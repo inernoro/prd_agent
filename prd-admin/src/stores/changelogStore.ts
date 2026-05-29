@@ -85,31 +85,36 @@ export const useChangelogStore = create<ChangelogState>()(
       error: null,
       lastSeenAt: null,
 
+      // stale-while-revalidate：有 sessionStorage 缓存时立即渲染旧数据并后台静默刷新
+      //（不翻 loadingCurrent，避免每次打开都闪 loading）；无缓存时才显示 loading。
       loadCurrentWeek: async (force?: boolean) => {
         const { loadingCurrent, currentWeek } = get();
-        if (loadingCurrent) return;
-        // 已有缓存 + 非强制：跳过（前端层面避免无谓往返）
-        if (currentWeek && !force) return;
-        set({ loadingCurrent: true, error: null });
+        if (loadingCurrent) return; // 冷加载去重（多个组件并发触发时）
+        const hasCache = currentWeek != null;
+        if (!hasCache) set({ loadingCurrent: true, error: null });
         // force 透传到后端：force=true 会绕过后端 IMemoryCache，从 local/GitHub 重新拉取
         const res = await getCurrentWeekChangelog(force === true);
         if (res.success) {
           set({ currentWeek: res.data, loadingCurrent: false });
-        } else {
+        } else if (!hasCache) {
           set({ loadingCurrent: false, error: res.error?.message || '加载待发布更新失败' });
+        } else {
+          set({ loadingCurrent: false }); // 后台刷新失败：保留旧数据，不打扰
         }
       },
 
       loadReleases: async (limit = 20, force?: boolean) => {
         const { loadingReleases, releases } = get();
         if (loadingReleases) return;
-        if (releases && !force) return;
-        set({ loadingReleases: true, error: null });
+        const hasCache = releases != null;
+        if (!hasCache) set({ loadingReleases: true, error: null });
         const res = await getChangelogReleases(limit, force === true);
         if (res.success) {
           set({ releases: res.data, loadingReleases: false });
-        } else {
+        } else if (!hasCache) {
           set({ loadingReleases: false, error: res.error?.message || '加载历史发布失败' });
+        } else {
+          set({ loadingReleases: false }); // 后台刷新失败：保留旧数据
         }
       },
 
@@ -121,8 +126,20 @@ export const useChangelogStore = create<ChangelogState>()(
       name: 'changelog-store',
       // 严格遵守 no-localstorage 规则
       storage: createJSONStorage(() => sessionStorage),
-      // 只持久化 lastSeenAt；数据每次会话重新拉取
-      partialize: (s) => ({ lastSeenAt: s.lastSeenAt }),
+      // v1 起一并持久化 releases / currentWeek：进页面先渲染缓存，后台静默刷新，
+      // 消除「每次打开都转圈」。sessionStorage 随标签页关闭清空，跨会话仍会冷拉一次。
+      version: 1,
+      // 旧版本（v0，只存 lastSeenAt）升级时：保留 lastSeenAt，数据字段重置为 null（首次进入冷拉一次）。
+      migrate: (persisted) => ({
+        lastSeenAt: (persisted as { lastSeenAt?: string | null } | null)?.lastSeenAt ?? null,
+        releases: null,
+        currentWeek: null,
+      }),
+      partialize: (s) => ({
+        lastSeenAt: s.lastSeenAt,
+        releases: s.releases,
+        currentWeek: s.currentWeek,
+      }),
     }
   )
 );

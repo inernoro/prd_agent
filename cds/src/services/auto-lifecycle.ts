@@ -41,8 +41,15 @@ export interface AutoLifecycleDeps {
    * override + stop（不推荐，仅测试/降级）。
    */
   redeployBranch?: (branchId: string) => Promise<void>;
+  beginAutoPublishOperation?: (branchId: string) => AutoLifecycleOperationLease | null;
   /** 注入时钟，方便测试。生产用 Date.now()。 */
   clock?: { now(): number };
+}
+
+export interface AutoLifecycleOperationLease {
+  operationId: string;
+  assertCurrent(step?: string): void;
+  complete(status: 'completed' | 'failed' | 'cancelled', error?: string): void;
 }
 
 // release 模式分类走 services/deploy-runtime.ts 这个 SSOT，与
@@ -268,7 +275,7 @@ export class AutoLifecycleService {
     profiles: BuildProfile[],
     minutes: number,
   ): Promise<void> {
-    const { stateService, stopBranch, redeployBranch } = this.deps;
+    const { stateService, stopBranch, redeployBranch, beginAutoPublishOperation } = this.deps;
 
     // 2026-05-14 Codex review P2 "Redeploy profiles that are already
     // configured for release"：plan 区分两类 entry——
@@ -329,6 +336,12 @@ export class AutoLifecycleService {
       return;
     }
 
+    const operationLease = beginAutoPublishOperation?.(branch.id) || null;
+    if (beginAutoPublishOperation && !operationLease) {
+      return;
+    }
+    let operationStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
+
     // 只有 switch 类（rewriteOverride）才动 override；redeploy-only 类
     // override 已是用户/项目选的 release，原样保留，仅靠重部署生效。
     const rewriteItems = plan.filter((p) => p.rewriteOverride);
@@ -349,14 +362,25 @@ export class AutoLifecycleService {
     };
 
     const switchedModes: string[] = plan.map((p) => p.label);
-    for (const item of rewriteItems) {
-      const existing = stateService.getBranch(branch.id)?.profileOverrides?.[item.profileId];
-      stateService.setBranchProfileOverride(branch.id, item.profileId, {
-        ...(existing || {}),
-        activeDeployMode: item.releaseMode,
-      });
+    try {
+      operationLease?.assertCurrent('auto-publish before override write');
+      for (const item of rewriteItems) {
+        operationLease?.assertCurrent(`auto-publish before override ${item.profileId}`);
+        const existing = stateService.getBranch(branch.id)?.profileOverrides?.[item.profileId];
+        stateService.setBranchProfileOverride(branch.id, item.profileId, {
+          ...(existing || {}),
+          activeDeployMode: item.releaseMode,
+        });
+      }
+      stateService.save();
+      operationLease?.assertCurrent('auto-publish after override write');
+    } catch (err) {
+      operationStatus = 'cancelled';
+      restoreOverrides();
+      throw err;
+    } finally {
+      operationLease?.complete(operationStatus);
     }
-    stateService.save();
 
     if (redeployBranch) {
       // 全自动重部署：deploy 路由 resolveEffectiveProfile 会读到上面写的

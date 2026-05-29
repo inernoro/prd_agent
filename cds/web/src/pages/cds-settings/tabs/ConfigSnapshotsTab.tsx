@@ -67,7 +67,9 @@ export function ConfigSnapshotsTab({ onToast }: Props): JSX.Element {
     if (!silent) setState({ status: 'loading' });
     setRefreshing(true);
     try {
-      const data = await apiRequest<{ snapshots: ConfigSnapshot[] }>('/api/config-snapshots');
+      const data = await apiRequest<{ snapshots: ConfigSnapshot[] }>('/api/config-snapshots', silent
+        ? { headers: { 'X-CDS-Poll': 'true' } }
+        : undefined);
       setState({ status: 'ok', snapshots: data.snapshots || [] });
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);

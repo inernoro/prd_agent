@@ -4510,7 +4510,12 @@ function safeChart(canvasId, config) {
                     description: description,
                     password: password,
                     expiresInDays: shareExpiryDays,
-                    ct: CancellationToken.None);
+                    ct: CancellationToken.None,
+                    // PR #685 Codex P2：工作流自动分享(autoShare=public/password)的语义就是
+                    // "给外部接收者"，必须显式传 visibility=public，否则会被 CreateShareAsync 的
+                    // 新默认 owner-only 拒绝，导致 workflow 生成的分享链返回 visibility_denied。
+                    // 密码保护(autoShare=password)由 AccessLevel 单独把关，visibility 仍是 public。
+                    visibility: "public");
 
                 var shareUrl = $"/share/web/{shareLink.Token}";
                 result["shareUrl"] = shareUrl;
@@ -5152,7 +5157,7 @@ function safeChart(canvasId, config) {
         };
         var request = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
         {
-            AppCallerCode = "page-agent.generate::chat",
+            AppCallerCode = AppCallerRegistry.PageAgent.Generate,
             ModelType = "chat",
             TimeoutSeconds = ctx.TimeoutSeconds,
             RequestBody = new System.Text.Json.Nodes.JsonObject { ["messages"] = messages },
@@ -5469,7 +5474,7 @@ function safeChart(canvasId, config) {
         };
         var planReq = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
         {
-            AppCallerCode = "page-agent.generate::chat",
+            AppCallerCode = AppCallerRegistry.PageAgent.Generate,
             ModelType = "chat",
             RequestBody = new System.Text.Json.Nodes.JsonObject { ["messages"] = planMessages },
         };
@@ -5507,7 +5512,7 @@ function safeChart(canvasId, config) {
         };
         var genReq = new PrdAgent.Infrastructure.LlmGateway.GatewayRequest
         {
-            AppCallerCode = "page-agent.generate::chat",
+            AppCallerCode = AppCallerRegistry.PageAgent.Generate,
             ModelType = "chat",
             TimeoutSeconds = 300,
             RequestBody = new System.Text.Json.Nodes.JsonObject { ["messages"] = genMessages },

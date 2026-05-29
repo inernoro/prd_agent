@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, ArrowUpCircle, CheckCircle2, Loader2, Pin, PinOff, RefreshCw, Sparkles, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { AlertTriangle, ArrowUpCircle, CheckCircle2, Pin, PinOff, RefreshCw, Sparkles, X } from 'lucide-react';
+import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
+import { apiUrl } from '@/lib/api';
 
 /*
  * GlobalUpdateBadge — 浮在屏幕左下角的全局 CDS 更新状态徽章。
@@ -69,6 +72,7 @@ const SSE_FAIL_THRESHOLD_COUNT = 3;
 const SSE_FAIL_THRESHOLD_MS = 30_000;
 
 export function GlobalUpdateBadge(): JSX.Element | null {
+  const navigate = useNavigate();
   const [state, setState] = useState<BadgeState>({ kind: 'idle' });
   // 2026-05-06 用户反馈"我要的是常开":徽章默认就展开显示完整状态,鼠标移开
   // 也不主动收。要让它收只能点 X 关闭(dismiss 1h)。Pin 按钮变成"自动收起切换"
@@ -164,14 +168,6 @@ export function GlobalUpdateBadge(): JSX.Element | null {
       initialShaRef.current = payload.headSha;
     }
 
-    if (initialShaRef.current && payload.headSha && payload.headSha !== initialShaRef.current) {
-      setState({
-        kind: 'updated',
-        fromSha: initialShaRef.current,
-        toSha: payload.headSha,
-      });
-      return;
-    }
     if (payload.activeSelfUpdate && !payload.activeSelfUpdate.interrupted) {
       const startedMs = Date.parse(payload.activeSelfUpdate.startedAt);
       const lastTickMs = payload.activeSelfUpdate.lastTickAt ? Date.parse(payload.activeSelfUpdate.lastTickAt) : Number.NaN;
@@ -185,6 +181,14 @@ export function GlobalUpdateBadge(): JSX.Element | null {
         step: payload.activeSelfUpdate.step,
         title: payload.activeSelfUpdate.logTail?.[payload.activeSelfUpdate.logTail.length - 1]?.text,
         staleSeconds: staleSeconds && staleSeconds >= 10 ? staleSeconds : undefined,
+      });
+      return;
+    }
+    if (initialShaRef.current && payload.headSha && payload.headSha !== initialShaRef.current) {
+      setState({
+        kind: 'updated',
+        fromSha: initialShaRef.current,
+        toSha: payload.headSha,
       });
       return;
     }
@@ -220,7 +224,7 @@ export function GlobalUpdateBadge(): JSX.Element | null {
     try {
       const ctrl = new AbortController();
       const timeoutId = window.setTimeout(() => ctrl.abort(), 10_000);
-      const r = await fetch('/api/self-status?probe=remote&force=1', {
+      const r = await fetch(apiUrl('/api/self-status?probe=remote&force=1'), {
         credentials: 'include',
         cache: 'no-store',
         signal: ctrl.signal,
@@ -249,6 +253,7 @@ export function GlobalUpdateBadge(): JSX.Element | null {
     let fallbackTimer: number | null = null;
     let firstErrorAt = 0;
     let consecutiveErrors = 0;
+    let consecutiveFallbackFailures = 0;
     let fallbackActive = false;
     let fallbackSuccessCount = 0;
     // ⚠ Bugbot Review 2026-05-06 0005a515: fallback polling 启动后永远不再尝
@@ -265,19 +270,27 @@ export function GlobalUpdateBadge(): JSX.Element | null {
       const tick = async (): Promise<void> => {
         if (cancelled) return;
         try {
-          const r = await fetch('/api/self-status?probe=remote', {
+          const r = await fetch(apiUrl('/api/self-status'), {
             credentials: 'include',
             cache: 'no-store',
+            headers: { 'X-CDS-Poll': 'true' },
           });
           if (r.ok) {
             const data = (await r.json()) as SelfStatusLite;
             if (!cancelled) applyPayload(data, 'update');
             fallbackSuccessCount += 1;
+            consecutiveFallbackFailures = 0;
           } else if (!cancelled) {
-            setState({ kind: 'restarting', sinceMs: Date.now() });
+            consecutiveFallbackFailures += 1;
+            if (consecutiveFallbackFailures >= 2 || r.status >= 500) {
+              setState({ kind: 'restarting', sinceMs: Date.now() });
+            }
           }
         } catch {
-          if (!cancelled) setState({ kind: 'restarting', sinceMs: Date.now() });
+          consecutiveFallbackFailures += 1;
+          if (!cancelled && consecutiveFallbackFailures >= 2) {
+            setState({ kind: 'restarting', sinceMs: Date.now() });
+          }
         }
         if (cancelled) return;
         // 每 FALLBACK_POLLS_PER_SSE_RETRY 次成功 poll 后,试着重连 SSE。失败
@@ -326,7 +339,7 @@ export function GlobalUpdateBadge(): JSX.Element | null {
       consecutiveErrors = 0;
       firstErrorAt = 0;
       try {
-        es = new EventSource('/api/self-status/stream', { withCredentials: true });
+        es = new EventSource(apiUrl('/api/self-status/stream'), { withCredentials: true });
       } catch {
         // 浏览器不支持 EventSource(极老 IE 等)→ 直接降级
         startFallbackPolling();
@@ -387,7 +400,9 @@ export function GlobalUpdateBadge(): JSX.Element | null {
         const now = Date.now();
         if (consecutiveErrors === 0) firstErrorAt = now;
         consecutiveErrors += 1;
-        setState({ kind: 'restarting', sinceMs: firstErrorAt || now });
+        if (consecutiveErrors >= 2) {
+          setState({ kind: 'restarting', sinceMs: firstErrorAt || now });
+        }
 
         const elapsed = now - firstErrorAt;
         if (consecutiveErrors >= SSE_FAIL_THRESHOLD_COUNT && elapsed > SSE_FAIL_THRESHOLD_MS) {
@@ -435,9 +450,10 @@ export function GlobalUpdateBadge(): JSX.Element | null {
       try {
         const ctrl = new AbortController();
         timeoutId = window.setTimeout(() => ctrl.abort(), 6_000);
-        const r = await fetch('/api/self-status?probe=remote', {
+        const r = await fetch(apiUrl('/api/self-status'), {
           credentials: 'include',
           cache: 'no-store',
+          headers: { 'X-CDS-Poll': 'true' },
           signal: ctrl.signal,
         });
         if (!r.ok || cancelled) return;
@@ -473,13 +489,11 @@ export function GlobalUpdateBadge(): JSX.Element | null {
     const abortTimer = window.setTimeout(() => ctrl.abort(), 5000);
     let acceptedFirstEvent = false;
     try {
-      const response = await fetch('/api/self-update', {
+      const response = await fetch(apiUrl('/api/self-update'), {
         method: 'POST',
         credentials: 'include',
         headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json' },
-        // body 必传 — handler `req.body` 在 json middleware 下,空 body 会被
-        // 解析成 undefined,再解构 `const { branch }` 会抛 TypeError。空对象 OK。
-        body: '{}',
+        body: JSON.stringify({ branch: lastSuccessRef.current?.currentBranch || 'main' }),
         signal: ctrl.signal,
       });
       window.clearTimeout(abortTimer);
@@ -597,7 +611,10 @@ export function GlobalUpdateBadge(): JSX.Element | null {
 
   if (!visible) return null;
 
-  const visual = visualForState(state, { onRetry: () => { void triggerManualRefresh(); } });
+  const visual = visualForState(state, {
+    onRetry: () => { void triggerManualRefresh(); },
+    onNavigate: navigate,
+  });
 
   // 2026-05-07 wave 3.2:重启 overlay — restarting 状态超过 5s 时显示全屏
   // 半透明 backdrop,让用户更明确感知"等几秒"。<5s 时只 banner,避免抖动。
@@ -615,7 +632,7 @@ export function GlobalUpdateBadge(): JSX.Element | null {
           aria-label="点击立即重试"
           title="点击立即重试 self-status"
         >
-          <Loader2 className="h-12 w-12 animate-spin text-white" />
+          <CdsLogoLoader size="xl" className="text-white" />
           <div className="mt-4 text-base font-semibold text-white">CDS 重启中 · {restartingElapsed}s</div>
           <div className="mt-1 text-xs text-white/70">点击立即重试 / 等待自动恢复</div>
         </div>
@@ -709,7 +726,10 @@ export function GlobalUpdateBadge(): JSX.Element | null {
 
 function visualForState(
   state: Exclude<BadgeState, { kind: 'idle' }>,
-  opts: { onRetry: () => void } = { onRetry: () => {} },
+  opts: { onRetry: () => void; onNavigate: (to: string) => void } = {
+    onRetry: () => {},
+    onNavigate: (to) => { window.location.href = to; },
+  },
 ): {
   icon: JSX.Element;
   label: string;
@@ -743,7 +763,7 @@ function visualForState(
         borderClass: 'border-amber-500/40',
         textClass: 'text-amber-700 dark:text-amber-300',
         onClick: () => {
-          window.location.href = '/cds-settings';
+          opts.onNavigate('/cds-settings');
         },
       };
     case 'activeUpdating': {
@@ -755,21 +775,21 @@ function visualForState(
       const stepText = state.title || state.step || '等待后端返回进度';
       const staleText = state.staleSeconds ? ` · ${state.staleSeconds}s 无新心跳` : '';
       return {
-        icon: <Loader2 className="h-4 w-4 animate-spin" />,
+        icon: <CdsLogoLoader size="sm" />,
         label: `${triggerLabel}进行中 ${elapsed}s · ${truncate(stepText, 42)}${staleText}`,
         title: 'CDS 正在执行 self-update。点击打开更新与重启查看完整流水。',
         bgClass: 'bg-amber-50 dark:bg-amber-950/30',
         borderClass: 'border-amber-500/40',
         textClass: 'text-amber-700 dark:text-amber-300',
         onClick: () => {
-          window.location.href = '/cds-settings#maintenance';
+          opts.onNavigate('/cds-settings#maintenance');
         },
       };
     }
     case 'restarting': {
       const elapsed = Math.floor((Date.now() - state.sinceMs) / 1000);
       return {
-        icon: <Loader2 className="h-4 w-4 animate-spin" />,
+        icon: <CdsLogoLoader size="sm" />,
         label: `CDS 不可达 ${elapsed}s · 可能正在重启…`,
         title: 'self-status 流断开。点击主动重试一次(SSE 也在自动 3 秒一次重连)。',
         bgClass: 'bg-blue-50 dark:bg-blue-950/30',
@@ -791,7 +811,7 @@ function visualForState(
         borderClass: 'border-red-500/40',
         textClass: 'text-red-700 dark:text-red-300',
         onClick: () => {
-          window.location.href = '/cds-settings';
+          opts.onNavigate('/cds-settings');
         },
       };
     default: {

@@ -45,6 +45,7 @@ function NavigationBridge() {
 //   2. AppShell 内但不进 launcher 的路由（admin 后端菜单 / 移动端 / 子路由）
 //   3. 子路由专用组件（如 LiteraryAgentEditorPageWrapper / WorkflowEditorPage 等）
 const LoginPage = lazy(() => import('@/pages/LoginPage'));
+const JoinTeamPage = lazy(() => import('@/pages/JoinTeamPage'));
 const ShareViewPage = lazy(() => import('@/pages/ShareViewPage'));
 const ShortLinkRouter = lazy(() => import('@/pages/ShortLinkRouter'));
 const PublicProfilePage = lazy(() => import('@/pages/PublicProfilePage'));
@@ -63,6 +64,7 @@ const PortfolioShowcasePage = lazy(() => import('@/pages/PortfolioShowcasePage')
 // 全屏路由的子路由组件（NAV_REGISTRY 已注册了主路由，这些是 sub-route 专用）
 const VisualAgentFullscreenPage = lazy(() => import('@/pages/visual-agent/VisualAgentFullscreenPage'));
 const LibraryStoreDetailPage = lazy(() => import('@/pages/library/LibraryStoreDetailPage').then(m => ({ default: m.LibraryStoreDetailPage })));
+const LibraryShareViewPage = lazy(() => import('@/pages/library/LibraryShareViewPage').then(m => ({ default: m.LibraryShareViewPage })));
 const WorkflowCanvasPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowCanvasPage })));
 const WorkflowEditorPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowEditorPage })));
 const LiteraryAgentEditorPageWrapper = lazy(() => import('@/pages/literary-agent').then(m => ({ default: m.LiteraryAgentEditorPageWrapper })));
@@ -190,6 +192,7 @@ export default function App() {
         <Route path="/u/:username" element={<PublicProfilePage />} />
         <Route path="/s/report-team/:token" element={<ReportTeamShareViewPage />} />
         <Route path="/s/skill/:token" element={<SkillShareViewPage />} />
+        <Route path="/s/lib/:token" element={<LibraryShareViewPage />} />
         {/* 统一短链 /s/{seq}（数字）— 兼容所有分享系统，老链接继续走上方专属路由 */}
         <Route path="/s/:slug" element={<ShortLinkRouter />} />
 
@@ -202,6 +205,16 @@ export default function App() {
         {NAV_REGISTRY.filter((e) => e.placement === 'fullscreen').map((e) => (
           <Route key={e.path} path={e.path} element={e.element} />
         ))}
+
+        {/* 自动加入共享文件夹（邀请链接）：登录后自动加入并跳网页托管 */}
+        <Route
+          path="/join/:code"
+          element={
+            <RequireAuth>
+              <JoinTeamPage />
+            </RequireAuth>
+          }
+        />
 
         {/* 子路由：智识殿堂详情 */}
         <Route path="/library/:storeId" element={<LibraryStoreDetailPage />} />

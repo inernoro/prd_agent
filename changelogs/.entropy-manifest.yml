@@ -1,22 +1,31 @@
-# 已处理的 changelog 片段（D6 changelog→doc 内容覆盖）
-# 自动维护，请勿手动删除条目
+# entropy-manifest.yml
+# 由 daily-entropy-plan 技能维护，记录已处理的 changelog 碎片
+# 首次创建于 2026-05-25，批量登记所有历史 changelog（无需追加 design 文档，均为标准表格格式）
+
 processed:
+  - 2026-04-18_pa-agent.md
+  - 2026-05-10_pa-agent-appcaller-chat-pick.md
+  - 2026-05-10_pa-agent-appcaller-startup-sync.md
+  - 2026-05-10_pa-agent-llm-binding-fix.md
+  - 2026-05-10_pa-agent-merge-from-main.md
+  - 2026-05-10_pa-agent-prompt-format-fix.md
+  - 2026-05-10_pa-agent-savage-secretary.md
   - 2026-05-11_defect-title-polish.md
   - 2026-05-11_desktop-post-update-summary.md
   - 2026-05-11_entropy-cleanup.md
+  - 2026-05-11_report-version-history.md
+  - 2026-05-11_skill-center-wave1.md
   - 2026-05-12_cds-branch-card-status-semantics.md
-  - 2026-05-12_cds-github-sync-auth.md
   - 2026-05-12_cds-floating-inbox-position.md
+  - 2026-05-12_cds-github-sync-auth.md
   - 2026-05-12_cds-infra-brand-icons.md
   - 2026-05-12_cds-infra-scope-model.md
   - 2026-05-12_cds-observability-polish.md
   - 2026-05-12_cds-project-card-compact-actions.md
-  - 2026-05-11_skill-center-wave1.md
   - 2026-05-12_cds-project-card-footer.md
   - 2026-05-12_cds-project-card-visual-tokens.md
   - 2026-05-12_cds-project-icons.md
   - 2026-05-12_cds-project-infra-isolation.md
-  - 2026-05-11_report-version-history.md
   - 2026-05-12_cds-project-list-breathing-room.md
   - 2026-05-12_cds-railway-onboarding.md
   - 2026-05-12_cds-railway-sidebar-icons.md
@@ -61,3 +70,98 @@ processed:
   - 2026-05-13_short-share-links.md
   - 2026-05-13_streaming-text-followup-r2.md
   - 2026-05-13_streaming-text-general-capability.md
+  - 2026-05-13_streaming-text-maxtailchars.md
+  - 2026-05-13_streaming-text-unify-batch1.md
+  - 2026-05-13_streaming-text-unify-batch2.md
+  - 2026-05-13_streaming-text-unify-batch3-final.md
+  - 2026-05-13_streaming-text-unify-batch3-partial.md
+  - 2026-05-13_web-pages-card-polish.md
+  - 2026-05-13_web-pages-default-title-and-anim-guard.md
+  - 2026-05-13_web-pages-large-media-and-url-encode.md
+  - 2026-05-14_cds-agent-artifact-collector.md
+  - 2026-05-14_cds-agent-long-auth-health.md
+  - 2026-05-14_cds-agent-model-guard.md
+  - 2026-05-14_cds-agent-session-list.md
+  - 2026-05-14_cds-agent-workbench-p2-p5.md
+  - 2026-05-14_cds-agent-workbench.md
+  - 2026-05-14_cds-auto-lifecycle-and-logs.md
+  - 2026-05-14_cds-branch-inheritance-and-stop-visibility.md
+  - 2026-05-14_cds-preview-asset-cache.md
+  - 2026-05-14_laowang-agent.md
+  - 2026-05-14_pdf-share-direct-iframe.md
+  - 2026-05-14_pdf-thumbnail-placeholder.md
+  - 2026-05-14_pdf-thumbnail-public-profile.md
+  - 2026-05-14_pdf-wrapper-marker.md
+  - 2026-05-14_pdf-wrapper-strict-detection.md
+  - 2026-05-14_review-appeal.md
+  - 2026-05-14_workflow-entry-polish.md
+  - 2026-05-15_cds-agent-runtime-architecture.md
+  - 2026-05-15_cds-agent-simple-view.md
+  - 2026-05-15_cds-skills-cli-accuracy.md
+  - 2026-05-15_cds-skills-cold-hot-split.md
+  - 2026-05-16_kb-nav-style.md
+  - 2026-05-16_kb-render-comment-replace.md
+  - 2026-05-16_showcase-dynamic-grid.md
+  - 2026-05-16_web-pages-upload-ux.md
+  - 2026-05-17_emergence-redesign.md
+  - 2026-05-17_gallery-stats.md
+  - 2026-05-18_cds-lifecycle-observability.md
+  - 2026-05-18_cds-scheduler-settings-ui.md
+  - 2026-05-18_emergence-reveal-fix.md
+  - 2026-05-18_skill-market-modal-share.md
+  - 2026-05-19_cds-container-stop-remove.md
+  - 2026-05-20_marketplace-upload-ui.md
+  - 2026-05-20_share-link-security-c1.md
+  - 2026-05-20_share-link-security-c2.md
+  - 2026-05-20_share-link-security-c3.md
+  - 2026-05-20_share-link-tester-lab.md
+  - 2026-05-21_ai-toolbox-quick-wizard-knowledge-base.md
+  - 2026-05-21_bugbot-fixes.md
+  - 2026-05-21_cds-issue-classification.md
+  - 2026-05-21_changelog-release-scope.md
+  - 2026-05-21_daily-log-tag-manager-polish.md
+  - 2026-05-21_daily-log-todo-improvements.md
+  - 2026-05-21_daily-log-top-tab-and-default-tab.md
+  - 2026-05-21_default-tab-internal-nav-fix.md
+  - 2026-05-21_defect-agent-share-launch.md
+  - 2026-05-21_doc-browser-show-updated-time.md
+  - 2026-05-21_my-shares-management.md
+  - 2026-05-21_report-agent-fixes.md
+  - 2026-05-21_report-editor-item-reorder.md
+  - 2026-05-21_report-editor-outline-sidebar.md
+  - 2026-05-21_report-editor-surface-restore.md
+  - 2026-05-21_report-editor-visual-overhaul.md
+  - 2026-05-21_report-grid-4col.md
+  - 2026-05-21_report-history-strip.md
+  - 2026-05-21_report-timeline-view.md
+  - 2026-05-21_review-agent-anti-bloat.md
+  - 2026-05-21_share-dock-upload-share.md
+  - 2026-05-21_share-integration-assets.md
+  - 2026-05-21_share-link-keep-prefix.md
+  - 2026-05-21_showcase-masonry-anim.md
+  - 2026-05-21_tag-manager-inplace-edit.md
+  - 2026-05-21_team-member-drawer-portal-fix.md
+  - 2026-05-21_week-date-format-dot.md
+  - 2026-05-21_week-label-date-range.md
+  - 2026-05-22_bugbot-round2-fixes.md
+  - 2026-05-22_bugbot-round3-fixes.md
+  - 2026-05-22_bugbot-round4-fix.md
+  - 2026-05-24_reprocess-background-task.md
+  - 2026-05-24_shortcuts-signed-install.md
+  - 2026-05-24_visual-agent-canvas-reconcile.md
+  - 2026-05-25_fix-kb-upload-filelist.md
+  - 2026-05-25_knowledge-base-share-and-ux.md
+  - 2026-05-25_reprocess-bugbot-fixes.md
+  - 2026-05-25_share-visibility-yellow.md
+  - 2026-05-26_risk-gate-opaque-red.md
+  - 2026-05-26_tip-reminder-expiry.md
+  - 2026-05-26_pa-agent-savage-iter-v2.md
+  - 2026-05-26_pa-agent-ue-revamp.md
+  - 2026-05-27_library-share-reader.md
+  - 2026-05-27_pa-agent-theme-typography.md
+  - 2026-05-27_review-agent-anti-gaming.md
+  - 2026-05-25_team-feature.md
+  - 2026-05-26_web-hosting-roles.md
+  - 2026-05-26_web-observability.md
+  - 2026-05-27_changelog-backend-swr.md
+  - 2026-05-27_changelog-swr-cache.md

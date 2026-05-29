@@ -342,6 +342,7 @@ export const api = {
         viewport: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/viewport`,
         messages: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/messages`,
         canvas: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/canvas`,
+        canvasReconcile: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/canvas/reconcile`,
         assets: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/assets`,
         asset: (id: string, assetId: string) => `/api/visual-agent/image-master/workspaces/${id}/assets/${assetId}`,
         imageGenRuns: (id: string) => `/api/visual-agent/image-master/workspaces/${id}/image-gen/runs`,
@@ -1080,6 +1081,11 @@ export const api = {
     reupload: (id: string) => `/api/web-pages/${id}/reupload`,
     batchDelete: () => '/api/web-pages/batch-delete',
     setVisibility: (id: string) => `/api/web-pages/${id}/visibility`,
+    setTeams: (id: string) => `/api/web-pages/${id}/teams`,
+    // 波1 访客痕迹：记录一次访问 + owner 查本页访客名单。
+    // 走独立前缀 /api/web-page-analytics 避开 AdminPermissionMiddleware 对 /api/web-pages/* 的写权限拦截。
+    recordView: (id: string) => `/api/web-page-analytics/${id}/record-view`,
+    viewers: (id: string) => `/api/web-page-analytics/${id}/viewers`,
     folders: () => '/api/web-pages/folders',
     tags: () => '/api/web-pages/tags',
     share: () => '/api/web-pages/share',
@@ -1088,6 +1094,9 @@ export const api = {
     viewShare: (token: string) => `/api/web-pages/shares/view/${token}`,
     saveShare: (token: string) => `/api/web-pages/shares/${token}/save`,
     viewLogs: '/api/web-pages/shares/view-logs',
+    shareLogsForSite: (siteId: string) => `/api/web-pages/${siteId}/share-logs`,
+    renewShare: (shareId: string) => `/api/web-pages/shares/${shareId}/renew`,
+    shareAnalytics: '/api/web-pages/shares/analytics',
   },
   // ============ 公开主页（/u/:username 无需登录） ============
   publicProfile: {
@@ -1104,6 +1113,7 @@ export const api = {
     list: () => '/api/shortcuts',
     create: () => '/api/shortcuts',
     delete: (id: string) => `/api/shortcuts/${id}`,
+    extend: (id: string) => `/api/shortcuts/${id}/extend`,
     setup: (id: string) => `/api/shortcuts/${id}/setup`,
     installData: (id: string) => `/api/shortcuts/${id}/install-data`,
     bindingTargets: () => '/api/shortcuts/binding-targets',
@@ -1135,6 +1145,7 @@ export const api = {
       listWithPreview: () => '/api/document-store/stores/with-preview',
       create: () => '/api/document-store/stores',
       detail: (storeId: string) => `/api/document-store/stores/${storeId}`,
+      setTeams: (storeId: string) => `/api/document-store/stores/${storeId}/teams`,
       primaryEntry: (storeId: string) => `/api/document-store/stores/${storeId}/primary-entry`,
       pinnedEntries: (storeId: string) => `/api/document-store/stores/${storeId}/pinned-entries`,
       rebuildContentIndex: (storeId: string) => `/api/document-store/stores/${storeId}/rebuild-content-index`,
@@ -1144,6 +1155,8 @@ export const api = {
       publicEntries: (storeId: string) => `/api/document-store/public/stores/${storeId}/entries`,
       publicEntryContent: (entryId: string) => `/api/document-store/public/entries/${entryId}/content`,
       publicShare: (token: string) => `/api/document-store/public/share/${token}`,
+      publicShareEntries: (token: string) => `/api/document-store/public/share/${token}/entries`,
+      publicShareEntryContent: (token: string, entryId: string) => `/api/document-store/public/share/${token}/entries/${entryId}/content`,
       // 互动
       like: (storeId: string) => `/api/document-store/stores/${storeId}/like`,
       favorite: (storeId: string) => `/api/document-store/stores/${storeId}/favorite`,
@@ -1186,6 +1199,33 @@ export const api = {
       update: (entryId: string) => `/api/document-store/entries/${entryId}`,
       delete: (entryId: string) => `/api/document-store/entries/${entryId}`,
     },
+  },
+  // ============ 波2 高级权限：全部网页审计视图 ============
+  adminWebPages: {
+    list: () => '/api/admin-web-pages',
+    viewers: (id: string) => `/api/admin-web-pages/${id}/viewers`,
+  },
+  // ============ 波3 网页/知识库自定义分类 + 按分类自动生成 ============
+  webFolders: {
+    list: () => '/api/web-folders',
+    create: () => '/api/web-folders',
+    detail: (id: string) => `/api/web-folders/${id}`,
+    generate: (id: string) => `/api/web-folders/${id}/generate`,
+  },
+  // ============ 团队（跨应用协作单位：网页托管 + 知识库共用） ============
+  teams: {
+    list: () => '/api/teams',
+    create: () => '/api/teams',
+    detail: (id: string) => `/api/teams/${id}`,
+    members: (id: string) => `/api/teams/${id}/members`,
+    member: (id: string, userId: string) => `/api/teams/${id}/members/${userId}`,
+    memberWebHostingRole: (id: string, userId: string) =>
+      `/api/teams/${id}/members/${userId}/web-hosting-role`,
+    inviteCode: (id: string) => `/api/teams/${id}/invite-code`,
+    join: () => '/api/teams/join',
+    activity: (id: string) => `/api/teams/${id}/activity`,
+    searchUsers: () => '/api/teams/search-users',
+    userCards: () => '/api/teams/user-cards',
   },
 
   // ============ Changelog 更新中心（代码级周报） ============

@@ -1,23 +1,39 @@
 ---
 name: bridge
-description: "Page Agent Bridge：通过 CDS 预览页面远程操作用户浏览器，实现 DOM 读取、鼠标轨迹点击、表单输入、SPA 导航等操作。"
+description: "Page Agent Bridge（仅手动触发）：通过 CDS 预览页面远程操作真实用户浏览器（DOM 读取、鼠标轨迹点击、表单输入、SPA 导航）。仅当用户显式输入 /bridge 时使用；禁止根据上下文自动推断调用。日常视觉验收/截图优先用 Playwright 无头浏览器直连预览域名，不要默认用 bridge。"
 triggers:
   - "/bridge"
-  - "操作页面"
-  - "打开预览"
-  - "页面自动化"
-  - "bridge test"
-  - "帮我操作"
 ---
 
-# Page Agent Bridge — 远程操作预览页面
+# Page Agent Bridge — 远程操作预览页面（仅手动触发）
+
+> **触发约束（2026-05-26 起）**：本技能**只能由用户显式输入 `/bridge` 触发**，禁止 Agent 根据
+> "操作页面 / 打开预览 / 帮我操作 / 视觉验收" 等上下文自动调用。原因：bridge 需要劫持用户真实
+> 浏览器 + 用户握手授权，副作用大；**日常视觉验收/截图请优先用 Playwright 无头浏览器**直连预览
+> 域名（见下方「视觉验收优先用 Playwright」），只有在确实需要操作*用户本人浏览器内的真实会话*
+> （如复现用户特定登录态 / 真实环境交互）时，才在用户明确 `/bridge` 后启用。
+
+> 暂停状态（2026-05-28）：Page Agent Bridge HTTP 轮询已默认关闭，除非 CDS 服务端显式设置 `CDS_BRIDGE_ENABLED=1`。不要主动使用本技能做页面操作；页面验收改用 `cdscli smoke`、浏览器插件/本地无头浏览器或人工预览。此文档仅保留历史设计与将来回滚参考。
 
 通过 CDS Widget 注入的 Bridge Client，Agent 可以读取用户浏览器中的真实页面 DOM、
 执行点击/输入操作（带鼠标轨迹动画），实现端到端的页面验证和自动化操作。
 
+## 视觉验收优先用 Playwright（不经 bridge）
+
+环境内已装 Playwright（全局 `/opt/node22/lib/node_modules`）。视觉验收/截图的默认路径是
+无头浏览器直连预览域名，无需用户握手、无副作用：
+
+- `chromium.launch()` → `newContext({ ignoreHTTPSErrors: true, extraHTTPHeaders: { 'X-AI-Access-Key', 'X-AI-Impersonate' } })`
+- 用 `addInitScript` 注入 `localStorage['prd-admin-auth']` 种子会话（AI 接入鉴权下 Bearer 可为占位值，
+  后端按 X-AI-Access-Key + X-AI-Impersonate 鉴权），即可渲染需登录的页面并截图
+- `waitUntil: 'domcontentloaded'`（预览域名外部资源会让 networkidle 挂起）
+
+只有这条路走不通、或必须操作*用户当前浏览器真实态*时，才考虑 `/bridge`。
+
 ## 触发词
 
-- `/bridge` / "操作页面" / "打开预览" / "帮我操作"
+- `/bridge`（唯一触发；不再响应自然语言推断）
+
 
 ## ⚠️ 核心架构：需要用户握手授权
 

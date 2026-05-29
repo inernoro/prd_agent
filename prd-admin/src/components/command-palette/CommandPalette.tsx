@@ -12,9 +12,11 @@ import {
   NAV_SECTION_ORDER,
   type NavCatalogItem,
 } from '@/lib/unifiedNavCatalog';
+import { isPaSecretaryIcon, renderPaSecretaryIconNode } from '@/lib/paSecretaryIconRegistry';
 
 function getIcon(name: string | undefined, size = 16) {
   if (!name) return <LucideIcons.Circle size={size} />;
+  if (isPaSecretaryIcon(name)) return renderPaSecretaryIconNode(size);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const Comp = (LucideIcons as any)[name];
   if (Comp) return <Comp size={size} />;

@@ -12,6 +12,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   // Escape for safe embedding in <script> tag
   const safeId = branchId.replace(/['"<>&]/g, '');
   const safeName = branchName.replace(/['"<>&]/g, '');
+  const bridgeEnabled = process.env.CDS_BRIDGE_ENABLED === '1';
 
   return `
 <script data-cds-widget>
@@ -21,6 +22,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   var BRANCH_ID='${safeId}';
   var BRANCH_NAME='${safeName}';
   var API='/_cds/api';
+  var BRIDGE_ENABLED=${bridgeEnabled ? 'true' : 'false'};
 
   // ── Styles ──
   var css=document.createElement('style');
@@ -1429,6 +1431,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
 
   // Lightweight check: is there an active session for this branch? (no body, no state)
   function bridgeCheckActivation(){
+    if(!BRIDGE_ENABLED)return;
     fetch(API+'/bridge/check/'+BRANCH_ID)
       .then(function(r){
         if(!r.ok){console.warn('[CDS Bridge] Check returned '+r.status);return null;}
@@ -1451,6 +1454,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
 
   // Fast polling heartbeat (500ms interval via setInterval).
   function bridgePoll(){
+    if(!BRIDGE_ENABLED)return;
     if(!bridgeActive)return;
     var state=collectPageState();
     fetch(API+'/bridge/heartbeat',{
@@ -1530,8 +1534,10 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     });
   }
 
-  // Start lightweight activation check every 10s (very low overhead, no body)
+  // Start lightweight activation check every 10s (very low overhead, no body).
+  // Disabled by default: Bridge HTTP polling is retained but opt-in only.
   try{
+    if(BRIDGE_ENABLED){
     bridgeCheckTimer=setInterval(bridgeCheckActivation,10000);
     // First check after 2s (give page time to settle)
     setTimeout(bridgeCheckActivation,2000);
@@ -1540,6 +1546,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
       try{bridgeCheckActivation();}catch(e){console.error('[CDS Bridge] Activation check error:',e);}
     },5000);
     console.log('[CDS Bridge] Initialization complete, check interval started');
+    }
   }catch(e){
     console.error('[CDS Bridge] Failed to initialize:',e);
   }
@@ -1578,6 +1585,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
   // ── Navigate Request Polling ──
   // Widget polls CDS for pending navigation requests from agents
   function pollNavigateRequests(){
+    if(!BRIDGE_ENABLED)return;
     fetch(API+'/bridge/navigate-requests/'+BRANCH_ID)
       .then(function(r){return r.ok?r.json():{};})
       .then(function(d){
@@ -1589,13 +1597,16 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
       })
       .catch(function(){});
   }
-  bridgeNavPollTimer=setInterval(pollNavigateRequests,10000);
+  if(BRIDGE_ENABLED){
+    bridgeNavPollTimer=setInterval(pollNavigateRequests,10000);
+  }
 
   // ── Handshake Request Polling ──
   // Widget polls CDS for pending handshake requests from AI.
   // User must click "同意" to approve and auto-activate Bridge session.
   var bridgeHandshakeRequest=null;
   function pollHandshakeRequests(){
+    if(!BRIDGE_ENABLED)return;
     fetch(API+'/bridge/handshake-requests/'+BRANCH_ID)
       .then(function(r){return r.ok?r.json():{};})
       .then(function(d){
@@ -1608,8 +1619,10 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
       .catch(function(){});
   }
   // Poll every 3s (faster than nav because user expects quick response to their chat)
-  setInterval(pollHandshakeRequests,3000);
-  setTimeout(pollHandshakeRequests,500);
+  if(BRIDGE_ENABLED){
+    setInterval(pollHandshakeRequests,3000);
+    setTimeout(pollHandshakeRequests,500);
+  }
 
   function renderHandshakeRequest(){
     var existing=document.getElementById('cds-handshake-request');

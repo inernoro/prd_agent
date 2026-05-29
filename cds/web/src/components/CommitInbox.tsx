@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronUp, ExternalLink, GitCommit, Inbox, Tag, X } from 'lucide-react';
+import { apiUrl } from '@/lib/api';
 
 interface BranchSummary {
   id: string;
@@ -154,7 +155,7 @@ export function CommitInbox(): JSX.Element | null {
 
   useEffect(() => {
     let cancelled = false;
-    const source = new EventSource('/api/branches/stream');
+    const source = new EventSource(apiUrl('/api/branches/stream'));
     source.onopen = () => {
       if (!cancelled) setConnected(true);
     };

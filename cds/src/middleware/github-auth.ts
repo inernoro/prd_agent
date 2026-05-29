@@ -4,7 +4,7 @@
  * When CDS is started with CDS_AUTH_MODE=github, this middleware is
  * mounted before the route layer to enforce that requests carry a
  * valid GitHub session cookie. Unauthenticated browser requests are
- * redirected to /login-gh.html; unauthenticated API requests get 401.
+ * redirected to /login; unauthenticated API requests get 401.
  *
  * Routes that MUST remain open (OAuth start/callback, static assets
  * for the login page itself) are listed in `PUBLIC_PATHS` below.
@@ -22,6 +22,8 @@ import { GH_SESSION_COOKIE } from '../routes/auth.js';
 const PUBLIC_PATHS: (string | RegExp)[] = [
   '/healthz',
   '/login',
+  // Compatibility URL: installSpaFallback redirects it to the React login
+  // route while preserving ?redirect=...
   '/login-gh.html',
   '/api/auth/github/login',
   '/api/auth/github/callback',
@@ -79,10 +81,10 @@ export function createGithubAuthMiddleware(deps: {
     if (!result) {
       if (wantsHtml(req)) {
         const redirect = encodeURIComponent(req.originalUrl || req.url || '/project-list');
-        res.redirect(302, `/login-gh.html?redirect=${redirect}`);
+        res.redirect(302, `/login?redirect=${redirect}`);
         return;
       }
-      res.status(401).json({ error: 'unauthenticated', loginUrl: '/login-gh.html' });
+      res.status(401).json({ error: 'unauthenticated', loginUrl: '/login' });
       return;
     }
 

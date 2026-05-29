@@ -29,7 +29,7 @@ import { Router } from 'express';
 import path from 'node:path';
 import type { StateService } from '../services/state.js';
 import { JsonStateBackingStore } from '../infra/state-store/json-backing-store.js';
-import { MongoSplitStateBackingStore } from '../infra/state-store/mongo-split-store.js';
+import { MongoSplitStateBackingStore, type ISplitMongoHandle } from '../infra/state-store/mongo-split-store.js';
 import { RealMongoSplitHandle } from '../infra/state-store/mongo-split-handle.js';
 import { createEnvFileOps } from '../infra/env-file.js';
 
@@ -58,6 +58,8 @@ export interface StorageModeRouterDeps {
   repoRoot: string;
   /** Shared mutable context — see interface. */
   context: StorageModeContext;
+  /** Test seam for creating the target mongo-split handle. */
+  createMongoSplitHandle?: (opts: { uri: string; databaseName: string; connectTimeoutMs: number }) => ISplitMongoHandle;
 }
 
 /**
@@ -222,10 +224,10 @@ export function createStorageModeRouter(deps: StorageModeRouterDeps): Router {
     }
   });
 
-  // POST /api/storage-mode/switch-to-mongo — runtime swap json → mongo-split.
+  // POST /api/storage-mode/switch-to-mongo — runtime swap json/mongo → mongo-split.
   //
   // Flow:
-  //   1. Validate input + reject if already on mongo
+  //   1. Validate input + reject if already on mongo-split
   //   2. Create a new handle + mongo-split store, init() (connect)
   //   3. Snapshot the current stateService state
   //   4. seedIfEmpty(snapshot) — idempotent; if the collection is
@@ -243,7 +245,7 @@ export function createStorageModeRouter(deps: StorageModeRouterDeps): Router {
       res.status(400).json({ ok: false, message: 'uri 不能为空' });
       return;
     }
-    if (context.resolvedMode === 'mongo' || context.resolvedMode === 'mongo-split') {
+    if (context.resolvedMode === 'mongo-split') {
       res.status(409).json({
         ok: false,
         message: `当前已经是 ${context.resolvedMode} 模式，如需换库请先切回 json 再切回来`,
@@ -252,7 +254,9 @@ export function createStorageModeRouter(deps: StorageModeRouterDeps): Router {
     }
 
     const dbName = databaseName || 'cds_state_db';
-    const handle = new RealMongoSplitHandle({ uri, databaseName: dbName, connectTimeoutMs: 5000 });
+    const handle = deps.createMongoSplitHandle
+      ? deps.createMongoSplitHandle({ uri, databaseName: dbName, connectTimeoutMs: 5000 })
+      : new RealMongoSplitHandle({ uri, databaseName: dbName, connectTimeoutMs: 5000 });
     const newStore = new MongoSplitStateBackingStore(handle);
 
     try {

@@ -1221,3 +1221,17 @@ db.skill_agent_sessions.createIndex(
   }
 )
 ```
+
+### pa_user_profiles
+
+毒舌秘书 v2 跨会话画像 — 一个用户一条记录。
+LLM 在 chat 末尾通过 `update_profile` JSON 块异步写入；用户在「我的画像」面板可手动增删改。
+
+```js
+// UserId 唯一 — 每个用户最多一条 profile，重复插入应被 unique 索引拦截
+db.pa_user_profiles.createIndex(
+  { "UserId": 1 },
+  { name: "uniq_pa_user_profiles_user", unique: true }
+)
+```
+

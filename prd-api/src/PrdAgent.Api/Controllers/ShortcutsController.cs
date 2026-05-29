@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using System.Diagnostics;
+using System.Text;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -16,6 +18,8 @@ namespace PrdAgent.Api.Controllers;
 public class ShortcutsController : ControllerBase
 {
     private const string AppKey = "shortcuts-agent";
+    private const int DefaultShortcutGrantYears = 1;
+    private const int ExtendedShortcutGrantYears = 3;
 
     private readonly MongoDbContext _db;
     private readonly ILogger<ShortcutsController> _logger;
@@ -80,7 +84,8 @@ public class ShortcutsController : ControllerBase
             BindingType = bindingType,
             BindingTargetId = request.BindingTargetId?.Trim(),
             BindingTargetName = bindingTargetName,
-            BindingVariables = request.BindingVariables
+            BindingVariables = request.BindingVariables,
+            ExpiresAt = DateTime.UtcNow.AddYears(DefaultShortcutGrantYears)
         };
 
         await _db.UserShortcuts.InsertOneAsync(shortcut, cancellationToken: ct);
@@ -102,6 +107,7 @@ public class ShortcutsController : ControllerBase
             shortcut.DeviceType,
             Token = token, // 仅此一次
             InstallPageUrl = installPageUrl, // 前端用此 URL 生成 QR 码
+            shortcut.ExpiresAt,
             shortcut.CreatedAt
         }));
     }
@@ -135,6 +141,7 @@ public class ShortcutsController : ControllerBase
             s.BindingTargetId,
             s.BindingTargetName,
             s.IsActive,
+            s.ExpiresAt,
             s.LastUsedAt,
             s.CollectCount,
             s.CreatedAt
@@ -163,6 +170,41 @@ public class ShortcutsController : ControllerBase
         _logger.LogInformation("Shortcut deleted: {Id} by user {UserId}", id, userId);
 
         return Ok(ApiResponse<object>.Ok(new { id, deleted = true }));
+    }
+
+    /// <summary>
+    /// 将快捷指令授权延长到 3 年后。
+    /// </summary>
+    [Authorize]
+    [HttpPost("{id}/extend")]
+    public async Task<IActionResult> ExtendShortcut([FromRoute] string id, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        if (string.IsNullOrEmpty(userId))
+            return Unauthorized(ApiResponse<object>.Fail("UNAUTHORIZED", "未登录"));
+
+        var shortcut = await _db.UserShortcuts
+            .Find(x => x.Id == id && x.UserId == userId)
+            .FirstOrDefaultAsync(ct);
+
+        if (shortcut == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "快捷指令不存在或无权限"));
+
+        var expiresAt = DateTime.UtcNow.AddYears(ExtendedShortcutGrantYears);
+        await _db.UserShortcuts.UpdateOneAsync(
+            x => x.Id == shortcut.Id && x.UserId == userId,
+            Builders<UserShortcut>.Update
+                .Set(x => x.ExpiresAt, expiresAt)
+                .Set(x => x.IsActive, true)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            shortcut.Id,
+            ExpiresAt = expiresAt,
+            GrantYears = ExtendedShortcutGrantYears
+        }));
     }
 
     /// <summary>
@@ -249,6 +291,9 @@ public class ShortcutsController : ControllerBase
         if (hash != shortcut.TokenHash)
             return Unauthorized(ApiResponse<object>.Fail("TOKEN_MISMATCH", "token 不匹配"));
 
+        if (IsShortcutExpired(shortcut))
+            return Unauthorized(ApiResponse<object>.Fail("EXPIRED", "快捷指令授权已过期"));
+
         var serverUrl = ResolveServerUrl();
         var downloadUrl = $"{serverUrl}/api/shortcuts/{shortcut.Id}/download?t={Uri.EscapeDataString(token)}";
 
@@ -263,6 +308,7 @@ public class ShortcutsController : ControllerBase
             shortcut.Color,
             Token = token,
             DownloadUrl = downloadUrl,
+            CanDownloadSigned = CanSignShortcutFiles(),
             ICloudUrl = template?.ICloudUrl,
             ServerUrl = serverUrl,
         }));
@@ -294,6 +340,9 @@ public class ShortcutsController : ControllerBase
         if (hash != shortcut.TokenHash)
             return Unauthorized("token 不匹配");
 
+        if (IsShortcutExpired(shortcut))
+            return Unauthorized("快捷指令授权已过期");
+
         // 获取默认模板
         var template = await _db.ShortcutTemplates
             .Find(x => x.IsDefault && x.IsActive)
@@ -302,6 +351,7 @@ public class ShortcutsController : ControllerBase
         var serverUrl = ResolveServerUrl();
 
         var downloadUrl = $"{serverUrl}/api/shortcuts/{shortcut.Id}/download?t={Uri.EscapeDataString(token)}";
+        var canDownloadSigned = CanSignShortcutFiles();
 
         // 返回 HTML 安装引导页
         var html = GenerateInstallPageHtml(
@@ -309,7 +359,8 @@ public class ShortcutsController : ControllerBase
             token: token,
             serverUrl: serverUrl,
             iCloudUrl: template?.ICloudUrl,
-            downloadUrl: downloadUrl);
+            downloadUrl: downloadUrl,
+            canDownloadSigned: canDownloadSigned);
 
         return Content(html, "text/html; charset=utf-8");
     }
@@ -317,7 +368,13 @@ public class ShortcutsController : ControllerBase
     /// <summary>
     /// 生成安装引导页 HTML
     /// </summary>
-    private static string GenerateInstallPageHtml(string shortcutName, string token, string serverUrl, string? iCloudUrl, string downloadUrl)
+    private static string GenerateInstallPageHtml(
+        string shortcutName,
+        string token,
+        string serverUrl,
+        string? iCloudUrl,
+        string downloadUrl,
+        bool canDownloadSigned)
     {
         var escapedName = System.Net.WebUtility.HtmlEncode(shortcutName);
         var escapedDownloadUrl = System.Net.WebUtility.HtmlEncode(downloadUrl);
@@ -332,6 +389,10 @@ public class ShortcutsController : ControllerBase
                        iCloud 模板
                     </a>
                 </div>";
+
+        var downloadSection = canDownloadSigned
+            ? $@"<a href=""{escapedDownloadUrl}"" class=""primary-btn"">下载签名快捷指令</a>"
+            : @"<div class=""warn-box"">当前服务端不能签名 .shortcut 文件，请使用 iCloud 模板或按下方信息手动配置。</div>";
 
         return $@"<!DOCTYPE html>
 <html lang=""zh-CN"">
@@ -389,6 +450,11 @@ public class ShortcutsController : ControllerBase
             border-radius: 10px; font-size: 14px; cursor: pointer; transition: all 0.2s ease;
         }}
         .copy-btn:active {{ background: rgba(255,255,255,0.2); transform: scale(0.97); }}
+        .warn-box {{
+            margin-top: 24px; padding: 14px 16px; border-radius: 12px;
+            background: rgba(255, 149, 0, 0.12); border: 1px solid rgba(255, 149, 0, 0.24);
+            color: rgba(255,255,255,0.78); font-size: 14px; line-height: 1.5;
+        }}
     </style>
 </head>
 <body>
@@ -410,7 +476,7 @@ public class ShortcutsController : ControllerBase
             <div class=""step-text"">在任意 App 点击<strong>分享 → {escapedName}</strong>即可收藏</div>
         </div>
 
-        <a href=""{escapedDownloadUrl}"" class=""primary-btn"">📲 下载并安装快捷指令</a>
+        {downloadSection}
 
         {iCloudSection}
 
@@ -464,6 +530,7 @@ public class ShortcutsController : ControllerBase
     public async Task<IActionResult> DownloadShortcutFile(
         [FromRoute] string id,
         [FromQuery(Name = "t")] string? token,
+        [FromQuery] bool allowUnsigned,
         CancellationToken ct)
     {
         var shortcut = await _db.UserShortcuts
@@ -480,6 +547,9 @@ public class ShortcutsController : ControllerBase
         if (hash != shortcut.TokenHash)
             return Unauthorized("token 不匹配");
 
+        if (IsShortcutExpired(shortcut))
+            return Unauthorized("快捷指令授权已过期");
+
         var serverUrl = ResolveServerUrl();
 
         var plistXml = ShortcutPlistGenerator.Generate(
@@ -488,7 +558,19 @@ public class ShortcutsController : ControllerBase
             serverUrl: serverUrl);
 
         var fileName = $"{shortcut.Name}.shortcut";
-        var bytes = System.Text.Encoding.UTF8.GetBytes(plistXml);
+        var signed = await TrySignShortcutFileAsync(plistXml, ct);
+        if (!signed.Success && !allowUnsigned)
+        {
+            return StatusCode(StatusCodes.Status409Conflict, ApiResponse<object>.Fail(
+                "SHORTCUT_SIGNING_UNAVAILABLE",
+                signed.Error ?? "当前服务端无法签名快捷指令文件，请使用 iCloud 模板或手动配置。"));
+        }
+
+        var bytes = signed.Success
+            ? signed.Bytes
+            : Encoding.UTF8.GetBytes(plistXml);
+
+        Response.Headers["X-Shortcut-Signed"] = signed.Success ? "true" : "false";
 
         return File(bytes, "application/x-shortcut", fileName);
     }
@@ -498,11 +580,23 @@ public class ShortcutsController : ControllerBase
     /// </summary>
     [AllowAnonymous]
     [HttpGet("template-download")]
-    public IActionResult DownloadTemplateFile([FromQuery] string? name)
+    public async Task<IActionResult> DownloadTemplateFile([FromQuery] string? name, [FromQuery] bool allowUnsigned = true, CancellationToken ct = default)
     {
         var templateName = string.IsNullOrWhiteSpace(name) ? "PrdAgent 收藏" : name.Trim();
         var plistXml = ShortcutPlistGenerator.GenerateTemplate(templateName);
-        var bytes = System.Text.Encoding.UTF8.GetBytes(plistXml);
+        var signed = await TrySignShortcutFileAsync(plistXml, ct);
+        if (!signed.Success && !allowUnsigned)
+        {
+            return StatusCode(StatusCodes.Status409Conflict, ApiResponse<object>.Fail(
+                "SHORTCUT_SIGNING_UNAVAILABLE",
+                signed.Error ?? "当前服务端无法签名快捷指令模板。"));
+        }
+
+        var bytes = signed.Success
+            ? signed.Bytes
+            : Encoding.UTF8.GetBytes(plistXml);
+
+        Response.Headers["X-Shortcut-Signed"] = signed.Success ? "true" : "false";
         return File(bytes, "application/x-shortcut", $"{templateName}.shortcut");
     }
 
@@ -519,7 +613,7 @@ public class ShortcutsController : ControllerBase
         return Ok(new
         {
             version = ShortcutPlistGenerator.CurrentVersion,
-            download = $"{serverUrl}/api/shortcuts/templates",
+            download = $"{serverUrl}/api/shortcuts/template-download",
             changelog = $"v{ShortcutPlistGenerator.CurrentVersion}: 收藏快捷指令"
         });
     }
@@ -542,6 +636,9 @@ public class ShortcutsController : ControllerBase
 
         if (!shortcut.IsActive)
             return Unauthorized(ApiResponse<object>.Fail("DISABLED", "快捷指令已禁用"));
+
+        if (IsShortcutExpired(shortcut))
+            return Unauthorized(ApiResponse<object>.Fail("EXPIRED", "快捷指令授权已过期"));
 
         if (string.IsNullOrWhiteSpace(request.Url) && string.IsNullOrWhiteSpace(request.Text))
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "url 和 text 不能同时为空"));
@@ -692,7 +789,10 @@ public class ShortcutsController : ControllerBase
         if (string.IsNullOrEmpty(userId))
         {
             var shortcut = await ValidateShortcutTokenAsync(ct);
-            userId = shortcut?.UserId;
+            if (shortcut != null && !IsShortcutExpired(shortcut))
+            {
+                userId = shortcut.UserId;
+            }
         }
 
         if (string.IsNullOrEmpty(userId))
@@ -726,12 +826,48 @@ public class ShortcutsController : ControllerBase
             .Limit(pageSize)
             .ToListAsync(ct);
 
+        var shortcutIds = items
+            .Select(x => x.ShortcutId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var shortcutNames = shortcutIds.Count == 0
+            ? new Dictionary<string, string>()
+            : (await _db.UserShortcuts
+                .Find(x => x.UserId == userId && shortcutIds.Contains(x.Id))
+                .Project(x => new { x.Id, x.Name })
+                .ToListAsync(ct))
+                .ToDictionary(x => x.Id, x => x.Name);
+
+        var projectedItems = items.Select(x => new
+        {
+            x.Id,
+            x.ShortcutId,
+            ShortcutName = !string.IsNullOrWhiteSpace(x.ShortcutId) && shortcutNames.TryGetValue(x.ShortcutId, out var name)
+                ? name
+                : null,
+            x.Url,
+            x.Text,
+            x.Tags,
+            x.Source,
+            x.Status,
+            x.Result,
+            x.Metadata,
+            x.ChannelTaskId,
+            x.CreatedAt,
+            x.UpdatedAt
+        }).ToList();
+
         return Ok(ApiResponse<object>.Ok(new
         {
-            Items = items,
+            Items = projectedItems,
+            items = projectedItems,
             Total = (int)total,
+            total = (int)total,
             Page = page,
-            PageSize = pageSize
+            page,
+            PageSize = pageSize,
+            pageSize
         }));
     }
 
@@ -747,7 +883,10 @@ public class ShortcutsController : ControllerBase
         if (string.IsNullOrEmpty(userId))
         {
             var shortcut = await ValidateShortcutTokenAsync(ct);
-            userId = shortcut?.UserId;
+            if (shortcut != null && !IsShortcutExpired(shortcut))
+            {
+                userId = shortcut.UserId;
+            }
         }
 
         if (string.IsNullOrEmpty(userId))
@@ -827,7 +966,7 @@ public class ShortcutsController : ControllerBase
             .ThenByDescending(x => x.CreatedAt)
             .ToListAsync(ct);
 
-        return Ok(ApiResponse<object>.Ok(new { templates }));
+        return Ok(ApiResponse<object>.Ok(new { items = templates, templates }));
     }
 
     /// <summary>
@@ -852,6 +991,16 @@ public class ShortcutsController : ControllerBase
             IsDefault = request.IsDefault,
             CreatedBy = GetAdminId()
         };
+
+        if (template.IsDefault)
+        {
+            await _db.ShortcutTemplates.UpdateManyAsync(
+                x => x.IsDefault,
+                Builders<ShortcutTemplate>.Update
+                    .Set(x => x.IsDefault, false)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: ct);
+        }
 
         await _db.ShortcutTemplates.InsertOneAsync(template, cancellationToken: ct);
 
@@ -913,6 +1062,118 @@ public class ShortcutsController : ControllerBase
 
     private string ResolveServerUrl() => Request.ResolveServerUrl(_config);
 
+    private bool CanSignShortcutFiles()
+    {
+        if (!OperatingSystem.IsMacOS()) return false;
+
+        var enabled = _config.GetValue<bool?>("Shortcuts:EnableLocalSigning") ?? true;
+        if (!enabled) return false;
+
+        var binary = ResolveShortcutSignBinary();
+        return System.IO.File.Exists(binary);
+    }
+
+    private string ResolveShortcutSignBinary()
+        => _config["Shortcuts:SignBinary"]?.Trim() is { Length: > 0 } configured
+            ? configured
+            : "/usr/bin/shortcuts";
+
+    private async Task<ShortcutSignResult> TrySignShortcutFileAsync(string plistXml, CancellationToken ct)
+    {
+        if (!CanSignShortcutFiles())
+        {
+            return ShortcutSignResult.Fail("本机没有可用的 shortcuts sign。");
+        }
+
+        var binary = ResolveShortcutSignBinary();
+        var timeoutSeconds = Math.Clamp(_config.GetValue<int?>("Shortcuts:SignTimeoutSeconds") ?? 20, 5, 120);
+        var workDir = Path.Combine(Path.GetTempPath(), "prdagent-shortcuts");
+        Directory.CreateDirectory(workDir);
+
+        var stem = Guid.NewGuid().ToString("N");
+        var inputPath = Path.Combine(workDir, $"{stem}.shortcut");
+        var outputPath = Path.Combine(workDir, $"{stem}.signed.shortcut");
+
+        try
+        {
+            await System.IO.File.WriteAllTextAsync(inputPath, plistXml, Encoding.UTF8, ct);
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = binary,
+                UseShellExecute = false,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true,
+            };
+            psi.ArgumentList.Add("sign");
+            psi.ArgumentList.Add("--mode");
+            psi.ArgumentList.Add("anyone");
+            psi.ArgumentList.Add("--input");
+            psi.ArgumentList.Add(inputPath);
+            psi.ArgumentList.Add("--output");
+            psi.ArgumentList.Add(outputPath);
+
+            using var process = Process.Start(psi);
+            if (process == null)
+            {
+                return ShortcutSignResult.Fail("启动 shortcuts sign 失败。");
+            }
+
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            var stderrTask = process.StandardError.ReadToEndAsync();
+
+            try
+            {
+                await process.WaitForExitAsync(ct).WaitAsync(TimeSpan.FromSeconds(timeoutSeconds), ct);
+            }
+            catch (TimeoutException)
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                return ShortcutSignResult.Fail("shortcuts sign 超时。");
+            }
+
+            var stdout = await stdoutTask;
+            var stderr = await stderrTask;
+
+            if (process.ExitCode != 0)
+            {
+                var detail = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
+                _logger.LogWarning("Shortcut signing failed: {Detail}", detail);
+                return ShortcutSignResult.Fail($"shortcuts sign 失败：{detail.Trim()}");
+            }
+
+            if (!System.IO.File.Exists(outputPath))
+            {
+                return ShortcutSignResult.Fail("shortcuts sign 未生成输出文件。");
+            }
+
+            var bytes = await System.IO.File.ReadAllBytesAsync(outputPath, ct);
+            return ShortcutSignResult.Ok(bytes);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Shortcut signing unavailable");
+            return ShortcutSignResult.Fail(ex.Message);
+        }
+        finally
+        {
+            TryDeleteFile(inputPath);
+            TryDeleteFile(outputPath);
+        }
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (System.IO.File.Exists(path)) System.IO.File.Delete(path);
+        }
+        catch { }
+    }
+
+    private static bool IsShortcutExpired(UserShortcut shortcut)
+        => shortcut.ExpiresAt.HasValue && shortcut.ExpiresAt.Value <= DateTime.UtcNow;
+
     private static string GenerateTaskId()
     {
         var date = DateTime.UtcNow.ToString("yyyyMMdd");
@@ -952,6 +1213,12 @@ public class ShortcutsController : ControllerBase
     }
 
     #endregion
+}
+
+internal sealed record ShortcutSignResult(bool Success, byte[] Bytes, string? Error)
+{
+    public static ShortcutSignResult Ok(byte[] bytes) => new(true, bytes, null);
+    public static ShortcutSignResult Fail(string error) => new(false, Array.Empty<byte>(), error);
 }
 
 #region Request DTOs

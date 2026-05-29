@@ -2573,3 +2573,67 @@
 }
 
 .mkt-qc-copy-primary:hover { opacity: 0.85; }
+
+/* ─────────────────────────────────────────────────────────────
+ * marketplace card wrappers — 用 reactbits SpotlightCard / PixelCard
+ * 包裹原 mkt-card 时的尺寸/层级 fix。
+ * 历史背景：reactbits 给的默认尺寸是 300×400 (PixelCard) 和 p-8 (SpotlightCard)，
+ * 直接拿来当卡片会被默认值劫持，所以这里只负责"打掉 reactbits 默认 + 让内层
+ * mkt-card 正确填满"，本身不引入新的视觉。
+ * ───────────────────────────────────────────────────────────── */
+
+/* 普通卡：SpotlightCard 包裹，内部 mkt-card 完整继承原样式 */
+.mkt-card-spotlight-wrap {
+  width: 100%;
+  display: block;
+  position: relative;
+  overflow: hidden;
+}
+.mkt-card-spotlight-wrap > .mkt-card {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+}
+
+/* ─── 技能图标区（SkillGlyph）：v6 游戏技能图标 ─────────────────────────
+ * 暖彩手绘线条 + 六边技能槽框，深色卡片上一层暖色径向辉光衬底。
+ * 官方与社区无封面卡共用。 */
+.mkt-card-official-glyph {
+  background:
+    radial-gradient(78% 60% at 50% 8%, var(--warm), transparent 70%),
+    var(--bg-elevated);
+}
+.mkt-card-glyph-banner {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 50%;
+  display: grid;
+  place-items: center;
+  z-index: 1;
+  pointer-events: none;
+}
+.skill-glyph-wrap {
+  width: 92px; height: 92px;
+  display: grid; place-items: center;
+}
+.skill-glyph {
+  display: block;
+  overflow: visible;
+  filter: drop-shadow(0 0 5px var(--glyphGlow));
+}
+.skill-glyph .ink { opacity: .92; transition: opacity .4s ease; }
+.mkt-card-official-glyph:hover .skill-glyph .ink,
+.mkt-card:hover .skill-glyph .ink { opacity: 1; }
+/* 悬浮：技能槽框缓缓旋转（符号本身不转）—— 像游戏点亮技能 */
+.skill-glyph .frame {
+  transform-box: view-box;
+  transform-origin: center;
+  transition: transform .7s cubic-bezier(.22, 1, .36, 1);
+}
+.mkt-card-official-glyph:hover .skill-glyph .frame,
+.mkt-card:hover .skill-glyph .frame { transform: rotate(15deg); }
+@media (prefers-reduced-motion: reduce) {
+  .skill-glyph .frame { transition: none; }
+  .mkt-card-official-glyph:hover .skill-glyph .frame,
+  .mkt-card:hover .skill-glyph .frame { transform: none; }
+}

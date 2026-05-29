@@ -14,6 +14,7 @@ export interface ShortcutItem {
   bindingTargetId?: string;
   bindingTargetName?: string;
   isActive: boolean;
+  expiresAt?: string;
   lastUsedAt?: string;
   collectCount: number;
   createdAt: string;
@@ -38,6 +39,7 @@ export interface CreateShortcutResult {
   deviceType: string;
   token: string; // 仅此一次
   installPageUrl: string;
+  expiresAt?: string;
   createdAt: string;
 }
 
@@ -68,6 +70,37 @@ export async function deleteShortcut(id: string) {
   return apiRequest<{ id: string; deleted: boolean }>(api.shortcuts.delete(id), {
     method: 'DELETE',
   });
+}
+
+export async function extendShortcut(id: string) {
+  return apiRequest<{ id: string; expiresAt: string; grantYears: number }>(api.shortcuts.extend(id), {
+    method: 'POST',
+  });
+}
+
+export interface ShortcutCollectionItem {
+  id: string;
+  shortcutId?: string;
+  shortcutName?: string;
+  url?: string;
+  text?: string;
+  tags: string[];
+  source: string;
+  status: string;
+  result?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function listCollections(params?: { page?: number; pageSize?: number; keyword?: string }) {
+  const query = new URLSearchParams();
+  query.set('page', String(params?.page ?? 1));
+  query.set('pageSize', String(params?.pageSize ?? 20));
+  if (params?.keyword?.trim()) query.set('keyword', params.keyword.trim());
+  return apiRequest<{ items: ShortcutCollectionItem[]; total: number; page: number; pageSize: number }>(
+    `${api.shortcuts.collections()}?${query.toString()}`,
+    { method: 'GET' }
+  );
 }
 
 export async function getBindingTargets() {

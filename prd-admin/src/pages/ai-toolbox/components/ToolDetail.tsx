@@ -34,6 +34,7 @@ import {
   Eye, ChevronRight,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { PaSecretary } from '@/lib/paSecretaryIconRegistry';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -56,6 +57,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   Bot, Lightbulb, Target, Wrench, Sparkles, Rocket, MessageSquare, Zap,
   Brain, Cpu, Database, Globe, Image, Music, Video, BookOpen,
   GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers, Swords,
+  PaSecretary,
 };
 
 const ICON_HUE_MAP: Record<string, number> = {
@@ -65,6 +67,7 @@ const ICON_HUE_MAP: Record<string, number> = {
   Database: 220, Globe: 180, Image: 330, Music: 300, Video: 0, BookOpen: 140,
   GraduationCap: 220, Briefcase: 30, Heart: 350, Star: 45, Shield: 210, Lock: 200,
   Search: 180, Layers: 240, Swords: 30,
+  PaSecretary: 205,
 };
 
 function getIconComponent(iconName: string): LucideIcon {

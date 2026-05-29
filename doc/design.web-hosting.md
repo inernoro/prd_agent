@@ -372,3 +372,27 @@ public class VideoGenRunWorker
 | 团队协作 | 站点共享给团队成员（非匿名分享） | 团队/Group 权限体系 |
 | 模板市场 | 站点模板发布到海鲜市场 | `IForkable` + `CONFIG_TYPE_REGISTRY` 集成 |
 | 在线编辑器 | 浏览器内编辑 HTML/CSS/JS | Monaco Editor 集成 |
+
+---
+
+## 变更记录（2026-05）
+
+### 团队共享与协作角色（2026-05-25/26）
+
+- 新增 `SharedTeamIds` 字段，网页托管与知识库均支持分享到团队；owner-or-member 双路径过滤放宽，全员可编辑共享站点
+- 新增团队作用域顶部「我的/团队」切换栏 + 「管理团队」面板（成员/邀请/活动日志），卡片显示成员归属头像昵称
+- 团队共享细分 owner / editor / viewer 三角色：viewer 只读、editor 可编辑/重传/建分享、删除收敛到文件夹 owner 或站点创建者
+- 新增 `WebHostingPermission` 纯策略类（角色继承解析 + 跨团队取最宽松 + 能力矩阵）
+- 团队管理面板新增成员「网页托管角色」选择器；网页托管团队视图按角色隐藏对应操作入口
+
+### 访客审计与可观测性（2026-05-26）
+
+- 新增 `SiteViewEvent` 记录登录访客 ID 快照；`WebPageAnalyticsController`（record-view + owner 查访客名单，owner 或团队成员可见）
+- 新增高级权限 `web-pages.viewAll` + `AdminWebPagesController`：跨用户查看全部托管网页、阅读量与访客记录
+- 前端：卡片「访客」抽屉、工具栏「文件夹」管理器、访问即记录访客；新增「全部网页（高级）」审计页 `/admin-web-pages`
+- 新增 `data-tour-id` 锚点（文件夹按钮/阅读量/卡片）+ 入库 onboarding 小技巧，进页面即可弹出教学 Tour
+
+### 文件夹绑生成器（2026-05-26）
+
+- 新增 `WebFolder + WebFolderController/Service`：给文件夹绑定 Markdown 模板一键生成网页/知识库条目
+- 「分类」概念并入既有「文件夹」（Folder）：`WebCategory→WebFolder`，消除分类与文件夹双概念冗余

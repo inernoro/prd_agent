@@ -30,6 +30,8 @@ public class DocumentStoreController : ControllerBase
     private readonly IDocumentService _documentService;
     private readonly IRunEventStore _runEventStore;
     private readonly ISafeOutboundUrlValidator _urlValidator;
+    private readonly ITeamService _teams;
+    private readonly ITeamActivityService _teamActivity;
     private readonly ILogger<DocumentStoreController> _logger;
 
     /// <summary>20 MB per file</summary>
@@ -50,6 +52,8 @@ public class DocumentStoreController : ControllerBase
         IDocumentService documentService,
         IRunEventStore runEventStore,
         ISafeOutboundUrlValidator urlValidator,
+        ITeamService teams,
+        ITeamActivityService teamActivity,
         ILogger<DocumentStoreController> logger)
     {
         _db = db;
@@ -58,6 +62,8 @@ public class DocumentStoreController : ControllerBase
         _documentService = documentService;
         _runEventStore = runEventStore;
         _urlValidator = urlValidator;
+        _teams = teams;
+        _teamActivity = teamActivity;
         _logger = logger;
     }
 
@@ -66,6 +72,78 @@ public class DocumentStoreController : ControllerBase
     private async Task<User?> FindUserByAnyIdAsync(string userId)
     {
         return await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+    }
+
+    // ── 团队作用域辅助 ──
+
+    private static bool IsTeamShared(DocumentStore s, List<string> myTeamIds)
+        => s.SharedTeamIds != null && s.SharedTeamIds.Any(myTeamIds.Contains);
+
+    /// <summary>可写：拥有者 或 团队成员（决策 10 全员可编辑；不含 public）</summary>
+    private static bool CanWriteStore(DocumentStore s, string userId, List<string> myTeamIds)
+        => s.OwnerId == userId || IsTeamShared(s, myTeamIds);
+
+    /// <summary>可读：拥有者 或 公开 或 团队成员</summary>
+    private static bool CanReadStore(DocumentStore s, string userId, List<string> myTeamIds)
+        => s.OwnerId == userId || s.IsPublic || IsTeamShared(s, myTeamIds);
+
+    /// <summary>加载并校验可写空间。无权返回错误 IActionResult，调用方据此短路</summary>
+    private async Task<(DocumentStore? store, IActionResult? error)> LoadWritableStoreAsync(string storeId, string userId)
+    {
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
+        if (store == null)
+            return (null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在")));
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
+        if (!CanWriteStore(store, userId, myTeamIds))
+            return (null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在")));
+        return (store, null);
+    }
+
+    private async Task<(string userId, string userName, string? avatarFileName)> GetActorWithAvatarAsync()
+    {
+        var userId = GetUserId();
+        var user = await FindUserByAnyIdAsync(userId);
+        var userName = user != null && !string.IsNullOrWhiteSpace(user.DisplayName)
+            ? user.DisplayName
+            : (user?.Username ?? "未知用户");
+        return (userId, userName, user?.AvatarFileName);
+    }
+
+    /// <summary>把动作记到 store 所分享的所有团队（store.SharedTeamIds 为空则 no-op）</summary>
+    private async Task LogStoreActivityAsync(DocumentStore store, string userId, string action, string targetType, string? targetId, string? targetTitle)
+    {
+        if (store.SharedTeamIds == null || store.SharedTeamIds.Count == 0) return;
+        await _teamActivity.LogForTeamsAsync(store.SharedTeamIds, TeamAppKey.DocumentStore, userId, action, targetType, targetId, targetTitle);
+    }
+
+    /// <summary>加载条目 + 其所属空间并校验可写（拥有者或团队成员）。无权返回错误 IActionResult</summary>
+    private async Task<(DocumentEntry? entry, DocumentStore? store, IActionResult? error)> LoadWritableEntryAsync(string entryId, string userId)
+    {
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
+        if (entry == null)
+            return (null, null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在")));
+        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId).FirstOrDefaultAsync();
+        if (store == null)
+            return (null, null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在")));
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
+        if (!CanWriteStore(store, userId, myTeamIds))
+            return (null, null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在")));
+        return (entry, store, null);
+    }
+
+    /// <summary>加载条目 + 其所属空间并校验可读（拥有者/公开/团队成员）。无权返回错误 IActionResult</summary>
+    private async Task<(DocumentEntry? entry, DocumentStore? store, IActionResult? error)> LoadReadableEntryAsync(string entryId, string userId)
+    {
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
+        if (entry == null)
+            return (null, null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在")));
+        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId).FirstOrDefaultAsync();
+        if (store == null)
+            return (null, null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在")));
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
+        if (!CanReadStore(store, userId, myTeamIds))
+            return (null, null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在")));
+        return (entry, store, null);
     }
 
     /// <summary>
@@ -158,15 +236,29 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<DocumentStore>.Ok(store));
     }
 
-    /// <summary>获取当前用户的文档空间列表</summary>
+    /// <summary>获取文档空间列表。scope=team + teamId 时返回该团队共享的空间，默认返回我的</summary>
     [HttpGet("stores")]
-    public async Task<IActionResult> ListStores([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    public async Task<IActionResult> ListStores(
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 20,
+        [FromQuery] string? scope = null, [FromQuery] string? teamId = null)
     {
         var userId = GetUserId();
         pageSize = Math.Clamp(pageSize, 1, 100);
         page = Math.Max(1, page);
 
-        var filter = Builders<DocumentStore>.Filter.Eq(s => s.OwnerId, userId);
+        FilterDefinition<DocumentStore> filter;
+        if (string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(teamId))
+        {
+            var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
+            if (!myTeamIds.Contains(teamId))
+                return Ok(ApiResponse<object>.Ok(new { items = new List<DocumentStore>(), total = 0, page, pageSize }));
+            filter = Builders<DocumentStore>.Filter.AnyEq(s => s.SharedTeamIds, teamId);
+        }
+        else
+        {
+            filter = Builders<DocumentStore>.Filter.Eq(s => s.OwnerId, userId);
+        }
+
         var total = await _db.DocumentStores.CountDocumentsAsync(filter);
         var items = await _db.DocumentStores.Find(filter)
             .SortByDescending(s => s.UpdatedAt)
@@ -186,7 +278,8 @@ public class DocumentStoreController : ControllerBase
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
-        if (store.OwnerId != userId && !store.IsPublic)
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
+        if (!CanReadStore(store, userId, myTeamIds))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
         return Ok(ApiResponse<DocumentStore>.Ok(store));
@@ -197,9 +290,8 @@ public class DocumentStoreController : ControllerBase
     public async Task<IActionResult> UpdateStore(string storeId, [FromBody] UpdateDocumentStoreRequest request)
     {
         var userId = GetUserId();
-        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
-        if (store == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+        var (store, error) = await LoadWritableStoreAsync(storeId, userId);
+        if (error != null) return error;
 
         var updates = new List<UpdateDefinition<DocumentStore>>();
 
@@ -227,9 +319,8 @@ public class DocumentStoreController : ControllerBase
     public async Task<IActionResult> SetPrimaryEntry(string storeId, [FromBody] SetPrimaryEntryRequest request)
     {
         var userId = GetUserId();
-        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
-        if (store == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+        var (store, error) = await LoadWritableStoreAsync(storeId, userId);
+        if (error != null) return error;
 
         // 如果设置主文档，校验条目存在且属于该空间
         if (!string.IsNullOrEmpty(request.EntryId))
@@ -252,14 +343,18 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { primaryEntryId = request.EntryId }));
     }
 
-    /// <summary>删除文档空间（级联清理所有关联数据）</summary>
+    /// <summary>删除文档空间（级联清理所有关联数据）。
+    /// 仅 owner 可删——团队成员能写条目不等于能删整个 store，
+    /// 否则任何被分享团队的成员都能级联抹掉 owner 的所有条目/附件/分享/评论/点赞/收藏（codex-bot 2026-05-28 P1）。</summary>
     [HttpDelete("stores/{storeId}")]
     public async Task<IActionResult> DeleteStore(string storeId)
     {
         var userId = GetUserId();
-        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+        if (store.OwnerId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "只有创建者可以删除文档空间"));
 
         // 1) 先拿到所有条目，收集正文/附件 ID 列表
         var entries = await _db.DocumentEntries.Find(e => e.StoreId == storeId).ToListAsync();
@@ -325,10 +420,9 @@ public class DocumentStoreController : ControllerBase
     [HttpPost("stores/{storeId}/entries")]
     public async Task<IActionResult> AddEntry(string storeId, [FromBody] AddDocumentEntryRequest request)
     {
-        var (userId, userName) = await GetActorInfoAsync();
-        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
-        if (store == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+        var (userId, userName, avatarFileName) = await GetActorWithAvatarAsync();
+        var (store, error) = await LoadWritableStoreAsync(storeId, userId);
+        if (error != null) return error;
 
         if (string.IsNullOrWhiteSpace(request.Title))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文档标题不能为空"));
@@ -349,6 +443,8 @@ public class DocumentStoreController : ControllerBase
             Tags = request.Tags ?? new List<string>(),
             Metadata = request.Metadata ?? new Dictionary<string, string>(),
             CreatedBy = userId,
+            CreatedByName = userName,
+            CreatedByAvatarFileName = avatarFileName,
             UpdatedBy = userId,
             UpdatedByName = userName,
             // 新建文档立即带 NEW 徽标（前端按 24h 内判定），24h 后自动消失
@@ -367,6 +463,8 @@ public class DocumentStoreController : ControllerBase
         _logger.LogInformation("[document-store] Entry added: {EntryId} to store {StoreId} by {UserId}",
             entry.Id, storeId, userId);
 
+        await LogStoreActivityAsync(store!, userId, TeamActivityAction.EntryCreated, "entry", entry.Id, entry.Title);
+
         return Ok(ApiResponse<DocumentEntry>.Ok(entry));
     }
 
@@ -374,10 +472,9 @@ public class DocumentStoreController : ControllerBase
     [HttpPost("stores/{storeId}/folders")]
     public async Task<IActionResult> CreateFolder(string storeId, [FromBody] CreateDocStoreFolderRequest request)
     {
-        var (userId, userName) = await GetActorInfoAsync();
-        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
-        if (store == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+        var (userId, userName, avatarFileName) = await GetActorWithAvatarAsync();
+        var (store, error) = await LoadWritableStoreAsync(storeId, userId);
+        if (error != null) return error;
 
         if (string.IsNullOrWhiteSpace(request.Name))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹名称不能为空"));
@@ -400,6 +497,8 @@ public class DocumentStoreController : ControllerBase
             SourceType = DocumentSourceType.Upload,
             ContentType = "application/x-folder",
             CreatedBy = userId,
+            CreatedByName = userName,
+            CreatedByAvatarFileName = avatarFileName,
             UpdatedBy = userId,
             UpdatedByName = userName,
         };
@@ -435,7 +534,8 @@ public class DocumentStoreController : ControllerBase
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
-        if (store.OwnerId != userId && !store.IsPublic)
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
+        if (!CanReadStore(store, userId, myTeamIds))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
         pageSize = Math.Clamp(pageSize, 1, 500);
@@ -490,7 +590,20 @@ public class DocumentStoreController : ControllerBase
             .Limit(pageSize)
             .ToListAsync();
 
-        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
+        // 标黄用：本批文档里哪些存在「单篇」有效分享（未撤销 + 未过期）
+        // 过期判定放内存做，规避可空 DateTime 进 Mongo 表达式树
+        var now = DateTime.UtcNow;
+        var pageEntryIds = items.Where(e => !e.IsFolder).Select(e => e.Id).ToHashSet();
+        var storeShareLinks = await _db.DocumentStoreShareLinks
+            .Find(l => l.StoreId == storeId && !l.IsRevoked)
+            .ToListAsync();
+        var sharedEntryIds = storeShareLinks
+            .Where(l => !string.IsNullOrEmpty(l.EntryId) && (l.ExpiresAt == null || l.ExpiresAt > now) && pageEntryIds.Contains(l.EntryId!))
+            .Select(l => l.EntryId!)
+            .Distinct()
+            .ToList();
+
+        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize, sharedEntryIds }));
     }
 
     /// <summary>获取文档条目详情</summary>
@@ -498,16 +611,10 @@ public class DocumentStoreController : ControllerBase
     public async Task<IActionResult> GetEntry(string entryId)
     {
         var userId = GetUserId();
-        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
-        if (entry == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+        var (entry, _, error) = await LoadReadableEntryAsync(entryId, userId);
+        if (error != null) return error;
 
-        // 校验权限：确认用户有权访问该空间
-        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId).FirstOrDefaultAsync();
-        if (store == null || (store.OwnerId != userId && !store.IsPublic))
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
-
-        return Ok(ApiResponse<DocumentEntry>.Ok(entry));
+        return Ok(ApiResponse<DocumentEntry>.Ok(entry!));
     }
 
     /// <summary>更新文档条目信息</summary>
@@ -515,13 +622,8 @@ public class DocumentStoreController : ControllerBase
     public async Task<IActionResult> UpdateEntry(string entryId, [FromBody] UpdateDocumentEntryRequest request)
     {
         var (userId, userName) = await GetActorInfoAsync();
-        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
-        if (entry == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
-
-        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId && s.OwnerId == userId).FirstOrDefaultAsync();
-        if (store == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+        var (entry, store, error) = await LoadWritableEntryAsync(entryId, userId);
+        if (error != null) return error;
 
         var updates = new List<UpdateDefinition<DocumentEntry>>();
 
@@ -543,6 +645,7 @@ public class DocumentStoreController : ControllerBase
             Builders<DocumentEntry>.Update.Combine(updates));
 
         var updated = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
+        await LogStoreActivityAsync(store!, userId, TeamActivityAction.EntryUpdated, "entry", entryId, updated?.Title);
         return Ok(ApiResponse<DocumentEntry>.Ok(updated!));
     }
 
@@ -551,13 +654,12 @@ public class DocumentStoreController : ControllerBase
     public async Task<IActionResult> DeleteEntry(string entryId)
     {
         var userId = GetUserId();
-        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
-        if (entry == null)
+        var (entry, store, error) = await LoadWritableEntryAsync(entryId, userId);
+        if (error != null) return error;
+        if (entry is null || store is null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
-        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId && s.OwnerId == userId).FirstOrDefaultAsync();
-        if (store == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+        var entryTitle = entry.Title;
 
         // 收集要级联清理的条目 ID 列表
         var idsToDelete = new List<string> { entryId };
@@ -632,6 +734,8 @@ public class DocumentStoreController : ControllerBase
             entriesResult.DeletedCount, syncLogsResult.DeletedCount, documentsDeleted, attachmentsDeleted,
             viewEventsResult.DeletedCount, inlineCommentsResult.DeletedCount, agentRunsResult.DeletedCount);
 
+        await LogStoreActivityAsync(store, userId, TeamActivityAction.EntryDeleted, "entry", entryId, entryTitle);
+
         return Ok(ApiResponse<object>.Ok(new
         {
             deleted = true,
@@ -650,12 +754,9 @@ public class DocumentStoreController : ControllerBase
     public async Task<IActionResult> MoveEntry(string entryId, [FromBody] MoveEntryRequest request)
     {
         var (userId, userName) = await GetActorInfoAsync();
-        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
-        if (entry == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
-
-        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId && s.OwnerId == userId).FirstOrDefaultAsync();
-        if (store == null)
+        var (entry, store, error) = await LoadWritableEntryAsync(entryId, userId);
+        if (error != null) return error;
+        if (entry is null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
         // 验证目标文件夹存在
@@ -683,12 +784,9 @@ public class DocumentStoreController : ControllerBase
     public async Task<IActionResult> UpdateEntryContent(string entryId, [FromBody] UpdateEntryContentRequest request)
     {
         var (userId, userName) = await GetActorInfoAsync();
-        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
-        if (entry == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
-
-        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId && s.OwnerId == userId).FirstOrDefaultAsync();
-        if (store == null)
+        var (entry, store, error) = await LoadWritableEntryAsync(entryId, userId);
+        if (error != null) return error;
+        if (entry is null || store is null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
         if (entry.IsFolder)
@@ -734,6 +832,8 @@ public class DocumentStoreController : ControllerBase
 
         // 重锚定划词评论：正文更新后，遍历所有 active 评论，用 SelectedText + context 重新定位
         var rebindStats = await RebindInlineCommentsAsync(entryId, content);
+
+        await LogStoreActivityAsync(store, userId, TeamActivityAction.EntryUpdated, "entry", entryId, entry.Title);
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -825,8 +925,9 @@ public class DocumentStoreController : ControllerBase
         if (folder == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文件夹不存在"));
 
-        var store = await _db.DocumentStores.Find(s => s.Id == folder.StoreId && s.OwnerId == userId).FirstOrDefaultAsync();
-        if (store == null)
+        var store = await _db.DocumentStores.Find(s => s.Id == folder.StoreId).FirstOrDefaultAsync();
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
+        if (store == null || !CanWriteStore(store, userId, myTeamIds))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文件夹不存在"));
 
         if (!string.IsNullOrEmpty(request.EntryId))
@@ -859,9 +960,8 @@ public class DocumentStoreController : ControllerBase
     public async Task<IActionResult> RebuildContentIndex(string storeId)
     {
         var userId = GetUserId();
-        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
-        if (store == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+        var (store, error) = await LoadWritableStoreAsync(storeId, userId);
+        if (error != null) return error;
 
         // 查找没有 ContentIndex 的条目
         var entries = await _db.DocumentEntries.Find(
@@ -920,9 +1020,10 @@ public class DocumentStoreController : ControllerBase
     [RequestSizeLimit(MaxUploadBytes)]
     public async Task<IActionResult> UploadFile(string storeId, [FromForm] IFormFile file, [FromForm] string? parentId = null, CancellationToken ct = default)
     {
-        var (userId, userName) = await GetActorInfoAsync();
-        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync(ct);
-        if (store == null)
+        var (userId, userName, avatarFileName) = await GetActorWithAvatarAsync();
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync(ct);
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
+        if (store == null || !CanWriteStore(store, userId, myTeamIds))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
         if (file == null || file.Length == 0)
@@ -1002,6 +1103,8 @@ public class DocumentStoreController : ControllerBase
             ContentType = mime,
             FileSize = file.Length,
             CreatedBy = userId,
+            CreatedByName = userName,
+            CreatedByAvatarFileName = avatarFileName,
             UpdatedBy = userId,
             UpdatedByName = userName,
             ContentIndex = contentIndex?.Trim(),
@@ -1020,6 +1123,8 @@ public class DocumentStoreController : ControllerBase
 
         _logger.LogInformation("[document-store] File uploaded: {EntryId} '{FileName}' ({Size}B) to store {StoreId} by {UserId}",
             entry.Id, file.FileName, file.Length, storeId, userId);
+
+        await LogStoreActivityAsync(store, userId, TeamActivityAction.EntryCreated, "entry", entry.Id, entry.Title);
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -1045,8 +1150,9 @@ public class DocumentStoreController : ControllerBase
         if (entry.IsFolder)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹无法替换文件"));
 
-        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId && s.OwnerId == userId).FirstOrDefaultAsync(ct);
-        if (store == null)
+        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId).FirstOrDefaultAsync(ct);
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
+        if (store == null || !CanWriteStore(store, userId, myTeamIds))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
         if (file == null || file.Length == 0)
@@ -1202,12 +1308,9 @@ public class DocumentStoreController : ControllerBase
     public async Task<IActionResult> GetEntryContent(string entryId)
     {
         var userId = GetUserId();
-        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
-        if (entry == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
-
-        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId).FirstOrDefaultAsync();
-        if (store == null || (store.OwnerId != userId && !store.IsPublic))
+        var (entry, _, error) = await LoadReadableEntryAsync(entryId, userId);
+        if (error != null) return error;
+        if (entry is null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
         // 优先从 ParsedPrd 读取完整内容
@@ -1407,8 +1510,9 @@ public class DocumentStoreController : ControllerBase
     public async Task<IActionResult> TogglePinnedEntry(string storeId, [FromBody] TogglePinRequest request)
     {
         var userId = GetUserId();
-        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
-        if (store == null)
+        var (store, error) = await LoadWritableStoreAsync(storeId, userId);
+        if (error != null) return error;
+        if (store is null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
         if (string.IsNullOrEmpty(request.EntryId))
@@ -1442,15 +1546,29 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { pinnedEntryIds = pinnedIds }));
     }
 
-    /// <summary>获取文档空间列表（含最近文档预览，用于卡片展示）</summary>
+    /// <summary>获取文档空间列表（含最近文档预览，用于卡片展示）。scope=team + teamId 时返回团队共享空间</summary>
     [HttpGet("stores/with-preview")]
-    public async Task<IActionResult> ListStoresWithPreview([FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    public async Task<IActionResult> ListStoresWithPreview(
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 20,
+        [FromQuery] string? scope = null, [FromQuery] string? teamId = null)
     {
         var userId = GetUserId();
         pageSize = Math.Clamp(pageSize, 1, 100);
         page = Math.Max(1, page);
 
-        var filter = Builders<DocumentStore>.Filter.Eq(s => s.OwnerId, userId);
+        var isTeamScope = string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(teamId);
+        FilterDefinition<DocumentStore> filter;
+        if (isTeamScope)
+        {
+            var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
+            if (!myTeamIds.Contains(teamId!))
+                return Ok(ApiResponse<object>.Ok(new { items = new List<object>(), total = 0, page, pageSize }));
+            filter = Builders<DocumentStore>.Filter.AnyEq(s => s.SharedTeamIds, teamId);
+        }
+        else
+        {
+            filter = Builders<DocumentStore>.Filter.Eq(s => s.OwnerId, userId);
+        }
         var total = await _db.DocumentStores.CountDocumentsAsync(filter);
         var stores = await _db.DocumentStores.Find(filter)
             .SortByDescending(s => s.UpdatedAt)
@@ -1462,24 +1580,85 @@ public class DocumentStoreController : ControllerBase
         var storeIds = stores.Select(s => s.Id).ToList();
         var entriesByStore = await LoadRecentEntriesByStoreAsync(storeIds);
 
-        var items = stores.Select(s => new
+        // 标黄用：哪些库存在「整库级」有效分享（未撤销 + 未过期 + EntryId 为空）
+        // 过期/为空判定放内存做，避免可空 DateTime 进 Mongo 表达式树的边界问题
+        var now = DateTime.UtcNow;
+        var activeStoreLinks = await _db.DocumentStoreShareLinks
+            .Find(l => storeIds.Contains(l.StoreId) && !l.IsRevoked)
+            .ToListAsync();
+        var sharedStoreIds = activeStoreLinks
+            .Where(l => string.IsNullOrEmpty(l.EntryId) && (l.ExpiresAt == null || l.ExpiresAt > now))
+            .Select(l => l.StoreId)
+            .ToHashSet();
+
+        // 团队作用域：批量取创建者头像/昵称，供卡片顶部成员归属展示
+        Dictionary<string, User> ownerMap = new();
+        if (isTeamScope)
         {
-            s.Id,
-            s.Name,
-            s.Description,
-            s.OwnerId,
-            s.AppKey,
-            s.Tags,
-            s.IsPublic,
-            s.PrimaryEntryId,
-            s.PinnedEntryIds,
-            s.DocumentCount,
-            s.CreatedAt,
-            s.UpdatedAt,
-            recentEntries = entriesByStore.GetValueOrDefault(s.Id, new()),
+            var ownerIds = stores.Select(s => s.OwnerId).Where(o => !string.IsNullOrWhiteSpace(o)).Distinct().ToList();
+            if (ownerIds.Count > 0)
+            {
+                var owners = await _db.Users.Find(u => ownerIds.Contains(u.UserId)).ToListAsync();
+                ownerMap = owners.ToDictionary(u => u.UserId, u => u);
+            }
+        }
+
+        var items = stores.Select(s =>
+        {
+            ownerMap.TryGetValue(s.OwnerId, out var owner);
+            return new
+            {
+                s.Id,
+                s.Name,
+                s.Description,
+                s.OwnerId,
+                ownerName = owner != null
+                    ? (!string.IsNullOrWhiteSpace(owner.DisplayName) ? owner.DisplayName : owner.Username)
+                    : null,
+                ownerAvatarFileName = owner?.AvatarFileName,
+                s.AppKey,
+                s.Tags,
+                s.IsPublic,
+                s.SharedTeamIds,
+                s.PrimaryEntryId,
+                s.PinnedEntryIds,
+                s.DocumentCount,
+                s.CreatedAt,
+                s.UpdatedAt,
+                hasActiveShare = sharedStoreIds.Contains(s.Id),
+                recentEntries = entriesByStore.GetValueOrDefault(s.Id, new()),
+            };
         }).ToList();
 
         return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
+    }
+
+    /// <summary>设置知识库分享到的团队（仅 owner 可调）</summary>
+    [HttpPatch("stores/{storeId}/teams")]
+    public async Task<IActionResult> SetStoreTeams(string storeId, [FromBody] SetStoreTeamsRequest request)
+    {
+        var userId = GetUserId();
+        // 分享出去是所有权动作，仅 owner 可设
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在或无权限"));
+
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
+        var sanitized = (request.TeamIds ?? new List<string>()).Where(t => myTeamIds.Contains(t)).Distinct().ToList();
+        var added = sanitized.Except(store.SharedTeamIds ?? new List<string>()).ToList();
+
+        await _db.DocumentStores.UpdateOneAsync(
+            s => s.Id == storeId,
+            Builders<DocumentStore>.Update
+                .Set(s => s.SharedTeamIds, sanitized)
+                .Set(s => s.UpdatedAt, DateTime.UtcNow));
+
+        if (added.Count > 0)
+            await _teamActivity.LogForTeamsAsync(added, TeamAppKey.DocumentStore, userId,
+                TeamActivityAction.StoreShared, "store", store.Id, store.Name);
+
+        store.SharedTeamIds = sanitized;
+        return Ok(ApiResponse<DocumentStore>.Ok(store));
     }
 
     /// <summary>手动触发同步</summary>
@@ -1988,35 +2167,7 @@ public class DocumentStoreController : ControllerBase
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档不存在或所在知识库未公开"));
 
-        string? content = null;
-        string? title = null;
-        if (!string.IsNullOrEmpty(entry.DocumentId))
-        {
-            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
-            if (doc != null) { content = doc.RawContent; title = doc.Title; }
-        }
-        if (string.IsNullOrEmpty(content) && !string.IsNullOrEmpty(entry.AttachmentId))
-        {
-            var att = await _db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync();
-            if (att != null) { content = att.ExtractedText; title ??= att.FileName; }
-        }
-
-        string? fileUrl = null;
-        if (!string.IsNullOrEmpty(entry.AttachmentId))
-        {
-            var att = await _db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync();
-            fileUrl = att?.Url;
-        }
-
-        return Ok(ApiResponse<object>.Ok(new
-        {
-            entryId = entry.Id,
-            title = title ?? entry.Title,
-            content,
-            contentType = entry.ContentType,
-            fileUrl,
-            hasContent = !string.IsNullOrEmpty(content),
-        }));
+        return Ok(ApiResponse<object>.Ok(await BuildEntryContentPayloadAsync(entry)));
     }
 
     /// <summary>点赞知识库</summary>
@@ -2242,11 +2393,27 @@ public class DocumentStoreController : ControllerBase
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库不存在"));
 
+        // 单篇文档分享：校验 entry 属于本知识库，快照标题
+        string? entryId = null;
+        string? entryTitle = null;
+        if (!string.IsNullOrWhiteSpace(request.EntryId))
+        {
+            var entry = await _db.DocumentEntries.Find(e => e.Id == request.EntryId && e.StoreId == storeId).FirstOrDefaultAsync();
+            if (entry == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "要分享的文档不存在或不属于该知识库"));
+            if (entry.IsFolder)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "目录不支持单独分享"));
+            entryId = entry.Id;
+            entryTitle = entry.Title;
+        }
+
         var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
         var link = new DocumentStoreShareLink
         {
             StoreId = storeId,
             StoreName = store.Name,
+            EntryId = entryId,
+            EntryTitle = entryTitle,
             Title = request.Title?.Trim(),
             Description = request.Description?.Trim(),
             CreatedBy = userId,
@@ -2334,6 +2501,9 @@ public class DocumentStoreController : ControllerBase
             link.Title,
             link.Description,
             link.CreatedByName,
+            // 单篇文档分享时非 null，前端据此只展示该篇而非整库
+            entryId = link.EntryId,
+            entryTitle = link.EntryTitle,
             store = new
             {
                 store.Id,
@@ -2346,6 +2516,96 @@ public class DocumentStoreController : ControllerBase
                 store.ViewCount,
             },
         }));
+    }
+
+    /// <summary>列出分享链接对应知识库的文档（匿名，token 门禁；单篇分享只返回该篇）</summary>
+    [HttpGet("public/share/{token}/entries")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ListShareEntries(string token)
+    {
+        var link = await ResolveActiveShareLinkAsync(token);
+        if (link == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在或已撤销"));
+
+        List<DocumentEntry> items;
+        if (!string.IsNullOrEmpty(link.EntryId))
+        {
+            // 单篇分享：只暴露该篇
+            items = await _db.DocumentEntries.Find(e => e.Id == link.EntryId && e.StoreId == link.StoreId).ToListAsync();
+        }
+        else
+        {
+            items = await _db.DocumentEntries.Find(e => e.StoreId == link.StoreId)
+                .SortByDescending(e => e.IsFolder)
+                .ThenByDescending(e => e.CreatedAt)
+                .Limit(500)
+                .ToListAsync();
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { items, total = items.Count }));
+    }
+
+    /// <summary>读取分享链接内某篇文档的正文（匿名，token 门禁 + entry 必须属于该库/单篇）</summary>
+    [HttpGet("public/share/{token}/entries/{entryId}/content")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetShareEntryContent(string token, string entryId)
+    {
+        var link = await ResolveActiveShareLinkAsync(token);
+        if (link == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "分享链接不存在或已撤销"));
+
+        // 单篇分享只能读那一篇；整库分享必须是该库内的条目
+        if (!string.IsNullOrEmpty(link.EntryId) && entryId != link.EntryId)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "该文档不在分享范围内"));
+
+        var entry = await _db.DocumentEntries.Find(e => e.Id == entryId && e.StoreId == link.StoreId).FirstOrDefaultAsync();
+        if (entry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档不存在"));
+
+        return Ok(ApiResponse<object>.Ok(await BuildEntryContentPayloadAsync(entry)));
+    }
+
+    /// <summary>解析有效（未撤销/未过期）的分享链接，找不到返回 null</summary>
+    private async Task<DocumentStoreShareLink?> ResolveActiveShareLinkAsync(string token)
+    {
+        var link = await _db.DocumentStoreShareLinks.Find(l => l.Token == token).FirstOrDefaultAsync();
+        if (link == null || link.IsRevoked) return null;
+        if (link.ExpiresAt.HasValue && link.ExpiresAt.Value < DateTime.UtcNow) return null;
+        return link;
+    }
+
+    /// <summary>构造单篇文档正文 payload（公开库 / 分享 token 两条路径共用）</summary>
+    private async Task<object> BuildEntryContentPayloadAsync(DocumentEntry entry)
+    {
+        string? content = null;
+        string? title = null;
+        if (!string.IsNullOrEmpty(entry.DocumentId))
+        {
+            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
+            if (doc != null) { content = doc.RawContent; title = doc.Title; }
+        }
+        if (string.IsNullOrEmpty(content) && !string.IsNullOrEmpty(entry.AttachmentId))
+        {
+            var att = await _db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync();
+            if (att != null) { content = att.ExtractedText; title ??= att.FileName; }
+        }
+
+        string? fileUrl = null;
+        if (!string.IsNullOrEmpty(entry.AttachmentId))
+        {
+            var att = await _db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync();
+            fileUrl = att?.Url;
+        }
+
+        return new
+        {
+            entryId = entry.Id,
+            title = title ?? entry.Title,
+            content,
+            contentType = entry.ContentType,
+            fileUrl,
+            hasContent = !string.IsNullOrEmpty(content),
+        };
     }
 
     // ─────────────────────────────────────────────
@@ -2653,7 +2913,16 @@ public class DocumentStoreController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
         var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId).FirstOrDefaultAsync();
-        if (store == null || store.OwnerId != userId)
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        // 评论写权限收紧（PR #685 Cursor Bugbot / Codex High-Severity 反馈）：
+        // 之前放宽到"私有库 + 有任何非撤销分享链 → 任何登录用户可写"是错误的，
+        // 因为没有验证调用方是否真的通过分享 token 访问，知道 entryId 就能越权评论。
+        // 现在只允许：owner 自己；公开库（IsPublic=true）的登录用户。
+        // 私有库即便有分享链，第三方也不能评论 —— 评论是创作者间的协作，不是访客功能。
+        var allowed = store.OwnerId == userId || store.IsPublic;
+        if (!allowed)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
         // B4：允许"不选中也能评论"——SelectedText 为空时视为对整篇文档的通用评论（无锚点）
@@ -2701,10 +2970,10 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<DocumentInlineComment>.Ok(comment));
     }
 
-    /// <summary>列出文档的划词评论（owner 和公开库访客都能读）</summary>
+    /// <summary>列出文档的划词评论（owner / 公开库 / 持有效分享 token 的访客可读）</summary>
     [HttpGet("entries/{entryId}/inline-comments")]
     [AllowAnonymous]
-    public async Task<IActionResult> ListInlineComments(string entryId)
+    public async Task<IActionResult> ListInlineComments(string entryId, [FromQuery] string? shareToken = null)
     {
         var entry = await _db.DocumentEntries.Find(e => e.Id == entryId).FirstOrDefaultAsync();
         if (entry == null)
@@ -2714,23 +2983,47 @@ public class DocumentStoreController : ControllerBase
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
-        // 非 owner + 非公开 → 403
-        var isOwner = false;
-        try
+        // 评论读权限（PR #685 Codex P1 二次反馈后收紧到 valid share context）：
+        // - owner：可读 + 可写
+        // - 公开库（IsPublic=true）：登录可读写、匿名只读
+        // - 私有库：仅当调用方带【有效的分享 token】（属于本 store + 未撤销 + 未过期）才可读
+        //   评论气泡。不再用"存在任意分享链"放行——那会让任何知 entryId 的登录用户、
+        //   甚至凭过期/无关的分享，枚举读取私有库评论。写权限始终只给 owner + 公开库。
+        // - 私有库无 token / token 无效：仅 owner
+        string? currentUser = null;
+        try { currentUser = this.GetRequiredUserId(); } catch { }
+        var isOwner = currentUser != null && store.OwnerId == currentUser;
+
+        // 校验分享 token 是否真的授权访问本 store + 本 entry（scope 到具体 share context）
+        // EntryId == null = 整库分享，能读库内任意 entry 的评论；
+        // EntryId == entryId = 单篇分享，只能读本篇；
+        // EntryId != entryId = 单篇分享但访问别篇 → 拒绝（PR #685 Codex P1：单文档 token 不能越权读整库评论）。
+        var hasValidShareContext = false;
+        if (!string.IsNullOrWhiteSpace(shareToken))
         {
-            var currentUser = this.GetRequiredUserId();
-            isOwner = store.OwnerId == currentUser;
+            var nowUtc = DateTime.UtcNow;
+            hasValidShareContext = await _db.DocumentStoreShareLinks
+                .Find(s => s.Token == shareToken
+                    && s.StoreId == store.Id
+                    && (s.EntryId == null || s.EntryId == entryId)
+                    && !s.IsRevoked
+                    && (s.ExpiresAt == null || s.ExpiresAt > nowUtc))
+                .AnyAsync();
         }
-        catch { }
-        if (!isOwner && !store.IsPublic)
+
+        var canRead = isOwner || store.IsPublic || hasValidShareContext;
+        if (!canRead)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
+
+        // 写权限只给 owner 和公开库登录用户；分享访客仅可读评论气泡，不能写入。
+        var canCreate = isOwner || (currentUser != null && store.IsPublic);
 
         var comments = await _db.DocumentInlineComments
             .Find(c => c.EntryId == entryId)
             .SortBy(c => c.CreatedAt)
             .ToListAsync();
 
-        return Ok(ApiResponse<object>.Ok(new { items = comments, canCreate = isOwner }));
+        return Ok(ApiResponse<object>.Ok(new { items = comments, canCreate }));
     }
 
     /// <summary>删除划词评论</summary>
@@ -2781,6 +3074,12 @@ public class UpdateDocumentStoreRequest
     public string? Description { get; set; }
     public List<string>? Tags { get; set; }
     public bool? IsPublic { get; set; }
+}
+
+public class SetStoreTeamsRequest
+{
+    /// <summary>知识库要分享到的团队 ID 列表（空表示取消所有团队分享）</summary>
+    public List<string>? TeamIds { get; set; }
 }
 
 public class AddDocumentEntryRequest
@@ -2884,6 +3183,9 @@ public class CreateShareLinkRequest
 
     /// <summary>过期天数（0 表示永不过期）</summary>
     public int ExpiresInDays { get; set; }
+
+    /// <summary>单篇文档分享：DocumentEntry.Id；不传 = 分享整个知识库</summary>
+    public string? EntryId { get; set; }
 }
 
 public class LogViewRequest

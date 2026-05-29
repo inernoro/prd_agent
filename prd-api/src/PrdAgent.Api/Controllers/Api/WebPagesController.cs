@@ -4,6 +4,7 @@ using System.Text;
 using Markdig;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Api.Extensions;
@@ -36,9 +37,17 @@ public class WebPagesController : ControllerBase
         ".md", ".markdown",
     };
 
-    public WebPagesController(IHostedSiteService siteService)
+    private readonly PrdAgent.Infrastructure.Database.MongoDbContext _db;
+    private readonly ITeamService _teams;
+
+    public WebPagesController(
+        IHostedSiteService siteService,
+        PrdAgent.Infrastructure.Database.MongoDbContext db,
+        ITeamService teams)
     {
         _siteService = siteService;
+        _db = db;
+        _teams = teams;
     }
 
     private string GetUserId() => this.GetRequiredUserId();
@@ -320,7 +329,7 @@ public class WebPagesController : ControllerBase
     // CRUD
     // ─────────────────────────────────────────────
 
-    /// <summary>获取当前用户的站点列表</summary>
+    /// <summary>获取站点列表。scope=team + teamId 时返回该团队共享的站点（含创建者头像昵称），默认返回我的</summary>
     [HttpGet]
     public async Task<IActionResult> List(
         [FromQuery] string? keyword,
@@ -329,11 +338,57 @@ public class WebPagesController : ControllerBase
         [FromQuery] string? sourceType,
         [FromQuery] string sort = "newest",
         [FromQuery] int skip = 0,
-        [FromQuery] int limit = 50)
+        [FromQuery] int limit = 50,
+        [FromQuery] string? scope = null,
+        [FromQuery] string? teamId = null)
     {
+        var userId = GetUserId();
         var (items, total) = await _siteService.ListAsync(
-            GetUserId(), keyword, folder, tag, sourceType, sort, skip, limit);
+            userId, keyword, folder, tag, sourceType, sort, skip, limit, scope, teamId);
+
+        // 团队作用域：附带创建者头像/昵称（卡片左下角展示）+ 我在该团队的网页托管有效角色
+        //（owner/editor/viewer），前端据此隐藏 viewer 的编辑/删除/分享入口。即使列表为空也返回角色。
+        if (string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(teamId))
+        {
+            var myRoles = await _teams.GetMyWebHostingTeamRolesAsync(userId);
+            var myWebHostingRole = myRoles.GetValueOrDefault(teamId);
+            var owners = items.Count > 0
+                ? await BuildUserCardsAsync(items.Select(s => s.OwnerUserId))
+                : new Dictionary<string, object>();
+            return Ok(ApiResponse<object>.Ok(new { items, total, owners, myWebHostingRole }));
+        }
+
         return Ok(ApiResponse<object>.Ok(new { items, total }));
+    }
+
+    /// <summary>设置站点分享到的团队（仅 owner 可调）</summary>
+    [HttpPatch("{id}/teams")]
+    public async Task<IActionResult> SetTeams(string id, [FromBody] SetSiteTeamsRequest req)
+    {
+        var updated = await _siteService.SetSharedTeamsAsync(id, GetUserId(), req.TeamIds ?? new List<string>());
+        if (updated == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在或无权限"));
+        return Ok(ApiResponse<object>.Ok(updated));
+    }
+
+    /// <summary>批量加载用户展示卡（userId → 昵称 + 头像文件名），前端据此渲染头像</summary>
+    private async Task<Dictionary<string, object>> BuildUserCardsAsync(IEnumerable<string> userIds)
+    {
+        var ids = userIds.Where(u => !string.IsNullOrWhiteSpace(u)).Distinct().ToList();
+        var map = new Dictionary<string, object>();
+        if (ids.Count == 0) return map;
+
+        var users = await _db.Users.Find(u => ids.Contains(u.UserId)).ToListAsync();
+        foreach (var u in users)
+        {
+            map[u.UserId] = new
+            {
+                userId = u.UserId,
+                displayName = !string.IsNullOrWhiteSpace(u.DisplayName) ? u.DisplayName : u.Username,
+                avatarFileName = u.AvatarFileName,
+            };
+        }
+        return map;
     }
 
     /// <summary>获取站点详情</summary>
@@ -471,12 +526,21 @@ public class WebPagesController : ControllerBase
     {
         try
         {
+            // visit 便捷链恒走 force=false（保留服务端去重 + 复用）；
+            // 用户主动 share 默认走 forceNew=true（PR 2026-05-28：分享面板每次显式新建），
+            // 除非 client 显式传 forceNew=false（少数兼容场景，保留逃生口）
+            var isVisit = req.Purpose == "visit";
+            var forceNew = !isVisit && (req.ForceNew ?? true);
+            var visibility = isVisit ? "public" : (req.Visibility ?? "owner-only");
+
             var share = await _siteService.CreateShareAsync(
                 GetUserId(), GetDisplayName(),
                 req.SiteId, req.SiteIds, req.ShareType ?? "single",
                 req.Title, req.Description,
                 req.Password, req.ExpiresInDays,
-                purpose: req.Purpose == "visit" ? "visit" : "share");
+                purpose: isVisit ? "visit" : "share",
+                forceNew: forceNew,
+                visibility: visibility);
 
             // P1 调整（2026-05-21 用户反馈）：默认 URL 保留分类前缀 /s/wp/{token}
             //   - 分类前缀有语义、利于在分享总管理面板里按类型分类
@@ -491,6 +555,7 @@ public class WebPagesController : ControllerBase
                 share.Password,
                 share.ExpiresAt,
                 share.ShortSeq,
+                share.Visibility,
                 shareUrl = $"/s/wp/{share.Token}",
                 // /s/{seq} 与 /s/{token} 都依赖 ShortLink 记录；ShortSeq=0（未注册）时两者都
                 // resolve missing，故都置 null，只暴露有效的带前缀长链 shareUrl。
@@ -508,12 +573,65 @@ public class WebPagesController : ControllerBase
         }
     }
 
-    /// <summary>获取当前用户的分享链接列表</summary>
+    /// <summary>获取当前用户的分享链接列表（含未过期 + 过期 ≤ 7 天宽限期）</summary>
     [HttpGet("shares")]
     public async Task<IActionResult> ListShares()
     {
         var items = await _siteService.ListSharesAsync(GetUserId());
-        return Ok(ApiResponse<object>.Ok(new { items }));
+        var now = DateTime.UtcNow;
+        var enriched = items.Select(x => new
+        {
+            x.Id,
+            x.Token,
+            x.ShortSeq,
+            x.SiteId,
+            x.SiteIds,
+            x.ShareType,
+            x.Title,
+            x.Description,
+            x.AccessLevel,
+            x.Password,
+            x.ExpiresAt,
+            x.Visibility,
+            x.CreatedAt,
+            x.CreatedByName,
+            x.ViewCount,
+            x.UniqueIpCount,
+            x.LastViewedAt,
+            isExpired = x.ExpiresAt.HasValue && x.ExpiresAt.Value < now,
+            inGracePeriod = x.ExpiresAt.HasValue && x.ExpiresAt.Value < now && x.ExpiresAt.Value > now.AddDays(-7),
+            renewalCount = x.RenewalHistory?.Count ?? 0,
+        }).ToList();
+        return Ok(ApiResponse<object>.Ok(new { items = enriched }));
+    }
+
+    /// <summary>列出某个站点的分享访问日志（仅站点 owner 可查）</summary>
+    [HttpGet("{siteId}/share-logs")]
+    public async Task<IActionResult> ListShareLogsForSite(string siteId, [FromQuery] int limit = 50)
+    {
+        var logs = await _siteService.ListShareViewLogsForSiteAsync(siteId, GetUserId(), limit);
+        return Ok(ApiResponse<object>.Ok(new { items = logs }));
+    }
+
+    /// <summary>续期分享链接</summary>
+    [HttpPost("shares/{shareId}/renew")]
+    public async Task<IActionResult> RenewShare(string shareId, [FromBody] RenewShareRequest req)
+    {
+        var result = await _siteService.RenewShareAsync(shareId, GetUserId(), req.ExtendDays);
+        if (!result.Ok)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, result.Error ?? "续期失败"));
+        return Ok(ApiResponse<object>.Ok(new { newExpiresAt = result.NewExpiresAt }));
+    }
+
+    /// <summary>
+    /// 用户分享统计聚合（参考 Cloudflare 简化版）。
+    /// 可选 ?siteId=xxx 把统计范围收窄到单个站点（用于站点卡上的「本站点统计」按钮）。
+    /// </summary>
+    [HttpGet("shares/analytics")]
+    public async Task<IActionResult> GetShareAnalytics([FromQuery] int rangeDays = 7, [FromQuery] string? siteId = null)
+    {
+        var result = await _siteService.GetShareAnalyticsAsync(GetUserId(), rangeDays, siteId);
+        return Ok(ApiResponse<object>.Ok(result));
     }
 
     /// <summary>撤销分享链接</summary>
@@ -552,6 +670,7 @@ public class WebPagesController : ControllerBase
             return result.HttpStatus switch
             {
                 401 => Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, result.Error)),
+                403 => StatusCode(403, ApiResponse<object>.Fail(result.ErrorCode ?? "VISIBILITY_DENIED", result.Error)),
                 400 => BadRequest(ApiResponse<object>.Fail("EXPIRED", result.Error)),
                 _ => NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, result.Error)),
             };
@@ -641,6 +760,12 @@ public class SetVisibilityRequest
     public string Visibility { get; set; } = "private";
 }
 
+public class SetSiteTeamsRequest
+{
+    /// <summary>站点要分享到的团队 ID 列表（空表示取消所有团队分享）</summary>
+    public List<string>? TeamIds { get; set; }
+}
+
 public class CreateWebPageShareRequest
 {
     public string? SiteId { get; set; }
@@ -652,4 +777,19 @@ public class CreateWebPageShareRequest
     public int ExpiresInDays { get; set; }
     /// <summary>用途：visit = 站点访问便捷链（公开永久、独立池）；其余/缺省 = 用户分享</summary>
     public string? Purpose { get; set; }
+
+    /// <summary>
+    /// 是否强制新建（绕过服务端复用）。默认 true（分享面板每次显式新建）；
+    /// 调用方明确传 false 才走旧版复用逻辑。
+    /// </summary>
+    public bool? ForceNew { get; set; }
+
+    /// <summary>访问可见性：owner-only（默认） / logged-in / public</summary>
+    public string? Visibility { get; set; }
+}
+
+public class RenewShareRequest
+{
+    /// <summary>续期天数（1-365）</summary>
+    public int ExtendDays { get; set; } = 30;
 }

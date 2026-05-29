@@ -42,6 +42,8 @@ import { StateService } from '../../src/services/state.js';
 import { ContainerService } from '../../src/services/container.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
+import { BranchOperationCoordinator } from '../../src/services/branch-operation-coordinator.js';
+import type { ServerEventLogSink, ServerEventRecord } from '../../src/services/server-event-log-store.js';
 import type { CdsConfig } from '../../src/types.js';
 
 // Lightweight JSON request helper — tests its own contract so we don't
@@ -88,6 +90,22 @@ describe('View parity smoke test (list + topology)', () => {
   let tmpRoot: string;
   let server: http.Server;
   let stateService: StateService;
+  let serverEvents: Array<Omit<ServerEventRecord, '_id' | 'ts'> & { ts?: Date | string }>;
+  let dockerProbeCalls: { isRunning: number; getRunningContainerNames: number; listContainers: number };
+
+  const resetReadPathProbes = () => {
+    serverEvents.length = 0;
+    dockerProbeCalls.isRunning = 0;
+    dockerProbeCalls.getRunningContainerNames = 0;
+    dockerProbeCalls.listContainers = 0;
+  };
+
+  const expectNoLifecycleEvents = () => {
+    const lifecycleEvents = serverEvents.filter(
+      (event) => event.action.startsWith('branch.operation.') || event.source.includes('lifecycle'),
+    );
+    expect(lifecycleEvents).toEqual([]);
+  };
 
   beforeAll(async () => {
     tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-parity-'));
@@ -168,15 +186,32 @@ describe('View parity smoke test (list + topology)', () => {
 
     const shell = new MockShellExecutor();
     const worktreeService = new WorktreeService(shell);
+    serverEvents = [];
+    dockerProbeCalls = { isRunning: 0, getRunningContainerNames: 0, listContainers: 0 };
+    const serverEventLogStore: ServerEventLogSink = {
+      record(record) {
+        serverEvents.push(record);
+      },
+    };
+    const branchOperationCoordinator = new BranchOperationCoordinator(serverEventLogStore);
     // Stub just enough ContainerService surface for the routes we hit.
     // /api/infra calls isRunning() to reconcile status with Docker —
     // we hard-wire "not running" so the seeded status stays authoritative.
     // /api/branches uses getRunningContainerNames() (batched perf path) —
     // empty set ≡ "no containers running" for the mock.
     const stubContainer = {
-      isRunning: async () => false,
-      getRunningContainerNames: async () => new Set<string>(),
-      listContainers: async () => [],
+      isRunning: async () => {
+        dockerProbeCalls.isRunning++;
+        return false;
+      },
+      getRunningContainerNames: async () => {
+        dockerProbeCalls.getRunningContainerNames++;
+        return new Set<string>();
+      },
+      listContainers: async () => {
+        dockerProbeCalls.listContainers++;
+        return [];
+      },
     } as unknown as ContainerService;
 
     const app = express();
@@ -190,6 +225,8 @@ describe('View parity smoke test (list + topology)', () => {
         containerService: stubContainer,
         shell,
         config,
+        serverEventLogStore,
+        branchOperationCoordinator,
       } as any),
     );
     // GitHub router with NO client — this models the "CDS_GITHUB_CLIENT_ID
@@ -214,9 +251,12 @@ describe('View parity smoke test (list + topology)', () => {
 
   describe('shared read endpoints', () => {
     it('GET /api/branches returns a branches array', async () => {
+      resetReadPathProbes();
       const res = await requestJson(server, 'GET', '/api/branches');
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body.branches)).toBe(true);
+      expect(dockerProbeCalls.getRunningContainerNames).toBe(0);
+      expectNoLifecycleEvents();
     });
 
     it('GET /api/build-profiles returns {profiles:[...]} — the shape app.js expects', async () => {
@@ -235,6 +275,7 @@ describe('View parity smoke test (list + topology)', () => {
     });
 
     it('GET /api/infra returns {services:[...]} — the shape app.js expects', async () => {
+      resetReadPathProbes();
       const res = await requestJson(server, 'GET', '/api/infra');
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body.services)).toBe(true);
@@ -242,6 +283,8 @@ describe('View parity smoke test (list + topology)', () => {
       expect(mongo).toBeTruthy();
       expect(mongo.dockerImage).toBe('mongo:8.0');
       expect(mongo.volumes).toHaveLength(1);
+      expect(dockerProbeCalls.isRunning).toBe(0);
+      expectNoLifecycleEvents();
     });
 
     it('GET /api/routing-rules returns an object with rules array', async () => {
@@ -270,15 +313,51 @@ describe('View parity smoke test (list + topology)', () => {
         branch: 'smoke-parity',
         projectId: 'default',
         worktreePath: '/tmp/smoke-parity',
-        services: {},
-        status: 'idle',
+        services: {
+          api: {
+            profileId: 'api',
+            containerName: 'cds-default-smoke-parity-api',
+            hostPort: 21001,
+            status: 'running',
+          },
+        },
+        status: 'running',
         createdAt: new Date().toISOString(),
       } as any);
       const check = stateService.getBranch(branchId);
       expect(check).toBeTruthy();
     });
 
+    it('GET /api/branches?project=default&live=false is a passive snapshot, not a Docker reconcile', async () => {
+      resetReadPathProbes();
+      const res = await requestJson(server, 'GET', '/api/branches?project=default&live=false');
+      expect(res.status).toBe(200);
+      expect(res.body.branches.some((branch: any) => branch.id === branchId)).toBe(true);
+      expect(dockerProbeCalls.getRunningContainerNames).toBe(0);
+      expectNoLifecycleEvents();
+    });
+
+    it('GET /api/branches?project=default&live=true makes the operator-requested Docker probe explicit', async () => {
+      resetReadPathProbes();
+      const res = await requestJson(server, 'GET', '/api/branches?project=default&live=true');
+      expect(res.status).toBe(200);
+      expect(dockerProbeCalls.getRunningContainerNames).toBe(1);
+      expectNoLifecycleEvents();
+    });
+
+    it('GET /api/branches/:id/logs is read-only and does not probe Docker', async () => {
+      resetReadPathProbes();
+      const res = await requestJson(server, 'GET', `/api/branches/${branchId}/logs`);
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body.logs)).toBe(true);
+      expect(res.body.liveStreamHint?.url).toContain('/api/branches/stream?project=default');
+      expect(dockerProbeCalls.isRunning).toBe(0);
+      expect(dockerProbeCalls.getRunningContainerNames).toBe(0);
+      expectNoLifecycleEvents();
+    });
+
     it('GET /api/branches/:id/profile-overrides returns the inheritance structure', async () => {
+      resetReadPathProbes();
       // UF-09 contract: the shape the Variables tab depends on.
       const res = await requestJson(
         server,
@@ -300,6 +379,8 @@ describe('View parity smoke test (list + topology)', () => {
       // cdsEnvKeys lists the infrastructure vars that can never be
       // overridden — UF-09's "locked amber eye" state depends on this
       expect(Array.isArray(p.cdsEnvKeys)).toBe(true);
+      expect(dockerProbeCalls.isRunning).toBe(0);
+      expectNoLifecycleEvents();
     });
 
     it('PUT /api/branches/:id/profile-overrides/:profileId writes an override', async () => {

@@ -42,6 +42,12 @@
 - [私人执行助理（PA Agent）产品方案](spec.pa-agent) `spec.pa-agent`
   > PA Agent 产品定位、Phase 1 能力与路线图，可独立下载评审
 
+- [毒舌秘书：PA Agent 最小可行升级方案](spec.pa-agent-savage-upgrade) `spec.pa-agent-savage-upgrade`
+  > PA Agent 升级为毒舌秘书的最小可行方案，1-2 天内可上线，保留架构只改产品灵魂
+
+- [毒舌秘书 v2 迭代升级方案](spec.pa-agent-savage-iter-v2) `spec.pa-agent-savage-iter-v2`
+  > 毒舌秘书 PA Agent v2 阶段迭代升级方案
+
 - [周报 Agent 产品需求文档](spec.report-agent) `spec.report-agent`
   > 周报 Agent v1.0 的产品需求文档
 
@@ -76,6 +82,9 @@
 
 - [每日小贴士 / 路径式教程系统设计](design.daily-tips) `design.daily-tips`
   > 右下角悬浮教程书 + SpotlightOverlay 多步 Tour + 推送/批量/dismiss 闭环
+
+- [功能验收体系设计](design.acceptance-system) `design.acceptance-system`
+  > 业界对标(IEEE 829 / ISO·IEC·IEEE 29119-3 / 29148 / ISTQB / BDD)的标准化验收：为何而写、踩过的坑、v2 落地与 v3 演进、涌现与未来
 
 - [服务器权威性设计](design.server-authority) `design.server-authority`
   > 客户端断开不取消服务器任务的架构设计
@@ -662,8 +671,22 @@
 - [知识库（AI Toolbox attachment + 文档空间）债务台账](debt.knowledge-base) `debt.knowledge-base`
   > 8 条 open：两套并存模型 / RAG embedding 未做 / wip 标签 CI 守卫 / 上传 API 不互通 / 等
 
+- [功能验收体系 · 债务台账](debt.acceptance-system) `debt.acceptance-system`
+  > 标准创建/执行/结果三方经知识库打通的未来架构：分阶段还债（先 schema 化+版本绑定，后拆 Agent），含触发条件与 YAGNI 边界
+
 - [分享链接安全债务台账](debt.share-link-security) `debt.share-link-security`
   > 分享链接系统的已知安全边界与待补项
+
+- [团队（网页托管 + 知识库）债务台账](debt.team-feature) `debt.team-feature`
+  > 团队 wave 1 已知边界：回收站未做 / KB 次要端点仍 owner-only / 公共团队仅留字段 / 邀请链接路由 / 旧条目头像兜底
+- [验收技能（create-visual-test-to-kb）债务台账](debt.visual-acceptance-skill) `debt.visual-acceptance-skill`
+  > 验收技能 wave 1 已落地强制必给地址 + ZZ 照做风 + 画框序号；待补自动 diff 画框 / 流程缩略图 / AI 文案 / AI 视觉判定；明确不做录屏 + 自动镜头
+- [小技巧与首页提醒过时机制债务台账](debt.daily-tips) `debt.daily-tips`
+  > 小技巧/缺陷提醒 1 周过时机制的已知边界（历史数据不回填、存量环境需 seed 一次）
+- [殿堂阅读器（克莱风暖色）保留未融合 DocBrowser 的债务台账](debt.library-doc-reader) `debt.library-doc-reader`
+  > LibraryDocReader 720 行刻意做了米黄+圆体字+暖色调差异化品牌，融合需先做 DocBrowser 皮肤系统；记录重启评估的 4 个触发条件，避免下次重复调研
+- [周报详情页（异构数据）保留独立实现的债务台账](debt.report-detail) `debt.report-detail`
+  > ReportDetailPage 900 行业务实体（成员×周次矩阵 + 多 tabs + 计划对比 + 右栏面板），不是文档库语义；融合需先给 DocBrowser 加 leftSidebar/rightPanel/entryBadges 三 slot 系统
 
 ### 七、周报
 
@@ -711,6 +734,12 @@
 
 - [CDS Agent 工作台完成复盘（2026-05-15）](report.cds-agent-workbench-2026-05-15) `report.cds-agent-workbench-2026-05-15`
   > CDS Agent 工作台从连接探活到远程 sandbox 自巡检 PR 闭环的功能清单、坑位、未完成债务和交接提示词
+
+- [周报 2026-W21 (05-18 ~ 05-24)](report.2026-W21) `report.2026-W21`
+  > 2026 年第 21 周工作总结（160 commits / 20 PRs，分享链接安全加固 /s/{token} 统一、周报编辑器 Notion 式大改造 + 时间树视图、CDS Agent 官方 SDK 边界合入、CDS 容器可观测性收口、预览 URL SSOT 化）
+
+- [周报 2026-W20 (05-11 ~ 05-17)](report.2026-W20) `report.2026-W20`
+  > 2026 年第 20 周工作总结（702 commits / 28 PRs，知识库文档浏览器、作品广场动态列数 + 头像筛选、多类型资源预览、统一短链基础设施、CDS Agent runtime SDK 探索与熔断教训、老王智能体 + issues 三技能）
 
 - [周报 2026-W19 (05-04 ~ 05-10)](report.2026-W19) `report.2026-W19`
   > 2026 年第 19 周工作总结（310 commits / 15 PRs，CDS 蓝绿/Forwarder 架构落地、自更新十八轮收尾、五平台博主订阅 → 首页海报 Phase 2+3、Claude SDK 执行器 + CDS-MAP 配对协议 v1）
@@ -807,6 +836,8 @@
 | 2026-05-07 | 新增 | `guide.poster-feed-card` | 多平台博主订阅 → 首页海报弹窗（涌现 1 Phase 3 用户教程：5 平台 + 4 版式 + ASR 字幕） |
 | 2026-05-07 | 调整 | `plan.emergence-1-tiktok-douyin-poster` | Phase 3 已交付，新增 §3 多平台 / media-rehost / feed-card / ASR 字幕 + §3.7 关键文件 + §3.8 已知边界 |
 | 2026-05-07 | 调整 | `debt.workflow-agent` | v2.0：Phase 2 留尾 7 项全部 paid，新增 5 项 open（CDS dev 模式 hot-reload / B站 YouTube 无 mp4 / 小红书图集 / avatar 防盗链 / cues 仅 ASR 模式） |
+| 2026-05-24 | 新增 | `report.2026-W21` | 周报 2026-W21 (05-18 ~ 05-24) |
+| 2026-05-24 | 新增 | `report.2026-W20` | 周报 2026-W20 (05-11 ~ 05-17) |
 | 2026-05-09 | 新增 | `report.2026-W19` | 周报 2026-W19 (05-04 ~ 05-10) |
 | 2026-05-09 | 新增 | `report.2026-W18` | 周报 2026-W18 (04-27 ~ 05-03) |
 | 2026-05-09 | 新增 | `report.2026-W17` | 周报 2026-W17 (04-20 ~ 04-26) |

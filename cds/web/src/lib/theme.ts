@@ -1,5 +1,5 @@
 /*
- * Theme controller. Reads/writes sessionStorage and toggles `data-theme` on
+ * Theme controller. Reads/writes localStorage and toggles `data-theme` on
  * <html>. Bootstrap script in index.html applies the stored value before paint
  * to avoid FOUC.
  */
@@ -16,7 +16,7 @@ function systemTheme(): Theme {
 
 function readStoredMode(): ThemeMode {
   try {
-    const v = sessionStorage.getItem(STORAGE_KEY);
+    const v = localStorage.getItem(STORAGE_KEY) || sessionStorage.getItem(STORAGE_KEY);
     if (v === 'dark' || v === 'light' || v === 'system') return v;
   } catch {
     /* private mode */
@@ -33,7 +33,8 @@ export function applyThemeMode(mode: ThemeMode): void {
   document.documentElement.dataset.theme = theme;
   document.documentElement.dataset.themeMode = mode;
   try {
-    sessionStorage.setItem(STORAGE_KEY, mode);
+    localStorage.setItem(STORAGE_KEY, mode);
+    sessionStorage.removeItem(STORAGE_KEY);
   } catch {
     /* ignore */
   }
@@ -54,6 +55,17 @@ export function useTheme(): {
     const onChange = () => setSystem(systemTheme());
     media.addEventListener('change', onChange);
     return () => media.removeEventListener('change', onChange);
+  }, []);
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== STORAGE_KEY) return;
+      if (event.newValue === 'dark' || event.newValue === 'light' || event.newValue === 'system') {
+        setMode(event.newValue);
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
   }, []);
 
   useEffect(() => {

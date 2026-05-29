@@ -33,6 +33,7 @@ import {
   Hammer,
   type LucideIcon,
 } from 'lucide-react';
+import { PaSecretary } from '@/lib/paSecretaryIconRegistry';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useToolboxStore } from '@/stores/toolboxStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -46,6 +47,7 @@ import type { ToolboxItem } from '@/services';
 import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { ReviewAgentCardArt } from '@/pages/ai-toolbox/components/ReviewAgentCardArt';
+import { PaAgentCardArt } from '@/pages/ai-toolbox/components/PaAgentCardArt';
 import { HomeAmbientBackdrop } from '@/components/effects/HomeAmbientBackdrop';
 import { Reveal } from '@/pages/home/components/Reveal';
 import { TipsRotator } from '@/components/daily-tips/TipsRotator';
@@ -88,6 +90,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   FlaskConical, ScrollText, Sparkle, Sparkles, Library, Store,
   // 基础设施
   FolderHeart, Cpu, Users, Hammer,
+  PaSecretary,
 };
 
 // Agent 封面图/视频默认 CDN 路径由 `lib/homepageAssetSlots.ts` 统一维护
@@ -123,6 +126,8 @@ const ACCENT: Record<string, { from: string; to: string }> = {
   Cpu:       { from: '#6366F1', to: '#A5B4FC' },
   Users:     { from: '#22D3EE', to: '#67E8F9' },
   Hammer:    { from: '#64748B', to: '#94A3B8' },
+  // 毒舌秘书：科幻深蓝，与 PaAgentCardArt 内联插画呼应
+  PaSecretary:{ from: '#1D4ED8', to: '#67E8F9' },
 };
 
 function getAccent(icon: string) {
@@ -219,6 +224,10 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
   const [hovering, setHovering] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const Icon = getIcon(item.icon);
+  const isPaAgent = item.agentKey === 'pa-agent';
+  const cardDescription = isPaAgent
+    ? '把模糊想法转成 MECE 执行清单的 MBB 级私人助理'
+    : item.description;
 
   const handleMouseEnter = () => {
     setHovering(true);
@@ -249,8 +258,30 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
       }}
     >
       {/* Cover visual: inline art / CDN image / gradient fallback */}
+      {/*
+        毒舌秘书走「上传图优先 + inline 插画兜底」：与其他 agent 一致先看运维上传，
+        没上传时不用渐变占位，而是渲染 PaAgentCardArt 内联插画（MBB + 四象限 + 琥珀/青色）。
+        这是规则 #8「Agent 开发完成标准」要求的「看起来是个东西」。
+      */}
       {item.agentKey === 'review-agent' ? (
         <ReviewAgentCardArt />
+      ) : item.agentKey === 'pa-agent' && !uploadedCover ? (
+        <>
+          <PaAgentCardArt />
+          {videoUrl && (
+            <video
+              ref={videoRef}
+              src={videoUrl}
+              muted
+              loop
+              playsInline
+              preload="metadata"
+              onCanPlayThrough={() => setVideoReady(true)}
+              className="absolute inset-0 w-full h-full object-cover transition-opacity duration-500"
+              style={{ opacity: hovering && videoReady ? 1 : 0 }}
+            />
+          )}
+        </>
       ) : coverUrl && !coverFailed ? (
         <>
           <img
@@ -327,10 +358,10 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
           {item.name}
         </h3>
         <p
-          className="text-[13px] leading-relaxed mt-1.5 line-clamp-2 transition-all duration-300 group-hover:translate-y-[-2px] group-hover:opacity-100 opacity-80"
+          className="text-[13px] leading-relaxed mt-1.5 line-clamp-1 transition-all duration-300 group-hover:translate-y-[-2px] group-hover:opacity-100 opacity-80"
           style={{ color: 'rgba(255,255,255,0.95)', textShadow: '0 1px 2px rgba(0,0,0,1), 0 2px 6px rgba(0,0,0,0.8)' }}
         >
-          {item.description}
+          {cardDescription}
         </p>
       </div>
     </button>

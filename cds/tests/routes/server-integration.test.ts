@@ -4,12 +4,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import express from 'express';
-import { installSpaFallback } from '../../src/server.js';
+import { createServer, installSpaFallback } from '../../src/server.js';
 import { createClusterRouter } from '../../src/routes/cluster.js';
 import { createSchedulerRouter } from '../../src/scheduler/routes.js';
 import { StateService } from '../../src/services/state.js';
 import { ExecutorRegistry } from '../../src/scheduler/executor-registry.js';
+import { MockShellExecutor } from '../../src/services/shell-executor.js';
+import { WorktreeService } from '../../src/services/worktree.js';
 import type { CdsConfig } from '../../src/types.js';
+import type { ServerEventLogSink, ServerEventRecord } from '../../src/services/server-event-log-store.js';
+import type { HttpLogRecord, HttpLogSink } from '../../src/services/http-log-store.js';
 
 /**
  * Integration regression test: verifies that routes mounted after the
@@ -122,6 +126,216 @@ describe('Server route ordering (regression)', () => {
     });
   }
 
+  function buildRealServerWithEvents(events: ServerEventRecord[]): express.Express {
+    const stateFile = path.join(tmpDir, 'state.json');
+    const stateService = new StateService(stateFile);
+    stateService.load();
+    const serverEventLogStore: ServerEventLogSink = {
+      record() {},
+      async findRecent(filter = {}) {
+        const severityRank = { info: 10, warn: 20, error: 30 } as const;
+        const limit = Math.max(1, Math.min(filter.limit ?? 200, 1000));
+        return events
+          .filter((event) => {
+            if (filter.category && event.category !== filter.category) return false;
+            if (filter.severity && event.severity !== filter.severity) return false;
+            if (filter.minSeverity && severityRank[event.severity] < severityRank[filter.minSeverity]) return false;
+            if (filter.source && event.source !== filter.source) return false;
+            if (filter.action && event.action !== filter.action) return false;
+            if (filter.containerName && event.containerName !== filter.containerName) return false;
+            if (filter.branchId && event.branchId !== filter.branchId) return false;
+            if (filter.profileId && event.profileId !== filter.profileId) return false;
+            if (filter.projectId && event.projectId !== filter.projectId) return false;
+            if (filter.requestId && event.requestId !== filter.requestId) return false;
+            if (filter.operationId && event.operationId !== filter.operationId && event.details?.operationId !== filter.operationId) return false;
+            if (filter.since && event.ts < new Date(filter.since)) return false;
+            return true;
+          })
+          .sort((a, b) => b.ts.getTime() - a.ts.getTime())
+          .slice(0, limit);
+      },
+    };
+    return createServer({
+      stateService,
+      worktreeService: new WorktreeService(new MockShellExecutor(), tmpDir),
+      containerService: {} as any,
+      proxyService: {
+        getProxyLog: () => [],
+        setOnProxyLog: () => {},
+        handleSwitchFromExpress: (_req: unknown, _res: unknown) => {},
+      } as any,
+      bridgeService: {} as any,
+      shell: new MockShellExecutor(),
+      config: makeConfig({ repoRoot: tmpDir, worktreeBase: path.join(tmpDir, 'worktrees') }),
+      serverEventLogStore,
+    });
+  }
+
+  function buildRealServerWithHttpLogs(logs: HttpLogRecord[]): express.Express {
+    const stateFile = path.join(tmpDir, 'state.json');
+    const stateService = new StateService(stateFile);
+    stateService.load();
+    const httpLogStore: HttpLogSink = {
+      record() {},
+      async findRecent(filter = {}) {
+        const limit = Math.max(1, Math.min(filter.limit ?? 200, 1000));
+        return logs
+          .filter((log) => {
+            if (filter.method && log.method !== filter.method.toUpperCase()) return false;
+            if (filter.minStatus && log.status < filter.minStatus) return false;
+            if (filter.pathContains && !log.path.includes(filter.pathContains)) return false;
+            if (filter.since && log.ts < new Date(filter.since)) return false;
+            if (filter.until && log.ts > new Date(filter.until)) return false;
+            return true;
+          })
+          .sort((a, b) => b.ts.getTime() - a.ts.getTime())
+          .slice(0, limit);
+      },
+    };
+    return createServer({
+      stateService,
+      worktreeService: new WorktreeService(new MockShellExecutor(), tmpDir),
+      containerService: {} as any,
+      proxyService: {
+        getProxyLog: () => [],
+        setOnProxyLog: () => {},
+        handleSwitchFromExpress: (_req: unknown, _res: unknown) => {},
+      } as any,
+      bridgeService: {} as any,
+      shell: new MockShellExecutor(),
+      config: makeConfig({ repoRoot: tmpDir, worktreeBase: path.join(tmpDir, 'worktrees') }),
+      httpLogStore,
+    });
+  }
+
+  it('real createServer exposes queryable /api/server-events before branch router fallback', async () => {
+    const app = buildRealServerWithEvents([
+      {
+        _id: 'evt-start',
+        ts: new Date('2026-05-26T23:00:00.000Z'),
+        category: 'system',
+        severity: 'info',
+        source: 'branch-operation-coordinator',
+        action: 'branch.operation.started',
+        projectId: 'prd-agent',
+        branchId: 'prd-agent-main',
+        requestId: 'req-start',
+        operationId: 'op-start',
+        details: { operationId: 'op-start', trigger: 'webhook', commitSha: '1111111' },
+      },
+      {
+        _id: 'evt-cancel',
+        ts: new Date('2026-05-26T23:01:00.000Z'),
+        category: 'system',
+        severity: 'warn',
+        source: 'branch-operation-coordinator',
+        action: 'branch.operation.cancelled',
+        projectId: 'prd-agent',
+        branchId: 'prd-agent-main',
+        requestId: 'req-cancel',
+        operationId: 'op-cancel',
+        details: { operationId: 'op-cancel', trigger: 'manual', actor: 'user' },
+      },
+    ]);
+    server = await startServer(app);
+
+    const res = await request(
+      server,
+      '/api/server-events?operationId=op-cancel&branchId=prd-agent-main&action=branch.operation.cancelled',
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.contentType).toContain('application/json');
+    const body = JSON.parse(res.body);
+    expect(body.ok).toBe(true);
+    expect(body.disabled).toBe(false);
+    expect(body.total).toBe(1);
+    expect(body.events[0].operationId).toBe('op-cancel');
+    expect(body.events[0].requestId).toBe('req-cancel');
+    expect(body.events[0].details.trigger).toBe('manual');
+  });
+
+  it('real createServer treats /_cds/api/* as a master API alias, not SPA HTML', async () => {
+    const app = buildRealServerWithEvents([
+      {
+        _id: 'evt-cds-alias',
+        ts: new Date('2026-05-28T09:00:00.000Z'),
+        category: 'system',
+        severity: 'info',
+        source: 'test',
+        action: 'alias.probe',
+        requestId: 'req-alias',
+      },
+    ]);
+    installSpaFallback(app, webDir);
+    server = await startServer(app);
+
+    const res = await request(server, '/_cds/api/server-events?action=alias.probe');
+
+    expect(res.status).toBe(200);
+    expect(res.contentType).toContain('application/json');
+    expect(res.body).not.toContain('DASHBOARD');
+    const body = JSON.parse(res.body);
+    expect(body.ok).toBe(true);
+    expect(body.total).toBe(1);
+    expect(body.events[0].requestId).toBe('req-alias');
+  });
+
+  it('real createServer rejects invalid /api/server-events since timestamps', async () => {
+    const app = buildRealServerWithEvents([]);
+    server = await startServer(app);
+
+    const res = await request(server, '/api/server-events?since=not-a-date');
+
+    expect(res.status).toBe(400);
+    expect(res.contentType).toContain('application/json');
+    expect(JSON.parse(res.body).error).toBe('invalid_since');
+  });
+
+  it('real createServer exposes slow HTTP endpoint rankings from recent samples', async () => {
+    const base = {
+      _id: 'unused',
+      ts: new Date('2026-05-27T08:00:00.000Z'),
+      layer: 'master' as const,
+      requestId: 'req',
+      method: 'GET',
+      protocol: 'http',
+      host: 'cds.test',
+      path: '/api/branches',
+      status: 200,
+      durationMs: 1,
+      outcome: 'ok' as const,
+      request: {},
+      response: {},
+    };
+    const app = buildRealServerWithHttpLogs([
+      { ...base, _id: '1', requestId: 'r1', path: '/api/branches?project=prd-agent', durationMs: 5 },
+      { ...base, _id: '2', requestId: 'r2', path: '/api/branches/prd-agent-main/logs', durationMs: 1200 },
+      { ...base, _id: '3', requestId: 'r3', path: '/api/branches/prd-agent-main/logs', durationMs: 800, status: 500, outcome: 'server-error' },
+      { ...base, _id: '4', requestId: 'r4', path: '/api/projects/prd-agent', durationMs: 30 },
+      { ...base, _id: '5', requestId: 'r5', path: '/api/executors/capacity', durationMs: 60 },
+      { ...base, _id: '6', requestId: 'r6', path: '/api/branches/stream', durationMs: 40 },
+    ]);
+    server = await startServer(app);
+
+    const res = await request(server, '/api/http-logs/slow?sample=1000&top=5&includeNoise=1');
+
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.ok).toBe(true);
+    expect(body.sampleSize).toBe(6);
+    expect(body.endpoints[0]).toMatchObject({
+      method: 'GET',
+      endpoint: '/api/branches/:branchId/logs',
+      count: 2,
+      errorCount: 1,
+      maxMs: 1200,
+    });
+    expect(body.endpoints[0].slowest.requestId).toBe('r2');
+    expect(body.endpoints.map((endpoint: { endpoint: string }) => endpoint.endpoint)).toContain('/api/executors/capacity');
+    expect(body.endpoints.map((endpoint: { endpoint: string }) => endpoint.endpoint)).toContain('/api/branches/stream');
+  });
+
   it('cluster router returns JSON when mounted BEFORE installSpaFallback', async () => {
     const app = buildApp();
 
@@ -181,7 +395,7 @@ describe('Server route ordering (regression)', () => {
     expect(body).not.toContain?.('DASHBOARD');
   });
 
-  it('regression: SPA fallback still serves index.html for non-API paths', async () => {
+  it('regression: SPA fallback fails closed for non-API paths when React dist is missing', async () => {
     const app = buildApp();
 
     const stateFile = path.join(tmpDir, 'state.json');
@@ -204,30 +418,28 @@ describe('Server route ordering (regression)', () => {
 
     server = await startServer(app);
 
-    // Unknown non-API path should still get the dashboard HTML
+    // Unknown non-API path must not fall through to stale static HTML.
     const res = await request(server, '/some/spa/route');
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(404);
     expect(res.contentType).toContain('text/html');
-    expect(res.body).toContain('DASHBOARD');
+    expect(res.body).not.toContain('DASHBOARD');
   });
 
   // ── React migration: per-route progressive replacement ──
   //
-  // installSpaFallback() owns three layers of routing:
+  // installSpaFallback() owns two layers of routing:
   //
   //   1. /api/* — mounted upstream, never shadowed (the recovery endpoint
   //      POST /api/factory-reset lives here and must always reach its
   //      handler regardless of how many routes the React app claims).
-  //   2. The React app (cds/web/dist/) — only owns paths listed in
-  //      MIGRATED_REACT_ROUTES + the /assets/* directory for hashed bundles.
-  //   3. Legacy static pages (cds/web-legacy/) — fall-through for anything
-  //      not claimed above.
+  //   2. The React app (cds/web/dist/) — owns every non-API dashboard path,
+  //      plus the /assets/* directory for hashed bundles.
   //
   // These tests pin the contract so a future refactor can't accidentally let
-  // a migrated route regress to the legacy app, or worse, let the React SPA
-  // fallback start swallowing /api/* or unmigrated legacy paths.
+  // dashboard routes regress to static HTML, or worse, let the React SPA
+  // fallback start swallowing /api/*.
 
-  it('react mount: when cds/web/dist is missing, all paths fall through to legacy', async () => {
+  it('react mount: when cds/web/dist is missing, dashboard paths are not served from legacy static HTML', async () => {
     const app = buildApp();
     // Point reactDistOverride at a directory that doesn't exist; the helper
     // must warn-and-skip cleanly without crashing.
@@ -239,15 +451,15 @@ describe('Server route ordering (regression)', () => {
     expect(apiRes.contentType).toContain('application/json');
     expect(apiRes.body).toContain('"ok":true');
 
-    // /hello would normally be claimed by React, but with no dist on disk
-    // it falls through to the legacy SPA shell.
+    // /hello would normally be claimed by React, but with no dist on disk it
+    // must fail closed instead of serving stale legacy static HTML.
     const hello = await request(server, '/hello');
-    expect(hello.status).toBe(200);
+    expect(hello.status).toBe(404);
     expect(hello.contentType).toContain('text/html');
-    expect(hello.body).toContain('DASHBOARD');
+    expect(hello.body).not.toContain('DASHBOARD');
   });
 
-  it('react mount: serves migrated routes only, leaves legacy + recovery API intact', async () => {
+  it('react mount: serves all dashboard routes from React and leaves recovery API intact', async () => {
     const app = buildApp();
 
     // Build a fake React dist with the same shape Vite emits.
@@ -377,10 +589,18 @@ describe('Server route ordering (regression)', () => {
     expect(settingsNoProject.status).toBe(302);
     expect(settingsNoProject.body).toContain('/project-list');
 
-    // 10. Unmigrated paths still resolve to the legacy SPA shell, not React.
-    const legacy = await request(server, '/some/legacy/route');
-    expect(legacy.body).toContain('DASHBOARD');
-    expect(legacy.body).not.toContain('REACT_BUNDLE');
+    // 10. The old basic-auth login filename is retired; it must never serve
+    // the legacy HTML file or fall through to the legacy SPA shell.
+    const loginRedirect = await request(server, '/login.html?redirect=%2Fcds-settings');
+    expect(loginRedirect.status).toBe(301);
+    expect(loginRedirect.body).toContain('/login?redirect=%2Fcds-settings');
+    expect(loginRedirect.body).not.toContain('DASHBOARD');
+
+    // 11. Unknown non-API paths still resolve to React, which owns the
+    // client-side 404/redirect decision.
+    const unknown = await request(server, '/some/legacy/route');
+    expect(unknown.body).toContain('REACT_BUNDLE');
+    expect(unknown.body).not.toContain('DASHBOARD');
   });
 
   it('regression: SPA fallback installed TOO EARLY now returns JSON 404 (not HTML)', async () => {

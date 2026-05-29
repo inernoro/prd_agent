@@ -31,6 +31,7 @@ import { detectStack, detectModules, type StackDetection } from '../services/sta
 import { discoverComposeFiles, parseCdsCompose } from '../services/compose-parser.js';
 import { deriveEnvMetaForVars } from '../services/env-classifier.js';
 import { ProjectFilesService, ProjectFileError, type ProjectFilePayload } from '../services/project-files.js';
+import { repoNameFromGitRef } from '../services/preview-slug.js';
 import * as nodeFs from 'node:fs';
 import * as nodePath from 'node:path';
 import type { IShellExecutor, Project, CdsConfig, AgentKey, BuildProfile, InfraService } from '../types.js';
@@ -310,10 +311,10 @@ export function assertProjectAccess(
  * - branchCount: total branches in the project (including cold / error)
  * - runningBranchCount: branches with at least one running service
  * - runningServiceCount: sum of services in `running` state across branches
- * - lastDeployedAt: max(lastAccessedAt) across branches; BranchEntry
- *   updates lastAccessedAt on deploy completion (branches.ts:1210/1366),
- *   so this is a good "latest deploy" proxy. null when no branch ever
- *   deployed. Cached values from state.json — not a live docker check.
+ * - lastDeployedAt: max(lastDeployAt) across branches. Do not use
+ *   lastAccessedAt here: it is a deploy-attempt/LRU clock and can move
+ *   without a successful deploy. null when no branch has a success stamp.
+ *   Cached values from state.json — not a live docker check.
  */
 interface ProjectStats {
   branchCount: number;
@@ -457,8 +458,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
           }
         }
       }
-      if (b.lastAccessedAt && (!lastDeployedAt || b.lastAccessedAt > lastDeployedAt)) {
-        lastDeployedAt = b.lastAccessedAt;
+      if (b.lastDeployAt && (!lastDeployedAt || b.lastDeployAt > lastDeployedAt)) {
+        lastDeployedAt = b.lastDeployAt;
       }
     }
     return {
@@ -1498,9 +1499,18 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
+    // P4 Part 18 (Phase E audit fix #9): redact embedded userinfo
+    // before persisting. Users who paste tokens in the URL by mistake
+    // still get a working project, but the token never hits state.json.
+    // Private repo auth should go through the Device Flow token
+    // (injected at clone time via _injectGithubTokenIfPossible).
+    const rawGitRepoUrl = typeof body.gitRepoUrl === 'string' ? body.gitRepoUrl.trim() : undefined;
+    const gitRepoUrl = rawGitRepoUrl ? _redactUrlUserInfo(rawGitRepoUrl) : undefined;
+    const repoSlugFromGitUrl = repoNameFromGitRef(gitRepoUrl);
+
     // Track whether the slug was explicitly supplied by the caller.
     // When the caller leaves slug blank, we derive it from the project
-    // name and silently auto-suffix on collision (-2, -3, ...) so
+    // git URL's repo name first, then project name, and silently auto-suffix on collision (-2, -3, ...) so
     // pasting a Git URL whose repo name happens to match an existing
     // project just works. When the caller supplies an explicit slug,
     // we keep the strict 409 behaviour so the user knows their pick
@@ -1508,7 +1518,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     const slugProvidedExplicitly = Boolean((body.slug || '').trim());
     const baseSlug = slugProvidedExplicitly
       ? (body.slug as string).trim().toLowerCase()
-      : slugifyName(name);
+      : (repoSlugFromGitUrl || slugifyName(name));
     if (!SLUG_REGEX.test(baseSlug)) {
       res.status(400).json({
         error: 'validation',
@@ -1528,13 +1538,6 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
-    // P4 Part 18 (Phase E audit fix #9): redact embedded userinfo
-    // before persisting. Users who paste tokens in the URL by mistake
-    // still get a working project, but the token never hits state.json.
-    // Private repo auth should go through the Device Flow token
-    // (injected at clone time via _injectGithubTokenIfPossible).
-    const rawGitRepoUrl = typeof body.gitRepoUrl === 'string' ? body.gitRepoUrl.trim() : undefined;
-    const gitRepoUrl = rawGitRepoUrl ? _redactUrlUserInfo(rawGitRepoUrl) : undefined;
     const githubRepoFullName = gitRepoUrl ? _githubFullNameFromCloneUrl(gitRepoUrl) : undefined;
     const githubRepoAlreadyLinked = githubRepoFullName ? stateService.findProjectByRepoFullName(githubRepoFullName) : undefined;
     const description = typeof body.description === 'string' ? body.description.trim() : undefined;

@@ -206,6 +206,11 @@ public static class AdminPermissionCatalog
     public const string WebPagesWrite = "web-pages.write";
 
     /// <summary>
+    /// 网页托管高级权限：查看「全部用户」的托管站点及其阅读量与访客记录（跨用户审计视图）
+    /// </summary>
+    public const string WebPagesViewAll = "web-pages.viewAll";
+
+    /// <summary>
     /// 统一短链管理权限（管理员级）：查看/吊销所有用户创建的 /s/{seq} 短链。
     /// 用于系统设置→分享短链页面，区分于业务侧的 web-pages.write 等子系统写权限。
     /// </summary>
@@ -331,6 +336,7 @@ public static class AdminPermissionCatalog
 
         new(WebPagesRead, "网页托管-读", "查看托管站点列表与详情"),
         new(WebPagesWrite, "网页托管-写", "上传/编辑/删除/分享托管站点"),
+        new(WebPagesViewAll, "网页托管-查看全部", "跨用户查看全部托管站点及阅读量/访客记录（高级权限）"),
         new(ShortLinksManage, "短链管理", "系统设置 → 查看/吊销所有用户的 /s/{seq} 短链"),
 
         new(DocumentStoreRead, "文档空间-读", "查看文档空间与文档列表"),

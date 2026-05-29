@@ -20,15 +20,18 @@ public class ContentReprocessProcessor
 {
     private readonly ILlmGateway _llmGateway;
     private readonly IDocumentService _documentService;
+    private readonly ILLMRequestContextAccessor _llmCtx;
     private readonly ILogger<ContentReprocessProcessor> _logger;
 
     public ContentReprocessProcessor(
         ILlmGateway llmGateway,
         IDocumentService documentService,
+        ILLMRequestContextAccessor llmCtx,
         ILogger<ContentReprocessProcessor> logger)
     {
         _llmGateway = llmGateway;
         _documentService = documentService;
+        _llmCtx = llmCtx;
         _logger = logger;
     }
 
@@ -81,6 +84,20 @@ public class ContentReprocessProcessor
         await UpdateProgressAsync(db, runStore, run, 15, "调用 LLM");
 
         // 3) 流式调用
+        // Worker 场景必须显式开 LlmRequestContext，UserId 从 run.UserId 取——否则
+        // Gateway 日志/配额/账单挂不到用户头上（llm-gateway.md：日志会打 "UserId 为空"）。
+        using var _ctxScope = _llmCtx.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null,
+            SessionId: null,
+            UserId: run.UserId,
+            ViewRole: null,
+            DocumentChars: sourceContent.Length,
+            DocumentHash: null,
+            SystemPromptRedacted: "doc-store-reprocess",
+            RequestType: "chat",
+            AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Reprocess.Generate));
+
         var client = _llmGateway.CreateClient(
             AppCallerRegistry.DocumentStoreAgent.Reprocess.Generate,
             ModelTypes.Chat,

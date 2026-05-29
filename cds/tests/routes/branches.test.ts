@@ -8,6 +8,8 @@ import { clearRunningServiceErrorMessages, createBranchRouter } from '../../src/
 import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService } from '../../src/services/container.js';
+import { BranchOperationCoordinator } from '../../src/services/branch-operation-coordinator.js';
+import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { BranchEntry, CdsConfig } from '../../src/types.js';
@@ -60,8 +62,8 @@ describe('branch status helpers', () => {
 });
 
 async function request(
-  server: http.Server, method: string, urlPath: string, body?: unknown,
-): Promise<{ status: number; body: unknown }> {
+  server: http.Server, method: string, urlPath: string, body?: unknown, headers?: Record<string, string>,
+): Promise<{ status: number; body: unknown; headers: http.IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
     const addr = server.address() as { port: number };
     const data = body ? JSON.stringify(body) : undefined;
@@ -69,14 +71,15 @@ async function request(
       hostname: '127.0.0.1', port: addr.port, path: urlPath, method,
       headers: {
         'Content-Type': 'application/json',
+        ...(headers || {}),
         ...(data ? { 'Content-Length': Buffer.byteLength(data) } : {}),
       },
     }, (res) => {
       let raw = '';
       res.on('data', (chunk: Buffer) => (raw += chunk.toString()));
       res.on('end', () => {
-        try { resolve({ status: res.statusCode!, body: JSON.parse(raw) }); }
-        catch { resolve({ status: res.statusCode!, body: raw }); }
+        try { resolve({ status: res.statusCode!, body: JSON.parse(raw), headers: res.headers }); }
+        catch { resolve({ status: res.statusCode!, body: raw, headers: res.headers }); }
       });
     });
     req.on('error', reject);
@@ -103,6 +106,24 @@ describe('Branch Routes', () => {
   let server: http.Server;
   let mock: MockShellExecutor;
   let stateService: StateService;
+  let containerService: ContainerService;
+  let serverEventLogStore: ServerEventLogSink;
+  let registryNodes: any[];
+  let operationEvents: Array<{
+    category?: string;
+    source?: string;
+    severity?: string;
+    action: string;
+    branchId?: string | null;
+    requestId?: string | null;
+    operationId?: string | null;
+    operationKind?: string | null;
+    operationTrigger?: string | null;
+    operationActor?: string | null;
+    operationSource?: string | null;
+    commitSha?: string | null;
+    details?: Record<string, unknown>;
+  }>;
 
   beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-routes-'));
@@ -136,12 +157,41 @@ describe('Branch Routes', () => {
     seedLegacyDefaultProject(stateService);
 
     const worktreeService = new WorktreeService(mock, config.repoRoot);
-    const containerService = new ContainerService(mock, config);
+    containerService = new ContainerService(mock, config);
+    (containerService as any).waitForContainerAlive = async () => undefined;
+    (containerService as any).waitForReadiness = async () => true;
+    registryNodes = [];
+    const registry = {
+      getAll: () => registryNodes,
+      getOnline: () => registryNodes.filter((node) => node.status === 'online'),
+      selectExecutor: () => registryNodes.find((node) => node.status === 'online') || null,
+    } as any;
+    operationEvents = [];
+    serverEventLogStore = {
+      record(record) {
+        operationEvents.push({
+          category: record.category,
+          source: record.source,
+          severity: record.severity,
+          action: record.action,
+          branchId: record.branchId,
+          requestId: record.requestId,
+          operationId: record.operationId,
+          operationKind: record.operationKind,
+          operationTrigger: record.operationTrigger,
+          operationActor: record.operationActor,
+          operationSource: record.operationSource,
+          commitSha: record.commitSha,
+          details: record.details,
+        });
+      },
+    };
+    const branchOperationCoordinator = new BranchOperationCoordinator(serverEventLogStore);
 
     const app = express();
     app.use(express.json());
     app.use('/api', createBranchRouter({
-      stateService, worktreeService, containerService, shell: mock, config,
+      stateService, worktreeService, containerService, shell: mock, config, registry, branchOperationCoordinator, serverEventLogStore,
     }));
 
     await new Promise<void>((resolve) => {
@@ -150,6 +200,8 @@ describe('Branch Routes', () => {
   });
 
   afterEach(async () => {
+    delete process.env.CDS_DELETE_STATE_FLUSH_TIMEOUT_MS;
+    delete process.env.CDS_BRANCHES_SLOW_MS;
     await new Promise<void>((resolve) => server.close(() => resolve()));
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
   });
@@ -254,6 +306,14 @@ describe('Branch Routes', () => {
       expect(res.status).toBe(400);
     });
 
+    it('rejects URL-like branch names before creating a worktree', async () => {
+      const res = await request(server, 'POST', '/api/branches', {
+        branch: 'https/github.com/inernoro/prd_agent/pull/611',
+      });
+      expect(res.status).toBe(400);
+      expect((res.body as any).error).toBe('invalid_branch_name');
+    });
+
     it('should return 409 if branch already exists', async () => {
       await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
       const res = await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
@@ -294,6 +354,24 @@ describe('Branch Routes', () => {
       // Error must reference the *existing* id, not the new-formula one.
       expect((res.body as any).error).toContain('"main"');
     });
+
+    it('refuses to deploy a branch that was already stored with an invalid URL-like name', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'bad-url-branch',
+        projectId: 'default',
+        branch: 'https/github.com/inernoro/prd_agent/pull/611',
+        worktreePath: '/tmp/wt/bad-url-branch',
+        services: {},
+        status: 'idle',
+        createdAt: now,
+      });
+
+      const res = await request(server, 'POST', '/api/branches/bad-url-branch/deploy');
+
+      expect(res.status).toBe(400);
+      expect((res.body as any).error).toBe('invalid_branch_name');
+    });
   });
 
   describe('GET /api/branches', () => {
@@ -311,7 +389,7 @@ describe('Branch Routes', () => {
       expect((res.body as any).branches[0].id).toBe('main');
     });
 
-    it('live=false returns cached branch state without probing Docker', async () => {
+    it('returns cached branch state by default without probing Docker', async () => {
       const now = new Date().toISOString();
       stateService.addBranch({
         id: 'cached-main',
@@ -330,7 +408,7 @@ describe('Branch Routes', () => {
         createdAt: now,
       });
 
-      const res = await request(server, 'GET', '/api/branches?project=default&live=false');
+      const res = await request(server, 'GET', '/api/branches?project=default');
 
       expect(res.status).toBe(200);
       expect((res.body as any).branches[0].services.api.status).toBe('running');
@@ -338,7 +416,44 @@ describe('Branch Routes', () => {
       expect(mock.commands.some((cmd) => cmd.includes('git log -1'))).toBe(false);
     });
 
-    it('live=true reconciles branch state with Docker', async () => {
+    it('records timing headers and slow diagnostics for default branch snapshots without live probing', async () => {
+      process.env.CDS_BRANCHES_SLOW_MS = '0';
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'timed-main',
+        projectId: 'default',
+        branch: 'main',
+        worktreePath: path.join(tmpDir, 'worktrees', 'timed-main'),
+        status: 'running',
+        services: {
+          api: {
+            profileId: 'api',
+            containerName: 'cds-timed-main-api',
+            hostPort: 10001,
+            status: 'running',
+          },
+        },
+        createdAt: now,
+      });
+
+      const res = await request(server, 'GET', '/api/branches?project=default', undefined, {
+        'X-CDS-Request-Id': 'req-branches-timing',
+      });
+
+      expect(res.status).toBe(200);
+      expect(String(res.headers['server-timing'])).toContain('getState;dur=');
+      expect(String(res.headers['server-timing'])).toContain('liveSkipped;dur=');
+      expect(mock.commands.some((cmd) => cmd.includes('docker ps'))).toBe(false);
+      expect(mock.commands.some((cmd) => cmd.includes('git log -1'))).toBe(false);
+      const slowEvent = operationEvents.find((event) => event.action === 'branches.list.slow');
+      expect(slowEvent?.source).toBe('api.branches');
+      expect(slowEvent?.requestId).toBe('req-branches-timing');
+      expect(slowEvent?.details?.live).toBe(false);
+      expect(slowEvent?.details?.branchCount).toBeGreaterThanOrEqual(1);
+      expect((slowEvent?.details?.timings as Record<string, number>)?.total).toBeGreaterThanOrEqual(0);
+    });
+
+    it('live=true explicitly reconciles branch state with Docker', async () => {
       const now = new Date().toISOString();
       stateService.addBranch({
         id: 'live-main',
@@ -358,7 +473,7 @@ describe('Branch Routes', () => {
       });
       mock.addResponsePattern(/docker ps --format/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
 
-      const res = await request(server, 'GET', '/api/branches?project=default');
+      const res = await request(server, 'GET', '/api/branches?project=default&live=true');
 
       expect(res.status).toBe(200);
       expect((res.body as any).branches[0].services.api.status).toBe('stopped');
@@ -620,6 +735,1264 @@ describe('Branch Routes', () => {
       await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
       const res = await request(server, 'POST', '/api/branches/feature-test/stop');
       expect(res.status).toBe(200);
+      const operationActions = operationEvents
+        .filter((event) => event.branchId === 'feature-test')
+        .map((event) => event.action);
+      expect(operationActions).toContain('branch.operation.started');
+      expect(operationActions).toContain('branch.operation.completed');
+    });
+  });
+
+  describe('POST /api/branches/cleanup-damaged-containers', () => {
+    it('removes only non-running damaged services and records branch operations', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'damaged-branch',
+        projectId: 'default',
+        branch: 'feature/damaged',
+        worktreePath: path.join(tmpDir, 'worktrees', 'damaged-branch'),
+        status: 'error',
+        createdAt: now,
+        services: {
+          api: {
+            profileId: 'api',
+            containerName: 'missing-api',
+            hostPort: 10001,
+            status: 'error',
+          },
+          web: {
+            profileId: 'web',
+            containerName: 'running-web',
+            hostPort: 10002,
+            status: 'running',
+          },
+        },
+      });
+      mock.addResponse('docker ps --format "{{.Names}}"', {
+        stdout: 'running-web\n',
+        stderr: '',
+        exitCode: 0,
+      });
+
+      const res = await request(server, 'POST', '/api/branches/cleanup-damaged-containers');
+
+      expect(res.status).toBe(200);
+      expect((res.body as any).removedCount).toBe(1);
+      expect((res.body as any).skippedRunningCount).toBe(1);
+      const branch = stateService.getBranch('damaged-branch')!;
+      expect(branch.services.api).toBeUndefined();
+      expect(branch.services.web).toBeDefined();
+      const cleanupEvent = operationEvents.find((event) => event.source === 'bulk-damaged-container-cleanup');
+      expect(cleanupEvent?.action).toBe('app.damaged-containers.cleanup');
+      expect(cleanupEvent?.details?.removed).toEqual([
+        expect.objectContaining({ branchId: 'damaged-branch', profileId: 'api', containerName: 'missing-api' }),
+      ]);
+      expect(cleanupEvent?.details?.skippedRunning).toEqual([
+        expect.objectContaining({ branchId: 'damaged-branch', profileId: 'web', containerName: 'running-web' }),
+      ]);
+      const operationActions = operationEvents
+        .filter((event) => event.branchId === 'damaged-branch')
+        .map((event) => event.action);
+      expect(operationActions).toContain('branch.operation.started');
+      expect(operationActions).toContain('branch.operation.completed');
+    });
+
+    it('keeps building, starting, restarting, and actually running services during damaged cleanup', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'mixed-damaged',
+        projectId: 'default',
+        branch: 'feature/mixed-damaged',
+        worktreePath: path.join(tmpDir, 'worktrees', 'mixed-damaged'),
+        status: 'error',
+        createdAt: now,
+        services: {
+          missing: {
+            profileId: 'missing',
+            containerName: 'missing-container',
+            hostPort: 10001,
+            status: 'error',
+          },
+          building: {
+            profileId: 'building',
+            containerName: 'building-container',
+            hostPort: 10002,
+            status: 'building',
+          },
+          starting: {
+            profileId: 'starting',
+            containerName: 'starting-container',
+            hostPort: 10003,
+            status: 'starting',
+          },
+          restarting: {
+            profileId: 'restarting',
+            containerName: 'restarting-container',
+            hostPort: 10004,
+            status: 'restarting',
+          },
+          staleButRunning: {
+            profileId: 'staleButRunning',
+            containerName: 'stale-running-container',
+            hostPort: 10005,
+            status: 'error',
+          },
+        },
+      });
+      mock.addResponse('docker ps --format "{{.Names}}"', {
+        stdout: 'stale-running-container\n',
+        stderr: '',
+        exitCode: 0,
+      });
+
+      const res = await request(server, 'POST', '/api/branches/cleanup-damaged-containers');
+
+      expect(res.status).toBe(200);
+      expect((res.body as any).removedCount).toBe(1);
+      expect((res.body as any).skippedRunningCount).toBe(4);
+      const branch = stateService.getBranch('mixed-damaged')!;
+      expect(Object.keys(branch.services).sort()).toEqual([
+        'building',
+        'restarting',
+        'staleButRunning',
+        'starting',
+      ]);
+      expect(mock.commands.some((command) => command.includes('docker rm missing-container'))).toBe(true);
+      expect(mock.commands.some((command) => command.includes('docker rm building-container'))).toBe(false);
+      expect(mock.commands.some((command) => command.includes('docker rm starting-container'))).toBe(false);
+      expect(mock.commands.some((command) => command.includes('docker rm restarting-container'))).toBe(false);
+      expect(mock.commands.some((command) => command.includes('docker rm stale-running-container'))).toBe(false);
+      const cleanupEvent = operationEvents.find((event) => event.source === 'bulk-damaged-container-cleanup');
+      expect(cleanupEvent?.details?.removed).toEqual([
+        expect.objectContaining({ branchId: 'mixed-damaged', profileId: 'missing', containerName: 'missing-container' }),
+      ]);
+      expect(cleanupEvent?.details?.skippedRunning).toEqual(expect.arrayContaining([
+        expect.objectContaining({ branchId: 'mixed-damaged', profileId: 'building', containerName: 'building-container' }),
+        expect.objectContaining({ branchId: 'mixed-damaged', profileId: 'starting', containerName: 'starting-container' }),
+        expect.objectContaining({ branchId: 'mixed-damaged', profileId: 'restarting', containerName: 'restarting-container' }),
+        expect.objectContaining({ branchId: 'mixed-damaged', profileId: 'staleButRunning', containerName: 'stale-running-container' }),
+      ]));
+    });
+  });
+
+  describe('POST /api/branches/cleanup-orphan-containers', () => {
+    it('runs orphan removals through branch operation fencing and container diagnostics', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'orphan-host',
+        projectId: 'default',
+        branch: 'feature/orphan-host',
+        worktreePath: path.join(tmpDir, 'worktrees', 'orphan-host'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+      });
+      mock.addResponsePattern(/docker ps -a --filter "label=cds\.managed=true"/, () => ({
+        stdout: [
+          'orphan-api|exited|cds.managed=true,cds.type=app,cds.branch.id=orphan-host,cds.profile.id=api,cds.network=cds-network',
+        ].join('\n'),
+        stderr: '',
+        exitCode: 0,
+      }));
+
+      const res = await request(server, 'POST', '/api/branches/cleanup-orphan-containers?includeStopped=true');
+
+      expect(res.status).toBe(200);
+      expect((res.body as any).removed).toEqual([
+        expect.objectContaining({ branchId: 'orphan-host', profileId: 'api', containerName: 'orphan-api' }),
+      ]);
+      const opEvents = operationEvents.filter((event) => event.branchId === 'orphan-host');
+      const started = opEvents.find((event) => event.action === 'branch.operation.started');
+      const completed = opEvents.find((event) => event.action === 'branch.operation.completed');
+      expect(started?.details).toMatchObject({
+        kind: 'cleanup-orphans',
+        source: 'api.cleanup-orphan-containers',
+      });
+      expect(completed?.operationId).toBe(started?.operationId);
+      expect(mock.commands.some((command) => command.includes('docker stop orphan-api'))).toBe(true);
+      expect(mock.commands.some((command) => command.includes('docker rm orphan-api'))).toBe(true);
+    });
+  });
+
+  describe('POST /api/cleanup-cross-project-services', () => {
+    it('skips polluted service cleanup while the branch has an active lifecycle operation', async () => {
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'cross-cleanup-busy',
+        projectId: 'default',
+        branch: 'feature/cross-cleanup-busy',
+        worktreePath: path.join(tmpDir, 'worktrees', 'cross-cleanup-busy'),
+        status: 'idle',
+        createdAt: now,
+        services: {
+          api: {
+            profileId: 'api',
+            containerName: 'cds-cross-cleanup-busy-api',
+            hostPort: 10001,
+            status: 'idle',
+          },
+          foreign: {
+            profileId: 'foreign',
+            containerName: 'cds-cross-cleanup-busy-foreign',
+            hostPort: 10002,
+            status: 'running',
+          },
+        },
+      });
+      stateService.save();
+
+      let releaseRun!: () => void;
+      const runRelease = new Promise<void>((resolve) => { releaseRun = resolve; });
+      let markRunStarted!: () => void;
+      const runStarted = new Promise<void>((resolve) => { markRunStarted = resolve; });
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('docker run -d') && command.includes('--name cds-cross-cleanup-busy-api')) {
+          markRunStarted();
+          await runRelease;
+          return { stdout: 'cid-cross-cleanup-busy', stderr: '', exitCode: 0 };
+        }
+        return originalExec(command, options);
+      };
+
+      const deployPromise = request(server, 'POST', '/api/branches/cross-cleanup-busy/deploy');
+      try {
+        await runStarted;
+
+        const cleanup = await request(
+          server,
+          'POST',
+          '/api/cleanup-cross-project-services',
+          undefined,
+          { 'X-CDS-Request-Id': 'req-cross-cleanup' },
+        );
+
+        expect(cleanup.status).toBe(200);
+        expect((cleanup.body as any).trimmedCount).toBe(0);
+        expect((cleanup.body as any).skippedBusyCount).toBe(1);
+        expect(stateService.getBranch('cross-cleanup-busy')?.services.foreign).toBeTruthy();
+        expect(mock.commands.some((command) => command.includes('docker rm -f cds-cross-cleanup-busy-foreign'))).toBe(false);
+        const skipped = operationEvents.find((event) => event.action === 'app.cross-project-service.cleanup-skipped');
+        expect(skipped?.requestId).toBe('req-cross-cleanup');
+        expect(skipped?.branchId).toBe('cross-cleanup-busy');
+        expect(skipped?.operationKind).toBe('deploy');
+      } finally {
+        releaseRun();
+      }
+      const deploy = await deployPromise;
+      expect(deploy.status).toBe(200);
+    });
+  });
+
+  describe('POST /api/branches/:id/force-rebuild/:profileId', () => {
+    it('can reserve the next deploy as the same operation chain', async () => {
+      const now = new Date().toISOString();
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+      });
+      stateService.addBranch({
+        id: 'force-branch',
+        projectId: 'default',
+        branch: 'feature/force',
+        worktreePath: path.join(tmpDir, 'worktrees', 'force-branch'),
+        status: 'running',
+        createdAt: now,
+        services: {
+          api: {
+            profileId: 'api',
+            containerName: 'force-api',
+            hostPort: 10001,
+            status: 'running',
+          },
+        },
+      });
+      mock.addResponsePattern(/find .* -type d .* echo done/, () => ({ stdout: 'done\n', stderr: '', exitCode: 0 }));
+
+      const res = await request(server, 'POST', '/api/branches/force-branch/force-rebuild/api?reserveDeploy=1');
+
+      expect(res.status).toBe(200);
+      expect((res.body as any).reserveDeploy).toBe(true);
+      expect((res.body as any).operationId).toMatch(/^op_/);
+      const actions = operationEvents
+        .filter((event) => event.branchId === 'force-branch')
+        .map((event) => event.action);
+      expect(actions).toContain('branch.operation.started');
+      expect(actions).toContain('branch.operation.completed');
+      expect(actions).toContain('branch.operation.queued');
+    });
+
+    it('keeps force-rebuild deploy continuation on the same operation while merging webhook deploys behind it', async () => {
+      const now = new Date().toISOString();
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+      });
+      stateService.addBranch({
+        id: 'force-webhook',
+        projectId: 'default',
+        branch: 'feature/force-webhook',
+        worktreePath: path.join(tmpDir, 'worktrees', 'force-webhook'),
+        status: 'running',
+        createdAt: now,
+        services: {
+          api: {
+            profileId: 'api',
+            containerName: 'cds-force-webhook-api',
+            hostPort: 10001,
+            status: 'running',
+          },
+        },
+        githubCommitSha: '1111111111111111111111111111111111111111',
+      });
+      stateService.save();
+      mock.addResponsePattern(/find .* -type d .* echo done/, () => ({ stdout: 'done\n', stderr: '', exitCode: 0 }));
+
+      const fetchCalls: Array<{ url: string; body: unknown; requestId?: string }> = [];
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        fetchCalls.push({
+          url: String(input),
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          requestId: init?.headers && typeof init.headers === 'object' && !Array.isArray(init.headers)
+            ? (init.headers as Record<string, string>)['X-CDS-Request-Id']
+            : undefined,
+        });
+        return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
+      }) as typeof fetch;
+
+      try {
+        const force = await request(
+          server,
+          'POST',
+          '/api/branches/force-webhook/force-rebuild/api?reserveDeploy=1',
+          undefined,
+          { 'X-CDS-Request-Id': 'req-force' },
+        );
+        expect(force.status).toBe(200);
+        const forceOperationId = (force.body as any).operationId;
+        expect(forceOperationId).toMatch(/^op_/);
+
+        const webhook = await request(
+          server,
+          'POST',
+          '/api/branches/force-webhook/deploy',
+          { commitSha: '2222222222222222222222222222222222222222' },
+          { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-force-webhook' },
+        );
+        expect(String(webhook.body)).toContain('merged');
+        expect(fetchCalls).toEqual([]);
+
+        const deploy = await request(
+          server,
+          'POST',
+          '/api/branches/force-webhook/deploy/api',
+          undefined,
+          { 'X-CDS-Request-Id': 'req-force-deploy' },
+        );
+        expect(deploy.status).toBe(200);
+        expect(String(deploy.body)).toContain('complete');
+        expect(stateService.getBranch('force-webhook')?.status).toBe('running');
+        expect(fetchCalls).toHaveLength(1);
+        expect(fetchCalls[0].url).toContain('/api/branches/force-webhook/deploy');
+        expect(fetchCalls[0].body).toEqual({ commitSha: '2222222222222222222222222222222222222222' });
+        expect(fetchCalls[0].requestId).toBe('req-force-webhook');
+
+        const events = operationEvents.filter((event) => event.branchId === 'force-webhook');
+        expect(events.find((event) => event.action === 'branch.operation.queued')?.operationId).toBe(forceOperationId);
+        expect(events.find((event) => event.action === 'branch.operation.continued')?.operationId).toBe(forceOperationId);
+        const deployStarted = events.find((event) => event.action === 'branch.operation.started' && event.details?.kind === 'deploy-profile');
+        expect(deployStarted?.operationId).toBe(forceOperationId);
+        const pendingDispatch = events.find((event) => event.action === 'branch.operation.pending-dispatch.started');
+        expect(pendingDispatch?.details).toMatchObject({
+          commitSha: '2222222222222222222222222222222222222222',
+          trigger: 'webhook',
+          actor: 'system:webhook',
+          kind: 'deploy',
+          mergedCount: 1,
+        });
+        expect(pendingDispatch).toMatchObject({
+          operationKind: 'deploy',
+          operationTrigger: 'webhook',
+          operationActor: 'system:webhook',
+          operationSource: 'api.deploy-branch',
+          commitSha: '2222222222222222222222222222222222222222',
+        });
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  });
+
+  describe('branch operation fencing', () => {
+    it('dispatches only the latest merged webhook commit after the active deploy completes', async () => {
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'pending-latest',
+        projectId: 'default',
+        branch: 'feature/pending-latest',
+        worktreePath: path.join(tmpDir, 'worktrees', 'pending-latest'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+        githubCommitSha: '1111111111111111111111111111111111111111',
+      });
+      stateService.save();
+
+      let releaseRun!: () => void;
+      const runRelease = new Promise<void>((resolve) => { releaseRun = resolve; });
+      let markRunStarted!: () => void;
+      const runStarted = new Promise<void>((resolve) => { markRunStarted = resolve; });
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('docker run -d') && command.includes('--name cds-pending-latest-api')) {
+          markRunStarted();
+          await runRelease;
+          return { stdout: 'cid-pending-latest', stderr: '', exitCode: 0 };
+        }
+        return originalExec(command, options);
+      };
+
+      const fetchCalls: Array<{ url: string; body: unknown; requestId?: string }> = [];
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        fetchCalls.push({
+          url: String(input),
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          requestId: init?.headers && typeof init.headers === 'object' && !Array.isArray(init.headers)
+            ? (init.headers as Record<string, string>)['X-CDS-Request-Id']
+            : undefined,
+        });
+        return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
+      }) as typeof fetch;
+
+      try {
+        const activeDeploy = request(
+          server,
+          'POST',
+          '/api/branches/pending-latest/deploy',
+          { commitSha: '1111111111111111111111111111111111111111' },
+          { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-a' },
+        );
+        await runStarted;
+
+        const mergedB = await request(
+          server,
+          'POST',
+          '/api/branches/pending-latest/deploy',
+          { commitSha: '2222222222222222222222222222222222222222' },
+          { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-b' },
+        );
+        const mergedC = await request(
+          server,
+          'POST',
+          '/api/branches/pending-latest/deploy',
+          { commitSha: '3333333333333333333333333333333333333333' },
+          { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-c' },
+        );
+
+        expect(String(mergedB.body)).toContain('operationStatus');
+        expect(String(mergedB.body)).toContain('merged');
+        expect(String(mergedC.body)).toContain('3333333333333333333333333333333333333333');
+
+        releaseRun();
+        const active = await activeDeploy;
+        expect(active.status).toBe(200);
+        expect(fetchCalls).toHaveLength(1);
+        expect(fetchCalls[0].url).toContain('/api/branches/pending-latest/deploy');
+        expect(fetchCalls[0].body).toEqual({ commitSha: '3333333333333333333333333333333333333333' });
+        expect(fetchCalls[0].requestId).toBe('req-c');
+
+        const pendingDispatch = operationEvents.find((event) =>
+          event.branchId === 'pending-latest' && event.action === 'branch.operation.pending-dispatch.started',
+        );
+        expect(pendingDispatch?.operationId).toMatch(/^op_/);
+        expect(pendingDispatch?.details).toMatchObject({
+          commitSha: '3333333333333333333333333333333333333333',
+          trigger: 'webhook',
+          actor: 'system:webhook',
+          kind: 'deploy',
+          mergedCount: 2,
+        });
+        expect(pendingDispatch).toMatchObject({
+          operationKind: 'deploy',
+          operationTrigger: 'webhook',
+          operationActor: 'system:webhook',
+          operationSource: 'api.deploy-branch',
+          commitSha: '3333333333333333333333333333333333333333',
+        });
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('records pending webhook drops with queryable operation metadata when the branch is gone', async () => {
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'pending-gone',
+        projectId: 'default',
+        branch: 'feature/pending-gone',
+        worktreePath: path.join(tmpDir, 'worktrees', 'pending-gone'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+        githubCommitSha: '1111111111111111111111111111111111111111',
+      });
+      stateService.save();
+
+      let releaseRun!: () => void;
+      const runRelease = new Promise<void>((resolve) => { releaseRun = resolve; });
+      let markRunStarted!: () => void;
+      const runStarted = new Promise<void>((resolve) => { markRunStarted = resolve; });
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('docker run -d') && command.includes('--name cds-pending-gone-api')) {
+          markRunStarted();
+          await runRelease;
+          return { stdout: 'cid-pending-gone', stderr: '', exitCode: 0 };
+        }
+        return originalExec(command, options);
+      };
+
+      const fetchCalls: string[] = [];
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        fetchCalls.push(String(input));
+        return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
+      }) as typeof fetch;
+
+      try {
+        const activeDeploy = request(
+          server,
+          'POST',
+          '/api/branches/pending-gone/deploy',
+          { commitSha: '1111111111111111111111111111111111111111' },
+          { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-gone-a' },
+        );
+        await runStarted;
+
+        const merged = await request(
+          server,
+          'POST',
+          '/api/branches/pending-gone/deploy',
+          { commitSha: '2222222222222222222222222222222222222222' },
+          { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-gone-b' },
+        );
+        expect(String(merged.body)).toContain('merged');
+
+        stateService.removeBranch('pending-gone');
+        stateService.save();
+        releaseRun();
+
+        const active = await activeDeploy;
+        expect(active.status).toBe(200);
+        expect(fetchCalls).toHaveLength(0);
+
+        const pendingDrop = operationEvents.find((event) =>
+          event.branchId === 'pending-gone' && event.action === 'branch.operation.pending-drop',
+        );
+        expect(pendingDrop).toMatchObject({
+          requestId: 'req-gone-b',
+          operationId: expect.stringMatching(/^op_/),
+          operationKind: 'deploy',
+          operationTrigger: 'webhook',
+          operationActor: 'system:webhook',
+          operationSource: 'api.deploy-branch',
+          commitSha: '2222222222222222222222222222222222222222',
+        });
+        expect(pendingDrop?.details).toMatchObject({
+          operationId: pendingDrop?.operationId,
+          commitSha: '2222222222222222222222222222222222222222',
+          trigger: 'webhook',
+          actor: 'system:webhook',
+          source: 'api.deploy-branch',
+          kind: 'deploy',
+        });
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('manual stop cancels queued webhook deploy dispatch after an active deploy is fenced', async () => {
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'stop-pending',
+        projectId: 'default',
+        branch: 'feature/stop-pending',
+        worktreePath: path.join(tmpDir, 'worktrees', 'stop-pending'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+        githubCommitSha: '1111111111111111111111111111111111111111',
+      });
+      stateService.save();
+
+      let releaseRun!: () => void;
+      const runRelease = new Promise<void>((resolve) => { releaseRun = resolve; });
+      let markRunStarted!: () => void;
+      const runStarted = new Promise<void>((resolve) => { markRunStarted = resolve; });
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('docker run -d') && command.includes('--name cds-stop-pending-api')) {
+          markRunStarted();
+          await runRelease;
+          return { stdout: 'cid-stop-pending', stderr: '', exitCode: 0 };
+        }
+        return originalExec(command, options);
+      };
+
+      const fetchCalls: Array<{ url: string; body: unknown; requestId?: string }> = [];
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        fetchCalls.push({
+          url: String(input),
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          requestId: init?.headers && typeof init.headers === 'object' && !Array.isArray(init.headers)
+            ? (init.headers as Record<string, string>)['X-CDS-Request-Id']
+            : undefined,
+        });
+        return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
+      }) as typeof fetch;
+
+      try {
+        const activeDeploy = request(
+          server,
+          'POST',
+          '/api/branches/stop-pending/deploy',
+          { commitSha: '1111111111111111111111111111111111111111' },
+          { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-stop-a' },
+        );
+        await runStarted;
+
+        const mergedB = await request(
+          server,
+          'POST',
+          '/api/branches/stop-pending/deploy',
+          { commitSha: '2222222222222222222222222222222222222222' },
+          { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-stop-b' },
+        );
+        expect(String(mergedB.body)).toContain('merged');
+
+        const stop = await request(
+          server,
+          'POST',
+          '/api/branches/stop-pending/stop',
+          undefined,
+          { 'X-CDS-Request-Id': 'req-stop-manual' },
+        );
+        expect(stop.status).toBe(200);
+
+        releaseRun();
+        const active = await activeDeploy;
+        expect(active.status).toBe(200);
+        expect(String(active.body)).toContain('error');
+        expect(fetchCalls).toHaveLength(0);
+        expect(stateService.getBranch('stop-pending')?.status).toBe('idle');
+
+        const events = operationEvents.filter((event) => event.branchId === 'stop-pending');
+        expect(events.some((event) =>
+          event.action === 'branch.operation.cancelled'
+          && event.operationKind === 'deploy'
+          && event.details?.reason === 'superseded by stop',
+        )).toBe(true);
+        expect(events.some((event) =>
+          event.action === 'branch.operation.cancelled'
+          && event.operationKind === 'deploy'
+          && event.details?.pending === true
+          && event.details?.reason === 'superseded by stop',
+        )).toBe(true);
+        expect(events.find((event) => event.action === 'branch.operation.pending-dispatch.started')).toBeUndefined();
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('records branch delete completion only after state flush succeeds', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'flush-delete',
+        projectId: 'default',
+        branch: 'feature/flush-delete',
+        worktreePath: path.join(tmpDir, 'worktrees', 'flush-delete'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+      });
+      stateService.save();
+
+      stateService.flush = async () => {
+        operationEvents.push({ action: 'test.state-flushed', branchId: 'flush-delete' });
+      };
+
+      const del = await request(server, 'DELETE', '/api/branches/flush-delete');
+      expect(del.status).toBe(200);
+      expect(stateService.getBranch('flush-delete')).toBeUndefined();
+
+      const actions = operationEvents
+        .filter((event) => event.branchId === 'flush-delete')
+        .map((event) => event.action);
+      expect(actions.indexOf('test.state-flushed')).toBeGreaterThanOrEqual(0);
+      expect(actions.indexOf('branch.delete.completed')).toBeGreaterThan(actions.indexOf('test.state-flushed'));
+    });
+
+    it('does not keep delete SSE open when immediate delete completion audit hangs', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'hung-audit-delete',
+        projectId: 'default',
+        branch: 'feature/hung-audit-delete',
+        worktreePath: path.join(tmpDir, 'worktrees', 'hung-audit-delete'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+      });
+      stateService.save();
+
+      serverEventLogStore.recordImmediate = async () => {
+        await new Promise<void>(() => { /* simulate a stuck Mongo write */ });
+      };
+
+      const startedAt = Date.now();
+      const del = await request(server, 'DELETE', '/api/branches/hung-audit-delete');
+      const elapsedMs = Date.now() - startedAt;
+
+      expect(del.status).toBe(200);
+      expect(elapsedMs).toBeLessThan(2_000);
+      expect(String(del.body)).toContain('complete');
+      expect(stateService.getBranch('hung-audit-delete')).toBeUndefined();
+      expect(operationEvents.find((event) =>
+        event.branchId === 'hung-audit-delete' && event.action === 'branch.delete.completed',
+      )).toBeTruthy();
+      expect(operationEvents.find((event) =>
+        event.branchId === 'hung-audit-delete' && event.action === 'branch.delete.audit-timeout',
+      )).toBeTruthy();
+      expect(operationEvents.find((event) =>
+        event.branchId === 'hung-audit-delete' && event.action === 'branch.operation.completed',
+      )).toBeTruthy();
+    });
+
+    it('does not fail branch delete when immediate delete completion audit throws', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'failed-audit-delete',
+        projectId: 'default',
+        branch: 'feature/failed-audit-delete',
+        worktreePath: path.join(tmpDir, 'worktrees', 'failed-audit-delete'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+      });
+      stateService.save();
+
+      serverEventLogStore.recordImmediate = async () => {
+        throw new Error('mongo temporarily unavailable');
+      };
+
+      const del = await request(server, 'DELETE', '/api/branches/failed-audit-delete');
+
+      expect(del.status).toBe(200);
+      expect(String(del.body)).toContain('complete');
+      expect(stateService.getBranch('failed-audit-delete')).toBeUndefined();
+      expect(operationEvents.find((event) =>
+        event.branchId === 'failed-audit-delete' && event.action === 'branch.delete.completed',
+      )).toBeTruthy();
+      expect(operationEvents.find((event) =>
+        event.branchId === 'failed-audit-delete' && event.action === 'branch.operation.completed',
+      )).toBeTruthy();
+    });
+
+    it('does not report delete success when state flush hangs after removing branch state', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'hung-flush-delete',
+        projectId: 'default',
+        branch: 'feature/hung-flush-delete',
+        worktreePath: path.join(tmpDir, 'worktrees', 'hung-flush-delete'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+      });
+      stateService.save();
+
+      stateService.flush = async () => {
+        await new Promise<void>(() => { /* simulate stuck write-behind persistence */ });
+      };
+
+      process.env.CDS_DELETE_STATE_FLUSH_TIMEOUT_MS = '500';
+      const startedAt = Date.now();
+      const del = await request(server, 'DELETE', '/api/branches/hung-flush-delete');
+      delete process.env.CDS_DELETE_STATE_FLUSH_TIMEOUT_MS;
+      const elapsedMs = Date.now() - startedAt;
+
+      expect(elapsedMs).toBeLessThan(2_000);
+      expect(String(del.body)).toContain('error');
+      expect(String(del.body)).toContain('持久化超时');
+      expect(stateService.getBranch('hung-flush-delete')).toBeUndefined();
+      expect(operationEvents.find((event) =>
+        event.branchId === 'hung-flush-delete' && event.action === 'branch.delete.state-flush-timeout',
+      )).toBeTruthy();
+      expect(operationEvents.find((event) =>
+        event.branchId === 'hung-flush-delete' && event.action === 'branch.delete.completed',
+      )).toBeFalsy();
+      expect(operationEvents.find((event) =>
+        event.branchId === 'hung-flush-delete' && event.action === 'branch.operation.failed',
+      )).toBeTruthy();
+    });
+
+    it('does not keep delete SSE open for slow best-effort volume cleanup', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'slow-volume-delete',
+        projectId: 'default',
+        branch: 'feature/slow-volume-delete',
+        worktreePath: path.join(tmpDir, 'worktrees', 'slow-volume-delete'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+      });
+      stateService.save();
+
+      const originalExec = mock.exec.bind(mock);
+      let volumeCleanupStarted = false;
+      mock.exec = async (command, options) => {
+        if (command.includes('docker volume ls') && command.includes('--filter name=cds-nm-')) {
+          volumeCleanupStarted = true;
+          await new Promise<void>(() => { /* simulate a hung Docker volume command */ });
+        }
+        return originalExec(command, options);
+      };
+
+      const del = await request(server, 'DELETE', '/api/branches/slow-volume-delete');
+      expect(del.status).toBe(200);
+      expect(String(del.body)).toContain('complete');
+      expect(stateService.getBranch('slow-volume-delete')).toBeUndefined();
+      expect(volumeCleanupStarted).toBe(true);
+      expect(operationEvents.find((event) =>
+        event.branchId === 'slow-volume-delete' && event.action === 'branch.delete.completed',
+      )).toBeTruthy();
+    });
+
+    it('manual delete fences an in-flight webhook deploy and the old deploy cannot recreate branch state', async () => {
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'race-delete',
+        projectId: 'default',
+        branch: 'feature/race-delete',
+        worktreePath: path.join(tmpDir, 'worktrees', 'race-delete'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+        githubCommitSha: '1111111111111111111111111111111111111111',
+      });
+      stateService.save();
+
+      let releaseRun!: () => void;
+      const runRelease = new Promise<void>((resolve) => { releaseRun = resolve; });
+      let markRunStarted!: () => void;
+      const runStarted = new Promise<void>((resolve) => { markRunStarted = resolve; });
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('docker run -d') && command.includes('--name cds-race-delete-api')) {
+          markRunStarted();
+          await runRelease;
+          return { stdout: 'cid-race-delete', stderr: '', exitCode: 0 };
+        }
+        return originalExec(command, options);
+      };
+
+      const deployPromise = request(
+        server,
+        'POST',
+        '/api/branches/race-delete/deploy',
+        { commitSha: '2222222222222222222222222222222222222222' },
+        { 'X-CDS-Trigger': 'webhook' },
+      );
+      await runStarted;
+
+      const del = await request(server, 'DELETE', '/api/branches/race-delete');
+      expect(del.status).toBe(200);
+      expect(stateService.getBranch('race-delete')).toBeUndefined();
+
+      releaseRun();
+      const deploy = await deployPromise;
+      expect(deploy.status).toBe(200);
+      expect(String(deploy.body)).toContain('no longer current');
+      expect(stateService.getBranch('race-delete')).toBeUndefined();
+
+      const events = operationEvents.filter((event) => event.branchId === 'race-delete');
+      expect(events.map((event) => event.action)).toContain('branch.operation.cancelled');
+      expect(events.map((event) => event.action)).toContain('branch.operation.completed');
+      const deleteStarted = events.find((event) => event.action === 'branch.operation.started' && event.details?.kind === 'delete');
+      const deleteOperationId = deleteStarted?.operationId;
+      expect(deleteOperationId).toMatch(/^op_/);
+      expect(events.find((event) => event.action === 'branch.delete.requested')?.operationId).toBe(deleteOperationId);
+      expect(events.find((event) => event.action === 'branch.delete.completed')?.operationId).toBe(deleteOperationId);
+      expect(events.find((event) =>
+        event.action === 'container.logs.archived' && event.details?.archiveSource === 'branch-delete',
+      )?.operationId).toBe(deleteOperationId);
+      expect(events.map((event) => event.action)).toContain('container.remove.after-fenced-deploy');
+      expect(events.map((event) => event.action)).not.toContain('container.remove.after-fenced-deploy.skipped');
+    });
+
+    it('manual delete before docker run prevents a fenced webhook deploy from creating containers', async () => {
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'race-delete-before-run',
+        projectId: 'default',
+        branch: 'feature/race-delete-before-run',
+        worktreePath: path.join(tmpDir, 'worktrees', 'race-delete-before-run'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+        githubCommitSha: '1111111111111111111111111111111111111111',
+      });
+      stateService.save();
+
+      let releaseReset!: () => void;
+      const resetRelease = new Promise<void>((resolve) => { releaseReset = resolve; });
+      let markResetStarted!: () => void;
+      const resetStarted = new Promise<void>((resolve) => { markResetStarted = resolve; });
+      let dockerRunCount = 0;
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('git reset --hard')) {
+          markResetStarted();
+          await resetRelease;
+          return { stdout: 'HEAD is now at abc1234', stderr: '', exitCode: 0 };
+        }
+        if (command.includes('docker run -d') && command.includes('--name cds-race-delete-before-run-api')) {
+          dockerRunCount += 1;
+        }
+        return originalExec(command, options);
+      };
+
+      const deployPromise = request(
+        server,
+        'POST',
+        '/api/branches/race-delete-before-run/deploy',
+        { commitSha: '2222222222222222222222222222222222222222' },
+        { 'X-CDS-Trigger': 'webhook' },
+      );
+      await resetStarted;
+
+      const del = await request(server, 'DELETE', '/api/branches/race-delete-before-run');
+      expect(del.status).toBe(200);
+      expect(stateService.getBranch('race-delete-before-run')).toBeUndefined();
+
+      releaseReset();
+      const deploy = await deployPromise;
+      expect(deploy.status).toBe(200);
+      expect(String(deploy.body)).toContain('no longer current');
+      expect(stateService.getBranch('race-delete-before-run')).toBeUndefined();
+      expect(dockerRunCount).toBe(0);
+
+      const events = operationEvents.filter((event) => event.branchId === 'race-delete-before-run');
+      expect(events.map((event) => event.action)).toContain('branch.operation.cancelled');
+    });
+
+    it('manual delete after pre-run cleanup still fences before docker run', async () => {
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'race-delete-during-runservice',
+        projectId: 'default',
+        branch: 'feature/race-delete-during-runservice',
+        worktreePath: path.join(tmpDir, 'worktrees', 'race-delete-during-runservice'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+        githubCommitSha: '1111111111111111111111111111111111111111',
+      });
+      stateService.save();
+
+      let releasePreRun!: () => void;
+      const preRunRelease = new Promise<void>((resolve) => { releasePreRun = resolve; });
+      let markPreRunStarted!: () => void;
+      const preRunStarted = new Promise<void>((resolve) => { markPreRunStarted = resolve; });
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command === 'docker rm -f cds-race-delete-during-runservice-api') {
+          markPreRunStarted();
+          await preRunRelease;
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        return originalExec(command, options);
+      };
+
+      const deployPromise = request(
+        server,
+        'POST',
+        '/api/branches/race-delete-during-runservice/deploy',
+        { commitSha: '2222222222222222222222222222222222222222' },
+        { 'X-CDS-Trigger': 'webhook' },
+      );
+      await preRunStarted;
+
+      const del = await request(server, 'DELETE', '/api/branches/race-delete-during-runservice');
+      expect(del.status).toBe(200);
+      expect(stateService.getBranch('race-delete-during-runservice')).toBeUndefined();
+
+      releasePreRun();
+      const deploy = await deployPromise;
+      expect(deploy.status).toBe(200);
+      expect(String(deploy.body)).toContain('no longer current');
+      expect(mock.commands.some((command) =>
+        command.includes('docker run -d') && command.includes('--name cds-race-delete-during-runservice-api'),
+      )).toBe(false);
+    });
+
+    it('manual stop clears an active and queued webhook deploy without dispatching the queued commit', async () => {
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'race-stop',
+        projectId: 'default',
+        branch: 'feature/race-stop',
+        worktreePath: path.join(tmpDir, 'worktrees', 'race-stop'),
+        status: 'idle',
+        createdAt: now,
+        services: {},
+        githubCommitSha: '1111111111111111111111111111111111111111',
+      });
+      stateService.save();
+
+      let releaseRun!: () => void;
+      const runRelease = new Promise<void>((resolve) => { releaseRun = resolve; });
+      let markRunStarted!: () => void;
+      const runStarted = new Promise<void>((resolve) => { markRunStarted = resolve; });
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('docker run -d') && command.includes('--name cds-race-stop-api')) {
+          markRunStarted();
+          await runRelease;
+          return { stdout: 'cid-race-stop', stderr: '', exitCode: 0 };
+        }
+        return originalExec(command, options);
+      };
+
+      const fetchCalls: Array<{ url: string; body: unknown }> = [];
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        fetchCalls.push({
+          url: String(input),
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+        });
+        return new Response('event: complete\ndata: {"ok":true}\n\n', { status: 200 });
+      }) as typeof fetch;
+
+      try {
+        const activeDeploy = request(
+          server,
+          'POST',
+          '/api/branches/race-stop/deploy',
+          { commitSha: '1111111111111111111111111111111111111111' },
+          { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-stop-a' },
+        );
+        await runStarted;
+
+        const merged = await request(
+          server,
+          'POST',
+          '/api/branches/race-stop/deploy',
+          { commitSha: '2222222222222222222222222222222222222222' },
+          { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-stop-b' },
+        );
+        expect(String(merged.body)).toContain('merged');
+
+        const stop = await request(
+          server,
+          'POST',
+          '/api/branches/race-stop/stop',
+          undefined,
+          { 'X-CDS-Request-Id': 'req-stop-user' },
+        );
+        expect(stop.status).toBe(200);
+        expect((stop.body as any).message).toContain('已停止');
+        expect(stateService.getBranch('race-stop')?.status).toBe('idle');
+        expect(Object.values(stateService.getBranch('race-stop')?.services || {}).every((svc) => svc.status === 'stopped')).toBe(true);
+
+        releaseRun();
+        const deploy = await activeDeploy;
+        expect(deploy.status).toBe(200);
+        expect(String(deploy.body)).toContain('no longer current');
+        expect(fetchCalls).toEqual([]);
+        expect(stateService.getBranch('race-stop')?.status).toBe('idle');
+
+        const events = operationEvents.filter((event) => event.branchId === 'race-stop');
+        const cancelled = events.filter((event) => event.action === 'branch.operation.cancelled');
+        expect(cancelled.some((event) => event.details?.kind === 'deploy' && event.details?.pending !== true)).toBe(true);
+        expect(cancelled.some((event) => event.details?.pending === true && event.details?.reason === 'superseded by stop')).toBe(true);
+        const stopStarted = events.find((event) => event.action === 'branch.operation.started' && event.details?.kind === 'stop');
+        expect(stopStarted?.operationId).toMatch(/^op_/);
+        expect(events.find((event) => event.action === 'container.logs.archived' && event.details?.archiveSource === 'manual-stop')?.operationId)
+          .toBe(stopStarted?.operationId);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('remote executor deploy completes the branch operation lease so later webhook deploys are not merged into a stale active op', async () => {
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'remote-lease',
+        projectId: 'default',
+        branch: 'feature/remote-lease',
+        worktreePath: path.join(tmpDir, 'worktrees', 'remote-lease'),
+        status: 'idle',
+        createdAt: now,
+        services: {
+          api: {
+            profileId: 'api',
+            containerName: 'cds-remote-lease-api',
+            hostPort: 10001,
+            status: 'idle',
+          },
+        },
+        githubCommitSha: '1111111111111111111111111111111111111111',
+      });
+      stateService.save();
+      registryNodes.push({
+        id: 'exec-1',
+        host: '127.0.0.1',
+        port: 9101,
+        status: 'online',
+        role: 'remote',
+        labels: [],
+        branches: [],
+        capacity: { maxBranches: 10, memoryMB: 1024, cpuCores: 2 },
+        load: { memoryUsedMB: 0, cpuPercent: 0 },
+        registeredAt: now,
+        lastHeartbeat: now,
+      });
+
+      const fetchCalls: Array<{ url: string; body: any }> = [];
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        fetchCalls.push({
+          url: String(input),
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+        });
+        return new Response([
+          'event: step',
+          'data: {"step":"remote","status":"running","title":"remote deploy"}',
+          '',
+          'event: complete',
+          'data: {"ok":true,"services":{"api":{"status":"running"}}}',
+          '',
+          '',
+        ].join('\n'), { status: 200 });
+      }) as typeof fetch;
+
+      try {
+        const first = await request(
+          server,
+          'POST',
+          '/api/branches/remote-lease/deploy',
+          { commitSha: '1111111111111111111111111111111111111111', targetExecutorId: 'exec-1' },
+          { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-remote-a' },
+        );
+        expect(first.status).toBe(200);
+
+        const second = await request(
+          server,
+          'POST',
+          '/api/branches/remote-lease/deploy',
+          { commitSha: '2222222222222222222222222222222222222222', targetExecutorId: 'exec-1' },
+          { 'X-CDS-Trigger': 'webhook', 'X-CDS-Request-Id': 'req-remote-b' },
+        );
+        expect(second.status).toBe(200);
+        expect(String(second.body)).not.toContain('merged');
+        expect(fetchCalls).toHaveLength(2);
+
+        const events = operationEvents.filter((event) => event.branchId === 'remote-lease');
+        const started = events.filter((event) => event.action === 'branch.operation.started' && event.details?.kind === 'deploy');
+        const completed = events.filter((event) => event.action === 'branch.operation.completed' && event.details?.kind === 'deploy');
+        expect(started).toHaveLength(2);
+        expect(completed).toHaveLength(2);
+        expect(events.some((event) => event.action === 'branch.operation.merged')).toBe(false);
+        expect(fetchCalls[0].body.operationId).toBe(started[0].operationId);
+        expect(fetchCalls[1].body.operationId).toBe(started[1].operationId);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
   });
 
@@ -644,9 +2017,14 @@ describe('Branch Routes', () => {
 
       const res = await request(server, 'POST', '/api/branches/feature-test/reset');
       expect(res.status).toBe(200);
+      expect((res.body as any).operationId).toMatch(/^op_/);
 
       const list = await request(server, 'GET', '/api/branches');
       expect((list.body as any).branches[0].status).toBe('idle');
+      expect(operationEvents.some((event) => event.action === 'branch.operation.completed'
+        && event.operationKind === 'reset'
+        && event.operationTrigger === 'manual'
+        && event.branchId === 'feature-test')).toBe(true);
     });
   });
 
@@ -754,6 +2132,74 @@ describe('Branch Routes', () => {
 
       const list = await request(server, 'GET', '/api/build-profiles');
       expect((list.body as any).profiles).toHaveLength(0);
+    });
+
+    it('skips build profile service cleanup while the branch has an active lifecycle operation', async () => {
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api',
+        name: 'API',
+        dockerImage: 'node',
+        command: 'node server.js',
+        workDir: '.',
+        containerPort: 3000,
+      });
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'profile-delete-busy',
+        projectId: 'default',
+        branch: 'feature/profile-delete-busy',
+        worktreePath: path.join(tmpDir, 'worktrees', 'profile-delete-busy'),
+        status: 'idle',
+        createdAt: now,
+        services: {
+          api: {
+            profileId: 'api',
+            containerName: 'cds-profile-delete-busy-api',
+            hostPort: 10001,
+            status: 'idle',
+          },
+        },
+      });
+      stateService.save();
+
+      let releaseRun!: () => void;
+      const runRelease = new Promise<void>((resolve) => { releaseRun = resolve; });
+      let markRunStarted!: () => void;
+      const runStarted = new Promise<void>((resolve) => { markRunStarted = resolve; });
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.includes('docker run -d') && command.includes('--name cds-profile-delete-busy-api')) {
+          markRunStarted();
+          await runRelease;
+          return { stdout: 'cid-profile-delete-busy', stderr: '', exitCode: 0 };
+        }
+        return originalExec(command, options);
+      };
+
+      const deployPromise = request(server, 'POST', '/api/branches/profile-delete-busy/deploy');
+      try {
+        await runStarted;
+
+        const deletion = await request(
+          server,
+          'DELETE',
+          '/api/build-profiles/api',
+          undefined,
+          { 'X-CDS-Request-Id': 'req-profile-delete' },
+        );
+
+        expect(deletion.status).toBe(200);
+        expect((deletion.body as any).skippedBusyCount).toBe(1);
+        expect(stateService.getBranch('profile-delete-busy')?.services.api).toBeTruthy();
+        const skipped = operationEvents.find((event) => event.action === 'app.build-profile-service.cleanup-skipped');
+        expect(skipped?.requestId).toBe('req-profile-delete');
+        expect(skipped?.branchId).toBe('profile-delete-busy');
+        expect(skipped?.operationKind).toBe('deploy');
+      } finally {
+        releaseRun();
+      }
+      const deploy = await deployPromise;
+      expect(deploy.status).toBe(200);
     });
 
     it('P4 Part 16 (B1): POST /build-profiles honors body.projectId', async () => {
@@ -973,6 +2419,34 @@ describe('Branch Routes', () => {
     });
   });
 
+  describe('GET /api/branches/state-audit', () => {
+    it('counts only warning-severity findings as issues while preserving info totals', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'info-main',
+        projectId: 'default',
+        branch: 'main',
+        worktreePath: path.join(tmpDir, 'worktrees', 'info-main'),
+        status: 'idle',
+        services: {},
+        createdAt: now,
+        lastDeployAt: '2026-05-26T22:00:00.000Z',
+        lastPushAt: '2026-05-26T23:00:00.000Z',
+        githubCommitSha: 'abc1234',
+      });
+
+      const res = await request(server, 'GET', '/api/branches/state-audit?project=default');
+
+      expect(res.status).toBe(200);
+      expect((res.body as any).ok).toBe(true);
+      expect((res.body as any).issueCount).toBe(0);
+      expect((res.body as any).warnCount).toBe(0);
+      expect((res.body as any).infoCount).toBe(1);
+      expect((res.body as any).totalCount).toBe(1);
+      expect((res.body as any).issues[0].kind).toBe('push-newer-than-successful-deploy');
+    });
+  });
+
   // ── Logs ──
 
   describe('GET /api/branches/:id/logs', () => {
@@ -1011,6 +2485,18 @@ describe('Branch Routes', () => {
       const body = res.body as { liveStreamHint?: { url?: string } };
       expect(body.liveStreamHint?.url).toContain('project=p2');
     });
+
+    it('is a passive read path and does not touch Docker, Git, or branch operations', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/test' });
+      mock.commands.length = 0;
+      operationEvents.length = 0;
+
+      const res = await request(server, 'GET', '/api/branches/feature-test/logs');
+
+      expect(res.status).toBe(200);
+      expect(mock.commands.some((cmd) => /docker |git /.test(cmd))).toBe(false);
+      expect(operationEvents.filter((event) => event.action.startsWith('branch.operation.'))).toEqual([]);
+    });
   });
 
   // ── F9 (2026-05-02 onboarding UAT): Branch detail endpoint ──
@@ -1027,6 +2513,18 @@ describe('Branch Routes', () => {
       expect(body.branch).toBeDefined();
       expect(body.branch.id).toBe('feature-x');
       expect(body.branch.branch).toBe('feature/x');
+    });
+
+    it('is a passive read path and does not reconcile, deploy, or emit operation events', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/x' });
+      mock.commands.length = 0;
+      operationEvents.length = 0;
+
+      const res = await request(server, 'GET', '/api/branches/feature-x');
+
+      expect(res.status).toBe(200);
+      expect(mock.commands.some((cmd) => /docker |git /.test(cmd))).toBe(false);
+      expect(operationEvents.filter((event) => event.action.startsWith('branch.operation.'))).toEqual([]);
     });
 
     it('returns 404 when the id does not exist', async () => {
@@ -1099,10 +2597,9 @@ describe('Branch Routes', () => {
 
       expect(res.status).toBe(503);
       expect(res.body).toContain('CDS Waiting Room');
-      expect(res.body).toContain('shape-grid-bg');
-      expect(res.body).toContain('id="shape-grid"');
-      expect(res.body).toContain('data-shape="hexagon"');
-      expect(res.body).toContain('data-speed="0.39"');
+      expect(res.body).toContain('magic-rings-bg');
+      expect(res.body).toContain('id="magic-rings"');
+      expect(res.body).toContain('id="magic-rings-fragment"');
       expect(res.body).not.toContain('rings-orbit');
       expect(res.body).not.toContain('class="panel"');
       expect(res.body).toContain('分支环境正在构建');
@@ -1292,6 +2789,38 @@ describe('Branch Routes', () => {
       });
       const res = await request(server, 'POST', '/api/branches/feat-x/restart');
       expect(res.status).toBe(409);
+    });
+
+    it('records manual restart as a fenced branch operation with container operationId', async () => {
+      stateService.addBranch({
+        id: 'feat-restart',
+        branch: 'feat/restart',
+        worktreePath: '/tmp/wt/feat-restart',
+        services: {
+          api: {
+            profileId: 'api',
+            containerName: 'restart-api',
+            hostPort: 10001,
+            status: 'stopped',
+          },
+        },
+        status: 'idle',
+        createdAt: '2026-02-12T00:00:00Z',
+        projectId: 'default',
+      });
+      mock.addResponsePattern(/docker restart restart-api/, () => ({ stdout: 'restart-api', stderr: '', exitCode: 0 }));
+
+      const res = await request(server, 'POST', '/api/branches/feat-restart/restart');
+
+      expect(res.status).toBe(200);
+      const branch = stateService.getBranch('feat-restart')!;
+      expect(branch.status).toBe('running');
+      expect(branch.services.api.status).toBe('running');
+      const started = operationEvents.find((event) => event.branchId === 'feat-restart' && event.action === 'branch.operation.started');
+      const completed = operationEvents.find((event) => event.branchId === 'feat-restart' && event.action === 'branch.operation.completed');
+      expect(started?.details).toMatchObject({ kind: 'restart', source: 'api.restart-branch' });
+      expect(completed?.operationId).toBe(started?.operationId);
+      expect(mock.commands.some((command) => command.includes('docker restart restart-api'))).toBe(true);
     });
 
   });

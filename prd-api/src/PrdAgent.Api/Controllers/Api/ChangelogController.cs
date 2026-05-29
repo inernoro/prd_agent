@@ -56,6 +56,7 @@ public class ChangelogController : ControllerBase
     public async Task<IActionResult> GetCurrentWeek([FromQuery] bool force = false)
     {
         var view = await _reader.GetCurrentWeekAsync(force).ConfigureAwait(false);
+        if (!force) SetClientCacheHeaders();
         return Ok(ApiResponse<CurrentWeekDto>.Ok(MapCurrentWeek(view)));
     }
 
@@ -69,6 +70,7 @@ public class ChangelogController : ControllerBase
     {
         if (limit <= 0 || limit > 100) limit = 20;
         var view = await _reader.GetReleasesAsync(limit, force).ConfigureAwait(false);
+        if (!force) SetClientCacheHeaders();
         return Ok(ApiResponse<ReleasesDto>.Ok(MapReleases(view)));
     }
 
@@ -80,7 +82,21 @@ public class ChangelogController : ControllerBase
     {
         if (limit <= 0 || limit > 1000) limit = 1000;
         var view = await _reader.GetGitHubLogsAsync(limit, force).ConfigureAwait(false);
+        if (!force) SetClientCacheHeaders();
         return Ok(ApiResponse<GitHubLogsDto>.Ok(MapGitHubLogs(view)));
+    }
+
+    /// <summary>
+    /// 浏览器缓存策略：freshness-first。`no-cache` = 浏览器可存但每次使用前必须向后端校验，
+    /// 因此永远不会拿到「浏览器层面的陈旧副本」——杜绝「迟迟不更新」。
+    /// 速度由两层兜底，不靠浏览器缓存：
+    ///   1) 前端 sessionStorage 立即首屏渲染（不等网络），再后台拉取实时覆盖
+    ///   2) 后端 serve-stale-while-revalidate 内存缓存，校验请求 ms 级返回（不打 GitHub）
+    /// 这样既保持「秒开」又保证「所见即最新」。force=true（手动刷新）连后端缓存一并绕过。
+    /// </summary>
+    private void SetClientCacheHeaders()
+    {
+        Response.Headers["Cache-Control"] = "private, no-cache";
     }
 
     /// <summary>

@@ -1131,7 +1131,7 @@ window.cdsDoLogout = cdsDoLogout;
       fetch('/api/build-profiles?project=' + p, { credentials: 'same-origin' })
         .then(function (r) { return r.ok ? r.json() : { profiles: [] }; })
         .catch(function () { return { profiles: [] }; }),
-      fetch('/api/infra?project=' + p, { credentials: 'same-origin' })
+      fetch('/api/infra?project=' + p + '&live=false', { credentials: 'same-origin' })
         .then(function (r) { return r.ok ? r.json() : { services: [] }; })
         .catch(function () { return { services: [] }; }),
     ]).then(function (results) {

@@ -28,6 +28,8 @@ public class DatabaseInitializer
         await EnsureSystemRolesAsync();
         await EnsureWorkflowSkillAsync();
         await EnsureBuiltInGuideSkillsAsync();
+        await EnsureShortcutTemplateAsync();
+        await EnsureShortcutExpirationsAsync();
     }
 
     private async Task EnsureAdminUserAsync()
@@ -215,6 +217,76 @@ public class DatabaseInitializer
 
             def.Id = await _idGenerator.GenerateIdAsync("config");
             await _db.Skills.InsertOneAsync(def);
+        }
+    }
+
+    private async Task EnsureShortcutTemplateAsync()
+    {
+        const string defaultICloudUrl = "https://www.icloud.com/shortcuts/287ac5dffbee4411b186ec7c0e4b9ebd";
+
+        var existingDefault = await _db.ShortcutTemplates
+            .Find(x => x.IsDefault && x.IsActive)
+            .FirstOrDefaultAsync();
+
+        if (existingDefault != null)
+        {
+            if (!string.Equals(existingDefault.ICloudUrl, defaultICloudUrl, StringComparison.Ordinal))
+            {
+                await _db.ShortcutTemplates.UpdateOneAsync(
+                    x => x.Id == existingDefault.Id,
+                    Builders<ShortcutTemplate>.Update
+                        .Set(x => x.ICloudUrl, defaultICloudUrl)
+                        .Set(x => x.Version, "1.1")
+                        .Set(x => x.UpdatedAt, DateTime.UtcNow));
+            }
+            return;
+        }
+
+        var existingByUrl = await _db.ShortcutTemplates
+            .Find(x => x.ICloudUrl == defaultICloudUrl)
+            .FirstOrDefaultAsync();
+
+        if (existingByUrl != null)
+        {
+            await _db.ShortcutTemplates.UpdateOneAsync(
+                x => x.Id == existingByUrl.Id,
+                Builders<ShortcutTemplate>.Update
+                    .Set(x => x.IsDefault, true)
+                    .Set(x => x.IsActive, true)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow));
+            return;
+        }
+
+        var template = new ShortcutTemplate
+        {
+            Id = await _idGenerator.GenerateIdAsync("config"),
+            Name = "PrdAgent 收藏",
+            Description = "从 iOS 分享菜单收藏链接或文本到 MAP。",
+            ICloudUrl = defaultICloudUrl,
+            Version = "1.1",
+            IsDefault = true,
+            IsActive = true,
+            CreatedBy = "system",
+        };
+
+        await _db.ShortcutTemplates.InsertOneAsync(template);
+    }
+
+    private async Task EnsureShortcutExpirationsAsync()
+    {
+        var filter = Builders<UserShortcut>.Filter.Or(
+            Builders<UserShortcut>.Filter.Eq(x => x.ExpiresAt, null),
+            Builders<UserShortcut>.Filter.Exists(x => x.ExpiresAt, false));
+
+        var shortcuts = await _db.UserShortcuts.Find(filter).ToListAsync();
+        foreach (var shortcut in shortcuts)
+        {
+            var basis = shortcut.CreatedAt == default ? DateTime.UtcNow : shortcut.CreatedAt;
+            await _db.UserShortcuts.UpdateOneAsync(
+                x => x.Id == shortcut.Id,
+                Builders<UserShortcut>.Update
+                    .Set(x => x.ExpiresAt, basis.AddYears(1))
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow));
         }
     }
 

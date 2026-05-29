@@ -1,1 +1,0 @@
-| refactor | prd-admin | 周报编辑器视觉大改造（激进档）：去除每章节彩色圆圈/淡底/3px 色条/dashed 按钮等色斑；改 mono 编号 + h3 半粗标题 + hairline 分章；输入框 borderless + focus 时 1px indigo 底线 + row hover 浅灰底；AI 自动生成 banner 收敛为顶栏右上 ✨ AI 草稿 chip（tooltip 显时间+模型）；必填红 * 改灰 chip「必填」；整页 max-w-880px 居中；接近 Notion / Linear / Stripe Docs 阅读级编辑器气质 |

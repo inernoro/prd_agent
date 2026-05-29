@@ -37,42 +37,54 @@ public class OfficialSkillsController : ControllerBase
     [HttpGet("{skillKey}/download")]
     public IActionResult Download(string skillKey)
     {
-        if (skillKey is not (OfficialSkillTemplates.FindMapSkillsKey or OfficialSkillTemplates.AiDefectResolveKey))
+        var baseUrl = ResolveBaseUrl();
+
+        // 模板类官方技能（findmapskills / ai-defect-resolve）：占位替换 + SKILL.md/README
+        if (skillKey == OfficialSkillTemplates.FindMapSkillsKey || skillKey == OfficialSkillTemplates.AiDefectResolveKey)
+        {
+            var isDefect = skillKey == OfficialSkillTemplates.AiDefectResolveKey;
+            var version = isDefect ? OfficialSkillTemplates.AiDefectResolveVersion : OfficialSkillTemplates.FindMapSkillsVersion;
+            var releaseDate = isDefect ? OfficialSkillTemplates.AiDefectResolveReleaseDate : OfficialSkillTemplates.FindMapSkillsReleaseDate;
+            var skillTemplate = isDefect ? OfficialSkillTemplates.AiDefectResolveSkillMd : OfficialSkillTemplates.FindMapSkillsSkillMd;
+            var readmeTemplate = isDefect ? OfficialSkillTemplates.AiDefectResolveReadme : OfficialSkillTemplates.FindMapSkillsReadme;
+
+            string Subst(string template) => template
+                .Replace("{{BASE_URL}}", baseUrl)
+                .Replace("{{VERSION}}", version)
+                .Replace("{{RELEASE_DATE}}", releaseDate);
+            var skillMd = Subst(skillTemplate);
+            var readme = Subst(readmeTemplate);
+
+            using var ms = new MemoryStream();
+            using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
+            {
+                WriteEntry(zip, $"{skillKey}/SKILL.md", skillMd);
+                WriteEntry(zip, $"{skillKey}/README.md", readme);
+            }
+            var bytes = ms.ToArray();
+            Response.Headers.Append("Cache-Control", "no-store");
+            _logger.LogInformation("[OfficialSkills] 下发 {SkillKey} 技能包 {Bytes} bytes", skillKey, bytes.Length);
+            return File(bytes, "application/zip", $"{skillKey}.zip");
+        }
+
+        // 其余官方技能：从内嵌目录打完整 zip（含 reference/ scripts/ 等全部文本文件）
+        var entry = OfficialSkillCatalog.Find(skillKey);
+        if (entry == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, $"未找到官方技能: {skillKey}"));
 
-        var baseUrl = ResolveBaseUrl();
-        var version = skillKey == OfficialSkillTemplates.AiDefectResolveKey
-            ? OfficialSkillTemplates.AiDefectResolveVersion
-            : OfficialSkillTemplates.FindMapSkillsVersion;
-        var releaseDate = skillKey == OfficialSkillTemplates.AiDefectResolveKey
-            ? OfficialSkillTemplates.AiDefectResolveReleaseDate
-            : OfficialSkillTemplates.FindMapSkillsReleaseDate;
-        var skillTemplate = skillKey == OfficialSkillTemplates.AiDefectResolveKey
-            ? OfficialSkillTemplates.AiDefectResolveSkillMd
-            : OfficialSkillTemplates.FindMapSkillsSkillMd;
-        var readmeTemplate = skillKey == OfficialSkillTemplates.AiDefectResolveKey
-            ? OfficialSkillTemplates.AiDefectResolveReadme
-            : OfficialSkillTemplates.FindMapSkillsReadme;
-
-        string Subst(string template) => template
-            .Replace("{{BASE_URL}}", baseUrl)
-            .Replace("{{VERSION}}", version)
-            .Replace("{{RELEASE_DATE}}", releaseDate);
-        var skillMd = Subst(skillTemplate);
-        var readme = Subst(readmeTemplate);
-
-        using var ms = new MemoryStream();
-        using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
+        using var ms2 = new MemoryStream();
+        using (var zip = new ZipArchive(ms2, ZipArchiveMode.Create, leaveOpen: true))
         {
-            WriteEntry(zip, $"{skillKey}/SKILL.md", skillMd);
-            WriteEntry(zip, $"{skillKey}/README.md", readme);
+            foreach (var f in entry.Files)
+            {
+                // zip 内统一放在 {key}/ 目录下，解压即 ~/.claude/skills/{key}/
+                WriteEntry(zip, $"{entry.Key}/{f.Path}", f.Content);
+            }
         }
-        var bytes = ms.ToArray();
-
+        var bytes2 = ms2.ToArray();
         Response.Headers.Append("Cache-Control", "no-store");
-        _logger.LogInformation("[OfficialSkills] 下发 {SkillKey} 技能包 {Bytes} bytes", skillKey, bytes.Length);
-
-        return File(bytes, "application/zip", $"{skillKey}.zip");
+        _logger.LogInformation("[OfficialSkills] 下发 {SkillKey} 技能包 {Files} 文件 {Bytes} bytes", skillKey, entry.Files.Count, bytes2.Length);
+        return File(bytes2, "application/zip", $"{entry.Key}.zip");
     }
 
     /// <summary>

@@ -25,6 +25,13 @@ import type { Socket } from 'node:net';
 import type { ProxyStats, RouteRecord } from './types.js';
 import { buildWidgetScript } from '../widget-script.js';
 import { buildForwarderWaitingPageHtml } from './waiting-page.js';
+import {
+  createBodyCapture,
+  isBinaryContentType,
+  createRequestId,
+  redactHeaders,
+  type HttpLogSink,
+} from '../services/http-log-store.js';
 
 export interface ProxyHandlerOptions {
   /** upstream 连接超时 ms,默认 5000(connect 5s 无应答 → 504) */
@@ -35,6 +42,8 @@ export interface ProxyHandlerOptions {
   agent?: http.Agent;
   /** logger 注入 */
   logger?: { info?: (m: string) => void; warn?: (m: string) => void; error?: (m: string) => void };
+  /** 持久化 HTTP 日志 sink；每条请求单独文档写入 Mongo。 */
+  httpLogStore?: HttpLogSink | null;
   /** master daemon 的 admin REST 端口(默认 127.0.0.1) */
   masterPassthroughHost?: string;
   /** master daemon 的 admin REST 端口(默认 9900),`/_cds/api/*` 请求转发到此 */
@@ -111,6 +120,7 @@ interface ResolvedProxyOptions {
   unknownHostFallbackHost: string | undefined;
   unknownHostFallbackPort: number | undefined;
   logger: ProxyHandlerOptions['logger'];
+  httpLogStore: HttpLogSink | null;
 }
 
 export class ProxyHandler {
@@ -127,6 +137,7 @@ export class ProxyHandler {
       unknownHostFallbackHost: opts.unknownHostFallbackHost,
       unknownHostFallbackPort: opts.unknownHostFallbackPort,
       logger: opts.logger,
+      httpLogStore: opts.httpLogStore ?? null,
     };
     this.agent = opts.agent ?? new http.Agent({ keepAlive: true, maxSockets: 256 });
   }
@@ -139,6 +150,11 @@ export class ProxyHandler {
   ): Promise<void> {
     const t0 = Date.now();
     const host = (req.headers.host ?? '').split(':')[0];
+    const requestId = String(req.headers['x-cds-request-id'] || '').trim() || createRequestId();
+    req.headers['x-cds-request-id'] = requestId;
+    res.setHeader('X-CDS-Request-Id', requestId);
+    const requestCapture = createBodyCapture(undefined, req.headers['content-type']);
+    req.on('data', (chunk: Buffer | string) => requestCapture.onChunk(chunk));
     // 原始 URL 留给日志用(/_cds/api/branches → /_cds/api/branches),
     // 不污染 req 共享对象。Cursor Bugbot Low:之前 mutate req.url 让 forward 日志
     // 显示 strip 后的 path,debug 时无法关联客户端原请求。
@@ -189,6 +205,28 @@ export class ProxyHandler {
           // 故意不设 branchId/branchName → forwarder 不注入 widget(master 自己注入)
         };
       } else {
+        this.opts.httpLogStore?.record({
+          layer: 'forwarder',
+          requestId,
+          method: req.method || 'GET',
+          protocol: String(req.headers['x-forwarded-proto'] || 'http').split(',')[0],
+          host,
+          path: originalUrl,
+          status: 503,
+          durationMs: Date.now() - t0,
+          outcome: 'server-error',
+          remoteAddr: (req.headers['cf-connecting-ip'] as string)
+            || (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
+            || req.socket?.remoteAddress,
+          request: {
+            headers: redactHeaders(req.headers),
+            ...requestCapture.snapshot(req.headers['content-type']),
+          },
+          response: {
+            headers: redactHeaders(res.getHeaders() as Record<string, unknown>),
+          },
+          error: { code: 'NO_ROUTE', message: `no route for host=${host}` },
+        });
         this.respondWaiting(res, 503);
         this.stats.record(host, 503, Date.now() - t0);
         this.opts.logger?.warn?.(
@@ -199,11 +237,43 @@ export class ProxyHandler {
     }
     const upstreamHost = route.upstreamHost ?? '127.0.0.1';
     const upstreamPort = route.upstreamPort;
-    // 每请求一条 forward 日志:用原始 URL(含 /_cds 前缀如有),journalctl 能直接
-    // 关联客户端真实请求,不被 passthrough 的 path strip 干扰。对应 master proxy.ts:530。
-    this.opts.logger?.info?.(
-      `[forward] ${req.method ?? 'GET'} ${originalUrl} → ${upstreamHost}:${upstreamPort}${outgoingPath !== originalUrl ? ` (rewrite path → ${outgoingPath})` : ''} (host=${host}, branch=${route.branchId ?? 'unknown'})`,
-    );
+    const logHttp = (
+      status: number,
+      response: { bodyPreview?: string; bodyBytes?: number } = {},
+      outcome?: 'ok' | 'client-error' | 'server-error' | 'upstream-error' | 'timeout',
+      error?: { code?: string; message?: string },
+    ) => {
+      this.opts.httpLogStore?.record({
+        layer: 'forwarder',
+        requestId,
+        method: req.method || 'GET',
+        protocol: String(req.headers['x-forwarded-proto'] || 'http').split(',')[0],
+        host,
+        path: originalUrl,
+        status,
+        durationMs: Date.now() - t0,
+        outcome: outcome || (status >= 500 ? 'server-error' : status >= 400 ? 'client-error' : 'ok'),
+        remoteAddr: (req.headers['cf-connecting-ip'] as string)
+          || (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
+          || req.socket?.remoteAddress,
+        branchId: route.branchId ?? null,
+        upstream: `${upstreamHost}:${upstreamPort}${outgoingPath !== originalUrl ? outgoingPath : ''}`,
+        request: {
+          headers: redactHeaders(req.headers),
+          ...requestCapture.snapshot(req.headers['content-type']),
+        },
+        response: {
+          headers: redactHeaders(res.getHeaders() as Record<string, unknown>),
+          ...response,
+        },
+        error,
+      });
+    };
+    if (process.env.CDS_FORWARDER_ACCESS_LOG === '1') {
+      this.opts.logger?.info?.(
+        `[forward] ${req.method ?? 'GET'} ${originalUrl} → ${upstreamHost}:${upstreamPort}${outgoingPath !== originalUrl ? ` (rewrite path → ${outgoingPath})` : ''} (host=${host}, branch=${route.branchId ?? 'unknown'})`,
+      );
+    }
 
     // 透传 headers + X-Forwarded-* 累积。先复制 req.headers 不 mutate,
     // 再合并 passthrough 注入的 extraHeaders(如 x-cds-internal)。
@@ -221,6 +291,7 @@ export class ProxyHandler {
     if (extraHeaders) {
       for (const [k, v] of Object.entries(extraHeaders)) fwdHeaders[k] = v;
     }
+    fwdHeaders['x-cds-request-id'] = requestId;
     // X-Forwarded-For:append client IP
     const clientIp = (req.socket?.remoteAddress ?? '').replace(/^::ffff:/, '');
     const existingXff = req.headers['x-forwarded-for'];
@@ -292,14 +363,36 @@ export class ProxyHandler {
             status >= 200 && status < 300;
 
           if (shouldInjectWidget) {
-            this.injectWidgetAndSend(upstreamRes, res, route, finish, respHeaders);
+            this.injectWidgetAndSend(upstreamRes, res, route, finish, logHttp, respHeaders);
           } else {
             // 非 HTML 或非 2xx:原样透传(保留压缩 / chunked / SSE 等)
             if (!res.headersSent) {
               res.writeHead(status, respHeaders as http.OutgoingHttpHeaders);
             }
-            upstreamRes.on('end', () => finish(status));
-            upstreamRes.on('error', () => {
+            let bodyBytes = 0;
+            const previewChunks: Buffer[] = [];
+            const shouldLogApiFailure =
+              status >= 400 && (originalUrl.startsWith('/api/') || originalUrl.startsWith('/_cds/api/'));
+            upstreamRes.on('data', (chunk: Buffer | string) => {
+              const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+              bodyBytes += buf.length;
+              const captured = previewChunks.reduce((n, part) => n + part.length, 0);
+              if (captured < 8 * 1024) previewChunks.push(buf.subarray(0, 8 * 1024 - captured));
+            });
+            upstreamRes.on('end', () => {
+              const bodyPreview = isBinaryContentType(contentType)
+                ? ''
+                : Buffer.concat(previewChunks).toString('utf8').replace(/\0/g, '').trim();
+              if (shouldLogApiFailure) {
+                this.opts.logger?.warn?.(
+                  `[forward] api upstream ${status}: ${req.method ?? 'GET'} ${originalUrl} → ${upstreamHost}:${upstreamPort}${outgoingPath !== originalUrl ? ` path=${outgoingPath}` : ''} (host=${host}, branch=${route.branchId ?? 'unknown'}, requestId=${String(upstreamRes.headers['x-cds-request-id'] || req.headers['x-cds-request-id'] || '-')}, bytes=${bodyBytes}, contentType=${contentType || '-'})${bodyPreview ? ` body="${bodyPreview.slice(0, 240)}"` : ' emptyBody=true'}`,
+                );
+              }
+              logHttp(status, { bodyPreview: bodyPreview || undefined, bodyBytes });
+              finish(status);
+            });
+            upstreamRes.on('error', (err) => {
+              logHttp(502, {}, 'upstream-error', { message: err.message });
               try {
                 if (!res.headersSent) this.respondWaiting(res, 502);
                 else res.end();
@@ -319,6 +412,7 @@ export class ProxyHandler {
         } catch {
           // noop
         }
+        logHttp(504, {}, 'timeout', { code: 'ETIMEDOUT', message: 'upstream timeout' });
         if (!res.headersSent) this.respondWaiting(res, 504);
         else {
           try {
@@ -349,6 +443,12 @@ export class ProxyHandler {
         this.opts.logger?.warn?.(
           `[forward] upstream error: code=${code ?? 'UNKNOWN'} ${hint} → ${upstreamHost}:${upstreamPort} (host=${host})`,
         );
+        const wantStatus =
+          code === 'ECONNREFUSED' || code === 'EHOSTUNREACH' || code === 'ENOTFOUND' ? 503 : 502;
+        logHttp(wantStatus, {}, code === 'ETIMEDOUT' ? 'timeout' : 'upstream-error', {
+          code,
+          message: err.message,
+        });
         // 已发响应头 → 不能再 writeHead,直接 end
         if (res.headersSent) {
           try {
@@ -359,8 +459,6 @@ export class ProxyHandler {
           finish(502);
           return;
         }
-        const wantStatus =
-          code === 'ECONNREFUSED' || code === 'EHOSTUNREACH' || code === 'ENOTFOUND' ? 503 : 502;
         // 浏览器请求(accept: text/html) → 友好 HTML 自动刷新页(对齐 master proxy.ts:1074-1092)
         if (acceptsHtml) {
           this.respondHtmlError(res, wantStatus, hint, code ?? 'UNKNOWN');
@@ -557,6 +655,12 @@ export class ProxyHandler {
     res: ServerResponse,
     route: RouteRecord,
     finish: (status: number) => void,
+    logHttp: (
+      status: number,
+      response?: { bodyPreview?: string; bodyBytes?: number },
+      outcome?: 'ok' | 'client-error' | 'server-error' | 'upstream-error' | 'timeout',
+      error?: { code?: string; message?: string },
+    ) => void,
     overrideHeaders?: Record<string, string | string[] | undefined>,
   ): void {
     const status = upstreamRes.statusCode ?? 200;
@@ -581,6 +685,7 @@ export class ProxyHandler {
       } else if (!res.writableEnded) {
         try { res.end(); } catch { /* noop */ }
       }
+      logHttp(502, {}, 'upstream-error', { message: err.message });
       finish(502);
     });
     try {
@@ -591,7 +696,10 @@ export class ProxyHandler {
       // 罕见:zlib 直接构造失败。退化到原样透传。
       if (!res.headersSent) res.writeHead(status, headers);
       upstreamRes.pipe(res);
-      upstreamRes.on('end', () => finish(status));
+      upstreamRes.on('end', () => {
+        logHttp(status);
+        finish(status);
+      });
       return;
     }
     const chunks: Buffer[] = [];
@@ -600,6 +708,10 @@ export class ProxyHandler {
       if (aborted) return; // upstreamRes 已 errored,不应再 inject 残缺 body
       try {
         let body = Buffer.concat(chunks).toString('utf-8');
+        const responseForLog = {
+          bodyPreview: body.slice(0, 8 * 1024),
+          bodyBytes: Buffer.byteLength(body, 'utf8'),
+        };
         const widget = buildWidgetScript(route.branchId ?? '', route.branchName ?? '');
         const idx = body.lastIndexOf('</body>');
         if (idx !== -1) {
@@ -614,6 +726,7 @@ export class ProxyHandler {
           res.writeHead(status, headers as http.OutgoingHttpHeaders);
         }
         res.end(body);
+        logHttp(status, responseForLog);
         finish(status);
       } catch (err) {
         // 编码 / 解码异常:不再注入,直接关闭。日志真相之源(/human-verify finding #1)。
@@ -623,6 +736,7 @@ export class ProxyHandler {
         if (!res.writableEnded) {
           try { res.end(); } catch { /* noop */ }
         }
+        logHttp(status, {}, 'upstream-error', { message: (err as Error).message });
         finish(status);
       }
     });
@@ -638,6 +752,7 @@ export class ProxyHandler {
       } else if (!res.writableEnded) {
         try { res.end(); } catch { /* noop */ }
       }
+      logHttp(502, {}, 'upstream-error', { message: (err as Error).message });
       finish(502);
     });
   }

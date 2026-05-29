@@ -55,6 +55,26 @@ export function isSafeGitRef(ref: string): boolean {
   return true;
 }
 
+/**
+ * Product-level branch policy. This is intentionally stricter than
+ * isSafeGitRef(): a ref can be shell-safe but still be a URL/PR link
+ * accidentally pasted or pushed as a branch name. CDS should not turn
+ * those into preview environments.
+ */
+export function isAllowedCdsBranchName(ref: string): boolean {
+  if (!isSafeGitRef(ref)) return false;
+  const lower = ref.toLowerCase();
+  if (lower.startsWith('http/')) return false;
+  if (lower.startsWith('https/')) return false;
+  if (lower.startsWith('http:')) return false;
+  if (lower.startsWith('https:')) return false;
+  if (lower.includes('github.com/')) return false;
+  if (/(^|\/)pull\/\d+($|\/)/i.test(ref)) return false;
+  if (/(^|\/)pulls\/\d+($|\/)/i.test(ref)) return false;
+  if (/(^|\/)issues\/\d+($|\/)/i.test(ref)) return false;
+  return true;
+}
+
 export interface WebhookDispatchResult {
   /** Machine-readable outcome. */
   action:
@@ -143,7 +163,7 @@ export interface GitHubPushEvent {
   }>;
   size?: number;
   distinct_size?: number;
-  sender?: { login: string };
+  sender?: { login: string; avatar_url?: string };
 }
 
 export interface GitHubInstallationEvent {
@@ -169,6 +189,7 @@ export interface GitHubCheckRunEvent {
   };
   repository?: { full_name: string };
   installation?: { id: number };
+  sender?: { login?: string; avatar_url?: string };
 }
 
 export interface GitHubPullRequestEvent {
@@ -185,6 +206,7 @@ export interface GitHubPullRequestEvent {
   };
   repository?: { full_name: string };
   installation?: { id: number };
+  sender?: { login?: string; avatar_url?: string };
 }
 
 /**
@@ -635,6 +657,8 @@ export class GitHubWebhookDispatcher {
           githubPrNumber: event.pull_request.number,
           githubInstallationId: project.githubInstallationId ?? event.installation?.id,
           githubRepoFullName: repoFullName,
+          githubSenderLogin: event.sender?.login,
+          githubSenderAvatarUrl: event.sender?.avatar_url,
         });
         this.deps.stateService.save();
       }
@@ -677,6 +701,12 @@ export class GitHubWebhookDispatcher {
         message: `Rejected unsafe branch name from webhook: ${branchName.slice(0, 80)}`,
       };
     }
+    if (!isAllowedCdsBranchName(branchName)) {
+      return {
+        action: 'ignored-event',
+        message: `Rejected non-branch ref from webhook: ${branchName.slice(0, 120)}`,
+      };
+    }
     // commitSha must be a 40-hex git SHA. Rejecting anything else
     // prevents command injection even if attacker can push a malformed
     // "after" field (unlikely — GitHub always sends real SHAs).
@@ -685,6 +715,7 @@ export class GitHubWebhookDispatcher {
     }
     const commitSha = event.after;
     const repoFullName = event.repository.full_name;
+    const receivedAt = nowIso();
 
     const project = this.deps.stateService.findProjectByRepoFullName(repoFullName);
     if (!project) {
@@ -728,6 +759,9 @@ export class GitHubWebhookDispatcher {
         this.deps.stateService.updateBranchGithubMeta(branchId, {
           githubRepoFullName: repoFullName,
           githubCommitSha: commitSha,
+          lastPushAt: receivedAt,
+          githubSenderLogin: event.sender?.login,
+          githubSenderAvatarUrl: event.sender?.avatar_url,
           githubInstallationId: project.githubInstallationId ?? event.installation?.id,
         });
         this.deps.stateService.save();
@@ -741,8 +775,9 @@ export class GitHubWebhookDispatcher {
               patch: {
                 githubRepoFullName: updatedEntry.githubRepoFullName,
                 githubCommitSha: updatedEntry.githubCommitSha,
+                lastPushAt: updatedEntry.lastPushAt,
               },
-              ts: nowIso(),
+              ts: receivedAt,
             },
           });
         }
@@ -820,6 +855,9 @@ export class GitHubWebhookDispatcher {
     this.deps.stateService.updateBranchGithubMeta(branchId, {
       githubRepoFullName: repoFullName,
       githubCommitSha: commitSha,
+      lastPushAt: receivedAt,
+      githubSenderLogin: event.sender?.login,
+      githubSenderAvatarUrl: event.sender?.avatar_url,
       githubInstallationId: project.githubInstallationId ?? event.installation?.id,
     });
     this.deps.stateService.save();
@@ -844,8 +882,11 @@ export class GitHubWebhookDispatcher {
             patch: {
               githubRepoFullName: updatedEntry.githubRepoFullName,
               githubCommitSha: updatedEntry.githubCommitSha,
+              lastPushAt: updatedEntry.lastPushAt,
+              githubSenderLogin: updatedEntry.githubSenderLogin,
+              githubSenderAvatarUrl: updatedEntry.githubSenderAvatarUrl,
             },
-            ts: nowIso(),
+            ts: receivedAt,
           },
         });
       }

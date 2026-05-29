@@ -68,9 +68,7 @@ export function HelloPage(): JSX.Element {
           <div>
             <h1 className="text-2xl font-bold tracking-tight">CDS — 基础设施验证</h1>
             <p className="text-sm text-muted-foreground">
-              React + Vite + Tailwind + shadcn/ui（已迁移路由由 server.ts 的
-              <code> MIGRATED_REACT_ROUTES </code>登记，未迁移的路径回落到{' '}
-              <code>cds/web-legacy/</code>）
+              React + Vite + Tailwind + shadcn/ui（所有非 API 控制台路径均由 React Router 接管）
             </p>
           </div>
         </div>

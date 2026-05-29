@@ -119,16 +119,15 @@ public class MySharesController : ControllerBase
                     TargetType = ShortLinkTargetTypes.DocumentStore,
                     Token = s.Token,
                     Title = s.Title ?? s.StoreName ?? "（未命名知识库分享）",
-                    Subtitle = $"知识库 {s.StoreName}",
+                    Subtitle = string.IsNullOrEmpty(s.EntryId) ? $"知识库 {s.StoreName}" : $"文档 · {s.EntryTitle ?? s.StoreName}",
                     AccessLevel = "public",
                     ViewCount = s.ViewCount,
                     IsRevoked = s.IsRevoked,
                     ExpiresAt = s.ExpiresAt,
                     CreatedAt = s.CreatedAt,
-                    // 知识库历史路径 /library/share/{token}，但 App.tsx 当前没有该 SPA 路由
-                    //（debt -1），访客打开看到 SPA fallback。标 Viewable=false 如实告知用户。
-                    PrimaryPath = $"/library/share/{s.Token}",
-                    Viewable = false,
+                    // 统一分享路由 /s/lib/{token}（整库 + 单篇文档共用，前端 LibraryShareViewPage 渲染）
+                    PrimaryPath = $"/s/lib/{s.Token}",
+                    Viewable = true,
                 });
             }
         }

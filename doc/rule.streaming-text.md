@@ -184,6 +184,14 @@ const polishStream = useAiPreviewStream({
 - 批次二 (中等): AlignmentPanel, WorkflowChatPanel, DailyLogPolishPopover, QuickCreateWizard, SseTypingBlock 内部
 - 批次三 (收尾): WeeklyPoster TypingPanel, SseStreamPanel 文档对齐
 
+## 变更记录
+
+| 日期 | 说明 |
+|------|------|
+| 2026-05-13 批次一 | 新增 StreamingText 组件；Arena / 工作流 / PR Review SummaryPanel 接入；新增 `/_dev/streaming-text-lab` 演示场 |
+| 2026-05-13 批次二 | AlignmentPanel / DailyLogPolishPopover / ToolDetail / literary-agent / QuickCreateWizard / SseTypingBlock 接入；新增第 5 条 thinking 块禁裸文本强制规则 |
+| 2026-05-13 | 新增 `maxTailChars` prop — 通用尾部窗口，token key 用绝对 offset 防止滑窗闪烁；修复 EmergenceNode 因全文 span 堆积导致父节点被挤飞问题 |
+
 ## 相关
 
 - `prd-admin/src/components/streaming/StreamingText.tsx` 实现

@@ -1,0 +1,1 @@
+| fix | prd-admin | 修复 AI 百宝箱知识库上传无效：handleKnowledgeFileSelect 在 e.target.value='' 之后才 Array.from(files)，而 value 清空会就地清空 live FileList，导致上传循环拿到空数组、文件不入列表也不上传。改为清空前先快照成数组（QuickCreateWizard + ToolEditor 两处） |

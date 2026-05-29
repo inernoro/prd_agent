@@ -1208,7 +1208,7 @@
       });
 
     // 分支计数表
-    fetch('/api/branches?project=' + encodeURIComponent(pid), { credentials: 'same-origin' })
+    fetch('/api/branches?project=' + encodeURIComponent(pid) + '&live=false', { credentials: 'same-origin' })
       .then(function (r) { return r.json(); })
       .then(function (data) {
         var rows = (data && data.branches) || [];

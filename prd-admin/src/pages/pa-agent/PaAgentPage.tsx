@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   MessageSquare, LayoutGrid, Plus, Trash2, Edit2, Check, X,
-  Zap, ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, Brain, BookOpen, Sparkles, Mountain,
 } from 'lucide-react';
 import {
   getPaSessions, createPaSession, deletePaSession, renamePaSession,
@@ -9,6 +9,43 @@ import {
 import type { PaSessionInfo, PaTask } from '@/services/real/paAgentService';
 import { PaAssistantChat } from './PaAssistantChat';
 import { PaTaskBoard } from './PaTaskBoard';
+import { PaProfilePanel } from './PaProfilePanel';
+import { PaReviewDrawer } from './PaReviewDrawer';
+import { PaSecretaryIcon } from '@/pages/ai-toolbox/components/PaSecretaryIcon';
+import './paAgent.css';
+
+/** sessionStorage key — 主题偏好（gemini / mountain / parchment） */
+const PA_THEME_KEY = 'pa-agent.theme';
+/** sessionStorage key — 字号档位（small / medium / large） */
+const PA_FONTSIZE_KEY = 'pa-agent.fontsize';
+
+type PaTheme = 'gemini' | 'mountain' | 'parchment';
+type PaFontSize = 'small' | 'medium' | 'large';
+
+const PA_THEME_CYCLE: PaTheme[] = ['gemini', 'mountain', 'parchment'];
+
+function readThemePref(): PaTheme {
+  try {
+    const v = sessionStorage.getItem(PA_THEME_KEY);
+    if (v === 'dark') return 'mountain';
+    if (v && (PA_THEME_CYCLE as readonly string[]).includes(v)) return v as PaTheme;
+  } catch { /* sessionStorage 不可用时静默 */ }
+  return 'gemini';
+}
+
+function readPref<T extends string>(key: string, fallback: T, allowed: readonly T[]): T {
+  try {
+    const v = sessionStorage.getItem(key);
+    if (v && (allowed as readonly string[]).includes(v)) return v as T;
+  } catch { /* sessionStorage 不可用时静默 */ }
+  return fallback;
+}
+
+function writePref(key: string, value: string): void {
+  try {
+    sessionStorage.setItem(key, value);
+  } catch { /* 隐私模式下静默 */ }
+}
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import 'dayjs/locale/zh-cn';
@@ -54,57 +91,46 @@ function SessionItem({ session, active, onSelect, onDelete, onRename }: SessionI
 
   return (
     <div
-      className="group relative flex items-start gap-2 px-2.5 py-2 rounded-xl cursor-pointer transition-all"
-      style={{
-        background: active ? 'rgba(99,102,241,0.12)' : 'transparent',
-        border: active ? '1px solid rgba(99,102,241,0.25)' : '1px solid transparent',
-      }}
+      className="pa-session-item group relative flex items-center gap-1 px-2 cursor-pointer transition-colors"
+      data-active={active ? 'true' : 'false'}
       onClick={onSelect}
-      onMouseEnter={e => {
-        if (!active) e.currentTarget.style.background = 'var(--bg-hover)';
-      }}
-      onMouseLeave={e => {
-        if (!active) e.currentTarget.style.background = 'transparent';
+      onMouseMove={(e) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        e.currentTarget.style.setProperty('--pa-hover-x', `${x}px`);
+        e.currentTarget.style.setProperty('--pa-hover-y', `${y}px`);
       }}
     >
-      <div
-        className="shrink-0 w-6 h-6 rounded-lg flex items-center justify-center mt-0.5"
-        style={{ background: active ? 'linear-gradient(135deg,#6366f1,#8b5cf6)' : 'var(--bg-elevated)' }}
-      >
-        <MessageSquare size={11} color={active ? '#fff' : 'var(--text-muted)'} />
-      </div>
-
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 flex items-center justify-between gap-2">
         {editing ? (
-          <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+          <div className="flex items-center gap-1 flex-1 min-w-0" onClick={e => e.stopPropagation()}>
             <input
               ref={inputRef}
               value={editTitle}
               onChange={e => setEditTitle(e.target.value)}
               onKeyDown={handleKeyDown}
               onBlur={confirmEdit}
-              className="flex-1 text-xs bg-transparent outline-none border-b"
-              style={{ color: 'var(--text-primary)', borderColor: '#6366f1' }}
+              className="flex-1 text-xs bg-transparent outline-none border-b min-w-0"
+              style={{ color: 'var(--text-primary)', borderColor: 'var(--pa-accent-strong, #6366f1)' }}
             />
-            <button onClick={confirmEdit} className="p-0.5 text-green-500"><Check size={11} /></button>
-            <button onClick={() => setEditing(false)} className="p-0.5" style={{ color: 'var(--text-muted)' }}><X size={11} /></button>
+            <button onClick={confirmEdit} className="p-0.5 text-green-500 shrink-0"><Check size={11} /></button>
+            <button onClick={() => setEditing(false)} className="p-0.5 shrink-0" style={{ color: 'var(--text-muted)' }}><X size={11} /></button>
           </div>
         ) : (
           <>
             <div
-              className="text-xs font-medium truncate"
-              style={{ color: active ? '#a5b4fc' : 'var(--text-secondary)' }}
+              className="pa-fs-xs pa-session-title truncate min-w-0"
+              style={{ color: active ? undefined : 'var(--text-secondary)' }}
             >
               {session.title || '新对话'}
             </div>
-            {session.lastMessagePreview && (
-              <div className="text-[10px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                {session.lastMessagePreview}
-              </div>
-            )}
-            <div className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
+            <span
+              className="pa-fs-tiny shrink-0 tabular-nums"
+              style={{ color: 'var(--text-muted)', opacity: 0.75 }}
+            >
               {dayjs(session.updatedAt).fromNow()}
-            </div>
+            </span>
           </>
         )}
       </div>
@@ -112,7 +138,8 @@ function SessionItem({ session, active, onSelect, onDelete, onRename }: SessionI
       {/* Actions */}
       {!editing && (
         <div
-          className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+          className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity absolute right-1 top-1/2 -translate-y-1/2"
+          style={{ background: 'var(--pa-bg-hover, var(--bg-hover))' }}
           onClick={e => e.stopPropagation()}
         >
           <button
@@ -137,6 +164,99 @@ function SessionItem({ session, active, onSelect, onDelete, onRename }: SessionI
   );
 }
 
+// ── SessionSkeleton（骨架屏 — Linear/GitHub 风，比"加载中..."更现代） ────
+
+function SessionSkeleton() {
+  return (
+    <div className="pa-session-list pt-1">
+      {[0, 1, 2, 3].map(i => (
+        <div key={i} className="pa-session-item flex items-center justify-between gap-2 px-2">
+          <div className="h-2.5 rounded pa-skeleton-shimmer flex-1" style={{ maxWidth: `${55 + i * 8}%` }} />
+          <div className="h-2 w-10 rounded pa-skeleton-shimmer shrink-0 opacity-60" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── GroupedSessions — 按时间分组 + 复盘单独成组（Notion/Linear 风） ────────
+
+interface GroupedSessionsProps {
+  sessions: PaSessionInfo[];
+  activeSessionId: string | null;
+  onSelect: (id: string) => void;
+  onDelete: (id: string) => Promise<void>;
+  onRename: (id: string, title: string) => Promise<void>;
+}
+
+function GroupedSessions({ sessions, activeSessionId, onSelect, onDelete, onRename }: GroupedSessionsProps) {
+  // 排序后再分组，保证组内仍按 UpdatedAt 倒序
+  const sorted = [...sessions].sort(
+    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+  );
+
+  const now = dayjs();
+  const startOfToday = now.startOf('day');
+  const startOfYesterday = startOfToday.subtract(1, 'day');
+  const startOfWeek = now.startOf('week');
+
+  const reviewGroup: PaSessionInfo[] = [];
+  const todayGroup: PaSessionInfo[] = [];
+  const yesterdayGroup: PaSessionInfo[] = [];
+  const thisWeekGroup: PaSessionInfo[] = [];
+  const earlierGroup: PaSessionInfo[] = [];
+
+  for (const s of sorted) {
+    if (s.type === 'review') {
+      reviewGroup.push(s);
+      continue;
+    }
+    const u = dayjs(s.updatedAt);
+    if (u.isAfter(startOfToday) || u.isSame(startOfToday)) todayGroup.push(s);
+    else if (u.isAfter(startOfYesterday) || u.isSame(startOfYesterday)) yesterdayGroup.push(s);
+    else if (u.isAfter(startOfWeek) || u.isSame(startOfWeek)) thisWeekGroup.push(s);
+    else earlierGroup.push(s);
+  }
+
+  const groups: { key: string; label: string; items: PaSessionInfo[] }[] = [
+    { key: 'review', label: '我的复盘', items: reviewGroup },
+    { key: 'today', label: '今天', items: todayGroup },
+    { key: 'yesterday', label: '昨天', items: yesterdayGroup },
+    { key: 'week', label: '本周', items: thisWeekGroup },
+    { key: 'earlier', label: '更早', items: earlierGroup },
+  ];
+
+  return (
+    <div className="space-y-3">
+      {groups
+        .filter(g => g.items.length > 0)
+        .map(g => (
+          <div key={g.key} className="pa-session-group">
+            <div
+              className="px-2 pb-1 pa-fs-tiny font-semibold uppercase tracking-wider flex items-center justify-between"
+              style={{ color: 'var(--text-muted)', opacity: 0.65, letterSpacing: '0.08em' }}
+            >
+              <span>{g.label}</span>
+              <span className="text-[9px] opacity-70 tabular-nums">{g.items.length}</span>
+            </div>
+            <div className="pa-session-list">
+              {g.items.map(s => (
+                <SessionItem
+                  key={s.id}
+                  session={s}
+                  active={s.id === activeSessionId}
+                  onSelect={() => onSelect(s.id)}
+                  onDelete={() => void onDelete(s.id)}
+                  onRename={title => void onRename(s.id, title)}
+                />
+              ))}
+            </div>
+          </div>
+        ))}
+    </div>
+  );
+}
+
 // ── PaAgentPage ───────────────────────────────────────────────────────────
 
 export function PaAgentPage() {
@@ -146,6 +266,33 @@ export function PaAgentPage() {
   const [boardRefreshKey, setBoardRefreshKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
+
+  // 主题（gemini / mountain / parchment）与字号档 — sessionStorage 持久化
+  const [theme, setTheme] = useState<PaTheme>(() => readThemePref());
+  const [fontSize, setFontSize] = useState<PaFontSize>(() =>
+    readPref<PaFontSize>(PA_FONTSIZE_KEY, 'medium', ['small', 'medium', 'large']));
+
+  const handleToggleTheme = useCallback(() => {
+    setTheme(prev => {
+      const idx = PA_THEME_CYCLE.indexOf(prev);
+      const next = PA_THEME_CYCLE[(idx + 1) % PA_THEME_CYCLE.length]!;
+      writePref(PA_THEME_KEY, next);
+      return next;
+    });
+  }, []);
+
+  const themeToggleMeta: Record<PaTheme, { title: string; icon: React.ReactNode }> = {
+    gemini: { title: '当前：Gemini 浅色 — 点击切换山蓝深色', icon: <Sparkles size={14} /> },
+    mountain: { title: '当前：山蓝深色 — 点击切换羊皮卷', icon: <Mountain size={14} /> },
+    parchment: { title: '当前：羊皮卷 — 点击切换 Gemini 浅色', icon: <BookOpen size={14} /> },
+  };
+
+  const handleSetFontSize = useCallback((next: PaFontSize) => {
+    setFontSize(next);
+    writePref(PA_FONTSIZE_KEY, next);
+  }, []);
 
   const loadSessions = useCallback(async () => {
     const res = await getPaSessions();
@@ -209,10 +356,19 @@ export function PaAgentPage() {
   const activeSession = sessions.find(s => s.id === activeSessionId);
 
   return (
-    <div className="h-full flex" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
+    <div
+      className="pa-agent-root h-full flex min-h-0"
+      data-pa-theme={theme}
+      data-pa-fontsize={fontSize}
+      data-sidebar-open={sidebarOpen ? 'true' : 'false'}
+      style={{
+        background: 'transparent',
+        color: 'var(--text-primary)',
+      }}
+    >
       {/* ── Sidebar ── */}
       <div
-        className="flex flex-col shrink-0 transition-all duration-200 overflow-hidden"
+        className="pa-agent-sidebar flex flex-col shrink-0 transition-all duration-200 overflow-hidden"
         style={{
           width: sidebarOpen ? 220 : 0,
           borderRight: sidebarOpen ? '1px solid var(--border-default)' : 'none',
@@ -226,9 +382,12 @@ export function PaAgentPage() {
           <div className="flex items-center gap-2">
             <div
               className="w-6 h-6 rounded-lg flex items-center justify-center"
-              style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}
+              style={{
+                background: 'linear-gradient(135deg, rgba(255,255,255,0.95), rgba(238,242,248,0.9))',
+                boxShadow: '0 1px 4px rgba(66,133,244,0.15)',
+              }}
             >
-              <Zap size={12} color="#fff" />
+              <PaSecretaryIcon size={14} />
             </div>
             <span className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
               毒舌秘书
@@ -244,54 +403,30 @@ export function PaAgentPage() {
           </button>
         </div>
 
-        {/* Session list */}
-        <div className="flex-1 overflow-auto p-2 space-y-0.5">
+        {/* Session list — 按时间分组 + 复盘单独成组 */}
+        <div className="flex-1 overflow-auto p-2 space-y-1">
           {loading ? (
-            <div className="text-xs text-center pt-4" style={{ color: 'var(--text-muted)' }}>
-              加载中...
-            </div>
+            <SessionSkeleton />
           ) : sessions.length === 0 ? (
-            <div className="text-xs text-center pt-6" style={{ color: 'var(--text-muted)' }}>
-              点击 + 开始新对话
+            <div className="text-xs text-center pt-6 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+              点击 <span style={{ color: '#a5b4fc', fontWeight: 600 }}>+</span> 开始新对话<br/>
+              <span className="text-[10px] opacity-70">把混乱丢给秘书</span>
             </div>
           ) : (
-            sessions.map(s => (
-              <SessionItem
-                key={s.id}
-                session={s}
-                active={s.id === activeSessionId}
-                onSelect={() => { setActiveSessionId(s.id); setTab('chat'); }}
-                onDelete={() => void handleDeleteSession(s.id)}
-                onRename={title => void handleRenameSession(s.id, title)}
-              />
-            ))
+            <GroupedSessions
+              sessions={sessions}
+              activeSessionId={activeSessionId}
+              onSelect={id => { setActiveSessionId(id); setTab('chat'); }}
+              onDelete={handleDeleteSession}
+              onRename={handleRenameSession}
+            />
           )}
         </div>
 
-        {/* Task board link at bottom */}
-        <div
-          className="shrink-0 p-2"
-          style={{ borderTop: '1px solid var(--border-default)' }}
-        >
-          <button
-            onClick={() => setTab('board')}
-            className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl text-xs transition-all"
-            style={{
-              background: tab === 'board' ? 'rgba(99,102,241,0.12)' : 'transparent',
-              color: tab === 'board' ? '#a5b4fc' : 'var(--text-muted)',
-              border: tab === 'board' ? '1px solid rgba(99,102,241,0.25)' : '1px solid transparent',
-            }}
-            onMouseEnter={e => { if (tab !== 'board') e.currentTarget.style.background = 'var(--bg-hover)'; }}
-            onMouseLeave={e => { if (tab !== 'board') e.currentTarget.style.background = 'transparent'; }}
-          >
-            <LayoutGrid size={13} />
-            任务看板
-          </button>
-        </div>
       </div>
 
-      {/* ── Main area ── */}
-      <div className="flex-1 flex flex-col min-w-0">
+      {/* ── Main area（四角圆角内容区） ── */}
+      <div className="pa-agent-main flex-1 flex flex-col min-w-0 min-h-0">
         {/* Top bar */}
         <div
           className="shrink-0 flex items-center gap-2 px-3 py-2"
@@ -329,7 +464,8 @@ export function PaAgentPage() {
               <button
                 key={t.key}
                 onClick={() => setTab(t.key)}
-                className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-[10px] transition-all whitespace-nowrap font-medium"
+                data-active={tab === t.key}
+                className="pa-tab-button flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-[10px] whitespace-nowrap font-medium"
                 style={
                   tab === t.key
                     ? { background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: '#fff' }
@@ -341,6 +477,59 @@ export function PaAgentPage() {
               </button>
             ))}
           </div>
+
+          {/* 阅读偏好：字号档 + 主题切换（顶部 bar 右侧） */}
+          <div
+            className="hidden md:flex items-center gap-0.5 rounded-xl p-0.5"
+            style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-default)' }}
+            title="阅读偏好：字号 A- / A / A+ 三档"
+          >
+            <button
+              type="button"
+              className="pa-toolbar-btn pa-toolbar-font-btn"
+              data-active={fontSize === 'small'}
+              onClick={() => handleSetFontSize('small')}
+              title="小号字"
+            >
+              A-
+            </button>
+            <button
+              type="button"
+              className="pa-toolbar-btn pa-toolbar-font-btn"
+              data-active={fontSize === 'medium'}
+              onClick={() => handleSetFontSize('medium')}
+              title="默认字号"
+            >
+              A
+            </button>
+            <button
+              type="button"
+              className="pa-toolbar-btn pa-toolbar-font-btn"
+              data-active={fontSize === 'large'}
+              onClick={() => handleSetFontSize('large')}
+              title="大号字"
+            >
+              A+
+            </button>
+          </div>
+
+          <button
+            onClick={handleToggleTheme}
+            className="pa-toolbar-btn"
+            data-active={theme !== 'gemini'}
+            title={themeToggleMeta[theme].title}
+            style={{ width: 28, height: 28, padding: 0 }}
+          >
+            {themeToggleMeta[theme].icon}
+          </button>
+          <button
+            onClick={() => setProfileOpen(true)}
+            className="pa-toolbar-btn flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl"
+            title="毒舌秘书会跨会话记得的事 — 角色 / 项目 / 节奏 / 偏好"
+          >
+            <Brain size={13} />
+            我的画像
+          </button>
 
           {/* New chat button (visible when sidebar collapsed) */}
           {!sidebarOpen && (
@@ -387,10 +576,16 @@ export function PaAgentPage() {
               </div>
             )
           ) : (
-            <PaTaskBoard key={boardRefreshKey} />
+            <PaTaskBoard
+              key={boardRefreshKey}
+              onOpenReview={() => setReviewOpen(true)}
+            />
           )}
         </div>
       </div>
+
+      <PaProfilePanel open={profileOpen} onClose={() => setProfileOpen(false)} />
+      <PaReviewDrawer open={reviewOpen} onClose={() => setReviewOpen(false)} />
     </div>
   );
 }
