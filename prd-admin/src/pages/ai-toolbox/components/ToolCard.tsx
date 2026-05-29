@@ -49,6 +49,7 @@ import {
   Layers,
   Swords,
   HardHat,
+  FolderKanban,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { PaSecretary } from '@/lib/paSecretaryIconRegistry';
@@ -70,6 +71,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   Bot, Lightbulb, Target, Wrench, Sparkles, Rocket, MessageSquare, Zap,
   Brain, Cpu, Database, Globe, Image, Music, Video, BookOpen,
   GraduationCap, Briefcase, Heart, Star, Shield, Lock, Search, Layers,   Swords,
+  FolderKanban,
   PaSecretary,
 };
 
@@ -106,6 +108,7 @@ const ACCENT_PALETTE: Record<string, { from: string; soft: string }> = {
   Search:       { from: '#14B8A6', soft: '#5EEAD4' },
   Layers:       { from: '#8B5CF6', soft: '#C4B5FD' },
   Swords:       { from: '#F97316', soft: '#FDBA74' },
+  FolderKanban: { from: '#3B82F6', soft: '#93C5FD' },
   // 毒舌秘书：科幻深蓝 + 青色高光，与 PaAgentCardArt 内联插画呼应
   PaSecretary:  { from: '#2563EB', soft: '#67E8F9' },
 };

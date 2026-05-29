@@ -4,6 +4,8 @@ import type {
   PmTaskStatus,
   PmTaskPriority,
   PmOperationSubType,
+  PmStakeholderRole,
+  PmEvaluationGrade,
 } from '@/services/contracts/pmAgent';
 
 // ── 项目类型注册表（S / I / O）──
@@ -39,6 +41,33 @@ export const TASK_STATUS_REGISTRY: Record<PmTaskStatus, { label: string; color: 
 
 /** 看板列顺序 */
 export const BOARD_COLUMNS: PmTaskStatus[] = ['backlog', 'todo', 'in_progress', 'done'];
+
+// ── 干系人角色注册表（决定打分权重）──
+export const STAKEHOLDER_ROLE_REGISTRY: Record<PmStakeholderRole, { label: string; weightLabel: string; color: string }> = {
+  beneficiary: { label: '客户 / 业务方', weightLabel: '50%', color: '#EF4444' },
+  management: { label: '管理层', weightLabel: '20%', color: '#A855F7' },
+  team: { label: '项目团队', weightLabel: '20%', color: '#3B82F6' },
+  other: { label: '其他干系人', weightLabel: '10%', color: '#6B7280' },
+};
+
+// ── 权力利益矩阵四象限策略 ──
+// key: `${power}-${interest}`（high/low）
+export const POWER_INTEREST_MATRIX: Record<string, { label: string; strategy: string; color: string }> = {
+  'high-high': { label: '重点管理', strategy: '客户/管理层/核心业务方：定期沟通，确保需求被满足', color: '#EF4444' },
+  'low-high': { label: '让其参与', strategy: '项目成员/一线用户：听取意见，给予参与感', color: '#3B82F6' },
+  'high-low': { label: '随时告知', strategy: '监管机构/高层：知会项目情况，避免出问题', color: '#F59E0B' },
+  'low-low': { label: '持续监控', strategy: '普通公众/非直接相关方：保持监控即可', color: '#6B7280' },
+};
+
+// ── NPSS 等级注册表 ──
+export const GRADE_REGISTRY: Record<PmEvaluationGrade, { label: string; color: string; desc: string }> = {
+  success: { label: '成功项目', color: '#10B981', desc: '价值远大于投入，干系人非常满意（9-10 分）' },
+  mediocre: { label: '平庸项目', color: '#F59E0B', desc: '有一定价值但有不足，不算完全成功（7-8 分）' },
+  fail: { label: '失败项目', color: '#EF4444', desc: '价值小于投入，干系人觉得白做了（0-6 分）' },
+};
+
+/** NPSS 全球平均基线（PMI 调研） */
+export const NPSS_GLOBAL_BASELINE = 36;
 
 // ── 优先级注册表 ──
 export const PRIORITY_REGISTRY: Record<PmTaskPriority, { label: string; color: string; weight: number }> = {

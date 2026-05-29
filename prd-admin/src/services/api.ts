@@ -1298,6 +1298,8 @@ export const api = {
       decompose: (projectId: string) => `/api/pm/projects/${projectId}/decompose`,
       createTask: (projectId: string) => `/api/pm/projects/${projectId}/tasks`,
       batchTasks: (projectId: string) => `/api/pm/projects/${projectId}/tasks/batch`,
+      stakeholders: (projectId: string) => `/api/pm/projects/${projectId}/stakeholders`,
+      evaluate: (projectId: string) => `/api/pm/projects/${projectId}/evaluate`,
     },
     tasks: {
       update: (taskId: string) => `/api/pm/tasks/${taskId}`,

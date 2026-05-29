@@ -7,7 +7,7 @@ import { listPmProjects, deletePmProject } from '@/services';
 import type { PmProject } from '@/services/contracts/pmAgent';
 import { CreateProjectDialog } from './CreateProjectDialog';
 import { ProjectDetailView } from './ProjectDetailView';
-import { PROJECT_TYPE_REGISTRY, LIFECYCLE_REGISTRY } from './pmConstants';
+import { PROJECT_TYPE_REGISTRY, LIFECYCLE_REGISTRY, GRADE_REGISTRY } from './pmConstants';
 
 export function PmAgentPage() {
   const [projects, setProjects] = useState<PmProject[]>([]);
@@ -87,6 +87,11 @@ export function PmAgentPage() {
                   <div className="text-[11px] mt-1.5 line-clamp-2" style={{ color: 'var(--text-muted)' }}>{p.businessGoal}</div>
                   <div className="flex items-center gap-2 mt-3">
                     <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: `${lifeMeta.color}22`, color: lifeMeta.color }}>{lifeMeta.label}</span>
+                    {p.evaluation && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold" style={{ background: `${GRADE_REGISTRY[p.evaluation.grade].color}22`, color: GRADE_REGISTRY[p.evaluation.grade].color }}>
+                        NPSS {p.evaluation.satisfactionScore}
+                      </span>
+                    )}
                     <span className="text-[11px] ml-auto" style={{ color: 'var(--text-muted)' }}>{p.doneTaskCount}/{p.taskCount} 任务</span>
                   </div>
                   {/* 进度条 */}

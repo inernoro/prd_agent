@@ -7,6 +7,27 @@ export type PmOperationSubType = 'routine' | 'rectification' | 'supervision';
 export type PmProjectLifecycle = 'registered' | 'running' | 'closing' | 'evaluated' | 'archived';
 export type PmTaskStatus = 'backlog' | 'todo' | 'in_progress' | 'done' | 'cancelled';
 export type PmTaskPriority = 'urgent' | 'high' | 'medium' | 'low' | 'none';
+export type PmStakeholderRole = 'beneficiary' | 'management' | 'team' | 'other';
+export type PmStakeholderAxis = 'high' | 'low';
+export type PmEvaluationGrade = 'success' | 'mediocre' | 'fail';
+
+export type PmStakeholder = {
+  id: string;
+  name: string;
+  userId?: string | null;
+  role: PmStakeholderRole;
+  power: PmStakeholderAxis;
+  interest: PmStakeholderAxis;
+  score?: number | null;
+};
+
+export type PmEvaluation = {
+  satisfactionScore: number;
+  grade: PmEvaluationGrade;
+  roleAverages: Record<string, number>;
+  evaluatedAt: string;
+  evaluatedBy: string;
+};
 
 export type PmProject = {
   id: string;
@@ -29,6 +50,8 @@ export type PmProject = {
   ownerId: string;
   taskCount: number;
   doneTaskCount: number;
+  stakeholders: PmStakeholder[];
+  evaluation?: PmEvaluation | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -138,3 +161,16 @@ export type CreatePmTaskContract = (projectId: string, input: CreatePmTaskInput)
 export type BatchCreatePmTasksContract = (projectId: string, input: BatchCreatePmTasksInput) => Promise<ApiResponse<{ items: PmTask[]; count: number }>>;
 export type UpdatePmTaskContract = (taskId: string, input: UpdatePmTaskInput) => Promise<ApiResponse<{ updated: boolean }>>;
 export type DeletePmTaskContract = (taskId: string) => Promise<ApiResponse<{ deletedCount: number }>>;
+
+export type SetStakeholdersInput = {
+  stakeholders: Array<{
+    id?: string;
+    name: string;
+    userId?: string;
+    role: PmStakeholderRole;
+    power: PmStakeholderAxis;
+    interest: PmStakeholderAxis;
+  }>;
+};
+export type SetPmStakeholdersContract = (projectId: string, input: SetStakeholdersInput) => Promise<ApiResponse<{ stakeholders: PmStakeholder[] }>>;
+export type EvaluatePmProjectContract = (projectId: string, scores: Record<string, number>) => Promise<ApiResponse<{ evaluation: PmEvaluation }>>;

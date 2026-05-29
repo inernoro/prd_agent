@@ -1,28 +1,31 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, Sparkles, Plus, LayoutGrid, List, GanttChartSquare, Trash2 } from 'lucide-react';
+import { ArrowLeft, Sparkles, Plus, LayoutGrid, List, GanttChartSquare, Trash2, Users, Award } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import {
   getPmProject, createPmTask, updatePmTask, deletePmTask,
 } from '@/services';
-import type { PmProject, PmTask, PmTaskStatus } from '@/services/contracts/pmAgent';
+import type { PmProject, PmTask, PmTaskStatus, PmStakeholder, PmEvaluation } from '@/services/contracts/pmAgent';
 import { KanbanBoard } from './KanbanBoard';
 import { GanttChart } from './GanttChart';
 import { DecomposePanel } from './DecomposePanel';
-import { PROJECT_TYPE_REGISTRY, LIFECYCLE_REGISTRY, TASK_STATUS_REGISTRY, PRIORITY_REGISTRY } from './pmConstants';
+import { StakeholderPanel } from './StakeholderPanel';
+import { EvaluatePanel } from './EvaluatePanel';
+import { PROJECT_TYPE_REGISTRY, LIFECYCLE_REGISTRY, TASK_STATUS_REGISTRY, PRIORITY_REGISTRY, GRADE_REGISTRY } from './pmConstants';
 
 interface Props {
   projectId: string;
   onBack: () => void;
 }
 
-type ViewTab = 'board' | 'list' | 'gantt';
+type ViewTab = 'board' | 'list' | 'gantt' | 'stakeholders';
 
 const TABS: { key: ViewTab; label: string; icon: typeof LayoutGrid }[] = [
   { key: 'board', label: '看板', icon: LayoutGrid },
   { key: 'list', label: '列表', icon: List },
   { key: 'gantt', label: '甘特图', icon: GanttChartSquare },
+  { key: 'stakeholders', label: '干系人', icon: Users },
 ];
 
 export function ProjectDetailView({ projectId, onBack }: Props) {
@@ -31,6 +34,7 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<ViewTab>('board');
   const [showDecompose, setShowDecompose] = useState(false);
+  const [showEvaluate, setShowEvaluate] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [adding, setAdding] = useState(false);
 
@@ -87,10 +91,18 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
               <span className="text-[11px] px-1.5 py-0.5 rounded font-semibold" style={{ background: `${typeMeta.color}22`, color: typeMeta.color }}>{typeMeta.short}</span>
               <h2 className="text-[17px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{project.title}</h2>
               <span className="text-[11px] px-1.5 py-0.5 rounded" style={{ background: `${lifeMeta.color}22`, color: lifeMeta.color }}>{lifeMeta.label}</span>
+              {project.evaluation && (
+                <span className="text-[11px] px-1.5 py-0.5 rounded font-semibold" style={{ background: `${GRADE_REGISTRY[project.evaluation.grade].color}22`, color: GRADE_REGISTRY[project.evaluation.grade].color }}>
+                  {GRADE_REGISTRY[project.evaluation.grade].label} · {project.evaluation.satisfactionScore}
+                </span>
+              )}
             </div>
             <div className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>{project.projectNo}｜目标：{project.businessGoal}</div>
           </div>
-          <Button variant="primary" onClick={() => setShowDecompose(true)}><Sparkles size={14} />AI 拆解需求</Button>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" onClick={() => setShowEvaluate(true)}><Award size={14} />结案评价</Button>
+            <Button variant="primary" onClick={() => setShowDecompose(true)}><Sparkles size={14} />AI 拆解需求</Button>
+          </div>
         </div>
       </div>
 
@@ -126,7 +138,7 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
       </div>
 
       {/* 主视图 */}
-      {tasks.length === 0 && (
+      {tasks.length === 0 && tab !== 'stakeholders' && (
         <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-3 text-center">
           <div className="text-[14px] font-medium" style={{ color: 'var(--text-secondary)' }}>还没有任务</div>
           <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>点击右上角「AI 拆解需求」，让 AI 根据业务目标自动生成任务清单</div>
@@ -159,12 +171,30 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
 
       {tasks.length > 0 && tab === 'gantt' && <GanttChart tasks={tasks} />}
 
+      {tab === 'stakeholders' && (
+        <StakeholderPanel
+          projectId={projectId}
+          stakeholders={project.stakeholders}
+          onSaved={(list: PmStakeholder[]) => setProject((prev) => (prev ? { ...prev, stakeholders: list } : prev))}
+        />
+      )}
+
       {showDecompose && (
         <DecomposePanel
           projectId={projectId}
           businessGoal={project.businessGoal}
           onClose={() => setShowDecompose(false)}
           onCreated={() => { setShowDecompose(false); load(); }}
+        />
+      )}
+
+      {showEvaluate && (
+        <EvaluatePanel
+          projectId={projectId}
+          stakeholders={project.stakeholders}
+          existing={project.evaluation}
+          onClose={() => setShowEvaluate(false)}
+          onEvaluated={(evaluation: PmEvaluation) => setProject((prev) => (prev ? { ...prev, evaluation, lifecycle: 'evaluated' } : prev))}
         />
       )}
     </div>

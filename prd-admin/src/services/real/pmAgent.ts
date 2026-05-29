@@ -10,6 +10,8 @@ import type {
   BatchCreatePmTasksContract,
   UpdatePmTaskContract,
   DeletePmTaskContract,
+  SetPmStakeholdersContract,
+  EvaluatePmProjectContract,
 } from '@/services/contracts/pmAgent';
 
 export const createPmProjectReal: CreatePmProjectContract = async (input) => {
@@ -48,4 +50,12 @@ export const updatePmTaskReal: UpdatePmTaskContract = async (taskId, input) => {
 
 export const deletePmTaskReal: DeletePmTaskContract = async (taskId) => {
   return await apiRequest(api.pm.tasks.delete(encodeURIComponent(taskId)), { method: 'DELETE' });
+};
+
+export const setPmStakeholdersReal: SetPmStakeholdersContract = async (projectId, input) => {
+  return await apiRequest(api.pm.projects.stakeholders(encodeURIComponent(projectId)), { method: 'PUT', body: input });
+};
+
+export const evaluatePmProjectReal: EvaluatePmProjectContract = async (projectId, scores) => {
+  return await apiRequest(api.pm.projects.evaluate(encodeURIComponent(projectId)), { method: 'POST', body: { scores } });
 };

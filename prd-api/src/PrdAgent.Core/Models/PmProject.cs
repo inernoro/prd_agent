@@ -85,11 +85,112 @@ public class PmProject
     /// <summary>已完成任务数（反规范化缓存）</summary>
     public int DoneTaskCount { get; set; }
 
+    // ── Phase 2: 干系人 + NPSS 评价 ──
+
+    /// <summary>项目干系人列表（权力利益矩阵 + 加权打分载体）</summary>
+    public List<PmStakeholder> Stakeholders { get; set; } = new();
+
+    /// <summary>结案评价（NPSS）结果，未评价时为 null</summary>
+    public PmEvaluation? Evaluation { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
     /// <summary>软删除标记</summary>
     public bool IsDeleted { get; set; }
+}
+
+/// <summary>
+/// 项目干系人 — 权力利益矩阵分类 + NPSS 加权打分载体。
+/// </summary>
+public class PmStakeholder
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
+    /// <summary>干系人名称</summary>
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>关联系统用户 ID（可选）</summary>
+    public string? UserId { get; set; }
+
+    /// <summary>角色（决定打分权重）：beneficiary(客户/业务方) / management(管理层) / team(项目团队) / other(其他)</summary>
+    public string Role { get; set; } = PmStakeholderRole.Other;
+
+    /// <summary>权力高低：high / low（权力利益矩阵横轴）</summary>
+    public string Power { get; set; } = PmStakeholderAxis.Low;
+
+    /// <summary>利益高低：high / low（权力利益矩阵纵轴）</summary>
+    public string Interest { get; set; } = PmStakeholderAxis.Low;
+
+    /// <summary>结案打分（0-10，评价时填写），未打分为 null</summary>
+    public int? Score { get; set; }
+}
+
+/// <summary>
+/// 项目结案评价（NPSS）。
+/// 满意度 = 干系人加权打分（受益方权重为其他 2 倍），等级据此判定。
+/// </summary>
+public class PmEvaluation
+{
+    /// <summary>干系人满意度得分（0-100，加权后 ×10）</summary>
+    public double SatisfactionScore { get; set; }
+
+    /// <summary>项目等级：success(成功 9-10) / mediocre(平庸 7-8) / fail(失败 0-6)</summary>
+    public string Grade { get; set; } = PmEvaluationGrade.Fail;
+
+    /// <summary>各角色组加权明细（角色 → 该组平均分 0-10）</summary>
+    public Dictionary<string, double> RoleAverages { get; set; } = new();
+
+    public DateTime EvaluatedAt { get; set; } = DateTime.UtcNow;
+    public string EvaluatedBy { get; set; } = string.Empty;
+}
+
+/// <summary>干系人角色常量（决定打分权重）</summary>
+public static class PmStakeholderRole
+{
+    /// <summary>受益方：客户 / 业务方（权重为其他 2 倍，默认占 50%）</summary>
+    public const string Beneficiary = "beneficiary";
+    /// <summary>管理层（默认占 20%）</summary>
+    public const string Management = "management";
+    /// <summary>项目团队（默认占 20%）</summary>
+    public const string Team = "team";
+    /// <summary>其他干系人（默认占 10%）</summary>
+    public const string Other = "other";
+
+    public static readonly string[] All = { Beneficiary, Management, Team, Other };
+
+    /// <summary>
+    /// 角色基准权重（受益方为其他 2 倍）。实际计算时按"在场角色组"重归一化。
+    /// </summary>
+    public static readonly Dictionary<string, double> BaseWeights = new()
+    {
+        [Beneficiary] = 0.5,
+        [Management] = 0.2,
+        [Team] = 0.2,
+        [Other] = 0.1,
+    };
+}
+
+/// <summary>权力 / 利益高低轴常量（权力利益矩阵）</summary>
+public static class PmStakeholderAxis
+{
+    public const string High = "high";
+    public const string Low = "low";
+}
+
+/// <summary>NPSS 项目等级常量</summary>
+public static class PmEvaluationGrade
+{
+    /// <summary>成功项目（满意度 9-10 分）</summary>
+    public const string Success = "success";
+    /// <summary>平庸项目（满意度 7-8 分）</summary>
+    public const string Mediocre = "mediocre";
+    /// <summary>失败项目（满意度 0-6 分）</summary>
+    public const string Fail = "fail";
+
+    /// <summary>根据 0-10 满意度判定等级</summary>
+    public static string FromScore10(double score10)
+        => score10 >= 9 ? Success : score10 >= 7 ? Mediocre : Fail;
 }
 
 /// <summary>项目类型常量</summary>

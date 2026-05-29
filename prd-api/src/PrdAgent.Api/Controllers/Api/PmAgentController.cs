@@ -167,6 +167,100 @@ public class PmAgentController : ControllerBase
     }
 
     // ─────────────────────────────────────────────
+    // 干系人 + NPSS 结案评价（Phase 2）
+    // ─────────────────────────────────────────────
+
+    /// <summary>整体替换项目干系人列表（权力利益矩阵分类）</summary>
+    [HttpPut("projects/{projectId}/stakeholders")]
+    public async Task<IActionResult> SetStakeholders(string projectId, [FromBody] SetStakeholdersRequest request)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+
+        var stakeholders = (request.Stakeholders ?? new()).Select(s => new PmStakeholder
+        {
+            Id = string.IsNullOrWhiteSpace(s.Id) ? Guid.NewGuid().ToString("N") : s.Id!,
+            Name = (s.Name ?? "").Trim(),
+            UserId = s.UserId,
+            Role = PmStakeholderRole.All.Contains(s.Role ?? "") ? s.Role! : PmStakeholderRole.Other,
+            Power = s.Power == PmStakeholderAxis.High ? PmStakeholderAxis.High : PmStakeholderAxis.Low,
+            Interest = s.Interest == PmStakeholderAxis.High ? PmStakeholderAxis.High : PmStakeholderAxis.Low,
+            // 保留已有打分（若同 Id 已存在）
+            Score = project.Stakeholders.FirstOrDefault(e => e.Id == s.Id)?.Score,
+        }).Where(s => !string.IsNullOrEmpty(s.Name)).ToList();
+
+        await _db.PmProjects.UpdateOneAsync(p => p.Id == projectId,
+            Builders<PmProject>.Update.Set(p => p.Stakeholders, stakeholders).Set(p => p.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { stakeholders }));
+    }
+
+    /// <summary>结案评价（NPSS）：提交干系人打分 → 加权计算满意度 + 等级 → 落库并推进生命周期</summary>
+    [HttpPost("projects/{projectId}/evaluate")]
+    public async Task<IActionResult> Evaluate(string projectId, [FromBody] EvaluateRequest request)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (project.Stakeholders.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请先维护项目干系人，再进行评价"));
+
+        // 应用本次打分（按干系人 Id）
+        var scoreMap = request.Scores ?? new();
+        foreach (var s in project.Stakeholders)
+        {
+            if (scoreMap.TryGetValue(s.Id, out var v))
+                s.Score = Math.Clamp(v, 0, 10);
+        }
+
+        var scored = project.Stakeholders.Where(s => s.Score.HasValue).ToList();
+        if (scored.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "至少需要一位干系人打分"));
+
+        var evaluation = ComputeNpss(scored, userId);
+
+        await _db.PmProjects.UpdateOneAsync(p => p.Id == projectId,
+            Builders<PmProject>.Update
+                .Set(p => p.Stakeholders, project.Stakeholders)
+                .Set(p => p.Evaluation, evaluation)
+                .Set(p => p.Lifecycle, PmProjectLifecycle.Evaluated)
+                .Set(p => p.ClosedAt, project.ClosedAt ?? DateTime.UtcNow)
+                .Set(p => p.UpdatedAt, DateTime.UtcNow));
+
+        _logger.LogInformation("[pm-agent] Project evaluated: {ProjectId} satisfaction={Score} grade={Grade}",
+            projectId, evaluation.SatisfactionScore, evaluation.Grade);
+        return Ok(ApiResponse<object>.Ok(new { evaluation }));
+    }
+
+    /// <summary>
+    /// NPSS 加权满意度计算：按角色组求平均 → 角色权重重归一化（受益方为其他 2 倍）→ 加权汇总。
+    /// </summary>
+    private static PmEvaluation ComputeNpss(List<PmStakeholder> scored, string evaluatedBy)
+    {
+        var roleAverages = scored
+            .GroupBy(s => s.Role)
+            .ToDictionary(g => g.Key, g => g.Average(s => (double)s.Score!.Value));
+
+        // 仅对"在场角色组"重归一化基准权重
+        var presentWeightSum = roleAverages.Keys.Sum(r => PmStakeholderRole.BaseWeights.GetValueOrDefault(r, 0.1));
+        if (presentWeightSum <= 0) presentWeightSum = 1;
+
+        var weighted10 = roleAverages.Sum(kv =>
+            kv.Value * (PmStakeholderRole.BaseWeights.GetValueOrDefault(kv.Key, 0.1) / presentWeightSum));
+
+        return new PmEvaluation
+        {
+            SatisfactionScore = Math.Round(weighted10 * 10, 1), // 0-100
+            Grade = PmEvaluationGrade.FromScore10(weighted10),
+            RoleAverages = roleAverages.ToDictionary(kv => kv.Key, kv => Math.Round(kv.Value, 1)),
+            EvaluatedAt = DateTime.UtcNow,
+            EvaluatedBy = evaluatedBy,
+        };
+    }
+
+    // ─────────────────────────────────────────────
     // 任务 CRUD（看板 / 列表 / 甘特图）
     // ─────────────────────────────────────────────
 
@@ -494,4 +588,25 @@ public class DecomposeRequest
 {
     /// <summary>可选的需求文档/补充材料文本（零摩擦输入：粘贴/上传后传入）</summary>
     public string? RequirementText { get; set; }
+}
+
+public class SetStakeholdersRequest
+{
+    public List<StakeholderInput> Stakeholders { get; set; } = new();
+}
+
+public class StakeholderInput
+{
+    public string? Id { get; set; }
+    public string? Name { get; set; }
+    public string? UserId { get; set; }
+    public string? Role { get; set; }
+    public string? Power { get; set; }
+    public string? Interest { get; set; }
+}
+
+public class EvaluateRequest
+{
+    /// <summary>干系人打分：stakeholderId → 分数(0-10)</summary>
+    public Dictionary<string, int> Scores { get; set; } = new();
 }
