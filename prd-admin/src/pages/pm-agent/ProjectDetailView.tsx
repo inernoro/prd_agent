@@ -4,7 +4,7 @@ import { Button } from '@/components/design/Button';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import {
-  getPmProject, createPmTask, updatePmTask, deletePmTask,
+  getPmProject, createPmTask, updatePmTask, deletePmTask, updatePmProject,
 } from '@/services';
 import type { PmProject, PmTask, PmTaskStatus, PmStakeholder, PmEvaluation } from '@/services/contracts/pmAgent';
 import { KanbanBoard } from './KanbanBoard';
@@ -37,6 +37,8 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
   const [showEvaluate, setShowEvaluate] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [adding, setAdding] = useState(false);
+  const [costEdit, setCostEdit] = useState<{ budget: string; actualCost: string } | null>(null);
+  const [savingCost, setSavingCost] = useState(false);
 
   const load = useCallback(async () => {
     const res = await getPmProject(projectId);
@@ -72,6 +74,21 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
     else toast.error('创建失败', res.error?.message || '');
   };
 
+  const saveCost = async () => {
+    if (!costEdit) return;
+    setSavingCost(true);
+    const payload: { budget?: number; actualCost?: number } = {};
+    if (costEdit.budget !== '') payload.budget = Number(costEdit.budget);
+    if (costEdit.actualCost !== '') payload.actualCost = Number(costEdit.actualCost);
+    const res = await updatePmProject(projectId, payload);
+    setSavingCost(false);
+    if (res.success) {
+      setProject((prev) => (prev ? { ...prev, budget: payload.budget ?? prev.budget, actualCost: payload.actualCost ?? prev.actualCost } : prev));
+      setCostEdit(null);
+      toast.success('已保存成本', '');
+    } else toast.error('保存失败', res.error?.message || '');
+  };
+
   if (loading) return <div className="flex-1 min-h-0 flex items-center justify-center"><MapSectionLoader text="正在加载项目…" /></div>;
   if (!project) return null;
 
@@ -98,6 +115,33 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
               )}
             </div>
             <div className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>{project.projectNo}｜目标：{project.businessGoal}</div>
+            {/* 成本侧进度留痕：预算 / 实际成本 */}
+            <div className="text-[12px] mt-1.5 flex items-center gap-2 flex-wrap" style={{ color: 'var(--text-muted)' }}>
+              {costEdit ? (
+                <>
+                  <span>预算</span>
+                  <input type="number" min={0} value={costEdit.budget} onChange={(e) => setCostEdit({ ...costEdit, budget: e.target.value })}
+                    className="rounded px-2 py-0.5 text-[12px] outline-none border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)', width: 110 }} placeholder="预算(元)" />
+                  <span>实际</span>
+                  <input type="number" min={0} value={costEdit.actualCost} onChange={(e) => setCostEdit({ ...costEdit, actualCost: e.target.value })}
+                    className="rounded px-2 py-0.5 text-[12px] outline-none border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)', width: 110 }} placeholder="实际成本(元)" />
+                  <Button variant="primary" size="xs" onClick={saveCost} disabled={savingCost}>保存</Button>
+                  <button onClick={() => setCostEdit(null)} className="text-[12px] hover:opacity-70">取消</button>
+                </>
+              ) : (
+                <>
+                  <span>预算 {project.budget != null ? `¥${project.budget.toLocaleString('zh-CN')}` : '未设置'}</span>
+                  <span>·</span>
+                  <span>实际 {project.actualCost != null ? `¥${project.actualCost.toLocaleString('zh-CN')}` : '未填写'}</span>
+                  {project.budget != null && project.actualCost != null && (
+                    <span style={{ color: project.actualCost > project.budget ? '#EF4444' : '#10B981' }}>
+                      {project.actualCost > project.budget ? '超支' : '预算内'}
+                    </span>
+                  )}
+                  <button onClick={() => setCostEdit({ budget: project.budget != null ? String(project.budget) : '', actualCost: project.actualCost != null ? String(project.actualCost) : '' })} className="hover:opacity-70" style={{ color: 'var(--text-secondary)' }}>编辑成本</button>
+                </>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <Button variant="secondary" onClick={() => setShowEvaluate(true)}><Award size={14} />结案评价</Button>

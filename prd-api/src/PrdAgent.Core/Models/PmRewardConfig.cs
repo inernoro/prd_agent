@@ -28,5 +28,11 @@ public class PmRewardConfig
     public int MoreRapid { get; set; }
     public int MoreEmpowered { get; set; }
 
+    /// <summary>财年起始月份（1-12，默认 1 = 自然年）。用于财年维度 NPSS 盘点。</summary>
+    public int FiscalYearStartMonth { get; set; } = 1;
+
+    /// <summary>优秀项目奖金基数（元），叠加在常规项目奖金之上</summary>
+    public decimal ExcellenceBonusBase { get; set; } = 0;
+
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

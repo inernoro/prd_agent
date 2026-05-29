@@ -51,6 +51,8 @@ export type PmProject = {
   taskCount: number;
   doneTaskCount: number;
   valueCoefficient: number;
+  isExcellent: boolean;
+  excellenceAwardedAt?: string | null;
   stakeholders: PmStakeholder[];
   evaluation?: PmEvaluation | null;
   createdAt: string;
@@ -66,6 +68,8 @@ export type PmRewardConfig = {
   moreOutcome: number;
   moreRapid: number;
   moreEmpowered: number;
+  fiscalYearStartMonth: number;
+  excellenceBonusBase: number;
   updatedAt: string;
 };
 
@@ -78,7 +82,28 @@ export type PmProjectBonus = {
   grade: PmEvaluationGrade;
   satisfactionScore: number;
   valueCoefficient: number;
+  isExcellent: boolean;
   bonus: number;
+};
+
+export type PmNpssStats = {
+  totalEvaluated: number;
+  successCount: number;
+  mediocreCount: number;
+  failCount: number;
+  npss: number;
+  totalBonus: number;
+};
+
+export type PmQuarterStats = { quarter: number; stats: PmNpssStats };
+
+export type PmCostMetrics = {
+  onTimeRate: number;       // -1 表示无数据
+  onTimeBase: number;
+  budgetControlRate: number; // -1 表示无数据
+  budgetBase: number;
+  totalBudget: number;
+  totalActualCost: number;
 };
 
 export type PmDashboard = {
@@ -91,6 +116,11 @@ export type PmDashboard = {
   totalBonus: number;
   projects: PmProjectBonus[];
   rewardConfig: PmRewardConfig;
+  fiscalYear?: number | null;
+  availableFiscalYears: number[];
+  quarters: PmQuarterStats[];
+  excellentProjects: PmProjectBonus[];
+  costMetrics: PmCostMetrics;
 };
 
 export type PmTask = {
@@ -152,6 +182,7 @@ export type UpdatePmProjectInput = Partial<{
   plannedStartAt: string;
   plannedEndAt: string;
   budget: number;
+  actualCost: number;
   valueCoefficient: number;
   memberIds: string[];
 }>;
@@ -164,6 +195,8 @@ export type UpdateRewardConfigInput = Partial<{
   moreOutcome: number;
   moreRapid: number;
   moreEmpowered: number;
+  fiscalYearStartMonth: number;
+  excellenceBonusBase: number;
 }>;
 
 export type CreatePmTaskInput = Partial<Omit<PmTask, 'id' | 'projectId' | 'createdBy' | 'createdAt' | 'updatedAt' | 'source' | 'dependsOn' | 'labels'>> & {
@@ -222,6 +255,7 @@ export type SetStakeholdersInput = {
 };
 export type SetPmStakeholdersContract = (projectId: string, input: SetStakeholdersInput) => Promise<ApiResponse<{ stakeholders: PmStakeholder[] }>>;
 export type EvaluatePmProjectContract = (projectId: string, scores: Record<string, number>) => Promise<ApiResponse<{ evaluation: PmEvaluation }>>;
-export type GetPmDashboardContract = () => Promise<ApiResponse<PmDashboard>>;
+export type GetPmDashboardContract = (fiscalYear?: number) => Promise<ApiResponse<PmDashboard>>;
 export type GetPmRewardConfigContract = () => Promise<ApiResponse<PmRewardConfig>>;
 export type UpdatePmRewardConfigContract = (input: UpdateRewardConfigInput) => Promise<ApiResponse<PmRewardConfig>>;
+export type TogglePmExcellenceContract = (projectId: string, isExcellent: boolean) => Promise<ApiResponse<{ id: string; isExcellent: boolean }>>;

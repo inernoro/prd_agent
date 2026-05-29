@@ -137,6 +137,7 @@ public class PmAgentController : ControllerBase
         if (request.PlannedStartAt.HasValue) update = update.Set(p => p.PlannedStartAt, request.PlannedStartAt);
         if (request.PlannedEndAt.HasValue) update = update.Set(p => p.PlannedEndAt, request.PlannedEndAt);
         if (request.Budget.HasValue) update = update.Set(p => p.Budget, request.Budget);
+        if (request.ActualCost.HasValue) update = update.Set(p => p.ActualCost, request.ActualCost);
         if (request.ValueCoefficient.HasValue) update = update.Set(p => p.ValueCoefficient, Math.Max(0, request.ValueCoefficient.Value));
         if (request.MemberIds != null) update = update.Set(p => p.MemberIds, request.MemberIds);
         if (request.Lifecycle != null && PmProjectLifecycle.All.Contains(request.Lifecycle))
@@ -265,55 +266,131 @@ public class PmAgentController : ControllerBase
     // 组织级 NPSS 仪表盘 + 奖金（Phase 3）
     // ─────────────────────────────────────────────
 
-    /// <summary>组织级 NPSS 仪表盘：聚合已评价项目 → NPSS（成功占比−失败占比）+ 奖金测算 + 等级分布</summary>
+    /// <summary>
+    /// 组织级 NPSS 仪表盘（支持财年盘点）：NPSS（成功占比−失败占比）+ 奖金测算 + 等级分布
+    /// + 财年/季度盘点 + 优秀项目 + 成本侧进度留痕（按时交付率 / 预算控制率）。
+    /// </summary>
     [HttpGet("dashboard")]
-    public async Task<IActionResult> Dashboard()
+    public async Task<IActionResult> Dashboard([FromQuery] int? fiscalYear = null)
     {
         var cfg = await GetOrCreateRewardConfigAsync();
-        var projects = await _db.PmProjects
+        var startMonth = Math.Clamp(cfg.FiscalYearStartMonth, 1, 12);
+
+        var all = await _db.PmProjects
             .Find(p => !p.IsDeleted && p.Evaluation != null)
             .ToListAsync();
 
-        var success = projects.Count(p => p.Evaluation!.Grade == PmEvaluationGrade.Success);
-        var mediocre = projects.Count(p => p.Evaluation!.Grade == PmEvaluationGrade.Mediocre);
-        var fail = projects.Count(p => p.Evaluation!.Grade == PmEvaluationGrade.Fail);
-        var total = projects.Count;
+        // 每个项目归属的财年（按评价时间）
+        var availableFiscalYears = all
+            .Select(p => FiscalYearOf(p.Evaluation!.EvaluatedAt, startMonth))
+            .Distinct().OrderByDescending(y => y).ToList();
 
-        // NPSS = 成功占比 − 失败占比（百分比）
-        var npss = total > 0 ? (int)Math.Round((success - fail) * 100.0 / total) : 0;
+        // 按财年筛选（未指定则全部）
+        var scope = fiscalYear.HasValue
+            ? all.Where(p => FiscalYearOf(p.Evaluation!.EvaluatedAt, startMonth) == fiscalYear.Value).ToList()
+            : all;
 
-        var rows = projects
-            .OrderByDescending(p => p.Evaluation!.EvaluatedAt)
-            .Select(p =>
+        object BuildStats(List<PmProject> list)
+        {
+            var s = list.Count(p => p.Evaluation!.Grade == PmEvaluationGrade.Success);
+            var m = list.Count(p => p.Evaluation!.Grade == PmEvaluationGrade.Mediocre);
+            var f = list.Count(p => p.Evaluation!.Grade == PmEvaluationGrade.Fail);
+            var t = list.Count;
+            return new
             {
-                var bonus = ComputeBonus(p, cfg);
-                return new
-                {
-                    id = p.Id,
-                    projectNo = p.ProjectNo,
-                    title = p.Title,
-                    projectType = p.ProjectType,
-                    operationSubType = p.OperationSubType,
-                    grade = p.Evaluation!.Grade,
-                    satisfactionScore = p.Evaluation!.SatisfactionScore,
-                    valueCoefficient = p.ValueCoefficient,
-                    bonus,
-                };
+                totalEvaluated = t,
+                successCount = s,
+                mediocreCount = m,
+                failCount = f,
+                npss = t > 0 ? (int)Math.Round((s - f) * 100.0 / t) : 0,
+                totalBonus = list.Sum(p => ComputeBonus(p, cfg)),
+            };
+        }
+
+        var rows = scope
+            .OrderByDescending(p => p.Evaluation!.EvaluatedAt)
+            .Select(p => new
+            {
+                id = p.Id,
+                projectNo = p.ProjectNo,
+                title = p.Title,
+                projectType = p.ProjectType,
+                operationSubType = p.OperationSubType,
+                grade = p.Evaluation!.Grade,
+                satisfactionScore = p.Evaluation!.SatisfactionScore,
+                valueCoefficient = p.ValueCoefficient,
+                isExcellent = p.IsExcellent,
+                bonus = ComputeBonus(p, cfg),
             })
             .ToList();
 
+        // 季度盘点（仅在选定财年时有意义）
+        var quarters = fiscalYear.HasValue
+            ? Enumerable.Range(1, 4).Select(q =>
+            {
+                var qList = scope.Where(p => FiscalQuarterOf(p.Evaluation!.EvaluatedAt, startMonth) == q).ToList();
+                return new { quarter = q, stats = BuildStats(qList) };
+            }).ToList<object>()
+            : new List<object>();
+
+        // 成本侧进度留痕
+        var withPlan = scope.Where(p => p.PlannedEndAt.HasValue && p.ClosedAt.HasValue).ToList();
+        var onTime = withPlan.Count(p => p.ClosedAt!.Value <= p.PlannedEndAt!.Value);
+        var withBudget = scope.Where(p => p.Budget.HasValue && p.Budget.Value > 0 && p.ActualCost.HasValue).ToList();
+        var budgetOk = withBudget.Count(p => p.ActualCost!.Value <= p.Budget!.Value);
+
+        var scopeSuccess = scope.Count(p => p.Evaluation!.Grade == PmEvaluationGrade.Success);
+        var scopeMediocre = scope.Count(p => p.Evaluation!.Grade == PmEvaluationGrade.Mediocre);
+        var scopeFail = scope.Count(p => p.Evaluation!.Grade == PmEvaluationGrade.Fail);
+        var scopeNpss = scope.Count > 0 ? (int)Math.Round((scopeSuccess - scopeFail) * 100.0 / scope.Count) : 0;
+
         return Ok(ApiResponse<object>.Ok(new
         {
-            totalEvaluated = total,
-            successCount = success,
-            mediocreCount = mediocre,
-            failCount = fail,
-            npss,
+            // 兼容旧字段（前端总览直接用）
+            totalEvaluated = scope.Count,
+            successCount = scopeSuccess,
+            mediocreCount = scopeMediocre,
+            failCount = scopeFail,
+            npss = scopeNpss,
             baseline = 36,
             totalBonus = rows.Sum(r => r.bonus),
             projects = rows,
             rewardConfig = cfg,
+            // Phase 4
+            fiscalYear,
+            availableFiscalYears,
+            quarters,
+            excellentProjects = rows.Where(r => r.isExcellent).ToList(),
+            costMetrics = new
+            {
+                onTimeRate = withPlan.Count > 0 ? (int)Math.Round(onTime * 100.0 / withPlan.Count) : -1,
+                onTimeBase = withPlan.Count,
+                budgetControlRate = withBudget.Count > 0 ? (int)Math.Round(budgetOk * 100.0 / withBudget.Count) : -1,
+                budgetBase = withBudget.Count,
+                totalBudget = scope.Sum(p => p.Budget ?? 0),
+                totalActualCost = scope.Sum(p => p.ActualCost ?? 0),
+            },
         }));
+    }
+
+    private static int FiscalYearOf(DateTime d, int startMonth) => d.Month >= startMonth ? d.Year : d.Year - 1;
+    private static int FiscalQuarterOf(DateTime d, int startMonth) => (((d.Month - startMonth) % 12 + 12) % 12) / 3 + 1;
+
+    /// <summary>评选 / 取消评选优秀项目</summary>
+    [HttpPost("projects/{projectId}/excellence")]
+    public async Task<IActionResult> ToggleExcellence(string projectId, [FromBody] ToggleExcellenceRequest request)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+
+        var update = Builders<PmProject>.Update
+            .Set(p => p.IsExcellent, request.IsExcellent)
+            .Set(p => p.ExcellenceAwardedAt, request.IsExcellent ? DateTime.UtcNow : (DateTime?)null)
+            .Set(p => p.UpdatedAt, DateTime.UtcNow);
+        await _db.PmProjects.UpdateOneAsync(p => p.Id == projectId, update);
+        return Ok(ApiResponse<object>.Ok(new { id = projectId, isExcellent = request.IsExcellent }));
     }
 
     /// <summary>获取奖金配置（PMO 细则）</summary>
@@ -336,6 +413,8 @@ public class PmAgentController : ControllerBase
         if (request.MoreOutcome.HasValue) cfg.MoreOutcome = Math.Clamp(request.MoreOutcome.Value, 0, 100);
         if (request.MoreRapid.HasValue) cfg.MoreRapid = Math.Clamp(request.MoreRapid.Value, 0, 100);
         if (request.MoreEmpowered.HasValue) cfg.MoreEmpowered = Math.Clamp(request.MoreEmpowered.Value, 0, 100);
+        if (request.FiscalYearStartMonth.HasValue) cfg.FiscalYearStartMonth = Math.Clamp(request.FiscalYearStartMonth.Value, 1, 12);
+        if (request.ExcellenceBonusBase.HasValue) cfg.ExcellenceBonusBase = Math.Max(0, request.ExcellenceBonusBase.Value);
         cfg.UpdatedAt = DateTime.UtcNow;
 
         await _db.PmRewardConfigs.ReplaceOneAsync(c => c.Id == cfg.Id, cfg, new ReplaceOptions { IsUpsert = true });
@@ -360,6 +439,8 @@ public class PmAgentController : ControllerBase
             PmProjectType.Innovation => cfg.InnovationBase,
             _ => cfg.OperationRoutineBase,
         };
+        // 优秀项目额外叠加优秀奖金基数
+        if (p.IsExcellent) baseAmount += cfg.ExcellenceBonusBase;
         return Math.Round(baseAmount * (decimal)p.ValueCoefficient * (decimal)(satisfaction / 100.0), 2);
     }
 
@@ -648,6 +729,7 @@ public class UpdatePmProjectRequest
     public DateTime? PlannedStartAt { get; set; }
     public DateTime? PlannedEndAt { get; set; }
     public decimal? Budget { get; set; }
+    public decimal? ActualCost { get; set; }
     public double? ValueCoefficient { get; set; }
     public List<string>? MemberIds { get; set; }
 }
@@ -661,6 +743,13 @@ public class UpdateRewardConfigRequest
     public int? MoreOutcome { get; set; }
     public int? MoreRapid { get; set; }
     public int? MoreEmpowered { get; set; }
+    public int? FiscalYearStartMonth { get; set; }
+    public decimal? ExcellenceBonusBase { get; set; }
+}
+
+public class ToggleExcellenceRequest
+{
+    public bool IsExcellent { get; set; }
 }
 
 public class CreatePmTaskRequest

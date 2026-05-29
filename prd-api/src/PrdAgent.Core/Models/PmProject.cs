@@ -96,6 +96,14 @@ public class PmProject
     /// <summary>结案评价（NPSS）结果，未评价时为 null</summary>
     public PmEvaluation? Evaluation { get; set; }
 
+    // ── Phase 4: 优秀项目评选 ──
+
+    /// <summary>是否被评选为优秀项目（PMO 年度评选）</summary>
+    public bool IsExcellent { get; set; }
+
+    /// <summary>优秀项目评选时间</summary>
+    public DateTime? ExcellenceAwardedAt { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 

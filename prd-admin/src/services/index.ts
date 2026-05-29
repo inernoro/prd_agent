@@ -1946,6 +1946,7 @@ export {
   getPmDashboardReal as getPmDashboard,
   getPmRewardConfigReal as getPmRewardConfig,
   updatePmRewardConfigReal as updatePmRewardConfig,
+  togglePmExcellenceReal as togglePmExcellence,
 } from '@/services/real/pmAgent';
 export type {
   PmProject,
@@ -1956,6 +1957,8 @@ export type {
   PmRewardConfig,
   PmDashboard,
   PmProjectBonus,
+  PmQuarterStats,
+  PmCostMetrics,
   UpdateRewardConfigInput,
   PmProjectType,
   PmOperationSubType,

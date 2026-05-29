@@ -15,6 +15,7 @@ import type {
   GetPmDashboardContract,
   GetPmRewardConfigContract,
   UpdatePmRewardConfigContract,
+  TogglePmExcellenceContract,
 } from '@/services/contracts/pmAgent';
 
 export const createPmProjectReal: CreatePmProjectContract = async (input) => {
@@ -63,8 +64,13 @@ export const evaluatePmProjectReal: EvaluatePmProjectContract = async (projectId
   return await apiRequest(api.pm.projects.evaluate(encodeURIComponent(projectId)), { method: 'POST', body: { scores } });
 };
 
-export const getPmDashboardReal: GetPmDashboardContract = async () => {
-  return await apiRequest(api.pm.dashboard(), { method: 'GET' });
+export const getPmDashboardReal: GetPmDashboardContract = async (fiscalYear) => {
+  const url = fiscalYear != null ? `${api.pm.dashboard()}?fiscalYear=${fiscalYear}` : api.pm.dashboard();
+  return await apiRequest(url, { method: 'GET' });
+};
+
+export const togglePmExcellenceReal: TogglePmExcellenceContract = async (projectId, isExcellent) => {
+  return await apiRequest(api.pm.projects.excellence(encodeURIComponent(projectId)), { method: 'POST', body: { isExcellent } });
 };
 
 export const getPmRewardConfigReal: GetPmRewardConfigContract = async () => {
