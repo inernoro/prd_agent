@@ -37,6 +37,8 @@ export type CdsEventType =
   | 'pending-import.created'
   | 'pending-import.decided'
   | 'pending-import.count'
+  // 2026-05-29:项目虚拟 cds-compose.yml 变更(approve/手动编辑/repo 同步)
+  | 'project.config.changed'
   // 2026-05-28:infra flap 熔断告警(watchdog 自动停掉烂配置容器)
   | 'infra.flap.circuit-breaker'
   | 'heartbeat';

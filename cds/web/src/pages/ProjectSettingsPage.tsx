@@ -250,6 +250,7 @@ type TabValue =
   | 'comment-template'
   | 'env'
   | 'runtime-defaults'
+  | 'compose'
   | 'infra'
   | 'cache'
   | 'stats'
@@ -281,6 +282,7 @@ const tabGroups: TabGroup[] = [
     items: [
       { value: 'env', label: '项目环境变量', icon: TerminalSquare },
       { value: 'runtime-defaults', label: '新分支默认', icon: Rocket },
+      { value: 'compose', label: '项目配置', icon: FileText },
       { value: 'infra', label: '基础设施', icon: Plug },
       { value: 'cache', label: '缓存诊断', icon: HardDrive },
       { value: 'stats', label: '统计', icon: BarChart3 },
@@ -503,6 +505,9 @@ export function ProjectSettingsPage(): JSX.Element {
                 </TabsContent>
                 <TabsContent value="runtime-defaults">
                   <RuntimeDefaultsTab project={project} projectId={project.id} onSaved={setProject} onToast={setToast} />
+                </TabsContent>
+                <TabsContent value="compose">
+                  <ProjectComposeTab projectId={project.id} onToast={setToast} />
                 </TabsContent>
                 <TabsContent value="infra">
                   <ProjectInfraTab projectId={project.id} onToast={setToast} />
@@ -2524,6 +2529,160 @@ interface ProjectInfraService {
   entrypoint?: string | string[];
   restartPolicy?: string;
   createdAt: string;
+}
+
+// 项目配置 Tab — 虚拟 cds-compose.yml 读写 + 三级权威标注 (2026-05-29)
+interface ComposeAuthorityEntry {
+  path: string;
+  authority: 'repo' | 'platform' | 'user';
+  reason: string;
+  known: boolean;
+}
+interface ProjectComposeResponse {
+  yaml: string;
+  hasPersisted: boolean;
+  version: number;
+  updatedAt: string | null;
+  source: string | null;
+  authority: ComposeAuthorityEntry[];
+}
+
+const AUTHORITY_META: Record<'repo' | 'platform' | 'user', { label: string; desc: string; cls: string }> = {
+  repo: { label: 'repo 权威', desc: '构建/启动方式，由仓库结构决定，可改但应回写 repo', cls: 'bg-blue-500/10 text-blue-700 dark:text-blue-300' },
+  platform: { label: 'platform 权威', desc: '端口/网络/域名，由 CDS 分配，只读', cls: 'bg-amber-500/10 text-amber-700 dark:text-amber-300' },
+  user: { label: 'user 权威', desc: '环境变量等运营参数，用户可覆盖', cls: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' },
+};
+
+function ProjectComposeTab({
+  projectId,
+  onToast,
+}: {
+  projectId: string;
+  onToast: (message: string) => void;
+}): JSX.Element {
+  const [data, setData] = useState<ProjectComposeResponse | null>(null);
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [dirty, setDirty] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/compose`, { credentials: 'include' });
+      const body = await res.json();
+      if (!res.ok) { onToast(`加载失败:${body.error || res.status}`); return; }
+      setData(body as ProjectComposeResponse);
+      setDraft(body.yaml || '');
+      setDirty(false);
+    } catch (err) {
+      onToast(`加载异常:${(err as Error).message}`);
+    }
+  }, [projectId, onToast]);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const onSave = useCallback(async () => {
+    if (!draft.trim()) { onToast('配置不能为空'); return; }
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/compose`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ yaml: draft, actor: 'user', source: 'manual-edit' }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        if (body.violations && body.violations.length > 0) {
+          const paths = body.violations.map((v: { path: string }) => v.path).join('、');
+          onToast(`保存被拒:${paths} 属于平台权威,不可修改`);
+        } else {
+          onToast(`保存失败:${body.error || res.status}`);
+        }
+        return;
+      }
+      onToast(`已保存为 v${body.version}(改动 ${(body.changedPaths || []).length} 个字段)`);
+      await refresh();
+    } catch (err) {
+      onToast(`保存异常:${(err as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }, [draft, projectId, onToast, refresh]);
+
+  if (!data) return <LoadingBlock label="加载项目配置…" />;
+
+  // 按权威分组统计
+  const counts = data.authority.reduce(
+    (acc, a) => { acc[a.authority] = (acc[a.authority] || 0) + 1; return acc; },
+    {} as Record<string, number>,
+  );
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div>
+        <h3 className="text-base font-semibold">项目配置(cds-compose.yml)</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          这是本项目的配置 SSOT。build profile / 基础设施都从它派生。
+          {data.hasPersisted
+            ? <> 当前 <span className="font-mono">v{data.version}</span>{data.updatedAt ? ` · ${new Date(data.updatedAt).toLocaleString()}` : ''}{data.source ? ` · 来源 ${data.source}` : ''}。</>
+            : <> 该项目尚未固化配置,下方是从已落库 profile/infra 反向生成的<strong>只读起点</strong>,编辑保存后即成为正式 SSOT。</>}
+        </p>
+      </div>
+
+      {/* 三级权威图例 */}
+      <div className="flex flex-wrap gap-2 text-xs">
+        {(['repo', 'platform', 'user'] as const).map((k) => (
+          <span key={k} className={`inline-flex items-center gap-1 rounded px-2 py-1 ${AUTHORITY_META[k].cls}`} title={AUTHORITY_META[k].desc}>
+            {AUTHORITY_META[k].label}{counts[k] ? ` · ${counts[k]}` : ''}
+          </span>
+        ))}
+        <span className="self-center text-muted-foreground">platform 字段(端口/网络/域名)受保护,保存时若改动会被拒绝</span>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" variant="outline" size="sm" asChild>
+          <a href={`/api/projects/${encodeURIComponent(projectId)}/compose.yml`} download="cds-compose.yml">
+            <Download className="h-3.5 w-3.5" /> 下载 cds-compose.yml
+          </a>
+        </Button>
+        <Button type="button" variant="outline" size="sm" onClick={() => { void navigator.clipboard?.writeText(draft); onToast('已复制到剪贴板'); }}>
+          复制
+        </Button>
+        <Button type="button" variant="outline" size="sm" onClick={() => void refresh()} disabled={busy}>
+          <RefreshCw className="h-3.5 w-3.5" /> 重新加载
+        </Button>
+        <Button type="button" variant="default" size="sm" onClick={() => void onSave()} disabled={busy || !dirty}>
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} 保存配置
+        </Button>
+      </div>
+
+      <textarea
+        value={draft}
+        onChange={(e) => { setDraft(e.target.value); setDirty(true); }}
+        className="w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 font-mono text-xs"
+        rows={20}
+        spellCheck={false}
+        disabled={busy}
+        style={{ minHeight: 320, overflowY: 'auto' }}
+      />
+
+      {/* 字段权威明细 */}
+      {data.authority.length > 0 ? (
+        <details className="text-xs">
+          <summary className="cursor-pointer text-muted-foreground">字段权威明细({data.authority.length})</summary>
+          <div className="mt-2 space-y-1">
+            {data.authority.map((a) => (
+              <div key={a.path} className="flex items-center gap-2">
+                <span className={`inline-flex shrink-0 rounded px-1.5 py-0.5 ${AUTHORITY_META[a.authority].cls}`}>{a.authority}</span>
+                <code className="font-mono">{a.path}</code>
+                <span className="truncate text-muted-foreground">{a.reason}</span>
+              </div>
+            ))}
+          </div>
+        </details>
+      ) : null}
+    </div>
+  );
 }
 
 function ProjectInfraTab({

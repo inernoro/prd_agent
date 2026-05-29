@@ -12,6 +12,7 @@ import { createBridgeRouter } from './routes/bridge.js';
 import { createProjectsRouter, assertProjectAccess } from './routes/projects.js';
 import { createPendingImportRouter } from './routes/pending-import.js';
 import { createProjectInfraResyncRouter } from './routes/project-infra-resync.js';
+import { createProjectComposeRouter } from './routes/project-compose.js';
 import { createCacheRouter } from './routes/cache.js';
 import { createSnapshotsRouter } from './routes/snapshots.js';
 import { createRemoteHostsRouter } from './routes/remote-hosts.js';
@@ -737,6 +738,10 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/pending-imports\/(.+)$/, '查询待导入项目'],
     [/^POST \/pending-imports\/(.+)\/approve$/, '批准导入'],
     [/^POST \/pending-imports\/(.+)\/reject$/, '拒绝导入'],
+    // 项目虚拟 cds-compose.yml
+    [/^GET \/projects\/(.+)\/compose\.yml$/, '下载项目配置'],
+    [/^GET \/projects\/(.+)\/compose$/, '获取项目配置'],
+    [/^PUT \/projects\/(.+)\/compose$/, '保存项目配置'],
     // 项目基础设施重新同步
     [/^GET \/projects\/(.+)\/infra\/resync\/sources$/, '列出同步配置来源'],
     [/^POST \/projects\/(.+)\/infra\/resync\/preview$/, '预览基础设施同步'],
@@ -2763,6 +2768,11 @@ export function createServer(deps: ServerDeps): express.Express {
     containerService: deps.containerService,
     serverEventLogStore: deps.serverEventLogStore,
     config: { portStart: deps.config?.portStart, repoRoot: deps.config?.repoRoot ?? process.cwd() },
+    assertProjectAccess: assertProjectAccess as any,
+  }));
+  // 项目虚拟 cds-compose.yml 读写(配置 SSOT，2026-05-29)
+  app.use('/api', createProjectComposeRouter({
+    stateService: deps.stateService,
     assertProjectAccess: assertProjectAccess as any,
   }));
   // Cache diagnostics / repair / cross-server migration.

@@ -429,6 +429,15 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
       appliedInfra.push(service.id);
     }
 
+    // 把批准的 yaml 落为项目的虚拟 cds-compose.yml（配置 SSOT）。过去这份
+    // 原始 yaml 在解析成 profile/infra 后被丢弃，导致后续无从读改一份权威
+    // 配置、也无从检测漂移。现在 approve 即固化。
+    const composeVersion = stateService.setProjectCompose(
+      project.id,
+      item.composeYaml,
+      'import-approved',
+    );
+
     stateService.updatePendingImport(item.id, {
       status: 'approved',
       decidedAt: new Date().toISOString(),
@@ -443,6 +452,13 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
         appliedProfiles,
         appliedInfra,
         appliedEnvKeys,
+      });
+      // 配置变更事件（E5 地基）：虚拟 compose 写入即广播，面板 SSE / 未来
+      // 的 agent 订阅流据此感知「配置已更新到 vN」。
+      cdsEventsBus.publish('project.config.changed', {
+        projectId: item.projectId,
+        composeVersion,
+        source: 'import-approved',
       });
       const pendingCount = stateService.getPendingImports().filter((i) => i.status === 'pending').length;
       cdsEventsBus.publish('pending-import.count', { pendingCount });

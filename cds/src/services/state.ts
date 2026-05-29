@@ -1240,6 +1240,10 @@ export class StateService {
         | 'githubAutoDeploy'
         | 'githubLinkedAt'
         | 'autoSmokeEnabled'
+        | 'composeYaml'
+        | 'composeUpdatedAt'
+        | 'composeVersion'
+        | 'composeSource'
       >
     >,
   ): void {
@@ -1253,6 +1257,29 @@ export class StateService {
       updatedAt: new Date().toISOString(),
     };
     this.save();
+  }
+
+  /**
+   * 写入项目的虚拟 cds-compose.yml（配置 SSOT，2026-05-29）。单调递增
+   * composeVersion，记录来源。approve PendingImport / 手动编辑 / repo 同步
+   * 三条路径都过这里，保证版本号和时间戳一致。返回写入后的新版本号。
+   */
+  setProjectCompose(
+    projectId: string,
+    yaml: string,
+    source: 'import-approved' | 'manual-edit' | 'repo-sync',
+  ): number | undefined {
+    const project = this.getProject(projectId);
+    if (!project) return undefined;
+    const nextVersion = (project.composeVersion ?? 0) + 1;
+    const now = new Date().toISOString();
+    this.updateProject(project.id, {
+      composeYaml: yaml,
+      composeUpdatedAt: now,
+      composeVersion: nextVersion,
+      composeSource: source,
+    });
+    return nextVersion;
   }
 
   /**
