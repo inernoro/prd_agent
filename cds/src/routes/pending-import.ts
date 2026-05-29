@@ -247,6 +247,8 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
     try {
       const all = stateService.getPendingImports();
       const pendingCount = all.filter((i) => i.status === 'pending').length;
+      // Cursor Bugbot(PR #684, Low):created 事件顺带把 pendingCount 带上,消费方
+      // 收到 created 即可直接更新角标数,不必等紧随其后的 count 事件(自包含)。
       cdsEventsBus.publish('pending-import.created', {
         importId: item.id,
         projectId: item.projectId,
@@ -254,6 +256,7 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
         purpose: item.purpose,
         summary: item.summary,
         submittedAt: item.submittedAt,
+        pendingCount,
       });
       cdsEventsBus.publish('pending-import.count', { pendingCount });
     } catch { /* event publish 失败不影响主流程 */ }

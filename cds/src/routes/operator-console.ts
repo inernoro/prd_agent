@@ -29,6 +29,26 @@ export function createOperatorConsoleRouter(deps: {
 
   const router = Router();
 
+  // ── 人类鉴权门 ────────────────────────────────────────────────────
+  // Cursor Bugbot(PR #684, High)+ Codex(P1×2):operator console 能执行 root
+  // `shell.run`、审批/拒绝请求。此前只靠全局中间件(放行 AI access key / 项目级
+  // cdsp_ key),导致 *任何* 认证调用方(含 AI、含 project key)都能:
+  //   1. POST /operator/run 直接以 root 跑任意 shell
+  //   2. POST /operator/request 自己发请求,再 POST /approve 自审自批,绕过弹窗
+  //   3. GET /operator/ops 读到 destructive op 的 confirmText token
+  // 修复:这些"管理员动作"必须人类 cookie 鉴权(server.ts 给人类 cookie 登录打
+  // 的 req._cdsCookieAuth 标记 —— 单租户 CDS 上等同 admin)。AI / project key 一律
+  // 403。`/operator/request`(AI 发起待批)与 `/operator/requests/:id`(查自己请求
+  // 状态)保持对 AI 开放 —— 这正是"AI 请求 → 人类审批"流程的入口。
+  const requireHuman = (req: Request, res: Response, next: () => void): void => {
+    if ((req as { _cdsCookieAuth?: boolean })._cdsCookieAuth === true) { next(); return; }
+    res.status(403).json({
+      ok: false,
+      error: 'human_auth_required',
+      message: '该运维操作只允许已登录的人类管理员(CDS cookie 鉴权)执行,AI / 项目级密钥被拒绝。',
+    });
+  };
+
   // 把 caller 标识哈希成 session key(用 AI access key / cookie token / IP 兜底)
   const callerKeyFor = (req: Request): string => {
     const aiKey = String(req.headers['x-ai-access-key'] || '').trim();
@@ -37,7 +57,7 @@ export function createOperatorConsoleRouter(deps: {
     return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 16);
   };
 
-  router.get('/cds-system/operator/ops', (_req, res) => {
+  router.get('/cds-system/operator/ops', requireHuman, (_req, res) => {
     res.json({
       ok: true,
       ops: operatorOpRegistry.list(),
@@ -66,7 +86,7 @@ export function createOperatorConsoleRouter(deps: {
     });
   });
 
-  router.post('/cds-system/operator/requests/:id/approve', (req, res) => {
+  router.post('/cds-system/operator/requests/:id/approve', requireHuman, (req, res) => {
     const scope = (req.body ?? {}).scope === 'session' ? 'session' : 'once';
     const approver =
       (req as { cdsUser?: { githubLogin?: string; login?: string } }).cdsUser?.githubLogin ||
@@ -81,7 +101,7 @@ export function createOperatorConsoleRouter(deps: {
     res.json({ ok: true, request: updated });
   });
 
-  router.post('/cds-system/operator/requests/:id/reject', (req, res) => {
+  router.post('/cds-system/operator/requests/:id/reject', requireHuman, (req, res) => {
     const approver =
       (req as { cdsUser?: { githubLogin?: string; login?: string } }).cdsUser?.githubLogin ||
       (req as { cdsUser?: { githubLogin?: string; login?: string } }).cdsUser?.login ||
@@ -101,7 +121,7 @@ export function createOperatorConsoleRouter(deps: {
     res.json({ ok: true, request: r });
   });
 
-  router.get('/cds-system/operator/requests', (_req, res) => {
+  router.get('/cds-system/operator/requests', requireHuman, (_req, res) => {
     res.json({
       ok: true,
       pending: operatorApprovalService.listPending(),
@@ -110,7 +130,7 @@ export function createOperatorConsoleRouter(deps: {
     });
   });
 
-  router.post('/cds-system/operator/run', async (req: Request, res: Response) => {
+  router.post('/cds-system/operator/run', requireHuman, async (req: Request, res: Response) => {
     const { opId, confirmText, args } = (req.body ?? {}) as {
       opId?: string;
       confirmText?: string;

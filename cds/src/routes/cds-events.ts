@@ -42,6 +42,22 @@ export function createCdsEventsRouter(): Router {
       (res as { flushHeaders: () => void }).flushHeaders();
     }
 
+    // Codex review(PR #684, P2):本通道转发的全是 CDS 系统级 / 跨项目事件
+    // (self.status 全局健康、operator.request.*、pending-import.*、
+    // project.config.changed 等,含 projectId / agentName / summary)。顶层中间件
+    // 放行 project-scoped cdsp_ key,导致某项目的 key 连上来就能收到别的项目 +
+    // 全局事件,绕过项目隔离。这里按连接的鉴权范围过滤:
+    //   - 人类 cookie / 全局 AI key(无 cdsProjectKey)→ 看全部(运维面板)
+    //   - project-scoped key → 只看 data.projectId 命中自己项目的事件 + heartbeat,
+    //     全局事件(self.*/operator.*/infra.* 等无 projectId 的)一律不转发
+    const projectScope = (req as { cdsProjectKey?: { projectId: string } }).cdsProjectKey?.projectId;
+    const envelopeAllowed = (env: CdsEventEnvelope): boolean => {
+      if (!projectScope) return true;
+      if (env.type === 'heartbeat') return true;
+      const pid = (env.data as { projectId?: string } | null | undefined)?.projectId;
+      return typeof pid === 'string' && pid === projectScope;
+    };
+
     let alive = true;
     const write = (envelope: CdsEventEnvelope): boolean => {
       if (!alive) return false;
@@ -55,22 +71,25 @@ export function createCdsEventsRouter(): Router {
     };
 
     // 1) 立即发当前 snapshot(self.status)。snapshot 可能是空的 EMPTY,无碍。
+    //    project-scoped key 不发 —— self.status 是全局 CDS 健康,不属于单项目。
     try {
-      const snapshot = selfStatusCache.getSnapshot();
-      write({
-        type: 'self.status',
-        ts: new Date().toISOString(),
-        data: snapshot,
-      });
+      if (!projectScope) {
+        const snapshot = selfStatusCache.getSnapshot();
+        write({
+          type: 'self.status',
+          ts: new Date().toISOString(),
+          data: snapshot,
+        });
+      }
     } catch (err) {
       // 失败也不挂连接 — 客户端会等下一条事件
       // eslint-disable-next-line no-console
       console.warn('[cds-events] initial snapshot push failed:', (err as Error).message);
     }
 
-    // 2) 订阅 bus
+    // 2) 订阅 bus(project-scoped key 只放行命中自己项目的事件)
     const unsubscribe = cdsEventsBus.subscribe((envelope) => {
-      write(envelope);
+      if (envelopeAllowed(envelope)) write(envelope);
     });
 
     // 3) heartbeat — 每 25s 一条,带服务端 ts。前端用它做 SSE 连接健康判断。
