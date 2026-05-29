@@ -216,9 +216,17 @@ def validate_inputs(a, body, manifest):
             errs.append(f"[证据] 截图缺失/过小(<1KB)：{m.get('name', p)}")
         if not (m.get("caption") or "").strip():
             errs.append(f"[证据] 截图无 caption：{m.get('name', p)}")
+        # v2.2: harness 在截图前后做了就绪等待 + 内容校验，把 warning 写进 manifest；
+        # 这里把 warning 提升为拒收硬条件，让"页面没加载完就拍"无法蒙混过关。
+        ws = m.get("warnings") or []
+        if ws:
+            errs.append(f"[证据] 截图未就绪/有问题：{m.get('name', p)} → {' | '.join(ws)}")
     for kw, label in [("Verdict", "Verdict 行"), ("用例", "验收用例段"), ("缺陷", "缺陷清单段")]:
         if kw not in body:
             errs.append(f"[结构] 报告缺{label}")
+    # v2.1 强制：需求一一对应表（避免"用户提了 10 条只对应 6 条"的茫然，详见 standard-v2.md §6.4）
+    if "需求一一对应表" not in body:
+        errs.append("[结构] 报告缺「需求一一对应表」标题（v2.1 强制，详见 standard-v2.md §6.4）")
     if "{{EVIDENCE}}" not in body and "{{IMG:" not in body:
         errs.append("[结构] 报告缺截图占位：{{EVIDENCE}}（集中证据段）或 {{IMG:<name>}}（ZZ 逐步配图）至少要有一种")
     if PLACEHOLDER_PAT.search(body):

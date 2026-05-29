@@ -218,6 +218,7 @@ export function LibraryShareViewPage() {
           onSelectEntry={setSelectedEntryId}
           loadContent={loadContent}
           sortMode="created-desc"
+          inlineCommentShareToken={token ?? undefined}
         />
       </div>
     </div>

@@ -135,6 +135,12 @@ public class MongoDbContext
     public IMongoCollection<ProjectRouteSiteSpec> ProjectRouteSiteSpecs => _database.GetCollection<ProjectRouteSiteSpec>("project_route_site_specs");
     public IMongoCollection<ProjectRoutePlan> ProjectRoutePlans => _database.GetCollection<ProjectRoutePlan>("project_route_plans");
 
+    // CCAS Agent 赋码采集关联系统综合智能体
+    public IMongoCollection<PrdAgent.Core.Models.CcasAgent.CcasEquipmentAsset> CcasEquipmentAssets
+        => _database.GetCollection<PrdAgent.Core.Models.CcasAgent.CcasEquipmentAsset>("ccas_equipment_assets");
+    public IMongoCollection<PrdAgent.Core.Models.CcasAgent.CcasFlowDiagram> CcasFlowDiagrams
+        => _database.GetCollection<PrdAgent.Core.Models.CcasAgent.CcasFlowDiagram>("ccas_flow_diagrams");
+
     // Review Agent 产品评审员
     public IMongoCollection<ReviewSubmission> ReviewSubmissions => _database.GetCollection<ReviewSubmission>("review_submissions");
     public IMongoCollection<ReviewResult> ReviewResults => _database.GetCollection<ReviewResult>("review_results");

@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -11,6 +11,7 @@ import GithubSlugger from 'github-slugger';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { parseFrontmatter } from '@/lib/frontmatter';
+import { ImageLightbox } from '@/components/ui/ImageLightbox';
 // SSOT：与 TOC（markdownToc.ts）共用同一套「标题文本 → slug」规则，
 // 保证目录点击能精确跳到带内嵌 HTML 的标题（rehypeRaw 渲染后）。
 import { headingTextToSlug } from '@/lib/markdownToc';
@@ -64,6 +65,38 @@ export function MarkdownViewer({ content }: { content: string }) {
   // 剥离首个 YAML frontmatter 块，避免 ---/title:/description: 被当正文渲染。
   // 与左侧标题提取共用 parseFrontmatter（SSOT）。
   const body = useMemo(() => parseFrontmatter(content).body, [content]);
+
+  // 图片 lightbox：点击 markdown 中任意 <img> 打开放大模态，支持 ← → 切换。
+  // ⚠ 不能用"每次渲染重置 ref + img renderer 中 push"的方式收集图片！
+  // ReactMarkdown 在 body 不变时会缓存子树，img 自定义 renderer 不会重跑，
+  // 重置后的 ref 永远是空数组，导致 lightbox 永远不显示（2026-05-28 用户反馈）。
+  // 正确做法：用 useMemo 一次性扫 markdown 源码里的 ![alt](src) 模式，
+  // 列表稳定与 body 同生命周期，src 顺序与正文显示顺序一致。
+  const imageList = useMemo<{ src: string; alt: string }[]>(() => {
+    const list: { src: string; alt: string }[] = [];
+    // 标准 markdown 图片语法：![alt](src "title")
+    // 容错：alt 可空、src 可带 query、title 部分忽略
+    const re = /!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(body)) !== null) {
+      list.push({ alt: m[1] || '', src: m[2] });
+    }
+    // 兜底：内嵌 HTML <img src="..."> 也扫一遍（rehypeRaw 启用时正文可能直接含 HTML img）
+    const htmlRe = /<img[^>]+src=["']([^"']+)["'][^>]*(?:alt=["']([^"']*)["'])?[^>]*>/gi;
+    while ((m = htmlRe.exec(body)) !== null) {
+      const matched = m;
+      // 避免与 markdown 语法重复
+      if (!list.some(i => i.src === matched[1])) list.push({ src: matched[1], alt: matched[2] || '' });
+    }
+    return list;
+  }, [body]);
+  // src → 索引映射，img renderer 内 O(1) 查表
+  const imageIndexBySrc = useMemo(() => {
+    const map = new Map<string, number>();
+    imageList.forEach((it, idx) => map.set(it.src, idx));
+    return map;
+  }, [imageList]);
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
   // 每次 body 变化都重建 slugger，确保同名 heading 得到稳定干净的 slug
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const slugger = useMemo(() => new GithubSlugger(), [body]);
@@ -102,7 +135,16 @@ export function MarkdownViewer({ content }: { content: string }) {
     // F2：文档站观感——更大行距、自适应宽度（窄屏占满，宽屏给到 1180 上限避免长行不利阅读）、底部留白
     <div
       className="prose-invert text-[14px]"
-      style={{ lineHeight: 1.78, maxWidth: 'min(100%, 1180px)', paddingBottom: '96px' }}
+      style={{
+        lineHeight: 1.78,
+        maxWidth: 'min(100%, 1180px)',
+        paddingBottom: '96px',
+        // 显式允许文本选中（划词评论硬依赖）。
+        // 修复 2026-05-28 用户反馈："选中的内容会自动消失"——
+        // 任何祖先一旦 user-select:none 都会让选区瞬间清空，这里硬复位为 text。
+        userSelect: 'text',
+        WebkitUserSelect: 'text',
+      }}
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks, remarkMath]}
@@ -211,13 +253,38 @@ export function MarkdownViewer({ content }: { content: string }) {
           },
           pre: ({ children }) => <>{children}</>,
           hr: () => <hr className="my-7" style={{ borderColor: 'var(--border-subtle)' }} />,
-          img: ({ src, alt }) => (
-            <img src={src} alt={alt || ''} className="max-w-full rounded-lg my-3" style={{ maxHeight: '400px', border: '1px solid rgba(255,255,255,0.06)' }} />
-          ),
+          img: ({ src, alt }) => {
+            // 用 useMemo 预扫的 imageList 查索引，避免依赖 renderer 是否重跑
+            const myIdx = src ? (imageIndexBySrc.get(src) ?? -1) : -1;
+            return (
+              <img
+                src={src}
+                alt={alt || ''}
+                className="max-w-full rounded-lg my-3"
+                style={{
+                  maxHeight: '400px',
+                  border: '1px solid rgba(255,255,255,0.06)',
+                  cursor: myIdx >= 0 ? 'zoom-in' : 'default',
+                }}
+                onClick={() => {
+                  if (myIdx >= 0) setLightboxIdx(myIdx);
+                }}
+                title={myIdx >= 0 ? '点击放大 · 支持 ← → 切换' : (alt || '')}
+              />
+            );
+          },
         }}
       >
         {body}
       </ReactMarkdown>
+      {lightboxIdx !== null && imageList.length > 0 && (
+        <ImageLightbox
+          images={imageList.map((i) => i.src)}
+          captions={imageList.map((i) => i.alt)}
+          index={Math.min(lightboxIdx, imageList.length - 1)}
+          onClose={() => setLightboxIdx(null)}
+        />
+      )}
     </div>
   );
 }

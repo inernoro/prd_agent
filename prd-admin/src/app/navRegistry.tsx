@@ -33,6 +33,7 @@ const ChangelogPage = lazy(() => import('@/pages/changelog/ChangelogPage'));
 const SkillAgentPage = lazy(() => import('@/pages/SkillAgentPage'));
 const ArenaPage = lazy(() => import('@/pages/arena/ArenaPage').then(m => ({ default: m.ArenaPage })));
 const ReviewAgentPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentPage })));
+const CcasAgentPage = lazy(() => import('@/pages/ccas-agent').then(m => ({ default: m.CcasAgentPage })));
 const PrReviewPage = lazy(() => import('@/pages/pr-review').then(m => ({ default: m.PrReviewPage })));
 const PaAgentPage = lazy(() => import('@/pages/pa-agent').then(m => ({ default: m.PaAgentPage })));
 const ProjectRouteAgentPage = lazy(() => import('@/pages/project-route-agent').then(m => ({ default: m.ProjectRouteAgentPage })));
@@ -260,6 +261,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'toolbox',
       appKey: 'review-agent',
       tags: ['评审', '产品', 'PRD'],
+    },
+  },
+  {
+    path: '/ccas-agent',
+    permission: 'ccas-agent.use',
+    element: shellGuarded('ccas-agent.use', <CcasAgentPage />),
+    nav: {
+      label: '赋码采集关联智能体',
+      shortLabel: '赋码',
+      description: '产线赋码业务三件套：PRD 文档生成 + 设备素材库 + 流程示意图绘制',
+      icon: 'Factory',
+      section: 'toolbox',
+      appKey: 'ccas-agent',
+      tags: ['赋码', '采集', '产线', 'PRD', '流程图'],
+      wip: true,
     },
   },
   {

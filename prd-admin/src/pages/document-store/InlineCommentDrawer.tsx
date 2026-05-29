@@ -40,6 +40,8 @@ function formatRelative(iso?: string | null): string {
 export type InlineCommentDrawerProps = {
   entryId: string;
   entryTitle: string;
+  /** 分享视图传入分享 token，用于私有库读取评论气泡（PR #685 Codex P1） */
+  shareToken?: string;
   pendingSelection: PendingSelection | null;
   onClearPending: () => void;
   /** 点击某条评论时：尝试 scroll 到其 selectedText 在 DOM 中的位置 */
@@ -50,6 +52,7 @@ export type InlineCommentDrawerProps = {
 export function InlineCommentDrawer({
   entryId,
   entryTitle,
+  shareToken,
   pendingSelection,
   onClearPending,
   onLocate,
@@ -64,7 +67,7 @@ export function InlineCommentDrawer({
 
   const load = useCallback(async () => {
     setLoading(true);
-    const res = await listInlineComments(entryId);
+    const res = await listInlineComments(entryId, shareToken);
     if (res.success) {
       setComments(res.data.items);
       setCanCreate(res.data.canCreate);
@@ -72,7 +75,7 @@ export function InlineCommentDrawer({
       toast.error('加载评论失败', res.error?.message);
     }
     setLoading(false);
-  }, [entryId]);
+  }, [entryId, shareToken]);
 
   useEffect(() => {
     load();
