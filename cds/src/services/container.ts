@@ -1901,16 +1901,27 @@ export class ContainerService {
     //   2) `--restart` 默认从 unless-stopped 改成 on-failure:3,避免烂配
     //      置一直 churn;可在 yaml 用 restart: 字段覆盖
     //   3) image 之后跟 cmd suffix,顺序符合 docker run [OPTIONS] IMAGE [COMMAND]
-    const cmdParts = service.command === undefined
+    // 2026-05-28 Bugbot Medium 修复:数组形态的 entrypoint,docker `--entrypoint`
+    // 只接 executable,余下元素必须 prepend 到 cmd 才会生效。
+    // 例:entrypoint: ["python3","-m","http.server"] →
+    //   --entrypoint python3  ... image  -m http.server
+    const explicitCmdParts = service.command === undefined
       ? []
       : Array.isArray(service.command)
         ? service.command.map((c) => this.shellQuote(String(c)))
         : [String(service.command)]; // string 形态 yaml 中通常是 shell 语法,不再 quote
-    const entrypointFlag = service.entrypoint === undefined
-      ? ''
-      : Array.isArray(service.entrypoint)
-        ? `--entrypoint ${this.shellQuote(String(service.entrypoint[0] ?? ''))}`
-        : `--entrypoint ${this.shellQuote(String(service.entrypoint))}`;
+    let entrypointFlag = '';
+    let entrypointExtraArgs: string[] = [];
+    if (service.entrypoint !== undefined) {
+      if (Array.isArray(service.entrypoint)) {
+        const [head, ...rest] = service.entrypoint;
+        entrypointFlag = `--entrypoint ${this.shellQuote(String(head ?? ''))}`;
+        entrypointExtraArgs = rest.map((r) => this.shellQuote(String(r)));
+      } else {
+        entrypointFlag = `--entrypoint ${this.shellQuote(String(service.entrypoint))}`;
+      }
+    }
+    const cmdParts = [...entrypointExtraArgs, ...explicitCmdParts];
     const restartPolicy = (typeof service.restartPolicy === 'string' && service.restartPolicy.trim())
       ? service.restartPolicy.trim()
       : 'on-failure:3';

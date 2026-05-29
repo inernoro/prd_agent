@@ -2600,18 +2600,73 @@ function ProjectInfraTab({
   if (services === null) return <LoadingBlock label="加载基础设施列表…" />;
   if (error && services.length === 0) return <ErrorBlock message={error} />;
 
+  const runningCount = services.filter((s) => s.status === 'running').length;
+  const stoppedCount = services.filter((s) => s.status !== 'running').length;
+
+  const doStopAll = async (): Promise<void> => {
+    if (busy) return;
+    const running = services.filter((s) => s.status === 'running');
+    if (running.length === 0) return;
+    setBusy('__bulk__');
+    try {
+      for (const s of running) {
+        try {
+          await apiRequest(`/api/infra/${encodeURIComponent(s.id)}/stop?project=${encodeURIComponent(projectId)}`, { method: 'POST' });
+        } catch { /* tolerate single failure */ }
+      }
+      onToast(`已停止 ${running.length} 个 infra 服务(数据卷保留)`);
+      await refresh();
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const doStartAll = async (): Promise<void> => {
+    if (busy) return;
+    const stopped = services.filter((s) => s.status !== 'running');
+    if (stopped.length === 0) return;
+    setBusy('__bulk__');
+    try {
+      for (const s of stopped) {
+        try {
+          await apiRequest(`/api/infra/${encodeURIComponent(s.id)}/start?project=${encodeURIComponent(projectId)}`, { method: 'POST' });
+        } catch { /* tolerate */ }
+      }
+      onToast(`已启动 ${stopped.length} 个 infra 服务`);
+      await refresh();
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1">
           <h3 className="text-base font-semibold">项目基础设施</h3>
           <p className="text-xs text-muted-foreground mt-1">
             mongodb / redis / postgres 等 infra 容器,跟随项目独立部署。审批 cds-compose.yml 时自动创建,这里可启停/删除。
           </p>
+          <p className="text-[11px] text-muted-foreground/80 mt-1">
+            <span className="font-medium text-foreground/80">数据卷不丢失</span>:删除/停止容器不影响 docker named volume,
+            下次同名 infra 创建会自动挂回原数据。
+          </p>
         </div>
-        <Button type="button" variant="outline" size="sm" onClick={refresh} disabled={busy !== null}>
-          <RefreshCw className="h-3 w-3" /> 刷新
-        </Button>
+        <div className="flex flex-wrap gap-2 shrink-0">
+          <Button type="button" variant="outline" size="sm"
+            onClick={doStartAll} disabled={busy !== null || stoppedCount === 0}
+            title={stoppedCount === 0 ? '没有可启动的服务' : `启动 ${stoppedCount} 个已停止的服务`}>
+            全部启动 {stoppedCount > 0 ? `(${stoppedCount})` : ''}
+          </Button>
+          <Button type="button" variant="outline" size="sm"
+            onClick={doStopAll} disabled={busy !== null || runningCount === 0}
+            title={runningCount === 0 ? '没有正在运行的服务' : `停止 ${runningCount} 个运行中的服务(数据保留)`}>
+            全部停止 {runningCount > 0 ? `(${runningCount})` : ''}
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={refresh} disabled={busy !== null}>
+            <RefreshCw className="h-3 w-3" /> 刷新
+          </Button>
+        </div>
       </div>
 
       {services.length === 0 ? (

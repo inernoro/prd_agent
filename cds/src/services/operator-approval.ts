@@ -5,7 +5,11 @@
 //
 // 数据模型:
 //   - PendingRequest: 一次具体的 op 请求 (id, opId, args, requestedBy, status, result)
-//   - SessionApproval: 同一个 caller(access key 哈希)+同一个 opId 在 1h 内自动通过
+//   - SessionApproval: 同一 caller(access key 哈希)+ 同一 opId + 同一 args 在 7 天内
+//     自动通过。**SECURITY 2026-05-28 Cursor PR #684 High 级反馈:**
+//     原 session key 只有 (callerKey, opId),用户批 `shell.run dmesg|head` 等于授权
+//     7 天任意 root 命令。修法:session key 加 argsHash(sha256 of canonical JSON),
+//     不同命令必须重新批,7 天 TTL 保留(用户明确要求)。
 //
 // 流程:
 //   1. AI POST /operator/request {opId, args} → 检查 session 自动通过 → 直接 run
@@ -24,6 +28,18 @@ import { operatorOpRegistry, type OperatorOpContext } from './operator-console.j
 import type { IShellExecutor } from '../types.js';
 import type { StateService } from './state.js';
 import type { ServerEventLogSink } from './server-event-log-store.js';
+import { createHash } from 'node:crypto';
+
+/**
+ * 把 args 对象哈希成稳定字符串,用于 session key 第三段。
+ * 用 sorted-key JSON 保证 {a:1,b:2} 与 {b:2,a:1} 同哈希。
+ * undefined / null args 哈希为常量(便于无参 op 复用)。
+ */
+function argsHashFor(args: Record<string, unknown> | undefined): string {
+  if (!args || Object.keys(args).length === 0) return 'no-args';
+  const canonical = JSON.stringify(args, Object.keys(args).sort());
+  return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
+}
 
 export type RequestStatus =
   | 'pending'        // 等待审批
@@ -58,18 +74,20 @@ export interface PendingRequest {
 interface SessionApproval {
   callerKey: string;
   opId: string;
+  /** 2026-05-28 SECURITY:args 内容哈希。同 op 不同 args 不复用同一 session */
+  argsHash: string;
   approvedBy: string;
   approvedAt: string;
   expiresAt: number;
 }
 
-const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;  // 7 天 — 用户授权后这个 access key 可用 7 天免重复确认
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;  // 7 天 — 用户授权后该 (caller, op, args) 组合可用 7 天免重复确认
 const REQUEST_TTL_MS = 5 * 60 * 1000;     // 5 分钟未审批自动 expire
 const REQUEST_HISTORY_MAX = 200;
 
-class OperatorApprovalService {
+export class OperatorApprovalService {
   private requests = new Map<string, PendingRequest>();
-  private sessions = new Map<string, SessionApproval>(); // key: `${callerKey}::${opId}`
+  private sessions = new Map<string, SessionApproval>(); // key: `${callerKey}::${opId}::${argsHash}`
   private shell: IShellExecutor | null = null;
   private stateService: StateService | null = null;
   private repoRoot: string = '';
@@ -135,8 +153,10 @@ class OperatorApprovalService {
     };
     this.persist(req);
 
-    // 检查 session 自动通过
-    const sessionKey = `${opts.callerKey}::${op.id}`;
+    // 检查 session 自动通过 — 2026-05-28 session key 加 argsHash,防止
+    // "批一条 dmesg 等于授权 7 天任意 root 命令" 的 High 级漏洞。
+    const argsHash = argsHashFor(opts.args);
+    const sessionKey = `${opts.callerKey}::${op.id}::${argsHash}`;
     const session = this.sessions.get(sessionKey);
     if (session && session.expiresAt > Date.now()) {
       req.status = 'approved';
@@ -169,10 +189,15 @@ class OperatorApprovalService {
     req.approvedAt = new Date().toISOString();
     req.approvedScope = opts.scope;
     if (opts.scope === 'session') {
-      const sessionKey = `${req.callerKey}::${req.opId}`;
+      // 2026-05-28:session 绑定到具体 args(High 级修复)。
+      // 用户授权"7 天"= 只对**这条**(caller, op, args) 组合免重复确认,
+      // 不再是"对这个 op 任何 args 都免确认"。
+      const argsHash = argsHashFor(req.args);
+      const sessionKey = `${req.callerKey}::${req.opId}::${argsHash}`;
       this.sessions.set(sessionKey, {
         callerKey: req.callerKey,
         opId: req.opId,
+        argsHash,
         approvedBy: opts.approver,
         approvedAt: req.approvedAt,
         expiresAt: Date.now() + SESSION_TTL_MS,
@@ -218,8 +243,21 @@ class OperatorApprovalService {
     return [...this.sessions.values()].filter((s) => s.expiresAt > now);
   }
 
+  /**
+   * 2026-05-28:撤销同一 caller+op 下**所有 argsHash** 变体的 session。
+   * 这是"用户主动撤销 op 全部授权"的语义,与按精确 args 撤销不同。
+   * 返回删了几条。
+   */
   revokeSession(callerKey: string, opId: string): boolean {
-    return this.sessions.delete(`${callerKey}::${opId}`);
+    const prefix = `${callerKey}::${opId}::`;
+    let deleted = 0;
+    for (const key of [...this.sessions.keys()]) {
+      if (key.startsWith(prefix)) {
+        this.sessions.delete(key);
+        deleted += 1;
+      }
+    }
+    return deleted > 0;
   }
 
   // ── 内部 ──────────────────────────────────────────────────────────

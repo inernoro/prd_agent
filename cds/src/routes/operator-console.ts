@@ -132,11 +132,14 @@ export function createOperatorConsoleRouter(deps: {
       return;
     }
     // 二次确认 token
+    // 2026-05-28 SECURITY:不在错误响应里回显期望的 confirmText —— 否则
+    // 调用方一次 400 拿到 token 立刻重发就跳过了"二次确认"。confirmText
+    // 是带外协议,只在 op 注册表里可见,客户端必须显式知道才能传。
     if (op.confirmText && confirmText !== op.confirmText) {
       res.status(400).json({
         ok: false,
         error: 'confirmation required',
-        confirmText: op.confirmText,
+        hint: '该操作为 destructive,客户端必须传正确的 confirmText 字段。具体值由 op 注册表定义,不再随响应回显。',
       });
       return;
     }
