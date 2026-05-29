@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
+  Database,
   Download,
   Eye,
   FileText,
@@ -252,6 +253,7 @@ type TabValue =
   | 'runtime-defaults'
   | 'compose'
   | 'infra'
+  | 'storage'
   | 'cache'
   | 'stats'
   | 'activity'
@@ -284,6 +286,7 @@ const tabGroups: TabGroup[] = [
       { value: 'runtime-defaults', label: '新分支默认', icon: Rocket },
       { value: 'compose', label: '项目配置', icon: FileText },
       { value: 'infra', label: '基础设施', icon: Plug },
+      { value: 'storage', label: '存储', icon: Database },
       { value: 'cache', label: '缓存诊断', icon: HardDrive },
       { value: 'stats', label: '统计', icon: BarChart3 },
       { value: 'activity', label: '活动日志', icon: Activity },
@@ -511,6 +514,9 @@ export function ProjectSettingsPage(): JSX.Element {
                 </TabsContent>
                 <TabsContent value="infra">
                   <ProjectInfraTab projectId={project.id} onToast={setToast} />
+                </TabsContent>
+                <TabsContent value="storage">
+                  <ProjectStorageTab projectId={project.id} onToast={setToast} />
                 </TabsContent>
                 <TabsContent value="comment-template">
                   <CommentTemplateTab projectId={project.id} onToast={setToast} />
@@ -2681,6 +2687,177 @@ function ProjectComposeTab({
           </div>
         </details>
       ) : null}
+    </div>
+  );
+}
+
+interface ProjectStorageVolumeRow {
+  name: string;
+  sizeBytes: number | null;
+  sizeHuman: string;
+  mountedBy: string[];
+  containerPath: string;
+  type: 'volume' | 'bind';
+  note?: string;
+}
+
+interface ProjectStorageDiskInfo {
+  filesystem?: string;
+  totalBytes: number | null;
+  usedBytes: number | null;
+  availBytes: number | null;
+  usePercent: number | null;
+  mountedOn?: string;
+}
+
+interface ProjectStorageResponse {
+  volumes: ProjectStorageVolumeRow[];
+  totalBytes: number;
+  totalHuman: string;
+  diskInfo?: ProjectStorageDiskInfo;
+  note?: string;
+}
+
+function ProjectStorageTab({
+  projectId,
+  onToast,
+}: {
+  projectId: string;
+  onToast: (message: string) => void;
+}): JSX.Element {
+  const [data, setData] = useState<ProjectStorageResponse | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/storage`, { credentials: 'include' });
+      const body = await res.json();
+      if (!res.ok) { onToast(`加载失败：${body.error || res.status}`); return; }
+      setData(body as ProjectStorageResponse);
+    } catch (err) {
+      onToast(`加载异常：${(err as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }, [projectId, onToast]);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  if (!data) return <LoadingBlock label="加载存储信息…" />;
+
+  const disk = data.diskInfo;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-base font-semibold">项目存储</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            本项目各基础设施服务的数据卷（docker named volume）大小与挂载关系。
+            数据卷在重建容器时会保留，删除前请确认数据已备份。
+          </p>
+        </div>
+        <Button type="button" variant="outline" size="sm" onClick={() => void refresh()} disabled={busy}>
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} 刷新
+        </Button>
+      </div>
+
+      {/* 概览：总占用 + 卷数量 + 可选磁盘信息 */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <MetricTile
+          icon={<Database className="h-3.5 w-3.5" />}
+          label="数据卷总占用"
+          value={data.totalHuman}
+        />
+        <MetricTile
+          icon={<HardDrive className="h-3.5 w-3.5" />}
+          label="数据卷数量"
+          value={data.volumes.length}
+        />
+        {disk ? (
+          <MetricTile
+            icon={<HardDrive className="h-3.5 w-3.5" />}
+            label="宿主机磁盘"
+            value={
+              disk.usePercent != null
+                ? `已用 ${disk.usePercent}%`
+                : '未知'
+            }
+            detail={
+              disk.availBytes != null
+                ? `剩余 ${formatBytes(disk.availBytes)}${disk.mountedOn ? ` · ${disk.mountedOn}` : ''}`
+                : undefined
+            }
+          />
+        ) : null}
+      </div>
+
+      {data.note ? (
+        <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>{data.note}</span>
+        </div>
+      ) : null}
+
+      {/* 卷列表 / 空状态 */}
+      {data.volumes.length === 0 ? (
+        <div className="flex flex-col items-center gap-3 rounded-md border border-dashed border-border px-4 py-10 text-center">
+          <Database className="h-8 w-8 text-muted-foreground" />
+          <div className="text-sm font-medium">该项目还没有任何数据卷</div>
+          <p className="max-w-md text-xs text-muted-foreground">
+            数据卷由基础设施服务（如 MongoDB / Redis）声明。先到「基础设施」标签页添加带数据卷的服务，
+            或在「项目配置」里给服务补上 volumes，重新同步后这里就会出现卷的占用情况。
+          </p>
+          <Button type="button" variant="outline" size="sm" asChild>
+            <a href={`#infra`} onClick={(e) => { e.preventDefault(); window.location.hash = 'infra'; }}>
+              前往基础设施
+            </a>
+          </Button>
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-md border border-border">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/40 text-xs text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 text-left font-medium">数据卷</th>
+                <th className="px-3 py-2 text-right font-medium">大小</th>
+                <th className="px-3 py-2 text-left font-medium">挂载服务</th>
+                <th className="px-3 py-2 text-left font-medium">容器内路径</th>
+                <th className="px-3 py-2 text-left font-medium">类型</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.volumes.map((vol) => (
+                <tr key={vol.name} className="border-t border-border align-top">
+                  <td className="px-3 py-2">
+                    <code className="font-mono text-xs">{vol.name}</code>
+                    {vol.note ? (
+                      <div className="mt-0.5 text-xs text-muted-foreground">{vol.note}</div>
+                    ) : null}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-xs">
+                    {vol.sizeHuman}
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="flex flex-wrap gap-1">
+                      {vol.mountedBy.map((svc) => (
+                        <span key={svc} className="inline-flex rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{svc}</span>
+                      ))}
+                    </div>
+                  </td>
+                  <td className="px-3 py-2">
+                    <code className="font-mono text-xs text-muted-foreground">{vol.containerPath || '—'}</code>
+                  </td>
+                  <td className="px-3 py-2 text-xs">
+                    {vol.type === 'bind' ? '目录挂载' : '数据卷'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

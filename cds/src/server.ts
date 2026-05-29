@@ -13,6 +13,7 @@ import { createProjectsRouter, assertProjectAccess } from './routes/projects.js'
 import { createPendingImportRouter } from './routes/pending-import.js';
 import { createProjectInfraResyncRouter } from './routes/project-infra-resync.js';
 import { createProjectComposeRouter } from './routes/project-compose.js';
+import { createProjectStorageRouter } from './routes/project-storage.js';
 import { createCacheRouter } from './routes/cache.js';
 import { createSnapshotsRouter } from './routes/snapshots.js';
 import { createRemoteHostsRouter } from './routes/remote-hosts.js';
@@ -731,6 +732,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/projects\/(.+)\/github\/link$/, '关联 GitHub 仓库'],
     [/^DELETE \/projects\/(.+)\/github\/link$/, '解除 GitHub 关联'],
     [/^POST \/projects\/(.+)\/clone$/, '克隆代码'],
+    [/^GET \/projects\/(.+)\/storage$/, '获取项目存储'],
     [/^GET \/projects\/(.+)$/, '查询项目'],
     [/^PUT \/projects\/(.+)$/, '更新项目'],
     [/^DELETE \/projects\/(.+)$/, '删除项目'],
@@ -2773,6 +2775,12 @@ export function createServer(deps: ServerDeps): express.Express {
   // 项目虚拟 cds-compose.yml 读写(配置 SSOT，2026-05-29)
   app.use('/api', createProjectComposeRouter({
     stateService: deps.stateService,
+    assertProjectAccess: assertProjectAccess as any,
+  }));
+  // 项目存储面板(infra named volume 大小/挂载关系，feature-emerge E7，2026-05-29)
+  app.use('/api', createProjectStorageRouter({
+    stateService: deps.stateService,
+    shell: deps.shell,
     assertProjectAccess: assertProjectAccess as any,
   }));
   // Cache diagnostics / repair / cross-server migration.
