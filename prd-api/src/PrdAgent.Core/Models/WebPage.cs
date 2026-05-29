@@ -91,6 +91,14 @@ public class HostedSite
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// 内容版本时间戳：仅在创建 / 重新上传（内容真正变化）时更新，
+    /// 元数据改动（改标题、改可见性、改共享团队）不动它。
+    /// 用作 SiteUrl / pdfAssetUrl 的 ?v= 缓存指纹，确保"内容不变命中缓存、重新上传击穿缓存"。
+    /// 老数据缺该字段时反序列化为 default(DateTime)，?v 取一个稳定值，照常命中缓存（向后兼容）。
+    /// </summary>
+    public DateTime ContentVersion { get; set; } = DateTime.UtcNow;
 }
 
 /// <summary>站点文件清单项</summary>

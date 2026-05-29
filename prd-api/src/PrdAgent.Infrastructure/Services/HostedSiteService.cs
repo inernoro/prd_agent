@@ -32,8 +32,9 @@ public class HostedSiteService : IHostedSiteService
     // max-age=3600 是兜底——万一某些 CDN 配置忽略查询串，最长 1 小时后也会回源刷新。
     private const string SiteCacheControl = "public, max-age=3600";
 
-    // 给入口 URL 追加版本指纹。version 取站点的 UpdatedAt：只在重新上传时变化，
-    // 因此"没更新"的站点 URL 恒定可缓存，符合用户要求。
+    // 给入口 URL 追加版本指纹。version 取站点的 ContentVersion：只在创建 / 重新上传
+    // （内容真正变化）时改变；改标题、改可见性等元数据操作不动它。因此"没更新"的站点
+    // URL 恒定可缓存，符合用户要求"没更新还要缓存"。
     internal static string AppendVersion(string url, DateTime version)
     {
         if (string.IsNullOrWhiteSpace(url)) return url;
@@ -147,6 +148,7 @@ public class HostedSiteService : IHostedSiteService
             SiteUrl = AppendVersion(_storage.BuildUrlForKey(cosKey), now),
             CreatedAt = now,
             UpdatedAt = now,
+            ContentVersion = now,
             Files = new List<HostedSiteFile>
             {
                 new() { Path = "index.html", CosKey = cosKey, Size = rewritten.Length, MimeType = "text/html" }
@@ -190,6 +192,7 @@ public class HostedSiteService : IHostedSiteService
             SiteUrl = siteUrl,
             CreatedAt = now,
             UpdatedAt = now,
+            ContentVersion = now,
             Files = result.Files,
             TotalSize = result.TotalSize,
             Tags = tags ?? new(),
@@ -232,6 +235,7 @@ public class HostedSiteService : IHostedSiteService
             SiteUrl = AppendVersion(_storage.BuildUrlForKey(cosKey), now),
             CreatedAt = now,
             UpdatedAt = now,
+            ContentVersion = now,
             Files = new List<HostedSiteFile>
             {
                 new() { Path = "index.html", CosKey = cosKey, Size = htmlBytes.Length, MimeType = "text/html" }
@@ -329,7 +333,8 @@ public class HostedSiteService : IHostedSiteService
                 .Set(x => x.Files, siteFiles)
                 .Set(x => x.TotalSize, totalSize)
                 .Set(x => x.WrappedAssetType, normalizedType)
-                .Set(x => x.UpdatedAt, now),
+                .Set(x => x.UpdatedAt, now)
+                .Set(x => x.ContentVersion, now),
             cancellationToken: ct);
 
         // 清理旧文件中不再被新文件集复用的 key。同 key（如 index.html）已被新内容
@@ -1119,7 +1124,7 @@ public class HostedSiteService : IHostedSiteService
     // 这种 2 文件普通 ZIP 误判为包装站（Codex P2 反复抓到，PR #612）。
     private string? TryBuildPdfAssetUrl(HostedSite site)
         => IsPdfWrapperSite(site, out var pdf)
-            ? AppendVersion(_storage.BuildUrlForKey(pdf!.CosKey), site.UpdatedAt)
+            ? AppendVersion(_storage.BuildUrlForKey(pdf!.CosKey), site.ContentVersion)
             : null;
 
     public static bool IsPdfWrapperSite(HostedSite site, out HostedSiteFile? pdf)
@@ -1530,6 +1535,8 @@ public class HostedSiteService : IHostedSiteService
                 CosPrefix = original.CosPrefix,
                 EntryFile = original.EntryFile,
                 SiteUrl = original.SiteUrl,
+                // 复用原站 COS 文件，内容版本也照搬，保证 pdfAssetUrl 的 ?v 与原站一致（缓存命中）
+                ContentVersion = original.ContentVersion,
                 Files = original.Files.Select(f => new HostedSiteFile
                 {
                     Path = f.Path,
