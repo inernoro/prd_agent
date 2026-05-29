@@ -10,3 +10,5 @@
 | fix | prd-api | ListInlineComments 的 shareToken 校验补 EntryId 匹配：单文档分享 token 不能越权读整 store 评论（PR #685 Codex P1） |
 | fix | prd-admin | fetchIdRef stale guard 改用 try/finally 保证 loading 清理：仅 latest 请求清，stale 让位避免 spinner 卡死（PR #685 Bugbot Medium）。SharesPanel + ShareAnalyticsDrawer 同步 |
 | chore | prd-admin | 删 dead code listShareLogsForSite（services/real + index.ts re-export），无 consumer（PR #685 Bugbot Low） |
+| fix | prd-api | CreateShareAsync 复用路径把 Visibility 加入 reuse key：请求 public 不再复用到旧 owner-only 链接，修复工作流自动分享仍可能返回 owner-only token 的 High 漏洞（PR #685 Bugbot High / Codex P2 二次）；legacy 空 Visibility 按 public 兼容匹配 |
+| fix | prd-admin | DocBrowser 评论计数 fetchIdRef 守卫：进入条目预拉 + onClose 重拉都用同一 ref，切换条目时旧响应不覆盖新计数（PR #685 Bugbot Low） |

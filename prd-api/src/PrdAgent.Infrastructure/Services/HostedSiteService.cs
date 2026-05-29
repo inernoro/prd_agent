@@ -633,6 +633,8 @@ public class HostedSiteService : IHostedSiteService
         var wantPassword = string.IsNullOrWhiteSpace(password) ? null : password.Trim();
         var nowUtc = DateTime.UtcNow;
         var newExpiresAt = expiresInDays > 0 ? nowUtc.AddDays(expiresInDays) : (DateTime?)null;
+        // visit 链恒 public；其余按调用方传入的 visibility（已在方法开头 normalize）
+        var effVisibility = effPurpose == "visit" ? "public" : normalizedVisibility;
 
         // forceNew=true（PR 2026-05-28 起，用户在分享面板显式点新建）：跳过复用直接新建。
         // visit 便捷链恒走复用路径（避免每次进入页面都创建一条便捷链污染列表）。
@@ -643,6 +645,13 @@ public class HostedSiteService : IHostedSiteService
             var reuseFilter = fb.Eq(x => x.CreatedBy, userId)
                 & fb.Eq(x => x.IsRevoked, false)
                 & fb.Eq(x => x.AccessLevel, wantAccess)
+                // Visibility 必须进 reuse key（PR #685 Bugbot High / Codex P2）：
+                // 否则请求 public 却复用到旧的 owner-only 链接，reuse 路径又不更新 Visibility，
+                // 导致工作流自动分享(visibility=public)返回 owner-only token → 外部访问 403。
+                // 空 Visibility（legacy）按 public 兼容，与 effVisibility=public 时一并匹配。
+                & (effVisibility == "public"
+                    ? (fb.Eq(x => x.Visibility, "public") | fb.Eq(x => x.Visibility, "") | fb.Eq(x => x.Visibility, (string?)null))
+                    : fb.Eq(x => x.Visibility, effVisibility))
                 // 已过期的链接不得复用，否则覆盖 ExpiresAt 会"复活"旧 token，
                 // 持有过期 URL 的人凭旧链接重新获得访问权——必须新建（换新 token）。
                 & (fb.Eq(x => x.ExpiresAt, (DateTime?)null) | fb.Gt(x => x.ExpiresAt, nowUtc))
@@ -752,9 +761,8 @@ public class HostedSiteService : IHostedSiteService
         }
 
         // 新分享：同时写明文（去重 + 展示给分享者）和 Hash/Salt（校验主路径）
+        // effVisibility 已在 reuse 块前声明（visit 恒 public，其余按 normalizedVisibility）
         var pwdHash = wantPassword != null ? (SharePasswordHash?)_sharePwd.Hash(wantPassword) : null;
-        // visit 链恒为 public（站点访问便捷链），其余按调用方传入的 visibility
-        var effVisibility = effPurpose == "visit" ? "public" : normalizedVisibility;
         var share = new WebPageShareLink
         {
             SiteId = shareType != "collection" ? siteId : null,

@@ -1056,6 +1056,9 @@ export function DocBrowser({
   //   "💬 N 条评论" 点击打开 InlineCommentDrawer。
   // 仅 best-effort：失败/无权（私有库无分享访问）默认 0，不影响主流程。
   const [commentCount, setCommentCount] = useState(0);
+  // 评论计数 fetchIdRef 守卫（PR #685 Bugbot Low）：切换条目 / onClose 重拉时，
+  // 旧 entry 的慢响应不覆盖新 entry 已设的计数。
+  const commentCountFetchIdRef = useRef(0);
   // 选区 offset 必须基于"实际渲染的正文"解析：文本类预览渲染的是
   // parseFrontmatter(text).body（已剥 frontmatter），若把含 frontmatter 的
   // 原文喂给 useContentSelection，选中同时出现在 frontmatter 的文字（如标题）
@@ -1086,14 +1089,13 @@ export function DocBrowser({
       setCommentCount(0);
       return;
     }
-    let cancelled = false;
+    const myId = ++commentCountFetchIdRef.current;
     (async () => {
       try {
         const res = await listInlineComments(trackedEntryForComments.id, inlineCommentShareToken);
-        if (!cancelled && res.success) setCommentCount(res.data.items.length);
+        if (myId === commentCountFetchIdRef.current && res.success) setCommentCount(res.data.items.length);
       } catch { /* 私有库 + 无分享 + 非 owner 会 404，正常 */ }
     })();
-    return () => { cancelled = true; };
   }, [trackedEntryForComments, inlineCommentShareToken]);
 
   // F1：仅当当前预览是文本类（Markdown/提取文本）时，给右侧 TOC 提供正文
@@ -2128,11 +2130,13 @@ export function DocBrowser({
           onClose={() => {
             setInlineCommentsOpen(false);
             setPendingSelection(null);
-            // 关闭时刷新评论计数（新建/删除/无变化都通用）
+            // 关闭时刷新评论计数（新建/删除/无变化都通用）；带 fetchIdRef 守卫，
+            // 关闭后立刻切换条目时旧响应不覆盖新计数（PR #685 Bugbot Low）
             if (trackedEntryForComments) {
               const entryId = trackedEntryForComments.id;
+              const myId = ++commentCountFetchIdRef.current;
               listInlineComments(entryId, inlineCommentShareToken).then((res) => {
-                if (res.success) setCommentCount(res.data.items.length);
+                if (myId === commentCountFetchIdRef.current && res.success) setCommentCount(res.data.items.length);
               }).catch(() => {});
             }
           }}
