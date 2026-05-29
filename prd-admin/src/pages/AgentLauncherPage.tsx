@@ -46,6 +46,7 @@ import type { ToolboxItem } from '@/services';
 import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { ReviewAgentCardArt } from '@/pages/ai-toolbox/components/ReviewAgentCardArt';
+import { ProjectRouteAgentCardArt } from '@/pages/ai-toolbox/components/ProjectRouteAgentCardArt';
 import { HomeAmbientBackdrop } from '@/components/effects/HomeAmbientBackdrop';
 import { Reveal } from '@/pages/home/components/Reveal';
 import { TipsRotator } from '@/components/daily-tips/TipsRotator';
@@ -251,6 +252,8 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
       {/* Cover visual: inline art / CDN image / gradient fallback */}
       {item.agentKey === 'review-agent' ? (
         <ReviewAgentCardArt />
+      ) : item.agentKey === 'project-route-agent' ? (
+        <ProjectRouteAgentCardArt />
       ) : coverUrl && !coverFailed ? (
         <>
           <img

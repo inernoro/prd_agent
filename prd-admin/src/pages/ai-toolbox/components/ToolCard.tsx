@@ -158,6 +158,7 @@ function getPalette(iconName: string) {
 
 import { SpotlightEffect } from './SpotlightEffect';
 import { ReviewAgentCardArt } from './ReviewAgentCardArt';
+import { ProjectRouteAgentCardArt } from './ProjectRouteAgentCardArt';
 
 export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
   const {
@@ -387,6 +388,8 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
       {/* Cover visual — 内联插画 / CDN 图片 / 渐变兜底 */}
       {item.agentKey === 'review-agent' ? (
         <ReviewAgentCardArt />
+      ) : item.agentKey === 'project-route-agent' ? (
+        <ProjectRouteAgentCardArt />
       ) : coverUrl && !coverFailed ? (
         <>
           <img
