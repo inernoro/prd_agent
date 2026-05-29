@@ -91,6 +91,18 @@ public class HostedSite
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// 内容版本时间戳：仅在创建 / 重新上传（内容真正变化）时更新，
+    /// 元数据改动（改标题、改可见性、改共享团队）不动它。
+    /// 用作 SiteUrl / pdfAssetUrl 的 ?v= 缓存指纹，确保"内容不变命中缓存、重新上传击穿缓存"。
+    ///
+    /// 注意：**禁止**给这里加 `= DateTime.UtcNow` 初始化器。Mongo 反序列化老文档（无此字段）
+    /// 时会保留初始化器的值——若为 UtcNow，则每次读取都得到当前时间，?v 每次都变，
+    /// 反而把缓存击穿（Codex PR #686 P2 抓到）。保持默认 default(DateTime) 才是确定值；
+    /// 所有创建路径都会显式赋 now，老文档则在读取侧回退到 CreatedAt（见 TryBuildPdfAssetUrl）。
+    /// </summary>
+    public DateTime ContentVersion { get; set; }
 }
 
 /// <summary>站点文件清单项</summary>
