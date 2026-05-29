@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, DeployModeOverride, BuildProfileOverride, ReadinessProbe } from '../types.js';
 import { combinedOutput } from '../types.js';
-import { resolveEnvTemplates } from './compose-parser.js';
+import { resolveCommandTemplate, resolveEnvTemplates } from './compose-parser.js';
 import { applyPerBranchDbIsolation } from './db-scope-isolation.js';
 import { nodeModulesVolumeName } from '../util/node-modules-volume.js';
 import {
@@ -1905,20 +1905,28 @@ export class ContainerService {
     // 只接 executable,余下元素必须 prepend 到 cmd 才会生效。
     // 例:entrypoint: ["python3","-m","http.server"] →
     //   --entrypoint python3  ... image  -m http.server
-    const explicitCmdParts = service.command === undefined
+    // 2026-05-29 灾难修复:之前 service.env 走了 resolveEnvTemplates 但 command /
+    // entrypoint 没走 — yaml 里 `command: redis-server --requirepass ${CDS_REDIS_PASSWORD}`
+    // 透传到 child_process.exec,host shell 找不到 CDS_REDIS_PASSWORD(那是项目
+    // 级 customEnv,不是 systemd CDS 进程 env)→ 展开成空 → redis 启动看到
+    // `--requirepass ` 缺值,FATAL CONFIG ERROR 无限重启。把 command/entrypoint
+    // 也过一遍同一份 customEnv 模板替换,根治。
+    const resolvedCommand = resolveCommandTemplate(service.command, customEnv);
+    const resolvedEntrypoint = resolveCommandTemplate(service.entrypoint, customEnv);
+    const explicitCmdParts = resolvedCommand === undefined
       ? []
-      : Array.isArray(service.command)
-        ? service.command.map((c) => this.shellQuote(String(c)))
-        : [String(service.command)]; // string 形态 yaml 中通常是 shell 语法,不再 quote
+      : Array.isArray(resolvedCommand)
+        ? resolvedCommand.map((c) => this.shellQuote(String(c)))
+        : [String(resolvedCommand)]; // string 形态 yaml 中通常是 shell 语法,不再 quote
     let entrypointFlag = '';
     let entrypointExtraArgs: string[] = [];
-    if (service.entrypoint !== undefined) {
-      if (Array.isArray(service.entrypoint)) {
-        const [head, ...rest] = service.entrypoint;
+    if (resolvedEntrypoint !== undefined) {
+      if (Array.isArray(resolvedEntrypoint)) {
+        const [head, ...rest] = resolvedEntrypoint;
         entrypointFlag = `--entrypoint ${this.shellQuote(String(head ?? ''))}`;
         entrypointExtraArgs = rest.map((r) => this.shellQuote(String(r)));
       } else {
-        entrypointFlag = `--entrypoint ${this.shellQuote(String(service.entrypoint))}`;
+        entrypointFlag = `--entrypoint ${this.shellQuote(String(resolvedEntrypoint))}`;
       }
     }
     const cmdParts = [...entrypointExtraArgs, ...explicitCmdParts];

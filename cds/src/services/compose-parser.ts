@@ -814,6 +814,28 @@ export function resolveEnvTemplates(
   return result;
 }
 
+/**
+ * Expand `${VAR}` references inside a yaml `command:` / `entrypoint:` value
+ * using the project's customEnv as lookup table. Mirrors what
+ * resolveEnvTemplates does for env, so a yaml line like
+ *   command: redis-server --requirepass ${CDS_REDIS_PASSWORD}
+ * doesn't reach `docker run` as a literal `${CDS_REDIS_PASSWORD}` (which
+ * the host shell then expands to empty because the CDS process env has no
+ * such variable, leaving redis with `--requirepass ` and no value).
+ *
+ * Returns the same shape as the input: undefined → undefined,
+ * string → string, string[] → string[].
+ */
+export function resolveCommandTemplate(
+  cmd: string | string[] | undefined,
+  cdsVars: Record<string, string> | undefined,
+): string | string[] | undefined {
+  if (cmd === undefined || !cdsVars) return cmd;
+  const expandedVars = expandVarsToFixedPoint(cdsVars);
+  if (Array.isArray(cmd)) return cmd.map((c) => singlePassResolve(c, expandedVars));
+  return singlePassResolve(cmd, expandedVars);
+}
+
 // ── Internal helpers ──
 
 /**
