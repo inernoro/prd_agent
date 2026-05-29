@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
@@ -17,12 +18,22 @@ namespace PrdAgent.Infrastructure.Services.ProjectRouteAgent;
 public sealed class GitRepoCacheService
 {
     private static readonly TimeSpan FreshnessWindow = TimeSpan.FromHours(6);
+    /// <summary>启动时清理：超过 7 天未访问的缓存目录直接删，防止 /tmp 无限累积。</summary>
+    private static readonly TimeSpan StaleEvictionAge = TimeSpan.FromDays(7);
     private const int MaxFileBytes = 256 * 1024;
     private const int MaxTotalBytes = 2 * 1024 * 1024;
     private const int MaxFileCount = 300;
 
     private readonly ILogger<GitRepoCacheService> _logger;
     private readonly string _cacheRoot;
+
+    /// <summary>
+    /// 同一仓库的串行化锁，按缓存目录路径 key。
+    /// 解决：Singleton + 多并发请求时，两个用户同时引用同一个 repoUrl 会同时
+    /// 进入 TryRecursiveDelete + clone 流程，互相破坏对方的目录。
+    /// 注：这是进程内锁，多副本部署时仍可能并发（属于部署架构问题，不在此修）。
+    /// </summary>
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _repoLocks = new();
 
     public GitRepoCacheService(IConfiguration configuration, ILogger<GitRepoCacheService> logger)
     {
@@ -31,6 +42,35 @@ public sealed class GitRepoCacheService
             ?? configuration["ProjectRouteAgent:CacheRoot"]
             ?? Path.Combine(Path.GetTempPath(), "project-route-agent-cache");
         Directory.CreateDirectory(_cacheRoot);
+
+        // fire-and-forget 启动清理：扫描并删除超过 StaleEvictionAge 未访问的目录。
+        // 异步执行，不阻塞应用启动；失败仅记录日志。
+        _ = Task.Run(CleanupStaleAsync);
+    }
+
+    private SemaphoreSlim GetRepoLock(string cacheDir)
+        => _repoLocks.GetOrAdd(cacheDir, _ => new SemaphoreSlim(1, 1));
+
+    /// <summary>
+    /// 获取指定缓存目录的串行化锁；返回的 IDisposable 在 Dispose 时自动释放。
+    /// 调用方写 `using var _ = await AcquireRepoLockAsync(dir, ct);` 即可。
+    /// </summary>
+    private async Task<IDisposable> AcquireRepoLockAsync(string cacheDir, CancellationToken ct)
+    {
+        var sem = GetRepoLock(cacheDir);
+        await sem.WaitAsync(ct);
+        return new RepoLockHandle(sem);
+    }
+
+    private sealed class RepoLockHandle : IDisposable
+    {
+        private SemaphoreSlim? _sem;
+        public RepoLockHandle(SemaphoreSlim sem) { _sem = sem; }
+        public void Dispose()
+        {
+            var s = System.Threading.Interlocked.Exchange(ref _sem, null);
+            try { s?.Release(); } catch { /* 已 dispose 或异常时静默 */ }
+        }
     }
 
     /// <summary>
@@ -65,6 +105,11 @@ public sealed class GitRepoCacheService
             throw new GitRepoCacheException($"非法的分支名：{branch}");
 
         var dir = ResolveCacheDir(repoUrl, branch);
+
+        // 串行化同一仓库的并发请求：两个用户同时引用同一个 repoUrl 时，
+        // 后到者必须等先到者完成 clone/fetch，避免互相删对方的 .git 目录。
+        // 锁粒度=cacheDir，不同仓库可并行。锁会随 using 自动释放，包括异常路径。
+        using var __repoLock = await AcquireRepoLockAsync(dir, ct);
 
         // 注入 OAuth token 到 URL（仅 https）。token 不出现在日志 / 缓存路径里。
         var cloneUrl = InjectTokenIntoUrl(repoUrl, accessToken);
@@ -516,6 +561,96 @@ public sealed class GitRepoCacheService
         {
             // best effort
         }
+    }
+
+    /// <summary>
+    /// 启动时异步清理超过 StaleEvictionAge（默认 7 天）未访问的缓存目录。
+    /// 实现要点：
+    ///   - fire-and-forget，不阻塞应用启动
+    ///   - 用 `.routemap-cache.stamp` 文件的最后写入时间作为"最后访问"基准；
+    ///     stamp 不存在时退化用目录最后写入时间
+    ///   - 容错：单个目录失败不影响其他目录；整体失败仅记录日志
+    ///   - 顺带清理已变空的 hash 父目录，保持磁盘整洁
+    /// </summary>
+    private async Task CleanupStaleAsync()
+    {
+        await Task.Yield();
+        try
+        {
+            if (!Directory.Exists(_cacheRoot)) return;
+            var threshold = DateTime.UtcNow - StaleEvictionAge;
+            var removed = 0;
+            long bytesFreed = 0;
+
+            foreach (var hashDir in Directory.EnumerateDirectories(_cacheRoot))
+            {
+                try
+                {
+                    foreach (var branchDir in Directory.EnumerateDirectories(hashDir))
+                    {
+                        DateTime lastTouched;
+                        var stamp = Path.Combine(branchDir, ".routemap-cache.stamp");
+                        try
+                        {
+                            lastTouched = File.Exists(stamp)
+                                ? File.GetLastWriteTimeUtc(stamp)
+                                : Directory.GetLastWriteTimeUtc(branchDir);
+                        }
+                        catch
+                        {
+                            continue;
+                        }
+                        if (lastTouched > threshold) continue;
+
+                        var size = TryComputeDirectorySize(branchDir);
+                        try
+                        {
+                            Directory.Delete(branchDir, recursive: true);
+                            removed++;
+                            bytesFreed += size;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "[GitRepoCache] cleanup failed for {Dir}", branchDir);
+                        }
+                    }
+                    // hashDir 下没分支了就一起清掉
+                    if (!Directory.EnumerateFileSystemEntries(hashDir).Any())
+                    {
+                        try { Directory.Delete(hashDir); } catch { /* best effort */ }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "[GitRepoCache] cleanup iter failed for {Dir}", hashDir);
+                }
+            }
+
+            if (removed > 0)
+            {
+                _logger.LogInformation(
+                    "[GitRepoCache] startup cleanup removed {Count} stale dirs ({MB:F1} MB freed)",
+                    removed, bytesFreed / 1024.0 / 1024.0);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[GitRepoCache] startup cleanup aborted");
+        }
+    }
+
+    private static long TryComputeDirectorySize(string dir)
+    {
+        try
+        {
+            var total = 0L;
+            foreach (var f in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
+            {
+                try { total += new FileInfo(f).Length; } catch { /* skip */ }
+            }
+            return total;
+        }
+        catch { return 0; }
     }
 
     private static bool IsFresh(string dir)
