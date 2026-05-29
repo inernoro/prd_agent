@@ -2537,6 +2537,7 @@ function ProjectInfraTab({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [resyncOpen, setResyncOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -2663,11 +2664,21 @@ function ProjectInfraTab({
             title={runningCount === 0 ? '没有正在运行的服务' : `停止 ${runningCount} 个运行中的服务(数据保留)`}>
             全部停止 {runningCount > 0 ? `(${runningCount})` : ''}
           </Button>
+          <Button type="button" variant="default" size="sm" onClick={() => setResyncOpen(true)} disabled={busy !== null}>
+            重新同步配置
+          </Button>
           <Button type="button" variant="outline" size="sm" onClick={refresh} disabled={busy !== null}>
             <RefreshCw className="h-3 w-3" /> 刷新
           </Button>
         </div>
       </div>
+
+      <InfraResyncDialog
+        open={resyncOpen}
+        onOpenChange={(open) => { setResyncOpen(open); if (!open) void refresh(); }}
+        projectId={projectId}
+        onToast={onToast}
+      />
 
       {services.length === 0 ? (
         <div className="rounded-md border border-dashed border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-6 text-center text-sm text-muted-foreground">
@@ -2774,5 +2785,228 @@ function ProjectInfraTab({
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// 项目基础设施 重新同步对话框 (2026-05-29)
+// 用户反馈:"我想重新初始化这个项目, 比如彻底重装这个数据库啊...
+//   缺乏一个重新从 cds-compose.yml 初始化的功能...这是个断头应用了"
+// ─────────────────────────────────────────────────────────────
+
+interface ResyncDiff {
+  adds: Array<{ id: string; name: string; dockerImage: string; containerPort: number }>;
+  updates: Array<{ id: string; name: string; reasons: string[] }>;
+  removes: Array<{ id: string; name: string; containerName: string; status: string }>;
+  noChange: Array<{ id: string; name: string }>;
+}
+
+function InfraResyncDialog({
+  open, onOpenChange, projectId, onToast,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  projectId: string;
+  onToast: (message: string) => void;
+}): JSX.Element {
+  const [yamlText, setYamlText] = useState('');
+  const [diff, setDiff] = useState<ResyncDiff | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [cmdError, setCmdError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [confirmTextInput, setConfirmTextInput] = useState('');
+
+  // 重置时清空
+  useEffect(() => {
+    if (!open) {
+      setYamlText('');
+      setDiff(null);
+      setPreviewError(null);
+      setCmdError(null);
+      setConfirmTextInput('');
+    }
+  }, [open]);
+
+  const onPreview = useCallback(async () => {
+    if (!yamlText.trim()) return;
+    setBusy(true);
+    setPreviewError(null);
+    setCmdError(null);
+    setDiff(null);
+    try {
+      const res = await fetch(
+        `/api/projects/${encodeURIComponent(projectId)}/infra/resync/preview`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ composeYaml: yamlText }),
+        },
+      );
+      const body = await res.json();
+      if (!res.ok) {
+        setPreviewError(body.error || `HTTP ${res.status}`);
+        if (body.cmdValidationError) setCmdError(body.cmdValidationError);
+        return;
+      }
+      setDiff(body as ResyncDiff);
+    } catch (err) {
+      setPreviewError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }, [projectId, yamlText]);
+
+  const onExecute = useCallback(async () => {
+    if (!diff) return;
+    if (diff.removes.length > 0 && confirmTextInput.trim().toLowerCase() !== 'yes') {
+      onToast('删除项需要输入 yes 确认');
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch(
+        `/api/projects/${encodeURIComponent(projectId)}/infra/resync/execute`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ composeYaml: yamlText, confirmText: confirmTextInput || undefined }),
+        },
+      );
+      const body = await res.json();
+      if (!res.ok) {
+        onToast(`执行失败:${body.error || res.status}`);
+        return;
+      }
+      const a = body.applied || {};
+      const errCount = (body.errors || []).length;
+      onToast(`同步完成:新增 ${(a.added || []).length} · 更新 ${(a.updated || []).length} · 删除 ${(a.removed || []).length}${errCount > 0 ? ` · 错误 ${errCount}` : ''}`);
+      onOpenChange(false);
+    } catch (err) {
+      onToast(`执行异常:${(err as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }, [diff, confirmTextInput, projectId, yamlText, onToast, onOpenChange]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>重新同步项目基础设施</DialogTitle>
+          <DialogDescription>
+            粘贴 cds-compose.yml,先预览 diff,再执行。<strong>docker named volume 保留</strong>,
+            被删/重建的容器其数据卷会被新容器自动接回。
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3" style={{ minHeight: 0 }}>
+          <div>
+            <label className="text-xs font-medium text-foreground/80">cds-compose.yml</label>
+            <textarea
+              value={yamlText}
+              onChange={(e) => { setYamlText(e.target.value); setDiff(null); }}
+              className="mt-1 w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-2 font-mono text-xs"
+              rows={8}
+              placeholder={`x-cds-project:\n  name: my-project\nservices:\n  mongodb:\n    image: mongo:7\n    ports: ["27017"]\n    volumes: [mongodb-data:/data/db]\n`}
+              disabled={busy}
+              style={{ minHeight: 160, maxHeight: 280, overflowY: 'auto' }}
+            />
+          </div>
+
+          {previewError ? (
+            <div className="rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-300">
+              <div className="font-semibold">预览失败</div>
+              <div>{previewError}</div>
+              {cmdError ? <div className="mt-2 font-mono text-xs">{cmdError}</div> : null}
+            </div>
+          ) : null}
+
+          {!diff ? (
+            <div className="flex justify-end">
+              <Button type="button" onClick={onPreview} disabled={busy || !yamlText.trim()}>
+                {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                预览 diff
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-3 max-h-[40vh] overflow-y-auto" style={{ overscrollBehavior: 'contain', minHeight: 0 }}>
+              {diff.adds.length > 0 ? (
+                <div>
+                  <div className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+                    新增 {diff.adds.length}
+                  </div>
+                  {diff.adds.map((a) => (
+                    <div key={`add-${a.id}`} className="mt-1 rounded border border-emerald-500/30 bg-emerald-500/5 px-2 py-1 text-xs">
+                      <code className="font-mono">{a.id}</code> · {a.dockerImage}:{a.containerPort}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {diff.updates.length > 0 ? (
+                <div>
+                  <div className="text-xs font-semibold text-sky-700 dark:text-sky-300">
+                    更新 {diff.updates.length}(image/cmd/env/volumes/ports 任一变化即重建)
+                  </div>
+                  {diff.updates.map((u) => (
+                    <div key={`upd-${u.id}`} className="mt-1 rounded border border-sky-500/30 bg-sky-500/5 px-2 py-1 text-xs">
+                      <code className="font-mono">{u.id}</code>
+                      <ul className="mt-0.5 list-disc pl-4 text-[11px] text-foreground/80">
+                        {u.reasons.map((r, i) => <li key={i}>{r}</li>)}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {diff.removes.length > 0 ? (
+                <div>
+                  <div className="text-xs font-semibold text-red-700 dark:text-red-300">
+                    删除 {diff.removes.length}(yaml 中已不存在 · 数据卷保留)
+                  </div>
+                  {diff.removes.map((r) => (
+                    <div key={`rm-${r.id}`} className="mt-1 rounded border border-red-500/30 bg-red-500/5 px-2 py-1 text-xs">
+                      <code className="font-mono">{r.id}</code> · {r.containerName} · {r.status}
+                    </div>
+                  ))}
+                  <div className="mt-2">
+                    <label className="text-xs">输入 <code className="font-mono">yes</code> 确认删除上述 {diff.removes.length} 个服务:</label>
+                    <input
+                      type="text"
+                      value={confirmTextInput}
+                      onChange={(e) => setConfirmTextInput(e.target.value)}
+                      className="mt-1 w-32 rounded border border-[hsl(var(--hairline))] bg-background px-2 py-1 font-mono text-xs"
+                      placeholder="yes"
+                      disabled={busy}
+                    />
+                  </div>
+                </div>
+              ) : null}
+              {diff.noChange.length > 0 ? (
+                <div className="text-xs text-muted-foreground">
+                  无变化 {diff.noChange.length}:{diff.noChange.map((n) => n.id).join(', ')}
+                </div>
+              ) : null}
+              {diff.adds.length === 0 && diff.updates.length === 0 && diff.removes.length === 0 ? (
+                <div className="rounded-md border border-dashed border-[hsl(var(--hairline))] p-4 text-center text-sm text-muted-foreground">
+                  完全一致,无需同步
+                </div>
+              ) : null}
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>取消</Button>
+          {diff && (diff.adds.length + diff.updates.length + diff.removes.length) > 0 ? (
+            <Button type="button" variant="default" onClick={onExecute}
+              disabled={busy || (diff.removes.length > 0 && confirmTextInput.trim().toLowerCase() !== 'yes')}>
+              {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+              执行同步
+            </Button>
+          ) : null}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

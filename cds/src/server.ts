@@ -9,8 +9,9 @@ import { createBranchRouter } from './routes/branches.js';
 import { createCdsEventsRouter } from './routes/cds-events.js';
 import { createOperatorConsoleRouter } from './routes/operator-console.js';
 import { createBridgeRouter } from './routes/bridge.js';
-import { createProjectsRouter } from './routes/projects.js';
+import { createProjectsRouter, assertProjectAccess } from './routes/projects.js';
 import { createPendingImportRouter } from './routes/pending-import.js';
+import { createProjectInfraResyncRouter } from './routes/project-infra-resync.js';
 import { createCacheRouter } from './routes/cache.js';
 import { createSnapshotsRouter } from './routes/snapshots.js';
 import { createRemoteHostsRouter } from './routes/remote-hosts.js';
@@ -736,6 +737,9 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/pending-imports\/(.+)$/, '查询待导入项目'],
     [/^POST \/pending-imports\/(.+)\/approve$/, '批准导入'],
     [/^POST \/pending-imports\/(.+)\/reject$/, '拒绝导入'],
+    // 项目基础设施重新同步
+    [/^POST \/projects\/(.+)\/infra\/resync\/preview$/, '预览基础设施同步'],
+    [/^POST \/projects\/(.+)\/infra\/resync\/execute$/, '执行基础设施同步'],
     // 分支扩展
     [/^GET \/branches\/stream$/, '订阅分支状态流'],
     [/^POST \/branches\/(.+)\/checkout\/(.+)$/, '检出 Commit'],
@@ -2752,6 +2756,14 @@ export function createServer(deps: ServerDeps): express.Express {
   // Mounted at /api so the nested /projects/:id/pending-import path works
   // alongside the rest of the projects router.
   app.use('/api', createPendingImportRouter({ stateService: deps.stateService }));
+  // 2026-05-29 项目基础设施重新同步(用户反馈:断头应用,缺 yaml resync)
+  app.use('/api', createProjectInfraResyncRouter({
+    stateService: deps.stateService,
+    containerService: deps.containerService,
+    serverEventLogStore: deps.serverEventLogStore,
+    config: { portStart: deps.config?.portStart },
+    assertProjectAccess: assertProjectAccess as any,
+  }));
   // Cache diagnostics / repair / cross-server migration.
   // See routes/cache.ts for why this exists (挂载失效诊断 + 换机器预热).
   app.use('/api', createCacheRouter({ stateService: deps.stateService, shell: deps.shell }));
