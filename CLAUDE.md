@@ -430,6 +430,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 |------|--------|-------------|
 | **technical-documentation** | — | 输入文档需求 → Diátaxis 工作流 + 8 种模板（Spec/Architecture/Runbook/API/Quick Start/How-to/FAQ/Tutorial） |
 | **ui-ux-pro-max** | — | 输入设计需求 → 67 种风格 + 96 种配色 + 57 种字体搭配，支持 13 种技术栈 |
+| **product-document-generator** | — | 输入产品需求 → 按工程版 1+N 主-子文档模板或敏捷版模板生成/补全符合 AI 开发要求的产品文档（Part A 价值层 + Part B 功能层两阶段） |
 
 ### 元技能
 
