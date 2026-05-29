@@ -50,10 +50,47 @@ export type PmProject = {
   ownerId: string;
   taskCount: number;
   doneTaskCount: number;
+  valueCoefficient: number;
   stakeholders: PmStakeholder[];
   evaluation?: PmEvaluation | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type PmRewardConfig = {
+  id: string;
+  strategicBase: number;
+  innovationBase: number;
+  operationRoutineBase: number;
+  moreVision: number;
+  moreOutcome: number;
+  moreRapid: number;
+  moreEmpowered: number;
+  updatedAt: string;
+};
+
+export type PmProjectBonus = {
+  id: string;
+  projectNo: string;
+  title: string;
+  projectType: PmProjectType;
+  operationSubType?: PmOperationSubType | null;
+  grade: PmEvaluationGrade;
+  satisfactionScore: number;
+  valueCoefficient: number;
+  bonus: number;
+};
+
+export type PmDashboard = {
+  totalEvaluated: number;
+  successCount: number;
+  mediocreCount: number;
+  failCount: number;
+  npss: number;
+  baseline: number;
+  totalBonus: number;
+  projects: PmProjectBonus[];
+  rewardConfig: PmRewardConfig;
 };
 
 export type PmTask = {
@@ -115,7 +152,18 @@ export type UpdatePmProjectInput = Partial<{
   plannedStartAt: string;
   plannedEndAt: string;
   budget: number;
+  valueCoefficient: number;
   memberIds: string[];
+}>;
+
+export type UpdateRewardConfigInput = Partial<{
+  strategicBase: number;
+  innovationBase: number;
+  operationRoutineBase: number;
+  moreVision: number;
+  moreOutcome: number;
+  moreRapid: number;
+  moreEmpowered: number;
 }>;
 
 export type CreatePmTaskInput = Partial<Omit<PmTask, 'id' | 'projectId' | 'createdBy' | 'createdAt' | 'updatedAt' | 'source' | 'dependsOn' | 'labels'>> & {
@@ -174,3 +222,6 @@ export type SetStakeholdersInput = {
 };
 export type SetPmStakeholdersContract = (projectId: string, input: SetStakeholdersInput) => Promise<ApiResponse<{ stakeholders: PmStakeholder[] }>>;
 export type EvaluatePmProjectContract = (projectId: string, scores: Record<string, number>) => Promise<ApiResponse<{ evaluation: PmEvaluation }>>;
+export type GetPmDashboardContract = () => Promise<ApiResponse<PmDashboard>>;
+export type GetPmRewardConfigContract = () => Promise<ApiResponse<PmRewardConfig>>;
+export type UpdatePmRewardConfigContract = (input: UpdateRewardConfigInput) => Promise<ApiResponse<PmRewardConfig>>;

@@ -1943,6 +1943,9 @@ export {
   deletePmTaskReal as deletePmTask,
   setPmStakeholdersReal as setPmStakeholders,
   evaluatePmProjectReal as evaluatePmProject,
+  getPmDashboardReal as getPmDashboard,
+  getPmRewardConfigReal as getPmRewardConfig,
+  updatePmRewardConfigReal as updatePmRewardConfig,
 } from '@/services/real/pmAgent';
 export type {
   PmProject,
@@ -1950,6 +1953,10 @@ export type {
   PmTaskDraft,
   PmStakeholder,
   PmEvaluation,
+  PmRewardConfig,
+  PmDashboard,
+  PmProjectBonus,
+  UpdateRewardConfigInput,
   PmProjectType,
   PmOperationSubType,
   PmProjectLifecycle,

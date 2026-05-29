@@ -67,6 +67,9 @@ public class PmProject
     /// <summary>实际成本（结案时填写，单位：元）</summary>
     public decimal? ActualCost { get; set; }
 
+    /// <summary>项目价值系数（奖金计算用，基准值 1，由 PMO 调整）</summary>
+    public double ValueCoefficient { get; set; } = 1.0;
+
     /// <summary>立项方案文档（关联 Attachment / 文本，可选）</summary>
     public string? ProposalRef { get; set; }
 

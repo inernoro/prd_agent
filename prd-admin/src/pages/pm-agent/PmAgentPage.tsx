@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { FolderKanban, Plus, Trash2 } from 'lucide-react';
+import { FolderKanban, Plus, Trash2, TrendingUp } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
@@ -7,6 +7,7 @@ import { listPmProjects, deletePmProject } from '@/services';
 import type { PmProject } from '@/services/contracts/pmAgent';
 import { CreateProjectDialog } from './CreateProjectDialog';
 import { ProjectDetailView } from './ProjectDetailView';
+import { DashboardView } from './DashboardView';
 import { PROJECT_TYPE_REGISTRY, LIFECYCLE_REGISTRY, GRADE_REGISTRY } from './pmConstants';
 
 export function PmAgentPage() {
@@ -14,6 +15,7 @@ export function PmAgentPage() {
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [showDashboard, setShowDashboard] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -41,6 +43,15 @@ export function PmAgentPage() {
     );
   }
 
+  // 组织 NPSS 看板
+  if (showDashboard) {
+    return (
+      <div className="h-full min-h-0 p-5">
+        <DashboardView onBack={() => setShowDashboard(false)} />
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-4 h-full min-h-0 p-5">
       {/* 头部 */}
@@ -50,6 +61,7 @@ export function PmAgentPage() {
           <h1 className="text-[18px] font-semibold" style={{ color: 'var(--text-primary)' }}>项目管理</h1>
           <p className="text-[12px]" style={{ color: 'var(--text-muted)' }}>立项注册 → 任务看板 / 甘特图 → AI 拆解需求（对齐米多 PMO 方法论）</p>
         </div>
+        <Button variant="secondary" onClick={() => setShowDashboard(true)}><TrendingUp size={15} />NPSS 看板</Button>
         <Button variant="primary" onClick={() => setShowCreate(true)}><Plus size={15} />立项</Button>
       </div>
 

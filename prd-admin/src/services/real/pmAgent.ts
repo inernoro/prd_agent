@@ -12,6 +12,9 @@ import type {
   DeletePmTaskContract,
   SetPmStakeholdersContract,
   EvaluatePmProjectContract,
+  GetPmDashboardContract,
+  GetPmRewardConfigContract,
+  UpdatePmRewardConfigContract,
 } from '@/services/contracts/pmAgent';
 
 export const createPmProjectReal: CreatePmProjectContract = async (input) => {
@@ -58,4 +61,16 @@ export const setPmStakeholdersReal: SetPmStakeholdersContract = async (projectId
 
 export const evaluatePmProjectReal: EvaluatePmProjectContract = async (projectId, scores) => {
   return await apiRequest(api.pm.projects.evaluate(encodeURIComponent(projectId)), { method: 'POST', body: { scores } });
+};
+
+export const getPmDashboardReal: GetPmDashboardContract = async () => {
+  return await apiRequest(api.pm.dashboard(), { method: 'GET' });
+};
+
+export const getPmRewardConfigReal: GetPmRewardConfigContract = async () => {
+  return await apiRequest(api.pm.rewardConfig(), { method: 'GET' });
+};
+
+export const updatePmRewardConfigReal: UpdatePmRewardConfigContract = async (input) => {
+  return await apiRequest(api.pm.rewardConfig(), { method: 'PUT', body: input });
 };

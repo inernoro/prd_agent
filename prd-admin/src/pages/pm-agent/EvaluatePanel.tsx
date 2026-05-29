@@ -58,7 +58,7 @@ export function EvaluatePanel({ projectId, stakeholders, existing, onClose, onEv
 
   const modal = (
     <div className="surface-backdrop fixed inset-0 z-[100] flex items-center justify-center p-4" onClick={onClose}>
-      <div className="rounded-xl border flex flex-col w-full" style={{ maxWidth: 560, maxHeight: '88vh', background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }} onClick={(e) => e.stopPropagation()}>
+      <div className="rounded-xl border flex flex-col w-full" style={{ maxWidth: 560, maxHeight: '88vh', background: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)' }} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-5 py-4 shrink-0 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
           <Award size={17} style={{ color: '#10B981' }} />
           <div className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>结案评价 · NPSS</div>

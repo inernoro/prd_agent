@@ -52,7 +52,7 @@ public class PmAgentController : ControllerBase
         var leaderId = string.IsNullOrWhiteSpace(request.LeaderId) ? userId : request.LeaderId.Trim();
 
         // Leader 名称冗余（便于展示）
-        var leader = await _db.Users.Find(u => u.Id == leaderId).FirstOrDefaultAsync();
+        var leader = await _db.Users.Find(u => u.UserId == leaderId).FirstOrDefaultAsync();
 
         var project = new PmProject
         {
@@ -137,6 +137,7 @@ public class PmAgentController : ControllerBase
         if (request.PlannedStartAt.HasValue) update = update.Set(p => p.PlannedStartAt, request.PlannedStartAt);
         if (request.PlannedEndAt.HasValue) update = update.Set(p => p.PlannedEndAt, request.PlannedEndAt);
         if (request.Budget.HasValue) update = update.Set(p => p.Budget, request.Budget);
+        if (request.ValueCoefficient.HasValue) update = update.Set(p => p.ValueCoefficient, Math.Max(0, request.ValueCoefficient.Value));
         if (request.MemberIds != null) update = update.Set(p => p.MemberIds, request.MemberIds);
         if (request.Lifecycle != null && PmProjectLifecycle.All.Contains(request.Lifecycle))
         {
@@ -261,6 +262,119 @@ public class PmAgentController : ControllerBase
     }
 
     // ─────────────────────────────────────────────
+    // 组织级 NPSS 仪表盘 + 奖金（Phase 3）
+    // ─────────────────────────────────────────────
+
+    /// <summary>组织级 NPSS 仪表盘：聚合已评价项目 → NPSS（成功占比−失败占比）+ 奖金测算 + 等级分布</summary>
+    [HttpGet("dashboard")]
+    public async Task<IActionResult> Dashboard()
+    {
+        var cfg = await GetOrCreateRewardConfigAsync();
+        var projects = await _db.PmProjects
+            .Find(p => !p.IsDeleted && p.Evaluation != null)
+            .ToListAsync();
+
+        var success = projects.Count(p => p.Evaluation!.Grade == PmEvaluationGrade.Success);
+        var mediocre = projects.Count(p => p.Evaluation!.Grade == PmEvaluationGrade.Mediocre);
+        var fail = projects.Count(p => p.Evaluation!.Grade == PmEvaluationGrade.Fail);
+        var total = projects.Count;
+
+        // NPSS = 成功占比 − 失败占比（百分比）
+        var npss = total > 0 ? (int)Math.Round((success - fail) * 100.0 / total) : 0;
+
+        var rows = projects
+            .OrderByDescending(p => p.Evaluation!.EvaluatedAt)
+            .Select(p =>
+            {
+                var bonus = ComputeBonus(p, cfg);
+                return new
+                {
+                    id = p.Id,
+                    projectNo = p.ProjectNo,
+                    title = p.Title,
+                    projectType = p.ProjectType,
+                    operationSubType = p.OperationSubType,
+                    grade = p.Evaluation!.Grade,
+                    satisfactionScore = p.Evaluation!.SatisfactionScore,
+                    valueCoefficient = p.ValueCoefficient,
+                    bonus,
+                };
+            })
+            .ToList();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            totalEvaluated = total,
+            successCount = success,
+            mediocreCount = mediocre,
+            failCount = fail,
+            npss,
+            baseline = 36,
+            totalBonus = rows.Sum(r => r.bonus),
+            projects = rows,
+            rewardConfig = cfg,
+        }));
+    }
+
+    /// <summary>获取奖金配置（PMO 细则）</summary>
+    [HttpGet("reward-config")]
+    public async Task<IActionResult> GetRewardConfig()
+    {
+        var cfg = await GetOrCreateRewardConfigAsync();
+        return Ok(ApiResponse<object>.Ok(cfg));
+    }
+
+    /// <summary>更新奖金配置 + M.O.R.E 组织自评</summary>
+    [HttpPut("reward-config")]
+    public async Task<IActionResult> UpdateRewardConfig([FromBody] UpdateRewardConfigRequest request)
+    {
+        var cfg = await GetOrCreateRewardConfigAsync();
+        if (request.StrategicBase.HasValue) cfg.StrategicBase = Math.Max(0, request.StrategicBase.Value);
+        if (request.InnovationBase.HasValue) cfg.InnovationBase = Math.Max(0, request.InnovationBase.Value);
+        if (request.OperationRoutineBase.HasValue) cfg.OperationRoutineBase = Math.Max(0, request.OperationRoutineBase.Value);
+        if (request.MoreVision.HasValue) cfg.MoreVision = Math.Clamp(request.MoreVision.Value, 0, 100);
+        if (request.MoreOutcome.HasValue) cfg.MoreOutcome = Math.Clamp(request.MoreOutcome.Value, 0, 100);
+        if (request.MoreRapid.HasValue) cfg.MoreRapid = Math.Clamp(request.MoreRapid.Value, 0, 100);
+        if (request.MoreEmpowered.HasValue) cfg.MoreEmpowered = Math.Clamp(request.MoreEmpowered.Value, 0, 100);
+        cfg.UpdatedAt = DateTime.UtcNow;
+
+        await _db.PmRewardConfigs.ReplaceOneAsync(c => c.Id == cfg.Id, cfg, new ReplaceOptions { IsUpsert = true });
+        return Ok(ApiResponse<object>.Ok(cfg));
+    }
+
+    /// <summary>项目奖金计算：基数 × 价值系数 × (满意度/100)；满意度&lt;60 或 定向整改/专项督办 → 0</summary>
+    private static decimal ComputeBonus(PmProject p, PmRewardConfig cfg)
+    {
+        if (p.Evaluation == null) return 0;
+        // 定向整改 / 专项督办无奖金
+        if (p.ProjectType == PmProjectType.Operation &&
+            (p.OperationSubType == PmOperationSubType.Rectification || p.OperationSubType == PmOperationSubType.Supervision))
+            return 0;
+
+        var satisfaction = p.Evaluation.SatisfactionScore; // 0-100
+        if (satisfaction < 60) return 0;
+
+        var baseAmount = p.ProjectType switch
+        {
+            PmProjectType.Strategic => cfg.StrategicBase,
+            PmProjectType.Innovation => cfg.InnovationBase,
+            _ => cfg.OperationRoutineBase,
+        };
+        return Math.Round(baseAmount * (decimal)p.ValueCoefficient * (decimal)(satisfaction / 100.0), 2);
+    }
+
+    private async Task<PmRewardConfig> GetOrCreateRewardConfigAsync()
+    {
+        var cfg = await _db.PmRewardConfigs.Find(c => c.Id == "default").FirstOrDefaultAsync();
+        if (cfg == null)
+        {
+            cfg = new PmRewardConfig();
+            await _db.PmRewardConfigs.InsertOneAsync(cfg);
+        }
+        return cfg;
+    }
+
+    // ─────────────────────────────────────────────
     // 任务 CRUD（看板 / 列表 / 甘特图）
     // ─────────────────────────────────────────────
 
@@ -370,7 +484,7 @@ public class PmAgentController : ControllerBase
         if (request.AssigneeId != null)
         {
             update = update.Set(t => t.AssigneeId, request.AssigneeId);
-            var assignee = await _db.Users.Find(u => u.Id == request.AssigneeId).FirstOrDefaultAsync();
+            var assignee = await _db.Users.Find(u => u.UserId == request.AssigneeId).FirstOrDefaultAsync();
             update = update.Set(t => t.AssigneeName, assignee?.DisplayName);
         }
         if (request.EstimateDays.HasValue) update = update.Set(t => t.EstimateDays, request.EstimateDays);
@@ -479,7 +593,7 @@ public class PmAgentController : ControllerBase
     private async Task FillAssigneeNameAsync(PmTask task)
     {
         if (string.IsNullOrWhiteSpace(task.AssigneeId)) return;
-        var assignee = await _db.Users.Find(u => u.Id == task.AssigneeId).FirstOrDefaultAsync();
+        var assignee = await _db.Users.Find(u => u.UserId == task.AssigneeId).FirstOrDefaultAsync();
         task.AssigneeName = assignee?.DisplayName;
     }
 
@@ -534,7 +648,19 @@ public class UpdatePmProjectRequest
     public DateTime? PlannedStartAt { get; set; }
     public DateTime? PlannedEndAt { get; set; }
     public decimal? Budget { get; set; }
+    public double? ValueCoefficient { get; set; }
     public List<string>? MemberIds { get; set; }
+}
+
+public class UpdateRewardConfigRequest
+{
+    public decimal? StrategicBase { get; set; }
+    public decimal? InnovationBase { get; set; }
+    public decimal? OperationRoutineBase { get; set; }
+    public int? MoreVision { get; set; }
+    public int? MoreOutcome { get; set; }
+    public int? MoreRapid { get; set; }
+    public int? MoreEmpowered { get; set; }
 }
 
 public class CreatePmTaskRequest

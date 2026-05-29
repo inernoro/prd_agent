@@ -69,6 +69,14 @@ export const GRADE_REGISTRY: Record<PmEvaluationGrade, { label: string; color: s
 /** NPSS 全球平均基线（PMI 调研） */
 export const NPSS_GLOBAL_BASELINE = 36;
 
+/** M.O.R.E 提升框架（四要素都做到 NPSS 可达 94，一个都没做到仅 27） */
+export const MORE_FRAMEWORK = [
+  { key: 'moreVision' as const, letter: 'M', label: '清晰愿景', desc: '项目对齐战略，让所有人知道为什么做', color: '#EF4444' },
+  { key: 'moreOutcome' as const, letter: 'O', label: '结果导向治理', desc: '管最终价值交付，而非管流程', color: '#A855F7' },
+  { key: 'moreRapid' as const, letter: 'R', label: '快速迭代', desc: '小步快跑，快速验证价值，避免大失败', color: '#3B82F6' },
+  { key: 'moreEmpowered' as const, letter: 'E', label: '赋能团队', desc: '给团队自主权，快速响应变化', color: '#10B981' },
+];
+
 // ── 优先级注册表 ──
 export const PRIORITY_REGISTRY: Record<PmTaskPriority, { label: string; color: string; weight: number }> = {
   urgent: { label: '紧急', color: '#EF4444', weight: 4 },

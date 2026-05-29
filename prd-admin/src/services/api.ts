@@ -1305,6 +1305,8 @@ export const api = {
       update: (taskId: string) => `/api/pm/tasks/${taskId}`,
       delete: (taskId: string) => `/api/pm/tasks/${taskId}`,
     },
+    dashboard: () => '/api/pm/dashboard',
+    rewardConfig: () => '/api/pm/reward-config',
   },
 } as const;
 

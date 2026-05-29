@@ -106,7 +106,7 @@ export function DecomposePanel({ projectId, businessGoal, onClose, onCreated }: 
     <div className="surface-backdrop fixed inset-0 z-[100] flex items-center justify-center p-4" onClick={phase === 'streaming' ? undefined : onClose}>
       <div
         className="rounded-xl border flex flex-col w-full"
-        style={{ maxWidth: 720, height: '86vh', maxHeight: '86vh', background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}
+        style={{ maxWidth: 720, height: '86vh', maxHeight: '86vh', background: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)' }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

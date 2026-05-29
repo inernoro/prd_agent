@@ -54,7 +54,7 @@ export function CreateProjectDialog({ onClose, onCreated }: Props) {
     <div className="surface-backdrop fixed inset-0 z-[100] flex items-center justify-center p-4" onClick={onClose}>
       <div
         className="rounded-xl border flex flex-col w-full"
-        style={{ maxWidth: 560, maxHeight: '88vh', background: 'var(--bg-card)', borderColor: 'var(--border-subtle)' }}
+        style={{ maxWidth: 560, maxHeight: '88vh', background: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)' }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
