@@ -262,8 +262,9 @@ public class ProjectRouteAgentController : ControllerBase
     [HttpPost("site-spec")]
     public async Task<IActionResult> UpsertSiteSpec([FromBody] UpsertSiteSpecRequest req, CancellationToken ct)
     {
-        if (!HasManagePermission())
-            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限维护公共站点说明"));
+        // 公共站点说明对所有有 project-route-agent.use 权限的用户开放查看 + 编辑。
+        // 控制器级 [Authorize] + [AdminController(ProjectRouteAgentUse)] 已确保只有授权用户能调，
+        // 故此处不再额外要求 manage 权限。CreatedBy / UpdatedBy 落 userId 保留可审计性。
 
         if (req == null)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请求体为空"));

@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Route, Upload, FileText, X, AlertCircle, Settings2, Sparkles, GitBranch, FolderTree, Loader2, Github, ChevronDown, ChevronRight, History, RefreshCw, Trash2, Check, Copy } from 'lucide-react';
-import { useAuthStore } from '@/stores/authStore';
 import { uploadAttachment } from '@/services/real/aiToolbox';
 import { createPortal } from 'react-dom';
 import {
@@ -37,9 +36,7 @@ interface RepoLiveStatus {
 }
 
 export function ProjectRouteAgentPage() {
-  const perms = useAuthStore((s) => s.permissions); const isRoot = useAuthStore((s) => s.isRoot);
-  const canManage = isRoot || perms.includes('project-route-agent.manage') || perms.includes('super');
-
+  // 公共站点说明对所有授权用户开放查看 + 编辑（不再要求 manage 权限）。
   const [tab, setTab] = useState<Tab>('analyze');
 
   return (
@@ -60,14 +57,12 @@ export function ProjectRouteAgentPage() {
           <TabButton active={tab === 'analyze'} onClick={() => setTab('analyze')}>
             分析方案
           </TabButton>
-          {canManage && (
-            <TabButton active={tab === 'admin'} onClick={() => setTab('admin')}>
-              <span className="inline-flex items-center gap-1.5">
-                <Settings2 className="w-3.5 h-3.5" />
-                公共站点说明
-              </span>
-            </TabButton>
-          )}
+          <TabButton active={tab === 'admin'} onClick={() => setTab('admin')}>
+            <span className="inline-flex items-center gap-1.5">
+              <Settings2 className="w-3.5 h-3.5" />
+              公共站点说明
+            </span>
+          </TabButton>
         </div>
       </header>
 
