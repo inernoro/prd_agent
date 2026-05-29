@@ -202,22 +202,42 @@ export function createProjectComposeRouter(deps: ProjectComposeDeps): Router {
 }
 
 /**
- * 粗粒度 diff:把新旧 yaml 各解析成扁平「service.field」路径集合,返回新增/
- * 改动的字段路径。用于权威校验「调用方动了哪些字段」。解析失败时保守返回
- * 全部新字段路径(宁可多报也别漏过 platform 字段)。
+ * 把整份 compose 文档(含顶层键)递归展开成叶子路径集合,返回新增/改动的路径。
+ * 用于权威校验「调用方动了哪些字段」。解析失败时保守返回空(上层 parse 已先校验)。
+ *
+ * Codex review(PR #684, P2×2):此前只读 `parsed.services` 且只展一层
+ * (`services.{svc}.{field}`),导致两类 platform 字段绕过权威校验:
+ *   1. 顶层平台键 networks / x-cds-domain —— 压根没进 map
+ *   2. 嵌套平台叶子 services.*.deploy.replicas —— 只记到 services.{svc}.deploy
+ *      (归一成 services.*.deploy,表里没有 → 被当 user 放行)
+ * 改为:解析**整份文档**(不止 services)+ 递归到叶子。配合 classifyComposeField
+ * 的祖先匹配,任何 platform 子树下的改动都会被正确识别。
  */
+function flattenDocToLeaves(value: unknown, prefix: string, map: Map<string, string>): void {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (entries.length === 0) {
+      // 空对象本身也是一个可比较的叶子(从有内容变空 = 改动)
+      map.set(prefix, '{}');
+      return;
+    }
+    for (const [k, v] of entries) {
+      flattenDocToLeaves(v, prefix ? `${prefix}.${k}` : k, map);
+    }
+    return;
+  }
+  // 原始值 / 数组 → 叶子(数组整体作为一个值比较,如 ports 列表)
+  map.set(prefix, JSON.stringify(value));
+}
+
 function diffChangedFieldPaths(oldYaml: string | undefined, newYaml: string): string[] {
   const flatten = (yamlText: string | undefined): Map<string, string> => {
     const map = new Map<string, string>();
     if (!yamlText) return map;
-    const parsed = parseRawServices(yamlText);
-    if (!parsed || !parsed.services) return map;
-    for (const [svc, def] of Object.entries(parsed.services)) {
-      if (!def || typeof def !== 'object') continue;
-      for (const field of Object.keys(def)) {
-        map.set(`services.${svc}.${field}`, JSON.stringify((def as Record<string, unknown>)[field]));
-      }
-    }
+    let doc: unknown;
+    try { doc = yaml.load(yamlText); } catch { return map; }
+    if (!doc || typeof doc !== 'object') return map;
+    flattenDocToLeaves(doc, '', map);
     return map;
   };
   const oldMap = flatten(oldYaml);

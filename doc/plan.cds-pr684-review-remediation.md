@@ -20,7 +20,7 @@ infra resync / 服务漂移徽标 等)。两个自动 review bot 持续提 issue
 - [x] cds-events SSE 对 project-scoped key 过滤事件,不泄露跨项目/全局事件(F,P2)
 - [x] pending-import created 事件去掉 dead `pendingCount` 变量(G,Low)
 
-### 批 2 — compose 权限 flatten(P2×2)
+### 批 2 — compose 权限 flatten(P2×2)✅ 已完成
 - [ ] project-compose diffChangedFieldPaths 覆盖顶层平台键(networks / x-cds-domain)
 - [ ] 递归嵌套平台字段(services.*.deploy.replicas),防权限绕过(D1/D2)
 

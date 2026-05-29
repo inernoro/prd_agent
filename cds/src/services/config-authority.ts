@@ -83,6 +83,18 @@ export function classifyComposeField(path: string): FieldAuthorityEntry & { know
   // 顶层精确兜底
   const top = COMPOSE_FIELD_AUTHORITY[path];
   if (top) return { ...top, known: true };
+  // Codex review(PR #684):叶子路径继承最近已登记祖先的权威。权威表混了粒度
+  // —— 顶层整键(networks / x-cds-domain)、服务级整字段(services.*.ports)、
+  // 嵌套叶子(services.*.deploy.replicas)。diff 现在递归到叶子(networks.cds-net.driver
+  // / services.api.deploy.replicas 等),若不向上匹配,改 networks 子键就会被当未登记
+  // user 字段放行,绕过 platform 权威。这里从最具体往上逐级 prefix 查表,命中即返回
+  // (最近祖先优先),保证任何 platform 子树下的改动都被正确判为 platform。
+  const segs = path.split('.');
+  for (let len = segs.length - 1; len >= 1; len -= 1) {
+    const prefix = segs.slice(0, len).join('.');
+    const ancestor = COMPOSE_FIELD_AUTHORITY[normalizePath(prefix)] || COMPOSE_FIELD_AUTHORITY[prefix];
+    if (ancestor) return { ...ancestor, known: true };
+  }
   return { authority: 'user', reason: '未登记字段，默认按用户权威处理', known: false };
 }
 

@@ -43,6 +43,35 @@ describe('classifyComposeField', () => {
     expect(c.authority).toBe('user');
     expect(c.known).toBe(false);
   });
+
+  // 2026-05-29 Codex review(PR #684, P2×2):祖先前缀匹配 —— diff 递归到叶子后,
+  // platform 子树下的任何改动都必须仍判 platform,否则改 networks 子键 / deploy.replicas
+  // 会被当未登记 user 字段放行,绕过权威校验。
+  it('顶层 platform 整键的子叶子继承 platform(networks.cds-net.driver)', () => {
+    expect(classifyComposeField('networks').authority).toBe('platform');
+    expect(classifyComposeField('networks.cds-net.driver').authority).toBe('platform');
+    expect(classifyComposeField('networks.cds-net.driver').known).toBe(true);
+  });
+
+  it('x-cds-domain(顶层 platform)被识别', () => {
+    expect(classifyComposeField('x-cds-domain').authority).toBe('platform');
+  });
+
+  it('嵌套 platform 叶子 services.*.deploy.replicas → platform', () => {
+    expect(classifyComposeField('services.api.deploy.replicas').authority).toBe('platform');
+    expect(classifyComposeField('services.api.deploy.replicas').known).toBe(true);
+  });
+
+  it('services.*.ports 的子项(若递归到数组以下)仍继承 platform', () => {
+    // ports 通常是数组叶子,但即便结构变化递归更深,也必须继承 platform
+    expect(classifyComposeField('services.api.ports.0').authority).toBe('platform');
+  });
+
+  it('deploy 下非 replicas 的未登记子键 → 仍是 user(不过度上锁)', () => {
+    // services.*.deploy 本身未登记,只有 .replicas 是 platform;deploy.resources
+    // 这类不应被误判 platform
+    expect(classifyComposeField('services.api.deploy.resources').authority).toBe('user');
+  });
 });
 
 describe('validateComposePatch', () => {
