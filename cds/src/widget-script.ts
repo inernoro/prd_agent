@@ -520,7 +520,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
         h+='<span style="font-size:11px;color:#8b949e">状态: </span>';
         h+='<span class="cds-status-dot'+statusBlink+'" style="background:'+statusColor+'"></span>';
         h+='<span style="font-size:11px;color:'+statusColor+';font-style:italic;font-weight:600">'+branchStatus+'</span>';
-        if(commitSha)h+='<span class="cds-commit-sha">'+commitSha+'</span>';
+        if(commitSha)h+='<span class="cds-commit-sha" title="'+commitSha+'">'+shortSha(commitSha)+'</span>';
         h+='</div>';
         if(commitMsg)h+='<div class="cds-commit-msg" title="'+commitMsg.replace(/"/g,'&quot;')+'">'+commitMsg+'</div>';
         // Deploy mode selectors
@@ -607,7 +607,7 @@ export function buildWidgetScript(branchId: string, branchName: string): string 
     h+='<div class="cds-badge-main">';
     h+='<span class="cds-badge-icon">'+(syncState.visible&&syncState.phase==='syncing'?ICON_REFRESH:ICON_BRANCH)+'</span>';
     h+='<span class="cds-branch">'+BRANCH_NAME+'</span>';
-    if(commitSha)h+='<span class="cds-sha" title="'+commitSha+'">'+commitSha+'</span>';
+    if(commitSha)h+='<span class="cds-sha" title="'+commitSha+'">'+shortSha(commitSha)+'</span>';
     if(syncState.visible){
       var syncChipClass='cds-sync-chip'+(syncState.phase==='done'?' done':syncState.phase==='error'?' error':'');
       h+='<span class="'+syncChipClass+'" title="'+syncLabelText().replace(/"/g,'&quot;')+'">';
