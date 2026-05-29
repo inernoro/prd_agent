@@ -421,8 +421,9 @@ public class ProjectRouteAgentController : ControllerBase
         Response.Headers["Cache-Control"] = "no-cache, no-transform";
         Response.Headers["X-Accel-Buffering"] = "no";
 
-        // 互斥锁：心跳协程和业务流共享 Response.Body，写入必须串行化
-        var writeLock = new SemaphoreSlim(1, 1);
+        // 互斥锁：心跳协程和业务流共享 Response.Body，写入必须串行化。
+        // 用 using 确保方法退出（含异常路径）时释放底层 native resources（waitHandle）。
+        using var writeLock = new SemaphoreSlim(1, 1);
 
         async Task WriteEvent(string evt, object data)
         {
@@ -434,8 +435,11 @@ public class ProjectRouteAgentController : ControllerBase
                 await Response.Body.WriteAsync(bytes, CancellationToken.None);
                 await Response.Body.FlushAsync(CancellationToken.None);
             }
+            // 客户端断开时 kestrel 会抛 IOException（含 ConnectionAbortedException 派生）。
+            // 这是正常预期，不该噪音化为 ERROR 级日志。
             catch (OperationCanceledException) { /* 客户端断开 */ }
             catch (ObjectDisposedException) { /* response 已关闭 */ }
+            catch (IOException) { /* 客户端断开 / 连接中止 */ }
             finally
             {
                 try { writeLock.Release(); } catch { /* disposed */ }
@@ -465,7 +469,8 @@ public class ProjectRouteAgentController : ControllerBase
                 }
                 catch (OperationCanceledException) { break; }
                 catch (ObjectDisposedException) { break; }
-                catch (Exception) { /* response 已关闭 */ break; }
+                catch (IOException) { break; /* 客户端断开 / 连接中止 */ }
+                catch (Exception) { break; /* response 已关闭等异常路径 */ }
                 finally
                 {
                     try { writeLock.Release(); } catch { /* disposed */ }

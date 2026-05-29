@@ -1126,6 +1126,10 @@ function AdminView() {
 
   const [title, setTitle] = useState('');
   const [markdown, setMarkdown] = useState('');
+  // 记录最近一次落库的 updatedAt / updatedBy（DB 字段），用于在 UI 顶部展示「最近由谁修改」痕迹。
+  // 公共站点说明对所有授权用户开放编辑，必须给协作者一个可追溯的事实源。
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<string | null>(null);
+  const [lastUpdatedBy, setLastUpdatedBy] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -1172,6 +1176,8 @@ function AdminView() {
       const s = res.data!.siteSpec;
       setTitle(s.title);
       setMarkdown(s.markdownContent);
+      setLastUpdatedAt(s.updatedAt ?? null);
+      setLastUpdatedBy(s.updatedBy ?? s.createdBy ?? null);
     }
     setLoading(false);
   }
@@ -1190,6 +1196,12 @@ function AdminView() {
         return;
       }
       setOkMsg(res.data!.mode === 'created' ? '已创建公共站点说明' : '已更新公共站点说明');
+      // 保存成功后立即刷新顶部修改痕迹，让用户看到自己的提交已记录
+      const saved = res.data!.siteSpec;
+      if (saved) {
+        setLastUpdatedAt(saved.updatedAt ?? null);
+        setLastUpdatedBy(saved.updatedBy ?? saved.createdBy ?? null);
+      }
     } finally {
       setSaving(false);
     }
@@ -1206,7 +1218,22 @@ function AdminView() {
   return (
     <div className="max-w-5xl mx-auto px-6 py-8 space-y-6">
       <section className="bg-white/3 border border-white/10 rounded-xl p-5">
-        <h2 className="text-sm font-semibold text-white mb-3">公共站点说明</h2>
+        <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+          <h2 className="text-sm font-semibold text-white">公共站点说明</h2>
+          {lastUpdatedAt && (
+            <p className="text-[11px] text-white/40 inline-flex items-center gap-1.5">
+              <History className="w-3 h-3" />
+              最近由
+              <span className="text-white/70 font-mono">{lastUpdatedBy ?? '—'}</span>
+              于
+              <span className="text-white/70">{new Date(lastUpdatedAt).toLocaleString()}</span>
+              更新
+            </p>
+          )}
+        </div>
+        <p className="text-[11px] text-amber-300/60 mb-3 leading-relaxed">
+          注意：所有有项目路由智能体权限的用户都可编辑此文档，提交后会立即对全部用户生效。请避免与他人同时编辑以免互相覆盖。
+        </p>
         <div className="space-y-3">
           <div>
             <label className="block text-xs font-medium text-white/60 mb-1.5">标题</label>
