@@ -131,6 +131,10 @@ public class MongoDbContext
     public IMongoCollection<DefectShareLink> DefectShareLinks => _database.GetCollection<DefectShareLink>("defect_share_links");
     public IMongoCollection<DefectFixReport> DefectFixReports => _database.GetCollection<DefectFixReport>("defect_fix_reports");
 
+    // Project Route Agent 项目路由智能体（用户方案 → 仓库 routemap 项目路径）
+    public IMongoCollection<ProjectRouteSiteSpec> ProjectRouteSiteSpecs => _database.GetCollection<ProjectRouteSiteSpec>("project_route_site_specs");
+    public IMongoCollection<ProjectRoutePlan> ProjectRoutePlans => _database.GetCollection<ProjectRoutePlan>("project_route_plans");
+
     // CCAS Agent 赋码采集关联系统综合智能体
     public IMongoCollection<PrdAgent.Core.Models.CcasAgent.CcasEquipmentAsset> CcasEquipmentAssets
         => _database.GetCollection<PrdAgent.Core.Models.CcasAgent.CcasEquipmentAsset>("ccas_equipment_assets");

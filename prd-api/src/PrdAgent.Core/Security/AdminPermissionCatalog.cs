@@ -196,6 +196,16 @@ public static class AdminPermissionCatalog
     public const string PrReviewUse = "pr-review.use";
 
     /// <summary>
+    /// 项目路由智能体权限（普通用户）：上传方案 + 查看自己的解析结果
+    /// </summary>
+    public const string ProjectRouteAgentUse = "project-route-agent.use";
+
+    /// <summary>
+    /// 项目路由智能体管理权限（管理员）：维护公共站点说明 md 与仓库登记
+    /// </summary>
+    public const string ProjectRouteAgentManage = "project-route-agent.manage";
+
+    /// <summary>
     /// 网页托管权限（读）：查看托管站点列表
     /// </summary>
     public const string WebPagesRead = "web-pages.read";
@@ -333,6 +343,9 @@ public static class AdminPermissionCatalog
         new(ReviewAgentAppealReview, "产品评审智能体-申诉受理", "审理用户对评审结果的申诉（通过 / 驳回）"),
 
         new(PrReviewUse, "PR 审查智能体", "基于每用户 GitHub OAuth 的 PR 审查（任意团队）"),
+
+        new(ProjectRouteAgentUse, "项目路由智能体", "上传方案 md，自动识别应用/模块并定位仓库 routemap 项目路径"),
+        new(ProjectRouteAgentManage, "项目路由智能体-管理", "维护公共站点说明 md 与仓库登记"),
 
         new(WebPagesRead, "网页托管-读", "查看托管站点列表与详情"),
         new(WebPagesWrite, "网页托管-写", "上传/编辑/删除/分享托管站点"),

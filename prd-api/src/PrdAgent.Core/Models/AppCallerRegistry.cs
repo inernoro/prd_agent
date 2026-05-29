@@ -1260,6 +1260,36 @@ public static class PaAgent
         public const string Conversation = "pa-agent.review::chat";
     }
 }
+
+/// <summary>
+/// 项目路由智能体 — 用户方案 md → 识别应用/模块 → 仓库 routemap 项目路径
+/// </summary>
+public static class ProjectRouteAgent
+{
+    public const string AppName = "Project Route Agent";
+
+    public static class Extract
+    {
+        [AppCallerMetadata(
+            "项目路由-应用模块抽取",
+            "从用户方案 markdown 中抽取涉及的应用 + 业务模块清单",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "ProjectRoute"
+        )]
+        public const string Apps = "project-route-agent.extract.apps::chat";
+    }
+
+    public static class Resolve
+    {
+        [AppCallerMetadata(
+            "项目路由-routemap 路径匹配",
+            "对照公共站点说明 + 各仓库 routemap 目录，把方案应用/模块映射到具体项目路径",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "ProjectRoute"
+        )]
+        public const string RoutemapMatch = "project-route-agent.resolve.routemap::chat";
+    }
+}
 }
 
 /// <summary>

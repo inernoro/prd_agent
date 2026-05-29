@@ -36,6 +36,7 @@ const ReviewAgentPage = lazy(() => import('@/pages/review-agent').then(m => ({ d
 const CcasAgentPage = lazy(() => import('@/pages/ccas-agent').then(m => ({ default: m.CcasAgentPage })));
 const PrReviewPage = lazy(() => import('@/pages/pr-review').then(m => ({ default: m.PrReviewPage })));
 const PaAgentPage = lazy(() => import('@/pages/pa-agent').then(m => ({ default: m.PaAgentPage })));
+const ProjectRouteAgentPage = lazy(() => import('@/pages/project-route-agent').then(m => ({ default: m.ProjectRouteAgentPage })));
 const UsersPage = lazy(() => import('@/pages/UsersPage'));
 const ModelManageTabsPage = lazy(() => import('@/pages/ModelManageTabsPage').then(m => ({ default: m.ModelManageTabsPage })));
 const LlmLogsPage = lazy(() => import('@/pages/LlmLogsPage'));
@@ -304,6 +305,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       appKey: 'pa-agent',
       wip: true,
       tags: ['助理', 'PA', '任务', '四象限', 'MECE'],
+    },
+  },
+  {
+    path: '/project-route-agent',
+    permission: 'project-route-agent.use',
+    element: shellGuarded('project-route-agent.use', <ProjectRouteAgentPage />),
+    nav: {
+      label: '项目路由智能体',
+      shortLabel: '路由',
+      description: '上传方案 md，AI 识别应用 / 模块并定位仓库 routemap 项目路径',
+      icon: 'Route',
+      section: 'toolbox',
+      appKey: 'project-route-agent',
+      wip: true,
+      tags: ['路由', 'routemap', '项目定位', '仓库', '方案'],
     },
   },
   {

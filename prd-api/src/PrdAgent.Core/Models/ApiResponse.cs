@@ -104,6 +104,11 @@ public static class ErrorCodes
     // 生图相关
     public const string IMAGE_GEN_RUN_NOT_FOUND = "IMAGE_GEN_RUN_NOT_FOUND";
 
+    public const string PLAN_TITLE_DUPLICATE = "PLAN_TITLE_DUPLICATE";
+
+    /// <summary>乐观锁失败：客户端提交时数据已被他人覆盖（HTTP 409）</summary>
+    public const string STALE_UPDATE = "STALE_UPDATE";
+
     // 配额相关
     public const string QUOTA_EXCEEDED = "QUOTA_EXCEEDED";
 

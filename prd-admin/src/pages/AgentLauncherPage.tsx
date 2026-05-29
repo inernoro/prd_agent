@@ -47,6 +47,7 @@ import type { ToolboxItem } from '@/services';
 import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { ReviewAgentCardArt } from '@/pages/ai-toolbox/components/ReviewAgentCardArt';
+import { ProjectRouteAgentCardArt } from '@/pages/ai-toolbox/components/ProjectRouteAgentCardArt';
 import { PaAgentCardArt } from '@/pages/ai-toolbox/components/PaAgentCardArt';
 import { HomeAmbientBackdrop } from '@/components/effects/HomeAmbientBackdrop';
 import { Reveal } from '@/pages/home/components/Reveal';
@@ -265,6 +266,8 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
       */}
       {item.agentKey === 'review-agent' ? (
         <ReviewAgentCardArt />
+      ) : item.agentKey === 'project-route-agent' ? (
+        <ProjectRouteAgentCardArt />
       ) : item.agentKey === 'pa-agent' && !uploadedCover ? (
         <>
           <PaAgentCardArt />

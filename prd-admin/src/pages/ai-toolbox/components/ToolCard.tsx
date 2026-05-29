@@ -162,6 +162,7 @@ function getPalette(iconName: string) {
 
 import { SpotlightEffect } from './SpotlightEffect';
 import { ReviewAgentCardArt } from './ReviewAgentCardArt';
+import { ProjectRouteAgentCardArt } from './ProjectRouteAgentCardArt';
 import { PaAgentCardArt } from './PaAgentCardArt';
 import { useAgentImageUrl, useAgentVideoUrl } from '@/stores/homepageAssetsStore';
 
@@ -401,6 +402,8 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
           上传后立即走上传图（uploadedCover 优先于硬编码 CDN）。视频规则不变。 */}
       {item.agentKey === 'review-agent' ? (
         <ReviewAgentCardArt />
+      ) : item.agentKey === 'project-route-agent' ? (
+        <ProjectRouteAgentCardArt />
       ) : item.agentKey === 'pa-agent' && !uploadedCover ? (
         <>
           <PaAgentCardArt />

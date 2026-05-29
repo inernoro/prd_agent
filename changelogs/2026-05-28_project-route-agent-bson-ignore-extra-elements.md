@@ -1,0 +1,1 @@
+| fix | prd-api | 修复项目路由智能体「服务器内部错误」：给 ProjectRouteExtractedRepo / ProjectRouteResolution / ProjectRouteRoutemapFile 三个嵌套 model 加 [BsonIgnoreExtraElements]，兼容 V1 时按 module 分组的老格式 plan 文档，避免 BsonSerializationException 被 ExceptionMiddleware 吞成 500 |
