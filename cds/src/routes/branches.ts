@@ -53,7 +53,7 @@ import {
   type BranchOperationTrigger,
   type PendingWebhookDeploy,
 } from '../services/branch-operation-coordinator.js';
-import { waitForRestartSafeBranchOperations } from '../services/restart-drain.js';
+import { waitForRestartSafeBranchOperations, resolveRestartDrainTimeoutMs } from '../services/restart-drain.js';
 
 // ── Self-status SSE 模块级状态 ────────────────────────────────────────
 // 2026-05-28 重构:状态权威源迁移到 services/self-status-cache.ts。
@@ -1686,7 +1686,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   async function waitForRestartSafeBranchOperationsForRoute(
     source: string,
-    timeoutMs = Number(process.env.CDS_RESTART_DRAIN_TIMEOUT_MS || 5_000),
+    // Cursor Bugbot(PR #684, High):默认走 deploy-safe SSOT(180s + env 覆盖),
+    // 不再硬编码 5s —— 否则 self-update / self-force-sync 几乎必然在 deploy 中途
+    // process.exit 强制重启,留下不一致状态。见 restart-drain.ts 注释。
+    timeoutMs = resolveRestartDrainTimeoutMs(),
     intervalMs = 1000,
   ) {
     return waitForRestartSafeBranchOperations({

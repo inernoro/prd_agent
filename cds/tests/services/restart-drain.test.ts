@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { ActiveOperation } from '../../src/services/branch-operation-coordinator.js';
-import { waitForRestartSafeBranchOperations } from '../../src/services/restart-drain.js';
+import {
+  waitForRestartSafeBranchOperations,
+  resolveRestartDrainTimeoutMs,
+  DEFAULT_RESTART_DRAIN_TIMEOUT_MS,
+} from '../../src/services/restart-drain.js';
 
 function activeOperation(kind: ActiveOperation['request']['kind'] = 'deploy'): ActiveOperation {
   return {
@@ -21,6 +25,36 @@ function activeOperation(kind: ActiveOperation['request']['kind'] = 'deploy'): A
     },
   };
 }
+
+// 2026-05-29 Cursor Bugbot(PR #684, High):默认排空上限必须是 deploy-safe 的 180s,
+// 不再是会打断 deploy 的 5s;env 覆盖仍生效(0 = 不等)。
+describe('resolveRestartDrainTimeoutMs', () => {
+  const original = process.env.CDS_RESTART_DRAIN_TIMEOUT_MS;
+  afterEach(() => {
+    if (original === undefined) delete process.env.CDS_RESTART_DRAIN_TIMEOUT_MS;
+    else process.env.CDS_RESTART_DRAIN_TIMEOUT_MS = original;
+  });
+
+  it('默认 180s(deploy-safe,不是被改坏的 5s)', () => {
+    delete process.env.CDS_RESTART_DRAIN_TIMEOUT_MS;
+    expect(DEFAULT_RESTART_DRAIN_TIMEOUT_MS).toBe(180_000);
+    expect(resolveRestartDrainTimeoutMs()).toBe(180_000);
+  });
+
+  it('env 覆盖生效(含 0 = 立即重启不等)', () => {
+    process.env.CDS_RESTART_DRAIN_TIMEOUT_MS = '0';
+    expect(resolveRestartDrainTimeoutMs()).toBe(0);
+    process.env.CDS_RESTART_DRAIN_TIMEOUT_MS = '30000';
+    expect(resolveRestartDrainTimeoutMs()).toBe(30_000);
+  });
+
+  it('非法 env 回落默认', () => {
+    process.env.CDS_RESTART_DRAIN_TIMEOUT_MS = 'abc';
+    expect(resolveRestartDrainTimeoutMs()).toBe(180_000);
+    process.env.CDS_RESTART_DRAIN_TIMEOUT_MS = '-5';
+    expect(resolveRestartDrainTimeoutMs()).toBe(180_000);
+  });
+});
 
 describe('waitForRestartSafeBranchOperations', () => {
   it('returns immediately when no branch write operation is active', async () => {

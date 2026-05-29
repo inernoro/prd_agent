@@ -35,8 +35,8 @@ infra resync / 服务漂移徽标 等)。两个自动 review bot 持续提 issue
 - [x] operator-console:先 marker+crontab+supervisor,detached 停 cds-master(C1,P1)
 - [x] exec_cds.sh marker 阻止 self-update 回落 systemd(C2,P2)
 
-### 批 5 — restart-drain(High)
-- [ ] branches.ts + restart-drain.ts:180s→5s 超时回退评估。这是别人故意改的决策,
+### 批 5 — restart-drain(High)✅ 已完成
+- [x] branches.ts + restart-drain.ts:默认恢复 deploy-safe 180s(SSOT + env 覆盖)。这是别人故意改的决策,
       需在"server-authority(客户端断开不取消任务)"与"5s 快速重启"间权衡。
       方案:默认拉回较长(如 120s)+ 保留 env 覆盖 + self-update 等真正需要快重启
       的路径单独短超时,而不是全局 5s。(B1)
