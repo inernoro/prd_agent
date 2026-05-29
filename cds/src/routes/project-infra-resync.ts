@@ -37,6 +37,7 @@ import { cdsEventsBus } from '../services/cds-events-bus.js';
 import type { ContainerService } from '../services/container.js';
 import type { ServerEventLogSink } from '../services/server-event-log-store.js';
 import { findInfraCmdViolations } from '../config/infra-cmd-whitelist.js';
+import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 
 export interface InfraResyncDiff {
   adds: Array<{ id: string; name: string; dockerImage: string; containerPort: number }>;
@@ -339,7 +340,7 @@ export function createProjectInfraResyncRouter(deps: InfraResyncDeps): Router {
           healthCheck: yamlSvc.healthCheck,
           ...(yamlSvc.command !== undefined ? { command: yamlSvc.command } : { command: undefined }),
           ...(yamlSvc.entrypoint !== undefined ? { entrypoint: yamlSvc.entrypoint } : { entrypoint: undefined }),
-          ...(yamlSvc.restartPolicy !== undefined ? { restartPolicy: yamlSvc.restartPolicy } : {}),
+          ...(yamlSvc.restartPolicy !== undefined ? { restartPolicy: sanitizeDockerRestartPolicy(yamlSvc.restartPolicy) } : {}),
           status: 'stopped',
           errorMessage: undefined,
         }, projectId);
@@ -383,7 +384,7 @@ export function createProjectInfraResyncRouter(deps: InfraResyncDeps): Router {
           ...(yamlSvc.entrypoint !== undefined ? { entrypoint: yamlSvc.entrypoint } : {}),
           // Codex review(PR #684, P2):新增 infra 也要带上 yaml 声明的 restartPolicy,
           // 否则首次部署就回落默认,和 update 路径同病。
-          ...(yamlSvc.restartPolicy !== undefined ? { restartPolicy: yamlSvc.restartPolicy } : {}),
+          ...(yamlSvc.restartPolicy !== undefined ? { restartPolicy: sanitizeDockerRestartPolicy(yamlSvc.restartPolicy) } : {}),
           createdAt: new Date().toISOString(),
         };
         stateService.addInfraService(service);

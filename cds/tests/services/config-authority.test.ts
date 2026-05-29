@@ -12,6 +12,8 @@ import {
   classifyComposeField,
   validateComposePatch,
   annotateComposeAuthority,
+  escapeSeg,
+  splitPath,
 } from '../../src/services/config-authority.js';
 
 describe('classifyComposeField', () => {
@@ -71,6 +73,23 @@ describe('classifyComposeField', () => {
     // services.*.deploy 本身未登记,只有 .replicas 是 platform;deploy.resources
     // 这类不应被误判 platform
     expect(classifyComposeField('services.api.deploy.resources').authority).toBe('user');
+  });
+
+  // 2026-05-29 Codex review(PR #684):service 名含 `.`(如 api.v1)时,escapeSeg
+  // 后 splitPath 才能把它当单段,平台规则 services.*.ports 仍命中,不被绕过。
+  it('service 名含点(escapeSeg)→ ports 仍判 platform,不绕过', () => {
+    expect(classifyComposeField('services.api\\.v1.ports').authority).toBe('platform');
+    expect(classifyComposeField('services.api\\.v1.networks').authority).toBe('platform');
+    // user 字段仍是 user
+    expect(classifyComposeField('services.api\\.v1.environment').authority).toBe('user');
+  });
+});
+
+describe('escapeSeg / splitPath（点转义,防 service 名含点绕过权威）', () => {
+  it('escapeSeg 转义点 + 反斜杠,splitPath 互逆', () => {
+    expect(escapeSeg('api.v1')).toBe('api\\.v1');
+    expect(splitPath('services.api\\.v1.ports')).toEqual(['services', 'api.v1', 'ports']);
+    expect(splitPath('a.b.c')).toEqual(['a', 'b', 'c']);
   });
 });
 

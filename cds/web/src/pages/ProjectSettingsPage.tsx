@@ -41,7 +41,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { apiRequest, ApiError } from '@/lib/api';
+import { apiRequest, apiUrl, ApiError } from '@/lib/api';
 import { EnvEditor } from '@/pages/cds-settings/EnvEditor';
 import { CodePill, ErrorBlock, LoadingBlock, MetricTile, Section } from '@/pages/cds-settings/components';
 import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
@@ -2573,7 +2573,7 @@ function ProjectComposeTab({
 
   const refresh = useCallback(async () => {
     try {
-      const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/compose`, { credentials: 'include' });
+      const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}/compose`), { credentials: 'include' });
       const body = await res.json();
       if (!res.ok) { onToast(`加载失败:${body.error || res.status}`); return; }
       setData(body as ProjectComposeResponse);
@@ -2590,7 +2590,7 @@ function ProjectComposeTab({
     if (!draft.trim()) { onToast('配置不能为空'); return; }
     setBusy(true);
     try {
-      const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/compose`, {
+      const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}/compose`), {
         method: 'PUT',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -2647,7 +2647,7 @@ function ProjectComposeTab({
 
       <div className="flex flex-wrap gap-2">
         <Button type="button" variant="outline" size="sm" asChild>
-          <a href={`/api/projects/${encodeURIComponent(projectId)}/compose.yml`} download="cds-compose.yml">
+          <a href={apiUrl(`/api/projects/${encodeURIComponent(projectId)}/compose.yml`)} download="cds-compose.yml">
             <Download className="h-3.5 w-3.5" /> 下载 cds-compose.yml
           </a>
         </Button>
@@ -2731,7 +2731,7 @@ function ProjectStorageTab({
   const refresh = useCallback(async () => {
     setBusy(true);
     try {
-      const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/storage`, { credentials: 'include' });
+      const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}/storage`), { credentials: 'include' });
       const body = await res.json();
       if (!res.ok) { onToast(`加载失败：${body.error || res.status}`); return; }
       setData(body as ProjectStorageResponse);
@@ -3177,7 +3177,7 @@ function InfraResyncDialog({
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    fetch(`/api/projects/${encodeURIComponent(projectId)}/infra/resync/sources`, { credentials: 'include' })
+    fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}/infra/resync/sources`), { credentials: 'include' })
       .then((r) => r.json())
       .then((body) => {
         if (cancelled) return;
@@ -3205,7 +3205,7 @@ function InfraResyncDialog({
     setDiff(null);
     try {
       const res = await fetch(
-        `/api/projects/${encodeURIComponent(projectId)}/infra/resync/preview`,
+        apiUrl(`/api/projects/${encodeURIComponent(projectId)}/infra/resync/preview`),
         {
           method: 'POST',
           credentials: 'include',
@@ -3236,7 +3236,7 @@ function InfraResyncDialog({
     setBusy(true);
     try {
       const res = await fetch(
-        `/api/projects/${encodeURIComponent(projectId)}/infra/resync/execute`,
+        apiUrl(`/api/projects/${encodeURIComponent(projectId)}/infra/resync/execute`),
         {
           method: 'POST',
           credentials: 'include',

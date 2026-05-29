@@ -35,6 +35,7 @@ import type { BuildProfile, InfraService, PendingImport } from '../types.js';
 import { parseCdsCompose } from '../services/compose-parser.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
 import { findInfraCmdViolations } from '../config/infra-cmd-whitelist.js';
+import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 
 export interface PendingImportRouterDeps {
   stateService: StateService;
@@ -413,6 +414,10 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
         // 2026-05-28:命令/入口透传(修 minio 灾难)
         ...(def.command !== undefined ? { command: def.command } : {}),
         ...(def.entrypoint !== undefined ? { entrypoint: def.entrypoint } : {}),
+        // Cursor Bugbot(PR #684):parseCdsCompose 已从 yaml restart: 提取 restartPolicy,
+        // 但 approve 路径原来只透传 command/entrypoint,丢了 restartPolicy → 用户写
+        // restart: always 也会回落 on-failure:3。在存储边界 sanitize 后落库(纵深防御)。
+        ...(def.restartPolicy !== undefined ? { restartPolicy: sanitizeDockerRestartPolicy(def.restartPolicy) } : {}),
         createdAt: new Date().toISOString(),
       };
       stateService.addInfraService(service);

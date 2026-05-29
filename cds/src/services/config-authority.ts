@@ -62,14 +62,42 @@ export const COMPOSE_FIELD_AUTHORITY: Record<string, FieldAuthorityEntry> = {
   'services.*.volumes': { authority: 'user', reason: '数据卷挂载关系到用户数据持久化' },
 };
 
+// Codex review(PR #684):compose 的 object key(尤其 service 名)可能含 `.`
+// (如 `api.v1`)。路径用 `.` join 后,naive split('.') 会把 `services.api.v1.ports`
+// 切成 [services, api, v1, ports] → service 名误判成 `api`,平台规则 services.*.ports
+// 匹配不到 → 该项目可绕过权威改 ports/networks。修复:构建路径时对每个 key 做
+// escapeSeg(把 `.` 转义成 `\.`),解析时用 splitPath 按未转义的 `.` 切。
+export function escapeSeg(seg: string): string {
+  return seg.replace(/\\/g, '\\\\').replace(/\./g, '\\.');
+}
+
+/** 按未转义的 `.` 切分路径,并还原每段里的转义 `.`。 */
+export function splitPath(path: string): string[] {
+  const segs: string[] = [];
+  let cur = '';
+  for (let i = 0; i < path.length; i++) {
+    const c = path[i];
+    if (c === '\\' && i + 1 < path.length) { cur += path[i + 1]; i++; continue; }
+    if (c === '.') { segs.push(cur); cur = ''; continue; }
+    cur += c;
+  }
+  segs.push(cur);
+  return segs;
+}
+
+/** 把 segs 还原回转义路径表示(与 splitPath 互逆,用于祖先前缀匹配)。 */
+function joinPath(segs: string[]): string {
+  return segs.map(escapeSeg).join('.');
+}
+
 /** 路径中 service 名那一段会被归一成 `*` 再查表。 */
 function normalizePath(path: string): string {
-  const segs = path.split('.');
-  // services.<name>.xxx → services.*.xxx
+  const segs = splitPath(path);
+  // services.<name>.xxx → services.*.xxx(name 即使含 `.` 也只占一段,不会误切)
   if (segs[0] === 'services' && segs.length >= 2) {
     segs[1] = '*';
   }
-  return segs.join('.');
+  return joinPath(segs);
 }
 
 /**
@@ -89,9 +117,9 @@ export function classifyComposeField(path: string): FieldAuthorityEntry & { know
   // / services.api.deploy.replicas 等),若不向上匹配,改 networks 子键就会被当未登记
   // user 字段放行,绕过 platform 权威。这里从最具体往上逐级 prefix 查表,命中即返回
   // (最近祖先优先),保证任何 platform 子树下的改动都被正确判为 platform。
-  const segs = path.split('.');
+  const segs = splitPath(path);
   for (let len = segs.length - 1; len >= 1; len -= 1) {
-    const prefix = segs.slice(0, len).join('.');
+    const prefix = joinPath(segs.slice(0, len));
     const ancestor = COMPOSE_FIELD_AUTHORITY[normalizePath(prefix)] || COMPOSE_FIELD_AUTHORITY[prefix];
     if (ancestor) return { ...ancestor, known: true };
   }
@@ -150,7 +178,8 @@ export function annotateComposeAuthority(
   for (const [svcName, svc] of Object.entries(parsed.services)) {
     if (!svc || typeof svc !== 'object') continue;
     for (const field of Object.keys(svc)) {
-      const path = `services.${svcName}.${field}`;
+      // escapeSeg:service 名/字段名可能含 `.`,转义后才不会被 splitPath 误切
+      const path = `services.${escapeSeg(svcName)}.${escapeSeg(field)}`;
       const cls = classifyComposeField(path);
       out.push({ path, authority: cls.authority, reason: cls.reason, known: cls.known });
     }

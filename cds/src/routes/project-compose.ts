@@ -28,7 +28,7 @@ import yaml from 'js-yaml';
 import type { StateService } from '../services/state.js';
 import type { BuildProfile, InfraService } from '../types.js';
 import { parseCdsCompose } from '../services/compose-parser.js';
-import { annotateComposeAuthority, validateComposePatch, classifyComposeField } from '../services/config-authority.js';
+import { annotateComposeAuthority, validateComposePatch, classifyComposeField, escapeSeg } from '../services/config-authority.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
 
 /** 解析原始 cds-compose YAML 拿到 services map(权威标注/字段 diff 用)。 */
@@ -181,6 +181,10 @@ export function createProjectComposeRouter(deps: ProjectComposeDeps): Router {
 
     // 3) 落库 + 广播
     const newVersion = stateService.setProjectCompose(projectId, yaml, source === 'repo-sync' ? 'repo-sync' : 'manual-edit');
+    // Cursor Bugbot(PR #684):setProjectCompose 只改内存,不内部持久化(对比
+    // pending-import approve 路径显式调 save())。不 save 则进程崩溃前这次 compose
+    // 写入会丢。显式持久化。
+    stateService.save();
     try {
       cdsEventsBus.publish('project.config.changed', {
         projectId,
@@ -222,7 +226,10 @@ function flattenDocToLeaves(value: unknown, prefix: string, map: Map<string, str
       return;
     }
     for (const [k, v] of entries) {
-      flattenDocToLeaves(v, prefix ? `${prefix}.${k}` : k, map);
+      // escapeSeg:object key(尤其 service 名)可能含 `.`,转义后 classifyComposeField
+      // 的 splitPath 才能把它当成单段,不误切(Codex review PR #684)。
+      const seg = escapeSeg(k);
+      flattenDocToLeaves(v, prefix ? `${prefix}.${seg}` : seg, map);
     }
     return;
   }

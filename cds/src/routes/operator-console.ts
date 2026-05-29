@@ -40,20 +40,35 @@ export function createOperatorConsoleRouter(deps: {
   // 的 req._cdsCookieAuth 标记 —— 单租户 CDS 上等同 admin)。AI / project key 一律
   // 403。`/operator/request`(AI 发起待批)与 `/operator/requests/:id`(查自己请求
   // 状态)保持对 AI 开放 —— 这正是"AI 请求 → 人类审批"流程的入口。
+  // Codex review(PR #684):basic-auth 模式下 server.ts 打 _cdsCookieAuth;但
+  // CDS_AUTH_MODE=github 模式下 github-auth 中间件只打 req.cdsUser/cdsSession,
+  // 不打 _cdsCookieAuth。原来只认 _cdsCookieAuth 会把 GitHub 登录的管理员一律 403,
+  // 整个 operator console 在 github 模式不可用。这里同时接受"已验证的 GitHub 会话"。
+  const isHumanAdmin = (req: Request): boolean => {
+    if ((req as { _cdsCookieAuth?: boolean })._cdsCookieAuth === true) return true;
+    // github-auth 中间件验证通过才会同时挂 cdsUser + cdsSession(机器密钥不会)
+    const r = req as { cdsUser?: unknown; cdsSession?: unknown };
+    return !!r.cdsUser && !!r.cdsSession;
+  };
   const requireHuman = (req: Request, res: Response, next: () => void): void => {
-    if ((req as { _cdsCookieAuth?: boolean })._cdsCookieAuth === true) { next(); return; }
+    if (isHumanAdmin(req)) { next(); return; }
     res.status(403).json({
       ok: false,
       error: 'human_auth_required',
-      message: '该运维操作只允许已登录的人类管理员(CDS cookie 鉴权)执行,AI / 项目级密钥被拒绝。',
+      message: '该运维操作只允许已登录的人类管理员(CDS cookie 或 GitHub 会话)执行,AI / 项目级密钥被拒绝。',
     });
   };
 
-  // 把 caller 标识哈希成 session key(用 AI access key / cookie token / IP 兜底)
+  // 把 caller 标识哈希成 session key。Codex review(PR #684, P1):session 审批
+  // 必须绑定到"实际鉴权身份",否则同一 host/NAT 下另一个 AI/project key 会蹭到
+  // 7 天 session 自动跑同一 root 命令。因此优先用真实凭据(含 Authorization Bearer
+  // 与 ai-access-key 别名 + GitHub 会话 id),IP 仅作最末兜底。
   const callerKeyFor = (req: Request): string => {
-    const aiKey = String(req.headers['x-ai-access-key'] || '').trim();
+    const bearer = String(req.headers['authorization'] || '').replace(/^Bearer\s+/i, '').trim();
+    const aiKey = String(req.headers['x-ai-access-key'] || req.headers['ai-access-key'] || '').trim();
+    const sessionId = (req as { cdsSession?: { id?: string } }).cdsSession?.id || '';
     const cookieToken = (req.headers.cookie || '').match(/cds_token=([^;]+)/)?.[1] || '';
-    const raw = aiKey || cookieToken || String(req.socket?.remoteAddress || 'anon');
+    const raw = sessionId || bearer || aiKey || cookieToken || String(req.socket?.remoteAddress || 'anon');
     return crypto.createHash('sha256').update(raw).digest('hex').slice(0, 16);
   };
 
@@ -115,9 +130,19 @@ export function createOperatorConsoleRouter(deps: {
     res.json({ ok: true, request: updated });
   });
 
+  // Cursor Bugbot(PR #684, Medium):该端点返回 PendingRequest,内含 result.details
+  // (shell.run 的完整 stdout/stderr)、args(实际 shell 命令)、执行 logs。原来无
+  // 任何校验,任意认证调用方(含 project-scoped cdsp_ key)凭 id 即可读任意请求的
+  // 系统级敏感数据。改为「人类管理员 OR 本请求发起方」:AI 发起方仍能轮询自己请求
+  // 的状态(callerKey 匹配),但读不到别人的;人类管理员可读全部。
   router.get('/cds-system/operator/requests/:id', (req, res) => {
     const r = operatorApprovalService.get(req.params.id);
     if (!r) { res.status(404).json({ ok: false, error: 'not found' }); return; }
+    const owns = r.callerKey && r.callerKey === callerKeyFor(req);
+    if (!isHumanAdmin(req) && !owns) {
+      res.status(403).json({ ok: false, error: 'forbidden', message: '只能查看自己发起的运维请求,或以人类管理员身份查看全部。' });
+      return;
+    }
     res.json({ ok: true, request: r });
   });
 
