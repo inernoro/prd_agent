@@ -503,6 +503,197 @@ public class CcasAgentController : ControllerBase
     }
 
     // ──────────────────────────────────────────────
+    // 子能力 4：智能客服（基于知识库的严格 RAG 问答）
+    // ──────────────────────────────────────────────
+
+    public class QaChatRequest
+    {
+        /// <summary>用户当前提问</summary>
+        public string Message { get; set; } = string.Empty;
+
+        /// <summary>历史对话（最近若干轮，由前端维护）。最多取 20 条。</summary>
+        public List<QaHistoryItem>? History { get; set; }
+
+        /// <summary>引用的知识库条目 ID 列表（同 PRD 子能力，复用 BuildReferenceContextAsync）</summary>
+        public List<string>? ReferenceEntryIds { get; set; }
+
+        /// <summary>
+        /// 联网检索开关：
+        /// - false（默认）：严格 RAG，只依赖知识库；知识库没有就明说不杜撰。
+        /// - true：放宽到「知识库优先 + 模型公开知识补充」；非知识库内容会标注「（来自模型通用知识）」。
+        /// 注：当前未接入实时爬虫，开关只切换 system prompt 约束级别，对用户透明。
+        /// </summary>
+        public bool WebSearch { get; set; } = false;
+
+        /// <summary>会话 ID（仅用于日志关联，不强制持久化）</summary>
+        public string? SessionId { get; set; }
+    }
+
+    public class QaHistoryItem
+    {
+        /// <summary>"user" / "assistant"</summary>
+        public string Role { get; set; } = "user";
+        public string Content { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// 智能客服 SSE 流式问答。事件协议：
+    ///   - phase   { phase, message }
+    ///   - model   { model, platform }
+    ///   - reference { requested, included, totalChars, budget, skipped[], items[] }
+    ///   - typing  { text }                  // 正文增量
+    ///   - done    { elapsedMs, webSearch }
+    ///   - error   { message }
+    /// </summary>
+    [HttpPost("qa/stream")]
+    [Produces("text/event-stream")]
+    public async Task QaStream([FromBody] QaChatRequest req, CancellationToken cancellationToken)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Connection = "keep-alive";
+
+        var userId = GetUserId();
+
+        if (req == null || string.IsNullOrWhiteSpace(req.Message))
+        {
+            await WriteSseAsync("error", new { message = "请输入问题（message 不能为空）" });
+            return;
+        }
+
+        var question = req.Message.Trim();
+        var webSearchOn = req.WebSearch;
+
+        // 拼接 system prompt：严格 RAG / 放宽 + 知识库参考块
+        var systemPrompt = CcasQaPrompts.BuildSystemPrompt(webSearchOn);
+
+        var referenceInfo = await BuildReferenceContextAsync(req.ReferenceEntryIds, userId, "QA");
+        if (!string.IsNullOrEmpty(referenceInfo.AppendedContent))
+        {
+            systemPrompt += referenceInfo.AppendedContent;
+        }
+
+        // reference 事件 — 始终发，让前端知道实际命中
+        await WriteSseAsync("reference", new
+        {
+            requested = req.ReferenceEntryIds?.Count ?? 0,
+            included = referenceInfo.IncludedCount,
+            totalChars = referenceInfo.TotalChars,
+            budget = ReferenceTotalBudget,
+            skipped = referenceInfo.Skipped,
+            items = referenceInfo.IncludedItems,
+        });
+
+        // 拼接 user message：历史上下文（折叠成 markdown 段落）+ 当前问题
+        var userPromptSb = new StringBuilder();
+        var historyTuples = (req.History ?? new List<QaHistoryItem>())
+            .Where(h => !string.IsNullOrWhiteSpace(h.Content))
+            .Select(h => ((h.Role ?? "user").Trim().ToLowerInvariant(), h.Content))
+            .ToList();
+        var historyBlock = CcasQaPrompts.BuildHistoryContext(historyTuples);
+        if (!string.IsNullOrWhiteSpace(historyBlock))
+        {
+            userPromptSb.AppendLine(historyBlock);
+            userPromptSb.AppendLine();
+        }
+        userPromptSb.AppendLine("## 当前问题");
+        userPromptSb.AppendLine(question);
+        if (referenceInfo.IncludedCount == 0 && !webSearchOn)
+        {
+            // 没挂任何知识库 + 严格模式：在 user 消息里再点一次，避免 LLM 偷懒往外扩
+            userPromptSb.AppendLine();
+            userPromptSb.AppendLine("（注：本次对话未挂载任何知识库参考资料，请按系统提示直接说明无法回答。）");
+        }
+
+        var gatewayRequest = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.CcasAgent.Qa.Chat,
+            ModelType = ModelTypes.Chat,
+            Stream = true,
+            IncludeThinking = false,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                    new JsonObject { ["role"] = "user", ["content"] = userPromptSb.ToString() },
+                },
+                // RAG 场景温度低一点，减少创作性发散
+                ["temperature"] = 0.2,
+                ["max_tokens"] = 4096,
+            },
+        };
+
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null,
+            SessionId: req.SessionId,
+            UserId: userId,
+            ViewRole: null,
+            DocumentChars: question.Length,
+            DocumentHash: null,
+            SystemPromptRedacted: $"[CCAS_QA:web={webSearchOn}:refs={referenceInfo.IncludedCount}]",
+            RequestType: "chat",
+            AppCallerCode: AppCallerRegistry.CcasAgent.Qa.Chat));
+
+        await WriteSseAsync("phase", new
+        {
+            phase = "preparing",
+            message = referenceInfo.IncludedCount > 0
+                ? $"检索到 {referenceInfo.IncludedCount} 条知识库参考，正在生成…"
+                : (webSearchOn ? "未挂载知识库；将以模型公开知识回答…" : "未挂载知识库；将明确告知无法回答…"),
+        });
+
+        var sentModel = false;
+        var startedAt = DateTime.UtcNow;
+
+        try
+        {
+            await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
+            {
+                if (chunk.Type == GatewayChunkType.Start && !sentModel && chunk.Resolution != null)
+                {
+                    sentModel = true;
+                    await WriteSseAsync("model", new
+                    {
+                        model = chunk.Resolution.ActualModel,
+                        platform = chunk.Resolution.ActualPlatformName,
+                    });
+                    await WriteSseAsync("phase", new { phase = "answering", message = "AI 正在回答…" });
+                }
+                else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    try { await WriteSseAsync("typing", new { text = chunk.Content }); }
+                    catch (ObjectDisposedException) { break; }
+                }
+                else if (chunk.Type == GatewayChunkType.Error)
+                {
+                    var err = chunk.Error ?? chunk.Content ?? "网关返回未知错误";
+                    _logger.LogError("CcasAgent QA 网关错误 user={UserId}: {Error}", userId, err);
+                    try { await WriteSseAsync("error", new { message = $"LLM 网关错误: {err}" }); }
+                    catch { }
+                    return;
+                }
+            }
+
+            try
+            {
+                await WriteSseAsync("done", new
+                {
+                    elapsedMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds,
+                    webSearch = webSearchOn,
+                });
+            }
+            catch (ObjectDisposedException) { }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "CcasAgent QA 失败 user={UserId}", userId);
+            try { await WriteSseAsync("error", new { message = "智能客服失败：" + ex.Message }); } catch { }
+        }
+    }
+
+    // ──────────────────────────────────────────────
     // 子能力 3：流程示意图
     // ──────────────────────────────────────────────
 
@@ -769,20 +960,30 @@ public class CcasAgentController : ControllerBase
 
     /// <summary>
     /// 知识库参考资料注入结果（提取出来便于上层做 SSE 通知 + 落库 / 日志）。
+    /// IncludedItems：注入成功的条目摘要清单（前端引用列表用），按注入顺序排序，与 [N] 角标对应。
     /// </summary>
-    private sealed record ReferenceContext(string AppendedContent, int IncludedCount, int TotalChars, List<string> Skipped);
+    private sealed record ReferenceContext(
+        string AppendedContent,
+        int IncludedCount,
+        int TotalChars,
+        List<string> Skipped,
+        List<ReferenceItem> IncludedItems);
+
+    /// <summary>注入成功的单条参考资料摘要，给前端做引用脚注用。</summary>
+    private sealed record ReferenceItem(int Index, string EntryId, string StoreId, string Title, int Chars);
 
     /// <summary>
     /// 按用户传入的 entryIds，从「文档空间」(document_store) 拉取内容拼装为 system prompt 末尾追加段。
     /// 权限校验：只引用「自己创建的空间」或「公开空间（IsPublic=true）」中的条目。
     /// 预算控制：单条 ≤ 8K 字符截断；总和 ≤ 24K 字符按选中顺序裁剪。
     /// 内容来源：优先 ParsedPrd.RawContent，回退 Attachment.ExtractedText。
+    /// purposeNote：用于注入段落标题，避免 PRD/QA 共用 prompt 时语境混乱。
     /// </summary>
-    private async Task<ReferenceContext> BuildReferenceContextAsync(List<string>? entryIds, string userId)
+    private async Task<ReferenceContext> BuildReferenceContextAsync(List<string>? entryIds, string userId, string purposeNote = "PRD")
     {
         if (entryIds == null || entryIds.Count == 0)
         {
-            return new ReferenceContext(string.Empty, 0, 0, new List<string>());
+            return new ReferenceContext(string.Empty, 0, 0, new List<string>(), new List<ReferenceItem>());
         }
 
         // 去重 + 限上限（最多 20 条，防止爆数据库查询）
@@ -794,7 +995,7 @@ public class CcasAgentController : ControllerBase
             .ToList();
         if (ids.Count == 0)
         {
-            return new ReferenceContext(string.Empty, 0, 0, new List<string>());
+            return new ReferenceContext(string.Empty, 0, 0, new List<string>(), new List<ReferenceItem>());
         }
 
         var entries = await _db.DocumentEntries
@@ -817,12 +1018,15 @@ public class CcasAgentController : ControllerBase
         sb.AppendLine();
         sb.AppendLine("## 领域参考资料（来自知识库）");
         sb.AppendLine();
-        sb.AppendLine("以下材料来自米多内部知识库，作为本次 PRD 生成的事实依据。生成时优先采纳这里的术语、规则、流程定义；与用户输入冲突时按用户输入为准并在文档中标注。");
+        sb.AppendLine(purposeNote == "QA"
+            ? "以下材料是用户从内部知识库挑选的参考资料，**本次问答只能基于这些材料回答**。回答中请用 `[1]` `[2]` 这样的角标标注来源（角标对应下方的 `参考 #N`）。"
+            : "以下材料来自米多内部知识库，作为本次 PRD 生成的事实依据。生成时优先采纳这里的术语、规则、流程定义；与用户输入冲突时按用户输入为准并在文档中标注。");
         sb.AppendLine();
 
         var includedCount = 0;
         var totalChars = 0;
         var skipped = new List<string>();
+        var includedItems = new List<ReferenceItem>();
 
         foreach (var entry in entries)
         {
@@ -904,17 +1108,23 @@ public class CcasAgentController : ControllerBase
 
             includedCount++;
             totalChars += content.Length;
+            includedItems.Add(new ReferenceItem(
+                Index: includedCount,
+                EntryId: entry.Id,
+                StoreId: entry.StoreId,
+                Title: entry.Title ?? string.Empty,
+                Chars: content.Length));
         }
 
         if (includedCount == 0)
         {
             // 没有任何条目可用，不污染 prompt
-            return new ReferenceContext(string.Empty, 0, 0, skipped);
+            return new ReferenceContext(string.Empty, 0, 0, skipped, new List<ReferenceItem>());
         }
 
         sb.AppendLine();
         sb.AppendLine($"_（共注入 {includedCount} 条参考资料，约 {totalChars} 字符）_");
-        return new ReferenceContext(sb.ToString(), includedCount, totalChars, skipped);
+        return new ReferenceContext(sb.ToString(), includedCount, totalChars, skipped, includedItems);
     }
 
     private async Task WriteSseAsync(string eventType, object data)

@@ -1150,6 +1150,17 @@ public static class CcasAgent
         )]
         public const string Generate = "ccas-agent.equipment::generation";
     }
+
+    public static class Qa
+    {
+        [AppCallerMetadata(
+            "智能客服-知识库问答",
+            "基于知识库的严格 RAG 问答：只用注入的领域参考资料回答，缺资料就明说不杜撰；可开联网开关让 AI 引用模型公开知识",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Chat"
+        )]
+        public const string Chat = "ccas-agent.qa::chat";
+    }
 }
 
 /// <summary>

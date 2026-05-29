@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Factory, FileText, Image as ImageIcon, GitBranch, AlertCircle } from 'lucide-react';
+import { Factory, FileText, Image as ImageIcon, GitBranch, AlertCircle, MessageSquare } from 'lucide-react';
 import { getCcasMeta } from '@/services';
 import type { CcasMeta } from '@/services';
 import { TabBar } from '@/components/design/TabBar';
@@ -7,13 +7,15 @@ import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { CcasPrdTab } from './CcasPrdTab';
 import { CcasEquipmentTab } from './CcasEquipmentTab';
 import { CcasFlowTab } from './CcasFlowTab';
+import { CcasQaTab } from './CcasQaTab';
 
-type Tab = 'prd' | 'equipment' | 'flow';
+type Tab = 'prd' | 'equipment' | 'flow' | 'qa';
 
 const TABS: { key: Tab; label: string; icon: React.ReactNode; desc: string }[] = [
   { key: 'prd', label: 'PRD 文档生成', icon: <FileText className="w-4 h-4" />, desc: '按米多 product-document-generator 模板生成 / 优化产品文档（工程版 / 敏捷版）' },
   { key: 'equipment', label: '设备素材库', icon: <ImageIcon className="w-4 h-4" />, desc: '按预设风格生成产线设备图，攒一份属于你的素材库，给流程图节点用' },
   { key: 'flow', label: '流程示意图', icon: <GitBranch className="w-4 h-4" />, desc: 'AI 解析输入 → 节点 + 边 JSON → ReactFlow 拼装素材图，可拖动微调 + 导出' },
+  { key: 'qa', label: '智能客服', icon: <MessageSquare className="w-4 h-4" />, desc: '基于知识库的严格 RAG 问答，知识库没有就明说不杜撰；可开联网开关补充模型公开知识' },
 ];
 
 export function CcasAgentPage() {
@@ -88,6 +90,7 @@ export function CcasAgentPage() {
             {tab === 'prd' && <CcasPrdTab meta={meta} />}
             {tab === 'equipment' && <CcasEquipmentTab meta={meta} />}
             {tab === 'flow' && <CcasFlowTab meta={meta} />}
+            {tab === 'qa' && <CcasQaTab meta={meta} />}
           </>
         ) : null}
       </div>

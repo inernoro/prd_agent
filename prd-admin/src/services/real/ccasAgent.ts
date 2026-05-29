@@ -164,6 +164,35 @@ export async function deleteCcasFlowDiagram(id: string): Promise<ApiResponse<{ d
 
 export const CCAS_PRD_STREAM_URL = '/api/ccas-agent/prd/stream';
 export const CCAS_FLOW_PARSE_STREAM_URL = '/api/ccas-agent/flow/parse-stream';
+export const CCAS_QA_STREAM_URL = '/api/ccas-agent/qa/stream';
+
+// ──────────────────────────────────────────────
+// 智能客服请求 / SSE 事件类型（前端 fetch + ReadableStream 自行消费）
+// ──────────────────────────────────────────────
+
+export interface CcasQaHistoryItem {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface CcasQaRequest {
+  message: string;
+  history?: CcasQaHistoryItem[];
+  referenceEntryIds?: string[];
+  webSearch?: boolean;
+  sessionId?: string;
+}
+
+/** SSE `reference` 事件 payload —— 后端注入实际命中的知识库条目 */
+export interface CcasQaReferencePayload {
+  requested: number;
+  included: number;
+  totalChars: number;
+  budget: number;
+  skipped: string[];
+  /** 注入成功的条目摘要（按 [N] 角标顺序排列），用于前端引用脚注渲染 */
+  items: Array<{ index: number; entryId: string; storeId: string; title: string; chars: number }>;
+}
 
 // ──────────────────────────────────────────────
 // 知识库（document-store）轻量代理

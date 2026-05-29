@@ -1909,6 +1909,7 @@ export {
   getKnowledgeEntryContent,
   CCAS_PRD_STREAM_URL,
   CCAS_FLOW_PARSE_STREAM_URL,
+  CCAS_QA_STREAM_URL,
 } from '@/services/real/ccasAgent';
 export type {
   CcasMeta,
@@ -1920,4 +1921,7 @@ export type {
   CcasFlowDiagramSummary,
   CcasKnowledgeStore,
   CcasKnowledgeEntry,
+  CcasQaHistoryItem,
+  CcasQaRequest,
+  CcasQaReferencePayload,
 } from '@/services/real/ccasAgent';
