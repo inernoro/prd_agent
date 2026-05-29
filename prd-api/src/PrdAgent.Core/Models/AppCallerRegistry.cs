@@ -1112,6 +1112,22 @@ public static class EmergenceExplorer
 }
 
 /// <summary>
+/// Page Agent 工作流胶囊页面/代码生成
+/// </summary>
+public static class PageAgent
+{
+    public const string AppName = "Page Agent";
+
+    [AppCallerMetadata(
+        "胶囊页面/代码生成",
+        "CapsuleExecutor 调用 LLM 生成 React/Tailwind 页面或代码",
+        ModelTypes = new[] { ModelTypes.Chat },
+        Category = "Workflow"
+    )]
+    public const string Generate = "page-agent.generate::chat";
+}
+
+/// <summary>
 /// Skill Agent 技能引导创建
 /// </summary>
 public static class SkillAgent
@@ -1142,6 +1158,30 @@ public static class SkillAgent
 }
 
 /// <summary>
+/// 海鲜市场技能
+/// </summary>
+public static class MarketplaceSkill
+{
+    public const string AppName = "海鲜市场技能";
+
+    [AppCallerMetadata(
+        "技能详情-摘要",
+        "上传时从 SKILL.md 生成 30 字详情摘要（同步）",
+        ModelTypes = new[] { ModelTypes.Chat },
+        Category = "Marketplace"
+    )]
+    public const string Summary = "marketplace-skill.summary::chat";
+
+    [AppCallerMetadata(
+        "技能详情-AI 起草",
+        "拖入文件后流式生成详情草稿，前端逐字渲染",
+        ModelTypes = new[] { ModelTypes.Chat },
+        Category = "Marketplace"
+    )]
+    public const string DraftDescription = "marketplace-skill.draft-description::chat";
+}
+
+/// <summary>
 /// 毒舌秘书（PA Agent）— MBB 级私人执行助理，MECE 拆解 + 四象限 + 毒舌不鸡汤
 /// </summary>
 public static class PaAgent
@@ -1155,6 +1195,17 @@ public static class PaAgent
             Category = "Assistant"
         )]
         public const string Conversation = "pa-agent.chat::chat";
+    }
+
+    public static class Review
+    {
+        [AppCallerMetadata(
+            "毒舌秘书-复盘",
+            "对一周/自定义时段的任务数据进行 MECE 复盘，输出数字 + 没干完的为什么 + 下周建议",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Assistant"
+        )]
+        public const string Conversation = "pa-agent.review::chat";
     }
 }
 

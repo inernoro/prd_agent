@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Library,
   Plus,
@@ -23,12 +23,17 @@ import {
   Bookmark,
   Users,
   ArrowUpRight,
+  Wand2,
+  CheckCircle2,
+  AlertCircle,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
+import { TeamScopeBar, type TeamScope } from '@/components/team/TeamScopeBar';
+import { useTeamStore } from '@/stores/teamStore';
 import { AnimatePresence } from 'motion/react';
 import CountUp from '@/components/reactbits/CountUp';
 import {
@@ -59,7 +64,11 @@ import {
   revokeDocStoreShareLink,
   listMyFavoriteDocumentStores,
   listMyLikedDocumentStores,
+  setStoreTeams,
 } from '@/services';
+import { ShareToTeamDialog } from '@/components/team/ShareToTeamDialog';
+import { UserAvatar } from '@/components/ui/UserAvatar';
+import { resolveAvatarUrl } from '@/lib/avatar';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
 import type {
   DocumentStore,
@@ -74,7 +83,9 @@ import { systemDialog } from '@/lib/systemDialog';
 import { SubscriptionDetailDrawer } from './SubscriptionDetailDrawer';
 import { SubtitleGenerationDrawer } from './SubtitleGenerationDrawer';
 import { ReprocessDrawer } from './ReprocessDrawer';
+import { ReprocessRunHost } from './ReprocessRunHost';
 import { ViewersDrawer } from './ViewersDrawer';
+import { useReprocessRunStore, selectStreamingByEntry } from '@/stores/reprocessRunStore';
 
 const ACCEPT_TYPES = '.md,.txt,.pdf,.doc,.docx,.json,.yaml,.yml,.csv';
 
@@ -286,12 +297,16 @@ function EditStoreDialog({ storeId, initialName, initialTags, onClose, onSaved }
 }
 
 // ── 分享对话框（创建短链 + 列表 + 撤销） ──
-function ShareDialog({ storeId, storeName, isPublic, onClose }: {
+function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle, onClose }: {
   storeId: string;
   storeName: string;
   isPublic: boolean;
+  /** 非空 = 分享单篇文档而非整库 */
+  entryId?: string;
+  entryTitle?: string;
   onClose: () => void;
 }) {
+  const isDocShare = Boolean(entryId);
   const [links, setLinks] = useState<DocumentStoreShareLink[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -309,7 +324,7 @@ function ShareDialog({ storeId, storeName, isPublic, onClose }: {
 
   const handleCreate = async () => {
     setCreating(true);
-    const res = await createDocStoreShareLink(storeId, { title: title.trim() || undefined, expiresInDays });
+    const res = await createDocStoreShareLink(storeId, { title: title.trim() || undefined, expiresInDays, entryId });
     if (res.success) {
       setLinks(prev => [res.data, ...prev]);
       setTitle('');
@@ -330,7 +345,7 @@ function ShareDialog({ storeId, storeName, isPublic, onClose }: {
   };
 
   const copyLink = (token: string) => {
-    const url = `${window.location.origin}/library/share/${token}`;
+    const url = `${window.location.origin}/s/lib/${token}`;
     navigator.clipboard.writeText(url).then(() => toast.success('链接已复制'));
   };
 
@@ -346,7 +361,7 @@ function ShareDialog({ storeId, storeName, isPublic, onClose }: {
               <Share2 size={15} />
             </div>
             <span className="text-[15px] font-semibold text-token-primary">
-              分享「{storeName}」
+              {isDocShare ? `分享文档「${entryTitle ?? ''}」` : `分享「${storeName}」`}
             </span>
           </div>
           <button onClick={onClose}
@@ -355,8 +370,8 @@ function ShareDialog({ storeId, storeName, isPublic, onClose }: {
           </button>
         </div>
 
-        {/* 公开访问直链 */}
-        {isPublic && (
+        {/* 公开访问直链（整库公开时；单篇分享不适用） */}
+        {isPublic && !isDocShare && (
           <div className="surface-inset mb-5 rounded-[12px] p-4">
             <div className="flex items-center gap-2 mb-2">
               <Globe size={12} className="text-token-accent" />
@@ -418,50 +433,76 @@ function ShareDialog({ storeId, storeName, isPublic, onClose }: {
             </p>
           ) : (
             <div className="space-y-2">
-              {links.map(link => (
-                <div key={link.id} className={`surface-row rounded-[10px] p-3 ${link.isRevoked ? 'opacity-50' : ''}`}>
-                  <div className="flex items-start justify-between gap-2 mb-2">
-                    <div className="flex-1 min-w-0">
-                      <div className="truncate text-[12px] font-semibold text-token-primary">
-                        {link.title || '未命名分享'}
+              {links.map(link => {
+                const fullUrl = `${window.location.origin}/s/lib/${link.token}`;
+                return (
+                  <div
+                    key={link.id}
+                    className={`surface-row rounded-[10px] p-3 ${link.isRevoked ? 'opacity-60' : ''}`}
+                    style={link.isRevoked ? undefined : {
+                      // 已分享出去 = 标黄（左侧黄条 + 淡黄底），一眼区分「分享中 / 已撤销」
+                      borderLeft: '3px solid rgba(234,179,8,0.85)',
+                      background: 'rgba(234,179,8,0.06)',
+                    }}>
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        {!link.isRevoked && (
+                          <span
+                            className="inline-flex items-center gap-1 flex-shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold"
+                            style={{ background: 'rgba(234,179,8,0.16)', color: 'rgba(234,179,8,0.95)', border: '1px solid rgba(234,179,8,0.3)' }}>
+                            已分享
+                          </span>
+                        )}
+                        <span className="truncate text-[12px] font-semibold text-token-primary">
+                          {link.title || (link.entryId ? (link.entryTitle || '文档分享') : '整库分享')}
+                        </span>
                       </div>
-                      <div className="mt-0.5 truncate font-mono text-[10px] text-token-muted">
-                        /library/share/{link.token}
+                      <div className="flex items-center gap-3 text-[10px] text-token-muted flex-shrink-0">
+                        <span className="flex items-center gap-1">
+                          <Eye size={9} /> {link.viewCount}
+                        </span>
+                        {link.expiresAt && (
+                          <span className="flex items-center gap-1">
+                            <Calendar size={9} />
+                            {new Date(link.expiresAt).toLocaleDateString()} 过期
+                          </span>
+                        )}
                       </div>
                     </div>
-                    {!link.isRevoked && (
-                      <div className="flex items-center gap-1 flex-shrink-0">
+
+                    {link.isRevoked ? (
+                      // 已撤销：链接失效，明示状态（不再提供复制）
+                      <div className="flex items-center gap-2">
+                        <span className="flex-1 min-w-0 truncate font-mono text-[11px] text-token-muted line-through">
+                          {fullUrl}
+                        </span>
+                        <span className="text-[11px] font-semibold text-token-error flex-shrink-0">已撤销</span>
+                      </div>
+                    ) : (
+                      // 有效：完整链接直接平铺可选中 + 醒目「复制」，撤销降为次要操作
+                      <div className="flex items-center gap-2">
+                        <input
+                          value={fullUrl}
+                          readOnly
+                          onFocus={(e) => e.currentTarget.select()}
+                          className="prd-field h-8 flex-1 min-w-0 rounded-[8px] px-3 font-mono text-[11px] outline-none"
+                        />
                         <button
                           onClick={() => copyLink(link.token)}
-                          className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[6px] text-token-muted hover:bg-white/6"
-                          title="复制链接">
-                          <Copy size={12} />
+                          className="surface-action-accent flex h-8 cursor-pointer items-center gap-1 rounded-[8px] px-3 text-[11px] font-semibold flex-shrink-0">
+                          <Copy size={11} /> 复制
                         </button>
                         <button
                           onClick={() => handleRevoke(link.id)}
-                          className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[6px] text-token-error hover:bg-white/6"
-                          title="撤销">
-                          <Trash2 size={12} />
+                          className="flex h-8 cursor-pointer items-center gap-1 rounded-[8px] px-2.5 text-[11px] text-token-muted transition-colors hover:text-token-error flex-shrink-0"
+                          title="撤销此分享（撤销后链接立即失效）">
+                          <Trash2 size={11} /> 撤销
                         </button>
                       </div>
                     )}
                   </div>
-                  <div className="flex items-center gap-3 text-[10px] text-token-muted">
-                    <span className="flex items-center gap-1">
-                      <Eye size={9} /> {link.viewCount}
-                    </span>
-                    {link.expiresAt && (
-                      <span className="flex items-center gap-1">
-                        <Calendar size={9} />
-                        {new Date(link.expiresAt).toLocaleDateString()} 过期
-                      </span>
-                    )}
-                    {link.isRevoked && (
-                      <span className="text-token-error">已撤销</span>
-                    )}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -478,6 +519,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
 }) {
   const [store, setStore] = useState<DocumentStore | null>(null);
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
+  /** 已被「单篇分享」的文档 id 集合（文件树标黄用） */
+  const [sharedEntryIds, setSharedEntryIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(undefined);
   const [showSubscribe, setShowSubscribe] = useState(false);
@@ -490,6 +533,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
   const [subtitleTarget, setSubtitleTarget] = useState<{ id: string; title: string } | null>(null);
   /** 当前打开的再加工 Drawer 目标 entry（null = 未打开） */
   const [reprocessTarget, setReprocessTarget] = useState<{ id: string; title: string } | null>(null);
+  /** 当前打开的「单篇文档分享」目标（null = 未打开） */
+  const [docShareTarget, setDocShareTarget] = useState<{ id: string; title: string } | null>(null);
+  /** 新建后需要自动进入编辑态的文档 id（用一次即清） */
+  const [autoEditEntryId, setAutoEditEntryId] = useState<string | undefined>(undefined);
 
   // 文件上传状态
   const [uploading, setUploading] = useState(false);
@@ -509,7 +556,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
   const loadEntries = useCallback(async () => {
     setLoading(true);
     const res = await listDocumentEntries(storeId, 1, 200);
-    if (res.success) setEntries(res.data.items);
+    if (res.success) {
+      setEntries(res.data.items);
+      setSharedEntryIds(new Set(res.data.sharedEntryIds ?? []));
+    }
     setLoading(false);
   }, [storeId]);
 
@@ -517,6 +567,46 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
     loadStore();
     loadEntries();
   }, [loadStore, loadEntries]);
+
+  // ── 文档再加工：页面级任务中枢（关抽屉 / 刷新都不丢） ──
+  const dismissRun = useReprocessRunStore((s) => s.dismissRun);
+  // 只订阅一个【不含 streamedText】的签名串：状态/阶段/进度(取整)/标题等。
+  // 这样 SSE 文本 chunk（最高频、只改 streamedText）不会触发本页 + 整棵文件树重渲染，
+  // 仅在进度等真实变化时才更新（Bugbot 性能报告）。打字内容由抽屉自身订阅渲染。
+  const reprocessSig = useReprocessRunStore((s) =>
+    Object.values(s.runs)
+      .filter((r) => r.storeId === storeId)
+      .map((r) => `${r.runId}|${r.status}|${r.phase}|${Math.round(r.progress)}|${r.sourceEntryId}|${r.sourceTitle}|${r.outputEntryId ?? ''}`)
+      .sort()
+      .join('~~'),
+  );
+  // 本知识库下的所有再加工任务（pill 渲染用）——按签名记忆，引用稳定
+  const storeRuns = useMemo(
+    () => Object.values(useReprocessRunStore.getState().runs)
+      .filter((r) => r.storeId === storeId)
+      .sort((a, b) => b.startedAt - a.startedAt),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [reprocessSig, storeId],
+  );
+  // 源文档 → 进度（文件树 chip 用）
+  const reprocessingMap = useMemo(
+    () => selectStreamingByEntry(useReprocessRunStore.getState().runs, storeId),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [reprocessSig, storeId],
+  );
+
+  // Host 报告任务到达终态：完成则刷新文件树 + 选中新文档（与抽屉是否开着无关）
+  const handleReprocessCompleted = useCallback((status: 'done' | 'failed', outputEntryId?: string) => {
+    if (status === 'done' && outputEntryId) {
+      void loadEntries();
+      setSelectedEntryId(outputEntryId);
+      // 兜底再刷一次：兼容 DB 副本同步延迟
+      setTimeout(() => { void loadEntries(); }, 1500);
+      toast.success('文档加工完成', '已保存为新文档');
+    } else if (status === 'failed') {
+      toast.error('文档加工失败', '可在任务卡片查看原因');
+    }
+  }, [loadEntries]);
 
   // 文件上传处理
   const handleFiles = useCallback(async (files: File[]) => {
@@ -722,7 +812,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
     if (res.success) {
       setEntries(prev => [res.data, ...prev]);
       setSelectedEntryId(res.data.id);
-      toast.success('已创建文档，点击编辑按钮开始写作');
+      // 新建文档默认直接进入编辑态，省去用户再点一次「编辑」
+      setAutoEditEntryId(res.data.id);
+      toast.success('已创建文档，开始写作吧');
     } else {
       toast.error('创建失败', res.error?.message);
     }
@@ -886,16 +978,29 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
             const entry = entries.find(e => e.id === id);
             if (entry) setReprocessTarget({ id, title: entry.title });
           }}
+          onShareEntry={(id) => {
+            const entry = entries.find(e => e.id === id);
+            if (entry) setDocShareTarget({ id, title: entry.title });
+          }}
+          autoEditEntryId={autoEditEntryId}
+          onAutoEditConsumed={() => setAutoEditEntryId(undefined)}
           onReplaceFile={handleReplaceFile}
+          reprocessingMap={reprocessingMap}
+          sharedEntryIds={sharedEntryIds}
           loading={loading}
           emptyState={
             <div className="flex-1 flex flex-col items-center justify-center py-16">
               <FolderOpen size={44} className="mb-5 text-token-muted opacity-30" />
               <p className="mb-1 text-[14px] font-semibold text-token-primary">还没有文档</p>
-              <p className="mb-6 text-[12px] text-token-muted">上传文档到这个空间，或直接拖拽文件到页面</p>
-              <Button variant="primary" size="md" onClick={() => fileInputRef.current?.click()}>
-                <Upload size={15} /> 上传第一个文档
-              </Button>
+              <p className="mb-6 text-[12px] text-token-muted">新建一篇空白文档直接写，或上传 / 拖拽文件到页面</p>
+              <div className="flex items-center gap-2.5">
+                <Button variant="primary" size="md" onClick={handleCreateDocument}>
+                  <FileText size={15} /> 新建文档
+                </Button>
+                <Button variant="secondary" size="md" onClick={() => fileInputRef.current?.click()}>
+                  <Upload size={15} /> 上传文档
+                </Button>
+              </div>
             </div>
           }
         />
@@ -917,6 +1022,18 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
           storeName={store.name}
           isPublic={store.isPublic}
           onClose={() => setShowShareDialog(false)}
+        />
+      )}
+
+      {/* 单篇文档分享对话框（来自文件树右键「分享」） */}
+      {docShareTarget && (
+        <ShareDialog
+          storeId={storeId}
+          storeName={store.name}
+          isPublic={store.isPublic}
+          entryId={docShareTarget.id}
+          entryTitle={docShareTarget.title}
+          onClose={() => setDocShareTarget(null)}
         />
       )}
 
@@ -947,18 +1064,71 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
         )}
       </AnimatePresence>
 
+      {/* 文档再加工：无 UI 的 SSE 宿主（每个进行中任务一个，与抽屉解耦） */}
+      {storeRuns
+        .filter((r) => r.status === 'streaming')
+        .map((r) => (
+          <ReprocessRunHost key={r.runId} runId={r.runId} onCompleted={handleReprocessCompleted} />
+        ))}
+
+      {/* 文档再加工：右下角常驻任务 pill —— 关抽屉后仍可见，点击重新展开 */}
+      {storeRuns.length > 0 && (
+        <div className="fixed bottom-5 right-5 z-40 flex flex-col gap-2" style={{ maxWidth: '300px' }}>
+          {storeRuns.map((r) => {
+            const isRunning = r.status === 'streaming';
+            const accent = r.status === 'done'
+              ? 'rgba(74,222,128,0.95)'
+              : r.status === 'failed'
+                ? 'rgba(248,113,113,0.95)'
+                : 'rgba(96,165,250,0.95)';
+            return (
+              <div
+                key={r.runId}
+                className="surface-popover flex items-center gap-2.5 rounded-[12px] border border-token-subtle px-3 py-2.5 cursor-pointer"
+                title="点击展开查看进度"
+                onClick={() => setReprocessTarget({ id: r.sourceEntryId, title: r.sourceTitle })}
+              >
+                <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-[8px]"
+                  style={{ background: 'rgba(255,255,255,0.05)', color: accent }}>
+                  {r.status === 'done'
+                    ? <CheckCircle2 size={14} />
+                    : r.status === 'failed'
+                      ? <AlertCircle size={14} />
+                      : <MapSpinner size={14} />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[11px] font-semibold text-token-primary">{r.sourceTitle}</p>
+                  <p className="truncate text-[10px] text-token-muted">
+                    {isRunning
+                      ? `${r.phase} · ${Math.round(r.progress)}%`
+                      : r.status === 'done' ? '加工完成' : '加工失败'}
+                  </p>
+                </div>
+                {isRunning ? (
+                  <Wand2 size={12} className="flex-shrink-0 text-token-muted" />
+                ) : (
+                  <button
+                    className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-[6px] text-token-muted hover:bg-white/6"
+                    title="移除"
+                    onClick={(e) => { e.stopPropagation(); dismissRun(r.runId); }}
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* 文档再加工抽屉 */}
       <AnimatePresence>
         {reprocessTarget && (
           <ReprocessDrawer
             entryId={reprocessTarget.id}
             entryTitle={reprocessTarget.title}
+            storeId={storeId}
             onClose={() => setReprocessTarget(null)}
-            onDone={(newId) => {
-              void loadEntries();
-              setSelectedEntryId(newId);
-              setTimeout(() => { void loadEntries(); }, 1500);
-            }}
           />
         )}
       </AnimatePresence>
@@ -1164,8 +1334,11 @@ export function DocumentStorePage() {
   const [favorites, setFavorites] = useState<InteractionStoreCard[]>([]);
   const [likes, setLikes] = useState<InteractionStoreCard[]>([]);
   const [loading, setLoading] = useState(true);
+  // 我的 / 团队 作用域（默认我的；仅 mine 标签生效）
+  const [teamScope, setTeamScope] = useState<TeamScope>(() => useTeamStore.getState().getScope('document-store'));
   const [showCreate, setShowCreate] = useState(false);
   const [editTarget, setEditTarget] = useState<{ id: string; name: string; tags: string[] } | null>(null);
+  const [shareTeamTarget, setShareTeamTarget] = useState<{ id: string; name: string; teamIds: string[] } | null>(null);
   // 使用 storeId 而不是 store 对象，这样刷新后可以从 URL 或 sessionStorage 恢复
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(() => {
     return sessionStorage.getItem('doc-store-selected-id');
@@ -1173,10 +1346,10 @@ export function DocumentStorePage() {
 
   const loadStores = useCallback(async () => {
     setLoading(true);
-    const res = await listDocumentStoresWithPreview(1, 50);
+    const res = await listDocumentStoresWithPreview(1, 50, { scope: teamScope.scope, teamId: teamScope.teamId });
     if (res.success) setStores(res.data.items);
     setLoading(false);
-  }, []);
+  }, [teamScope]);
 
   const loadFavorites = useCallback(async () => {
     setLoading(true);
@@ -1235,14 +1408,21 @@ export function DocumentStorePage() {
         icon={<Library size={14} />}
         actions={
           tab === 'mine' ? (
-            <Button
-              variant="primary"
-              size="xs"
-              data-tour-id="document-store-create"
-              onClick={() => setShowCreate(true)}
-            >
-              <Plus size={13} /> 新建空间
-            </Button>
+            <div className="flex items-center gap-2">
+              <TeamScopeBar
+                moduleKey="document-store"
+                value={teamScope}
+                onChange={setTeamScope}
+              />
+              <Button
+                variant="primary"
+                size="xs"
+                data-tour-id="document-store-create"
+                onClick={() => setShowCreate(true)}
+              >
+                <Plus size={13} /> 新建空间
+              </Button>
+            </div>
           ) : null
         }
       />
@@ -1348,9 +1528,31 @@ export function DocumentStorePage() {
                           <Library size={16} style={{ color: 'rgba(59,130,246,0.85)' }} />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <h3 className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                            {s.name}
-                          </h3>
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <h3 className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                              {s.name}
+                            </h3>
+                            {s.hasActiveShare && (
+                              <span
+                                className="inline-flex items-center gap-1 flex-shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold"
+                                style={{ background: 'rgba(234,179,8,0.14)', color: 'rgba(234,179,8,0.95)', border: '1px solid rgba(234,179,8,0.32)' }}
+                                title="该知识库已对外分享">
+                                <Share2 size={9} /> 已分享
+                              </span>
+                            )}
+                          </div>
+                          {/* 团队作用域：顶部显示创建者头像 + 昵称 */}
+                          {teamScope.scope === 'team' && (s as DocumentStoreWithPreview).ownerName && (
+                            <div className="flex items-center gap-1 mt-0.5">
+                              <UserAvatar
+                                src={resolveAvatarUrl({ avatarFileName: (s as DocumentStoreWithPreview).ownerAvatarFileName })}
+                                className="w-3.5 h-3.5 rounded-full"
+                              />
+                              <span className="text-[11px] truncate" style={{ color: 'var(--text-secondary)' }}>
+                                {(s as DocumentStoreWithPreview).ownerName}
+                              </span>
+                            </div>
+                          )}
                           {s.description ? (
                             <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
                               {s.description}
@@ -1363,16 +1565,28 @@ export function DocumentStorePage() {
                         </div>
                       </div>
                       {tab === 'mine' && (
-                        <button
-                          className="surface-row h-6 w-6 rounded-[6px] flex items-center justify-center cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
-                          title="编辑名称与标签"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setEditTarget({ id: s.id, name: s.name, tags: s.tags ?? [] });
-                          }}
-                          style={{ color: 'rgba(59,130,246,0.7)' }}>
-                          <Pencil size={11} />
-                        </button>
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          <button
+                            className="surface-row h-6 w-6 rounded-[6px] flex items-center justify-center cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="分享到共享文件夹"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setShareTeamTarget({ id: s.id, name: s.name, teamIds: (s as DocumentStoreWithPreview).sharedTeamIds ?? [] });
+                            }}
+                            style={{ color: 'rgba(59,130,246,0.7)' }}>
+                            <Users size={11} />
+                          </button>
+                          <button
+                            className="surface-row h-6 w-6 rounded-[6px] flex items-center justify-center cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="编辑名称与标签"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditTarget({ id: s.id, name: s.name, tags: s.tags ?? [] });
+                            }}
+                            style={{ color: 'rgba(59,130,246,0.7)' }}>
+                            <Pencil size={11} />
+                          </button>
+                        </div>
                       )}
                     </div>
 
@@ -1487,6 +1701,19 @@ export function DocumentStorePage() {
           onSaved={(patch) => {
             setStores(prev => prev.map(x => x.id === editTarget.id ? { ...x, name: patch.name, tags: patch.tags } : x));
           }}
+        />
+      )}
+
+      {shareTeamTarget && (
+        <ShareToTeamDialog
+          title={`分享「${shareTeamTarget.name}」到共享文件夹`}
+          initialTeamIds={shareTeamTarget.teamIds}
+          onConfirm={async (teamIds) => {
+            await setStoreTeams(shareTeamTarget.id, teamIds);
+            setStores(prev => prev.map(x => x.id === shareTeamTarget.id ? { ...x, sharedTeamIds: teamIds } : x));
+            setShareTeamTarget(null);
+          }}
+          onClose={() => setShareTeamTarget(null)}
         />
       )}
     </div>

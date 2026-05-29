@@ -16,6 +16,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { NAV_DIVIDER_KEY } from '@/stores/navOrderStore';
 import { Minus, Plus, RotateCcw, X } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
+import { isPaSecretaryIcon, renderPaSecretaryIconNode } from '@/lib/paSecretaryIconRegistry';
 
 interface NavMetaItem {
   navKey: string;
@@ -50,6 +51,7 @@ type NavLayoutEditorProps = {
 };
 
 function getIcon(name: string, size = 16) {
+  if (isPaSecretaryIcon(name)) return renderPaSecretaryIconNode(size);
   const IconComponent = (LucideIcons as unknown as Record<string, ComponentType<{ size?: number }>>)[name];
   if (IconComponent) return <IconComponent size={size} />;
   return <LucideIcons.Circle size={size} />;

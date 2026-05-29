@@ -218,6 +218,7 @@ public class MongoDbContext
     public IMongoCollection<PaTask> PaTasks => _database.GetCollection<PaTask>("pa_tasks");
     public IMongoCollection<PaMessage> PaMessages => _database.GetCollection<PaMessage>("pa_messages");
     public IMongoCollection<PaSession> PaSessions => _database.GetCollection<PaSession>("pa_sessions");
+    public IMongoCollection<PaUserProfile> PaUserProfiles => _database.GetCollection<PaUserProfile>("pa_user_profiles");
 
     // Arena 竞技场（盲评对战）
     public IMongoCollection<ArenaGroup> ArenaGroups => _database.GetCollection<ArenaGroup>("arena_groups");
@@ -281,6 +282,15 @@ public class MongoDbContext
     public IMongoCollection<DocumentStoreViewEvent> DocumentStoreViewEvents => _database.GetCollection<DocumentStoreViewEvent>("document_store_view_events");
     public IMongoCollection<DocumentInlineComment> DocumentInlineComments => _database.GetCollection<DocumentInlineComment>("document_inline_comments");
     public IMongoCollection<KnowledgeBaseDraft> KnowledgeBaseDrafts => _database.GetCollection<KnowledgeBaseDraft>("knowledge_base_drafts");
+
+    // Team 团队（跨应用协作单位：网页托管 + 知识库共用）
+    public IMongoCollection<Team> Teams => _database.GetCollection<Team>("teams");
+    public IMongoCollection<TeamMember> TeamMembers => _database.GetCollection<TeamMember>("team_members");
+    public IMongoCollection<TeamActivityLog> TeamActivityLogs => _database.GetCollection<TeamActivityLog>("team_activity_logs");
+
+    // 网页访客痕迹 + 自定义分类
+    public IMongoCollection<SiteViewEvent> SiteViewEvents => _database.GetCollection<SiteViewEvent>("site_view_events");
+    public IMongoCollection<WebFolder> WebFolders => _database.GetCollection<WebFolder>("web_folders");
 
     // Emergence Explorer 涌现探索器
     public IMongoCollection<EmergenceTree> EmergenceTrees => _database.GetCollection<EmergenceTree>("emergence_trees");
@@ -1276,6 +1286,41 @@ public class MongoDbContext
         {
             // ignore
         }
+
+        // ========== Team 团队索引 ==========
+
+        // Teams：按邀请码查询（兑换路径）
+        Teams.Indexes.CreateOne(new CreateIndexModel<Team>(
+            Builders<Team>.IndexKeys.Ascending(x => x.InviteCode),
+            new CreateIndexOptions { Name = "idx_teams_invite_code" }));
+
+        // TeamMembers：(TeamId, UserId) 唯一；按 UserId 查"我的团队"
+        try
+        {
+            TeamMembers.Indexes.CreateOne(new CreateIndexModel<TeamMember>(
+                Builders<TeamMember>.IndexKeys.Ascending(x => x.TeamId).Ascending(x => x.UserId),
+                new CreateIndexOptions { Name = "uniq_team_members_team_user", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        TeamMembers.Indexes.CreateOne(new CreateIndexModel<TeamMember>(
+            Builders<TeamMember>.IndexKeys.Ascending(x => x.UserId),
+            new CreateIndexOptions { Name = "idx_team_members_user" }));
+
+        // TeamActivityLogs：按 (TeamId, CreatedAt desc) 拉时间线
+        TeamActivityLogs.Indexes.CreateOne(new CreateIndexModel<TeamActivityLog>(
+            Builders<TeamActivityLog>.IndexKeys.Ascending(x => x.TeamId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_team_activity_team_created" }));
+
+        // HostedSites / DocumentStores：SharedTeamIds 多值索引（团队作用域过滤）
+        HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
+            Builders<HostedSite>.IndexKeys.Ascending(x => x.SharedTeamIds),
+            new CreateIndexOptions { Name = "idx_hosted_sites_shared_teams" }));
+        DocumentStores.Indexes.CreateOne(new CreateIndexModel<DocumentStore>(
+            Builders<DocumentStore>.IndexKeys.Ascending(x => x.SharedTeamIds),
+            new CreateIndexOptions { Name = "idx_document_stores_shared_teams" }));
 
         // ========== Report Agent 周报管理索引 ==========
 

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
@@ -130,9 +131,9 @@ export function GlobalVarsTab({ onToast }: { onToast: (message: string) => void 
       description={
         <>
           所有项目共享的环境变量（<code>_global</code> scope）。项目独有变量请在{' '}
-          <a className="text-primary underline-offset-4 hover:underline" href="/project-list">
+          <Link className="text-primary underline-offset-4 hover:underline" to="/project-list">
             项目列表
-          </a>{' '}
+          </Link>{' '}
           中选择项目后配置。
         </>
       }

@@ -152,6 +152,8 @@ builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAppSettingsService, PrdAgent.Infrastructure.Services.AppSettingsService>();
 // 更新中心：从仓库 changelogs/ 与 CHANGELOG.md 解析代码级周报
 builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.Changelog.IChangelogReader, PrdAgent.Infrastructure.Services.Changelog.ChangelogReader>();
+// 启动预热更新中心缓存，配合 serve-stale-while-revalidate 让用户不必等冷启动拉取
+builder.Services.AddHostedService<PrdAgent.Infrastructure.Services.Changelog.ChangelogCacheWarmer>();
 // 周报海报 AI 向导:读取数据源 + 调 LLM 生成结构化页面
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.Poster.IPosterAutopilotService, PrdAgent.Infrastructure.Services.Poster.PosterAutopilotService>();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.ISystemPromptService, PrdAgent.Infrastructure.Services.SystemPromptService>();
@@ -200,6 +202,12 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Inf
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.VideoAssetProvider>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.WebPageAssetProvider>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteService, PrdAgent.Infrastructure.Services.HostedSiteService>();
+// 团队（跨应用协作单位：网页托管 + 知识库共用）+ 团队活动日志
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.ITeamService, PrdAgent.Infrastructure.Services.TeamService>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.ITeamActivityService, PrdAgent.Infrastructure.Services.TeamActivityService>();
+// 网页访客痕迹审计 + 自定义分类自动生成
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.ISiteViewEventService, PrdAgent.Infrastructure.Services.SiteViewEventService>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IWebFolderService, PrdAgent.Infrastructure.Services.WebFolderService>();
 // 统一短链路由（所有分享系统共用 /s/{seq}）
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IShortLinkService, PrdAgent.Infrastructure.Services.ShortLinkService>();
 // 分享链接密码安全统一服务（PBKDF2 + FixedTimeEquals + 失败锁），网页/周报/知识库/工作流共用

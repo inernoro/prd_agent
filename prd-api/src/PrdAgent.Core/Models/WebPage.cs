@@ -72,6 +72,12 @@ public class HostedSite
     /// <summary>所属用户 ID</summary>
     public string OwnerUserId { get; set; } = string.Empty;
 
+    /// <summary>
+    /// 分享到的团队 ID 列表 —— 出现在这些团队的「网页托管」团队视图里。
+    /// 空列表表示纯个人站点（个人路径不受影响）。仅网页托管模块消费此字段。
+    /// </summary>
+    public List<string> SharedTeamIds { get; set; } = new();
+
     /// <summary>浏览次数</summary>
     public long ViewCount { get; set; }
 

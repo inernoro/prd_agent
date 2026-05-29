@@ -239,7 +239,7 @@ export function ReviewLeaderboardView({ groupBy }: Props) {
             label="一次性通过率"
             value={formatPct(summary.totalFirstTimePassRate)}
             progress={summary.totalFirstTimePassRate ?? 0}
-            hint="通过的方案中，从未重审的占比"
+            hint="一次提交即通过、未触发重传救机会的方案占比（按方案标题去重）"
           />
         </div>
       )}
@@ -322,9 +322,11 @@ export function ReviewLeaderboardView({ groupBy }: Props) {
         </div>
       )}
 
-      {/* 历史数据近似值提示 */}
+      {/* 统计口径说明 */}
       <p className="text-[11px] text-white/30 leading-relaxed">
-        说明：「一次性通过率」= 通过的方案中从未触发「重新评审」的占比；2026-05-13 之前的历史数据未追踪 rerun 次数，统计为近似值。
+        说明：方案按「提交人 + 标题」去重，同标题的多次提交视为同一方案。
+        「一次性通过率」= 一次提交即通过、且未使用「重新上传方案」救机会的方案数 / 该用户在此期间的方案总数；
+        系统故障导致的「重新评审」不计入用户重评。
       </p>
     </div>
   );

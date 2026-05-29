@@ -113,7 +113,10 @@ export default function SkillShareViewPage() {
 
       {/* 内容 */}
       <div className="flex-1" style={{ minHeight: 0 }}>
-        <SkillContentBrowser zipUrl={data.skill.zipUrl} sizeBytes={data.skill.zipSizeBytes} />
+        <SkillContentBrowser
+          zipUrl={`/api/marketplace/skills/public/skill-share/${token}/zip-content`}
+          sizeBytes={data.skill.zipSizeBytes}
+        />
       </div>
     </div>
   );

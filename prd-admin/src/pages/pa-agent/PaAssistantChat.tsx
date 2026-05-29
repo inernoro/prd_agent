@@ -1,15 +1,21 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Send, Paperclip, X, ChevronRight, Loader2, Plus, Zap, Check, CheckCircle,
-  Scissors, AlarmClock, AlertTriangle, ListChecks,
+  Scissors, AlarmClock, AlertTriangle, ListChecks, Brain, Eye, ExternalLink,
   FileText, FileSpreadsheet, FileType, File as FileIcon,
 } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import type { PaMessage, PaTask, PaUploadResult, PaTaskEvent, PaSessionInfo } from '@/services/real/paAgentService';
+import type {
+  PaMessage, PaTask, PaUploadResult, PaTaskEvent, PaSessionInfo, PaProfileEvent,
+} from '@/services/real/paAgentService';
 import {
   getPaMessages, streamPaChat, createPaTask, uploadPaFile,
 } from '@/services/real/paAgentService';
+import { StreamingText } from '@/components/streaming';
+import { ChatMarkdown } from './ChatMarkdown';
+import { PaSecretaryHeroArt } from '@/pages/ai-toolbox/components/PaSecretaryHeroArt';
+
+/** 「进一步了解我」外链 — 米多内部 wp 链接，承载毒舌秘书完整产品介绍 */
+const LEARN_MORE_URL = 'https://map.ebcone.net/s/wp/0q1-vbQ9HehA';
 
 // ── Quick commands（毒舌秘书风格，零 emoji） ──────────────────────────────
 
@@ -56,6 +62,25 @@ function FileTypeIcon({ name, size = 12 }: { name: string; size?: number }) {
 // Strip JSON block from content for display
 function stripTaskJson(content: string): string {
   return content.replace(/```json\s*[\s\S]*?```/g, '').trim();
+}
+
+/** 流式首包未到前的等待态：橙色「让我想想...」+ 动态省略号 */
+function PaThinkingIndicator() {
+  return (
+    <div
+      className="pa-thinking-indicator"
+      role="status"
+      aria-live="polite"
+      aria-label="让我想想"
+    >
+      <span className="pa-thinking-label">让我想想</span>
+      <span className="pa-thinking-ellipsis" aria-hidden="true">
+        <span>.</span>
+        <span>.</span>
+        <span>.</span>
+      </span>
+    </div>
+  );
 }
 
 // ── SuggestTaskButton ──────────────────────────────────────────────────────
@@ -129,6 +154,44 @@ function SuggestTaskButton({ event, sessionId, onSaved }: SuggestTaskButtonProps
   );
 }
 
+// ── ProfileUpdateToast ─────────────────────────────────────────────────────
+
+function ProfileUpdateToast({ event, onDismiss }: { event: PaProfileEvent; onDismiss: () => void }) {
+  useEffect(() => {
+    const t = setTimeout(onDismiss, 7000);
+    return () => clearTimeout(t);
+  }, [onDismiss]);
+
+  const isSuggest = event.confidence === 'suggest';
+  const items = [...event.addedMemories.map(m => m.text), ...event.changedFields];
+  if (items.length === 0) return null;
+
+  return (
+    <div className="mt-2 flex flex-col gap-1">
+      <div
+        className="self-start inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium"
+        style={{
+          background: isSuggest ? 'rgba(245,158,11,0.12)' : 'rgba(99,102,241,0.12)',
+          color: isSuggest ? '#fcd34d' : '#a5b4fc',
+          border: isSuggest
+            ? '1px solid rgba(245,158,11,0.3)'
+            : '1px solid rgba(99,102,241,0.3)',
+        }}
+        title={isSuggest
+          ? '秘书觉得可能要记下来 — 在「我的画像」里确认才会参与未来对话'
+          : '秘书已经记下来了 — 下次对话会带上'}
+      >
+        {isSuggest ? <Eye size={11} /> : <Brain size={11} />}
+        {isSuggest ? '秘书想记下：' : '秘书记住了：'}
+        <span className="font-normal max-w-[240px] truncate">
+          {items.slice(0, 2).join(' / ')}
+          {items.length > 2 && ` 等 ${items.length} 项`}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 // ── AutoSaveToast ──────────────────────────────────────────────────────────
 
 function AutoSaveToast({ event, onDismiss }: { event: PaTaskEvent; onDismiss: () => void }) {
@@ -169,11 +232,13 @@ interface ChatBubbleProps {
   sessionId: string;
   suggestEvent?: PaTaskEvent;
   autoEvent?: PaTaskEvent;
+  profileEvent?: PaProfileEvent;
   onTaskSaved: (task: PaTask) => void;
 }
 
-function ChatBubble({ msg, sessionId, suggestEvent, autoEvent, onTaskSaved }: ChatBubbleProps) {
+function ChatBubble({ msg, sessionId, suggestEvent, autoEvent, profileEvent, onTaskSaved }: ChatBubbleProps) {
   const [autoDismissed, setAutoDismissed] = useState(false);
+  const [profileDismissed, setProfileDismissed] = useState(false);
   const isUser = msg.role === 'user';
   const displayContent = stripTaskJson(msg.content);
 
@@ -181,7 +246,7 @@ function ChatBubble({ msg, sessionId, suggestEvent, autoEvent, onTaskSaved }: Ch
     return (
       <div className="flex justify-end mb-4">
         <div
-          className="max-w-[80%] rounded-2xl rounded-br-sm px-4 py-2.5 text-sm leading-relaxed"
+          className="max-w-[80%] rounded-2xl rounded-br-sm px-4 py-2.5 pa-fs-sm"
           style={{ background: 'linear-gradient(135deg,#3b82f6,#6366f1)', color: '#fff' }}
         >
           {msg.content}
@@ -200,16 +265,14 @@ function ChatBubble({ msg, sessionId, suggestEvent, autoEvent, onTaskSaved }: Ch
       </div>
       <div className="max-w-[82%]">
         <div
-          className="rounded-2xl rounded-tl-sm px-4 py-3 text-sm leading-relaxed"
+          className="rounded-2xl rounded-tl-sm px-4 py-3 pa-fs-sm"
           style={{
             background: 'var(--bg-elevated)',
             border: '1px solid var(--border-default)',
             color: 'var(--text-primary)',
           }}
         >
-          <div className="prose prose-sm max-w-none" style={{ color: 'inherit' }}>
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayContent}</ReactMarkdown>
-          </div>
+          <ChatMarkdown content={displayContent} />
         </div>
         {/* Auto-saved toast */}
         {autoEvent && !autoDismissed && (
@@ -218,6 +281,10 @@ function ChatBubble({ msg, sessionId, suggestEvent, autoEvent, onTaskSaved }: Ch
         {/* Suggest button */}
         {suggestEvent && (
           <SuggestTaskButton event={suggestEvent} sessionId={sessionId} onSaved={onTaskSaved} />
+        )}
+        {/* Profile update toast */}
+        {profileEvent && !profileDismissed && (
+          <ProfileUpdateToast event={profileEvent} onDismiss={() => setProfileDismissed(true)} />
         )}
       </div>
     </div>
@@ -235,6 +302,7 @@ interface PaAssistantChatProps {
 export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: PaAssistantChatProps) {
   const [messages, setMessages] = useState<PaMessage[]>([]);
   const [taskEvents, setTaskEvents] = useState<Record<string, PaTaskEvent>>({});
+  const [profileEvents, setProfileEvents] = useState<Record<string, PaProfileEvent>>({});
   const [streamingContent, setStreamingContent] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [input, setInput] = useState('');
@@ -256,6 +324,7 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
     if (!sessionId) return;
     setMessages([]);
     setTaskEvents({});
+    setProfileEvents({});
     setLoadingHistory(true);
     (async () => {
       try {
@@ -367,6 +436,9 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
           onSessionUpdated?.({ updatedAt: new Date().toISOString() });
         }
       },
+      onProfileUpdate: (event) => {
+        setProfileEvents(prev => ({ ...prev, [assistantMsgId]: event }));
+      },
     });
   }, [isStreaming, sessionId, attachment, onTaskSaved, onSessionUpdated]);
 
@@ -390,49 +462,94 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
             <Loader2 size={22} className="animate-spin" style={{ color: 'var(--text-muted)' }} />
           </div>
         ) : isEmpty ? (
-          <div className="flex flex-col items-center justify-center h-full gap-6 px-4">
+          <div className="flex flex-col items-center justify-center h-full gap-7 px-4 pa-empty-enter">
             <div className="text-center max-w-md">
-              <div
-                className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-3"
-                style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}
-              >
-                <Zap size={26} color="#fff" />
+              <div className="flex items-center justify-center mx-auto mb-4">
+                <PaSecretaryHeroArt size={96} />
               </div>
-              <div className="text-base font-semibold mb-1">毒舌秘书</div>
-              <div className="text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-                我不是来陪聊的，是来帮你把混乱变成清单的。
-                <br />
-                跟我说「挺好的」我会装没听见——把你最难的事丢过来。
+              {/* display 标题层 — 流星扫光 */}
+              <div
+                className="pa-hero-title-shooting font-semibold mb-2"
+                style={{ fontSize: 'calc(22px * var(--pa-fs-scale))', lineHeight: 'calc(28px * var(--pa-fs-scale))', letterSpacing: '-0.01em' }}
+              >
+                毒舌秘书
+              </div>
+              {/* 一段两行：用户指定的新文案 */}
+              <div
+                className="mb-1"
+                style={{ fontSize: 'calc(13.5px * var(--pa-fs-scale))', lineHeight: 'calc(22px * var(--pa-fs-scale))', color: 'var(--text-secondary)' }}
+              >
+                把模糊想法转成 MECE 执行清单的 MBB 级私人助理。
+              </div>
+              <div
+                style={{ fontSize: 'calc(12px * var(--pa-fs-scale))', lineHeight: 'calc(20px * var(--pa-fs-scale))', color: 'var(--text-muted)', opacity: 0.85 }}
+              >
+                毒舌幽默、不堆鸡汤、能落盘。
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-2 w-full max-w-sm">
+            <div className="grid grid-cols-2 gap-2.5 w-full max-w-md">
               {QUICK_COMMANDS.map((cmd, i) => (
                 <button
                   key={i}
                   onClick={() => void handleSend(cmd.prompt)}
-                  className="flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs text-left transition-all hover:scale-[1.02]"
+                  className="pa-quick-cmd group flex items-center gap-2 px-3 py-2.5 rounded-xl pa-fs-xs text-left"
                   style={{
                     background: 'var(--bg-elevated)',
                     border: '1px solid var(--border-default)',
                     color: 'var(--text-secondary)',
                   }}
-                  onMouseEnter={e => { e.currentTarget.style.borderColor = '#6366f166'; }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-default)'; }}
                 >
-                  <span className="shrink-0" style={{ color: '#6366f1' }}>{cmd.icon}</span>
-                  <span className="font-medium truncate">{cmd.label}</span>
-                  <ChevronRight size={11} className="ml-auto shrink-0" style={{ color: 'var(--text-muted)' }} />
+                  <span className="pa-quick-cmd-icon shrink-0 w-6 h-6 rounded-lg flex items-center justify-center transition-all">
+                    {cmd.icon}
+                  </span>
+                  <span className="font-medium truncate flex-1">{cmd.label}</span>
+                  <ChevronRight size={11} className="opacity-30 group-hover:opacity-90 group-hover:translate-x-0.5 transition-all" />
                 </button>
               ))}
             </div>
-            <p className="text-[11px] text-center max-w-sm" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
-              明确待办自动入库；不确定的会让你拍板。
-            </p>
+
+            {/* 二级 CTA：进一步了解我（ghost 按钮，外链新窗口） */}
+            <a
+              href={LEARN_MORE_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="pa-learn-more group inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[11px] font-medium border"
+              style={{
+                background: 'transparent',
+                color: 'var(--text-muted)',
+              }}
+              title="打开毒舌秘书完整介绍（外链 · 新窗口）"
+            >
+              <span>进一步了解我</span>
+              <ExternalLink
+                size={10}
+                className="opacity-60 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all"
+              />
+            </a>
+
+            <div className="flex items-center gap-2 text-[10.5px]" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
+              <kbd
+                className="px-1.5 py-0.5 rounded font-mono text-[10px]"
+                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
+              >
+                Enter
+              </kbd>
+              <span>发送</span>
+              <span className="opacity-40">·</span>
+              <kbd
+                className="px-1.5 py-0.5 rounded font-mono text-[10px]"
+                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
+              >
+                Shift+Enter
+              </kbd>
+              <span>换行</span>
+            </div>
           </div>
         ) : (
           <>
             {messages.map((msg) => {
               const event = taskEvents[msg.id];
+              const profileEvent = profileEvents[msg.id];
               return (
                 <ChatBubble
                   key={msg.id}
@@ -440,40 +557,42 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
                   sessionId={sessionId}
                   suggestEvent={event?.confidence === 'suggest' ? event : undefined}
                   autoEvent={event?.confidence === 'auto' ? event : undefined}
+                  profileEvent={profileEvent}
                   onTaskSaved={onTaskSaved ?? (() => {})}
                 />
               );
             })}
-            {/* Streaming bubble */}
+            {/* Streaming bubble — 用 StreamingText 实现 blur-focus 入场，
+                避免 ReactMarkdown 每个 chunk 全量重渲染导致的抖动 */}
             {isStreaming && (
-              <div className="flex justify-start mb-4 gap-2.5">
+              <div className="flex justify-start mb-4 gap-2.5 streaming-bubble-enter">
                 <div
                   className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center mt-0.5"
-                  style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}
+                  style={{
+                    background: 'linear-gradient(135deg,#6366f1,#8b5cf6)',
+                    boxShadow: '0 0 0 2px rgba(99,102,241,0.12), 0 8px 24px -8px rgba(139,92,246,0.45)',
+                  }}
                 >
                   <Zap size={13} color="#fff" />
                 </div>
                 <div
-                  className="max-w-[82%] rounded-2xl rounded-tl-sm px-4 py-3 text-sm"
-                  style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                  className="max-w-[82%] rounded-2xl rounded-tl-sm px-4 py-3 pa-fs-sm pa-thinking-bubble"
+                  style={{
+                    background: 'var(--bg-elevated)',
+                    border: '1px solid var(--border-default)',
+                    color: 'var(--text-primary)',
+                    boxShadow: '0 1px 0 rgba(255,255,255,0.02) inset',
+                  }}
                 >
                   {streamingContent ? (
-                    <div className="prose prose-sm max-w-none" style={{ color: 'inherit' }}>
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {stripTaskJson(streamingContent.replace(/\u200B/g, ''))}
-                      </ReactMarkdown>
-                    </div>
+                    <StreamingText
+                      text={stripTaskJson(streamingContent.replace(/\u200B/g, ''))}
+                      streaming
+                      mode="blur"
+                      cursorContent="dot"
+                    />
                   ) : (
-                    <div className="flex items-center gap-1.5">
-                      {[0, 150, 300].map(d => (
-                        <span key={d} className="w-1.5 h-1.5 rounded-full animate-bounce"
-                          style={{ background: 'var(--text-muted)', animationDelay: `${d}ms` }} />
-                      ))}
-                    </div>
-                  )}
-                  {streamingContent && (
-                    <span className="inline-block w-0.5 h-4 align-middle animate-pulse ml-0.5"
-                      style={{ background: '#6366f1' }} />
+                    <PaThinkingIndicator />
                   )}
                 </div>
               </div>
@@ -521,7 +640,7 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
             disabled={isStreaming}
             placeholder={isStreaming ? '正在回复中...' : attachment ? '说说你想拿这份文档干什么。' : '说事实，不说感受。'}
             rows={1}
-            className="w-full resize-none bg-transparent text-sm outline-none px-4 pt-3 pb-1"
+            className="w-full resize-none bg-transparent pa-fs-sm outline-none px-4 pt-3 pb-1"
             style={{ color: 'var(--text-primary)', minHeight: 42, maxHeight: 140 }}
           />
           <div className="flex items-center justify-between px-3 pb-2.5 pt-1 gap-2">

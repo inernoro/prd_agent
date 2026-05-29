@@ -214,6 +214,25 @@ export type CreateWorkspaceImageGenRunContract = (args: {
   idempotencyKey?: string;
 }) => Promise<ApiResponse<{ runId: string }>>;
 
+/** 画布对账：按 run.TargetCanvasKey 反查真实结果，修复 running/无图 error 的卡死占位（不依赖前端 runId） */
+export type ReconcileCanvasItem = {
+  key: string;
+  action: 'recovered' | 'marked-error' | 'already-error' | 'in-progress' | 'no-run';
+  runId?: string;
+  runStatus?: string;
+  src?: string | null;
+  assetId?: string | null;
+  sha256?: string | null;
+  originalSrc?: string | null;
+  originalSha256?: string | null;
+  prompt?: string | null;
+  errorMessage?: string | null;
+};
+
+export type ReconcileWorkspaceCanvasContract = (args: { id: string; dryRun?: boolean }) => Promise<
+  ApiResponse<{ reconciled: ReconcileCanvasItem[]; updated: boolean; dryRun?: boolean; conflict?: boolean }>
+>;
+
 export type DeleteVisualAgentWorkspaceAssetContract = (input: { id: string; assetId: string }) => Promise<ApiResponse<{ deleted: boolean }>>;
 
 export type RefreshVisualAgentWorkspaceCoverContract = (input: { id: string; limit?: number; idempotencyKey?: string }) => Promise<

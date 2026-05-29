@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Atom, Check, LayoutGrid, Monitor, Moon, Search, Settings, Sun } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Check, LayoutGrid, LogOut, Monitor, Moon, Search, Settings, Sun } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { CommitInbox } from '@/components/CommitInbox';
 import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
 import { SiteNoticeInbox } from '@/components/SiteNoticeInbox';
+import { CdsMetallicLogo } from '@/components/brand/CdsMetallicLogo';
 import { Button } from '@/components/ui/button';
+import { apiUrl } from '@/lib/api';
 import { applyThemeMode, useTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
 
@@ -36,12 +39,31 @@ export interface AppShellProps {
   wide?: boolean;
 }
 
+type ShellAuthStatus = {
+  enabled?: boolean;
+  mode?: string;
+  logoutEndpoint?: string | null;
+};
+
+const preloadProjectListPage = (): void => { void import('@/pages/ProjectListPage'); };
+const preloadCdsSettingsPage = (): void => { void import('@/pages/CdsSettingsPage'); };
+
+function shellLoginHref(mode?: string): string {
+  const path = mode === 'github' ? '/api/auth/github/login' : '/login';
+  if (window.location.port === '5173') {
+    return `${window.location.protocol}//${window.location.hostname}:9900${path}`;
+  }
+  return path;
+}
+
 export function AppShell({ active = 'projects', topbar, children, wide = false }: AppShellProps): JSX.Element {
   /*
    * Global Cmd/Ctrl+K → CommandPalette opens. Mounting it here means every
    * page gets the palette for free, regardless of which page added the rail.
    */
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [authStatus, setAuthStatus] = useState<ShellAuthStatus | null>(null);
+  const [logoutState, setLogoutState] = useState<'idle' | 'running' | 'error'>('idle');
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const isAccel = event.metaKey || event.ctrlKey;
@@ -59,9 +81,48 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
     };
   }, []);
 
+  useEffect(() => {
+    const ctrl = new AbortController();
+    fetch(apiUrl('/api/auth/status'), {
+      credentials: 'include',
+      headers: { Accept: 'application/json' },
+      signal: ctrl.signal,
+    })
+      .then((res) => res.ok ? res.json() as Promise<ShellAuthStatus> : null)
+      .then((data) => setAuthStatus(data))
+      .catch((err: unknown) => {
+        if ((err as DOMException)?.name === 'AbortError') return;
+        setAuthStatus(null);
+      });
+    return () => ctrl.abort();
+  }, []);
+
+  const logout = async (): Promise<void> => {
+    const endpoint = authStatus?.logoutEndpoint;
+    if (!endpoint) return;
+    setLogoutState('running');
+    try {
+      const res = await fetch(apiUrl(endpoint), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      window.location.href = shellLoginHref(authStatus.mode);
+    } catch {
+      setLogoutState('error');
+      window.setTimeout(() => setLogoutState('idle'), 3000);
+    }
+  };
+
   return (
     <div className="cds-app-shell">
-      <AppRail active={active} />
+      <AppRail
+        active={active}
+        canLogout={Boolean(authStatus?.logoutEndpoint)}
+        logoutState={logoutState}
+        onLogout={() => { void logout(); }}
+      />
       <div className="flex min-w-0 flex-col">
         {topbar}
         <main className={cn('cds-main', wide ? 'cds-main--wide' : null)}>
@@ -225,12 +286,22 @@ export function PaletteHint(): JSX.Element {
   );
 }
 
-function AppRail({ active }: { active: AppNavKey }): JSX.Element {
+function AppRail({
+  active,
+  canLogout,
+  logoutState,
+  onLogout,
+}: {
+  active: AppNavKey;
+  canLogout: boolean;
+  logoutState: 'idle' | 'running' | 'error';
+  onLogout: () => void;
+}): JSX.Element {
   return (
     <nav className="cds-rail" aria-label="主导航">
       <div className="cds-rail-brand">
         <div className="cds-rail-avatar" aria-label="CDS">
-          <Atom className="cds-rail-avatar-icon" aria-hidden />
+          <CdsMetallicLogo className="cds-rail-avatar-icon" aria-hidden />
         </div>
         <div className="min-w-0 flex-1">
           <div className="cds-rail-brand-title truncate">Cloud Dev Suite</div>
@@ -238,28 +309,47 @@ function AppRail({ active }: { active: AppNavKey }): JSX.Element {
       </div>
 
       <div className="cds-rail-section">
-      <a
-        href="/project-list"
+      <Link
+        to="/project-list"
         className="cds-rail-item"
         data-active={active === 'projects' ? 'true' : 'false'}
         aria-label="项目列表"
         title="项目列表"
+        onMouseEnter={preloadProjectListPage}
+        onFocus={preloadProjectListPage}
       >
         <LayoutGrid />
         <span>Projects</span>
-      </a>
-      <a
-        href="/cds-settings"
+      </Link>
+      <Link
+        to="/cds-settings"
         className="cds-rail-item"
         data-active={active === 'cds-settings' ? 'true' : 'false'}
         aria-label="CDS 系统设置"
         title="CDS 系统设置（更新 / 存储 / 集群 / 全局变量）"
+        onMouseEnter={preloadCdsSettingsPage}
+        onFocus={preloadCdsSettingsPage}
       >
         <Settings />
         <span>Settings</span>
-      </a>
+      </Link>
       </div>
       <div className="flex-1" />
+      {canLogout ? (
+        <button
+          type="button"
+          className="cds-rail-item cds-rail-item--danger"
+          onClick={onLogout}
+          disabled={logoutState === 'running'}
+          aria-label="退出登录"
+          title="退出登录"
+        >
+          <LogOut />
+          <span>
+            {logoutState === 'running' ? '退出中' : logoutState === 'error' ? '退出失败' : 'Logout'}
+          </span>
+        </button>
+      ) : null}
       {/* 2026-05-04 主题切换从这里挪到 AppShell 顶层右上(FloatingThemeToggle),
           原因:左下与 GlobalUpdateBadge 浮动徽章在某些状态下视觉重叠;industry
           标准位置(Vercel / Linear / Notion / Stripe)都在右上。 */}

@@ -21,6 +21,7 @@ import * as Popover from '@radix-ui/react-popover';
 import {
   deleteVisualAgentWorkspaceAsset,
   createWorkspaceImageGenRun,
+  reconcileVisualAgentWorkspaceCanvas,
   generateVisualAgentWorkspaceTitle,
   getVisualAgentWorkspaceDetail,
   listVisualAgentWorkspaceMessages,
@@ -65,7 +66,7 @@ import { resolveImageRefs, buildRequestText } from '@/lib/imageRefResolver';
 import type { CanvasImageItem as ContractCanvasItem, ChipRef } from '@/lib/imageRefContract';
 import { moveUp, moveDown, bringToFront, sendToBack } from '@/lib/canvasLayerUtils';
 import { assignMissingRefIds, getMaxRefId } from '@/lib/visualAgentCanvasPersist';
-import type { ImageAsset, VisualAgentCanvas, VisualAgentWorkspace } from '@/services/contracts/visualAgent';
+import type { ImageAsset, ReconcileCanvasItem, VisualAgentCanvas, VisualAgentWorkspace } from '@/services/contracts/visualAgent';
 import type { Model } from '@/types/admin';
 import {
   ArrowUpToLine,
@@ -227,6 +228,8 @@ type PersistedCanvasElementV1 =
       hidden?: boolean;
       /** 占位状态：running 表示生成中，后端会回填 */
       status?: 'running' | 'error';
+      /** 占位元素关联的后端生图 runId，持久化以便刷新后快速对账（SSOT 仍是后端 run.TargetCanvasKey） */
+      runId?: string;
       /** 图片引用 ID，用于消息中的 @imgN 引用，持久化保存 */
       refId?: number;
       ext?: Record<string, unknown>;
@@ -344,6 +347,8 @@ function canvasToPersistedV1(items: CanvasImageItem[]): { state: PersistedCanvas
         naturalH: it.naturalH,
         // 保存占位状态，以便后端回填时能找到目标元素
         status: isPlaceholder ? (it.status as 'running' | 'error') : undefined,
+        // 持久化 runId（仅占位元素）：避免关页/刷新后丢失，导致占位无法被对账/看门狗恢复
+        runId: isPlaceholder && it.runId ? String(it.runId).trim() || undefined : undefined,
         // 持久化 refId
         refId: typeof it.refId === 'number' && it.refId > 0 ? it.refId : undefined,
         ext: {},
@@ -419,6 +424,8 @@ function persistedV1ToCanvas(
         src,
         // 恢复占位状态：running 表示后端仍在生成中
         status: isPlaceholder ? el.status! : 'done',
+        // 恢复持久化的 runId（占位元素），供 in-session 看门狗/刷新走快速路径
+        runId: isPlaceholder && el.runId ? String(el.runId).trim() || undefined : undefined,
         kind: 'image',
         syncStatus: src.startsWith('/api/visual-agent/image-master/assets/file/') || /^https?:\/\//i.test(src) ? 'synced' : 'pending',
         syncError: null,
@@ -486,6 +493,45 @@ function persistedV1ToCanvas(
   }
   // 还原时不应无故少一张；用与持久化一致的上限（MAX_PERSIST_ELEMENTS）
   return { canvas: out.slice(0, MAX_PERSIST_ELEMENTS), missingAssets, localOnlyImages };
+}
+
+/**
+ * 把后端画布对账结果按 key 局部应用到本地画布。
+ * 只动被对账命中的元素，绝不整盘覆盖，避免清掉用户正在进行的位置/选区编辑。
+ */
+function applyReconcileReport(
+  reconciled: ReconcileCanvasItem[],
+  setCanvas: (updater: (prev: CanvasImageItem[]) => CanvasImageItem[]) => void,
+) {
+  for (const r of reconciled) {
+    if (r.action === 'recovered' && r.src) {
+      const src = r.src;
+      setCanvas((prev) =>
+        prev.map((x) =>
+          x.key === r.key
+            ? {
+                ...x,
+                status: 'done' as const,
+                kind: 'image' as const,
+                src,
+                originalSrc: r.originalSrc || src,
+                assetId: r.assetId || x.assetId,
+                sha256: r.sha256 || x.sha256,
+                originalSha256: r.originalSha256 || x.originalSha256,
+                syncStatus: 'synced' as const,
+                syncError: null,
+              }
+            : x
+        )
+      );
+    } else if (r.action === 'marked-error' || r.action === 'already-error') {
+      const msg = r.errorMessage || '生成失败';
+      setCanvas((prev) =>
+        prev.map((x) => (x.key === r.key && x.status === 'running' ? { ...x, status: 'error' as const, errorMessage: msg } : x))
+      );
+    }
+    // in-progress / no-run：后端仍在处理或无对应 run，保留占位
+  }
 }
 
 type UiMsg = {
@@ -2491,52 +2537,22 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           const refIdChanged = assignMissingRefIds(restored.canvas);
           applyCanvasFocus(restored.canvas);
 
-          // 同步 running 状态的元素：查询后端实际状态
-          const runningElements = restored.canvas.filter((el) => el.status === 'running' && el.runId);
-          if (runningElements.length > 0) {
-            void (async () => {
-              for (const el of runningElements) {
-                try {
-                  const res = await getImageGenRun({ runId: el.runId!, includeItems: true, includeImages: true });
-                  if (!res.success || !res.data?.run) continue;
-                  const run = res.data.run;
-                  if (run.status === 'Failed' || run.status === 'Cancelled') {
-                    // 后端已失败，更新前端状态
-                    setCanvas((prev) =>
-                      prev.map((x) =>
-                        x.key === el.key
-                          ? { ...x, status: 'error', errorMessage: run.status === 'Failed' ? '生成失败（后端）' : '已取消' }
-                          : x
-                      )
-                    );
-                  } else if (run.status === 'Completed') {
-                    // 后端已完成，尝试获取图片 URL
-                    const item = res.data.items?.find((it) => it.url);
-                    if (item?.url) {
-                      setCanvas((prev) =>
-                        prev.map((x) =>
-                          x.key === el.key
-                            ? { ...x, status: 'done', src: item.url!, kind: 'image' }
-                            : x
-                        )
-                      );
-                    } else {
-                      // 完成但没有 URL，标记为错误
-                      setCanvas((prev) =>
-                        prev.map((x) =>
-                          x.key === el.key
-                            ? { ...x, status: 'error', errorMessage: '生成完成但无图片 URL' }
-                            : x
-                        )
-                      );
-                    }
-                  }
-                  // 如果是 Queued/Running，保持 running 状态，用户可以等待或重试
-                } catch {
-                  // 查询失败，保持原状态
+          // 加载即对账：修复历史上 runId 未落库 / 后端失败未回填导致的卡死占位（running / 无图 error）。
+          // 走 workspace 级对账（按 TargetCanvasKey 反查），不依赖前端持久化的 runId。
+          const hasStuck = restored.canvas.some((el) => el.status === 'running' || (el.status === 'error' && !el.src));
+          if (hasStuck && workspaceId) {
+            const reconcileWid = workspaceId;
+            void reconcileVisualAgentWorkspaceCanvas({ id: reconcileWid, dryRun: false })
+              .then((res) => {
+                // 防串台：响应回来时若已切换 workspace / 卸载，丢弃，避免把别的 workspace 的对账结果套到当前画布
+                if (cancelled || workspaceId !== reconcileWid) return;
+                if (res.success && res.data?.reconciled?.length) {
+                  applyReconcileReport(res.data.reconciled, setCanvas);
                 }
-              }
-            })();
+              })
+              .catch(() => {
+                // 对账失败：watchdog 会再试
+              });
           }
 
           if (restored.missingAssets > 0 || restored.localOnlyImages > 0) {
@@ -2600,57 +2616,134 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     };
   }, [focusStage, pushMsg, setViewport, workspaceId]);
 
-  // Watchdog：定期检查画布上卡住的 running 项目，自动恢复或标记失败
+  // 当前 workspaceId 的最新值引用：供异步回调判断是否已切换 workspace（防串台）
+  const workspaceIdRef = useRef(workspaceId);
+  workspaceIdRef.current = workspaceId;
+
+  // 拿到 runId 后立即把含 runId 的画布落盘（不等 debounce）：避免用户在 debounce 刷盘前关页/切走，
+  // 导致占位落库缺 runId。三条生图路径（主生成 / 快捷操作 / 草图）统一复用，避免只在主路径补 runId。
+  const persistRunIdImmediately = useCallback(
+    (key: string, runId: string) => {
+      void (async () => {
+        try {
+          const next = (canvasRef.current ?? []).map((x) => (x.key === key ? { ...x, runId } : x));
+          const built = canvasToPersistedV1(next);
+          const json = JSON.stringify(built.state);
+          if (json !== lastSavedJsonRef.current) {
+            const r = await saveVisualAgentWorkspaceCanvas({
+              id: workspaceId,
+              schemaVersion: PERSIST_SCHEMA_VERSION,
+              payloadJson: json,
+              idempotencyKey: `runIdSave_${key}_${runId}`,
+            });
+            // 仅保存成功才更新已存标记：失败保留旧标记让 debounce 重试，避免误判已存导致 runId 永不落库。
+            if (r.success) {
+              lastSavedJsonRef.current = json;
+              lastSaveAtRef.current = Date.now();
+            }
+          }
+        } catch {
+          // 立即保存失败不阻断生成；debounce 自动保存仍会兜底
+        }
+      })();
+    },
+    [workspaceId]
+  );
+
+  // 画布对账兜底：按 run.TargetCanvasKey 反查真实结果，修复 running / 无图 error 的卡死占位。
+  // 关键：后端按"画布元素 id == TargetCanvasKey"匹配，不依赖前端 runId，
+  // 因此能拯救历史上 runId 未落库的孤儿占位（详见 backend ReconcileWorkspaceCanvas）。
+  const reconcileStuckCanvas = useCallback(async () => {
+    const wid = workspaceId;
+    if (!wid) return;
+    const items = canvasRef.current ?? [];
+    const hasStuck = items.some((el) => el.status === 'running' || (el.status === 'error' && !el.src));
+    if (!hasStuck) return;
+    try {
+      const res = await reconcileVisualAgentWorkspaceCanvas({ id: wid, dryRun: false });
+      // 防串台：响应回来时若已切换 workspace，丢弃，避免把别的 workspace 的对账结果套到当前画布
+      if (workspaceIdRef.current !== wid) return;
+      if (res.success && res.data?.reconciled?.length) {
+        applyReconcileReport(res.data.reconciled, setCanvas);
+      }
+    } catch {
+      // 对账失败：下次 watchdog / 下次加载再试
+    }
+  }, [workspaceId]);
+
+  const reconcileStuckCanvasRef = useRef(reconcileStuckCanvas);
+  useEffect(() => {
+    reconcileStuckCanvasRef.current = reconcileStuckCanvas;
+  }, [reconcileStuckCanvas]);
+
+  // Watchdog：定期检查画布上卡住的 running / 无图 error 占位并自动恢复。
+  // 两条路径缺一不可：
+  //  A) 有 runId 的占位 → 直查 run 状态同步本地。覆盖"SSE 掉线但 worker 已成功"的 desync：
+  //     此时 server 画布已是 done，workspace 对账只扫 server 端仍卡死的元素、扫不到它，
+  //     必须靠直查 run 把本地从 running 拉成 done（否则本地永远转圈）。
+  //  B) 无 runId 的占位（历史孤儿）→ 走 workspace 级对账（按 TargetCanvasKey 反查）。
   useEffect(() => {
     const WATCHDOG_INTERVAL = 15_000; // 每 15 秒检查一次
-    const STALE_THRESHOLD = 120_000; // running 超过 2 分钟视为可能卡住
+    const STALE_THRESHOLD = 45_000; // 占位超过 45 秒未出结果即触发恢复（旧值 120s 过长）
 
     const tid = window.setInterval(() => {
       const items = canvasRef.current;
-      const staleRunning = items.filter(
-        (el) => el.status === 'running' && el.runId && el.createdAt && Date.now() - el.createdAt > STALE_THRESHOLD
+      const stale = items.filter(
+        (el) =>
+          (el.status === 'running' || (el.status === 'error' && !el.src)) &&
+          el.createdAt &&
+          Date.now() - el.createdAt > STALE_THRESHOLD
       );
-      if (staleRunning.length === 0) return;
+      if (stale.length === 0) return;
 
-      // 逐个查询后端实际状态
-      for (const el of staleRunning) {
-        void getImageGenRun({ runId: el.runId!, includeItems: true, includeImages: true })
+      const wid0 = workspaceIdRef.current;
+
+      // A) 有 runId 的卡死元素：直查 run 真实状态，同步本地（覆盖 SSE 掉线 desync）。
+      //    healable 同时含 running 与"无图 error"：transient SSE/查询失败可能把仍在生成的占位误标 error，
+      //    待 run 实际 Completed 时必须能从 error 翻回 done，否则会卡在 error 直到刷新。
+      const healable = (x: CanvasImageItem) => x.status === 'running' || (x.status === 'error' && !x.src);
+      for (const el of stale) {
+        if (!el.runId) continue;
+        const runId = el.runId;
+        const key = el.key;
+        void getImageGenRun({ runId, includeItems: true, includeImages: true })
           .then((res) => {
+            if (workspaceIdRef.current !== wid0) return; // 防串台：已切换 workspace
             if (!res.success || !res.data?.run) return;
             const run = res.data.run;
             if (run.status === 'Completed') {
-              const item = res.data.items?.find((it) => it.url);
-              if (item?.url) {
+              const it = res.data.items?.find((i) => i.url);
+              if (it?.url) {
+                const u = it.url;
                 setCanvas((prev) =>
                   prev.map((x) =>
-                    x.key === el.key && x.status === 'running'
-                      ? { ...x, status: 'done', src: item.url!, kind: 'image', originalSrc: item.url!, syncStatus: 'synced' as const }
+                    x.key === key && healable(x)
+                      ? { ...x, status: 'done', kind: 'image', src: u, originalSrc: u, syncStatus: 'synced' as const, syncError: null }
                       : x
                   )
                 );
               } else {
                 setCanvas((prev) =>
-                  prev.map((x) =>
-                    x.key === el.key && x.status === 'running'
-                      ? { ...x, status: 'error', errorMessage: '生成完成但无图片数据' }
-                      : x
-                  )
+                  prev.map((x) => (x.key === key && x.status === 'running' ? { ...x, status: 'error', errorMessage: '生成完成但无图片数据' } : x))
                 );
               }
             } else if (run.status === 'Failed' || run.status === 'Cancelled') {
+              const errItem = res.data.items?.find((i) => i.errorMessage);
+              const msg = run.status === 'Cancelled' ? '已取消' : (errItem?.errorMessage || '生成失败');
               setCanvas((prev) =>
-                prev.map((x) =>
-                  x.key === el.key && x.status === 'running'
-                    ? { ...x, status: 'error', errorMessage: run.status === 'Failed' ? '生成失败' : '已取消' }
-                    : x
-                )
+                prev.map((x) => (x.key === key && x.status === 'running' ? { ...x, status: 'error', errorMessage: msg } : x))
               );
             }
-            // Queued/Running：后端仍在处理，继续等待
+            // Queued/Running：后端仍在处理，保留占位
           })
           .catch(() => {
-            // 查询失败，不做处理，下次 watchdog 再试
+            // 查询失败，下次 watchdog 再试
           });
+      }
+
+      // B) 无 runId 的卡死元素（历史孤儿）→ workspace 级对账
+      if (stale.some((el) => !el.runId)) {
+        void reconcileStuckCanvasRef.current();
       }
     }, WATCHDOG_INTERVAL);
 
@@ -3876,11 +3969,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
       // 保存 runId 到画布元素，用于刷新页面后同步状态
       setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, runId } : x)));
+      // 立即落盘含 runId 的画布（不等 debounce），三条生图路径统一复用
+      persistRunIdImmediately(key, runId);
 
       // 可选：订阅进度并实时替换（关闭页面也没关系，服务端会最终回填）
       const ac = new AbortController();
       streamImageGenRunWithRetry({
         runId,
+        maxAttempts: 20,
         signal: ac.signal,
         onEvent: (evt) => {
           const data = String(evt.data ?? '').trim();
@@ -3963,18 +4059,51 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             triggerDefectFlash();
           }
         },
-      }).then(() => {
-        // SSE 流结束后，检查该图片是否还在 running 状态
-        // 如果是，说明服务端没有返回最终状态，需要标记为 error
+      }).then(async () => {
+        // SSE 流"结束"≠生成失败：代理 EOF / 重试耗尽都会走到这里，而后端（服务器权威）可能仍在生成。
+        // 因此不再盲目标 error，先查后端真实状态：成功→回填图；仍在跑→保留占位交给看门狗/对账；确认失败/查不到→才标 error。
+        if ((canvasRef.current.find((x) => x.key === key)?.status) !== 'running') return;
+        // 默认按"超时/连接中断"处理；若后端能给出真实失败原因，则覆盖为真实原因（不再一律显示超时）。
+        let failMsg = '生成超时或连接中断，请重试';
+        try {
+          const res = await getImageGenRun({ runId, includeItems: true, includeImages: true });
+          if (res.success && res.data?.run) {
+            const run = res.data.run;
+            if (run.status === 'Completed') {
+              const it = res.data.items?.find((i) => i.url);
+              if (it?.url) {
+                const u = it.url;
+                setCanvas((prev) =>
+                  prev.map((x) =>
+                    x.key === key && x.status === 'running'
+                      ? { ...x, status: 'done', kind: 'image', src: u, originalSrc: u, syncStatus: 'synced' as const }
+                      : x
+                  )
+                );
+                return;
+              }
+              failMsg = '生成完成但无图片数据，请重试';
+            } else if (run.status === 'Queued' || run.status === 'Running') {
+              // 后端仍在跑：保留 running，交给看门狗/对账
+              return;
+            } else if (run.status === 'Failed' || run.status === 'Cancelled') {
+              // surface 真实失败原因，而不是误报"超时"
+              const errItem = res.data.items?.find((i) => i.errorMessage);
+              failMsg = run.status === 'Cancelled' ? '已取消' : (errItem?.errorMessage || '生成失败');
+            }
+          }
+        } catch {
+          // 查询失败：沿用默认超时文案
+        }
         setCanvas((prev) => {
           const item = prev.find((x) => x.key === key);
           if (item && item.status === 'running') {
-            pushMsg('Assistant', buildGenErrorContent({ msg: '生成超时或连接中断，请重试', refSrc: refSrc || undefined, prompt: displayPrompt || undefined, runId, modelPool: pickedModel?.name || pickedModel?.modelName || '', imageRefShas }));
+            pushMsg('Assistant', buildGenErrorContent({ msg: failMsg, refSrc: refSrc || undefined, prompt: displayPrompt || undefined, runId, modelPool: pickedModel?.name || pickedModel?.modelName || '', imageRefShas }));
             triggerDefectFlash();
           }
           return prev.map((x) =>
             x.key === key && x.status === 'running'
-              ? { ...x, status: 'error', errorMessage: '生成超时或连接中断，请重试' }
+              ? { ...x, status: 'error', errorMessage: failMsg }
               : x
           );
         });
@@ -4145,11 +4274,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         }
         const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
         setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, runId } : x)));
+        persistRunIdImmediately(key, runId);
 
         // 订阅 SSE 流
         const ac = new AbortController();
         void streamImageGenRunWithRetry({
           runId,
+          maxAttempts: 20,
           signal: ac.signal,
           onEvent: (evt) => {
             const data = String(evt.data ?? '').trim();
@@ -4190,15 +4321,46 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt, runId, modelPool: modelPoolName }));
             }
           },
-        }).then(() => {
+        }).then(async () => {
+          // SSE 流结束先查后端真实状态，避免代理 EOF / 重试耗尽时误标 error（后端可能仍在生成）。
+          if ((canvasRef.current.find((x) => x.key === key)?.status) !== 'running') return;
+          let failMsg = '生成超时或连接中断，请重试';
+          try {
+            const res = await getImageGenRun({ runId, includeItems: true, includeImages: true });
+            if (res.success && res.data?.run) {
+              const run = res.data.run;
+              if (run.status === 'Completed') {
+                const it = res.data.items?.find((i) => i.url);
+                if (it?.url) {
+                  const u = it.url;
+                  setCanvas((prev) =>
+                    prev.map((x) =>
+                      x.key === key && x.status === 'running'
+                        ? { ...x, status: 'done', kind: 'image', src: u, originalSrc: u, syncStatus: 'synced' as const }
+                        : x
+                    )
+                  );
+                  return;
+                }
+                failMsg = '生成完成但无图片数据，请重试';
+              } else if (run.status === 'Queued' || run.status === 'Running') {
+                return;
+              } else if (run.status === 'Failed' || run.status === 'Cancelled') {
+                const errItem = res.data.items?.find((i) => i.errorMessage);
+                failMsg = run.status === 'Cancelled' ? '已取消' : (errItem?.errorMessage || '生成失败');
+              }
+            }
+          } catch {
+            // 查询失败：沿用默认超时文案
+          }
           setCanvas((prev) => {
             const item = prev.find((x) => x.key === key);
             if (item && item.status === 'running') {
-              pushMsg('Assistant', buildGenErrorContent({ msg: '生成超时或连接中断，请重试', refSrc: refSrc || undefined, prompt, modelPool: modelPoolName }));
+              pushMsg('Assistant', buildGenErrorContent({ msg: failMsg, refSrc: refSrc || undefined, prompt, modelPool: modelPoolName }));
             }
             return prev.map((x) =>
               x.key === key && x.status === 'running'
-                ? { ...x, status: 'error', errorMessage: '生成超时或连接中断，请重试' }
+                ? { ...x, status: 'error', errorMessage: failMsg }
                 : x
             );
           });
@@ -4209,7 +4371,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt }));
       }
     },
-    [effectiveModel, imageGenSize, workspaceId, setSelectionWithoutChip, pushMsg],
+    [effectiveModel, imageGenSize, workspaceId, setSelectionWithoutChip, pushMsg, persistRunIdImmediately],
   );
 
   /** 快捷操作栏：点击内置/DIY 操作 */
@@ -8911,9 +9073,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             // 订阅 Run 事件流
             const runId = runRes.data.runId;
             setCanvas(prev => prev.map(x => x.key === genKey ? { ...x, runId } : x));
+            persistRunIdImmediately(genKey, runId);
             const sketchAc = new AbortController();
             void streamImageGenRunWithRetry({
               runId,
+              maxAttempts: 20,
               signal: sketchAc.signal,
               onEvent: (evt) => {
                 const evData = String(evt.data ?? '').trim();
@@ -8952,15 +9116,44 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   pushMsg('Assistant', buildGenErrorContent({ msg, refSrc, prompt: desc.trim(), runId, modelPool: modelPoolName }));
                 }
               },
-            }).then(() => {
+            }).then(async () => {
+              // SSE 流结束先查后端真实状态，避免代理 EOF / 重试耗尽时误标 error（后端可能仍在生成）。
+              if ((canvasRef.current.find(x => x.key === genKey)?.status) !== 'running') return;
+              let failMsg = '生成超时或连接中断，请重试';
+              try {
+                const res = await getImageGenRun({ runId, includeItems: true, includeImages: true });
+                if (res.success && res.data?.run) {
+                  const run = res.data.run;
+                  if (run.status === 'Completed') {
+                    const it = res.data.items?.find(i => i.url);
+                    if (it?.url) {
+                      const u = it.url;
+                      setCanvas(prev => prev.map(x =>
+                        x.key === genKey && x.status === 'running'
+                          ? { ...x, status: 'done' as const, kind: 'image' as const, src: u, originalSrc: u, syncStatus: 'synced' as const }
+                          : x
+                      ));
+                      return;
+                    }
+                    failMsg = '生成完成但无图片数据，请重试';
+                  } else if (run.status === 'Queued' || run.status === 'Running') {
+                    return;
+                  } else if (run.status === 'Failed' || run.status === 'Cancelled') {
+                    const errItem = res.data.items?.find(i => i.errorMessage);
+                    failMsg = run.status === 'Cancelled' ? '已取消' : (errItem?.errorMessage || '生成失败');
+                  }
+                }
+              } catch {
+                // 查询失败：沿用默认超时文案
+              }
               setCanvas(prev => {
                 const item = prev.find(x => x.key === genKey);
                 if (item && item.status === 'running') {
-                  pushMsg('Assistant', buildGenErrorContent({ msg: '生成超时或连接中断，请重试', refSrc, prompt: desc.trim(), modelPool: modelPoolName }));
+                  pushMsg('Assistant', buildGenErrorContent({ msg: failMsg, refSrc, prompt: desc.trim(), modelPool: modelPoolName }));
                 }
                 return prev.map(x =>
                   x.key === genKey && x.status === 'running'
-                    ? { ...x, status: 'error' as const, errorMessage: '生成超时或连接中断，请重试' }
+                    ? { ...x, status: 'error' as const, errorMessage: failMsg }
                     : x
                 );
               });

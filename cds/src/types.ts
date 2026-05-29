@@ -507,6 +507,22 @@ export interface BranchEntry {
    */
   githubRepoFullName?: string;
   githubCommitSha?: string;
+  /** Time when CDS last accepted a GitHub push/check metadata update for this branch. */
+  lastPushAt?: string;
+  /** Time when CDS last accepted/attempted to dispatch a deploy request. */
+  lastDeployDispatchAt?: string;
+  /** Commit SHA attached to the last deploy dispatch request. */
+  lastDeployDispatchCommitSha?: string;
+  /** Source that created the last deploy dispatch request. */
+  lastDeployDispatchSource?: 'webhook' | 'manual' | 'system';
+  /** Whether the last deploy dispatch was accepted by the deploy endpoint. */
+  lastDeployDispatchStatus?: 'dispatching' | 'accepted' | 'failed' | 'interrupted';
+  /** Failure reason when the deploy dispatch itself failed before deployment started. */
+  lastDeployDispatchError?: string;
+  /** GitHub user login that triggered the latest webhook touching this branch. */
+  githubSenderLogin?: string;
+  /** Original GitHub avatar URL from webhook payload.sender.avatar_url. */
+  githubSenderAvatarUrl?: string;
   githubCheckRunId?: number;
   githubInstallationId?: number;
   /**
@@ -570,10 +586,13 @@ export interface BranchEntry {
    *   - 'user'      用户在 UI 上点了停止
    *   - 'scheduler' 调度器自动降温/驱逐
    *   - 'executor'  远端执行器
-   *   - 'crash'     容器自行退出（崩溃 / OOM / docker kill），由 auto-restart 巡检发现
+   *   - 'crash'     进程自行异常退出（非 0/143/137）
+   *   - 'oom'       Docker / kernel 明确报告 OOMKilled
+   *   - 'external'  未匹配到 CDS 意图的 docker kill / SIGKILL
+   *   - 'cds'       CDS 生命周期操作（删除 / 重部署替换 / 清理旧容器）
    *   - 'system'    其他系统侧（垃圾回收 / janitor 等）
    */
-  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'system';
+  lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'oom' | 'external' | 'cds' | 'system';
 }
 
 /** State of a single service (one build profile instance) within a branch */
@@ -1143,7 +1162,7 @@ export interface SelfUpdateRecord {
   /** 触发源:目前只有 'manual'(/api/self-update);保留枚举给未来 webhook/auto-poll 接入 */
   trigger: 'manual' | 'force-sync' | 'auto-poll' | 'webhook';
   /** 终态 */
-  status: 'success' | 'failed' | 'aborted';
+  status: 'success' | 'failed' | 'aborted' | 'deferred';
   /** 整个流程耗时(ms);失败也填,便于看是「秒挂」还是「磨蹭半天才失败」。
    *  注意:这只是 process.exit 之前的后端流程时间,**不含 daemon 重启**。 */
   durationMs?: number;
@@ -1233,6 +1252,8 @@ export interface GithubWebhookDelivery {
   commitMessage?: string;
   /** 触发者 GitHub login(payload.sender.login) */
   actor?: string;
+  /** 触发者 GitHub 原始头像 URL(payload.sender.avatar_url) */
+  actorAvatarUrl?: string;
   /** GitHub repository owner / org,用于白名单筛选和一键加入 */
   githubOwner?: string;
   /** GitHub App 白名单判定。blocked 表示已验签但未进入业务 dispatch。 */

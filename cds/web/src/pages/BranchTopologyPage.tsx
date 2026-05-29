@@ -38,6 +38,11 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { apiRequest, ApiError } from '@/lib/api';
+import {
+  reduceBranchListState,
+  type BranchListAction,
+  type BranchListSlice,
+} from '@/lib/branch-list-state';
 import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 
 interface ProjectSummary {
@@ -47,6 +52,7 @@ interface ProjectSummary {
   aliasName?: string;
   gitRepoUrl?: string;
   githubRepoFullName?: string;
+  branchCount?: number;
 }
 
 interface ServiceState {
@@ -186,12 +192,45 @@ type LoadState =
       status: 'ok';
       project: ProjectSummary;
       branches: BranchSummary[];
+      lastKnownGoodBranches: BranchSummary[];
       profiles: BuildProfile[];
       infra: InfraService[];
       routingRules: RoutingRule[];
       previewMode: 'simple' | 'port' | 'multi';
       config: CdsConfigResponse;
+      projectWarning?: string;
     };
+
+type OkLoadState = Extract<LoadState, { status: 'ok' }>;
+
+function applyTopologyBranchAction(
+  current: OkLoadState,
+  action: BranchListAction<BranchSummary>,
+): { state: OkLoadState; needsEmptyRecheck: boolean } {
+  const slice: BranchListSlice<BranchSummary> = {
+    branches: current.branches,
+    lastKnownGoodBranches: current.lastKnownGoodBranches,
+    projectWarning: current.projectWarning,
+  };
+  const result = reduceBranchListState(slice, action);
+  return {
+    state: {
+      ...current,
+      branches: result.state.branches,
+      lastKnownGoodBranches: result.state.lastKnownGoodBranches,
+      projectWarning: result.state.projectWarning,
+    },
+    needsEmptyRecheck: result.needsEmptyRecheck,
+  };
+}
+
+function parseSseJson<T>(event: Event): T | null {
+  try {
+    return JSON.parse((event as MessageEvent).data) as T;
+  } catch {
+    return null;
+  }
+}
 
 function projectIdFromQuery(): string {
   return new URLSearchParams(window.location.search).get('project') || '';
@@ -331,33 +370,75 @@ export function BranchTopologyPage(): JSX.Element {
   const [infraDialogOpen, setInfraDialogOpen] = useState(false);
   const [toast, setToast] = useState('');
 
-  const refresh = useCallback(async (showLoading = false) => {
+  const confirmEmptyBranchList = useCallback(async (source: string) => {
+    if (!projectId) return;
+    try {
+      const [project, branchesRes] = await Promise.all([
+        apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
+        apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`),
+      ]);
+      setState((current) => {
+        if (current.status !== 'ok') return current;
+        return applyTopologyBranchAction(current, {
+          type: 'authoritativeLoaded',
+          branches: branchesRes.branches || [],
+          source,
+          confirmedEmpty: true,
+          projectBranchCount: project.branchCount ?? null,
+        }).state;
+      });
+    } catch (err) {
+      setState((current) => {
+        if (current.status !== 'ok') return current;
+        return applyTopologyBranchAction(current, {
+          type: 'refreshFailed',
+          message: err instanceof ApiError ? err.message : String(err),
+        }).state;
+      });
+    }
+  }, [projectId]);
+
+  const refresh = useCallback(async (showLoading = false, forceLive = false) => {
     if (!projectId) return;
     if (showLoading) setState({ status: 'loading' });
     try {
       const [project, branchesRes, profilesRes, infraRes, routingRulesRes, previewModeRes, config] = await Promise.all([
         apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
-        apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}`),
+        apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}`),
         apiRequest<BuildProfilesResponse>(`/api/build-profiles?project=${encodeURIComponent(projectId)}`),
-        apiRequest<InfraResponse>(`/api/infra?project=${encodeURIComponent(projectId)}`),
+        apiRequest<InfraResponse>(`/api/infra?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}`),
         apiRequest<RoutingRulesResponse>(`/api/routing-rules?project=${encodeURIComponent(projectId)}`),
         apiRequest<PreviewModeResponse>(`/api/projects/${encodeURIComponent(projectId)}/preview-mode`).catch(() => ({ mode: 'multi' as const })),
         apiRequest<CdsConfigResponse>('/api/config').catch(() => ({})),
       ]);
-      setState({
-        status: 'ok',
-        project,
-        branches: branchesRes.branches || [],
-        profiles: profilesRes.profiles || [],
-        infra: infraRes.services || [],
-        routingRules: routingRulesRes.rules || [],
-        previewMode: previewModeRes.mode || 'multi',
-        config,
+      let needsEmptyRecheck = false;
+      setState((current) => {
+        const nextBase: OkLoadState = {
+          status: 'ok',
+          project,
+          branches: current.status === 'ok' ? current.branches : [],
+          lastKnownGoodBranches: current.status === 'ok' ? current.lastKnownGoodBranches : [],
+          profiles: profilesRes.profiles || [],
+          infra: infraRes.services || [],
+          routingRules: routingRulesRes.rules || [],
+          previewMode: previewModeRes.mode || 'multi',
+          config,
+          projectWarning: current.status === 'ok' ? current.projectWarning : undefined,
+        };
+        const applied = applyTopologyBranchAction(nextBase, {
+          type: 'authoritativeLoaded',
+          branches: branchesRes.branches || [],
+          source: forceLive ? '拓扑实时刷新' : '拓扑分支刷新',
+          projectBranchCount: project.branchCount ?? null,
+        });
+        needsEmptyRecheck = applied.needsEmptyRecheck;
+        return applied.state;
       });
+      if (needsEmptyRecheck) void confirmEmptyBranchList('拓扑分支复核');
     } catch (err) {
       setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
     }
-  }, [projectId]);
+  }, [confirmEmptyBranchList, projectId]);
 
   useEffect(() => {
     void refresh(true);
@@ -366,49 +447,84 @@ export function BranchTopologyPage(): JSX.Element {
   useEffect(() => {
     if (!projectId) return;
     const source = new EventSource(`/api/branches/stream?project=${encodeURIComponent(projectId)}`);
+    const applySseAction = (action: BranchListAction<BranchSummary>) => {
+      let needsEmptyRecheck = false;
+      setState((current) => {
+        if (current.status !== 'ok') return current;
+        const applied = applyTopologyBranchAction(current, action);
+        needsEmptyRecheck = needsEmptyRecheck || applied.needsEmptyRecheck;
+        return applied.state;
+      });
+      if (needsEmptyRecheck) void confirmEmptyBranchList(action.type === 'sseSnapshot' ? action.source : '拓扑实时事件');
+    };
     source.addEventListener('snapshot', (ev) => {
-      const data = JSON.parse((ev as MessageEvent).data) as { branches?: BranchSummary[] };
-      setState((current) => current.status === 'ok' ? { ...current, branches: data.branches || [] } : current);
+      const data = parseSseJson<{ branches?: BranchSummary[]; projectId?: string }>(ev);
+      if (!data) {
+        applySseAction({ type: 'sseMalformed', source: '拓扑实时快照' });
+        return;
+      }
+      if (data.projectId && data.projectId !== projectId) return;
+      applySseAction({ type: 'sseSnapshot', branches: data.branches, source: '拓扑实时快照' });
+    });
+    source.addEventListener('branch.created', (ev) => {
+      const data = parseSseJson<{ branch?: BranchSummary }>(ev);
+      if (!data) {
+        applySseAction({ type: 'sseMalformed', source: 'branch.created' });
+        return;
+      }
+      if (!data.branch || data.branch.projectId !== projectId) return;
+      applySseAction({ type: 'sseBranchUpsert', branch: data.branch, projectId });
     });
     source.addEventListener('branch.updated', (ev) => {
-      const data = JSON.parse((ev as MessageEvent).data) as { branch?: BranchSummary };
-      const nextBranch = data.branch;
-      if (!nextBranch) return;
-      setState((current) => {
-        if (current.status !== 'ok') return current;
-        const exists = current.branches.some((branch) => branch.id === nextBranch.id);
-        return {
-          ...current,
-          branches: exists
-            ? current.branches.map((branch) => branch.id === nextBranch.id ? { ...branch, ...nextBranch } : branch)
-            : [nextBranch, ...current.branches],
-        };
-      });
+      const data = parseSseJson<{ branch?: BranchSummary }>(ev);
+      if (!data) {
+        applySseAction({ type: 'sseMalformed', source: 'branch.updated' });
+        return;
+      }
+      if (!data.branch || data.branch.projectId !== projectId) return;
+      applySseAction({ type: 'sseBranchUpsert', branch: data.branch, projectId });
     });
     source.addEventListener('branch.status', (ev) => {
-      const data = JSON.parse((ev as MessageEvent).data) as { branchId?: string; status?: BranchSummary['status'] };
+      const data = parseSseJson<{
+        branchId?: string;
+        projectId?: string;
+        status?: BranchSummary['status'];
+        branch?: BranchSummary;
+      }>(ev);
+      if (!data) {
+        applySseAction({ type: 'sseMalformed', source: 'branch.status' });
+        return;
+      }
       if (!data.branchId || !data.status) return;
-      setState((current) => {
-        if (current.status !== 'ok') return current;
-        return {
-          ...current,
-          branches: current.branches.map((branch) =>
-            branch.id === data.branchId ? { ...branch, status: data.status as BranchSummary['status'] } : branch,
-          ),
-        };
+      const eventProjectId = data.branch?.projectId || data.projectId;
+      if (eventProjectId !== projectId) return;
+      if (data.branch) {
+        applySseAction({
+          type: 'sseBranchUpsert',
+          branch: { ...data.branch, status: data.status },
+          projectId,
+        });
+        return;
+      }
+      applySseAction({
+        type: 'sseBranchPatch',
+        branchId: data.branchId,
+        projectId,
+        patch: { status: data.status } as Partial<BranchSummary>,
       });
     });
     source.addEventListener('branch.removed', (ev) => {
-      const data = JSON.parse((ev as MessageEvent).data) as { branchId?: string };
+      const data = parseSseJson<{ branchId?: string; projectId?: string }>(ev);
+      if (!data) {
+        applySseAction({ type: 'sseMalformed', source: 'branch.removed' });
+        return;
+      }
       if (!data.branchId) return;
-      setState((current) => (
-        current.status === 'ok'
-          ? { ...current, branches: current.branches.filter((branch) => branch.id !== data.branchId) }
-          : current
-      ));
+      if (data.projectId !== projectId) return;
+      applySseAction({ type: 'sseBranchRemove', branchId: data.branchId, projectId });
     });
     return () => source.close();
-  }, [projectId]);
+  }, [confirmEmptyBranchList, projectId]);
 
   useEffect(() => {
     if (!toast) return;
@@ -561,7 +677,7 @@ export function BranchTopologyPage(): JSX.Element {
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => void refresh(false)}
+                onClick={() => void refresh(false, true)}
                 aria-label="刷新"
                 title="刷新"
               >
@@ -598,6 +714,12 @@ export function BranchTopologyPage(): JSX.Element {
             <TopologyMetric label="视图模式" value={activeBranch ? '单分支' : '共享'} detail={activeBranch?.branch || '全部分支'} icon={<Network className="h-4 w-4" />} />
             <TopologyMetric label="预览模式" value={state.status === 'ok' ? state.previewMode : '-'} detail={state.status === 'ok' ? (state.config.previewDomain || state.config.mainDomain || 'localhost') : '-'} icon={<TerminalSquare className="h-4 w-4" />} />
           </div>
+
+          {state.status === 'ok' && state.projectWarning ? (
+            <div className="border-t border-amber-500/20 bg-amber-500/10 px-4 py-2 text-sm text-amber-700 dark:text-amber-300">
+              {state.projectWarning}
+            </div>
+          ) : null}
 
           {state.status === 'ok' ? (
             <div className="border-t border-border px-4 py-3">

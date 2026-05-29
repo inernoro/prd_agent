@@ -5,7 +5,7 @@ import {
   Search, ChevronRight, ChevronDown, Plus, Pin, PinOff,
   ToggleLeft, ToggleRight, Trash2, FilePlus, FolderPlus,
   Upload, Link, LayoutTemplate, Bot, Pencil, Save, X,
-  Sparkles, Wand2, Tags, Replace, BookOpen, Settings,
+  Sparkles, Wand2, Tags, Replace, BookOpen, Settings, Share2,
 } from 'lucide-react';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
@@ -40,6 +40,7 @@ export type DocBrowserEntry = {
   contentType: string;
   fileSize: number;
   tags?: string[];
+  createdAt?: string;
   updatedAt?: string;
   updatedByName?: string;
   summary?: string;
@@ -50,6 +51,14 @@ export type DocBrowserEntry = {
   lastChangedAt?: string;
   metadata?: Record<string, string>;
 };
+
+/**
+ * 目录排序模式：
+ * - 'default'：置顶 → 文件夹 → 主文档 → 按标题升序（用于编辑场景，结构稳定）
+ * - 'created-desc'：置顶 → 文件夹 → 按创建时间倒序（用于阅读/分享场景，新内容先看到）
+ * - 'updated-desc'：置顶 → 文件夹 → 按更新时间倒序
+ */
+export type DocBrowserSortMode = 'default' | 'created-desc' | 'updated-desc';
 
 export type DocBrowserProps = {
   entries: DocBrowserEntry[];
@@ -81,10 +90,40 @@ export type DocBrowserProps = {
   onGenerateSubtitle?: (entryId: string) => void;
   /** 点击"再加工"时触发（仅 text entries 显示） */
   onReprocess?: (entryId: string) => void;
+  /** 点击"分享"时触发（仅文档条目显示），分享单篇文档 */
+  onShareEntry?: (entryId: string) => void;
+  /** 指定后：当该 entry 被选中且内容加载完成时自动进入编辑态（新建文档免再点一次「编辑」） */
+  autoEditEntryId?: string;
+  /** autoEdit 已被消费的回调（清除一次性标记） */
+  onAutoEditConsumed?: () => void;
   /** 点击"替换文件"时触发（仅文件条目显示）。原地替换内容，保留 Id/标签/主文档。 */
   onReplaceFile?: (entryId: string) => void;
+  /** 正在再加工的源文档 → 进度(0-100)。提供时对应行显示"加工中 N%"chip。 */
+  reprocessingMap?: Record<string, number>;
+  /** 已被「单篇分享」的文档 id 集合。命中的行显示黄色"已分享"标识（点击可查看/复制链接）。 */
+  sharedEntryIds?: Set<string>;
   emptyState?: React.ReactNode;
   loading?: boolean;
+  /** 目录排序模式，默认 'default'（置顶+folder+主文档+标题）。阅读/分享场景建议 'created-desc'。 */
+  sortMode?: DocBrowserSortMode;
+  /**
+   * 外观：
+   * - 'inset'：默认，单容器无 gap（知识库 / 分享页，连续阅读体验）
+   * - 'cards'：左右两个独立圆角卡片 + 12px gap（更新中心-周报，强分区视觉）
+   */
+  appearance?: 'inset' | 'cards';
+  /**
+   * 自定义"新鲜"判定（控制条目右侧 NEW 徽章）。
+   * 不传时走默认规则（lastChangedAt < 24h）。
+   * 更新中心-周报传入「自上次查看以来 cutoff」规则。
+   */
+  isEntryFresh?: (entry: DocBrowserEntry) => boolean;
+  /**
+   * 左侧 sidebar 顶部自定义头部内容（搜索框上方）。
+   * 用于显示「周报列表 · 按最近提交 · N 篇」这类列表标题 + 计数。
+   * 不传则不渲染。
+   */
+  sidebarHeader?: React.ReactNode;
 };
 
 // ── (new) 徽标判定：lastChangedAt 在 24 小时以内 ──
@@ -159,7 +198,7 @@ function formatMetaTime(iso?: string): string {
 function ContextMenu({
   x, y, entry, isPrimary, isPinned,
   onSetPrimary, onTogglePin, onDelete, onEditTags, onRename,
-  onGenerateSubtitle, onReprocess, onReplaceFile,
+  onGenerateSubtitle, onReprocess, onShareEntry, onReplaceFile,
   onClose,
 }: {
   x: number;
@@ -174,6 +213,7 @@ function ContextMenu({
   onRename?: (entry: DocBrowserEntry) => void;
   onGenerateSubtitle?: (entryId: string) => void;
   onReprocess?: (entryId: string) => void;
+  onShareEntry?: (entryId: string) => void;
   onReplaceFile?: (entryId: string) => void;
   onClose: () => void;
 }) {
@@ -189,6 +229,7 @@ function ContextMenu({
 
   const showSubtitle = canGenerateSubtitle(entry) && !!onGenerateSubtitle;
   const showReprocess = canReprocess(entry) && !!onReprocess;
+  const showShare = !entry.isFolder && !!onShareEntry;
 
   return (
     <div ref={menuRef} className="surface-popover fixed z-50 min-w-[170px] rounded-[10px] py-1" style={{ left: x, top: y }}>
@@ -208,7 +249,15 @@ function ContextMenu({
           再加工
         </button>
       )}
-      {(showSubtitle || showReprocess) && (
+      {showShare && (
+        <button
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-accent transition-colors hover:bg-white/6"
+          onClick={() => { onShareEntry!(entry.id); onClose(); }}>
+          <Share2 size={12} />
+          分享
+        </button>
+      )}
+      {(showSubtitle || showReprocess || showShare) && (
         <div className="my-1 border-t border-token-subtle" />
       )}
       {onRename && (
@@ -520,16 +569,21 @@ function TreeNode({
   showUpdatedTime,
   contentFirstLines,
   contentMatchIds,
+  reprocessingMap,
+  sharedEntryIds,
   onToggleFolder,
   onSelectEntry,
   onContextMenu,
+  onShareEntry,
   onMoveEntry,
   onOpenSubscription,
+  isEntryFresh,
 }: {
   entry: DocBrowserEntry;
   childrenMap: Map<string, DocBrowserEntry[]>;
   depth: number;
   selectedEntryId?: string;
+  isEntryFresh?: (entry: DocBrowserEntry) => boolean;
   primaryEntryId?: string;
   pinnedEntryIds: Set<string>;
   folderPrimaryMap: Map<string, string>;
@@ -538,9 +592,12 @@ function TreeNode({
   showUpdatedTime: boolean;
   contentFirstLines: Map<string, string>;
   contentMatchIds: Set<string>;
+  reprocessingMap?: Record<string, number>;
+  sharedEntryIds?: Set<string>;
   onToggleFolder: (id: string) => void;
   onSelectEntry: (id: string) => void;
   onContextMenu: (e: React.MouseEvent, entry: DocBrowserEntry) => void;
+  onShareEntry?: (entryId: string) => void;
   onMoveEntry?: (entryId: string, targetFolderId: string | null) => void;
   onOpenSubscription?: (entryId: string) => void;
 }) {
@@ -551,6 +608,8 @@ function TreeNode({
   const isPinned = pinnedEntryIds.has(entry.id);
   const children = childrenMap.get(entry.id) ?? [];
   const displayTitle = getDisplayTitle(entry, useContentTitle, contentFirstLines);
+  const reprocessing = !isFolder ? reprocessingMap?.[entry.id] : undefined;
+  const isShared = !isFolder && (sharedEntryIds?.has(entry.id) ?? false);
   const [dragOver, setDragOver] = useState(false);
 
   return (
@@ -640,6 +699,38 @@ function TreeNode({
           {displayTitle}
         </span>
 
+        {/* 已分享：黄色标识，点击打开分享弹窗查看/复制链接（不只是撤销） */}
+        {isShared && (
+          <span
+            onClick={onShareEntry ? (e) => { e.stopPropagation(); onShareEntry(entry.id); } : undefined}
+            className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0 font-bold cursor-pointer"
+            style={{
+              background: 'rgba(234,179,8,0.14)',
+              color: 'rgba(234,179,8,0.95)',
+              border: '1px solid rgba(234,179,8,0.32)',
+            }}
+            title="已分享 · 点击查看或复制链接"
+          >
+            <Share2 size={9} /> 已分享
+          </span>
+        )}
+
+        {/* 再加工进行中：源文档行显示"加工中 N%"——关闭抽屉后仍可见 */}
+        {reprocessing !== undefined && (
+          <span
+            className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0 font-semibold"
+            style={{
+              background: 'rgba(59,130,246,0.12)',
+              color: 'rgba(96,165,250,0.95)',
+              border: '1px solid rgba(59,130,246,0.25)',
+            }}
+            title="正在再加工"
+          >
+            <MapSpinner size={9} />
+            加工中 {Math.round(reprocessing)}%
+          </span>
+        )}
+
         {!isFolder && (entry.tags?.length ?? 0) > 0 && (
           <span
             className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0"
@@ -682,8 +773,8 @@ function TreeNode({
           </span>
         )}
 
-        {/* (new) 徽标：lastChangedAt 在 24 小时以内 — ShinyText 流光（reactbits） */}
-        {!isFolder && isRecentlyChanged(entry.lastChangedAt) && (
+        {/* (new) 徽标：默认 lastChangedAt 24 小时内；外部可通过 isEntryFresh 自定义规则 */}
+        {!isFolder && (isEntryFresh ? isEntryFresh(entry) : isRecentlyChanged(entry.lastChangedAt)) && (
           <span
             className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0 font-bold"
             style={{
@@ -763,11 +854,15 @@ function TreeNode({
           showUpdatedTime={showUpdatedTime}
           contentFirstLines={contentFirstLines}
           contentMatchIds={contentMatchIds}
+          reprocessingMap={reprocessingMap}
+          sharedEntryIds={sharedEntryIds}
           onToggleFolder={onToggleFolder}
           onSelectEntry={onSelectEntry}
           onContextMenu={onContextMenu}
+          onShareEntry={onShareEntry}
           onMoveEntry={onMoveEntry}
           onOpenSubscription={onOpenSubscription}
+          isEntryFresh={isEntryFresh}
         />
       ))}
     </>
@@ -840,9 +935,18 @@ export function DocBrowser({
   onOpenSubscription,
   onGenerateSubtitle,
   onReprocess,
+  onShareEntry,
+  autoEditEntryId,
+  onAutoEditConsumed,
   onReplaceFile,
+  reprocessingMap,
+  sharedEntryIds,
   emptyState,
   loading,
+  sortMode = 'default',
+  appearance = 'inset',
+  isEntryFresh,
+  sidebarHeader,
 }: DocBrowserProps) {
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState<DocBrowserEntry[] | null>(null);
@@ -984,7 +1088,13 @@ export function DocBrowser({
       }
     }
 
-    // 排序：置顶优先 → 文件夹优先 → 主文档优先 → 按标题
+    // 排序：置顶优先 → 文件夹优先 → 主文档优先 → 按 sortMode 决定剩余顺序
+    const tsOf = (e: DocBrowserEntry, field: 'createdAt' | 'updatedAt'): number => {
+      const v = e[field];
+      if (!v) return 0;
+      const t = new Date(v).getTime();
+      return Number.isNaN(t) ? 0 : t;
+    };
     const sortFn = (a: DocBrowserEntry, b: DocBrowserEntry) => {
       const aPinned = pinnedSet.has(a.id) || a.id === primaryEntryId;
       const bPinned = pinnedSet.has(b.id) || b.id === primaryEntryId;
@@ -992,6 +1102,13 @@ export function DocBrowser({
       if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
       if (a.id === primaryEntryId) return -1;
       if (b.id === primaryEntryId) return 1;
+      if (sortMode === 'created-desc') {
+        const d = tsOf(b, 'createdAt') - tsOf(a, 'createdAt');
+        if (d !== 0) return d;
+      } else if (sortMode === 'updated-desc') {
+        const d = tsOf(b, 'updatedAt') - tsOf(a, 'updatedAt');
+        if (d !== 0) return d;
+      }
       return a.title.localeCompare(b.title);
     };
     roots.sort(sortFn);
@@ -1000,7 +1117,7 @@ export function DocBrowser({
     const fCount = entries.filter(e => !e.isFolder).length;
 
     return { rootEntries: roots, childrenMap: cMap, fileCount: fCount };
-  }, [entries, primaryEntryId, pinnedSet]);
+  }, [entries, primaryEntryId, pinnedSet, sortMode]);
 
   // 从 summary 提取显示标题：优先 YAML frontmatter 的 title（去引号），
   // 没有 frontmatter / 没有 title 时回退到 frontmatter 之后的首个正文标题，
@@ -1184,6 +1301,22 @@ export function DocBrowser({
     }
   }, [selectedEntryId, loadEntryContent, entries]);
 
+  // 新建文档默认进入编辑态：autoEditEntryId 命中且内容加载完成后自动开编辑（一次性）
+  useEffect(() => {
+    if (!autoEditEntryId || selectedEntryId !== autoEditEntryId || contentLoading) return;
+    // 必须确认当前 preview 已是该 entry 的内容，否则会把上一篇的旧正文带进新文档
+    // （selectedEntryId 刚切换那一帧 contentLoading 仍为 false，preview 还是旧的）——Bugbot 报告
+    if (!loadedContentKey || !loadedContentKey.startsWith(autoEditEntryId + ':')) return;
+    const entry = entries.find(e => e.id === autoEditEntryId);
+    if (!entry || entry.isFolder) return;
+    const cfg = getFileTypeConfig(entry.title, entry.contentType);
+    if (cfg.editable && onSaveContent) {
+      setEditContent(preview?.text ?? '');
+      setEditMode(true);
+    }
+    onAutoEditConsumed?.();
+  }, [autoEditEntryId, selectedEntryId, contentLoading, loadedContentKey, preview, entries, onSaveContent, onAutoEditConsumed]);
+
   // 内容版本键变化时强制退出编辑态：
   // loadedContentKey = `${entryId}:${updatedAt}`。当"同一个 entry"的 updatedAt
   // 变了（左侧右键"替换文件"覆盖当前选中文档 / 外部更新），loadEntryContent
@@ -1247,16 +1380,32 @@ export function DocBrowser({
     return <>{emptyState}</>;
   }
 
+  const isCards = appearance === 'cards';
+  // cards: 双独立圆角卡片 + 12px gap（周报风格）；inset: 单容器无 gap（知识库/分享）
+  const rootClass = isCards
+    ? 'flex flex-1 gap-3 overflow-hidden p-3 rounded-2xl surface-raised'
+    : 'surface-inset flex flex-1 gap-0 overflow-hidden rounded-[12px]';
+  // cards 模式下左右各自包圆角卡片；inset 模式下走原生分隔线
+  const sidebarClass = isCards
+    ? 'surface-reading relative flex flex-shrink-0 flex-col rounded-xl overflow-hidden'
+    : 'bg-token-nested relative flex flex-shrink-0 flex-col border-r border-token-subtle';
+
   return (
-    <div className="surface-inset flex flex-1 gap-0 overflow-hidden rounded-[12px]" style={{ minHeight: 0 }}>
+    <div className={rootClass} style={{ minHeight: 0 }}>
 
       {/* 左侧：文件树（液态玻璃效果 + 可拖拽调整宽度） */}
-      <div ref={sidebarRef} className="bg-token-nested relative flex flex-shrink-0 flex-col border-r border-token-subtle"
+      <div ref={sidebarRef} className={sidebarClass}
         style={{
           width: `${sidebarWidth}px`,
           minHeight: 0,
         }}>
 
+        {/* 外部自定义 sidebar 头部（如「周报列表 · 按最近提交 · N 篇」），可选 */}
+        {sidebarHeader && (
+          <div className="shrink-0 px-3 py-2.5" style={{ borderBottom: '1px solid var(--border-faint)' }}>
+            {sidebarHeader}
+          </div>
+        )}
         {/* 标题显示切换 + 搜索 + 新建文件夹 */}
         <div className="surface-panel-header space-y-2.5 px-3 py-3">
           {/* 标题模式切换（正文标题/文件名）+ 显示设置 */}
@@ -1481,11 +1630,15 @@ export function DocBrowser({
               showUpdatedTime={showUpdatedTime}
               contentFirstLines={contentFirstLines}
               contentMatchIds={contentMatchIds}
+              reprocessingMap={reprocessingMap}
+              sharedEntryIds={sharedEntryIds}
               onToggleFolder={toggleFolder}
               onSelectEntry={onSelectEntry}
               onContextMenu={handleContextMenu}
+              onShareEntry={onShareEntry}
               onMoveEntry={onMoveEntry}
               onOpenSubscription={onOpenSubscription}
+              isEntryFresh={isEntryFresh}
             />
             </motion.div>
           ))}
@@ -1513,30 +1666,34 @@ export function DocBrowser({
           <span style={{ opacity: 0.8 }}>个文件</span>
         </div>
 
-        {/* 拖拽调整宽度的把手 */}
-        <div
-          className="absolute top-0 right-0 h-full w-1 cursor-col-resize group/resize"
-          onMouseDown={(e) => {
-            e.preventDefault();
-            resizeBaseLeftRef.current = sidebarRef.current?.getBoundingClientRect().left ?? 0;
-            setResizing(true);
-          }}
-          style={{ zIndex: 10 }}
-        >
+        {/* 拖拽调整宽度的把手（仅 inset 模式）。cards 模式下双卡片有 12px gap，
+            把手挂在 sidebar 内部右边缘会被 overflow-hidden + rounded-xl 剪成孤立小方块，
+            视觉怪异。cards 场景以阅读为主，固定宽度足够，故 cards 模式下不渲染。 */}
+        {!isCards && (
           <div
-            className="absolute top-0 left-0 h-full transition-all duration-150"
-            style={{
-              width: resizing ? '2px' : '1px',
-              background: resizing ? 'rgba(59,130,246,0.6)' : 'transparent',
+            className="absolute top-0 right-0 h-full w-1 cursor-col-resize group/resize"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              resizeBaseLeftRef.current = sidebarRef.current?.getBoundingClientRect().left ?? 0;
+              setResizing(true);
             }}
-          />
-          <div className="absolute top-0 left-0 h-full w-1 group-hover/resize:bg-[rgba(59,130,246,0.3)] transition-colors duration-150" />
-        </div>
+            style={{ zIndex: 10 }}
+          >
+            <div
+              className="absolute top-0 left-0 h-full transition-all duration-150"
+              style={{
+                width: resizing ? '2px' : '1px',
+                background: resizing ? 'rgba(59,130,246,0.6)' : 'transparent',
+              }}
+            />
+            <div className="absolute top-0 left-0 h-full w-1 group-hover/resize:bg-[rgba(59,130,246,0.3)] transition-colors duration-150" />
+          </div>
+        )}
       </div>
 
       {/* 右侧：文档预览 */}
       <div
-        className="flex-1 min-w-0 flex flex-col overflow-hidden"
+        className={`flex-1 min-w-0 flex flex-col overflow-hidden${isCards ? ' surface-reading rounded-xl' : ''}`}
         style={{ minHeight: 0 }}
       >
         {selectedEntryId ? (
@@ -1858,6 +2015,7 @@ export function DocBrowser({
           onRename={onRenameEntry ? (entry) => setRenameEntry(entry) : undefined}
           onGenerateSubtitle={onGenerateSubtitle}
           onReprocess={onReprocess}
+          onShareEntry={onShareEntry}
           onReplaceFile={onReplaceFile}
           onClose={() => setContextMenu(null)}
         />

@@ -60,6 +60,8 @@ export interface PaSessionInfo {
   title: string;
   lastMessagePreview?: string;
   messageCount: number;
+  /** chat（默认主对话）/ review（复盘归档会话） */
+  type?: 'chat' | 'review';
   createdAt: string;
   updatedAt: string;
 }
@@ -154,6 +156,70 @@ export async function uploadPaFile(file: File): Promise<ApiResponse<PaUploadResu
   }
 }
 
+// ── Profile (跨会话画像) ──────────────────────────────────────────────────
+
+export type PaMemorySource = 'auto' | 'suggest' | 'manual';
+export type PaMemoryKind = 'role' | 'project' | 'fact' | 'preference';
+
+export interface PaMemoryEntry {
+  id: string;
+  kind: PaMemoryKind;
+  text: string;
+  source: PaMemorySource;
+  status: 'active' | 'archived';
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface PaWorkRhythm {
+  typicalStartHour?: number | null;
+  typicalEndHour?: number | null;
+  weekendActive: boolean;
+  perfectionismLevel?: 'low' | 'mid' | 'high' | null;
+}
+
+export interface PaUserPreferences {
+  preferredAddress?: string | null;
+  forbiddenTopics: string[];
+  savageLevel: 'gentle' | 'default' | 'sharp';
+}
+
+export interface PaUserProfile {
+  id: string;
+  userId: string;
+  displayNameCache: string;
+  rhythm: PaWorkRhythm;
+  memories: PaMemoryEntry[];
+  preferences: PaUserPreferences;
+  lastActiveAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function getPaProfile(): Promise<ApiResponse<PaUserProfile>> {
+  return apiRequest<PaUserProfile>('/api/pa-agent/profile');
+}
+
+export async function updatePaProfile(
+  req: { rhythm?: Partial<PaWorkRhythm>; preferences?: Partial<PaUserPreferences> },
+): Promise<ApiResponse<PaUserProfile>> {
+  return apiRequest<PaUserProfile>('/api/pa-agent/profile', { method: 'PUT', body: req });
+}
+
+export async function addPaMemory(
+  req: { kind: PaMemoryKind; text: string },
+): Promise<ApiResponse<PaMemoryEntry>> {
+  return apiRequest<PaMemoryEntry>('/api/pa-agent/profile/memories', { method: 'POST', body: req });
+}
+
+export async function confirmPaMemory(id: string): Promise<ApiResponse<PaMemoryEntry>> {
+  return apiRequest<PaMemoryEntry>(`/api/pa-agent/profile/memories/${id}/confirm`, { method: 'POST' });
+}
+
+export async function deletePaMemory(id: string): Promise<ApiResponse<void>> {
+  return apiRequest<void>(`/api/pa-agent/profile/memories/${id}`, { method: 'DELETE' });
+}
+
 // ── SSE Chat Stream ────────────────────────────────────────────────────────
 
 export interface PaChatChunk {
@@ -172,6 +238,16 @@ export interface PaTaskEvent {
   subTasks?: string[];
 }
 
+/**
+ * 画像更新事件 — chat 流末尾后端解析 LLM `update_profile` JSON 块后推送。
+ * confidence=auto：已立即落盘并参与下次注入；confidence=suggest：等用户在画像面板确认。
+ */
+export interface PaProfileEvent {
+  confidence: PaMemorySource;
+  addedMemories: Array<{ id: string; kind: PaMemoryKind; text: string; source: PaMemorySource }>;
+  changedFields: string[];
+}
+
 export interface StreamPaChatOptions {
   sessionId: string;
   message: string;
@@ -181,6 +257,7 @@ export interface StreamPaChatOptions {
   onDone: () => void;
   onError: (err: string) => void;
   onTask?: (event: PaTaskEvent) => void;
+  onProfileUpdate?: (event: PaProfileEvent) => void;
 }
 
 export async function streamPaChat(opts: StreamPaChatOptions): Promise<() => void> {
@@ -245,8 +322,115 @@ export async function streamPaChat(opts: StreamPaChatOptions): Promise<() => voi
                 const taskData = JSON.parse((chunk as { type: string; data: string }).data) as PaTaskEvent;
                 opts.onTask?.(taskData);
               } catch { /* ignore */ }
+            } else if ((chunk as { type: string }).type === 'profile') {
+              try {
+                const data = (chunk as { type: string; data: PaProfileEvent }).data;
+                if (data) opts.onProfileUpdate?.(data);
+              } catch { /* ignore */ }
             } else {
               opts.onChunk(chunk);
+            }
+          } catch {
+            // ignore parse errors
+          }
+        }
+      }
+    } catch (e) {
+      if ((e as Error)?.name !== 'AbortError') {
+        opts.onError((e as Error)?.message ?? '连接失败');
+      }
+    }
+  })();
+
+  return () => controller.abort();
+}
+
+// ── Review (复盘 SSE) ──────────────────────────────────────────────────────
+
+export type PaReviewRange = 'weekly' | 'last7d' | 'last30d' | 'custom';
+
+export interface PaReviewStageEvent {
+  type: 'stage';
+  stage: 'aggregating' | 'scoring' | 'suggesting';
+  message: string;
+}
+
+export interface PaReviewDoneEvent {
+  type: 'done';
+  sessionId?: string;
+  range: string;
+}
+
+export interface StreamPaReviewOptions {
+  range: PaReviewRange;
+  startDate?: string;
+  endDate?: string;
+  onStage: (event: PaReviewStageEvent) => void;
+  onDelta: (content: string) => void;
+  onDone: (event: PaReviewDoneEvent) => void;
+  onError: (err: string) => void;
+}
+
+/**
+ * 流式复盘 — SSE 事件：stage / delta / done / error
+ * 一次性调用，所有累积文本通过 onDelta 增量推送。
+ */
+export async function streamPaReview(opts: StreamPaReviewOptions): Promise<() => void> {
+  const token = useAuthStore.getState().token;
+  const controller = new AbortController();
+
+  void (async () => {
+    try {
+      const baseUrl = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').replace(/\/+$/, '');
+      const url = `${baseUrl}/api/pa-agent/review/run`;
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          range: opts.range,
+          startDate: opts.startDate,
+          endDate: opts.endDate,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!resp.ok || !resp.body) {
+        opts.onError(`HTTP ${resp.status}`);
+        return;
+      }
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim();
+          if (!raw) continue;
+          try {
+            const evt = JSON.parse(raw) as
+              | PaReviewStageEvent
+              | { type: 'delta'; content: string }
+              | PaReviewDoneEvent
+              | { type: 'error'; message: string };
+            if (evt.type === 'stage') {
+              opts.onStage(evt);
+            } else if (evt.type === 'delta') {
+              opts.onDelta(evt.content);
+            } else if (evt.type === 'done') {
+              opts.onDone(evt);
+            } else if (evt.type === 'error') {
+              opts.onError(evt.message || '未知错误');
             }
           } catch {
             // ignore parse errors

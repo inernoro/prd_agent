@@ -36,7 +36,12 @@ public class AdminNotification
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? HandledAt { get; set; }
-    public DateTime? ExpiresAt { get; set; }
+
+    /// <summary>
+    /// 过期时间。默认创建后 7 天自动过期，避免提醒一直挂在首页堆积。
+    /// 显式指定时（如 webhook / 自动化规则）以指定值为准；需要永驻的通知可显式设 null。
+    /// </summary>
+    public DateTime? ExpiresAt { get; set; } = DateTime.UtcNow.AddDays(7);
 }
 
 public class NotificationAttachment

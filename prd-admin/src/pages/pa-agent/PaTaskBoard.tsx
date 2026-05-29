@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import { CheckSquare, Square, Trash2, RefreshCw, Flame, TrendingUp, Clock, Archive } from 'lucide-react';
+import {
+  CheckSquare, Square, Trash2, RefreshCw, Flame, TrendingUp, Clock, Archive,
+  RotateCcw, CalendarDays, ListTree,
+} from 'lucide-react';
 import type { PaTask, PaSubTask } from '@/services/real/paAgentService';
 import {
   getPaTasks,
@@ -7,6 +10,7 @@ import {
   deletePaTask,
   updatePaSubTask,
 } from '@/services/real/paAgentService';
+import dayjs from 'dayjs';
 
 // ── Quadrant config（毒舌秘书：四象限 + 毒舌一句，零 emoji） ─────────────
 
@@ -74,43 +78,106 @@ interface TaskCardProps {
   onDelete: (taskId: string) => void;
 }
 
+/** Deadline 显示：剩 X 天 / 已逾期 X 天 / null */
+function formatDeadline(deadline?: string): { label: string; tone: 'overdue' | 'soon' | 'normal' } | null {
+  if (!deadline) return null;
+  const d = dayjs(deadline);
+  if (!d.isValid()) return null;
+  const diff = d.diff(dayjs(), 'day');
+  if (diff < 0) return { label: `逾期 ${-diff} 天`, tone: 'overdue' };
+  if (diff === 0) return { label: '今天截止', tone: 'soon' };
+  if (diff <= 3) return { label: `剩 ${diff} 天`, tone: 'soon' };
+  return { label: `${d.format('M月D日')}`, tone: 'normal' };
+}
+
 function TaskCard({ task, qConfig, onToggleSubTask, onMarkDone, onDelete }: TaskCardProps) {
   const doneCount = task.subTasks.filter(s => s.done).length;
   const progress = task.subTasks.length > 0 ? doneCount / task.subTasks.length : 0;
   const isDone = task.status === 'done';
+  const deadline = formatDeadline(task.deadline);
 
   return (
     <div
-      className="rounded-xl p-3 mb-2 group transition-all hover:shadow-sm"
+      className="pa-task-card group relative rounded-xl p-3 mb-2"
       style={{
         background: 'var(--bg-base)',
         border: '1px solid var(--border-default)',
-        opacity: isDone ? 0.6 : 1,
+        opacity: isDone ? 0.62 : 1,
       }}
     >
-      <div className="flex items-start justify-between gap-2">
+      {/* 左侧象限色条 — 一眼能识别紧急度，遵循 Linear 优先级视觉权重 */}
+      <span
+        className="absolute left-0 top-3 bottom-3 w-[3px] rounded-r-full"
+        style={{ background: qConfig.gradient, opacity: isDone ? 0.35 : 0.85 }}
+      />
+
+      <div className="flex items-start justify-between gap-2 pl-1.5">
         <div className="flex-1 min-w-0">
-          <span
-            className="text-xs font-medium leading-snug block"
+          {/* 标题：14sb 主层 */}
+          <div
+            className="font-semibold leading-snug break-words"
             style={{
+              fontSize: 13,
               color: isDone ? 'var(--text-muted)' : 'var(--text-primary)',
               textDecoration: isDone ? 'line-through' : 'none',
             }}
           >
             {task.title}
-          </span>
+          </div>
+
+          {/* Chip 行：象限 + 截止日期 + 子任务进度 — 信息层级第二档 */}
+          {(deadline || task.subTasks.length > 0) && (
+            <div className="flex items-center flex-wrap gap-1.5 mt-1.5">
+              {deadline && (
+                <span
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium tabular-nums"
+                  style={
+                    deadline.tone === 'overdue'
+                      ? { background: 'rgba(239,68,68,0.13)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.3)' }
+                      : deadline.tone === 'soon'
+                      ? { background: 'rgba(245,158,11,0.13)', color: '#fcd34d', border: '1px solid rgba(245,158,11,0.3)' }
+                      : { background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)', border: '1px solid rgba(255,255,255,0.08)' }
+                  }
+                >
+                  <CalendarDays size={9} />
+                  {deadline.label}
+                </span>
+              )}
+              {task.subTasks.length > 0 && (
+                <span
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] tabular-nums"
+                  style={{
+                    background: 'rgba(255,255,255,0.04)',
+                    color: 'var(--text-muted)',
+                    border: '1px solid rgba(255,255,255,0.06)',
+                  }}
+                  title={`${doneCount}/${task.subTasks.length} 子步骤已完成`}
+                >
+                  <ListTree size={9} />
+                  {doneCount}/{task.subTasks.length}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Reasoning：12 muted 主辅层 */}
           {task.reasoning && (
-            <p className="mt-0.5 text-[10px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+            <p
+              className="mt-1.5 leading-relaxed"
+              style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: '17px' }}
+            >
               {task.reasoning}
             </p>
           )}
         </div>
+
+        {/* 操作浮条：hover 显示 */}
         <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
           {!isDone && (
             <button
               onClick={() => onMarkDone(task.id)}
               title="完成"
-              className="p-1 rounded-lg hover:bg-green-500/10 transition-colors"
+              className="p-1 rounded-lg pa-task-action transition-all"
               style={{ color: '#22c55e' }}
             >
               <CheckSquare size={13} />
@@ -119,7 +186,7 @@ function TaskCard({ task, qConfig, onToggleSubTask, onMarkDone, onDelete }: Task
           <button
             onClick={() => onDelete(task.id)}
             title="归档"
-            className="p-1 rounded-lg hover:bg-red-500/10 transition-colors"
+            className="p-1 rounded-lg pa-task-action-danger transition-all"
             style={{ color: 'var(--text-muted)' }}
           >
             <Trash2 size={13} />
@@ -127,44 +194,45 @@ function TaskCard({ task, qConfig, onToggleSubTask, onMarkDone, onDelete }: Task
         </div>
       </div>
 
-      {/* Progress bar */}
+      {/* Progress bar — 子步骤总进度 */}
       {task.subTasks.length > 0 && (
-        <div className="mt-2">
+        <div className="mt-2.5 pl-1.5">
           <div
             className="h-1 rounded-full overflow-hidden"
-            style={{ background: 'var(--bg-elevated)' }}
+            style={{ background: 'rgba(255,255,255,0.05)' }}
           >
             <div
-              className="h-full rounded-full transition-all"
+              className="h-full rounded-full transition-all duration-500 ease-out"
               style={{
                 width: `${progress * 100}%`,
                 background: qConfig.gradient,
+                boxShadow: progress > 0 ? `0 0 8px ${qConfig.pillText}66` : 'none',
               }}
             />
-          </div>
-          <div className="mt-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
-            {doneCount}/{task.subTasks.length} 完成
           </div>
         </div>
       )}
 
-      {/* Sub-tasks */}
+      {/* Sub-tasks 列表 */}
       {task.subTasks.length > 0 && (
-        <ul className="mt-2 space-y-1">
+        <ul className="mt-2 pl-1.5 space-y-1">
           {task.subTasks.map((sub: PaSubTask, i: number) => (
             <li key={i} className="flex items-center gap-1.5">
               <button
                 onClick={() => onToggleSubTask(task.id, i, !sub.done)}
-                className="shrink-0 transition-colors"
+                className="shrink-0 pa-subtask-toggle"
                 style={{ color: sub.done ? '#22c55e' : 'var(--text-muted)' }}
+                aria-label={sub.done ? '取消完成' : '标记完成'}
               >
                 {sub.done ? <CheckSquare size={12} /> : <Square size={12} />}
               </button>
               <span
-                className="text-[11px] leading-tight"
+                className="leading-tight pa-subtask-text"
                 style={{
+                  fontSize: 11,
                   color: sub.done ? 'var(--text-muted)' : 'var(--text-secondary)',
                   textDecoration: sub.done ? 'line-through' : 'none',
+                  opacity: sub.done ? 0.6 : 1,
                 }}
               >
                 {sub.content}
@@ -179,7 +247,12 @@ function TaskCard({ task, qConfig, onToggleSubTask, onMarkDone, onDelete }: Task
 
 // ── PaTaskBoard ────────────────────────────────────────────────────────────
 
-export function PaTaskBoard() {
+interface PaTaskBoardProps {
+  /** 点击「复盘」按钮时由父组件打开 PaReviewDrawer */
+  onOpenReview?: () => void;
+}
+
+export function PaTaskBoard({ onOpenReview }: PaTaskBoardProps = {}) {
   const [tasks, setTasks] = useState<PaTask[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -246,16 +319,33 @@ export function PaTaskBoard() {
             先干 Q1，再排 Q2，扫掉 Q3，养着 Q4。
           </span>
         </div>
-        <button
-          onClick={() => void load()}
-          className="shrink-0 flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg transition-colors"
-          style={{ color: 'var(--text-muted)', background: 'var(--bg-elevated)' }}
-          onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
-          onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg-elevated)'; }}
-        >
-          <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
-          刷新
-        </button>
+        <div className="shrink-0 flex items-center gap-2">
+          {onOpenReview && (
+            <button
+              onClick={onOpenReview}
+              className="pa-primary-button flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg font-medium"
+              style={{
+                color: '#fff',
+                background: 'linear-gradient(135deg,#f59e0b,#ef4444)',
+                boxShadow: '0 4px 12px -4px rgba(245,158,11,0.5)',
+              }}
+              title="毒舌秘书帮你复盘上周 / 自定义时段的任务进展"
+            >
+              <RotateCcw size={12} />
+              复盘
+            </button>
+          )}
+          <button
+            onClick={() => void load()}
+            className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg transition-colors"
+            style={{ color: 'var(--text-muted)', background: 'var(--bg-elevated)' }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg-elevated)'; }}
+          >
+            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+            刷新
+          </button>
+        </div>
       </div>
 
       {/* Board */}

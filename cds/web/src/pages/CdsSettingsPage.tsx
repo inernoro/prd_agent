@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import {
   Activity,
   Boxes,
@@ -19,22 +19,23 @@ import {
 import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { AccessKeysTab } from '@/pages/cds-settings/tabs/AccessKeysTab';
-import { AuthTab } from '@/pages/cds-settings/tabs/AuthTab';
-import { ClusterTab } from '@/pages/cds-settings/tabs/ClusterTab';
-import { ConnectionsTab } from '@/pages/cds-settings/tabs/ConnectionsTab';
-import { ConfigSnapshotsTab } from '@/pages/cds-settings/tabs/ConfigSnapshotsTab';
-import { GitHubAppTab } from '@/pages/cds-settings/tabs/GitHubAppTab';
-import { GitHubAppWhitelistTab } from '@/pages/cds-settings/tabs/GitHubAppWhitelistTab';
-import { GitHubWebhookLogTab } from '@/pages/cds-settings/tabs/GitHubWebhookLogTab';
-import { GlobalVarsTab } from '@/pages/cds-settings/tabs/GlobalVarsTab';
-import { LoadingPagesTab } from '@/pages/cds-settings/tabs/LoadingPagesTab';
-import { MaintenanceTab } from '@/pages/cds-settings/tabs/MaintenanceTab';
-import { MirrorTab } from '@/pages/cds-settings/tabs/MirrorTab';
-import { OverviewTab } from '@/pages/cds-settings/tabs/OverviewTab';
-import { RemoteHostsTab } from '@/pages/cds-settings/tabs/RemoteHostsTab';
-import { SchedulerTab } from '@/pages/cds-settings/tabs/SchedulerTab';
-import { StorageTab } from '@/pages/cds-settings/tabs/StorageTab';
+
+const AccessKeysTab = lazy(() => import('@/pages/cds-settings/tabs/AccessKeysTab').then((m) => ({ default: m.AccessKeysTab })));
+const AuthTab = lazy(() => import('@/pages/cds-settings/tabs/AuthTab').then((m) => ({ default: m.AuthTab })));
+const ClusterTab = lazy(() => import('@/pages/cds-settings/tabs/ClusterTab').then((m) => ({ default: m.ClusterTab })));
+const ConnectionsTab = lazy(() => import('@/pages/cds-settings/tabs/ConnectionsTab').then((m) => ({ default: m.ConnectionsTab })));
+const ConfigSnapshotsTab = lazy(() => import('@/pages/cds-settings/tabs/ConfigSnapshotsTab').then((m) => ({ default: m.ConfigSnapshotsTab })));
+const GitHubAppTab = lazy(() => import('@/pages/cds-settings/tabs/GitHubAppTab').then((m) => ({ default: m.GitHubAppTab })));
+const GitHubAppWhitelistTab = lazy(() => import('@/pages/cds-settings/tabs/GitHubAppWhitelistTab').then((m) => ({ default: m.GitHubAppWhitelistTab })));
+const GitHubWebhookLogTab = lazy(() => import('@/pages/cds-settings/tabs/GitHubWebhookLogTab').then((m) => ({ default: m.GitHubWebhookLogTab })));
+const GlobalVarsTab = lazy(() => import('@/pages/cds-settings/tabs/GlobalVarsTab').then((m) => ({ default: m.GlobalVarsTab })));
+const LoadingPagesTab = lazy(() => import('@/pages/cds-settings/tabs/LoadingPagesTab').then((m) => ({ default: m.LoadingPagesTab })));
+const MaintenanceTab = lazy(() => import('@/pages/cds-settings/tabs/MaintenanceTab').then((m) => ({ default: m.MaintenanceTab })));
+const MirrorTab = lazy(() => import('@/pages/cds-settings/tabs/MirrorTab').then((m) => ({ default: m.MirrorTab })));
+const OverviewTab = lazy(() => import('@/pages/cds-settings/tabs/OverviewTab').then((m) => ({ default: m.OverviewTab })));
+const RemoteHostsTab = lazy(() => import('@/pages/cds-settings/tabs/RemoteHostsTab').then((m) => ({ default: m.RemoteHostsTab })));
+const SchedulerTab = lazy(() => import('@/pages/cds-settings/tabs/SchedulerTab').then((m) => ({ default: m.SchedulerTab })));
+const StorageTab = lazy(() => import('@/pages/cds-settings/tabs/StorageTab').then((m) => ({ default: m.StorageTab })));
 
 /*
  * CDS system settings — flattened into 3 semantic groups (接入 / 运行时 /
@@ -116,6 +117,14 @@ function getInitialTab(): TabValue {
   return tabs.some((tab) => tab.value === hash) ? (hash as TabValue) : 'maintenance';
 }
 
+function SettingsTabFallback(): JSX.Element {
+  return (
+    <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] p-4 text-sm text-muted-foreground">
+      加载设置...
+    </div>
+  );
+}
+
 export function CdsSettingsPage(): JSX.Element {
   const [activeTab, setActiveTab] = useState<TabValue>(() => getInitialTab());
   const [toast, setToast] = useState('');
@@ -178,56 +187,60 @@ export function CdsSettingsPage(): JSX.Element {
             </TabsList>
 
             <div className="cds-surface-raised cds-hairline min-w-0 p-5">
-              <TabsContent value="overview">
-                <OverviewTab />
-              </TabsContent>
-              <TabsContent value="auth">
-                <AuthTab />
-              </TabsContent>
-              <TabsContent value="access-keys">
-                <AccessKeysTab onToast={setToast} />
-              </TabsContent>
-              <TabsContent value="github">
-                <GitHubAppTab onToast={setToast} />
-              </TabsContent>
-              <TabsContent value="github-whitelist">
-                <GitHubAppWhitelistTab onToast={setToast} />
-              </TabsContent>
-              <TabsContent value="webhook-log">
-                <GitHubWebhookLogTab onToast={setToast} />
-              </TabsContent>
-              <TabsContent value="storage">
-                <StorageTab />
-              </TabsContent>
-              <TabsContent value="scheduler">
-                <SchedulerTab onToast={setToast} />
-              </TabsContent>
-              <TabsContent value="cluster">
-                <ClusterTab />
-              </TabsContent>
-              <TabsContent value="remote-hosts">
-                <RemoteHostsTab onToast={setToast} />
-              </TabsContent>
-              <TabsContent value="connections">
-                <ConnectionsTab onToast={setToast} />
-              </TabsContent>
-              <TabsContent value="global-vars">
-                <GlobalVarsTab onToast={setToast} />
-              </TabsContent>
-              <TabsContent value="loading-pages">
-                <LoadingPagesTab />
-              </TabsContent>
-              <TabsContent value="snapshots">
-                <ConfigSnapshotsTab onToast={setToast} />
-              </TabsContent>
-              <TabsContent value="maintenance">
-                <div className="space-y-5">
-                  <MaintenanceTab onToast={setToast} />
-                  <DisclosurePanel title="镜像与外观" subtitle="镜像加速和浏览器标签设置">
-                    <MirrorTab />
-                  </DisclosurePanel>
-                </div>
-              </TabsContent>
+              <Suspense fallback={<SettingsTabFallback />}>
+                <TabsContent value="overview">
+                  {activeTab === 'overview' ? <OverviewTab /> : null}
+                </TabsContent>
+                <TabsContent value="auth">
+                  {activeTab === 'auth' ? <AuthTab /> : null}
+                </TabsContent>
+                <TabsContent value="access-keys">
+                  {activeTab === 'access-keys' ? <AccessKeysTab onToast={setToast} /> : null}
+                </TabsContent>
+                <TabsContent value="github">
+                  {activeTab === 'github' ? <GitHubAppTab onToast={setToast} /> : null}
+                </TabsContent>
+                <TabsContent value="github-whitelist">
+                  {activeTab === 'github-whitelist' ? <GitHubAppWhitelistTab onToast={setToast} /> : null}
+                </TabsContent>
+                <TabsContent value="webhook-log">
+                  {activeTab === 'webhook-log' ? <GitHubWebhookLogTab onToast={setToast} /> : null}
+                </TabsContent>
+                <TabsContent value="storage">
+                  {activeTab === 'storage' ? <StorageTab /> : null}
+                </TabsContent>
+                <TabsContent value="scheduler">
+                  {activeTab === 'scheduler' ? <SchedulerTab onToast={setToast} /> : null}
+                </TabsContent>
+                <TabsContent value="cluster">
+                  {activeTab === 'cluster' ? <ClusterTab /> : null}
+                </TabsContent>
+                <TabsContent value="remote-hosts">
+                  {activeTab === 'remote-hosts' ? <RemoteHostsTab onToast={setToast} /> : null}
+                </TabsContent>
+                <TabsContent value="connections">
+                  {activeTab === 'connections' ? <ConnectionsTab onToast={setToast} /> : null}
+                </TabsContent>
+                <TabsContent value="global-vars">
+                  {activeTab === 'global-vars' ? <GlobalVarsTab onToast={setToast} /> : null}
+                </TabsContent>
+                <TabsContent value="loading-pages">
+                  {activeTab === 'loading-pages' ? <LoadingPagesTab /> : null}
+                </TabsContent>
+                <TabsContent value="snapshots">
+                  {activeTab === 'snapshots' ? <ConfigSnapshotsTab onToast={setToast} /> : null}
+                </TabsContent>
+                <TabsContent value="maintenance">
+                  {activeTab === 'maintenance' ? (
+                    <div className="space-y-5">
+                      <MaintenanceTab onToast={setToast} />
+                      <DisclosurePanel title="镜像与外观" subtitle="镜像加速和浏览器标签设置">
+                        <MirrorTab />
+                      </DisclosurePanel>
+                    </div>
+                  ) : null}
+                </TabsContent>
+              </Suspense>
             </div>
           </div>
         </Tabs>

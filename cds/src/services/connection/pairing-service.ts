@@ -219,9 +219,15 @@ export class CdsPairingService {
     const hash = sha256Hex(rawToken);
     const conn = this.stateService.findActiveCdsConnectionByLongTokenHash(hash);
     if (!conn) return null;
-    // 异步刷 lastUsedAt（不 await，写盘失败不阻塞鉴权）
-    this.stateService
-      .updateCdsConnection(conn.id, { lastUsedAt: new Date().toISOString() });
+    // lastUsedAt is observability metadata, not part of auth correctness.
+    // High-frequency discovery polling must not save the whole CDS state on
+    // every request; in Mongo-backed state that path clones/sanitizes the full
+    // state document and can push the master heap into OOM.
+    const now = Date.now();
+    const lastUsedAt = conn.lastUsedAt ? Date.parse(conn.lastUsedAt) : 0;
+    if (!lastUsedAt || !Number.isFinite(lastUsedAt) || now - lastUsedAt > 60_000) {
+      this.stateService.updateCdsConnection(conn.id, { lastUsedAt: new Date(now).toISOString() });
+    }
     return conn;
   }
 }

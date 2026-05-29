@@ -21,10 +21,17 @@ namespace PrdAgent.Api.Controllers.Api;
 [Route("api/pa-agent")]
 [Authorize]
 [AdminController("pa-agent", AdminPermissionCatalog.PaAgentUse)]
-public class PaAgentController : ControllerBase
+public partial class PaAgentController : ControllerBase
 {
     private const string AppKey = "pa-agent";
     private const string AppCallerCode = "pa-agent.chat::chat";
+    private const string ReviewAppCallerCode = "pa-agent.review::chat";
+
+    /// <summary>
+    /// 运行时替换为「用户画像」段落；profile 为空时整块替换为空字符串。
+    /// 必须放在 # 用户信息 之后，让 LLM 优先级低于明确指定的称呼/姓名。
+    /// </summary>
+    private const string SystemPromptProfilePlaceholder = "__PA_PROFILE_BLOCK__";
 
     /// <summary>
     /// 运行时替换为用户显示名。禁止使用 string.Format：模板内含 JSON 示例花括号，
@@ -46,7 +53,7 @@ public class PaAgentController : ControllerBase
         # 用户信息
         - 姓名：__PA_USER_DISPLAY_NAME__
         - 称呼：直呼姓名「__PA_USER_DISPLAY_NAME__」，绝不叫「老板」「大佬」「您」；姓名为空时用「你」，不用敬语
-
+        __PA_PROFILE_BLOCK__
         # 五条核心信条（任何回复都不能违反）
         1. 混乱不可怕，可怕的是没有秩序。核心价值是把模糊想法转化为 MECE 执行清单
         2. 对你狠是为了不让你对结果后悔；该催就催，不因用户忙就放水
@@ -87,15 +94,18 @@ public class PaAgentController : ControllerBase
 
         # 任务识别规则（必须严格执行，否则前端看板不会更新）
 
-        每次回复都要评估用户消息是否包含任务意图，根据置信度在回复末尾输出 JSON 块：
+        每次回复都要先做一次「是否应进入任务看板」判断，再决定是否输出 save_task JSON：
+        - 只要用户消息里出现可执行事项（时间、动作、目标、交付物任一），就按任务规则处理
+        - 用户只是在讨论想法、风险、方向、情绪，但没有明确要做什么时，按 suggest 征询
+        - 判断不确定时宁可给 suggest，不要直接 auto
 
         ## 情况 A：明确任务（用户清楚表达要做某件具体事）
         confidence = "auto"，系统**自动加入看板**，无需用户确认。
         触发：「明天要做 X」「需要完成 Y」「帮我拆解 Z」「安排一下 A」「P0/P1 + 具体事项」
 
-        ## 情况 B：潜在任务（涉及工作 / 目标但未明确「要做」）
+        ## 情况 B：潜在任务（涉及工作 / 目标但未明确「要做」或存在歧义）
         confidence = "suggest"，前端**显示加入看板按钮**，由用户确认。
-        触发：消息涉及工作计划、会议安排、项目进展，但缺「我要做」意图
+        触发：消息涉及工作计划、会议安排、项目进展，但缺「我要做」意图；或语义歧义、时间边界不清
 
         ## 情况 C：普通对话（闲聊、询问建议、情绪表达等）
         不输出任何 JSON 块。
@@ -117,6 +127,33 @@ public class PaAgentController : ControllerBase
         - `confidence` 必须是 "auto" 或 "suggest"
         - `quadrant` 必须是 Q1 / Q2 / Q3 / Q4 之一
         - `sessionTitle` 仅首次发言时给值，之后为 null
+
+        # 跨会话画像更新（可选，与任务 JSON 互不影响）
+
+        当用户消息透露**长期持久事实**（角色 / 项目 / 偏好 / 工作节奏）时，**额外**在末尾输出第二个独立的 ```json``` 块。普通对话/任务相关临时信息不要输出。
+
+        - `confidence = "auto"`：信息很明确、长期成立（如「我是产品经理」）—— 直接记入画像并立即影响后续回复
+        - `confidence = "suggest"`：可能是长期事实但需要确认（如「最近压力大」可能只是当时状态）—— 用户在画像面板确认后才生效
+        - 一次最多 3 条 `patches`
+        - 每条 `text` ≤ 60 字
+        - 不要重复用户已经在「持久事实」里登记过的信息
+
+        ```json
+        {
+          "action": "update_profile",
+          "confidence": "auto",
+          "patches": [
+            { "op": "add", "kind": "role", "text": "产品经理" },
+            { "op": "set", "field": "rhythm.weekendActive", "value": true },
+            { "op": "set", "field": "preferences.preferredAddress", "value": "玉哥" }
+          ]
+        }
+        ```
+
+        - `kind` 必须是 role / project / fact / preference 之一
+        - `op` 支持 "add"（添加 memory）或 "set"（设置 rhythm/preferences 字段）
+        - `field` 支持 `rhythm.typicalStartHour` / `rhythm.typicalEndHour` / `rhythm.weekendActive` / `rhythm.perfectionismLevel` / `preferences.preferredAddress` / `preferences.savageLevel`
+        - 提取不到任何长期事实就**不要**输出 update_profile 块；不要硬凑
 
         # 关键禁忌
         - 心灵鸡汤
@@ -415,7 +452,11 @@ public class PaAgentController : ControllerBase
 
                 var displayName = GetDisplayName();
                 var userLabel = string.IsNullOrWhiteSpace(displayName) ? "你" : displayName;
-                var systemPrompt = SystemPromptTemplate.Replace(SystemPromptUserPlaceholder, userLabel);
+                var profile = await LoadOrCreateProfileAsync(userId, displayName);
+                var profileBlock = BuildProfileBlock(profile);
+                var systemPrompt = SystemPromptTemplate
+                    .Replace(SystemPromptUserPlaceholder, userLabel)
+                    .Replace(SystemPromptProfilePlaceholder, profileBlock);
 
                 int chunkCount = 0;
                 await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, llmMessages, CancellationToken.None))
@@ -513,12 +554,12 @@ public class PaAgentController : ControllerBase
             };
             await _db.PaMessages.InsertOneAsync(assistantMsg);
 
-            // ── Extract task payload from JSON block ──────────────────
+            // ── Extract task payload from JSON block(s) ───────────────
             string? autoTaskJson = null;
             string? sessionTitleFromLLM = null;
-            var jsonMatch = System.Text.RegularExpressions.Regex.Match(
+            var jsonMatches = System.Text.RegularExpressions.Regex.Matches(
                 fullReply, @"```json\s*([\s\S]*?)```");
-            if (jsonMatch.Success)
+            foreach (System.Text.RegularExpressions.Match jsonMatch in jsonMatches)
             {
                 try
                 {
@@ -565,6 +606,7 @@ public class PaAgentController : ControllerBase
                                 title = task.Title,
                                 quadrant = task.Quadrant,
                             });
+                            break;
                         }
                         else if (!string.IsNullOrWhiteSpace(title) && confidence == PaTaskConfidence.Suggest)
                         {
@@ -578,6 +620,7 @@ public class PaAgentController : ControllerBase
                                 reasoning,
                                 subTasks,
                             });
+                            break;
                         }
                     }
                 }
@@ -610,6 +653,24 @@ public class PaAgentController : ControllerBase
                 var taskEvent = JsonSerializer.Serialize(new { type = "task", data = autoTaskJson });
                 await Response.WriteAsync($"data: {taskEvent}\n\n", CancellationToken.None);
                 await Response.Body.FlushAsync(CancellationToken.None);
+            }
+
+            // ── Extract `update_profile` JSON block(s) ────────────────
+            // 与 save_task 协议互不影响：可能两个块都有、可能只有一个、可能都没有。
+            // 解析失败不影响主对话流程，只写一条 warning log。
+            try
+            {
+                var profilePatch = await TryApplyProfileUpdateAsync(userId, fullReply);
+                if (profilePatch != null)
+                {
+                    var profileEvent = JsonSerializer.Serialize(new { type = "profile", data = profilePatch });
+                    await Response.WriteAsync($"data: {profileEvent}\n\n", CancellationToken.None);
+                    await Response.Body.FlushAsync(CancellationToken.None);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[pa-agent] Failed to apply profile update");
             }
         }
     }

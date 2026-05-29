@@ -113,6 +113,7 @@ import type {
   DeleteVisualAgentWorkspaceAssetContract,
   UpdateVisualAgentWorkspaceContract,
   CreateWorkspaceImageGenRunContract,
+  ReconcileWorkspaceCanvasContract,
 } from '@/services/contracts/visualAgent';
 import type {
   CreateDesktopAssetKeyContract,
@@ -384,6 +385,7 @@ import {
   deleteVisualAgentWorkspaceAssetReal,
   updateVisualAgentWorkspaceReal,
   createWorkspaceImageGenRunReal,
+  reconcileVisualAgentWorkspaceCanvasReal,
   generateArticleMarkersReal,
   extractArticleMarkersReal,
   exportArticleReal,
@@ -975,6 +977,7 @@ export const saveVisualAgentWorkspaceViewport: SaveVisualAgentWorkspaceViewportC
 export const uploadVisualAgentWorkspaceAsset: UploadVisualAgentWorkspaceAssetContract = withAuth(uploadVisualAgentWorkspaceAssetReal);
 export const deleteVisualAgentWorkspaceAsset: DeleteVisualAgentWorkspaceAssetContract = withAuth(deleteVisualAgentWorkspaceAssetReal);
 export const createWorkspaceImageGenRun: CreateWorkspaceImageGenRunContract = withAuth(createWorkspaceImageGenRunReal);
+export const reconcileVisualAgentWorkspaceCanvas: ReconcileWorkspaceCanvasContract = withAuth(reconcileVisualAgentWorkspaceCanvasReal);
 export const refreshVisualAgentWorkspaceCover: RefreshVisualAgentWorkspaceCoverContract = withAuth(refreshVisualAgentWorkspaceCoverReal);
 
 export const generateVisualAgentWorkspaceTitle = generateVisualAgentWorkspaceTitleReal;
@@ -1692,7 +1695,35 @@ export {
   saveSharedSite,
   listShareViewLogs,
 } from '@/services/real/webPages';
-export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInfo, ShareViewData, ShareViewLogItem } from '@/services/real/webPages';
+export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInfo, ShareViewData, ShareViewLogItem, SiteOwnerCard } from '@/services/real/webPages';
+
+// ── Team 团队（跨应用协作） ──
+export {
+  listMyTeams,
+  createTeam,
+  getTeam,
+  updateTeam,
+  deleteTeam,
+  addTeamMembers,
+  removeTeamMember,
+  updateTeamMemberRole,
+  regenerateInviteCode,
+  joinTeam,
+  listTeamActivity,
+  searchTeamUsers,
+  getUserCards,
+  setSiteTeams,
+  setStoreTeams,
+} from '@/services/real/teams';
+export type {
+  Team,
+  TeamMember,
+  TeamRole,
+  TeamVisibility,
+  TeamListItem,
+  TeamActivityItem,
+  UserCard,
+} from '@/services/real/teams';
 
 // ── 统一短链解析 + 管理 ──
 export {
@@ -1754,6 +1785,8 @@ export {
   getAllSubmissions as getAllReviewSubmissions,
   getSubmission as getReviewSubmission,
   rerunSubmission as rerunReviewSubmission,
+  reuploadOnFailure as reuploadReviewOnFailure,
+  getSubmissionResults as getReviewSubmissionResults,
   getResultStreamUrl as getReviewResultStreamUrl,
   getSubmitters as getReviewSubmitters,
   listReviewWebhooks,
@@ -1856,6 +1889,9 @@ export {
   createShareLink as createDocStoreShareLink,
   listShareLinks as listDocStoreShareLinks,
   revokeShareLink as revokeDocStoreShareLink,
+  getDocStoreShareView,
+  listDocStoreShareEntries,
+  getDocStoreShareEntryContent,
 } from '@/services/real/documentStore';
 export type {
   DocumentStore,
@@ -1865,6 +1901,7 @@ export type {
   PublicDocumentStore,
   PublicStoreDetail,
   DocumentStoreShareLink,
+  DocStoreShareView,
   CreateDocumentStoreInput,
   AddDocumentEntryInput,
   DocumentSyncLogEntry,

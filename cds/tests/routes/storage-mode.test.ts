@@ -12,7 +12,7 @@
  *   - The router only gets installed when storageModeContext is
  *     passed (otherwise server.ts skips the use() call)
  *   - POST /test-mongo returns 400 on missing URI
- *   - POST /switch-to-mongo returns 409 when already on mongo
+ *   - POST /switch-to-mongo can migrate legacy mongo to mongo-split
  *   - POST /switch-to-json returns 409 when already on json
  */
 
@@ -26,6 +26,7 @@ import { createStorageModeRouter, type StorageModeContext } from '../../src/rout
 import { StateService } from '../../src/services/state.js';
 import { MongoStateBackingStore } from '../../src/infra/state-store/mongo-backing-store.js';
 import type { IMongoHandle, IMongoCollection } from '../../src/infra/state-store/mongo-backing-store.js';
+import type { ISplitMongoCollection, ISplitMongoHandle } from '../../src/infra/state-store/mongo-split-store.js';
 
 // ── Mongo fake (copied from mongo-backing-store.test.ts) ────────────
 class FakeCollection implements IMongoCollection {
@@ -45,11 +46,53 @@ class FakeCollection implements IMongoCollection {
 }
 class FakeHandle implements IMongoHandle {
   public readonly collection = new FakeCollection();
+  public readonly fragments = new FakeCollection();
+  public readonly logRecords = new FakeCollection();
   public pingResult = true;
   async connect() { /* */ }
   stateCollection() { return this.collection; }
+  stateFragmentCollection() { return this.fragments; }
+  stateLogRecordCollection() { return this.logRecords; }
   async close() { /* */ }
   async ping() { return this.pingResult; }
+}
+
+class FakeSplitCollection<TDoc extends { _id: string }> implements ISplitMongoCollection<TDoc> {
+  docs = new Map<string, TDoc>();
+  async findOne(filter: { _id: string }): Promise<TDoc | null> {
+    return this.docs.get(filter._id) || null;
+  }
+  find(): { toArray(): Promise<TDoc[]> } {
+    return { toArray: async () => [...this.docs.values()] };
+  }
+  async replaceOne(filter: { _id: string }, doc: TDoc): Promise<void> {
+    this.docs.set(filter._id, doc);
+  }
+  async deleteOne(filter: { _id: string }): Promise<void> {
+    this.docs.delete(filter._id);
+  }
+  async bulkWrite(operations: Array<unknown>): Promise<void> {
+    for (const op of operations as Array<any>) {
+      if (op.replaceOne) this.docs.set(op.replaceOne.filter._id, op.replaceOne.replacement);
+      if (op.deleteOne) this.docs.delete(op.deleteOne.filter._id);
+    }
+  }
+  async countDocuments(): Promise<number> {
+    return this.docs.size;
+  }
+}
+
+class FakeSplitHandle implements ISplitMongoHandle {
+  global = new FakeSplitCollection<{ _id: string; state: Omit<any, 'projects' | 'branches'>; updatedAt: string }>();
+  projects = new FakeSplitCollection<{ _id: string; doc: any; updatedAt: string }>();
+  branches = new FakeSplitCollection<{ _id: string; projectId: string; doc: any; updatedAt: string }>();
+  closed = false;
+  async connect(): Promise<void> {}
+  globalCollection() { return this.global; }
+  projectsCollection() { return this.projects; }
+  branchesCollection() { return this.branches; }
+  async close(): Promise<void> { this.closed = true; }
+  async ping(): Promise<boolean> { return true; }
 }
 
 async function request(
@@ -96,8 +139,9 @@ describe('Storage-mode router (P4 Part 18 D.3)', () => {
   let stateService: StateService;
   let context: StorageModeContext;
   let server: http.Server;
+  let splitHandle: FakeSplitHandle;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-storage-mode-test-'));
     stateFile = path.join(tmpDir, 'state.json');
     stateService = new StateService(stateFile, tmpDir);
@@ -109,6 +153,7 @@ describe('Storage-mode router (P4 Part 18 D.3)', () => {
       mongoUri: null,
       mongoDb: null,
     };
+    splitHandle = new FakeSplitHandle();
 
     const app = express();
     app.use(express.json());
@@ -117,8 +162,11 @@ describe('Storage-mode router (P4 Part 18 D.3)', () => {
       stateFile,
       repoRoot: tmpDir,
       context,
+      createMongoSplitHandle: () => splitHandle,
     }));
-    server = app.listen(0);
+    await new Promise<void>((resolve) => {
+      server = app.listen(0, '127.0.0.1', resolve);
+    });
   });
 
   afterEach(async () => {
@@ -183,8 +231,8 @@ describe('Storage-mode router (P4 Part 18 D.3)', () => {
   });
 
   describe('POST /api/storage-mode/switch-to-mongo', () => {
-    it('returns 409 when already on mongo', async () => {
-      context.resolvedMode = 'mongo';
+    it('returns 409 when already on mongo-split', async () => {
+      context.resolvedMode = 'mongo-split';
       const res = await request(server, 'POST', '/api/storage-mode/switch-to-mongo', {
         uri: 'mongodb://x:27017',
       });
@@ -195,6 +243,30 @@ describe('Storage-mode router (P4 Part 18 D.3)', () => {
     it('returns 400 when URI is missing', async () => {
       const res = await request(server, 'POST', '/api/storage-mode/switch-to-mongo', {});
       expect(res.status).toBe(400);
+    });
+
+    it('migrates legacy mongo mode to mongo-split using the current in-memory state', async () => {
+      const oldHandle = new FakeHandle();
+      const oldStore = new MongoStateBackingStore(oldHandle);
+      await oldStore.init();
+      stateService.setBackingStore(oldStore);
+      stateService.setCustomEnv({ KEY: 'from-legacy-mongo' });
+      context.resolvedMode = 'mongo';
+      context.mongoHandle = oldHandle;
+      context.mongoUri = 'mongodb://x:27017';
+      context.mongoDb = 'cds_state_db';
+
+      const res = await request(server, 'POST', '/api/storage-mode/switch-to-mongo', {
+        uri: 'mongodb://x:27017',
+        databaseName: 'cds_state_db',
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(true);
+      expect(res.body.kind).toBe('mongo-split');
+      expect(context.resolvedMode).toBe('mongo-split');
+      expect(stateService.getBackingStore().kind).toBe('mongo-split');
+      expect(splitHandle.global.docs.get('global')?.state.customEnv._global.KEY).toBe('from-legacy-mongo');
     });
   });
 

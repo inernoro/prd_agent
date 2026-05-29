@@ -26,6 +26,13 @@ public class DocumentStore
     /// <summary>是否公开（其他用户可浏览）</summary>
     public bool IsPublic { get; set; }
 
+    /// <summary>
+    /// 分享到的团队 ID 列表 —— 出现在这些团队的「知识库」团队视图里。
+    /// 空列表表示纯个人空间（个人路径不受影响）。仅知识库模块消费此字段。
+    /// 与 OwnerId（我的）、IsPublic（app 级公开）是三条独立的访问轴。
+    /// </summary>
+    public List<string> SharedTeamIds { get; set; } = new();
+
     /// <summary>主文档条目 ID（进入空间时默认展示的文档，类似 GitHub README）</summary>
     public string? PrimaryEntryId { get; set; }
 

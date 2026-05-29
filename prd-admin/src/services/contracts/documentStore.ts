@@ -17,6 +17,8 @@ export type DocumentStore = {
   viewCount: number;
   favoriteCount: number;
   coverImageUrl?: string;
+  /** 分享到的团队 ID 列表（仅知识库消费） */
+  sharedTeamIds?: string[];
   createdAt: string;
   updatedAt: string;
 };
@@ -52,6 +54,9 @@ export type DocumentStoreShareLink = {
   token: string;
   storeId: string;
   storeName: string;
+  /** 非空 = 单篇文档分享；空 = 整库分享 */
+  entryId?: string;
+  entryTitle?: string;
   title?: string;
   description?: string;
   viewCount: number;
@@ -61,6 +66,27 @@ export type DocumentStoreShareLink = {
   createdAt: string;
   expiresAt?: string;
   isRevoked: boolean;
+};
+
+/** 公开分享视图（/s/lib/:token 拉取，匿名可访问） */
+export type DocStoreShareView = {
+  token: string;
+  title?: string;
+  description?: string;
+  createdByName?: string;
+  /** 非空 = 单篇文档分享 */
+  entryId?: string;
+  entryTitle?: string;
+  store: {
+    id: string;
+    name: string;
+    description?: string;
+    primaryEntryId?: string;
+    pinnedEntryIds?: string[];
+    documentCount: number;
+    likeCount: number;
+    viewCount: number;
+  };
 };
 
 export type DocumentEntry = {
@@ -160,6 +186,12 @@ export type SubscriptionDetail = {
 
 export type DocumentStoreWithPreview = DocumentStore & {
   recentEntries: { id: string; title: string; updatedAt: string; contentType: string }[];
+  /** 是否存在「整库级」有效分享（用于卡片标黄） */
+  hasActiveShare?: boolean;
+  /** 团队作用域下后端附带的创建者昵称（卡片顶部成员归属展示） */
+  ownerName?: string;
+  /** 团队作用域下后端附带的创建者头像文件名 */
+  ownerAvatarFileName?: string;
 };
 
 /** 我收藏/点赞的知识库（用于 DocumentStorePage 的"我的收藏"/"我的点赞"标签） */
@@ -239,7 +271,7 @@ export type ListDocumentEntriesContract = (
   page?: number,
   pageSize?: number,
   keyword?: string,
-) => Promise<ApiResponse<{ items: DocumentEntry[]; total: number; page: number; pageSize: number }>>;
+) => Promise<ApiResponse<{ items: DocumentEntry[]; total: number; page: number; pageSize: number; sharedEntryIds?: string[] }>>;
 
 export type UpdateDocumentEntryContract = (
   entryId: string,

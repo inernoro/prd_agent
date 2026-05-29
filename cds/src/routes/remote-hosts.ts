@@ -42,7 +42,7 @@ import {
   type SidecarSpec,
 } from '../services/sidecar/sidecar-deployer.js';
 import { CdsPairingService } from '../services/connection/pairing-service.js';
-import { computePreviewSlug } from '../services/preview-slug.js';
+import { computePreviewSlug, previewProjectSlug } from '../services/preview-slug.js';
 
 export interface RemoteHostsRouterDeps {
   stateService: StateService;
@@ -60,6 +60,23 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     () => '',
   );
   const router = Router();
+  const instanceDiscoveryCache = new Map<string, {
+    expiresAt: number;
+    payload: { projectId: string } & ProjectRuntimeInstancesResponse;
+  }>();
+  const instanceDiscoveryCacheTtlMs = Math.max(
+    0,
+    Number.parseInt(process.env.CDS_INSTANCE_DISCOVERY_CACHE_MS || '2000', 10) || 0,
+  );
+  const instanceDiscoveryBuckets = new Map<string, { resetAt: number; count: number }>();
+  const instanceDiscoverySoftQps = Math.max(
+    1,
+    Number.parseInt(process.env.CDS_INSTANCE_DISCOVERY_SOFT_QPS || '1', 10) || 1,
+  );
+  const instanceDiscoverySoftBurst = Math.max(
+    instanceDiscoverySoftQps,
+    Number.parseInt(process.env.CDS_INSTANCE_DISCOVERY_SOFT_BURST || '3', 10) || 3,
+  );
 
   router.get('/cds-system/remote-hosts', (_req, res) => {
     res.json({ hosts: service.list() });
@@ -453,8 +470,42 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       return;
     }
 
+    const now = Date.now();
+    const cached = instanceDiscoveryCache.get(projectId);
+    const bucketKey = `${projectId}:${crypto.createHash('sha256').update(token || '').digest('hex').slice(0, 12)}`;
+    const bucket = instanceDiscoveryBuckets.get(bucketKey);
+    const nextBucket = !bucket || bucket.resetAt <= now
+      ? { resetAt: now + 1000, count: 1 }
+      : { resetAt: bucket.resetAt, count: bucket.count + 1 };
+    instanceDiscoveryBuckets.set(bucketKey, nextBucket);
+    if (
+      cached &&
+      req.query.fresh !== '1' &&
+      nextBucket.count > instanceDiscoverySoftBurst
+    ) {
+      res.setHeader('X-CDS-Cache', cached.expiresAt > now ? 'hit' : 'stale');
+      res.setHeader('X-CDS-RateLimit', 'soft');
+      res.setHeader('Retry-After', '1');
+      res.json(cached.payload);
+      return;
+    }
+    if (instanceDiscoveryCacheTtlMs > 0 && cached && cached.expiresAt > now && req.query.fresh !== '1') {
+      res.setHeader('X-CDS-Cache', 'hit');
+      res.setHeader('Retry-After', '1');
+      res.json(cached.payload);
+      return;
+    }
+
     const { instances, discovery, capacity } = collectProjectRuntimeInstances(deps.stateService, service, project);
-    res.json({ projectId, instances, discovery, capacity });
+    const payload = { projectId, instances, discovery, capacity };
+    if (instanceDiscoveryCacheTtlMs > 0) {
+      instanceDiscoveryCache.set(projectId, {
+        expiresAt: now + instanceDiscoveryCacheTtlMs,
+        payload,
+      });
+      res.setHeader('X-CDS-Cache', 'miss');
+    }
+    res.json(payload);
   });
 
   router.get('/projects/:id/runtime-capacity', (req, res) => {
@@ -976,7 +1027,7 @@ function collectProjectRuntimeInstances(
   }
 
   if (shouldIncludeBranchServicesInInstanceDiscovery(project)) {
-    const projectSlug = project.slug || project.id;
+    const projectSlug = previewProjectSlug(project, project.id);
     const previewRoot = resolvePreviewRootDomain();
     discovery.previewRootConfigured = Boolean(previewRoot);
     const branches = stateService.getBranchesForProject(project.id);
@@ -1656,7 +1707,7 @@ function resolveCdsManagedRuntimeBaseUrl(
   }
   const previewRoot = resolvePreviewRootDomain();
   if (!previewRoot) return null;
-  const previewSlug = computePreviewSlug(branch.branch, project.slug || project.id);
+  const previewSlug = computePreviewSlug(branch.branch, previewProjectSlug(project, project.id));
   return `https://${previewSlug}.${previewRoot}`;
 }
 

@@ -19,9 +19,19 @@ export interface BridgeRouterDeps {
   stateService?: StateService;
 }
 
+export function isBridgeEnabled(): boolean {
+  return process.env.CDS_BRIDGE_ENABLED === '1';
+}
+
 export function createBridgeRouter(deps: BridgeRouterDeps): Router {
   const { bridgeService, stateService } = deps;
   const router = Router();
+
+  const disabledPayload = {
+    disabled: true,
+    code: 'bridge_disabled',
+    message: 'Page Agent Bridge HTTP polling is temporarily disabled. Use normal preview/manual smoke paths instead.',
+  };
 
   // PR_C.3 helper：在 AI 占用 / 释放时给 branch + project 加计数 + 写 activity log。
   // actor 解析走 services/actor-resolver.ts 共享实现（Bugbot Low review）。
@@ -63,6 +73,10 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
 
   // POST /api/bridge/heartbeat — Widget heartbeat (fast polling, 500ms interval)
   router.post('/heartbeat', (req, res) => {
+    if (!isBridgeEnabled()) {
+      res.json({ command: null, ...disabledPayload });
+      return;
+    }
     const { branchId, state } = req.body || {};
     if (!branchId) {
       res.status(400).json({ error: 'branchId is required' });
@@ -74,6 +88,10 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
 
   // POST /api/bridge/result — Widget submits command execution result
   router.post('/result', (req, res) => {
+    if (!isBridgeEnabled()) {
+      res.json({ ok: true, ...disabledPayload });
+      return;
+    }
     const { branchId, id, success, error, data, state } = req.body || {};
     if (!branchId || !id) {
       res.status(400).json({ error: 'branchId and id are required' });
@@ -87,11 +105,19 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
 
   // GET /api/bridge/check/:branchId — Widget lightweight activation check (no body, no auth needed)
   router.get('/check/:branchId', (req, res) => {
+    if (!isBridgeEnabled()) {
+      res.json({ active: false, ...disabledPayload });
+      return;
+    }
     res.json({ active: bridgeService.isSessionActive(req.params.branchId) });
   });
 
   // POST /api/bridge/start-session — Agent activates Bridge for a branch
   router.post('/start-session', (req, res) => {
+    if (!isBridgeEnabled()) {
+      res.status(503).json(disabledPayload);
+      return;
+    }
     const { branchId } = req.body || {};
     if (!branchId) {
       res.status(400).json({ error: 'branchId is required' });
@@ -104,11 +130,19 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
 
   // GET /api/bridge/connections — List all active bridge connections
   router.get('/connections', (_req, res) => {
+    if (!isBridgeEnabled()) {
+      res.json({ connections: [], ...disabledPayload });
+      return;
+    }
     res.json({ connections: bridgeService.getConnections() });
   });
 
   // GET /api/bridge/state/:branchId — Read page state
   router.get('/state/:branchId', (req, res) => {
+    if (!isBridgeEnabled()) {
+      res.status(503).json(disabledPayload);
+      return;
+    }
     const { branchId } = req.params;
 
     if (!bridgeService.isConnected(branchId)) {
@@ -130,6 +164,10 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
 
   // POST /api/bridge/command/:branchId — Send command to widget (waits for result)
   router.post('/command/:branchId', async (req, res) => {
+    if (!isBridgeEnabled()) {
+      res.status(503).json(disabledPayload);
+      return;
+    }
     const { branchId } = req.params;
     const { action, params, description } = req.body || {};
 
@@ -167,6 +205,10 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
 
   // POST /api/bridge/navigate-request — Request user to open a page
   router.post('/navigate-request', (req, res) => {
+    if (!isBridgeEnabled()) {
+      res.status(503).json(disabledPayload);
+      return;
+    }
     const { branchId, url, reason } = req.body || {};
     if (!branchId || !url) {
       res.status(400).json({ error: 'branchId and url are required' });
@@ -178,12 +220,20 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
 
   // GET /api/bridge/navigate-requests/:branchId — Widget polls for pending navigate requests
   router.get('/navigate-requests/:branchId', (req, res) => {
+    if (!isBridgeEnabled()) {
+      res.json({ requests: [], ...disabledPayload });
+      return;
+    }
     const { branchId } = req.params;
     res.json({ requests: bridgeService.getNavigateRequests(branchId) });
   });
 
   // POST /api/bridge/navigate-requests/:id/dismiss — Dismiss a navigate request
   router.post('/navigate-requests/:id/dismiss', (req, res) => {
+    if (!isBridgeEnabled()) {
+      res.json({ success: true, ...disabledPayload });
+      return;
+    }
     bridgeService.dismissNavigateRequest(req.params.id);
     res.json({ success: true });
   });
@@ -194,6 +244,10 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
 
   // POST /api/bridge/handshake-request — AI asks user to approve a Bridge session
   router.post('/handshake-request', (req, res) => {
+    if (!isBridgeEnabled()) {
+      res.status(503).json(disabledPayload);
+      return;
+    }
     const { branchId, reason, agentName } = req.body || {};
     if (!branchId) {
       res.status(400).json({ error: 'branchId is required' });
@@ -213,11 +267,19 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
 
   // GET /api/bridge/handshake-requests/:branchId — Widget polls for pending handshake
   router.get('/handshake-requests/:branchId', (req, res) => {
+    if (!isBridgeEnabled()) {
+      res.json({ requests: [], ...disabledPayload });
+      return;
+    }
     res.json({ requests: bridgeService.getPendingHandshakeRequests(req.params.branchId) });
   });
 
   // POST /api/bridge/handshake-requests/:id/approve — User approves (from Widget)
   router.post('/handshake-requests/:id/approve', (req, res) => {
+    if (!isBridgeEnabled()) {
+      res.json({ success: false, ...disabledPayload });
+      return;
+    }
     const approved = bridgeService.approveHandshake(req.params.id);
     if (!approved) {
       res.status(404).json({ error: '握手请求不存在或已过期' });
@@ -228,6 +290,10 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
 
   // POST /api/bridge/handshake-requests/:id/reject — User rejects (from Widget)
   router.post('/handshake-requests/:id/reject', (req, res) => {
+    if (!isBridgeEnabled()) {
+      res.json({ success: false, ...disabledPayload });
+      return;
+    }
     const rejected = bridgeService.rejectHandshake(req.params.id);
     if (!rejected) {
       res.status(404).json({ error: '握手请求不存在或已过期' });
@@ -238,6 +304,10 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
 
   // GET /api/bridge/handshake-status/:id — AI polls for approval status
   router.get('/handshake-status/:id', (req, res) => {
+    if (!isBridgeEnabled()) {
+      res.json({ status: 'disabled', ...disabledPayload });
+      return;
+    }
     const status = bridgeService.getHandshakeStatus(req.params.id);
     if (!status) {
       res.json({ status: 'expired' });
@@ -252,6 +322,10 @@ export function createBridgeRouter(deps: BridgeRouterDeps): Router {
 
   // POST /api/bridge/end-session — AI signals it's done operating
   router.post('/end-session', (req, res) => {
+    if (!isBridgeEnabled()) {
+      res.json({ success: true, ...disabledPayload });
+      return;
+    }
     const { branchId, summary } = req.body || {};
     if (!branchId) {
       res.status(400).json({ error: 'branchId is required' });

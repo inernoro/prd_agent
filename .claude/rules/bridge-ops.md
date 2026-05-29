@@ -1,5 +1,7 @@
 # Page Agent Bridge 操作规范
 
+> 暂停状态（2026-05-28）：Bridge HTTP 轮询已默认关闭，`CDS_BRIDGE_ENABLED=1` 才会恢复。Agent 不应再把 Bridge 作为默认页面验收/操作手段；本规则只作为历史兼容和故障定位参考。
+
 Agent 通过 CDS Bridge 操作预览页面时的强制规则。
 
 ## 端点 URL 规约（2026-04-19 核对)

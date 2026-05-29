@@ -136,6 +136,8 @@ Flex 子元素默认 `min-height: auto`，会阻止 `max-height: 0` 的收缩生
 
 ### 4. Bridge 操作（`cds/src/routes/bridge.ts`）
 
+> 暂停状态（2026-05-28）：Bridge HTTP 轮询默认关闭。除非显式设置 `CDS_BRIDGE_ENABLED=1`，Widget 不会轮询 `/api/bridge/*`，Dashboard 也不主动查询 Bridge 状态。
+
 Agent 通过 CDS 操作用户浏览器的规范见 `.claude/rules/bridge-ops.md`：
 - 端点 `POST /api/bridge/command/:branchId`（branchId 在 URL **不**在 body）
 - 每条指令必须带 `description`（中文，用户可见）

@@ -233,6 +233,7 @@ PA Agent 的全部技术基础设施**保留**：
 | 版本 | 日期 | 说明 |
 |------|------|------|
 | v1.0 落地版 | 2026-05-10 | 首版：剥离 emoji 后落地于本仓库；五条信条、验收用例、四象限毒舌一句完整保留 |
+| v1.1 | 2026-05-10 | 修复 System Prompt 注入用户姓名：弃用 `string.Format`，改用 `__PA_USER_DISPLAY_NAME__` 占位符 Replace，避免与 JSON 示例花括号冲突导致 `FormatException` |
 
 ---
 

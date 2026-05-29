@@ -29,7 +29,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { StateService } from './state.js';
 import type { BranchEntry, BuildProfile } from '../types.js';
-import { computePreviewSlug } from './preview-slug.js';
+import { computePreviewSlug, previewProjectSlug } from './preview-slug.js';
 import type { RouteRecord } from '../forwarder/types.js';
 
 /**
@@ -115,7 +115,7 @@ export class ForwarderRoutePublisher {
     const records: RouteRecord[] = [];
     const projects = this.opts.state.getProjects();
     const projectSlugById = new Map<string, string>();
-    for (const p of projects) projectSlugById.set(p.id, p.slug);
+    for (const p of projects) projectSlugById.set(p.id, previewProjectSlug(p, p.id));
 
     const buildProfiles = this.opts.state.getBuildProfiles();
     const profileById = new Map<string, BuildProfile>();

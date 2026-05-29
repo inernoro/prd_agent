@@ -18,6 +18,15 @@ public class DocumentStoreShareLink
     /// <summary>知识库名称（快照）</summary>
     public string StoreName { get; set; } = string.Empty;
 
+    /// <summary>
+    /// 单篇文档分享：指向 DocumentEntry.Id。
+    /// null = 分享整个知识库；非 null = 只分享该篇文档。
+    /// </summary>
+    public string? EntryId { get; set; }
+
+    /// <summary>被分享文档的标题快照（仅单篇分享时有值）</summary>
+    public string? EntryTitle { get; set; }
+
     /// <summary>分享标题（自定义）</summary>
     public string? Title { get; set; }
 

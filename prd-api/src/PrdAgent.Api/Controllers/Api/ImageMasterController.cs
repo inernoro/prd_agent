@@ -1142,6 +1142,146 @@ public class ImageMasterController : ControllerBase
         return Ok(ApiResponse<object>.Ok(payload));
     }
 
+    private static string ReadCanvasStr(JsonObject o, string key)
+    {
+        var v = o[key];
+        if (v is JsonValue jv && jv.TryGetValue<string>(out var s)) return (s ?? string.Empty).Trim();
+        return string.Empty;
+    }
+
+    /// <summary>
+    /// 画布对账兜底：扫描画布上仍停在 running / 无图 error 的占位元素，按 image_gen_runs 的 TargetCanvasKey
+    /// 反查真实结果，修复"后端已生成或已失败、但画布占位卡死"的状态。
+    /// 关键：按"画布元素 id == run.TargetCanvasKey"匹配，不依赖前端持久化 runId，
+    /// 因此能拯救历史上 runId 未落库的孤儿占位。dryRun=true 时只报告不落库。
+    /// </summary>
+    [HttpPost("workspaces/{id}/canvas/reconcile")]
+    public async Task<IActionResult> ReconcileWorkspaceCanvas(string id, [FromQuery] bool dryRun = false, CancellationToken ct = default)
+    {
+        var adminId = GetAdminId();
+        var wid = (id ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(wid)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "id 不能为空"));
+
+        var ws = await GetWorkspaceIfAllowedAsync(wid, adminId, ct);
+        if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
+        if (ws.OwnerUserId == "__FORBIDDEN__") return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        // OCC 重试：对账期间 Worker 可能也在写画布
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            var canvas = await _db.ImageMasterCanvases
+                .Find(x => x.WorkspaceId == wid)
+                .SortByDescending(x => x.UpdatedAt).ThenByDescending(x => x.CreatedAt)
+                .FirstOrDefaultAsync(ct);
+            if (canvas == null || string.IsNullOrWhiteSpace((canvas.PayloadJson ?? string.Empty).Trim()))
+                return Ok(ApiResponse<object>.Ok(new { reconciled = Array.Empty<object>(), updated = false, dryRun }));
+
+            JsonNode? root;
+            try { root = JsonNode.Parse(canvas.PayloadJson); } catch { return Ok(ApiResponse<object>.Ok(new { reconciled = Array.Empty<object>(), updated = false, dryRun })); }
+            var elements = root?["elements"] as JsonArray;
+            if (elements == null) return Ok(ApiResponse<object>.Ok(new { reconciled = Array.Empty<object>(), updated = false, dryRun }));
+
+            var report = new List<object>();
+            var mutated = false;
+
+            foreach (var n in elements)
+            {
+                if (n is not JsonObject o) continue;
+                var status = ReadCanvasStr(o, "status");
+                var hasSrc = !string.IsNullOrWhiteSpace(ReadCanvasStr(o, "src"));
+                // 卡死占位：running，或 error 但没图（error 也可能其实后端已成功）
+                var isStuck = status == "running" || (status == "error" && !hasSrc);
+                if (!isStuck) continue;
+
+                var key = ReadCanvasStr(o, "id");
+                if (string.IsNullOrWhiteSpace(key)) key = ReadCanvasStr(o, "key");
+                if (string.IsNullOrWhiteSpace(key)) continue;
+
+                var run = await _db.ImageGenRuns
+                    .Find(x => x.OwnerAdminId == adminId && x.WorkspaceId == wid && x.TargetCanvasKey == key)
+                    .SortByDescending(x => x.CreatedAt)
+                    .FirstOrDefaultAsync(ct);
+                if (run == null) { report.Add(new { key, action = "no-run" }); continue; }
+
+                if (run.Status == ImageGenRunStatus.Completed)
+                {
+                    var item = await _db.ImageGenRunItems
+                        .Find(x => x.RunId == run.Id && x.OwnerAdminId == adminId && x.Status == ImageGenRunItemStatus.Done && x.Url != null && x.Url != "")
+                        .SortBy(x => x.ItemIndex).ThenBy(x => x.ImageIndex)
+                        .FirstOrDefaultAsync(ct);
+                    if (item != null && !string.IsNullOrWhiteSpace(item.Url))
+                    {
+                        var asset = await _db.ImageAssets
+                            .Find(x => x.WorkspaceId == wid && (x.Url == item.Url || x.OriginalUrl == item.Url))
+                            .FirstOrDefaultAsync(ct);
+                        o["kind"] = "image";
+                        o["status"] = "done";
+                        o["syncStatus"] = "synced";
+                        o["syncError"] = null;
+                        o["src"] = item.Url;
+                        if (asset != null)
+                        {
+                            o["assetId"] = asset.Id;
+                            o["sha256"] = asset.Sha256;
+                            if (!string.IsNullOrWhiteSpace(asset.OriginalUrl)) o["originalSrc"] = asset.OriginalUrl;
+                            if (!string.IsNullOrWhiteSpace(asset.OriginalSha256)) o["originalSha256"] = asset.OriginalSha256;
+                        }
+                        if (!string.IsNullOrWhiteSpace(item.Prompt)) o["prompt"] = item.Prompt;
+                        mutated = true;
+                        report.Add(new
+                        {
+                            key,
+                            action = "recovered",
+                            runId = run.Id,
+                            src = item.Url,
+                            assetId = asset?.Id,
+                            sha256 = asset?.Sha256,
+                            originalSrc = asset?.OriginalUrl,
+                            originalSha256 = asset?.OriginalSha256,
+                            prompt = item.Prompt
+                        });
+                    }
+                    else
+                    {
+                        if (status != "error") { o["status"] = "error"; o["errorMessage"] = "生成完成但无图片数据"; mutated = true; }
+                        report.Add(new { key, action = "marked-error", runId = run.Id, errorMessage = "生成完成但无图片数据" });
+                    }
+                }
+                else if (run.Status is ImageGenRunStatus.Failed or ImageGenRunStatus.Cancelled)
+                {
+                    var failItem = await _db.ImageGenRunItems
+                        .Find(x => x.RunId == run.Id && x.OwnerAdminId == adminId && x.ErrorMessage != null && x.ErrorMessage != "")
+                        .FirstOrDefaultAsync(ct);
+                    var msg = run.Status == ImageGenRunStatus.Cancelled
+                        ? "已取消"
+                        : (string.IsNullOrWhiteSpace(failItem?.ErrorMessage) ? "生成失败" : failItem!.ErrorMessage!);
+                    if (status != "error") { o["status"] = "error"; o["errorMessage"] = msg; o["syncStatus"] = "failed"; mutated = true; }
+                    report.Add(new { key, action = status == "error" ? "already-error" : "marked-error", runId = run.Id, runStatus = run.Status.ToString(), errorMessage = msg });
+                }
+                else
+                {
+                    // Queued / Running：后端仍在处理，保留占位
+                    report.Add(new { key, action = "in-progress", runId = run.Id, runStatus = run.Status.ToString() });
+                }
+            }
+
+            if (!mutated || dryRun)
+                return Ok(ApiResponse<object>.Ok(new { reconciled = report, updated = false, dryRun }));
+
+            var newJson = root!.ToJsonString(new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+            var nowTs = DateTime.UtcNow;
+            var updRes = await _db.ImageMasterCanvases.UpdateOneAsync(
+                x => x.Id == canvas.Id && x.UpdatedAt == canvas.UpdatedAt,
+                Builders<ImageMasterCanvas>.Update.Set(x => x.PayloadJson, newJson).Set(x => x.UpdatedAt, nowTs),
+                cancellationToken: ct);
+            if (updRes.ModifiedCount > 0)
+                return Ok(ApiResponse<object>.Ok(new { reconciled = report, updated = true, dryRun = false }));
+            // OCC 冲突 → 重试整轮
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { reconciled = Array.Empty<object>(), updated = false, conflict = true }));
+    }
+
     [HttpPost("workspaces/{id}/assets")]
     public async Task<IActionResult> UploadWorkspaceAsset(string id, [FromBody] UploadAssetRequest request, CancellationToken ct)
     {

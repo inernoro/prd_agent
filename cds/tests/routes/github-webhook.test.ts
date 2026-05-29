@@ -444,6 +444,40 @@ describe('GitHub webhook route', () => {
     expect(deployCalls[0].commitSha).toBe(payload.after);
   });
 
+  it('filters webhook delivery logs by branchId without leaking unscoped deliveries', async () => {
+    stateService.recordGithubWebhookDelivery({
+      id: 'exact',
+      receivedAt: new Date().toISOString(),
+      durationMs: 1,
+      event: 'push',
+      signatureValid: true,
+      dispatchAction: 'deploy',
+      branchId: 'proj-feat',
+      repoFullName: 'octocat/repo',
+      ref: 'refs/heads/feat',
+    });
+    stateService.recordGithubWebhookDelivery({
+      id: 'noise-without-branch',
+      receivedAt: new Date().toISOString(),
+      durationMs: 1,
+      event: 'workflow_job',
+      signatureValid: true,
+      dispatchAction: 'ignored',
+    });
+    server = startServer();
+
+    const res = await request(
+      server,
+      'GET',
+      '/api/cds-system/github/webhook-deliveries?branchId=proj-feat&limit=10',
+      '{}',
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.deliveries.map((item: { id: string }) => item.id)).toEqual(['exact']);
+    expect(res.body.filteredTotal).toBe(1);
+  });
+
   it('records and skips a valid GitHub webhook from a non-allowed owner', async () => {
     stateService.setGithubAppWhitelistOwners(['octocat']);
     stateService.addProject({

@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { apiRequest, ApiError } from '@/lib/api';
+import { normalizeHostStats } from '@/lib/host-stats';
 import { EmptyBlock, ErrorBlock, Field, LoadingBlock, MetricTile, Section } from '../components';
 import type { ClusterStatus, ExecutorNode, ExecutorsResponse, HostStatsResponse, LoadState } from '../types';
 
@@ -80,11 +81,13 @@ export function ClusterTab(): JSX.Element {
   const load = useCallback(async () => {
     setState({ status: 'loading' });
     try {
-      const [status, executors, host] = await Promise.all([
+      const [status, executors, hostRaw] = await Promise.all([
         apiRequest<ClusterStatus>('/api/cluster/status'),
         apiRequest<ExecutorsResponse>('/api/executors'),
-        apiRequest<HostStatsResponse>('/api/host-stats', { headers: { 'X-CDS-Poll': 'true' } }),
+        apiRequest<unknown>('/api/host-stats', { headers: { 'X-CDS-Poll': 'true' } }),
       ]);
+      const host = normalizeHostStats(hostRaw);
+      if (!host) throw new Error('主机状态返回格式异常，已阻止页面崩溃');
       setState({ status: 'ok', data: { status, executors, host } });
     } catch (err: unknown) {
       setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });

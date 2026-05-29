@@ -1,17 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { motion, useMotionValue, useSpring, useTransform, type MotionValue } from 'motion/react';
-import dotnetIconUrl from 'devicon/icons/dot-net/dot-net-original.svg';
-import goIconUrl from 'devicon/icons/go/go-original.svg';
-import javaIconUrl from 'devicon/icons/java/java-original.svg';
-import mongoIconUrl from 'devicon/icons/mongodb/mongodb-original.svg';
-import mysqlIconUrl from 'devicon/icons/mysql/mysql-original.svg';
-import nodeIconUrl from 'devicon/icons/nodejs/nodejs-original.svg';
-import phpIconUrl from 'devicon/icons/php/php-original.svg';
-import postgresIconUrl from 'devicon/icons/postgresql/postgresql-original.svg';
-import pythonIconUrl from 'devicon/icons/python/python-original.svg';
-import rabbitIconUrl from 'devicon/icons/rabbitmq/rabbitmq-original.svg';
-import redisIconUrl from 'devicon/icons/redis/redis-original.svg';
-import rustIconUrl from 'devicon/icons/rust/rust-original.svg';
 import {
   AlertTriangle,
   ArrowRight,
@@ -35,6 +24,18 @@ import {
   Trash2,
   XCircle,
 } from 'lucide-react';
+import dotnetIconUrl from 'devicon/icons/dot-net/dot-net-original.svg';
+import goIconUrl from 'devicon/icons/go/go-original.svg';
+import javaIconUrl from 'devicon/icons/java/java-original.svg';
+import mongoIconUrl from 'devicon/icons/mongodb/mongodb-original.svg';
+import mysqlIconUrl from 'devicon/icons/mysql/mysql-original.svg';
+import nodeIconUrl from 'devicon/icons/nodejs/nodejs-original.svg';
+import phpIconUrl from 'devicon/icons/php/php-original.svg';
+import postgresIconUrl from 'devicon/icons/postgresql/postgresql-original.svg';
+import pythonIconUrl from 'devicon/icons/python/python-original.svg';
+import rabbitIconUrl from 'devicon/icons/rabbitmq/rabbitmq-original.svg';
+import redisIconUrl from 'devicon/icons/redis/redis-original.svg';
+import rustIconUrl from 'devicon/icons/rust/rust-original.svg';
 
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
@@ -414,7 +415,9 @@ function compactList(values: string[] | undefined, empty = '无'): string {
 }
 
 export function ProjectListPage(): JSX.Element {
+  const navigate = useNavigate();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
+  const lastKnownGoodProjectsRef = useRef<ProjectSummary[]>([]);
   const [toast, setToast] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [createAutoPickRepo, setCreateAutoPickRepo] = useState(false);
@@ -460,11 +463,22 @@ export function ProjectListPage(): JSX.Element {
         apiRequest<ProjectsResponse>('/api/projects'),
         apiRequest<LegacyCleanupStatus>('/api/legacy-cleanup/status').catch(() => null),
       ]);
+      const nextProjects = projectsRes.projects || [];
+      const lastKnownGood = lastKnownGoodProjectsRef.current;
+      if (nextProjects.length > 0) {
+        lastKnownGoodProjectsRef.current = nextProjects;
+      }
+      const suspiciousEmpty =
+        nextProjects.length === 0 &&
+        ((projectsRes.total || 0) > 0 || lastKnownGood.length > 0);
       setState({
         status: 'ok',
-        projects: projectsRes.projects || [],
+        projects: suspiciousEmpty ? lastKnownGood : nextProjects,
         legacy: legacyRes,
       });
+      if (suspiciousEmpty) {
+        setToast('项目列表返回可疑空结果，已保留上一次有效列表');
+      }
       void loadPendingImports();
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
@@ -759,7 +773,7 @@ export function ProjectListPage(): JSX.Element {
               // 用 sessionStorage 把"跳过去就部署"信号传给 BranchListPage
               sessionStorage.setItem(`cds:autoDeployOnArrival:${projectId}`, '1');
             }
-            window.location.href = `/branches/${encodeURIComponent(projectId)}`;
+            navigate(`/branches/${encodeURIComponent(projectId)}`);
           }}
         />
         <AgentKeyManagerDialog
@@ -1247,7 +1261,15 @@ function EmptyProjects({ onCreate }: { onCreate: () => void }): JSX.Element {
 }
 
 function DeviconIcon({ src }: { src: string }): JSX.Element {
-  return <img aria-hidden alt="" className="cds-project-node-icon cds-project-node-devicon" draggable={false} src={src} />;
+  return (
+    <img
+      aria-hidden
+      alt=""
+      className="cds-project-node-icon cds-project-node-devicon"
+      draggable={false}
+      src={src}
+    />
+  );
 }
 
 function MongoIcon(): JSX.Element {
@@ -3269,10 +3291,10 @@ function GithubRepoPickerDialog({
             <ErrorBlock message={state.message} />
             {state.action === 'connect' || state.action === 'configure' ? (
               <Button asChild variant="outline">
-                <a href="/cds-settings#github">
+                <Link to="/cds-settings#github">
                   <ExternalLink />
                   打开 GitHub 设置
-                </a>
+                </Link>
               </Button>
             ) : (
               <Button type="button" variant="outline" onClick={() => void loadPage(1)}>

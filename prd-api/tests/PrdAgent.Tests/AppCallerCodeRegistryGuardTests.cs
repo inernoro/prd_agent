@@ -24,16 +24,10 @@ public class AppCallerCodeRegistryGuardTests
         _output = output;
     }
 
-    // 匹配形如 "xxx-agent.feature.sub::chat" 的字符串字面量
-    // - 前缀:kebab-case 应用键(必须 lowercase 开头,允许 a-z0-9-)
-    // - 中段:点号分隔的路径(至少一段);允许 a-zA-Z0-9- ——
-    //   故意放宽,这样 PR #504 那种用 camelCase("aiSummary")的违规命名也能被扫到、
-    //   走到 FindByAppCode 验证,而不是被正则静默吞掉(那才是 #504 能逾越的根因)。
-    //   一旦命中且未注册,本测试会失败并打出文件位置;命名是否规范由
-    //   RegisteredCodes_ShouldUseKebabCase 兜底强制。
-    // - 结尾:::modelType
+    // 匹配形如 "xxx.feature.sub::chat" 的字符串字面量,放宽 camelCase / 下划线以便不规范命名
+    // 也能走到注册检查 (kebab-case 检查由 RegisteredCodes_ShouldUseKebabCase 兜底)。
     private static readonly Regex AppCallerCodePattern = new(
-        @"""(?<code>[a-z][a-zA-Z0-9-]*(?:-[a-zA-Z0-9]+)*(?:\.[a-zA-Z0-9][a-zA-Z0-9-]*)+::(?:chat|vision|generation|intent|embedding|rerank|long-context|code))""",
+        @"""(?<code>[a-z][a-zA-Z0-9_-]*(?:\.[a-zA-Z0-9][a-zA-Z0-9_-]*)+::(?:chat|vision|generation|intent|embedding|rerank|long-context|code))""",
         RegexOptions.Compiled);
 
     // kebab-case 校验:每一段(用 . 分割,去掉 ::modelType 后)都必须只包含 a-z / 0-9 / -
@@ -41,24 +35,15 @@ public class AppCallerCodeRegistryGuardTests
         @"^[a-z][a-z0-9-]*$",
         RegexOptions.Compiled);
 
-    /// <summary>允许的命名空间前缀(与 AppCallerRegistry 对齐)。未在此列则不参与扫描。</summary>
-    private static readonly string[] AllowedPrefixes =
+    /// <summary>
+    /// 已知可豁免的非注册 caller-code 字面量:必须每条都附「为什么不该注册」的注释。
+    /// 默认空集合 —— 默认拒绝 (default-deny),任何 src/**.cs 里的 caller-code 字面量
+    /// 都必须能在 AppCallerRegistry 找到,除非显式列入此处并说明理由。
+    /// </summary>
+    private static readonly HashSet<string> KnownNonRegisteredLiterals = new(StringComparer.Ordinal)
     {
-        "prd-agent", "visual-agent", "literary-agent", "defect-agent", "video-agent",
-        "report-agent", "review-agent", "transcript-agent", "workflow-agent",
-        "pr-review", "emergence-explorer", "skill-agent", "arena", "ai-toolbox",
-        "tutorial-email", "open-platform", "channel-adapter", "document-store-agent",
-        "prd-admin", "prd-agent-desktop", "admin", "system",
+        // 暂无:如果将来出现"虚构例子"(纯文档片段、单元测试桩),在此登记并加注释解释。
     };
-
-    private static bool IsKnownPrefix(string code)
-    {
-        foreach (var p in AllowedPrefixes)
-        {
-            if (code.StartsWith(p + ".", StringComparison.Ordinal)) return true;
-        }
-        return false;
-    }
 
     [Fact]
     public void EveryAppCallerCodeLiteral_ShouldBeRegistered()
@@ -83,7 +68,7 @@ public class AppCallerCodeRegistryGuardTests
             foreach (Match m in AppCallerCodePattern.Matches(content))
             {
                 var code = m.Groups["code"].Value;
-                if (!IsKnownPrefix(code)) continue;           // 忽略测试数据 / 第三方
+                if (KnownNonRegisteredLiterals.Contains(code)) continue;
                 if (!seen.Add(code)) continue;                // 本轮已验过
 
                 if (AppCallerRegistrationService.FindByAppCode(code) == null)
@@ -103,13 +88,17 @@ public class AppCallerCodeRegistryGuardTests
             var lines = new List<string>
             {
                 "发现以下 AppCallerCode 字面量未在 AppCallerRegistry 中注册 ——",
-                "请在 prd-api/src/PrdAgent.Core/Models/AppCallerRegistry.cs 对应的 Agent 子类下,",
+                "请在 prd-api/src/PrdAgent.Core/Models/AppCallerRegistry.cs 对应的子类下,",
                 "新增带 [AppCallerMetadata] 的 public const string,然后用该常量替换字面量。",
+                "",
+                "(历史教训:之前用 AllowedPrefixes 白名单做 IsKnownPrefix 过滤,",
+                "新加的 marketplace-skill / page-agent / prd-agent-web / document-store 等前缀",
+                "因未及时同步白名单,被 CI 静默跳过 —— 现已改为 default-deny。)",
                 "",
             };
             foreach (var (code, files) in missing.OrderBy(kv => kv.Key))
             {
-                lines.Add($"  ❌ {code}");
+                lines.Add($"  X {code}");
                 foreach (var f in files.Distinct()) lines.Add($"       出现在: {f}");
             }
             var msg = string.Join('\n', lines);
@@ -117,7 +106,7 @@ public class AppCallerCodeRegistryGuardTests
             Assert.Fail(msg);
         }
 
-        _output.WriteLine($"✓ 已扫描 {seen.Count} 个 AppCallerCode 字面量,全部已在 AppCallerRegistry 注册。");
+        _output.WriteLine($"OK 已扫描 {seen.Count} 个 AppCallerCode 字面量,全部已在 AppCallerRegistry 注册。");
     }
 
     /// <summary>

@@ -99,6 +99,55 @@ describe('GitHubWebhookDispatcher', () => {
       expect(result.action).toBe('ignored-non-branch');
     });
 
+    it('rejects URL-like branch refs before creating or deploying', async () => {
+      stateService.addProject({
+        id: 'p1',
+        slug: 'proj',
+        name: 'Proj',
+        kind: 'git',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        githubRepoFullName: 'octocat/repo',
+        githubInstallationId: 42,
+      });
+      const d = buildDispatcher();
+
+      const result = await d.handle('push', {
+        ref: 'refs/heads/https/github.com/inernoro/prd_agent/pull/611',
+        after: 'abc123def456789012345678901234567890aaaa',
+        repository: { id: 1, full_name: 'octocat/repo' },
+      });
+
+      expect(result.action).toBe('ignored-event');
+      expect(result.deployRequest).toBeUndefined();
+      expect(worktree.createdWorktrees).toHaveLength(0);
+      expect(stateService.findBranchByProjectAndName('p1', 'https/github.com/inernoro/prd_agent/pull/611')).toBeUndefined();
+    });
+
+    it('rejects pull-number shaped branch refs before creating or deploying', async () => {
+      stateService.addProject({
+        id: 'p1',
+        slug: 'proj',
+        name: 'Proj',
+        kind: 'git',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        githubRepoFullName: 'octocat/repo',
+        githubInstallationId: 42,
+      });
+      const d = buildDispatcher();
+
+      const result = await d.handle('push', {
+        ref: 'refs/heads/pull/611',
+        after: 'abc123def456789012345678901234567890aaaa',
+        repository: { id: 1, full_name: 'octocat/repo' },
+      });
+
+      expect(result.action).toBe('ignored-event');
+      expect(result.deployRequest).toBeUndefined();
+      expect(worktree.createdWorktrees).toHaveLength(0);
+    });
+
     it('ignores delete pushes', async () => {
       const d = buildDispatcher();
       const result = await d.handle('push', {
