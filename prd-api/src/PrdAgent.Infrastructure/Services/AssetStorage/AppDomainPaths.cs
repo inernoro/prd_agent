@@ -30,6 +30,7 @@ public static class AppDomainPaths
     public const string DomainReportAgent = "report-agent";
     public const string DomainWorkflowAgent = "workflow-agent";
     public const string DomainTranscriptAgent = "transcript-agent";
+    public const string DomainCcasAgent = "ccas-agent";
     public const string DomainAssets = "assets";
     public const string DomainWatermark = "watermark";
     public const string DomainLogs = "logs";

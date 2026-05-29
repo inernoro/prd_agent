@@ -1112,6 +1112,58 @@ public static class EmergenceExplorer
 }
 
 /// <summary>
+/// CCAS (Code Collection &amp; Association System) Agent — 赋码采集关联系统综合智能体
+/// </summary>
+public static class CcasAgent
+{
+    public const string AppName = "CCAS Agent (赋码采集关联)";
+
+    public static class Prd
+    {
+        [AppCallerMetadata(
+            "PRD 文档生成",
+            "按米多 AI 产品文档模板（工程版 1+N 主-子文档 / 敏捷版扩建）补全/优化/扩写产品文档",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Doc"
+        )]
+        public const string Chat = "ccas-agent.prd::chat";
+    }
+
+    public static class Flow
+    {
+        [AppCallerMetadata(
+            "产线流程图节点解析",
+            "把用户描述的产线设备/位置/流程解析成结构化 JSON（节点 + 边）供 ReactFlow 渲染",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Flow"
+        )]
+        public const string Chat = "ccas-agent.flow::chat";
+    }
+
+    public static class Equipment
+    {
+        [AppCallerMetadata(
+            "设备素材生成",
+            "按预设风格（等距 3D / 工业线稿 / 卡通扁平 / 写实 / 矢量 SOP 等）文生图生成产线设备素材",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Equipment"
+        )]
+        public const string Generate = "ccas-agent.equipment::generation";
+    }
+
+    public static class Qa
+    {
+        [AppCallerMetadata(
+            "智能客服-知识库问答",
+            "基于知识库的严格 RAG 问答：只用注入的领域参考资料回答，缺资料就明说不杜撰；可开联网开关让 AI 引用模型公开知识",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Chat"
+        )]
+        public const string Chat = "ccas-agent.qa::chat";
+    }
+}
+
+/// <summary>
 /// Page Agent 工作流胶囊页面/代码生成
 /// </summary>
 public static class PageAgent

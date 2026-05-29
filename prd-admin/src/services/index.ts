@@ -1931,3 +1931,36 @@ export type {
   CreateEmergenceTreeInput,
   UpdateEmergenceNodeInput,
 } from '@/services/contracts/emergence';
+
+// ── CCAS Agent 赋码采集关联综合智能体 ──
+export {
+  getCcasMeta,
+  generateCcasEquipment,
+  listCcasEquipment,
+  toggleCcasEquipmentFavorite,
+  deleteCcasEquipment,
+  saveCcasFlowDiagram,
+  listCcasFlowDiagrams,
+  getCcasFlowDiagram,
+  deleteCcasFlowDiagram,
+  listMyKnowledgeStores,
+  listKnowledgeEntries,
+  getKnowledgeEntryContent,
+  CCAS_PRD_STREAM_URL,
+  CCAS_FLOW_PARSE_STREAM_URL,
+  CCAS_QA_STREAM_URL,
+} from '@/services/real/ccasAgent';
+export type {
+  CcasMeta,
+  CcasTemplateOption,
+  CcasStylePreset,
+  CcasAssociationMode,
+  CcasEquipmentAsset,
+  CcasFlowDiagram,
+  CcasFlowDiagramSummary,
+  CcasKnowledgeStore,
+  CcasKnowledgeEntry,
+  CcasQaHistoryItem,
+  CcasQaRequest,
+  CcasQaReferencePayload,
+} from '@/services/real/ccasAgent';
