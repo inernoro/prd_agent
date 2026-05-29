@@ -26,6 +26,21 @@ public class HostedSiteService : IHostedSiteService
     private const long MaxExtractedSize = 500L * 1024 * 1024; // 500MB
     private const int MaxFileCount = 500;
 
+    // 网页托管对象的 Cache-Control。配合 SiteUrl 上的 ?v={UpdatedAt.Ticks} 版本指纹形成
+    // 「内容指纹缓存」：内容不变 → URL 不变 → 命中浏览器/CDN 缓存（满足"没更新就用缓存"）；
+    // 重新上传 → UpdatedAt 变化 → ?v 变化 → URL 变化 → 击穿缓存拿到新内容。
+    // max-age=3600 是兜底——万一某些 CDN 配置忽略查询串，最长 1 小时后也会回源刷新。
+    private const string SiteCacheControl = "public, max-age=3600";
+
+    // 给入口 URL 追加版本指纹。version 取站点的 UpdatedAt：只在重新上传时变化，
+    // 因此"没更新"的站点 URL 恒定可缓存，符合用户要求。
+    internal static string AppendVersion(string url, DateTime version)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return url;
+        var sep = url.Contains('?') ? '&' : '?';
+        return $"{url}{sep}v={version.Ticks}";
+    }
+
     private static readonly HashSet<string> BlockedExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".exe", ".dll", ".sh", ".bat", ".cmd", ".ps1", ".msi", ".com", ".scr", ".pif",
@@ -116,9 +131,10 @@ public class HostedSiteService : IHostedSiteService
         CancellationToken ct)
     {
         var siteId = Guid.NewGuid().ToString("N");
+        var now = DateTime.UtcNow;
         var rewritten = RewriteAbsolutePathsInHtml(htmlBytes, "index.html");
         var cosKey = _storage.BuildSiteKey(siteId, "index.html");
-        await _storage.UploadToKeyAsync(cosKey, rewritten, "text/html; charset=utf-8", CancellationToken.None);
+        await _storage.UploadToKeyAsync(cosKey, rewritten, "text/html; charset=utf-8", CancellationToken.None, SiteCacheControl);
 
         var site = new HostedSite
         {
@@ -128,7 +144,9 @@ public class HostedSiteService : IHostedSiteService
             SourceType = "upload",
             CosPrefix = $"web-hosting/sites/{siteId}/",
             EntryFile = "index.html",
-            SiteUrl = _storage.BuildUrlForKey(cosKey),
+            SiteUrl = AppendVersion(_storage.BuildUrlForKey(cosKey), now),
+            CreatedAt = now,
+            UpdatedAt = now,
             Files = new List<HostedSiteFile>
             {
                 new() { Path = "index.html", CosKey = cosKey, Size = rewritten.Length, MimeType = "text/html" }
@@ -153,12 +171,13 @@ public class HostedSiteService : IHostedSiteService
         CancellationToken ct = default)
     {
         var siteId = Guid.NewGuid().ToString("N");
+        var now = DateTime.UtcNow;
         var result = await ExtractAndUploadZip(siteId, zipBytes);
         if (result.Error != null)
             throw new InvalidOperationException(result.Error);
 
         var cosPrefix = $"web-hosting/sites/{siteId}/";
-        var siteUrl = _storage.BuildUrlForKey(_storage.BuildSiteKey(siteId, result.EntryFile));
+        var siteUrl = AppendVersion(_storage.BuildUrlForKey(_storage.BuildSiteKey(siteId, result.EntryFile)), now);
 
         var site = new HostedSite
         {
@@ -169,6 +188,8 @@ public class HostedSiteService : IHostedSiteService
             CosPrefix = cosPrefix,
             EntryFile = result.EntryFile,
             SiteUrl = siteUrl,
+            CreatedAt = now,
+            UpdatedAt = now,
             Files = result.Files,
             TotalSize = result.TotalSize,
             Tags = tags ?? new(),
@@ -192,11 +213,12 @@ public class HostedSiteService : IHostedSiteService
         CancellationToken ct)
     {
         var siteId = Guid.NewGuid().ToString("N");
+        var now = DateTime.UtcNow;
         var htmlBytes = RewriteAbsolutePathsInHtml(
             System.Text.Encoding.UTF8.GetBytes(htmlContent), "index.html");
 
         var cosKey = _storage.BuildSiteKey(siteId, "index.html");
-        await _storage.UploadToKeyAsync(cosKey, htmlBytes, "text/html; charset=utf-8", CancellationToken.None);
+        await _storage.UploadToKeyAsync(cosKey, htmlBytes, "text/html; charset=utf-8", CancellationToken.None, SiteCacheControl);
 
         var site = new HostedSite
         {
@@ -207,7 +229,9 @@ public class HostedSiteService : IHostedSiteService
             SourceRef = sourceRef?.Trim(),
             CosPrefix = $"web-hosting/sites/{siteId}/",
             EntryFile = "index.html",
-            SiteUrl = _storage.BuildUrlForKey(cosKey),
+            SiteUrl = AppendVersion(_storage.BuildUrlForKey(cosKey), now),
+            CreatedAt = now,
+            UpdatedAt = now,
             Files = new List<HostedSiteFile>
             {
                 new() { Path = "index.html", CosKey = cosKey, Size = htmlBytes.Length, MimeType = "text/html" }
@@ -271,7 +295,7 @@ public class HostedSiteService : IHostedSiteService
         {
             var rewritten = RewriteAbsolutePathsInHtml(fileBytes, "index.html");
             var cosKey = _storage.BuildSiteKey(siteId, "index.html");
-            await _storage.UploadToKeyAsync(cosKey, rewritten, "text/html; charset=utf-8", CancellationToken.None);
+            await _storage.UploadToKeyAsync(cosKey, rewritten, "text/html; charset=utf-8", CancellationToken.None, SiteCacheControl);
             siteFiles = new List<HostedSiteFile>
             {
                 new() { Path = "index.html", CosKey = cosKey, Size = rewritten.Length, MimeType = "text/html" }
@@ -284,8 +308,12 @@ public class HostedSiteService : IHostedSiteService
             throw new InvalidOperationException("仅支持 .html/.htm/.zip 文件");
         }
 
-        // siteId 前缀保持不变 → SiteUrl 稳定，既有书签 / 公开主页 / 知识库引用不会 404
-        var siteUrl = _storage.BuildUrlForKey(_storage.BuildSiteKey(siteId, entryFile));
+        // siteId 前缀保持不变 → COS key 稳定，既有书签 / 公开主页 / 知识库引用不会 404。
+        // 但 index.html 是原地覆盖（同 key），URL 字符串若也保持不变，浏览器/CDN 会继续吐
+        // 旧缓存 →「替换网页不生效」。因此在 URL 上追加 ?v={UpdatedAt.Ticks} 版本指纹：
+        // 重新上传 → UpdatedAt 变化 → URL 变化 → 击穿缓存；没有重新上传则 URL 恒定 → 命中缓存。
+        var now = DateTime.UtcNow;
+        var siteUrl = AppendVersion(_storage.BuildUrlForKey(_storage.BuildSiteKey(siteId, entryFile)), now);
 
         // wrappedAssetType 必须显式覆盖（包括清空）：
         // - 用户把 PDF 重传到原 HTML 站，应写入 "pdf" 让分享/缩略走 PDF 路径
@@ -301,7 +329,7 @@ public class HostedSiteService : IHostedSiteService
                 .Set(x => x.Files, siteFiles)
                 .Set(x => x.TotalSize, totalSize)
                 .Set(x => x.WrappedAssetType, normalizedType)
-                .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                .Set(x => x.UpdatedAt, now),
             cancellationToken: ct);
 
         // 清理旧文件中不再被新文件集复用的 key。同 key（如 index.html）已被新内容
@@ -1090,7 +1118,9 @@ public class HostedSiteService : IHostedSiteService
     // 只看 marker，不依赖 ZIP 文件形状——避免把"用户上传的 custom landing.html + report.pdf"
     // 这种 2 文件普通 ZIP 误判为包装站（Codex P2 反复抓到，PR #612）。
     private string? TryBuildPdfAssetUrl(HostedSite site)
-        => IsPdfWrapperSite(site, out var pdf) ? _storage.BuildUrlForKey(pdf!.CosKey) : null;
+        => IsPdfWrapperSite(site, out var pdf)
+            ? AppendVersion(_storage.BuildUrlForKey(pdf!.CosKey), site.UpdatedAt)
+            : null;
 
     public static bool IsPdfWrapperSite(HostedSite site, out HostedSiteFile? pdf)
     {
@@ -1614,7 +1644,7 @@ public class HostedSiteService : IHostedSiteService
 
                 var cosKey = _storage.BuildSiteKey(siteId, relativePath);
                 await _storage.UploadToKeyAsync(cosKey, entryBytes,
-                    mimeType == "text/html" ? "text/html; charset=utf-8" : mimeType, CancellationToken.None);
+                    mimeType == "text/html" ? "text/html; charset=utf-8" : mimeType, CancellationToken.None, SiteCacheControl);
 
                 files.Add(new HostedSiteFile
                 {

@@ -204,10 +204,10 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         }
     }
 
-    public async Task UploadToKeyAsync(string key, byte[] bytes, string? contentType, CancellationToken ct)
+    public async Task UploadToKeyAsync(string key, byte[] bytes, string? contentType, CancellationToken ct, string? cacheControl = null)
     {
         ThrowIfDisposed();
-        await UploadBytesInternalAsync(NormalizeKey(key), bytes, contentType, ct).ConfigureAwait(false);
+        await UploadBytesInternalAsync(NormalizeKey(key), bytes, contentType, ct, cacheControl).ConfigureAwait(false);
     }
 
     public string BuildUrlForKey(string key)
@@ -249,7 +249,7 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
 
     // ========================== Private ==========================
 
-    private async Task UploadBytesInternalAsync(string key, byte[] bytes, string? contentType, CancellationToken ct)
+    private async Task UploadBytesInternalAsync(string key, byte[] bytes, string? contentType, CancellationToken ct, string? cacheControl = null)
     {
         if (bytes == null || bytes.Length == 0) throw new ArgumentException("bytes empty", nameof(bytes));
         var putReq = new PutObjectRequest
@@ -260,6 +260,8 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
             ContentType = (contentType ?? string.Empty).Trim(),
             DisablePayloadSigning = true, // R2 推荐
         };
+        var cc = (cacheControl ?? string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(cc)) putReq.Headers.CacheControl = cc;
         await _s3.PutObjectAsync(putReq, ct).ConfigureAwait(false);
     }
 
