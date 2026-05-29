@@ -31,6 +31,7 @@ export const SHORT_LABEL_MAP: Record<string, string> = {
   'transcript-agent': '转录',
   'emergence-agent': '涌现',
   'emergence': '涌现',
+  'pm-agent': '项目',
   'skill-agent': '技能助手',
   'workflow-agent': '工作流',
 

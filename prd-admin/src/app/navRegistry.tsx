@@ -29,6 +29,7 @@ const DocumentStorePage = lazy(() => import('@/pages/document-store').then(m => 
 const AdminWebPagesPage = lazy(() => import('@/pages/AdminWebPagesPage'));
 const LibraryLandingPage = lazy(() => import('@/pages/library/LibraryLandingPage').then(m => ({ default: m.LibraryLandingPage })));
 const EmergenceExplorerPage = lazy(() => import('@/pages/emergence').then(m => ({ default: m.EmergenceExplorerPage })));
+const PmAgentPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.PmAgentPage })));
 const ChangelogPage = lazy(() => import('@/pages/changelog/ChangelogPage'));
 const SkillAgentPage = lazy(() => import('@/pages/SkillAgentPage'));
 const ArenaPage = lazy(() => import('@/pages/arena/ArenaPage').then(m => ({ default: m.ArenaPage })));
@@ -288,6 +289,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       appKey: 'pa-agent',
       wip: true,
       tags: ['助理', 'PA', '任务', '四象限', 'MECE'],
+    },
+  },
+  {
+    path: '/pm-agent',
+    permission: 'pm-agent.use',
+    element: shellGuarded('pm-agent.use', <PmAgentPage />),
+    nav: {
+      label: '项目管理智能体',
+      shortLabel: '项目',
+      description: '项目立项、任务看板、甘特图，AI 自动拆解需求为任务（对齐 PMO 方法论）',
+      icon: 'FolderKanban',
+      section: 'toolbox',
+      appKey: 'pm-agent',
+      wip: true,
+      tags: ['项目管理', 'PMO', '看板', '甘特图', '任务拆解'],
     },
   },
   {

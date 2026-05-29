@@ -1112,6 +1112,25 @@ public static class EmergenceExplorer
 }
 
 /// <summary>
+/// 项目管理智能体（PM Agent）
+/// </summary>
+public static class ProjectManagement
+{
+    public const string AppName = "项目管理智能体";
+
+    public static class Decompose
+    {
+        [AppCallerMetadata(
+            "需求拆解",
+            "将项目业务目标/需求文档拆解为带优先级、工时、依赖的可执行任务树",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Workflow"
+        )]
+        public const string Chat = "pm-agent.decompose::chat";
+    }
+}
+
+/// <summary>
 /// Page Agent 工作流胶囊页面/代码生成
 /// </summary>
 public static class PageAgent

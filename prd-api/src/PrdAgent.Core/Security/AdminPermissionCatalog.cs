@@ -232,6 +232,11 @@ public static class AdminPermissionCatalog
     public const string EmergenceAgentUse = "emergence-agent.use";
 
     /// <summary>
+    /// 项目管理智能体权限：立项/任务管理/看板/甘特图/AI 需求拆解（普通用户级 Agent 权限）
+    /// </summary>
+    public const string PmAgentUse = "pm-agent.use";
+
+    /// <summary>
     /// 工作空间权限（读）：查看工作空间列表
     /// </summary>
     public const string WorkspacesRead = "workspaces.read";
@@ -338,6 +343,8 @@ public static class AdminPermissionCatalog
         new(DocumentStoreWrite, "文档空间-写", "创建/编辑/删除文档空间与文档"),
 
         new(EmergenceAgentUse, "涌现探索智能体", "可视化功能涌现与创意探索（创建/探索/涌现）"),
+
+        new(PmAgentUse, "项目管理智能体", "项目立项、任务看板、甘特图与 AI 需求拆解"),
 
         new(WorkspacesRead, "工作空间-读", "查看工作空间列表与详情"),
         new(WorkspacesWrite, "工作空间-写", "创建/编辑/删除工作空间、发送指令"),

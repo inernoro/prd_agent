@@ -246,6 +246,7 @@ docs:
 
   # ── 六、技术债务台账（按模块）──
   # 已知边界 / 后续可补 / 留尾风险，命名规范见 rule.doc-naming.md「debt.* 专项约定」
+  debt.pm-agent: 项目管理智能体 · 债务台账
   debt.video-agent: 视频生成 Agent · 债务台账
   debt.workflow-agent: 工作流 Agent · 债务台账
   debt.asset-storage: 资源存储（IAssetStorage 实现）债务台账

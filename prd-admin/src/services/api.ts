@@ -1286,6 +1286,24 @@ export const api = {
       explore: (nodeId: string) => `/api/emergence/nodes/${nodeId}/explore`,
     },
   },
+
+  // ============ Project Management 项目管理 ============
+  pm: {
+    projects: {
+      list: () => '/api/pm/projects',
+      create: () => '/api/pm/projects',
+      detail: (projectId: string) => `/api/pm/projects/${projectId}`,
+      update: (projectId: string) => `/api/pm/projects/${projectId}`,
+      delete: (projectId: string) => `/api/pm/projects/${projectId}`,
+      decompose: (projectId: string) => `/api/pm/projects/${projectId}/decompose`,
+      createTask: (projectId: string) => `/api/pm/projects/${projectId}/tasks`,
+      batchTasks: (projectId: string) => `/api/pm/projects/${projectId}/tasks/batch`,
+    },
+    tasks: {
+      update: (taskId: string) => `/api/pm/tasks/${taskId}`,
+      delete: (taskId: string) => `/api/pm/tasks/${taskId}`,
+    },
+  },
 } as const;
 
 export default api;

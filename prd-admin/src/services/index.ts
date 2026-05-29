@@ -1929,3 +1929,31 @@ export type {
   CreateEmergenceTreeInput,
   UpdateEmergenceNodeInput,
 } from '@/services/contracts/emergence';
+
+// ── Project Management 项目管理 ──
+export {
+  createPmProjectReal as createPmProject,
+  listPmProjectsReal as listPmProjects,
+  getPmProjectReal as getPmProject,
+  updatePmProjectReal as updatePmProject,
+  deletePmProjectReal as deletePmProject,
+  createPmTaskReal as createPmTask,
+  batchCreatePmTasksReal as batchCreatePmTasks,
+  updatePmTaskReal as updatePmTask,
+  deletePmTaskReal as deletePmTask,
+} from '@/services/real/pmAgent';
+export type {
+  PmProject,
+  PmTask,
+  PmTaskDraft,
+  PmProjectType,
+  PmOperationSubType,
+  PmProjectLifecycle,
+  PmTaskStatus,
+  PmTaskPriority,
+  CreatePmProjectInput,
+  UpdatePmProjectInput,
+  CreatePmTaskInput,
+  UpdatePmTaskInput,
+  BatchCreatePmTasksInput,
+} from '@/services/contracts/pmAgent';

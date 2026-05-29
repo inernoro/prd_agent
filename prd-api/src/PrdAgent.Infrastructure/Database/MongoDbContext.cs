@@ -292,6 +292,10 @@ public class MongoDbContext
     public IMongoCollection<EmergenceTree> EmergenceTrees => _database.GetCollection<EmergenceTree>("emergence_trees");
     public IMongoCollection<EmergenceNode> EmergenceNodes => _database.GetCollection<EmergenceNode>("emergence_nodes");
 
+    // Project Management 项目管理
+    public IMongoCollection<PmProject> PmProjects => _database.GetCollection<PmProject>("pm_projects");
+    public IMongoCollection<PmTask> PmTasks => _database.GetCollection<PmTask>("pm_tasks");
+
     // Asset Registry 资产登记簿（跨存储迁移基础设施）
     public IMongoCollection<AssetRegistryEntry> AssetRegistry => _database.GetCollection<AssetRegistryEntry>("asset_registry");
 

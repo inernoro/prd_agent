@@ -257,6 +257,7 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteBackfillServic
 // 涌现探索器
 builder.Services.AddSingleton<PrdAgent.Api.Services.SystemCapabilityScanner>();
 builder.Services.AddScoped<PrdAgent.Api.Services.EmergenceService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.PmAgentService>();
 
 // 技能引导 Agent
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.SkillAgentService>();

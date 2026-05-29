@@ -1,0 +1,140 @@
+import type { ApiResponse } from '@/types/api';
+
+// ── 数据类型 ──
+
+export type PmProjectType = 'strategic' | 'innovation' | 'operation';
+export type PmOperationSubType = 'routine' | 'rectification' | 'supervision';
+export type PmProjectLifecycle = 'registered' | 'running' | 'closing' | 'evaluated' | 'archived';
+export type PmTaskStatus = 'backlog' | 'todo' | 'in_progress' | 'done' | 'cancelled';
+export type PmTaskPriority = 'urgent' | 'high' | 'medium' | 'low' | 'none';
+
+export type PmProject = {
+  id: string;
+  projectNo: string;
+  title: string;
+  description?: string;
+  businessGoal: string;
+  projectType: PmProjectType;
+  operationSubType?: PmOperationSubType | null;
+  lifecycle: PmProjectLifecycle;
+  leaderId: string;
+  leaderName?: string;
+  memberIds: string[];
+  strategyAlignment?: string;
+  plannedStartAt?: string | null;
+  plannedEndAt?: string | null;
+  closedAt?: string | null;
+  budget?: number | null;
+  actualCost?: number | null;
+  ownerId: string;
+  taskCount: number;
+  doneTaskCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PmTask = {
+  id: string;
+  projectId: string;
+  title: string;
+  description?: string;
+  parentTaskId?: string | null;
+  status: PmTaskStatus;
+  priority: PmTaskPriority;
+  assigneeId?: string | null;
+  assigneeName?: string | null;
+  estimateDays?: number | null;
+  startAt?: string | null;
+  dueAt?: string | null;
+  dependsOn: string[];
+  labels: string[];
+  orderKey: number;
+  source: 'manual' | 'ai_decompose';
+  sourceRef?: string | null;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/** AI 拆解出的任务草稿（SSE 流式返回，未落库） */
+export type PmTaskDraft = {
+  title: string;
+  description?: string;
+  priority: PmTaskPriority;
+  estimateDays?: number | null;
+  dependsOnTitles: string[];
+  sourceRef?: string | null;
+  labels: string[];
+};
+
+// ── 请求类型 ──
+
+export type CreatePmProjectInput = {
+  title: string;
+  description?: string;
+  businessGoal: string;
+  projectType: PmProjectType;
+  operationSubType?: PmOperationSubType;
+  leaderId?: string;
+  memberIds?: string[];
+  strategyAlignment?: string;
+  plannedStartAt?: string;
+  plannedEndAt?: string;
+  budget?: number;
+};
+
+export type UpdatePmProjectInput = Partial<{
+  title: string;
+  description: string;
+  businessGoal: string;
+  strategyAlignment: string;
+  lifecycle: PmProjectLifecycle;
+  plannedStartAt: string;
+  plannedEndAt: string;
+  budget: number;
+  memberIds: string[];
+}>;
+
+export type CreatePmTaskInput = Partial<Omit<PmTask, 'id' | 'projectId' | 'createdBy' | 'createdAt' | 'updatedAt' | 'source' | 'dependsOn' | 'labels'>> & {
+  title: string;
+  dependsOn?: string[];
+  labels?: string[];
+};
+
+export type UpdatePmTaskInput = Partial<{
+  title: string;
+  description: string;
+  status: PmTaskStatus;
+  priority: PmTaskPriority;
+  assigneeId: string;
+  estimateDays: number;
+  startAt: string;
+  dueAt: string;
+  dependsOn: string[];
+  labels: string[];
+  orderKey: number;
+}>;
+
+export type BatchCreatePmTasksInput = {
+  tasks: Array<{
+    title: string;
+    description?: string;
+    priority?: PmTaskPriority;
+    estimateDays?: number | null;
+    dependsOnTitles?: string[];
+    sourceRef?: string | null;
+    labels?: string[];
+  }>;
+};
+
+// ── Contract 签名 ──
+
+export type CreatePmProjectContract = (input: CreatePmProjectInput) => Promise<ApiResponse<PmProject>>;
+export type ListPmProjectsContract = (page?: number, pageSize?: number, type?: PmProjectType) => Promise<ApiResponse<{ items: PmProject[]; total: number; page: number; pageSize: number }>>;
+export type GetPmProjectContract = (projectId: string) => Promise<ApiResponse<{ project: PmProject; tasks: PmTask[] }>>;
+export type UpdatePmProjectContract = (projectId: string, input: UpdatePmProjectInput) => Promise<ApiResponse<{ updated: boolean }>>;
+export type DeletePmProjectContract = (projectId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
+export type CreatePmTaskContract = (projectId: string, input: CreatePmTaskInput) => Promise<ApiResponse<PmTask>>;
+export type BatchCreatePmTasksContract = (projectId: string, input: BatchCreatePmTasksInput) => Promise<ApiResponse<{ items: PmTask[]; count: number }>>;
+export type UpdatePmTaskContract = (taskId: string, input: UpdatePmTaskInput) => Promise<ApiResponse<{ updated: boolean }>>;
+export type DeletePmTaskContract = (taskId: string) => Promise<ApiResponse<{ deletedCount: number }>>;
