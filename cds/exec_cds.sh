@@ -1192,6 +1192,11 @@ systemd_available() {
 }
 
 should_manage_with_systemd() {
+  # Codex review(PR #684, C2/P2):一旦执行过 cds.migrate-to-supervisor,会落一个
+  # .cds-supervisor-mode marker。此后即便是 root + systemd 可用,也禁止再走 systemd
+  # 路径 —— 否则 self-update 的重启会 install-systemd + restart cds-master.service,
+  # 与正在接管的 supervisor 抢端口、把刚迁移掉的 systemd 单元又装回来。
+  [ -f "$SCRIPT_DIR/.cds-supervisor-mode" ] && return 1
   [ "$FG" != true ] && [ "$(id -u)" = "0" ] && systemd_available
 }
 

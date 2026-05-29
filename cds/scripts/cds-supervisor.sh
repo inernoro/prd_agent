@@ -49,6 +49,13 @@ LOG_FILE="$LOG_DIR/cds-${ROLE:-unknown}.log"
 
 run_loop() {
   local role="$1" script="$2"
+  # Codex review(PR #684, P1):@reboot crontab 启动时 cwd 是 /root 或 /,而 master
+  # 用 process.cwd() 推 cds.config.json + 默认 repoRoot。不 chdir 就会在错误目录读写
+  # state。spawn node 前先切到 repo 的 cds/ 目录,保证配置/状态落在正确的树。
+  if ! cd "$CDS_ROOT/cds" 2>/dev/null; then
+    echo "[supervisor $role $(date -Iseconds)] FATAL: 无法 cd 到 $CDS_ROOT/cds,检查 CDS_REPO_ROOT" >&2
+    exit 1
+  fi
   # 自己注册到 supervisor pid 文件
   echo $$ > "$SUPERVISOR_PID_FILE"
   local child=""
@@ -94,6 +101,13 @@ case "$SUBCMD" in
   stop)
     ROLE2="${1:-master}"
     SUP_F="$RUN_DIR/cds-${ROLE2}.supervisor.pid"
+    CHILD_F="$RUN_DIR/cds-${ROLE2}.pid"
+    # Codex review(PR #684, P2):node 子进程是 supervisor 用 `&` 拉起的独立进程。
+    # 若 supervisor 在 5s 内没退(忽略 SIGTERM),原来只 KILL supervisor 这个 shell,
+    # child 会变孤儿继续跑,而 PID 文件已删、status 报 stopped → 下次启动重复起 /
+    # 端口冲突。修复:超时路径除了 KILL supervisor,也 KILL 记录在 CHILD_F 里的子进程。
+    child_pid=""
+    [ -f "$CHILD_F" ] && child_pid=$(cat "$CHILD_F" 2>/dev/null)
     if [ -f "$SUP_F" ]; then
       sup_pid=$(cat "$SUP_F")
       if kill -0 "$sup_pid" 2>/dev/null; then
@@ -104,10 +118,17 @@ case "$SUBCMD" in
           sleep 1
           kill -0 "$sup_pid" 2>/dev/null || break
         done
-        kill -0 "$sup_pid" 2>/dev/null && kill -KILL "$sup_pid" 2>/dev/null
+        if kill -0 "$sup_pid" 2>/dev/null; then
+          echo "cds-${ROLE2}: supervisor 未在 5s 内退出,强杀 supervisor + child"
+          kill -KILL "$sup_pid" 2>/dev/null
+          # supervisor 被 KILL,其 TERM trap 不会执行 → child 成孤儿,这里显式收掉
+          [ -n "$child_pid" ] && kill -0 "$child_pid" 2>/dev/null && kill -KILL "$child_pid" 2>/dev/null
+        fi
       fi
     fi
-    rm -f "$RUN_DIR/cds-${ROLE2}.pid" "$SUP_F"
+    # 兜底:即便走了优雅路径,确认 child 真的没了(防 trap 竞态)
+    [ -n "$child_pid" ] && kill -0 "$child_pid" 2>/dev/null && kill -KILL "$child_pid" 2>/dev/null
+    rm -f "$CHILD_F" "$SUP_F"
     echo "cds-${ROLE2}: stopped"
     ;;
 

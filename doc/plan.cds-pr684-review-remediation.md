@@ -29,11 +29,11 @@ infra resync / 服务漂移徽标 等)。两个自动 review bot 持续提 issue
 - [x] useCdsEvents 订阅 operator.request.* 事件(审批弹窗实时)(E2)
 - [x] self-status-cache 刷新合并补一次队列(防卡 updating)(E3)
 
-### 批 4 — supervisor 迁移(P1×2 + P2×2)
-- [ ] cds-supervisor.sh 启动子进程前 chdir 到 repo cds/ 目录(C3,P1)
-- [ ] cds-supervisor.sh stop 超时杀子进程/进程组(C4,P2)
-- [ ] operator-console self-update op:先起 supervisor 再停 cds-master(C1,P1)
-- [ ] operator-console:supervisor 模式下阻止 self-update 回落 systemd(C2,P2)
+### 批 4 — supervisor 迁移(P1×2 + P2×2)✅ 已完成
+- [x] cds-supervisor.sh 启动子进程前 chdir 到 repo cds/ 目录(C3,P1)
+- [x] cds-supervisor.sh stop 超时杀子进程/进程组(C4,P2)
+- [x] operator-console:先 marker+crontab+supervisor,detached 停 cds-master(C1,P1)
+- [x] exec_cds.sh marker 阻止 self-update 回落 systemd(C2,P2)
 
 ### 批 5 — restart-drain(High)
 - [ ] branches.ts + restart-drain.ts:180s→5s 超时回退评估。这是别人故意改的决策,

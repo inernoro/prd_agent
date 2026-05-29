@@ -220,42 +220,28 @@ operatorOpRegistry.register({
   estimatedSeconds: 15,
   run: async ({ shell, log, repoRoot }) => {
     const supervisor = `${repoRoot}/cds/scripts/cds-supervisor.sh`;
+    const marker = `${repoRoot}/cds/.cds-supervisor-mode`;
     log('info', `准备迁移 — supervisor 脚本: ${supervisor}`);
-    // 1) 停 systemd 服务,但不 disable(以防回滚)
-    log('info', '1/5 停 systemd cds-master + cds-forwarder...');
-    const stopRes = await shell.exec(
-      'systemctl stop cds-master.service cds-forwarder.service 2>&1; ' +
-      'systemctl disable cds-master.service cds-forwarder.service 2>&1',
-      { timeout: 30_000 },
-    );
-    log('info', `systemctl: ${(stopRes.stdout || stopRes.stderr || 'ok').slice(0, 200)}`);
-    // 2) 启动 supervisor(setsid 完全脱离当前 shell)
-    log('info', '2/5 启动 supervisor master + forwarder...');
-    const startMaster = await shell.exec(
-      `setsid ${supervisor} master < /dev/null > /dev/null 2>&1 &
-       echo started_master`,
-      { timeout: 5000 },
-    );
-    log('info', `master: ${startMaster.stdout.trim()}`);
-    const startFwd = await shell.exec(
-      `setsid ${supervisor} forwarder < /dev/null > /dev/null 2>&1 &
-       echo started_forwarder`,
-      { timeout: 5000 },
-    );
-    log('info', `forwarder: ${startFwd.stdout.trim()}`);
-    // 3) 等 5s 看是否真起来
-    log('info', '3/5 等 5s 验证 supervisor 启动...');
-    await new Promise((r) => setTimeout(r, 5000));
-    const statusM = await shell.exec(`${supervisor} status master 2>&1`, { timeout: 3000 });
-    const statusF = await shell.exec(`${supervisor} status forwarder 2>&1`, { timeout: 3000 });
-    log('info', `master status: ${statusM.stdout.trim()}`);
-    log('info', `forwarder status: ${statusF.stdout.trim()}`);
-    if (statusM.exitCode !== 0 || statusF.exitCode !== 0) {
-      log('error', '某个 supervisor 未正常启动!检查 /var/log/cds/*.log');
-      throw new Error('supervisor 启动验证失败');
-    }
-    // 4) 加 crontab @reboot
-    log('info', '4/5 注册 crontab @reboot 让机器重启后自动起...');
+
+    // Codex review(PR #684, C1/P1 + C2/P2):本 handler 自己就跑在 cds-master 进程里。
+    // 原实现第 1 步就 `systemctl stop cds-master.service` —— 那会在第 2 步启动 supervisor
+    // 之前就把执行本 handler 的进程杀掉,留下"systemd 已停 + supervisor 没起"的死局。
+    // 而且 supervisor 与 systemd master 抢同一端口,无法"先验证 supervisor 再停 systemd"。
+    // 正确顺序:
+    //   1. 写 .cds-supervisor-mode marker(让 exec_cds.sh 此后永不再走 systemd —— C2)
+    //   2. 注册 crontab @reboot(无端口竞争,安全)
+    //   3. 启动 supervisor(它会 crash-loop 重试绑定,systemd master 还占着端口时绑不上,
+    //      待 systemd 停掉、端口释放后自动绑上 —— 利用 supervisor 自身的重启循环)
+    //   4. **detached** 停 + disable systemd(setsid + 延迟,脱离本 handler 生命周期):
+    //      停 cds-master 会杀掉本进程,所以必须放到后台、等 SSE 响应 flush 后再执行。
+    // 完成后本 handler 立即返回(无法在停掉自己之后再验证,改由日志 + 后续访问验收)。
+
+    // 1) marker —— 一旦写下,exec_cds.sh should_manage_with_systemd() 返回 false
+    await shell.exec(`touch ${marker} 2>&1 || true`, { timeout: 3000 });
+    log('info', `1/4 已写 supervisor-mode marker: ${marker}`);
+
+    // 2) crontab @reboot(无竞争,先做)
+    log('info', '2/4 注册 crontab @reboot 让机器重启后自动起...');
     const cronLine1 = `@reboot ${supervisor} master < /dev/null > /dev/null 2>&1 &`;
     const cronLine2 = `@reboot ${supervisor} forwarder < /dev/null > /dev/null 2>&1 &`;
     const cronExisting = await shell.exec('crontab -l 2>/dev/null || true', { timeout: 3000 });
@@ -271,15 +257,42 @@ operatorOpRegistry.register({
     } else {
       log('info', 'crontab 已含 @reboot 行,跳过');
     }
-    // 5) 最终汇报
-    log('info', '5/5 迁移完成');
+
+    // 3) 启动 supervisor(setsid 脱离当前 shell)。此刻 systemd master 还占着端口,
+    //    supervisor 的 node child 会 EADDRINUSE 退出 → 2s 后重试,待端口释放即绑上。
+    log('info', '3/4 启动 supervisor master + forwarder(systemd 停掉前会先重试绑定)...');
+    await shell.exec(
+      `setsid ${supervisor} master < /dev/null > /dev/null 2>&1 &
+       echo started_master`,
+      { timeout: 5000 },
+    );
+    await shell.exec(
+      `setsid ${supervisor} forwarder < /dev/null > /dev/null 2>&1 &
+       echo started_forwarder`,
+      { timeout: 5000 },
+    );
+
+    // 4) detached 停 + disable systemd —— 关键:停 cds-master 会杀掉本进程,所以放后台,
+    //    sleep 2s 等本次 SSE 响应 flush 完,再停。停掉后端口释放,supervisor 立即接管。
+    log('info', '4/4 已派发后台任务:2s 后停用 systemd 单元,supervisor 随即接管端口。');
+    const detachedStop =
+      'sleep 2; ' +
+      'systemctl stop cds-master.service cds-forwarder.service; ' +
+      'systemctl disable cds-master.service cds-forwarder.service';
+    await shell.exec(
+      `setsid sh -c ${JSON.stringify(detachedStop)} < /dev/null > /dev/null 2>&1 &
+       echo dispatched_stop`,
+      { timeout: 5000 },
+    );
+
     return {
-      summary: 'CDS 已迁移到 supervisor 后台进程模式 — 不再受 systemd 资源限制约束',
+      summary: 'CDS 迁移到 supervisor 已派发:marker + crontab + supervisor 已就绪,' +
+        'systemd 单元将在 2s 后后台停用,supervisor 随即接管。请稍后访问预览域名并查看 /var/log/cds/*.log 验收。',
       details: {
         supervisor,
-        masterStatus: statusM.stdout.trim(),
-        forwarderStatus: statusF.stdout.trim(),
+        marker,
         cronInstalled: next !== cur,
+        note: '本 handler 运行在 cds-master 内,停 systemd 会终止本进程,故停用动作走 detached 后台,无法在响应里回报最终状态。',
       },
     };
   },
