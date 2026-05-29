@@ -161,7 +161,14 @@ export function createProjectComposeRouter(deps: ProjectComposeDeps): Router {
 
     // 2) 权威校验:对比旧 compose,找出被改动的字段,platform 字段禁止非平台调用方修改
     const callerActor: 'agent' | 'user' = actor === 'agent' ? 'agent' : 'user';
-    const changedPaths = diffChangedFieldPaths(project.composeYaml, yaml);
+    // Codex review(PR #684):legacy 项目还没持久化 composeYaml 时,GET 返回的是
+    // synthesizeComposeFromState 合成结果。若这里拿 undefined 当 diff 基线,首次
+    // 保存会把合成 yaml 里**未改动**的平台字段(services.*.ports 等)也算成"新增
+    // 改动",validateComposePatch 以 platform-owned 拒绝 user 调用方 → 用户只改了
+    // 一个 repo/user 字段也存不进去,除非手动删掉必填端口。基线必须与 GET 对齐:
+    // composeYaml 缺失时用同一份合成结果兜底,这样未改动的平台字段不进 changedPaths。
+    const oldYaml = project.composeYaml || synthesizeComposeFromState(stateService, projectId);
+    const changedPaths = diffChangedFieldPaths(oldYaml, yaml);
     const validation = validateComposePatch(changedPaths, callerActor);
     if (!validation.ok) {
       res.status(403).json({

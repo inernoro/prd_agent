@@ -36,12 +36,7 @@ import { parseCdsCompose, discoverComposeFiles } from '../services/compose-parse
 import { cdsEventsBus } from '../services/cds-events-bus.js';
 import type { ContainerService } from '../services/container.js';
 import type { ServerEventLogSink } from '../services/server-event-log-store.js';
-
-// 与 pending-import 同款白名单 — 单独维护,免互相 import 路由
-const NEEDS_CMD: Array<{ pattern: RegExp; example: string }> = [
-  { pattern: /^minio\/minio/i, example: 'command: ["server", "/data", "--console-address", ":9001"]' },
-  { pattern: /^(docker\.io\/library\/)?elasticsearch:/i, example: 'command: ["elasticsearch", "-Ediscovery.type=single-node"]' },
-];
+import { findInfraCmdViolations } from '../config/infra-cmd-whitelist.js';
 
 export interface InfraResyncDiff {
   adds: Array<{ id: string; name: string; dockerImage: string; containerPort: number }>;
@@ -93,10 +88,20 @@ function diffSignatures(
     entrypoint?: string | string[];
     env?: Record<string, string>;
     volumes?: Array<{ name: string; containerPath: string; type?: string; readOnly?: boolean }>;
+    restartPolicy?: string;
   },
 ): string[] {
   const a = dockerRunSignature(current);
-  const b = dockerRunSignature({ ...yamlSvc, restartPolicy: current.restartPolicy });
+  // Cursor Bugbot(PR #684):此前硬编码 `restartPolicy: current.restartPolicy`,
+  // 让两侧 restartPolicy 永远相等 → 文件头(第 11 行)声称 restartPolicy 是
+  // 重建触发条件却永远检测不到。根因是 yaml 解析以前不产出 restartPolicy,
+  // 直接删覆盖会让每个非默认 restartPolicy 的服务都报假 diff。现在 parseCdsCompose
+  // 已从 yaml 的 `restart:` 读出 restartPolicy:yaml 显式声明时用它比对,未声明
+  // 则沿用 current(保留原"不写就不报假 diff"的初衷,同时尊重显式声明)。
+  const b = dockerRunSignature({
+    ...yamlSvc,
+    restartPolicy: yamlSvc.restartPolicy ?? current.restartPolicy,
+  });
   const reasons: string[] = [];
   if (a.image !== b.image) reasons.push(`image: ${a.image} → ${b.image}`);
   if (a.port !== b.port) reasons.push(`port: ${a.port} → ${b.port}`);
@@ -104,26 +109,18 @@ function diffSignatures(
   if (a.entrypoint !== b.entrypoint) reasons.push(`entrypoint: "${a.entrypoint}" → "${b.entrypoint}"`);
   if (JSON.stringify(a.env) !== JSON.stringify(b.env)) reasons.push('env 有变化');
   if (JSON.stringify(a.volumes) !== JSON.stringify(b.volumes)) reasons.push('volumes 有变化');
+  if (a.restartPolicy !== b.restartPolicy) reasons.push(`restartPolicy: ${a.restartPolicy} → ${b.restartPolicy}`);
   return reasons;
 }
 
 /**
  * 校验 infra 服务的 cmd 白名单。返回 null 即通过,否则错误消息。
+ * 白名单走 config/infra-cmd-whitelist.ts 的 SSOT(与 pending-import 共用)。
  */
 export function validateInfraCmds(infraServices: Array<{ id: string; dockerImage: string; command?: string | string[] }>): string | null {
-  const bad = infraServices.filter((s) => {
-    const match = NEEDS_CMD.find((r) => r.pattern.test(s.dockerImage));
-    if (!match) return false;
-    const cmdEmpty = s.command === undefined
-      || (typeof s.command === 'string' && !s.command.trim())
-      || (Array.isArray(s.command) && s.command.length === 0);
-    return cmdEmpty;
-  });
-  if (bad.length === 0) return null;
-  return bad.map((s) => {
-    const example = NEEDS_CMD.find((r) => r.pattern.test(s.dockerImage))?.example || 'command: ["<start subcommand>"]';
-    return `${s.id} (${s.dockerImage}) → ${example}`;
-  }).join('; ');
+  const violations = findInfraCmdViolations(infraServices);
+  if (violations.length === 0) return null;
+  return violations.map((v) => `${v.id} (${v.dockerImage}) → ${v.example}`).join('; ');
 }
 
 export interface InfraResyncDeps {

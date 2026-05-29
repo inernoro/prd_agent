@@ -34,6 +34,7 @@ import type { StateService } from '../services/state.js';
 import type { BuildProfile, InfraService, PendingImport } from '../types.js';
 import { parseCdsCompose } from '../services/compose-parser.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
+import { findInfraCmdViolations } from '../config/infra-cmd-whitelist.js';
 
 export interface PendingImportRouterDeps {
   stateService: StateService;
@@ -211,26 +212,12 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
         // 带子命令(minio 必须 `server /data` / elasticsearch 类似),否则
         // 容器启动后立即 exit 0 引发 unless-stopped 无限重启。
         // 历史灾难:openvisual 的 minio cmd 缺失导致 288 次重启拖垮 host。
-        const NEEDS_CMD: Array<{ pattern: RegExp; example: string }> = [
-          { pattern: /^minio\/minio/i, example: 'command: ["server", "/data", "--console-address", ":9001"]' },
-          { pattern: /^(docker\.io\/library\/)?elasticsearch:/i, example: 'command: ["elasticsearch", "-Ediscovery.type=single-node"]' },
-        ];
-        const badInfra = check.infraServices
-          .filter((s) => {
-            const match = NEEDS_CMD.find((r) => r.pattern.test(s.dockerImage));
-            if (!match) return false;
-            const cmdEmpty = s.command === undefined
-              || (typeof s.command === 'string' && !s.command.trim())
-              || (Array.isArray(s.command) && s.command.length === 0);
-            return cmdEmpty;
-          });
+        // 白名单走 config/infra-cmd-whitelist.ts 的 SSOT(与 project-infra-resync 共用,
+        // 2026-05-29 Cursor Bugbot:此前两处各抄一份有漂移风险)。
+        const badInfra = findInfraCmdViolations(check.infraServices);
         if (badInfra.length > 0) {
           const hint = badInfra
-            .map((s) => {
-              const example = NEEDS_CMD.find((r) => r.pattern.test(s.dockerImage))?.example
-                || 'command: ["<start subcommand>"]';
-              return `${s.id} (${s.dockerImage}) → ${example}`;
-            })
+            .map((v) => `${v.id} (${v.dockerImage}) → ${v.example}`)
             .join('; ');
           res.status(400).json({
             error: 'invalid_infra_cmd',

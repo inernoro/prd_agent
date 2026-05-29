@@ -312,6 +312,42 @@ services:
     expect(cfg!.infraServices[0].command).toEqual(['server', '/data', '--console-address', ':9001']);
   });
 
+  // 2026-05-29 Cursor Bugbot(PR #684):infra resync 声称 restartPolicy 是重建触发
+  // 条件,但 yaml 解析以前不产出 restartPolicy。回归:yaml 的 `restart:` 必须被解析。
+  it('infra restart 字段必须解析为 restartPolicy', () => {
+    const yaml = `
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "3000:3000"
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg!.infraServices).toHaveLength(1);
+    expect(cfg!.infraServices[0].restartPolicy).toBe('unless-stopped');
+  });
+
+  it('infra 缺 restart:字段保持 undefined(由下游兜底,不报假 diff)', () => {
+    const yaml = `
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "3000:3000"
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg!.infraServices[0].restartPolicy).toBeUndefined();
+  });
+
   it('infra command(string 形态)和 entrypoint 同时支持', () => {
     const yaml = `
 services:

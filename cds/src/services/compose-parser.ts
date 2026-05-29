@@ -34,6 +34,13 @@ export interface ComposeServiceDef {
   command?: string | string[];
   /** Docker `--entrypoint` 覆盖,与 command 同时存在则一起传 */
   entrypoint?: string | string[];
+  /**
+   * 2026-05-29:yaml 里的 `restart:` 字段(docker compose 标准:no /
+   * always / on-failure / unless-stopped 等)。仅在 yaml 显式声明时填充;
+   * 缺省时为 undefined,由下游(container.ts)按 on-failure:3 兜底。
+   * infra resync 的 diffSignatures 用它判定 restartPolicy 是否变化。
+   */
+  restartPolicy?: string;
 }
 
 /** Raw compose YAML structure */
@@ -85,6 +92,8 @@ interface ComposeServiceEntry {
   };
   container_name?: string;
   command?: string | string[];
+  /** docker compose 标准 `restart:` 重启策略(no/always/on-failure/unless-stopped) */
+  restart?: string;
   working_dir?: string;
   depends_on?: Record<string, { condition?: string }> | string[];
   labels?: Record<string, string> | string[];
@@ -516,6 +525,7 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           healthCheck: extractHealthCheck(entry.healthcheck),
           ...(entry.command !== undefined ? { command: entry.command } : {}),
           ...(entry.entrypoint !== undefined ? { entrypoint: entry.entrypoint } : {}),
+          ...(entry.restart ? { restartPolicy: entry.restart } : {}),
         });
       }
     }
