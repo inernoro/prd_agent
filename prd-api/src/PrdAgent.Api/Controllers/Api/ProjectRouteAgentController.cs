@@ -420,8 +420,12 @@ public class ProjectRouteAgentController : ControllerBase
         Response.Headers["Cache-Control"] = "no-cache, no-transform";
         Response.Headers["X-Accel-Buffering"] = "no";
 
+        // 互斥锁：心跳协程和业务流共享 Response.Body，写入必须串行化
+        var writeLock = new SemaphoreSlim(1, 1);
+
         async Task WriteEvent(string evt, object data)
         {
+            await writeLock.WaitAsync(CancellationToken.None);
             try
             {
                 var json = JsonSerializer.Serialize(data, JsonOpts);
@@ -431,7 +435,45 @@ public class ProjectRouteAgentController : ControllerBase
             }
             catch (OperationCanceledException) { /* 客户端断开 */ }
             catch (ObjectDisposedException) { /* response 已关闭 */ }
+            finally
+            {
+                try { writeLock.Release(); } catch { /* disposed */ }
+            }
         }
+
+        // SSE keepalive：服务端权威性原则要求长任务每 10s 发心跳，否则 nginx / CDN 的
+        // 60s 默认 idle timeout 会断流。useSseStream hook 看到没 data 字段的注释行
+        // (`: keepalive`) 会原样忽略，不影响业务事件分发。
+        using var heartbeatCts = new CancellationTokenSource();
+        var heartbeatTask = Task.Run(async () =>
+        {
+            var beat = Encoding.UTF8.GetBytes(": keepalive\n\n");
+            while (!heartbeatCts.IsCancellationRequested)
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(8), heartbeatCts.Token);
+                }
+                catch (OperationCanceledException) { break; }
+
+                await writeLock.WaitAsync(CancellationToken.None);
+                try
+                {
+                    await Response.Body.WriteAsync(beat, CancellationToken.None);
+                    await Response.Body.FlushAsync(CancellationToken.None);
+                }
+                catch (OperationCanceledException) { break; }
+                catch (ObjectDisposedException) { break; }
+                catch (Exception) { /* response 已关闭 */ break; }
+                finally
+                {
+                    try { writeLock.Release(); } catch { /* disposed */ }
+                }
+            }
+        }, heartbeatCts.Token);
+
+        try
+        {
 
         var plan = await _db.ProjectRoutePlans.Find(x => x.Id == id).FirstOrDefaultAsync(CancellationToken.None);
         if (plan == null)
@@ -589,6 +631,17 @@ public class ProjectRouteAgentController : ControllerBase
             plan.CompletedAt = DateTime.UtcNow;
             await _db.ProjectRoutePlans.ReplaceOneAsync(x => x.Id == plan.Id, plan, cancellationToken: CancellationToken.None);
             await WriteEvent("error", new { message = ex.Message });
+        }
+
+        }
+        finally
+        {
+            // 无论早 return / 内层 catch / 正常完成都必须停心跳并等它退出，
+            // 避免心跳协程在 response 关闭后还在尝试写。
+            heartbeatCts.Cancel();
+            try { await heartbeatTask; }
+            catch (OperationCanceledException) { /* 预期 */ }
+            catch (Exception ex) { _logger.LogDebug(ex, "[ProjectRouteAgent] heartbeat task ended with error"); }
         }
     }
 
