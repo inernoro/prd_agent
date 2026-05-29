@@ -2815,6 +2815,13 @@ function InfraResyncDialog({
   const [cmdError, setCmdError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmTextInput, setConfirmTextInput] = useState('');
+  const [deleteVolumes, setDeleteVolumes] = useState(false);
+  // yaml 来源:project-repo(默认) / approved-<importId> / manual
+  const [sourceKind, setSourceKind] = useState<'repo' | 'approved' | 'manual'>('repo');
+  const [sources, setSources] = useState<{
+    repoCompose?: { found: boolean; fileName?: string; yaml?: string; error?: string };
+    recentApproved?: Array<{ importId: string; agentName: string; decidedAt?: string; yaml: string }>;
+  } | null>(null);
 
   // 重置时清空
   useEffect(() => {
@@ -2824,8 +2831,35 @@ function InfraResyncDialog({
       setPreviewError(null);
       setCmdError(null);
       setConfirmTextInput('');
+      setDeleteVolumes(false);
+      setSourceKind('repo');
+      setSources(null);
     }
   }, [open]);
+
+  // 打开时拉来源:项目根目录 cds-compose.yml + 最近审批记录
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    fetch(`/api/projects/${encodeURIComponent(projectId)}/infra/resync/sources`, { credentials: 'include' })
+      .then((r) => r.json())
+      .then((body) => {
+        if (cancelled) return;
+        setSources(body);
+        // 默认用项目根目录的 yaml(若存在)
+        if (body.repoCompose?.found && body.repoCompose.yaml) {
+          setSourceKind('repo');
+          setYamlText(body.repoCompose.yaml);
+        } else if ((body.recentApproved || []).length > 0) {
+          setSourceKind('approved');
+          setYamlText(body.recentApproved[0].yaml);
+        } else {
+          setSourceKind('manual');
+        }
+      })
+      .catch(() => { /* 静默,用户可手动粘贴 */ });
+    return () => { cancelled = true; };
+  }, [open, projectId]);
 
   const onPreview = useCallback(async () => {
     if (!yamlText.trim()) return;
@@ -2871,7 +2905,7 @@ function InfraResyncDialog({
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ composeYaml: yamlText, confirmText: confirmTextInput || undefined }),
+          body: JSON.stringify({ composeYaml: yamlText, confirmText: confirmTextInput || undefined, deleteVolumes }),
         },
       );
       const body = await res.json();
@@ -2881,14 +2915,26 @@ function InfraResyncDialog({
       }
       const a = body.applied || {};
       const errCount = (body.errors || []).length;
-      onToast(`同步完成:新增 ${(a.added || []).length} · 更新 ${(a.updated || []).length} · 删除 ${(a.removed || []).length}${errCount > 0 ? ` · 错误 ${errCount}` : ''}`);
+      const volCount = (body.volumeRemovals || []).filter((v: { ok: boolean }) => v.ok).length;
+      onToast(`同步完成:新增 ${(a.added || []).length} · 更新 ${(a.updated || []).length} · 删除 ${(a.removed || []).length}${volCount > 0 ? ` · 删卷 ${volCount}` : ''}${errCount > 0 ? ` · 错误 ${errCount}` : ''}`);
       onOpenChange(false);
     } catch (err) {
       onToast(`执行异常:${(err as Error).message}`);
     } finally {
       setBusy(false);
     }
-  }, [diff, confirmTextInput, projectId, yamlText, onToast, onOpenChange]);
+  }, [diff, confirmTextInput, deleteVolumes, projectId, yamlText, onToast, onOpenChange]);
+
+  const pickSource = useCallback((kind: 'repo' | 'approved' | 'manual', yaml?: string) => {
+    setSourceKind(kind);
+    setDiff(null);
+    setPreviewError(null);
+    if (kind === 'manual') {
+      setYamlText('');
+    } else if (yaml !== undefined) {
+      setYamlText(yaml);
+    }
+  }, []);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -2902,11 +2948,33 @@ function InfraResyncDialog({
         </DialogHeader>
 
         <div className="space-y-3" style={{ minHeight: 0 }}>
+          {/* yaml 来源选择 */}
+          <div className="flex flex-wrap gap-2 text-xs">
+            <span className="text-muted-foreground self-center">来源:</span>
+            <button type="button" disabled={busy || !sources?.repoCompose?.found}
+              onClick={() => pickSource('repo', sources?.repoCompose?.yaml)}
+              className={`rounded px-2 py-1 border ${sourceKind === 'repo' ? 'border-primary bg-primary/10 text-foreground' : 'border-[hsl(var(--hairline))] text-muted-foreground'} disabled:opacity-40`}>
+              项目根目录{sources?.repoCompose?.found ? ` (${sources.repoCompose.fileName})` : ' (未找到)'}
+            </button>
+            {(sources?.recentApproved || []).length > 0 ? (
+              <button type="button" disabled={busy}
+                onClick={() => pickSource('approved', sources?.recentApproved?.[0]?.yaml)}
+                className={`rounded px-2 py-1 border ${sourceKind === 'approved' ? 'border-primary bg-primary/10 text-foreground' : 'border-[hsl(var(--hairline))] text-muted-foreground'}`}>
+                最近审批 ({sources?.recentApproved?.[0]?.agentName || 'agent'})
+              </button>
+            ) : null}
+            <button type="button" disabled={busy}
+              onClick={() => pickSource('manual')}
+              className={`rounded px-2 py-1 border ${sourceKind === 'manual' ? 'border-primary bg-primary/10 text-foreground' : 'border-[hsl(var(--hairline))] text-muted-foreground'}`}>
+              手动粘贴
+            </button>
+          </div>
+
           <div>
             <label className="text-xs font-medium text-foreground/80">cds-compose.yml</label>
             <textarea
               value={yamlText}
-              onChange={(e) => { setYamlText(e.target.value); setDiff(null); }}
+              onChange={(e) => { setYamlText(e.target.value); setDiff(null); setSourceKind('manual'); }}
               className="mt-1 w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-2 font-mono text-xs"
               rows={8}
               placeholder={`x-cds-project:\n  name: my-project\nservices:\n  mongodb:\n    image: mongo:7\n    ports: ["27017"]\n    volumes: [mongodb-data:/data/db]\n`}
@@ -2962,15 +3030,33 @@ function InfraResyncDialog({
               {diff.removes.length > 0 ? (
                 <div>
                   <div className="text-xs font-semibold text-red-700 dark:text-red-300">
-                    删除 {diff.removes.length}(yaml 中已不存在 · 数据卷保留)
+                    删除 {diff.removes.length}(yaml 中已不存在 · 默认仅删容器,数据卷保留)
                   </div>
                   {diff.removes.map((r) => (
                     <div key={`rm-${r.id}`} className="mt-1 rounded border border-red-500/30 bg-red-500/5 px-2 py-1 text-xs">
                       <code className="font-mono">{r.id}</code> · {r.containerName} · {r.status}
                     </div>
                   ))}
+                  <label className="mt-2 flex items-start gap-2 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={deleteVolumes}
+                      onChange={(e) => setDeleteVolumes(e.target.checked)}
+                      disabled={busy}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      <span className="font-semibold text-red-700 dark:text-red-300">同时删除数据卷(不可恢复)</span>
+                      <br />
+                      <span className="text-muted-foreground">
+                        默认不勾:只删容器,docker named volume 保留,数据安全。
+                        勾选后被删服务的 named volume 会一并 <code className="font-mono">docker volume rm</code>,
+                        相当于"彻底重装"。
+                      </span>
+                    </span>
+                  </label>
                   <div className="mt-2">
-                    <label className="text-xs">输入 <code className="font-mono">yes</code> 确认删除上述 {diff.removes.length} 个服务:</label>
+                    <label className="text-xs">输入 <code className="font-mono">yes</code> 确认删除上述 {diff.removes.length} 个服务{deleteVolumes ? '(含数据卷)' : ''}:</label>
                     <input
                       type="text"
                       value={confirmTextInput}

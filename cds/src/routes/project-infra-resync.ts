@@ -28,9 +28,11 @@
 //   - 全程审计写 serverEventLogStore + cds-events bus
 
 import { Router } from 'express';
+import nodeFs from 'node:fs';
+import nodePath from 'node:path';
 import type { StateService } from '../services/state.js';
 import type { InfraService } from '../types.js';
-import { parseCdsCompose } from '../services/compose-parser.js';
+import { parseCdsCompose, discoverComposeFiles } from '../services/compose-parser.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
 import type { ContainerService } from '../services/container.js';
 import type { ServerEventLogSink } from '../services/server-event-log-store.js';
@@ -128,7 +130,7 @@ export interface InfraResyncDeps {
   stateService: StateService;
   containerService: ContainerService;
   serverEventLogStore?: ServerEventLogSink | null;
-  config: { portStart?: number };
+  config: { portStart?: number; repoRoot: string };
   assertProjectAccess: (req: any, projectId: string) => { status: number; body: unknown } | null;
 }
 
@@ -191,6 +193,43 @@ export function createProjectInfraResyncRouter(deps: InfraResyncDeps): Router {
     return { diff };
   }
 
+  // GET 列出可用 yaml 来源:① 项目根目录的 cds-compose.yml(默认)
+  // ② 最近 3 条已审批 PendingImport ③ 上传(前端自己处理,这里不返回)
+  router.get('/projects/:id/infra/resync/sources', (req, res) => {
+    const projectId = req.params.id;
+    const access = deps.assertProjectAccess(req, projectId);
+    if (access) { res.status(access.status).json(access.body); return; }
+    const project = stateService.getProject(projectId);
+    if (!project) { res.status(404).json({ error: '项目不存在' }); return; }
+
+    // 来源 1:项目根目录
+    let repoCompose: { found: boolean; fileName?: string; yaml?: string; error?: string } = { found: false };
+    try {
+      const repoRoot = stateService.getProjectRepoRoot(projectId, config.repoRoot);
+      const files = discoverComposeFiles(repoRoot);
+      if (files.length > 0) {
+        const yaml = nodeFs.readFileSync(files[0], 'utf-8');
+        repoCompose = { found: true, fileName: nodePath.basename(files[0]), yaml };
+      }
+    } catch (err) {
+      repoCompose = { found: false, error: (err as Error).message };
+    }
+
+    // 来源 2:最近 3 条已审批的 pending-import(本项目)
+    const recentApproved = stateService.getPendingImports()
+      .filter((i) => i.projectId === projectId && i.status === 'approved' && i.composeYaml)
+      .sort((a, b) => (b.decidedAt || '').localeCompare(a.decidedAt || ''))
+      .slice(0, 3)
+      .map((i) => ({
+        importId: i.id,
+        agentName: i.agentName,
+        decidedAt: i.decidedAt,
+        yaml: i.composeYaml,
+      }));
+
+    res.json({ repoCompose, recentApproved });
+  });
+
   router.post('/projects/:id/infra/resync/preview', (req, res) => {
     const projectId = req.params.id;
     const access = deps.assertProjectAccess(req, projectId);
@@ -218,7 +257,7 @@ export function createProjectInfraResyncRouter(deps: InfraResyncDeps): Router {
     const project = stateService.getProject(projectId);
     if (!project) { res.status(404).json({ error: '项目不存在' }); return; }
 
-    const { composeYaml, confirmText } = (req.body || {}) as { composeYaml?: string; confirmText?: string };
+    const { composeYaml, confirmText, deleteVolumes } = (req.body || {}) as { composeYaml?: string; confirmText?: string; deleteVolumes?: boolean };
     if (!composeYaml || !composeYaml.trim()) {
       res.status(400).json({ error: 'composeYaml 必填' });
       return;
@@ -260,10 +299,22 @@ export function createProjectInfraResyncRouter(deps: InfraResyncDeps): Router {
     const applied = { added: [] as string[], updated: [] as string[], removed: [] as string[] };
     const errors: Array<{ phase: string; id: string; message: string }> = [];
 
-    // Phase 1: removes — 停 + 删容器 + 删 state(数据卷自动保留)
+    // Phase 1: removes — 停 + 删容器 + 删 state(默认数据卷保留;
+    // deleteVolumes=true 时显式删 named volume,需用户弹窗勾选过)
+    const volumeRemovals: Array<{ name: string; ok: boolean; error?: string }> = [];
     for (const r of diff.removes) {
       try {
+        const current = stateService.getInfraServiceForProjectAndId(projectId, r.id);
         try { await containerService.stopInfraService(r.containerName); } catch { /* tolerate */ }
+        if (deleteVolumes && current) {
+          const namedVols = (current.volumes || [])
+            .filter((v) => v.type !== 'bind')
+            .map((v) => v.name);
+          if (namedVols.length > 0) {
+            const vr = await containerService.removeNamedVolumes(namedVols);
+            volumeRemovals.push(...vr);
+          }
+        }
         stateService.removeInfraService(r.id, projectId);
         applied.removed.push(r.id);
       } catch (err) {
@@ -359,7 +410,7 @@ export function createProjectInfraResyncRouter(deps: InfraResyncDeps): Router {
       cdsEventsBus.publish('pending-import.count', { pendingCount: stateService.getPendingImports().filter((i) => i.status === 'pending').length });
     } catch { /* ignore */ }
 
-    res.json({ applied, errors });
+    res.json({ applied, errors, volumeRemovals });
   });
 
   return router;

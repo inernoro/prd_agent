@@ -738,6 +738,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/pending-imports\/(.+)\/approve$/, '批准导入'],
     [/^POST \/pending-imports\/(.+)\/reject$/, '拒绝导入'],
     // 项目基础设施重新同步
+    [/^GET \/projects\/(.+)\/infra\/resync\/sources$/, '列出同步配置来源'],
     [/^POST \/projects\/(.+)\/infra\/resync\/preview$/, '预览基础设施同步'],
     [/^POST \/projects\/(.+)\/infra\/resync\/execute$/, '执行基础设施同步'],
     // 分支扩展
@@ -2761,7 +2762,7 @@ export function createServer(deps: ServerDeps): express.Express {
     stateService: deps.stateService,
     containerService: deps.containerService,
     serverEventLogStore: deps.serverEventLogStore,
-    config: { portStart: deps.config?.portStart },
+    config: { portStart: deps.config?.portStart, repoRoot: deps.config?.repoRoot ?? process.cwd() },
     assertProjectAccess: assertProjectAccess as any,
   }));
   // Cache diagnostics / repair / cross-server migration.

@@ -2002,6 +2002,30 @@ export class ContainerService {
   }
 
   /**
+   * 2026-05-29 显式删除 named volumes(仅 resync"含数据卷重装"路径调用)。
+   * 普通 stop/rm **不删** volume(数据保留是默认契约)。这个方法是用户在
+   * 弹窗里显式勾选"是否删数据卷"后才走。bind mount(type=bind)跳过。
+   * 返回每个 volume 的删除结果,失败不抛(volume 可能被其他容器占用)。
+   */
+  async removeNamedVolumes(volumeNames: string[]): Promise<Array<{ name: string; ok: boolean; error?: string }>> {
+    const results: Array<{ name: string; ok: boolean; error?: string }> = [];
+    for (const name of volumeNames) {
+      if (!name || !name.trim()) continue;
+      const r = await this.shell.exec(`docker volume rm ${this.shellQuote(name)}`);
+      const ok = r.exitCode === 0;
+      results.push({ name, ok, ...(ok ? {} : { error: (r.stderr || '').slice(0, 200) }) });
+      this.recordContainerEvent({
+        severity: ok ? 'warn' : 'error',
+        source: 'cds-container-service',
+        action: 'infra.volume.remove',
+        message: `docker volume rm ${name} — ${ok ? 'ok' : 'failed'}`,
+        command: { name: 'docker volume rm', exitCode: r.exitCode, stdoutPreview: r.stdout, stderrPreview: r.stderr },
+      });
+    }
+    return results;
+  }
+
+  /**
    * Discover CDS-managed infra containers by Docker labels.
    * Returns a map of service.id → container status.
    *
