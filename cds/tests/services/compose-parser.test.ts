@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseResourceLimits, resolveEnvTemplates, parseCdsCompose } from '../../src/services/compose-parser.js';
+import { parseResourceLimits, resolveEnvTemplates, parseCdsCompose, parseComposeString, toCdsCompose } from '../../src/services/compose-parser.js';
 
 /**
  * Tests for `parseResourceLimits` — Phase 2 cgroup limit parsing.
@@ -559,5 +559,57 @@ services:
     expect(cfg!.envVars.MYSQL_URL).toContain('mysql://');
     expect(cfg!.envVars.REDIS_URL).toContain('redis://');
     expect(cfg!.envVars.RABBITMQ_URL).toContain('amqp://');
+  });
+});
+
+// 2026-05-29 Cursor Bugbot(PR #684):restartPolicy 只在 parseCdsCompose 解析,
+// parseComposeString / parseComposeFile 漏了,导致这两条路径解析的 compose 永远
+// 不带 restartPolicy,diffSignatures 退化成检测不到。回归。
+describe('parseComposeString — restartPolicy 一致性', () => {
+  it('parseComposeString 也解析 restart 字段', () => {
+    const yaml = `
+services:
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "6379:6379"
+`;
+    const svcs = parseComposeString(yaml);
+    const redis = svcs.find((s) => s.id === 'redis');
+    expect(redis?.restartPolicy).toBe('always');
+  });
+});
+
+// 2026-05-29 Codex review(PR #684, P2):toCdsCompose(项目级全量导出 /api/export-config)
+// 此前 infra 段漏了 command/entrypoint/restartPolicy → 导出再 import 丢启动命令
+// (minio 崩溃循环复现)。round-trip 回归。
+describe('toCdsCompose — infra 启动命令 + restart 往返', () => {
+  it('infra 的 command / entrypoint / restartPolicy 都出回 yaml 且可被 parseCdsCompose 读回', () => {
+    const yaml = toCdsCompose(
+      [
+        // 至少一个 app profile,否则不是合法 CDS compose
+        {
+          id: 'web', name: 'web', dockerImage: 'node:20', workDir: '.', containerWorkDir: '/app',
+          containerPort: 3000, env: {}, command: 'pnpm start',
+        } as any,
+      ],
+      {},
+      [
+        {
+          id: 'minio', projectId: 'p', name: 'minio', dockerImage: 'minio/minio:latest',
+          containerPort: 9000, hostPort: 19000, containerName: 'cds-infra-p-minio',
+          status: 'stopped', volumes: [], env: {},
+          command: ['server', '/data'], restartPolicy: 'unless-stopped',
+        } as any,
+      ],
+      [],
+    );
+    expect(yaml).toContain('minio');
+    // round-trip:重新解析回来,command + restartPolicy 不丢
+    const reparsed = parseCdsCompose(yaml);
+    const minio = reparsed!.infraServices.find((s) => s.id === 'minio');
+    expect(minio?.command).toEqual(['server', '/data']);
+    expect(minio?.restartPolicy).toBe('unless-stopped');
   });
 });

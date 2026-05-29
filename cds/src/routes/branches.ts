@@ -27,6 +27,7 @@ import { CheckRunRunner } from '../services/check-run-runner.js';
 import { branchEvents, nowIso } from '../services/branch-events.js';
 import { GitHubAppClient } from '../services/github-app-client.js';
 import { classifyEnvKey } from '../config/known-env-keys.js';
+import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 import { isAllowedCdsBranchName, isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { buildPreviewUrl } from '../services/comment-template.js';
 import { computePreviewSlug, previewProjectSlug } from '../services/preview-slug.js';
@@ -9592,7 +9593,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // 2026-05-28:手工 POST /api/infra 也支持 command/entrypoint
         ...(body.command !== undefined ? { command: body.command } : {}),
         ...(body.entrypoint !== undefined ? { entrypoint: body.entrypoint } : {}),
-        ...(typeof body.restartPolicy === 'string' ? { restartPolicy: body.restartPolicy } : {}),
+        // Cursor Bugbot(PR #684):在存储边界就 sanitize restartPolicy,而不是只
+        // 依赖 container.ts 在 docker run 时 sanitize。否则未校验的值留在 state.json,
+        // 任何未来读 service.restartPolicy 的代码路径(如 diffSignatures 直接比对)
+        // 都可能忘记 sanitize 而把注入串带进 shell。纵深防御:存进去的就是合法值。
+        ...(typeof body.restartPolicy === 'string'
+          ? { restartPolicy: sanitizeDockerRestartPolicy(body.restartPolicy) }
+          : {}),
         createdAt: new Date().toISOString(),
       };
 

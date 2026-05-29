@@ -274,6 +274,7 @@ export function parseComposeFile(filePath: string): ComposeServiceDef[] {
       healthCheck: extractHealthCheck(entry.healthcheck),
       ...(entry.command !== undefined ? { command: entry.command } : {}),
       ...(entry.entrypoint !== undefined ? { entrypoint: entry.entrypoint } : {}),
+      ...(entry.restart ? { restartPolicy: entry.restart } : {}),
     };
 
     results.push(parsed);
@@ -312,6 +313,7 @@ export function parseComposeString(yamlString: string): ComposeServiceDef[] {
       healthCheck: extractHealthCheck(entry.healthcheck),
       ...(entry.command !== undefined ? { command: entry.command } : {}),
       ...(entry.entrypoint !== undefined ? { entrypoint: entry.entrypoint } : {}),
+      ...(entry.restart ? { restartPolicy: entry.restart } : {}),
     });
   }
 
@@ -695,6 +697,20 @@ export function toCdsCompose(
         interval: `${svc.healthCheck.interval}s`,
         retries: svc.healthCheck.retries,
       };
+    }
+
+    // Codex review(PR #684, P2):infra 的 command / entrypoint / restartPolicy 必须
+    // 随 toCdsCompose 出回 yaml,否则 /api/export-config 导出再 import 会丢启动命令
+    // (minio/elasticsearch 崩溃循环复现路径)以及 restart 策略。与上面 standalone
+    // infra exporter 的修复对齐,这里是项目级全量导出路径,之前漏了。
+    if (svc.command !== undefined) {
+      entry.command = svc.command;
+    }
+    if (svc.entrypoint !== undefined) {
+      entry.entrypoint = svc.entrypoint;
+    }
+    if (svc.restartPolicy) {
+      entry.restart = svc.restartPolicy;
     }
 
     servicesMap[svc.id] = entry;
