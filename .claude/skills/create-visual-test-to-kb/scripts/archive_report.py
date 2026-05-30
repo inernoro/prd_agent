@@ -147,9 +147,27 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
         "reportId": report_id,
         "acceptedAt": now.isoformat(timespec="seconds"),
     }
+    # Q5 自动分子文件夹：按模块归档（无模块则按 YYYY-MM），避免验收库平铺成几百条。
+    # find-or-create：列已有条目找同名根级文件夹，命中复用、否则建。后端 CreateFolder 不去重，故在此 find-or-create。
+    folder_name = (a.module or "").strip() or now.strftime("%Y-%m")
+    parent_id = None
+    try:
+        ents = curl(H + [f"{base}/stores/{rid}/entries?all=true&pageSize=500"])["data"]["items"]
+        hit = [e for e in ents if e.get("isFolder") and not e.get("parentId") and e.get("title") == folder_name]
+        if hit:
+            parent_id = hit[0]["id"]
+        else:
+            parent_id = curl(HJ + ["-X", "POST", "-d", json.dumps({"name": folder_name}),
+                                   f"{base}/stores/{rid}/folders"])["data"]["id"]
+        print(f"  归档子文件夹「{folder_name}」id={parent_id}")
+    except Exception as e:
+        print(f"  [提示] 子文件夹归档失败，落根级：{str(e)[:100]}")
+        parent_id = None
+
     eid = curl(HJ + ["-X", "POST", "-d", json.dumps({
         "title": title, "summary": f"# {title}",  # 双保险:summary 也以标题打头
         "sourceType": "reference", "contentType": "text/markdown",
+        "parentId": parent_id,  # 归入模块/月份子文件夹（None 则根级）
         "tags": tags or [],  # 状态(通过/不通过)+操作方式+档位走标签，不进标题
         "metadata": entry_meta,
     }), f"{base}/stores/{rid}/entries"])["data"]["id"]
