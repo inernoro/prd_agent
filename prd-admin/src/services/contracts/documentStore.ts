@@ -19,6 +19,8 @@ export type DocumentStore = {
   coverImageUrl?: string;
   /** 分享到的团队 ID 列表（仅知识库消费） */
   sharedTeamIds?: string[];
+  /** 知识库模板键（如 acceptance-report-v2）。非空时写入条目按模板校验。 */
+  templateKey?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -209,6 +211,7 @@ export type CreateDocumentStoreInput = {
   appKey?: string;
   tags?: string[];
   isPublic?: boolean;
+  templateKey?: string;
 };
 
 export type UpdateDocumentStoreInput = {
@@ -216,6 +219,7 @@ export type UpdateDocumentStoreInput = {
   description?: string;
   tags?: string[];
   isPublic?: boolean;
+  templateKey?: string;
 };
 
 export type AddDocumentEntryInput = {

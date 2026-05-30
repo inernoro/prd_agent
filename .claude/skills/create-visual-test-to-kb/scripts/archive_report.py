@@ -118,7 +118,10 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
     else:
         rid = curl(HJ + ["-X", "POST", "-d", json.dumps(
             {"name": store_name, "description": cfg["report"].get("storeDescription", ""),
-             "isPublic": want_public}
+             "isPublic": want_public,
+             # 模板键：让"验收报告库"对写入条目做结构约束（design.acceptance-kb.md §5.B）。
+             # 机器归档缺必填 metadata/正文 section 会被后端 422 拒收。
+             "templateKey": cfg["report"].get("templateKey")}
         ), f"{base}/stores"])["data"]["id"]
     print(f"  报告库 id={rid}")
 
@@ -134,10 +137,21 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
     meta = build_meta(report_id, now, imp, a, preview)
     content = assemble(title, body, evidence, meta, img_md)
 
+    # metadata：结论可视(前端按 verdict 渲染绿/琥珀/红徽章) + 跨环境同步幂等(reportId 去重)。
+    # kind=acceptance-report 让后端模板校验对本次写入"硬卡"(缺项 422 而非软放行)。
+    entry_meta = {
+        "kind": "acceptance-report",
+        "verdict": a.verdict,          # pass / conditional / fail
+        "tier": a.tier,                # L0 / L1 / L2
+        "target": a.target,
+        "reportId": report_id,
+        "acceptedAt": now.isoformat(timespec="seconds"),
+    }
     eid = curl(HJ + ["-X", "POST", "-d", json.dumps({
         "title": title, "summary": f"# {title}",  # 双保险:summary 也以标题打头
         "sourceType": "reference", "contentType": "text/markdown",
         "tags": tags or [],  # 状态(通过/不通过)+操作方式+档位走标签，不进标题
+        "metadata": entry_meta,
     }), f"{base}/stores/{rid}/entries"])["data"]["id"]
     print(f"  报告条目 id={eid} title={title} tags={tags or []}")
     # 防「断头报告」：标题建了但 PUT 524 丢了正文 → 留下能看到标题、点开却空白的空壳条目。

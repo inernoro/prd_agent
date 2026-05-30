@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
+import { getVerdictConfig } from '@/lib/acceptanceVerdictRegistry';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { motion } from 'motion/react';
@@ -108,6 +109,11 @@ export type DocBrowserProps = {
   loading?: boolean;
   /** 目录排序模式，默认 'default'（置顶+folder+主文档+标题）。阅读/分享场景建议 'created-desc'。 */
   sortMode?: DocBrowserSortMode;
+  /**
+   * "显示更新时间"的默认值（仅在用户未显式切换过开关时生效）。
+   * 验收报告库传 true，让时间默认可见；用户手动开/关后以其选择为准。
+   */
+  showUpdatedTimeDefault?: boolean;
   /**
    * 分享视图传入分享 token，用于私有库读取划词评论气泡（PR #685 Codex P1）。
    * 后端凭此 token 验证调用方确实通过有效分享访问，而非靠"存在分享链"放行。
@@ -781,6 +787,22 @@ function TreeNode({
           </span>
         )}
 
+        {/* 验收结论徽章：验收报告条目按 metadata.verdict 渲染绿/琥珀/红，列表里一眼看出通过没通过 */}
+        {!isFolder && (() => {
+          const vc = getVerdictConfig(entry.metadata?.verdict);
+          if (!vc) return null;
+          const tier = entry.metadata?.tier;
+          return (
+            <span
+              className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0 font-bold"
+              style={{ background: vc.background, color: vc.color, border: vc.border }}
+              title={`验收结论：${vc.label}${tier ? ` · 档位 ${tier}` : ''}`}
+            >
+              {vc.label}{tier ? ` ${tier}` : ''}
+            </span>
+          );
+        })()}
+
         {!isFolder && (entry.tags?.length ?? 0) > 0 && (
           <span
             className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0"
@@ -993,6 +1015,7 @@ export function DocBrowser({
   emptyState,
   loading,
   sortMode = 'default',
+  showUpdatedTimeDefault = false,
   appearance = 'inset',
   isEntryFresh,
   sidebarHeader,
@@ -1009,9 +1032,12 @@ export function DocBrowser({
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [useContentTitle, setUseContentTitle] = useState(true);
-  const [showUpdatedTime, setShowUpdatedTime] = useState<boolean>(
-    () => sessionStorage.getItem('doc-browser-show-updated-time') === '1',
-  );
+  const [showUpdatedTime, setShowUpdatedTime] = useState<boolean>(() => {
+    const saved = sessionStorage.getItem('doc-browser-show-updated-time');
+    if (saved === '1') return true;
+    if (saved === '0') return false;
+    return showUpdatedTimeDefault; // 用户未显式选择时走调用方默认（验收库默认显示时间）
+  });
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
   const [contentFirstLines, setContentFirstLines] = useState<Map<string, string>>(new Map());

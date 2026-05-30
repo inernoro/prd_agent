@@ -54,6 +54,13 @@ public class DocumentStore
     /// <summary>封面图 URL（公开知识库展示用）</summary>
     public string? CoverImageUrl { get; set; }
 
+    /// <summary>
+    /// 知识库模板键（null = 普通库，不做结构约束）。
+    /// 非空时，写入条目会按 AcceptanceTemplateRegistry 对应模板校验必填 metadata / 正文 section。
+    /// 当前内置：acceptance-report-v2（验收报告）。
+    /// </summary>
+    public string? TemplateKey { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

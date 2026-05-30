@@ -49,6 +49,7 @@ docs:
   # 先看核心架构，再看各模块设计
   design.daily-tips: 每日小贴士 / 路径式教程系统设计
   design.acceptance-system: 功能验收体系设计（业界对标的标准化验收 + 取证 + 归档）
+  design.acceptance-kb: 验收报告知识库设计（最新在前 + 结论可视 + 模板约束 + 跨环境同步）
   design.server-authority: 服务器权威性设计
   design.unified-skill-system: 技能系统统一设计
   design.llm-gateway: LLM Gateway 统一调用架构设计
