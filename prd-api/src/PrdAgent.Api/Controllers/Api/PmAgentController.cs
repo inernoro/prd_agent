@@ -1072,8 +1072,14 @@ public class PmAgentController : ControllerBase
         var userId = GetUserId();
         var project = await FindAccessibleProjectAsync(projectId, userId);
         if (project == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
-        if (project.OwnerId != userId && project.LeaderId != userId)
-            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅立项人或负责人可发起评价"));
+        // 结案评价由项目经理发起
+        if (project.LeaderId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "结案评价仅项目经理可发起"));
+        // 必须过了项目计划结束时间
+        if (project.PlannedEndAt == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请先设置项目计划结束时间，到期后再发起结案评价"));
+        if (DateTime.UtcNow < project.PlannedEndAt.Value)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"未到项目计划结束时间（{project.PlannedEndAt.Value:yyyy-MM-dd}），暂不能发起结案评价"));
         if (project.Stakeholders.Count == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请先维护项目干系人，再发起评价"));
 

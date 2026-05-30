@@ -22,6 +22,11 @@ interface Props {
 export function EvaluatePanel({ project, onClose, onChanged }: Props) {
   const me = useAuthStore((s) => s.user?.userId ?? '');
   const isOwner = project.ownerId === me || project.leaderId === me;
+  // 结案评价由项目经理发起，且须过了项目计划结束时间
+  const isLeader = project.leaderId === me;
+  const endLabel = project.plannedEndAt ? new Date(project.plannedEndAt).toLocaleDateString('zh-CN') : '';
+  const endPassed = project.plannedEndAt ? new Date(project.plannedEndAt).getTime() <= Date.now() : false;
+  const canInitiate = isLeader && endPassed;
   const round = project.evaluationRound ?? null;
   const result = round?.status === 'finalized' ? round.result : (round ? null : project.evaluation);
   const collecting = round?.status === 'collecting';
@@ -95,7 +100,13 @@ export function EvaluatePanel({ project, onClose, onChanged }: Props) {
             <div className="text-center py-6">
               <div className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>尚未发起结案评价</div>
               <div className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>
-                {isOwner ? '点下方「发起评价」，系统将通知各干系人独立打分，全部评完后汇总。' : '请等待立项人发起评价。'}
+                {!isLeader
+                  ? '结案评价由项目经理在项目计划结束后发起。'
+                  : !project.plannedEndAt
+                    ? '请先设置项目「计划结束时间」，到期后由你（项目经理）发起评价。'
+                    : !endPassed
+                      ? `需到项目计划结束时间（${endLabel}）后，由你（项目经理）发起；当前未到期。`
+                      : '点下方「发起评价」，系统将通知各干系人独立打分，全部评完后汇总。'}
               </div>
             </div>
           )}
@@ -145,8 +156,10 @@ export function EvaluatePanel({ project, onClose, onChanged }: Props) {
 
         <div className="flex justify-end gap-2 px-5 py-3.5 shrink-0 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
           <Button variant="ghost" onClick={onClose}>关闭</Button>
-          {!collecting && isOwner && (
-            <Button variant="primary" onClick={start} disabled={busy || project.stakeholders.length === 0}>
+          {!collecting && isLeader && (
+            <Button variant="primary" onClick={start}
+              disabled={busy || project.stakeholders.length === 0 || !canInitiate}
+              title={!canInitiate ? (project.plannedEndAt ? `未到计划结束时间（${endLabel}）` : '请先设置项目计划结束时间') : undefined}>
               {busy ? <MapSpinner size={14} /> : <Play size={14} />}{result ? '重新发起评价' : '发起评价'}
             </Button>
           )}

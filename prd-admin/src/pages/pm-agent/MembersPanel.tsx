@@ -88,7 +88,7 @@ export function MembersPanel({ projectId, canManage }: Props) {
             还没有成员。{canManage ? '上方搜索用户添加。' : '仅项目经理/创建人可管理成员。'}
           </div>
         )}
-        {members.map((m) => {
+        {[...members].sort((a, b) => (a.userId === leaderId ? -1 : 0) - (b.userId === leaderId ? -1 : 0)).map((m) => {
           const avatar = resolveAvatarUrl({ avatarFileName: m.avatarFileName });
           const isLeader = m.userId === leaderId;
           const isOwner = m.userId === ownerId;

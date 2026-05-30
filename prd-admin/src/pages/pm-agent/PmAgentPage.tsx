@@ -110,7 +110,7 @@ export function PmAgentPage() {
               </div>
               <div className="grid gap-2 mt-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
                 {[
-                  { n: '1', t: '立项', d: '填项目名、业务目标、项目类型（默认普通），指定项目经理' },
+                  { n: '1', t: '立项', d: '填项目名、业务目标、项目类型，指定项目经理' },
                   { n: '2', t: '定目标', d: '在「目标」围绕业务目标设 OKR，可 AI 拆解；进度由里程碑滚动' },
                   { n: '3', t: '推进', d: '用里程碑 + 任务（看板 / 列表 / 甘特）排期跟踪，或 AI 拆解需求成任务' },
                   { n: '4', t: '结案', d: '维护干系人打分得 NPSS，看板汇总成功度与奖金' },
