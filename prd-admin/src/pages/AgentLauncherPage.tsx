@@ -804,7 +804,7 @@ export default function AgentLauncherPage() {
         }
       `}</style>
       
-      <div className="flex-1 min-h-0 overflow-auto relative" style={{ zIndex: 1 }}>
+      <div className="flex-1 min-h-0 overflow-hidden relative flex" style={{ zIndex: 1 }}>
 
         {/* Hero 本地 aurora 光晕 */}
         <div
@@ -821,6 +821,9 @@ export default function AgentLauncherPage() {
             zIndex: 0,
           }}
         />
+
+        {/* ── 左列：主内容（独立滚动）；右列：AI 大事早知道 全高 rail（上下贯穿） ── */}
+        <div className="flex-1 min-w-0 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
 
         {/* ── 页面主体内容（悬浮在背景图之上） ── */}
         <div className="relative z-10">
@@ -923,26 +926,16 @@ export default function AgentLauncherPage() {
             </div>
             {/* end hero content */}
 
-            {/* ── Quick Links（左·四大板块） + AI 大事早知道（右·实时资讯时间线 rail） ── */}
+            {/* ── Quick Links — Extended Hero Background Area ── */}
             {!searchQuery.trim() && (
               <div className={`relative z-10 ${isMobile ? 'px-5 pb-6' : 'px-8 pb-10'}`}>
-                <div
-                  style={{
-                    display: 'grid',
-                    gap: isMobile ? 12 : 16,
-                    // 宽屏：左侧卡片弹性区 + 右侧 360px 资讯列；窄屏：单列堆叠（资讯列落到卡片下方）
-                    gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) 360px',
-                    alignItems: 'stretch',
-                  }}
-                >
                 <div
                   className="grid"
                   style={{
                     gap: isMobile ? 10 : 14,
                     gridTemplateColumns: isMobile
                       ? `repeat(auto-fit, minmax(160px, 1fr))`
-                      : `repeat(auto-fit, minmax(220px, 1fr))`,
-                    alignContent: 'start',
+                      : `repeat(auto-fit, minmax(260px, 1fr))`,
                   }}
                 >
               {quickLinks.map((link, idx) => {
@@ -1068,11 +1061,6 @@ export default function AgentLauncherPage() {
                 );
               })}
                 </div>
-                {/* 右侧：AI 大事早知道 实时资讯时间线 */}
-                <Reveal className="h-full" delay={REVEAL.quickLinkBase + 60} duration={REVEAL_DURATION} offset={20}>
-                  <AiNewsRadar />
-                </Reveal>
-                </div>
               </div>
             )}
           </div>
@@ -1197,6 +1185,22 @@ export default function AgentLauncherPage() {
             </>
           )}
         </div>
+        {/* mobile: 资讯雷达落到主内容流末尾（无右列） */}
+        {isMobile && !searchQuery.trim() && (
+          <div className="px-5 pb-8" style={{ height: 520 }}>
+            <AiNewsRadar />
+          </div>
+        )}
+        </div>
+        {/* ── 右列：AI 大事早知道 全高 rail（仅宽屏，上下贯穿，左列滚动时常驻） ── */}
+        {!isMobile && (
+          <div
+            className="shrink-0 min-h-0 relative z-10"
+            style={{ width: 372, paddingTop: 28, paddingRight: 32, paddingBottom: 24, paddingLeft: 4 }}
+          >
+            <AiNewsRadar />
+          </div>
+        )}
       </div>
 
       <DesktopDownloadDialog open={downloadDialogOpen} onOpenChange={setDownloadDialogOpen} />

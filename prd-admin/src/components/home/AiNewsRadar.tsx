@@ -110,7 +110,8 @@ const BUCKET_LABEL: Record<Bucket, string> = {
 
 const POLL_MS = 90_000;
 const TICK_MS = 30_000;
-const FEATURED_THRESHOLD = 0.75;
+// 精选阈值：源站多数条目 ~0.65，0.7 用于挑出更高信号项（0.78~0.92）。
+const FEATURED_THRESHOLD = 0.7;
 
 type Tab = 'featured' | 'all';
 
@@ -119,7 +120,8 @@ export function AiNewsRadar() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(false);
-  const [tab, setTab] = useState<Tab>('featured');
+  // 默认「全部」：保证首屏资讯充实、rail 不留白（精选作为可选高信号筛选）。
+  const [tab, setTab] = useState<Tab>('all');
   const [now, setNow] = useState(() => Date.now());
   const [justUpdated, setJustUpdated] = useState(false);
 
@@ -300,7 +302,7 @@ export function AiNewsRadar() {
       {/* Timeline body */}
       <div
         className="relative z-10 flex-1 min-h-0 overflow-y-auto px-4 pb-3"
-        style={{ overscrollBehavior: 'contain', maxHeight: 560 }}
+        style={{ overscrollBehavior: 'contain' }}
       >
         {loading ? (
           <div className="flex items-center justify-center py-16">
