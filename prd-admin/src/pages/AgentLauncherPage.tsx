@@ -48,6 +48,7 @@ import { ShowcaseGallery } from '@/components/showcase/ShowcaseGallery';
 import { DesktopDownloadDialog } from '@/components/ui/DesktopDownloadDialog';
 import { ReviewAgentCardArt } from '@/pages/ai-toolbox/components/ReviewAgentCardArt';
 import { PaAgentCardArt } from '@/pages/ai-toolbox/components/PaAgentCardArt';
+import { PmAgentCardArt } from '@/pages/ai-toolbox/components/PmAgentCardArt';
 import { HomeAmbientBackdrop } from '@/components/effects/HomeAmbientBackdrop';
 import { Reveal } from '@/pages/home/components/Reveal';
 import { TipsRotator } from '@/components/daily-tips/TipsRotator';
@@ -265,6 +266,8 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
       */}
       {item.agentKey === 'review-agent' ? (
         <ReviewAgentCardArt />
+      ) : item.agentKey === 'pm-agent' && !uploadedCover ? (
+        <PmAgentCardArt />
       ) : item.agentKey === 'pa-agent' && !uploadedCover ? (
         <>
           <PaAgentCardArt />
