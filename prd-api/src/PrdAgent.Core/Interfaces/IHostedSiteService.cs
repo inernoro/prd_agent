@@ -151,6 +151,71 @@ public interface IHostedSiteService
     /// 由 WebPageVisibilityBackfillService 在启动时调用一次。
     /// </summary>
     Task<int> BackfillShareVisibilityAsync(CancellationToken ct = default);
+
+    // ── 评论 ──
+
+    /// <summary>切换站点是否允许评论（仅 owner / editor 可调）。返回更新后的站点；无权或不存在返回 null。</summary>
+    Task<HostedSite?> SetCommentsEnabledAsync(string siteId, string userId, bool enabled, CancellationToken ct = default);
+
+    /// <summary>
+    /// 直连 siteId 列出评论（owner / 有访问权的团队成员视角）。
+    /// 校验 viewer 对站点的访问权（与 GetByIdAsync 同款 owner/team 规则）；无权或不存在返回 null。
+    /// </summary>
+    Task<SiteCommentsResult?> ListCommentsBySiteAsync(string siteId, string viewerUserId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 经分享链接列出评论（公开访问路径）。校验分享访问门（撤销 / 过期 / 可见性 / 密码）。
+    /// 通过后返回分享首个站点的评论；门禁不过时 Result.Error 非空。
+    /// </summary>
+    Task<SiteCommentsResult> ListCommentsByShareAsync(string token, string? password, string? viewerUserId, CancellationToken ct = default);
+
+    /// <summary>直连 siteId 发表评论（需 viewer 对站点有访问权）。站点不存在 / 无权 / 评论关闭时 Error 非空。</summary>
+    Task<AddCommentResult> AddCommentBySiteAsync(
+        string siteId, string authorUserId, string authorName, string? avatarFileName,
+        string content, CancellationToken ct = default);
+
+    /// <summary>经分享链接发表评论（公开路径，需登录）。校验分享访问门 + 评论开关；通过后插入。</summary>
+    Task<AddCommentResult> AddCommentByShareAsync(
+        string token, string? password,
+        string authorUserId, string authorName, string? avatarFileName,
+        string content, string? ipAddress, CancellationToken ct = default);
+
+    /// <summary>删除评论（作者本人或站点 owner）。无权 / 不存在返回 false。</summary>
+    Task<bool> DeleteCommentAsync(string commentId, string userId, CancellationToken ct = default);
+}
+
+public class HostedSiteCommentDto
+{
+    public string Id { get; set; } = string.Empty;
+    public string SiteId { get; set; } = string.Empty;
+    public string Content { get; set; } = string.Empty;
+    public string AuthorUserId { get; set; } = string.Empty;
+    public string AuthorName { get; set; } = "用户";
+    public string? AuthorAvatarFileName { get; set; }
+    public DateTime CreatedAt { get; set; }
+    /// <summary>当前 viewer 是否可删除本评论（作者本人或站点 owner）</summary>
+    public bool CanDelete { get; set; }
+}
+
+public class SiteCommentsResult
+{
+    public string SiteId { get; set; } = string.Empty;
+    public bool CommentsEnabled { get; set; } = true;
+    /// <summary>当前 viewer 是否可发表（已登录 + 评论开启）</summary>
+    public bool CanComment { get; set; }
+    public List<HostedSiteCommentDto> Comments { get; set; } = new();
+    public string? Error { get; set; }
+    public int HttpStatus { get; set; } = 200;
+    /// <summary>错误码：not_found / expired / VISIBILITY_DENIED / UNAUTHORIZED</summary>
+    public string? ErrorCode { get; set; }
+}
+
+public class AddCommentResult
+{
+    public HostedSiteCommentDto? Comment { get; set; }
+    public string? Error { get; set; }
+    public int HttpStatus { get; set; } = 200;
+    public string? ErrorCode { get; set; }
 }
 
 public class TagCountResult
