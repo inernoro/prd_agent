@@ -20,6 +20,8 @@ import { useViewTracking } from '@/lib/useViewTracking';
 import { useContentSelection, type ContentSelectionInfo } from '@/lib/useContentSelection';
 import { MessageSquareText, MessageSquarePlus } from 'lucide-react';
 import { InlineCommentDrawer, type PendingSelection } from '@/pages/document-store/InlineCommentDrawer';
+import { AcceptanceEvidenceGraph } from './AcceptanceEvidenceGraph';
+import { Workflow } from 'lucide-react';
 import { listInlineComments } from '@/services';
 import { DocToc } from './DocToc';
 
@@ -1115,6 +1117,7 @@ export function DocBrowser({
   // 批次 D：划词评论
   const contentAreaRef = useRef<HTMLDivElement>(null);
   const [inlineCommentsOpen, setInlineCommentsOpen] = useState(false);
+  const [evidenceGraphOpen, setEvidenceGraphOpen] = useState(false);
   const [pendingSelection, setPendingSelection] = useState<PendingSelection | null>(null);
   // 2026-05-28 用户反馈："看不到别人留在这里的评论气泡"。
   // 进入条目时主动预拉评论计数，让正文上方常驻一颗 chip：
@@ -1981,6 +1984,26 @@ export function DocBrowser({
                   </>
                 );
               })()}
+              {/* 验收报告「证据关系图」按钮：仅验收类条目 + 有正文时显示，放在工具栏（非文章正中） */}
+              {(() => {
+                const sel = entries.find(e => e.id === selectedEntryId);
+                const isAcc = !!(sel?.metadata?.kind === 'acceptance-report' || sel?.metadata?.verdict);
+                if (!isAcc || !preview?.text || editMode) return null;
+                return (
+                  <button
+                    onClick={() => setEvidenceGraphOpen(true)}
+                    className="h-6 px-2 rounded-[8px] text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors flex-shrink-0"
+                    style={{
+                      background: 'rgba(99,102,241,0.1)',
+                      border: '1px solid rgba(99,102,241,0.22)',
+                      color: 'rgba(165,180,252,0.95)',
+                    }}
+                    title="证据关系图 — 把报告里的步骤连成页面跳转关系图（探案证据板）"
+                  >
+                    <Workflow size={11} /> 证据图
+                  </button>
+                );
+              })()}
               {/* 批次 D：划词评论开关按钮 */}
               {trackedEntryForComments && (
                 <button
@@ -2177,6 +2200,15 @@ export function DocBrowser({
           onSave={async (newTitle) => {
             await onRenameEntry(renameEntry.id, newTitle);
           }}
+        />
+      )}
+
+      {/* 验收报告证据关系图（探案证据板） */}
+      {evidenceGraphOpen && preview?.text && (
+        <AcceptanceEvidenceGraph
+          content={preview.text}
+          title={entries.find(e => e.id === selectedEntryId)?.title ?? '验收报告'}
+          onClose={() => setEvidenceGraphOpen(false)}
         />
       )}
 
