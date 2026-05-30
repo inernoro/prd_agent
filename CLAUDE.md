@@ -206,7 +206,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 - 提交前先穷尽下列自测路径，**至少跑通一条**：
   1. **Vitest / xUnit 集成测试**：模拟真实状态机/调用链，断言新行为发生（首选，最廉价）
   2. **`/cds-deploy`**：推到 CDS 灰度环境，等容器就绪 + 自动冒烟（无 SDK / 无 sudo 时的兜底）
-  3. **`bridge` 操作预览域名**：通过 CDS Bridge 自动操作浏览器走真实用户路径
+  3. **Playwright 无头浏览器直连预览域名**：走真实用户路径取证（`/验收` 技能的 harness 即此路径）
   4. **`WebFetch` + 已有 API key**：对暴露的非鉴权端点跑真实 HTTP 请求，断言返回值
 - 必须在交付消息里**写明**自测了什么、断言了什么、用了哪条路径
 - **禁止**用「我无法做到 X」作为提交完成的借口——必须先列出具体尝试过哪几条路径才被卡住，让用户能判断是真硬限制还是 AI 偷懒
@@ -219,7 +219,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 **判定脚本**（提交前自查）：
 - [ ] 我跑了 `pnpm tsc --noEmit` ?（语法 / 类型）
 - [ ] 我跑了 `pnpm test` / `dotnet test` ?（不退化）
-- [ ] 我**新增了**针对本次改动的集成测试 / 调了 `/cds-deploy` / 用了 `bridge` ?（行为是否真发生）
+- [ ] 我**新增了**针对本次改动的集成测试 / 调了 `/cds-deploy` / 用 Playwright 直连预览域名 ?（行为是否真发生）
 - [ ] 交付消息里写清自测路径 + 自测结论了 ?
 
 如果第 3 项 ❌，**不允许声称"已完成"**。
@@ -378,10 +378,8 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | **preview-url** | `/preview` | 输入当前分支 → 自动拼接 `分支名.miduo.org` 预览地址，用于人工验收 |
 | **acceptance-checklist** | `/uat` | 输入功能场景 → 生成真人逐步打勾的 UAT 清单（Phase 0-7：前置 → 冷启 → 执行 → 验证 → 回归 → 回滚 → 负面），每步含预期结果 + 失败排查手册。CLI/Web 双通道支持 |
 | **task-handoff-checklist** | `/handoff` | 输入当前变更 → 扫描导航/文档/规则/工作流/测试/风险/质量/后续 8 个维度，输出交接清单 |
-| **auto-fix-issues** | `/audit` | Agent 间 issue 反馈/修复/复测协议。三档标签 (`待解决` / `已解决待验收` / `已验收`)、issue + tracker + PR 收尾 + 复测报告四套模板，PR 合并必须改 label 的强制清单，杜绝"修了忘改 label" |
 | **issues-autofix** | `/issues-autofix` | 无人值守日常 issue 维护 Agent。批跑 open issue，按分类规则自动答复/修复/升级，绝不反向询问。完全跳过 `visual-test:*` / `discussion` / 其他 Agent 领地（详见 `doc/rule.issues-system.md` §3） |
-| **issues-visual-create** | `/issues-visual-create` | 创建一条视觉验收子 issue。输入"测什么"(PR#/commit/页面)，按 #605 模板 v0.x 生成 `[visual-test]` issue，挂 `visual-test:pending` 等执行者接单 |
-| **issues-visual-run** | `/issues-visual-run` | 24h 视觉测试执行者 Agent 逻辑。拉 `visual-test:pending` 队列，按矩阵跑用例(双主题强制)，回评论失败清单(P0-P3) 或 `/visual-pass`。完全不开新 issue |
+| **issues-visual-run** | `/issues-visual-run` | 24h 视觉测试执行者 Agent 逻辑。拉 `visual-test:pending` 队列，按矩阵跑用例(双主题强制)，回评论失败清单(P0-P3) 或 `/visual-pass`。亦可按需创建 `[visual-test]` 子 issue |
 | **create-visual-test-to-kb** | `/验收` | 工业级功能验收/视觉测试全流水线（MAP 验收标准 v2）。三段不可分：标准/模板 → 模拟人类浏览器取证（点击导航进入、禁地址栏直达、双主题截图）→ 报告归档进知识库出分享链。归档前强制准入校验（目标/档位/Verdict/截图数/证据完整性不达标直接拒收）。项目无关，改 `acceptance.config.json` 跨仓库复用 |
 | **weekly-update-summary** | `/weekly` | 输入时间范围 → 从 git 历史收集 commit/PR/贡献者数据，输出分类周报（完成项 + 下周优先级） |
 
@@ -389,7 +387,6 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 
 | 技能 | 触发词 | 输入 → 输出 |
 |------|--------|-------------|
-| **bridge** | `/bridge` | 输入操作指令 → 通过 CDS 预览页面远程操作浏览器（鼠标轨迹 + DOM 读取 + 点击/输入/SPA 导航） |
 | **conflict-resolution** | `/resolve` | 输入当前分支 → 将 main 合并进来，AI 自动解决冲突，避免 PR 时冲突 |
 | **doc-writer** | `/doc` | 输入文档类型 → 校验 `doc/` 下的命名和表头格式，自动套用 6 种标准模板（spec/design/plan/rule/guide/report） |
 | **doc-sync** | `/doc-sync` | 无需输入 → 扫描 `doc/` 目录，自动对齐 `index.yml` 和 `guide.list.directory.md` |
@@ -398,7 +395,6 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | **llm-visibility** | `/visibility` | 输入代码变更 → 扫描所有 LLM 调用点，检查是否符合「禁止空白等待」原则，输出合规报告 |
 | **llm-call-trace** | `/llm-trace` | 前端选 A 后端跑 B / LLM 日志 model 不对时 → 按"前端 body → DB run → resolve 调用次数审计 → LLM 日志 Model"的顺序定位，避免凭直觉打补丁（本仓库血泪技能） |
 | **feature-emerge** | `/emerge` | 输入任意模块/痛点 → 扫描该模块能力 + 全局横向能力（Gateway / Bridge / Run-Worker / Attachment）→ 四层发散（基线/差异化/智力/疯狂）→ 收敛推荐波次。通用涌现，不限文档 |
-| **cn-brief-summary** | `200字总结` | 无需输入 → 在回复末尾自动追加 ≤200 字中文通俗总结 |
 | **dev-completion-report** | `/dev-report` | 开发完成后 → 输出三段式报告：200 字总结 + 总结清单（改动/风险/测试/验收）+ 行业对比分析 |
 | **create-skill-file** | `/create-skill` | 输入技能需求 → 生成符合规范的 SKILL.md 文件并评分 |
 | **cds-project-scan** | `/cds-scan` | 输入项目目录 → 自动检测技术栈和基础设施，生成 CDS docker-compose YAML |
@@ -408,14 +404,12 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | **create-executor** | `/create-executor` | 输入执行器名称和用途 → 自动读取代码、生成执行器、注册、自测，全自动接入 CLI Agent 执行器 |
 | **createzzdemo** | `/createzzdemo` | 输入教程名 → 枚举 A-F 6 类步骤让用户选组合，生成 DailyTipUpsert JSON 入库，含大全套 showcase 回归模板 |
 | **entropy-cleanup** | `/entropy` | 无需输入 → 扫描 doc/ 命名、index.yml、guide.list、技能表、changelog 碎片、codebase-snapshot 五维一致性，输出欠款清单并自动补齐 |
-| **daily-entropy-plan** | `/daily-entropy` | 仅手动触发 → 一条命令跑完整日例行：合并历史熵减 PR → 切新分支 → 六维双向扫描 → 自动修复 → diff 核验 → 提交 + 推送 + 创建 PR + squash 合并。全程不中断，不需要人工确认 |
 | **laowang** | `老王`、`/laowang` | 用户卡住/任务太难/争执不下时触发 → 用米多解决问题五步法（直面问题 → 抓主要矛盾 → 责任到人 → 备齐资源 → 做好才算做）强制拆解。风格直率，副作用：50% 概率追加一项延伸任务 |
 
 ### 专项修复技能
 
 | 技能 | 触发词 | 输入 → 输出 |
 |------|--------|-------------|
-| **fix-unused-imports** | — | 输入 TS6133 错误 → 自动删除未使用的 TypeScript import/变量 |
 | **fix-surface-styles** | `/fix-surface` | 输入页面路径 → 扫描并修复 CSS 样式偏差，统一到 Surface System |
 | **add-agent-permission** | `加权限` | 输入权限名 → 自动判断分类并同步修改后端枚举 + 前端类型 + 角色分配 |
 | **add-image-gen-model** | `添加生图模型` | 输入模型信息 → 在后端 Config + 前端 Adapter 中注册新的图片生成模型 |
@@ -428,7 +422,6 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 
 | 技能 | 触发词 | 输入 → 输出 |
 |------|--------|-------------|
-| **technical-documentation** | — | 输入文档需求 → Diátaxis 工作流 + 8 种模板（Spec/Architecture/Runbook/API/Quick Start/How-to/FAQ/Tutorial） |
 | **ui-ux-pro-max** | — | 输入设计需求 → 67 种风格 + 96 种配色 + 57 种字体搭配，支持 13 种技术栈 |
 | **product-document-generator** | — | 输入产品需求 → 按工程版 1+N 主-子文档模板或敏捷版模板生成/补全符合 AI 开发要求的产品文档（Part A 价值层 + Part B 功能层两阶段） |
 
