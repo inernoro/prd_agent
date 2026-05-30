@@ -284,7 +284,15 @@ export type BatchCreatePmTasksInput = {
 // ── Contract 签名 ──
 
 export type CreatePmProjectContract = (input: CreatePmProjectInput) => Promise<ApiResponse<PmProject>>;
-export type ListPmProjectsContract = (page?: number, pageSize?: number, type?: PmProjectType) => Promise<ApiResponse<{ items: PmProject[]; total: number; page: number; pageSize: number }>>;
+export type PmProjectScope = 'managed' | 'related' | 'all';
+
+export type ListPmProjectsContract = (
+  opts?: { page?: number; pageSize?: number; type?: PmProjectType; scope?: PmProjectScope }
+) => Promise<ApiResponse<{ items: PmProject[]; total: number; page: number; pageSize: number }>>;
+
+export type PmMember = { userId: string; displayName: string; avatarFileName?: string | null };
+export type GetPmMembersContract = (projectId: string) => Promise<ApiResponse<{ members: PmMember[]; leaderId: string; ownerId: string }>>;
+export type SetPmMembersContract = (projectId: string, memberIds: string[]) => Promise<ApiResponse<{ members: PmMember[]; memberIds: string[] }>>;
 export type GetPmProjectContract = (projectId: string) => Promise<ApiResponse<{ project: PmProject; tasks: PmTask[] }>>;
 export type UpdatePmProjectContract = (projectId: string, input: UpdatePmProjectInput) => Promise<ApiResponse<{ updated: boolean }>>;
 export type DeletePmProjectContract = (projectId: string) => Promise<ApiResponse<{ deleted: boolean }>>;

@@ -1952,9 +1952,13 @@ export {
   getPmTaskActivitiesReal as getPmTaskActivities,
   addPmTaskCommentReal as addPmTaskComment,
   bulkPmTasksReal as bulkPmTasks,
+  getPmMembersReal as getPmMembers,
+  setPmMembersReal as setPmMembers,
 } from '@/services/real/pmAgent';
 export type {
   PmProject,
+  PmMember,
+  PmProjectScope,
   PmTask,
   PmTaskDraft,
   PmStakeholder,
