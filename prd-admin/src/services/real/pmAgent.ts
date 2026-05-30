@@ -11,7 +11,9 @@ import type {
   UpdatePmTaskContract,
   DeletePmTaskContract,
   SetPmStakeholdersContract,
-  EvaluatePmProjectContract,
+  StartPmEvaluationContract,
+  SubmitPmScoreContract,
+  FinalizePmEvaluationContract,
   GetPmDashboardContract,
   GetPmRewardConfigContract,
   UpdatePmRewardConfigContract,
@@ -63,8 +65,16 @@ export const setPmStakeholdersReal: SetPmStakeholdersContract = async (projectId
   return await apiRequest(api.pm.projects.stakeholders(encodeURIComponent(projectId)), { method: 'PUT', body: input });
 };
 
-export const evaluatePmProjectReal: EvaluatePmProjectContract = async (projectId, scores) => {
-  return await apiRequest(api.pm.projects.evaluate(encodeURIComponent(projectId)), { method: 'POST', body: { scores } });
+export const startPmEvaluationReal: StartPmEvaluationContract = async (projectId) => {
+  return await apiRequest(api.pm.projects.evaluationStart(encodeURIComponent(projectId)), { method: 'POST', body: {} });
+};
+
+export const submitPmScoreReal: SubmitPmScoreContract = async (projectId, stakeholderId, score) => {
+  return await apiRequest(api.pm.projects.evaluationScore(encodeURIComponent(projectId)), { method: 'POST', body: { stakeholderId, score } });
+};
+
+export const finalizePmEvaluationReal: FinalizePmEvaluationContract = async (projectId) => {
+  return await apiRequest(api.pm.projects.evaluationFinalize(encodeURIComponent(projectId)), { method: 'POST', body: {} });
 };
 
 export const getPmDashboardReal: GetPmDashboardContract = async (fiscalYear) => {

@@ -93,8 +93,11 @@ public class PmProject
     /// <summary>项目干系人列表（权力利益矩阵 + 加权打分载体）</summary>
     public List<PmStakeholder> Stakeholders { get; set; } = new();
 
-    /// <summary>结案评价（NPSS）结果，未评价时为 null</summary>
+    /// <summary>结案评价（NPSS）最终结果，未评价时为 null</summary>
     public PmEvaluation? Evaluation { get; set; }
+
+    /// <summary>当前/最近一轮结案评价（多人独立打分 → 汇总），未发起时为 null</summary>
+    public PmEvaluationRound? EvaluationRound { get; set; }
 
     // ── Phase 4: 优秀项目评选 ──
 
@@ -124,8 +127,11 @@ public class PmStakeholder
     /// <summary>干系人名称</summary>
     public string Name { get; set; } = string.Empty;
 
-    /// <summary>关联系统用户 ID（可选）</summary>
+    /// <summary>关联系统用户 ID（内部干系人必填；外部干系人为 null）</summary>
     public string? UserId { get; set; }
+
+    /// <summary>是否外部干系人（如无系统账号的客户，由立项人代为录入评分）</summary>
+    public bool IsExternal { get; set; }
 
     /// <summary>角色（决定打分权重）：beneficiary(客户/业务方) / management(管理层) / team(项目团队) / other(其他)</summary>
     public string Role { get; set; } = PmStakeholderRole.Other;
@@ -136,8 +142,54 @@ public class PmStakeholder
     /// <summary>利益高低：high / low（权力利益矩阵纵轴）</summary>
     public string Interest { get; set; } = PmStakeholderAxis.Low;
 
-    /// <summary>结案打分（0-10，评价时填写），未打分为 null</summary>
+    /// <summary>[已废弃] 旧版单人评分流程的打分字段，仅为兼容旧数据反序列化保留，不再使用</summary>
+    [Obsolete("评分已迁移至 PmEvaluationRound.Participants")]
     public int? Score { get; set; }
+}
+
+/// <summary>
+/// 结案评价一轮 — 多人独立打分 → 系统汇总。
+/// 由立项人/Leader 发起，各干系人各自打分（互相不可见），全部完成后汇总出 NPSS。
+/// </summary>
+public class PmEvaluationRound
+{
+    /// <summary>状态：collecting(收集中) / finalized(已汇总)</summary>
+    public string Status { get; set; } = PmEvaluationRoundStatus.Collecting;
+
+    public string InitiatedBy { get; set; } = string.Empty;
+    public string? InitiatedByName { get; set; }
+    public DateTime InitiatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? FinalizedAt { get; set; }
+
+    /// <summary>参评人（发起时按干系人快照生成）</summary>
+    public List<PmEvaluationParticipant> Participants { get; set; } = new();
+
+    /// <summary>汇总结果（finalized 后填充）</summary>
+    public PmEvaluation? Result { get; set; }
+}
+
+/// <summary>一轮评价中的单个参评人 + 其打分</summary>
+public class PmEvaluationParticipant
+{
+    /// <summary>对应干系人 Id（快照）</summary>
+    public string StakeholderId { get; set; } = string.Empty;
+    public string? UserId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public bool IsExternal { get; set; }
+    public string Role { get; set; } = PmStakeholderRole.Other;
+
+    /// <summary>打分（0-10），未打分为 null</summary>
+    public int? Score { get; set; }
+    public DateTime? ScoredAt { get; set; }
+    /// <summary>实际录入人（内部=本人 UserId；外部=立项人 UserId）</summary>
+    public string? ScoredBy { get; set; }
+}
+
+/// <summary>评价轮状态常量</summary>
+public static class PmEvaluationRoundStatus
+{
+    public const string Collecting = "collecting";
+    public const string Finalized = "finalized";
 }
 
 /// <summary>

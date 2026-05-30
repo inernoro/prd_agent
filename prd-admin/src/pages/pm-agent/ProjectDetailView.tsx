@@ -8,7 +8,7 @@ import { useAuthStore } from '@/stores/authStore';
 import {
   getPmProject, createPmTask, updatePmTask, deletePmTask, updatePmProject, bulkPmTasks,
 } from '@/services';
-import type { PmProject, PmTask, PmTaskStatus, PmTaskPriority, PmStakeholder, PmEvaluation } from '@/services/contracts/pmAgent';
+import type { PmProject, PmTask, PmTaskStatus, PmTaskPriority, PmStakeholder } from '@/services/contracts/pmAgent';
 import { KanbanBoard } from './KanbanBoard';
 import { GanttChart } from './GanttChart';
 import { DecomposePanel } from './DecomposePanel';
@@ -380,9 +380,7 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
       )}
 
       {showEvaluate && (
-        <EvaluatePanel projectId={projectId} stakeholders={project.stakeholders} existing={project.evaluation}
-          onClose={() => setShowEvaluate(false)}
-          onEvaluated={(evaluation: PmEvaluation) => setProject((prev) => (prev ? { ...prev, evaluation, lifecycle: 'evaluated' } : prev))} />
+        <EvaluatePanel project={project} onClose={() => setShowEvaluate(false)} onChanged={load} />
       )}
     </div>
   );

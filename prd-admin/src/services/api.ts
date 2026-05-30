@@ -1300,7 +1300,9 @@ export const api = {
       batchTasks: (projectId: string) => `/api/pm/projects/${projectId}/tasks/batch`,
       bulkTasks: (projectId: string) => `/api/pm/projects/${projectId}/tasks/bulk`,
       stakeholders: (projectId: string) => `/api/pm/projects/${projectId}/stakeholders`,
-      evaluate: (projectId: string) => `/api/pm/projects/${projectId}/evaluate`,
+      evaluationStart: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/start`,
+      evaluationScore: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/score`,
+      evaluationFinalize: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/finalize`,
       excellence: (projectId: string) => `/api/pm/projects/${projectId}/excellence`,
     },
     tasks: {

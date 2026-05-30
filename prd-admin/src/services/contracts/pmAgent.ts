@@ -15,10 +15,31 @@ export type PmStakeholder = {
   id: string;
   name: string;
   userId?: string | null;
+  isExternal: boolean;
   role: PmStakeholderRole;
   power: PmStakeholderAxis;
   interest: PmStakeholderAxis;
+};
+
+export type PmEvaluationParticipant = {
+  stakeholderId: string;
+  userId?: string | null;
+  name: string;
+  isExternal: boolean;
+  role: PmStakeholderRole;
   score?: number | null;
+  scoredAt?: string | null;
+  scoredBy?: string | null;
+};
+
+export type PmEvaluationRound = {
+  status: 'collecting' | 'finalized';
+  initiatedBy: string;
+  initiatedByName?: string | null;
+  initiatedAt: string;
+  finalizedAt?: string | null;
+  participants: PmEvaluationParticipant[];
+  result?: PmEvaluation | null;
 };
 
 export type PmEvaluation = {
@@ -56,6 +77,7 @@ export type PmProject = {
   wipLimits?: Partial<Record<PmTaskStatus, number>> | null;
   stakeholders: PmStakeholder[];
   evaluation?: PmEvaluation | null;
+  evaluationRound?: PmEvaluationRound | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -272,15 +294,18 @@ export type DeletePmTaskContract = (taskId: string) => Promise<ApiResponse<{ del
 export type SetStakeholdersInput = {
   stakeholders: Array<{
     id?: string;
-    name: string;
+    name?: string;
     userId?: string;
+    isExternal?: boolean;
     role: PmStakeholderRole;
     power: PmStakeholderAxis;
     interest: PmStakeholderAxis;
   }>;
 };
 export type SetPmStakeholdersContract = (projectId: string, input: SetStakeholdersInput) => Promise<ApiResponse<{ stakeholders: PmStakeholder[] }>>;
-export type EvaluatePmProjectContract = (projectId: string, scores: Record<string, number>) => Promise<ApiResponse<{ evaluation: PmEvaluation }>>;
+export type StartPmEvaluationContract = (projectId: string) => Promise<ApiResponse<{ round: PmEvaluationRound }>>;
+export type SubmitPmScoreContract = (projectId: string, stakeholderId: string, score: number) => Promise<ApiResponse<{ scored: number; total: number }>>;
+export type FinalizePmEvaluationContract = (projectId: string) => Promise<ApiResponse<{ round: PmEvaluationRound }>>;
 export type GetPmDashboardContract = (fiscalYear?: number) => Promise<ApiResponse<PmDashboard>>;
 export type GetPmRewardConfigContract = () => Promise<ApiResponse<PmRewardConfig>>;
 export type UpdatePmRewardConfigContract = (input: UpdateRewardConfigInput) => Promise<ApiResponse<PmRewardConfig>>;

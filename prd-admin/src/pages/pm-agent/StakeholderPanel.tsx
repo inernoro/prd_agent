@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Plus, Trash2, Save } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { toast } from '@/lib/toast';
-import { setPmStakeholders } from '@/services';
+import { setPmStakeholders, getUsers } from '@/services';
+import type { AdminUser } from '@/types/admin';
 import type { PmStakeholder, PmStakeholderRole, PmStakeholderAxis } from '@/services/contracts/pmAgent';
 import { STAKEHOLDER_ROLE_REGISTRY, POWER_INTEREST_MATRIX } from './pmConstants';
 
@@ -14,7 +16,6 @@ interface Props {
 }
 
 const ROLES: PmStakeholderRole[] = ['beneficiary', 'management', 'team', 'other'];
-// 矩阵象限顺序：左上(low-high) 右上(high-high) / 左下(low-low) 右下(high-low)
 const QUADRANTS: { power: PmStakeholderAxis; interest: PmStakeholderAxis }[] = [
   { power: 'low', interest: 'high' },
   { power: 'high', interest: 'high' },
@@ -25,23 +26,34 @@ const QUADRANTS: { power: PmStakeholderAxis; interest: PmStakeholderAxis }[] = [
 let tmpSeq = 0;
 const tmpId = () => `tmp-${Date.now()}-${tmpSeq++}`;
 
-export function StakeholderPanel({ projectId, stakeholders, onSaved }: Props) {
-  const [list, setList] = useState<PmStakeholder[]>(stakeholders);
-  const [saving, setSaving] = useState(false);
+type Row = PmStakeholder;
 
-  const addOne = () => setList((prev) => [...prev, {
-    id: tmpId(), name: '', role: 'beneficiary', power: 'high', interest: 'high', score: null,
-  }]);
-  const update = (id: string, patch: Partial<PmStakeholder>) => setList((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+export function StakeholderPanel({ projectId, stakeholders, onSaved }: Props) {
+  const [list, setList] = useState<Row[]>(stakeholders);
+  const [saving, setSaving] = useState(false);
+  const [users, setUsers] = useState<AdminUser[]>([]);
+
+  useEffect(() => { void getUsers({ page: 1, pageSize: 200 }).then((res) => { if (res.success) setUsers(res.data.items); }); }, []);
+  const userName = useMemo(() => new Map(users.map((u) => [u.userId, u.displayName || u.username])), [users]);
+
+  const addInternal = () => setList((prev) => [...prev, { id: tmpId(), name: '', userId: '', isExternal: false, role: 'team', power: 'low', interest: 'high' }]);
+  const addExternal = () => setList((prev) => [...prev, { id: tmpId(), name: '', userId: null, isExternal: true, role: 'beneficiary', power: 'high', interest: 'high' }]);
+  const update = (id: string, patch: Partial<Row>) => setList((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
   const remove = (id: string) => setList((prev) => prev.filter((s) => s.id !== id));
 
+  // 行的展示名（内部=用户名，外部=手填名）
+  const rowName = (s: Row) => (s.isExternal ? s.name : (s.userId ? (userName.get(s.userId) || s.name || '(已选用户)') : ''));
+
   const save = async () => {
-    const cleaned = list.filter((s) => s.name.trim());
+    const cleaned = list.filter((s) => (s.isExternal ? s.name.trim() : !!s.userId));
     setSaving(true);
     const res = await setPmStakeholders(projectId, {
       stakeholders: cleaned.map((s) => ({
         id: s.id.startsWith('tmp-') ? undefined : s.id,
-        name: s.name.trim(), role: s.role, power: s.power, interest: s.interest,
+        name: s.isExternal ? s.name.trim() : undefined,
+        userId: s.isExternal ? undefined : (s.userId || undefined),
+        isExternal: s.isExternal,
+        role: s.role, power: s.power, interest: s.interest,
       })),
     });
     setSaving(false);
@@ -60,7 +72,7 @@ export function StakeholderPanel({ projectId, stakeholders, onSaved }: Props) {
           {QUADRANTS.map((q) => {
             const key = `${q.power}-${q.interest}`;
             const meta = POWER_INTEREST_MATRIX[key];
-            const members = list.filter((s) => s.power === q.power && s.interest === q.interest && s.name.trim());
+            const members = list.filter((s) => s.power === q.power && s.interest === q.interest && rowName(s).trim());
             return (
               <div key={key} className="rounded-lg border p-3 flex flex-col" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-base)' }}>
                 <div className="flex items-center gap-2">
@@ -71,7 +83,7 @@ export function StakeholderPanel({ projectId, stakeholders, onSaved }: Props) {
                 <div className="text-[10.5px] mt-1" style={{ color: 'var(--text-muted)' }}>{meta.strategy}</div>
                 <div className="flex flex-wrap gap-1 mt-2">
                   {members.map((s) => (
-                    <span key={s.id} className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>{s.name}</span>
+                    <span key={s.id} className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'var(--bg-card)', color: 'var(--text-secondary)' }}>{rowName(s)}{s.isExternal ? ' · 外部' : ''}</span>
                   ))}
                   {members.length === 0 && <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>—</span>}
                 </div>
@@ -85,25 +97,29 @@ export function StakeholderPanel({ projectId, stakeholders, onSaved }: Props) {
       <div>
         <div className="flex items-center justify-between mb-2">
           <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>干系人列表</div>
-          <Button variant="secondary" size="sm" onClick={addOne}><Plus size={13} />添加</Button>
+          <div className="flex gap-1.5">
+            <Button variant="secondary" size="sm" onClick={addInternal}><Plus size={13} />成员</Button>
+            <Button variant="ghost" size="sm" onClick={addExternal}><Plus size={13} />外部</Button>
+          </div>
         </div>
         <div className="flex flex-col gap-2">
           {list.length === 0 && (
             <div className="text-[12px] text-center py-6 rounded-lg border border-dashed" style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}>
-              暂无干系人，点「添加」录入。结案评价（NPSS）需要先维护干系人。
+              暂无干系人。「成员」从系统用户中选（可在线打分）；「外部」用于无账号的客户（由立项人代录评分）。
             </div>
           )}
           {list.map((s) => {
             const roleMeta = STAKEHOLDER_ROLE_REGISTRY[s.role];
             return (
               <div key={s.id} className="rounded-lg border p-2.5 flex items-center gap-2 flex-wrap" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
-                <input
-                  className="rounded px-2 py-1 text-[12px] outline-none border flex-1 min-w-[120px]"
-                  style={inputStyle}
-                  value={s.name}
-                  onChange={(e) => update(s.id, { name: e.target.value })}
-                  placeholder="干系人名称"
-                />
+                <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0" style={{ background: s.isExternal ? 'rgba(245,158,11,0.15)' : 'rgba(59,130,246,0.15)', color: s.isExternal ? '#F59E0B' : '#3B82F6' }}>{s.isExternal ? '外部' : '成员'}</span>
+                <div className="flex-1 min-w-[160px]">
+                  {s.isExternal ? (
+                    <input className="w-full rounded px-2 py-1 text-[12px] outline-none border" style={inputStyle} value={s.name} onChange={(e) => update(s.id, { name: e.target.value })} placeholder="外部干系人姓名 / 单位" />
+                  ) : (
+                    <UserSearchSelect value={s.userId || ''} onChange={(uid) => update(s.id, { userId: uid, name: userName.get(uid) || '' })} users={users} placeholder="从系统用户选择…" uiSize="sm" />
+                  )}
+                </div>
                 <select className="rounded px-2 py-1 text-[11px] outline-none border" style={{ ...inputStyle, color: roleMeta.color }} value={s.role} onChange={(e) => update(s.id, { role: e.target.value as PmStakeholderRole })}>
                   {ROLES.map((r) => <option key={r} value={r}>{STAKEHOLDER_ROLE_REGISTRY[r].label}（{STAKEHOLDER_ROLE_REGISTRY[r].weightLabel}）</option>)}
                 </select>
