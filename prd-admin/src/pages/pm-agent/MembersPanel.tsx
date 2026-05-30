@@ -5,8 +5,9 @@ import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { toast } from '@/lib/toast';
-import { getPmMembers, setPmMembers } from '@/services';
+import { getPmMembers, setPmMembers, getUsers } from '@/services';
 import type { PmMember } from '@/services/contracts/pmAgent';
+import type { AdminUser } from '@/types/admin';
 
 interface Props {
   projectId: string;
@@ -26,6 +27,7 @@ export function MembersPanel({ projectId, canManage }: Props) {
   const [saving, setSaving] = useState(false);
   const [pickId, setPickId] = useState('');
   const [dirty, setDirty] = useState(false);
+  const [users, setUsers] = useState<AdminUser[]>([]);
 
   const load = useCallback(async () => {
     const res = await getPmMembers(projectId);
@@ -35,12 +37,18 @@ export function MembersPanel({ projectId, canManage }: Props) {
   }, [projectId]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    void getUsers({ page: 1, pageSize: 200 }).then((res) => {
+      if (res.success) setUsers(res.data.items.filter((u) => u.status === 'Active'));
+    });
+  }, []);
 
   const addMember = (uid: string) => {
     setPickId('');
     if (!uid || members.some((m) => m.userId === uid)) return;
-    // 用占位，保存后由后端回填显示名/头像
-    setMembers((prev) => [...prev, { userId: uid, displayName: uid, avatarFileName: null }]);
+    // 用 MAP 用户列表立即解析出显示名/头像，避免展示原始 UserId
+    const u = users.find((x) => x.userId === uid);
+    setMembers((prev) => [...prev, { userId: uid, displayName: u?.displayName || uid, avatarFileName: u?.avatarFileName ?? null }]);
     setDirty(true);
   };
   const remove = (uid: string) => { setMembers((prev) => prev.filter((m) => m.userId !== uid)); setDirty(true); };
@@ -69,7 +77,7 @@ export function MembersPanel({ projectId, canManage }: Props) {
 
       {canManage && (
         <div className="flex items-center gap-2" style={{ maxWidth: 320 }}>
-          <UserSearchSelect value={pickId} onChange={addMember} placeholder="搜索并添加成员…" uiSize="sm" />
+          <UserSearchSelect value={pickId} onChange={addMember} users={users} placeholder="搜索并添加成员…" uiSize="sm" />
           <Plus size={15} style={{ color: 'var(--text-muted)' }} />
         </div>
       )}
@@ -94,7 +102,7 @@ export function MembersPanel({ projectId, canManage }: Props) {
               <span className="text-[13px] flex-1 min-w-0 truncate" style={{ color: 'var(--text-primary)' }}>{m.displayName}</span>
               {isLeader && <span className="text-[10px] px-1.5 py-0.5 rounded inline-flex items-center gap-0.5" style={{ background: 'rgba(245,158,11,0.15)', color: '#F59E0B' }}><Crown size={10} />项目经理</span>}
               {isOwner && !isLeader && <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(59,130,246,0.15)', color: '#3B82F6' }}>创建人</span>}
-              {canManage && (
+              {canManage && !isLeader && (
                 <button onClick={() => remove(m.userId)} className="opacity-0 group-hover:opacity-100 p-1 rounded shrink-0" style={{ color: 'var(--text-muted)' }} title="移除成员"><Trash2 size={14} /></button>
               )}
             </div>

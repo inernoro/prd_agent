@@ -90,7 +90,8 @@ public class PmAgentController : ControllerBase
             Lifecycle = PmProjectLifecycle.Registered,
             LeaderId = leaderId,
             LeaderName = leader?.DisplayName,
-            MemberIds = request.MemberIds ?? new(),
+            // 项目经理默认加入成员（去重）
+            MemberIds = (request.MemberIds ?? new()).Append(leaderId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList(),
             StrategyAlignment = request.StrategyAlignment?.Trim(),
             PlannedStartAt = request.PlannedStartAt,
             PlannedEndAt = request.PlannedEndAt,
@@ -217,7 +218,9 @@ public class PmAgentController : ControllerBase
         if (project == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
 
-        var members = await ResolveMembersAsync(project.MemberIds);
+        // 项目经理始终视为成员（兼容历史项目：即便没存进 MemberIds 也展示）
+        var memberIds = project.MemberIds.Append(project.LeaderId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
+        var members = await ResolveMembersAsync(memberIds);
         return Ok(ApiResponse<object>.Ok(new { members, leaderId = project.LeaderId, ownerId = project.OwnerId }));
     }
 
@@ -232,7 +235,8 @@ public class PmAgentController : ControllerBase
         if (project.OwnerId != userId && project.LeaderId != userId)
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅立项人或负责人可管理成员"));
 
-        var ids = (request.MemberIds ?? new()).Distinct().ToList();
+        // 项目经理不可被移除，始终保留在成员中
+        var ids = (request.MemberIds ?? new()).Append(project.LeaderId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
         var valid = await _db.Users.Find(u => ids.Contains(u.UserId)).Project(u => u.UserId).ToListAsync();
         var members = ids.Where(valid.Contains).ToList();
 
