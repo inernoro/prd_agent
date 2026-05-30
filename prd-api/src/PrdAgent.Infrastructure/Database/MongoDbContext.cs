@@ -302,6 +302,19 @@ public class MongoDbContext
     public IMongoCollection<EmergenceTree> EmergenceTrees => _database.GetCollection<EmergenceTree>("emergence_trees");
     public IMongoCollection<EmergenceNode> EmergenceNodes => _database.GetCollection<EmergenceNode>("emergence_nodes");
 
+    // Project Management 项目管理
+    public IMongoCollection<PmProject> PmProjects => _database.GetCollection<PmProject>("pm_projects");
+    public IMongoCollection<PmTask> PmTasks => _database.GetCollection<PmTask>("pm_tasks");
+    public IMongoCollection<PmRewardConfig> PmRewardConfigs => _database.GetCollection<PmRewardConfig>("pm_reward_configs");
+    public IMongoCollection<PmTaskActivity> PmTaskActivities => _database.GetCollection<PmTaskActivity>("pm_task_activities");
+    public IMongoCollection<PmKnowledgeFile> PmKnowledgeFiles => _database.GetCollection<PmKnowledgeFile>("pm_knowledge_files");
+    public IMongoCollection<PmDecision> PmDecisions => _database.GetCollection<PmDecision>("pm_decisions");
+    public IMongoCollection<PmWeeklyReport> PmWeeklyReports => _database.GetCollection<PmWeeklyReport>("pm_weekly_reports");
+    public IMongoCollection<PmMeeting> PmMeetings => _database.GetCollection<PmMeeting>("pm_meetings");
+    public IMongoCollection<PmGoal> PmGoals => _database.GetCollection<PmGoal>("pm_goals");
+    public IMongoCollection<PmMilestone> PmMilestones => _database.GetCollection<PmMilestone>("pm_milestones");
+    public IMongoCollection<PmAuditLog> PmAuditLogs => _database.GetCollection<PmAuditLog>("pm_audit_logs");
+
     // Asset Registry 资产登记簿（跨存储迁移基础设施）
     public IMongoCollection<AssetRegistryEntry> AssetRegistry => _database.GetCollection<AssetRegistryEntry>("asset_registry");
 

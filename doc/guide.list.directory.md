@@ -650,6 +650,8 @@
 
 > 模块级未还工程债（已知边界 / 后续可补 / 留尾风险）。命名规范见 `rule.doc-naming.md` 「debt.* 专项约定」。
 
+- [项目管理智能体 · 债务台账](debt.pm-agent) `debt.pm-agent`
+  > Phase 1 MVP 仅交付执行层；治理层（干系人/NPSS/奖金/盘点）待 Phase 2-3；Leader 职级强校验待 User 加字段
 - [视频生成 Agent · 债务台账](debt.video-agent) `debt.video-agent`
   > 4 条 open：OpenRouter CDN 7 天过期、混合渲染 ffmpeg normalize、直出心跳文案分级、成本预估 tooltip
 

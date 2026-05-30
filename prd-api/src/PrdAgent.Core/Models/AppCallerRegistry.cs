@@ -1112,6 +1112,36 @@ public static class EmergenceExplorer
 }
 
 /// <summary>
+/// 项目管理智能体（PM Agent）
+/// </summary>
+public static class ProjectManagement
+{
+    public const string AppName = "项目管理智能体";
+
+    public static class Decompose
+    {
+        [AppCallerMetadata(
+            "需求拆解",
+            "将项目业务目标/需求文档拆解为带优先级、工时、依赖的可执行任务树",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Workflow"
+        )]
+        public const string Chat = "pm-agent.decompose::chat";
+    }
+
+    public static class GoalDecompose
+    {
+        [AppCallerMetadata(
+            "目标拆解",
+            "依据项目业务目标拆解为若干可量化的目标/关键结果(OKR)",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Workflow"
+        )]
+        public const string Chat = "pm-agent.goal-decompose::chat";
+    }
+}
+
+/// <summary>
 /// CCAS (Code Collection &amp; Association System) Agent — 赋码采集关联系统综合智能体
 /// </summary>
 public static class CcasAgent

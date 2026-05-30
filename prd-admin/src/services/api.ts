@@ -1289,6 +1289,63 @@ export const api = {
       explore: (nodeId: string) => `/api/emergence/nodes/${nodeId}/explore`,
     },
   },
+
+  // ============ Project Management 项目管理 ============
+  pm: {
+    projects: {
+      list: () => '/api/pm/projects',
+      create: () => '/api/pm/projects',
+      detail: (projectId: string) => `/api/pm/projects/${projectId}`,
+      update: (projectId: string) => `/api/pm/projects/${projectId}`,
+      delete: (projectId: string) => `/api/pm/projects/${projectId}`,
+      decompose: (projectId: string) => `/api/pm/projects/${projectId}/decompose`,
+      createTask: (projectId: string) => `/api/pm/projects/${projectId}/tasks`,
+      batchTasks: (projectId: string) => `/api/pm/projects/${projectId}/tasks/batch`,
+      bulkTasks: (projectId: string) => `/api/pm/projects/${projectId}/tasks/bulk`,
+      members: (projectId: string) => `/api/pm/projects/${projectId}/members`,
+      knowledgeFiles: (projectId: string) => `/api/pm/projects/${projectId}/knowledge/files`,
+      memberSites: (projectId: string) => `/api/pm/projects/${projectId}/member-sites`,
+      decisions: (projectId: string) => `/api/pm/projects/${projectId}/decisions`,
+      weeklyReports: (projectId: string) => `/api/pm/projects/${projectId}/weekly-reports`,
+      weeklyReportImage: (projectId: string) => `/api/pm/projects/${projectId}/weekly-reports/image`,
+      meetings: (projectId: string) => `/api/pm/projects/${projectId}/meetings`,
+      goals: (projectId: string) => `/api/pm/projects/${projectId}/goals`,
+      goalsDecompose: (projectId: string) => `/api/pm/projects/${projectId}/goals/decompose`,
+      milestones: (projectId: string) => `/api/pm/projects/${projectId}/milestones`,
+      stakeholders: (projectId: string) => `/api/pm/projects/${projectId}/stakeholders`,
+      evaluationStart: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/start`,
+      evaluationScore: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/score`,
+      evaluationFinalize: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/finalize`,
+      excellence: (projectId: string) => `/api/pm/projects/${projectId}/excellence`,
+    },
+    tasks: {
+      update: (taskId: string) => `/api/pm/tasks/${taskId}`,
+      delete: (taskId: string) => `/api/pm/tasks/${taskId}`,
+      activities: (taskId: string) => `/api/pm/tasks/${taskId}/activities`,
+      comments: (taskId: string) => `/api/pm/tasks/${taskId}/comments`,
+    },
+    knowledge: {
+      file: (fileId: string) => `/api/pm/knowledge/files/${fileId}`,
+    },
+    decisions: {
+      item: (decisionId: string) => `/api/pm/decisions/${decisionId}`,
+    },
+    weeklyReports: {
+      item: (reportId: string) => `/api/pm/weekly-reports/${reportId}`,
+    },
+    meetings: {
+      item: (meetingId: string) => `/api/pm/meetings/${meetingId}`,
+    },
+    goals: {
+      item: (goalId: string) => `/api/pm/goals/${goalId}`,
+    },
+    milestones: {
+      item: (milestoneId: string) => `/api/pm/milestones/${milestoneId}`,
+    },
+    dashboard: () => '/api/pm/dashboard',
+    auditLogs: () => '/api/pm/audit-logs',
+    rewardConfig: () => '/api/pm/reward-config',
+  },
 } as const;
 
 export default api;
