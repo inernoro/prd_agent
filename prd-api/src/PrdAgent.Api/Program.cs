@@ -84,6 +84,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 });
 
 // 添加服务
+builder.Services.AddScoped<PrdAgent.Api.Filters.PmAuditActionFilter>();
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {

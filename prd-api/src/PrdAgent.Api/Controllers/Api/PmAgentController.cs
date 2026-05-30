@@ -20,6 +20,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [Route("api/pm")]
 [Authorize]
 [AdminController("pm-agent", AdminPermissionCatalog.PmAgentUse)]
+[ServiceFilter(typeof(PrdAgent.Api.Filters.PmAuditActionFilter))]
 public class PmAgentController : ControllerBase
 {
     private readonly MongoDbContext _db;
@@ -776,6 +777,55 @@ public class PmAgentController : ControllerBase
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "个人目标仅本人可删除"));
         await _db.PmGoals.DeleteOneAsync(x => x.Id == goalId);
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    // ─────────────────────────────────────────────
+    // 审计日志（操作留痕，管理层可见）
+    // ─────────────────────────────────────────────
+
+    /// <summary>审计日志列表（管理层可见）。可按 projectId 过滤；批量解析操作人名称与项目标题</summary>
+    [HttpGet("audit-logs")]
+    public async Task<IActionResult> ListAuditLogs([FromQuery] string? projectId = null, [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
+    {
+        if (!HasPermission(AdminPermissionCatalog.PmAgentAudit))
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "审计日志仅对管理层开放"));
+
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 200);
+        var b = Builders<PmAuditLog>.Filter;
+        var filter = string.IsNullOrWhiteSpace(projectId) ? b.Empty : b.Eq(x => x.ProjectId, projectId);
+        var total = await _db.PmAuditLogs.CountDocumentsAsync(filter);
+        var logs = await _db.PmAuditLogs.Find(filter).SortByDescending(x => x.CreatedAt)
+            .Skip((page - 1) * pageSize).Limit(pageSize).ToListAsync();
+
+        var actorIds = logs.Select(l => l.ActorId).Distinct().ToList();
+        var actorMap = (await _db.Users.Find(u => actorIds.Contains(u.UserId)).ToListAsync())
+            .ToDictionary(u => u.UserId, u => u.DisplayName);
+        var projIds = logs.Where(l => l.ProjectId != null).Select(l => l.ProjectId!).Distinct().ToList();
+        var projMap = (await _db.PmProjects.Find(p => projIds.Contains(p.Id)).ToListAsync())
+            .ToDictionary(p => p.Id, p => new { p.ProjectNo, p.Title });
+
+        var items = logs.Select(l =>
+        {
+            var hasProj = l.ProjectId != null && projMap.TryGetValue(l.ProjectId, out _);
+            projMap.TryGetValue(l.ProjectId ?? "", out var proj);
+            return new
+            {
+                id = l.Id,
+                projectId = l.ProjectId,
+                projectNo = hasProj ? proj!.ProjectNo : null,
+                projectTitle = hasProj ? proj!.Title : null,
+                actorId = l.ActorId,
+                actorName = actorMap.TryGetValue(l.ActorId, out var n) ? n : null,
+                action = l.Action,
+                actionLabel = l.ActionLabel,
+                method = l.Method,
+                path = l.Path,
+                targetId = l.TargetId,
+                createdAt = l.CreatedAt,
+            };
+        }).ToList();
+        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
     }
 
     // ─────────────────────────────────────────────

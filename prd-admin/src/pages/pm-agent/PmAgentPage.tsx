@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { FolderKanban, Plus, Trash2, TrendingUp, Lightbulb, ChevronUp, ChevronDown } from 'lucide-react';
+import { FolderKanban, Plus, Trash2, TrendingUp, Lightbulb, ChevronUp, ChevronDown, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
@@ -9,6 +9,7 @@ import type { PmProject, PmProjectScope } from '@/services/contracts/pmAgent';
 import { CreateProjectDialog } from './CreateProjectDialog';
 import { ProjectDetailView } from './ProjectDetailView';
 import { DashboardView } from './DashboardView';
+import { AuditLogView } from './AuditLogView';
 import { PROJECT_TYPE_REGISTRY, LIFECYCLE_REGISTRY, GRADE_REGISTRY } from './pmConstants';
 
 export function PmAgentPage() {
@@ -17,11 +18,17 @@ export function PmAgentPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showDashboard, setShowDashboard] = useState(false);
+  const [showAudit, setShowAudit] = useState(false);
   const [scope, setScope] = useState<PmProjectScope>('managed');
   // 组织 NPSS 看板仅对管理层开放（pm-agent.dashboard），与普通的 pm-agent.use 区分
   const canViewDashboard = useAuthStore((s) => {
     const perms = Array.isArray(s.permissions) ? s.permissions : [];
     return perms.includes('pm-agent.dashboard') || perms.includes('super');
+  });
+  // 审计日志仅对管理层开放（pm-agent.audit）
+  const canViewAudit = useAuthStore((s) => {
+    const perms = Array.isArray(s.permissions) ? s.permissions : [];
+    return perms.includes('pm-agent.audit') || perms.includes('super');
   });
   const [guideOpen, setGuideOpen] = useState(() => sessionStorage.getItem('pm-guide-collapsed') !== '1');
   const toggleGuide = () => setGuideOpen((v) => { sessionStorage.setItem('pm-guide-collapsed', v ? '1' : '0'); return !v; });
@@ -61,6 +68,15 @@ export function PmAgentPage() {
     );
   }
 
+  // 审计日志
+  if (showAudit) {
+    return (
+      <div className="h-full min-h-0 p-5">
+        <AuditLogView onBack={() => setShowAudit(false)} />
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-4 h-full min-h-0 p-5">
       {/* 头部 */}
@@ -73,6 +89,9 @@ export function PmAgentPage() {
         <button onClick={toggleGuide} className="flex items-center gap-1 text-[12px] px-2 py-1 rounded hover:opacity-70" style={{ color: 'var(--text-muted)' }} title="使用说明">
           <Lightbulb size={14} />说明{guideOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
         </button>
+        {canViewAudit && (
+          <Button variant="secondary" onClick={() => setShowAudit(true)}><ShieldCheck size={15} />审计日志</Button>
+        )}
         {canViewDashboard && (
           <Button variant="secondary" onClick={() => setShowDashboard(true)}><TrendingUp size={15} />NPSS 看板</Button>
         )}

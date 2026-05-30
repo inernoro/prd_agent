@@ -242,6 +242,11 @@ public static class AdminPermissionCatalog
     public const string PmAgentDashboard = "pm-agent.dashboard";
 
     /// <summary>
+    /// 项目管理-审计日志权限：查看项目操作留痕（合规/追溯，管理层级）
+    /// </summary>
+    public const string PmAgentAudit = "pm-agent.audit";
+
+    /// <summary>
     /// 工作空间权限（读）：查看工作空间列表
     /// </summary>
     public const string WorkspacesRead = "workspaces.read";
@@ -351,6 +356,7 @@ public static class AdminPermissionCatalog
 
         new(PmAgentUse, "项目管理智能体", "项目立项、任务看板、甘特图与 AI 需求拆解"),
         new(PmAgentDashboard, "项目管理-组织NPSS看板", "查看公司级 NPSS 经营看板与奖金测算（仅授予管理层）"),
+        new(PmAgentAudit, "项目管理-审计日志", "查看项目操作留痕审计日志（合规/追溯，仅授予管理层）"),
 
         new(WorkspacesRead, "工作空间-读", "查看工作空间列表与详情"),
         new(WorkspacesWrite, "工作空间-写", "创建/编辑/删除工作空间、发送指令"),

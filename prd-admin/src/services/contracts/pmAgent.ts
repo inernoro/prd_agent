@@ -402,6 +402,23 @@ export type ListPmGoalsContract = (projectId: string) => Promise<ApiResponse<{ i
 export type CreatePmGoalContract = (projectId: string, input: SavePmGoalInput) => Promise<ApiResponse<PmGoal>>;
 export type UpdatePmGoalContract = (goalId: string, input: SavePmGoalInput) => Promise<ApiResponse<{ updated: boolean }>>;
 export type DeletePmGoalContract = (goalId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
+
+// ── 审计日志 ──
+export type PmAuditLog = {
+  id: string;
+  projectId?: string | null;
+  projectNo?: string | null;
+  projectTitle?: string | null;
+  actorId: string;
+  actorName?: string | null;
+  action: string;
+  actionLabel: string;
+  method: string;
+  path: string;
+  targetId?: string | null;
+  createdAt: string;
+};
+export type ListPmAuditLogsContract = (opts?: { projectId?: string; page?: number; pageSize?: number }) => Promise<ApiResponse<{ items: PmAuditLog[]; total: number; page: number; pageSize: number }>>;
 export type GetPmProjectContract = (projectId: string) => Promise<ApiResponse<{ project: PmProject; tasks: PmTask[] }>>;
 export type UpdatePmProjectContract = (projectId: string, input: UpdatePmProjectInput) => Promise<ApiResponse<{ updated: boolean }>>;
 export type DeletePmProjectContract = (projectId: string) => Promise<ApiResponse<{ deleted: boolean }>>;

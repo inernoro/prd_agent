@@ -1335,6 +1335,7 @@ export const api = {
       item: (goalId: string) => `/api/pm/goals/${goalId}`,
     },
     dashboard: () => '/api/pm/dashboard',
+    auditLogs: () => '/api/pm/audit-logs',
     rewardConfig: () => '/api/pm/reward-config',
   },
 } as const;

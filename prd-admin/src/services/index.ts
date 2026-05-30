@@ -1976,6 +1976,7 @@ export {
   createPmGoalReal as createPmGoal,
   updatePmGoalReal as updatePmGoal,
   deletePmGoalReal as deletePmGoal,
+  listPmAuditLogsReal as listPmAuditLogs,
 } from '@/services/real/pmAgent';
 export type {
   PmProject,
@@ -1995,6 +1996,7 @@ export type {
   PmGoalScope,
   PmGoalStatus,
   SavePmGoalInput,
+  PmAuditLog,
   PmTask,
   PmTaskDraft,
   PmStakeholder,

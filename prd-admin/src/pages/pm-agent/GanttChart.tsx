@@ -104,11 +104,14 @@ export function GanttChart({ tasks, onOpen }: Props) {
                         height: ROW_H - 12,
                         background: `${statusColor}cc`,
                       }}
-                      title={`${t.title}｜${fmt(new Date(s))} - ${fmt(new Date(e))}${t.dependsOn.length ? `｜依赖 ${t.dependsOn.length} 项` : ''}`}
+                      title={`${t.title}｜${fmt(new Date(s))} - ${fmt(new Date(e))}${t.assigneeName ? `｜负责人 ${t.assigneeName}` : ''}${t.dependsOn.length ? `｜依赖 ${t.dependsOn.length} 项` : ''}`}
                       onClick={onOpen ? () => onOpen(t) : undefined}
                     >
                       <span className="text-[10px] truncate" style={{ color: '#fff' }}>
-                        {t.dependsOn.length > 0 ? '↳ ' : ''}{t.estimateDays != null ? `${t.estimateDays}人天` : ''}
+                        {t.dependsOn.length > 0 ? '↳ ' : ''}
+                        {t.assigneeName || ''}
+                        {t.assigneeName && t.estimateDays != null ? ' · ' : ''}
+                        {t.estimateDays != null ? `${t.estimateDays}人天` : ''}
                       </span>
                     </div>
                   </div>

@@ -44,6 +44,7 @@ import type {
   CreatePmGoalContract,
   UpdatePmGoalContract,
   DeletePmGoalContract,
+  ListPmAuditLogsContract,
 } from '@/services/contracts/pmAgent';
 import type { ApiResponse } from '@/types/api';
 import { useAuthStore } from '@/stores/authStore';
@@ -181,6 +182,14 @@ export const updatePmGoalReal: UpdatePmGoalContract = async (goalId, input) => {
 
 export const deletePmGoalReal: DeletePmGoalContract = async (goalId) => {
   return await apiRequest(api.pm.goals.item(encodeURIComponent(goalId)), { method: 'DELETE' });
+};
+
+// ── 审计日志 ──
+export const listPmAuditLogsReal: ListPmAuditLogsContract = async (opts) => {
+  const { projectId, page = 1, pageSize = 50 } = opts ?? {};
+  const qs = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+  if (projectId) qs.set('projectId', projectId);
+  return await apiRequest(`${api.pm.auditLogs()}?${qs.toString()}`, { method: 'GET' });
 };
 
 export const getPmProjectReal: GetPmProjectContract = async (projectId) => {
