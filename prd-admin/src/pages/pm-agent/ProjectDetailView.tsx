@@ -8,7 +8,7 @@ import { useAuthStore } from '@/stores/authStore';
 import {
   getPmProject, createPmTask, updatePmTask, deletePmTask, updatePmProject, bulkPmTasks,
 } from '@/services';
-import type { PmProject, PmTask, PmTaskStatus, PmTaskPriority, PmStakeholder } from '@/services/contracts/pmAgent';
+import type { PmProject, PmTask, PmTaskStatus, PmTaskPriority } from '@/services/contracts/pmAgent';
 import { KanbanBoard } from './KanbanBoard';
 import { GanttChart } from './GanttChart';
 import { DecomposePanel } from './DecomposePanel';
@@ -359,8 +359,7 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
       {tasks.length > 0 && tab === 'gantt' && <GanttChart tasks={filtered} />}
 
       {tab === 'stakeholders' && (
-        <StakeholderPanel projectId={projectId} stakeholders={project.stakeholders}
-          onSaved={(list: PmStakeholder[]) => setProject((prev) => (prev ? { ...prev, stakeholders: list } : prev))} />
+        <StakeholderPanel projectId={projectId} stakeholders={project.stakeholders} onSaved={() => load()} />
       )}
 
       {openTask && (

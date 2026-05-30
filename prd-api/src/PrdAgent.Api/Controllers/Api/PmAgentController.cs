@@ -185,33 +185,35 @@ public class PmAgentController : ControllerBase
         var stakeholders = new List<PmStakeholder>();
         foreach (var s in request.Stakeholders ?? new())
         {
-            var isExternal = s.IsExternal == true;
-            // 内部干系人：解析用户显示名；外部干系人：用手填姓名
-            string name;
-            if (!isExternal && !string.IsNullOrWhiteSpace(s.UserId))
-            {
-                var u = await _db.Users.Find(x => x.UserId == s.UserId).FirstOrDefaultAsync();
-                name = u?.DisplayName ?? (s.Name ?? "").Trim();
-            }
-            else
-            {
-                name = (s.Name ?? "").Trim();
-            }
-            if (string.IsNullOrEmpty(name)) continue;
+            // 干系人一律为 MAP 用户，UserId 必填
+            if (string.IsNullOrWhiteSpace(s.UserId)) continue;
+            var u = await _db.Users.Find(x => x.UserId == s.UserId).FirstOrDefaultAsync();
+            if (u == null) continue;
+            var isRep = s.IsRepresentative == true;
+            var note = (s.Note ?? "").Trim();
+            // 作代表时备注必填
+            if (isRep && string.IsNullOrEmpty(note))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"干系人「{u.DisplayName}」作为外部代表时必须填写备注"));
+
             stakeholders.Add(new PmStakeholder
             {
                 Id = string.IsNullOrWhiteSpace(s.Id) ? Guid.NewGuid().ToString("N") : s.Id!,
-                Name = name,
-                UserId = isExternal ? null : s.UserId,
-                IsExternal = isExternal,
+                Name = u.DisplayName,
+                UserId = s.UserId,
+                IsRepresentative = isRep,
+                Note = isRep ? note : (string.IsNullOrEmpty(note) ? null : note),
                 Role = PmStakeholderRole.All.Contains(s.Role ?? "") ? s.Role! : PmStakeholderRole.Other,
                 Power = s.Power == PmStakeholderAxis.High ? PmStakeholderAxis.High : PmStakeholderAxis.Low,
                 Interest = s.Interest == PmStakeholderAxis.High ? PmStakeholderAxis.High : PmStakeholderAxis.Low,
             });
         }
 
-        await _db.PmProjects.UpdateOneAsync(p => p.Id == projectId,
-            Builders<PmProject>.Update.Set(p => p.Stakeholders, stakeholders).Set(p => p.UpdatedAt, DateTime.UtcNow));
+        var update = Builders<PmProject>.Update.Set(p => p.Stakeholders, stakeholders).Set(p => p.UpdatedAt, DateTime.UtcNow);
+        // 干系人变更后，进行中的评价轮失效（参评人集合已变），强制重新发起以保持一致
+        if (project.EvaluationRound?.Status == PmEvaluationRoundStatus.Collecting)
+            update = update.Set(p => p.EvaluationRound, (PmEvaluationRound?)null);
+
+        await _db.PmProjects.UpdateOneAsync(p => p.Id == projectId, update);
         return Ok(ApiResponse<object>.Ok(new { stakeholders }));
     }
 
@@ -235,7 +237,8 @@ public class PmAgentController : ControllerBase
             InitiatedByName = actorName,
             Participants = project.Stakeholders.Select(s => new PmEvaluationParticipant
             {
-                StakeholderId = s.Id, UserId = s.UserId, Name = s.Name, IsExternal = s.IsExternal, Role = s.Role,
+                StakeholderId = s.Id, UserId = s.UserId, Name = s.Name, Role = s.Role,
+                IsRepresentative = s.IsRepresentative, Note = s.Note,
             }).ToList(),
         };
 
@@ -244,7 +247,7 @@ public class PmAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { round }));
     }
 
-    /// <summary>提交一位参评人的打分（内部=本人；外部=owner/leader 代录）</summary>
+    /// <summary>提交一位参评人的打分（仅本人；无账号的历史外部项由 owner/leader 代录）</summary>
     [HttpPost("projects/{projectId}/evaluation/score")]
     public async Task<IActionResult> SubmitScore(string projectId, [FromBody] SubmitScoreRequest request)
     {
@@ -259,8 +262,8 @@ public class PmAgentController : ControllerBase
         if (p == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "参评人不存在"));
 
         var isOwner = project.OwnerId == userId || project.LeaderId == userId;
-        // 内部参评人只能本人打分；外部参评人由 owner/leader 代录
-        if (p.IsExternal || p.UserId == null) { if (!isOwner) return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "外部干系人评分仅立项人可代录")); }
+        // 干系人均为 MAP 用户，只能本人打分；历史无账号参评项由 owner/leader 代录兜底
+        if (p.UserId == null) { if (!isOwner) return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "该参评人需由立项人代录")); }
         else if (p.UserId != userId) return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "只能提交属于自己的评分"));
 
         p.Score = Math.Clamp(request.Score, 0, 10);
@@ -1003,9 +1006,9 @@ public class SetStakeholdersRequest
 public class StakeholderInput
 {
     public string? Id { get; set; }
-    public string? Name { get; set; }
     public string? UserId { get; set; }
-    public bool? IsExternal { get; set; }
+    public bool? IsRepresentative { get; set; }
+    public string? Note { get; set; }
     public string? Role { get; set; }
     public string? Power { get; set; }
     public string? Interest { get; set; }

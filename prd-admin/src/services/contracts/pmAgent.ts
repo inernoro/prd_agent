@@ -15,7 +15,8 @@ export type PmStakeholder = {
   id: string;
   name: string;
   userId?: string | null;
-  isExternal: boolean;
+  isRepresentative: boolean;
+  note?: string | null;
   role: PmStakeholderRole;
   power: PmStakeholderAxis;
   interest: PmStakeholderAxis;
@@ -25,7 +26,8 @@ export type PmEvaluationParticipant = {
   stakeholderId: string;
   userId?: string | null;
   name: string;
-  isExternal: boolean;
+  isRepresentative?: boolean;
+  note?: string | null;
   role: PmStakeholderRole;
   score?: number | null;
   scoredAt?: string | null;
@@ -294,9 +296,9 @@ export type DeletePmTaskContract = (taskId: string) => Promise<ApiResponse<{ del
 export type SetStakeholdersInput = {
   stakeholders: Array<{
     id?: string;
-    name?: string;
-    userId?: string;
-    isExternal?: boolean;
+    userId: string;
+    isRepresentative?: boolean;
+    note?: string;
     role: PmStakeholderRole;
     power: PmStakeholderAxis;
     interest: PmStakeholderAxis;

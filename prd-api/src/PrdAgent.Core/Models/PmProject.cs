@@ -127,11 +127,18 @@ public class PmStakeholder
     /// <summary>干系人名称</summary>
     public string Name { get; set; } = string.Empty;
 
-    /// <summary>关联系统用户 ID（内部干系人必填；外部干系人为 null）</summary>
+    /// <summary>关联系统用户 ID（必填，干系人一律为 MAP 用户）</summary>
     public string? UserId { get; set; }
 
-    /// <summary>是否外部干系人（如无系统账号的客户，由立项人代为录入评分）</summary>
+    /// <summary>[已废弃] 旧版"外部手填"标记，保留仅为兼容旧数据反序列化</summary>
+    [Obsolete("外部干系人改为：选一位 MAP 用户作代表 + 备注，见 IsRepresentative/Note")]
     public bool IsExternal { get; set; }
+
+    /// <summary>是否为外部方代表（该用户代表外部客户/单位参与与打分）</summary>
+    public bool IsRepresentative { get; set; }
+
+    /// <summary>备注（作代表时必填，说明代表谁/职责）</summary>
+    public string? Note { get; set; }
 
     /// <summary>角色（决定打分权重）：beneficiary(客户/业务方) / management(管理层) / team(项目团队) / other(其他)</summary>
     public string Role { get; set; } = PmStakeholderRole.Other;
@@ -175,7 +182,10 @@ public class PmEvaluationParticipant
     public string StakeholderId { get; set; } = string.Empty;
     public string? UserId { get; set; }
     public string Name { get; set; } = string.Empty;
-    public bool IsExternal { get; set; }
+    /// <summary>[已废弃] 兼容旧字段</summary>
+    [Obsolete] public bool IsExternal { get; set; }
+    public bool IsRepresentative { get; set; }
+    public string? Note { get; set; }
     public string Role { get; set; } = PmStakeholderRole.Other;
 
     /// <summary>打分（0-10），未打分为 null</summary>

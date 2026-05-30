@@ -37,8 +37,8 @@ export function EvaluatePanel({ project, onClose, onChanged }: Props) {
   const scoredCount = round?.participants.filter((p) => p.score != null).length ?? 0;
   const total = round?.participants.length ?? 0;
 
-  const canEdit = (p: { userId?: string | null; isExternal: boolean }) =>
-    (p.isExternal || !p.userId) ? isOwner : p.userId === me;
+  const canEdit = (p: { userId?: string | null }) =>
+    !p.userId ? isOwner : p.userId === me;
 
   const grade = result ? GRADE_REGISTRY[result.grade] : null;
 
@@ -115,7 +115,7 @@ export function EvaluatePanel({ project, onClose, onChanged }: Props) {
                     <div className="flex items-center gap-2">
                       <span className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>{p.name}</span>
                       <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: `${roleMeta.color}22`, color: roleMeta.color }}>{roleMeta.label} {roleMeta.weightLabel}</span>
-                      {p.isExternal && <span className="text-[10px]" style={{ color: '#F59E0B' }}>外部·代录</span>}
+                      {p.isRepresentative && <span className="text-[10px]" style={{ color: '#F59E0B' }} title={p.note ?? ''}>代表{p.note ? `·${p.note}` : ''}</span>}
                       <span className="ml-auto text-[11px] inline-flex items-center gap-1" style={{ color: p.score != null ? '#10B981' : 'var(--text-muted)' }}>
                         {p.score != null ? <><Check size={12} />已评</> : <><Clock size={12} />待评</>}
                       </span>
