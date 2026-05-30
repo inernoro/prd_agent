@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseResourceLimits, resolveEnvTemplates, parseCdsCompose } from '../../src/services/compose-parser.js';
+import { parseResourceLimits, resolveEnvTemplates, parseCdsCompose, parseComposeString, toCdsCompose } from '../../src/services/compose-parser.js';
 
 /**
  * Tests for `parseResourceLimits` — Phase 2 cgroup limit parsing.
@@ -289,6 +289,101 @@ services:
     expect(cfg!.infraServices).toHaveLength(1);
     expect(cfg!.infraServices[0].id).toBe('postgres');
   });
+
+  // 2026-05-28 minio 灾难回归测试:command / entrypoint 必须从 yaml 提取
+  // 到 InfraService,否则 docker run 漏传 cmd → 容器死循环。
+  it('infra command(数组形态)必须被解析并传到 InfraService', () => {
+    const yaml = `
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "3000:3000"
+  minio:
+    image: minio/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    ports:
+      - "9000:9000"
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg).not.toBeNull();
+    expect(cfg!.infraServices).toHaveLength(1);
+    expect(cfg!.infraServices[0].id).toBe('minio');
+    expect(cfg!.infraServices[0].command).toEqual(['server', '/data', '--console-address', ':9001']);
+  });
+
+  // 2026-05-29 Cursor Bugbot(PR #684):infra resync 声称 restartPolicy 是重建触发
+  // 条件,但 yaml 解析以前不产出 restartPolicy。回归:yaml 的 `restart:` 必须被解析。
+  it('infra restart 字段必须解析为 restartPolicy', () => {
+    const yaml = `
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "3000:3000"
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg!.infraServices).toHaveLength(1);
+    expect(cfg!.infraServices[0].restartPolicy).toBe('unless-stopped');
+  });
+
+  it('infra 缺 restart:字段保持 undefined(由下游兜底,不报假 diff)', () => {
+    const yaml = `
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "3000:3000"
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg!.infraServices[0].restartPolicy).toBeUndefined();
+  });
+
+  it('infra command(string 形态)和 entrypoint 同时支持', () => {
+    const yaml = `
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "3000:3000"
+  custom:
+    image: my-custom:latest
+    entrypoint: /usr/local/bin/start.sh
+    command: --verbose --port 8080
+    ports:
+      - "8080:8080"
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg!.infraServices).toHaveLength(1);
+    expect(cfg!.infraServices[0].command).toBe('--verbose --port 8080');
+    expect(cfg!.infraServices[0].entrypoint).toBe('/usr/local/bin/start.sh');
+  });
+
+  it('infra 缺 command:字段保持 undefined(不强制 default)', () => {
+    const yaml = `
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "3000:3000"
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+`;
+    const cfg = parseCdsCompose(yaml);
+    expect(cfg!.infraServices[0].command).toBeUndefined();
+    expect(cfg!.infraServices[0].entrypoint).toBeUndefined();
+  });
 });
 
 describe('parseStandardCompose — agent runtime sidecar isolation', () => {
@@ -464,5 +559,57 @@ services:
     expect(cfg!.envVars.MYSQL_URL).toContain('mysql://');
     expect(cfg!.envVars.REDIS_URL).toContain('redis://');
     expect(cfg!.envVars.RABBITMQ_URL).toContain('amqp://');
+  });
+});
+
+// 2026-05-29 Cursor Bugbot(PR #684):restartPolicy 只在 parseCdsCompose 解析,
+// parseComposeString / parseComposeFile 漏了,导致这两条路径解析的 compose 永远
+// 不带 restartPolicy,diffSignatures 退化成检测不到。回归。
+describe('parseComposeString — restartPolicy 一致性', () => {
+  it('parseComposeString 也解析 restart 字段', () => {
+    const yaml = `
+services:
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "6379:6379"
+`;
+    const svcs = parseComposeString(yaml);
+    const redis = svcs.find((s) => s.id === 'redis');
+    expect(redis?.restartPolicy).toBe('always');
+  });
+});
+
+// 2026-05-29 Codex review(PR #684, P2):toCdsCompose(项目级全量导出 /api/export-config)
+// 此前 infra 段漏了 command/entrypoint/restartPolicy → 导出再 import 丢启动命令
+// (minio 崩溃循环复现)。round-trip 回归。
+describe('toCdsCompose — infra 启动命令 + restart 往返', () => {
+  it('infra 的 command / entrypoint / restartPolicy 都出回 yaml 且可被 parseCdsCompose 读回', () => {
+    const yaml = toCdsCompose(
+      [
+        // 至少一个 app profile,否则不是合法 CDS compose
+        {
+          id: 'web', name: 'web', dockerImage: 'node:20', workDir: '.', containerWorkDir: '/app',
+          containerPort: 3000, env: {}, command: 'pnpm start',
+        } as any,
+      ],
+      {},
+      [
+        {
+          id: 'minio', projectId: 'p', name: 'minio', dockerImage: 'minio/minio:latest',
+          containerPort: 9000, hostPort: 19000, containerName: 'cds-infra-p-minio',
+          status: 'stopped', volumes: [], env: {},
+          command: ['server', '/data'], restartPolicy: 'unless-stopped',
+        } as any,
+      ],
+      [],
+    );
+    expect(yaml).toContain('minio');
+    // round-trip:重新解析回来,command + restartPolicy 不丢
+    const reparsed = parseCdsCompose(yaml);
+    const minio = reparsed!.infraServices.find((s) => s.id === 'minio');
+    expect(minio?.command).toEqual(['server', '/data']);
+    expect(minio?.restartPolicy).toBe('unless-stopped');
   });
 });

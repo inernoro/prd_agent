@@ -196,6 +196,16 @@ public static class AdminPermissionCatalog
     public const string PrReviewUse = "pr-review.use";
 
     /// <summary>
+    /// 项目路由智能体权限（普通用户）：上传方案 + 查看自己的解析结果
+    /// </summary>
+    public const string ProjectRouteAgentUse = "project-route-agent.use";
+
+    /// <summary>
+    /// 项目路由智能体管理权限（管理员）：维护公共站点说明 md 与仓库登记
+    /// </summary>
+    public const string ProjectRouteAgentManage = "project-route-agent.manage";
+
+    /// <summary>
     /// 网页托管权限（读）：查看托管站点列表
     /// </summary>
     public const string WebPagesRead = "web-pages.read";
@@ -260,6 +270,11 @@ public static class AdminPermissionCatalog
     /// 技能引导 Agent 权限：AI 引导创建技能
     /// </summary>
     public const string SkillAgentUse = "skill-agent.use";
+
+    /// <summary>
+    /// 赋码采集关联系统综合智能体权限：PRD 文档生成 + 设备素材库 + 产线流程示意图绘制
+    /// </summary>
+    public const string CcasAgentUse = "ccas-agent.use";
 
     /// <summary>
     /// 私人助理 Agent 权限：任务拆解、四象限排序、任务清单管理
@@ -344,6 +359,9 @@ public static class AdminPermissionCatalog
 
         new(PrReviewUse, "PR 审查智能体", "基于每用户 GitHub OAuth 的 PR 审查（任意团队）"),
 
+        new(ProjectRouteAgentUse, "项目路由智能体", "上传方案 md，自动识别应用/模块并定位仓库 routemap 项目路径"),
+        new(ProjectRouteAgentManage, "项目路由智能体-管理", "维护公共站点说明 md 与仓库登记"),
+
         new(WebPagesRead, "网页托管-读", "查看托管站点列表与详情"),
         new(WebPagesWrite, "网页托管-写", "上传/编辑/删除/分享托管站点"),
         new(WebPagesViewAll, "网页托管-查看全部", "跨用户查看全部托管站点及阅读量/访客记录（高级权限）"),
@@ -363,10 +381,11 @@ public static class AdminPermissionCatalog
 
         new(SkillAgentUse, "技能引导智能体", "AI 引导创建技能、导出技能包"),
 
+        new(CcasAgentUse, "赋码采集关联系统智能体", "产线赋码业务的 PRD 生成 + 设备素材库 + 流程示意图绘制"),
+        new(PaAgentUse, "私人助理 Agent", "任务拆解、四象限排序、任务清单管理"),
+
         new(DailyTipsRead, "小技巧-读", "查看小技巧列表（管理视图）"),
         new(DailyTipsWrite, "小技巧-写", "新建/编辑/删除首页小技巧与引导卡片"),
-
-        new(PaAgentUse, "私人助理 Agent", "任务拆解、四象限排序、任务清单管理"),
 
         new(Super, "超级权限", "兜底放行：建议仅给 root/超级管理员"),
     };

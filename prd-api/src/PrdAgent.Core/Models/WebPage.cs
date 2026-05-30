@@ -91,6 +91,18 @@ public class HostedSite
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// 内容版本时间戳：仅在创建 / 重新上传（内容真正变化）时更新，
+    /// 元数据改动（改标题、改可见性、改共享团队）不动它。
+    /// 用作 SiteUrl / pdfAssetUrl 的 ?v= 缓存指纹，确保"内容不变命中缓存、重新上传击穿缓存"。
+    ///
+    /// 注意：**禁止**给这里加 `= DateTime.UtcNow` 初始化器。Mongo 反序列化老文档（无此字段）
+    /// 时会保留初始化器的值——若为 UtcNow，则每次读取都得到当前时间，?v 每次都变，
+    /// 反而把缓存击穿（Codex PR #686 P2 抓到）。保持默认 default(DateTime) 才是确定值；
+    /// 所有创建路径都会显式赋 now，老文档则在读取侧回退到 CreatedAt（见 TryBuildPdfAssetUrl）。
+    /// </summary>
+    public DateTime ContentVersion { get; set; }
 }
 
 /// <summary>站点文件清单项</summary>
@@ -181,9 +193,61 @@ public class WebPageShareLink
     public DateTime? ExpiresAt { get; set; }
     public bool IsRevoked { get; set; }
 
+    /// <summary>
+    /// 链接可见性：
+    /// - owner-only：仅创建者或所属站点的 SharedTeamIds 成员可访问（新建分享面板默认勾选）
+    /// - logged-in：任何登录用户可访问
+    /// - public：任何人（含未登录）可访问，受 AccessLevel 密码门控
+    ///
+    /// 字段默认值为空字符串：
+    /// (a) 旧分享文档没这个字段，反序列化得到 "" → ViewShareAsync 识别为 legacy → 按 public 处理
+    ///     这样保护存量公开链接，避免发布瞬间所有旧链接被拒绝
+    /// (b) 新建分享时 CreateShareAsync 必须显式赋值（owner-only / logged-in / public），杜绝裸默认
+    /// (c) visit 便捷链恒为 public
+    ///
+    /// 不再依赖延迟 30s 的 backfill —— legacy 兼容直接在读路径完成。
+    /// </summary>
+    public string Visibility { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 续期审计历史（每次创建复用 / 显式续期都追加一条）。
+    /// 用于排查"莫名其妙过期"——可以看到这个链接的 ExpiresAt 被谁、什么时候、改成什么值。
+    /// </summary>
+    public List<ShareRenewalEvent> RenewalHistory { get; set; } = new();
+
+    /// <summary>
+    /// 唯一 IP 数（基于 ShareViewLogs 的 distinct IP 聚合缓存）。
+    /// 列表查询时如发现该值与 ViewCount 比例严重失衡（如 ViewCount > 缓存值 + 50）则在线重算；
+    /// 不参与高频写路径（避免每次访问聚合 distinct count）。
+    /// </summary>
+    public long UniqueIpCount { get; set; }
+
     private static string GenerateToken()
         => Convert.ToBase64String(RandomNumberGenerator.GetBytes(9))
             .Replace("+", "-").Replace("/", "_").TrimEnd('=');
+}
+
+/// <summary>
+/// 分享链接续期/有效期变更审计记录（写入 WebPageShareLink.RenewalHistory）
+/// </summary>
+public class ShareRenewalEvent
+{
+    public DateTime At { get; set; } = DateTime.UtcNow;
+
+    /// <summary>操作类型：created | reused | renewed | revoked | visibility-changed</summary>
+    public string Action { get; set; } = string.Empty;
+
+    /// <summary>触发操作的用户 ID</summary>
+    public string? ByUserId { get; set; }
+
+    /// <summary>变更前的过期时间</summary>
+    public DateTime? OldExpiresAt { get; set; }
+
+    /// <summary>变更后的过期时间</summary>
+    public DateTime? NewExpiresAt { get; set; }
+
+    /// <summary>变更说明（如 "extended by 30 days" / "reuse refreshed"）</summary>
+    public string? Note { get; set; }
 }
 
 /// <summary>

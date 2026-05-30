@@ -55,7 +55,7 @@ public sealed class NullAssetStorage : IAssetStorage
         return null;
     }
 
-    public Task UploadToKeyAsync(string key, byte[] bytes, string? contentType, CancellationToken ct)
+    public Task UploadToKeyAsync(string key, byte[] bytes, string? contentType, CancellationToken ct, string? cacheControl = null)
     {
         return Task.CompletedTask;
     }

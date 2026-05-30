@@ -1094,6 +1094,9 @@ export const api = {
     viewShare: (token: string) => `/api/web-pages/shares/view/${token}`,
     saveShare: (token: string) => `/api/web-pages/shares/${token}/save`,
     viewLogs: '/api/web-pages/shares/view-logs',
+    shareLogsForSite: (siteId: string) => `/api/web-pages/${siteId}/share-logs`,
+    renewShare: (shareId: string) => `/api/web-pages/shares/${shareId}/renew`,
+    shareAnalytics: '/api/web-pages/shares/analytics',
   },
   // ============ 公开主页（/u/:username 无需登录） ============
   publicProfile: {

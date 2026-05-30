@@ -36,6 +36,14 @@ public class HostedSiteBackfillService : BackgroundService
             {
                 _logger.LogInformation("HostedSiteBackfillService: 已回填 {Count} 个 PDF 包装站 marker", count);
             }
+
+            // 一次性 visibility backfill（PR 2026-05-28）：把存量分享链接 Visibility
+            // 从默认 "owner-only" 迁移为 "public"，保护历史公开链路；仅作用于发布前已存在的链接，幂等。
+            var visCount = await siteService.BackfillShareVisibilityAsync(stoppingToken);
+            if (visCount > 0)
+            {
+                _logger.LogInformation("HostedSiteBackfillService: 已迁移 {Count} 条存量分享到 public Visibility", visCount);
+            }
         }
         catch (OperationCanceledException) { /* 正常停机 */ }
         catch (Exception ex)

@@ -328,6 +328,16 @@ export class ProxyHandler {
         resolve();
       };
 
+      // 2026-05-28: SSE / EventSource 长连接不能用普通 upstreamTimeoutMs(5s)。
+      // SSE 响应只有 headers 后阶段性写 event,任意一段空闲 > 5s 都会被 socket
+      // idle timeout 杀掉。判断方法:Accept: text/event-stream(SSE 客户端契约),
+      // 或 path 含 stream/events 等关键字。命中就把 timeout 关掉(0),让连接活到
+      // 客户端主动关或上游主动关。
+      const acceptHdr = String(req.headers['accept'] || '').toLowerCase();
+      const isLikelySSE = acceptHdr.includes('text/event-stream') ||
+        /\/(stream|events|sse)(\?|$|\/)/i.test(outgoingPath);
+      const requestTimeoutMs = isLikelySSE ? 0 : this.opts.upstreamTimeoutMs;
+
       const upstream = http.request(
         {
           host: upstreamHost,
@@ -336,7 +346,7 @@ export class ProxyHandler {
           path: outgoingPath, // /_cds passthrough 时是 strip 后路径,否则等于 req.url
           headers: fwdHeaders,
           agent: this.agent,
-          timeout: this.opts.upstreamTimeoutMs,
+          timeout: requestTimeoutMs,
         },
         (upstreamRes) => {
           const status = upstreamRes.statusCode ?? 502;

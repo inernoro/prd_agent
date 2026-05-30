@@ -246,8 +246,15 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 loadRoutes();
 watchRoutesJson();
 
+// 2026-05-28 keepalive 匹配修复(同 cds/src/index.ts:listenWithRetry):
+// nginx 反代到本进程时 idle pool 默认 60s,Node http.Server.keepAliveTimeout
+// 默认 5s。5s 后 Node 主动 FIN socket,nginx 仍以为可复用 → 下条请求 recv RST
+// → 50% 4xx/5xx。把 Node 阈值提到大于 nginx 才避免。Node ≥ 18 同时要求
+// headersTimeout >= keepAliveTimeout。
+server.keepAliveTimeout = 65_000;
+server.headersTimeout = 70_000;
 server.listen(FORWARDER_PORT, () => {
   console.log(
-    `[forwarder] listening on :${FORWARDER_PORT} (routes: ${routes.length} from ${routesSource})`,
+    `[forwarder] listening on :${FORWARDER_PORT} (routes: ${routes.length} from ${routesSource}) keepAlive=${server.keepAliveTimeout}ms`,
   );
 });

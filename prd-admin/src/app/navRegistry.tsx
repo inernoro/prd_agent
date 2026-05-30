@@ -34,8 +34,10 @@ const ChangelogPage = lazy(() => import('@/pages/changelog/ChangelogPage'));
 const SkillAgentPage = lazy(() => import('@/pages/SkillAgentPage'));
 const ArenaPage = lazy(() => import('@/pages/arena/ArenaPage').then(m => ({ default: m.ArenaPage })));
 const ReviewAgentPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentPage })));
+const CcasAgentPage = lazy(() => import('@/pages/ccas-agent').then(m => ({ default: m.CcasAgentPage })));
 const PrReviewPage = lazy(() => import('@/pages/pr-review').then(m => ({ default: m.PrReviewPage })));
 const PaAgentPage = lazy(() => import('@/pages/pa-agent').then(m => ({ default: m.PaAgentPage })));
+const ProjectRouteAgentPage = lazy(() => import('@/pages/project-route-agent').then(m => ({ default: m.ProjectRouteAgentPage })));
 const UsersPage = lazy(() => import('@/pages/UsersPage'));
 const ModelManageTabsPage = lazy(() => import('@/pages/ModelManageTabsPage').then(m => ({ default: m.ModelManageTabsPage })));
 const LlmLogsPage = lazy(() => import('@/pages/LlmLogsPage'));
@@ -263,6 +265,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
   {
+    path: '/ccas-agent',
+    permission: 'ccas-agent.use',
+    element: shellGuarded('ccas-agent.use', <CcasAgentPage />),
+    nav: {
+      label: '赋码采集关联智能体',
+      shortLabel: '赋码',
+      description: '产线赋码业务三件套：PRD 文档生成 + 设备素材库 + 流程示意图绘制',
+      icon: 'Factory',
+      section: 'toolbox',
+      appKey: 'ccas-agent',
+      tags: ['赋码', '采集', '产线', 'PRD', '流程图'],
+      wip: true,
+    },
+  },
+  {
     path: '/pr-review',
     permission: 'pr-review.use',
     element: shellGuarded('pr-review.use', <PrReviewPage />),
@@ -304,6 +321,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       appKey: 'pm-agent',
       wip: true,
       tags: ['项目管理', 'PMO', '看板', '甘特图', '任务拆解'],
+    },
+  },
+  {
+    path: '/project-route-agent',
+    permission: 'project-route-agent.use',
+    element: shellGuarded('project-route-agent.use', <ProjectRouteAgentPage />),
+    nav: {
+      label: '项目路由智能体',
+      shortLabel: '路由',
+      description: '上传方案 md，AI 识别应用 / 模块并定位仓库 routemap 项目路径',
+      icon: 'Route',
+      section: 'toolbox',
+      appKey: 'project-route-agent',
+      wip: true,
+      tags: ['路由', 'routemap', '项目定位', '仓库', '方案'],
     },
   },
   {

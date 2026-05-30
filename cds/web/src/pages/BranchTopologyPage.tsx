@@ -447,6 +447,8 @@ export function BranchTopologyPage(): JSX.Element {
   useEffect(() => {
     if (!projectId) return;
     const source = new EventSource(`/api/branches/stream?project=${encodeURIComponent(projectId)}`);
+    // 2026-05-28 阻断浏览器原生 3s 重试,避免 Cloudflare 边缘 400 风暴
+    source.onerror = () => { try { source.close(); } catch { /* tolerate */ } };
     const applySseAction = (action: BranchListAction<BranchSummary>) => {
       let needsEmptyRecheck = false;
       setState((current) => {

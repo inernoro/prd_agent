@@ -44,8 +44,11 @@ public interface IAssetStorage
     /// <summary>
     /// 上传 bytes 到指定的自定义 key（绕过 SHA256 去重，用于站点托管等场景）。
     /// key 需包含完整路径（含 prefix），可通过 BuildSiteKey 生成。
+    /// cacheControl 可选：设置对象的 Cache-Control 响应头（如 "public, max-age=3600"）。
+    /// 网页托管场景配合 SiteUrl 上的 ?v={UpdatedAt} 版本指纹使用：内容不变 → URL 不变 → 命中缓存；
+    /// 重新上传 → UpdatedAt 变化 → URL 变化 → 击穿缓存。
     /// </summary>
-    Task UploadToKeyAsync(string key, byte[] bytes, string? contentType, CancellationToken ct);
+    Task UploadToKeyAsync(string key, byte[] bytes, string? contentType, CancellationToken ct, string? cacheControl = null);
 
     /// <summary>
     /// 根据 key 构建公开访问 URL。

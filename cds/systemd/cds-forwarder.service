@@ -62,9 +62,11 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=cds-forwarder
 
-# 资源 cap:forwarder 是无状态反代,内存几十 MB 已够。给 256M 作为防爆兜底。
-MemoryMax=256M
-CPUQuota=50%
+# 2026-05-28 用户彻底拆除所有资源限制(同 cds-master.service):
+# 即使是无状态反代,在高并发 / SSE 长连接场景下被 CPUQuota=50%(0.5 core)卡
+# 会反向放大延迟。MemoryMax=256M 在大量并发连接时也可能 OOM kill。
+MemoryMax=infinity
+# 不限 CPU,跟随 Linux 公平调度
 
 # 安全加固
 NoNewPrivileges=true

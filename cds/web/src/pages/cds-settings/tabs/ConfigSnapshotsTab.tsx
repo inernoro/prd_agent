@@ -72,6 +72,8 @@ export function ConfigSnapshotsTab({ onToast }: Props): JSX.Element {
         : undefined);
       setState({ status: 'ok', snapshots: data.snapshots || [] });
     } catch (err) {
+      // 2026-05-28 transient(Cloudflare 边缘抖动)静默保留缓存
+      if (err instanceof ApiError && err.transient) return;
       const message = err instanceof ApiError ? err.message : String(err);
       setState({ status: 'error', message });
     } finally {

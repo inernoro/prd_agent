@@ -1699,6 +1699,28 @@ export interface Project {
    */
   autoSmokeEnabled?: boolean;
   /**
+   * 项目的虚拟 cds-compose.yml —— 配置 SSOT（2026-05-29）。
+   *
+   * 历史上 composeYaml 只存在于临时 PendingImport（审批快照），批准后被
+   * 解析成 build profiles / infra / env 散装落库，**原始 yaml 当场丢弃**。
+   * 结果：repo 结构变了没人知道 profile 漂移（mdimp 案例），agent 也无从
+   * 通过技能读改一份权威配置。这几个字段把虚拟 compose 提升为 Project 的
+   * 一等公民：approve / 手动编辑 / repo 同步都写这里，下游 profile/infra
+   * 都视为它的派生物。
+   *
+   * - `composeYaml`：最近一次生效的完整 cds-compose.yml 文本（verbatim）
+   * - `composeUpdatedAt`：最近写入时间
+   * - `composeVersion`：单调递增版本号，每次写入 +1（供漂移检测 / 回滚）
+   * - `composeSource`：本次写入来源，便于面板标注「谁改的」
+   *
+   * 字段缺省（老 project）时 GET 接口回退到「从已落库的 profile/infra
+   * 反向拼一份只读视图」，不强制要求历史项目立刻有 composeYaml。
+   */
+  composeYaml?: string;
+  composeUpdatedAt?: string;
+  composeVersion?: number;
+  composeSource?: 'import-approved' | 'manual-edit' | 'repo-sync';
+  /**
    * P5 (per-project settings, migrated from CdsState top-level fields).
    * 历史上以下字段都挂在 state.xxx 全局根，多项目时全局值会跨项目串扰。
    * 现在迁到 Project 上，全局值在升级时一次性 seed 进 default 项目。
@@ -2055,6 +2077,18 @@ export interface InfraService {
   env: Record<string, string>;
   /** Health check configuration */
   healthCheck?: InfraHealthCheck;
+  /**
+   * 2026-05-28:容器启动命令(yaml `command:`)。docker run 时拼到 image 之后。
+   * 历史漏掉这个字段导致 minio/elasticsearch 这类需要子命令的 image 无法启动。
+   */
+  command?: string | string[];
+  /** Docker `--entrypoint` 覆盖,与 image 默认 ENTRYPOINT 不一致时使用 */
+  entrypoint?: string | string[];
+  /**
+   * Docker `--restart` 策略。默认 `on-failure:3`(2026-05-28 起,从旧硬编码
+   * `unless-stopped` 改来)。可在 yaml 用 `restart:` 字段覆盖。
+   */
+  restartPolicy?: string;
   /** When this service was created */
   createdAt: string;
 }

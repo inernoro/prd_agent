@@ -90,6 +90,8 @@ export function ClusterTab(): JSX.Element {
       if (!host) throw new Error('主机状态返回格式异常，已阻止页面崩溃');
       setState({ status: 'ok', data: { status, executors, host } });
     } catch (err: unknown) {
+      // 2026-05-28 transient(Cloudflare 边缘抖动)静默,保留上次 ok 状态
+      if (err instanceof ApiError && err.transient) return;
       setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
     }
   }, []);

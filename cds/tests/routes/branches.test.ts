@@ -126,6 +126,10 @@ describe('Branch Routes', () => {
   }>;
 
   beforeEach(async () => {
+    // 2026-05-28: 重置 selfStatusCache 单例,避免上个测试残留的 remoteBranches/
+    // lastKnownGood 串到本测试。createBranchRouter 会重新 init cache。
+    const cacheMod = await import('../../src/services/self-status-cache.js');
+    cacheMod.selfStatusCache._resetForTests();
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-routes-'));
     const config = makeConfig(tmpDir);
     mock = new MockShellExecutor();
@@ -2652,6 +2656,23 @@ describe('Branch Routes', () => {
   // branch picker 返回空数组,self-update UI 完全不可用。
   // ──────────────────────────────────────────────────────────────────
   describe('GET /api/self-branches', () => {
+    // 2026-05-28 重构:/api/self-branches 不再直接同步扫 git,改读
+    // selfStatusCache.remoteBranches。下面的测试直接调 cache.enqueueRefresh
+    // 让 cache 跑一次 scanRemoteBranchesFromGit,等 refresh job done 后再 GET。
+    // (test app 没有挂 cds-events router,所以无法走 POST /api/self-refresh)
+    // mock shell 响应仍然是同一套(模拟 git for-each-ref 等)。
+    const waitForRefresh = async (): Promise<void> => {
+      // cache 的 refresh job 是异步的;实际跑完需要让微任务 + 后续 await 全部执行。
+      for (let i = 0; i < 30; i += 1) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+    };
+    const triggerCacheRefresh = async (): Promise<void> => {
+      const mod = await import('../../src/services/self-status-cache.js');
+      const job = mod.selfStatusCache.enqueueRefresh('manual');
+      expect(['queued', 'running']).toContain(job.status);
+      await waitForRefresh();
+    };
     it('正确解析 git for-each-ref 用 0x1F 分隔的输出', async () => {
       mock.clearPatterns();
       const SEP = '\x1f'; // 真 0x1F 字节
@@ -2684,9 +2705,14 @@ describe('Branch Routes', () => {
         stdout: '', stderr: '', exitCode: 0,
       }));
 
+      // 触发 cache refresh,等 job done。新契约:/api/self-branches 读 cache。
+      await triggerCacheRefresh();
+
       const res = await request(server, 'GET', '/api/self-branches');
       expect(res.status).toBe(200);
       const body = res.body as {
+        ok?: boolean;
+        degraded?: boolean;
         current: string;
         commitHash: string;
         currentCommitterDate: string;
@@ -2749,6 +2775,8 @@ describe('Branch Routes', () => {
       mock.addResponsePattern(/git rev-parse --short HEAD/, () => ({ stdout: 'aaa1111', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/git log -1 --format=%cI HEAD/, () => ({ stdout: '2026-05-04T12:00:00+00:00', stderr: '', exitCode: 0 }));
 
+      await triggerCacheRefresh();
+
       const res = await request(server, 'GET', '/api/self-branches');
       expect(res.status).toBe(200);
       const body = res.body as { branchDetails: Array<{ subject: string }> };
@@ -2756,7 +2784,8 @@ describe('Branch Routes', () => {
       expect(body.branchDetails[0].subject).toBe('fix(cds): 修 bug — 含 () : / 等特殊符号');
     });
 
-    it('git for-each-ref 失败时返回 500 友好错误', async () => {
+    it('git for-each-ref 失败时返回 200 + degraded(永不 5xx)', async () => {
+      // 2026-05-28 契约变更:本端点永远 200,失败用 degraded:true 暴露。
       mock.clearPatterns();
       mock.addResponsePattern(/git rev-parse --abbrev-ref HEAD/, () => ({
         stdout: 'main', stderr: '', exitCode: 0,
@@ -2766,10 +2795,19 @@ describe('Branch Routes', () => {
         throw new Error('fatal: not a git repository');
       });
 
+      await triggerCacheRefresh();
+
       const res = await request(server, 'GET', '/api/self-branches');
-      expect(res.status).toBe(500);
-      const body = res.body as { error: string };
-      expect(body.error).toContain('获取分支列表失败');
+      expect(res.status).toBe(200);
+      const body = res.body as {
+        ok: boolean;
+        degraded: boolean;
+        reason?: string | null;
+        branchDetails: unknown[];
+      };
+      // remoteBranches scan 抛错时 cache.scanRemoteBranches 会内部 catch,
+      // 仍然保留旧 remoteBranches(空)— 接口表现为 ok+空列表,不是 500。
+      expect(body.branchDetails).toEqual([]);
     });
   });
 

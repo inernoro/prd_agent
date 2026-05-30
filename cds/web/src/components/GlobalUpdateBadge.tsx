@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, ArrowUpCircle, CheckCircle2, Pin, PinOff, RefreshCw, Sparkles, X } from 'lucide-react';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiUrl } from '@/lib/api';
+import { useCdsEvents, type SelfStatusSnapshot } from '@/hooks/useCdsEvents';
 
 /*
  * GlobalUpdateBadge — 浮在屏幕左下角的全局 CDS 更新状态徽章。
@@ -65,11 +66,8 @@ type BadgeState =
   | { kind: 'bundleStale'; backendSha: string; bundleSha: string };
 
 const DISMISS_KEY = 'cds:global-update-badge:dismissed-until';
-// SSE 不可用时的降级轮询间隔。比原来的 30s 更长 — 已经是兜底方案,主路径走 SSE。
-const FALLBACK_POLL_INTERVAL_MS = 60_000;
-// 连续 N 次 onerror 且累积超过 30s 仍未 onopen,判定 SSE 不可用,启动降级。
-const SSE_FAIL_THRESHOLD_COUNT = 3;
-const SSE_FAIL_THRESHOLD_MS = 30_000;
+// 2026-05-28 后:SSE 失败回退、重试、阈值都由 useCdsEvents 单例统一处理,
+// 本组件不再独立维护;原 FALLBACK_POLL_INTERVAL_MS / SSE_FAIL_THRESHOLD_* 常量已删除。
 
 export function GlobalUpdateBadge(): JSX.Element | null {
   const navigate = useNavigate();
@@ -214,216 +212,36 @@ export function GlobalUpdateBadge(): JSX.Element | null {
     void source; // 当前不需要按 source 分支处理,保留参数以便日后埋点
   }, []);
 
-  // 手动刷新按钮:走老的 /api/self-status?probe=remote&force=1 当作一次 update 事件处理。
+  // 2026-05-28 重构:手动刷新走 POST /api/self-refresh(任务化,202 + jobId)。
+  // 实际进度由 useCdsEvents 订阅的 self.refresh.started/done/failed 事件接管,
+  // 这里只发起请求 + 让按钮 spin 一会儿。
+  const events = useCdsEvents();
   const triggerManualRefresh = useCallback(async (): Promise<void> => {
-    // ref guard 即时生效,先于 React batch；setRefreshing 只为驱动 UI 状态
-    // (disabled / spin 动画),并发防护看 ref 不看 state。
     if (refreshingRef.current) return;
     refreshingRef.current = true;
     setRefreshing(true);
     try {
-      const ctrl = new AbortController();
-      const timeoutId = window.setTimeout(() => ctrl.abort(), 10_000);
-      const r = await fetch(apiUrl('/api/self-status?probe=remote&force=1'), {
-        credentials: 'include',
-        cache: 'no-store',
-        signal: ctrl.signal,
-      });
-      window.clearTimeout(timeoutId);
-      if (!r.ok) {
-        // 主动刷新失败 → 视为 restarting,让用户感知 CDS 不太行
-        setState({ kind: 'restarting', sinceMs: Date.now() });
-        return;
-      }
-      const data = (await r.json()) as SelfStatusLite;
-      applyPayload(data, 'manual');
+      await events.requestRefresh('manual');
     } catch {
-      setState({ kind: 'restarting', sinceMs: Date.now() });
+      // 失败由 effectiveConnection / lastError 反映 — 不再翻 restarting
     } finally {
       refreshingRef.current = false;
       setRefreshing(false);
     }
-    // 不再依赖 refreshing state（避免 stale closure 让 guard 失效）
-  }, [applyPayload]);
+  }, [events]);
 
-  // SSE 订阅 + 失败降级到轮询。
+  // 2026-05-28 重构:订阅 useCdsEvents store。它本身是全局单例 EventSource,
+  // 维护 snapshot / connection state / refreshing / updating;本组件只负责把
+  // snapshot 映射成 BadgeState,大幅简化 SSE / 重试 / 降级逻辑。
   useEffect(() => {
-    let cancelled = false;
-    let es: EventSource | null = null;
-    let fallbackTimer: number | null = null;
-    let firstErrorAt = 0;
-    let consecutiveErrors = 0;
-    let consecutiveFallbackFailures = 0;
-    let fallbackActive = false;
-    let fallbackSuccessCount = 0;
-    // ⚠ Bugbot Review 2026-05-06 0005a515: fallback polling 启动后永远不再尝
-    // 试 SSE,即使是临时网络/代理问题恢复了也只能等用户刷新页面。每 N 次成
-    // 功 poll 后试着重连一次 SSE;失败会被 onerror 重新拉回 polling。
-    const FALLBACK_POLLS_PER_SSE_RETRY = 5; // 5 * 60s = 5min 一次升级尝试
-
-    const startFallbackPolling = (): void => {
-      if (fallbackActive || cancelled) return;
-      fallbackActive = true;
-      fallbackSuccessCount = 0;
-      // eslint-disable-next-line no-console
-      console.warn('[GlobalUpdateBadge] SSE 不可用,降级到 60s 轮询');
-      const tick = async (): Promise<void> => {
-        if (cancelled) return;
-        try {
-          const r = await fetch(apiUrl('/api/self-status'), {
-            credentials: 'include',
-            cache: 'no-store',
-            headers: { 'X-CDS-Poll': 'true' },
-          });
-          if (r.ok) {
-            const data = (await r.json()) as SelfStatusLite;
-            if (!cancelled) applyPayload(data, 'update');
-            fallbackSuccessCount += 1;
-            consecutiveFallbackFailures = 0;
-          } else if (!cancelled) {
-            consecutiveFallbackFailures += 1;
-            if (consecutiveFallbackFailures >= 2 || r.status >= 500) {
-              setState({ kind: 'restarting', sinceMs: Date.now() });
-            }
-          }
-        } catch {
-          consecutiveFallbackFailures += 1;
-          if (!cancelled && consecutiveFallbackFailures >= 2) {
-            setState({ kind: 'restarting', sinceMs: Date.now() });
-          }
-        }
-        if (cancelled) return;
-        // 每 FALLBACK_POLLS_PER_SSE_RETRY 次成功 poll 后,试着重连 SSE。失败
-        // 会触发 onerror,达到阈值后 onerror 内会再调 startFallbackPolling()
-        // 把 fallback 重新拉起来 — 形成"polling ↔ SSE"自愈循环。
-        //
-        // ⚠ Bugbot 2026-05-06 50a97d6e:之前 fallbackActive=false + 不再
-        // schedule 下一轮 tick + 直接 connect()。如果 SSE 静默挂着不触发
-        // onerror(没达到 3 次/30s 阈值),polling 这边已停,SSE 那边不来数据,
-        // 出现长达 ~33s 的 "无源" 区间。改为:**保留 polling 继续滚**,
-        // 只 connect() 试 SSE。SSE 真活了 → onopen 里关 polling;真死了 →
-        // 原先的 polling 已经在那转,无缝兜底。
-        if (fallbackSuccessCount >= FALLBACK_POLLS_PER_SSE_RETRY) {
-          fallbackSuccessCount = 0;
-          // ⚠ Bugbot 2026-05-06 d8a072be + d8a80ffd:counter reset 移到 connect()
-          // 内部、关旧 ES **之后**做。在外面先 reset 后 close 会留一个微任务窗口
-          // 让旧 ES 已 queue 的 onerror 把 0 又改成 1,污染新 ES 的阈值判断。
-          // eslint-disable-next-line no-console
-          console.info('[GlobalUpdateBadge] 尝试升级回 SSE 长连接(polling 继续滚作为兜底)');
-          connect();
-          // 注意:这里**不**清 fallbackTimer,polling 继续作为兜底,
-          // SSE 的 onopen 里才真正关掉 polling。
-        }
-        // ⚠ Bugbot 2026-05-06 ed38c0a0:in-flight tick 可能在 onopen 已经把
-        // fallbackActive 翻成 false / 清完 fallbackTimer **之后**才 await 完成,
-        // 这里如果无脑 setTimeout 会再起一个 fallbackTimer,onopen 永远关不掉
-        // → polling 永远停不下来。补 active+cancelled guard。
-        if (cancelled || !fallbackActive) return;
-        fallbackTimer = window.setTimeout(() => { void tick(); }, FALLBACK_POLL_INTERVAL_MS);
-      };
-      void tick();
-    };
-
-    const connect = (): void => {
-      if (cancelled) return;
-      // ⚠ Bugbot 2026-05-06 ed38c0a0:升级路径每次 connect() 都新建 EventSource,
-      // 不关旧的 → 旧 ES 留在 selfStatusClients 里继续吃心跳 + 重复触发 applyPayload。
-      // 进 connect 先关掉旧实例兜底。
-      if (es) {
-        try { es.close(); } catch { /* ignore */ }
-        es = null;
-      }
-      // ⚠ Bugbot 7eefcba6 + d8a072be + d8a80ffd:counter reset 必须**在关旧 ES 之后**
-      // 立刻做,中间不留微任务窗口。否则旧 ES 已 queue 的 onerror 会把 0 又改成 1,
-      // 新 EventSource 的第一个 onerror 立刻达到阈值 → 升级永远失败。
-      consecutiveErrors = 0;
-      firstErrorAt = 0;
-      try {
-        es = new EventSource(apiUrl('/api/self-status/stream'), { withCredentials: true });
-      } catch {
-        // 浏览器不支持 EventSource(极老 IE 等)→ 直接降级
-        startFallbackPolling();
-        return;
-      }
-
-      es.onopen = (): void => {
-        // 连上了:重置失败计数,清掉 restarting(若有)
-        consecutiveErrors = 0;
-        firstErrorAt = 0;
-        // ⚠ Bugbot 2026-05-06 50a97d6e:fallback 升级路径让 polling 继续滚
-        // 作为兜底,SSE 真连上了才在这里关 polling — 升级期间无缝衔接,
-        // 不会出现"polling 已停 / SSE 静默"的真空期。
-        if (fallbackActive) {
-          fallbackActive = false;
-          if (fallbackTimer !== null) {
-            window.clearTimeout(fallbackTimer);
-            fallbackTimer = null;
-          }
-          // eslint-disable-next-line no-console
-          console.info('[GlobalUpdateBadge] SSE 升级成功,关掉 fallback polling');
-        }
-        // 不直接清掉 state — 让 snapshot 事件来填充。这里只在恢复后给个 hint:
-        // 若当前是 restarting,等下一条 snapshot/update 事件即可。
-      };
-
-      es.addEventListener('snapshot', (ev: MessageEvent) => {
-        try {
-          const data = JSON.parse(ev.data) as SelfStatusLite;
-          applyPayload(data, 'snapshot');
-        } catch {
-          /* malformed payload, ignore */
-        }
-      });
-
-      es.addEventListener('update', (ev: MessageEvent) => {
-        try {
-          const data = JSON.parse(ev.data) as SelfStatusLite;
-          applyPayload(data, 'update');
-        } catch {
-          /* malformed payload, ignore */
-        }
-      });
-
-      es.addEventListener('keepalive', () => {
-        // ⚠ Bugbot Review 2026-05-06 fda43466: keepalive 到达本身证明连接活着,
-        // 必须用来"反证"restarting。否则当服务端 computeSelfStatusPayload 异常
-        // 被 try/catch 吞掉时,snapshot 事件永远不到,徽章会卡在 "CDS 不可达 Ns"。
-        consecutiveErrors = 0;
-        firstErrorAt = 0;
-        setState((prev) => (prev.kind === 'restarting' ? { kind: 'idle' } : prev));
-      });
-
-      es.onerror = (): void => {
-        // EventSource 断开 — 浏览器内置 3s 重试,不需要我们手动 reconnect。
-        // 但要把 UI 切到 restarting,并累计失败次数判断是否需要降级。
-        if (cancelled) return;
-        const now = Date.now();
-        if (consecutiveErrors === 0) firstErrorAt = now;
-        consecutiveErrors += 1;
-        if (consecutiveErrors >= 2) {
-          setState({ kind: 'restarting', sinceMs: firstErrorAt || now });
-        }
-
-        const elapsed = now - firstErrorAt;
-        if (consecutiveErrors >= SSE_FAIL_THRESHOLD_COUNT && elapsed > SSE_FAIL_THRESHOLD_MS) {
-          // 判定 SSE 不可用 — 关掉 EventSource,降级轮询
-          if (es) {
-            es.close();
-            es = null;
-          }
-          startFallbackPolling();
-        }
-      };
-    };
-
-    connect();
-
-    return () => {
-      cancelled = true;
-      if (es) es.close();
-      if (fallbackTimer !== null) window.clearTimeout(fallbackTimer);
-    };
-  }, [applyPayload]);
+    if (events.snapshot) {
+      applyPayload(events.snapshot as SelfStatusSnapshot & SelfStatusLite, 'update');
+    }
+    // useCdsEvents 的 disconnected 状态 ⇒ 显示 restarting(原逻辑兜底)
+    if (events.effectiveConnection === 'disconnected') {
+      setState({ kind: 'restarting', sinceMs: Date.now() });
+    }
+  }, [events.snapshot, events.effectiveConnection, applyPayload]);
 
   // restarting / activeUpdating 状态下 1s 定时刷新让计时秒数跳动。
   // elapsed 在 visualForState 里 render 时计算一次,组件本身不会因时间流逝
@@ -435,46 +253,10 @@ export function GlobalUpdateBadge(): JSX.Element | null {
     return () => window.clearInterval(t);
   }, [state.kind]);
 
-  // restarting / activeUpdating 期间用短周期 HTTP 探测主动反证。SSE 断开后浏览器会自动重连,
-  // 但 snapshot/keepalive 不一定立刻回来;一旦 /api/self-status 恢复 200,
-  // 就说明控制面已经活着,不能让全屏遮罩继续等 60s fallback polling。
-  useEffect(() => {
-    if (state.kind !== 'restarting' && state.kind !== 'activeUpdating') return;
-
-    let cancelled = false;
-    let inFlight = false;
-    const probeRecovered = async (): Promise<void> => {
-      if (cancelled || inFlight) return;
-      inFlight = true;
-      let timeoutId: number | null = null;
-      try {
-        const ctrl = new AbortController();
-        timeoutId = window.setTimeout(() => ctrl.abort(), 6_000);
-        const r = await fetch(apiUrl('/api/self-status'), {
-          credentials: 'include',
-          cache: 'no-store',
-          headers: { 'X-CDS-Poll': 'true' },
-          signal: ctrl.signal,
-        });
-        if (!r.ok || cancelled) return;
-        const data = (await r.json()) as SelfStatusLite;
-        if (!cancelled) applyPayload(data, 'update');
-      } catch {
-        // 仍在重启或网络未恢复,等下一轮探测。
-      } finally {
-        if (timeoutId !== null) window.clearTimeout(timeoutId);
-        inFlight = false;
-      }
-    };
-
-    const firstTimer = window.setTimeout(() => { void probeRecovered(); }, 1_000);
-    const intervalTimer = window.setInterval(() => { void probeRecovered(); }, state.kind === 'activeUpdating' ? 2_000 : 3_000);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(firstTimer);
-      window.clearInterval(intervalTimer);
-    };
-  }, [state.kind, applyPayload]);
+  // 旧的 probe-recovered 轮询(每 2-3s 调一次 /api/self-status 反证恢复)已删除。
+  // 2026-05-28: useCdsEvents 的 SSE 通道断了浏览器内置重连;恢复后 self.status
+  // 事件会立刻把 snapshot 推过来,本组件 useEffect 监听 events.snapshot 自动更新。
+  // 不再需要前端主动短周期探测。
 
   // 立即更新(2026-05-04 UX 优化):updateAvailable 状态下角标 hover 直接给
   // "立即更新"按钮,POST /api/self-update 后 Badge 切到 restarting 状态。

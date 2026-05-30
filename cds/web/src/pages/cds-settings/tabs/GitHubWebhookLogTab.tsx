@@ -160,6 +160,8 @@ export function GitHubWebhookLogTab({ onToast }: Props): JSX.Element {
         : undefined);
       setState({ status: 'ok', deliveries: data.deliveries, total: data.total });
     } catch (err) {
+      // 2026-05-28 transient(Cloudflare 边缘抖动)静默保留缓存
+      if (err instanceof ApiError && err.transient) return;
       const message = err instanceof ApiError ? err.message : String(err);
       setState({ status: 'error', message });
       if (!silent) onToast(`加载失败：${message}`);

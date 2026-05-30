@@ -103,10 +103,26 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     );
   }
 
-  // ── Error: Not Found / Expired ──
+  // ── Error: Not Found / Expired / Visibility Denied ──
   if (error) {
     const isNotFound = error.code === 'NOT_FOUND';
     const isExpired = error.code === 'EXPIRED';
+    const isVisibilityDenied = error.code === 'visibility_denied' || error.code === 'VISIBILITY_DENIED';
+    const titleText = isNotFound
+      ? '链接不存在'
+      : isExpired
+        ? '链接已过期'
+        : isVisibilityDenied
+          ? '需要权限访问'
+          : '出错了';
+    const detailText = isNotFound
+      ? '该分享链接不存在或已被撤销'
+      : isExpired
+        ? '该分享链接已超过有效期，请联系分享者重新创建或续期'
+        : isVisibilityDenied
+          ? (error.message || '此链接仅限创建者或团队成员访问')
+          : error.message;
+    const currentPath = typeof window !== 'undefined' ? window.location.pathname + window.location.search : '/';
     return (
       <div style={styles.fullScreen}>
         <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}><BlackHoleVortex /></div>
@@ -114,22 +130,42 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
         <div style={{ ...styles.glassCard, textAlign: 'center', padding: '40px 32px' }}>
           <div style={{
             width: 64, height: 64, borderRadius: '50%',
-            background: 'rgba(239, 68, 68, 0.15)',
+            background: isVisibilityDenied ? 'rgba(96, 165, 250, 0.15)' : 'rgba(239, 68, 68, 0.15)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             margin: '0 auto 20px',
           }}>
-            <AlertCircle size={32} color="rgba(239, 68, 68, 0.9)" />
+            {isVisibilityDenied
+              ? <Lock size={32} color="rgba(96, 165, 250, 0.9)" />
+              : <AlertCircle size={32} color="rgba(239, 68, 68, 0.9)" />}
           </div>
           <h2 style={{ color: '#fff', margin: '0 0 8px', fontSize: 20, fontWeight: 600 }}>
-            {isNotFound ? '链接不存在' : isExpired ? '链接已过期' : '出错了'}
+            {titleText}
           </h2>
           <p style={{ color: 'rgba(255,255,255,0.5)', margin: 0, fontSize: 14, lineHeight: 1.6 }}>
-            {isNotFound
-              ? '该分享链接不存在或已被撤销'
-              : isExpired
-                ? '该分享链接已超过有效期'
-                : error.message}
+            {detailText}
           </p>
+          {isVisibilityDenied && !isAuthenticated && (
+            <button
+              type="button"
+              onClick={() => navigate(`/login?redirect=${encodeURIComponent(currentPath)}`)}
+              style={{
+                marginTop: 20,
+                padding: '10px 24px',
+                borderRadius: 10,
+                border: '1px solid rgba(96, 165, 250, 0.5)',
+                background: 'rgba(96, 165, 250, 0.18)',
+                color: '#fff',
+                cursor: 'pointer',
+                fontSize: 14,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+              }}
+            >
+              <LogIn size={14} />
+              登录后再试
+            </button>
+          )}
         </div>
       </div>
     );

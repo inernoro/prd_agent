@@ -98,9 +98,9 @@ public sealed class RegistryAssetStorage : IAssetStorage
         return await _inner.ExistsAsync(key, ct);
     }
 
-    public async Task UploadToKeyAsync(string key, byte[] bytes, string? contentType, CancellationToken ct)
+    public async Task UploadToKeyAsync(string key, byte[] bytes, string? contentType, CancellationToken ct, string? cacheControl = null)
     {
-        await _inner.UploadToKeyAsync(key, bytes, contentType, ct);
+        await _inner.UploadToKeyAsync(key, bytes, contentType, ct, cacheControl);
         var url = _inner.BuildUrlForKey(key);
         await LogRegistryAsync("write", key, null, url, InferDomainFromKey(key), InferTypeFromKey(key), contentType, bytes.Length);
     }

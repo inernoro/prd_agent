@@ -5,6 +5,8 @@ import { Check, LayoutGrid, LogOut, Monitor, Moon, Search, Settings, Sun } from 
 import { CommandPalette } from '@/components/CommandPalette';
 import { CommitInbox } from '@/components/CommitInbox';
 import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
+import { OperatorApprovalModal } from '@/components/OperatorApprovalModal';
+import { PendingImportInbox } from '@/components/PendingImportInbox';
 import { SiteNoticeInbox } from '@/components/SiteNoticeInbox';
 import { CdsMetallicLogo } from '@/components/brand/CdsMetallicLogo';
 import { Button } from '@/components/ui/button';
@@ -135,6 +137,12 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
           刷新 / 前端 bundle 异常)。30s 一次轮询 /api/self-status,基于状态推
           视觉。 */}
       <GlobalUpdateBadge />
+      {/* 2026-05-28 运维操作审批弹窗,挂全局,任何页面都能弹 */}
+      <OperatorApprovalModal />
+      {/* 2026-05-28 Agent 导入审批徽章 + 抽屉:右下角浮动,
+          pendingCount > 0 时主动出现;flap 熔断事件也走这条 toast。
+          用户反馈:不再需要 AI 给地址才能开审批 */}
+      <PendingImportInbox />
       <CommitInbox />
       {/* 2026-05-04 主题切换右上角浮动(用户反馈左下角与 GlobalUpdateBadge
           重叠 + 行业 Vercel/Linear/Notion 都在右上)。fixed 不挤占 TopBar

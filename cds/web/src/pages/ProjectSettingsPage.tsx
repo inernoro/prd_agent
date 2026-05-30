@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
+  Database,
   Download,
   Eye,
   FileText,
@@ -40,7 +41,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { apiRequest, ApiError } from '@/lib/api';
+import { apiRequest, apiUrl, ApiError } from '@/lib/api';
 import { EnvEditor } from '@/pages/cds-settings/EnvEditor';
 import { CodePill, ErrorBlock, LoadingBlock, MetricTile, Section } from '@/pages/cds-settings/components';
 import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
@@ -250,6 +251,9 @@ type TabValue =
   | 'comment-template'
   | 'env'
   | 'runtime-defaults'
+  | 'compose'
+  | 'infra'
+  | 'storage'
   | 'cache'
   | 'stats'
   | 'activity'
@@ -280,6 +284,9 @@ const tabGroups: TabGroup[] = [
     items: [
       { value: 'env', label: '项目环境变量', icon: TerminalSquare },
       { value: 'runtime-defaults', label: '新分支默认', icon: Rocket },
+      { value: 'compose', label: '项目配置', icon: FileText },
+      { value: 'infra', label: '基础设施', icon: Plug },
+      { value: 'storage', label: '存储', icon: Database },
       { value: 'cache', label: '缓存诊断', icon: HardDrive },
       { value: 'stats', label: '统计', icon: BarChart3 },
       { value: 'activity', label: '活动日志', icon: Activity },
@@ -501,6 +508,15 @@ export function ProjectSettingsPage(): JSX.Element {
                 </TabsContent>
                 <TabsContent value="runtime-defaults">
                   <RuntimeDefaultsTab project={project} projectId={project.id} onSaved={setProject} onToast={setToast} />
+                </TabsContent>
+                <TabsContent value="compose">
+                  <ProjectComposeTab projectId={project.id} onToast={setToast} />
+                </TabsContent>
+                <TabsContent value="infra">
+                  <ProjectInfraTab projectId={project.id} onToast={setToast} />
+                </TabsContent>
+                <TabsContent value="storage">
+                  <ProjectStorageTab projectId={project.id} onToast={setToast} />
                 </TabsContent>
                 <TabsContent value="comment-template">
                   <CommentTemplateTab projectId={project.id} onToast={setToast} />
@@ -2498,3 +2514,921 @@ const activityTypeLabels: Record<string, string> = {
   'branch-deleted': '删除分支',
   'branch-created': '创建分支',
 };
+
+// ─────────────────────────────────────────────────────────────
+// 项目基础设施 Tab(2026-05-28 新增)
+// 用户反馈:openvisual 的烂 minio infra 配置没法在 UI 里删,只能调
+// `/api/infra/:id?project=<id>` DELETE。本 Tab 把列表 + 启停 + 删除做出来。
+// ─────────────────────────────────────────────────────────────
+
+interface ProjectInfraService {
+  id: string;
+  projectId: string;
+  name: string;
+  dockerImage: string;
+  containerPort: number;
+  hostPort: number;
+  containerName: string;
+  status: 'running' | 'stopped' | 'error';
+  errorMessage?: string;
+  command?: string | string[];
+  entrypoint?: string | string[];
+  restartPolicy?: string;
+  createdAt: string;
+}
+
+// 项目配置 Tab — 虚拟 cds-compose.yml 读写 + 三级权威标注 (2026-05-29)
+interface ComposeAuthorityEntry {
+  path: string;
+  authority: 'repo' | 'platform' | 'user';
+  reason: string;
+  known: boolean;
+}
+interface ProjectComposeResponse {
+  yaml: string;
+  hasPersisted: boolean;
+  version: number;
+  updatedAt: string | null;
+  source: string | null;
+  authority: ComposeAuthorityEntry[];
+}
+
+const AUTHORITY_META: Record<'repo' | 'platform' | 'user', { label: string; desc: string; cls: string }> = {
+  repo: { label: 'repo 权威', desc: '构建/启动方式，由仓库结构决定，可改但应回写 repo', cls: 'bg-blue-500/10 text-blue-700 dark:text-blue-300' },
+  platform: { label: 'platform 权威', desc: '端口/网络/域名，由 CDS 分配，只读', cls: 'bg-amber-500/10 text-amber-700 dark:text-amber-300' },
+  user: { label: 'user 权威', desc: '环境变量等运营参数，用户可覆盖', cls: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' },
+};
+
+function ProjectComposeTab({
+  projectId,
+  onToast,
+}: {
+  projectId: string;
+  onToast: (message: string) => void;
+}): JSX.Element {
+  const [data, setData] = useState<ProjectComposeResponse | null>(null);
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [dirty, setDirty] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}/compose`), { credentials: 'include' });
+      const body = await res.json();
+      if (!res.ok) { onToast(`加载失败:${body.error || res.status}`); return; }
+      setData(body as ProjectComposeResponse);
+      setDraft(body.yaml || '');
+      setDirty(false);
+    } catch (err) {
+      onToast(`加载异常:${(err as Error).message}`);
+    }
+  }, [projectId, onToast]);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const onSave = useCallback(async () => {
+    if (!draft.trim()) { onToast('配置不能为空'); return; }
+    setBusy(true);
+    try {
+      const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}/compose`), {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ yaml: draft, actor: 'user', source: 'manual-edit' }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        if (body.violations && body.violations.length > 0) {
+          const paths = body.violations.map((v: { path: string }) => v.path).join('、');
+          onToast(`保存被拒:${paths} 属于平台权威,不可修改`);
+        } else {
+          onToast(`保存失败:${body.error || res.status}`);
+        }
+        return;
+      }
+      onToast(`已保存为 v${body.version}(改动 ${(body.changedPaths || []).length} 个字段)`);
+      await refresh();
+    } catch (err) {
+      onToast(`保存异常:${(err as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }, [draft, projectId, onToast, refresh]);
+
+  if (!data) return <LoadingBlock label="加载项目配置…" />;
+
+  // 按权威分组统计
+  const counts = data.authority.reduce(
+    (acc, a) => { acc[a.authority] = (acc[a.authority] || 0) + 1; return acc; },
+    {} as Record<string, number>,
+  );
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div>
+        <h3 className="text-base font-semibold">项目配置(cds-compose.yml)</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          这是本项目的配置 SSOT。build profile / 基础设施都从它派生。
+          {data.hasPersisted
+            ? <> 当前 <span className="font-mono">v{data.version}</span>{data.updatedAt ? ` · ${new Date(data.updatedAt).toLocaleString()}` : ''}{data.source ? ` · 来源 ${data.source}` : ''}。</>
+            : <> 该项目尚未固化配置,下方是从已落库 profile/infra 反向生成的<strong>只读起点</strong>,编辑保存后即成为正式 SSOT。</>}
+        </p>
+      </div>
+
+      {/* 三级权威图例 */}
+      <div className="flex flex-wrap gap-2 text-xs">
+        {(['repo', 'platform', 'user'] as const).map((k) => (
+          <span key={k} className={`inline-flex items-center gap-1 rounded px-2 py-1 ${AUTHORITY_META[k].cls}`} title={AUTHORITY_META[k].desc}>
+            {AUTHORITY_META[k].label}{counts[k] ? ` · ${counts[k]}` : ''}
+          </span>
+        ))}
+        <span className="self-center text-muted-foreground">platform 字段(端口/网络/域名)受保护,保存时若改动会被拒绝</span>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" variant="outline" size="sm" asChild>
+          <a href={apiUrl(`/api/projects/${encodeURIComponent(projectId)}/compose.yml`)} download="cds-compose.yml">
+            <Download className="h-3.5 w-3.5" /> 下载 cds-compose.yml
+          </a>
+        </Button>
+        <Button type="button" variant="outline" size="sm" onClick={() => { void navigator.clipboard?.writeText(draft); onToast('已复制到剪贴板'); }}>
+          复制
+        </Button>
+        <Button type="button" variant="outline" size="sm" onClick={() => void refresh()} disabled={busy}>
+          <RefreshCw className="h-3.5 w-3.5" /> 重新加载
+        </Button>
+        <Button type="button" variant="default" size="sm" onClick={() => void onSave()} disabled={busy || !dirty}>
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} 保存配置
+        </Button>
+      </div>
+
+      <textarea
+        value={draft}
+        onChange={(e) => { setDraft(e.target.value); setDirty(true); }}
+        className="w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 font-mono text-xs"
+        rows={20}
+        spellCheck={false}
+        disabled={busy}
+        style={{ minHeight: 320, overflowY: 'auto' }}
+      />
+
+      {/* 字段权威明细 */}
+      {data.authority.length > 0 ? (
+        <details className="text-xs">
+          <summary className="cursor-pointer text-muted-foreground">字段权威明细({data.authority.length})</summary>
+          <div className="mt-2 space-y-1">
+            {data.authority.map((a) => (
+              <div key={a.path} className="flex items-center gap-2">
+                <span className={`inline-flex shrink-0 rounded px-1.5 py-0.5 ${AUTHORITY_META[a.authority].cls}`}>{a.authority}</span>
+                <code className="font-mono">{a.path}</code>
+                <span className="truncate text-muted-foreground">{a.reason}</span>
+              </div>
+            ))}
+          </div>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+interface ProjectStorageVolumeRow {
+  name: string;
+  sizeBytes: number | null;
+  sizeHuman: string;
+  mountedBy: string[];
+  containerPath: string;
+  type: 'volume' | 'bind';
+  note?: string;
+}
+
+interface ProjectStorageDiskInfo {
+  filesystem?: string;
+  totalBytes: number | null;
+  usedBytes: number | null;
+  availBytes: number | null;
+  usePercent: number | null;
+  mountedOn?: string;
+}
+
+interface ProjectStorageResponse {
+  volumes: ProjectStorageVolumeRow[];
+  totalBytes: number;
+  totalHuman: string;
+  diskInfo?: ProjectStorageDiskInfo;
+  note?: string;
+}
+
+function ProjectStorageTab({
+  projectId,
+  onToast,
+}: {
+  projectId: string;
+  onToast: (message: string) => void;
+}): JSX.Element {
+  const [data, setData] = useState<ProjectStorageResponse | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setBusy(true);
+    try {
+      const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}/storage`), { credentials: 'include' });
+      const body = await res.json();
+      if (!res.ok) { onToast(`加载失败：${body.error || res.status}`); return; }
+      setData(body as ProjectStorageResponse);
+    } catch (err) {
+      onToast(`加载异常：${(err as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }, [projectId, onToast]);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  if (!data) return <LoadingBlock label="加载存储信息…" />;
+
+  const disk = data.diskInfo;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-base font-semibold">项目存储</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            本项目各基础设施服务的数据卷（docker named volume）大小与挂载关系。
+            数据卷在重建容器时会保留，删除前请确认数据已备份。
+          </p>
+        </div>
+        <Button type="button" variant="outline" size="sm" onClick={() => void refresh()} disabled={busy}>
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} 刷新
+        </Button>
+      </div>
+
+      {/* 概览：总占用 + 卷数量 + 可选磁盘信息 */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <MetricTile
+          icon={<Database className="h-3.5 w-3.5" />}
+          label="数据卷总占用"
+          value={data.totalHuman}
+        />
+        <MetricTile
+          icon={<HardDrive className="h-3.5 w-3.5" />}
+          label="数据卷数量"
+          value={data.volumes.length}
+        />
+        {disk ? (
+          <MetricTile
+            icon={<HardDrive className="h-3.5 w-3.5" />}
+            label="宿主机磁盘"
+            value={
+              disk.usePercent != null
+                ? `已用 ${disk.usePercent}%`
+                : '未知'
+            }
+            detail={
+              disk.availBytes != null
+                ? `剩余 ${formatBytes(disk.availBytes)}${disk.mountedOn ? ` · ${disk.mountedOn}` : ''}`
+                : undefined
+            }
+          />
+        ) : null}
+      </div>
+
+      {data.note ? (
+        <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>{data.note}</span>
+        </div>
+      ) : null}
+
+      {/* 卷列表 / 空状态 */}
+      {data.volumes.length === 0 ? (
+        <div className="flex flex-col items-center gap-3 rounded-md border border-dashed border-border px-4 py-10 text-center">
+          <Database className="h-8 w-8 text-muted-foreground" />
+          <div className="text-sm font-medium">该项目还没有任何数据卷</div>
+          <p className="max-w-md text-xs text-muted-foreground">
+            数据卷由基础设施服务（如 MongoDB / Redis）声明。先到「基础设施」标签页添加带数据卷的服务，
+            或在「项目配置」里给服务补上 volumes，重新同步后这里就会出现卷的占用情况。
+          </p>
+          <Button type="button" variant="outline" size="sm" asChild>
+            <a href={`#infra`} onClick={(e) => { e.preventDefault(); window.location.hash = 'infra'; }}>
+              前往基础设施
+            </a>
+          </Button>
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-md border border-border">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/40 text-xs text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 text-left font-medium">数据卷</th>
+                <th className="px-3 py-2 text-right font-medium">大小</th>
+                <th className="px-3 py-2 text-left font-medium">挂载服务</th>
+                <th className="px-3 py-2 text-left font-medium">容器内路径</th>
+                <th className="px-3 py-2 text-left font-medium">类型</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.volumes.map((vol) => (
+                <tr key={vol.name} className="border-t border-border align-top">
+                  <td className="px-3 py-2">
+                    <code className="font-mono text-xs">{vol.name}</code>
+                    {vol.note ? (
+                      <div className="mt-0.5 text-xs text-muted-foreground">{vol.note}</div>
+                    ) : null}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-xs">
+                    {vol.sizeHuman}
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="flex flex-wrap gap-1">
+                      {vol.mountedBy.map((svc) => (
+                        <span key={svc} className="inline-flex rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{svc}</span>
+                      ))}
+                    </div>
+                  </td>
+                  <td className="px-3 py-2">
+                    <code className="font-mono text-xs text-muted-foreground">{vol.containerPath || '—'}</code>
+                  </td>
+                  <td className="px-3 py-2 text-xs">
+                    {vol.type === 'bind' ? '目录挂载' : '数据卷'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProjectInfraTab({
+  projectId,
+  onToast,
+}: {
+  projectId: string;
+  onToast: (message: string) => void;
+}): JSX.Element {
+  const [services, setServices] = useState<ProjectInfraService[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [resyncOpen, setResyncOpen] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      setError(null);
+      const data = await apiRequest<{ services?: ProjectInfraService[] }>(
+        `/api/infra?project=${encodeURIComponent(projectId)}&live=1`,
+      );
+      setServices(data.services || []);
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : (err as Error).message;
+      setError(msg || '加载失败');
+      setServices([]);
+    }
+  }, [projectId]);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const doStart = useCallback(async (id: string) => {
+    setBusy(id);
+    try {
+      await apiRequest(`/api/infra/${encodeURIComponent(id)}/start?project=${encodeURIComponent(projectId)}`, { method: 'POST' });
+      onToast(`已启动 ${id}`);
+      await refresh();
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : (err as Error).message;
+      onToast(`启动失败:${msg}`);
+    } finally {
+      setBusy(null);
+    }
+  }, [projectId, refresh, onToast]);
+
+  const doStop = useCallback(async (id: string) => {
+    setBusy(id);
+    try {
+      await apiRequest(`/api/infra/${encodeURIComponent(id)}/stop?project=${encodeURIComponent(projectId)}`, { method: 'POST' });
+      onToast(`已停止 ${id}`);
+      await refresh();
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : (err as Error).message;
+      onToast(`停止失败:${msg}`);
+    } finally {
+      setBusy(null);
+    }
+  }, [projectId, refresh, onToast]);
+
+  const doDelete = useCallback(async (id: string) => {
+    setBusy(id);
+    try {
+      await apiRequest(`/api/infra/${encodeURIComponent(id)}?project=${encodeURIComponent(projectId)}`, { method: 'DELETE' });
+      onToast(`已删除 ${id}`);
+      setConfirmDeleteId(null);
+      await refresh();
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : (err as Error).message;
+      onToast(`删除失败:${msg}`);
+    } finally {
+      setBusy(null);
+    }
+  }, [projectId, refresh, onToast]);
+
+  if (services === null) return <LoadingBlock label="加载基础设施列表…" />;
+  if (error && services.length === 0) return <ErrorBlock message={error} />;
+
+  const runningCount = services.filter((s) => s.status === 'running').length;
+  const stoppedCount = services.filter((s) => s.status !== 'running').length;
+
+  const doStopAll = async (): Promise<void> => {
+    if (busy) return;
+    const running = services.filter((s) => s.status === 'running');
+    if (running.length === 0) return;
+    setBusy('__bulk__');
+    try {
+      for (const s of running) {
+        try {
+          await apiRequest(`/api/infra/${encodeURIComponent(s.id)}/stop?project=${encodeURIComponent(projectId)}`, { method: 'POST' });
+        } catch { /* tolerate single failure */ }
+      }
+      onToast(`已停止 ${running.length} 个 infra 服务(数据卷保留)`);
+      await refresh();
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const doStartAll = async (): Promise<void> => {
+    if (busy) return;
+    const stopped = services.filter((s) => s.status !== 'running');
+    if (stopped.length === 0) return;
+    setBusy('__bulk__');
+    try {
+      for (const s of stopped) {
+        try {
+          await apiRequest(`/api/infra/${encodeURIComponent(s.id)}/start?project=${encodeURIComponent(projectId)}`, { method: 'POST' });
+        } catch { /* tolerate */ }
+      }
+      onToast(`已启动 ${stopped.length} 个 infra 服务`);
+      await refresh();
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1">
+          <h3 className="text-base font-semibold">项目基础设施</h3>
+          <p className="text-xs text-muted-foreground mt-1">
+            mongodb / redis / postgres 等 infra 容器,跟随项目独立部署。审批 cds-compose.yml 时自动创建,这里可启停/删除。
+          </p>
+          <p className="text-[11px] text-muted-foreground/80 mt-1">
+            <span className="font-medium text-foreground/80">数据卷不丢失</span>:删除/停止容器不影响 docker named volume,
+            下次同名 infra 创建会自动挂回原数据。
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2 shrink-0">
+          <Button type="button" variant="outline" size="sm"
+            onClick={doStartAll} disabled={busy !== null || stoppedCount === 0}
+            title={stoppedCount === 0 ? '没有可启动的服务' : `启动 ${stoppedCount} 个已停止的服务`}>
+            全部启动 {stoppedCount > 0 ? `(${stoppedCount})` : ''}
+          </Button>
+          <Button type="button" variant="outline" size="sm"
+            onClick={doStopAll} disabled={busy !== null || runningCount === 0}
+            title={runningCount === 0 ? '没有正在运行的服务' : `停止 ${runningCount} 个运行中的服务(数据保留)`}>
+            全部停止 {runningCount > 0 ? `(${runningCount})` : ''}
+          </Button>
+          <Button type="button" variant="default" size="sm" onClick={() => setResyncOpen(true)} disabled={busy !== null}>
+            重新同步配置
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={refresh} disabled={busy !== null}>
+            <RefreshCw className="h-3 w-3" /> 刷新
+          </Button>
+        </div>
+      </div>
+
+      <InfraResyncDialog
+        open={resyncOpen}
+        onOpenChange={(open) => { setResyncOpen(open); if (!open) void refresh(); }}
+        projectId={projectId}
+        onToast={onToast}
+      />
+
+      {services.length === 0 ? (
+        <div className="rounded-md border border-dashed border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-6 text-center text-sm text-muted-foreground">
+          该项目尚无 infra 容器
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {services.map((svc) => {
+            const isBusy = busy === svc.id;
+            const cmdText = svc.command === undefined ? null
+              : Array.isArray(svc.command) ? svc.command.join(' ')
+              : String(svc.command);
+            return (
+              <div
+                key={svc.id}
+                className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-3"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="font-semibold text-foreground">{svc.name}</span>
+                      <CodePill>{svc.id}</CodePill>
+                      <span className={
+                        `inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] ` +
+                        (svc.status === 'running'
+                          ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                          : svc.status === 'error'
+                            ? 'bg-red-500/10 text-red-700 dark:text-red-300'
+                            : 'bg-muted text-muted-foreground')
+                      }>
+                        {svc.status === 'running' ? '运行中' : svc.status === 'error' ? '错误' : '已停止'}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground font-mono">
+                      {svc.dockerImage}
+                      {' · '}
+                      :{svc.hostPort}→{svc.containerPort}
+                    </div>
+                    {cmdText ? (
+                      <div className="mt-1 text-[11px] text-foreground/70 font-mono break-all">
+                        cmd: {cmdText}
+                      </div>
+                    ) : null}
+                    {svc.errorMessage ? (
+                      <div className="mt-1.5 text-[11px] text-red-600 dark:text-red-400">
+                        {svc.errorMessage}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    {svc.status === 'running' ? (
+                      <Button type="button" variant="outline" size="sm" onClick={() => doStop(svc.id)} disabled={isBusy}>
+                        {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                        停止
+                      </Button>
+                    ) : (
+                      <Button type="button" variant="outline" size="sm" onClick={() => doStart(svc.id)} disabled={isBusy}>
+                        {isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                        启动
+                      </Button>
+                    )}
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => setConfirmDeleteId(svc.id)}
+                      disabled={isBusy}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                      删除
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <Dialog open={confirmDeleteId !== null} onOpenChange={(open) => { if (!open) setConfirmDeleteId(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-destructive" />
+              确认删除 infra 服务
+            </DialogTitle>
+            <DialogDescription>
+              将停止并删除容器 <code className="font-mono">{confirmDeleteId}</code>,以及对应的持久卷映射记录。
+              数据卷本身不会被删(volumes 由 docker 单独管理),但服务不会再启动。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="outline" onClick={() => setConfirmDeleteId(null)}>取消</Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => confirmDeleteId && doDelete(confirmDeleteId)}
+              disabled={busy !== null}
+            >
+              {busy !== null ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+              确认删除
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// 项目基础设施 重新同步对话框 (2026-05-29)
+// 用户反馈:"我想重新初始化这个项目, 比如彻底重装这个数据库啊...
+//   缺乏一个重新从 cds-compose.yml 初始化的功能...这是个断头应用了"
+// ─────────────────────────────────────────────────────────────
+
+interface ResyncDiff {
+  adds: Array<{ id: string; name: string; dockerImage: string; containerPort: number }>;
+  updates: Array<{ id: string; name: string; reasons: string[] }>;
+  removes: Array<{ id: string; name: string; containerName: string; status: string }>;
+  noChange: Array<{ id: string; name: string }>;
+}
+
+function InfraResyncDialog({
+  open, onOpenChange, projectId, onToast,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  projectId: string;
+  onToast: (message: string) => void;
+}): JSX.Element {
+  const [yamlText, setYamlText] = useState('');
+  const [diff, setDiff] = useState<ResyncDiff | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [cmdError, setCmdError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [confirmTextInput, setConfirmTextInput] = useState('');
+  const [deleteVolumes, setDeleteVolumes] = useState(false);
+  // yaml 来源:project-repo(默认) / approved-<importId> / manual
+  const [sourceKind, setSourceKind] = useState<'repo' | 'approved' | 'manual'>('repo');
+  const [sources, setSources] = useState<{
+    repoCompose?: { found: boolean; fileName?: string; yaml?: string; error?: string };
+    recentApproved?: Array<{ importId: string; agentName: string; decidedAt?: string; yaml: string }>;
+  } | null>(null);
+
+  // 重置时清空
+  useEffect(() => {
+    if (!open) {
+      setYamlText('');
+      setDiff(null);
+      setPreviewError(null);
+      setCmdError(null);
+      setConfirmTextInput('');
+      setDeleteVolumes(false);
+      setSourceKind('repo');
+      setSources(null);
+    }
+  }, [open]);
+
+  // 打开时拉来源:项目根目录 cds-compose.yml + 最近审批记录
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}/infra/resync/sources`), { credentials: 'include' })
+      .then((r) => r.json())
+      .then((body) => {
+        if (cancelled) return;
+        setSources(body);
+        // 默认用项目根目录的 yaml(若存在)
+        if (body.repoCompose?.found && body.repoCompose.yaml) {
+          setSourceKind('repo');
+          setYamlText(body.repoCompose.yaml);
+        } else if ((body.recentApproved || []).length > 0) {
+          setSourceKind('approved');
+          setYamlText(body.recentApproved[0].yaml);
+        } else {
+          setSourceKind('manual');
+        }
+      })
+      .catch(() => { /* 静默,用户可手动粘贴 */ });
+    return () => { cancelled = true; };
+  }, [open, projectId]);
+
+  const onPreview = useCallback(async () => {
+    if (!yamlText.trim()) return;
+    setBusy(true);
+    setPreviewError(null);
+    setCmdError(null);
+    setDiff(null);
+    try {
+      const res = await fetch(
+        apiUrl(`/api/projects/${encodeURIComponent(projectId)}/infra/resync/preview`),
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ composeYaml: yamlText }),
+        },
+      );
+      const body = await res.json();
+      if (!res.ok) {
+        setPreviewError(body.error || `HTTP ${res.status}`);
+        if (body.cmdValidationError) setCmdError(body.cmdValidationError);
+        return;
+      }
+      setDiff(body as ResyncDiff);
+    } catch (err) {
+      setPreviewError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }, [projectId, yamlText]);
+
+  const onExecute = useCallback(async () => {
+    if (!diff) return;
+    if (diff.removes.length > 0 && confirmTextInput.trim().toLowerCase() !== 'yes') {
+      onToast('删除项需要输入 yes 确认');
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch(
+        apiUrl(`/api/projects/${encodeURIComponent(projectId)}/infra/resync/execute`),
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ composeYaml: yamlText, confirmText: confirmTextInput || undefined, deleteVolumes }),
+        },
+      );
+      const body = await res.json();
+      if (!res.ok) {
+        onToast(`执行失败:${body.error || res.status}`);
+        return;
+      }
+      const a = body.applied || {};
+      const errCount = (body.errors || []).length;
+      const volCount = (body.volumeRemovals || []).filter((v: { ok: boolean }) => v.ok).length;
+      onToast(`同步完成:新增 ${(a.added || []).length} · 更新 ${(a.updated || []).length} · 删除 ${(a.removed || []).length}${volCount > 0 ? ` · 删卷 ${volCount}` : ''}${errCount > 0 ? ` · 错误 ${errCount}` : ''}`);
+      onOpenChange(false);
+    } catch (err) {
+      onToast(`执行异常:${(err as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }, [diff, confirmTextInput, deleteVolumes, projectId, yamlText, onToast, onOpenChange]);
+
+  const pickSource = useCallback((kind: 'repo' | 'approved' | 'manual', yaml?: string) => {
+    setSourceKind(kind);
+    setDiff(null);
+    setPreviewError(null);
+    if (kind === 'manual') {
+      setYamlText('');
+    } else if (yaml !== undefined) {
+      setYamlText(yaml);
+    }
+  }, []);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>重新同步项目基础设施</DialogTitle>
+          <DialogDescription>
+            粘贴 cds-compose.yml,先预览 diff,再执行。<strong>docker named volume 保留</strong>,
+            被删/重建的容器其数据卷会被新容器自动接回。
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3" style={{ minHeight: 0 }}>
+          {/* yaml 来源选择 */}
+          <div className="flex flex-wrap gap-2 text-xs">
+            <span className="text-muted-foreground self-center">来源:</span>
+            <button type="button" disabled={busy || !sources?.repoCompose?.found}
+              onClick={() => pickSource('repo', sources?.repoCompose?.yaml)}
+              className={`rounded px-2 py-1 border ${sourceKind === 'repo' ? 'border-primary bg-primary/10 text-foreground' : 'border-[hsl(var(--hairline))] text-muted-foreground'} disabled:opacity-40`}>
+              项目根目录{sources?.repoCompose?.found ? ` (${sources.repoCompose.fileName})` : ' (未找到)'}
+            </button>
+            {(sources?.recentApproved || []).length > 0 ? (
+              <button type="button" disabled={busy}
+                onClick={() => pickSource('approved', sources?.recentApproved?.[0]?.yaml)}
+                className={`rounded px-2 py-1 border ${sourceKind === 'approved' ? 'border-primary bg-primary/10 text-foreground' : 'border-[hsl(var(--hairline))] text-muted-foreground'}`}>
+                最近审批 ({sources?.recentApproved?.[0]?.agentName || 'agent'})
+              </button>
+            ) : null}
+            <button type="button" disabled={busy}
+              onClick={() => pickSource('manual')}
+              className={`rounded px-2 py-1 border ${sourceKind === 'manual' ? 'border-primary bg-primary/10 text-foreground' : 'border-[hsl(var(--hairline))] text-muted-foreground'}`}>
+              手动粘贴
+            </button>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-foreground/80">cds-compose.yml</label>
+            <textarea
+              value={yamlText}
+              onChange={(e) => { setYamlText(e.target.value); setDiff(null); setSourceKind('manual'); }}
+              className="mt-1 w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-2 font-mono text-xs"
+              rows={8}
+              placeholder={`x-cds-project:\n  name: my-project\nservices:\n  mongodb:\n    image: mongo:7\n    ports: ["27017"]\n    volumes: [mongodb-data:/data/db]\n`}
+              disabled={busy}
+              style={{ minHeight: 160, maxHeight: 280, overflowY: 'auto' }}
+            />
+          </div>
+
+          {previewError ? (
+            <div className="rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-300">
+              <div className="font-semibold">预览失败</div>
+              <div>{previewError}</div>
+              {cmdError ? <div className="mt-2 font-mono text-xs">{cmdError}</div> : null}
+            </div>
+          ) : null}
+
+          {!diff ? (
+            <div className="flex justify-end">
+              <Button type="button" onClick={onPreview} disabled={busy || !yamlText.trim()}>
+                {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                预览 diff
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-3 max-h-[40vh] overflow-y-auto" style={{ overscrollBehavior: 'contain', minHeight: 0 }}>
+              {diff.adds.length > 0 ? (
+                <div>
+                  <div className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+                    新增 {diff.adds.length}
+                  </div>
+                  {diff.adds.map((a) => (
+                    <div key={`add-${a.id}`} className="mt-1 rounded border border-emerald-500/30 bg-emerald-500/5 px-2 py-1 text-xs">
+                      <code className="font-mono">{a.id}</code> · {a.dockerImage}:{a.containerPort}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {diff.updates.length > 0 ? (
+                <div>
+                  <div className="text-xs font-semibold text-sky-700 dark:text-sky-300">
+                    更新 {diff.updates.length}(image/cmd/env/volumes/ports 任一变化即重建)
+                  </div>
+                  {diff.updates.map((u) => (
+                    <div key={`upd-${u.id}`} className="mt-1 rounded border border-sky-500/30 bg-sky-500/5 px-2 py-1 text-xs">
+                      <code className="font-mono">{u.id}</code>
+                      <ul className="mt-0.5 list-disc pl-4 text-[11px] text-foreground/80">
+                        {u.reasons.map((r, i) => <li key={i}>{r}</li>)}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {diff.removes.length > 0 ? (
+                <div>
+                  <div className="text-xs font-semibold text-red-700 dark:text-red-300">
+                    删除 {diff.removes.length}(yaml 中已不存在 · 默认仅删容器,数据卷保留)
+                  </div>
+                  {diff.removes.map((r) => (
+                    <div key={`rm-${r.id}`} className="mt-1 rounded border border-red-500/30 bg-red-500/5 px-2 py-1 text-xs">
+                      <code className="font-mono">{r.id}</code> · {r.containerName} · {r.status}
+                    </div>
+                  ))}
+                  <label className="mt-2 flex items-start gap-2 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={deleteVolumes}
+                      onChange={(e) => setDeleteVolumes(e.target.checked)}
+                      disabled={busy}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      <span className="font-semibold text-red-700 dark:text-red-300">同时删除数据卷(不可恢复)</span>
+                      <br />
+                      <span className="text-muted-foreground">
+                        默认不勾:只删容器,docker named volume 保留,数据安全。
+                        勾选后被删服务的 named volume 会一并 <code className="font-mono">docker volume rm</code>,
+                        相当于"彻底重装"。
+                      </span>
+                    </span>
+                  </label>
+                  <div className="mt-2">
+                    <label className="text-xs">输入 <code className="font-mono">yes</code> 确认删除上述 {diff.removes.length} 个服务{deleteVolumes ? '(含数据卷)' : ''}:</label>
+                    <input
+                      type="text"
+                      value={confirmTextInput}
+                      onChange={(e) => setConfirmTextInput(e.target.value)}
+                      className="mt-1 w-32 rounded border border-[hsl(var(--hairline))] bg-background px-2 py-1 font-mono text-xs"
+                      placeholder="yes"
+                      disabled={busy}
+                    />
+                  </div>
+                </div>
+              ) : null}
+              {diff.noChange.length > 0 ? (
+                <div className="text-xs text-muted-foreground">
+                  无变化 {diff.noChange.length}:{diff.noChange.map((n) => n.id).join(', ')}
+                </div>
+              ) : null}
+              {diff.adds.length === 0 && diff.updates.length === 0 && diff.removes.length === 0 ? (
+                <div className="rounded-md border border-dashed border-[hsl(var(--hairline))] p-4 text-center text-sm text-muted-foreground">
+                  完全一致,无需同步
+                </div>
+              ) : null}
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>取消</Button>
+          {diff && (diff.adds.length + diff.updates.length + diff.removes.length) > 0 ? (
+            <Button type="button" variant="default" onClick={onExecute}
+              disabled={busy || (diff.removes.length > 0 && confirmTextInput.trim().toLowerCase() !== 'yes')}>
+              {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+              执行同步
+            </Button>
+          ) : null}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

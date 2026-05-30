@@ -1,0 +1,1 @@
+| fix | cds | 重启前排空 in-flight 分支操作的默认上限从 5s 恢复到 deploy-safe 的 180s(抽成 DEFAULT_RESTART_DRAIN_TIMEOUT_MS + resolveRestartDrainTimeoutMs SSOT,utility 与 route 包装共用),避免 self-update/self-force-sync 几乎必然在 deploy 中途强制重启留下不一致状态;CDS_RESTART_DRAIN_TIMEOUT_MS 仍可覆盖(0=不等),早返机制不变(Cursor High+Medium) |

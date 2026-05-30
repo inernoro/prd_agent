@@ -6,7 +6,8 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, DeployModeOverride, BuildProfileOverride, ReadinessProbe } from '../types.js';
 import { combinedOutput } from '../types.js';
-import { resolveEnvTemplates } from './compose-parser.js';
+import { resolveCommandTemplate, resolveEnvTemplates } from './compose-parser.js';
+import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 import { applyPerBranchDbIsolation } from './db-scope-isolation.js';
 import { nodeModulesVolumeName } from '../util/node-modules-volume.js';
 import {
@@ -869,19 +870,11 @@ export class ContainerService {
         onOutput?.(`── Node.js 容器: node_modules 走 docker volume(跨部署持久化,首次会装满,后续秒过)──\n`);
       }
 
-      // Phase 2 resilience: enforce per-container cgroup limits when configured.
-      //
-      // 用户反馈 2026-05-06:"每一个容器都不限制内存,尽情释放"。
-      // 不再下发 --memory / --memory-swap;profile.resources.memoryMB 仅作
-      // capacity 调度规划的提示(见 capacityMessage),不再硬限制运行时。
-      // CPU 限制保留 — 它是配额不是 OOM,语义不同。
+      // 2026-05-28 用户反馈"100GB 内存,不允许任何容器限制":彻底删除所有
+      // docker 运行时资源限制(--memory / --memory-swap / --cpus)。
+      // memoryMB / cpus 字段仅作 capacity 调度规划提示,不下发到 docker run。
+      // 不下发任何 --memory / --memory-swap / --cpus,避免任何容器构造慢。
       const resourceFlags: string[] = [];
-      if (profile.resources?.cpus && profile.resources.cpus > 0) {
-        resourceFlags.push(`--cpus ${profile.resources.cpus}`);
-      }
-      if (resourceFlags.length > 0) {
-        onOutput?.(`── 资源限制: ${resourceFlags.join(' ')} ──\n`);
-      }
 
       // Phase 7 fix(B10,2026-05-01)— --entrypoint 覆盖。
       // 默认不传(走 image 自带 ENTRYPOINT)。指定时:
@@ -936,7 +929,7 @@ export class ContainerService {
         `-w ${containerWorkDir}`,
         envFlag,
         '--tmpfs /tmp',
-        this.appLabels(entry.id, profile.id, network),
+        this.appLabels(entry.projectId, entry.id, profile.id, network),
         profile.dockerImage,
         `sh -c "${command.replace(/"/g, '\\"')}"`,
       ].join(' ');
@@ -1682,22 +1675,30 @@ export class ContainerService {
 
   // ── Container labels & discovery ──
 
-  /** Docker labels applied to all CDS-managed app containers */
-  private appLabels(branchId: string, profileId: string, network: string): string {
+  /**
+   * Docker labels applied to all CDS-managed app containers.
+   * 2026-05-28 起新增 `cds.project.id` 用于跨项目隔离与按项目过滤清理。
+   */
+  private appLabels(projectId: string, branchId: string, profileId: string, network: string): string {
     return [
       '--label cds.managed=true',
       '--label cds.type=app',
+      `--label cds.project.id=${projectId || '_unknown'}`,
       `--label cds.branch.id=${branchId}`,
       `--label cds.profile.id=${profileId}`,
       `--label cds.network=${network}`,
     ].join(' ');
   }
 
-  /** Docker labels applied to all CDS-managed infra containers */
+  /**
+   * Docker labels applied to all CDS-managed infra containers.
+   * 2026-05-28 起新增 `cds.project.id`(老 legacy infra 用 `_legacy`)。
+   */
   private infraLabels(service: InfraService, network: string): string {
     return [
       '--label cds.managed=true',
       '--label cds.type=infra',
+      `--label cds.project.id=${service.projectId || '_legacy'}`,
       `--label cds.service.id=${service.id}`,
       `--label cds.network=${network}`,
     ].join(' ');
@@ -1894,6 +1895,49 @@ export class ContainerService {
       this.getProjectMarkers(service.projectId),
     ).map((a) => `--network-alias ${a}`);
 
+    // 2026-05-28 灾难修复:
+    //   1) yaml 的 `command:` / `entrypoint:` 必须传给 docker run,否则容器
+    //      用 image 默认 ENTRYPOINT,minio/elasticsearch 这类需要子命令的
+    //      image 会立刻 exit 0 → unless-stopped 无限重启拖垮整个 host
+    //   2) `--restart` 默认从 unless-stopped 改成 on-failure:3,避免烂配
+    //      置一直 churn;可在 yaml 用 restart: 字段覆盖
+    //   3) image 之后跟 cmd suffix,顺序符合 docker run [OPTIONS] IMAGE [COMMAND]
+    // 2026-05-28 Bugbot Medium 修复:数组形态的 entrypoint,docker `--entrypoint`
+    // 只接 executable,余下元素必须 prepend 到 cmd 才会生效。
+    // 例:entrypoint: ["python3","-m","http.server"] →
+    //   --entrypoint python3  ... image  -m http.server
+    // 2026-05-29 灾难修复:之前 service.env 走了 resolveEnvTemplates 但 command /
+    // entrypoint 没走 — yaml 里 `command: redis-server --requirepass ${CDS_REDIS_PASSWORD}`
+    // 透传到 child_process.exec,host shell 找不到 CDS_REDIS_PASSWORD(那是项目
+    // 级 customEnv,不是 systemd CDS 进程 env)→ 展开成空 → redis 启动看到
+    // `--requirepass ` 缺值,FATAL CONFIG ERROR 无限重启。把 command/entrypoint
+    // 也过一遍同一份 customEnv 模板替换,根治。
+    const resolvedCommand = resolveCommandTemplate(service.command, customEnv);
+    const resolvedEntrypoint = resolveCommandTemplate(service.entrypoint, customEnv);
+    const explicitCmdParts = resolvedCommand === undefined
+      ? []
+      : Array.isArray(resolvedCommand)
+        ? resolvedCommand.map((c) => this.shellQuote(String(c)))
+        : [String(resolvedCommand)]; // string 形态 yaml 中通常是 shell 语法,不再 quote
+    let entrypointFlag = '';
+    let entrypointExtraArgs: string[] = [];
+    if (resolvedEntrypoint !== undefined) {
+      if (Array.isArray(resolvedEntrypoint)) {
+        const [head, ...rest] = resolvedEntrypoint;
+        entrypointFlag = `--entrypoint ${this.shellQuote(String(head ?? ''))}`;
+        entrypointExtraArgs = rest.map((r) => this.shellQuote(String(r)));
+      } else {
+        entrypointFlag = `--entrypoint ${this.shellQuote(String(resolvedEntrypoint))}`;
+      }
+    }
+    const cmdParts = [...entrypointExtraArgs, ...explicitCmdParts];
+    // Codex review(PR #684, P1 安全):restartPolicy 会被原样拼进经 shell 执行的
+    // docker run 字符串。新增的 POST /api/infra 把 body.restartPolicy 落库、yaml 的
+    // restart: 也会进来 —— 若值是 `no; touch /tmp/pwn` 之类,shell 会在 host 上执行
+    // 注入的后缀。这里按 Docker 合法 restart 策略白名单校验(no / always /
+    // unless-stopped / on-failure[:N]),非法值一律回落默认,杜绝命令注入。
+    const restartPolicy = sanitizeDockerRestartPolicy(service.restartPolicy);
+
     const cmd = [
       'docker run -d',
       `--name ${service.containerName}`,
@@ -1903,10 +1947,12 @@ export class ContainerService {
       ...volumeFlags,
       ...envFlags,
       ...healthFlags,
+      ...(entrypointFlag ? [entrypointFlag] : []),
       this.infraLabels(service, network),
-      '--restart unless-stopped',
+      `--restart ${restartPolicy}`,
       service.dockerImage,
-    ].join(' ');
+      ...cmdParts,
+    ].filter(Boolean).join(' ');
 
     const result = await this.shell.exec(cmd);
     if (result.exitCode !== 0) {
@@ -1965,6 +2011,30 @@ export class ContainerService {
         stderrPreview: `${stopResult.stderr || ''}${rmResult.stderr || ''}`,
       },
     });
+  }
+
+  /**
+   * 2026-05-29 显式删除 named volumes(仅 resync"含数据卷重装"路径调用)。
+   * 普通 stop/rm **不删** volume(数据保留是默认契约)。这个方法是用户在
+   * 弹窗里显式勾选"是否删数据卷"后才走。bind mount(type=bind)跳过。
+   * 返回每个 volume 的删除结果,失败不抛(volume 可能被其他容器占用)。
+   */
+  async removeNamedVolumes(volumeNames: string[]): Promise<Array<{ name: string; ok: boolean; error?: string }>> {
+    const results: Array<{ name: string; ok: boolean; error?: string }> = [];
+    for (const name of volumeNames) {
+      if (!name || !name.trim()) continue;
+      const r = await this.shell.exec(`docker volume rm ${this.shellQuote(name)}`);
+      const ok = r.exitCode === 0;
+      results.push({ name, ok, ...(ok ? {} : { error: (r.stderr || '').slice(0, 200) }) });
+      this.recordContainerEvent({
+        severity: ok ? 'warn' : 'error',
+        source: 'cds-container-service',
+        action: 'infra.volume.remove',
+        message: `docker volume rm ${name} — ${ok ? 'ok' : 'failed'}`,
+        command: { name: 'docker volume rm', exitCode: r.exitCode, stdoutPreview: r.stdout, stderrPreview: r.stderr },
+      });
+    }
+    return results;
   }
 
   /**

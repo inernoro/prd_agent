@@ -86,4 +86,8 @@ public static class AppNames
     /// <summary>Transcript Agent - 音视频转录</summary>
     public const string TranscriptAgent = "transcript-agent";
     public const string TranscriptAgentDisplay = "音视频转录";
+
+    /// <summary>CCAS Agent - 赋码采集关联系统智能体（PRD 生成 + 设备素材库 + 流程示意图绘制）</summary>
+    public const string CcasAgent = "ccas-agent";
+    public const string CcasAgentDisplay = "赋码采集关联";
 }

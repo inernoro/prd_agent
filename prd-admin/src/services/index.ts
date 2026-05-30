@@ -1694,8 +1694,10 @@ export {
   viewShare as viewSiteShare,
   saveSharedSite,
   listShareViewLogs,
+  renewShare as renewSiteShare,
+  getShareAnalytics as getSiteShareAnalytics,
 } from '@/services/real/webPages';
-export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInfo, ShareViewData, ShareViewLogItem, SiteOwnerCard } from '@/services/real/webPages';
+export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInfo, ShareViewData, ShareViewLogItem, SiteOwnerCard, ShareAnalyticsResult, ShareAnalyticsLinkSummary, ShareAnalyticsTimelineEntry } from '@/services/real/webPages';
 
 // ── Team 团队（跨应用协作） ──
 export {
@@ -2034,3 +2036,36 @@ export type {
   BatchCreatePmTasksInput,
   SetStakeholdersInput,
 } from '@/services/contracts/pmAgent';
+
+// ── CCAS Agent 赋码采集关联综合智能体 ──
+export {
+  getCcasMeta,
+  generateCcasEquipment,
+  listCcasEquipment,
+  toggleCcasEquipmentFavorite,
+  deleteCcasEquipment,
+  saveCcasFlowDiagram,
+  listCcasFlowDiagrams,
+  getCcasFlowDiagram,
+  deleteCcasFlowDiagram,
+  listMyKnowledgeStores,
+  listKnowledgeEntries,
+  getKnowledgeEntryContent,
+  CCAS_PRD_STREAM_URL,
+  CCAS_FLOW_PARSE_STREAM_URL,
+  CCAS_QA_STREAM_URL,
+} from '@/services/real/ccasAgent';
+export type {
+  CcasMeta,
+  CcasTemplateOption,
+  CcasStylePreset,
+  CcasAssociationMode,
+  CcasEquipmentAsset,
+  CcasFlowDiagram,
+  CcasFlowDiagramSummary,
+  CcasKnowledgeStore,
+  CcasKnowledgeEntry,
+  CcasQaHistoryItem,
+  CcasQaRequest,
+  CcasQaReferencePayload,
+} from '@/services/real/ccasAgent';

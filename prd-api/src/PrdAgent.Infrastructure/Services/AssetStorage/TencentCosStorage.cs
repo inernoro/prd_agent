@@ -76,7 +76,7 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
     /// <summary>
     /// 上传 bytes 到指定 key（可选设置 Content-Type）。
     /// </summary>
-    public async Task UploadBytesAsync(string key, byte[] bytes, string? contentType, CancellationToken ct)
+    public async Task UploadBytesAsync(string key, byte[] bytes, string? contentType, CancellationToken ct, string? cacheControl = null)
     {
         ThrowIfDisposed();
         var k = NormalizeKey(key);
@@ -85,6 +85,7 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         await using var ms = new MemoryStream(bytes, writable: false);
         var req = new PutObjectRequest(_bucket, k, ms);
         TrySetContentType(req, contentType);
+        TrySetHeader(req, "Cache-Control", cacheControl);
         ct.ThrowIfCancellationRequested();
         await Task.Run(() => _cos.PutObject(req), ct).ConfigureAwait(false);
     }
@@ -459,9 +460,9 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         return BuildPublicUrl(key);
     }
 
-    public async Task UploadToKeyAsync(string key, byte[] bytes, string? contentType, CancellationToken ct)
+    public async Task UploadToKeyAsync(string key, byte[] bytes, string? contentType, CancellationToken ct, string? cacheControl = null)
     {
-        await UploadBytesAsync(key, bytes, contentType, ct).ConfigureAwait(false);
+        await UploadBytesAsync(key, bytes, contentType, ct, cacheControl).ConfigureAwait(false);
     }
 
     public string BuildUrlForKey(string key)
@@ -531,9 +532,12 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
     }
 
     private static void TrySetContentType(object request, string? contentType)
+        => TrySetHeader(request, "Content-Type", contentType);
+
+    private static void TrySetHeader(object request, string headerName, string? headerValue)
     {
-        var ct = (contentType ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(ct)) return;
+        var value = (headerValue ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(value)) return;
         try
         {
             var t = request.GetType();
@@ -545,7 +549,7 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
                     m.GetParameters()[1].ParameterType == typeof(string));
             if (mi != null)
             {
-                mi.Invoke(request, new object[] { "Content-Type", ct });
+                mi.Invoke(request, new object[] { headerName, value });
             }
         }
         catch

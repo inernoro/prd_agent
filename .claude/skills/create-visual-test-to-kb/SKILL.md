@@ -34,12 +34,31 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
 3. **命名 + 防 `---`**:报告名业界状态前置 `[{verdict_cn}] {目标} · 验收报告 · {项目} · {日期}`;正文必须以 `# 标题` 打头(目录显示名取 summary 首行,见标准 §2.1)。`archive_report.py` 已内置,手工归档也照此。
 4. **准入门槛(入口准则)**:归档前强制校验——目标有意义、档位/Verdict 合法、截图数达档位下限、证据完整、报告结构齐、无半成品残留;**任一不达标直接拒收、不写库**(见标准 §3.5)。输入不对,输出不可能对。
 
+## 自动选模板（AI 自决，告知用户；歧义才问）
+
+技能本身按规则自动决定用哪套模板（v2.1 起），**不让用户每次都选**。AI 调用本技能时按下表判定，并在第一句话告诉用户「本次用 X 模板，理由 Y」：
+
+| 信号 | 选模板 | 理由 |
+|---|---|---|
+| 单一功能/单页/单模块；流程线性（点A→点B→看结果） | **ZZ 照做风**（默认） | 步骤化叙事让"同岗位照做能复现"，对线性交互最直观 |
+| L0 / L1 档位；用户提了具体场景化诉求 | **ZZ 照做风** | 步骤序号天然映射诉求条目，便于一一对应 |
+| 跨模块/跨端（后端+前端+桌面）；L2 档位 | **九段集中证据** | DoD/自测路径/硬约束/缺陷分段更适合复杂证据 |
+| 安全/性能/合规重点；用例非线性需要 ISO 25010 维度分类 | **九段集中证据** | 用例表带 Phase + 维度列，集中证据段适合截图+日志混排 |
+| 单纯回归测试，不引入新行为 | **九段精简版**（删 5.5 节，保留其他） | 用户没提新需求 → 不需要"需求一一对应表" |
+| 信号矛盾（如 L2 但单页、或多端但单一诉求） | **问用户**（仅此场景才问） | 用 AskUserQuestion 给两个选项 + 推荐项 |
+
+**实操**：AI 在 driver 写完截图后、归档前，按上表挑模板，并在交付消息里第一段写：
+
+> 本次验收用「ZZ 照做风」模板。理由：单页交互 + 用户提了 10 条线性诉求，步骤号天然对齐诉求表。
+
+歧义场景才走 AskUserQuestion。**禁止"凭感觉随便选"或"两套都跑一遍"**。
+
 ## 工作流(四步)
 
-1. **定标准与档位**:读 `reference/standard-v2.md`,按改动定 L0/L1/L2(下限见 §3)。
+1. **定标准与档位 + 选模板**:读 `reference/standard-v2.md`,按改动定 L0/L1/L2(下限见 §3);按上表「自动选模板」决定 zz-report.md / report-template.md(歧义才问用户)。
 2. **写 driver 取证**:用 `scripts/harness.mjs` 的 helper 写本次验收的真人路径脚本。基础 helper:`launch/login/gotoByClick/click/type/setTheme/shot`。**ZZ 照做 helper(画框 + 步骤序号,默认用)**:`stepClick(page,outDir,N,locator,name,caption)` 在点击目标上画红框 + 标序号 → 截"点这里"图 → 清框 → 真点击;`stepShot(page,outDir,N,name,caption,highlight?)` 截结果图并框住变化处;`box/clearBoxes` 手动画框。跨用户前置(如造分享链)走 API。核心页双主题各一张;结束 `writeManifest(outDir)`。
    运行:`PWPATH=$(npm root -g)/playwright node <driver>.mjs`(无 playwright 先 `npm i -g playwright && npx playwright install chromium`)。
-3. **读图核对**:截图用 Read 工具读回,肉眼级核对(这套抓到过"匿名未登录""按钮没渲染"等真 bug)。据此填模板得出 Verdict。**默认用 `templates/zz-report.md`(ZZ 照做风:全大标题、一句话一步、`{{IMG:<name>}}` 逐步配图、文字在上图在下、变化处画框、分支顺序讲,见标准 §6.3)**;旧版九段集中证据用 `templates/report-template.md` + `{{EVIDENCE}}`。
+3. **读图核对**:截图用 Read 工具读回,肉眼级核对(这套抓到过"匿名未登录""按钮没渲染"等真 bug)。据此填**自动选定的模板**得出 Verdict。两套模板共享同一速览卡(H1 + Verdict + 一句话结论 + 元信息表) + 同一结尾(meta 注释);中间章节按所选风格走。
 4. **归档**:`python3 scripts/archive_report.py --config acceptance.config.json --target "<目标>" --module "<模块>" --feature "<功能>" --type "<新增功能|优化|修复>" --verdict <pass|conditional|fail> --tier <L0|L1|L2> --report-md <正文.md> --manifest <outDir>/manifest.json [--branch --commit]`。
    - **命名固定结构**(用户定):标题 = `项目 · 模块 · 功能 · 操作方式 · 验收报告`(`--module/--feature/--type` 拼装,空段自动跳过)。**状态(通过/不通过)不进标题——走 tags 标记**(脚本自动写 `[verdict_cn, type, tier]`),不靠改名表达状态。
    - 正文用 `{{IMG:<截图name>}}` 逐步内联(ZZ)或 `{{EVIDENCE}}` 集中,脚本自动替换为内联截图。

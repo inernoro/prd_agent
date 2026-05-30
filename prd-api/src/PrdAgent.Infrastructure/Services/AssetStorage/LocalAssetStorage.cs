@@ -152,8 +152,9 @@ public class LocalAssetStorage : IAssetStorage
         return Task.FromResult(File.Exists(filePath));
     }
 
-    public async Task UploadToKeyAsync(string key, byte[] bytes, string? contentType, CancellationToken ct)
+    public async Task UploadToKeyAsync(string key, byte[] bytes, string? contentType, CancellationToken ct, string? cacheControl = null)
     {
+        // 本地存储无对象级 Cache-Control 概念，cacheControl 仅在 COS/R2 生效，这里忽略。
         var filePath = Path.Combine(_baseDir, key.Replace('/', Path.DirectorySeparatorChar));
         var dir = Path.GetDirectoryName(filePath);
         if (dir != null) Directory.CreateDirectory(dir);
