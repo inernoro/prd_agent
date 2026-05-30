@@ -13,8 +13,8 @@ export const PmAgentCardArt = memo(function PmAgentCardArt() {
   ];
   return (
     <div
-      className="relative w-full overflow-hidden"
-      style={{ aspectRatio: '16 / 10', background: 'linear-gradient(135deg, #0c1733 0%, #15224c 45%, #123a52 100%)' }}
+      className="absolute inset-0 overflow-hidden"
+      style={{ background: 'linear-gradient(135deg, #0c1733 0%, #15224c 45%, #123a52 100%)' }}
     >
       {/* 背景光斑 */}
       <div className="absolute inset-0" style={{ background: 'radial-gradient(circle at 20% 22%, rgba(96,165,250,0.30), transparent 55%)' }} />

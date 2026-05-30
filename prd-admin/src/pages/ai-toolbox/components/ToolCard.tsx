@@ -166,6 +166,7 @@ function getPalette(iconName: string) {
 import { SpotlightEffect } from './SpotlightEffect';
 import { ReviewAgentCardArt } from './ReviewAgentCardArt';
 import { PaAgentCardArt } from './PaAgentCardArt';
+import { PmAgentCardArt } from './PmAgentCardArt';
 import { useAgentImageUrl, useAgentVideoUrl } from '@/stores/homepageAssetsStore';
 
 export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
@@ -421,6 +422,8 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
             />
           )}
         </>
+      ) : item.agentKey === 'pm-agent' && !uploadedCover ? (
+        <PmAgentCardArt />
       ) : coverUrl && !coverFailed ? (
         <>
           <img
