@@ -118,8 +118,9 @@ public class PmAgentController : ControllerBase
 
         // 访问范围（与 FindAccessibleProjectAsync 对齐：owner/leader/member/stakeholder）
         var managed = b.Eq(p => p.LeaderId, userId);
+        // 我相关的：我被设为干系人的项目，且我不是项目经理
         var related = b.And(
-            b.Or(b.Eq(p => p.OwnerId, userId), b.ElemMatch(p => p.Stakeholders, s => s.UserId == userId)),
+            b.ElemMatch(p => p.Stakeholders, s => s.UserId == userId),
             b.Ne(p => p.LeaderId, userId));
         if (scope == "managed") conds.Add(managed);
         else if (scope == "related") conds.Add(related);
