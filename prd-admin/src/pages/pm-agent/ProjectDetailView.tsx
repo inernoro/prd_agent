@@ -68,6 +68,8 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
   const [adding, setAdding] = useState(false);
   const [costEdit, setCostEdit] = useState<{ budget: string; actualCost: string } | null>(null);
   const [savingCost, setSavingCost] = useState(false);
+  const [timeEdit, setTimeEdit] = useState<{ start: string; end: string } | null>(null);
+  const [savingTime, setSavingTime] = useState(false);
   const [openTask, setOpenTask] = useState<PmTask | null>(null);
   // P1 筛选 / 分组
   const [search, setSearch] = useState('');
@@ -144,6 +146,22 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
     } else toast.error('保存失败', res.error?.message || '');
   };
 
+  const saveTime = async () => {
+    if (!timeEdit) return;
+    if (timeEdit.start && timeEdit.end && timeEdit.end < timeEdit.start) { toast.error('结束时间不能早于开始时间', ''); return; }
+    setSavingTime(true);
+    const payload: { plannedStartAt?: string; plannedEndAt?: string } = {};
+    if (timeEdit.start) payload.plannedStartAt = new Date(timeEdit.start + 'T00:00:00').toISOString();
+    if (timeEdit.end) payload.plannedEndAt = new Date(timeEdit.end + 'T00:00:00').toISOString();
+    const res = await updatePmProject(projectId, payload);
+    setSavingTime(false);
+    if (res.success) {
+      setProject((prev) => (prev ? { ...prev, plannedStartAt: payload.plannedStartAt ?? prev.plannedStartAt, plannedEndAt: payload.plannedEndAt ?? prev.plannedEndAt } : prev));
+      setTimeEdit(null);
+      toast.success('已保存项目时间', '');
+    } else toast.error('保存失败', res.error?.message || '');
+  };
+
   // P2 批量
   const toggleSel = (id: string) => setSelected((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const bulkApply = async (patch: { status?: PmTaskStatus; priority?: PmTaskPriority; assigneeId?: string }) => {
@@ -216,6 +234,27 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
               )}
             </div>
             <div className="text-[12px] mt-1" style={{ color: 'var(--text-muted)' }}>{project.projectNo}｜目标：{project.businessGoal}</div>
+            {/* 项目时间 */}
+            <div className="text-[12px] mt-1.5 flex items-center gap-2 flex-wrap" style={{ color: 'var(--text-muted)' }}>
+              <CalendarClock size={12} />
+              {timeEdit ? (
+                <>
+                  <span>开始</span>
+                  <input type="date" value={timeEdit.start} onChange={(e) => setTimeEdit({ ...timeEdit, start: e.target.value })}
+                    className="rounded px-2 py-0.5 text-[12px] outline-none border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} />
+                  <span>结束</span>
+                  <input type="date" value={timeEdit.end} onChange={(e) => setTimeEdit({ ...timeEdit, end: e.target.value })}
+                    className="rounded px-2 py-0.5 text-[12px] outline-none border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} />
+                  <Button variant="primary" size="xs" onClick={saveTime} disabled={savingTime}>保存</Button>
+                  <button onClick={() => setTimeEdit(null)} className="text-[12px] hover:opacity-70">取消</button>
+                </>
+              ) : (
+                <>
+                  <span>时间 {project.plannedStartAt ? new Date(project.plannedStartAt).toLocaleDateString('zh-CN') : '未设置'} ~ {project.plannedEndAt ? new Date(project.plannedEndAt).toLocaleDateString('zh-CN') : '未设置'}</span>
+                  <button onClick={() => setTimeEdit({ start: project.plannedStartAt ? project.plannedStartAt.slice(0, 10) : '', end: project.plannedEndAt ? project.plannedEndAt.slice(0, 10) : '' })} className="hover:opacity-70" style={{ color: 'var(--text-secondary)' }}>编辑时间</button>
+                </>
+              )}
+            </div>
             {/* 成本侧进度留痕 */}
             <div className="text-[12px] mt-1.5 flex items-center gap-2 flex-wrap" style={{ color: 'var(--text-muted)' }}>
               {costEdit ? (

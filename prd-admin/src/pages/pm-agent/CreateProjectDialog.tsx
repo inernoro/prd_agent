@@ -26,13 +26,19 @@ export function CreateProjectDialog({ onClose, onCreated }: Props) {
   const [operationSubType, setOperationSubType] = useState<PmOperationSubType>('routine');
   const [strategyAlignment, setStrategyAlignment] = useState('');
   const [leaderId, setLeaderId] = useState(myId);
+  const [plannedStartAt, setPlannedStartAt] = useState('');
+  const [plannedEndAt, setPlannedEndAt] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // 日期输入(YYYY-MM-DD) → ISO；开始时间允许早于当前时间，不做过去校验
+  const toIso = (v: string) => (v ? new Date(v + 'T00:00:00').toISOString() : undefined);
 
   const handleCreate = async () => {
     if (!title.trim()) { setError('请填写项目名称'); return; }
     if (!businessGoal.trim()) { setError('请填写业务目标（AI 拆解任务的依据）'); return; }
     if (!leaderId) { setError('请指定项目经理'); return; }
+    if (plannedStartAt && plannedEndAt && plannedEndAt < plannedStartAt) { setError('结束时间不能早于开始时间'); return; }
     setLoading(true);
     setError('');
     const res = await createPmProject({
@@ -43,6 +49,8 @@ export function CreateProjectDialog({ onClose, onCreated }: Props) {
       operationSubType: projectType === 'operation' ? operationSubType : undefined,
       strategyAlignment: strategyAlignment.trim() || undefined,
       leaderId,
+      plannedStartAt: toIso(plannedStartAt),
+      plannedEndAt: toIso(plannedEndAt),
     });
     setLoading(false);
     if (res.success) {
@@ -65,7 +73,7 @@ export function CreateProjectDialog({ onClose, onCreated }: Props) {
       >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 shrink-0 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
-          <div className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>立项注册</div>
+          <div className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>创建项目</div>
           <button onClick={onClose} className="p-1 rounded hover:opacity-70" style={{ color: 'var(--text-muted)' }}><X size={18} /></button>
         </div>
 
@@ -85,6 +93,18 @@ export function CreateProjectDialog({ onClose, onCreated }: Props) {
             <label className={labelCls} style={{ color: 'var(--text-secondary)' }}>项目经理 <span style={{ color: '#EF4444' }}>*</span></label>
             <UserSearchSelect value={leaderId} onChange={setLeaderId} placeholder="选择项目经理（默认你自己）" />
           </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls} style={{ color: 'var(--text-secondary)' }}>开始时间</label>
+              <input type="date" className={inputCls} style={inputStyle} value={plannedStartAt} onChange={(e) => setPlannedStartAt(e.target.value)} />
+            </div>
+            <div>
+              <label className={labelCls} style={{ color: 'var(--text-secondary)' }}>结束时间</label>
+              <input type="date" className={inputCls} style={inputStyle} value={plannedEndAt} onChange={(e) => setPlannedEndAt(e.target.value)} />
+            </div>
+          </div>
+          <div className="text-[11px] -mt-2" style={{ color: 'var(--text-muted)' }}>开始时间可早于今天；结束时间用于「结案评价须过项目结束时间」的判定。</div>
 
           <div>
             <label className={labelCls} style={{ color: 'var(--text-secondary)' }}>项目类型</label>

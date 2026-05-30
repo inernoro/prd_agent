@@ -58,7 +58,7 @@ public class PmAgentController : ControllerBase
     // 项目 CRUD（立项 / 列表 / 详情 / 更新 / 删除）
     // ─────────────────────────────────────────────
 
-    /// <summary>立项注册 — 创建项目</summary>
+    /// <summary>创建项目（立项）</summary>
     [HttpPost("projects")]
     public async Task<IActionResult> CreateProject([FromBody] CreatePmProjectRequest request)
     {
