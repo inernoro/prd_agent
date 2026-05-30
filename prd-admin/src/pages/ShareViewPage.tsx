@@ -6,6 +6,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { Lock, ExternalLink, FileCode2, Eye, EyeOff, AlertCircle, ShieldCheck, Unlock, Download, Check, LogIn } from 'lucide-react';
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
 import { BlurText } from '@/components/reactbits';
+import CommentsSection from '@/components/web-hosting/CommentsSection';
 
 function fmtSize(b: number) {
   if (b < 1024) return `${b} B`;

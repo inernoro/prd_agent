@@ -39,6 +39,7 @@ import { useTeamStore } from '@/stores/teamStore';
 import { recordSiteView } from '@/services/real/webAnalytics';
 import { SiteViewersDrawer } from '@/components/web-hosting/SiteViewersDrawer';
 import { ShareAnalyticsDrawer } from '@/components/web-hosting/ShareAnalyticsDrawer';
+import SitePreviewModal from '@/components/web-hosting/SitePreviewModal';
 import { createPortal } from 'react-dom';
 import type { DocumentStore } from '@/services/contracts/documentStore';
 import { ShareDock, useDockDrag } from '@/components/share-dock';
@@ -1222,7 +1223,7 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
   );
 }
 
-function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSelect, onTogglePublic, onEdit, onDelete, onShare, onCancelShare, onQrCode, onTransferToLibrary, onReplaceFile, onViewers, onMove }: {
+function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSelect, onTogglePublic, onEdit, onDelete, onShare, onCancelShare, onQrCode, onTransferToLibrary, onReplaceFile, onViewers, onMove, onComments }: {
   site: HostedSite;
   selected: boolean;
   fresh?: boolean;
@@ -1240,6 +1241,7 @@ function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSelect, on
   onTransferToLibrary: () => void;
   onReplaceFile: (file: File) => void;
   onMove?: () => void;
+  onComments?: () => void;
 }) {
   const c = caps ?? { canEdit: true, canDelete: true, canShare: true, canSetVisibility: true };
   const isPublic = site.visibility === 'public';
