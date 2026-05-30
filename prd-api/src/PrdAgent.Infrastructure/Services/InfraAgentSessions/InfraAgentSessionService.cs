@@ -1767,7 +1767,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                             messageId = runId,
                             text,
                             source = eventSource,
-                            runtimeAdapter = selectedRuntimeAdapter,
+                            runtimeAdapter = activeAdapterKind,
                             runtimeInstance = ev.RuntimeInstanceName
                         }), ct);
                     }
@@ -1781,7 +1781,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                         risk = "dangerous",
                         status = "waiting",
                         source = eventSource,
-                        runtimeAdapter = selectedRuntimeAdapter,
+                        runtimeAdapter = activeAdapterKind,
                         runtimeInstance = ev.RuntimeInstanceName
                     }), ct);
                     break;
@@ -1792,7 +1792,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                         decision = "completed",
                         resultSummary = ev.Content,
                         source = eventSource,
-                        runtimeAdapter = selectedRuntimeAdapter,
+                        runtimeAdapter = activeAdapterKind,
                         runtimeInstance = ev.RuntimeInstanceName
                     }), ct);
                     break;
@@ -1801,7 +1801,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                     {
                         level = "info",
                         source = eventSource,
-                        runtimeAdapter = selectedRuntimeAdapter,
+                        runtimeAdapter = activeAdapterKind,
                         inputTokens = ev.InputTokens,
                         outputTokens = ev.OutputTokens,
                         content = ev.Content,
@@ -1813,7 +1813,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                     {
                         level = "info",
                         source = eventSource,
-                        runtimeAdapter = selectedRuntimeAdapter,
+                        runtimeAdapter = activeAdapterKind,
                         runtimeInstance = ev.RuntimeInstanceName,
                         runtimeRunId = runId,
                         message = ev.Message ?? "runtime initialized",
@@ -1827,7 +1827,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                         messageId = runId,
                         finalText = doneText,
                         source = eventSource,
-                        runtimeAdapter = selectedRuntimeAdapter,
+                        runtimeAdapter = activeAdapterKind,
                         content = ev.Content,
                         runtimeInstance = ev.RuntimeInstanceName
                     }), ct);
@@ -1861,7 +1861,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                         recoveryKind = errorStatus.RecoveryKind,
                         nextActions = errorStatus.NextActions,
                         source = eventSource,
-                        runtimeAdapter = selectedRuntimeAdapter,
+                        runtimeAdapter = activeAdapterKind,
                         runtimeInstance = ev.RuntimeInstanceName,
                         content = ev.Content
                     }), ct);
