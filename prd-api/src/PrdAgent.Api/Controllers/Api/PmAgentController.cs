@@ -4,9 +4,11 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -22,14 +24,25 @@ public class PmAgentController : ControllerBase
 {
     private readonly MongoDbContext _db;
     private readonly PmAgentService _pmService;
+    private readonly IAssetStorage _assetStorage;
+    private readonly IHostedSiteService _hostedSites;
     private readonly ILogger<PmAgentController> _logger;
 
-    public PmAgentController(MongoDbContext db, PmAgentService pmService, ILogger<PmAgentController> logger)
+    public PmAgentController(
+        MongoDbContext db,
+        PmAgentService pmService,
+        IAssetStorage assetStorage,
+        IHostedSiteService hostedSites,
+        ILogger<PmAgentController> logger)
     {
         _db = db;
         _pmService = pmService;
+        _assetStorage = assetStorage;
+        _hostedSites = hostedSites;
         _logger = logger;
     }
+
+    private const long MaxKnowledgeBytes = 50 * 1024 * 1024;
 
     private string GetUserId() => this.GetRequiredUserId();
 
@@ -962,6 +975,12 @@ public class CreatePmProjectRequest
 public class SetMembersRequest
 {
     public List<string> MemberIds { get; set; } = new();
+}
+
+public class UpdateKnowledgeFileRequest
+{
+    public string? FileName { get; set; }
+    public string? Category { get; set; }
 }
 
 public class UpdatePmProjectRequest

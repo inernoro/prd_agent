@@ -23,7 +23,14 @@ import type {
   BulkPmTasksContract,
   GetPmMembersContract,
   SetPmMembersContract,
+  ListPmKnowledgeFilesContract,
+  UpdatePmKnowledgeFileContract,
+  DeletePmKnowledgeFileContract,
+  GetPmMemberSitesContract,
+  PmKnowledgeFile,
 } from '@/services/contracts/pmAgent';
+import type { ApiResponse } from '@/types/api';
+import { useAuthStore } from '@/stores/authStore';
 
 export const createPmProjectReal: CreatePmProjectContract = async (input) => {
   return await apiRequest(api.pm.projects.create(), { method: 'POST', body: input });
@@ -43,6 +50,39 @@ export const getPmMembersReal: GetPmMembersContract = async (projectId) => {
 
 export const setPmMembersReal: SetPmMembersContract = async (projectId, memberIds) => {
   return await apiRequest(api.pm.projects.members(encodeURIComponent(projectId)), { method: 'PUT', body: { memberIds } });
+};
+
+// ── 知识库 ──
+export const listPmKnowledgeFilesReal: ListPmKnowledgeFilesContract = async (projectId, category) => {
+  const qs = category ? `?category=${encodeURIComponent(category)}` : '';
+  return await apiRequest(`${api.pm.projects.knowledgeFiles(encodeURIComponent(projectId))}${qs}`, { method: 'GET' });
+};
+
+/** 知识库上传：FormData 必须走原生 fetch（apiRequest 会 JSON 序列化，见规则 #7） */
+export const uploadPmKnowledgeFileReal = async (projectId: string, file: File, category?: string): Promise<ApiResponse<PmKnowledgeFile>> => {
+  const token = useAuthStore.getState().token;
+  const fd = new FormData();
+  fd.append('file', file);
+  if (category) fd.append('category', category);
+  const res = await fetch(api.pm.projects.knowledgeFiles(encodeURIComponent(projectId)), {
+    method: 'POST',
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: fd,
+    credentials: 'include',
+  });
+  return await res.json();
+};
+
+export const updatePmKnowledgeFileReal: UpdatePmKnowledgeFileContract = async (fileId, input) => {
+  return await apiRequest(api.pm.knowledge.file(encodeURIComponent(fileId)), { method: 'PUT', body: input });
+};
+
+export const deletePmKnowledgeFileReal: DeletePmKnowledgeFileContract = async (fileId) => {
+  return await apiRequest(api.pm.knowledge.file(encodeURIComponent(fileId)), { method: 'DELETE' });
+};
+
+export const getPmMemberSitesReal: GetPmMemberSitesContract = async (projectId) => {
+  return await apiRequest(api.pm.projects.memberSites(encodeURIComponent(projectId)), { method: 'GET' });
 };
 
 export const getPmProjectReal: GetPmProjectContract = async (projectId) => {

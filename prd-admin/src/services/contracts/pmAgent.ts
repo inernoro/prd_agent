@@ -293,6 +293,27 @@ export type ListPmProjectsContract = (
 export type PmMember = { userId: string; displayName: string; avatarFileName?: string | null };
 export type GetPmMembersContract = (projectId: string) => Promise<ApiResponse<{ members: PmMember[]; leaderId: string; ownerId: string }>>;
 export type SetPmMembersContract = (projectId: string, memberIds: string[]) => Promise<ApiResponse<{ members: PmMember[]; memberIds: string[] }>>;
+
+// ── 知识库 ──
+export type PmKnowledgeFile = {
+  id: string;
+  projectId: string;
+  fileName: string;
+  contentType: string;
+  fileSize: number;
+  url: string;
+  category: string;
+  uploaderId: string;
+  uploaderName?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+export type PmMemberSite = { userId: string; userName: string; siteId: string; title: string; url: string };
+
+export type ListPmKnowledgeFilesContract = (projectId: string, category?: string) => Promise<ApiResponse<{ files: PmKnowledgeFile[]; categories: string[] }>>;
+export type UpdatePmKnowledgeFileContract = (fileId: string, input: { fileName?: string; category?: string }) => Promise<ApiResponse<{ updated: boolean }>>;
+export type DeletePmKnowledgeFileContract = (fileId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
+export type GetPmMemberSitesContract = (projectId: string) => Promise<ApiResponse<{ sites: PmMemberSite[] }>>;
 export type GetPmProjectContract = (projectId: string) => Promise<ApiResponse<{ project: PmProject; tasks: PmTask[] }>>;
 export type UpdatePmProjectContract = (projectId: string, input: UpdatePmProjectInput) => Promise<ApiResponse<{ updated: boolean }>>;
 export type DeletePmProjectContract = (projectId: string) => Promise<ApiResponse<{ deleted: boolean }>>;

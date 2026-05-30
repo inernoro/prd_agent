@@ -1954,11 +1954,18 @@ export {
   bulkPmTasksReal as bulkPmTasks,
   getPmMembersReal as getPmMembers,
   setPmMembersReal as setPmMembers,
+  listPmKnowledgeFilesReal as listPmKnowledgeFiles,
+  uploadPmKnowledgeFileReal as uploadPmKnowledgeFile,
+  updatePmKnowledgeFileReal as updatePmKnowledgeFile,
+  deletePmKnowledgeFileReal as deletePmKnowledgeFile,
+  getPmMemberSitesReal as getPmMemberSites,
 } from '@/services/real/pmAgent';
 export type {
   PmProject,
   PmMember,
   PmProjectScope,
+  PmKnowledgeFile,
+  PmMemberSite,
   PmTask,
   PmTaskDraft,
   PmStakeholder,

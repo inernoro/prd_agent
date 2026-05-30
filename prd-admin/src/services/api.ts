@@ -1300,6 +1300,8 @@ export const api = {
       batchTasks: (projectId: string) => `/api/pm/projects/${projectId}/tasks/batch`,
       bulkTasks: (projectId: string) => `/api/pm/projects/${projectId}/tasks/bulk`,
       members: (projectId: string) => `/api/pm/projects/${projectId}/members`,
+      knowledgeFiles: (projectId: string) => `/api/pm/projects/${projectId}/knowledge/files`,
+      memberSites: (projectId: string) => `/api/pm/projects/${projectId}/member-sites`,
       stakeholders: (projectId: string) => `/api/pm/projects/${projectId}/stakeholders`,
       evaluationStart: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/start`,
       evaluationScore: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/score`,
@@ -1311,6 +1313,9 @@ export const api = {
       delete: (taskId: string) => `/api/pm/tasks/${taskId}`,
       activities: (taskId: string) => `/api/pm/tasks/${taskId}/activities`,
       comments: (taskId: string) => `/api/pm/tasks/${taskId}/comments`,
+    },
+    knowledge: {
+      file: (fileId: string) => `/api/pm/knowledge/files/${fileId}`,
     },
     dashboard: () => '/api/pm/dashboard',
     rewardConfig: () => '/api/pm/reward-config',
