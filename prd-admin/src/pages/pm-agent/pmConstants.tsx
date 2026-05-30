@@ -8,6 +8,7 @@ import type {
   PmEvaluationGrade,
   PmDecisionType,
   PmGoalStatus,
+  PmMilestoneHealth,
 } from '@/services/contracts/pmAgent';
 
 // ── 项目类型注册表（S / I / O）──
@@ -103,6 +104,15 @@ export const GOAL_SCOPE = {
   team: { label: '团队目标', desc: '全员可见的项目共同目标' },
   personal: { label: '个人目标', desc: '仅自己可见的个人计划' },
 } as const;
+
+// ── 里程碑健康度注册表（派生，用于徽章/菱形配色）──
+export const MILESTONE_HEALTH_REGISTRY: Record<PmMilestoneHealth, { label: string; color: string }> = {
+  on_track: { label: '正常', color: '#3B82F6' },
+  at_risk: { label: '临近', color: '#F59E0B' },
+  overdue: { label: '已逾期', color: '#EF4444' },
+  reached: { label: '已达成', color: '#10B981' },
+  cancelled: { label: '已取消', color: '#9CA3AF' },
+};
 
 // ── 优先级注册表 ──
 export const PRIORITY_REGISTRY: Record<PmTaskPriority, { label: string; color: string; weight: number }> = {

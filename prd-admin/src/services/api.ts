@@ -1307,6 +1307,7 @@ export const api = {
       weeklyReportImage: (projectId: string) => `/api/pm/projects/${projectId}/weekly-reports/image`,
       meetings: (projectId: string) => `/api/pm/projects/${projectId}/meetings`,
       goals: (projectId: string) => `/api/pm/projects/${projectId}/goals`,
+      milestones: (projectId: string) => `/api/pm/projects/${projectId}/milestones`,
       stakeholders: (projectId: string) => `/api/pm/projects/${projectId}/stakeholders`,
       evaluationStart: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/start`,
       evaluationScore: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/score`,
@@ -1333,6 +1334,9 @@ export const api = {
     },
     goals: {
       item: (goalId: string) => `/api/pm/goals/${goalId}`,
+    },
+    milestones: {
+      item: (milestoneId: string) => `/api/pm/milestones/${milestoneId}`,
     },
     dashboard: () => '/api/pm/dashboard',
     auditLogs: () => '/api/pm/audit-logs',

@@ -177,6 +177,7 @@ export type PmTask = {
   title: string;
   description?: string;
   parentTaskId?: string | null;
+  milestoneId?: string | null;
   status: PmTaskStatus;
   priority: PmTaskPriority;
   assigneeId?: string | null;
@@ -267,6 +268,7 @@ export type UpdatePmTaskInput = Partial<{
   dependsOn: string[];
   labels: string[];
   orderKey: number;
+  milestoneId: string;
 }>;
 
 export type BatchCreatePmTasksInput = {
@@ -419,6 +421,32 @@ export type PmAuditLog = {
   createdAt: string;
 };
 export type ListPmAuditLogsContract = (opts?: { projectId?: string; page?: number; pageSize?: number }) => Promise<ApiResponse<{ items: PmAuditLog[]; total: number; page: number; pageSize: number }>>;
+
+// ── 里程碑 ──
+export type PmMilestoneStatus = 'planned' | 'reached' | 'cancelled';
+export type PmMilestoneHealth = 'on_track' | 'at_risk' | 'overdue' | 'reached' | 'cancelled';
+export type PmMilestone = {
+  id: string;
+  projectId: string;
+  title: string;
+  description?: string | null;
+  dueAt?: string | null;
+  reachedAt?: string | null;
+  goalId?: string | null;
+  status: PmMilestoneStatus;
+  orderKey: number;
+  taskTotal: number;
+  taskDone: number;
+  progress: number;
+  health: PmMilestoneHealth;
+  createdAt: string;
+  updatedAt: string;
+};
+export type SavePmMilestoneInput = Partial<{ title: string; description: string; dueAt: string; goalId: string; status: PmMilestoneStatus; orderKey: number }>;
+export type ListPmMilestonesContract = (projectId: string) => Promise<ApiResponse<{ items: PmMilestone[] }>>;
+export type CreatePmMilestoneContract = (projectId: string, input: SavePmMilestoneInput) => Promise<ApiResponse<PmMilestone>>;
+export type UpdatePmMilestoneContract = (milestoneId: string, input: SavePmMilestoneInput) => Promise<ApiResponse<{ updated: boolean }>>;
+export type DeletePmMilestoneContract = (milestoneId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
 export type GetPmProjectContract = (projectId: string) => Promise<ApiResponse<{ project: PmProject; tasks: PmTask[] }>>;
 export type UpdatePmProjectContract = (projectId: string, input: UpdatePmProjectInput) => Promise<ApiResponse<{ updated: boolean }>>;
 export type DeletePmProjectContract = (projectId: string) => Promise<ApiResponse<{ deleted: boolean }>>;

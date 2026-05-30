@@ -45,6 +45,10 @@ import type {
   UpdatePmGoalContract,
   DeletePmGoalContract,
   ListPmAuditLogsContract,
+  ListPmMilestonesContract,
+  CreatePmMilestoneContract,
+  UpdatePmMilestoneContract,
+  DeletePmMilestoneContract,
 } from '@/services/contracts/pmAgent';
 import type { ApiResponse } from '@/types/api';
 import { useAuthStore } from '@/stores/authStore';
@@ -190,6 +194,23 @@ export const listPmAuditLogsReal: ListPmAuditLogsContract = async (opts) => {
   const qs = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (projectId) qs.set('projectId', projectId);
   return await apiRequest(`${api.pm.auditLogs()}?${qs.toString()}`, { method: 'GET' });
+};
+
+// ── 里程碑 ──
+export const listPmMilestonesReal: ListPmMilestonesContract = async (projectId) => {
+  return await apiRequest(api.pm.projects.milestones(encodeURIComponent(projectId)), { method: 'GET' });
+};
+
+export const createPmMilestoneReal: CreatePmMilestoneContract = async (projectId, input) => {
+  return await apiRequest(api.pm.projects.milestones(encodeURIComponent(projectId)), { method: 'POST', body: input });
+};
+
+export const updatePmMilestoneReal: UpdatePmMilestoneContract = async (milestoneId, input) => {
+  return await apiRequest(api.pm.milestones.item(encodeURIComponent(milestoneId)), { method: 'PUT', body: input });
+};
+
+export const deletePmMilestoneReal: DeletePmMilestoneContract = async (milestoneId) => {
+  return await apiRequest(api.pm.milestones.item(encodeURIComponent(milestoneId)), { method: 'DELETE' });
 };
 
 export const getPmProjectReal: GetPmProjectContract = async (projectId) => {

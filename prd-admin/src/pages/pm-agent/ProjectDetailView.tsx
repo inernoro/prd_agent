@@ -6,9 +6,9 @@ import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { toast } from '@/lib/toast';
 import { useAuthStore } from '@/stores/authStore';
 import {
-  getPmProject, createPmTask, updatePmTask, deletePmTask, updatePmProject, bulkPmTasks,
+  getPmProject, createPmTask, updatePmTask, deletePmTask, updatePmProject, bulkPmTasks, listPmMilestones,
 } from '@/services';
-import type { PmProject, PmTask, PmTaskStatus, PmTaskPriority } from '@/services/contracts/pmAgent';
+import type { PmProject, PmTask, PmTaskStatus, PmTaskPriority, PmMilestone } from '@/services/contracts/pmAgent';
 import { KanbanBoard } from './KanbanBoard';
 import { GanttChart } from './GanttChart';
 import { DecomposePanel } from './DecomposePanel';
@@ -19,6 +19,7 @@ import { DecisionsPanel } from './DecisionsPanel';
 import { WeeklyReportsPanel } from './WeeklyReportsPanel';
 import { MeetingsPanel } from './MeetingsPanel';
 import { GoalsPanel } from './GoalsPanel';
+import { MilestonesBar } from './MilestonesBar';
 import { EvaluatePanel } from './EvaluatePanel';
 import { TaskDetailDrawer } from './TaskDetailDrawer';
 import { PROJECT_TYPE_REGISTRY, LIFECYCLE_REGISTRY, TASK_STATUS_REGISTRY, PRIORITY_REGISTRY, GRADE_REGISTRY } from './pmConstants';
@@ -57,6 +58,7 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
   const myId = useAuthStore((s) => s.user?.userId ?? '');
   const [project, setProject] = useState<PmProject | null>(null);
   const [tasks, setTasks] = useState<PmTask[]>([]);
+  const [milestones, setMilestones] = useState<PmMilestone[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<ViewTab>('tasks');
   const [viewMode, setViewMode] = useState<TaskViewMode>('board');
@@ -78,12 +80,18 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
   const [wipEdit, setWipEdit] = useState(false);
   const [bulkAssignee, setBulkAssignee] = useState('');
 
+  const loadMilestones = useCallback(async () => {
+    const res = await listPmMilestones(projectId);
+    if (res.success) setMilestones(res.data.items);
+  }, [projectId]);
+
   const load = useCallback(async () => {
     const res = await getPmProject(projectId);
     if (res.success) { setProject(res.data.project); setTasks(res.data.tasks); }
     else toast.error('加载失败', res.error?.message || '');
+    loadMilestones();
     setLoading(false);
-  }, [projectId]);
+  }, [projectId, loadMilestones]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -394,7 +402,10 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
         </div>
       )}
 
-      {tasks.length > 0 && tab === 'tasks' && viewMode === 'gantt' && <GanttChart tasks={filtered} onOpen={setOpenTask} />}
+      {tab === 'tasks' && viewMode === 'gantt' && (
+        <MilestonesBar projectId={projectId} milestones={milestones} canManage={project.ownerId === myId || project.leaderId === myId} onChanged={loadMilestones} />
+      )}
+      {tasks.length > 0 && tab === 'tasks' && viewMode === 'gantt' && <GanttChart tasks={filtered} milestones={milestones} onOpen={setOpenTask} />}
 
       {tab === 'knowledge' && <KnowledgePanel projectId={projectId} />}
 
@@ -418,9 +429,10 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
         <TaskDetailDrawer
           task={openTask}
           allTasks={tasks}
+          milestones={milestones}
           onClose={() => setOpenTask(null)}
-          onSaved={(u) => { setTasks((prev) => prev.map((t) => (t.id === u.id ? u : t))); setOpenTask(null); }}
-          onDeleted={(id) => { setTasks((prev) => prev.filter((t) => t.id !== id)); setOpenTask(null); }}
+          onSaved={(u) => { setTasks((prev) => prev.map((t) => (t.id === u.id ? u : t))); setOpenTask(null); loadMilestones(); }}
+          onDeleted={(id) => { setTasks((prev) => prev.filter((t) => t.id !== id)); setOpenTask(null); loadMilestones(); }}
           onChanged={load}
         />
       )}

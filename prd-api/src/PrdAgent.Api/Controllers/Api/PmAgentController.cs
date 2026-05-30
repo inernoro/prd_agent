@@ -780,6 +780,153 @@ public class PmAgentController : ControllerBase
     }
 
     // ─────────────────────────────────────────────
+    // 里程碑（独立节点；进度由任务完成度读时滚动）
+    // ─────────────────────────────────────────────
+
+    /// <summary>里程碑列表，附进度滚动（任务完成度）与派生健康度</summary>
+    [HttpGet("projects/{projectId}/milestones")]
+    public async Task<IActionResult> ListMilestones(string projectId)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+
+        var milestones = await _db.PmMilestones.Find(m => m.ProjectId == projectId)
+            .SortBy(m => m.OrderKey).ThenBy(m => m.DueAt).ToListAsync();
+        // 仅取计算进度所需字段
+        var tasks = await _db.PmTasks.Find(t => t.ProjectId == projectId)
+            .Project(t => new { t.MilestoneId, t.Status }).ToListAsync();
+
+        var items = milestones.Select(m =>
+        {
+            var mine = tasks.Where(t => t.MilestoneId == m.Id && t.Status != PmTaskStatus.Cancelled).ToList();
+            var total = mine.Count;
+            var done = mine.Count(t => t.Status == PmTaskStatus.Done);
+            var progress = total > 0 ? (int)Math.Round(done * 100.0 / total) : 0;
+            return new
+            {
+                id = m.Id,
+                projectId = m.ProjectId,
+                title = m.Title,
+                description = m.Description,
+                dueAt = m.DueAt,
+                reachedAt = m.ReachedAt,
+                goalId = m.GoalId,
+                status = m.Status,
+                orderKey = m.OrderKey,
+                taskTotal = total,
+                taskDone = done,
+                progress,
+                health = MilestoneHealth(m, total, done),
+                createdAt = m.CreatedAt,
+                updatedAt = m.UpdatedAt,
+            };
+        }).ToList();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>派生健康度（不存储）：reached/cancelled/overdue/at_risk/on_track</summary>
+    private static string MilestoneHealth(PmMilestone m, int total, int done)
+    {
+        if (m.Status == PmMilestoneStatus.Reached) return "reached";
+        if (m.Status == PmMilestoneStatus.Cancelled) return "cancelled";
+        var allDone = total > 0 && done >= total;
+        var today = DateTime.UtcNow.Date;
+        if (m.DueAt.HasValue && !allDone)
+        {
+            if (m.DueAt.Value.Date < today) return "overdue";
+            if (m.DueAt.Value.Date <= today.AddDays(3)) return "at_risk";
+        }
+        return "on_track";
+    }
+
+    /// <summary>新建里程碑（仅 owner/leader 排计划）</summary>
+    [HttpPost("projects/{projectId}/milestones")]
+    public async Task<IActionResult> CreateMilestone(string projectId, [FromBody] MilestoneRequest request)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (project.OwnerId != userId && project.LeaderId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅立项人或负责人可管理里程碑"));
+        if (string.IsNullOrWhiteSpace(request.Title))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "里程碑名称不能为空"));
+
+        var creatorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+        var entity = new PmMilestone
+        {
+            ProjectId = projectId,
+            Title = request.Title!.Trim(),
+            Description = request.Description?.Trim(),
+            DueAt = request.DueAt,
+            GoalId = string.IsNullOrWhiteSpace(request.GoalId) ? null : request.GoalId,
+            Status = PmMilestoneStatus.Planned,
+            OrderKey = DateTime.UtcNow.Ticks,
+            CreatedBy = userId,
+            CreatedByName = creatorName,
+        };
+        await _db.PmMilestones.InsertOneAsync(entity);
+        return Ok(ApiResponse<object>.Ok(entity));
+    }
+
+    /// <summary>更新里程碑（仅 owner/leader）。转入 reached 落 ReachedAt，转出清空</summary>
+    [HttpPut("milestones/{milestoneId}")]
+    public async Task<IActionResult> UpdateMilestone(string milestoneId, [FromBody] MilestoneRequest request)
+    {
+        var userId = GetUserId();
+        var m = await _db.PmMilestones.Find(x => x.Id == milestoneId).FirstOrDefaultAsync();
+        if (m == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "里程碑不存在"));
+        var project = await FindAccessibleProjectAsync(m.ProjectId, userId);
+        if (project == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (project.OwnerId != userId && project.LeaderId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅立项人或负责人可管理里程碑"));
+
+        var update = Builders<PmMilestone>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow);
+        if (request.Title != null)
+        {
+            if (string.IsNullOrWhiteSpace(request.Title))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "里程碑名称不能为空"));
+            update = update.Set(x => x.Title, request.Title.Trim());
+        }
+        if (request.Description != null) update = update.Set(x => x.Description, request.Description.Trim());
+        if (request.DueAt.HasValue) update = update.Set(x => x.DueAt, request.DueAt);
+        if (request.GoalId != null) update = update.Set(x => x.GoalId, string.IsNullOrWhiteSpace(request.GoalId) ? null : request.GoalId);
+        if (request.OrderKey.HasValue) update = update.Set(x => x.OrderKey, request.OrderKey.Value);
+        if (request.Status != null)
+        {
+            if (!PmMilestoneStatus.IsValid(request.Status))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的里程碑状态"));
+            update = update.Set(x => x.Status, request.Status);
+            if (request.Status == PmMilestoneStatus.Reached && m.Status != PmMilestoneStatus.Reached)
+                update = update.Set(x => x.ReachedAt, DateTime.UtcNow);
+            else if (request.Status != PmMilestoneStatus.Reached && m.Status == PmMilestoneStatus.Reached)
+                update = update.Set(x => x.ReachedAt, (DateTime?)null);
+        }
+        await _db.PmMilestones.UpdateOneAsync(x => x.Id == milestoneId, update);
+        return Ok(ApiResponse<object>.Ok(new { updated = true }));
+    }
+
+    /// <summary>删除里程碑（仅 owner/leader）。同时解除其下任务的归属（MilestoneId 置空）</summary>
+    [HttpDelete("milestones/{milestoneId}")]
+    public async Task<IActionResult> DeleteMilestone(string milestoneId)
+    {
+        var userId = GetUserId();
+        var m = await _db.PmMilestones.Find(x => x.Id == milestoneId).FirstOrDefaultAsync();
+        if (m == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "里程碑不存在"));
+        var project = await FindAccessibleProjectAsync(m.ProjectId, userId);
+        if (project == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (project.OwnerId != userId && project.LeaderId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅立项人或负责人可管理里程碑"));
+
+        await _db.PmTasks.UpdateManyAsync(t => t.MilestoneId == milestoneId,
+            Builders<PmTask>.Update.Set(t => t.MilestoneId, (string?)null).Set(t => t.UpdatedAt, DateTime.UtcNow));
+        await _db.PmMilestones.DeleteOneAsync(x => x.Id == milestoneId);
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    // ─────────────────────────────────────────────
     // 审计日志（操作留痕，管理层可见）
     // ─────────────────────────────────────────────
 
@@ -1216,6 +1363,7 @@ public class PmAgentController : ControllerBase
             Title = request.Title.Trim(),
             Description = request.Description?.Trim(),
             ParentTaskId = request.ParentTaskId,
+            MilestoneId = string.IsNullOrWhiteSpace(request.MilestoneId) ? null : request.MilestoneId,
             Status = PmTaskStatus.All.Contains(request.Status ?? "") ? request.Status! : PmTaskStatus.Backlog,
             Priority = PmTaskPriority.All.Contains(request.Priority ?? "") ? request.Priority! : PmTaskPriority.None,
             AssigneeId = request.AssigneeId,
@@ -1314,6 +1462,8 @@ public class PmAgentController : ControllerBase
         if (request.DependsOn != null) update = update.Set(t => t.DependsOn, request.DependsOn);
         if (request.Labels != null) update = update.Set(t => t.Labels, request.Labels);
         if (request.OrderKey.HasValue) update = update.Set(t => t.OrderKey, request.OrderKey.Value);
+        // MilestoneId：空串=解除归属（置 null），非空=归属
+        if (request.MilestoneId != null) update = update.Set(t => t.MilestoneId, string.IsNullOrWhiteSpace(request.MilestoneId) ? null : request.MilestoneId);
 
         await _db.PmTasks.UpdateOneAsync(t => t.Id == taskId, update);
         if (request.Status != null) await RecalcTaskCountAsync(task.ProjectId);
@@ -1712,6 +1862,7 @@ public class CreatePmTaskRequest
     public string Title { get; set; } = string.Empty;
     public string? Description { get; set; }
     public string? ParentTaskId { get; set; }
+    public string? MilestoneId { get; set; }
     public string? Status { get; set; }
     public string? Priority { get; set; }
     public string? AssigneeId { get; set; }
@@ -1752,6 +1903,18 @@ public class UpdatePmTaskRequest
     public List<string>? DependsOn { get; set; }
     public List<string>? Labels { get; set; }
     public double? OrderKey { get; set; }
+    /// <summary>所属里程碑：传空串=解除归属，非空=归属，null=不变</summary>
+    public string? MilestoneId { get; set; }
+}
+
+public class MilestoneRequest
+{
+    public string? Title { get; set; }
+    public string? Description { get; set; }
+    public DateTime? DueAt { get; set; }
+    public string? GoalId { get; set; }
+    public string? Status { get; set; }
+    public long? OrderKey { get; set; }
 }
 
 public class DecomposeRequest
