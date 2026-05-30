@@ -393,6 +393,14 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
           style={{ flex: 1, border: 'none', width: '100%' }}
           sandbox={site.pdfAssetUrl ? undefined : 'allow-scripts allow-same-origin allow-popups allow-forms'}
         />
+        {/* 评论区：iframe 下方可滚动区，访客可读、登录后可评（token 必有） */}
+        {token && (
+          <div style={{ flexShrink: 0, maxHeight: '40vh', overflowY: 'auto', overscrollBehavior: 'contain', background: '#0a0a0a', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+            <div style={{ maxWidth: 820, margin: '0 auto', padding: '16px' }}>
+              <CommentsSection mode="share" token={token} password={password || undefined} />
+            </div>
+          </div>
+        )}
       </div>
     );
   }

@@ -273,6 +273,8 @@ export default function WebPagesPage() {
   const [replaceTarget, setReplaceTarget] = useState<{ site: HostedSite; file: File } | null>(null);
   const [replacing, setReplacing] = useState(false);
   const [viewersTarget, setViewersTarget] = useState<{ siteId: string; siteTitle: string } | null>(null);
+  // 评论管理：点击站点卡「评论」按钮打开预览 + 评论面板（owner 可发表/删除 + 允许评论开关）
+  const [commentSite, setCommentSite] = useState<HostedSite | null>(null);
 
   // ─── Load ───
 
@@ -529,6 +531,7 @@ export default function WebPagesPage() {
             onReplaceFile={(file) => setReplaceTarget({ site, file })}
             onViewers={() => setViewersTarget({ siteId: site.id, siteTitle: site.title })}
             onMove={() => setMovingSite(site)}
+            onComments={siteCaps(site).canShare ? () => setCommentSite(site) : undefined}
           />
         ))}
       </div>
@@ -547,6 +550,7 @@ export default function WebPagesPage() {
             onShare={() => handleShare(site.id)}
             onCancelShare={() => cancelShareForSite(site.id)}
             onQrCode={() => setQrSite(site)}
+            onComments={siteCaps(site).canShare ? () => setCommentSite(site) : undefined}
           />
         ))}
       </div>
@@ -941,6 +945,11 @@ export default function WebPagesPage() {
           siteTitle={viewersTarget.siteTitle}
           onClose={() => setViewersTarget(null)}
         />
+      )}
+
+      {/* 评论管理：站点预览 iframe + 评论面板 + 允许评论开关 */}
+      {commentSite && (
+        <SitePreviewModal site={commentSite} onClose={() => setCommentSite(null)} />
       )}
 
       {movingSite && (
@@ -1430,6 +1439,9 @@ function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSelect, on
                 onClick={onTransferToLibrary}
               />
             )}
+            {onComments && (
+              <IconAction icon={<MessageSquare size={12} />} label="评论管理" onClick={onComments} />
+            )}
             {onViewers && (
               <IconAction icon={<Eye size={12} />} label="访客" onClick={onViewers} />
             )}
@@ -1539,7 +1551,7 @@ function IconAction({
 
 // ─── List View ───
 
-function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete, onShare, onCancelShare, onQrCode }: {
+function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete, onShare, onCancelShare, onQrCode, onComments }: {
   site: HostedSite;
   selected: boolean;
   shared?: boolean;
@@ -1652,6 +1664,11 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
         <button onClick={onQrCode} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="二维码">
           <QrCode size={14} style={{ color: 'var(--text-muted)' }} />
         </button>
+        {onComments && (
+          <button onClick={onComments} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="评论管理">
+            <MessageSquare size={14} style={{ color: 'var(--text-muted)' }} />
+          </button>
+        )}
         {c.canEdit && (
           <button onClick={onEdit} className="p-1 rounded hover:bg-[var(--bg-hover)]">
             <Edit3 size={14} style={{ color: 'var(--text-muted)' }} />
