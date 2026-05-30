@@ -75,6 +75,10 @@ def _req(method, path, base, key, user, body=None):
     req.add_header("X-AI-Access-Key", key)
     req.add_header("X-AI-Impersonate", user)
     req.add_header("Content-Type", "application/json")
+    # 预览域名走 Cloudflare,默认 urllib UA 会被 1010 拦,带个常规 UA。
+    req.add_header("User-Agent",
+                   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                   "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             raw = resp.read().decode("utf-8")
