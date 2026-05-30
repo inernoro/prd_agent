@@ -237,6 +237,11 @@ public static class AdminPermissionCatalog
     public const string PmAgentUse = "pm-agent.use";
 
     /// <summary>
+    /// 项目管理-组织 NPSS 看板权限：查看公司级 NPSS 经营看板与奖金测算（管理层级，区别于 PmAgentUse）
+    /// </summary>
+    public const string PmAgentDashboard = "pm-agent.dashboard";
+
+    /// <summary>
     /// 工作空间权限（读）：查看工作空间列表
     /// </summary>
     public const string WorkspacesRead = "workspaces.read";
@@ -345,6 +350,7 @@ public static class AdminPermissionCatalog
         new(EmergenceAgentUse, "涌现探索智能体", "可视化功能涌现与创意探索（创建/探索/涌现）"),
 
         new(PmAgentUse, "项目管理智能体", "项目立项、任务看板、甘特图与 AI 需求拆解"),
+        new(PmAgentDashboard, "项目管理-组织NPSS看板", "查看公司级 NPSS 经营看板与奖金测算（仅授予管理层）"),
 
         new(WorkspacesRead, "工作空间-读", "查看工作空间列表与详情"),
         new(WorkspacesWrite, "工作空间-写", "创建/编辑/删除工作空间、发送指令"),

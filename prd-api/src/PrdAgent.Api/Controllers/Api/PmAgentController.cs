@@ -46,6 +46,13 @@ public class PmAgentController : ControllerBase
 
     private string GetUserId() => this.GetRequiredUserId();
 
+    /// <summary>是否具备指定权限（中间件已把有效权限注入 permissions claim）。super 视为全通过。</summary>
+    private bool HasPermission(string perm)
+    {
+        var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
+        return permissions.Contains(perm) || permissions.Contains(AdminPermissionCatalog.Super);
+    }
+
     // ─────────────────────────────────────────────
     // 项目 CRUD（立项 / 列表 / 详情 / 更新 / 删除）
     // ─────────────────────────────────────────────
@@ -650,11 +657,16 @@ public class PmAgentController : ControllerBase
     [HttpGet("dashboard")]
     public async Task<IActionResult> Dashboard([FromQuery] int? fiscalYear = null)
     {
+        // 组织级经营看板仅对管理层开放（pm-agent.dashboard），与普通的 pm-agent.use 区分
+        if (!HasPermission(AdminPermissionCatalog.PmAgentDashboard))
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "组织 NPSS 看板仅对管理层开放"));
+
         var cfg = await GetOrCreateRewardConfigAsync();
         var startMonth = Math.Clamp(cfg.FiscalYearStartMonth, 1, 12);
 
+        // 公司级 NPSS 只统计正式分级项目（战略/创新/运营），普通项目不计入
         var all = await _db.PmProjects
-            .Find(p => !p.IsDeleted && p.Evaluation != null)
+            .Find(p => !p.IsDeleted && p.Evaluation != null && p.ProjectType != PmProjectType.General)
             .ToListAsync();
 
         // 每个项目归属的财年（按评价时间）

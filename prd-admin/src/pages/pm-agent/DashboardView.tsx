@@ -49,7 +49,8 @@ export function DashboardView({ onBack }: Props) {
   if (!data) return null;
 
   const cfg = data.rewardConfig;
-  const npssColor = data.npss >= NPSS_GLOBAL_BASELINE ? '#10B981' : '#EF4444';
+  const hasData = data.totalEvaluated > 0;
+  const npssColor = !hasData ? 'var(--border-subtle)' : data.npss >= NPSS_GLOBAL_BASELINE ? '#10B981' : '#EF4444';
   const dist = [
     { ...GRADE_REGISTRY.success, count: data.successCount },
     { ...GRADE_REGISTRY.mediocre, count: data.mediocreCount },
@@ -67,7 +68,10 @@ export function DashboardView({ onBack }: Props) {
         </button>
         <div className="flex items-center gap-2 flex-wrap">
           <TrendingUp size={20} style={{ color: '#10B981' }} />
-          <h2 className="text-[17px] font-semibold" style={{ color: 'var(--text-primary)' }}>组织 NPSS 看板</h2>
+          <div className="flex flex-col">
+            <h2 className="text-[17px] font-semibold" style={{ color: 'var(--text-primary)' }}>组织 NPSS 看板</h2>
+            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>公司级经营指标，仅统计战略 / 创新 / 运营级项目（普通项目不计入）</span>
+          </div>
           <select
             className="ml-auto rounded-lg px-3 py-1.5 text-[12px] outline-none border"
             style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}
@@ -86,11 +90,13 @@ export function DashboardView({ onBack }: Props) {
           <div className="rounded-xl border p-4" style={{ borderColor: npssColor, background: `${npssColor}10` }}>
             <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>组织 NPSS（成功占比 − 失败占比）</div>
             <div className="flex items-baseline gap-2 mt-1">
-              <span className="text-[32px] font-bold" style={{ color: npssColor }}>{data.npss}</span>
+              <span className="text-[32px] font-bold" style={{ color: hasData ? npssColor : 'var(--text-muted)' }}>{hasData ? data.npss : '—'}</span>
               <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>全球基线 {data.baseline}</span>
             </div>
-            <div className="text-[11px] mt-1" style={{ color: npssColor }}>
-              {data.npss >= data.baseline ? `高于全球基线 ${data.npss - data.baseline} 分` : `低于全球基线 ${data.baseline - data.npss} 分`}
+            <div className="text-[11px] mt-1" style={{ color: hasData ? npssColor : 'var(--text-muted)' }}>
+              {!hasData
+                ? '暂无已评价的分级项目'
+                : data.npss >= data.baseline ? `高于全球基线 ${data.npss - data.baseline} 分` : `低于全球基线 ${data.baseline - data.npss} 分`}
             </div>
           </div>
           <div className="rounded-xl border p-4" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
