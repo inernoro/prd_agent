@@ -1502,6 +1502,10 @@ public class DocumentStoreController : ControllerBase
         var existingReportIds = new HashSet<string>(existing
             .Where(e => e.Metadata != null && e.Metadata.ContainsKey("reportId"))
             .Select(e => e.Metadata["reportId"]));
+        // 已存在文件夹按 (parentId, title) 索引，重复导入时复用而非重建（保证幂等）
+        var existingFolders = existing.Where(e => e.IsFolder)
+            .GroupBy(e => $"{e.ParentId ?? ""} {e.Title}")
+            .ToDictionary(g => g.Key, g => g.First().Id);
 
         var idMap = new Dictionary<string, string>(); // exportId -> 新 entryId
         int created = 0, skipped = 0, failed = 0;
@@ -1517,6 +1521,18 @@ public class DocumentStoreController : ControllerBase
                 string? newParent = null;
                 if (!string.IsNullOrEmpty(f.ParentExportId) && !idMap.TryGetValue(f.ParentExportId, out newParent))
                     continue; // 父文件夹还没建，下一趟再来
+
+                // 幂等：同 (parent, title) 已存在则复用，不重复建
+                var folderKey = $"{newParent ?? ""} {f.Title}";
+                if (existingFolders.TryGetValue(folderKey, out var reuseId))
+                {
+                    idMap[f.ExportId] = reuseId;
+                    skipped++;
+                    pendingFolders.Remove(f);
+                    progressed = true;
+                    continue;
+                }
+
                 var folder = new DocumentEntry
                 {
                     StoreId = store.Id,
@@ -1535,6 +1551,7 @@ public class DocumentStoreController : ControllerBase
                 };
                 await _db.DocumentEntries.InsertOneAsync(folder);
                 idMap[f.ExportId] = folder.Id;
+                existingFolders[folderKey] = folder.Id; // 同次导入内也复用
                 created++;
                 pendingFolders.Remove(f);
                 progressed = true;
