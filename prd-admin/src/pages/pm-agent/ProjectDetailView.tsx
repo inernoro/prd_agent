@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Sparkles, Plus, LayoutGrid, List, GanttChartSquare, Trash2, Users, Award, Search, CalendarClock } from 'lucide-react';
+import { ArrowLeft, Sparkles, Plus, LayoutGrid, List, GanttChartSquare, Trash2, Users, UserCog, Award, Search, CalendarClock } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
@@ -13,6 +13,7 @@ import { KanbanBoard } from './KanbanBoard';
 import { GanttChart } from './GanttChart';
 import { DecomposePanel } from './DecomposePanel';
 import { StakeholderPanel } from './StakeholderPanel';
+import { MembersPanel } from './MembersPanel';
 import { EvaluatePanel } from './EvaluatePanel';
 import { TaskDetailDrawer } from './TaskDetailDrawer';
 import { PROJECT_TYPE_REGISTRY, LIFECYCLE_REGISTRY, TASK_STATUS_REGISTRY, PRIORITY_REGISTRY, GRADE_REGISTRY } from './pmConstants';
@@ -22,15 +23,18 @@ interface Props {
   onBack: () => void;
 }
 
-type ViewTab = 'board' | 'list' | 'gantt' | 'stakeholders';
+type ViewTab = 'board' | 'list' | 'gantt' | 'members' | 'stakeholders';
 type GroupBy = 'none' | 'assignee' | 'priority';
 
 const TABS: { key: ViewTab; label: string; icon: typeof LayoutGrid }[] = [
   { key: 'board', label: '看板', icon: LayoutGrid },
   { key: 'list', label: '列表', icon: List },
   { key: 'gantt', label: '甘特图', icon: GanttChartSquare },
+  { key: 'members', label: '成员', icon: UserCog },
   { key: 'stakeholders', label: '干系人', icon: Users },
 ];
+
+const isTaskTab = (t: ViewTab) => t === 'board' || t === 'list' || t === 'gantt';
 
 const isOverdue = (t: PmTask) => !!t.dueAt && t.status !== 'done' && t.status !== 'cancelled' && new Date(t.dueAt) < new Date(new Date().toDateString());
 const ORDER_STEP = 1024;
@@ -247,7 +251,7 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
       </div>
 
       {/* P1 筛选栏（任务视图） */}
-      {tab !== 'stakeholders' && tasks.length > 0 && (
+      {isTaskTab(tab) && tasks.length > 0 && (
         <div className="shrink-0 flex items-center gap-2 flex-wrap text-[12px]">
           <div className="relative">
             <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
@@ -314,7 +318,7 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
       )}
 
       {/* 空状态 */}
-      {tasks.length === 0 && tab !== 'stakeholders' && (
+      {tasks.length === 0 && isTaskTab(tab) && (
         <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-3 text-center">
           <div className="text-[14px] font-medium" style={{ color: 'var(--text-secondary)' }}>还没有任务</div>
           <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>点击右上角「AI 拆解需求」，让 AI 根据业务目标自动生成任务清单</div>
@@ -357,6 +361,10 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
       )}
 
       {tasks.length > 0 && tab === 'gantt' && <GanttChart tasks={filtered} />}
+
+      {tab === 'members' && (
+        <MembersPanel projectId={projectId} canManage={project.ownerId === myId || project.leaderId === myId} />
+      )}
 
       {tab === 'stakeholders' && (
         <StakeholderPanel projectId={projectId} stakeholders={project.stakeholders} onSaved={() => load()} />
