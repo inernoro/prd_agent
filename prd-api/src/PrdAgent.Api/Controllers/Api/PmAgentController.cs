@@ -139,6 +139,7 @@ public class PmAgentController : ControllerBase
         if (request.Budget.HasValue) update = update.Set(p => p.Budget, request.Budget);
         if (request.ActualCost.HasValue) update = update.Set(p => p.ActualCost, request.ActualCost);
         if (request.ValueCoefficient.HasValue) update = update.Set(p => p.ValueCoefficient, Math.Max(0, request.ValueCoefficient.Value));
+        if (request.WipLimits != null) update = update.Set(p => p.WipLimits, request.WipLimits.Where(kv => PmTaskStatus.All.Contains(kv.Key) && kv.Value > 0).ToDictionary(kv => kv.Key, kv => kv.Value));
         if (request.MemberIds != null) update = update.Set(p => p.MemberIds, request.MemberIds);
         if (request.Lifecycle != null && PmProjectLifecycle.All.Contains(request.Lifecycle))
         {
@@ -577,7 +578,103 @@ public class PmAgentController : ControllerBase
 
         await _db.PmTasks.UpdateOneAsync(t => t.Id == taskId, update);
         if (request.Status != null) await RecalcTaskCountAsync(task.ProjectId);
+
+        // 变更留痕（仅记录关键字段）
+        var changes = new List<PmTaskActivity>();
+        if (request.Status != null && PmTaskStatus.All.Contains(request.Status) && request.Status != task.Status)
+            changes.Add(BuildChange(task, userId, "status", task.Status, request.Status));
+        if (request.Priority != null && PmTaskPriority.All.Contains(request.Priority) && request.Priority != task.Priority)
+            changes.Add(BuildChange(task, userId, "priority", task.Priority, request.Priority));
+        if (request.AssigneeId != null && request.AssigneeId != (task.AssigneeId ?? ""))
+            changes.Add(BuildChange(task, userId, "assignee", task.AssigneeName ?? task.AssigneeId, request.AssigneeId));
+        if (changes.Count > 0)
+        {
+            var actorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+            foreach (var c in changes) c.UserName = actorName;
+            await _db.PmTaskActivities.InsertManyAsync(changes);
+        }
         return Ok(ApiResponse<object>.Ok(new { updated = true }));
+    }
+
+    private static PmTaskActivity BuildChange(PmTask task, string userId, string field, string? from, string? to) => new()
+    {
+        TaskId = task.Id, ProjectId = task.ProjectId, Type = PmActivityType.Change,
+        UserId = userId, Field = field, FromValue = from, ToValue = to,
+    };
+
+    /// <summary>任务活动记录（评论 + 变更日志）</summary>
+    [HttpGet("tasks/{taskId}/activities")]
+    public async Task<IActionResult> GetActivities(string taskId)
+    {
+        var userId = GetUserId();
+        var task = await _db.PmTasks.Find(t => t.Id == taskId).FirstOrDefaultAsync();
+        if (task == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
+        if (await FindAccessibleProjectAsync(task.ProjectId, userId) == null)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权操作"));
+
+        var items = await _db.PmTaskActivities.Find(a => a.TaskId == taskId)
+            .SortByDescending(a => a.CreatedAt).Limit(200).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>发表任务评论</summary>
+    [HttpPost("tasks/{taskId}/comments")]
+    public async Task<IActionResult> AddComment(string taskId, [FromBody] AddCommentRequest request)
+    {
+        var userId = GetUserId();
+        var task = await _db.PmTasks.Find(t => t.Id == taskId).FirstOrDefaultAsync();
+        if (task == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
+        if (await FindAccessibleProjectAsync(task.ProjectId, userId) == null)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权操作"));
+        if (string.IsNullOrWhiteSpace(request.Content))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "评论内容不能为空"));
+
+        var actorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+        var activity = new PmTaskActivity
+        {
+            TaskId = taskId, ProjectId = task.ProjectId, Type = PmActivityType.Comment,
+            UserId = userId, UserName = actorName, Content = request.Content.Trim(),
+        };
+        await _db.PmTaskActivities.InsertOneAsync(activity);
+        return Ok(ApiResponse<object>.Ok(activity));
+    }
+
+    /// <summary>批量操作任务（改状态/优先级/负责人 或 删除）</summary>
+    [HttpPost("projects/{projectId}/tasks/bulk")]
+    public async Task<IActionResult> BulkTasks(string projectId, [FromBody] BulkTasksRequest request)
+    {
+        var userId = GetUserId();
+        if (await FindAccessibleProjectAsync(projectId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        var ids = (request.TaskIds ?? new()).Distinct().ToList();
+        if (ids.Count == 0) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "未选择任务"));
+
+        var filter = Builders<PmTask>.Filter.And(
+            Builders<PmTask>.Filter.Eq(t => t.ProjectId, projectId),
+            Builders<PmTask>.Filter.In(t => t.Id, ids));
+
+        if (request.Delete == true)
+        {
+            var del = await _db.PmTasks.DeleteManyAsync(filter);
+            await RecalcTaskCountAsync(projectId);
+            return Ok(ApiResponse<object>.Ok(new { deletedCount = del.DeletedCount }));
+        }
+
+        var update = Builders<PmTask>.Update.Set(t => t.UpdatedAt, DateTime.UtcNow);
+        var touched = false;
+        if (request.Status != null && PmTaskStatus.All.Contains(request.Status)) { update = update.Set(t => t.Status, request.Status); touched = true; }
+        if (request.Priority != null && PmTaskPriority.All.Contains(request.Priority)) { update = update.Set(t => t.Priority, request.Priority); touched = true; }
+        if (request.AssigneeId != null)
+        {
+            var assignee = await _db.Users.Find(u => u.UserId == request.AssigneeId).FirstOrDefaultAsync();
+            update = update.Set(t => t.AssigneeId, request.AssigneeId).Set(t => t.AssigneeName, assignee?.DisplayName);
+            touched = true;
+        }
+        if (!touched) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无有效变更"));
+
+        var res = await _db.PmTasks.UpdateManyAsync(filter, update);
+        if (request.Status != null) await RecalcTaskCountAsync(projectId);
+        return Ok(ApiResponse<object>.Ok(new { matched = res.MatchedCount, modified = res.ModifiedCount }));
     }
 
     /// <summary>删除任务（级联删除子任务 + 清理依赖引用）</summary>
@@ -731,7 +828,22 @@ public class UpdatePmProjectRequest
     public decimal? Budget { get; set; }
     public decimal? ActualCost { get; set; }
     public double? ValueCoefficient { get; set; }
+    public Dictionary<string, int>? WipLimits { get; set; }
     public List<string>? MemberIds { get; set; }
+}
+
+public class AddCommentRequest
+{
+    public string Content { get; set; } = string.Empty;
+}
+
+public class BulkTasksRequest
+{
+    public List<string> TaskIds { get; set; } = new();
+    public bool? Delete { get; set; }
+    public string? Status { get; set; }
+    public string? Priority { get; set; }
+    public string? AssigneeId { get; set; }
 }
 
 public class UpdateRewardConfigRequest

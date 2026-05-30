@@ -104,6 +104,9 @@ public class PmProject
     /// <summary>优秀项目评选时间</summary>
     public DateTime? ExcellenceAwardedAt { get; set; }
 
+    /// <summary>看板 WIP 限制（status → 在制上限），未设置的列不限制</summary>
+    public Dictionary<string, int> WipLimits { get; set; } = new();
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 

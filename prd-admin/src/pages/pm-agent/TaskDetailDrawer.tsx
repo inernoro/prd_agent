@@ -1,13 +1,22 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Trash2, Link2, AlertTriangle } from 'lucide-react';
+import { X, Trash2, Link2, AlertTriangle, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { toast } from '@/lib/toast';
-import { updatePmTask, deletePmTask, createPmTask } from '@/services';
-import type { PmTask, PmTaskStatus, PmTaskPriority } from '@/services/contracts/pmAgent';
+import { updatePmTask, deletePmTask, createPmTask, getPmTaskActivities, addPmTaskComment } from '@/services';
+import type { PmTask, PmTaskStatus, PmTaskPriority, PmTaskActivity } from '@/services/contracts/pmAgent';
 import { TASK_STATUS_REGISTRY, PRIORITY_REGISTRY } from './pmConstants';
+
+const FIELD_LABEL: Record<string, string> = { status: '状态', priority: '优先级', assignee: '负责人', title: '标题' };
+const codeLabel = (field: string, v?: string | null) => {
+  if (!v) return '空';
+  if (field === 'status') return TASK_STATUS_REGISTRY[v as PmTaskStatus]?.label ?? v;
+  if (field === 'priority') return PRIORITY_REGISTRY[v as PmTaskPriority]?.label ?? v;
+  return v;
+};
+const fmtTime = (iso: string) => { const d = new Date(iso); return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 
 interface Props {
   task: PmTask;
@@ -42,6 +51,20 @@ export function TaskDetailDrawer({ task, allTasks, onClose, onSaved, onDeleted, 
   const [dependsOn, setDependsOn] = useState<string[]>(task.dependsOn ?? []);
   const [saving, setSaving] = useState(false);
   const [subTitle, setSubTitle] = useState('');
+  const [activities, setActivities] = useState<PmTaskActivity[]>([]);
+  const [comment, setComment] = useState('');
+
+  const loadActivities = useCallback(async () => {
+    const res = await getPmTaskActivities(task.id);
+    if (res.success) setActivities(res.data.items);
+  }, [task.id]);
+  useEffect(() => { loadActivities(); }, [loadActivities]);
+
+  const postComment = async () => {
+    if (!comment.trim()) return;
+    const res = await addPmTaskComment(task.id, comment.trim());
+    if (res.success) { setComment(''); loadActivities(); } else toast.error('评论失败', res.error?.message || '');
+  };
 
   const children = useMemo(() => allTasks.filter((t) => t.parentTaskId === task.id), [allTasks, task.id]);
 
@@ -219,6 +242,34 @@ export function TaskDetailDrawer({ task, allTasks, onClose, onSaved, onDeleted, 
                   value={subTitle} onChange={(e) => setSubTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addSubtask(); }} placeholder="添加子任务，回车确认" />
                 <Button variant="secondary" size="sm" onClick={addSubtask} disabled={!subTitle.trim()}>添加</Button>
               </div>
+            </div>
+          </div>
+
+          {/* 动态 / 评论 */}
+          <div>
+            <label className={labelCls} style={{ color: 'var(--text-secondary)' }}><MessageSquare size={11} className="inline mr-1" />动态与评论</label>
+            <div className="flex items-center gap-1.5 mb-2">
+              <input className="flex-1 rounded-lg px-2 py-1.5 text-[12px] outline-none border" style={inputStyle}
+                value={comment} onChange={(e) => setComment(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') postComment(); }} placeholder="写评论，回车发送" />
+              <Button variant="secondary" size="sm" onClick={postComment} disabled={!comment.trim()}>发送</Button>
+            </div>
+            <div className="flex flex-col gap-2">
+              {activities.length === 0 && <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>暂无动态</div>}
+              {activities.map((a) => (
+                <div key={a.id} className="text-[11.5px]">
+                  <div className="flex items-center gap-1.5">
+                    <span style={{ color: 'var(--text-secondary)' }}>{a.userName || '用户'}</span>
+                    <span style={{ color: 'var(--text-muted)' }}>{fmtTime(a.createdAt)}</span>
+                  </div>
+                  {a.type === 'comment' ? (
+                    <div className="mt-0.5 px-2 py-1 rounded" style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}>{a.content}</div>
+                  ) : (
+                    <div className="mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                      将{FIELD_LABEL[a.field || ''] || a.field} 从「{codeLabel(a.field || '', a.fromValue)}」改为「{codeLabel(a.field || '', a.toValue)}」
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
         </div>

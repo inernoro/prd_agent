@@ -1298,6 +1298,7 @@ export const api = {
       decompose: (projectId: string) => `/api/pm/projects/${projectId}/decompose`,
       createTask: (projectId: string) => `/api/pm/projects/${projectId}/tasks`,
       batchTasks: (projectId: string) => `/api/pm/projects/${projectId}/tasks/batch`,
+      bulkTasks: (projectId: string) => `/api/pm/projects/${projectId}/tasks/bulk`,
       stakeholders: (projectId: string) => `/api/pm/projects/${projectId}/stakeholders`,
       evaluate: (projectId: string) => `/api/pm/projects/${projectId}/evaluate`,
       excellence: (projectId: string) => `/api/pm/projects/${projectId}/excellence`,
@@ -1305,6 +1306,8 @@ export const api = {
     tasks: {
       update: (taskId: string) => `/api/pm/tasks/${taskId}`,
       delete: (taskId: string) => `/api/pm/tasks/${taskId}`,
+      activities: (taskId: string) => `/api/pm/tasks/${taskId}/activities`,
+      comments: (taskId: string) => `/api/pm/tasks/${taskId}/comments`,
     },
     dashboard: () => '/api/pm/dashboard',
     rewardConfig: () => '/api/pm/reward-config',

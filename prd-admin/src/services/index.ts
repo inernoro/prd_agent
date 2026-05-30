@@ -1947,6 +1947,9 @@ export {
   getPmRewardConfigReal as getPmRewardConfig,
   updatePmRewardConfigReal as updatePmRewardConfig,
   togglePmExcellenceReal as togglePmExcellence,
+  getPmTaskActivitiesReal as getPmTaskActivities,
+  addPmTaskCommentReal as addPmTaskComment,
+  bulkPmTasksReal as bulkPmTasks,
 } from '@/services/real/pmAgent';
 export type {
   PmProject,
@@ -1959,6 +1962,8 @@ export type {
   PmProjectBonus,
   PmQuarterStats,
   PmCostMetrics,
+  PmTaskActivity,
+  BulkTasksInput,
   UpdateRewardConfigInput,
   PmProjectType,
   PmOperationSubType,

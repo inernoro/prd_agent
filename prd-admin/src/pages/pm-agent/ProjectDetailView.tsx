@@ -6,7 +6,7 @@ import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { toast } from '@/lib/toast';
 import { useAuthStore } from '@/stores/authStore';
 import {
-  getPmProject, createPmTask, updatePmTask, deletePmTask, updatePmProject,
+  getPmProject, createPmTask, updatePmTask, deletePmTask, updatePmProject, bulkPmTasks,
 } from '@/services';
 import type { PmProject, PmTask, PmTaskStatus, PmTaskPriority, PmStakeholder, PmEvaluation } from '@/services/contracts/pmAgent';
 import { KanbanBoard } from './KanbanBoard';
@@ -54,6 +54,10 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
   const [fAssignee, setFAssignee] = useState('');
   const [myOnly, setMyOnly] = useState(false);
   const [groupBy, setGroupBy] = useState<GroupBy>('none');
+  // P2 批量选择 + WIP
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [wipEdit, setWipEdit] = useState(false);
+  const [bulkAssignee, setBulkAssignee] = useState('');
 
   const load = useCallback(async () => {
     const res = await getPmProject(projectId);
@@ -111,6 +115,23 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
       setCostEdit(null);
       toast.success('已保存成本', '');
     } else toast.error('保存失败', res.error?.message || '');
+  };
+
+  // P2 批量
+  const toggleSel = (id: string) => setSelected((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const bulkApply = async (patch: { status?: PmTaskStatus; priority?: PmTaskPriority; assigneeId?: string }) => {
+    const res = await bulkPmTasks(projectId, { taskIds: [...selected], ...patch });
+    if (res.success) { setSelected(new Set()); setBulkAssignee(''); load(); } else toast.error('批量操作失败', res.error?.message || '');
+  };
+  const bulkDelete = async () => {
+    if (!window.confirm(`确定删除选中的 ${selected.size} 个任务？`)) return;
+    const res = await bulkPmTasks(projectId, { taskIds: [...selected], delete: true });
+    if (res.success) { setSelected(new Set()); load(); } else toast.error('批量删除失败', res.error?.message || '');
+  };
+  const saveWip = async (limits: Record<string, number>) => {
+    const res = await updatePmProject(projectId, { wipLimits: limits });
+    if (res.success) { setProject((prev) => (prev ? { ...prev, wipLimits: limits } : prev)); toast.success('已保存 WIP 限制', ''); }
+    else toast.error('保存失败', res.error?.message || '');
   };
 
   // P1 筛选
@@ -251,7 +272,44 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
               <option value="priority">按优先级</option>
             </select>
           )}
+          {tab === 'board' && (
+            <button onClick={() => setWipEdit((v) => !v)} className="rounded-lg px-2.5 py-1.5 border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }}>WIP 限制</button>
+          )}
           {hasFilter && <span style={{ color: 'var(--text-muted)' }}>命中 {filtered.length} / {tasks.length}</span>}
+        </div>
+      )}
+
+      {/* WIP 限制编辑（看板）*/}
+      {tab === 'board' && wipEdit && (
+        <div className="shrink-0 flex items-center gap-3 flex-wrap rounded-lg px-3 py-2 text-[12px]" style={{ background: 'var(--bg-base)' }}>
+          <span style={{ color: 'var(--text-secondary)' }}>各列在制上限（0=不限）：</span>
+          {(['backlog', 'todo', 'in_progress', 'done'] as PmTaskStatus[]).map((col) => (
+            <label key={col} className="flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+              {TASK_STATUS_REGISTRY[col].label}
+              <input type="number" min={0} defaultValue={project.wipLimits?.[col] ?? 0}
+                onChange={(e) => { const v = Number(e.target.value); const next = { ...(project.wipLimits ?? {}) } as Record<string, number>; if (v > 0) next[col] = v; else delete next[col]; setProject((prev) => (prev ? { ...prev, wipLimits: next } : prev)); }}
+                className="rounded px-2 py-0.5 outline-none border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)', width: 56 }} />
+            </label>
+          ))}
+          <Button variant="primary" size="xs" onClick={() => { saveWip((project.wipLimits ?? {}) as Record<string, number>); setWipEdit(false); }}>保存</Button>
+        </div>
+      )}
+
+      {/* 批量操作条（列表多选）*/}
+      {tab === 'list' && selected.size > 0 && (
+        <div className="shrink-0 flex items-center gap-2 flex-wrap rounded-lg px-3 py-2 text-[12px]" style={{ background: 'rgba(59,130,246,0.1)' }}>
+          <span style={{ color: '#3B82F6' }}>已选 {selected.size}</span>
+          <select defaultValue="" onChange={(e) => { if (e.target.value) bulkApply({ status: e.target.value as PmTaskStatus }); e.currentTarget.value = ''; }} className="rounded px-2 py-1 outline-none border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>
+            <option value="">改状态…</option>
+            {(['backlog', 'todo', 'in_progress', 'done', 'cancelled'] as PmTaskStatus[]).map((s) => <option key={s} value={s}>{TASK_STATUS_REGISTRY[s].label}</option>)}
+          </select>
+          <select defaultValue="" onChange={(e) => { if (e.target.value) bulkApply({ priority: e.target.value as PmTaskPriority }); e.currentTarget.value = ''; }} className="rounded px-2 py-1 outline-none border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>
+            <option value="">改优先级…</option>
+            {(['urgent', 'high', 'medium', 'low', 'none'] as PmTaskPriority[]).map((p) => <option key={p} value={p}>{PRIORITY_REGISTRY[p].label}</option>)}
+          </select>
+          <div style={{ width: 150 }}><UserSearchSelect value={bulkAssignee} onChange={(uid) => { setBulkAssignee(uid); if (uid) bulkApply({ assigneeId: uid }); }} placeholder="改负责人…" uiSize="sm" /></div>
+          <button onClick={bulkDelete} className="rounded px-2 py-1 border" style={{ borderColor: '#EF4444', color: '#EF4444' }}>删除</button>
+          <button onClick={() => setSelected(new Set())} className="ml-auto" style={{ color: 'var(--text-muted)' }}>取消选择</button>
         </div>
       )}
 
@@ -281,6 +339,7 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
                 const overdue = isOverdue(t);
                 return (
                   <div key={t.id} onClick={() => setOpenTask(t)} className="group flex items-center gap-3 px-4 py-2.5 border-b cursor-pointer" style={{ borderColor: 'var(--border-subtle)' }}>
+                    <input type="checkbox" checked={selected.has(t.id)} onClick={(e) => e.stopPropagation()} onChange={() => toggleSel(t.id)} style={{ accentColor: '#3B82F6' }} />
                     <span className="w-2 h-2 rounded-full shrink-0" style={{ background: s.color }} title={s.label} />
                     <span className="text-[13px] flex-1 min-w-0 truncate" style={{ color: 'var(--text-primary)' }}>{t.title}</span>
                     {overdue && <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0 inline-flex items-center gap-0.5" style={{ background: 'rgba(239,68,68,0.15)', color: '#EF4444' }}><CalendarClock size={10} />逾期</span>}

@@ -16,6 +16,9 @@ import type {
   GetPmRewardConfigContract,
   UpdatePmRewardConfigContract,
   TogglePmExcellenceContract,
+  GetPmTaskActivitiesContract,
+  AddPmTaskCommentContract,
+  BulkPmTasksContract,
 } from '@/services/contracts/pmAgent';
 
 export const createPmProjectReal: CreatePmProjectContract = async (input) => {
@@ -71,6 +74,18 @@ export const getPmDashboardReal: GetPmDashboardContract = async (fiscalYear) => 
 
 export const togglePmExcellenceReal: TogglePmExcellenceContract = async (projectId, isExcellent) => {
   return await apiRequest(api.pm.projects.excellence(encodeURIComponent(projectId)), { method: 'POST', body: { isExcellent } });
+};
+
+export const getPmTaskActivitiesReal: GetPmTaskActivitiesContract = async (taskId) => {
+  return await apiRequest(api.pm.tasks.activities(encodeURIComponent(taskId)), { method: 'GET' });
+};
+
+export const addPmTaskCommentReal: AddPmTaskCommentContract = async (taskId, content) => {
+  return await apiRequest(api.pm.tasks.comments(encodeURIComponent(taskId)), { method: 'POST', body: { content } });
+};
+
+export const bulkPmTasksReal: BulkPmTasksContract = async (projectId, input) => {
+  return await apiRequest(api.pm.projects.bulkTasks(encodeURIComponent(projectId)), { method: 'POST', body: input });
 };
 
 export const getPmRewardConfigReal: GetPmRewardConfigContract = async () => {

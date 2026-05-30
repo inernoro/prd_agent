@@ -107,6 +107,28 @@ export type PmCostMetrics = {
   totalActualCost: number;
 };
 
+export type PmTaskActivity = {
+  id: string;
+  taskId: string;
+  projectId: string;
+  type: 'comment' | 'change';
+  userId: string;
+  userName?: string | null;
+  content?: string | null;
+  field?: string | null;
+  fromValue?: string | null;
+  toValue?: string | null;
+  createdAt: string;
+};
+
+export type BulkTasksInput = {
+  taskIds: string[];
+  delete?: boolean;
+  status?: PmTaskStatus;
+  priority?: PmTaskPriority;
+  assigneeId?: string;
+};
+
 export type PmDashboard = {
   totalEvaluated: number;
   successCount: number;
@@ -185,6 +207,7 @@ export type UpdatePmProjectInput = Partial<{
   budget: number;
   actualCost: number;
   valueCoefficient: number;
+  wipLimits: Record<string, number>;
   memberIds: string[];
 }>;
 
@@ -260,3 +283,6 @@ export type GetPmDashboardContract = (fiscalYear?: number) => Promise<ApiRespons
 export type GetPmRewardConfigContract = () => Promise<ApiResponse<PmRewardConfig>>;
 export type UpdatePmRewardConfigContract = (input: UpdateRewardConfigInput) => Promise<ApiResponse<PmRewardConfig>>;
 export type TogglePmExcellenceContract = (projectId: string, isExcellent: boolean) => Promise<ApiResponse<{ id: string; isExcellent: boolean }>>;
+export type GetPmTaskActivitiesContract = (taskId: string) => Promise<ApiResponse<{ items: PmTaskActivity[] }>>;
+export type AddPmTaskCommentContract = (taskId: string, content: string) => Promise<ApiResponse<PmTaskActivity>>;
+export type BulkPmTasksContract = (projectId: string, input: BulkTasksInput) => Promise<ApiResponse<{ matched?: number; modified?: number; deletedCount?: number }>>;
