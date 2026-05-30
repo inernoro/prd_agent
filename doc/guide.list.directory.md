@@ -460,6 +460,9 @@
 - [技能百科全书指南](guide.skill-catalog) `guide.skill-catalog`
   > 所有已注册技能的完整目录与使用说明
 
+- [删技能前置检查清单 · 指南](guide.skill-removal-checklist) `guide.skill-removal-checklist`
+  > 删除/合并技能前必跑的引用面检查清单（PR #690 教训固化）
+
 - [冒烟测试指南](guide.smoke-tests) `guide.smoke-tests`
   > 核心业务流程冒烟测试的操作说明与 curl 命令集
 
