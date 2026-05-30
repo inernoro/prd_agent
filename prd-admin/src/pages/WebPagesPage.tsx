@@ -81,6 +81,7 @@ import {
   User,
   FolderInput,
   BarChart3,
+  MessageSquare,
   Plus,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
