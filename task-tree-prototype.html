@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>个人任务树 · 拟物真树原型</title>
+<style>
+  :root {
+    --bg-top: #0d1117;
+    --bg-bot: #131c2b;
+    --soil: #2b2016;
+    --soil-edge: #3a2c1e;
+    --trunk-a: #6b4a2f;
+    --trunk-b: #3d2b1c;
+    --text: #e8e6e0;
+    --text-dim: #9aa0a6;
+    --panel-bg: #1b2230;
+    --panel-border: rgba(255,255,255,0.08);
+    --chip-bg: rgba(255,255,255,0.06);
+  }
+  [data-theme="light"] {
+    --bg-top: #f4ece1;
+    --bg-bot: #dbe7ef;
+    --soil: #b89b78;
+    --soil-edge: #a98a64;
+    --trunk-a: #8a6038;
+    --trunk-b: #5c3f24;
+    --text: #2a2620;
+    --text-dim: #6b675f;
+    --panel-bg: #fffdfa;
+    --panel-border: rgba(0,0,0,0.10);
+    --chip-bg: rgba(0,0,0,0.05);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    color: var(--text);
+    background: linear-gradient(180deg, var(--bg-top), var(--bg-bot));
+    overflow: hidden;
+    height: 100vh;
+  }
+  .app { display: flex; height: 100vh; min-height: 0; }
+  .stage { flex: 1; min-width: 0; position: relative; }
+  svg { width: 100%; height: 100%; display: block; }
+
+  .toolbar {
+    position: absolute; top: 16px; left: 16px; right: 16px;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    pointer-events: none;
+  }
+  .toolbar > * { pointer-events: auto; }
+  .title { font-size: 15px; font-weight: 700; letter-spacing: .5px; }
+  .subtitle { font-size: 12px; color: var(--text-dim); }
+  .spacer { flex: 1; }
+  button.btn {
+    border: 1px solid var(--panel-border);
+    background: var(--chip-bg);
+    color: var(--text);
+    padding: 7px 13px; border-radius: 9px; font-size: 12.5px; cursor: pointer;
+    transition: background .15s, transform .1s;
+  }
+  button.btn:hover { background: rgba(127,127,127,0.18); }
+  button.btn:active { transform: translateY(1px); }
+
+  .legend {
+    position: absolute; bottom: 96px; left: 16px;
+    display: flex; flex-direction: column; gap: 6px;
+    background: var(--panel-bg); border: 1px solid var(--panel-border);
+    border-radius: 12px; padding: 10px 12px; font-size: 12px;
+    backdrop-filter: blur(8px);
+  }
+  .legend .row { display: flex; align-items: center; gap: 8px; }
+  .legend .dot { width: 12px; height: 12px; border-radius: 50%; box-shadow: 0 0 8px currentColor; }
+
+  .chatbar {
+    position: absolute; bottom: 18px; left: 16px; right: 16px;
+    display: flex; gap: 8px; align-items: center;
+  }
+  .chatbar input {
+    flex: 1; padding: 12px 14px; border-radius: 12px;
+    border: 1px solid var(--panel-border); background: var(--panel-bg);
+    color: var(--text); font-size: 13.5px; outline: none;
+  }
+  .chatbar input::placeholder { color: var(--text-dim); }
+  .chatbar .hint { position: absolute; top: -20px; left: 4px; font-size: 11px; color: var(--text-dim); }
+
+  /* side panel */
+  .panel {
+    width: 320px; flex-shrink: 0; background: var(--panel-bg);
+    border-left: 1px solid var(--panel-border);
+    padding: 22px 20px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .panel h2 { margin: 0; font-size: 16px; }
+  .panel .meta { font-size: 12px; color: var(--text-dim); }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label { font-size: 11px; color: var(--text-dim); letter-spacing: .4px; }
+  .field .val { font-size: 13.5px; line-height: 1.6; }
+  .statusrow { display: flex; gap: 6px; flex-wrap: wrap; }
+  .statuspill {
+    padding: 5px 11px; border-radius: 20px; font-size: 12px; cursor: pointer;
+    border: 1px solid transparent; opacity: .55; transition: opacity .15s, transform .1s;
+  }
+  .statuspill:hover { opacity: .85; }
+  .statuspill.active { opacity: 1; border-color: rgba(255,255,255,0.35); transform: scale(1.04); }
+  .blocker-box {
+    border: 1px solid rgba(224,86,59,0.5); background: rgba(224,86,59,0.10);
+    border-radius: 10px; padding: 10px 12px; font-size: 13px; color: var(--text);
+  }
+  .blocker-box .lbl { font-size: 11px; color: #e0563b; font-weight: 700; letter-spacing: .5px; }
+  .deps .chip {
+    display: inline-block; padding: 4px 10px; margin: 3px 4px 0 0;
+    background: var(--chip-bg); border-radius: 8px; font-size: 12px;
+  }
+  .empty-hint { color: var(--text-dim); font-size: 13px; line-height: 1.7; }
+
+  /* svg element states */
+  .branch { fill: none; stroke-linecap: round; }
+  .leaf { cursor: pointer; transition: transform .12s; transform-box: fill-box; transform-origin: center; }
+  .leaf:hover { transform: scale(1.18); }
+  .nodelabel { font-size: 11.5px; pointer-events: none; }
+  .labelbg { pointer-events: none; }
+  @keyframes blockpulse { 0%,100% { opacity: .25; r: 16px; } 50% { opacity: .7; r: 22px; } }
+  .blockhalo { animation: blockpulse 1.6s ease-in-out infinite; }
+  @keyframes sway { 0%,100% { transform: rotate(-0.5deg); } 50% { transform: rotate(0.6deg); } }
+  #treeRoot { animation: sway 7s ease-in-out infinite; }
+  .selectedRing { fill: none; stroke: #ffffff; stroke-opacity: .8; stroke-width: 2; stroke-dasharray: 4 4; }
+</style>
+</head>
+<body data-theme="dark">
+  <div class="app">
+    <div class="stage">
+      <svg id="svg" viewBox="0 0 1000 800" preserveAspectRatio="xMidYMax meet">
+        <defs>
+          <radialGradient id="glowSel" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="#fff" stop-opacity="0.5"/>
+            <stop offset="100%" stop-color="#fff" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+        <g id="ground"></g>
+        <g id="treeRoot">
+          <g id="branchLayer"></g>
+          <g id="leafLayer"></g>
+          <g id="labelLayer"></g>
+        </g>
+      </svg>
+
+      <div class="toolbar">
+        <div>
+          <div class="title">个人任务树</div>
+          <div class="subtitle">创世支柱 → 主干 → 枝干，注意力长在哪，卡点亮在哪</div>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn" id="btnReplay">重新生长</button>
+        <button class="btn" id="btnLabels">隐藏标签</button>
+        <button class="btn" id="btnTheme">白天 / 夜晚</button>
+      </div>
+
+      <div class="legend" id="legend"></div>
+
+      <div class="chatbar">
+        <div class="hint">模拟「对话摘任务」：描述一句话，自动长出新枝（含"卡"字会标成卡点）</div>
+        <input id="chatInput" placeholder="例：周报自动化 卡在等待模型池配额 …" />
+        <button class="btn" id="btnAdd">摘出 →</button>
+      </div>
+    </div>
+
+    <div class="panel" id="panel">
+      <div class="empty-hint">
+        点一片叶子看任务详情。<br/><br/>
+        每片叶子是一个任务，颜色是进度，<span style="color:#e0563b">红色脉冲</span>是卡点。
+        枝干的父子关系就是「被依赖 → 下一个任务」。<br/><br/>
+        下方输入框模拟用对话把任务摘出来——它会从当前选中的节点上长出一根新枝。
+      </div>
+    </div>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---- 任务树数据（创世支柱 = 根）----
+  const tree = {
+    id: "root", title: "2026 Q2 主线", status: "building", children: [
+      { id: "a", title: "任务树智能体 v1", status: "building", children: [
+        { id: "a1", title: "对话摘取任务", status: "building" },
+        { id: "a2", title: "可视化框架选型", status: "done" },
+        { id: "a3", title: "卡点上报视图", status: "idea" },
+      ]},
+      { id: "b", title: "周报自动化", status: "planned", children: [
+        { id: "b1", title: "数据源接入", status: "planned" },
+        { id: "b2", title: "LLM 生成草稿", status: "blocked", blocker: "等待模型池配额审批，无法压测长上下文" },
+      ]},
+      { id: "c", title: "缺陷分享 Agent", status: "done", children: [
+        { id: "c1", title: "外部 Agent 鉴权", status: "done" },
+        { id: "c2", title: "验收回流", status: "building", children: [
+          { id: "c21", title: "复测报告模板", status: "idea" },
+        ]},
+      ]},
+    ]
+  };
+
+  const STATUS = {
+    idea:     { label: "想法",   color: "#9aa37b" },
+    planned:  { label: "已规划", color: "#4fb6a8" },
+    building: { label: "进行中", color: "#e0a73b" },
+    done:     { label: "已完成", color: "#4cae63" },
+    blocked:  { label: "卡点",   color: "#e0563b" },
+  };
+
+  const svg = document.getElementById("svg");
+  const branchLayer = document.getElementById("branchLayer");
+  const leafLayer = document.getElementById("leafLayer");
+  const labelLayer = document.getElementById("labelLayer");
+  const groundG = document.getElementById("ground");
+  const panel = document.getElementById("panel");
+  const SVGNS = "http://www.w3.org/2000/svg";
+
+  const W = 1000, H = 800;
+  const CX = W / 2, GROUND_Y = H - 70;
+  let showLabels = true;
+  let selectedId = null;
+  let idSeq = 100;
+
+  function hash(s){ let h=0; for(let i=0;i<s.length;i++){h=(h*31+s.charCodeAt(i))|0;} return h; }
+  function el(tag, attrs){ const e=document.createElementNS(SVGNS,tag); for(const k in attrs) e.setAttribute(k,attrs[k]); return e; }
+
+  // ---- 布局：递归把树摆成有机的真树 ----
+  function layout() {
+    const nodes = [];   // {ref,x,y,angle,depth,parent}
+    const branches = []; // {from:{x,y}, to:{x,y}, width, depth, child}
+
+    function place(node, x, y, angle, len, depth, parentNode) {
+      const rad = angle * Math.PI / 180;
+      const tipX = x + Math.cos(rad) * len;
+      const tipY = y + Math.sin(rad) * len;
+      const width = Math.max(26 * Math.pow(0.6, depth), 3);
+      branches.push({ from:{x,y}, to:{x:tipX,y:tipY}, width, depth, childId: node.id, bow: (hash(node.id)%2?1:-1) });
+      const rec = { ref: node, x: tipX, y: tipY, angle, depth, parent: parentNode };
+      nodes.push(rec);
+
+      const kids = node.children || [];
+      const n = kids.length;
+      if (n > 0) {
+        const spread = Math.min(36 + n * 20, 150);
+        const childLen = Math.max(len * 0.74, 46);
+        for (let i = 0; i < n; i++) {
+          let childA = angle + (i - (n - 1) / 2) * (spread / Math.max(n - 1, 1));
+          if (n === 1) childA = angle + (hash(kids[0].id) % 30 - 15);
+          childA += (hash(kids[i].id) % 14 - 7); // 有机抖动
+          place(kids[i], tipX, tipY, childA, childLen, depth + 1, rec);
+        }
+      }
+    }
+    place(tree, CX, GROUND_Y, -90, 152, 0, null);
+    return { nodes, branches };
+  }
+
+  function leafPath() {
+    // 叶片形状（中心在 0,0，主轴沿 x）
+    return "M -16 0 Q -2 -11 16 0 Q -2 11 -16 0 Z";
+  }
+
+  function render(animateNew) {
+    branchLayer.innerHTML = ""; leafLayer.innerHTML = ""; labelLayer.innerHTML = "";
+    const { nodes, branches } = layout();
+
+    // 枝干（先画，叶子盖在上面）
+    branches.forEach((b) => {
+      const mx = (b.from.x + b.to.x) / 2, my = (b.from.y + b.to.y) / 2;
+      const dx = b.to.x - b.from.x, dy = b.to.y - b.from.y;
+      const ln = Math.hypot(dx, dy) || 1;
+      const px = -dy / ln, py = dx / ln; // 垂直方向
+      const bow = b.bow * Math.min(ln * 0.12, 22);
+      const cx = mx + px * bow, cy = my + py * bow;
+      const d = `M ${b.from.x} ${b.from.y} Q ${cx} ${cy} ${b.to.x} ${b.to.y}`;
+      const path = el("path", {
+        d, class: "branch",
+        stroke: b.depth === 0 ? "url(#trunkGrad)" : trunkColor(b.depth),
+        "stroke-width": b.width
+      });
+      branchLayer.appendChild(path);
+      const total = path.getTotalLength();
+      const isNew = animateNew ? nodeIsNew(b.childId) : true;
+      if (isNew) {
+        path.style.strokeDasharray = total;
+        path.style.strokeDashoffset = total;
+        path.style.transition = `stroke-dashoffset .55s ease-out`;
+        path.style.transitionDelay = (b.depth * 0.32) + "s";
+        requestAnimationFrame(() => requestAnimationFrame(() => { path.style.strokeDashoffset = 0; }));
+      }
+    });
+
+    // 叶子 + 标签
+    nodes.forEach((rec) => {
+      const st = STATUS[rec.ref.status] || STATUS.idea;
+      const scale = Math.max(1.5 - rec.depth * 0.18, 0.78);
+      const isRoot = rec.depth === 0;
+
+      const g = el("g", { transform: `translate(${rec.x} ${rec.y})` });
+
+      // 卡点光晕
+      if (rec.ref.status === "blocked") {
+        g.appendChild(el("circle", { class: "blockhalo", cx: 0, cy: 0, r: 16, fill: "#e0563b" }));
+      }
+      // 选中环
+      if (rec.ref.id === selectedId) {
+        g.appendChild(el("circle", { class: "selectedRing", cx: 0, cy: 0, r: 20 + scale * 6 }));
+      }
+
+      let shape;
+      if (isRoot) {
+        shape = el("circle", { class: "leaf", cx: 0, cy: 0, r: 15, fill: st.color, stroke: "#fff", "stroke-opacity": .25, "stroke-width": 2 });
+      } else {
+        shape = el("path", { class: "leaf", d: leafPath(), fill: st.color,
+          transform: `rotate(${rec.angle}) scale(${scale})`, stroke: "rgba(0,0,0,0.18)", "stroke-width": 1 });
+      }
+      shape.style.filter = `drop-shadow(0 0 ${isRoot?10:5}px ${st.color}aa)`;
+      shape.addEventListener("click", (e) => { e.stopPropagation(); selectNode(rec.ref.id); });
+      shape.addEventListener("mouseenter", () => shape.style.cursor = "pointer");
+      shape.appendChild(elTitle(rec.ref.title + " · " + st.label));
+
+      const isNew = animateNew ? nodeIsNew(rec.ref.id) : true;
+      if (isNew) {
+        g.style.transformBox = "fill-box";
+        g.style.opacity = 0;
+        g.style.transform = `translate(${rec.x}px,${rec.y}px) scale(0.2)`;
+        g.style.transformOrigin = "center";
+        g.style.transition = "opacity .4s ease-out, transform .5s cubic-bezier(.34,1.56,.64,1)";
+        g.style.transitionDelay = (rec.depth * 0.32 + 0.45) + "s";
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          g.style.opacity = 1;
+          g.style.transform = `translate(${rec.x}px,${rec.y}px) scale(1)`;
+        }));
+      }
+      leafLayer.appendChild(g);
+
+      // 标签
+      if (showLabels) {
+        const lx = rec.x, ly = rec.y - (isRoot ? 26 : 18 * scale + 8);
+        const txt = el("text", { class: "nodelabel", x: lx, y: ly, "text-anchor": "middle", fill: "var(--text)" });
+        txt.textContent = rec.ref.title;
+        const bg = el("rect", { class: "labelbg", rx: 5, ry: 5, fill: "var(--panel-bg)", "fill-opacity": .72 });
+        labelLayer.appendChild(bg); labelLayer.appendChild(txt);
+        // 量背景尺寸
+        const bb = txt.getBBox();
+        bg.setAttribute("x", bb.x - 6); bg.setAttribute("y", bb.y - 3);
+        bg.setAttribute("width", bb.width + 12); bg.setAttribute("height", bb.height + 6);
+        if (rec.ref.status === "blocked") { bg.setAttribute("stroke", "#e0563b"); bg.setAttribute("stroke-width", 1); }
+      }
+    });
+
+    newNodeIds.clear();
+  }
+
+  function elTitle(text){ const t=document.createElementNS(SVGNS,"title"); t.textContent=text; return t; }
+  function trunkColor(depth){
+    const t = Math.min(depth / 5, 1);
+    return mix(getCss("--trunk-a"), getCss("--trunk-b"), t);
+  }
+  function getCss(v){ return getComputedStyle(document.body).getPropertyValue(v).trim(); }
+  function mix(a,b,t){
+    const pa=hex(a), pb=hex(b);
+    const r=Math.round(pa[0]+(pb[0]-pa[0])*t), g=Math.round(pa[1]+(pb[1]-pa[1])*t), bl=Math.round(pa[2]+(pb[2]-pa[2])*t);
+    return `rgb(${r},${g},${bl})`;
+  }
+  function hex(h){ h=h.replace('#',''); if(h.length===3) h=h.split('').map(c=>c+c).join(''); return [parseInt(h.substr(0,2),16),parseInt(h.substr(2,2),16),parseInt(h.substr(4,2),16)]; }
+
+  // trunk gradient（需在 defs 动态建，依赖主题色）
+  function ensureTrunkGrad(){
+    let defs = svg.querySelector("defs");
+    let g = document.getElementById("trunkGrad");
+    if (g) g.remove();
+    g = el("linearGradient", { id: "trunkGrad", x1:"0", y1:"1", x2:"0", y2:"0" });
+    g.appendChild(el("stop", { offset:"0%", "stop-color": getCss("--trunk-b") }));
+    g.appendChild(el("stop", { offset:"100%", "stop-color": getCss("--trunk-a") }));
+    defs.appendChild(g);
+  }
+
+  function drawGround(){
+    groundG.innerHTML = "";
+    const mound = el("path", {
+      d: `M 0 ${GROUND_Y+8} Q ${CX} ${GROUND_Y-34} ${W} ${GROUND_Y+8} L ${W} ${H} L 0 ${H} Z`,
+      fill: "var(--soil)", stroke: "var(--soil-edge)", "stroke-width": 2
+    });
+    groundG.appendChild(mound);
+  }
+
+  // ---- 新节点动画追踪 ----
+  const newNodeIds = new Set();
+  function nodeIsNew(id){ return newNodeIds.has(id); }
+
+  // ---- 选中 / 详情面板 ----
+  function findNode(id, node, parent){
+    node = node || tree;
+    if (node.id === id) return { node, parent };
+    for (const c of (node.children||[])) { const r = findNode(id, c, node); if (r) return r; }
+    return null;
+  }
+  function selectNode(id){
+    selectedId = id; render(false); renderPanel(id);
+  }
+  function renderPanel(id){
+    const found = findNode(id);
+    if (!found) return;
+    const { node, parent } = found;
+    const st = STATUS[node.status];
+    panel.innerHTML = "";
+    const h = document.createElement("h2"); h.textContent = node.title; panel.appendChild(h);
+    const meta = document.createElement("div"); meta.className = "meta";
+    meta.textContent = parent ? ("被依赖于：" + parent.title) : "创世支柱（根任务）";
+    panel.appendChild(meta);
+
+    // 状态切换
+    const f1 = field("进度");
+    const row = document.createElement("div"); row.className = "statusrow";
+    Object.keys(STATUS).forEach(k => {
+      const p = document.createElement("span");
+      p.className = "statuspill" + (k===node.status?" active":"");
+      p.textContent = STATUS[k].label;
+      p.style.background = STATUS[k].color + "33";
+      p.style.color = STATUS[k].color;
+      p.onclick = () => { node.status = k; if(k!=="blocked") delete node.blocker; render(false); renderPanel(id); };
+      row.appendChild(p);
+    });
+    f1.appendChild(row); panel.appendChild(f1);
+
+    // 卡点
+    if (node.status === "blocked") {
+      const box = document.createElement("div"); box.className = "blocker-box";
+      box.innerHTML = `<div class="lbl">卡点</div>` + (node.blocker || "（点此补充卡点描述）");
+      panel.appendChild(box);
+    }
+
+    // 下一个任务（子任务）
+    const kids = node.children || [];
+    const f2 = field(kids.length ? "下一个任务（枝干）" : "下一个任务");
+    if (kids.length) {
+      const wrap = document.createElement("div"); wrap.className = "deps";
+      kids.forEach(c => {
+        const chip = document.createElement("span"); chip.className = "chip";
+        chip.style.borderLeft = "3px solid " + STATUS[c.status].color;
+        chip.textContent = c.title;
+        chip.style.cursor = "pointer";
+        chip.onclick = () => selectNode(c.id);
+        wrap.appendChild(chip);
+      });
+      f2.appendChild(wrap);
+    } else {
+      const v = document.createElement("div"); v.className = "val"; v.style.color = "var(--text-dim)";
+      v.textContent = "末梢任务。可在下方输入框为它摘出下一步。";
+      f2.appendChild(v);
+    }
+    panel.appendChild(f2);
+
+    const tip = document.createElement("div"); tip.className = "empty-hint";
+    tip.innerHTML = "已选中此节点。下方「摘出」会把新任务挂在它下面，长出新枝。";
+    panel.appendChild(tip);
+  }
+  function field(label){
+    const f = document.createElement("div"); f.className = "field";
+    const l = document.createElement("label"); l.textContent = label; f.appendChild(l);
+    return f;
+  }
+
+  // ---- 模拟「对话摘任务」----
+  function inferStatus(text){
+    if (/卡|阻塞|堵|block|等待|依赖不了/.test(text)) return "blocked";
+    if (/完成|做完|搞定|done|上线/.test(text)) return "done";
+    if (/在做|进行|开始|building|开发中/.test(text)) return "building";
+    if (/计划|准备|规划|排期|planned/.test(text)) return "planned";
+    return "idea";
+  }
+  function addTask(text){
+    text = text.trim(); if (!text) return;
+    const status = inferStatus(text);
+    const id = "n" + (idSeq++);
+    let title = text.replace(/[，,。.].*$/, "").slice(0, 14);
+    const node = { id, title, status };
+    if (status === "blocked") node.blocker = text;
+    const target = selectedId ? findNode(selectedId).node : tree;
+    target.children = target.children || [];
+    target.children.push(node);
+    newNodeIds.add(id);
+    render(true);
+    setTimeout(() => selectNode(id), (((findNode(id)?{}:{}), 1)) && 700);
+  }
+
+  // ---- legend ----
+  function renderLegend(){
+    const l = document.getElementById("legend");
+    l.innerHTML = "";
+    Object.keys(STATUS).forEach(k => {
+      const row = document.createElement("div"); row.className = "row";
+      const dot = document.createElement("span"); dot.className = "dot";
+      dot.style.background = STATUS[k].color; dot.style.color = STATUS[k].color;
+      const t = document.createElement("span"); t.textContent = STATUS[k].label;
+      row.appendChild(dot); row.appendChild(t); l.appendChild(row);
+    });
+  }
+
+  // ---- 控件 ----
+  document.getElementById("btnReplay").onclick = () => { markAllNew(tree); render(true); };
+  document.getElementById("btnLabels").onclick = (e) => { showLabels = !showLabels; e.target.textContent = showLabels ? "隐藏标签" : "显示标签"; render(false); };
+  document.getElementById("btnTheme").onclick = () => {
+    document.body.dataset.theme = document.body.dataset.theme === "dark" ? "light" : "dark";
+    ensureTrunkGrad(); drawGround(); render(false);
+  };
+  document.getElementById("btnAdd").onclick = () => { const i = document.getElementById("chatInput"); addTask(i.value); i.value = ""; };
+  document.getElementById("chatInput").addEventListener("keydown", (e) => { if (e.key === "Enter") document.getElementById("btnAdd").click(); });
+  svg.addEventListener("click", () => { selectedId = null; render(false); panel.innerHTML = '<div class="empty-hint">点一片叶子看任务详情。</div>'; });
+
+  function markAllNew(node){ newNodeIds.add(node.id); (node.children||[]).forEach(markAllNew); }
+
+  // ---- init ----
+  ensureTrunkGrad();
+  drawGround();
+  renderLegend();
+  markAllNew(tree);
+  render(true);
+})();
+</script>
+</body>
+</html>
