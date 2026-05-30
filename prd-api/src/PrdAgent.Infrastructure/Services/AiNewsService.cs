@@ -23,7 +23,8 @@ public class AiNewsService : IAiNewsService
     private const string StaleKey = "AiNews:Latest24h:Stale";
     private static readonly TimeSpan FreshTtl = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan StaleTtl = TimeSpan.FromHours(6);
-    private const int MaxItems = 60;
+    // 更新中心「AI 大事」时间线支持「加载更多」往下翻，放宽返回上限（首页 teaser 只取头部几条）。
+    private const int MaxItems = 200;
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {

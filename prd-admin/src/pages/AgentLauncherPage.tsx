@@ -53,7 +53,7 @@ import { PmAgentCardArt } from '@/pages/ai-toolbox/components/PmAgentCardArt';
 import { HomeAmbientBackdrop } from '@/components/effects/HomeAmbientBackdrop';
 import { Reveal } from '@/pages/home/components/Reveal';
 import { TipsRotator } from '@/components/daily-tips/TipsRotator';
-import { AiNewsRadar } from '@/components/home/AiNewsRadar';
+import { UpdateCenterNewsTeaser } from '@/components/ai-news/UpdateCenterNewsTeaser';
 
 /**
  * 进场动效节奏 —— 与 /home LandingPage 同款 Reveal 组件，duration 减半（1000ms）让整体速度翻倍。
@@ -804,7 +804,7 @@ export default function AgentLauncherPage() {
         }
       `}</style>
       
-      <div className="flex-1 min-h-0 overflow-hidden relative flex" style={{ zIndex: 1 }}>
+      <div className="flex-1 min-h-0 overflow-auto relative" style={{ zIndex: 1 }}>
 
         {/* Hero 本地 aurora 光晕 */}
         <div
@@ -821,9 +821,6 @@ export default function AgentLauncherPage() {
             zIndex: 0,
           }}
         />
-
-        {/* ── 左列：主内容（独立滚动）；右列：AI 大事早知道 全高 rail（上下贯穿） ── */}
-        <div className="flex-1 min-w-0 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
 
         {/* ── 页面主体内容（悬浮在背景图之上） ── */}
         <div className="relative z-10">
@@ -1056,6 +1053,9 @@ export default function AgentLauncherPage() {
                         {link.desc}
                       </div>
                     </div>
+
+                    {/* 更新中心卡：底部偶尔「跳出」一条 AI 资讯标题，点卡进入「AI 大事」时间线 */}
+                    {isUpdates && <UpdateCenterNewsTeaser />}
                   </button>
                   </Reveal>
                 );
@@ -1185,22 +1185,6 @@ export default function AgentLauncherPage() {
             </>
           )}
         </div>
-        {/* mobile: 资讯雷达落到主内容流末尾（无右列） */}
-        {isMobile && !searchQuery.trim() && (
-          <div className="px-5 pb-8" style={{ height: 520 }}>
-            <AiNewsRadar />
-          </div>
-        )}
-        </div>
-        {/* ── 右列：AI 大事早知道 全高 rail（仅宽屏，上下贯穿，左列滚动时常驻） ── */}
-        {!isMobile && (
-          <div
-            className="shrink-0 min-h-0 relative z-10"
-            style={{ width: 372, paddingTop: 28, paddingRight: 32, paddingBottom: 24, paddingLeft: 4 }}
-          >
-            <AiNewsRadar />
-          </div>
-        )}
       </div>
 
       <DesktopDownloadDialog open={downloadDialogOpen} onOpenChange={setDownloadDialogOpen} />
