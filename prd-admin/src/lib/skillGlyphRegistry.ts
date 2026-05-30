@@ -91,10 +91,6 @@ const SYMBOLS: Record<string, (c: [string, string, string]) => string> = {
     <path d="M42,48 L34,52 L38,60 L48,56 Z" fill="none" stroke="${c[0]}" stroke-width="1.6" stroke-linejoin="round"/>
     <path d="M36,53 l3,5 M40,51 l3,5 M44,50 l2.5,5" stroke="${c[2]}" stroke-width="1" stroke-linecap="round"/>
     <path d="M58,42 l0,5 M55.5,44.5 l5,0" stroke="${c[1]}" stroke-width="1.5" stroke-linecap="round"/>`,
-  'technical-documentation': (c) => `
-    <path d="M46,34 Q38,30 30,33 V58 Q38,55 46,59 Q54,55 62,58 V33 Q54,30 46,34 Z" fill="none" stroke="${c[0]}" stroke-width="1.7" stroke-linejoin="round"/>
-    <line x1="46" y1="34" x2="46" y2="59" stroke="${c[2]}" stroke-width="1.2"/>
-    <path d="M34,40 q4,-1.5 8,0 M34,46 q4,-1.5 8,0 M50,40 q4,-1.5 8,0 M50,46 q4,-1.5 8,0" stroke="${c[2]}" stroke-width="1" fill="none"/>`,
   'laowang': (c) => `
     <path d="M28,60 L42,38 L50,50 L56,42 L64,60 Z" fill="${c[0]}" fill-opacity="0.2" stroke="${c[0]}" stroke-width="1.7" stroke-linejoin="round"/>
     <path d="M46,22 l2.2,4.6 l5,0.6 l-3.6,3.5 l0.9,5 l-4.5,-2.4 l-4.5,2.4 l0.9,-5 l-3.6,-3.5 l5,-0.6 Z" fill="${c[1]}" stroke="${c[0]}" stroke-width="1"/>`,

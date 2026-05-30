@@ -32,7 +32,6 @@ const TEXT_EXT = new Set(['.md', '.markdown', '.txt', '.py', '.csv', '.json', '.
 // {{BASE_URL}} 占位替换），catalog 只管其余可移植技能，避免重复/降低改动风险。
 const INCLUDE = new Set([
   'laowang',                 // 精英·米多文化人格
-  'technical-documentation', // 通用技术文档写作
   'ui-ux-pro-max',           // 通用 UI/UX 设计智能
   'risk-matrix',             // 通用风险评估
   'skill-validation',        // 通用需求验证
@@ -61,7 +60,6 @@ const DISPLAY_NAME = {
   'risk-matrix': 'risk-matrix · MECE 风险评估',
   'skill-validation': 'skill-validation · 需求七维度评分',
   'task-handoff-checklist': 'task-handoff-checklist · 任务交接清单',
-  'technical-documentation': 'technical-documentation · 技术文档模板',
   'theme-transition': 'theme-transition · 主题切换水波纹动效',
   'ui-ux-pro-max': 'UI/UX Pro Max · 设计智能',
 };

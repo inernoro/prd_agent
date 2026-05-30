@@ -1,5 +1,5 @@
 # entropy-manifest.yml
-# 由 daily-entropy-plan 技能维护，记录已处理的 changelog 碎片
+# 由 entropy-cleanup 技能维护，记录已处理的 changelog 碎片
 # 首次创建于 2026-05-25，批量登记所有历史 changelog（无需追加 design 文档，均为标准表格格式）
 
 processed:

@@ -157,6 +157,7 @@ docs:
   guide.cds-deploy-three-paths: CDS 三种部署方式指南
   guide.cds-fullstack-infra-smoke: CDS 全栈基础设施冒烟样例指南
   guide.skill-workflow: AI 技能工作流指南
+  guide.skill-removal-checklist: 删技能前置检查清单指南
   guide.mongodb-indexes: MongoDB 索引手册
   guide.multi-image-compose-test: 多图组合功能测试备忘录
   guide.doubao-asr-relay: 豆包 ASR 模型中继接入指南

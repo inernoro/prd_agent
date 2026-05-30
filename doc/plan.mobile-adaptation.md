@@ -486,7 +486,6 @@ npx lighthouse http://localhost:5173/agent-launcher \
 | Skill | 触发时机 | 用途 |
 |-------|----------|------|
 | **`/verify`** (human-verify) | 每个 Phase 完成后 | 多角度验证适配效果：逆向验证（缩小窗口看是否溢出）、边界测试（极端宽度 320px/414px）、用户场景模拟（单手操作流程） |
-| **`/fix-unused-imports`** | 每次大批量组件创建后 | 清理新增公共组件导入后可能产生的未使用导入（旧组件被 ResponsiveGrid 等替代后） |
 | **`/smoke-test`** | Phase 1 完成后 | 验证 API 层未因布局改动产生回归（Controller 端点仍正常响应） |
 
 ### 6.2 发版阶段
