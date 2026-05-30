@@ -1076,6 +1076,9 @@ public class PmAgentController : ControllerBase
         // 结案评价由项目经理发起
         if (project.LeaderId != userId)
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "结案评价仅项目经理可发起"));
+        // 已完成结案评价的项目不可重复发起
+        if (project.Evaluation != null || project.EvaluationRound?.Status == PmEvaluationRoundStatus.Finalized)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "项目已完成结案评价，不能重复发起"));
         // 必须过了项目计划结束时间
         if (project.PlannedEndAt == null)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请先设置项目计划结束时间，到期后再发起结案评价"));

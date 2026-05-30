@@ -114,6 +114,14 @@ export function EvaluatePanel({ project, onClose, onChanged }: Props) {
           {/* 收集中：参评人列表 */}
           {collecting && (
             <>
+              {/* 评分进度：谁已评 / 谁未评 */}
+              <div className="flex items-center gap-2">
+                <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>评分进度</span>
+                <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--bg-base)' }}>
+                  <div style={{ width: `${total ? Math.round((scoredCount / total) * 100) : 0}%`, height: '100%', background: '#10B981' }} />
+                </div>
+                <span className="text-[11px] tabular-nums" style={{ color: 'var(--text-muted)' }}>{scoredCount}/{total} 已评</span>
+              </div>
               <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
                 打分标准：项目交付的价值是否值得投入的时间和成本？（0-10 分，受益方权重为其他 2 倍，分数互相不可见）
               </div>
@@ -156,11 +164,11 @@ export function EvaluatePanel({ project, onClose, onChanged }: Props) {
 
         <div className="flex justify-end gap-2 px-5 py-3.5 shrink-0 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
           <Button variant="ghost" onClick={onClose}>关闭</Button>
-          {!collecting && isLeader && (
+          {!collecting && !result && isLeader && (
             <Button variant="primary" onClick={start}
               disabled={busy || project.stakeholders.length === 0 || !canInitiate}
               title={!canInitiate ? (project.plannedEndAt ? `未到计划结束时间（${endLabel}）` : '请先设置项目计划结束时间') : undefined}>
-              {busy ? <MapSpinner size={14} /> : <Play size={14} />}{result ? '重新发起评价' : '发起评价'}
+              {busy ? <MapSpinner size={14} /> : <Play size={14} />}发起评价
             </Button>
           )}
           {collecting && isOwner && (
