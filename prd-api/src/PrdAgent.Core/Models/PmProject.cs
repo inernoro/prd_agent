@@ -3,11 +3,11 @@ namespace PrdAgent.Core.Models;
 /// <summary>
 /// 项目管理 - 项目实体。
 ///
-/// 对齐米多 PMO 方法论：
+/// 通用项目管理方法论：
 /// - 项目 = 临时性 + 明确起止/目标/资源/干系人验收的工作
-/// - 类型分级：S(战略) / I(创新) / O(运营，含 常规/定向整改/专项督办)
+/// - 类型分级：普通(General，默认) / 战略(S) / 创新(I) / 运营(O，含 常规/定向整改/专项督办)
 /// - 全生命周期：立项注册 → 进行 → 结案 → 评价(NPSS) → 奖金
-/// - 价值导向：成功 = Value > Effort + Expense（NPSS 评价见 PmEvaluation，Phase 2）
+/// - 价值导向：成功 = Value > Effort + Expense（NPSS 评价见 PmEvaluation）
 /// </summary>
 public class PmProject
 {
@@ -25,8 +25,8 @@ public class PmProject
     /// <summary>业务目标（立项必填，AI 拆解任务的依据）</summary>
     public string BusinessGoal { get; set; } = string.Empty;
 
-    /// <summary>项目类型：strategic(S) / innovation(I) / operation(O)</summary>
-    public string ProjectType { get; set; } = PmProjectType.Operation;
+    /// <summary>项目类型：general(普通,默认) / strategic(S) / innovation(I) / operation(O)</summary>
+    public string ProjectType { get; set; } = PmProjectType.General;
 
     /// <summary>
     /// 运营级子类型（仅 ProjectType=operation 时有效）：
@@ -210,6 +210,8 @@ public static class PmEvaluationGrade
 /// <summary>项目类型常量</summary>
 public static class PmProjectType
 {
+    /// <summary>普通项目（默认，不分级的通用项目）</summary>
+    public const string General = "general";
     /// <summary>战略级项目（S）</summary>
     public const string Strategic = "strategic";
     /// <summary>创新级项目（I）</summary>
@@ -217,7 +219,7 @@ public static class PmProjectType
     /// <summary>运营级项目（O）</summary>
     public const string Operation = "operation";
 
-    public static readonly string[] All = { Strategic, Innovation, Operation };
+    public static readonly string[] All = { General, Strategic, Innovation, Operation };
 }
 
 /// <summary>运营级项目子类型常量</summary>

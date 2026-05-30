@@ -12,14 +12,14 @@ interface Props {
   onCreated: (project: PmProject) => void;
 }
 
-const TYPES: PmProjectType[] = ['strategic', 'innovation', 'operation'];
+const TYPES: PmProjectType[] = ['general', 'strategic', 'innovation', 'operation'];
 const SUBTYPES: PmOperationSubType[] = ['routine', 'rectification', 'supervision'];
 
 export function CreateProjectDialog({ onClose, onCreated }: Props) {
   const [title, setTitle] = useState('');
   const [businessGoal, setBusinessGoal] = useState('');
   const [description, setDescription] = useState('');
-  const [projectType, setProjectType] = useState<PmProjectType>('operation');
+  const [projectType, setProjectType] = useState<PmProjectType>('general');
   const [operationSubType, setOperationSubType] = useState<PmOperationSubType>('routine');
   const [strategyAlignment, setStrategyAlignment] = useState('');
   const [loading, setLoading] = useState(false);
@@ -77,7 +77,7 @@ export function CreateProjectDialog({ onClose, onCreated }: Props) {
 
           <div>
             <label className={labelCls} style={{ color: 'var(--text-secondary)' }}>项目类型</label>
-            <div className="flex gap-2">
+            <div className="grid grid-cols-2 gap-2">
               {TYPES.map((t) => {
                 const meta = PROJECT_TYPE_REGISTRY[t];
                 const active = projectType === t;
@@ -85,7 +85,7 @@ export function CreateProjectDialog({ onClose, onCreated }: Props) {
                   <button
                     key={t}
                     onClick={() => setProjectType(t)}
-                    className="flex-1 rounded-lg px-2 py-2 text-[12px] border text-left transition-colors"
+                    className="rounded-lg px-2 py-2 text-[12px] border text-left transition-colors"
                     style={{
                       borderColor: active ? meta.color : 'var(--border-subtle)',
                       background: active ? `${meta.color}1a` : 'var(--bg-input)',

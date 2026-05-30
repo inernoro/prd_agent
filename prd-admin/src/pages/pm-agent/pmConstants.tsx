@@ -10,6 +10,7 @@ import type {
 
 // ── 项目类型注册表（S / I / O）──
 export const PROJECT_TYPE_REGISTRY: Record<PmProjectType, { label: string; short: string; color: string; desc: string }> = {
+  general: { label: '普通项目', short: '普', color: '#64748B', desc: '不分级的通用项目，适用于大多数日常工作' },
   strategic: { label: '战略级项目', short: 'S', color: '#EF4444', desc: '依据年度经营计划的重点项目，全流程监控、月度复盘、季度评审' },
   innovation: { label: '创新级项目', short: 'I', color: '#A855F7', desc: '基于"成就客户"的创新探索，一米宽十米深，主要做 POC' },
   operation: { label: '运营级项目', short: 'O', color: '#3B82F6', desc: '部门日常运营衍生的攻坚型项目' },

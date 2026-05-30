@@ -2,7 +2,7 @@ import type { ApiResponse } from '@/types/api';
 
 // ── 数据类型 ──
 
-export type PmProjectType = 'strategic' | 'innovation' | 'operation';
+export type PmProjectType = 'general' | 'strategic' | 'innovation' | 'operation';
 export type PmOperationSubType = 'routine' | 'rectification' | 'supervision';
 export type PmProjectLifecycle = 'registered' | 'running' | 'closing' | 'evaluated' | 'archived';
 export type PmTaskStatus = 'backlog' | 'todo' | 'in_progress' | 'done' | 'cancelled';
@@ -62,6 +62,7 @@ export type PmProject = {
 
 export type PmRewardConfig = {
   id: string;
+  generalBase: number;
   strategicBase: number;
   innovationBase: number;
   operationRoutineBase: number;
@@ -212,6 +213,7 @@ export type UpdatePmProjectInput = Partial<{
 }>;
 
 export type UpdateRewardConfigInput = Partial<{
+  generalBase: number;
   strategicBase: number;
   innovationBase: number;
   operationRoutineBase: number;

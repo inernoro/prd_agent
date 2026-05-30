@@ -10,6 +10,9 @@ public class PmRewardConfig
 {
     public string Id { get; set; } = "default";
 
+    /// <summary>普通项目奖金基数（元，默认 0）</summary>
+    public decimal GeneralBase { get; set; } = 0;
+
     /// <summary>战略级项目奖金基数（元）</summary>
     public decimal StrategicBase { get; set; } = 100000;
 

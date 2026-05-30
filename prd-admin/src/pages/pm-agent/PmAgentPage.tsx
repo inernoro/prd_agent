@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { FolderKanban, Plus, Trash2, TrendingUp } from 'lucide-react';
+import { FolderKanban, Plus, Trash2, TrendingUp, Lightbulb, ChevronUp, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
@@ -16,6 +16,8 @@ export function PmAgentPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showDashboard, setShowDashboard] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(() => sessionStorage.getItem('pm-guide-collapsed') !== '1');
+  const toggleGuide = () => setGuideOpen((v) => { sessionStorage.setItem('pm-guide-collapsed', v ? '1' : '0'); return !v; });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -59,11 +61,44 @@ export function PmAgentPage() {
         <FolderKanban size={22} style={{ color: '#3B82F6' }} />
         <div className="flex-1 min-w-0">
           <h1 className="text-[18px] font-semibold" style={{ color: 'var(--text-primary)' }}>项目管理</h1>
-          <p className="text-[12px]" style={{ color: 'var(--text-muted)' }}>立项注册 → 任务看板 / 甘特图 → AI 拆解需求（对齐米多 PMO 方法论）</p>
+          <p className="text-[12px]" style={{ color: 'var(--text-muted)' }}>立项 → 任务看板 / 甘特图 → AI 拆解需求 → 结案评价</p>
         </div>
+        <button onClick={toggleGuide} className="flex items-center gap-1 text-[12px] px-2 py-1 rounded hover:opacity-70" style={{ color: 'var(--text-muted)' }} title="使用说明">
+          <Lightbulb size={14} />说明{guideOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+        </button>
         <Button variant="secondary" onClick={() => setShowDashboard(true)}><TrendingUp size={15} />NPSS 看板</Button>
         <Button variant="primary" onClick={() => setShowCreate(true)}><Plus size={15} />立项</Button>
       </div>
+
+      {/* 使用说明（引导区） */}
+      {guideOpen && (
+        <div className="shrink-0 rounded-xl border p-4" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
+          <div className="flex items-start gap-2">
+            <Lightbulb size={16} className="mt-0.5 shrink-0" style={{ color: '#F59E0B' }} />
+            <div className="flex-1 min-w-0">
+              <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>项目管理能帮你做什么</div>
+              <div className="text-[12px] mt-1" style={{ color: 'var(--text-secondary)' }}>
+                把「有明确目标、有起止时间」的临时性工作当作项目来管理：立项后用任务看板 / 列表 / 甘特图跟踪进度，还能让 AI 根据目标自动把需求拆成任务。
+              </div>
+              <div className="grid gap-2 mt-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
+                {[
+                  { n: '1', t: '立项', d: '点「立项」填项目名和业务目标，选项目类型（默认普通）' },
+                  { n: '2', t: '推进', d: '用 AI 拆解需求自动生成任务，或手动添加；在看板拖拽、点任务卡编辑' },
+                  { n: '3', t: '结案', d: '维护干系人并打分得出 NPSS 满意度，NPSS 看板汇总成功度与奖金' },
+                ].map((s) => (
+                  <div key={s.n} className="rounded-lg p-2.5" style={{ background: 'var(--bg-base)' }}>
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold" style={{ background: 'rgba(59,130,246,0.2)', color: '#3B82F6' }}>{s.n}</span>
+                      <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>{s.t}</span>
+                    </div>
+                    <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>{s.d}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 列表 */}
       {loading ? (

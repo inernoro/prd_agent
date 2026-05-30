@@ -407,6 +407,7 @@ public class PmAgentController : ControllerBase
     public async Task<IActionResult> UpdateRewardConfig([FromBody] UpdateRewardConfigRequest request)
     {
         var cfg = await GetOrCreateRewardConfigAsync();
+        if (request.GeneralBase.HasValue) cfg.GeneralBase = Math.Max(0, request.GeneralBase.Value);
         if (request.StrategicBase.HasValue) cfg.StrategicBase = Math.Max(0, request.StrategicBase.Value);
         if (request.InnovationBase.HasValue) cfg.InnovationBase = Math.Max(0, request.InnovationBase.Value);
         if (request.OperationRoutineBase.HasValue) cfg.OperationRoutineBase = Math.Max(0, request.OperationRoutineBase.Value);
@@ -438,7 +439,8 @@ public class PmAgentController : ControllerBase
         {
             PmProjectType.Strategic => cfg.StrategicBase,
             PmProjectType.Innovation => cfg.InnovationBase,
-            _ => cfg.OperationRoutineBase,
+            PmProjectType.Operation => cfg.OperationRoutineBase,
+            _ => cfg.GeneralBase,
         };
         // 优秀项目额外叠加优秀奖金基数
         if (p.IsExcellent) baseAmount += cfg.ExcellenceBonusBase;
@@ -848,6 +850,7 @@ public class BulkTasksRequest
 
 public class UpdateRewardConfigRequest
 {
+    public decimal? GeneralBase { get; set; }
     public decimal? StrategicBase { get; set; }
     public decimal? InnovationBase { get; set; }
     public decimal? OperationRoutineBase { get; set; }

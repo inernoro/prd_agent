@@ -192,6 +192,7 @@ export function DashboardView({ onBack }: Props) {
           <div className="text-[11px] mb-3" style={{ color: 'var(--text-muted)' }}>奖金 = 基数 × 价值系数 × (满意度/100)；满意度&lt;60 或 定向整改/专项督办 → 归零。</div>
           <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
             {([
+              { key: 'generalBase' as const, label: '普通项目基数', cur: cfg.generalBase },
               { key: 'strategicBase' as const, label: '战略级基数', cur: cfg.strategicBase },
               { key: 'innovationBase' as const, label: '创新级基数', cur: cfg.innovationBase },
               { key: 'operationRoutineBase' as const, label: '常规运营级基数', cur: cfg.operationRoutineBase },
