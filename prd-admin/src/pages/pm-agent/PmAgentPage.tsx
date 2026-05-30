@@ -84,7 +84,7 @@ export function PmAgentPage() {
         <FolderKanban size={22} style={{ color: '#3B82F6' }} />
         <div className="flex-1 min-w-0">
           <h1 className="text-[18px] font-semibold" style={{ color: 'var(--text-primary)' }}>项目管理</h1>
-          <p className="text-[12px]" style={{ color: 'var(--text-muted)' }}>立项 → 任务看板 / 甘特图 → AI 拆解需求 → 结案评价</p>
+          <p className="text-[12px]" style={{ color: 'var(--text-muted)' }}>立项 → 目标 → 里程碑 / 任务 → 推进 → 结案</p>
         </div>
         <button onClick={toggleGuide} className="flex items-center gap-1 text-[12px] px-2 py-1 rounded hover:opacity-70" style={{ color: 'var(--text-muted)' }} title="使用说明">
           <Lightbulb size={14} />说明{guideOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
@@ -106,13 +106,14 @@ export function PmAgentPage() {
             <div className="flex-1 min-w-0">
               <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>项目管理能帮你做什么</div>
               <div className="text-[12px] mt-1" style={{ color: 'var(--text-secondary)' }}>
-                把「有明确目标、有起止时间」的临时性工作当作项目来管理：立项后用任务看板 / 列表 / 甘特图跟踪进度，还能让 AI 根据目标自动把需求拆成任务。
+                把「有明确目标、有起止时间」的临时性工作当作项目：先定目标（可让 AI 依据业务目标拆解 OKR），再用里程碑 + 任务（看板 / 列表 / 甘特）排计划与跟踪，结案时按 NPSS 评价。
               </div>
               <div className="grid gap-2 mt-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
                 {[
-                  { n: '1', t: '立项', d: '点「立项」填项目名和业务目标，选项目类型（默认普通）' },
-                  { n: '2', t: '推进', d: '用 AI 拆解需求自动生成任务，或手动添加；在看板拖拽、点任务卡编辑' },
-                  { n: '3', t: '结案', d: '维护干系人并打分得出 NPSS 满意度，NPSS 看板汇总成功度与奖金' },
+                  { n: '1', t: '立项', d: '填项目名、业务目标、项目类型（默认普通），指定项目经理' },
+                  { n: '2', t: '定目标', d: '在「目标」围绕业务目标设 OKR，可 AI 拆解；进度由里程碑滚动' },
+                  { n: '3', t: '推进', d: '用里程碑 + 任务（看板 / 列表 / 甘特）排期跟踪，或 AI 拆解需求成任务' },
+                  { n: '4', t: '结案', d: '维护干系人打分得 NPSS，看板汇总成功度与奖金' },
                 ].map((s) => (
                   <div key={s.n} className="rounded-lg p-2.5" style={{ background: 'var(--bg-base)' }}>
                     <div className="flex items-center gap-1.5">
@@ -157,7 +158,7 @@ export function PmAgentPage() {
           <FolderKanban size={40} style={{ color: 'var(--text-muted)', opacity: 0.5 }} />
           <div className="text-[15px] font-medium" style={{ color: 'var(--text-secondary)' }}>还没有项目</div>
           <div className="text-[12px] max-w-md" style={{ color: 'var(--text-muted)' }}>
-            项目是「为创造独特成果而进行的临时性工作」。点击立项，填写业务目标后即可让 AI 帮你拆解任务、可视化排期。
+            项目是「为创造独特成果而进行的临时性工作」。点击立项、填写业务目标后，可让 AI 拆解目标与任务，用里程碑可视化排期，并跟踪到结案评价。
           </div>
           <Button variant="primary" onClick={() => setShowCreate(true)}><Plus size={15} />立项第一个项目</Button>
         </div>
