@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Trash2, Link2, AlertTriangle, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { toast } from '@/lib/toast';
-import { updatePmTask, deletePmTask, createPmTask, getPmTaskActivities, addPmTaskComment } from '@/services';
-import type { PmTask, PmTaskStatus, PmTaskPriority, PmTaskActivity } from '@/services/contracts/pmAgent';
+import { updatePmTask, deletePmTask, createPmTask, getPmTaskActivities, addPmTaskComment, getPmMembers } from '@/services';
+import type { PmMember, PmTask, PmTaskStatus, PmTaskPriority, PmTaskActivity } from '@/services/contracts/pmAgent';
 import { TASK_STATUS_REGISTRY, PRIORITY_REGISTRY } from './pmConstants';
 
 const FIELD_LABEL: Record<string, string> = { status: '状态', priority: '优先级', assignee: '负责人', title: '标题' };
@@ -53,17 +53,49 @@ export function TaskDetailDrawer({ task, allTasks, onClose, onSaved, onDeleted, 
   const [subTitle, setSubTitle] = useState('');
   const [activities, setActivities] = useState<PmTaskActivity[]>([]);
   const [comment, setComment] = useState('');
+  // @ 提醒：项目成员候选 + 已提及映射 + 弹层状态
+  const [members, setMembers] = useState<PmMember[]>([]);
+  const [mentioned, setMentioned] = useState<Record<string, string>>({});
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const commentRef = useRef<HTMLInputElement>(null);
 
   const loadActivities = useCallback(async () => {
     const res = await getPmTaskActivities(task.id);
     if (res.success) setActivities(res.data.items);
   }, [task.id]);
   useEffect(() => { loadActivities(); }, [loadActivities]);
+  useEffect(() => {
+    getPmMembers(task.projectId).then((res) => { if (res.success) setMembers(res.data.members); });
+  }, [task.projectId]);
+
+  const mentionMatches = mentionQuery === null ? [] : members.filter((m) =>
+    m.displayName.toLowerCase().includes(mentionQuery.toLowerCase())).slice(0, 6);
+
+  const onCommentChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setComment(val);
+    const caret = e.target.selectionStart ?? val.length;
+    const m = val.slice(0, caret).match(/@([^\s@]*)$/);
+    setMentionQuery(m ? m[1] : null);
+  };
+
+  const pickMention = (mb: PmMember) => {
+    const el = commentRef.current;
+    const caret = el?.selectionStart ?? comment.length;
+    const before = comment.slice(0, caret).replace(/@([^\s@]*)$/, `@${mb.displayName} `);
+    const next = before + comment.slice(caret);
+    setComment(next);
+    setMentioned((prev) => ({ ...prev, [mb.userId]: mb.displayName }));
+    setMentionQuery(null);
+    requestAnimationFrame(() => { el?.focus(); const pos = before.length; el?.setSelectionRange(pos, pos); });
+  };
 
   const postComment = async () => {
     if (!comment.trim()) return;
-    const res = await addPmTaskComment(task.id, comment.trim());
-    if (res.success) { setComment(''); loadActivities(); } else toast.error('评论失败', res.error?.message || '');
+    // 仅保留 @名 仍在文本中的提及
+    const ids = Object.entries(mentioned).filter(([, name]) => comment.includes(`@${name}`)).map(([uid]) => uid);
+    const res = await addPmTaskComment(task.id, comment.trim(), ids);
+    if (res.success) { setComment(''); setMentioned({}); setMentionQuery(null); loadActivities(); } else toast.error('评论失败', res.error?.message || '');
   };
 
   const children = useMemo(() => allTasks.filter((t) => t.parentTaskId === task.id), [allTasks, task.id]);
@@ -249,8 +281,25 @@ export function TaskDetailDrawer({ task, allTasks, onClose, onSaved, onDeleted, 
           <div>
             <label className={labelCls} style={{ color: 'var(--text-secondary)' }}><MessageSquare size={11} className="inline mr-1" />动态与评论</label>
             <div className="flex items-center gap-1.5 mb-2">
-              <input className="flex-1 rounded-lg px-2 py-1.5 text-[12px] outline-none border" style={inputStyle}
-                value={comment} onChange={(e) => setComment(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') postComment(); }} placeholder="写评论，回车发送" />
+              <div className="relative flex-1">
+                <input ref={commentRef} className="w-full rounded-lg px-2 py-1.5 text-[12px] outline-none border" style={inputStyle}
+                  value={comment} onChange={onCommentChange}
+                  onKeyDown={(e) => {
+                    if (mentionQuery !== null && mentionMatches.length > 0 && (e.key === 'Enter' || e.key === 'Tab')) { e.preventDefault(); pickMention(mentionMatches[0]); return; }
+                    if (e.key === 'Escape' && mentionQuery !== null) { e.preventDefault(); setMentionQuery(null); return; }
+                    if (e.key === 'Enter') postComment();
+                  }}
+                  placeholder="写评论，输入 @ 提醒成员，回车发送" />
+                {mentionQuery !== null && mentionMatches.length > 0 && (
+                  <div className="absolute left-0 bottom-full mb-1 z-10 rounded-lg border py-1 shadow-lg" style={{ minWidth: 180, background: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)' }}>
+                    {mentionMatches.map((mb) => (
+                      <button key={mb.userId} onClick={() => pickMention(mb)} className="w-full text-left px-3 py-1.5 text-[12px] hover:opacity-80" style={{ color: 'var(--text-primary)' }}>
+                        @{mb.displayName}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <Button variant="secondary" size="sm" onClick={postComment} disabled={!comment.trim()}>发送</Button>
             </div>
             <div className="flex flex-col gap-2">

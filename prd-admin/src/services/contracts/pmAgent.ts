@@ -447,5 +447,5 @@ export type GetPmRewardConfigContract = () => Promise<ApiResponse<PmRewardConfig
 export type UpdatePmRewardConfigContract = (input: UpdateRewardConfigInput) => Promise<ApiResponse<PmRewardConfig>>;
 export type TogglePmExcellenceContract = (projectId: string, isExcellent: boolean) => Promise<ApiResponse<{ id: string; isExcellent: boolean }>>;
 export type GetPmTaskActivitiesContract = (taskId: string) => Promise<ApiResponse<{ items: PmTaskActivity[] }>>;
-export type AddPmTaskCommentContract = (taskId: string, content: string) => Promise<ApiResponse<PmTaskActivity>>;
+export type AddPmTaskCommentContract = (taskId: string, content: string, mentionedUserIds?: string[]) => Promise<ApiResponse<PmTaskActivity>>;
 export type BulkPmTasksContract = (projectId: string, input: BulkTasksInput) => Promise<ApiResponse<{ matched?: number; modified?: number; deletedCount?: number }>>;

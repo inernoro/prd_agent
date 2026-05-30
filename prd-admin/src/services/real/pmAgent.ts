@@ -249,8 +249,8 @@ export const getPmTaskActivitiesReal: GetPmTaskActivitiesContract = async (taskI
   return await apiRequest(api.pm.tasks.activities(encodeURIComponent(taskId)), { method: 'GET' });
 };
 
-export const addPmTaskCommentReal: AddPmTaskCommentContract = async (taskId, content) => {
-  return await apiRequest(api.pm.tasks.comments(encodeURIComponent(taskId)), { method: 'POST', body: { content } });
+export const addPmTaskCommentReal: AddPmTaskCommentContract = async (taskId, content, mentionedUserIds) => {
+  return await apiRequest(api.pm.tasks.comments(encodeURIComponent(taskId)), { method: 'POST', body: { content, mentionedUserIds } });
 };
 
 export const bulkPmTasksReal: BulkPmTasksContract = async (projectId, input) => {

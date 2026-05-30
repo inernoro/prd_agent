@@ -1375,7 +1375,49 @@ public class PmAgentController : ControllerBase
             UserId = userId, UserName = actorName, Content = request.Content.Trim(),
         };
         await _db.PmTaskActivities.InsertOneAsync(activity);
+
+        // @ 提醒：为每个被提及的用户写一条站内通知（复用 admin_notifications 通知中心）
+        await NotifyMentionsAsync(request.MentionedUserIds, userId, actorName, task, activity.Content ?? "");
+
         return Ok(ApiResponse<object>.Ok(activity));
+    }
+
+    /// <summary>评论 @ 提醒：给被提及用户各写一条站内通知。失败不影响评论本身。</summary>
+    private async Task NotifyMentionsAsync(List<string>? mentionedUserIds, string actorId, string? actorName, PmTask task, string comment)
+    {
+        try
+        {
+            var targets = (mentionedUserIds ?? new()).Where(x => !string.IsNullOrWhiteSpace(x) && x != actorId).Distinct().ToList();
+            if (targets.Count == 0) return;
+            // 只通知确属本项目成员/经理/创建人的用户，防止越权 @
+            var project = await _db.PmProjects.Find(p => p.Id == task.ProjectId).FirstOrDefaultAsync();
+            if (project == null) return;
+            var allowed = project.MemberIds.Append(project.LeaderId).Append(project.OwnerId)
+                .Where(x => !string.IsNullOrWhiteSpace(x)).ToHashSet();
+            targets = targets.Where(allowed.Contains).ToList();
+            if (targets.Count == 0) return;
+
+            var who = string.IsNullOrWhiteSpace(actorName) ? "有人" : actorName;
+            var excerpt = comment.Length > 80 ? comment[..80] + "…" : comment;
+            var now = DateTime.UtcNow;
+            var notifications = targets.Select(uid => new AdminNotification
+            {
+                Key = $"pm-mention:{task.Id}:{actorId}:{now.Ticks}:{uid}",
+                TargetUserId = uid,
+                Title = $"{who} 在任务「{task.Title}」中提到了你",
+                Message = excerpt,
+                Level = "info",
+                Source = "pm-agent",
+                ActionLabel = "查看任务",
+                ActionUrl = "/pm-agent",
+                ActionKind = "navigate",
+            }).ToList();
+            await _db.AdminNotifications.InsertManyAsync(notifications, cancellationToken: CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[pm-agent] 写 @ 提醒通知失败 task={TaskId}", task.Id);
+        }
     }
 
     /// <summary>批量操作任务（改状态/优先级/负责人 或 删除）</summary>
@@ -1633,6 +1675,8 @@ public class UpdatePmProjectRequest
 public class AddCommentRequest
 {
     public string Content { get; set; } = string.Empty;
+    /// <summary>被 @ 提醒的用户 UserId 列表（前端从项目成员中选取）</summary>
+    public List<string>? MentionedUserIds { get; set; }
 }
 
 public class BulkTasksRequest
