@@ -28,6 +28,10 @@ import type {
   DeletePmKnowledgeFileContract,
   GetPmMemberSitesContract,
   PmKnowledgeFile,
+  ListPmDecisionsContract,
+  CreatePmDecisionContract,
+  UpdatePmDecisionContract,
+  DeletePmDecisionContract,
 } from '@/services/contracts/pmAgent';
 import type { ApiResponse } from '@/types/api';
 import { useAuthStore } from '@/stores/authStore';
@@ -83,6 +87,23 @@ export const deletePmKnowledgeFileReal: DeletePmKnowledgeFileContract = async (f
 
 export const getPmMemberSitesReal: GetPmMemberSitesContract = async (projectId) => {
   return await apiRequest(api.pm.projects.memberSites(encodeURIComponent(projectId)), { method: 'GET' });
+};
+
+// ── 决策事项 ──
+export const listPmDecisionsReal: ListPmDecisionsContract = async (projectId) => {
+  return await apiRequest(api.pm.projects.decisions(encodeURIComponent(projectId)), { method: 'GET' });
+};
+
+export const createPmDecisionReal: CreatePmDecisionContract = async (projectId, input) => {
+  return await apiRequest(api.pm.projects.decisions(encodeURIComponent(projectId)), { method: 'POST', body: input });
+};
+
+export const updatePmDecisionReal: UpdatePmDecisionContract = async (decisionId, input) => {
+  return await apiRequest(api.pm.decisions.item(encodeURIComponent(decisionId)), { method: 'PUT', body: input });
+};
+
+export const deletePmDecisionReal: DeletePmDecisionContract = async (decisionId) => {
+  return await apiRequest(api.pm.decisions.item(encodeURIComponent(decisionId)), { method: 'DELETE' });
 };
 
 export const getPmProjectReal: GetPmProjectContract = async (projectId) => {

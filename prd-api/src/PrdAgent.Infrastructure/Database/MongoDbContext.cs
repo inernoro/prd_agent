@@ -298,6 +298,7 @@ public class MongoDbContext
     public IMongoCollection<PmRewardConfig> PmRewardConfigs => _database.GetCollection<PmRewardConfig>("pm_reward_configs");
     public IMongoCollection<PmTaskActivity> PmTaskActivities => _database.GetCollection<PmTaskActivity>("pm_task_activities");
     public IMongoCollection<PmKnowledgeFile> PmKnowledgeFiles => _database.GetCollection<PmKnowledgeFile>("pm_knowledge_files");
+    public IMongoCollection<PmDecision> PmDecisions => _database.GetCollection<PmDecision>("pm_decisions");
 
     // Asset Registry 资产登记簿（跨存储迁移基础设施）
     public IMongoCollection<AssetRegistryEntry> AssetRegistry => _database.GetCollection<AssetRegistryEntry>("asset_registry");

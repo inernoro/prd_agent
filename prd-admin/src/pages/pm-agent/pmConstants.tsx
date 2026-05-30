@@ -6,6 +6,7 @@ import type {
   PmOperationSubType,
   PmStakeholderRole,
   PmEvaluationGrade,
+  PmDecisionType,
 } from '@/services/contracts/pmAgent';
 
 // ── 项目类型注册表（S / I / O）──
@@ -77,6 +78,16 @@ export const MORE_FRAMEWORK = [
   { key: 'moreRapid' as const, letter: 'R', label: '快速迭代', desc: '小步快跑，快速验证价值，避免大失败', color: '#3B82F6' },
   { key: 'moreEmpowered' as const, letter: 'E', label: '赋能团队', desc: '给团队自主权，快速响应变化', color: '#10B981' },
 ];
+
+// ── 决策事项状态注册表（三态分栏顺序）──
+export const DECISION_TYPE_REGISTRY: Record<PmDecisionType, { label: string; color: string; desc: string }> = {
+  pending: { label: '待决策', color: '#F59E0B', desc: '尚未拍板，需要进一步讨论或上级裁决' },
+  decided: { label: '已决策', color: '#10B981', desc: '已正式定案，记录定案人与时间' },
+  memo: { label: '备忘', color: '#6366F1', desc: '需长期留痕的约定 / 风险 / 注意事项' },
+};
+
+/** 决策三态分栏顺序 */
+export const DECISION_COLUMNS: PmDecisionType[] = ['pending', 'decided', 'memo'];
 
 // ── 优先级注册表 ──
 export const PRIORITY_REGISTRY: Record<PmTaskPriority, { label: string; color: string; weight: number }> = {

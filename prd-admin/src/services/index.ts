@@ -1959,6 +1959,10 @@ export {
   updatePmKnowledgeFileReal as updatePmKnowledgeFile,
   deletePmKnowledgeFileReal as deletePmKnowledgeFile,
   getPmMemberSitesReal as getPmMemberSites,
+  listPmDecisionsReal as listPmDecisions,
+  createPmDecisionReal as createPmDecision,
+  updatePmDecisionReal as updatePmDecision,
+  deletePmDecisionReal as deletePmDecision,
 } from '@/services/real/pmAgent';
 export type {
   PmProject,
@@ -1966,6 +1970,10 @@ export type {
   PmProjectScope,
   PmKnowledgeFile,
   PmMemberSite,
+  PmDecision,
+  PmDecisionType,
+  CreatePmDecisionInput,
+  UpdatePmDecisionInput,
   PmTask,
   PmTaskDraft,
   PmStakeholder,

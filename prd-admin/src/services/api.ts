@@ -1302,6 +1302,7 @@ export const api = {
       members: (projectId: string) => `/api/pm/projects/${projectId}/members`,
       knowledgeFiles: (projectId: string) => `/api/pm/projects/${projectId}/knowledge/files`,
       memberSites: (projectId: string) => `/api/pm/projects/${projectId}/member-sites`,
+      decisions: (projectId: string) => `/api/pm/projects/${projectId}/decisions`,
       stakeholders: (projectId: string) => `/api/pm/projects/${projectId}/stakeholders`,
       evaluationStart: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/start`,
       evaluationScore: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/score`,
@@ -1316,6 +1317,9 @@ export const api = {
     },
     knowledge: {
       file: (fileId: string) => `/api/pm/knowledge/files/${fileId}`,
+    },
+    decisions: {
+      item: (decisionId: string) => `/api/pm/decisions/${decisionId}`,
     },
     dashboard: () => '/api/pm/dashboard',
     rewardConfig: () => '/api/pm/reward-config',

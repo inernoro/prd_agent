@@ -314,6 +314,30 @@ export type ListPmKnowledgeFilesContract = (projectId: string, category?: string
 export type UpdatePmKnowledgeFileContract = (fileId: string, input: { fileName?: string; category?: string }) => Promise<ApiResponse<{ updated: boolean }>>;
 export type DeletePmKnowledgeFileContract = (fileId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
 export type GetPmMemberSitesContract = (projectId: string) => Promise<ApiResponse<{ sites: PmMemberSite[] }>>;
+
+// ── 决策事项 ──
+export type PmDecisionType = 'pending' | 'decided' | 'memo';
+export type PmDecision = {
+  id: string;
+  projectId: string;
+  title: string;
+  content?: string | null;
+  type: PmDecisionType;
+  decidedBy?: string | null;
+  decidedByName?: string | null;
+  decidedAt?: string | null;
+  createdBy: string;
+  createdByName?: string | null;
+  orderKey: number;
+  createdAt: string;
+  updatedAt: string;
+};
+export type CreatePmDecisionInput = { title: string; content?: string; type?: PmDecisionType };
+export type UpdatePmDecisionInput = Partial<{ title: string; content: string; type: PmDecisionType; orderKey: number }>;
+export type ListPmDecisionsContract = (projectId: string) => Promise<ApiResponse<{ items: PmDecision[] }>>;
+export type CreatePmDecisionContract = (projectId: string, input: CreatePmDecisionInput) => Promise<ApiResponse<PmDecision>>;
+export type UpdatePmDecisionContract = (decisionId: string, input: UpdatePmDecisionInput) => Promise<ApiResponse<{ updated: boolean }>>;
+export type DeletePmDecisionContract = (decisionId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
 export type GetPmProjectContract = (projectId: string) => Promise<ApiResponse<{ project: PmProject; tasks: PmTask[] }>>;
 export type UpdatePmProjectContract = (projectId: string, input: UpdatePmProjectInput) => Promise<ApiResponse<{ updated: boolean }>>;
 export type DeletePmProjectContract = (projectId: string) => Promise<ApiResponse<{ deleted: boolean }>>;

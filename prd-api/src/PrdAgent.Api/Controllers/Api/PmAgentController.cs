@@ -246,6 +246,233 @@ public class PmAgentController : ControllerBase
     }
 
     // ─────────────────────────────────────────────
+    // 项目知识库（多格式文件 + 分类）+ 成员托管站点联动
+    // ─────────────────────────────────────────────
+
+    /// <summary>知识库文件列表（可按分类过滤）+ 全部分类聚合</summary>
+    [HttpGet("projects/{projectId}/knowledge/files")]
+    public async Task<IActionResult> ListKnowledgeFiles(string projectId, [FromQuery] string? category)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+
+        var all = await _db.PmKnowledgeFiles.Find(f => f.ProjectId == projectId)
+            .SortByDescending(f => f.CreatedAt).ToListAsync();
+        var categories = all.Select(f => f.Category).Where(c => !string.IsNullOrWhiteSpace(c)).Distinct().OrderBy(c => c).ToList();
+        var files = string.IsNullOrWhiteSpace(category) ? all : all.Where(f => f.Category == category).ToList();
+        return Ok(ApiResponse<object>.Ok(new { files, categories }));
+    }
+
+    /// <summary>上传知识库文件（multipart）。文件本体存 IAssetStorage，元信息落 pm_knowledge_files</summary>
+    [HttpPost("projects/{projectId}/knowledge/files")]
+    public async Task<IActionResult> UploadKnowledgeFile(string projectId, [FromForm] IFormFile? file, [FromForm] string? category)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (file == null || file.Length == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "未选择文件"));
+        if (file.Length > MaxKnowledgeBytes)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_TOO_LARGE, "单文件不能超过 50MB"));
+
+        byte[] bytes;
+        await using (var ms = new MemoryStream())
+        {
+            await file.CopyToAsync(ms, CancellationToken.None);
+            bytes = ms.ToArray();
+        }
+        var mime = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType;
+        var stored = await _assetStorage.SaveAsync(bytes, mime, CancellationToken.None, domain: "prd-agent", type: "pm-knowledge", fileName: file.FileName);
+
+        var uploaderName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+        var entity = new PmKnowledgeFile
+        {
+            ProjectId = projectId,
+            FileName = file.FileName,
+            ContentType = mime,
+            FileSize = file.Length,
+            Url = stored.Url,
+            Category = string.IsNullOrWhiteSpace(category) ? "未分类" : category!.Trim(),
+            UploaderId = userId,
+            UploaderName = uploaderName,
+        };
+        await _db.PmKnowledgeFiles.InsertOneAsync(entity);
+        return Ok(ApiResponse<object>.Ok(entity));
+    }
+
+    /// <summary>改名 / 改分类</summary>
+    [HttpPut("knowledge/files/{fileId}")]
+    public async Task<IActionResult> UpdateKnowledgeFile(string fileId, [FromBody] UpdateKnowledgeFileRequest request)
+    {
+        var userId = GetUserId();
+        var f = await _db.PmKnowledgeFiles.Find(x => x.Id == fileId).FirstOrDefaultAsync();
+        if (f == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文件不存在"));
+        if (await FindAccessibleProjectAsync(f.ProjectId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+
+        var update = Builders<PmKnowledgeFile>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow);
+        if (!string.IsNullOrWhiteSpace(request.FileName)) update = update.Set(x => x.FileName, request.FileName!.Trim());
+        if (!string.IsNullOrWhiteSpace(request.Category)) update = update.Set(x => x.Category, request.Category!.Trim());
+        await _db.PmKnowledgeFiles.UpdateOneAsync(x => x.Id == fileId, update);
+        return Ok(ApiResponse<object>.Ok(new { updated = true }));
+    }
+
+    /// <summary>删除知识库文件（删元信息记录）</summary>
+    [HttpDelete("knowledge/files/{fileId}")]
+    public async Task<IActionResult> DeleteKnowledgeFile(string fileId)
+    {
+        var userId = GetUserId();
+        var f = await _db.PmKnowledgeFiles.Find(x => x.Id == fileId).FirstOrDefaultAsync();
+        if (f == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文件不存在"));
+        if (await FindAccessibleProjectAsync(f.ProjectId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        await _db.PmKnowledgeFiles.DeleteOneAsync(x => x.Id == fileId);
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    /// <summary>聚合项目成员（创建人 + 负责人 + 成员）名下已公开的托管站点，免密查看</summary>
+    [HttpGet("projects/{projectId}/member-sites")]
+    public async Task<IActionResult> GetMemberSites(string projectId)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+
+        var ownerIds = new List<string> { project.OwnerId, project.LeaderId };
+        ownerIds.AddRange(project.MemberIds);
+        var distinctIds = ownerIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
+
+        var nameMap = (await _db.Users.Find(u => distinctIds.Contains(u.UserId)).ToListAsync())
+            .ToDictionary(u => u.UserId, u => u.DisplayName);
+
+        var sites = new List<object>();
+        foreach (var ownerId in distinctIds)
+        {
+            var hosted = await _hostedSites.ListPublicByUserIdAsync(ownerId, 60, CancellationToken.None);
+            foreach (var s in hosted)
+            {
+                sites.Add(new
+                {
+                    userId = ownerId,
+                    userName = nameMap.TryGetValue(ownerId, out var n) ? n : "—",
+                    siteId = s.Id,
+                    title = s.Title,
+                    url = s.SiteUrl,
+                });
+            }
+        }
+        return Ok(ApiResponse<object>.Ok(new { sites }));
+    }
+
+    // ─────────────────────────────────────────────
+    // 决策事项（待决策 / 已决策 / 备忘）
+    // ─────────────────────────────────────────────
+
+    /// <summary>项目决策列表（按状态 + OrderKey + 时间排序）</summary>
+    [HttpGet("projects/{projectId}/decisions")]
+    public async Task<IActionResult> ListDecisions(string projectId)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+
+        var items = await _db.PmDecisions.Find(d => d.ProjectId == projectId)
+            .SortBy(d => d.OrderKey).ThenByDescending(d => d.CreatedAt).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>新建决策事项。type 缺省 pending</summary>
+    [HttpPost("projects/{projectId}/decisions")]
+    public async Task<IActionResult> CreateDecision(string projectId, [FromBody] CreateDecisionRequest request)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (string.IsNullOrWhiteSpace(request.Title))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "决策标题不能为空"));
+
+        var type = PmDecisionType.IsValid(request.Type) ? request.Type! : PmDecisionType.Pending;
+        var creatorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+        var entity = new PmDecision
+        {
+            ProjectId = projectId,
+            Title = request.Title!.Trim(),
+            Content = request.Content?.Trim(),
+            Type = type,
+            CreatedBy = userId,
+            CreatedByName = creatorName,
+            OrderKey = DateTime.UtcNow.Ticks,
+        };
+        if (type == PmDecisionType.Decided)
+        {
+            entity.DecidedBy = userId;
+            entity.DecidedByName = creatorName;
+            entity.DecidedAt = DateTime.UtcNow;
+        }
+        await _db.PmDecisions.InsertOneAsync(entity);
+        return Ok(ApiResponse<object>.Ok(entity));
+    }
+
+    /// <summary>更新决策（标题 / 内容 / 状态流转）。转入 decided 落定案信息，转出 decided 清空</summary>
+    [HttpPut("decisions/{decisionId}")]
+    public async Task<IActionResult> UpdateDecision(string decisionId, [FromBody] UpdateDecisionRequest request)
+    {
+        var userId = GetUserId();
+        var d = await _db.PmDecisions.Find(x => x.Id == decisionId).FirstOrDefaultAsync();
+        if (d == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "决策不存在"));
+        if (await FindAccessibleProjectAsync(d.ProjectId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+
+        var update = Builders<PmDecision>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow);
+        if (request.Title != null)
+        {
+            if (string.IsNullOrWhiteSpace(request.Title))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "决策标题不能为空"));
+            update = update.Set(x => x.Title, request.Title.Trim());
+        }
+        if (request.Content != null) update = update.Set(x => x.Content, request.Content.Trim());
+
+        if (request.Type != null)
+        {
+            if (!PmDecisionType.IsValid(request.Type))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的决策状态"));
+            update = update.Set(x => x.Type, request.Type);
+            if (request.Type == PmDecisionType.Decided && d.Type != PmDecisionType.Decided)
+            {
+                var actorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+                update = update.Set(x => x.DecidedBy, userId).Set(x => x.DecidedByName, actorName).Set(x => x.DecidedAt, DateTime.UtcNow);
+            }
+            else if (request.Type != PmDecisionType.Decided && d.Type == PmDecisionType.Decided)
+            {
+                update = update.Set(x => x.DecidedBy, (string?)null).Set(x => x.DecidedByName, (string?)null).Set(x => x.DecidedAt, (DateTime?)null);
+            }
+        }
+        if (request.OrderKey.HasValue) update = update.Set(x => x.OrderKey, request.OrderKey.Value);
+
+        await _db.PmDecisions.UpdateOneAsync(x => x.Id == decisionId, update);
+        return Ok(ApiResponse<object>.Ok(new { updated = true }));
+    }
+
+    /// <summary>删除决策事项</summary>
+    [HttpDelete("decisions/{decisionId}")]
+    public async Task<IActionResult> DeleteDecision(string decisionId)
+    {
+        var userId = GetUserId();
+        var d = await _db.PmDecisions.Find(x => x.Id == decisionId).FirstOrDefaultAsync();
+        if (d == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "决策不存在"));
+        if (await FindAccessibleProjectAsync(d.ProjectId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        await _db.PmDecisions.DeleteOneAsync(x => x.Id == decisionId);
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    // ─────────────────────────────────────────────
     // 干系人 + NPSS 结案评价（Phase 2）
     // ─────────────────────────────────────────────
 
@@ -981,6 +1208,21 @@ public class UpdateKnowledgeFileRequest
 {
     public string? FileName { get; set; }
     public string? Category { get; set; }
+}
+
+public class CreateDecisionRequest
+{
+    public string? Title { get; set; }
+    public string? Content { get; set; }
+    public string? Type { get; set; }
+}
+
+public class UpdateDecisionRequest
+{
+    public string? Title { get; set; }
+    public string? Content { get; set; }
+    public string? Type { get; set; }
+    public long? OrderKey { get; set; }
 }
 
 public class UpdatePmProjectRequest
