@@ -53,6 +53,7 @@ export type PmProject = {
   valueCoefficient: number;
   isExcellent: boolean;
   excellenceAwardedAt?: string | null;
+  wipLimits?: Partial<Record<PmTaskStatus, number>> | null;
   stakeholders: PmStakeholder[];
   evaluation?: PmEvaluation | null;
   createdAt: string;
