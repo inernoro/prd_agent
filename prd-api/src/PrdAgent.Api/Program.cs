@@ -283,6 +283,14 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ArenaRunWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.TranscriptRunWorker>();
 builder.Services.AddSingleton<PrdAgent.Api.Services.DoubaoStreamAsrService>();
 
+// 首页「AI 大事早知道」资讯雷达：代理拉取 ai-news-radar 公共静态 JSON（5min 内存缓存 + 6h stale 保底）
+builder.Services.AddHttpClient("AiNews", c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(8);
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("PrdAgent-AiNewsRadar/1.0");
+});
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAiNewsService, PrdAgent.Infrastructure.Services.AiNewsService>();
+
 // 知识库 Agent 后台执行器（字幕生成 + 文档再加工，复用 DoubaoStreamAsrService 和 ILlmGateway）
 builder.Services.AddHttpClient("DocStoreAgent");
 builder.Services.AddScoped<PrdAgent.Api.Services.SubtitleGenerationProcessor>();

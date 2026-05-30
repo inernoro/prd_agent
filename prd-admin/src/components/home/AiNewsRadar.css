@@ -1,0 +1,61 @@
+/* 首页「AI 大事早知道」资讯雷达 —— 动效（让面板"活"起来） */
+
+@keyframes ainr-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.82); }
+}
+
+/* live 灯外圈雷达扩散 */
+@keyframes ainr-ring {
+  0% { transform: scale(1); opacity: 0.55; }
+  70% { transform: scale(2.6); opacity: 0; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+
+/* 新条目入场 */
+@keyframes ainr-slide-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 「有新内容」提示淡入 */
+@keyframes ainr-pop {
+  0% { opacity: 0; transform: translateY(-4px) scale(0.96); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* 刷新图标旋转 */
+@keyframes ainr-spin {
+  to { transform: rotate(360deg); }
+}
+
+.ainr-live-dot { position: relative; }
+.ainr-live-dot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: inherit;
+  animation: ainr-ring 2.4s ease-out infinite;
+}
+.ainr-live-core { animation: ainr-pulse 2.4s ease-in-out infinite; }
+
+.ainr-item { animation: ainr-slide-in 0.42s ease both; }
+
+.ainr-updated-pill { animation: ainr-pop 0.3s ease both; }
+
+.ainr-spinning { animation: ainr-spin 0.9s linear infinite; transform-origin: center; }
+
+/* 时间线竖脊上滚动的高光（缓慢流动，弱化但持续，强化"活着"的感知） */
+@keyframes ainr-spine-flow {
+  0% { background-position: 0 0; }
+  100% { background-position: 0 -200px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ainr-live-dot::after,
+  .ainr-live-core,
+  .ainr-item,
+  .ainr-updated-pill,
+  .ainr-spinning { animation: none; }
+}

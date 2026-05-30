@@ -53,6 +53,7 @@ import { PmAgentCardArt } from '@/pages/ai-toolbox/components/PmAgentCardArt';
 import { HomeAmbientBackdrop } from '@/components/effects/HomeAmbientBackdrop';
 import { Reveal } from '@/pages/home/components/Reveal';
 import { TipsRotator } from '@/components/daily-tips/TipsRotator';
+import { AiNewsRadar } from '@/components/home/AiNewsRadar';
 
 /**
  * 进场动效节奏 —— 与 /home LandingPage 同款 Reveal 组件，duration 减半（1000ms）让整体速度翻倍。
@@ -922,16 +923,26 @@ export default function AgentLauncherPage() {
             </div>
             {/* end hero content */}
 
-            {/* ── Quick Links — Extended Hero Background Area ── */}
+            {/* ── Quick Links（左·四大板块） + AI 大事早知道（右·实时资讯时间线 rail） ── */}
             {!searchQuery.trim() && (
               <div className={`relative z-10 ${isMobile ? 'px-5 pb-6' : 'px-8 pb-10'}`}>
+                <div
+                  style={{
+                    display: 'grid',
+                    gap: isMobile ? 12 : 16,
+                    // 宽屏：左侧卡片弹性区 + 右侧 360px 资讯列；窄屏：单列堆叠（资讯列落到卡片下方）
+                    gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) 360px',
+                    alignItems: 'stretch',
+                  }}
+                >
                 <div
                   className="grid"
                   style={{
                     gap: isMobile ? 10 : 14,
                     gridTemplateColumns: isMobile
                       ? `repeat(auto-fit, minmax(160px, 1fr))`
-                      : `repeat(auto-fit, minmax(260px, 1fr))`,
+                      : `repeat(auto-fit, minmax(220px, 1fr))`,
+                    alignContent: 'start',
                   }}
                 >
               {quickLinks.map((link, idx) => {
@@ -1056,6 +1067,11 @@ export default function AgentLauncherPage() {
                   </Reveal>
                 );
               })}
+                </div>
+                {/* 右侧：AI 大事早知道 实时资讯时间线 */}
+                <Reveal className="h-full" delay={REVEAL.quickLinkBase + 60} duration={REVEAL_DURATION} offset={20}>
+                  <AiNewsRadar />
+                </Reveal>
                 </div>
               </div>
             )}
