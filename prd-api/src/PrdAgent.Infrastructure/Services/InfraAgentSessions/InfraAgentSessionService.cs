@@ -23,6 +23,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     private readonly IInfraConnectionService _connections;
     private readonly IInfraAgentRuntimeProfileService _runtimeProfiles;
     private readonly IInfraAgentRuntimeAdapter? _runtimeAdapter;
+    private readonly AgentRuntime.GatewayReviewRuntimeAdapter? _liteReviewAdapter;
     private readonly IInfraAgentRuntimeJobQueue _runtimeJobs;
     private readonly IAgentToolRegistry _toolRegistry;
     private readonly HttpClient _http;
@@ -35,7 +36,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         IInfraAgentRuntimeAdapter? runtimeAdapter,
         IInfraAgentRuntimeJobQueue runtimeJobs,
         IAgentToolRegistry toolRegistry,
-        HttpClient http)
+        HttpClient http,
+        AgentRuntime.GatewayReviewRuntimeAdapter? liteReviewAdapter = null)
     {
         _db = db;
         _logger = logger;
@@ -45,6 +47,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         _runtimeJobs = runtimeJobs;
         _toolRegistry = toolRegistry;
         _http = http;
+        _liteReviewAdapter = liteReviewAdapter;
     }
 
     public async Task<List<InfraAgentSessionView>> ListAsync(string userId, int limit, CancellationToken ct)
@@ -257,7 +260,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             var timeoutSeconds = runtimeProfile?.TimeoutSeconds ?? session.TimeoutSeconds;
             var networkPolicy = runtimeProfile?.NetworkPolicy ?? session.NetworkPolicy;
             var autoCleanupMinutes = runtimeProfile?.AutoCleanupMinutes ?? session.AutoCleanupMinutes;
-            EnsureRuntimeProfileCompatibleWithAdapter(runtime, runtimeProfile, ResolveSidecarRuntimeAdapter());
+            EnsureRuntimeProfileCompatibleOrLiteFallback(runtime, runtimeProfile, ResolveSidecarRuntimeAdapter());
             await RunHookAsync(session, hookProfile, "beforeStart", hookProfile?.BeforeStart, blockOnFailure: true, ct);
             var body = new
             {
@@ -375,7 +378,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         }
 
         var messageRuntimeProfile = await ResolveRuntimeProfileForSessionAsync(userId, session.RuntimeProfileId, ct);
-        EnsureRuntimeProfileCompatibleWithAdapter(
+        EnsureRuntimeProfileCompatibleOrLiteFallback(
             session.Runtime,
             messageRuntimeProfile,
             ResolveSidecarRuntimeAdapter());
@@ -674,9 +677,10 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
         try
         {
-            if (!string.IsNullOrWhiteSpace(session.CurrentRuntimeRunId) && _runtimeAdapter != null)
+            var cancelAdapter = ResolveAdapterByKind(session.RuntimeAdapter);
+            if (!string.IsNullOrWhiteSpace(session.CurrentRuntimeRunId) && cancelAdapter != null)
             {
-                var cancel = await _runtimeAdapter.CancelAsync(session.CurrentRuntimeRunId, ct);
+                var cancel = await cancelAdapter.CancelAsync(session.CurrentRuntimeRunId, ct);
                 await AppendRawEventAsync(
                     session.Id,
                     await NextEventSeqAsync(session.Id, ct),
@@ -1628,66 +1632,55 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             return true;
         }
 
-        if (_runtimeAdapter == null || !_runtimeAdapter.IsConfigured)
-        {
-            var message = BuildRuntimeUnavailableMessage();
-            await AppendRawEventAsync(
-                session.Id,
-                await NextEventSeqAsync(session.Id, ct),
-                InfraAgentEventTypes.Error,
-                JsonSerializer.Serialize(new
-                {
-                    code = InfraAgentSessionErrorCodes.RuntimeUnavailable,
-                    source = "runtime-router",
-                    message,
-                    retryable = true
-                }),
-                ct);
-            await MarkRuntimeFailedAsync(session, message, ct);
-            return false;
-        }
-
         var runtimeProfile = await ResolveRuntimeProfileForSessionAsync(session.UserId, session.RuntimeProfileId, ct);
         var model = runtimeProfile?.Model ?? session.Model ?? "claude-opus-4-5";
         var runId = $"infra-agent-{session.Id}-{Guid.NewGuid():N}";
-        var selectedRuntimeAdapter = ResolveSidecarRuntimeAdapter();
-        try
+        var officialAdapterKind = ResolveSidecarRuntimeAdapter();
+
+        // 优雅降级决策：官方 SDK 可用且 profile 兼容 → official；否则有 lite 兜底 → lite；都没有 → 失败。
+        var sidecarConfigured = _runtimeAdapter?.IsConfigured == true;
+        var profileCompatible = IsRuntimeProfileCompatibleWithAdapter(session.Runtime, runtimeProfile, officialAdapterKind);
+        var liteAvailable = _liteReviewAdapter?.IsConfigured == true;
+        var selection = DecideRuntimeSelection(sidecarConfigured, profileCompatible, liteAvailable);
+
+        if (selection.Mode == InfraAgentRuntimeMode.Unavailable)
         {
-            EnsureRuntimeProfileCompatibleWithAdapter(session.Runtime, runtimeProfile, selectedRuntimeAdapter);
-        }
-        catch (InfraAgentSessionException ex)
-        {
+            var unavailableMessage = sidecarConfigured
+                ? InfraAgentRuntimeProfileCompatibility.BuildIncompatibleMessage(runtimeProfile?.Name ?? "default", runtimeProfile?.Model ?? "")
+                : BuildRuntimeUnavailableMessage();
             await AppendRawEventAsync(
                 session.Id,
                 await NextEventSeqAsync(session.Id, ct),
                 InfraAgentEventTypes.Error,
                 JsonSerializer.Serialize(new
                 {
-                    code = ex.ErrorCode,
+                    code = sidecarConfigured
+                        ? InfraAgentSessionErrorCodes.RuntimeProfileIncompatible
+                        : InfraAgentSessionErrorCodes.RuntimeUnavailable,
                     source = "runtime-router",
-                    message = ex.Message,
-                    recoveryKind = "provider_config",
-                    retryable = false,
-                    nextActions = new[]
-                    {
-                        "为 Claude Agent SDK 路径选择 Claude/Anthropic 兼容 runtime profile",
-                        "如果必须使用当前 OpenAI-compatible gateway，请为该任务切换到普通 OpenAI-compatible runtime adapter"
-                    }
+                    message = unavailableMessage,
+                    retryable = !sidecarConfigured
                 }),
                 ct);
-            await MarkRuntimeFailedAsync(session, ex.Message, ct);
+            await MarkRuntimeFailedAsync(session, unavailableMessage, ct);
             return false;
         }
+
+        var isLite = selection.Mode == InfraAgentRuntimeMode.Lite;
+        var activeAdapter = isLite ? (IInfraAgentRuntimeAdapter)_liteReviewAdapter! : _runtimeAdapter!;
+        var activeAdapterKind = isLite ? AgentRuntime.GatewayReviewRuntimeAdapter.SourceName : officialAdapterKind;
+        var modeLabel = isLite ? "lite" : "official";
+
         var finalText = new StringBuilder();
         await _db.InfraAgentSessions.UpdateOneAsync(
             x => x.Id == session.Id,
             Builders<InfraAgentSession>.Update
                 .Set(x => x.CurrentRuntimeRunId, runId)
-                .Set(x => x.RuntimeAdapter, selectedRuntimeAdapter)
+                .Set(x => x.RuntimeAdapter, activeAdapterKind)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow),
             cancellationToken: ct);
         session.CurrentRuntimeRunId = runId;
-        session.RuntimeAdapter = selectedRuntimeAdapter;
+        session.RuntimeAdapter = activeAdapterKind;
 
         await AppendRawEventAsync(
             session.Id,
@@ -1696,13 +1689,15 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             JsonSerializer.Serialize(new
             {
                 status = "running",
-                reason = "sidecar_runtime_started",
+                reason = isLite ? "lite_runtime_started" : "sidecar_runtime_started",
+                mode = modeLabel,
+                degradeReason = isLite ? selection.Reason : null,
                 runtime = session.Runtime,
                 model,
                 baseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl,
                 protocol = runtimeProfile?.Protocol,
-                runtimeAdapter = selectedRuntimeAdapter,
-                runtimeTransport = _runtimeAdapter.AdapterKind,
+                runtimeAdapter = activeAdapterKind,
+                runtimeTransport = activeAdapter.AdapterKind,
                 runtimeRunId = runId,
                 workspaceRoot = session.WorkspaceRoot,
                 gitRepository = session.GitRepository,
@@ -1729,12 +1724,13 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             BaseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl,
             ApiKey = runtimeProfile?.ApiKey,
             Protocol = runtimeProfile?.Protocol,
-            RuntimeAdapter = selectedRuntimeAdapter,
+            RuntimeAdapter = activeAdapterKind,
             MapSessionId = session.Id,
             TraceId = session.TraceId,
             WorkspaceRoot = session.WorkspaceRoot,
             GitRepository = session.GitRepository,
-            GitRef = session.GitRef
+            GitRef = session.GitRef,
+            UserId = session.UserId
         };
 
         await AppendRawEventAsync(
@@ -1745,17 +1741,19 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             {
                 level = "info",
                 source = "runtime-router",
-                runtimeAdapter = selectedRuntimeAdapter,
-                runtimeTransport = _runtimeAdapter.AdapterKind,
+                runtimeAdapter = activeAdapterKind,
+                runtimeTransport = activeAdapter.AdapterKind,
                 runtimeRunId = runId,
-                message = $"runtime tools exposed count={request.Tools.Count} timeout={request.TimeoutSeconds}s cpu={session.ResourceCpuCores} memory={session.ResourceMemoryMb}MB network={session.NetworkPolicy}"
+                message = isLite
+                    ? $"lite review runtime started reason={selection.Reason}; read-only, no tools, no approval"
+                    : $"runtime tools exposed count={request.Tools.Count} timeout={request.TimeoutSeconds}s cpu={session.ResourceCpuCores} memory={session.ResourceMemoryMb}MB network={session.NetworkPolicy}"
             }),
             ct);
 
-        await foreach (var ev in _runtimeAdapter.RunStreamAsync(request, ct))
+        await foreach (var ev in activeAdapter.RunStreamAsync(request, ct))
         {
             var seq = await NextEventSeqAsync(session.Id, ct);
-            var eventSource = string.IsNullOrWhiteSpace(ev.Source) ? _runtimeAdapter.AdapterKind : ev.Source;
+            var eventSource = string.IsNullOrWhiteSpace(ev.Source) ? activeAdapter.AdapterKind : ev.Source;
             switch (ev.Type)
             {
                 case InfraAgentRuntimeEventType.TextDelta:
@@ -2551,6 +2549,76 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     private static bool IsSidecarRuntime(string? runtime) =>
         string.Equals(runtime, InfraAgentRuntimes.ClaudeSdk, StringComparison.OrdinalIgnoreCase)
         || string.Equals(runtime, InfraAgentRuntimes.Custom, StringComparison.OrdinalIgnoreCase);
+
+    internal enum InfraAgentRuntimeMode { Official, Lite, Unavailable }
+
+    internal sealed record InfraAgentRuntimeSelection(InfraAgentRuntimeMode Mode, string Reason);
+
+    /// <summary>
+    /// 优雅降级决策（纯函数，可单测）：
+    /// - 官方 sidecar 已配置且 profile 兼容 → official；
+    /// - 否则有 lite 兜底 → lite（原因区分 sidecar 未配置 / R1 profile 不兼容）；
+    /// - 都没有 → unavailable。
+    /// </summary>
+    internal static InfraAgentRuntimeSelection DecideRuntimeSelection(
+        bool sidecarConfigured,
+        bool profileCompatible,
+        bool liteAvailable)
+    {
+        if (sidecarConfigured && profileCompatible)
+        {
+            return new InfraAgentRuntimeSelection(InfraAgentRuntimeMode.Official, "official_sdk_ready");
+        }
+
+        var reason = sidecarConfigured ? "r1_profile_incompatible" : "sidecar_not_configured";
+        return liteAvailable
+            ? new InfraAgentRuntimeSelection(InfraAgentRuntimeMode.Lite, reason)
+            : new InfraAgentRuntimeSelection(InfraAgentRuntimeMode.Unavailable, reason);
+    }
+
+    private IInfraAgentRuntimeAdapter? ResolveAdapterByKind(string? adapterKind)
+    {
+        if (string.Equals(adapterKind, AgentRuntime.GatewayReviewRuntimeAdapter.SourceName, StringComparison.OrdinalIgnoreCase))
+        {
+            return _liteReviewAdapter;
+        }
+
+        return _runtimeAdapter;
+    }
+
+    private static bool IsRuntimeProfileCompatibleWithAdapter(
+        string? runtime,
+        InfraAgentRuntimeProfileSecretView? profile,
+        string desiredRuntimeAdapter)
+    {
+        if (!IsSidecarRuntime(runtime) || profile == null)
+        {
+            return true;
+        }
+
+        return InfraAgentRuntimeProfileCompatibility.AnalyzeForDesiredRuntimeAdapter(
+            desiredRuntimeAdapter,
+            profile.Runtime,
+            profile.Protocol,
+            profile.Model).Compatible;
+    }
+
+    /// <summary>
+    /// 创建期 / 发消息前的兼容校验：当 lite 兜底可用时不再硬卡，留给运行时降级；
+    /// 否则维持原有「不兼容直接拒绝」行为。
+    /// </summary>
+    private void EnsureRuntimeProfileCompatibleOrLiteFallback(
+        string? runtime,
+        InfraAgentRuntimeProfileSecretView? profile,
+        string desiredRuntimeAdapter)
+    {
+        if (_liteReviewAdapter?.IsConfigured == true)
+        {
+            return;
+        }
+
+        EnsureRuntimeProfileCompatibleWithAdapter(runtime, profile, desiredRuntimeAdapter);
+    }
 
     private static void EnsureRuntimeProfileCompatibleWithAdapter(
         string? runtime,

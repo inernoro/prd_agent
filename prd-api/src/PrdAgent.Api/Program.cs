@@ -1096,6 +1096,10 @@ builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IClaudeSidecarRouter,
     PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarRouter>();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IInfraAgentRuntimeAdapter,
     PrdAgent.Infrastructure.Services.AgentRuntime.SidecarRuntimeAdapter>();
+// Lite 只读审查降级适配器：R1 未闭合 / 官方 sidecar 不可用时的兜底路径（走现有 LLM Gateway）。
+// 注册为 Scoped：依赖 Scoped 的 ILlmGateway，避免单例捕获作用域服务（captive dependency）。
+// 跨作用域的硬 Stop 不在本轮范围（Lite 只读短任务），运行内取消由 linked CTS 处理。
+builder.Services.AddScoped<PrdAgent.Infrastructure.Services.AgentRuntime.GatewayReviewRuntimeAdapter>();
 builder.Services.AddHttpClient(
     PrdAgent.Infrastructure.Services.ClaudeSidecar.ClaudeSidecarRouter.HttpClientName);
 builder.Services.AddHttpClient(

@@ -175,7 +175,12 @@ public sealed record SidecarPoolDiagnostics(
     SidecarRuntimeProfileRepairPlan? RuntimeProfileRepairPlan = null,
     SidecarNextCyclePlan? NextCyclePlan = null,
     IReadOnlyList<SidecarDebugCommand>? DebugCommands = null,
-    SidecarExecutionPanel? ExecutionPanel = null
+    SidecarExecutionPanel? ExecutionPanel = null,
+    /// <summary>
+    /// 是否存在可用的 Lite 只读审查降级路径（走现有 LLM Gateway）。
+    /// 为 true 时即便官方 SDK pool 未就绪 / R1 未闭合，用户仍可发起只读审查任务。
+    /// </summary>
+    bool LiteReviewAvailable = false
 );
 
 public sealed record SidecarRuntimeProfileDiagnostics(

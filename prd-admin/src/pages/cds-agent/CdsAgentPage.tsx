@@ -316,6 +316,8 @@ function runtimeDiscoveryBlockReason(status: InfraAgentRuntimeDiagnostics): stri
 function runtimePoolBlockReason(status: InfraAgentRuntimeDiagnostics | null): string {
   if (!status) return '正在检测 CDS runtime pool，请稍后刷新。';
   if (status.instanceCount > 0 && status.healthyCount > 0) return '';
+  // Lite 只读审查降级可用时不阻塞：用户仍可发起只读审查（结果为预览级），官方 SDK pool 就绪后自动升级。
+  if (status.liteReviewAvailable) return '';
   const discoveryReason = runtimeDiscoveryBlockReason(status);
   if (discoveryReason) return discoveryReason;
   const firstBlocker = status.blockers?.find((item) => item.trim());
@@ -3664,8 +3666,26 @@ export default function CdsAgentPage() {
 	        ))}
 	      </div>
 	    );
+	    const officialPoolReady = Boolean(runtimeStatus && runtimeStatus.instanceCount > 0 && runtimeStatus.healthyCount > 0);
+	    const liteModeActive = Boolean(runtimeStatus?.liteReviewAvailable && !officialPoolReady);
+	    const modeBadge = (
+	      <span
+	        className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-semibold"
+	        style={liteModeActive
+	          ? { background: 'rgba(96,165,250,0.16)', border: '1px solid rgba(96,165,250,0.32)', color: 'rgba(191,219,254,0.95)' }
+	          : { background: 'rgba(52,211,153,0.14)', border: '1px solid rgba(52,211,153,0.3)', color: 'rgba(167,243,208,0.95)' }}
+	      >
+	        {liteModeActive ? <FileSearch size={12} /> : <ShieldCheck size={12} />}
+	        {liteModeActive ? 'Lite 预览 · 只读' : '官方 SDK'}
+	      </span>
+	    );
 	    const simpleComposer = (
 	      <div className="mx-auto w-full max-w-[820px] rounded-2xl p-3" style={{ background: 'rgba(38,38,38,0.96)', border: '1px solid rgba(255,255,255,0.12)', boxShadow: '0 18px 60px rgba(0,0,0,0.34)' }}>
+	        {liteModeActive && (
+	          <div className="mb-2 rounded-lg px-3 py-2 text-[11px] leading-relaxed text-blue-100/82" style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.22)' }}>
+	            当前为 <strong>Lite 预览模式</strong>：尚未配置 Claude/Anthropic provider，系统改用现有模型做<strong>只读</strong>代码审查（不修改文件、不执行命令、无需审批）。结果为预览级，配置官方 provider 后自动升级为商业级审查。
+	          </div>
+	        )}
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <div className="inline-flex rounded-lg p-1" style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.08)' }}>
               {([
@@ -3690,9 +3710,12 @@ export default function CdsAgentPage() {
                 );
               })}
             </div>
-            <span className="text-xs text-white/36">
-              {simpleTaskMode === 'code' ? '面向代码、测试、构建和 PR 建议' : '不要求仓库，先按普通 Agent 对话处理'}
-            </span>
+            <div className="flex items-center gap-2">
+              {modeBadge}
+              <span className="text-xs text-white/36">
+                {simpleTaskMode === 'code' ? '面向代码、测试、构建和 PR 建议' : '不要求仓库，先按普通 Agent 对话处理'}
+              </span>
+            </div>
           </div>
 	        <textarea
 	          value={prompt}
