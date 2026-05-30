@@ -319,7 +319,6 @@ export AI_ACCESS_KEY=your-key        # 推荐，零交互认证
 | `/create-skill` | `"创建技能"` | 开发新的 AI 技能时套用标准模板 |
 | `/theme-transition` | `"主题过渡"` | 添加主题切换动效（View Transition API） |
 | `/fix-surface` | `"修复样式"` | CSS 样式偏差批量修复 |
-| `200字总结` | `"通俗总结"` | 回复末尾追加 200 字中文通俗总结 |
 
 ---
 

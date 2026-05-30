@@ -242,8 +242,7 @@ Widget (非 React)                         React App
 | 初始化 | `cds/src/index.ts` | BridgeService 实例化 + activity 回调 |
 | 浏览器端 | `cds/src/widget-script.ts` | Bridge Client 全部逻辑（DOM 提取/操作执行/动画/轮询） |
 | React 桥接 | `prd-admin/src/app/App.tsx` | NavigationBridge 组件（监听 CustomEvent → useNavigate） |
-| 规则 | `.claude/rules/bridge-ops.md` | Agent 使用 Bridge 的强制规则 |
-| 技能 | `.claude/skills/bridge/SKILL.md` | `/bridge` 技能文档 |
+| 规则 | `.claude/rules/bridge-ops.md` | Agent 使用 Bridge 的强制规则（Bridge 暂停期仍作历史兼容/故障定位参考）|
 
 ---
 
@@ -271,6 +270,5 @@ Widget (非 React)                         React App
 ## 十一、关联文档
 
 - `doc/design.cds.md` — CDS 核心架构
-- `.claude/rules/bridge-ops.md` — Bridge 操作强制规则
-- `.claude/skills/bridge/SKILL.md` — `/bridge` 技能使用指南
+- `.claude/rules/bridge-ops.md` — Bridge 操作强制规则（`/bridge` 技能已于 2026-05-30 下线，Bridge HTTP 轮询默认关闭，需 `CDS_BRIDGE_ENABLED=1` 恢复）
 - alibaba/page-agent — DOM 提取格式参考
