@@ -292,7 +292,8 @@ public class PmAgentController : ControllerBase
             bytes = ms.ToArray();
         }
         var mime = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType;
-        var stored = await _assetStorage.SaveAsync(bytes, mime, CancellationToken.None, domain: "prd-agent", type: "pm-knowledge", fileName: file.FileName);
+        var storageType = mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ? AppDomainPaths.TypeImg : AppDomainPaths.TypeDoc;
+        var stored = await _assetStorage.SaveAsync(bytes, mime, CancellationToken.None, domain: "prd-agent", type: storageType, fileName: file.FileName);
 
         var uploaderName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
         var entity = new PmKnowledgeFile
