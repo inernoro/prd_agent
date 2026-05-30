@@ -111,7 +111,8 @@ export type DocBrowserProps = {
   sortMode?: DocBrowserSortMode;
   /**
    * "显示更新时间"的默认值（仅在用户未显式切换过开关时生效）。
-   * 验收报告库传 true，让时间默认可见；用户手动开/关后以其选择为准。
+   * 默认 true：时间默认显示（用户反馈要求），且时间永远固定在每行最右边。
+   * 用户手动开/关后以其 sessionStorage 选择为准。
    */
   showUpdatedTimeDefault?: boolean;
   /**
@@ -671,6 +672,7 @@ function TreeNode({
   return (
     <>
       <button
+        data-entry-id={entry.id}
         onClick={() => {
           if (isFolder) onToggleFolder(entry.id);
           else onSelectEntry(entry.id);
@@ -818,16 +820,6 @@ function TreeNode({
           </span>
         )}
 
-        {/* 更新时间副标题：由"显示设置 → 显示更新时间"开关控制，默认关 */}
-        {!isFolder && showUpdatedTime && entry.updatedAt && (
-          <RelativeTime
-            value={entry.updatedAt}
-            refreshIntervalMs={0}
-            className="text-[9.5px] tabular-nums flex-shrink-0 text-token-muted"
-            title={`最后更新：${new Date(entry.updatedAt).toLocaleString('zh-CN')}${entry.updatedByName ? ` · ${entry.updatedByName}` : ''}`}
-          />
-        )}
-
         {/* 内容命中标记：标题未含关键词但因正文命中被返回 */}
         {!isFolder && contentMatchIds.has(entry.id) && (
           <span
@@ -895,6 +887,19 @@ function TreeNode({
 
         {isPinned && !isPrimary && (
           <Pin size={10} className="flex-shrink-0" style={{ color: 'rgba(59,130,246,0.5)' }} />
+        )}
+
+        {/* 更新时间：默认显示，且永远固定在最右边（外层 span marginLeft:auto 把它推到行尾，
+            其余徽章靠左排）。由"显示设置 → 显示更新时间"开关可关。 */}
+        {!isFolder && showUpdatedTime && entry.updatedAt && (
+          <span className="flex-shrink-0" style={{ marginLeft: 'auto', paddingLeft: '6px' }}>
+            <RelativeTime
+              value={entry.updatedAt}
+              refreshIntervalMs={0}
+              className="text-[9.5px] tabular-nums text-token-muted"
+              title={`最后更新：${new Date(entry.updatedAt).toLocaleString('zh-CN')}${entry.updatedByName ? ` · ${entry.updatedByName}` : ''}`}
+            />
+          </span>
         )}
 
         {/* F3：文件夹章节——右侧文件计数 + 折叠箭头（文档站目录习惯：箭头在右） */}
@@ -1015,7 +1020,7 @@ export function DocBrowser({
   emptyState,
   loading,
   sortMode = 'default',
-  showUpdatedTimeDefault = false,
+  showUpdatedTimeDefault = true,
   appearance = 'inset',
   isEntryFresh,
   sidebarHeader,
@@ -1064,6 +1069,40 @@ export function DocBrowser({
   const searchSeqRef = useRef(0);
   const addMenuRef = useRef<HTMLDivElement>(null);
   const pinnedSet = useMemo(() => new Set(pinnedIds), [pinnedIds]);
+
+  // 父链映射（entryId → parentId），用于展开选中条目的所有祖先文件夹
+  const parentMap = useMemo(() => {
+    const m = new Map<string, string | undefined>();
+    for (const e of entries) m.set(e.id, e.parentId);
+    return m;
+  }, [entries]);
+
+  // 选中条目（含通过 ?entry 传入的初始选中）自动展开其所有祖先文件夹 + 滚动到可见。
+  // 否则在分享链 / 子文件夹归档场景下，选中的那篇藏在折叠文件夹里，用户看不到"当前在读哪一篇"。
+  useEffect(() => {
+    if (!selectedEntryId) return;
+    const ancestors: string[] = [];
+    let pid = parentMap.get(selectedEntryId);
+    let guard = 0;
+    while (pid && guard++ < 50) {
+      ancestors.push(pid);
+      pid = parentMap.get(pid);
+    }
+    if (ancestors.length) {
+      setExpandedFolders(prev => {
+        let changed = false;
+        const next = new Set(prev);
+        for (const a of ancestors) if (!next.has(a)) { next.add(a); changed = true; }
+        return changed ? next : prev;
+      });
+    }
+    // 展开后下一帧把选中行滚到可见区
+    const t = setTimeout(() => {
+      const el = sidebarRef.current?.querySelector(`[data-entry-id="${selectedEntryId}"]`);
+      el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }, 80);
+    return () => clearTimeout(t);
+  }, [selectedEntryId, parentMap]);
 
   // 批次 C：只对选中的非文件夹条目埋点
   const trackedEntryId = useMemo(() => {

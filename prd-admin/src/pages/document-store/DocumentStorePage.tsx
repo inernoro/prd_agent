@@ -954,9 +954,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
       <div className="flex-1 min-h-0 flex flex-col pt-3">
         <DocBrowser
           entries={entries}
-          /* 验收报告库：最新在前 + 默认显示时间（design.acceptance-kb.md §5.A） */
+          /* 验收报告库：最新在前（design.acceptance-kb.md §5.A）；时间默认显示由 DocBrowser 默认值兜底 */
           sortMode={store.templateKey === ACCEPTANCE_TEMPLATE_KEY ? 'created-desc' : 'default'}
-          showUpdatedTimeDefault={store.templateKey === ACCEPTANCE_TEMPLATE_KEY}
           primaryEntryId={store.primaryEntryId}
           pinnedEntryIds={store.pinnedEntryIds ?? []}
           selectedEntryId={selectedEntryId}
