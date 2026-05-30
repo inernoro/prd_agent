@@ -156,6 +156,13 @@ export function StakeholderPanel({ projectId, stakeholders, onSaved }: Props) {
               <input className="w-full rounded-lg px-2 py-1.5 text-[12px] outline-none border" style={inputStyle} value={editing.note ?? ''} onChange={(e) => update(editing.id, { note: e.target.value })} placeholder="例如：代表客户 XX 公司采购部" />
             </div>
           )}
+
+          {/* 保存放在编辑区底部，紧挨操作 */}
+          <div className="flex items-center justify-end gap-2 mt-3.5 pt-3 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+            <span className="text-[11px] mr-auto" style={{ color: 'var(--text-muted)' }}>编辑完点「保存」落库（保存全部干系人）</span>
+            <Button variant="ghost" size="sm" onClick={() => setEditingId(null)}>完成</Button>
+            <Button variant="primary" onClick={save} disabled={saving}>{saving ? <MapSpinner size={14} /> : <Save size={14} />}保存</Button>
+          </div>
         </div>
       )}
     </div>
