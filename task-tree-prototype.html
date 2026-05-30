@@ -3,145 +3,100 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>个人任务树 · 探索原型 v2</title>
+<title>个人任务树 · 探索原型 v3（思维树）</title>
 <style>
-  :root {
-    --bg-top:#0d1117; --bg-bot:#131c2b; --soil:#2b2016; --soil-edge:#3a2c1e;
-    --trunk-a:#6b4a2f; --trunk-b:#3d2b1c;
-    --text:#e8e6e0; --text-dim:#9aa0a6;
-    --panel-bg:#1b2230; --panel-2:#232c3d; --border:rgba(255,255,255,0.09);
-    --chip:rgba(255,255,255,0.06); --card:#202a3a; --card-bd:rgba(255,255,255,0.10);
+  :root{
+    --bg-top:#0e1116; --bg-bot:#10151f;
+    --text:#e9e7e2; --text-dim:#969ba3;
+    --panel:#161b24; --panel-2:#1d232e; --border:rgba(255,255,255,0.08);
+    --chip:rgba(255,255,255,0.05);
+    --card:#1b212c; --card-bd:rgba(255,255,255,0.10); --card-shadow:rgba(0,0,0,.45);
+    --link:rgba(150,160,175,.38); --root-glow:#7c5cff;
   }
-  [data-theme="light"] {
-    --bg-top:#f4ece1; --bg-bot:#dbe7ef; --soil:#b89b78; --soil-edge:#a98a64;
-    --trunk-a:#8a6038; --trunk-b:#5c3f24;
-    --text:#2a2620; --text-dim:#6b675f;
-    --panel-bg:#fffdfa; --panel-2:#f3eee7; --border:rgba(0,0,0,0.10);
-    --chip:rgba(0,0,0,0.05); --card:#ffffff; --card-bd:rgba(0,0,0,0.10);
+  [data-theme="light"]{
+    --bg-top:#f6f1ea; --bg-bot:#eaf0f5;
+    --text:#262320; --text-dim:#7a766e;
+    --panel:#fffdfb; --panel-2:#f1ece4; --border:rgba(0,0,0,0.09);
+    --chip:rgba(0,0,0,0.04);
+    --card:#ffffff; --card-bd:rgba(0,0,0,0.09); --card-shadow:rgba(80,70,60,.16);
+    --link:rgba(120,110,100,.34); --root-glow:#7c5cff;
   }
-  * { box-sizing:border-box; }
-  html,body { margin:0; height:100%; }
-  body {
-    font-family:-apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
-    color:var(--text); background:linear-gradient(180deg,var(--bg-top),var(--bg-bot));
-    height:100vh; overflow:hidden;
-  }
-  .app { display:flex; flex-direction:column; height:100vh; min-height:0; }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;}
+  body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    color:var(--text);background:radial-gradient(120% 120% at 50% 0%,var(--bg-top),var(--bg-bot));height:100vh;overflow:hidden;}
+  .app{display:flex;flex-direction:column;height:100vh;min-height:0;}
+  .top{display:flex;align-items:center;gap:14px;padding:12px 18px;flex-shrink:0;border-bottom:1px solid var(--border);}
+  .brand b{font-size:15px;letter-spacing:.5px;} .brand span{font-size:11.5px;color:var(--text-dim);}
+  .tabs{display:flex;gap:5px;}
+  .tab{padding:8px 15px;border-radius:10px;font-size:13px;cursor:pointer;border:1px solid transparent;color:var(--text-dim);}
+  .tab.active{background:var(--chip);color:var(--text);border-color:var(--border);}
+  .spacer{flex:1;}
+  select,.btn{background:var(--chip);color:var(--text);border:1px solid var(--border);border-radius:9px;padding:7px 11px;font-size:12.5px;cursor:pointer;}
+  .lbl{font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:6px;}
+  .main{flex:1;display:flex;min-height:0;}
+  .stage{flex:1;min-width:0;position:relative;}
+  svg{width:100%;height:100%;display:block;}
+  .side{width:330px;flex-shrink:0;background:var(--panel);border-left:1px solid var(--border);padding:20px;overflow-y:auto;display:flex;flex-direction:column;gap:15px;}
+  .legend{position:absolute;top:14px;left:14px;display:flex;gap:13px;background:var(--panel);border:1px solid var(--border);border-radius:11px;padding:8px 13px;font-size:11.5px;backdrop-filter:blur(8px);}
+  .legend .row{display:flex;align-items:center;gap:6px;} .legend .dot{width:9px;height:9px;border-radius:50%;box-shadow:0 0 7px currentColor;}
+  .viewhint{position:absolute;bottom:14px;left:14px;font-size:11.5px;color:var(--text-dim);max-width:340px;line-height:1.6;}
 
-  /* top bar */
-  .top { display:flex; align-items:center; gap:14px; padding:12px 18px; flex-shrink:0;
-         border-bottom:1px solid var(--border); }
-  .brand b { font-size:15px; letter-spacing:.5px; }
-  .brand span { font-size:11.5px; color:var(--text-dim); }
-  .tabs { display:flex; gap:6px; }
-  .tab { padding:8px 16px; border-radius:10px; font-size:13px; cursor:pointer;
-         border:1px solid transparent; color:var(--text-dim); }
-  .tab.active { background:var(--chip); color:var(--text); border-color:var(--border); }
-  .spacer { flex:1; }
-  .who select, .btn {
-    background:var(--chip); color:var(--text); border:1px solid var(--border);
-    border-radius:9px; padding:7px 12px; font-size:12.5px; cursor:pointer;
-  }
-  .who { font-size:12px; color:var(--text-dim); display:flex; align-items:center; gap:6px; }
+  .chat{flex-shrink:0;border-top:1px solid var(--border);padding:10px 18px;background:var(--panel);}
+  .chatlog{max-height:78px;overflow-y:auto;font-size:12.5px;line-height:1.7;margin-bottom:8px;}
+  .chatlog .u{color:var(--text);} .chatlog .a{color:var(--text-dim);} .chatlog .a b{color:#6cc6b8;}
+  .chatrow{display:flex;gap:8px;}
+  .chatrow input{flex:1;padding:11px 14px;border-radius:11px;border:1px solid var(--border);background:var(--panel-2);color:var(--text);font-size:13.5px;outline:none;}
+  .chatrow input::placeholder{color:var(--text-dim);}
 
-  /* main split */
-  .main { flex:1; display:flex; min-height:0; }
-  .stage { flex:1; min-width:0; position:relative; }
-  svg { width:100%; height:100%; display:block; }
-  .side { width:330px; flex-shrink:0; background:var(--panel-bg); border-left:1px solid var(--border);
-          padding:20px; overflow-y:auto; display:flex; flex-direction:column; gap:15px; }
+  .side h2{margin:0;font-size:16px;} .side .meta{font-size:12px;color:var(--text-dim);}
+  .field{display:flex;flex-direction:column;gap:6px;} .field label{font-size:11px;color:var(--text-dim);letter-spacing:.4px;}
+  .statusrow{display:flex;gap:6px;flex-wrap:wrap;}
+  .pill{padding:5px 11px;border-radius:20px;font-size:12px;cursor:pointer;opacity:.5;border:1px solid transparent;transition:opacity .15s,transform .1s;}
+  .pill:hover{opacity:.85;} .pill.active{opacity:1;border-color:rgba(128,128,128,.5);transform:scale(1.04);}
+  .blocker{border:1px solid rgba(224,86,59,.5);background:rgba(224,86,59,.10);border-radius:10px;padding:10px 12px;font-size:13px;}
+  .blocker .l{font-size:11px;color:#e0563b;font-weight:700;}
+  .chips .chip{display:inline-block;padding:4px 10px;margin:3px 4px 0 0;background:var(--chip);border-radius:8px;font-size:12px;cursor:pointer;}
+  .hint{color:var(--text-dim);font-size:13px;line-height:1.75;}
 
-  /* legend */
-  .legend { position:absolute; top:14px; left:14px; display:flex; gap:14px;
-            background:var(--panel-bg); border:1px solid var(--border); border-radius:11px;
-            padding:8px 13px; font-size:11.5px; backdrop-filter:blur(8px); }
-  .legend .row { display:flex; align-items:center; gap:6px; }
-  .legend .dot { width:10px; height:10px; border-radius:50%; box-shadow:0 0 7px currentColor; }
-  .viewhint { position:absolute; top:14px; right:14px; font-size:11.5px; color:var(--text-dim);
-              background:var(--panel-bg); border:1px solid var(--border); border-radius:11px; padding:8px 13px; max-width:280px; }
+  /* svg pieces */
+  .link{fill:none;stroke:var(--link);stroke-linecap:round;}
+  .dep{fill:none;stroke:#e0a73b;stroke-width:1.5;stroke-dasharray:5 6;opacity:.55;}
+  .node{cursor:pointer;}
+  @keyframes pulse{0%,100%{opacity:.3;}50%{opacity:.85;}}
+  .blockdot{animation:pulse 1.5s ease-in-out infinite;}
 
-  /* chat dock */
-  .chat { flex-shrink:0; border-top:1px solid var(--border); padding:10px 18px; background:var(--panel-bg); }
-  .chatlog { max-height:84px; overflow-y:auto; font-size:12.5px; line-height:1.7; margin-bottom:8px; }
-  .chatlog .u { color:var(--text); }
-  .chatlog .a { color:var(--text-dim); }
-  .chatlog .a b { color:#4fb6a8; }
-  .chatrow { display:flex; gap:8px; }
-  .chatrow input { flex:1; padding:11px 14px; border-radius:11px; border:1px solid var(--border);
-                   background:var(--panel-2); color:var(--text); font-size:13.5px; outline:none; }
-  .chatrow input::placeholder { color:var(--text-dim); }
-
-  /* side panel pieces */
-  .side h2 { margin:0; font-size:16px; }
-  .side .meta { font-size:12px; color:var(--text-dim); }
-  .field { display:flex; flex-direction:column; gap:6px; }
-  .field label { font-size:11px; color:var(--text-dim); letter-spacing:.4px; }
-  .statusrow { display:flex; gap:6px; flex-wrap:wrap; }
-  .pill { padding:5px 11px; border-radius:20px; font-size:12px; cursor:pointer; opacity:.5;
-          border:1px solid transparent; transition:opacity .15s, transform .1s; }
-  .pill:hover { opacity:.85; } .pill.active { opacity:1; border-color:rgba(128,128,128,.5); transform:scale(1.04); }
-  .blocker { border:1px solid rgba(224,86,59,.5); background:rgba(224,86,59,.10); border-radius:10px; padding:10px 12px; font-size:13px; }
-  .blocker .lbl { font-size:11px; color:#e0563b; font-weight:700; }
-  .chips .chip { display:inline-block; padding:4px 10px; margin:3px 4px 0 0; background:var(--chip);
-                 border-radius:8px; font-size:12px; cursor:pointer; }
-  .hint { color:var(--text-dim); font-size:13px; line-height:1.7; }
-
-  /* svg states */
-  .branch { fill:none; stroke-linecap:round; }
-  .dep { fill:none; stroke:#e0a73b; stroke-width:1.4; stroke-dasharray:5 5; opacity:.5; }
-  .leaf { cursor:pointer; transition:transform .12s; transform-box:fill-box; transform-origin:center; }
-  .leaf:hover { transform:scale(1.18); }
-  .nodelabel { font-size:11.5px; pointer-events:none; }
-  @keyframes blockpulse { 0%,100%{opacity:.25;r:15px;} 50%{opacity:.65;r:21px;} }
-  .blockhalo { animation:blockpulse 1.6s ease-in-out infinite; }
-  @keyframes sway { 0%,100%{transform:rotate(-.5deg);} 50%{transform:rotate(.6deg);} }
-  #treeRoot { animation:sway 7s ease-in-out infinite; }
-  .selRing { fill:none; stroke:#fff; stroke-opacity:.8; stroke-width:2; stroke-dasharray:4 4; }
-
-  /* card view */
-  .cardNode { cursor:pointer; }
-  .cardBox { rx:12; }
-  .cardArrow { fill:none; stroke:var(--text-dim); stroke-width:1.6; opacity:.55; }
-  .cardArrow.depedge { stroke:#e0a73b; stroke-dasharray:5 5; }
-
-  /* report wall */
-  .wall { padding:26px; overflow-y:auto; height:100%; }
-  .wall h1 { font-size:18px; margin:0 0 4px; }
-  .wall .sub { color:var(--text-dim); font-size:12.5px; margin-bottom:18px; }
-  .wallgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:14px; }
-  .blockcard { background:var(--card); border:1px solid rgba(224,86,59,.45); border-left:4px solid #e0563b;
-               border-radius:13px; padding:15px 16px; }
-  .blockcard .top { display:flex; justify-content:space-between; align-items:baseline; }
-  .blockcard .owner { font-size:12px; color:var(--text-dim); }
-  .blockcard .days { font-size:12px; font-weight:700; color:#e0563b; }
-  .blockcard .ttl { font-size:14.5px; font-weight:600; margin:6px 0; }
-  .blockcard .rsn { font-size:13px; color:var(--text); line-height:1.6; }
-  .blockcard .downs { margin-top:9px; font-size:11.5px; color:var(--text-dim); }
-  .wall .clear { color:var(--text-dim); }
+  .wall{padding:26px;overflow-y:auto;height:100%;}
+  .wall h1{font-size:18px;margin:0 0 4px;} .wall .sub{color:var(--text-dim);font-size:12.5px;margin-bottom:18px;}
+  .wallgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;}
+  .bc{background:var(--card);border:1px solid rgba(224,86,59,.4);border-left:4px solid #e0563b;border-radius:13px;padding:15px 16px;box-shadow:0 6px 18px var(--card-shadow);}
+  .bc .t{display:flex;justify-content:space-between;align-items:baseline;}
+  .bc .o{font-size:12px;color:var(--text-dim);} .bc .d{font-size:12px;font-weight:700;color:#e0563b;}
+  .bc .ttl{font-size:14.5px;font-weight:600;margin:6px 0;} .bc .r{font-size:13px;line-height:1.6;}
+  .bc .dn{margin-top:9px;font-size:11.5px;color:var(--text-dim);}
 </style>
 </head>
 <body data-theme="dark">
 <div class="app">
   <div class="top">
-    <div class="brand"><b>个人任务树</b> &nbsp;<span>注意力长在哪，卡点亮在哪</span></div>
+    <div class="brand"><b>个人任务树</b>&nbsp;<span>注意力长在哪，卡点亮在哪</span></div>
     <div class="tabs">
       <div class="tab active" data-view="tree">成长树</div>
-      <div class="tab" data-view="board">工作台</div>
       <div class="tab" data-view="wall">卡点墙</div>
     </div>
     <div class="spacer"></div>
-    <div class="who">视角 <select id="ownerSel"></select></div>
+    <div class="lbl">布局
+      <select id="layoutSel"><option value="h">横向整齐</option><option value="r">径向生命树</option></select>
+    </div>
+    <div class="lbl">视角 <select id="ownerSel"></select></div>
     <button class="btn" id="btnReplay">重新生长</button>
     <button class="btn" id="btnTheme">白天 / 夜晚</button>
   </div>
-
   <div class="main">
     <div class="stage">
-      <svg id="svg" viewBox="0 0 1000 760" preserveAspectRatio="xMidYMid meet">
+      <svg id="svg" preserveAspectRatio="xMidYMid meet">
         <defs></defs>
-        <g id="ground"></g>
-        <g id="treeRoot"><g id="depLayer"></g><g id="branchLayer"></g><g id="leafLayer"></g><g id="labelLayer"></g></g>
-        <g id="boardRoot"></g>
+        <g id="depLayer"></g><g id="linkLayer"></g><g id="nodeLayer"></g>
       </svg>
       <div class="wall" id="wall" style="display:none"></div>
       <div class="legend" id="legend"></div>
@@ -149,7 +104,6 @@
     </div>
     <div class="side" id="side"></div>
   </div>
-
   <div class="chat">
     <div class="chatlog" id="chatlog"></div>
     <div class="chatrow">
@@ -158,21 +112,14 @@
     </div>
   </div>
 </div>
-
 <script>
 (function(){
   "use strict";
-  const SVGNS="http://www.w3.org/2000/svg";
-  const STATUS={
-    idea:{label:"想法",color:"#9aa37b"}, planned:{label:"已规划",color:"#4fb6a8"},
-    building:{label:"进行中",color:"#e0a73b"}, done:{label:"已完成",color:"#4cae63"},
-    blocked:{label:"卡点",color:"#e0563b"},
-  };
+  const NS="http://www.w3.org/2000/svg";
+  const STATUS={idea:{label:"想法",color:"#9aa37b"},planned:{label:"已规划",color:"#4fb6a8"},
+    building:{label:"进行中",color:"#e0a73b"},done:{label:"已完成",color:"#4cae63"},blocked:{label:"卡点",color:"#e0563b"}};
   const PEOPLE=[{id:"me",name:"我"},{id:"lin",name:"林"},{id:"zhao",name:"赵"}];
-
-  // flat task model: parent=结构父(树); deps=被依赖的前置(DAG跨枝/跨人)
   let TASKS=[
-    // 我
     {id:"me0",owner:"me",title:"2026 Q2 主线",status:"building",parent:null},
     {id:"a",owner:"me",title:"任务树智能体 v1",status:"building",parent:"me0"},
     {id:"a1",owner:"me",title:"对话摘取任务",status:"building",parent:"a"},
@@ -185,160 +132,125 @@
     {id:"c1",owner:"me",title:"外部 Agent 鉴权",status:"done",parent:"c"},
     {id:"c2",owner:"me",title:"验收回流",status:"building",parent:"c"},
     {id:"c21",owner:"me",title:"复测报告模板",status:"idea",parent:"c2"},
-    // 林
     {id:"lin0",owner:"lin",title:"数据平台",status:"building",parent:null},
     {id:"lin1",owner:"lin",title:"数据 API 网关",status:"building",parent:"lin0"},
     {id:"lin2",owner:"lin",title:"埋点 SDK",status:"blocked",parent:"lin0",blocker:"前端埋点方案未定，等设计评审拍板",stuck:8},
-    // 赵
     {id:"zhao0",owner:"zhao",title:"增长实验",status:"building",parent:null},
     {id:"zhao1",owner:"zhao",title:"AB 测试框架",status:"done",parent:"zhao0"},
     {id:"zhao2",owner:"zhao",title:"实验看板",status:"blocked",parent:"zhao0",deps:["lin1"],blocker:"缺数据源，依赖林的「数据 API 网关」尚未就绪",stuck:3},
   ];
 
-  const svg=document.getElementById("svg");
-  const depLayer=document.getElementById("depLayer");
-  const branchLayer=document.getElementById("branchLayer");
-  const leafLayer=document.getElementById("leafLayer");
-  const labelLayer=document.getElementById("labelLayer");
-  const boardRoot=document.getElementById("boardRoot");
-  const groundG=document.getElementById("ground");
-  const wallEl=document.getElementById("wall");
-  const side=document.getElementById("side");
-  const W=1000,H=760,CX=W/2,GROUND_Y=H-58;
-
-  let view="tree", owner="me", selectedId=null, idSeq=200;
+  const svg=document.getElementById("svg"),depLayer=document.getElementById("depLayer"),
+    linkLayer=document.getElementById("linkLayer"),nodeLayer=document.getElementById("nodeLayer"),
+    wallEl=document.getElementById("wall"),side=document.getElementById("side"),log=document.getElementById("chatlog");
+  const CW=176,CH=52;            // card size
+  const ROWGAP=30,COLGAP=232;    // tidy spacing -> 永不重叠
+  let view="tree",layout="h",owner="me",selectedId=null,idSeq=200;
   const newIds=new Set();
 
-  const el=(t,a)=>{const e=document.createElementNS(SVGNS,t);for(const k in a)e.setAttribute(k,a[k]);return e;};
+  const el=(t,a)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);return e;};
   const get=id=>TASKS.find(t=>t.id===id);
-  const childrenOf=id=>TASKS.filter(t=>t.parent===id);
+  const kidsOf=id=>TASKS.filter(t=>t.parent===id);
   const rootOf=o=>TASKS.find(t=>t.owner===o&&t.parent===null);
   const css=v=>getComputedStyle(document.body).getPropertyValue(v).trim();
-  const hex=h=>{h=h.replace('#','');if(h.length===3)h=h.split('').map(c=>c+c).join('');return[parseInt(h.substr(0,2),16),parseInt(h.substr(2,2),16),parseInt(h.substr(4,2),16)];};
-  const mix=(a,b,t)=>{const p=hex(a),q=hex(b);return`rgb(${Math.round(p[0]+(q[0]-p[0])*t)},${Math.round(p[1]+(q[1]-p[1])*t)},${Math.round(p[2]+(q[2]-p[2])*t)})`;};
-  const hash=s=>{let h=0;for(let i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))|0;return h;};
+  const name=id=>(PEOPLE.find(p=>p.id===id)||{}).name||id;
 
-  // ---------- TREE LAYOUT (subtree-leaf weighted, anti-collision) ----------
-  function leafCount(id){const k=childrenOf(id);return k.length?k.reduce((s,c)=>s+leafCount(c.id),0):1;}
-  function layoutTree(){
-    const nodes=[],branches=[],pos={};
-    function place(id,x,y,center,span,len,depth){
-      const rad=center*Math.PI/180, tx=x+Math.cos(rad)*len, ty=y+Math.sin(rad)*len;
-      const width=Math.max(26*Math.pow(0.62,depth),3);
-      branches.push({from:{x,y},to:{x:tx,y:ty},width,depth,id});
-      pos[id]={x:tx,y:ty,angle:center,depth};
-      nodes.push({id,x:tx,y:ty,angle:center,depth});
-      const kids=childrenOf(id); if(!kids.length)return;
-      const total=kids.reduce((s,c)=>s+leafCount(c.id),0);
-      const childLen=Math.max(len*0.76,52);
-      let acc=center-span/2;
-      kids.forEach(c=>{const share=span*(leafCount(c.id)/total); const cc=acc+share/2;
-        const jit=(hash(c.id)%10-5); place(c.id,tx,ty,cc+jit,share,childLen,depth+1); acc+=share;});
+  // ---- tidy-tree layout (leaf-slot + parent-average，自包含，永不重叠) ----
+  function tidy(){
+    const pos={};let leaf=0;
+    function walk(id,depth){
+      const ks=kidsOf(id);let y;
+      if(!ks.length){y=leaf*(CH+ROWGAP);leaf++;}
+      else{const ys=ks.map(k=>walk(k.id,depth+1));y=(ys[0]+ys[ys.length-1])/2;}
+      pos[id]={depth,x:depth*COLGAP,y,cx:depth*COLGAP+CW/2,cy:y+CH/2};
+      return y;
     }
-    const r=rootOf(owner);
-    place(r.id,CX,GROUND_Y,-90,150,150,0);
-    return {nodes,branches,pos};
+    walk(rootOf(owner).id,0);
+    return pos;
   }
-  const leafPath="M -15 0 Q -2 -10 15 0 Q -2 10 -15 0 Z";
+  function radial(){
+    const t=tidy();const ids=Object.keys(t);
+    let maxDepth=0,maxY=0;ids.forEach(id=>{maxDepth=Math.max(maxDepth,t[id].depth);maxY=Math.max(maxY,t[id].y);});
+    const RING=160,cx0=0,cy0=0;
+    const pos={};
+    ids.forEach(id=>{const n=t[id];
+      const ang=(maxY?(n.y/maxY):0)*Math.PI*1.55 - Math.PI*0.775 - Math.PI/2; // 扇形向上展开
+      const r=n.depth*RING;
+      const x=cx0+Math.cos(ang)*r,y=cy0+Math.sin(ang)*r;
+      pos[id]={depth:n.depth,cx:x,cy:y,x:x-CW/2,y:y-CH/2,ang};});
+    return pos;
+  }
+
+  function curveH(a,b){const x1=a.cx+CW/2,y1=a.cy,x2=b.cx-CW/2,y2=b.cy,dx=(x2-x1)/2;
+    return`M ${x1} ${y1} C ${x1+dx} ${y1}, ${x2-dx} ${y2}, ${x2} ${y2}`;}
+  function curveR(a,b){const mx=(a.cx+b.cx)/2,my=(a.cy+b.cy)/2;
+    return`M ${a.cx} ${a.cy} Q ${mx*0.78} ${my*0.78} ${b.cx} ${b.cy}`;}
 
   function renderTree(animate){
-    depLayer.innerHTML="";branchLayer.innerHTML="";leafLayer.innerHTML="";labelLayer.innerHTML="";
-    const {nodes,branches,pos}=layoutTree();
-    branches.forEach(b=>{
-      const mx=(b.from.x+b.to.x)/2,my=(b.from.y+b.to.y)/2,dx=b.to.x-b.from.x,dy=b.to.y-b.from.y;
-      const ln=Math.hypot(dx,dy)||1,px=-dy/ln,py=dx/ln,bw=(hash(b.id)%2?1:-1)*Math.min(ln*.12,20);
-      const d=`M ${b.from.x} ${b.from.y} Q ${mx+px*bw} ${my+py*bw} ${b.to.x} ${b.to.y}`;
-      const p=el("path",{d,class:"branch",stroke:b.depth===0?"url(#trunkGrad)":mix(css("--trunk-a"),css("--trunk-b"),Math.min(b.depth/5,1)),"stroke-width":b.width});
-      branchLayer.appendChild(p);
-      if(!animate||newIds.has(b.id)){const tl=p.getTotalLength();p.style.strokeDasharray=tl;p.style.strokeDashoffset=tl;
-        p.style.transition="stroke-dashoffset .55s ease-out";p.style.transitionDelay=(b.depth*.3)+"s";
+    depLayer.innerHTML="";linkLayer.innerHTML="";nodeLayer.innerHTML="";
+    const pos=layout==="r"?radial():tidy();
+    const ids=Object.keys(pos);
+    // auto-fit viewBox
+    let minX=1e9,minY=1e9,maxX=-1e9,maxY=-1e9;
+    ids.forEach(id=>{const p=pos[id];minX=Math.min(minX,p.x);minY=Math.min(minY,p.y);maxX=Math.max(maxX,p.x+CW);maxY=Math.max(maxY,p.y+CH);});
+    const pad=70;svg.setAttribute("viewBox",`${minX-pad} ${minY-pad} ${maxX-minX+pad*2} ${maxY-minY+pad*2}`);
+
+    // links (parent->child)
+    TASKS.filter(t=>pos[t.id]&&t.parent&&pos[t.parent]).forEach(t=>{
+      const a=pos[t.parent],b=pos[t.id];
+      const w=Math.max(5-b.depth*0.9,1.6);
+      const p=el("path",{class:"link",d:layout==="r"?curveR(a,b):curveH(a,b),"stroke-width":w});
+      linkLayer.appendChild(p);
+      if(!animate||newIds.has(t.id)){const tl=p.getTotalLength();p.style.strokeDasharray=tl;p.style.strokeDashoffset=tl;
+        p.style.transition="stroke-dashoffset .5s ease-out";p.style.transitionDelay=(b.depth*.28)+"s";
         requestAnimationFrame(()=>requestAnimationFrame(()=>p.style.strokeDashoffset=0));}
     });
-    // dependency ghost lines (deps within this owner's visible nodes)
-    TASKS.filter(t=>t.owner===owner&&t.deps).forEach(t=>{
-      t.deps.forEach(dp=>{ if(pos[t.id]&&pos[dp]){ const a=pos[dp],c=pos[t.id];
-        depLayer.appendChild(el("path",{class:"dep",d:`M ${a.x} ${a.y} Q ${(a.x+c.x)/2} ${(a.y+c.y)/2-40} ${c.x} ${c.y}`})); } });
-    });
-    nodes.forEach(n=>{
-      const t=get(n.id),st=STATUS[t.status],scale=Math.max(1.5-n.depth*.18,.78),isRoot=n.depth===0;
-      const g=el("g",{transform:`translate(${n.x} ${n.y})`});
-      if(t.status==="blocked")g.appendChild(el("circle",{class:"blockhalo",cx:0,cy:0,r:15,fill:"#e0563b"}));
-      if(t.id===selectedId)g.appendChild(el("circle",{class:"selRing",cx:0,cy:0,r:20+scale*5}));
-      let shape;
-      if(isRoot)shape=el("circle",{class:"leaf",cx:0,cy:0,r:15,fill:st.color,stroke:"#fff","stroke-opacity":.25,"stroke-width":2});
-      else shape=el("path",{class:"leaf",d:leafPath,fill:st.color,transform:`rotate(${n.angle}) scale(${scale})`,stroke:"rgba(0,0,0,.18)","stroke-width":1});
-      shape.style.filter=`drop-shadow(0 0 ${isRoot?9:5}px ${st.color}aa)`;
-      shape.addEventListener("click",e=>{e.stopPropagation();selectNode(t.id);});
-      const ti=document.createElementNS(SVGNS,"title");ti.textContent=t.title+" · "+st.label;shape.appendChild(ti);
-      g.appendChild(shape);
-      if(!animate||newIds.has(n.id)){g.style.opacity=0;g.style.transition="opacity .4s, transform .5s cubic-bezier(.34,1.56,.64,1)";
-        g.style.transform=`translate(${n.x}px,${n.y}px) scale(.2)`;g.style.transitionDelay=(n.depth*.3+.4)+"s";
-        requestAnimationFrame(()=>requestAnimationFrame(()=>{g.style.opacity=1;g.style.transform=`translate(${n.x}px,${n.y}px) scale(1)`;}));}
-      leafLayer.appendChild(g);
-      const ly=n.y-(isRoot?26:18*scale+7);
-      const txt=el("text",{class:"nodelabel",x:n.x,y:ly,"text-anchor":"middle",fill:"var(--text)"});txt.textContent=t.title;
-      const bg=el("rect",{rx:5,ry:5,fill:"var(--panel-bg)","fill-opacity":.74});
-      labelLayer.appendChild(bg);labelLayer.appendChild(txt);
-      const bb=txt.getBBox();bg.setAttribute("x",bb.x-5);bg.setAttribute("y",bb.y-2);bg.setAttribute("width",bb.width+10);bg.setAttribute("height",bb.height+4);
-      if(t.status==="blocked"){bg.setAttribute("stroke","#e0563b");bg.setAttribute("stroke-width",1);}
-    });
+    // dependency edges
+    TASKS.filter(t=>t.owner===owner&&t.deps).forEach(t=>t.deps.forEach(dp=>{if(pos[dp]&&pos[t.id]){
+      const a=pos[dp],b=pos[t.id];depLayer.appendChild(el("path",{class:"dep",d:`M ${a.cx} ${a.cy} Q ${(a.cx+b.cx)/2} ${(a.cy+b.cy)/2-46} ${b.cx} ${b.cy}`}));}}));
+    // nodes
+    ids.forEach(id=>{const t=get(id),st=STATUS[t.status],p=pos[id],isRoot=p.depth===0;
+      const g=el("g",{class:"node",transform:`translate(${p.x} ${p.y})`});
+      // shadow card
+      const rect=el("rect",{x:0,y:0,width:CW,height:CH,rx:13,fill:"var(--card)",
+        stroke:t.id===selectedId?"var(--root-glow)":(t.status==="blocked"?"#e0563b":"var(--card-bd)"),
+        "stroke-width":t.id===selectedId?2:1.2});
+      rect.style.filter="drop-shadow(0 5px 14px var(--card-shadow))";
+      g.appendChild(rect);
+      g.appendChild(el("rect",{x:0,y:0,width:5,height:CH,rx:2.5,fill:isRoot?"var(--root-glow)":st.color}));
+      if(isRoot){const ring=el("rect",{x:-4,y:-4,width:CW+8,height:CH+8,rx:16,fill:"none",stroke:"var(--root-glow)","stroke-opacity":.35,"stroke-width":2});ring.style.filter="drop-shadow(0 0 10px var(--root-glow))";g.insertBefore(ring,rect);}
+      const ttl=el("text",{x:16,y:23,fill:"var(--text)","font-size":13.5,"font-weight":600});ttl.textContent=(isRoot?"创世支柱 · ":"")+t.title;ttl.textContent=ttl.textContent.slice(0,isRoot?14:13);g.appendChild(ttl);
+      const sub=el("text",{x:16,y:41,fill:isRoot?"var(--text-dim)":st.color,"font-size":11.5});
+      sub.textContent="● "+st.label+(t.status==="blocked"?(" · 卡 "+(t.stuck||"?")+" 天"):"");g.appendChild(sub);
+      if(t.status==="blocked")g.appendChild(el("circle",{class:"blockdot",cx:CW-13,cy:14,r:5,fill:"#e0563b"}));
+      g.addEventListener("click",e=>{e.stopPropagation();selectNode(id);});
+      if(!animate||newIds.has(id)){g.style.opacity=0;g.style.transition="opacity .4s,transform .5s cubic-bezier(.34,1.5,.64,1)";
+        g.style.transformBox="fill-box";g.style.transformOrigin="0 50%";
+        g.style.transform=`translate(${p.x}px,${p.y}px) scale(.55)`;g.style.transitionDelay=(p.depth*.28+.32)+"s";
+        requestAnimationFrame(()=>requestAnimationFrame(()=>{g.style.opacity=1;g.style.transform=`translate(${p.x}px,${p.y}px) scale(1)`;}));}
+      nodeLayer.appendChild(g);});
     newIds.clear();
   }
 
-  // ---------- BOARD (card DAG) ----------
-  function renderBoard(){
-    boardRoot.innerHTML="";
-    // BFS layers by depth from owner root
-    const r=rootOf(owner),depth={},order={};
-    (function walk(id,d){depth[id]=d;childrenOf(id).forEach(c=>walk(c.id,d+1));})(r.id,0);
-    const byDepth={};Object.keys(depth).forEach(id=>{(byDepth[depth[id]]=byDepth[depth[id]]||[]).push(id);});
-    const colW=235,cardW=185,cardH=66,gapY=20;
-    const pos={};
-    Object.keys(byDepth).forEach(d=>{const ids=byDepth[d];const totalH=ids.length*(cardH+gapY);
-      ids.forEach((id,i)=>{pos[id]={x:40+d*colW,y:(H-totalH)/2+i*(cardH+gapY)+30};});});
-    // edges: parent->child + dep edges
-    TASKS.filter(t=>pos[t.id]).forEach(t=>{
-      if(t.parent&&pos[t.parent]){const a=pos[t.parent],b=pos[t.id];
-        boardRoot.appendChild(el("path",{class:"cardArrow",d:`M ${a.x+cardW} ${a.y+cardH/2} C ${a.x+cardW+40} ${a.y+cardH/2}, ${b.x-40} ${b.y+cardH/2}, ${b.x} ${b.y+cardH/2}`}));}
-      (t.deps||[]).forEach(dp=>{if(pos[dp]){const a=pos[dp],b=pos[t.id];
-        boardRoot.appendChild(el("path",{class:"cardArrow depedge",d:`M ${a.x+cardW} ${a.y+cardH} C ${a.x+cardW+30} ${a.y+cardH+30}, ${b.x-30} ${b.y+cardH+30}, ${b.x} ${b.y+cardH/2}`}));}});
-    });
-    Object.keys(pos).forEach(id=>{const t=get(id),st=STATUS[t.status],p=pos[id];
-      const g=el("g",{class:"cardNode",transform:`translate(${p.x} ${p.y})`});
-      g.appendChild(el("rect",{class:"cardBox",x:0,y:0,width:cardW,height:cardH,rx:12,fill:"var(--card)",stroke:t.id===selectedId?"#fff":(t.status==="blocked"?"#e0563b":"var(--card-bd)"),"stroke-width":t.id===selectedId?2:1.2}));
-      g.appendChild(el("rect",{x:0,y:0,width:5,height:cardH,rx:2,fill:st.color}));
-      const ttl=el("text",{x:16,y:27,fill:"var(--text)","font-size":13.5,"font-weight":600});ttl.textContent=t.title.slice(0,12);g.appendChild(ttl);
-      const sp=el("text",{x:16,y:48,fill:st.color,"font-size":11.5});sp.textContent="● "+st.label+(t.status==="blocked"?(" · 卡 "+(t.stuck||"?")+" 天"):"");g.appendChild(sp);
-      g.addEventListener("click",e=>{e.stopPropagation();selectNode(id);});
-      boardRoot.appendChild(g);});
-  }
-
-  // ---------- REPORT WALL ----------
   function renderWall(){
     const blocked=TASKS.filter(t=>t.status==="blocked").sort((a,b)=>(b.stuck||0)-(a.stuck||0));
-    const name=id=>(PEOPLE.find(p=>p.id===id)||{}).name||id;
-    const downstream=t=>TASKS.filter(x=>(x.deps||[]).includes(t.id)).map(x=>name(x.owner)+"·"+x.title);
-    let html=`<h1>卡点墙 · 给老板的一眼</h1><div class="sub">全员卡点按卡住时长排序，最久的排最前。共 ${blocked.length} 个卡点。</div><div class="wallgrid">`;
-    if(!blocked.length)html+=`<div class="clear">当前没有卡点，一切顺畅。</div>`;
-    blocked.forEach(t=>{const downs=downstream(t);
-      html+=`<div class="blockcard"><div class="top"><span class="owner">${name(t.owner)}</span><span class="days">卡 ${t.stuck||"?"} 天</span></div>
-      <div class="ttl">${t.title}</div><div class="rsn">${t.blocker||""}</div>
-      ${downs.length?`<div class="downs">阻塞了：${downs.join("、")}</div>`:""}</div>`;});
-    html+="</div>";
-    wallEl.innerHTML=html;
+    const downs=t=>TASKS.filter(x=>(x.deps||[]).includes(t.id)).map(x=>name(x.owner)+"·"+x.title);
+    let h=`<h1>卡点墙 · 给老板的一眼</h1><div class="sub">全员卡点按卡住时长排序，最久的在前。共 ${blocked.length} 个。</div><div class="wallgrid">`;
+    if(!blocked.length)h+=`<div class="hint">当前没有卡点，一切顺畅。</div>`;
+    blocked.forEach(t=>{const d=downs(t);h+=`<div class="bc"><div class="t"><span class="o">${name(t.owner)}</span><span class="d">卡 ${t.stuck||"?"} 天</span></div><div class="ttl">${t.title}</div><div class="r">${t.blocker||""}</div>${d.length?`<div class="dn">阻塞了：${d.join("、")}</div>`:""}</div>`;});
+    wallEl.innerHTML=h+"</div>";
   }
 
-  // ---------- SIDE PANEL ----------
-  function selectNode(id){selectedId=id;if(view==="tree")renderTree(false);else if(view==="board")renderBoard();renderSide(id);}
+  function selectNode(id){selectedId=id;if(view==="tree")renderTree(false);renderSide(id);}
   function renderSide(id){
-    if(view==="wall"){side.innerHTML=`<div class="hint">卡点墙是只读上报视图：把所有人的红色卡点聚到一起，按卡住时长排序，并标出每个卡点<b>下游阻塞了谁</b>。<br/><br/>老板一眼就知道：谁卡了、卡多久、卡了会连累哪些任务。</div>`;return;}
+    if(view==="wall"){side.innerHTML=`<div class="hint">卡点墙是只读上报视图：把所有人的卡点聚到一起按时长排序，并标出每个卡点<b>下游阻塞了谁</b>。老板一眼知道谁卡了、卡多久、连累了谁。</div>`;return;}
     const t=id&&get(id);
-    if(!t){side.innerHTML=`<div class="hint">点一个节点看详情。<br/><br/>叶子/卡片 = 任务，颜色 = 进度，<span style="color:#e0563b">红色</span> = 卡点。<br/>实线 = 父子（被依赖→下一步），<span style="color:#e0a73b">黄色虚线</span> = 跨枝/跨人依赖。<br/><br/>底部输入框模拟「对话摘任务」。</div>`;return;}
+    if(!t){side.innerHTML=`<div class="hint">点一个节点看详情。<br/><br/>卡片=任务，左侧色条=进度，<span style="color:#e0563b">红点闪烁</span>=卡点。实线=父子（被依赖→下一步），<span style="color:#e0a73b">黄虚线</span>=跨枝/跨人依赖。<br/><br/>右上角可切「横向整齐 / 径向生命树」两种布局，底部输入框模拟对话摘任务。</div>`;return;}
     let h=`<h2>${t.title}</h2><div class="meta">${t.parent?("属于："+get(t.parent).title):"创世支柱（根任务）"}</div>`;
     h+=`<div class="field"><label>进度</label><div class="statusrow" id="sr"></div></div>`;
-    if(t.status==="blocked")h+=`<div class="blocker"><div class="lbl">卡点</div>${t.blocker||"（补充卡点描述）"}${t.stuck?` · 已卡 ${t.stuck} 天`:""}</div>`;
-    const kids=childrenOf(t.id);
-    h+=`<div class="field"><label>${kids.length?"下一个任务（枝干）":"下一步"}</label><div class="chips" id="kids"></div></div>`;
+    if(t.status==="blocked")h+=`<div class="blocker"><div class="l">卡点</div>${t.blocker||"（补充）"}${t.stuck?` · 已卡 ${t.stuck} 天`:""}</div>`;
+    const ks=kidsOf(t.id);
+    h+=`<div class="field"><label>${ks.length?"下一个任务（枝干）":"下一步"}</label><div class="chips" id="kids"></div></div>`;
     const deps=(t.deps||[]).map(get).filter(Boolean);
     if(deps.length)h+=`<div class="field"><label>依赖（前置）</label><div class="chips" id="deps"></div></div>`;
     side.innerHTML=h;
@@ -347,79 +259,52 @@
       p.textContent=STATUS[k].label;p.style.background=STATUS[k].color+"33";p.style.color=STATUS[k].color;
       p.onclick=()=>{t.status=k;if(k!=="blocked"){delete t.blocker;delete t.stuck;}rerender();renderSide(id);};sr.appendChild(p);});
     const kc=side.querySelector("#kids");
-    if(kids.length)kids.forEach(c=>{const ch=document.createElement("span");ch.className="chip";ch.style.borderLeft="3px solid "+STATUS[c.status].color;ch.textContent=c.title;ch.onclick=()=>selectNode(c.id);kc.appendChild(ch);});
-    else if(kc)kc.innerHTML=`<span class="hint">末梢任务，可在下方摘出下一步。</span>`;
+    if(ks.length)ks.forEach(c=>{const ch=document.createElement("span");ch.className="chip";ch.style.borderLeft="3px solid "+STATUS[c.status].color;ch.textContent=c.title;ch.onclick=()=>selectNode(c.id);kc.appendChild(ch);});
+    else kc.innerHTML=`<span class="hint">末梢任务，可在下方摘出下一步。</span>`;
     const dc=side.querySelector("#deps");
-    if(dc)deps.forEach(d=>{const ch=document.createElement("span");ch.className="chip";ch.style.borderLeft="3px solid #e0a73b";ch.textContent=(d.owner!==owner?(PEOPLE.find(p=>p.id===d.owner).name+"·"):"")+d.title;ch.onclick=()=>{if(d.owner!==owner){owner=d.owner;document.getElementById("ownerSel").value=owner;}selectNode(d.id);};dc.appendChild(ch);});
+    if(dc)deps.forEach(d=>{const ch=document.createElement("span");ch.className="chip";ch.style.borderLeft="3px solid #e0a73b";ch.textContent=(d.owner!==owner?(name(d.owner)+"·"):"")+d.title;ch.onclick=()=>{if(d.owner!==owner){owner=d.owner;document.getElementById("ownerSel").value=owner;}selectNode(d.id);};dc.appendChild(ch);});
   }
 
-  // ---------- CHAT (fake LLM streaming) ----------
-  const log=document.getElementById("chatlog");
-  function logLine(cls,html){const d=document.createElement("div");d.className=cls;d.innerHTML=html;log.appendChild(d);log.scrollTop=log.scrollHeight;return d;}
-  function infer(text){
-    if(/卡|阻塞|堵|block|等待|配额|审批|没排上/.test(text))return"blocked";
-    if(/完成|做完|搞定|done|上线|发布/.test(text))return"done";
-    if(/在做|进行|开始|开发中/.test(text))return"building";
-    if(/计划|准备|规划|排期|下周|要搞|打算/.test(text))return"planned";
-    return"idea";
-  }
-  function sendChat(){
-    const inp=document.getElementById("chatInput");const text=inp.value.trim();if(!text)return;inp.value="";
-    logLine("u","你：" + text);
-    const a=logLine("a","<b>任务树</b>：正在分析…");
-    const status=infer(text);const st=STATUS[status];
-    const title=text.replace(/[，,。.；;].*$/,"").replace(/^(这周|本周|下周|我?要|打算|准备)/,"").slice(0,14)||"新任务";
+  // chat fake streaming
+  function logLine(c,html){const d=document.createElement("div");d.className=c;d.innerHTML=html;log.appendChild(d);log.scrollTop=log.scrollHeight;return d;}
+  function infer(x){if(/卡|阻塞|堵|block|等待|配额|审批|没排上/.test(x))return"blocked";if(/完成|做完|搞定|done|上线|发布/.test(x))return"done";if(/在做|进行|开始|开发中/.test(x))return"building";if(/计划|准备|规划|排期|下周|要搞|打算/.test(x))return"planned";return"idea";}
+  function sendChat(){const inp=document.getElementById("chatInput"),text=inp.value.trim();if(!text)return;inp.value="";
+    logLine("u","你："+text);const a=logLine("a","<b>任务树</b>：正在分析…");
+    const status=infer(text),st=STATUS[status];
+    const title=text.replace(/[，,。.；;].*$/,"").replace(/^(这周|本周|下周|我?要|打算|准备)/,"").slice(0,13)||"新任务";
     const blocker=status==="blocked"?text:null;
-    const parentNode=selectedId&&get(selectedId)&&get(selectedId).owner===owner?get(selectedId):rootOf(owner);
-    const full=`解析为任务「${title}」｜进度：${st.label}${blocker?"｜识别到卡点":""}｜建议挂到「${parentNode.title}」下，正在生长…`;
-    let i=0;const timer=setInterval(()=>{i+=2;a.innerHTML="<b>任务树</b>："+full.slice(0,i);log.scrollTop=log.scrollHeight;
-      if(i>=full.length){clearInterval(timer);commit();}},22);
-    function commit(){
-      const id="n"+(idSeq++);const node={id,owner,title,status,parent:parentNode.id};
-      if(blocker){node.blocker=blocker;node.stuck=0;}
-      TASKS.push(node);newIds.add(id);
-      if(view!=="tree"){view="tree";switchView();}
-      renderTree(true);setTimeout(()=>selectNode(id),700);
-    }
-  }
+    const parent=selectedId&&get(selectedId)&&get(selectedId).owner===owner?get(selectedId):rootOf(owner);
+    const full=`解析为任务「${title}」｜进度：${st.label}${blocker?"｜识别到卡点":""}｜建议挂到「${parent.title}」下，正在生长…`;
+    let i=0;const tm=setInterval(()=>{i+=2;a.innerHTML="<b>任务树</b>："+full.slice(0,i);log.scrollTop=log.scrollHeight;
+      if(i>=full.length){clearInterval(tm);const id="n"+(idSeq++);const node={id,owner,title,status,parent:parent.id};if(blocker){node.blocker=blocker;node.stuck=0;}TASKS.push(node);newIds.add(id);
+        if(view!=="tree"){view="tree";switchView();}renderTree(true);setTimeout(()=>selectNode(id),650);}},22);}
 
-  // ---------- view switch / chrome ----------
-  function rerender(){if(view==="tree")renderTree(false);else if(view==="board")renderBoard();else renderWall();}
+  function rerender(){if(view==="tree")renderTree(false);else renderWall();}
   function switchView(){
     document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active",t.dataset.view===view));
-    svg.style.display=(view==="wall")?"none":"block";
-    wallEl.style.display=(view==="wall")?"block":"none";
-    document.getElementById("legend").style.display=(view==="wall")?"none":"flex";
-    boardRoot.style.display=(view==="board")?"block":"none";
-    document.getElementById("treeRoot").style.display=(view==="tree")?"block":"none";
-    groundG.style.display=(view==="tree")?"block":"none";
-    const hints={tree:"成长树：形势感知门面。一眼看长势，卡点闪红。点叶子看详情、改进度。黄色虚线=依赖。",
-      board:"工作台：卡片 + DAG 箭头。灰箭头=父子（下一步），黄虚线=前置依赖。点卡片编辑。",
-      wall:"卡点墙：给老板的上报视图，跨人卡点按时长排序。"};
-    document.getElementById("viewhint").textContent=hints[view];
-    if(view==="tree")renderTree(true);else if(view==="board")renderBoard();else renderWall();
+    svg.style.display=view==="wall"?"none":"block";wallEl.style.display=view==="wall"?"block":"none";
+    document.getElementById("legend").style.display=view==="wall"?"none":"flex";
+    document.getElementById("viewhint").style.display=view==="wall"?"none":"block";
+    document.getElementById("viewhint").textContent=layout==="r"
+      ?"径向生命树：创世支柱在中心，任务枝桠向四周放射生长。黄虚线=依赖。"
+      :"横向整齐树：tidy 自动布局，节点永不重叠。左侧色条=进度，红点=卡点，黄虚线=依赖。";
+    if(view==="tree")renderTree(true);else renderWall();
     renderSide(selectedId);
   }
-
-  function ensureDefs(){const defs=svg.querySelector("defs");const old=document.getElementById("trunkGrad");if(old)old.remove();
-    const g=el("linearGradient",{id:"trunkGrad",x1:"0",y1:"1",x2:"0",y2:"0"});
-    g.appendChild(el("stop",{offset:"0%","stop-color":css("--trunk-b")}));g.appendChild(el("stop",{offset:"100%","stop-color":css("--trunk-a")}));defs.appendChild(g);}
-  function drawGround(){groundG.innerHTML="";groundG.appendChild(el("path",{d:`M 0 ${GROUND_Y+8} Q ${CX} ${GROUND_Y-32} ${W} ${GROUND_Y+8} L ${W} ${H} L 0 ${H} Z`,fill:"var(--soil)",stroke:"var(--soil-edge)","stroke-width":2}));}
   function drawLegend(){const l=document.getElementById("legend");l.innerHTML="";Object.keys(STATUS).forEach(k=>{const r=document.createElement("div");r.className="row";const d=document.createElement("span");d.className="dot";d.style.background=STATUS[k].color;d.style.color=STATUS[k].color;const t=document.createElement("span");t.textContent=STATUS[k].label;r.appendChild(d);r.appendChild(t);l.appendChild(r);});}
   function fillOwners(){const s=document.getElementById("ownerSel");PEOPLE.forEach(p=>{const o=document.createElement("option");o.value=p.id;o.textContent=p.name;s.appendChild(o);});s.value=owner;}
+  function markNew(){TASKS.filter(t=>t.owner===owner).forEach(t=>newIds.add(t.id));}
 
-  // events
   document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{view=t.dataset.view;switchView();});
-  document.getElementById("ownerSel").onchange=e=>{owner=e.target.value;selectedId=null;markAllNew();switchView();};
-  document.getElementById("btnReplay").onclick=()=>{markAllNew();if(view!=="tree"){view="tree";}switchView();};
-  document.getElementById("btnTheme").onclick=()=>{document.body.dataset.theme=document.body.dataset.theme==="dark"?"light":"dark";ensureDefs();drawGround();rerender();};
+  document.getElementById("layoutSel").onchange=e=>{layout=e.target.value;markNew();switchView();};
+  document.getElementById("ownerSel").onchange=e=>{owner=e.target.value;selectedId=null;markNew();switchView();};
+  document.getElementById("btnReplay").onclick=()=>{markNew();view="tree";switchView();};
+  document.getElementById("btnTheme").onclick=()=>{document.body.dataset.theme=document.body.dataset.theme==="dark"?"light":"dark";rerender();};
   document.getElementById("btnSend").onclick=sendChat;
   document.getElementById("chatInput").addEventListener("keydown",e=>{if(e.key==="Enter")sendChat();});
   svg.addEventListener("click",()=>{selectedId=null;rerender();renderSide(null);});
-  function markAllNew(){TASKS.filter(t=>t.owner===owner).forEach(t=>newIds.add(t.id));}
 
-  // init
-  ensureDefs();drawGround();drawLegend();fillOwners();markAllNew();switchView();
+  drawLegend();fillOwners();markNew();switchView();
 })();
 </script>
 </body>
