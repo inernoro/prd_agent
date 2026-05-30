@@ -1128,6 +1128,17 @@ public static class ProjectManagement
         )]
         public const string Chat = "pm-agent.decompose::chat";
     }
+
+    public static class GoalDecompose
+    {
+        [AppCallerMetadata(
+            "目标拆解",
+            "依据项目业务目标拆解为若干可量化的目标/关键结果(OKR)",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Workflow"
+        )]
+        public const string Chat = "pm-agent.goal-decompose::chat";
+    }
 }
 
 /// <summary>

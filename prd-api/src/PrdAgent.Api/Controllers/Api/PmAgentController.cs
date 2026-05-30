@@ -1721,6 +1721,38 @@ public class PmAgentController : ControllerBase
         await WriteSseEvent("done", new { totalNew = count, error = llmError });
     }
 
+    /// <summary>AI 依据业务目标拆解目标/关键结果（SSE 流式，仅 owner/leader）</summary>
+    [HttpPost("projects/{projectId}/goals/decompose")]
+    [Produces("text/event-stream")]
+    public async Task GoalDecompose(string projectId)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null) { Response.StatusCode = 404; return; }
+        if (project.OwnerId != userId && project.LeaderId != userId) { Response.StatusCode = 403; return; }
+
+        Response.ContentType = "text/event-stream; charset=utf-8";
+        Response.Headers.CacheControl = "no-cache";
+        await WriteSseEvent("stage", new { stage = "decomposing", message = "正在依据业务目标拆解目标/关键结果…" });
+
+        string? llmError = null;
+        var count = 0;
+        await foreach (var draft in _pmService.DecomposeGoalsAsync(
+            project, userId,
+            onError: err => llmError = err,
+            onContent: async text => await WriteSseEvent("typing", new { text }),
+            onThinking: async text => await WriteSseEvent("thinking", new { text })))
+        {
+            count++;
+            await WriteSseEvent("goal", draft);
+            await WriteSseEvent("stage", new { stage = "drafting", message = $"已拆解 {count} 个目标…" });
+        }
+
+        if (llmError != null)
+            await WriteSseEvent("error", new { message = llmError });
+        await WriteSseEvent("done", new { totalNew = count, error = llmError });
+    }
+
     // ── 辅助方法 ──
 
     private async Task<PmProject?> FindAccessibleProjectAsync(string projectId, string userId)

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus, Trash2, Pencil, Check, X, Target, Lock, Users, Compass, Flag } from 'lucide-react';
+import { Plus, Trash2, Pencil, Check, X, Target, Lock, Users, Compass, Flag, Sparkles } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
@@ -8,6 +8,7 @@ import {
 } from '@/services';
 import type { PmGoal, PmGoalScope, PmGoalStatus, SavePmGoalInput, PmMilestone } from '@/services/contracts/pmAgent';
 import { GOAL_STATUS_REGISTRY, GOAL_SCOPE, MILESTONE_HEALTH_REGISTRY } from './pmConstants';
+import { GoalDecomposePanel } from './GoalDecomposePanel';
 
 interface Props {
   projectId: string;
@@ -36,6 +37,7 @@ export function GoalsPanel({ projectId, businessGoal, canManage }: Props) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null); // null | `new:team` | `new:personal` | id
   const [draft, setDraft] = useState<SavePmGoalInput>({});
+  const [showAi, setShowAi] = useState(false);
 
   const load = useCallback(async () => {
     const [gr, mr] = await Promise.all([listPmGoals(projectId), listPmMilestones(projectId)]);
@@ -162,7 +164,7 @@ export function GoalsPanel({ projectId, businessGoal, canManage }: Props) {
     );
   };
 
-  const section = (scope: PmGoalScope, icon: typeof Target, canWrite: boolean) => {
+  const section = (scope: PmGoalScope, icon: typeof Target, canWrite: boolean, withAi = false) => {
     const Icon = icon;
     const list = grouped[scope];
     const creating = editing === `new:${scope}`;
@@ -172,7 +174,12 @@ export function GoalsPanel({ projectId, businessGoal, canManage }: Props) {
           <Icon size={15} style={{ color: scope === 'team' ? '#3B82F6' : '#A855F7' }} />
           <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>{GOAL_SCOPE[scope].label}</span>
           <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{GOAL_SCOPE[scope].desc}</span>
-          {canWrite && <Button variant="ghost" size="sm" className="ml-auto" onClick={() => startCreate(scope)}><Plus size={13} />新增</Button>}
+          {canWrite && (
+            <div className="ml-auto flex items-center gap-1.5">
+              {withAi && <Button variant="ghost" size="sm" onClick={() => setShowAi(true)}><Sparkles size={13} />AI 拆目标</Button>}
+              <Button variant="ghost" size="sm" onClick={() => startCreate(scope)}><Plus size={13} />新增</Button>
+            </div>
+          )}
         </div>
         {creating && renderEditor(`new:${scope}`)}
         {list.length === 0 && !creating ? (
@@ -226,8 +233,13 @@ export function GoalsPanel({ projectId, businessGoal, canManage }: Props) {
         </div>
       )}
 
-      {section('team', Users, canManage)}
+      {section('team', Users, canManage, true)}
       {section('personal', Lock, true)}
+
+      {showAi && (
+        <GoalDecomposePanel projectId={projectId} businessGoal={businessGoal}
+          onClose={() => setShowAi(false)} onCreated={() => { setShowAi(false); load(); }} />
+      )}
     </div>
   );
 }

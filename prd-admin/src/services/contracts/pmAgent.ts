@@ -402,6 +402,8 @@ export type PmGoal = {
   updatedAt: string;
 };
 export type SavePmGoalInput = Partial<{ scope: PmGoalScope; title: string; description: string; metric: string; period: string; progress: number; progressMode: 'auto' | 'manual'; status: PmGoalStatus; orderKey: number }>;
+/** AI 拆解出的目标草稿（SSE 返回，未落库） */
+export type PmGoalDraft = { title: string; description?: string | null; metric?: string | null; period?: string | null };
 export type ListPmGoalsContract = (projectId: string) => Promise<ApiResponse<{ items: PmGoal[] }>>;
 export type CreatePmGoalContract = (projectId: string, input: SavePmGoalInput) => Promise<ApiResponse<PmGoal>>;
 export type UpdatePmGoalContract = (goalId: string, input: SavePmGoalInput) => Promise<ApiResponse<{ updated: boolean }>>;

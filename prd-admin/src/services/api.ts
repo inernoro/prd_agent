@@ -1307,6 +1307,7 @@ export const api = {
       weeklyReportImage: (projectId: string) => `/api/pm/projects/${projectId}/weekly-reports/image`,
       meetings: (projectId: string) => `/api/pm/projects/${projectId}/meetings`,
       goals: (projectId: string) => `/api/pm/projects/${projectId}/goals`,
+      goalsDecompose: (projectId: string) => `/api/pm/projects/${projectId}/goals/decompose`,
       milestones: (projectId: string) => `/api/pm/projects/${projectId}/milestones`,
       stakeholders: (projectId: string) => `/api/pm/projects/${projectId}/stakeholders`,
       evaluationStart: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/start`,

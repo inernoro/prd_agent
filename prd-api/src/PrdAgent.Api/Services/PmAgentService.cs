@@ -244,6 +244,82 @@ public class PmAgentService
         }
         return new();
     }
+
+    // ── AI 目标拆解（业务目标 → 目标/关键结果）──
+
+    /// <summary>依据项目业务目标拆解为目标/关键结果草稿（不落库，供前端确认后创建）。</summary>
+    public async IAsyncEnumerable<PmGoalDraft> DecomposeGoalsAsync(
+        PmProject project,
+        string userId,
+        Action<string>? onError = null,
+        Func<string, Task>? onContent = null,
+        Func<string, Task>? onThinking = null,
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        var request = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.ProjectManagement.GoalDecompose.Chat,
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = BuildGoalDecomposeSystemPrompt() },
+                    new JsonObject { ["role"] = "user", ["content"] = BuildGoalDecomposeUserMessage(project) }
+                },
+                ["temperature"] = 0.6,
+                ["include_reasoning"] = true,
+                ["reasoning"] = new JsonObject { ["exclude"] = false },
+            },
+            TimeoutSeconds = 120,
+            IncludeThinking = true,
+            Context = new GatewayRequestContext { UserId = userId }
+        };
+        var (full, err) = await StreamAndAccumulateAsync(request, onContent, onThinking);
+        if (err != null) { onError?.Invoke(err); yield break; }
+        if (string.IsNullOrWhiteSpace(full)) { onError?.Invoke("LLM 返回空内容（模型响应为空）"); yield break; }
+        foreach (var d in ParseGoalDrafts(full)) yield return d;
+    }
+
+    private static List<PmGoalDraft> ParseGoalDrafts(string content)
+    {
+        var list = new List<PmGoalDraft>();
+        try
+        {
+            var json = ExtractJsonArray(content);
+            if (json == null) return list;
+            foreach (var item in json)
+            {
+                if (item is not JsonObject obj) continue;
+                list.Add(new PmGoalDraft
+                {
+                    Title = obj["title"]?.GetValue<string>() ?? "未命名目标",
+                    Description = obj["description"]?.GetValue<string>(),
+                    Metric = obj["metric"]?.GetValue<string>(),
+                    Period = obj["period"]?.GetValue<string>(),
+                });
+            }
+        }
+        catch (Exception) { /* 解析失败返回空，不阻断 */ }
+        return list;
+    }
+
+    private static string BuildGoalDecomposeSystemPrompt()
+        => "你是资深项目管理专家。请把项目的业务目标拆解为 3-6 个可量化的【目标/关键结果(OKR)】。"
+         + "每个目标聚焦结果而非动作，尽量可衡量。严格只输出 JSON 数组，元素形如："
+         + "{\"title\":\"目标标题\",\"description\":\"简要说明\",\"metric\":\"衡量指标/关键结果\",\"period\":\"周期(可选,如 2026 Q2)\"}。"
+         + "不要输出数组以外的任何文字。";
+
+    private static string BuildGoalDecomposeUserMessage(PmProject project)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"项目名称：{project.Title}");
+        sb.AppendLine($"业务目标：{project.BusinessGoal}");
+        if (!string.IsNullOrWhiteSpace(project.Description)) sb.AppendLine($"项目描述：{project.Description}");
+        if (!string.IsNullOrWhiteSpace(project.StrategyAlignment)) sb.AppendLine($"战略对齐：{project.StrategyAlignment}");
+        sb.AppendLine("请据此拆解目标/关键结果，只输出 JSON 数组。");
+        return sb.ToString();
+    }
 }
 
 /// <summary>
@@ -259,4 +335,13 @@ public class PmTaskDraft
     public List<string> DependsOnTitles { get; set; } = new();
     public string? SourceRef { get; set; }
     public List<string> Labels { get; set; } = new();
+}
+
+/// <summary>AI 拆解出的目标草稿（不落库）。</summary>
+public class PmGoalDraft
+{
+    public string Title { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public string? Metric { get; set; }
+    public string? Period { get; set; }
 }
