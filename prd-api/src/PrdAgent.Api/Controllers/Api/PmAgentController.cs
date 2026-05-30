@@ -590,6 +590,91 @@ public class PmAgentController : ControllerBase
     }
 
     // ─────────────────────────────────────────────
+    // 会议纪要（参会人 + Markdown 纪要）
+    // ─────────────────────────────────────────────
+
+    /// <summary>会议纪要列表（按会议时间倒序），附参会人显示信息</summary>
+    [HttpGet("projects/{projectId}/meetings")]
+    public async Task<IActionResult> ListMeetings(string projectId)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+
+        var items = await _db.PmMeetings.Find(m => m.ProjectId == projectId)
+            .SortByDescending(m => m.MeetingAt).ThenByDescending(m => m.CreatedAt).ToListAsync();
+        var attendeeIds = items.SelectMany(m => m.AttendeeIds).Distinct().ToList();
+        var attendees = await ResolveMembersAsync(attendeeIds);
+        return Ok(ApiResponse<object>.Ok(new { items, attendees }));
+    }
+
+    /// <summary>新建会议纪要</summary>
+    [HttpPost("projects/{projectId}/meetings")]
+    public async Task<IActionResult> CreateMeeting(string projectId, [FromBody] MeetingRequest request)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (string.IsNullOrWhiteSpace(request.Title))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "会议主题不能为空"));
+
+        var recorderName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+        var entity = new PmMeeting
+        {
+            ProjectId = projectId,
+            Title = request.Title!.Trim(),
+            MeetingAt = request.MeetingAt,
+            Location = request.Location?.Trim(),
+            AttendeeIds = (request.AttendeeIds ?? new()).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList(),
+            Content = request.Content ?? string.Empty,
+            RecordedBy = userId,
+            RecordedByName = recorderName,
+        };
+        await _db.PmMeetings.InsertOneAsync(entity);
+        return Ok(ApiResponse<object>.Ok(entity));
+    }
+
+    /// <summary>更新会议纪要</summary>
+    [HttpPut("meetings/{meetingId}")]
+    public async Task<IActionResult> UpdateMeeting(string meetingId, [FromBody] MeetingRequest request)
+    {
+        var userId = GetUserId();
+        var m = await _db.PmMeetings.Find(x => x.Id == meetingId).FirstOrDefaultAsync();
+        if (m == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "会议纪要不存在"));
+        if (await FindAccessibleProjectAsync(m.ProjectId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+
+        var update = Builders<PmMeeting>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow);
+        if (request.Title != null)
+        {
+            if (string.IsNullOrWhiteSpace(request.Title))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "会议主题不能为空"));
+            update = update.Set(x => x.Title, request.Title.Trim());
+        }
+        if (request.Content != null) update = update.Set(x => x.Content, request.Content);
+        if (request.Location != null) update = update.Set(x => x.Location, request.Location.Trim());
+        if (request.MeetingAt.HasValue) update = update.Set(x => x.MeetingAt, request.MeetingAt);
+        if (request.AttendeeIds != null) update = update.Set(x => x.AttendeeIds, request.AttendeeIds.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList());
+        await _db.PmMeetings.UpdateOneAsync(x => x.Id == meetingId, update);
+        return Ok(ApiResponse<object>.Ok(new { updated = true }));
+    }
+
+    /// <summary>删除会议纪要</summary>
+    [HttpDelete("meetings/{meetingId}")]
+    public async Task<IActionResult> DeleteMeeting(string meetingId)
+    {
+        var userId = GetUserId();
+        var m = await _db.PmMeetings.Find(x => x.Id == meetingId).FirstOrDefaultAsync();
+        if (m == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "会议纪要不存在"));
+        if (await FindAccessibleProjectAsync(m.ProjectId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        await _db.PmMeetings.DeleteOneAsync(x => x.Id == meetingId);
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    // ─────────────────────────────────────────────
     // 干系人 + NPSS 结案评价（Phase 2）
     // ─────────────────────────────────────────────
 
@@ -1352,6 +1437,15 @@ public class WeeklyReportRequest
     public string? Title { get; set; }
     public string? Content { get; set; }
     public DateTime? WeekStart { get; set; }
+}
+
+public class MeetingRequest
+{
+    public string? Title { get; set; }
+    public DateTime? MeetingAt { get; set; }
+    public string? Location { get; set; }
+    public List<string>? AttendeeIds { get; set; }
+    public string? Content { get; set; }
 }
 
 public class UpdatePmProjectRequest

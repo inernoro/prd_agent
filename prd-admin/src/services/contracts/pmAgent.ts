@@ -356,6 +356,26 @@ export type ListPmWeeklyReportsContract = (projectId: string) => Promise<ApiResp
 export type CreatePmWeeklyReportContract = (projectId: string, input: SavePmWeeklyReportInput) => Promise<ApiResponse<PmWeeklyReport>>;
 export type UpdatePmWeeklyReportContract = (reportId: string, input: SavePmWeeklyReportInput) => Promise<ApiResponse<{ updated: boolean }>>;
 export type DeletePmWeeklyReportContract = (reportId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
+
+// ── 会议纪要 ──
+export type PmMeeting = {
+  id: string;
+  projectId: string;
+  title: string;
+  meetingAt?: string | null;
+  location?: string | null;
+  attendeeIds: string[];
+  content: string;
+  recordedBy: string;
+  recordedByName?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+export type SavePmMeetingInput = { title?: string; meetingAt?: string; location?: string; attendeeIds?: string[]; content?: string };
+export type ListPmMeetingsContract = (projectId: string) => Promise<ApiResponse<{ items: PmMeeting[]; attendees: PmMember[] }>>;
+export type CreatePmMeetingContract = (projectId: string, input: SavePmMeetingInput) => Promise<ApiResponse<PmMeeting>>;
+export type UpdatePmMeetingContract = (meetingId: string, input: SavePmMeetingInput) => Promise<ApiResponse<{ updated: boolean }>>;
+export type DeletePmMeetingContract = (meetingId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
 export type GetPmProjectContract = (projectId: string) => Promise<ApiResponse<{ project: PmProject; tasks: PmTask[] }>>;
 export type UpdatePmProjectContract = (projectId: string, input: UpdatePmProjectInput) => Promise<ApiResponse<{ updated: boolean }>>;
 export type DeletePmProjectContract = (projectId: string) => Promise<ApiResponse<{ deleted: boolean }>>;

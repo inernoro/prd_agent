@@ -36,6 +36,10 @@ import type {
   CreatePmWeeklyReportContract,
   UpdatePmWeeklyReportContract,
   DeletePmWeeklyReportContract,
+  ListPmMeetingsContract,
+  CreatePmMeetingContract,
+  UpdatePmMeetingContract,
+  DeletePmMeetingContract,
 } from '@/services/contracts/pmAgent';
 import type { ApiResponse } from '@/types/api';
 import { useAuthStore } from '@/stores/authStore';
@@ -139,6 +143,23 @@ export const uploadPmWeeklyReportImageReal = async (projectId: string, file: Fil
     credentials: 'include',
   });
   return await res.json();
+};
+
+// ── 会议纪要 ──
+export const listPmMeetingsReal: ListPmMeetingsContract = async (projectId) => {
+  return await apiRequest(api.pm.projects.meetings(encodeURIComponent(projectId)), { method: 'GET' });
+};
+
+export const createPmMeetingReal: CreatePmMeetingContract = async (projectId, input) => {
+  return await apiRequest(api.pm.projects.meetings(encodeURIComponent(projectId)), { method: 'POST', body: input });
+};
+
+export const updatePmMeetingReal: UpdatePmMeetingContract = async (meetingId, input) => {
+  return await apiRequest(api.pm.meetings.item(encodeURIComponent(meetingId)), { method: 'PUT', body: input });
+};
+
+export const deletePmMeetingReal: DeletePmMeetingContract = async (meetingId) => {
+  return await apiRequest(api.pm.meetings.item(encodeURIComponent(meetingId)), { method: 'DELETE' });
 };
 
 export const getPmProjectReal: GetPmProjectContract = async (projectId) => {
