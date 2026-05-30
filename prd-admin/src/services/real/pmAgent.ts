@@ -40,6 +40,10 @@ import type {
   CreatePmMeetingContract,
   UpdatePmMeetingContract,
   DeletePmMeetingContract,
+  ListPmGoalsContract,
+  CreatePmGoalContract,
+  UpdatePmGoalContract,
+  DeletePmGoalContract,
 } from '@/services/contracts/pmAgent';
 import type { ApiResponse } from '@/types/api';
 import { useAuthStore } from '@/stores/authStore';
@@ -160,6 +164,23 @@ export const updatePmMeetingReal: UpdatePmMeetingContract = async (meetingId, in
 
 export const deletePmMeetingReal: DeletePmMeetingContract = async (meetingId) => {
   return await apiRequest(api.pm.meetings.item(encodeURIComponent(meetingId)), { method: 'DELETE' });
+};
+
+// ── 目标 / 计划 ──
+export const listPmGoalsReal: ListPmGoalsContract = async (projectId) => {
+  return await apiRequest(api.pm.projects.goals(encodeURIComponent(projectId)), { method: 'GET' });
+};
+
+export const createPmGoalReal: CreatePmGoalContract = async (projectId, input) => {
+  return await apiRequest(api.pm.projects.goals(encodeURIComponent(projectId)), { method: 'POST', body: input });
+};
+
+export const updatePmGoalReal: UpdatePmGoalContract = async (goalId, input) => {
+  return await apiRequest(api.pm.goals.item(encodeURIComponent(goalId)), { method: 'PUT', body: input });
+};
+
+export const deletePmGoalReal: DeletePmGoalContract = async (goalId) => {
+  return await apiRequest(api.pm.goals.item(encodeURIComponent(goalId)), { method: 'DELETE' });
 };
 
 export const getPmProjectReal: GetPmProjectContract = async (projectId) => {

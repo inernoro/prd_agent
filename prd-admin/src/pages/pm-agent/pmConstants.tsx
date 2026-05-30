@@ -7,6 +7,7 @@ import type {
   PmStakeholderRole,
   PmEvaluationGrade,
   PmDecisionType,
+  PmGoalStatus,
 } from '@/services/contracts/pmAgent';
 
 // ── 项目类型注册表（S / I / O）──
@@ -88,6 +89,20 @@ export const DECISION_TYPE_REGISTRY: Record<PmDecisionType, { label: string; col
 
 /** 决策三态分栏顺序 */
 export const DECISION_COLUMNS: PmDecisionType[] = ['pending', 'decided', 'memo'];
+
+// ── 目标状态注册表 ──
+export const GOAL_STATUS_REGISTRY: Record<PmGoalStatus, { label: string; color: string }> = {
+  on_track: { label: '正常推进', color: '#10B981' },
+  at_risk: { label: '有风险', color: '#F59E0B' },
+  done: { label: '已达成', color: '#3B82F6' },
+  abandoned: { label: '已放弃', color: '#9CA3AF' },
+};
+
+/** 目标范围文案 */
+export const GOAL_SCOPE = {
+  team: { label: '团队目标', desc: '全员可见的项目共同目标' },
+  personal: { label: '个人目标', desc: '仅自己可见的个人计划' },
+} as const;
 
 // ── 优先级注册表 ──
 export const PRIORITY_REGISTRY: Record<PmTaskPriority, { label: string; color: string; weight: number }> = {

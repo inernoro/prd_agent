@@ -1306,6 +1306,7 @@ export const api = {
       weeklyReports: (projectId: string) => `/api/pm/projects/${projectId}/weekly-reports`,
       weeklyReportImage: (projectId: string) => `/api/pm/projects/${projectId}/weekly-reports/image`,
       meetings: (projectId: string) => `/api/pm/projects/${projectId}/meetings`,
+      goals: (projectId: string) => `/api/pm/projects/${projectId}/goals`,
       stakeholders: (projectId: string) => `/api/pm/projects/${projectId}/stakeholders`,
       evaluationStart: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/start`,
       evaluationScore: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/score`,
@@ -1329,6 +1330,9 @@ export const api = {
     },
     meetings: {
       item: (meetingId: string) => `/api/pm/meetings/${meetingId}`,
+    },
+    goals: {
+      item: (goalId: string) => `/api/pm/goals/${goalId}`,
     },
     dashboard: () => '/api/pm/dashboard',
     rewardConfig: () => '/api/pm/reward-config',

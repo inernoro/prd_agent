@@ -675,6 +675,110 @@ public class PmAgentController : ControllerBase
     }
 
     // ─────────────────────────────────────────────
+    // 目标 / 计划（团队目标全员可见，个人目标仅本人）
+    // ─────────────────────────────────────────────
+
+    /// <summary>目标列表：团队目标全员可见 + 仅返回当前用户自己的个人目标（可见性后端隔离）</summary>
+    [HttpGet("projects/{projectId}/goals")]
+    public async Task<IActionResult> ListGoals(string projectId)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+
+        var b = Builders<PmGoal>.Filter;
+        var filter = b.And(
+            b.Eq(g => g.ProjectId, projectId),
+            b.Or(
+                b.Eq(g => g.Scope, PmGoalScope.Team),
+                b.And(b.Eq(g => g.Scope, PmGoalScope.Personal), b.Eq(g => g.OwnerId, userId))));
+        var items = await _db.PmGoals.Find(filter).SortBy(g => g.OrderKey).ThenByDescending(g => g.CreatedAt).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>新建目标。个人目标 OwnerId 强制为当前用户</summary>
+    [HttpPost("projects/{projectId}/goals")]
+    public async Task<IActionResult> CreateGoal(string projectId, [FromBody] GoalRequest request)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (string.IsNullOrWhiteSpace(request.Title))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "目标标题不能为空"));
+
+        var scope = PmGoalScope.IsValid(request.Scope) ? request.Scope! : PmGoalScope.Team;
+        var creatorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+        var entity = new PmGoal
+        {
+            ProjectId = projectId,
+            Scope = scope,
+            OwnerId = userId, // 个人目标=本人；团队目标记录创建人
+            Title = request.Title!.Trim(),
+            Description = request.Description?.Trim(),
+            Metric = request.Metric?.Trim(),
+            Period = request.Period?.Trim(),
+            Progress = Math.Clamp(request.Progress ?? 0, 0, 100),
+            Status = PmGoalStatus.IsValid(request.Status) ? request.Status! : PmGoalStatus.OnTrack,
+            CreatedBy = userId,
+            CreatedByName = creatorName,
+            OrderKey = DateTime.UtcNow.Ticks,
+        };
+        await _db.PmGoals.InsertOneAsync(entity);
+        return Ok(ApiResponse<object>.Ok(entity));
+    }
+
+    /// <summary>更新目标。个人目标仅本人可改；团队目标项目成员均可改</summary>
+    [HttpPut("goals/{goalId}")]
+    public async Task<IActionResult> UpdateGoal(string goalId, [FromBody] GoalRequest request)
+    {
+        var userId = GetUserId();
+        var g = await _db.PmGoals.Find(x => x.Id == goalId).FirstOrDefaultAsync();
+        if (g == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "目标不存在"));
+        if (await FindAccessibleProjectAsync(g.ProjectId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (g.Scope == PmGoalScope.Personal && g.OwnerId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "个人目标仅本人可修改"));
+
+        var update = Builders<PmGoal>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow);
+        if (request.Title != null)
+        {
+            if (string.IsNullOrWhiteSpace(request.Title))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "目标标题不能为空"));
+            update = update.Set(x => x.Title, request.Title.Trim());
+        }
+        if (request.Description != null) update = update.Set(x => x.Description, request.Description.Trim());
+        if (request.Metric != null) update = update.Set(x => x.Metric, request.Metric.Trim());
+        if (request.Period != null) update = update.Set(x => x.Period, request.Period.Trim());
+        if (request.Progress.HasValue) update = update.Set(x => x.Progress, Math.Clamp(request.Progress.Value, 0, 100));
+        if (request.Status != null)
+        {
+            if (!PmGoalStatus.IsValid(request.Status))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的目标状态"));
+            update = update.Set(x => x.Status, request.Status);
+        }
+        if (request.OrderKey.HasValue) update = update.Set(x => x.OrderKey, request.OrderKey.Value);
+        await _db.PmGoals.UpdateOneAsync(x => x.Id == goalId, update);
+        return Ok(ApiResponse<object>.Ok(new { updated = true }));
+    }
+
+    /// <summary>删除目标。个人目标仅本人可删</summary>
+    [HttpDelete("goals/{goalId}")]
+    public async Task<IActionResult> DeleteGoal(string goalId)
+    {
+        var userId = GetUserId();
+        var g = await _db.PmGoals.Find(x => x.Id == goalId).FirstOrDefaultAsync();
+        if (g == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "目标不存在"));
+        if (await FindAccessibleProjectAsync(g.ProjectId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (g.Scope == PmGoalScope.Personal && g.OwnerId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "个人目标仅本人可删除"));
+        await _db.PmGoals.DeleteOneAsync(x => x.Id == goalId);
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    // ─────────────────────────────────────────────
     // 干系人 + NPSS 结案评价（Phase 2）
     // ─────────────────────────────────────────────
 
@@ -1446,6 +1550,18 @@ public class MeetingRequest
     public string? Location { get; set; }
     public List<string>? AttendeeIds { get; set; }
     public string? Content { get; set; }
+}
+
+public class GoalRequest
+{
+    public string? Scope { get; set; }
+    public string? Title { get; set; }
+    public string? Description { get; set; }
+    public string? Metric { get; set; }
+    public string? Period { get; set; }
+    public int? Progress { get; set; }
+    public string? Status { get; set; }
+    public long? OrderKey { get; set; }
 }
 
 public class UpdatePmProjectRequest

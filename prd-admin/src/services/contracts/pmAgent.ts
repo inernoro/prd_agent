@@ -376,6 +376,32 @@ export type ListPmMeetingsContract = (projectId: string) => Promise<ApiResponse<
 export type CreatePmMeetingContract = (projectId: string, input: SavePmMeetingInput) => Promise<ApiResponse<PmMeeting>>;
 export type UpdatePmMeetingContract = (meetingId: string, input: SavePmMeetingInput) => Promise<ApiResponse<{ updated: boolean }>>;
 export type DeletePmMeetingContract = (meetingId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
+
+// ── 目标 / 计划 ──
+export type PmGoalScope = 'team' | 'personal';
+export type PmGoalStatus = 'on_track' | 'at_risk' | 'done' | 'abandoned';
+export type PmGoal = {
+  id: string;
+  projectId: string;
+  scope: PmGoalScope;
+  ownerId: string;
+  title: string;
+  description?: string | null;
+  metric?: string | null;
+  period?: string | null;
+  progress: number;
+  status: PmGoalStatus;
+  createdBy: string;
+  createdByName?: string | null;
+  orderKey: number;
+  createdAt: string;
+  updatedAt: string;
+};
+export type SavePmGoalInput = Partial<{ scope: PmGoalScope; title: string; description: string; metric: string; period: string; progress: number; status: PmGoalStatus; orderKey: number }>;
+export type ListPmGoalsContract = (projectId: string) => Promise<ApiResponse<{ items: PmGoal[] }>>;
+export type CreatePmGoalContract = (projectId: string, input: SavePmGoalInput) => Promise<ApiResponse<PmGoal>>;
+export type UpdatePmGoalContract = (goalId: string, input: SavePmGoalInput) => Promise<ApiResponse<{ updated: boolean }>>;
+export type DeletePmGoalContract = (goalId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
 export type GetPmProjectContract = (projectId: string) => Promise<ApiResponse<{ project: PmProject; tasks: PmTask[] }>>;
 export type UpdatePmProjectContract = (projectId: string, input: UpdatePmProjectInput) => Promise<ApiResponse<{ updated: boolean }>>;
 export type DeletePmProjectContract = (projectId: string) => Promise<ApiResponse<{ deleted: boolean }>>;

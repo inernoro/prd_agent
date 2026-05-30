@@ -301,6 +301,7 @@ public class MongoDbContext
     public IMongoCollection<PmDecision> PmDecisions => _database.GetCollection<PmDecision>("pm_decisions");
     public IMongoCollection<PmWeeklyReport> PmWeeklyReports => _database.GetCollection<PmWeeklyReport>("pm_weekly_reports");
     public IMongoCollection<PmMeeting> PmMeetings => _database.GetCollection<PmMeeting>("pm_meetings");
+    public IMongoCollection<PmGoal> PmGoals => _database.GetCollection<PmGoal>("pm_goals");
 
     // Asset Registry 资产登记簿（跨存储迁移基础设施）
     public IMongoCollection<AssetRegistryEntry> AssetRegistry => _database.GetCollection<AssetRegistryEntry>("asset_registry");

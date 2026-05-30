@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Sparkles, Plus, LayoutGrid, List, GanttChartSquare, Trash2, Users, UserCog, Award, Search, CalendarClock, BookOpen, Gavel, FileText, NotebookText } from 'lucide-react';
+import { ArrowLeft, Sparkles, Plus, LayoutGrid, List, GanttChartSquare, Trash2, Users, UserCog, Award, Search, CalendarClock, BookOpen, Gavel, FileText, NotebookText, Target } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
@@ -18,6 +18,7 @@ import { KnowledgePanel } from './KnowledgePanel';
 import { DecisionsPanel } from './DecisionsPanel';
 import { WeeklyReportsPanel } from './WeeklyReportsPanel';
 import { MeetingsPanel } from './MeetingsPanel';
+import { GoalsPanel } from './GoalsPanel';
 import { EvaluatePanel } from './EvaluatePanel';
 import { TaskDetailDrawer } from './TaskDetailDrawer';
 import { PROJECT_TYPE_REGISTRY, LIFECYCLE_REGISTRY, TASK_STATUS_REGISTRY, PRIORITY_REGISTRY, GRADE_REGISTRY } from './pmConstants';
@@ -27,13 +28,14 @@ interface Props {
   onBack: () => void;
 }
 
-type ViewTab = 'board' | 'list' | 'gantt' | 'knowledge' | 'weekly' | 'meetings' | 'members' | 'decisions' | 'stakeholders';
+type ViewTab = 'board' | 'list' | 'gantt' | 'goals' | 'knowledge' | 'weekly' | 'meetings' | 'members' | 'decisions' | 'stakeholders';
 type GroupBy = 'none' | 'assignee' | 'priority';
 
 const TABS: { key: ViewTab; label: string; icon: typeof LayoutGrid }[] = [
   { key: 'board', label: '看板', icon: LayoutGrid },
   { key: 'list', label: '列表', icon: List },
   { key: 'gantt', label: '甘特图', icon: GanttChartSquare },
+  { key: 'goals', label: '目标', icon: Target },
   { key: 'knowledge', label: '知识库', icon: BookOpen },
   { key: 'weekly', label: '周报', icon: FileText },
   { key: 'meetings', label: '会议纪要', icon: NotebookText },
@@ -236,13 +238,13 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
 
       {/* Tab 切换 + 快速加任务 */}
       <div className="shrink-0 flex items-center gap-2 flex-wrap">
-        <div className="flex gap-1 rounded-lg p-1" style={{ background: 'var(--bg-base)' }}>
+        <div className="flex flex-wrap gap-1 rounded-lg p-1" style={{ background: 'var(--bg-base)' }}>
           {TABS.map((t) => {
             const Icon = t.icon;
             const active = tab === t.key;
             return (
               <button key={t.key} onClick={() => setTab(t.key)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] transition-colors shrink-0"
                 style={{ background: active ? 'var(--bg-card)' : 'transparent', color: active ? 'var(--text-primary)' : 'var(--text-muted)' }}>
                 <Icon size={14} /> {t.label}
               </button>
@@ -375,6 +377,8 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
       {tab === 'weekly' && <WeeklyReportsPanel projectId={projectId} />}
 
       {tab === 'meetings' && <MeetingsPanel projectId={projectId} />}
+
+      {tab === 'goals' && <GoalsPanel projectId={projectId} />}
 
       {tab === 'members' && (
         <MembersPanel projectId={projectId} canManage={project.ownerId === myId || project.leaderId === myId} />

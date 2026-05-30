@@ -1972,6 +1972,10 @@ export {
   createPmMeetingReal as createPmMeeting,
   updatePmMeetingReal as updatePmMeeting,
   deletePmMeetingReal as deletePmMeeting,
+  listPmGoalsReal as listPmGoals,
+  createPmGoalReal as createPmGoal,
+  updatePmGoalReal as updatePmGoal,
+  deletePmGoalReal as deletePmGoal,
 } from '@/services/real/pmAgent';
 export type {
   PmProject,
@@ -1987,6 +1991,10 @@ export type {
   SavePmWeeklyReportInput,
   PmMeeting,
   SavePmMeetingInput,
+  PmGoal,
+  PmGoalScope,
+  PmGoalStatus,
+  SavePmGoalInput,
   PmTask,
   PmTaskDraft,
   PmStakeholder,
