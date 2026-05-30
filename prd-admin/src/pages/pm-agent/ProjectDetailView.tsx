@@ -28,23 +28,27 @@ interface Props {
   onBack: () => void;
 }
 
-type ViewTab = 'board' | 'list' | 'gantt' | 'goals' | 'knowledge' | 'weekly' | 'meetings' | 'members' | 'decisions' | 'stakeholders';
+type ViewTab = 'goals' | 'tasks' | 'decisions' | 'weekly' | 'meetings' | 'knowledge' | 'members' | 'stakeholders';
+type TaskViewMode = 'board' | 'list' | 'gantt';
 type GroupBy = 'none' | 'assignee' | 'priority';
 
 const TABS: { key: ViewTab; label: string; icon: typeof LayoutGrid }[] = [
-  { key: 'board', label: '看板', icon: LayoutGrid },
-  { key: 'list', label: '列表', icon: List },
-  { key: 'gantt', label: '甘特图', icon: GanttChartSquare },
   { key: 'goals', label: '目标', icon: Target },
-  { key: 'knowledge', label: '知识库', icon: BookOpen },
+  { key: 'tasks', label: '任务', icon: LayoutGrid },
+  { key: 'decisions', label: '决策', icon: Gavel },
   { key: 'weekly', label: '周报', icon: FileText },
   { key: 'meetings', label: '会议纪要', icon: NotebookText },
+  { key: 'knowledge', label: '知识库', icon: BookOpen },
   { key: 'members', label: '成员', icon: UserCog },
-  { key: 'decisions', label: '决策', icon: Gavel },
   { key: 'stakeholders', label: '干系人', icon: Users },
 ];
 
-const isTaskTab = (t: ViewTab) => t === 'board' || t === 'list' || t === 'gantt';
+// 任务 Tab 内部三视图（看板/列表/甘特）
+const TASK_VIEWS: { key: TaskViewMode; label: string; icon: typeof LayoutGrid }[] = [
+  { key: 'board', label: '看板', icon: LayoutGrid },
+  { key: 'list', label: '列表', icon: List },
+  { key: 'gantt', label: '甘特图', icon: GanttChartSquare },
+];
 
 const isOverdue = (t: PmTask) => !!t.dueAt && t.status !== 'done' && t.status !== 'cancelled' && new Date(t.dueAt) < new Date(new Date().toDateString());
 const ORDER_STEP = 1024;
@@ -54,7 +58,8 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
   const [project, setProject] = useState<PmProject | null>(null);
   const [tasks, setTasks] = useState<PmTask[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<ViewTab>('board');
+  const [tab, setTab] = useState<ViewTab>('tasks');
+  const [viewMode, setViewMode] = useState<TaskViewMode>('board');
   const [showDecompose, setShowDecompose] = useState(false);
   const [showEvaluate, setShowEvaluate] = useState(false);
   const [newTitle, setNewTitle] = useState('');
@@ -231,14 +236,13 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
           </div>
           <div className="flex items-center gap-2">
             <Button variant="secondary" onClick={() => setShowEvaluate(true)}><Award size={14} />结案评价</Button>
-            <Button variant="primary" onClick={() => setShowDecompose(true)}><Sparkles size={14} />AI 拆解需求</Button>
           </div>
         </div>
       </div>
 
-      {/* Tab 切换 + 快速加任务 */}
-      <div className="shrink-0 flex items-center gap-2 flex-wrap">
-        <div className="flex flex-wrap gap-1 rounded-lg p-1" style={{ background: 'var(--bg-base)' }}>
+      {/* Tab 切换 */}
+      <div className="shrink-0">
+        <div className="inline-flex flex-wrap gap-1 rounded-lg p-1" style={{ background: 'var(--bg-base)' }}>
           {TABS.map((t) => {
             const Icon = t.icon;
             const active = tab === t.key;
@@ -251,17 +255,37 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
             );
           })}
         </div>
-        <div className="flex items-center gap-1.5 ml-auto">
-          <input className="rounded-lg px-3 py-1.5 text-[12px] outline-none border"
-            style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)', width: 200 }}
-            value={newTitle} onChange={(e) => setNewTitle(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') handleAddTask(); }} placeholder="快速添加任务…" />
-          <Button variant="secondary" size="sm" onClick={handleAddTask} disabled={adding || !newTitle.trim()}><Plus size={14} /></Button>
-        </div>
       </div>
 
+      {/* 任务工具栏：视图切换（看板/列表/甘特）+ 快速添加任务 + AI 拆解（仅「任务」Tab）*/}
+      {tab === 'tasks' && (
+        <div className="shrink-0 flex items-center gap-2 flex-wrap">
+          <div className="flex gap-1 rounded-lg p-1" style={{ background: 'var(--bg-base)' }}>
+            {TASK_VIEWS.map((v) => {
+              const Icon = v.icon;
+              const active = viewMode === v.key;
+              return (
+                <button key={v.key} onClick={() => setViewMode(v.key)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] transition-colors shrink-0"
+                  style={{ background: active ? 'var(--bg-card)' : 'transparent', color: active ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                  <Icon size={14} /> {v.label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex items-center gap-1.5 ml-auto">
+            <input className="rounded-lg px-3 py-1.5 text-[12px] outline-none border"
+              style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)', width: 200 }}
+              value={newTitle} onChange={(e) => setNewTitle(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleAddTask(); }} placeholder="快速添加任务…" />
+            <Button variant="secondary" size="sm" onClick={handleAddTask} disabled={adding || !newTitle.trim()}><Plus size={14} /></Button>
+            <Button variant="primary" size="sm" onClick={() => setShowDecompose(true)}><Sparkles size={14} />AI 拆解需求</Button>
+          </div>
+        </div>
+      )}
+
       {/* P1 筛选栏（任务视图） */}
-      {isTaskTab(tab) && tasks.length > 0 && (
+      {tab === 'tasks' && tasks.length > 0 && (
         <div className="shrink-0 flex items-center gap-2 flex-wrap text-[12px]">
           <div className="relative">
             <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
@@ -279,14 +303,14 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
             style={{ background: myOnly ? 'rgba(59,130,246,0.15)' : 'var(--bg-input)', borderColor: myOnly ? '#3B82F6' : 'var(--border-subtle)', color: myOnly ? '#3B82F6' : 'var(--text-secondary)' }}>
             仅看我的
           </button>
-          {tab === 'list' && (
+          {viewMode === 'list' && (
             <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as GroupBy)} className="rounded-lg px-2 py-1.5 outline-none border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>
               <option value="none">不分组</option>
               <option value="assignee">按负责人</option>
               <option value="priority">按优先级</option>
             </select>
           )}
-          {tab === 'board' && (
+          {viewMode === 'board' && (
             <button onClick={() => setWipEdit((v) => !v)} className="rounded-lg px-2.5 py-1.5 border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }}>WIP 限制</button>
           )}
           {hasFilter && <span style={{ color: 'var(--text-muted)' }}>命中 {filtered.length} / {tasks.length}</span>}
@@ -294,7 +318,7 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
       )}
 
       {/* WIP 限制编辑（看板）*/}
-      {tab === 'board' && wipEdit && (
+      {tab === 'tasks' && viewMode === 'board' && wipEdit && (
         <div className="shrink-0 flex items-center gap-3 flex-wrap rounded-lg px-3 py-2 text-[12px]" style={{ background: 'var(--bg-base)' }}>
           <span style={{ color: 'var(--text-secondary)' }}>各列在制上限（0=不限）：</span>
           {(['backlog', 'todo', 'in_progress', 'done'] as PmTaskStatus[]).map((col) => (
@@ -310,7 +334,7 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
       )}
 
       {/* 批量操作条（列表多选）*/}
-      {tab === 'list' && selected.size > 0 && (
+      {tab === 'tasks' && viewMode === 'list' && selected.size > 0 && (
         <div className="shrink-0 flex items-center gap-2 flex-wrap rounded-lg px-3 py-2 text-[12px]" style={{ background: 'rgba(59,130,246,0.1)' }}>
           <span style={{ color: '#3B82F6' }}>已选 {selected.size}</span>
           <select defaultValue="" onChange={(e) => { if (e.target.value) bulkApply({ status: e.target.value as PmTaskStatus }); e.currentTarget.value = ''; }} className="rounded px-2 py-1 outline-none border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>
@@ -328,7 +352,7 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
       )}
 
       {/* 空状态 */}
-      {tasks.length === 0 && isTaskTab(tab) && (
+      {tasks.length === 0 && tab === 'tasks' && (
         <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-3 text-center">
           <div className="text-[14px] font-medium" style={{ color: 'var(--text-secondary)' }}>还没有任务</div>
           <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>点击右上角「AI 拆解需求」，让 AI 根据业务目标自动生成任务清单</div>
@@ -336,11 +360,11 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
         </div>
       )}
 
-      {tasks.length > 0 && tab === 'board' && (
+      {tasks.length > 0 && tab === 'tasks' && viewMode === 'board' && (
         <KanbanBoard tasks={filtered} onMove={handleMove} onDelete={handleDelete} onOpen={setOpenTask} wipLimits={project.wipLimits ?? undefined} />
       )}
 
-      {tasks.length > 0 && tab === 'list' && (
+      {tasks.length > 0 && tab === 'tasks' && viewMode === 'list' && (
         <div className="flex-1 min-h-0 overflow-y-auto border rounded-xl" style={{ borderColor: 'var(--border-subtle)', overscrollBehavior: 'contain' }}>
           {listGroups.map((g) => (
             <div key={g.key}>
@@ -370,7 +394,7 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
         </div>
       )}
 
-      {tasks.length > 0 && tab === 'gantt' && <GanttChart tasks={filtered} onOpen={setOpenTask} />}
+      {tasks.length > 0 && tab === 'tasks' && viewMode === 'gantt' && <GanttChart tasks={filtered} onOpen={setOpenTask} />}
 
       {tab === 'knowledge' && <KnowledgePanel projectId={projectId} />}
 
