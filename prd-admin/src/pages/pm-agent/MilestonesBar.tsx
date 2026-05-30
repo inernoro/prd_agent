@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Plus, Trash2, Pencil, Check, X, Flag } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
-import { createPmMilestone, updatePmMilestone, deletePmMilestone } from '@/services';
-import type { PmMilestone } from '@/services/contracts/pmAgent';
+import { createPmMilestone, updatePmMilestone, deletePmMilestone, listPmGoals } from '@/services';
+import type { PmMilestone, PmGoal } from '@/services/contracts/pmAgent';
 import { MILESTONE_HEALTH_REGISTRY } from './pmConstants';
 
 interface Props {
@@ -28,16 +28,23 @@ export function MilestonesBar({ projectId, milestones, canManage, onChanged }: P
   const [editing, setEditing] = useState<string | null>(null); // 'new' | id
   const [title, setTitle] = useState('');
   const [dueAt, setDueAt] = useState('');
+  const [goalId, setGoalId] = useState('');
+  const [goals, setGoals] = useState<PmGoal[]>([]);
   const [busy, setBusy] = useState(false);
 
-  const startNew = () => { setEditing('new'); setTitle(''); setDueAt(''); };
-  const startEdit = (m: PmMilestone) => { setEditing(m.id); setTitle(m.title); setDueAt(m.dueAt ? m.dueAt.slice(0, 10) : ''); };
+  useEffect(() => {
+    if (!canManage) return;
+    listPmGoals(projectId).then((res) => { if (res.success) setGoals(res.data.items.filter((g) => g.scope === 'team')); });
+  }, [projectId, canManage]);
+
+  const startNew = () => { setEditing('new'); setTitle(''); setDueAt(''); setGoalId(''); };
+  const startEdit = (m: PmMilestone) => { setEditing(m.id); setTitle(m.title); setDueAt(m.dueAt ? m.dueAt.slice(0, 10) : ''); setGoalId(m.goalId || ''); };
   const cancel = () => setEditing(null);
 
   const save = async () => {
     if (!title.trim()) { toast.error('请填写里程碑名称', ''); return; }
     setBusy(true);
-    const payload = { title: title.trim(), dueAt: dueAt || undefined };
+    const payload = { title: title.trim(), dueAt: dueAt || undefined, goalId: goalId || undefined };
     const res = editing === 'new'
       ? await createPmMilestone(projectId, payload)
       : await updatePmMilestone(editing!, payload);
@@ -74,6 +81,11 @@ export function MilestonesBar({ projectId, milestones, canManage, onChanged }: P
             className="text-[12px] rounded-md px-2 py-1.5 outline-none border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)', width: 240 }} />
           <input type="date" value={dueAt} onChange={(e) => setDueAt(e.target.value)} title="预计达成时间"
             className="text-[12px] rounded-md px-2 py-1.5 outline-none border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} />
+          <select value={goalId} onChange={(e) => setGoalId(e.target.value)} title="关联目标"
+            className="text-[12px] rounded-md px-2 py-1.5 outline-none border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>
+            <option value="">不关联目标</option>
+            {goals.map((g) => <option key={g.id} value={g.id}>{g.title}</option>)}
+          </select>
           <Button variant="primary" size="sm" onClick={save} disabled={busy}>{busy ? <MapSpinner size={12} /> : <Check size={12} />}保存</Button>
           <Button variant="ghost" size="sm" onClick={cancel}><X size={12} />取消</Button>
         </div>
@@ -92,6 +104,11 @@ export function MilestonesBar({ projectId, milestones, canManage, onChanged }: P
                     className="text-[12px] rounded px-1.5 py-1 outline-none border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)', width: 160 }} />
                   <input type="date" value={dueAt} onChange={(e) => setDueAt(e.target.value)}
                     className="text-[12px] rounded px-1.5 py-1 outline-none border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} />
+                  <select value={goalId} onChange={(e) => setGoalId(e.target.value)} title="关联目标"
+                    className="text-[12px] rounded px-1.5 py-1 outline-none border" style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)', maxWidth: 120 }}>
+                    <option value="">不关联</option>
+                    {goals.map((g) => <option key={g.id} value={g.id}>{g.title}</option>)}
+                  </select>
                   <button onClick={save} disabled={busy} title="保存" style={{ color: '#10B981' }}>{busy ? <MapSpinner size={13} /> : <Check size={14} />}</button>
                   <button onClick={cancel} title="取消" style={{ color: 'var(--text-muted)' }}><X size={14} /></button>
                 </div>

@@ -392,6 +392,8 @@ export type PmGoal = {
   metric?: string | null;
   period?: string | null;
   progress: number;
+  progressMode: 'auto' | 'manual';
+  linkedMilestoneCount?: number;
   status: PmGoalStatus;
   createdBy: string;
   createdByName?: string | null;
@@ -399,7 +401,7 @@ export type PmGoal = {
   createdAt: string;
   updatedAt: string;
 };
-export type SavePmGoalInput = Partial<{ scope: PmGoalScope; title: string; description: string; metric: string; period: string; progress: number; status: PmGoalStatus; orderKey: number }>;
+export type SavePmGoalInput = Partial<{ scope: PmGoalScope; title: string; description: string; metric: string; period: string; progress: number; progressMode: 'auto' | 'manual'; status: PmGoalStatus; orderKey: number }>;
 export type ListPmGoalsContract = (projectId: string) => Promise<ApiResponse<{ items: PmGoal[] }>>;
 export type CreatePmGoalContract = (projectId: string, input: SavePmGoalInput) => Promise<ApiResponse<PmGoal>>;
 export type UpdatePmGoalContract = (goalId: string, input: SavePmGoalInput) => Promise<ApiResponse<{ updated: boolean }>>;

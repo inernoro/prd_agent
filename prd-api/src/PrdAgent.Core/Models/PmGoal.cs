@@ -29,8 +29,11 @@ public class PmGoal
     /// <summary>周期（如「2026 Q2」「6 月」）</summary>
     public string? Period { get; set; }
 
-    /// <summary>进度 0-100</summary>
+    /// <summary>进度 0-100（manual 模式下为手填值；auto 模式下作为无关联里程碑时的兜底）</summary>
     public int Progress { get; set; }
+
+    /// <summary>进度模式：auto(由关联里程碑滚动) | manual(手填)。新建默认 auto</summary>
+    public string ProgressMode { get; set; } = PmGoalProgressMode.Auto;
 
     /// <summary>状态：on_track | at_risk | done | abandoned</summary>
     public string Status { get; set; } = PmGoalStatus.OnTrack;
@@ -46,6 +49,15 @@ public class PmGoal
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>目标进度模式</summary>
+public static class PmGoalProgressMode
+{
+    public const string Auto = "auto";
+    public const string Manual = "manual";
+
+    public static bool IsValid(string? v) => v is Auto or Manual;
 }
 
 /// <summary>目标范围</summary>

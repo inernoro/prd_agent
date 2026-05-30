@@ -694,11 +694,37 @@ public class PmAgentController : ControllerBase
             b.Or(
                 b.Eq(g => g.Scope, PmGoalScope.Team),
                 b.And(b.Eq(g => g.Scope, PmGoalScope.Personal), b.Eq(g => g.OwnerId, userId))));
-        var items = await _db.PmGoals.Find(filter).SortBy(g => g.OrderKey).ThenByDescending(g => g.CreatedAt).ToListAsync();
+        var goals = await _db.PmGoals.Find(filter).SortBy(g => g.OrderKey).ThenByDescending(g => g.CreatedAt).ToListAsync();
+
+        // auto 模式进度：由关联里程碑(Milestone.GoalId==目标)的任务完成度滚动平均
+        var milestones = await _db.PmMilestones.Find(m => m.ProjectId == projectId).ToListAsync();
+        var tasks = await _db.PmTasks.Find(t => t.ProjectId == projectId)
+            .Project(t => new { t.MilestoneId, t.Status }).ToListAsync();
+        int MsProgress(string msId)
+        {
+            var mine = tasks.Where(t => t.MilestoneId == msId && t.Status != PmTaskStatus.Cancelled).ToList();
+            return mine.Count > 0 ? (int)Math.Round(mine.Count(t => t.Status == PmTaskStatus.Done) * 100.0 / mine.Count) : 0;
+        }
+
+        var items = goals.Select(g =>
+        {
+            var linked = milestones.Where(m => m.GoalId == g.Id).ToList();
+            var effective = (g.ProgressMode == PmGoalProgressMode.Auto && linked.Count > 0)
+                ? (int)Math.Round(linked.Average(m => MsProgress(m.Id)))
+                : g.Progress;
+            return new
+            {
+                id = g.Id, projectId = g.ProjectId, scope = g.Scope, ownerId = g.OwnerId,
+                title = g.Title, description = g.Description, metric = g.Metric, period = g.Period,
+                progress = effective, progressMode = g.ProgressMode, linkedMilestoneCount = linked.Count,
+                status = g.Status, createdBy = g.CreatedBy, createdByName = g.CreatedByName,
+                orderKey = g.OrderKey, createdAt = g.CreatedAt, updatedAt = g.UpdatedAt,
+            };
+        }).ToList();
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
-    /// <summary>新建目标。个人目标 OwnerId 强制为当前用户</summary>
+    /// <summary>新建目标。个人目标 OwnerId 强制本人；团队目标仅 owner/leader 可建</summary>
     [HttpPost("projects/{projectId}/goals")]
     public async Task<IActionResult> CreateGoal(string projectId, [FromBody] GoalRequest request)
     {
@@ -710,6 +736,9 @@ public class PmAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "目标标题不能为空"));
 
         var scope = PmGoalScope.IsValid(request.Scope) ? request.Scope! : PmGoalScope.Team;
+        if (scope == PmGoalScope.Team && project.OwnerId != userId && project.LeaderId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "团队目标仅立项人或负责人可创建"));
+
         var creatorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
         var entity = new PmGoal
         {
@@ -721,6 +750,7 @@ public class PmAgentController : ControllerBase
             Metric = request.Metric?.Trim(),
             Period = request.Period?.Trim(),
             Progress = Math.Clamp(request.Progress ?? 0, 0, 100),
+            ProgressMode = PmGoalProgressMode.IsValid(request.ProgressMode) ? request.ProgressMode! : PmGoalProgressMode.Auto,
             Status = PmGoalStatus.IsValid(request.Status) ? request.Status! : PmGoalStatus.OnTrack,
             CreatedBy = userId,
             CreatedByName = creatorName,
@@ -737,12 +767,21 @@ public class PmAgentController : ControllerBase
         var userId = GetUserId();
         var g = await _db.PmGoals.Find(x => x.Id == goalId).FirstOrDefaultAsync();
         if (g == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "目标不存在"));
-        if (await FindAccessibleProjectAsync(g.ProjectId, userId) == null)
+        var project = await FindAccessibleProjectAsync(g.ProjectId, userId);
+        if (project == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
         if (g.Scope == PmGoalScope.Personal && g.OwnerId != userId)
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "个人目标仅本人可修改"));
+        if (g.Scope == PmGoalScope.Team && project.OwnerId != userId && project.LeaderId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "团队目标仅立项人或负责人可修改"));
 
         var update = Builders<PmGoal>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow);
+        if (request.ProgressMode != null)
+        {
+            if (!PmGoalProgressMode.IsValid(request.ProgressMode))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的进度模式"));
+            update = update.Set(x => x.ProgressMode, request.ProgressMode);
+        }
         if (request.Title != null)
         {
             if (string.IsNullOrWhiteSpace(request.Title))
@@ -771,10 +810,13 @@ public class PmAgentController : ControllerBase
         var userId = GetUserId();
         var g = await _db.PmGoals.Find(x => x.Id == goalId).FirstOrDefaultAsync();
         if (g == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "目标不存在"));
-        if (await FindAccessibleProjectAsync(g.ProjectId, userId) == null)
+        var project = await FindAccessibleProjectAsync(g.ProjectId, userId);
+        if (project == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
         if (g.Scope == PmGoalScope.Personal && g.OwnerId != userId)
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "个人目标仅本人可删除"));
+        if (g.Scope == PmGoalScope.Team && project.OwnerId != userId && project.LeaderId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "团队目标仅立项人或负责人可删除"));
         await _db.PmGoals.DeleteOneAsync(x => x.Id == goalId);
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
@@ -1802,6 +1844,7 @@ public class GoalRequest
     public string? Metric { get; set; }
     public string? Period { get; set; }
     public int? Progress { get; set; }
+    public string? ProgressMode { get; set; }
     public string? Status { get; set; }
     public long? OrderKey { get; set; }
 }

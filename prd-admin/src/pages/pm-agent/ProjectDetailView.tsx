@@ -413,7 +413,7 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
 
       {tab === 'meetings' && <MeetingsPanel projectId={projectId} />}
 
-      {tab === 'goals' && <GoalsPanel projectId={projectId} />}
+      {tab === 'goals' && <GoalsPanel projectId={projectId} businessGoal={project.businessGoal} canManage={project.ownerId === myId || project.leaderId === myId} />}
 
       {tab === 'members' && (
         <MembersPanel projectId={projectId} canManage={project.ownerId === myId || project.leaderId === myId} />
