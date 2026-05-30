@@ -4,6 +4,8 @@ import { TASK_STATUS_REGISTRY, PRIORITY_REGISTRY } from './pmConstants';
 
 interface Props {
   tasks: PmTask[];
+  /** 点击任务名或时间条 → 打开统一的任务详情抽屉 */
+  onOpen?: (task: PmTask) => void;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -19,7 +21,7 @@ function fmt(d: Date) { return `${d.getMonth() + 1}/${d.getDate()}`; }
  * 仅渲染带 startAt + dueAt 的任务；缺日期的任务在底部提示补全。
  * 采用横向滚动而非 pan/zoom 画布，故不涉及 gesture-unification 规则。
  */
-export function GanttChart({ tasks }: Props) {
+export function GanttChart({ tasks, onOpen }: Props) {
   const dated = useMemo(() => tasks.filter((t) => t.startAt && t.dueAt), [tasks]);
   const undatedCount = tasks.length - dated.length;
 
@@ -83,13 +85,18 @@ export function GanttChart({ tasks }: Props) {
               const pColor = PRIORITY_REGISTRY[t.priority].color;
               return (
                 <div key={t.id} className="flex border-b items-center" style={{ borderColor: 'var(--border-subtle)', height: ROW_H }}>
-                  <div className="shrink-0 border-r px-3 text-[12px] truncate" style={{ width: LABEL_W, borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} title={t.title}>
+                  <div
+                    className={`shrink-0 border-r px-3 text-[12px] truncate ${onOpen ? 'cursor-pointer hover:underline' : ''}`}
+                    style={{ width: LABEL_W, borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}
+                    title={t.title}
+                    onClick={onOpen ? () => onOpen(t) : undefined}
+                  >
                     {t.priority !== 'none' && <span className="inline-block w-1.5 h-1.5 rounded-full mr-1.5" style={{ background: pColor }} />}
                     {t.title}
                   </div>
                   <div className="relative" style={{ width: days * COL_W, height: ROW_H }}>
                     <div
-                      className="absolute rounded-md flex items-center px-2"
+                      className={`absolute rounded-md flex items-center px-2 ${onOpen ? 'cursor-pointer' : ''}`}
                       style={{
                         left: offset * COL_W + 2,
                         width: span * COL_W - 4,
@@ -98,6 +105,7 @@ export function GanttChart({ tasks }: Props) {
                         background: `${statusColor}cc`,
                       }}
                       title={`${t.title}｜${fmt(new Date(s))} - ${fmt(new Date(e))}${t.dependsOn.length ? `｜依赖 ${t.dependsOn.length} 项` : ''}`}
+                      onClick={onOpen ? () => onOpen(t) : undefined}
                     >
                       <span className="text-[10px] truncate" style={{ color: '#fff' }}>
                         {t.dependsOn.length > 0 ? '↳ ' : ''}{t.estimateDays != null ? `${t.estimateDays}人天` : ''}

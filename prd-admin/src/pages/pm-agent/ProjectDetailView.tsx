@@ -370,7 +370,7 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
         </div>
       )}
 
-      {tasks.length > 0 && tab === 'gantt' && <GanttChart tasks={filtered} />}
+      {tasks.length > 0 && tab === 'gantt' && <GanttChart tasks={filtered} onOpen={setOpenTask} />}
 
       {tab === 'knowledge' && <KnowledgePanel projectId={projectId} />}
 
