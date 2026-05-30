@@ -102,7 +102,7 @@ CLI：`.claude/skills/create-visual-test-to-kb/scripts/kb_sync.py --store 验收
 
 ### 5.D 最小权限写入（document-store:write scoped key）+ 自动子文件夹
 
-- **scoped key**：新增 `document-store:read` / `document-store:write` AgentApiKey scope。`AdminPermissionMiddleware` 增加「scope `a:b` 精确满足 admin 权限 `a.b`」的映射（仅精确等值，不跨资源泄漏），`ApiKeyAuthenticationHandler` 给 AgentApiKey 补 `sub` claim 使其以 owner 身份执行。归档/同步脚本优先用 `MAP_DOC_STORE_KEY`（Bearer），替代 AI 超级密钥——最小权限、无 impersonate、可单独撤销。未设则回退超级密钥（向后兼容）。
+- **scoped key**：新增 `document-store:read` / `document-store:write` AgentApiKey scope。`AdminPermissionMiddleware` 对 AgentApiKey 请求走「纯 scope」授权——scope `a:b` 精确满足 admin 权限 `a.b`（仅精确等值，不跨资源泄漏），且**绝不继承 owner 的 admin 权限/root**（否则 root 名下的 scoped key 等于全权，最小权限失效）。`ApiKeyAuthenticationHandler` 给 AgentApiKey 补 `sub` claim 使其以 owner 身份读写自己的数据。归档/同步脚本优先用 `MAP_DOC_STORE_KEY`（Bearer），替代 AI 超级密钥——最小权限、无 impersonate、可单独撤销。未设则回退超级密钥（向后兼容）。
 - **自动子文件夹**：归档时按 `--module`（无则 `YYYY-MM`）find-or-create 根级子文件夹，条目挂其下，验收库不再平铺成几百条。
 
 ---

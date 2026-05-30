@@ -96,11 +96,25 @@ public sealed class AdminPermissionMiddleware
             return;
         }
 
-        // AgentApiKey scope 授权：持有匹配 scope 的 M2M Key 直接放行（最小权限路径，
-        // 不走 admin 账户权限位 / Access 门槛）。放在 perms 计算前，避免 scoped key 被 Access 门挡掉。
-        if (HasScopeGrant(context, required))
+        // AgentApiKey 走"纯 scope"授权，保证最小权限：M2M Key 命中匹配 scope 才放行，
+        // 且【绝不】继承 owner 的 admin 权限/root（否则 root 名下的 scoped key 等于全权，最小权限失效）。
+        // scope "a:b"（冒号）精确满足 admin 权限 "a.b"（点分），不跨资源泄漏。
+        var isAgentKey = string.Equals(context.User.FindFirst("authType")?.Value, "agent-apikey", StringComparison.Ordinal);
+        if (isAgentKey)
         {
-            await _next(context);
+            if (HasScopeGrant(context, required))
+            {
+                await _next(context);
+                return;
+            }
+            var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            _logger.LogWarning("[403] AgentApiKey scope 不足 - Path: {Path}, Method: {Method}, IP: {IP}, Required: {Required}",
+                path, method, ip, required);
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            context.Response.ContentType = "application/json; charset=utf-8";
+            var denied = ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED,
+                $"此接口要求 scope: {required.Replace('.', ':')}。当前 AgentApiKey 未授权该范围。");
+            await context.Response.WriteAsync(JsonSerializer.Serialize(denied, _jsonOptions));
             return;
         }
 
