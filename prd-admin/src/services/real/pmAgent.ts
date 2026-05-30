@@ -32,6 +32,10 @@ import type {
   CreatePmDecisionContract,
   UpdatePmDecisionContract,
   DeletePmDecisionContract,
+  ListPmWeeklyReportsContract,
+  CreatePmWeeklyReportContract,
+  UpdatePmWeeklyReportContract,
+  DeletePmWeeklyReportContract,
 } from '@/services/contracts/pmAgent';
 import type { ApiResponse } from '@/types/api';
 import { useAuthStore } from '@/stores/authStore';
@@ -104,6 +108,37 @@ export const updatePmDecisionReal: UpdatePmDecisionContract = async (decisionId,
 
 export const deletePmDecisionReal: DeletePmDecisionContract = async (decisionId) => {
   return await apiRequest(api.pm.decisions.item(encodeURIComponent(decisionId)), { method: 'DELETE' });
+};
+
+// ── 项目周报 ──
+export const listPmWeeklyReportsReal: ListPmWeeklyReportsContract = async (projectId) => {
+  return await apiRequest(api.pm.projects.weeklyReports(encodeURIComponent(projectId)), { method: 'GET' });
+};
+
+export const createPmWeeklyReportReal: CreatePmWeeklyReportContract = async (projectId, input) => {
+  return await apiRequest(api.pm.projects.weeklyReports(encodeURIComponent(projectId)), { method: 'POST', body: input });
+};
+
+export const updatePmWeeklyReportReal: UpdatePmWeeklyReportContract = async (reportId, input) => {
+  return await apiRequest(api.pm.weeklyReports.item(encodeURIComponent(reportId)), { method: 'PUT', body: input });
+};
+
+export const deletePmWeeklyReportReal: DeletePmWeeklyReportContract = async (reportId) => {
+  return await apiRequest(api.pm.weeklyReports.item(encodeURIComponent(reportId)), { method: 'DELETE' });
+};
+
+/** 周报内嵌图片上传：FormData 必须走原生 fetch（apiRequest 会 JSON 序列化，见规则 #7） */
+export const uploadPmWeeklyReportImageReal = async (projectId: string, file: File): Promise<ApiResponse<{ url: string }>> => {
+  const token = useAuthStore.getState().token;
+  const fd = new FormData();
+  fd.append('file', file);
+  const res = await fetch(api.pm.projects.weeklyReportImage(encodeURIComponent(projectId)), {
+    method: 'POST',
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: fd,
+    credentials: 'include',
+  });
+  return await res.json();
 };
 
 export const getPmProjectReal: GetPmProjectContract = async (projectId) => {

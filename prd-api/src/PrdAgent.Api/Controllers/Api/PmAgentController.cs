@@ -480,6 +480,111 @@ public class PmAgentController : ControllerBase
     }
 
     // ─────────────────────────────────────────────
+    // 项目周报（Markdown，支持 md 导入 + 图片）
+    // ─────────────────────────────────────────────
+
+    /// <summary>周报列表（按周起始日 / 创建时间倒序）</summary>
+    [HttpGet("projects/{projectId}/weekly-reports")]
+    public async Task<IActionResult> ListWeeklyReports(string projectId)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+
+        var items = await _db.PmWeeklyReports.Find(r => r.ProjectId == projectId)
+            .SortByDescending(r => r.WeekStart).ThenByDescending(r => r.CreatedAt).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>新建周报（content 为 Markdown，可由前端导入 md 文件后提交）</summary>
+    [HttpPost("projects/{projectId}/weekly-reports")]
+    public async Task<IActionResult> CreateWeeklyReport(string projectId, [FromBody] WeeklyReportRequest request)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (string.IsNullOrWhiteSpace(request.Title))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "周报标题不能为空"));
+
+        var authorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+        var entity = new PmWeeklyReport
+        {
+            ProjectId = projectId,
+            Title = request.Title!.Trim(),
+            WeekStart = request.WeekStart,
+            Content = request.Content ?? string.Empty,
+            AuthorId = userId,
+            AuthorName = authorName,
+        };
+        await _db.PmWeeklyReports.InsertOneAsync(entity);
+        return Ok(ApiResponse<object>.Ok(entity));
+    }
+
+    /// <summary>更新周报</summary>
+    [HttpPut("weekly-reports/{reportId}")]
+    public async Task<IActionResult> UpdateWeeklyReport(string reportId, [FromBody] WeeklyReportRequest request)
+    {
+        var userId = GetUserId();
+        var r = await _db.PmWeeklyReports.Find(x => x.Id == reportId).FirstOrDefaultAsync();
+        if (r == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "周报不存在"));
+        if (await FindAccessibleProjectAsync(r.ProjectId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+
+        var update = Builders<PmWeeklyReport>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow);
+        if (request.Title != null)
+        {
+            if (string.IsNullOrWhiteSpace(request.Title))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "周报标题不能为空"));
+            update = update.Set(x => x.Title, request.Title.Trim());
+        }
+        if (request.Content != null) update = update.Set(x => x.Content, request.Content);
+        if (request.WeekStart.HasValue) update = update.Set(x => x.WeekStart, request.WeekStart);
+        await _db.PmWeeklyReports.UpdateOneAsync(x => x.Id == reportId, update);
+        return Ok(ApiResponse<object>.Ok(new { updated = true }));
+    }
+
+    /// <summary>删除周报</summary>
+    [HttpDelete("weekly-reports/{reportId}")]
+    public async Task<IActionResult> DeleteWeeklyReport(string reportId)
+    {
+        var userId = GetUserId();
+        var r = await _db.PmWeeklyReports.Find(x => x.Id == reportId).FirstOrDefaultAsync();
+        if (r == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "周报不存在"));
+        if (await FindAccessibleProjectAsync(r.ProjectId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        await _db.PmWeeklyReports.DeleteOneAsync(x => x.Id == reportId);
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    /// <summary>上传周报内嵌图片（multipart），返回可访问 URL 供前端插入 Markdown</summary>
+    [HttpPost("projects/{projectId}/weekly-reports/image")]
+    public async Task<IActionResult> UploadWeeklyReportImage(string projectId, [FromForm] IFormFile? file)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (file == null || file.Length == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "未选择图片"));
+        var mime = file.ContentType ?? "";
+        if (!mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅支持图片文件"));
+        if (file.Length > 10 * 1024 * 1024)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_TOO_LARGE, "单张图片不能超过 10MB"));
+
+        byte[] bytes;
+        await using (var ms = new MemoryStream())
+        {
+            await file.CopyToAsync(ms, CancellationToken.None);
+            bytes = ms.ToArray();
+        }
+        var stored = await _assetStorage.SaveAsync(bytes, mime, CancellationToken.None, domain: "prd-agent", type: "img", fileName: file.FileName);
+        return Ok(ApiResponse<object>.Ok(new { url = stored.Url }));
+    }
+
+    // ─────────────────────────────────────────────
     // 干系人 + NPSS 结案评价（Phase 2）
     // ─────────────────────────────────────────────
 
@@ -1235,6 +1340,13 @@ public class UpdateDecisionRequest
     public string? Content { get; set; }
     public string? Type { get; set; }
     public long? OrderKey { get; set; }
+}
+
+public class WeeklyReportRequest
+{
+    public string? Title { get; set; }
+    public string? Content { get; set; }
+    public DateTime? WeekStart { get; set; }
 }
 
 public class UpdatePmProjectRequest

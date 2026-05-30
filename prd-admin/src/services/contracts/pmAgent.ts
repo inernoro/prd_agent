@@ -338,6 +338,24 @@ export type ListPmDecisionsContract = (projectId: string) => Promise<ApiResponse
 export type CreatePmDecisionContract = (projectId: string, input: CreatePmDecisionInput) => Promise<ApiResponse<PmDecision>>;
 export type UpdatePmDecisionContract = (decisionId: string, input: UpdatePmDecisionInput) => Promise<ApiResponse<{ updated: boolean }>>;
 export type DeletePmDecisionContract = (decisionId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
+
+// ── 项目周报 ──
+export type PmWeeklyReport = {
+  id: string;
+  projectId: string;
+  title: string;
+  weekStart?: string | null;
+  content: string;
+  authorId: string;
+  authorName?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+export type SavePmWeeklyReportInput = { title?: string; content?: string; weekStart?: string };
+export type ListPmWeeklyReportsContract = (projectId: string) => Promise<ApiResponse<{ items: PmWeeklyReport[] }>>;
+export type CreatePmWeeklyReportContract = (projectId: string, input: SavePmWeeklyReportInput) => Promise<ApiResponse<PmWeeklyReport>>;
+export type UpdatePmWeeklyReportContract = (reportId: string, input: SavePmWeeklyReportInput) => Promise<ApiResponse<{ updated: boolean }>>;
+export type DeletePmWeeklyReportContract = (reportId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
 export type GetPmProjectContract = (projectId: string) => Promise<ApiResponse<{ project: PmProject; tasks: PmTask[] }>>;
 export type UpdatePmProjectContract = (projectId: string, input: UpdatePmProjectInput) => Promise<ApiResponse<{ updated: boolean }>>;
 export type DeletePmProjectContract = (projectId: string) => Promise<ApiResponse<{ deleted: boolean }>>;

@@ -1303,6 +1303,8 @@ export const api = {
       knowledgeFiles: (projectId: string) => `/api/pm/projects/${projectId}/knowledge/files`,
       memberSites: (projectId: string) => `/api/pm/projects/${projectId}/member-sites`,
       decisions: (projectId: string) => `/api/pm/projects/${projectId}/decisions`,
+      weeklyReports: (projectId: string) => `/api/pm/projects/${projectId}/weekly-reports`,
+      weeklyReportImage: (projectId: string) => `/api/pm/projects/${projectId}/weekly-reports/image`,
       stakeholders: (projectId: string) => `/api/pm/projects/${projectId}/stakeholders`,
       evaluationStart: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/start`,
       evaluationScore: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/score`,
@@ -1320,6 +1322,9 @@ export const api = {
     },
     decisions: {
       item: (decisionId: string) => `/api/pm/decisions/${decisionId}`,
+    },
+    weeklyReports: {
+      item: (reportId: string) => `/api/pm/weekly-reports/${reportId}`,
     },
     dashboard: () => '/api/pm/dashboard',
     rewardConfig: () => '/api/pm/reward-config',

@@ -210,6 +210,22 @@ export const MarkdownContent = memo(function MarkdownContent({ content, classNam
               <h4 className="text-sm font-semibold mb-1 mt-2">{children}</h4>
             );
           },
+          img({ src, alt }) {
+            return (
+              <img
+                src={typeof src === 'string' ? src : undefined}
+                alt={alt ?? ''}
+                loading="lazy"
+                className={isReading ? 'my-4 rounded-lg' : 'my-2 rounded-md'}
+                style={{
+                  maxWidth: '100%',
+                  height: 'auto',
+                  display: 'block',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                }}
+              />
+            );
+          },
           hr() {
             return isReading ? (
               <hr

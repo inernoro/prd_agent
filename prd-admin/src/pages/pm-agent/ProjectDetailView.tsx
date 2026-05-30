@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Sparkles, Plus, LayoutGrid, List, GanttChartSquare, Trash2, Users, UserCog, Award, Search, CalendarClock, BookOpen, Gavel } from 'lucide-react';
+import { ArrowLeft, Sparkles, Plus, LayoutGrid, List, GanttChartSquare, Trash2, Users, UserCog, Award, Search, CalendarClock, BookOpen, Gavel, FileText } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
@@ -16,6 +16,7 @@ import { StakeholderPanel } from './StakeholderPanel';
 import { MembersPanel } from './MembersPanel';
 import { KnowledgePanel } from './KnowledgePanel';
 import { DecisionsPanel } from './DecisionsPanel';
+import { WeeklyReportsPanel } from './WeeklyReportsPanel';
 import { EvaluatePanel } from './EvaluatePanel';
 import { TaskDetailDrawer } from './TaskDetailDrawer';
 import { PROJECT_TYPE_REGISTRY, LIFECYCLE_REGISTRY, TASK_STATUS_REGISTRY, PRIORITY_REGISTRY, GRADE_REGISTRY } from './pmConstants';
@@ -25,7 +26,7 @@ interface Props {
   onBack: () => void;
 }
 
-type ViewTab = 'board' | 'list' | 'gantt' | 'knowledge' | 'members' | 'decisions' | 'stakeholders';
+type ViewTab = 'board' | 'list' | 'gantt' | 'knowledge' | 'weekly' | 'members' | 'decisions' | 'stakeholders';
 type GroupBy = 'none' | 'assignee' | 'priority';
 
 const TABS: { key: ViewTab; label: string; icon: typeof LayoutGrid }[] = [
@@ -33,6 +34,7 @@ const TABS: { key: ViewTab; label: string; icon: typeof LayoutGrid }[] = [
   { key: 'list', label: '列表', icon: List },
   { key: 'gantt', label: '甘特图', icon: GanttChartSquare },
   { key: 'knowledge', label: '知识库', icon: BookOpen },
+  { key: 'weekly', label: '周报', icon: FileText },
   { key: 'members', label: '成员', icon: UserCog },
   { key: 'decisions', label: '决策', icon: Gavel },
   { key: 'stakeholders', label: '干系人', icon: Users },
@@ -367,6 +369,8 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
       {tasks.length > 0 && tab === 'gantt' && <GanttChart tasks={filtered} />}
 
       {tab === 'knowledge' && <KnowledgePanel projectId={projectId} />}
+
+      {tab === 'weekly' && <WeeklyReportsPanel projectId={projectId} />}
 
       {tab === 'members' && (
         <MembersPanel projectId={projectId} canManage={project.ownerId === myId || project.leaderId === myId} />

@@ -1963,6 +1963,11 @@ export {
   createPmDecisionReal as createPmDecision,
   updatePmDecisionReal as updatePmDecision,
   deletePmDecisionReal as deletePmDecision,
+  listPmWeeklyReportsReal as listPmWeeklyReports,
+  createPmWeeklyReportReal as createPmWeeklyReport,
+  updatePmWeeklyReportReal as updatePmWeeklyReport,
+  deletePmWeeklyReportReal as deletePmWeeklyReport,
+  uploadPmWeeklyReportImageReal as uploadPmWeeklyReportImage,
 } from '@/services/real/pmAgent';
 export type {
   PmProject,
@@ -1974,6 +1979,8 @@ export type {
   PmDecisionType,
   CreatePmDecisionInput,
   UpdatePmDecisionInput,
+  PmWeeklyReport,
+  SavePmWeeklyReportInput,
   PmTask,
   PmTaskDraft,
   PmStakeholder,
