@@ -1299,6 +1299,7 @@ export const api = {
       createTask: (projectId: string) => `/api/pm/projects/${projectId}/tasks`,
       batchTasks: (projectId: string) => `/api/pm/projects/${projectId}/tasks/batch`,
       bulkTasks: (projectId: string) => `/api/pm/projects/${projectId}/tasks/bulk`,
+      members: (projectId: string) => `/api/pm/projects/${projectId}/members`,
       stakeholders: (projectId: string) => `/api/pm/projects/${projectId}/stakeholders`,
       evaluationStart: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/start`,
       evaluationScore: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/score`,

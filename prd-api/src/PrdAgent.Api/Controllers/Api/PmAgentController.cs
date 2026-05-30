@@ -49,10 +49,15 @@ public class PmAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的项目类型"));
 
         var userId = GetUserId();
-        var leaderId = string.IsNullOrWhiteSpace(request.LeaderId) ? userId : request.LeaderId.Trim();
+        // 项目经理必填（前端默认填当前用户但可改）
+        var leaderId = request.LeaderId?.Trim();
+        if (string.IsNullOrWhiteSpace(leaderId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请指定项目经理"));
 
-        // Leader 名称冗余（便于展示）
+        // Leader 名称冗余（便于展示）；同时校验该用户存在
         var leader = await _db.Users.Find(u => u.UserId == leaderId).FirstOrDefaultAsync();
+        if (leader == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "项目经理不是有效用户"));
 
         var project = new PmProject
         {
@@ -78,22 +83,32 @@ public class PmAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(project));
     }
 
-    /// <summary>项目列表（我创建的 + 我参与的）</summary>
+    /// <summary>项目列表。scope: managed(我管理的=项目经理) / related(我相关的=创建人或干系人且非Leader) / all(默认)</summary>
     [HttpGet("projects")]
-    public async Task<IActionResult> ListProjects([FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? type = null)
+    public async Task<IActionResult> ListProjects([FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? type = null, [FromQuery] string? scope = null)
     {
         var userId = GetUserId();
         pageSize = Math.Clamp(pageSize, 1, 100);
         page = Math.Max(1, page);
 
         var b = Builders<PmProject>.Filter;
-        var filter = b.And(
-            b.Eq(p => p.IsDeleted, false),
-            b.Or(b.Eq(p => p.OwnerId, userId), b.Eq(p => p.LeaderId, userId), b.AnyEq(p => p.MemberIds, userId))
-        );
-        if (!string.IsNullOrWhiteSpace(type) && PmProjectType.All.Contains(type))
-            filter = b.And(filter, b.Eq(p => p.ProjectType, type));
+        var conds = new List<FilterDefinition<PmProject>> { b.Eq(p => p.IsDeleted, false) };
 
+        // 访问范围（与 FindAccessibleProjectAsync 对齐：owner/leader/member/stakeholder）
+        var managed = b.Eq(p => p.LeaderId, userId);
+        var related = b.And(
+            b.Or(b.Eq(p => p.OwnerId, userId), b.ElemMatch(p => p.Stakeholders, s => s.UserId == userId)),
+            b.Ne(p => p.LeaderId, userId));
+        if (scope == "managed") conds.Add(managed);
+        else if (scope == "related") conds.Add(related);
+        else conds.Add(b.Or(
+            b.Eq(p => p.OwnerId, userId), b.Eq(p => p.LeaderId, userId),
+            b.AnyEq(p => p.MemberIds, userId), b.ElemMatch(p => p.Stakeholders, s => s.UserId == userId)));
+
+        if (!string.IsNullOrWhiteSpace(type) && PmProjectType.All.Contains(type))
+            conds.Add(b.Eq(p => p.ProjectType, type));
+
+        var filter = b.And(conds);
         var total = await _db.PmProjects.CountDocumentsAsync(filter);
         var items = await _db.PmProjects.Find(filter)
             .SortByDescending(p => p.UpdatedAt)
@@ -167,6 +182,54 @@ public class PmAgentController : ControllerBase
 
         _logger.LogInformation("[pm-agent] Project deleted: {ProjectId} by {UserId}", projectId, userId);
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    // ─────────────────────────────────────────────
+    // 项目成员管理（参与干活的人，区别于干系人）
+    // ─────────────────────────────────────────────
+
+    /// <summary>项目成员详情（含显示名/头像 + 项目经理/创建人标识）</summary>
+    [HttpGet("projects/{projectId}/members")]
+    public async Task<IActionResult> GetMembers(string projectId)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+
+        var members = await ResolveMembersAsync(project.MemberIds);
+        return Ok(ApiResponse<object>.Ok(new { members, leaderId = project.LeaderId, ownerId = project.OwnerId }));
+    }
+
+    /// <summary>整体替换项目成员。仅 owner/leader 可改</summary>
+    [HttpPut("projects/{projectId}/members")]
+    public async Task<IActionResult> SetMembers(string projectId, [FromBody] SetMembersRequest request)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (project.OwnerId != userId && project.LeaderId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅立项人或负责人可管理成员"));
+
+        var ids = (request.MemberIds ?? new()).Distinct().ToList();
+        var valid = await _db.Users.Find(u => ids.Contains(u.UserId)).Project(u => u.UserId).ToListAsync();
+        var members = ids.Where(valid.Contains).ToList();
+
+        await _db.PmProjects.UpdateOneAsync(p => p.Id == projectId,
+            Builders<PmProject>.Update.Set(p => p.MemberIds, members).Set(p => p.UpdatedAt, DateTime.UtcNow));
+
+        var resolved = await ResolveMembersAsync(members);
+        return Ok(ApiResponse<object>.Ok(new { members = resolved, memberIds = members }));
+    }
+
+    /// <summary>把成员 UserId 列表解析为含显示名/头像的对象</summary>
+    private async Task<List<object>> ResolveMembersAsync(List<string> memberIds)
+    {
+        var ids = memberIds.Distinct().ToList();
+        if (ids.Count == 0) return new();
+        var users = await _db.Users.Find(u => ids.Contains(u.UserId)).ToListAsync();
+        return users.Select(u => (object)new { userId = u.UserId, displayName = u.DisplayName, avatarFileName = u.AvatarFileName }).ToList();
     }
 
     // ─────────────────────────────────────────────
@@ -894,6 +957,11 @@ public class CreatePmProjectRequest
     public DateTime? PlannedStartAt { get; set; }
     public DateTime? PlannedEndAt { get; set; }
     public decimal? Budget { get; set; }
+}
+
+public class SetMembersRequest
+{
+    public List<string> MemberIds { get; set; } = new();
 }
 
 public class UpdatePmProjectRequest

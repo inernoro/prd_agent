@@ -4,6 +4,8 @@ import { X } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { createPmProject } from '@/services';
+import { UserSearchSelect } from '@/components/UserSearchSelect';
+import { useAuthStore } from '@/stores/authStore';
 import type { PmProject, PmProjectType, PmOperationSubType } from '@/services/contracts/pmAgent';
 import { PROJECT_TYPE_REGISTRY, OPERATION_SUBTYPE_REGISTRY } from './pmConstants';
 
@@ -16,18 +18,21 @@ const TYPES: PmProjectType[] = ['general', 'strategic', 'innovation', 'operation
 const SUBTYPES: PmOperationSubType[] = ['routine', 'rectification', 'supervision'];
 
 export function CreateProjectDialog({ onClose, onCreated }: Props) {
+  const myId = useAuthStore((s) => s.user?.userId ?? '');
   const [title, setTitle] = useState('');
   const [businessGoal, setBusinessGoal] = useState('');
   const [description, setDescription] = useState('');
   const [projectType, setProjectType] = useState<PmProjectType>('general');
   const [operationSubType, setOperationSubType] = useState<PmOperationSubType>('routine');
   const [strategyAlignment, setStrategyAlignment] = useState('');
+  const [leaderId, setLeaderId] = useState(myId);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   const handleCreate = async () => {
     if (!title.trim()) { setError('请填写项目名称'); return; }
     if (!businessGoal.trim()) { setError('请填写业务目标（AI 拆解任务的依据）'); return; }
+    if (!leaderId) { setError('请指定项目经理'); return; }
     setLoading(true);
     setError('');
     const res = await createPmProject({
@@ -37,6 +42,7 @@ export function CreateProjectDialog({ onClose, onCreated }: Props) {
       projectType,
       operationSubType: projectType === 'operation' ? operationSubType : undefined,
       strategyAlignment: strategyAlignment.trim() || undefined,
+      leaderId,
     });
     setLoading(false);
     if (res.success) {
@@ -73,6 +79,11 @@ export function CreateProjectDialog({ onClose, onCreated }: Props) {
           <div>
             <label className={labelCls} style={{ color: 'var(--text-secondary)' }}>业务目标 <span style={{ color: '#EF4444' }}>*</span></label>
             <textarea className={inputCls} style={{ ...inputStyle, resize: 'vertical', minHeight: 64 }} value={businessGoal} onChange={(e) => setBusinessGoal(e.target.value)} placeholder="项目要达成的业务价值，譬如：新购收入提升 20% / 平台 LTV 提升…（AI 据此拆解任务）" />
+          </div>
+
+          <div>
+            <label className={labelCls} style={{ color: 'var(--text-secondary)' }}>项目经理 <span style={{ color: '#EF4444' }}>*</span></label>
+            <UserSearchSelect value={leaderId} onChange={setLeaderId} placeholder="选择项目经理（默认你自己）" />
           </div>
 
           <div>

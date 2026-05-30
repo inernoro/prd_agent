@@ -4,7 +4,7 @@ import { Button } from '@/components/design/Button';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import { listPmProjects, deletePmProject } from '@/services';
-import type { PmProject } from '@/services/contracts/pmAgent';
+import type { PmProject, PmProjectScope } from '@/services/contracts/pmAgent';
 import { CreateProjectDialog } from './CreateProjectDialog';
 import { ProjectDetailView } from './ProjectDetailView';
 import { DashboardView } from './DashboardView';
@@ -16,16 +16,17 @@ export function PmAgentPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showDashboard, setShowDashboard] = useState(false);
+  const [scope, setScope] = useState<PmProjectScope>('managed');
   const [guideOpen, setGuideOpen] = useState(() => sessionStorage.getItem('pm-guide-collapsed') !== '1');
   const toggleGuide = () => setGuideOpen((v) => { sessionStorage.setItem('pm-guide-collapsed', v ? '1' : '0'); return !v; });
 
   const load = useCallback(async () => {
     setLoading(true);
-    const res = await listPmProjects(1, 100);
+    const res = await listPmProjects({ pageSize: 100, scope });
     if (res.success) setProjects(res.data.items);
     else toast.error('加载失败', res.error?.message || '');
     setLoading(false);
-  }, []);
+  }, [scope]);
 
   useEffect(() => { if (!selectedId) load(); }, [load, selectedId]);
 
@@ -99,6 +100,27 @@ export function PmAgentPage() {
           </div>
         </div>
       )}
+
+      {/* 范围分段：我管理的 / 我相关的 / 全部 */}
+      <div className="shrink-0 flex items-center gap-1 rounded-lg p-1 w-fit" style={{ background: 'var(--bg-base)' }}>
+        {([
+          { key: 'managed' as const, label: '我管理的' },
+          { key: 'related' as const, label: '我相关的' },
+          { key: 'all' as const, label: '全部' },
+        ]).map((s) => {
+          const active = scope === s.key;
+          return (
+            <button
+              key={s.key}
+              onClick={() => setScope(s.key)}
+              className="px-3 py-1.5 rounded-md text-[12px] transition-colors"
+              style={{ background: active ? 'var(--bg-card)' : 'transparent', color: active ? 'var(--text-primary)' : 'var(--text-muted)' }}
+            >
+              {s.label}
+            </button>
+          );
+        })}
+      </div>
 
       {/* 列表 */}
       {loading ? (

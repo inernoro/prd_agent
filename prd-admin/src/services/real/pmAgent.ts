@@ -21,16 +21,28 @@ import type {
   GetPmTaskActivitiesContract,
   AddPmTaskCommentContract,
   BulkPmTasksContract,
+  GetPmMembersContract,
+  SetPmMembersContract,
 } from '@/services/contracts/pmAgent';
 
 export const createPmProjectReal: CreatePmProjectContract = async (input) => {
   return await apiRequest(api.pm.projects.create(), { method: 'POST', body: input });
 };
 
-export const listPmProjectsReal: ListPmProjectsContract = async (page = 1, pageSize = 20, type) => {
+export const listPmProjectsReal: ListPmProjectsContract = async (opts) => {
+  const { page = 1, pageSize = 20, type, scope } = opts ?? {};
   const qs = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (type) qs.set('type', type);
+  if (scope) qs.set('scope', scope);
   return await apiRequest(`${api.pm.projects.list()}?${qs.toString()}`, { method: 'GET' });
+};
+
+export const getPmMembersReal: GetPmMembersContract = async (projectId) => {
+  return await apiRequest(api.pm.projects.members(encodeURIComponent(projectId)), { method: 'GET' });
+};
+
+export const setPmMembersReal: SetPmMembersContract = async (projectId, memberIds) => {
+  return await apiRequest(api.pm.projects.members(encodeURIComponent(projectId)), { method: 'PUT', body: { memberIds } });
 };
 
 export const getPmProjectReal: GetPmProjectContract = async (projectId) => {
