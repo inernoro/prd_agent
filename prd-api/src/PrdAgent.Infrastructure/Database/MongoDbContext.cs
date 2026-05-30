@@ -302,6 +302,10 @@ public class MongoDbContext
     public IMongoCollection<EmergenceTree> EmergenceTrees => _database.GetCollection<EmergenceTree>("emergence_trees");
     public IMongoCollection<EmergenceNode> EmergenceNodes => _database.GetCollection<EmergenceNode>("emergence_nodes");
 
+    // 个人任务树
+    public IMongoCollection<TaskTree> TaskTrees => _database.GetCollection<TaskTree>("task_trees");
+    public IMongoCollection<TaskNode> TaskNodes => _database.GetCollection<TaskNode>("task_nodes");
+
     // Project Management 项目管理
     public IMongoCollection<PmProject> PmProjects => _database.GetCollection<PmProject>("pm_projects");
     public IMongoCollection<PmTask> PmTasks => _database.GetCollection<PmTask>("pm_tasks");

@@ -121,6 +121,7 @@ const ACCENT: Record<string, { from: string; to: string }> = {
   FlaskConical: { from: '#0EA5E9', to: '#7DD3FC' },
   ScrollText: { from: '#64748B', to: '#94A3B8' },
   Sparkle:   { from: '#A855F7', to: '#D8B4FE' },
+  ListTree:  { from: '#22C55E', to: '#86EFAC' },
   Sparkles:  { from: '#FBBF24', to: '#FCD34D' },
   Library:   { from: '#3B82F6', to: '#60A5FA' },
   Store:     { from: '#F59E0B', to: '#FB923C' },

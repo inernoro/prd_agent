@@ -242,6 +242,11 @@ public static class AdminPermissionCatalog
     public const string EmergenceAgentUse = "emergence-agent.use";
 
     /// <summary>
+    /// 个人任务树智能体权限：创建/编辑任务树、对话摘取任务、查看卡点上报（普通用户级 Agent 权限）
+    /// </summary>
+    public const string TaskTreeUse = "task-tree.use";
+
+    /// <summary>
     /// 项目管理智能体权限：立项/任务管理/看板/甘特图/AI 需求拆解（普通用户级 Agent 权限）
     /// </summary>
     public const string PmAgentUse = "pm-agent.use";
@@ -371,6 +376,8 @@ public static class AdminPermissionCatalog
         new(DocumentStoreWrite, "文档空间-写", "创建/编辑/删除文档空间与文档"),
 
         new(EmergenceAgentUse, "涌现探索智能体", "可视化功能涌现与创意探索（创建/探索/涌现）"),
+
+        new(TaskTreeUse, "个人任务树智能体", "分层任务管理、对话摘取任务、卡点上报（创建/编辑/查看）"),
 
         new(PmAgentUse, "项目管理智能体", "项目立项、任务看板、甘特图与 AI 需求拆解"),
         new(PmAgentDashboard, "项目管理-组织NPSS看板", "查看公司级 NPSS 经营看板与奖金测算（仅授予管理层）"),

@@ -1932,6 +1932,29 @@ export type {
   UpdateEmergenceNodeInput,
 } from '@/services/contracts/emergence';
 
+// ── 个人任务树 ──
+export {
+  createTaskTreeReal as createTaskTree,
+  listTaskTreesReal as listTaskTrees,
+  getTaskTreeReal as getTaskTree,
+  deleteTaskTreeReal as deleteTaskTree,
+  createTaskNodeReal as createTaskNode,
+  updateTaskNodeReal as updateTaskNode,
+  deleteTaskNodeReal as deleteTaskNode,
+  addTaskDependencyReal as addTaskDependency,
+  removeTaskDependencyReal as removeTaskDependency,
+  listTaskBlockersReal as listTaskBlockers,
+} from '@/services/real/taskTree';
+export type {
+  TaskTree,
+  TaskNode,
+  TaskStatus,
+  TaskBlockerItem,
+  CreateTaskTreeInput,
+  CreateTaskNodeInput,
+  UpdateTaskNodeInput,
+} from '@/services/contracts/taskTree';
+
 // ── Project Management 项目管理 ──
 export {
   createPmProjectReal as createPmProject,

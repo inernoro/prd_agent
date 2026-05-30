@@ -29,6 +29,7 @@ const DocumentStorePage = lazy(() => import('@/pages/document-store').then(m => 
 const AdminWebPagesPage = lazy(() => import('@/pages/AdminWebPagesPage'));
 const LibraryLandingPage = lazy(() => import('@/pages/library/LibraryLandingPage').then(m => ({ default: m.LibraryLandingPage })));
 const EmergenceExplorerPage = lazy(() => import('@/pages/emergence').then(m => ({ default: m.EmergenceExplorerPage })));
+const TaskTreePage = lazy(() => import('@/pages/task-tree').then(m => ({ default: m.TaskTreePage })));
 const PmAgentPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.PmAgentPage })));
 const ChangelogPage = lazy(() => import('@/pages/changelog/ChangelogPage'));
 const SkillAgentPage = lazy(() => import('@/pages/SkillAgentPage'));
@@ -218,6 +219,20 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'agent',
       appKey: 'emergence-agent',
       tags: ['涌现', '探索', 'AI', '创意', '智能体'],
+    },
+  },
+  {
+    path: '/task-tree',
+    permission: 'task-tree.use',
+    element: shellGuarded('task-tree.use', <TaskTreePage />),
+    nav: {
+      label: '个人任务树',
+      shortLabel: '任务树',
+      description: '分层任务管理，对话摘取任务、卡点上报，一眼看清推进进度',
+      icon: 'ListTree',
+      section: 'agent',
+      appKey: 'task-tree-agent',
+      tags: ['任务', '任务树', '卡点', '进度', '智能体'],
     },
   },
 
