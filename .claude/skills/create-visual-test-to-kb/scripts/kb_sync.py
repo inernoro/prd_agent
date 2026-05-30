@@ -5,9 +5,10 @@
 把一个知识库从源环境导出、导入到目标环境，按 metadata.reportId 幂等去重。
 本期只同步文本类正文（验收报告天然是 markdown），二进制附件源端标 skipped、不搬。
 
-鉴权：与 archive_report.py 一致——AI 超级密钥 + 模拟登录头。
-  - 默认两端共用 env：AI_ACCESS_KEY（密钥）+ MAP_AI_USER（模拟用户）
-  - 目标端如需不同密钥，用 --to-key-env / --to-user-env 指向另一组 env 变量名
+鉴权（两种，优先 scoped key）：
+  - 推荐：设 MAP_DOC_STORE_KEY=sk-ak-...（带 document-store:write scope），走 Bearer，最小权限
+  - 回退：AI_ACCESS_KEY（超级密钥）+ MAP_AI_USER（模拟用户），走 X-AI-Access-Key + X-AI-Impersonate
+  - 目标端如需不同凭据，用 --to-key-env / --to-user-env / --to-agent-key-env 指向另一组 env 变量名
 
 用法：
   export AI_ACCESS_KEY=...  MAP_AI_USER=...
@@ -41,8 +42,14 @@ def curl(args, retries=3):
     raise RuntimeError(f"curl 失败（{retries} 次）：{last}")
 
 
-def headers(key, user, with_json=False):
-    h = ["-H", f"X-AI-Access-Key: {key}", "-H", f"X-AI-Impersonate: {user}"]
+def build_headers(key_env, user_env, agent_key_env, with_json=False):
+    """优先 scoped AgentApiKey（Bearer），无则回退 AI 超级密钥 + impersonate。"""
+    agent_key = os.environ.get(agent_key_env, "").strip() if agent_key_env else ""
+    if agent_key:
+        h = ["-H", f"Authorization: Bearer {agent_key}"]
+    else:
+        h = ["-H", f"X-AI-Access-Key: {os.environ[key_env]}",
+             "-H", f"X-AI-Impersonate: {os.environ[user_env]}"]
     if with_json:
         h += ["-H", "Content-Type: application/json"]
     return h
@@ -59,23 +66,20 @@ def main():
     ap.add_argument("--from", dest="src", required=True, help="源环境 base URL，如 https://a.miduo.org")
     ap.add_argument("--to", dest="dst", required=True, help="目标环境 base URL")
     ap.add_argument("--store", required=True, help="知识库名称（两端按名匹配/创建）")
-    ap.add_argument("--key-env", default="AI_ACCESS_KEY", help="源端密钥 env 变量名")
-    ap.add_argument("--user-env", default="MAP_AI_USER", help="源端模拟用户 env 变量名")
-    ap.add_argument("--to-key-env", default=None, help="目标端密钥 env（缺省同源端）")
+    ap.add_argument("--agent-key-env", default="MAP_DOC_STORE_KEY", help="源端 scoped AgentApiKey env（优先；sk-ak-*）")
+    ap.add_argument("--key-env", default="AI_ACCESS_KEY", help="源端超级密钥 env（scoped key 缺省时回退）")
+    ap.add_argument("--user-env", default="MAP_AI_USER", help="源端模拟用户 env（回退路径用）")
+    ap.add_argument("--to-agent-key-env", default=None, help="目标端 scoped key env（缺省同源端）")
+    ap.add_argument("--to-key-env", default=None, help="目标端超级密钥 env（缺省同源端）")
     ap.add_argument("--to-user-env", default=None, help="目标端模拟用户 env（缺省同源端）")
     ap.add_argument("--dry-run", action="store_true", help="只导出并打印统计，不写目标端")
     a = ap.parse_args()
 
     src = a.src.rstrip("/")
     dst = a.dst.rstrip("/")
-    src_key = os.environ[a.key_env]
-    src_user = os.environ[a.user_env]
-    dst_key = os.environ[a.to_key_env] if a.to_key_env else src_key
-    dst_user = os.environ[a.to_user_env] if a.to_user_env else src_user
-
-    Hs = headers(src_key, src_user)
-    Hd = headers(dst_key, dst_user)
-    HdJ = headers(dst_key, dst_user, with_json=True)
+    Hs = build_headers(a.key_env, a.user_env, a.agent_key_env)
+    HdJ = build_headers(a.to_key_env or a.key_env, a.to_user_env or a.user_env,
+                        a.to_agent_key_env or a.agent_key_env, with_json=True)
 
     # 1. 源端定位库 → 导出 bundle
     sid = find_store(src, Hs, a.store)

@@ -107,6 +107,10 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
                 new Claim("appId", key.Id),
                 new Claim("appName", key.Name),
                 new Claim("boundUserId", key.OwnerUserId),
+                // sub = 绑定用户：让 GetRequiredUserId() 能解析出身份，AgentApiKey 以 owner 身份执行
+                // （与 AiAccessKey handler 设 sub 的做法一致；缺它会导致需要 userId 的控制器 500）
+                new Claim("sub", key.OwnerUserId),
+                new Claim(ClaimTypes.NameIdentifier, key.OwnerUserId),
                 new Claim("authType", "agent-apikey"),
                 new Claim("agentApiKeyId", key.Id)
             };

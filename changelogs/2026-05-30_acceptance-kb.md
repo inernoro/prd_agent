@@ -4,3 +4,5 @@
 | fix | prd-admin | 验收报告库 owner 视角排序改为最新在前（created-desc）+ 默认显示更新时间，修复同名报告按字典序乱簇看不出新旧 |
 | feat | create-visual-test-to-kb | 归档时建库带 templateKey、条目写 verdict/tier/target/reportId metadata；新增 kb_sync.py 跨环境同步脚本 |
 | feat | create-visual-test-to-kb | 归档自动按模块（无模块则 YYYY-MM）find-or-create 子文件夹归类，验收库不再平铺 |
+| feat | prd-api | 新增 document-store:read/write AgentApiKey scope；AdminPermissionMiddleware 支持 scope(a:b)→权限(a.b)精确映射；AgentApiKey 补 sub claim 使 M2M Key 能以 owner 身份写文档空间，替代 AI 超级密钥 |
+| feat | create-visual-test-to-kb | 归档/同步脚本优先用 MAP_DOC_STORE_KEY（document-store:write 最小权限 scoped key，Bearer），无则回退超级密钥 |

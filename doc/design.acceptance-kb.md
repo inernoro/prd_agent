@@ -55,7 +55,7 @@
 - 二进制附件（截图）的跨环境同步——v1 只搬文本正文，bundle 标注 skipped。
 - 给所有知识库做通用模板系统——本期只注册 `acceptance-report-v2` 一个模板。
 - 重做分享阅读页排序（分享页已是 `created-desc`，本就正确）。
-- 专用最小权限 AgentApiKey（沿用现有 `AI_ACCESS_KEY` 通道，列入 `debt`）。
+- 跨环境同步二进制附件（截图）——本期只搬文本正文。
 
 ---
 
@@ -98,7 +98,12 @@
 | `stores/{id}/export` | GET | 返回 bundle JSON：store 元信息（含 templateKey）+ 文件夹树 + entries（tags/metadata）+ 每条正文 markdown；二进制附件标 skipped |
 | `stores/import` | POST | 按 bundle 重建；幂等：按 `metadata.reportId` 去重，存在则跳过 |
 
-CLI：`.claude/skills/create-visual-test-to-kb/scripts/kb_sync.py --store 验收报告 --from <url> --to <url>`，内部 export → import，鉴权复用技能既有的 `AI_ACCESS_KEY` + `MAP_AI_USER`（目标端可用 `--to-key-env` 指向另一组），返回 `{created, skipped, failed}` 统计。归属在验收技能下而非 cdscli（cdscli 是 CDS 控制面，打的是 app 的 `/api/document-store`，属不同层）。
+CLI：`.claude/skills/create-visual-test-to-kb/scripts/kb_sync.py --store 验收报告 --from <url> --to <url>`，内部 export → import，鉴权优先 `MAP_DOC_STORE_KEY` scoped key（见 5.D）、无则回退 `AI_ACCESS_KEY` + `MAP_AI_USER`，返回 `{created, skipped, failed}` 统计。归属在验收技能下而非 cdscli（cdscli 是 CDS 控制面，打的是 app 的 `/api/document-store`，属不同层）。
+
+### 5.D 最小权限写入（document-store:write scoped key）+ 自动子文件夹
+
+- **scoped key**：新增 `document-store:read` / `document-store:write` AgentApiKey scope。`AdminPermissionMiddleware` 增加「scope `a:b` 精确满足 admin 权限 `a.b`」的映射（仅精确等值，不跨资源泄漏），`ApiKeyAuthenticationHandler` 给 AgentApiKey 补 `sub` claim 使其以 owner 身份执行。归档/同步脚本优先用 `MAP_DOC_STORE_KEY`（Bearer），替代 AI 超级密钥——最小权限、无 impersonate、可单独撤销。未设则回退超级密钥（向后兼容）。
+- **自动子文件夹**：归档时按 `--module`（无则 `YYYY-MM`）find-or-create 根级子文件夹，条目挂其下，验收库不再平铺成几百条。
 
 ---
 

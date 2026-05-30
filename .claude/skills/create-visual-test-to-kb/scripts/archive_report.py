@@ -96,9 +96,20 @@ def run_local(cfg, a, title, report_id, body, manifest, meta, tags=None):
 
 def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=None):
     api = cfg["auth"]["api"]
-    key = os.environ[api["keyEnv"]]
-    imp = os.environ[api["impersonateEnv"]]
-    H = ["-H", f"{api['keyHeader']}: {key}", "-H", f"{api['impersonateHeader']}: {imp}"]
+    # 简便方式（推荐）：设 MAP_DOC_STORE_KEY=sk-ak-...（带 document-store:write scope 的最小权限长效 Key），
+    # 走 Authorization: Bearer，无需 impersonate、无需 AI 超级密钥。
+    # 未设时回退 AI 超级密钥 + X-AI-Impersonate（向后兼容）。
+    agent_key_env = api.get("agentKeyEnv", "MAP_DOC_STORE_KEY")
+    agent_key = os.environ.get(agent_key_env, "").strip()
+    if agent_key:
+        H = ["-H", f"Authorization: Bearer {agent_key}"]
+        imp = os.environ.get(api.get("impersonateEnv", ""), "") or "(scoped-key-owner)"
+        print(f"  鉴权：AgentApiKey scope（{agent_key_env}，最小权限 document-store:write）")
+    else:
+        key = os.environ[api["keyEnv"]]
+        imp = os.environ[api["impersonateEnv"]]
+        H = ["-H", f"{api['keyHeader']}: {key}", "-H", f"{api['impersonateHeader']}: {imp}"]
+        print("  鉴权：AI 超级密钥 + impersonate（建议改用 MAP_DOC_STORE_KEY scoped key）")
     HJ = H + ["-H", "Content-Type: application/json"]
     base = preview.rstrip("/") + cfg["report"]["apiBasePath"]
 

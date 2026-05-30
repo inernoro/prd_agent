@@ -16,8 +16,10 @@
       "loggedInWhen": "leave-login-path"
     },
     "api": {
-      "_comment": "归档落库用。prd-agent 走 AI 超级密钥模拟登录。",
+      "_comment": "归档落库用。优先 scoped AgentApiKey(最小权限)，无则回退 AI 超级密钥模拟登录。",
       "type": "ai-access-key",
+      "agentKeyEnv": "MAP_DOC_STORE_KEY",
+      "_agentKeyNote": "推荐：在 知识库→接入AI/AgentApiKey 处签发一个带 document-store:write scope 的长效 Key(sk-ak-*)，export 到 MAP_DOC_STORE_KEY。脚本会优先用它走 Authorization: Bearer，最小权限、无需 impersonate。未设则回退下面的超级密钥。",
       "keyHeader": "X-AI-Access-Key",
       "keyEnv": "AI_ACCESS_KEY",
       "impersonateHeader": "X-AI-Impersonate",

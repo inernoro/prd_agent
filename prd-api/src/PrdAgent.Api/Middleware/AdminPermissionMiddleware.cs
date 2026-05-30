@@ -47,6 +47,24 @@ public sealed class AdminPermissionMiddleware
         return false;
     }
 
+    /// <summary>
+    /// AgentApiKey scope 授权：scope "a:b"（冒号）满足 admin 权限 "a.b"（点分）。
+    /// 让持 document-store:write scope 的最小权限 M2M Key 能写文档空间，
+    /// 无需 admin 账户权限位、无需 AI 超级密钥。精确等值匹配，不跨资源泄漏
+    /// （document-store:write 只满足 document-store.write，不满足别的权限）。
+    /// </summary>
+    private static bool HasScopeGrant(HttpContext ctx, string requiredPermission)
+    {
+        var scopes = ctx.User?.FindAll("scope");
+        if (scopes == null) return false;
+        foreach (var c in scopes)
+        {
+            if (string.Equals(c.Value.Replace(':', '.'), requiredPermission, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
 
     public async Task Invoke(HttpContext context, IAdminPermissionService permissionService)
     {
@@ -75,6 +93,14 @@ public sealed class AdminPermissionMiddleware
             context.Response.ContentType = "application/json; charset=utf-8";
             var payload = ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权");
             await context.Response.WriteAsync(JsonSerializer.Serialize(payload, _jsonOptions));
+            return;
+        }
+
+        // AgentApiKey scope 授权：持有匹配 scope 的 M2M Key 直接放行（最小权限路径，
+        // 不走 admin 账户权限位 / Access 门槛）。放在 perms 计算前，避免 scoped key 被 Access 门挡掉。
+        if (HasScopeGrant(context, required))
+        {
+            await _next(context);
             return;
         }
 
