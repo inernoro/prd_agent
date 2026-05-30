@@ -25,6 +25,13 @@
 - 删：评论作者本人 或 站点 owner。
 - 开关：仅 owner / editor 可切换 `CommentsEnabled`（默认 true，存量站点反序列化为 true）。
 
+## 验收状态（2026-05-30）
+
+- 前端：`pnpm tsc --noEmit` 0 error、`pnpm lint` 改动文件 0 告警（已自测通过）。
+- 后端 C#：本地无 dotnet SDK，依赖 CDS 远端编译验证。**截至交付，CDS 分支 `claude-fervent-meitner-lcue8` 持续 `building` 近 30 分钟，预览域名 `/api/v` 恒 503，deploy 触发返回 HTTP 500（git 操作成功但部署链路失败）** —— 属 CDS 构建侧外部阻塞，非本次代码可自解。
+- 视觉验收（create-visual-test-to-kb）**未执行**：(a) 预览未就绪；(b) `MAP_ACCEPT_PASS` 登录密码 env 缺失，harness 无法走真人登录路径发表评论。两者均为外部不可自产输入。
+- 待 CDS 构建绿灯 + 提供登录密码后，按既定 driver（登录 → 点「网页托管」→ 站点卡「评论管理」→ 截图；分享页评论区双主题）补跑视觉验收并归档。
+
 ## 关联
 
 - 后端：`HostedSiteComment.cs`、`HostedSiteService.cs`（评论段）、`WebPagesController.cs`（评论端点）、`IHostedSiteService.cs`（DTO）
