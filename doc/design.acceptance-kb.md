@@ -1,6 +1,6 @@
 # 验收报告知识库 · 设计
 
-> **版本**：v1.0 | **日期**：2026-05-30 | **状态**：实施中
+> **版本**：v1.0 | **日期**：2026-05-30 | **状态**：已落地（后端 B/C 经预览域名端到端自测通过；前端 A 徽章已类型+数据验证，待真人视觉确认）
 > **关联实现**：`prd-api/.../DocumentStoreController.cs`、`prd-admin/.../DocBrowser.tsx`、`.claude/skills/create-visual-test-to-kb/`
 > **关联设计**：`design.acceptance-system.md`（验收体系主文档）、`debt.knowledge-base.md`、`debt.acceptance-system.md`
 > **一句话**：把"验收报告堆进一个平铺知识库、看不出新旧也看不出通过没通过"升级为"最新在前、结论可视、结构受模板约束、可跨环境同步"的质量资产库。
