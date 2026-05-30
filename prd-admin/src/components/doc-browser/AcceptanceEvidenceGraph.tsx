@@ -7,6 +7,8 @@ import {
   Controls,
   MarkerType,
   ReactFlowProvider,
+  Handle,
+  Position,
   type Node,
   type Edge,
   type NodeProps,
@@ -66,6 +68,9 @@ function StepNode({ data }: NodeProps) {
         boxShadow: '0 6px 20px rgba(0,0,0,0.35)',
       }}
     >
+      {/* 连接点：边必须连到 Handle，否则不渲染（ReactFlow v12） */}
+      <Handle type="target" position={Position.Top} style={{ opacity: 0 }} isConnectable={false} />
+      <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} isConnectable={false} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px' }}>
         <span
           style={{
