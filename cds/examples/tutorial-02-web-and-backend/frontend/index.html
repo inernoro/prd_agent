@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CDS 教程 02 - 网页 + 后台</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 640px; margin: 64px auto; padding: 0 16px; }
+      code { background: #f1eae4; padding: 2px 6px; border-radius: 4px; }
+      pre { background: #f1eae4; padding: 12px; border-radius: 6px; }
+    </style>
+  </head>
+  <body>
+    <h1>CDS 教程 02 - 网页 + 后台</h1>
+    <p>前端通过 <code>/api/health</code> 调用同域后端，CDS 用 path 前缀把 <code>/api/</code> 路由到后端 service。</p>
+    <button id="btn">调用 /api/health</button>
+    <pre id="out">点上面的按钮…</pre>
+    <script>
+      document.getElementById("btn").addEventListener("click", async () => {
+        const out = document.getElementById("out");
+        try {
+          const r = await fetch("/api/health");
+          out.textContent = JSON.stringify(await r.json(), null, 2);
+        } catch (e) {
+          out.textContent = "请求失败: " + e;
+        }
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CDS 教程 03 - 网页 + 后台 + MongoDB</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 640px; margin: 64px auto; padding: 0 16px; }
+      pre { background: #f1eae4; padding: 12px; border-radius: 6px; }
+    </style>
+  </head>
+  <body>
+    <h1>CDS 教程 03 - 网页 + 后台 + MongoDB</h1>
+    <p>点击按钮会让后端往 MongoDB 写一条访问记录，并返回累计访问数。</p>
+    <button id="btn">记录一次访问</button>
+    <pre id="out">点上面的按钮…</pre>
+    <script>
+      document.getElementById("btn").addEventListener("click", async () => {
+        const out = document.getElementById("out");
+        try {
+          const r = await fetch("/api/visit");
+          out.textContent = JSON.stringify(await r.json(), null, 2);
+        } catch (e) {
+          out.textContent = "请求失败: " + e;
+        }
+      });
+    </script>
+  </body>
+</html>

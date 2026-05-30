@@ -1,0 +1,18 @@
+services:
+  web:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -lc "npx --yes serve -s . -l ${PORT}"
+    ports:
+      - "4173:4173"
+    volumes:
+      - ./site:/app
+    environment:
+      PORT: "4173"
+    labels:
+      cds.path-prefix: /
+      cds.readiness-path: /
+
+x-cds-project:
+  name: CDS 教程 01 - 静态网页托管
+  description: 最小静态站点，单个 service，无后端无数据库。

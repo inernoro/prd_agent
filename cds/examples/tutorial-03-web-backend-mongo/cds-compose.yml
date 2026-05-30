@@ -1,0 +1,57 @@
+services:
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -lc "npx --yes serve -s . -l ${PORT}"
+    ports:
+      - "4173:4173"
+    volumes:
+      - ./frontend:/app
+    environment:
+      PORT: "4173"
+    labels:
+      cds.path-prefix: /
+      cds.readiness-path: /
+
+  backend:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -lc "npm install --no-audit --no-fund && npm start"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - mongodb
+    environment:
+      PORT: "3000"
+      MONGODB_URL: ${MONGODB_URL}
+    labels:
+      cds.path-prefix: /api/
+      cds.readiness-path: /ready
+
+  mongodb:
+    image: mongo:8.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb-data:/data/db
+    healthcheck:
+      test: 'mongosh --eval "db.runCommand({ping:1})" --quiet'
+      interval: 10s
+      retries: 3
+
+volumes:
+  mongodb-data:
+
+x-cds-project:
+  name: CDS 教程 03 - 网页 + 后台 + MongoDB
+  description: 前端 + Express 后端 + MongoDB，后端读写一条访问记录。
+
+x-cds-env:
+  MONGODB_URL: mongodb://mongodb:27017/app
+
+x-cds-env-meta:
+  MONGODB_URL:
+    kind: infra-derived
+    hint: 后端连接 MongoDB 的连接串。

@@ -394,6 +394,9 @@
 - [CDS 三种部署方式指南](guide.cds-deploy-three-paths) `guide.cds-deploy-three-paths`
   > 从 cds-compose.yml、CDS 技能扫描、从 0 创建三条路径完成部署的步骤和验收标准
 
+- [从零开始的 CDS 教程 · 指南](guide.cds-tutorial) `guide.cds-tutorial`
+  > 4 个横向场景（静态/网页+后台/+MongoDB/+redis+mysql+rabbitmq）× 2 条纵向路径（直配/compose 导入）+ compose 评分/自愈 + 每场景独立知识库
+
 - [CDS 全栈基础设施冒烟样例指南](guide.cds-fullstack-infra-smoke) `guide.cds-fullstack-infra-smoke`
   > 使用前端、后端、MySQL、Redis、RabbitMQ 极简样例验证 CDS 一键部署和沙盒导入适配度
 
@@ -669,6 +672,9 @@
 
 - [CDS compose 模板 TODO secrets · 债务台账](debt.cds-compose-secrets) `debt.cds-compose-secrets`
   > 2 条 open：x-cds-env TODO secrets 致全量 import 必被拒 / admin static 每次冷 vite build 就绪窗口紧绷
+
+- [CDS 教程（示例工程 + 隔离知识库 + 评分/自愈）· 债务台账](debt.cds-tutorial) `debt.cds-tutorial`
+  > 5 条 open：--write 重序列化丢注释 / 自愈覆盖面有限 / 占位值需人工 / 真机冒烟依赖 CDS / 发布脚本需真实 owner
 
 - [知识库（AI Toolbox attachment + 文档空间）债务台账](debt.knowledge-base) `debt.knowledge-base`
   > 8 条 open：两套并存模型 / RAG embedding 未做 / wip 标签 CI 守卫 / 上传 API 不互通 / 等

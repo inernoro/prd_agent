@@ -1,0 +1,32 @@
+services:
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -lc "npx --yes serve -s . -l ${PORT}"
+    ports:
+      - "4173:4173"
+    volumes:
+      - ./frontend:/app
+    environment:
+      PORT: "4173"
+    labels:
+      cds.path-prefix: /
+      cds.readiness-path: /
+
+  backend:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -lc "npm install --no-audit --no-fund && npm start"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./backend:/app
+    environment:
+      PORT: "3000"
+    labels:
+      cds.path-prefix: /api/
+      cds.readiness-path: /ready
+
+x-cds-project:
+  name: CDS 教程 02 - 网页 + 后台
+  description: 前端静态站 + Express 后端，path 前缀路由 / 与 /api/。
