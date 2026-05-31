@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -34,6 +35,17 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
         // 知识库公开端点（智识殿堂浏览/详情/分享）
         "/api/document-store/public/",
     };
+
+    // 站点维度评论的「列表 + 发表」路由：/api/web-pages/{siteId}/comments
+    // siteId 在路径中段，无法用 PublicRoutes 的 StartsWith 前缀命中。
+    // ListCommentsBySiteAsync/AddCommentBySiteAsync 经 GetByIdAsync 自行鉴权（owner + 团队成员，
+    // 含 viewer 角色均可读/评），若仍套用 AdminPermissionMiddleware 的 WebPagesWrite 写权限，
+    // 团队 viewer 成员从面板发表评论会被提前拦成 403（Codex P2）。这里只豁免「权限检查」，
+    // [Authorize] 仍要求登录，业务层 access check 仍在，故是登录态 + 业务层鉴权。
+    // 注意：$ 锚点确保只命中 .../comments，不会误伤 {id}/comments-enabled（owner/editor 专属开关，需保留写权限）。
+    private static readonly Regex SiteCommentRoute = new(
+        @"^/api/web-pages/[^/]+/comments/?$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     public AdminControllerScanner(ILogger<AdminControllerScanner> logger, Assembly? controllerAssembly = null)
     {
@@ -166,6 +178,11 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
             {
                 return true;
             }
+        }
+        // 站点维度评论列表/发表（siteId 在路径中段，前缀匹配命中不了）
+        if (SiteCommentRoute.IsMatch(path))
+        {
+            return true;
         }
         return false;
     }
