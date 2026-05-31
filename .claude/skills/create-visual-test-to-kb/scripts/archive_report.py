@@ -115,6 +115,7 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
 
     store_name = cfg["report"]["storeName"]
     want_public = bool(cfg["report"].get("isPublic", False))
+    want_template = cfg["report"].get("templateKey")
     stores = curl(H + [f"{base}/stores?pageSize=100"])["data"]["items"]
     match = [s for s in stores if s["name"] == store_name]
     if match:
@@ -126,13 +127,18 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
             print(f"  [告警] 复用库「{store_name}」isPublic={cur_public}，但 config 要 {want_public}："
                   + ("该库当前公开在殿堂(对所有人可见)，验收报告通常应私有；如非本意请把库设私有后重跑。"
                      if cur_public else "config 想公开但库是私有；如需进殿堂请手动设公开。"))
+        # 补 templateKey：早就存在的库（find-or-create 复用）可能缺 templateKey，
+        # 导致前端排序退化为字典序、最新报告不在最前。缺了就补，让 created-desc 生效。
+        if want_template and match[0].get("templateKey") != want_template:
+            curl(HJ + ["-X", "PUT", "-d", json.dumps({"templateKey": want_template}), f"{base}/stores/{rid}"])
+            print(f"  复用库缺 templateKey，已补设为 {want_template}（让最新报告排最前）")
     else:
         rid = curl(HJ + ["-X", "POST", "-d", json.dumps(
             {"name": store_name, "description": cfg["report"].get("storeDescription", ""),
              "isPublic": want_public,
              # 模板键：让"验收报告库"对写入条目做结构约束（design.acceptance-kb.md §5.B）。
              # 机器归档缺必填 metadata/正文 section 会被后端 422 拒收。
-             "templateKey": cfg["report"].get("templateKey")}
+             "templateKey": want_template}
         ), f"{base}/stores"])["data"]["id"]
     print(f"  报告库 id={rid}")
 
@@ -158,27 +164,13 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
         "reportId": report_id,
         "acceptedAt": now.isoformat(timespec="seconds"),
     }
-    # Q5 自动分子文件夹：按模块归档（无模块则按 YYYY-MM），避免验收库平铺成几百条。
-    # find-or-create：列已有条目找同名根级文件夹，命中复用、否则建。后端 CreateFolder 不去重，故在此 find-or-create。
-    folder_name = (a.module or "").strip() or now.strftime("%Y-%m")
-    parent_id = None
-    try:
-        ents = curl(H + [f"{base}/stores/{rid}/entries?all=true&pageSize=500"])["data"]["items"]
-        hit = [e for e in ents if e.get("isFolder") and not e.get("parentId") and e.get("title") == folder_name]
-        if hit:
-            parent_id = hit[0]["id"]
-        else:
-            parent_id = curl(HJ + ["-X", "POST", "-d", json.dumps({"name": folder_name}),
-                                   f"{base}/stores/{rid}/folders"])["data"]["id"]
-        print(f"  归档子文件夹「{folder_name}」id={parent_id}")
-    except Exception as e:
-        print(f"  [提示] 子文件夹归档失败，落根级：{str(e)[:100]}")
-        parent_id = None
-
+    # 报告平铺在库根级（不自动分子文件夹）：用户最看重"最新报告一眼可见"，
+    # 配合库的 created-desc 排序，新报告永远在最顶。曾经按模块自动建子文件夹，
+    # 反而把最新报告藏进文件夹、与"最新最前"打架，已撤销。
+    # （原始诉求 Q5 问的是"验收报告是否独立成库"，是库级隔离，不是库内再分子文件夹。）
     eid = curl(HJ + ["-X", "POST", "-d", json.dumps({
         "title": title, "summary": f"# {title}",  # 双保险:summary 也以标题打头
         "sourceType": "reference", "contentType": "text/markdown",
-        "parentId": parent_id,  # 归入模块/月份子文件夹（None 则根级）
         "tags": tags or [],  # 状态(通过/不通过)+操作方式+档位走标签，不进标题
         "metadata": entry_meta,
     }), f"{base}/stores/{rid}/entries"])["data"]["id"]
