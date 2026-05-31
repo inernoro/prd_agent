@@ -177,6 +177,8 @@ export function TaskTreePage() {
         setTreeId(first.id);
         await loadTree(first.id);
       }
+    } else {
+      toast.error(res.error?.message ?? '加载任务树列表失败');
     }
     setLoading(false);
   }, [loadTree]);
@@ -198,6 +200,9 @@ export function TaskTreePage() {
       if (res.success && res.data) {
         setBlockers(res.data.items);
         setCanViewAll(res.data.canViewAll);
+      } else {
+        setBlockers([]); // 失败不残留上一 scope 的卡点
+        toast.error(res.error?.message ?? '加载卡点失败');
       }
     })();
   }, [view, wallScope]);
@@ -247,9 +252,16 @@ export function TaskTreePage() {
     if (!title) { toast.error('请输入任务树标题'); return; }
     const res = await createTaskTree({ title });
     if (res.success && res.data) {
+      // 直接采用返回的树与根节点，不依赖二次 list/detail（其失败会卡在空状态却已建树）
       setNewTitle('');
-      await loadTrees();
+      setTrees((ts) => [res.data!.tree, ...ts]);
+      setTreeId(res.data.tree.id);
+      firstLoadRef.current = true;
+      newIdsRef.current = new Set([res.data.root.id]);
+      setNodes([res.data.root]);
+      setSelectedId(null);
       toast.success('任务树已创建');
+      setTimeout(() => fit(), 80);
     } else {
       toast.error(res.error?.message ?? '创建失败');
     }
@@ -333,13 +345,17 @@ export function TaskTreePage() {
     if (!title) return;
     const res = await createTaskTree({ title });
     if (res.success && res.data) {
+      // 直接采用返回的树与根节点，避免二次 list/detail 失败时状态不一致
       setNewTreeTitle('');
       setShowNewTree(false);
-      const list = await listTaskTrees();
-      if (list.success && list.data) setTrees(list.data.items);
+      setTrees((ts) => [res.data!.tree, ...ts]);
       setTreeId(res.data.tree.id);
-      await loadTree(res.data.tree.id);
+      firstLoadRef.current = true;
+      newIdsRef.current = new Set([res.data.root.id]);
+      setNodes([res.data.root]);
+      setSelectedId(null);
       toast.success('任务树已创建');
+      setTimeout(() => fit(), 80);
     } else {
       toast.error(res.error?.message ?? '创建失败');
     }
@@ -365,7 +381,7 @@ export function TaskTreePage() {
     const ctrl = new AbortController();
     let typing = '';
     try {
-      const apiBase = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
+      const apiBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').replace(/\/+$/, '');
       const resp = await fetch(`${apiBase}${api.taskTree.trees.extract(encodeURIComponent(treeId))}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
@@ -635,7 +651,7 @@ function SidePanel({
         className="tt-titleedit"
         value={titleDraft}
         onChange={(e) => setTitleDraft(e.target.value)}
-        onBlur={() => onRename(node, titleDraft)}
+        onBlur={() => { if (titleDraft.trim()) onRename(node, titleDraft); else setTitleDraft(node.title); }}
         onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
       />
       <div className="tt-meta">{parent ? `属于：${parent.title}` : '创世支柱（根任务）'}</div>

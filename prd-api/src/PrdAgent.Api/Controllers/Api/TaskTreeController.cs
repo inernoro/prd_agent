@@ -147,7 +147,9 @@ public class TaskTreeController : ControllerBase
         if (parentId == null)
         {
             var root = await _db.TaskNodes.Find(n => n.TreeId == treeId && n.ParentId == null).FirstOrDefaultAsync();
-            parentId = root?.Id;
+            if (root == null)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "任务树缺少根节点，无法挂载"));
+            parentId = root.Id;
         }
         else
         {

@@ -16,3 +16,8 @@
 | fix | prd-admin | removeNode/addDep/removeDep 对 dependsOn 加 null 兜底 |
 | fix | prd-admin | 重命名根节点时同步刷新本地 trees 列表（头部下拉即时更新） |
 | fix | prd-api | DeleteTree 清理其它树对被删节点的跨树依赖引用，避免悬空依赖边 |
+| fix | prd-admin | 创建任务树直接采用返回的树+根节点，不依赖二次 list/detail；失败不弹成功 toast |
+| fix | prd-admin | loadTrees/卡点墙 scope 加载失败时报错兜底，不残留旧数据/不误显空状态 |
+| fix | prd-admin | 侧栏标题清空失焦时还原为原标题，不留空白编辑框 |
+| fix | prd-admin | extract SSE base URL 去尾部斜杠，避免双斜杠路由不匹配 |
+| fix | prd-api | CreateNode 在树缺根节点时拒绝挂载，不再产生孤儿节点 |
