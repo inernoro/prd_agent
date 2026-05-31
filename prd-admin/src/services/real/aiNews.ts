@@ -14,6 +14,8 @@ export interface AiNewsItem {
   aiScore: number;
   /** 命中的 AI 关键信号词（如 ["智能体","RAG"]），作为附加标签展示。 */
   aiSignals: string[];
+  /** 文章摘要片段（默认展示的「部分内容」，抓不到为 null）。 */
+  excerpt?: string | null;
 }
 
 /** 资讯流响应（与后端 AiNewsFeed 对应）。 */
@@ -37,7 +39,19 @@ export function getAiNewsLatest(): Promise<ApiResponse<AiNewsFeed>> {
 }
 
 /**
- * 为指定资讯 id 批量获取「一句话 AI 解读」（命中缓存直接返回，未命中后端调 LLM 生成）。
+ * 为指定资讯 id 批量抓取文章摘要片段（默认展示的「部分内容」）。
+ * 命中缓存直接返回，未命中后端抓目标页 meta 描述。返回 id -> 摘要（仅含非空）。
+ */
+export function getAiNewsExcerpt(ids: string[]): Promise<ApiResponse<Record<string, string>>> {
+  return apiRequest<Record<string, string>>('/api/ai-news/excerpt', {
+    method: 'POST',
+    body: { ids },
+    auth: false,
+  });
+}
+
+/**
+ * 为指定资讯 id 批量获取「一句话 AI 解读」（备用：摘要抓不到时兜底）。
  * 需登录态（后端 [Authorize]）。返回 id -> 解读文本 的映射。
  */
 export function getAiNewsCommentary(ids: string[]): Promise<ApiResponse<Record<string, string>>> {

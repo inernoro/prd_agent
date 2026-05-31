@@ -49,9 +49,27 @@ public class AiNewsController : ControllerBase
         var map = await _service.EnrichCommentaryAsync(ids, userId, ct);
         return Ok(ApiResponse<Dictionary<string, string>>.Ok(map));
     }
+
+    /// <summary>
+    /// 为指定资讯抓取 / 读取文章摘要片段（默认展示的「部分内容」）。
+    /// 公共数据，允许匿名；只抓 feed 内已知 URL（无 SSRF 风险）。前端按可见条目分批请求。
+    /// </summary>
+    [HttpPost("excerpt")]
+    [AllowAnonymous]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<IActionResult> Excerpt([FromBody] AiNewsCommentaryRequest body, CancellationToken ct)
+    {
+        var ids = body?.Ids ?? new List<string>();
+        if (ids.Count == 0)
+        {
+            return Ok(ApiResponse<Dictionary<string, string>>.Ok(new()));
+        }
+        var map = await _service.EnrichExcerptAsync(ids, ct);
+        return Ok(ApiResponse<Dictionary<string, string>>.Ok(map));
+    }
 }
 
-/// <summary>「一句话解读」请求体：要解读的资讯 id 列表（取自当前 feed）。</summary>
+/// <summary>资讯增强请求体：要处理的资讯 id 列表（取自当前 feed）。</summary>
 public class AiNewsCommentaryRequest
 {
     public List<string> Ids { get; set; } = new();

@@ -8,3 +8,5 @@
 | feat | prd-api | 新增「AI 大事」一句话解读：POST /api/ai-news/commentary 按资讯 id 批量调 LLM 生成编辑点评(基于标题/来源/分类)，落 ai_news_enrichments 缓存去重；注册 AppCaller prd-admin.ai-news.commentary::chat |
 | feat | prd-admin | 「AI 大事」时间线改为流动新闻 feed(去掉每条独立边框,改细分隔线)，每条新增 AI 一句话解读(渐进拉取+生成中呼吸占位)，让资讯有内容、活起来 |
 | fix | prd-admin | 「AI 大事」时间线视觉重做:三列布局(时间/脊/内容)修掉圆点压时间 bug;AI 解读去掉半透明圆角玻璃框,改扁平报刊导语(细实线+文字),整体更干净 |
+| feat | prd-api | 「AI 大事」默认改为抓文章 meta 摘要(og:description/description)做内容片段,缓存 Excerpt;新增 POST /api/ai-news/excerpt(匿名,只抓 feed 内已知 URL 防 SSRF);AI 解读降级为抓不到摘要时的备用 |
+| feat | prd-admin | 「AI 大事」内容片段默认显示文章摘要(无标签新闻 dek),抓不到才回退 AI 解读(带「AI解读」标签);渐进抓取 |

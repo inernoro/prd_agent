@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { glassPanel } from '@/lib/glassStyles';
-import { getAiNewsLatest, getAiNewsCommentary, type AiNewsFeed, type AiNewsItem } from '@/services/real/aiNews';
+import { getAiNewsLatest, getAiNewsExcerpt, getAiNewsCommentary, type AiNewsFeed, type AiNewsItem } from '@/services/real/aiNews';
 import {
   labelMeta,
   itemTime,
@@ -93,9 +93,12 @@ export function AiNewsTimeline() {
   const [view, setView] = useState<View>('timeline');
   const [now, setNow] = useState(() => Date.now());
   const [visible, setVisible] = useState(PAGE);
-  // AI 一句话解读：id -> 文本；已请求过的 id 记到 ref 避免重复拉取
+  // 默认内容=文章摘要片段；摘要抓不到时回退 AI 解读（备用）。
+  const [excerpt, setExcerpt] = useState<Record<string, string>>({});
+  const [noExcerpt, setNoExcerpt] = useState<Set<string>>(new Set());
   const [commentary, setCommentary] = useState<Record<string, string>>({});
-  const requestedRef = useRef<Set<string>>(new Set());
+  const excerptReqRef = useRef<Set<string>>(new Set());
+  const commentaryReqRef = useRef<Set<string>>(new Set());
 
   const load = useCallback(async (initial: boolean) => {
     if (initial) setLoading(true);
@@ -167,17 +170,45 @@ export function AiNewsTimeline() {
     [feed],
   );
 
-  // 渐进拉取可见条目的「一句话 AI 解读」：每出现一批新 id 就请求一次（后端缓存 + 批量 LLM）
+  // 默认：渐进抓取可见条目的文章摘要片段。抓到的填 excerpt，没抓到的记入 noExcerpt（待回退 AI 解读）。
   useEffect(() => {
-    const ids = shown.map((i) => i.id).filter((id) => id && !requestedRef.current.has(id));
+    const ids = shown.map((i) => i.id).filter((id) => id && !excerptReqRef.current.has(id));
     if (ids.length === 0) return;
-    ids.forEach((id) => requestedRef.current.add(id));
+    ids.forEach((id) => excerptReqRef.current.add(id));
     let alive = true;
     void (async () => {
-      // 分批（与后端单次上限对齐），逐批回填，体验上「逐条活起来」
-      for (let i = 0; i < ids.length; i += 10) {
+      for (let i = 0; i < ids.length; i += 12) {
         if (!alive) return;
-        const chunk = ids.slice(i, i + 10);
+        const chunk = ids.slice(i, i + 12);
+        const res = await getAiNewsExcerpt(chunk);
+        if (!alive) return;
+        const data = res.success && res.data ? res.data : {};
+        setExcerpt((prev) => ({ ...prev, ...data }));
+        const missing = chunk.filter((id) => !data[id]);
+        if (missing.length > 0) {
+          setNoExcerpt((prev) => {
+            const next = new Set(prev);
+            missing.forEach((id) => next.add(id));
+            return next;
+          });
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [shown]);
+
+  // 备用：仅对「确认抓不到摘要」的条目，回退拉取 AI 一句话解读。
+  useEffect(() => {
+    const ids = [...noExcerpt].filter((id) => !commentaryReqRef.current.has(id));
+    if (ids.length === 0) return;
+    ids.forEach((id) => commentaryReqRef.current.add(id));
+    let alive = true;
+    void (async () => {
+      for (let i = 0; i < ids.length; i += 6) {
+        if (!alive) return;
+        const chunk = ids.slice(i, i + 6);
         const res = await getAiNewsCommentary(chunk);
         if (alive && res.success && res.data) {
           setCommentary((prev) => ({ ...prev, ...res.data }));
@@ -187,7 +218,7 @@ export function AiNewsTimeline() {
     return () => {
       alive = false;
     };
-  }, [shown]);
+  }, [noExcerpt]);
 
   // ── 来源身份行：favicon + 来源名 + 站点名 + 相对时间 ──
   const sourceHeader = (it: AiNewsItem, meta: LabelMeta) => (
@@ -242,32 +273,37 @@ export function AiNewsTimeline() {
     );
   };
 
-  // ── AI 一句话解读：扁平报刊导语(dek)风，一条细实线 + 文字，不用半透明底色/圆角框/引号图标 ──
-  const commentaryBlock = (it: AiNewsItem, meta: LabelMeta) => {
-    const text = commentary[it.id];
+  // ── 内容片段：默认文章摘要(无标签,纯新闻 dek)；抓不到时回退 AI 解读(带「AI解读」小标签);都没有则占位 ──
+  const contentBlock = (it: AiNewsItem, meta: LabelMeta) => {
+    const ex = excerpt[it.id];
+    const cm = commentary[it.id];
+    if (ex) {
+      return (
+        <div
+          className="ainews-commentary mt-2 pl-3 text-[13px] leading-relaxed line-clamp-2"
+          style={{ borderLeft: '2px solid var(--border-subtle, rgba(255,255,255,0.16))', color: 'var(--text-secondary, rgba(255,255,255,0.72))' }}
+        >
+          {ex}
+        </div>
+      );
+    }
+    if (cm) {
+      return (
+        <div
+          className="ainews-commentary mt-2 pl-3 flex items-baseline gap-2"
+          style={{ borderLeft: `2px solid ${meta.color}` }}
+        >
+          <span className="text-[11px] font-semibold shrink-0 tracking-wide" style={{ color: meta.color }}>AI解读</span>
+          <span className="text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.72))' }}>{cm}</span>
+        </div>
+      );
+    }
     return (
       <div
-        className="mt-2 pl-3 flex items-baseline gap-2"
-        style={{ borderLeft: `2px solid ${text ? meta.color : 'var(--border-subtle, rgba(255,255,255,0.14))'}` }}
+        className="mt-2 pl-3"
+        style={{ borderLeft: '2px solid var(--border-subtle, rgba(255,255,255,0.12))' }}
       >
-        <span
-          className="text-[11px] font-semibold shrink-0 tracking-wide"
-          style={{ color: text ? meta.color : 'var(--text-muted)' }}
-        >
-          AI解读
-        </span>
-        {text ? (
-          <span
-            className="ainews-commentary text-[13px] leading-relaxed"
-            style={{ color: 'var(--text-secondary, rgba(255,255,255,0.78))' }}
-          >
-            {text}
-          </span>
-        ) : (
-          <span className="ainews-shimmer text-[13px]" style={{ color: 'var(--text-muted)' }}>
-            正在解读…
-          </span>
-        )}
+        <span className="ainews-shimmer text-[13px]" style={{ color: 'var(--text-muted)' }}>加载摘要…</span>
       </div>
     );
   };
@@ -455,7 +491,7 @@ export function AiNewsTimeline() {
                                 style={{ color: 'var(--text-muted)' }}
                               />
                             </div>
-                            {commentaryBlock(it, meta)}
+                            {contentBlock(it, meta)}
                             {tagRow(it, meta)}
                           </div>
                         </a>
@@ -488,7 +524,7 @@ export function AiNewsTimeline() {
                           >
                             {it.title}
                           </div>
-                          {commentaryBlock(it, meta)}
+                          {contentBlock(it, meta)}
                           {tagRow(it, meta)}
                         </a>
                       );

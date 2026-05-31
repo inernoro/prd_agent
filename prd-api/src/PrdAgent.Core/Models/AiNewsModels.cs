@@ -21,13 +21,16 @@ public class AiNewsItem
     public double AiScore { get; set; }
     /// <summary>命中的 AI 关键信号词（如 ["智能体","RAG"]），前端作为附加标签展示。</summary>
     public List<string> AiSignals { get; set; } = new();
-    /// <summary>AI 生成的一句话解读 / 推荐理由（来自 ai_news_enrichments 缓存，未生成时为 null）。</summary>
+    /// <summary>文章摘要片段（抓取目标页 og:description / meta description，缓存；抓不到为 null）。默认展示内容。</summary>
+    public string? Excerpt { get; set; }
+    /// <summary>AI 生成的一句话解读 / 推荐理由（来自 ai_news_enrichments 缓存，未生成时为 null）。摘要抓不到时的备用展示。</summary>
     public string? Commentary { get; set; }
 }
 
 /// <summary>
-/// 「AI 大事」每条资讯的 AI 一句话解读缓存（按资讯 id 去重，避免每次刷新重复调用 LLM）。
-/// 数据源只有标题，故解读是基于「标题 + 来源 + 分类」的编辑点评，不是文章正文摘要。
+/// 「AI 大事」每条资讯的内容增强缓存（按资讯 id 去重）。
+/// Excerpt：抓取目标页 meta 摘要（默认展示的「部分内容」）。
+/// Commentary：AI 一句话解读（摘要抓不到时的备用）。
 /// </summary>
 public class AiNewsEnrichment
 {
@@ -35,9 +38,11 @@ public class AiNewsEnrichment
     public string Id { get; set; } = "";
     /// <summary>资讯标题（生成时的快照，便于排查）。</summary>
     public string Title { get; set; } = "";
-    /// <summary>AI 一句话解读 / 推荐理由。</summary>
+    /// <summary>文章摘要片段（抓取目标页 meta 描述）。抓取过但确实没有时为空串，用于区分「未抓」与「抓了没有」。</summary>
+    public string? Excerpt { get; set; }
+    /// <summary>AI 一句话解读 / 推荐理由（备用）。</summary>
     public string Commentary { get; set; } = "";
-    /// <summary>生成所用模型（可观测）。</summary>
+    /// <summary>解读所用模型（可观测）。</summary>
     public string Model { get; set; } = "";
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

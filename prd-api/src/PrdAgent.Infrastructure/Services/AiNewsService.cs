@@ -1,6 +1,9 @@
+using System.Net;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
@@ -144,13 +147,17 @@ public class AiNewsService : IAiNewsService
                         CreatedAt = DateTime.UtcNow,
                     });
                 }
-                // 落库（upsert，按 id 去重）
+                // 落库（upsert，只 $set 解读相关字段，避免覆盖已抓取的 Excerpt）
                 foreach (var d in docs)
                 {
-                    await _db.AiNewsEnrichments.ReplaceOneAsync(
+                    await _db.AiNewsEnrichments.UpdateOneAsync(
                         Builders<AiNewsEnrichment>.Filter.Eq(x => x.Id, d.Id),
-                        d,
-                        new ReplaceOptions { IsUpsert = true },
+                        Builders<AiNewsEnrichment>.Update
+                            .Set(x => x.Commentary, d.Commentary)
+                            .Set(x => x.Model, d.Model)
+                            .SetOnInsert(x => x.Title, d.Title)
+                            .SetOnInsert(x => x.CreatedAt, DateTime.UtcNow),
+                        new UpdateOptions { IsUpsert = true },
                         ct);
                 }
             }
@@ -161,6 +168,137 @@ public class AiNewsService : IAiNewsService
         }
 
         return result;
+    }
+
+    public async Task<Dictionary<string, string>> EnrichExcerptAsync(
+        IReadOnlyList<string> ids, CancellationToken ct = default)
+    {
+        var result = new Dictionary<string, string>();
+        var wanted = ids.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
+        if (wanted.Count == 0) return result;
+
+        // 命中缓存：Excerpt != null 表示已抓过（空串=抓了但没有，避免反复抓）
+        var cached = await _db.AiNewsEnrichments
+            .Find(Builders<AiNewsEnrichment>.Filter.In(x => x.Id, wanted))
+            .ToListAsync(ct);
+        var fetchedIds = new HashSet<string>();
+        foreach (var c in cached)
+        {
+            if (c.Excerpt != null)
+            {
+                fetchedIds.Add(c.Id);
+                if (c.Excerpt.Length > 0) result[c.Id] = c.Excerpt;
+            }
+        }
+
+        var missing = wanted.Where(id => !fetchedIds.Contains(id)).ToList();
+        if (missing.Count == 0) return result;
+
+        var feed = await GetLatestAsync(ct);
+        var byId = feed.Items
+            .Where(i => !string.IsNullOrWhiteSpace(i.Id))
+            .GroupBy(i => i.Id)
+            .ToDictionary(g => g.Key, g => g.First());
+        var toFetch = missing.Where(byId.ContainsKey).ToList();
+        if (toFetch.Count == 0) return result;
+
+        // 并发抓取（限流），抓不到也写空串标记已抓
+        using var sem = new SemaphoreSlim(6);
+        var tasks = toFetch.Select(async id =>
+        {
+            await sem.WaitAsync(ct);
+            try
+            {
+                var ex = await FetchExcerptAsync(byId[id].Url, ct);
+                return (Id: id, Excerpt: ex ?? "");
+            }
+            catch
+            {
+                return (Id: id, Excerpt: "");
+            }
+            finally
+            {
+                sem.Release();
+            }
+        });
+        var fetched = await Task.WhenAll(tasks);
+
+        foreach (var (id, ex) in fetched)
+        {
+            if (ex.Length > 0) result[id] = ex;
+            await _db.AiNewsEnrichments.UpdateOneAsync(
+                Builders<AiNewsEnrichment>.Filter.Eq(x => x.Id, id),
+                Builders<AiNewsEnrichment>.Update
+                    .Set(x => x.Excerpt, ex)
+                    .SetOnInsert(x => x.Title, byId[id].Title)
+                    .SetOnInsert(x => x.CreatedAt, DateTime.UtcNow),
+                new UpdateOptions { IsUpsert = true },
+                ct);
+        }
+        return result;
+    }
+
+    /// <summary>抓取目标页 meta 摘要（og:description / twitter:description / description）。</summary>
+    private async Task<string?> FetchExcerptAsync(string url, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return null;
+        var client = _httpFactory.CreateClient("AiNews");
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        req.Headers.TryAddWithoutValidation("User-Agent",
+            "Mozilla/5.0 (compatible; PrdAgentNewsBot/1.0; +https://miduo.org)");
+        req.Headers.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml");
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(TimeSpan.FromSeconds(5));
+
+        using var resp = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+        if (!resp.IsSuccessStatusCode) return null;
+        var mediaType = resp.Content.Headers.ContentType?.MediaType ?? "";
+        if (!mediaType.Contains("html", StringComparison.OrdinalIgnoreCase)) return null;
+
+        // 只读 head 区域（前 ~256KB 足够拿到 <meta>）
+        await using var stream = await resp.Content.ReadAsStreamAsync(cts.Token);
+        var buf = new byte[256 * 1024];
+        var read = 0;
+        int n;
+        while (read < buf.Length && (n = await stream.ReadAsync(buf.AsMemory(read, buf.Length - read), cts.Token)) > 0)
+        {
+            read += n;
+        }
+        var html = Encoding.UTF8.GetString(buf, 0, read);
+        return ExtractMetaDescription(html);
+    }
+
+    private static readonly string[] DescKeys = { "og:description", "twitter:description", "description" };
+
+    /// <summary>从 HTML 抠 meta 描述，按 og &gt; twitter &gt; name=description 优先级，解码 + 截断。</summary>
+    private static string? ExtractMetaDescription(string html)
+    {
+        if (string.IsNullOrEmpty(html)) return null;
+        foreach (var key in DescKeys)
+        {
+            // content 在 key 之后
+            var m = Regex.Match(html,
+                $"<meta[^>]*(?:property|name)\\s*=\\s*[\"']{Regex.Escape(key)}[\"'][^>]*content\\s*=\\s*[\"']([^\"']*)[\"']",
+                RegexOptions.IgnoreCase | RegexOptions.Singleline);
+            if (!m.Success)
+            {
+                // content 在 key 之前
+                m = Regex.Match(html,
+                    $"<meta[^>]*content\\s*=\\s*[\"']([^\"']*)[\"'][^>]*(?:property|name)\\s*=\\s*[\"']{Regex.Escape(key)}[\"']",
+                    RegexOptions.IgnoreCase | RegexOptions.Singleline);
+            }
+            if (m.Success)
+            {
+                var text = WebUtility.HtmlDecode(m.Groups[1].Value).Trim();
+                text = Regex.Replace(text, "\\s+", " ");
+                if (text.Length >= 8)
+                {
+                    return text.Length > 140 ? text[..140].TrimEnd() + "…" : text;
+                }
+            }
+        }
+        return null;
     }
 
     private async Task<(Dictionary<string, string> Map, string Model)> GenerateCommentaryBatchAsync(
