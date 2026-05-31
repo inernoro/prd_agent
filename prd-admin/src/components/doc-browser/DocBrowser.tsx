@@ -707,14 +707,13 @@ function TreeNode({
             onMoveEntry(draggedId, entry.id);
           }
         }}
-        className={`relative w-full flex flex-col gap-1 text-left cursor-pointer transition-all duration-150 group ${isFolder ? 'py-[7px]' : 'py-[7px] hover-bg-soft'}`}
+        className={`relative w-full flex flex-col gap-0.5 text-left cursor-pointer transition-all duration-150 group ${isFolder ? 'py-[7px]' : 'py-[9px] hover-bg-soft'}`}
         style={{
           // 整块圆角高亮：左右留 6px 内缩，hover/选中不贴边
           paddingLeft: `${10 + depth * 14}px`,
           paddingRight: '10px',
           marginLeft: '6px',
           marginRight: '6px',
-          borderRadius: '9px',
           // 仅在拖拽/选中时显式给背景，未高亮时留空让 hover-bg-soft 类的 :hover 生效
           background: dragOver
             ? 'var(--accent-soft, rgba(99,102,241,0.14))'
@@ -729,7 +728,11 @@ function TreeNode({
                 borderTop: '1px solid var(--border-faint)',
                 borderRadius: 0,
               }
-            : {}),
+            : {
+                borderRadius: '9px',
+                // 条目之间一条淡分隔线（内缩对齐圆角块），让两行布局下相邻条目不糊在一起
+                borderBottom: '1px solid var(--border-faint)',
+              }),
         }}
         title={isFolder ? '点击展开/折叠（可拖拽文件到此）' : isPrimary ? '主文档' : '右键打开菜单'}
       >
