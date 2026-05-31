@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { viewSiteShare, saveSharedSite } from '@/services';
 import type { ShareViewData } from '@/services';
 import { useAuthStore } from '@/stores/authStore';
-import { Lock, ExternalLink, FileCode2, Eye, EyeOff, AlertCircle, ShieldCheck, Unlock, Download, Check, LogIn } from 'lucide-react';
+import { Lock, ExternalLink, FileCode2, Eye, EyeOff, AlertCircle, ShieldCheck, Unlock, Download, Check, LogIn, MessageSquare, X } from 'lucide-react';
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
 import { BlurText } from '@/components/reactbits';
 import CommentsSection from '@/components/web-hosting/CommentsSection';
@@ -37,6 +37,8 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const inputRef = useRef<HTMLInputElement>(null);
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'already'>('idle');
+  // 评论抽屉：单站点分享页右下角浮动「评论」按钮打开（避免只在 iframe 下方、需往下滚才看见）
+  const [showComments, setShowComments] = useState(false);
 
   const handleSave = useCallback(async () => {
     if (!token) return;
@@ -393,13 +395,68 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
           style={{ flex: 1, border: 'none', width: '100%' }}
           sandbox={site.pdfAssetUrl ? undefined : 'allow-scripts allow-same-origin allow-popups allow-forms'}
         />
-        {/* 评论区：iframe 下方可滚动区，访客可读、登录后可评（token 必有） */}
+
+        {/* 评论：右下角浮动按钮 + 右侧滑出抽屉。访客一眼可见入口，不必往下滚（token 必有） */}
         {token && (
-          <div style={{ flexShrink: 0, maxHeight: '40vh', overflowY: 'auto', overscrollBehavior: 'contain', background: '#0a0a0a', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-            <div style={{ maxWidth: 820, margin: '0 auto', padding: '16px' }}>
-              <CommentsSection mode="share" token={token} password={password || undefined} />
-            </div>
-          </div>
+          <>
+            {!showComments && (
+              <button
+                onClick={() => setShowComments(true)}
+                title="评论"
+                style={{
+                  position: 'fixed', right: 20, bottom: 20, zIndex: 50,
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '12px 18px', borderRadius: 9999, border: 'none', cursor: 'pointer',
+                  background: 'rgba(59, 130, 246, 0.95)', color: '#fff',
+                  fontSize: 14, fontWeight: 600,
+                  boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+                  backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)',
+                }}
+              >
+                <MessageSquare size={16} />
+                评论
+              </button>
+            )}
+            {showComments && (
+              <>
+                {/* 遮罩：点击关闭 */}
+                <div
+                  onClick={() => setShowComments(false)}
+                  style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,0.4)' }}
+                />
+                {/* 右侧抽屉 */}
+                <aside
+                  style={{
+                    position: 'fixed', top: 0, right: 0, bottom: 0, zIndex: 61,
+                    width: 'min(420px, 92vw)', display: 'flex', flexDirection: 'column',
+                    background: '#0f1014', borderLeft: '1px solid rgba(255,255,255,0.1)',
+                    boxShadow: '-12px 0 40px rgba(0,0,0,0.5)',
+                  }}
+                >
+                  <div style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.08)', flexShrink: 0,
+                  }}>
+                    <span style={{ color: '#fff', fontSize: 14, fontWeight: 600 }}>评论</span>
+                    <button
+                      onClick={() => setShowComments(false)}
+                      title="关闭"
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        width: 28, height: 28, borderRadius: 8, border: 'none', cursor: 'pointer',
+                        background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.7)',
+                      }}
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                  <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: 16 }}>
+                    <CommentsSection mode="share" token={token} password={password || undefined} />
+                  </div>
+                </aside>
+              </>
+            )}
+          </>
         )}
       </div>
     );
