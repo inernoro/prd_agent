@@ -1408,46 +1408,48 @@ export function DocumentStorePage() {
         title="知识库"
         icon={<Library size={14} />}
         actions={
-          tab === 'mine' ? (
-            <div className="flex items-center gap-2">
-              <TeamScopeBar
-                moduleKey="document-store"
-                value={teamScope}
-                onChange={setTeamScope}
-              />
-              <Button
-                variant="primary"
-                size="xs"
-                data-tour-id="document-store-create"
-                onClick={() => setShowCreate(true)}
-              >
-                <Plus size={13} /> 新建空间
-              </Button>
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            {/* 视图切换：我的空间 / 我的收藏 / 我的点赞（上移到标题行，与作用域控件同排） */}
+            <div className="flex items-center gap-1.5">
+              {tabs.map(t => {
+                const active = tab === t.key;
+                const Icon = t.icon;
+                return (
+                  <button
+                    key={t.key}
+                    onClick={() => setTab(t.key)}
+                    className="h-8 px-3 rounded-[10px] text-[12px] font-semibold flex items-center gap-1.5 cursor-pointer transition-all duration-200"
+                    style={{
+                      background: active ? 'rgba(59,130,246,0.1)' : 'rgba(255,255,255,0.03)',
+                      border: active ? '1px solid rgba(59,130,246,0.2)' : '1px solid rgba(255,255,255,0.06)',
+                      color: active ? 'rgba(59,130,246,0.9)' : 'var(--text-muted)',
+                    }}>
+                    <Icon size={12} /> {t.label}
+                  </button>
+                );
+              })}
             </div>
-          ) : null
+            {tab === 'mine' && (
+              <>
+                <span className="w-px h-5 self-center" style={{ background: 'rgba(255,255,255,0.08)' }} />
+                <TeamScopeBar
+                  moduleKey="document-store"
+                  value={teamScope}
+                  onChange={setTeamScope}
+                />
+                <Button
+                  variant="primary"
+                  size="xs"
+                  data-tour-id="document-store-create"
+                  onClick={() => setShowCreate(true)}
+                >
+                  <Plus size={13} /> 新建空间
+                </Button>
+              </>
+            )}
+          </div>
         }
       />
-
-      {/* 标签切换 */}
-      <div className="px-5 flex items-center gap-2">
-        {tabs.map(t => {
-          const active = tab === t.key;
-          const Icon = t.icon;
-          return (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              className="h-8 px-3 rounded-[10px] text-[12px] font-semibold flex items-center gap-1.5 cursor-pointer transition-all duration-200"
-              style={{
-                background: active ? 'rgba(59,130,246,0.1)' : 'rgba(255,255,255,0.03)',
-                border: active ? '1px solid rgba(59,130,246,0.2)' : '1px solid rgba(255,255,255,0.06)',
-                color: active ? 'rgba(59,130,246,0.9)' : 'var(--text-muted)',
-              }}>
-              <Icon size={12} /> {t.label}
-            </button>
-          );
-        })}
-      </div>
 
       <div className="px-5 pb-6 w-full">
         {loading ? (
@@ -1627,9 +1629,21 @@ export function DocumentStorePage() {
                                 {idx + 1}
                               </span>
                               <FileText size={12} className="flex-shrink-0" style={{ color: 'rgba(59,130,246,0.6)' }} />
-                              <span className="flex-1 text-[11.5px] truncate" style={{ color: 'var(--text-secondary)' }}>
+                              <span className="min-w-0 text-[11.5px] truncate" style={{ color: 'var(--text-secondary)' }}>
                                 {entry.title}
                               </span>
+                              {(entry.tags?.length ?? 0) > 0 && (
+                                <span className="hidden xl:flex items-center gap-1 flex-shrink-0">
+                                  {entry.tags!.slice(0, 2).map(t => (
+                                    <span key={t}
+                                      className="inline-flex items-center h-[15px] px-1.5 rounded-[4px] text-[9px] font-medium max-w-[68px] truncate"
+                                      style={{ background: 'rgba(59,130,246,0.1)', color: 'rgba(59,130,246,0.85)' }}>
+                                      {t}
+                                    </span>
+                                  ))}
+                                </span>
+                              )}
+                              <span className="flex-1" />
                               <span className="text-[10px] flex-shrink-0 tabular-nums" style={{ color: 'var(--text-muted)' }}>
                                 <RelativeTime value={entry.updatedAt} />
                               </span>

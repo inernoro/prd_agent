@@ -2325,6 +2325,7 @@ public class DocumentStoreController : ControllerBase
                 title = e.Title,
                 updatedAt = e.UpdatedAt,
                 contentType = e.ContentType,
+                tags = e.Tags ?? new List<string>(),
             }).ToList();
             return (sid, list);
         }).ToList();
