@@ -8,7 +8,6 @@ import {
   ChevronDown,
   List,
   LayoutGrid,
-  Quote,
   type LucideIcon,
 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -243,22 +242,30 @@ export function AiNewsTimeline() {
     );
   };
 
-  // ── AI 一句话解读（内容主体）：未生成时呼吸占位，生成后淡入 ──
+  // ── AI 一句话解读：扁平报刊导语(dek)风，一条细实线 + 文字，不用半透明底色/圆角框/引号图标 ──
   const commentaryBlock = (it: AiNewsItem, meta: LabelMeta) => {
     const text = commentary[it.id];
     return (
       <div
-        className="mt-2.5 flex items-start gap-2 rounded-lg pl-2.5 pr-3 py-2"
-        style={{ background: `${meta.color}12`, borderLeft: `2px solid ${meta.color}` }}
+        className="mt-2 pl-3 flex items-baseline gap-2"
+        style={{ borderLeft: `2px solid ${text ? meta.color : 'var(--border-subtle, rgba(255,255,255,0.14))'}` }}
       >
-        <Quote size={12} className="shrink-0 mt-0.5" style={{ color: meta.color }} />
+        <span
+          className="text-[11px] font-semibold shrink-0 tracking-wide"
+          style={{ color: text ? meta.color : 'var(--text-muted)' }}
+        >
+          AI解读
+        </span>
         {text ? (
-          <span className="ainews-commentary text-[12.5px] leading-relaxed" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.82))' }}>
+          <span
+            className="ainews-commentary text-[13px] leading-relaxed"
+            style={{ color: 'var(--text-secondary, rgba(255,255,255,0.78))' }}
+          >
             {text}
           </span>
         ) : (
-          <span className="ainews-shimmer text-[12.5px]" style={{ color: 'var(--text-muted)' }}>
-            AI 正在解读这条资讯…
+          <span className="ainews-shimmer text-[13px]" style={{ color: 'var(--text-muted)' }}>
+            正在解读…
           </span>
         )}
       </div>
@@ -399,13 +406,8 @@ export function AiNewsTimeline() {
                 </div>
 
                 {view === 'timeline' ? (
-                  // ── 单列新闻流：左侧绝对时间轴(HH:MM) + 贯穿时间脊 + 流动条目(不单独框) ──
-                  <div className="relative">
-                    {/* 时间脊（贯穿整组时间轴列） */}
-                    <span
-                      className="absolute top-3 bottom-3 w-px"
-                      style={{ left: 47, background: 'var(--border-subtle, rgba(255,255,255,0.12))' }}
-                    />
+                  // ── 单列新闻流：三列布局[时间 | 时间脊 | 内容]，节点与时间各占一列不重叠；扁平、无玻璃感 ──
+                  <div className="flex flex-col">
                     {g.items.map((it, idx) => {
                       const meta = labelMeta(it.aiLabel);
                       const isLast = idx === g.items.length - 1;
@@ -415,30 +417,35 @@ export function AiNewsTimeline() {
                           href={it.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="ainews-item group relative flex items-stretch gap-3 transition-colors hover:bg-[rgba(255,255,255,0.025)] rounded-lg"
-                          style={{
-                            animationDelay: `${Math.min(idx, 12) * 24}ms`,
-                            borderBottom: isLast ? 'none' : '1px solid var(--border-subtle, rgba(255,255,255,0.06))',
-                          }}
+                          className="ainews-item group flex items-stretch transition-colors hover:bg-[rgba(255,255,255,0.02)]"
+                          style={{ animationDelay: `${Math.min(idx, 12) * 24}ms` }}
                         >
-                          {/* 左：绝对时间 + 脊上节点 */}
-                          <div className="shrink-0 relative" style={{ width: 40 }}>
+                          {/* 列1：绝对时间 */}
+                          <div
+                            className="shrink-0 pt-4 pr-3 text-right text-[12px] font-mono"
+                            style={{ width: 56, color: 'var(--text-muted)' }}
+                          >
+                            {clockLabel(itemTime(it), g.bucket)}
+                          </div>
+                          {/* 列2：时间脊 + 节点（独立一列，绝不与时间重叠） */}
+                          <div className="shrink-0 relative" style={{ width: 14 }}>
                             <span
-                              className="block text-[12px] font-mono font-semibold pt-4 text-right"
-                              style={{ color: 'var(--text-secondary, rgba(255,255,255,0.65))' }}
-                            >
-                              {clockLabel(itemTime(it), g.bucket)}
-                            </span>
+                              className="absolute top-0 bottom-0"
+                              style={{ left: 6, width: 1, background: 'var(--border-subtle, rgba(255,255,255,0.1))' }}
+                            />
                             <span
-                              className="absolute rounded-full z-10"
-                              style={{ left: 47 - 12, top: 19, width: 9, height: 9, background: meta.color, boxShadow: `0 0 0 3px var(--bg-card, #1E1F20), 0 0 8px ${meta.color}80` }}
+                              className="absolute rounded-full"
+                              style={{ left: 3, top: 18, width: 7, height: 7, background: meta.color }}
                             />
                           </div>
-                          {/* 右：流动内容（无边框卡） */}
-                          <div className="flex-1 min-w-0 py-3.5 pr-2">
+                          {/* 列3：流动内容 */}
+                          <div
+                            className="flex-1 min-w-0 pl-3 py-4 pr-2"
+                            style={{ borderBottom: isLast ? 'none' : '1px solid var(--border-subtle, rgba(255,255,255,0.06))' }}
+                          >
                             {sourceHeader(it, meta)}
                             <div
-                              className="text-[15px] font-semibold leading-snug line-clamp-2 mt-2 group-hover:underline"
+                              className="text-[15px] font-semibold leading-snug line-clamp-2 mt-1.5 group-hover:underline"
                               style={{ color: 'var(--text-primary)', textDecorationColor: meta.color }}
                             >
                               {it.title}
