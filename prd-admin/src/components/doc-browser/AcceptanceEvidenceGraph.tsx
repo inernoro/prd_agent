@@ -150,6 +150,13 @@ function GraphInner({ steps, onEnlarge }: { steps: Omit<StepNodeData, 'onEnlarge
       nodeTypes={nodeTypes}
       fitView
       fitViewOptions={{ padding: 0.22, maxZoom: 1 }}
+      onInit={(inst) => {
+        // fitView 把多个高节点压得太小时，抬到可读缩放（围绕中心放大，列仍居中），
+        // 用户上下滚动看完整链；少量节点则保持 fit。解决"太小看不清"的默认观感。
+        requestAnimationFrame(() => {
+          try { if (inst.getZoom() < 0.78) inst.zoomTo(0.85, { duration: 0 }); } catch { /* noop */ }
+        });
+      }}
       minZoom={0.3}
       maxZoom={2.5}
       proOptions={{ hideAttribution: true }}
