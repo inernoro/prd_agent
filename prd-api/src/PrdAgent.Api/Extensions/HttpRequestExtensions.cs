@@ -12,24 +12,33 @@ public static class HttpRequestExtensions
     /// <summary>
     /// 取真实客户端 IP。反向代理 / Docker 网络下，<see cref="ConnectionInfo.RemoteIpAddress"/>
     /// 只是上一跳（如 172.20.x.x 内网地址 / ::ffff: 映射地址），并非访客真实 IP。
-    /// 优先级：X-Forwarded-For 第一跳 > X-Real-IP > RemoteIpAddress。
+    ///
+    /// 优先级（针对本仓库 deploy/nginx 拓扑，X-Real-IP=$remote_addr 覆盖写、
+    /// X-Forwarded-For=$proxy_add_x_forwarded_for 追加写）：
+    ///   1. X-Real-IP —— nginx 用 $remote_addr 覆盖写入，不会被客户端伪造，最可信
+    ///   2. X-Forwarded-For 的「最后一段」—— nginx 追加在末尾的才是它实测的 remote_addr；
+    ///      前面的段是客户端自带、可伪造（绝不能取第一段，否则 `X-Forwarded-For: 1.2.3.4`
+    ///      就能伪造统计 IP）
+    ///   3. RemoteIpAddress
     /// 同时把 IPv4-mapped IPv6（::ffff:1.2.3.4）规整回点分十进制。
-    /// 注：仅用于访问统计/审计展示，未做代理可信校验，不可作为安全判定依据。
+    /// 注：仅用于访问统计/审计展示，未做严格代理可信链校验，不作为安全判定依据。
     /// </summary>
     public static string? GetRealClientIp(this HttpContext context)
     {
-        // X-Forwarded-For: "client, proxy1, proxy2"，第一个才是原始客户端
-        var xff = context.Request.Headers["X-Forwarded-For"].FirstOrDefault();
-        if (!string.IsNullOrWhiteSpace(xff))
-        {
-            var first = xff.Split(',')[0].Trim();
-            if (!string.IsNullOrWhiteSpace(first))
-                return NormalizeIp(first);
-        }
-
+        // 1. X-Real-IP：nginx overwrite，不可伪造
         var xRealIp = context.Request.Headers["X-Real-IP"].FirstOrDefault();
         if (!string.IsNullOrWhiteSpace(xRealIp))
             return NormalizeIp(xRealIp.Trim());
+
+        // 2. X-Forwarded-For：append 写法下取最后一段（反代填入的真实 remote_addr），
+        //    前面的段客户端可伪造
+        var xff = context.Request.Headers["X-Forwarded-For"].FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(xff))
+        {
+            var parts = xff.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (parts.Length > 0)
+                return NormalizeIp(parts[^1]);
+        }
 
         return NormalizeIp(context.Connection.RemoteIpAddress?.ToString());
     }

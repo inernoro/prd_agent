@@ -549,9 +549,16 @@ public class HostedSiteService : IHostedSiteService
         var site = await _db.HostedSites.Find(x => x.Id == siteId && x.OwnerUserId == userId).FirstOrDefaultAsync(ct);
         if (site == null) return null;
 
-        // 只保留我确实所属的团队，避免分享到不存在 / 越权的团队
-        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
-        var sanitized = teamIds.Where(t => myTeamIds.Contains(t)).Distinct().ToList();
+        // 角色门控：只保留「我在该团队有网页托管编辑权限（owner/editor）」的团队。
+        // GetMyWebHostingTeamRolesAsync 仅返回我所属团队（已含成员校验），并解析出有效角色。
+        // 关键：不能用 WebHostingPermission.Can(role, …, isSiteOwner) —— 上传者本身就是站点 owner，
+        // isSiteOwner=true 会短路放行，导致只读 viewer 直调 API 把自己上传的站点分享进团队（越权）。
+        // 故此处直接比对团队级角色，viewer 一律剔除。
+        var roles = await _teams.GetMyWebHostingTeamRolesAsync(userId, ct);
+        var sanitized = teamIds
+            .Where(t => roles.TryGetValue(t, out var r)
+                        && (r == WebHostingRoles.Owner || r == WebHostingRoles.Editor))
+            .Distinct().ToList();
         var added = sanitized.Except(site.SharedTeamIds).ToList();
 
         await _db.HostedSites.UpdateOneAsync(

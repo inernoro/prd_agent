@@ -46,7 +46,9 @@ export function SitePreview({ url, className, style }: { url: string; className?
 
   return (
     <div ref={containerRef} className={className} style={{ position: 'relative', overflow: 'hidden', ...style }}>
-      {!loaded && (
+      {/* 占位符随「未进入视口 或 未加载完」显示——离屏后即使有迟到的 onLoad 把 loaded 置真，
+          只要 inView 为 false 占位符仍可见，不会出现空白瓦片 */}
+      {(!inView || !loaded) && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
           <Globe size={20} style={{ color: 'var(--accent-primary)', opacity: 0.4 }} />
         </div>
@@ -68,7 +70,7 @@ export function SitePreview({ url, className, style }: { url: string; className?
             position: 'absolute',
             top: 0,
             left: 0,
-            opacity: loaded ? 1 : 0,
+            opacity: inView && loaded ? 1 : 0,
             transition: 'opacity 0.3s',
           }}
         />
