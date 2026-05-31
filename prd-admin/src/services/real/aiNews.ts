@@ -12,6 +12,8 @@ export interface AiNewsItem {
   firstSeenAt: string | null;
   aiLabel: string;
   aiScore: number;
+  /** 命中的 AI 关键信号词（如 ["智能体","RAG"]），作为附加标签展示。 */
+  aiSignals: string[];
 }
 
 /** 资讯流响应（与后端 AiNewsFeed 对应）。 */

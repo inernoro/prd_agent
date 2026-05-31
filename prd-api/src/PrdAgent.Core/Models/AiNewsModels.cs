@@ -19,6 +19,8 @@ public class AiNewsItem
     public string AiLabel { get; set; } = "";
     /// <summary>AI 相关度评分 0~1。</summary>
     public double AiScore { get; set; }
+    /// <summary>命中的 AI 关键信号词（如 ["智能体","RAG"]），前端作为附加标签展示。</summary>
+    public List<string> AiSignals { get; set; } = new();
 }
 
 /// <summary>

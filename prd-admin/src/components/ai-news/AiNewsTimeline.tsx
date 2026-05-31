@@ -20,6 +20,7 @@ import {
   parseTime,
   bucketOf,
   BUCKET_LABEL,
+  clockLabel,
   FEATURED_THRESHOLD,
   sortByRecency,
   type LabelMeta,
@@ -163,12 +164,31 @@ export function AiNewsTimeline() {
     [feed],
   );
 
-  // ── 单条 meta 行（时间线 / 网格 共用）──
-  const metaRow = (it: AiNewsItem, meta: LabelMeta) => {
+  // ── 来源身份行：favicon + 来源名 + 站点名 + 相对时间 ──
+  const sourceHeader = (it: AiNewsItem, meta: LabelMeta) => (
+    <div className="flex items-center gap-2 min-w-0">
+      <SourceAvatar url={it.url} meta={meta} size={26} />
+      <span className="text-[12px] font-semibold truncate max-w-[180px]" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.82))' }}>
+        {it.source || hostOf(it.url)}
+      </span>
+      {it.siteName && it.siteName !== it.source && (
+        <span className="text-[11px] truncate max-w-[120px]" style={{ color: 'var(--text-muted)' }}>
+          {it.siteName}
+        </span>
+      )}
+      <span className="text-[11px] ml-auto shrink-0" style={{ color: 'var(--text-muted)' }}>
+        {relTime(itemTime(it), now)}
+      </span>
+    </div>
+  );
+
+  // ── 标签行：分类 + 精选 + 命中关键词（最多 3 个）──
+  const tagRow = (it: AiNewsItem, meta: LabelMeta) => {
     const Icon = meta.icon;
     const featured = it.aiScore >= FEATURED_THRESHOLD;
+    const signals = (it.aiSignals ?? []).filter(Boolean).slice(0, 3);
     return (
-      <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+      <div className="flex items-center gap-1.5 mt-2 flex-wrap">
         <span
           className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded"
           style={{ background: `${meta.color}1f`, color: meta.color }}
@@ -184,14 +204,15 @@ export function AiNewsTimeline() {
             <Sparkles size={9} /> 精选
           </span>
         )}
-        {it.source && (
-          <span className="text-[11px] truncate max-w-[160px]" style={{ color: 'var(--text-muted)' }}>
-            {it.source}
+        {signals.map((s) => (
+          <span
+            key={s}
+            className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded"
+            style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle, rgba(255,255,255,0.08))' }}
+          >
+            {s}
           </span>
-        )}
-        <span className="text-[10px] ml-auto shrink-0" style={{ color: 'var(--text-muted)' }}>
-          {relTime(itemTime(it), now)}
-        </span>
+        ))}
       </div>
     );
   };
@@ -330,52 +351,59 @@ export function AiNewsTimeline() {
                 </div>
 
                 {view === 'timeline' ? (
-                  // ── 单列新闻流：左侧时间脊 + favicon + 标题 + meta ──
-                  <div className="relative">
-                    {/* 时间脊 */}
+                  // ── 单列新闻流：左侧绝对时间轴(HH:MM) + 时间脊 + 富信息卡片 ──
+                  <div className="relative flex flex-col gap-2.5">
+                    {/* 时间脊（贯穿时间轴列） */}
                     <span
-                      className="absolute top-1 bottom-1 w-px"
-                      style={{ left: 19, background: 'var(--border-subtle, rgba(255,255,255,0.09))' }}
+                      className="absolute top-2 bottom-2 w-px"
+                      style={{ left: 47, background: 'var(--border-subtle, rgba(255,255,255,0.1))' }}
                     />
-                    <div className="flex flex-col">
-                      {g.items.map((it, idx) => {
-                        const meta = labelMeta(it.aiLabel);
-                        return (
+                    {g.items.map((it, idx) => {
+                      const meta = labelMeta(it.aiLabel);
+                      return (
+                        <div key={it.id || it.url} className="flex items-stretch gap-3">
+                          {/* 左：绝对时间 + 脊上节点 */}
+                          <div className="shrink-0 relative" style={{ width: 40 }}>
+                            <span
+                              className="block text-[12px] font-mono font-semibold pt-3 text-right"
+                              style={{ color: 'var(--text-secondary, rgba(255,255,255,0.7))' }}
+                            >
+                              {clockLabel(itemTime(it), g.bucket)}
+                            </span>
+                            <span
+                              className="absolute rounded-full z-10"
+                              style={{ left: 47 - 12, top: 16, width: 9, height: 9, background: meta.color, boxShadow: `0 0 0 3px var(--bg-card, #1E1F20), 0 0 8px ${meta.color}80` }}
+                            />
+                          </div>
+                          {/* 右：富信息卡片 */}
                           <a
-                            key={it.id || it.url}
                             href={it.url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="ainews-item group relative flex items-start gap-3 rounded-xl px-3 py-3 transition-colors hover:bg-[rgba(255,255,255,0.04)]"
-                            style={{ animationDelay: `${Math.min(idx, 12) * 24}ms` }}
+                            className="ainews-item group relative flex-1 min-w-0 rounded-xl p-3.5 transition-all duration-200 hover:-translate-y-0.5"
+                            style={{ ...glassPanel, animationDelay: `${Math.min(idx, 12) * 24}ms` }}
                           >
-                            {/* 节点色点（脊上） */}
                             <span
-                              className="absolute rounded-full z-10"
-                              style={{ left: 16, top: 18, width: 7, height: 7, background: meta.color, boxShadow: `0 0 0 3px ${meta.color}26` }}
+                              className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+                              style={{ boxShadow: `inset 0 0 0 1px ${meta.color}4d, 0 0 20px ${meta.color}14` }}
                             />
-                            {/* favicon（缩进让出时间脊） */}
-                            <div className="shrink-0 ml-5">
-                              <SourceAvatar url={it.url} meta={meta} size={40} />
+                            {sourceHeader(it, meta)}
+                            <div
+                              className="text-[15px] font-semibold leading-snug line-clamp-2 mt-2 group-hover:underline"
+                              style={{ color: 'var(--text-primary)', textDecorationColor: meta.color }}
+                            >
+                              {it.title}
+                              <ExternalLink
+                                size={12}
+                                className="inline-block ml-1 mb-0.5 opacity-0 group-hover:opacity-60 transition-opacity"
+                                style={{ color: 'var(--text-muted)' }}
+                              />
                             </div>
-                            <div className="flex-1 min-w-0">
-                              <div
-                                className="text-[14.5px] font-medium leading-snug line-clamp-2 group-hover:underline"
-                                style={{ color: 'var(--text-primary)', textDecorationColor: meta.color }}
-                              >
-                                {it.title}
-                                <ExternalLink
-                                  size={12}
-                                  className="inline-block ml-1 mb-0.5 opacity-0 group-hover:opacity-60 transition-opacity"
-                                  style={{ color: 'var(--text-muted)' }}
-                                />
-                              </div>
-                              {metaRow(it, meta)}
-                            </div>
+                            {tagRow(it, meta)}
                           </a>
-                        );
-                      })}
-                    </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : (
                   // ── 网格视图 ──
@@ -396,16 +424,14 @@ export function AiNewsTimeline() {
                             className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
                             style={{ boxShadow: `inset 0 0 0 1px ${meta.color}55, 0 0 22px ${meta.color}1a` }}
                           />
-                          <div className="flex items-start gap-2.5">
-                            <SourceAvatar url={it.url} meta={meta} size={34} />
-                            <div
-                              className="text-[13.5px] font-medium leading-snug line-clamp-3 transition-colors"
-                              style={{ color: 'var(--text-primary)' }}
-                            >
-                              {it.title}
-                            </div>
+                          {sourceHeader(it, meta)}
+                          <div
+                            className="text-[13.5px] font-medium leading-snug line-clamp-3 transition-colors mt-2"
+                            style={{ color: 'var(--text-primary)' }}
+                          >
+                            {it.title}
                           </div>
-                          {metaRow(it, meta)}
+                          {tagRow(it, meta)}
                         </a>
                       );
                     })}

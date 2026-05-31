@@ -125,6 +125,7 @@ public class AiNewsService : IAiNewsService
         FirstSeenAt = x.FirstSeenAt,
         AiLabel = x.AiLabel ?? "",
         AiScore = x.AiScore,
+        AiSignals = x.AiSignals ?? new(),
     };
 
     private static string? FirstNonEmpty(params string?[] values) =>
@@ -156,5 +157,6 @@ public class AiNewsService : IAiNewsService
         [JsonPropertyName("first_seen_at")] public string? FirstSeenAt { get; set; }
         [JsonPropertyName("ai_label")] public string? AiLabel { get; set; }
         [JsonPropertyName("ai_score")] public double AiScore { get; set; }
+        [JsonPropertyName("ai_signals")] public List<string>? AiSignals { get; set; }
     }
 }

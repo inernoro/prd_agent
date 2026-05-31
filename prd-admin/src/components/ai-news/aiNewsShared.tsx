@@ -71,6 +71,15 @@ export function relTime(ms: number | null, now: number): string {
   return `${d} 天前`;
 }
 
+/** 时间轴标签：当天/昨天显示 HH:MM，更早显示 MM-DD（配合分组标题消歧）。 */
+export function clockLabel(ms: number | null, b: Bucket): string {
+  if (ms == null) return '--:--';
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  if (b === 'earlier') return `${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export type Bucket = 'now' | 'today' | 'yesterday' | 'earlier' | 'unknown';
 
 export function bucketOf(ms: number | null, now: number): Bucket {
