@@ -495,7 +495,13 @@ export default function WebPagesPage() {
   );
   const siteGroups = useMemo(() => buildSiteGroups(displaySites, groupMode), [displaySites, groupMode]);
 
-  const enterSpace = (s: Space) => { setCurrentSpace(s); setActiveFolder(null); setSelectedIds(new Set()); };
+  const enterSpace = (s: Space) => {
+    setCurrentSpace(s);
+    setActiveFolder(null);
+    setSelectedIds(new Set());
+    // 切空间立刻清空上一作用域的角色，避免用旧 scope 的角色误判权限（由随后的 load 重新填充）
+    setMyWebHostingRole(null);
+  };
 
   const handleMoveSite = async (targetSpace: Space, folder: string | null) => {
     if (!movingSite) return;
@@ -591,7 +597,9 @@ export default function WebPagesPage() {
             const targetSpace = currentSpace;
             // 权限闸门：团队空间内必须有编辑权限才能投放（与上传按钮的显隐条件一致）。
             // dropzone 始终挂载，不能让只读 viewer 通过拖拽绕过按钮把内容写进团队空间。
-            if (targetSpace.kind === 'team' && !canEditInWebHosting(myWebHostingRole)) {
+            // 仅在「角色已确切加载（非 null）」时硬拦截：刚切进团队空间 role 尚未就绪（null）时放行，
+            // 由后端 403 + 「归属团队失败」兜底，避免误拦正在加载的编辑者（false 无权限 toast）。
+            if (targetSpace.kind === 'team' && myWebHostingRole !== null && !canEditInWebHosting(myWebHostingRole)) {
               toast.error('无权限', '你在该团队空间是只读角色，无法上传网页');
               return;
             }
