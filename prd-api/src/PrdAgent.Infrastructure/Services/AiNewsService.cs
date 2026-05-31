@@ -178,26 +178,28 @@ public class AiNewsService : IAiNewsService
             RequestType: "chat",
             AppCallerCode: AppCallerRegistry.Admin.AiNews.Commentary));
 
+        // 用 1..N 的序号代替哈希 id（模型无法可靠回显 40 位哈希），返回后按序号映射回真实 id。
         var listJson = new JsonArray();
-        foreach (var it in batch)
+        for (var i = 0; i < batch.Count; i++)
         {
             listJson.Add(new JsonObject
             {
-                ["id"] = it.Id,
-                ["title"] = it.Title,
-                ["source"] = it.Source,
-                ["label"] = it.AiLabel,
+                ["n"] = i + 1,
+                ["title"] = batch[i].Title,
+                ["source"] = batch[i].Source,
+                ["label"] = batch[i].AiLabel,
             });
         }
 
         var systemPrompt =
-            "你是 PrdAgent「AI 大事」资讯频道的责任编辑。下面给你一批 AI 资讯（只有标题、来源、分类，没有正文）。\n" +
-            "请基于标题为每条写一句**中文**编辑解读 / 推荐理由，告诉读者「这条值不值得点、对谁有用、关键点是什么」。\n" +
+            "你是 PrdAgent「AI 大事」资讯频道的责任编辑。下面给你一批 AI 资讯（JSON 数组，每条有序号 n、标题 title、来源 source、分类 label，没有正文）。\n" +
+            "为每条写一句**中文**编辑解读 / 推荐理由，告诉读者「这条值不值得点、对谁有用、关键点是什么」。\n" +
             "要求：\n" +
             "- 每条 18~45 字，口语、犀利、有信息增量，不要复述标题原文\n" +
-            "- 不确定的不要编造细节；标题信息太少就给出「为什么这类消息值得关注」的角度\n" +
+            "- 不确定的不要编造细节；标题信息太少就给「为什么这类消息值得关注」的角度\n" +
             "- 禁止任何 emoji\n" +
-            "- 只输出一个 JSON 数组，元素为 {\"id\":\"...\",\"comment\":\"...\"}，不要 markdown 代码围栏、不要多余文字";
+            "- 必须为每个输入序号都给一条；只输出一个 JSON 数组，元素为 {\"n\":序号,\"comment\":\"解读\"}\n" +
+            "- 不要 markdown 代码围栏、不要任何多余文字";
 
         var gatewayBody = new JsonObject
         {
@@ -207,7 +209,7 @@ public class AiNewsService : IAiNewsService
                 new JsonObject { ["role"] = "user", ["content"] = listJson.ToJsonString() },
             },
             ["temperature"] = 0.6,
-            ["max_tokens"] = 90 * batch.Count + 200,
+            ["max_tokens"] = 90 * batch.Count + 300,
         };
 
         var resp = await _gateway.SendAsync(new GatewayRequest
@@ -223,10 +225,17 @@ public class AiNewsService : IAiNewsService
             return (new(), "");
         }
 
-        return (ParseCommentaryJson(resp.Content), resp.Resolution?.ActualModel ?? "");
+        var map = ParseCommentaryByIndex(resp.Content, batch);
+        if (map.Count == 0)
+        {
+            var preview = resp.Content.Length > 300 ? resp.Content[..300] : resp.Content;
+            _logger.LogWarning("[AiNews] 解读输出解析为空，原文预览：{Preview}", preview);
+        }
+        return (map, resp.Resolution?.ActualModel ?? "");
     }
 
-    private static Dictionary<string, string> ParseCommentaryJson(string content)
+    /// <summary>解析 [{n,comment}]，按序号映射回 batch 的真实资讯 id。</summary>
+    private static Dictionary<string, string> ParseCommentaryByIndex(string content, List<AiNewsItem> batch)
     {
         var map = new Dictionary<string, string>();
         var json = ExtractJsonArray(content);
@@ -238,17 +247,21 @@ public class AiNewsService : IAiNewsService
             foreach (var el in doc.RootElement.EnumerateArray())
             {
                 if (el.ValueKind != JsonValueKind.Object) continue;
-                var id = el.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
+                if (!el.TryGetProperty("n", out var nEl)) continue;
+                var n = nEl.ValueKind == JsonValueKind.Number && nEl.TryGetInt32(out var ni)
+                    ? ni
+                    : (int.TryParse(nEl.GetString(), out var ns) ? ns : 0);
+                if (n < 1 || n > batch.Count) continue;
                 var comment = el.TryGetProperty("comment", out var cEl) ? cEl.GetString() : null;
-                if (!string.IsNullOrWhiteSpace(id) && !string.IsNullOrWhiteSpace(comment))
+                if (!string.IsNullOrWhiteSpace(comment))
                 {
-                    map[id!] = comment!.Trim();
+                    map[batch[n - 1].Id] = comment!.Trim();
                 }
             }
         }
         catch
         {
-            // 解析失败返回空，调用方按未生成处理
+            // 解析失败返回空，调用方按未生成处理（并已记录原文预览）
         }
         return map;
     }
