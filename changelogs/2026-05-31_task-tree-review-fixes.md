@@ -10,3 +10,9 @@
 | fix | prd-admin | 对话摘取切树后同步更新底部对话行，避免卡在"正在分析…" |
 | fix | prd-api | CreateNode 不再接受裸 DependsOn（依赖一律经 AddDependency 校验+防环） |
 | fix | prd-api | UpdateNode 点"卡点"pill（不带 blocker）时保留已有卡点描述，不再清空 |
+| fix | prd-admin | 对话摘取 extract 走 VITE_API_BASE_URL 前缀，分离部署时 SSE 不再 404 |
+| fix | prd-admin | 切树后 thinking/typing/error 流式事件一并丢弃，不再覆盖新树对话行 |
+| fix | prd-admin | 摘取失败替换"正在分析…"占位行而非新增，避免重复消息 |
+| fix | prd-admin | removeNode/addDep/removeDep 对 dependsOn 加 null 兜底 |
+| fix | prd-admin | 重命名根节点时同步刷新本地 trees 列表（头部下拉即时更新） |
+| fix | prd-api | DeleteTree 清理其它树对被删节点的跨树依赖引用，避免悬空依赖边 |

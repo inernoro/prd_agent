@@ -284,9 +284,14 @@ export function TaskTreePage() {
   };
 
   const renameNode = async (node: TaskNode, title: string) => {
-    if (!title.trim() || title.trim() === node.title) return;
-    const res = await updateTaskNode(node.id, { title: title.trim() });
-    if (res.success && res.data) setNodes((ns) => ns.map((n) => (n.id === node.id ? res.data! : n)));
+    const t = title.trim();
+    if (!t || t === node.title) return;
+    const res = await updateTaskNode(node.id, { title: t });
+    if (res.success && res.data) {
+      setNodes((ns) => ns.map((n) => (n.id === node.id ? res.data! : n)));
+      // 重命名根节点时后端同步了 TaskTree.Title，本地 trees 列表（头部下拉）也要刷新
+      if (!node.parentId) setTrees((ts) => ts.map((tr) => (tr.id === node.treeId ? { ...tr, title: t.length > 60 ? t.slice(0, 60) : t } : tr)));
+    }
   };
 
   const removeNode = async (node: TaskNode) => {
@@ -303,7 +308,7 @@ export function TaskTreePage() {
             if (n.parentId && dead.has(n.parentId) && !dead.has(n.id)) { dead.add(n.id); changed = true; }
           }
         }
-        return ns.filter((n) => !dead.has(n.id)).map((n) => ({ ...n, dependsOn: n.dependsOn.filter((d) => !dead.has(d)) }));
+        return ns.filter((n) => !dead.has(n.id)).map((n) => ({ ...n, dependsOn: (n.dependsOn || []).filter((d) => !dead.has(d)) }));
       });
       setSelectedId(null);
       setTimeout(() => fit(), 80);
@@ -314,13 +319,13 @@ export function TaskTreePage() {
 
   const addDep = async (node: TaskNode, depId: string) => {
     const res = await addTaskDependency(node.id, depId);
-    if (res.success) setNodes((ns) => ns.map((n) => (n.id === node.id ? { ...n, dependsOn: [...new Set([...n.dependsOn, depId])] } : n)));
+    if (res.success) setNodes((ns) => ns.map((n) => (n.id === node.id ? { ...n, dependsOn: [...new Set([...(n.dependsOn || []), depId])] } : n)));
     else toast.error(res.error?.message ?? '添加依赖失败');
   };
 
   const removeDep = async (node: TaskNode, depId: string) => {
     const res = await removeTaskDependency(node.id, depId);
-    if (res.success) setNodes((ns) => ns.map((n) => (n.id === node.id ? { ...n, dependsOn: n.dependsOn.filter((d) => d !== depId) } : n)));
+    if (res.success) setNodes((ns) => ns.map((n) => (n.id === node.id ? { ...n, dependsOn: (n.dependsOn || []).filter((d) => d !== depId) } : n)));
   };
 
   const createNewTree = async () => {
@@ -360,7 +365,8 @@ export function TaskTreePage() {
     const ctrl = new AbortController();
     let typing = '';
     try {
-      const resp = await fetch(api.taskTree.trees.extract(encodeURIComponent(treeId)), {
+      const apiBase = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
+      const resp = await fetch(`${apiBase}${api.taskTree.trees.extract(encodeURIComponent(treeId))}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ text, parentId }),
@@ -371,16 +377,15 @@ export function TaskTreePage() {
         if (!evt.data) return;
         let data: Record<string, unknown> = {};
         try { data = JSON.parse(evt.data); } catch { /* ignore */ }
+        // 切树后本次摘取的所有事件都不应再写当前 UI（节点已按 server-authority 建到原树）
+        if (treeIdRef.current !== extractTreeId) {
+          if (evt.event === 'node') toast.info('任务已创建到切换前的任务树');
+          return;
+        }
         if (evt.event === 'thinking' || evt.event === 'typing') {
           typing += String(data.text ?? '');
           setChatLog((l) => { const c = [...l]; c[c.length - 1] = { role: 'a', text: typing || '正在生成…' }; return c; });
         } else if (evt.event === 'node') {
-          if (treeIdRef.current !== extractTreeId) {
-            // 用户已切到别的树：节点已按 server-authority 正确建到原树，给出反馈而非静默丢弃
-            toast.info('任务已创建到切换前的任务树');
-            setChatLog((l) => { const c = [...l]; c[c.length - 1] = { role: 'a', text: '任务已创建到切换前的任务树' }; return c; });
-            return;
-          }
           const node = data as unknown as TaskNode;
           newIdsRef.current = new Set([node.id]);
           setNodes((ns) => [...ns, node]);
@@ -391,7 +396,7 @@ export function TaskTreePage() {
         }
       }, ctrl.signal);
     } catch (e) {
-      setChatLog((l) => [...l, { role: 'a', text: `摘取失败：${(e as Error).message}` }]);
+      setChatLog((l) => { const c = [...l]; c[c.length - 1] = { role: 'a', text: `摘取失败：${(e as Error).message}` }; return c; });
     } finally {
       setExtracting(false);
       setTimeout(() => fit(), 80);

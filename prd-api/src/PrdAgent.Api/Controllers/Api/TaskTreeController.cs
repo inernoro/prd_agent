@@ -114,7 +114,13 @@ public class TaskTreeController : ControllerBase
         if (tree == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务树不存在"));
 
+        // 依赖允许跨树（同 owner），删树前先收集被删节点 ID，清理其它树残留的依赖引用
+        var deletedIds = await _db.TaskNodes.Find(n => n.TreeId == treeId).Project(n => n.Id).ToListAsync();
         await _db.TaskNodes.DeleteManyAsync(n => n.TreeId == treeId);
+        if (deletedIds.Count > 0)
+            await _db.TaskNodes.UpdateManyAsync(
+                n => n.OwnerId == userId,
+                Builders<TaskNode>.Update.PullAll(n => n.DependsOn, deletedIds));
         await _db.TaskTrees.DeleteOneAsync(t => t.Id == treeId);
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
