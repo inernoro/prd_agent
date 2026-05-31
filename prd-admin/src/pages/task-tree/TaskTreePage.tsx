@@ -119,6 +119,11 @@ export function TaskTreePage() {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const newIdsRef = useRef<Set<string>>(new Set());
   const dragRef = useRef<{ x: number; y: number; cx: number; cy: number } | null>(null);
+  // 防陈旧响应：tab/树/scope 快速切换时，丢弃更早请求的结果（prd-admin 约定）
+  const loadSeqRef = useRef(0);
+  const blockersSeqRef = useRef(0);
+  const treeIdRef = useRef<string | null>(null);
+  useEffect(() => { treeIdRef.current = treeId; }, [treeId]);
 
   const pos = useMemo(() => computeLayout(nodes, layout), [nodes, layout]);
 
@@ -143,7 +148,9 @@ export function TaskTreePage() {
   }, [pos]);
 
   const loadTree = useCallback(async (id: string) => {
+    const seq = ++loadSeqRef.current;
     const res = await getTaskTree(id);
+    if (seq !== loadSeqRef.current) return; // 已切到别的树，丢弃陈旧响应
     if (res.success && res.data) {
       newIdsRef.current = new Set(res.data.nodes.map((n) => n.id));
       setNodes(res.data.nodes);
@@ -174,15 +181,16 @@ export function TaskTreePage() {
   }, [treeId, layout, fit]);
 
   useEffect(() => {
-    if (view === 'wall') {
-      void (async () => {
-        const res = await listTaskBlockers(wallScope);
-        if (res.success && res.data) {
-          setBlockers(res.data.items);
-          setCanViewAll(res.data.canViewAll);
-        }
-      })();
-    }
+    if (view !== 'wall') return;
+    const seq = ++blockersSeqRef.current;
+    void (async () => {
+      const res = await listTaskBlockers(wallScope);
+      if (seq !== blockersSeqRef.current) return; // 丢弃陈旧响应
+      if (res.success && res.data) {
+        setBlockers(res.data.items);
+        setCanViewAll(res.data.canViewAll);
+      }
+    })();
   }, [view, wallScope]);
 
   // wheel 缩放/平移（passive:false 才能 preventDefault）
@@ -206,7 +214,7 @@ export function TaskTreePage() {
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, []);
+  }, [view, loading, treeId]); // svg 在 loading/卡点墙 时不渲染，需在其挂载后重新绑定
 
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     dragRef.current = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y };
@@ -337,6 +345,7 @@ export function TaskTreePage() {
     setChatText('');
     setChatLog((l) => [...l, { role: 'u', text }, { role: 'a', text: '正在分析…' }]);
     setExtracting(true);
+    const extractTreeId = treeId; // 锁定本次摘取归属的树
     const token = useAuthStore.getState().token;
     const parentId = selectedId && nodes.some((n) => n.id === selectedId) ? selectedId : undefined;
     const ctrl = new AbortController();
@@ -357,6 +366,7 @@ export function TaskTreePage() {
           typing += String(data.text ?? '');
           setChatLog((l) => { const c = [...l]; c[c.length - 1] = { role: 'a', text: typing || '正在生成…' }; return c; });
         } else if (evt.event === 'node') {
+          if (treeIdRef.current !== extractTreeId) return; // 用户已切树，丢弃归属错误的节点
           const node = data as unknown as TaskNode;
           newIdsRef.current = new Set([node.id]);
           setNodes((ns) => [...ns, node]);
