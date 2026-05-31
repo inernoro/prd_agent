@@ -96,20 +96,29 @@ TODAY=${ARG_DATE:-$(date +%Y-%m-%d)}
 ### Phase 2：数据收集（按纪律 2/3）
 
 ```bash
-# 2.1 当日全部提交（含各分支落地的，主干口径为主）
-git log --format="%cd%x09%h%x09%an%x09%s" --date=short | awk -F '\t' -v d="$TODAY" '$1==d'
+# 0. 先定主干（纪律 2/3）：以下所有 git log 都必须带 "$DEFAULT_BRANCH" + --first-parent，
+#    否则在 feature 分支上跑会把未合并提交当成"主干落地"，并绕过零提交硬闸。
+DEFAULT_BRANCH=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)
+DEFAULT_BRANCH=${DEFAULT_BRANCH:-origin/main}
+
+# 2.1 当日落地主干的提交
+git log --first-parent "$DEFAULT_BRANCH" --format="%cd%x09%h%x09%an%x09%s" --date=short \
+  | awk -F '\t' -v d="$TODAY" '$1==d'
 
 # 2.2 当日提交类型分布（按 Conventional Commits 前缀）
 #   feat / fix / perf / refactor / style / docs / chore / test
-git log --format="%cd%x09%s" --date=short | awk -F '\t' -v d="$TODAY" '$1==d{print $2}' \
+git log --first-parent "$DEFAULT_BRANCH" --format="%cd%x09%s" --date=short \
+  | awk -F '\t' -v d="$TODAY" '$1==d{print $2}' \
   | grep -oE '^(feat|fix|perf|refactor|style|docs|chore|test)' | sort | uniq -c
 
 # 2.3 穿透当日 merge commit（取 PR 真实 commits）
-git log --merges --format="%cd%x09%H%x09%s" --date=short | awk -F '\t' -v d="$TODAY" '$1==d{print $2}' \
+git log --first-parent --merges "$DEFAULT_BRANCH" --format="%cd%x09%H%x09%s" --date=short \
+  | awk -F '\t' -v d="$TODAY" '$1==d{print $2}' \
   | while read m; do echo "== PR merge $m =="; git log "$m^1..$m^2" --oneline 2>/dev/null; done
 
 # 2.4 贡献者
-git log --format="%cd%x09%an" --date=short | awk -F '\t' -v d="$TODAY" '$1==d{print $2}' | sort | uniq -c
+git log --first-parent "$DEFAULT_BRANCH" --format="%cd%x09%an" --date=short \
+  | awk -F '\t' -v d="$TODAY" '$1==d{print $2}' | sort | uniq -c
 ```
 
 ### Phase 3：聚类与分层
@@ -135,10 +144,15 @@ git log --format="%cd%x09%an" --date=short | awk -F '\t' -v d="$TODAY" '$1==d{pr
 - **每张截图必须标注「验证了什么」**：caption 写成「{功能}：{这张图证明了什么}」，例如「AI 大事双栏布局：feed 居左 + 右侧栏填充，宽屏无大片留白」。**禁止**只写功能名不写验证点——读者不能靠猜。
 - 走真实用户路径（点击导航进入，禁地址栏直达），双主题按 `acceptance.config.json` 决定。
 
+**取证方式：写 driver，不是直接跑 harness。** `harness.mjs` 只导出 helper（`login/gotoByClick/click/shot/writeManifest/waitForReady/stepClick/stepShot…`），**没有 CLI 入口、不吃 `--base/--steps/--out`**。必须复制 `create-visual-test-to-kb/scripts/example-driver.mjs` 改成本次真人路径脚本，再用 `node` 跑：
+
 ```bash
-# 取证（每个重要功能一次，产出 manifest.json + 截图）
-node .claude/skills/create-visual-test-to-kb/scripts/harness.mjs \
-  --base "$PREVIEW_URL" --steps <步骤脚本> --out /tmp/acc_shots
+# 凭据在环境变量：MAP_AI_USER + MAP_ACCEPT_PASS（仅有 MAP_AI_PASSWORD 时取它兜底）
+export PWPATH=$(npm root -g)/playwright
+export MAP_ACCEPT_PASS="${MAP_ACCEPT_PASS:-$MAP_AI_PASSWORD}"
+PREVIEW_URL=$(python3 .claude/skills/cds/cli/cdscli.py --human preview-url | tail -1)
+# driver 内 import harness helpers，对 2-4 个重要功能 login → gotoByClick → shot(带验证点 caption) → writeManifest(OUT)
+node /tmp/daily-driver.mjs "$PREVIEW_URL"      # 产出 OUT/*.png + OUT/manifest.json
 ```
 
 在报告对应的新功能小节插入「{{IMG:<name>}}」占位（report-template.md 已支持逐步配图），**并把 harness 产出的 `manifest.json` 一起传给 Phase 5 的 `publish.py --manifest`**——脚本会先把截图上传到知识库拿可访问 URL、回填占位，再写正文。`publish.py` 发布前有硬闸：正文里若残留任何未替换的 `{{IMG:}}`/`{{EVIDENCE}}` 占位（即占位有了却没传对应截图）会**直接拒发**，杜绝读者看到坏占位。**缺少截图取证的新功能段落，必须显式写「本功能未取截图，原因：……」**（用文字，不要留占位），不留空白让读者疑惑。
@@ -156,7 +170,8 @@ python3 .claude/skills/daily-report-summary/reference/publish.py \
   --impersonate inernoro \
   --title "日报-${TODAY}-今日大事早知道" \
   --daily-date "${TODAY}" \
-  --report-md /tmp/daily-${TODAY}.md
+  --report-md /tmp/daily-${TODAY}.md \
+  --manifest /tmp/acc_shots/manifest.json   # 有 Phase 4.5 截图时必传，脚本据此上传图 + 回填 {{IMG:}} 占位
 # 无密钥 / 无文档空间时退化：加 --local --out <path>，落本地 md（仅自查，不算交付）
 ```
 

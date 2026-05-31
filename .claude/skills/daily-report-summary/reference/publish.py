@@ -39,10 +39,11 @@ def curl(args, retries=5):
 
 
 def headers(impersonate, with_json=False):
-    key = os.environ.get("DAILY_DOC_STORE_KEY", "").strip()
+    # 优先 DAILY_DOC_STORE_KEY，回退验收技能共用的 MAP_DOC_STORE_KEY（都是 document-store:write scoped key）
+    key = os.environ.get("DAILY_DOC_STORE_KEY", "").strip() or os.environ.get("MAP_DOC_STORE_KEY", "").strip()
     if key:
         h = ["-H", f"Authorization: Bearer {key}"]
-        print("  鉴权：DAILY_DOC_STORE_KEY scoped key（最小权限）")
+        print("  鉴权：scoped key（DAILY_DOC_STORE_KEY / MAP_DOC_STORE_KEY，最小权限）")
     else:
         super_key = os.environ.get("AI_ACCESS_KEY", "").strip()
         if not super_key:
@@ -64,8 +65,8 @@ def find_store(base, H, name):
     page = 1
     while True:
         res = curl(H + [f"{base}/stores?page={page}&pageSize=100"])
-        data = res.get("data", {})
-        items = data.get("items", [])
+        data = res.get("data") or {}            # success:false 时 data 可能为 null
+        items = data.get("items") or []         # items 可能为 null
         for s in items:
             if s.get("name") == name:
                 return s["id"]
@@ -193,10 +194,12 @@ def main():
             cap = m.get("caption", m["name"])
             name_to_md[m["name"]] = f"![{cap}]({url})"
             # upload 会建一个文件条目，取 URL 后删掉，避免库里多出图片条目
-            try:
-                curl(H + ["-X", "DELETE", f"{base}/entries/{d['entry']['id']}"])
-            except Exception:
-                pass
+            tmp_eid = (d.get("entry") or {}).get("id")
+            if tmp_eid:
+                try:
+                    curl(H + ["-X", "DELETE", f"{base}/entries/{tmp_eid}"])
+                except Exception as de:
+                    print(f"  [告警] 截图临时条目 {tmp_eid} 删除失败（库里可能残留一个图片条目，可手动清理）：{str(de)[:80]}")
             print(f"  上传截图 {m['name']} -> {url}")
         body = apply_evidence(body, name_to_md)
         assert_no_placeholder(body)
@@ -221,31 +224,47 @@ def main():
     print(f"  条目 id={eid} title={a.title} dailyDate={daily_date} shots={len(manifest)}")
 
     # write content + verify hasContent（空壳兜底）
-    def has_content():
+    # content_state(): True=确认有正文 / False=确认为空 / None=验证不可达(524等，不能下结论)
+    def content_state():
         try:
-            return bool(curl(H + [f"{base}/entries/{eid}/content"], retries=2).get("data", {}).get("hasContent"))
+            r = curl(H + [f"{base}/entries/{eid}/content"], retries=2)
+            if not r.get("success"):
+                return None
+            return bool((r.get("data") or {}).get("hasContent"))
         except Exception:
+            return None
+
+    def put_content():
+        try:
+            w = curl(HJ + ["-X", "PUT", "-d", json.dumps({"content": body}), f"{base}/entries/{eid}/content"])
+            return bool(w.get("success"))
+        except Exception as e:
+            print(f"  写正文异常：{str(e)[:120]}")
             return False
-    ok = False
-    try:
-        w = curl(HJ + ["-X", "PUT", "-d", json.dumps({"content": body}), f"{base}/entries/{eid}/content"])
-        print(f"  写正文 success={w.get('success')}")
-        ok = has_content()
-        if not ok:
-            curl(HJ + ["-X", "PUT", "-d", json.dumps({"content": body}), f"{base}/entries/{eid}/content"])
-            ok = has_content()
-    except Exception as e:
-        print(f"  写正文异常：{str(e)[:120]}")
-        ok = has_content()
-    if not ok:
+
+    put_ok = put_content()
+    print(f"  写正文 put_ok={put_ok}")
+    state = content_state()
+    if not put_ok and state is False:   # 既没 PUT 成功又确认为空 → 再写一次
+        put_ok = put_content()
+        state = content_state()
+
+    if put_ok or state is True:
+        print(f"  正文已落库（put_ok={put_ok}, verified={state}）")
+    elif state is False:
+        # 确认为空壳（PUT 没成功且 GET 明确 hasContent=false）→ 清理，不留断头报告
         try:
             curl(H + ["-X", "DELETE", f"{base}/entries/{eid}"], retries=2)
-            print(f"  正文未生效，已删空壳条目 {eid}")
+            print(f"  正文确认为空，已删空壳条目 {eid}")
         except Exception:
-            print(f"  正文未生效且删除失败；稳定后请手动删条目 {eid}")
+            print(f"  正文确认为空且删除失败；稳定后请手动删条目 {eid}")
         rollback_store_if_new()
         raise RuntimeError("正文写入未生效(hasContent=false)，请稍后重跑")
-    print("  正文已校验落库 hasContent=true")
+    else:
+        # state=None：验证接口不可达，无法证明为空 → 保留条目，绝不误删可能已落库的正文（High 修复）
+        raise RuntimeError(
+            f"正文写入结果未确认（PUT 未返回成功且验证接口不可达）。已保留条目 {eid} 避免误删，"
+            "请稍后登录该库人工确认/重写，勿盲目重跑造成重复。")
 
     # share link
     share_url = None
