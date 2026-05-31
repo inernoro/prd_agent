@@ -1521,6 +1521,10 @@ export function DocumentStorePage() {
               const ci = Math.abs([...s.id].reduce((a, c) => (a * 31 + c.charCodeAt(0)) | 0, 0)) % ICON_PALETTE.length;
               const [c1, c2] = ICON_PALETTE[ci];
               const category = s.tags?.[0];
+              // 头像文件名字段名因来源而异：我的/团队列表是 ownerAvatarFileName，收藏/点赞列表是 ownerAvatar
+              const ownerAvatarFileName = (s as DocumentStoreWithPreview).ownerAvatarFileName
+                ?? (s as InteractionStoreCard).ownerAvatar;
+              const hasOwner = Boolean((s as DocumentStoreWithPreview).ownerName || ownerName);
               return (
                 <GlassCard key={s.id} animated interactive padding="none"
                   className="group flex flex-col h-full"
@@ -1682,9 +1686,9 @@ export function DocumentStorePage() {
                         <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
                           <RelativeTime value={s.updatedAt} refreshIntervalMs={0} />
                         </span>
-                        {(s as DocumentStoreWithPreview).ownerName || ownerName ? (
+                        {hasOwner ? (
                           <UserAvatar
-                            src={resolveAvatarUrl({ avatarFileName: (s as DocumentStoreWithPreview).ownerAvatarFileName })}
+                            src={resolveAvatarUrl({ avatarFileName: ownerAvatarFileName })}
                             className="w-6 h-6 rounded-full"
                             style={{ border: '2px solid var(--bg-card, #1b1b1e)' }}
                           />
