@@ -721,9 +721,10 @@ public class HostedSiteService : IHostedSiteService
             var firstSite = await _db.HostedSites.Find(x => x.Id == allIds[0])
                 .Project(Builders<HostedSite>.Projection.Expression(s => s.Title))
                 .FirstOrDefaultAsync(ct);
+            // 不再加「{用户} 分享给你的」前缀，直接用站点名/合集名作为标题
             shareTitle = shareType == "collection"
-                ? $"{displayName} 分享给你的 {allIds.Count} 个站点合集"
-                : $"{displayName} 分享给你的「{firstSite ?? "站点"}」";
+                ? $"{allIds.Count} 个站点合集"
+                : (firstSite ?? "站点");
         }
         var effDescription = description?.Trim();
 
@@ -1104,7 +1105,7 @@ public class HostedSiteService : IHostedSiteService
 
         return new ShareViewResult
         {
-            Title = share.Title,
+            Title = StripLegacySharePrefix(share.Title),
             Description = share.Description,
             ShareType = share.ShareType,
             CreatedAt = share.CreatedAt,
@@ -1336,7 +1337,7 @@ public class HostedSiteService : IHostedSiteService
         {
             ViewedAt = l.ViewedAt,
             ShareToken = l.ShareToken,
-            ShareTitle = titleByToken.TryGetValue(l.ShareToken, out var t) ? t : null,
+            ShareTitle = StripLegacySharePrefix(titleByToken.TryGetValue(l.ShareToken, out var t) ? t : null),
             ViewerName = l.ViewerName,
             IpAddress = MaskIp(l.IpAddress),
             UserAgent = l.UserAgent,
@@ -1351,7 +1352,7 @@ public class HostedSiteService : IHostedSiteService
             {
                 ShareId = s.Id,
                 Token = s.Token,
-                Title = s.Title,
+                Title = StripLegacySharePrefix(s.Title),
                 ViewCount = s.ViewCount,
                 UniqueIpCount = s.UniqueIpCount,
                 LastViewedAt = s.LastViewedAt,
@@ -1379,6 +1380,9 @@ public class HostedSiteService : IHostedSiteService
     private static string? MaskIp(string? ip)
     {
         if (string.IsNullOrWhiteSpace(ip)) return ip;
+        // 历史数据可能存了 IPv4-mapped IPv6（::ffff:1.2.3.4），先规整回点分十进制再脱敏
+        if (ip.StartsWith("::ffff:", StringComparison.OrdinalIgnoreCase) && ip.Contains('.'))
+            ip = ip["::ffff:".Length..];
         if (ip.Contains('.'))
         {
             var parts = ip.Split('.');
@@ -1390,6 +1394,20 @@ public class HostedSiteService : IHostedSiteService
             return parts.Length >= 3 ? $"{parts[0]}:{parts[1]}:{parts[2]}::*" : ip;
         }
         return ip;
+    }
+
+    // 历史遗留：旧分享链接的 Title 里 baked 了「{用户} 分享给你的「站点名」」/「… N 个站点合集」前缀。
+    // 新链接已不再写入前缀；此处在展示侧剥掉旧前缀，老数据无需迁移即可干净显示。
+    private static string? StripLegacySharePrefix(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title)) return title;
+        const string marker = " 分享给你的";
+        var idx = title.IndexOf(marker, StringComparison.Ordinal);
+        if (idx <= 0) return title;
+        var rest = title[(idx + marker.Length)..].Trim();
+        if (rest.Length >= 2 && rest[0] == '「' && rest[^1] == '」')
+            rest = rest[1..^1];
+        return string.IsNullOrWhiteSpace(rest) ? title : rest;
     }
 
     public async Task<ShareDiagnosticsResult?> GetShareDiagnosticsAsync(string token, CancellationToken ct = default)

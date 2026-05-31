@@ -349,11 +349,9 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <ShieldCheck size={14} color="rgba(34, 197, 94, 0.8)" />
-            {data.createdByName && (
-              <span style={{ color: 'rgba(34, 197, 94, 0.9)', fontSize: 13, fontWeight: 600 }}>{data.createdByName}</span>
-            )}
+            {/* 不再展示「{用户} 分享给你的」前缀，直接显示站点标题 */}
             <span style={{ color: '#fff', fontSize: 14, fontWeight: 500 }}>
-              {data.createdByName ? `分享给你的「${site.title}」` : (data.title || site.title)}
+              {data.title || site.title}
             </span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
