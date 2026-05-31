@@ -5414,7 +5414,8 @@ def _autofix_env_var_unresolved(doc: dict, issue: dict) -> str | None:
         env = {}
         doc["x-cds-env"] = env
     if var in env:
-        return None
+        # 同一次修复循环里已被前一条 issue 补入;视为已修,不降级为 manual。
+        return f"x-cds-env 已含 {var}(同次修复,无需重复写入)"
     env[var] = "CHANGE_ME"
     return f"x-cds-env 新增 {var}: CHANGE_ME(占位,需人工改成真实值)"
 

@@ -133,6 +133,43 @@ def test_fixer_without_meta_degrades_to_manual():
     assert len(heal["manual"]) == 1
 
 
+def test_duplicate_env_var_both_counted_as_fixed():
+    """同一变量出现两次时,第二条 issue 也应被计为已修而非降级为 manual。"""
+    compose = (
+        "services:\n"
+        "  api:\n"
+        "    image: node:20-alpine\n"
+        "    ports: ['3000']\n"
+        "    volumes: ['./api:/app']\n"
+        "    environment:\n"
+        "      TOKEN: ${SECRET_TOKEN}\n"
+        "    command: sh -c 'echo ${SECRET_TOKEN}'\n"
+    )
+    path = _write_compose(compose)
+    doc = {
+        "services": {
+            "api": {
+                "image": "node:20-alpine", "ports": ["3000"],
+                "volumes": ["./api:/app"],
+                "environment": {"TOKEN": "${SECRET_TOKEN}"},
+                "command": "sh -c 'echo ${SECRET_TOKEN}'",
+            }
+        }
+    }
+    # 同一变量被 verify 检测出两条 ERROR(environment + command 各一条)
+    issues = [
+        {"severity": "ERROR", "service": "api", "rule": "env-var-unresolved",
+         "message": "...", "fix": "...", "meta": {"var": "SECRET_TOKEN"}},
+        {"severity": "ERROR", "service": "api", "rule": "env-var-unresolved",
+         "message": "...", "fix": "...", "meta": {"var": "SECRET_TOKEN"}},
+    ]
+    heal = cdscli._verify_autofix(path, doc, issues)
+    # 两条都应进 autoFixed,manual 为空
+    assert len(heal["autoFixed"]) == 2
+    assert heal["manual"] == []
+    assert "SECRET_TOKEN: CHANGE_ME" in heal["patchedYaml"]
+
+
 def test_gate_uses_remaining_issues_after_write():
     """--fix --write 后门禁应基于剩余 issue,全部修完则 ERROR 降为 0。"""
     issues = [
