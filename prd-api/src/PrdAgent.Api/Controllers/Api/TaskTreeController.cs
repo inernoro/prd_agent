@@ -192,10 +192,25 @@ public class TaskTreeController : ControllerBase
             var newParent = request.ParentId.Length == 0 ? null : request.ParentId;
             if (newParent == nodeId)
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "父节点不能是自己"));
+            // 根节点不可改父节点：否则整棵树将失去 ParentId==null 的根，前端布局塌陷
+            if (node.ParentId == null && newParent != null)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "根节点（创世支柱）不能改父节点"));
             if (newParent != null)
             {
                 var p = await _db.TaskNodes.Find(n => n.Id == newParent && n.TreeId == node.TreeId).FirstOrDefaultAsync();
                 if (p == null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "目标父节点不存在"));
+                // 防环：新父节点不能是本节点的子孙
+                var treeNodes = await _db.TaskNodes.Find(n => n.TreeId == node.TreeId).ToListAsync();
+                var descendants = new HashSet<string> { nodeId };
+                bool grew = true;
+                while (grew)
+                {
+                    grew = false;
+                    foreach (var tn in treeNodes)
+                        if (tn.ParentId != null && descendants.Contains(tn.ParentId) && descendants.Add(tn.Id)) grew = true;
+                }
+                if (descendants.Contains(newParent))
+                    return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不能把节点移动到它自己的子任务之下（会形成环）"));
             }
             updates.Add(u.Set(n => n.ParentId, newParent));
         }
