@@ -90,13 +90,27 @@ def resolve_daily_date(daily_date, title):
 
 
 def load_manifest(path):
+    """加载并校验截图清单。Phase 4.5 硬要求：每张图必须有"说明验证了什么"的 caption、
+    且文件就绪、无 harness warnings——不达标 fail-fast，不让弱 caption/未就绪图混进日报。"""
     if not path:
         return []
     m = json.load(open(path, encoding="utf-8"))
+    errs = []
     for item in m:
+        name = item.get("name") or item.get("path", "")
         p = item.get("path", "")
-        if not os.path.isfile(p):
-            raise RuntimeError(f"manifest 截图缺失：{item.get('name', p)} -> {p}")
+        if not os.path.isfile(p) or os.path.getsize(p) < 1024:
+            errs.append(f"截图缺失/过小(<1KB)：{name}")
+        cap = (item.get("caption") or "").strip()
+        if not cap:
+            errs.append(f"截图无 caption（必须说明验证了什么）：{name}")
+        elif cap == name or len(cap) < 6:
+            errs.append(f"截图 caption 太弱（只写名字/过短，需写清验证点）：{name} -> {cap!r}")
+        ws = item.get("warnings") or []
+        if ws:  # harness 在截图前后做就绪校验，把问题写进 warnings；这里提升为拒发硬条件
+            errs.append(f"截图未就绪/有问题：{name} -> {' | '.join(ws)}")
+    if errs:
+        raise RuntimeError("截图清单校验未通过（Phase 4.5 要求每张图就绪且说明验证点）：\n  - " + "\n  - ".join(errs))
     return m
 
 
