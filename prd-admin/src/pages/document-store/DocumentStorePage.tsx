@@ -1523,9 +1523,9 @@ export function DocumentStorePage() {
                   <div className="p-4 pb-2 flex-1 flex flex-col">
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                        <div className="w-9 h-9 rounded-[10px] flex items-center justify-center flex-shrink-0"
-                          style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.12)' }}>
-                          <Library size={16} style={{ color: 'rgba(59,130,246,0.85)' }} />
+                        <div className="w-10 h-10 rounded-[11px] flex items-center justify-center flex-shrink-0"
+                          style={{ background: 'linear-gradient(135deg, rgba(59,130,246,0.9), rgba(99,102,241,0.75))', boxShadow: '0 4px 12px -4px rgba(59,130,246,0.5)' }}>
+                          <Library size={18} style={{ color: '#fff' }} />
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5 min-w-0">
@@ -1541,27 +1541,27 @@ export function DocumentStorePage() {
                               </span>
                             )}
                           </div>
-                          {/* 团队作用域：顶部显示创建者头像 + 昵称 */}
-                          {teamScope.scope === 'team' && (s as DocumentStoreWithPreview).ownerName && (
+                          {/* 副标题行：分类/作用域归属 + 文章数 */}
+                          {teamScope.scope === 'team' && (s as DocumentStoreWithPreview).ownerName ? (
                             <div className="flex items-center gap-1 mt-0.5">
                               <UserAvatar
                                 src={resolveAvatarUrl({ avatarFileName: (s as DocumentStoreWithPreview).ownerAvatarFileName })}
                                 className="w-3.5 h-3.5 rounded-full"
                               />
                               <span className="text-[11px] truncate" style={{ color: 'var(--text-secondary)' }}>
-                                {(s as DocumentStoreWithPreview).ownerName}
+                                {(s as DocumentStoreWithPreview).ownerName} · {s.documentCount} 篇
                               </span>
                             </div>
+                          ) : (
+                            <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                              {ownerName ? `@${ownerName} · ` : ''}{s.documentCount} 篇文章
+                            </p>
                           )}
-                          {s.description ? (
+                          {s.description && (
                             <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
                               {s.description}
                             </p>
-                          ) : ownerName ? (
-                            <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                              @{ownerName}
-                            </p>
-                          ) : null}
+                          )}
                         </div>
                       </div>
                       {tab === 'mine' && (
@@ -1612,31 +1612,51 @@ export function DocumentStorePage() {
                       </div>
                     )}
 
-                    {/* 最近文档预览列表 */}
-                    <div className="flex-1 mt-1.5 space-y-0.5 min-h-[60px]">
+                    {/* 最近文档预览列表 — 文章迷你目录（序号 + 标题 + 更多计数） */}
+                    <div className="flex-1 mt-2 min-h-[88px]">
                       {(s.recentEntries?.length ?? 0) > 0 ? (
-                        s.recentEntries.map((entry) => (
-                          <div key={entry.id} className="flex items-center gap-1.5 py-1 px-1 rounded-[6px] transition-colors hover:bg-white/3">
-                            <FileText size={11} className="flex-shrink-0" style={{ color: 'rgba(59,130,246,0.5)' }} />
-                            <span className="flex-1 text-[11px] truncate" style={{ color: 'var(--text-secondary)' }}>
-                              {entry.title}
-                            </span>
-                            <span className="text-[9px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
-                              {new Date(entry.updatedAt).toLocaleDateString()}
-                            </span>
-                          </div>
-                        ))
+                        <div className="rounded-[9px] overflow-hidden"
+                          style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                          {s.recentEntries.slice(0, 3).map((entry, idx) => (
+                            <div key={entry.id}
+                              className="flex items-center gap-2 px-2.5 py-1.5 transition-colors hover:bg-white/[0.04]"
+                              style={{ borderTop: idx === 0 ? 'none' : '1px solid rgba(255,255,255,0.05)' }}>
+                              <span className="text-[10px] w-3.5 text-center flex-shrink-0 tabular-nums" style={{ color: 'var(--text-muted)' }}>
+                                {idx + 1}
+                              </span>
+                              <FileText size={12} className="flex-shrink-0" style={{ color: 'rgba(59,130,246,0.6)' }} />
+                              <span className="flex-1 text-[11.5px] truncate" style={{ color: 'var(--text-secondary)' }}>
+                                {entry.title}
+                              </span>
+                            </div>
+                          ))}
+                          {s.documentCount > 3 && (
+                            <div className="flex items-center justify-center px-2.5 py-1.5 text-[10.5px]"
+                              style={{ borderTop: '1px solid rgba(255,255,255,0.05)', color: 'var(--text-muted)' }}>
+                              + 还有 {s.documentCount - 3} 篇
+                            </div>
+                          )}
+                        </div>
                       ) : (
-                        <div className="flex items-center justify-center h-full">
+                        <div className="flex items-center justify-center h-full rounded-[9px]"
+                          style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.08)', minHeight: '88px' }}>
                           <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>知识库暂无内容</span>
                         </div>
                       )}
                     </div>
 
-                    <div className="flex items-center justify-between mt-2 pt-2.5"
+                    <div className="flex items-center justify-between mt-2.5 pt-2.5"
                       style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
                       <div className="flex items-center gap-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                        <span><span style={{ color: 'var(--text-secondary)' }}>{s.documentCount}</span> 个文档</span>
+                        <span className="inline-flex items-center gap-1" title="文档数">
+                          <FileText size={11} /> {s.documentCount}
+                        </span>
+                        <span className="inline-flex items-center gap-1" title="浏览">
+                          <Eye size={11} /> {s.viewCount ?? 0}
+                        </span>
+                        <span className="inline-flex items-center gap-1" title="点赞">
+                          <Heart size={11} /> {s.likeCount ?? 0}
+                        </span>
                       </div>
                       <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
                         {new Date(s.updatedAt).toLocaleDateString()}
