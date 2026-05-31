@@ -1645,7 +1645,7 @@ export function DocumentStorePage() {
                               )}
                               <span className="flex-1" />
                               <span className="text-[10px] flex-shrink-0 tabular-nums" style={{ color: 'var(--text-muted)' }}>
-                                <RelativeTime value={entry.updatedAt} />
+                                <RelativeTime value={entry.updatedAt} refreshIntervalMs={0} />
                               </span>
                             </div>
                           ))}
@@ -1680,7 +1680,7 @@ export function DocumentStorePage() {
                       {/* 右下角：相对修改时间 + 贡献者头像（两者都保留，不再二选一） */}
                       <div className="flex items-center gap-2">
                         <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                          <RelativeTime value={s.updatedAt} />
+                          <RelativeTime value={s.updatedAt} refreshIntervalMs={0} />
                         </span>
                         {(s as DocumentStoreWithPreview).ownerName || ownerName ? (
                           <UserAvatar
