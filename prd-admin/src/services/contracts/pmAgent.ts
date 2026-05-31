@@ -64,6 +64,7 @@ export type PmProject = {
   leaderId: string;
   leaderName?: string;
   memberIds: string[];
+  observerIds: string[];
   strategyAlignment?: string;
   plannedStartAt?: string | null;
   plannedEndAt?: string | null;
@@ -293,8 +294,9 @@ export type ListPmProjectsContract = (
 ) => Promise<ApiResponse<{ items: PmProject[]; total: number; page: number; pageSize: number }>>;
 
 export type PmMember = { userId: string; displayName: string; avatarFileName?: string | null };
-export type GetPmMembersContract = (projectId: string) => Promise<ApiResponse<{ members: PmMember[]; leaderId: string; ownerId: string }>>;
+export type GetPmMembersContract = (projectId: string) => Promise<ApiResponse<{ members: PmMember[]; observers: PmMember[]; leaderId: string; ownerId: string }>>;
 export type SetPmMembersContract = (projectId: string, memberIds: string[]) => Promise<ApiResponse<{ members: PmMember[]; memberIds: string[] }>>;
+export type SetPmObserversContract = (projectId: string, observerIds: string[]) => Promise<ApiResponse<{ observers: PmMember[]; observerIds: string[] }>>;
 
 // ── 知识库 ──
 export type PmKnowledgeFile = {

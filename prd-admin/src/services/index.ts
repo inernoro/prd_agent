@@ -1956,6 +1956,7 @@ export {
   bulkPmTasksReal as bulkPmTasks,
   getPmMembersReal as getPmMembers,
   setPmMembersReal as setPmMembers,
+  setPmObserversReal as setPmObservers,
   listPmKnowledgeFilesReal as listPmKnowledgeFiles,
   uploadPmKnowledgeFileReal as uploadPmKnowledgeFile,
   updatePmKnowledgeFileReal as updatePmKnowledgeFile,

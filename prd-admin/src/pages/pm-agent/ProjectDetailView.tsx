@@ -71,6 +71,9 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
   const [timeEdit, setTimeEdit] = useState<{ start: string; end: string } | null>(null);
   const [savingTime, setSavingTime] = useState(false);
   const [openTask, setOpenTask] = useState<PmTask | null>(null);
+  // 立项后引导：成员只有项目经理一人、且无观察者时，引导去拉人协作（有人后自动消失，可手动收起）
+  const [teamGuideDismissed, setTeamGuideDismissed] = useState(() => sessionStorage.getItem(`pm-team-guide-${projectId}`) === '1');
+  const dismissTeamGuide = () => { sessionStorage.setItem(`pm-team-guide-${projectId}`, '1'); setTeamGuideDismissed(true); };
   // P1 筛选 / 分组
   const [search, setSearch] = useState('');
   const [fPriority, setFPriority] = useState('');
@@ -286,6 +289,29 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
           </div>
         </div>
       </div>
+
+      {/* 立项后团队协作引导（仅项目经理一人、无观察者时显示，可管理者可见） */}
+      {(project.ownerId === myId || project.leaderId === myId)
+        && !teamGuideDismissed
+        && project.memberIds.filter((id) => id && id !== project.leaderId).length === 0
+        && (project.observerIds ?? []).length === 0 && (
+        <div className="shrink-0 rounded-xl border p-4" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
+          <div className="flex items-start gap-2.5">
+            <Sparkles size={16} className="mt-0.5 shrink-0" style={{ color: '#3B82F6' }} />
+            <div className="flex-1 min-w-0">
+              <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>立项成功，接下来把团队拉起来</div>
+              <div className="text-[12px] mt-1" style={{ color: 'var(--text-secondary)' }}>
+                目前项目里只有你一人。去「成员」把一起干活的人拉进来分配任务；不直接参与、只需了解进展的同事可加为「观察者」（权限相同、主要是看）；需要参与结案评价的，到「干系人」里维护。
+              </div>
+              <div className="flex items-center gap-2 mt-3">
+                <Button variant="primary" size="sm" onClick={() => setTab('members')}><UserCog size={14} />去拉成员 / 观察者</Button>
+                <Button variant="ghost" size="sm" onClick={() => setTab('stakeholders')}><Users size={14} />维护干系人</Button>
+                <button onClick={dismissTeamGuide} className="ml-auto text-[12px] px-2 py-1 rounded hover:opacity-70" style={{ color: 'var(--text-muted)' }}>知道了</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Tab 切换 */}
       <div className="shrink-0">

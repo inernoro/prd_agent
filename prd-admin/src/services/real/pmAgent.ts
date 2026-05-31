@@ -23,6 +23,7 @@ import type {
   BulkPmTasksContract,
   GetPmMembersContract,
   SetPmMembersContract,
+  SetPmObserversContract,
   ListPmKnowledgeFilesContract,
   UpdatePmKnowledgeFileContract,
   DeletePmKnowledgeFileContract,
@@ -71,6 +72,10 @@ export const getPmMembersReal: GetPmMembersContract = async (projectId) => {
 
 export const setPmMembersReal: SetPmMembersContract = async (projectId, memberIds) => {
   return await apiRequest(api.pm.projects.members(encodeURIComponent(projectId)), { method: 'PUT', body: { memberIds } });
+};
+
+export const setPmObserversReal: SetPmObserversContract = async (projectId, observerIds) => {
+  return await apiRequest(api.pm.projects.observers(encodeURIComponent(projectId)), { method: 'PUT', body: { observerIds } });
 };
 
 // ── 知识库 ──

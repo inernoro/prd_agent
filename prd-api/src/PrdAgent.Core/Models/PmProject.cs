@@ -46,8 +46,14 @@ public class PmProject
     /// <summary>项目 Leader 名称（冗余，便于展示）</summary>
     public string? LeaderName { get; set; }
 
-    /// <summary>项目成员 UserId 列表</summary>
+    /// <summary>项目成员 UserId 列表（参与项目执行/日常事务的人）</summary>
     public List<string> MemberIds { get; set; } = new();
+
+    /// <summary>
+    /// 项目观察者 UserId 列表（拥有与成员一样的访问权限，但主要是看，一般不参与日常事务）。
+    /// 与 MemberIds 互斥（同一人不能既是成员又是观察者）；与 Stakeholders 可重叠（观察者可同时是干系人）。
+    /// </summary>
+    public List<string> ObserverIds { get; set; } = new();
 
     /// <summary>战略对齐说明（对齐哪个年度经营计划/战略目标）</summary>
     public string? StrategyAlignment { get; set; }
