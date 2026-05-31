@@ -291,6 +291,11 @@ public class AiNewsService : IAiNewsService
             if (m.Success)
             {
                 var text = WebUtility.HtmlDecode(m.Groups[1].Value).Trim();
+                // 部分站点 meta 里实体被双重编码（&amp;ldquo;），再解一次
+                if (Regex.IsMatch(text, "&(?:[a-zA-Z]+|#\\d+);"))
+                {
+                    text = WebUtility.HtmlDecode(text).Trim();
+                }
                 text = Regex.Replace(text, "\\s+", " ");
                 if (text.Length >= 8)
                 {
