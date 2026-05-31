@@ -136,10 +136,16 @@ public class TaskTreeController : ControllerBase
         if (string.IsNullOrWhiteSpace(title))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "任务标题不能为空"));
 
-        // 校验父节点属于同一棵树
-        if (!string.IsNullOrEmpty(request.ParentId))
+        // 解析父节点：为空则挂到既有根，避免产生第二个无父根（前端布局只渲染一个根，多出的根会消失）
+        string? parentId = string.IsNullOrEmpty(request.ParentId) ? null : request.ParentId;
+        if (parentId == null)
         {
-            var parent = await _db.TaskNodes.Find(n => n.Id == request.ParentId && n.TreeId == treeId).FirstOrDefaultAsync();
+            var root = await _db.TaskNodes.Find(n => n.TreeId == treeId && n.ParentId == null).FirstOrDefaultAsync();
+            parentId = root?.Id;
+        }
+        else
+        {
+            var parent = await _db.TaskNodes.Find(n => n.Id == parentId && n.TreeId == treeId).FirstOrDefaultAsync();
             if (parent == null)
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "父节点不存在或不属于该树"));
         }
@@ -149,7 +155,7 @@ public class TaskTreeController : ControllerBase
         {
             TreeId = treeId,
             OwnerId = userId,
-            ParentId = string.IsNullOrEmpty(request.ParentId) ? null : request.ParentId,
+            ParentId = parentId,
             Title = title.Length > 120 ? title[..120] : title,
             Description = request.Description?.Trim(),
             Status = status,
@@ -305,6 +311,22 @@ public class TaskTreeController : ControllerBase
         var dep = await _db.TaskNodes.Find(n => n.Id == depId && n.OwnerId == userId).FirstOrDefaultAsync();
         if (dep == null)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "依赖的节点不存在"));
+
+        // 防环：DependsOn 是 DAG。若 depId 已（直接或间接）依赖 nodeId，再加 node→depId 会成环。
+        var ownerNodes = await _db.TaskNodes.Find(n => n.OwnerId == userId).ToListAsync();
+        var depMap = ownerNodes.ToDictionary(n => n.Id, n => n.DependsOn ?? new List<string>());
+        var seen = new HashSet<string>();
+        var stack = new Stack<string>();
+        stack.Push(depId);
+        while (stack.Count > 0)
+        {
+            var cur = stack.Pop();
+            if (!seen.Add(cur)) continue;
+            if (cur == nodeId)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该依赖会形成循环依赖"));
+            if (depMap.TryGetValue(cur, out var ds))
+                foreach (var d in ds) stack.Push(d);
+        }
 
         await _db.TaskNodes.UpdateOneAsync(n => n.Id == nodeId,
             Builders<TaskNode>.Update.AddToSet(n => n.DependsOn, depId).Set(n => n.UpdatedAt, DateTime.UtcNow));
