@@ -10,3 +10,4 @@
 | fix | prd-admin | 「AI 大事」时间线视觉重做:三列布局(时间/脊/内容)修掉圆点压时间 bug;AI 解读去掉半透明圆角玻璃框,改扁平报刊导语(细实线+文字),整体更干净 |
 | feat | prd-api | 「AI 大事」默认改为抓文章 meta 摘要(og:description/description)做内容片段,缓存 Excerpt;新增 POST /api/ai-news/excerpt(匿名,只抓 feed 内已知 URL 防 SSRF);AI 解读降级为抓不到摘要时的备用 |
 | feat | prd-admin | 「AI 大事」内容片段默认显示文章摘要(无标签新闻 dek),抓不到才回退 AI 解读(带「AI解读」标签);渐进抓取 |
+| feat | prd-admin | 「AI 大事」新增分类筛选:头部下方一排可横向滚动的 chip(全部/精选 + 各 aiLabel 分类,带图标+计数+分类色),点击按分类过滤 |

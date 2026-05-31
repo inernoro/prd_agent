@@ -15,6 +15,7 @@ import { glassPanel } from '@/lib/glassStyles';
 import { getAiNewsLatest, getAiNewsExcerpt, getAiNewsCommentary, type AiNewsFeed, type AiNewsItem } from '@/services/real/aiNews';
 import {
   labelMeta,
+  LABEL_REGISTRY,
   itemTime,
   relTime,
   parseTime,
@@ -43,7 +44,8 @@ const POLL_MS = 90_000;
 const TICK_MS = 30_000;
 const PAGE = 24; // 每批揭示条数
 
-type Tab = 'all' | 'featured';
+// 'all' | 'featured' | <aiLabel 分类 key>
+type Filter = string;
 type View = 'timeline' | 'grid';
 
 function hostOf(url: string): string {
@@ -89,7 +91,7 @@ export function AiNewsTimeline() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(false);
-  const [tab, setTab] = useState<Tab>('all');
+  const [tab, setTab] = useState<Filter>('all');
   const [view, setView] = useState<View>('timeline');
   const [now, setNow] = useState(() => Date.now());
   const [visible, setVisible] = useState(PAGE);
@@ -143,8 +145,23 @@ export function AiNewsTimeline() {
 
   const allItems = useMemo(() => {
     const all = sortByRecency(feed?.items ?? []);
-    return tab === 'featured' ? all.filter((x) => x.aiScore >= FEATURED_THRESHOLD) : all;
+    if (tab === 'all') return all;
+    if (tab === 'featured') return all.filter((x) => x.aiScore >= FEATURED_THRESHOLD);
+    return all.filter((x) => x.aiLabel === tab); // 按分类筛选
   }, [feed, tab]);
+
+  // 当前 feed 里实际出现的分类（带计数，按数量降序），只取注册表里有正式名称/颜色的
+  const categories = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const it of feed?.items ?? []) {
+      if (it.aiLabel && LABEL_REGISTRY[it.aiLabel]) {
+        counts.set(it.aiLabel, (counts.get(it.aiLabel) ?? 0) + 1);
+      }
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([key, count]) => ({ key, count, meta: LABEL_REGISTRY[key] }));
+  }, [feed]);
 
   const shown = useMemo(() => allItems.slice(0, visible), [allItems, visible]);
   const hasMore = visible < allItems.length;
@@ -362,29 +379,8 @@ export function AiNewsTimeline() {
           </div>
         </div>
 
-        {/* 筛选 + 视图切换 + 刷新 */}
+        {/* 视图切换 + 刷新（分类筛选移到下方独立一行） */}
         <div className="flex items-center gap-1.5 ml-auto shrink-0">
-          {(['all', 'featured'] as Tab[]).map((t) => {
-            const on = tab === t;
-            const cnt = t === 'all' ? feed?.items.length ?? 0 : featuredCount;
-            return (
-              <button
-                key={t}
-                type="button"
-                onClick={() => setTab(t)}
-                className="text-[12px] px-3 py-1.5 rounded-full transition-colors"
-                style={{
-                  color: on ? 'var(--text-primary)' : 'var(--text-muted)',
-                  background: on ? 'rgba(34,211,238,0.14)' : 'transparent',
-                  border: `1px solid ${on ? 'rgba(34,211,238,0.34)' : 'var(--border-subtle, rgba(255,255,255,0.08))'}`,
-                }}
-              >
-                {t === 'featured' ? '精选' : '全部'}
-                {feed && <span style={{ opacity: 0.55, marginLeft: 5 }}>{cnt}</span>}
-              </button>
-            );
-          })}
-          <span className="w-px h-5 mx-0.5" style={{ background: 'var(--border-subtle, rgba(255,255,255,0.1))' }} />
           <ViewToggleBtn v="timeline" icon={List} label="时间线视图" />
           <ViewToggleBtn v="grid" icon={LayoutGrid} label="网格视图" />
           <button
@@ -399,6 +395,42 @@ export function AiNewsTimeline() {
           </button>
         </div>
       </header>
+
+      {/* ── 分类筛选 chip（全部 / 精选 / 各分类，可横向滚动） ── */}
+      <div
+        className="shrink-0 flex items-center gap-1.5 overflow-x-auto pb-0.5"
+        style={{ scrollbarWidth: 'thin', overscrollBehaviorX: 'contain' }}
+      >
+        {(() => {
+          const chips: Array<{ key: string; label: string; count: number; color?: string; icon?: LucideIcon }> = [
+            { key: 'all', label: '全部', count: feed?.items.length ?? 0 },
+            { key: 'featured', label: '精选', count: featuredCount, color: '#22d3ee' },
+            ...categories.map((c) => ({ key: c.key, label: c.meta.label, count: c.count, color: c.meta.color, icon: c.meta.icon })),
+          ];
+          return chips.map((chip) => {
+            const on = tab === chip.key;
+            const accent = chip.color ?? '#22d3ee';
+            const Icon = chip.icon;
+            return (
+              <button
+                key={chip.key}
+                type="button"
+                onClick={() => setTab(chip.key)}
+                className="shrink-0 inline-flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-full transition-colors"
+                style={{
+                  color: on ? (chip.color ?? 'var(--text-primary)') : 'var(--text-muted)',
+                  background: on ? `${accent}1f` : 'transparent',
+                  border: `1px solid ${on ? `${accent}59` : 'var(--border-subtle, rgba(255,255,255,0.08))'}`,
+                }}
+              >
+                {Icon && <Icon size={12} style={{ color: on ? accent : 'var(--text-muted)' }} />}
+                {chip.label}
+                {feed && <span style={{ opacity: 0.55 }}>{chip.count}</span>}
+              </button>
+            );
+          });
+        })()}
+      </div>
 
       {/* ── Body ── */}
       <div className="flex-1 min-h-0 overflow-y-auto pr-1" style={{ overscrollBehavior: 'contain' }}>
