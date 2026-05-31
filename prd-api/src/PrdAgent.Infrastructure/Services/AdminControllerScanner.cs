@@ -36,15 +36,17 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
         "/api/document-store/public/",
     };
 
-    // 站点维度评论的「列表 + 发表」路由：/api/web-pages/{siteId}/comments
-    // siteId 在路径中段，无法用 PublicRoutes 的 StartsWith 前缀命中。
-    // ListCommentsBySiteAsync/AddCommentBySiteAsync 经 GetByIdAsync 自行鉴权（owner + 团队成员，
-    // 含 viewer 角色均可读/评），若仍套用 AdminPermissionMiddleware 的 WebPagesWrite 写权限，
-    // 团队 viewer 成员从面板发表评论会被提前拦成 403（Codex P2）。这里只豁免「权限检查」，
-    // [Authorize] 仍要求登录，业务层 access check 仍在，故是登录态 + 业务层鉴权。
-    // 注意：$ 锚点确保只命中 .../comments，不会误伤 {id}/comments-enabled（owner/editor 专属开关，需保留写权限）。
+    // 站点维度评论相关路由（siteId 在路径中段，无法用 PublicRoutes 的 StartsWith 前缀命中）：
+    //   - /api/web-pages/{siteId}/comments          列表(GET) + 发表(POST)
+    //   - /api/web-pages/{siteId}/comments-enabled  评论开关(PATCH)
+    // 这三条都在 service 层自行鉴权，不依赖全局 WebPagesWrite 管理权限：
+    //   - ListCommentsBySiteAsync/AddCommentBySiteAsync 经 GetByIdAsync 校验（owner + 团队成员，含 viewer 可读/评）
+    //   - SetCommentsEnabledAsync 显式只放行 owner/editor（其余返回 null → 404）
+    // 若仍套用 AdminPermissionMiddleware 的 WebPagesWrite 闸门，团队 viewer 发表评论 / 团队 editor 改开关
+    // 会在 service 鉴权前被中间件提前拦成 403（Codex P2，两轮）。这里只豁免「管理权限检查」，
+    // [Authorize] 仍要求登录，业务层 owner/editor/成员鉴权仍在，故是登录态 + 业务层鉴权。
     private static readonly Regex SiteCommentRoute = new(
-        @"^/api/web-pages/[^/]+/comments/?$",
+        @"^/api/web-pages/[^/]+/comments(-enabled)?/?$",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     public AdminControllerScanner(ILogger<AdminControllerScanner> logger, Assembly? controllerAssembly = null)
