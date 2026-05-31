@@ -8,6 +8,7 @@ import {
   ChevronDown,
   List,
   LayoutGrid,
+  BarChart3,
   type LucideIcon,
 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -186,6 +187,13 @@ export function AiNewsTimeline() {
     () => (feed?.items ?? []).filter((x) => x.aiScore >= FEATURED_THRESHOLD).length,
     [feed],
   );
+
+  // 右侧栏：精选速览列表 + 分类分布最大值（画 mini bar 用）
+  const featuredItems = useMemo(
+    () => sortByRecency((feed?.items ?? []).filter((x) => x.aiScore >= FEATURED_THRESHOLD)).slice(0, 12),
+    [feed],
+  );
+  const maxCatCount = useMemo(() => categories.reduce((m, c) => Math.max(m, c.count), 0), [categories]);
 
   // 默认：渐进抓取可见条目的文章摘要片段。抓到的填 excerpt，没抓到的记入 noExcerpt（待回退 AI 解读）。
   useEffect(() => {
@@ -432,8 +440,9 @@ export function AiNewsTimeline() {
         })()}
       </div>
 
-      {/* ── Body ── */}
-      <div className="flex-1 min-h-0 overflow-y-auto pr-1" style={{ overscrollBehavior: 'contain' }}>
+      {/* ── Body：左 feed（居左铺主区）+ 右 侧栏（宽屏显示，填充右侧） ── */}
+      <div className="flex-1 min-h-0 flex gap-5">
+        <div className="flex-1 min-w-0 overflow-y-auto pr-1" style={{ overscrollBehavior: 'contain' }}>
         {loading ? (
           <div className="flex items-center justify-center py-24">
             <MapSpinner size={26} color="#22d3ee" />
@@ -461,7 +470,7 @@ export function AiNewsTimeline() {
           </div>
         ) : (
           // 单列新闻流时间线居中阅读列；网格视图铺满宽度
-          <div style={view === 'timeline' ? { maxWidth: 900, margin: '0 auto' } : undefined} className="flex flex-col gap-5">
+          <div className="flex flex-col gap-5">
             {groups.map((g, gi) => (
               <section key={`${g.bucket}-${gi}`} className="flex flex-col gap-3">
                 {/* 分组标题 */}
@@ -584,6 +593,86 @@ export function AiNewsTimeline() {
               )
             )}
           </div>
+        )}
+        </div>
+
+        {/* ── 右侧栏（xl+ 才显示）：今日概览 + 精选速览，填充右侧空白 ── */}
+        {!loading && !error && !(feed?.degraded ?? false) && (feed?.items.length ?? 0) > 0 && (
+          <aside
+            className="hidden xl:flex flex-col w-[340px] shrink-0 overflow-y-auto gap-4 pb-2"
+            style={{ overscrollBehavior: 'contain' }}
+          >
+            {/* 今日概览 + 分类分布（点分类条可筛选） */}
+            <section style={glassPanel} className="rounded-2xl p-4 shrink-0">
+              <div className="flex items-center gap-2 mb-3">
+                <BarChart3 size={15} style={{ color: '#22d3ee' }} />
+                <h3 className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>今日概览</h3>
+                <span className="text-[11px] ml-auto" style={{ color: 'var(--text-muted)' }}>监测 {feed?.total ?? 0} 条</span>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                {categories.slice(0, 9).map((c) => {
+                  const Icon = c.meta.icon;
+                  const pct = maxCatCount > 0 ? Math.round((c.count / maxCatCount) * 100) : 0;
+                  const on = tab === c.key;
+                  return (
+                    <button
+                      key={c.key}
+                      type="button"
+                      onClick={() => setTab(on ? 'all' : c.key)}
+                      className="group flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-[rgba(255,255,255,0.04)]"
+                      style={{ background: on ? `${c.meta.color}14` : 'transparent' }}
+                    >
+                      <Icon size={13} style={{ color: c.meta.color }} className="shrink-0" />
+                      <span className="text-[12px] shrink-0 w-16 text-left truncate" style={{ color: on ? c.meta.color : 'var(--text-secondary, rgba(255,255,255,0.8))' }}>
+                        {c.meta.label}
+                      </span>
+                      <span className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--border-subtle, rgba(255,255,255,0.08))' }}>
+                        <span className="block h-full rounded-full" style={{ width: `${pct}%`, background: c.meta.color, opacity: on ? 1 : 0.65 }} />
+                      </span>
+                      <span className="text-[11px] shrink-0 w-7 text-right font-mono" style={{ color: 'var(--text-muted)' }}>{c.count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+
+            {/* 精选速览 */}
+            {featuredItems.length > 0 && (
+              <section style={glassPanel} className="rounded-2xl p-4 flex flex-col min-h-0">
+                <div className="flex items-center gap-2 mb-3 shrink-0">
+                  <Sparkles size={15} style={{ color: '#67e8f9' }} />
+                  <h3 className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>精选速览</h3>
+                  <span className="text-[11px] ml-auto" style={{ color: 'var(--text-muted)' }}>{featuredItems.length} 条高信号</span>
+                </div>
+                <div className="flex flex-col gap-2.5 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+                  {featuredItems.map((it) => {
+                    const meta = labelMeta(it.aiLabel);
+                    return (
+                      <a
+                        key={it.id || it.url}
+                        href={it.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="group flex items-start gap-2.5"
+                      >
+                        <SourceAvatar url={it.url} meta={meta} size={28} />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[12.5px] leading-snug line-clamp-2 group-hover:underline" style={{ color: 'var(--text-primary)', textDecorationColor: meta.color }}>
+                            {it.title}
+                          </div>
+                          <div className="text-[10px] mt-0.5 flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
+                            <span style={{ color: meta.color }}>{meta.label}</span>
+                            <span style={{ opacity: 0.5 }}>·</span>
+                            <span>{relTime(itemTime(it), now)}</span>
+                          </div>
+                        </div>
+                      </a>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+          </aside>
         )}
       </div>
     </div>
