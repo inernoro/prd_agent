@@ -101,25 +101,36 @@ TODAY=${ARG_DATE:-$(date +%Y-%m-%d)}
 DEFAULT_BRANCH=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)
 DEFAULT_BRANCH=${DEFAULT_BRANCH:-origin/main}
 
-# 2.1 当日落地主干的提交
+# 2.1 当日落地主干的 first-parent 提交（merge 行 + 直接提交）——看"今天落了哪些 PR/直接提交"
 git log --first-parent "$DEFAULT_BRANCH" --format="%cd%x09%h%x09%an%x09%s" --date=short \
   | awk -F '\t' -v d="$TODAY" '$1==d'
 
-# 2.2 当日提交类型分布（按 Conventional Commits 前缀）
-#   feat / fix / perf / refactor / style / docs / chore / test
-git log --first-parent "$DEFAULT_BRANCH" --format="%cd%x09%s" --date=short \
+# 2.2 收集"当天落地的真实提交"——类型分布/贡献者/新增展开的【权威来源】。
+#   关键：合并日 first-parent 多为 "Merge pull request…"，直接 grep 会把 feat/fix 统计成 0、
+#   贡献者只剩 merge 作者。所以真实提交 = (a) 当天直接落主干的非 merge 提交
+#   + (b) 当天每个 merge 内部穿透出来的真实提交。产出 /tmp/today_real.tsv：<author>\t<subject>
+: > /tmp/today_real.tsv
+git log --first-parent --no-merges "$DEFAULT_BRANCH" --format="%cd%x09%an%x09%s" --date=short \
+  | awk -F '\t' -v d="$TODAY" '$1==d{print $2"\t"$3}' >> /tmp/today_real.tsv
+git log --first-parent --merges "$DEFAULT_BRANCH" --format="%cd%x09%H" --date=short \
   | awk -F '\t' -v d="$TODAY" '$1==d{print $2}' \
-  | grep -oE '^(feat|fix|perf|refactor|style|docs|chore|test)' | sort | uniq -c
+  | while read m; do git log "$m^1..$m^2" --no-merges --format="%an%x09%s"; done >> /tmp/today_real.tsv
 
-# 2.3 穿透当日 merge commit（取 PR 真实 commits）
+# 类型分布（权威：从真实提交主题统计，不是 merge 标题）
+cut -f2 /tmp/today_real.tsv | grep -oE '^(feat|fix|perf|refactor|style|docs|chore|test)' | sort | uniq -c | sort -rn
+# 提交总数（报告头 N 用这个：真实落地提交数，不含 merge 壳）
+wc -l < /tmp/today_real.tsv
+
+# 2.3 穿透当日 merge commit（人读，判断主题归属；与 2.2(b) 同源）
 git log --first-parent --merges "$DEFAULT_BRANCH" --format="%cd%x09%H%x09%s" --date=short \
   | awk -F '\t' -v d="$TODAY" '$1==d{print $2}' \
-  | while read m; do echo "== PR merge $m =="; git log "$m^1..$m^2" --oneline 2>/dev/null; done
+  | while read m; do echo "== PR merge $m =="; git log "$m^1..$m^2" --no-merges --oneline 2>/dev/null; done
 
-# 2.4 贡献者
-git log --first-parent "$DEFAULT_BRANCH" --format="%cd%x09%an" --date=short \
-  | awk -F '\t' -v d="$TODAY" '$1==d{print $2}' | sort | uniq -c
+# 2.4 贡献者（权威：真实提交作者，含 PR 内作者，不是按 merge 作者；与 2.2 同源）
+cut -f1 /tmp/today_real.tsv | sort | uniq -c | sort -rn
 ```
+
+> 报告头的 `feat M / fix K / 贡献者 C / 提交 N` 一律取 2.2/2.4 的【真实提交】口径，**不要**用 2.1 的 first-parent 行数（合并日会把 N 缩成 PR 个数、把 feat/fix 显示成 0、贡献者只剩按 merge 的人），否则与正文「新增/修复」叙述自相矛盾。
 
 ### Phase 3：聚类与分层
 

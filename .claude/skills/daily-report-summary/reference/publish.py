@@ -276,10 +276,11 @@ def main():
             f"正文写入结果未确认（PUT 未返回成功且验证接口不可达）。已保留条目 {eid} 避免误删，"
             "请稍后登录该库人工确认/重写，勿盲目重跑造成重复。")
 
-    # share link
+    # share link —— 必须带 entryId 把分享限定到本篇；不传 entryId 后端会建"整库分享"，
+    # 一条日报链接就能浏览私有「日报知识库」里的全部日报（Codex P2 隐私修复）。
     share_url = None
     try:
-        tok = curl(HJ + ["-X", "POST", "-d", json.dumps({"title": a.title, "expiresInDays": 0}),
+        tok = curl(HJ + ["-X", "POST", "-d", json.dumps({"title": a.title, "expiresInDays": 0, "entryId": eid}),
                          f"{base}/stores/{rid}/share-links"])["data"]["token"]
         share_url = f"{a.base.rstrip('/')}/s/lib/{tok}?entry={eid}"
     except Exception as e:
