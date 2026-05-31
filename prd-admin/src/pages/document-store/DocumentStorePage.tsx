@@ -1510,6 +1510,14 @@ export function DocumentStorePage() {
               const isInteraction = tab !== 'mine';
               const ownerName = isInteraction ? (s as InteractionStoreCard).ownerName : undefined;
               const isOwnInteraction = isInteraction && (s as InteractionStoreCard).isOwner;
+              // 按库 id 稳定取色（复刻设计稿图1的多彩图标）
+              const ICON_PALETTE: [string, string][] = [
+                ['#3ecf8e', '#27a06b'], ['#5b8cff', '#3a6fe0'], ['#f5a623', '#d98314'],
+                ['#ff6b9c', '#e0467a'], ['#7c5cff', '#5b3fd0'], ['#26c0c0', '#159191'],
+              ];
+              const ci = Math.abs([...s.id].reduce((a, c) => (a * 31 + c.charCodeAt(0)) | 0, 0)) % ICON_PALETTE.length;
+              const [c1, c2] = ICON_PALETTE[ci];
+              const category = s.tags?.[0];
               return (
                 <GlassCard key={s.id} animated interactive padding="none"
                   className="group flex flex-col h-full"
@@ -1524,7 +1532,7 @@ export function DocumentStorePage() {
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <div className="flex items-center gap-2.5 min-w-0 flex-1">
                         <div className="w-10 h-10 rounded-[11px] flex items-center justify-center flex-shrink-0"
-                          style={{ background: 'linear-gradient(135deg, rgba(59,130,246,0.9), rgba(99,102,241,0.75))', boxShadow: '0 4px 12px -4px rgba(59,130,246,0.5)' }}>
+                          style={{ background: `linear-gradient(135deg, ${c1}, ${c2})`, boxShadow: `0 4px 12px -4px ${c1}99` }}>
                           <Library size={18} style={{ color: '#fff' }} />
                         </div>
                         <div className="min-w-0 flex-1">
@@ -1541,27 +1549,10 @@ export function DocumentStorePage() {
                               </span>
                             )}
                           </div>
-                          {/* 副标题行：分类/作用域归属 + 文章数 */}
-                          {teamScope.scope === 'team' && (s as DocumentStoreWithPreview).ownerName ? (
-                            <div className="flex items-center gap-1 mt-0.5">
-                              <UserAvatar
-                                src={resolveAvatarUrl({ avatarFileName: (s as DocumentStoreWithPreview).ownerAvatarFileName })}
-                                className="w-3.5 h-3.5 rounded-full"
-                              />
-                              <span className="text-[11px] truncate" style={{ color: 'var(--text-secondary)' }}>
-                                {(s as DocumentStoreWithPreview).ownerName} · {s.documentCount} 篇
-                              </span>
-                            </div>
-                          ) : (
-                            <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                              {ownerName ? `@${ownerName} · ` : ''}{s.documentCount} 篇文章
-                            </p>
-                          )}
-                          {s.description && (
-                            <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                              {s.description}
-                            </p>
-                          )}
+                          {/* 副标题行：分类(首个标签) · N 篇文章 —— 复刻设计稿图1 */}
+                          <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                            {category ? `${category} · ` : ownerName ? `@${ownerName} · ` : ''}{s.documentCount} 篇文章
+                          </p>
                         </div>
                       </div>
                       {tab === 'mine' && (
@@ -1586,34 +1577,44 @@ export function DocumentStorePage() {
                             style={{ color: 'rgba(59,130,246,0.7)' }}>
                             <Pencil size={11} />
                           </button>
+                          <button
+                            className="surface-row h-6 w-6 rounded-[6px] flex items-center justify-center cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="删除知识库"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              const entryCount = s.documentCount ?? 0;
+                              const confirmed = await systemDialog.confirm({
+                                title: '确认删除知识库',
+                                message: `删除「${s.name}」将永久清除：\n  · ${entryCount} 个文档条目\n  · 所有订阅同步日志\n  · 所有附件文件与解析正文\n  · 所有点赞 / 收藏 / 分享链接\n\n此操作不可恢复。`,
+                                tone: 'danger',
+                                confirmText: '永久删除',
+                                cancelText: '取消',
+                              });
+                              if (!confirmed) return;
+                              const res = await deleteDocumentStore(s.id);
+                              if (res.success) {
+                                setStores(prev => prev.filter(x => x.id !== s.id));
+                                toast.success('知识库已删除', '关联数据已全部清理');
+                              } else {
+                                toast.error('删除失败', res.error?.message);
+                              }
+                            }}
+                            style={{ color: 'rgba(239,68,68,0.6)' }}>
+                            <Trash2 size={11} />
+                          </button>
                         </div>
                       )}
                     </div>
 
-                    {/* 标签展示 */}
-                    {(s.tags?.length ?? 0) > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-1.5">
-                        {s.tags.slice(0, 4).map(t => (
-                          <span key={t}
-                            className="inline-flex items-center h-5 px-1.5 rounded-[5px] text-[10px] font-medium"
-                            style={{
-                              background: 'rgba(59,130,246,0.08)',
-                              border: '1px solid rgba(59,130,246,0.15)',
-                              color: 'rgba(59,130,246,0.85)',
-                            }}>
-                            # {t}
-                          </span>
-                        ))}
-                        {s.tags.length > 4 && (
-                          <span className="text-[10px] self-center" style={{ color: 'var(--text-muted)' }}>
-                            +{s.tags.length - 4}
-                          </span>
-                        )}
-                      </div>
+                    {/* 描述（整卡宽，复刻设计稿图1） */}
+                    {s.description && (
+                      <p className="text-[12px] mt-2 line-clamp-1" style={{ color: 'var(--text-secondary)' }}>
+                        {s.description}
+                      </p>
                     )}
 
                     {/* 最近文档预览列表 — 文章迷你目录（序号 + 标题 + 更多计数） */}
-                    <div className="flex-1 mt-2 min-h-[88px]">
+                    <div className="flex-1 mt-2.5 min-h-[88px]">
                       {(s.recentEntries?.length ?? 0) > 0 ? (
                         <div className="rounded-[9px] overflow-hidden"
                           style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
@@ -1645,9 +1646,9 @@ export function DocumentStorePage() {
                       )}
                     </div>
 
-                    <div className="flex items-center justify-between mt-2.5 pt-2.5"
+                    <div className="flex items-center justify-between mt-2.5 pt-3"
                       style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                      <div className="flex items-center gap-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      <div className="flex items-center gap-3.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                         <span className="inline-flex items-center gap-1" title="文档数">
                           <FileText size={11} /> {s.documentCount}
                         </span>
@@ -1658,45 +1659,22 @@ export function DocumentStorePage() {
                           <Heart size={11} /> {s.likeCount ?? 0}
                         </span>
                       </div>
-                      <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                        {new Date(s.updatedAt).toLocaleDateString()}
-                      </span>
+                      {/* 右下角贡献者头像（复刻图1）；团队作用域用真实创建者头像，否则用库色占位 */}
+                      <div className="flex items-center">
+                        {(s as DocumentStoreWithPreview).ownerName || ownerName ? (
+                          <UserAvatar
+                            src={resolveAvatarUrl({ avatarFileName: (s as DocumentStoreWithPreview).ownerAvatarFileName })}
+                            className="w-6 h-6 rounded-full"
+                            style={{ border: '2px solid var(--bg-card, #1b1b1e)' }}
+                          />
+                        ) : (
+                          <span className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white"
+                            style={{ background: `linear-gradient(135deg, ${c1}, ${c2})`, border: '2px solid var(--bg-card, #1b1b1e)' }}>
+                            {s.name.trim().charAt(0).toUpperCase()}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  </div>
-
-                  <div className="flex items-center gap-1.5 px-4 py-2.5 mt-auto"
-                    style={{ background: 'rgba(255,255,255,0.03)', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                    <button className="surface-row flex-1 h-7 rounded-[8px] text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer"
-                      style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.15)', color: 'rgba(59,130,246,0.85)' }}>
-                      <FolderOpen size={11} /> 打开
-                    </button>
-                    {tab === 'mine' && (
-                      <button
-                        className="surface-row h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
-                        title="删除空间"
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          const entryCount = s.documentCount ?? 0;
-                          const confirmed = await systemDialog.confirm({
-                            title: '确认删除知识库',
-                            message: `删除「${s.name}」将永久清除：\n  · ${entryCount} 个文档条目\n  · 所有订阅同步日志\n  · 所有附件文件与解析正文\n  · 所有点赞 / 收藏 / 分享链接\n\n此操作不可恢复。`,
-                            tone: 'danger',
-                            confirmText: '永久删除',
-                            cancelText: '取消',
-                          });
-                          if (!confirmed) return;
-                          const res = await deleteDocumentStore(s.id);
-                          if (res.success) {
-                            setStores(prev => prev.filter(x => x.id !== s.id));
-                            toast.success('知识库已删除', '关联数据已全部清理');
-                          } else {
-                            toast.error('删除失败', res.error?.message);
-                          }
-                        }}
-                        style={{ color: 'rgba(239,68,68,0.5)' }}>
-                        <Trash2 size={12} />
-                      </button>
-                    )}
                   </div>
                 </GlassCard>
               );
