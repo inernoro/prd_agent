@@ -59,9 +59,11 @@ export default function CommentsSection(props: Props) {
   const onStateLoadedRef = useRef(props.onStateLoaded);
   onStateLoadedRef.current = props.onStateLoaded;
 
-  const load = useCallback(async () => {
+  // silent=true：后台对账刷新，不翻 loading（否则全屏 section loader 会盖掉刚乐观插入的评论，
+  // 让发表后的新评论"闪没"，慢/失败的刷新更像没发成功，Cursor medium）。
+  const load = useCallback(async (silent = false) => {
     const myId = ++fetchIdRef.current;
-    setLoading(true);
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const res = mode === 'share'
@@ -73,14 +75,15 @@ export default function CommentsSection(props: Props) {
         setCommentsEnabled(res.data.commentsEnabled);
         setCanComment(res.data.canComment);
         onStateLoadedRef.current?.(res.data.commentsEnabled);
-      } else {
+      } else if (!silent) {
+        // 后台刷新失败保持静默：乐观插入的评论仍在屏上，不该用错误提示打断（发表已成功）
         setError(res.error?.message || '加载评论失败');
       }
     } catch {
       if (myId !== fetchIdRef.current || !mountedRef.current) return;
-      setError('网络错误，无法加载评论');
+      if (!silent) setError('网络错误，无法加载评论');
     } finally {
-      if (myId === fetchIdRef.current && mountedRef.current) setLoading(false);
+      if (myId === fetchIdRef.current && mountedRef.current && !silent) setLoading(false);
     }
   }, [mode, token, password, siteId]);
 
@@ -106,9 +109,9 @@ export default function CommentsSection(props: Props) {
         // 1) 乐观插入（按 id 去重）：服务端已落库，立即上屏 —— 即使下面 load() 失败，评论也已可见，
         //    用户不会以为没发出去而重复提交导致重复评论（Cursor medium: refresh fail → duplicate）。
         setComments((prev) => (prev.some((c) => c.id === created.id) ? prev : [created, ...prev]));
-        // 2) 再 load() 对账拿服务端真相（含他人新评论 / 准确时间戳）。best-effort：失败也无妨，
-        //    乐观插入已兜底；若并发 reload 漏掉本条，本次 load 会补正。
-        await load();
+        // 2) 再静默 load() 对账拿服务端真相（含他人新评论 / 准确时间戳）。silent=不翻 loading，
+        //    乐观插入的评论全程留在屏上；best-effort：失败也无妨，乐观插入已兜底。
+        await load(true);
       } else {
         setError(res.error?.message || '发表失败');
       }
