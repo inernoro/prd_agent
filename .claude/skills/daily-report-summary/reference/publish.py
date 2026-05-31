@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """日报发布到知识库（文档空间），或 --local 落本地 md。
 
-find-or-create「日报知识库」→ 建条目 → 写正文（带 hasContent 校验 + 空壳兜底）→ 出分享链。
+find-or-create「日报知识库」→（有截图则先上传图、回填 {{IMG:}}/{{EVIDENCE}} 占位）→
+建条目 → 写正文（带 hasContent 校验 + 空壳兜底）→ 出分享链。
 鉴权：优先 DAILY_DOC_STORE_KEY=sk-ak-*（Bearer，最小权限 document-store:write），
 回退 AI_ACCESS_KEY 超级密钥 + X-AI-Impersonate。
 
@@ -9,16 +10,19 @@ find-or-create「日报知识库」→ 建条目 → 写正文（带 hasContent 
   export AI_ACCESS_KEY=...
   python3 publish.py --base https://main-prd-agent.miduo.org \
     --impersonate inernoro --title "日报-2026-05-31-今日大事早知道" \
-    --daily-date 2026-05-31 --report-md /tmp/daily.md
+    --daily-date 2026-05-31 --report-md /tmp/daily.md \
+    --manifest /tmp/acc_shots/manifest.json   # 可选：harness 产出的截图清单
   # 无密钥 / 无文档空间时退化为本地：
-  python3 publish.py --local --title "..." --report-md /tmp/daily.md --out doc-store-fallback.md
+  python3 publish.py --local --title "..." --report-md /tmp/daily.md --out fallback.md \
+    --manifest /tmp/acc_shots/manifest.json
 """
-import argparse, json, os, subprocess, time, sys, re
+import argparse, json, os, subprocess, time, sys, re, shutil
 
 API = "/api/document-store"
 STORE_NAME = "日报知识库"
 STORE_DESC = "每日开发日报归档（今日大事早知道）。新增方向多讲，优化/修复次之，计划/遗留垫底。"
 DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
+PLACEHOLDER_RE = re.compile(r"\{\{IMG:[^}]+\}\}|\{\{EVIDENCE\}\}")
 
 
 def curl(args, retries=5):
@@ -65,12 +69,11 @@ def find_store(base, H, name):
         for s in items:
             if s.get("name") == name:
                 return s["id"]
-        # 翻页终止：拿不到满页或显式 hasNextPage=false
         has_next = data.get("hasNextPage")
         if has_next is False or len(items) < 100:
             return None
         page += 1
-        if page > 50:  # 安全阀
+        if page > 50:
             return None
 
 
@@ -81,11 +84,54 @@ def resolve_daily_date(daily_date, title):
     return m.group(1) if m else ""
 
 
-def run_local(a, body):
+def load_manifest(path):
+    if not path:
+        return []
+    m = json.load(open(path, encoding="utf-8"))
+    for item in m:
+        p = item.get("path", "")
+        if not os.path.isfile(p):
+            raise RuntimeError(f"manifest 截图缺失：{item.get('name', p)} -> {p}")
+    return m
+
+
+def apply_evidence(body, name_to_md):
+    """把 {{IMG:<name>}} 换成对应图、{{EVIDENCE}} 换成全部图集中段。"""
+    content = body
+    for name, md in name_to_md.items():
+        content = content.replace("{{IMG:%s}}" % name, md)
+    evidence = "\n\n".join(name_to_md.values())
+    content = content.replace("{{EVIDENCE}}", evidence)
+    return content
+
+
+def assert_no_placeholder(content):
+    """发布前硬闸：正文残留 {{IMG:}}/{{EVIDENCE}} 占位 → 拒发，避免读者看到坏占位。"""
+    left = PLACEHOLDER_RE.findall(content)
+    if left:
+        raise RuntimeError(
+            "正文残留未替换的截图占位 " + ", ".join(sorted(set(left))) +
+            "：要么传 --manifest 提供对应截图，要么从正文删掉这些占位后再发。")
+
+
+def run_local(a, body, manifest):
     out = a.out or f"daily-{resolve_daily_date(a.daily_date, a.title) or 'report'}.md"
+    name_to_md = {}
+    if manifest:
+        shot_dir = os.path.splitext(out)[0] + "_shots"
+        os.makedirs(shot_dir, exist_ok=True)
+        for m in manifest:
+            dst = os.path.join(shot_dir, f"{m['name']}.png")
+            shutil.copyfile(m["path"], dst)
+            cap = m.get("caption", m["name"])
+            name_to_md[m["name"]] = f"![{cap}](./{os.path.basename(shot_dir)}/{m['name']}.png)"
+            print(f"  拷贝截图 {m['name']} -> {dst}")
+    body = apply_evidence(body, name_to_md)
+    assert_no_placeholder(body)
     with open(out, "w", encoding="utf-8") as f:
         f.write(body)
-    print(json.dumps({"mode": "local", "title": a.title, "reportPath": out}, ensure_ascii=False))
+    print(json.dumps({"mode": "local", "title": a.title, "reportPath": out,
+                      "shots": len(name_to_md)}, ensure_ascii=False))
     print(f"\n===== 日报已落本地 =====\n路径：{out}")
 
 
@@ -94,8 +140,9 @@ def main():
     ap.add_argument("--base", default="", help="环境 base URL，如 https://main-prd-agent.miduo.org（doc-store 模式必填）")
     ap.add_argument("--impersonate", default="inernoro")
     ap.add_argument("--title", required=True)
-    ap.add_argument("--report-md", required=True, help="正文 md（以 # 标题打头）")
+    ap.add_argument("--report-md", required=True, help="正文 md（以 # 标题打头，可含 {{IMG:<name>}}/{{EVIDENCE}} 占位）")
     ap.add_argument("--daily-date", default="", help="metadata.dailyDate（YYYY-MM-DD）；缺省时从标题提取")
+    ap.add_argument("--manifest", default="", help="harness 截图清单 json：[{name,caption,path}]；有截图时必传")
     ap.add_argument("--local", action="store_true", help="不发网络，落本地 md（无密钥/无文档空间时用）")
     ap.add_argument("--out", default="", help="--local 模式输出路径")
     a = ap.parse_args()
@@ -103,9 +150,10 @@ def main():
     body = open(a.report_md, encoding="utf-8").read().lstrip()
     if not body.startswith("#"):
         body = f"# {a.title}\n\n" + body
+    manifest = load_manifest(a.manifest)
 
     if a.local:
-        run_local(a, body)
+        run_local(a, body, manifest)
         return
     if not a.base:
         sys.stderr.write("[错误] doc-store 模式需要 --base；或改用 --local。\n")
@@ -136,6 +184,27 @@ def main():
         except Exception:
             print(f"  发布失败且空库 {rid} 回滚也失败；稳定后请手动删该空库")
 
+    # 上传截图（先于建条目，拿到可访问 URL 回填占位），失败回滚新建库
+    try:
+        name_to_md = {}
+        for m in manifest:
+            d = curl(H + ["-F", f"file=@{m['path']}", f"{base}/stores/{rid}/upload"])["data"]
+            url = d["fileUrl"]
+            cap = m.get("caption", m["name"])
+            name_to_md[m["name"]] = f"![{cap}]({url})"
+            # upload 会建一个文件条目，取 URL 后删掉，避免库里多出图片条目
+            try:
+                curl(H + ["-X", "DELETE", f"{base}/entries/{d['entry']['id']}"])
+            except Exception:
+                pass
+            print(f"  上传截图 {m['name']} -> {url}")
+        body = apply_evidence(body, name_to_md)
+        assert_no_placeholder(body)
+    except Exception as e:
+        print(f"  截图上传/占位回填失败：{str(e)[:140]}")
+        rollback_store_if_new()
+        raise
+
     # create entry（失败则回滚新建的库）
     daily_date = resolve_daily_date(a.daily_date, a.title)
     meta = {"kind": "daily-report", "dailyDate": daily_date}
@@ -149,7 +218,7 @@ def main():
         print(f"  建条目失败：{str(e)[:120]}")
         rollback_store_if_new()
         raise
-    print(f"  条目 id={eid} title={a.title} dailyDate={daily_date}")
+    print(f"  条目 id={eid} title={a.title} dailyDate={daily_date} shots={len(manifest)}")
 
     # write content + verify hasContent（空壳兜底）
     def has_content():

@@ -141,7 +141,7 @@ node .claude/skills/create-visual-test-to-kb/scripts/harness.mjs \
   --base "$PREVIEW_URL" --steps <步骤脚本> --out /tmp/acc_shots
 ```
 
-把 manifest 里的截图按「{{IMG:<name>}}」占位插进报告对应的新功能小节（report-template.md 已支持逐步配图）。**缺少截图取证的新功能段落，必须显式写「本功能未取截图，原因：……」**，不留空白让读者疑惑。
+在报告对应的新功能小节插入「{{IMG:<name>}}」占位（report-template.md 已支持逐步配图），**并把 harness 产出的 `manifest.json` 一起传给 Phase 5 的 `publish.py --manifest`**——脚本会先把截图上传到知识库拿可访问 URL、回填占位，再写正文。`publish.py` 发布前有硬闸：正文里若残留任何未替换的 `{{IMG:}}`/`{{EVIDENCE}}` 占位（即占位有了却没传对应截图）会**直接拒发**，杜绝读者看到坏占位。**缺少截图取证的新功能段落，必须显式写「本功能未取截图，原因：……」**（用文字，不要留占位），不留空白让读者疑惑。
 
 > 取证依赖预览环境就绪 + 浏览器登录凭据（`MAP_AI_USER` / `MAP_ACCEPT_PASS`）。若环境/凭据不可用，跳过本阶段并在报告里注明「本期无截图，因预览环境/凭据不可用」，不要假装截过。
 
