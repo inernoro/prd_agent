@@ -1072,6 +1072,13 @@ export function DocBrowser({
   const addMenuRef = useRef<HTMLDivElement>(null);
   const pinnedSet = useMemo(() => new Set(pinnedIds), [pinnedIds]);
 
+  // 解析"当前选中条目"的数据：优先主 entries，回退搜索结果（后端搜索命中的条目可能
+  // 不在已加载的 entries 里，如 200 条分页之外、或 github_directory 这类靠搜索才浮现的条目）。
+  const selectedEntryData = useMemo(
+    () => entries.find(e => e.id === selectedEntryId) ?? searchResults?.find(e => e.id === selectedEntryId),
+    [entries, searchResults, selectedEntryId],
+  );
+
   // 父链映射（entryId → parentId），用于展开选中条目的所有祖先文件夹
   const parentMap = useMemo(() => {
     const m = new Map<string, string | undefined>();
@@ -2091,18 +2098,17 @@ export function DocBrowser({
                     }}
                     placeholder="在此编辑文档内容..."
                   />
-                ) : (preview || (() => {
-                    const s = entries.find(e => e.id === selectedEntryId);
-                    return s?.sourceType === 'github_directory' || s?.contentType === 'application/x-github-directory';
-                  })()) ? (
+                ) : (preview
+                      || selectedEntryData?.sourceType === 'github_directory'
+                      || selectedEntryData?.contentType === 'application/x-github-directory') ? (
                   <FilePreview
-                    entry={entries.find(e => e.id === selectedEntryId)}
+                    entry={selectedEntryData}
                     preview={preview}
                   />
                 ) : (
                   <div className="flex flex-col items-center justify-center h-full text-center text-gray-400 gap-2">
                     <FolderOpen size={48} className="opacity-20 mb-2" />
-                    <p className="text-[13px]">{entries.find(e => e.id === selectedEntryId)?.isFolder ? '这是一个目录' : '无法预览该文件'}</p>
+                    <p className="text-[13px]">{selectedEntryData?.isFolder ? '这是一个目录' : '无法预览该文件'}</p>
                   </div>
                 )}
                 {/* 划词选中时的浮层"添加评论"按钮 */}
