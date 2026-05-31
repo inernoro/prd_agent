@@ -68,6 +68,7 @@ import {
 } from '@/services';
 import { ShareToTeamDialog } from '@/components/team/ShareToTeamDialog';
 import { UserAvatar } from '@/components/ui/UserAvatar';
+import { RelativeTime } from '@/components/ui/RelativeTime';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
 import type {
@@ -1629,6 +1630,9 @@ export function DocumentStorePage() {
                               <span className="flex-1 text-[11.5px] truncate" style={{ color: 'var(--text-secondary)' }}>
                                 {entry.title}
                               </span>
+                              <span className="text-[10px] flex-shrink-0 tabular-nums" style={{ color: 'var(--text-muted)' }}>
+                                <RelativeTime value={entry.updatedAt} />
+                              </span>
                             </div>
                           ))}
                           {s.documentCount > 3 && (
@@ -1659,8 +1663,11 @@ export function DocumentStorePage() {
                           <Heart size={11} /> {s.likeCount ?? 0}
                         </span>
                       </div>
-                      {/* 右下角贡献者头像（复刻图1）；团队作用域用真实创建者头像，否则用库色占位 */}
-                      <div className="flex items-center">
+                      {/* 右下角：相对修改时间 + 贡献者头像（两者都保留，不再二选一） */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                          <RelativeTime value={s.updatedAt} />
+                        </span>
                         {(s as DocumentStoreWithPreview).ownerName || ownerName ? (
                           <UserAvatar
                             src={resolveAvatarUrl({ avatarFileName: (s as DocumentStoreWithPreview).ownerAvatarFileName })}
