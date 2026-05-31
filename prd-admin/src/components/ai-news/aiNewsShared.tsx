@@ -9,6 +9,11 @@ import {
   Megaphone,
   Boxes,
   Newspaper,
+  Flame,
+  Bot,
+  Cpu,
+  Workflow,
+  Code2,
   type LucideIcon,
 } from 'lucide-react';
 import type { AiNewsItem } from '@/services/real/aiNews';
@@ -28,8 +33,19 @@ export interface LabelMeta {
 }
 
 export const LABEL_REGISTRY: Record<string, LabelMeta> = {
-  model_release: { label: '模型发布', color: '#4ade80', icon: Rocket },
+  // ── 上游 ai-news-radar 实际使用的 11 种 ai_label（全部映射，治标：上游分类本身可能不准）──
   ai_general: { label: 'AI 动态', color: '#a5b4fc', icon: Sparkles },
+  model_release: { label: '模型发布', color: '#4ade80', icon: Rocket },
+  curated_hotlist: { label: '热榜', color: '#fb7185', icon: Flame },
+  ai_product_update: { label: '产品更新', color: '#22d3ee', icon: Boxes },
+  developer_tool: { label: '开发工具', color: '#fbbf24', icon: Wrench },
+  agent_workflow: { label: '智能体', color: '#818cf8', icon: Workflow },
+  robotics: { label: '机器人', color: '#f59e0b', icon: Bot },
+  industry_business: { label: '行业商业', color: '#34d399', icon: TrendingUp },
+  infra_compute: { label: '算力基建', color: '#38bdf8', icon: Cpu },
+  ai_tech: { label: '技术', color: '#c084fc', icon: Code2 },
+  research_paper: { label: '研究论文', color: '#f472b6', icon: ScrollText },
+  // ── 兼容历史 / 其它来源可能出现的别名（不在上游主表，出现时也有正确中文名）──
   product: { label: '产品', color: '#22d3ee', icon: Boxes },
   product_launch: { label: '新品', color: '#22d3ee', icon: Boxes },
   tool: { label: '工具', color: '#fbbf24', icon: Wrench },
