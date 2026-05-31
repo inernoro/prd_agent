@@ -36,7 +36,7 @@ public class AiNewsService : IAiNewsService
     };
 
     // 单次 LLM 调用最多解读多少条（控制 token 与延迟，前端按需分批请求）。
-    private const int CommentaryBatchSize = 10;
+    private const int CommentaryBatchSize = 6;
 
     private readonly IHttpClientFactory _httpFactory;
     private readonly IMemoryCache _cache;
@@ -209,7 +209,10 @@ public class AiNewsService : IAiNewsService
                 new JsonObject { ["role"] = "user", ["content"] = listJson.ToJsonString() },
             },
             ["temperature"] = 0.6,
-            ["max_tokens"] = 90 * batch.Count + 300,
+            // 给足 token：部分模型（如 deepseek-v4-flash）会先思考，预算太小会把额度耗在 reasoning 上导致 content 为空。
+            ["max_tokens"] = 3000,
+            // 这是结构化短文本任务，不需要推理；关掉 reasoning 让 token 全给最终 JSON（OpenRouter 字段，模型不支持时忽略）。
+            ["reasoning"] = new JsonObject { ["enabled"] = false },
         };
 
         var resp = await _gateway.SendAsync(new GatewayRequest
