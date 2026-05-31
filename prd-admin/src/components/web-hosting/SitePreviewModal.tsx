@@ -167,8 +167,19 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
                 className="flex-1 min-h-0 overflow-y-auto p-3"
                 style={{ overscrollBehavior: 'contain' }}
               >
-                {/* key 随开关变化，强制刷新评论区的 commentsEnabled 态 */}
-                <CommentsSection key={String(commentsEnabled)} mode="site" siteId={site.id} />
+                {/* key 随开关变化，强制刷新评论区的 commentsEnabled 态；
+                    onStateLoaded 用服务端权威值回填开关，消除"开关 ON 但面板显示已关闭"的 stale 偏差（Cursor medium） */}
+                <CommentsSection
+                  key={String(commentsEnabled)}
+                  mode="site"
+                  siteId={site.id}
+                  onStateLoaded={(serverEnabled) => {
+                    if (serverEnabled !== commentsEnabled) {
+                      setCommentsEnabled(serverEnabled);
+                      onCommentsEnabledChange?.(site.id, serverEnabled);
+                    }
+                  }}
+                />
               </div>
             </aside>
           )}

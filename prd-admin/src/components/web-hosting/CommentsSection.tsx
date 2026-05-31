@@ -19,9 +19,13 @@ import {
  *
  * 走 prd-admin 暗色面板配色（与 ShareViewPage / SitePreviewModal 一致）。
  */
-type Props =
+type Props = (
   | { mode: 'share'; token: string; password?: string; siteId?: never }
-  | { mode: 'site'; siteId: string; token?: never; password?: never };
+  | { mode: 'site'; siteId: string; token?: never; password?: never }
+) & {
+  /** 服务端权威 commentsEnabled 拉到后回传，供父级（预览弹窗开关）与 stale site 快照对齐 */
+  onStateLoaded?: (commentsEnabled: boolean) => void;
+};
 
 export default function CommentsSection(props: Props) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -42,6 +46,7 @@ export default function CommentsSection(props: Props) {
   const token = (props as { token?: string }).token;
   const password = (props as { password?: string }).password;
   const siteId = (props as { siteId?: string }).siteId;
+  const onStateLoaded = props.onStateLoaded;
 
   const load = useCallback(async () => {
     const myId = ++fetchIdRef.current;
@@ -56,6 +61,7 @@ export default function CommentsSection(props: Props) {
         setComments(res.data.comments);
         setCommentsEnabled(res.data.commentsEnabled);
         setCanComment(res.data.canComment);
+        onStateLoaded?.(res.data.commentsEnabled);
       } else {
         setError(res.error?.message || '加载评论失败');
       }
@@ -65,7 +71,7 @@ export default function CommentsSection(props: Props) {
     } finally {
       if (myId === fetchIdRef.current) setLoading(false);
     }
-  }, [mode, token, password, siteId]);
+  }, [mode, token, password, siteId, onStateLoaded]);
 
   // isAuthenticated / authToken 纳入依赖：登录态就绪（含 persist rehydration）后重新拉取，
   // 让已登录用户拿到 canComment=true 的发表 UI，不必手动刷新。
@@ -76,12 +82,14 @@ export default function CommentsSection(props: Props) {
   const handleSubmit = async () => {
     const content = draft.trim();
     if (!content || submitting) return;
+    const reqId = fetchIdRef.current; // 锁定当前线程，回来后变了就丢弃（防串线程，Cursor learned rule）
     setSubmitting(true);
     setError(null);
     try {
       const res = mode === 'share'
         ? await addShareComment(token!, content, password)
         : await addSiteComment(siteId!, content);
+      if (reqId !== fetchIdRef.current) return; // token/siteId/password/登录态已变，结果作废
       if (res.success && res.data) {
         setComments((prev) => [res.data!, ...prev]);
         setDraft('');
@@ -89,14 +97,17 @@ export default function CommentsSection(props: Props) {
         setError(res.error?.message || '发表失败');
       }
     } catch {
+      if (reqId !== fetchIdRef.current) return;
       setError('网络错误，发表失败');
     } finally {
-      setSubmitting(false);
+      if (reqId === fetchIdRef.current) setSubmitting(false);
     }
   };
 
   const handleDelete = async (commentId: string) => {
+    const reqId = fetchIdRef.current;
     const res = await deleteSiteComment(commentId);
+    if (reqId !== fetchIdRef.current) return; // 删除在途时线程已切换，late 响应不动新线程的列表
     if (res.success) {
       setComments((prev) => prev.filter((c) => c.id !== commentId));
     } else {

@@ -1781,7 +1781,7 @@ public class HostedSiteService : IHostedSiteService
             return new SiteCommentsResult { Error = "分享内无可评论站点", HttpStatus = 404, ErrorCode = "not_found" };
 
         var site = sites[0];
-        var comments = await LoadCommentDtosAsync(site, viewerUserId, ct);
+        var comments = await LoadCommentDtosAsync(site, viewerUserId, ct, maskUserId: true);
         return new SiteCommentsResult
         {
             SiteId = site.Id,
@@ -1886,7 +1886,7 @@ public class HostedSiteService : IHostedSiteService
         };
     }
 
-    private async Task<List<HostedSiteCommentDto>> LoadCommentDtosAsync(HostedSite site, string? viewerUserId, CancellationToken ct)
+    private async Task<List<HostedSiteCommentDto>> LoadCommentDtosAsync(HostedSite site, string? viewerUserId, CancellationToken ct, bool maskUserId = false)
     {
         var comments = await _db.HostedSiteComments
             .Find(c => c.SiteId == site.Id && !c.IsDeleted)
@@ -1900,7 +1900,8 @@ public class HostedSiteService : IHostedSiteService
             Id = c.Id,
             SiteId = c.SiteId,
             Content = c.Content,
-            AuthorUserId = c.AuthorUserId,
+            // 公开分享读取路径下抹掉内部 UserId，避免向匿名访客泄露账号标识（Codex P2）；CanDelete 已由服务端算好
+            AuthorUserId = maskUserId ? string.Empty : c.AuthorUserId,
             AuthorName = c.AuthorName,
             AuthorAvatarFileName = c.AuthorAvatarFileName,
             CreatedAt = c.CreatedAt,

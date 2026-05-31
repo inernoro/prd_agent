@@ -27,6 +27,10 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
         "/api/authz/menu-catalog",
         "/api/dashboard/notifications",
         "/api/web-pages/shares/view/",
+        // 评论删除：作者本人/站点 owner 可删（DeleteCommentAsync 内做 author/owner 校验）。
+        // 经分享页发表评论的普通登录用户没有 WebPagesWrite 权限，若不豁免会被 AdminPermissionMiddleware
+        // 提前拦成 403（Codex P2）。这里只豁免「权限检查」，[Authorize] 仍要求登录，故仍是登录态 + 业务层鉴权。
+        "/api/web-pages/comments/",
         // 知识库公开端点（智识殿堂浏览/详情/分享）
         "/api/document-store/public/",
     };
