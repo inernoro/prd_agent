@@ -35,3 +35,14 @@ export function getAiNewsLatest(): Promise<ApiResponse<AiNewsFeed>> {
   // 公共资讯端点（后端 [AllowAnonymous]），不依赖登录态。
   return apiRequest<AiNewsFeed>('/api/ai-news/latest', { method: 'GET', auth: false });
 }
+
+/**
+ * 为指定资讯 id 批量获取「一句话 AI 解读」（命中缓存直接返回，未命中后端调 LLM 生成）。
+ * 需登录态（后端 [Authorize]）。返回 id -> 解读文本 的映射。
+ */
+export function getAiNewsCommentary(ids: string[]): Promise<ApiResponse<Record<string, string>>> {
+  return apiRequest<Record<string, string>>('/api/ai-news/commentary', {
+    method: 'POST',
+    body: { ids },
+  });
+}

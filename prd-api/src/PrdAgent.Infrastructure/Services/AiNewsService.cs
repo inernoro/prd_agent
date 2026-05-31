@@ -1,9 +1,13 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
+using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LlmGateway;
 
 namespace PrdAgent.Infrastructure.Services;
 
@@ -31,15 +35,30 @@ public class AiNewsService : IAiNewsService
         PropertyNameCaseInsensitive = true,
     };
 
+    // 单次 LLM 调用最多解读多少条（控制 token 与延迟，前端按需分批请求）。
+    private const int CommentaryBatchSize = 10;
+
     private readonly IHttpClientFactory _httpFactory;
     private readonly IMemoryCache _cache;
     private readonly ILogger<AiNewsService> _logger;
+    private readonly MongoDbContext _db;
+    private readonly ILlmGateway _gateway;
+    private readonly ILLMRequestContextAccessor _llmRequestContext;
 
-    public AiNewsService(IHttpClientFactory httpFactory, IMemoryCache cache, ILogger<AiNewsService> logger)
+    public AiNewsService(
+        IHttpClientFactory httpFactory,
+        IMemoryCache cache,
+        ILogger<AiNewsService> logger,
+        MongoDbContext db,
+        ILlmGateway gateway,
+        ILLMRequestContextAccessor llmRequestContext)
     {
         _httpFactory = httpFactory;
         _cache = cache;
         _logger = logger;
+        _db = db;
+        _gateway = gateway;
+        _llmRequestContext = llmRequestContext;
     }
 
     public async Task<AiNewsFeed> GetLatestAsync(CancellationToken ct = default)
@@ -72,6 +91,175 @@ public class AiNewsService : IAiNewsService
             }
             return new AiNewsFeed { Degraded = true };
         }
+    }
+
+    public async Task<Dictionary<string, string>> EnrichCommentaryAsync(
+        IReadOnlyList<string> ids, string userId, CancellationToken ct = default)
+    {
+        var result = new Dictionary<string, string>();
+        var wanted = ids.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
+        if (wanted.Count == 0) return result;
+
+        // 1) 命中缓存
+        var cached = await _db.AiNewsEnrichments
+            .Find(Builders<AiNewsEnrichment>.Filter.In(x => x.Id, wanted))
+            .ToListAsync(ct);
+        foreach (var c in cached)
+        {
+            if (!string.IsNullOrWhiteSpace(c.Commentary)) result[c.Id] = c.Commentary;
+        }
+
+        // 2) 未命中的，从当前 feed 取标题后批量调 LLM
+        var missing = wanted.Where(id => !result.ContainsKey(id)).ToList();
+        if (missing.Count == 0) return result;
+
+        var feed = await GetLatestAsync(ct);
+        var byId = feed.Items
+            .Where(i => !string.IsNullOrWhiteSpace(i.Id))
+            .GroupBy(i => i.Id)
+            .ToDictionary(g => g.Key, g => g.First());
+        var toGen = missing.Where(byId.ContainsKey).Select(id => byId[id]).ToList();
+        if (toGen.Count == 0) return result;
+
+        for (var i = 0; i < toGen.Count; i += CommentaryBatchSize)
+        {
+            var batch = toGen.Skip(i).Take(CommentaryBatchSize).ToList();
+            try
+            {
+                var (gen, model) = await GenerateCommentaryBatchAsync(batch, userId, ct);
+                if (gen.Count == 0) continue;
+
+                var docs = new List<AiNewsEnrichment>();
+                foreach (var (id, text) in gen)
+                {
+                    if (string.IsNullOrWhiteSpace(text)) continue;
+                    result[id] = text;
+                    var item = byId.TryGetValue(id, out var it) ? it : null;
+                    docs.Add(new AiNewsEnrichment
+                    {
+                        Id = id,
+                        Title = item?.Title ?? "",
+                        Commentary = text,
+                        Model = model,
+                        CreatedAt = DateTime.UtcNow,
+                    });
+                }
+                // 落库（upsert，按 id 去重）
+                foreach (var d in docs)
+                {
+                    await _db.AiNewsEnrichments.ReplaceOneAsync(
+                        Builders<AiNewsEnrichment>.Filter.Eq(x => x.Id, d.Id),
+                        d,
+                        new ReplaceOptions { IsUpsert = true },
+                        ct);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[AiNews] 生成一句话解读失败（batch {Idx}），跳过本批", i / CommentaryBatchSize);
+            }
+        }
+
+        return result;
+    }
+
+    private async Task<(Dictionary<string, string> Map, string Model)> GenerateCommentaryBatchAsync(
+        List<AiNewsItem> batch, string userId, CancellationToken ct)
+    {
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null,
+            SessionId: null,
+            UserId: userId,
+            ViewRole: null,
+            DocumentChars: null,
+            DocumentHash: null,
+            SystemPromptRedacted: "ai-news-commentary",
+            RequestType: "chat",
+            AppCallerCode: AppCallerRegistry.Admin.AiNews.Commentary));
+
+        var listJson = new JsonArray();
+        foreach (var it in batch)
+        {
+            listJson.Add(new JsonObject
+            {
+                ["id"] = it.Id,
+                ["title"] = it.Title,
+                ["source"] = it.Source,
+                ["label"] = it.AiLabel,
+            });
+        }
+
+        var systemPrompt =
+            "你是 PrdAgent「AI 大事」资讯频道的责任编辑。下面给你一批 AI 资讯（只有标题、来源、分类，没有正文）。\n" +
+            "请基于标题为每条写一句**中文**编辑解读 / 推荐理由，告诉读者「这条值不值得点、对谁有用、关键点是什么」。\n" +
+            "要求：\n" +
+            "- 每条 18~45 字，口语、犀利、有信息增量，不要复述标题原文\n" +
+            "- 不确定的不要编造细节；标题信息太少就给出「为什么这类消息值得关注」的角度\n" +
+            "- 禁止任何 emoji\n" +
+            "- 只输出一个 JSON 数组，元素为 {\"id\":\"...\",\"comment\":\"...\"}，不要 markdown 代码围栏、不要多余文字";
+
+        var gatewayBody = new JsonObject
+        {
+            ["messages"] = new JsonArray
+            {
+                new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                new JsonObject { ["role"] = "user", ["content"] = listJson.ToJsonString() },
+            },
+            ["temperature"] = 0.6,
+            ["max_tokens"] = 90 * batch.Count + 200,
+        };
+
+        var resp = await _gateway.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.Admin.AiNews.Commentary,
+            ModelType = "chat",
+            RequestBody = gatewayBody,
+        }, ct);
+
+        if (!resp.Success || string.IsNullOrWhiteSpace(resp.Content))
+        {
+            _logger.LogWarning("[AiNews] 解读 LLM 无有效返回：{Err}", resp.ErrorMessage);
+            return (new(), "");
+        }
+
+        return (ParseCommentaryJson(resp.Content), resp.Resolution?.ActualModel ?? "");
+    }
+
+    private static Dictionary<string, string> ParseCommentaryJson(string content)
+    {
+        var map = new Dictionary<string, string>();
+        var json = ExtractJsonArray(content);
+        if (json == null) return map;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return map;
+            foreach (var el in doc.RootElement.EnumerateArray())
+            {
+                if (el.ValueKind != JsonValueKind.Object) continue;
+                var id = el.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
+                var comment = el.TryGetProperty("comment", out var cEl) ? cEl.GetString() : null;
+                if (!string.IsNullOrWhiteSpace(id) && !string.IsNullOrWhiteSpace(comment))
+                {
+                    map[id!] = comment!.Trim();
+                }
+            }
+        }
+        catch
+        {
+            // 解析失败返回空，调用方按未生成处理
+        }
+        return map;
+    }
+
+    /// <summary>从可能带围栏 / 前后缀的文本里抠出第一个 JSON 数组。</summary>
+    private static string? ExtractJsonArray(string text)
+    {
+        var start = text.IndexOf('[');
+        var end = text.LastIndexOf(']');
+        if (start < 0 || end <= start) return null;
+        return text.Substring(start, end - start + 1);
     }
 
     private async Task<AiNewsFeed> FetchAsync(CancellationToken ct)

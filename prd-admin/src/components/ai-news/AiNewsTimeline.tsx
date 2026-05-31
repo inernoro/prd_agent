@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Radio,
   RefreshCw,
@@ -8,11 +8,12 @@ import {
   ChevronDown,
   List,
   LayoutGrid,
+  Quote,
   type LucideIcon,
 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { glassPanel } from '@/lib/glassStyles';
-import { getAiNewsLatest, type AiNewsFeed, type AiNewsItem } from '@/services/real/aiNews';
+import { getAiNewsLatest, getAiNewsCommentary, type AiNewsFeed, type AiNewsItem } from '@/services/real/aiNews';
 import {
   labelMeta,
   itemTime,
@@ -93,6 +94,9 @@ export function AiNewsTimeline() {
   const [view, setView] = useState<View>('timeline');
   const [now, setNow] = useState(() => Date.now());
   const [visible, setVisible] = useState(PAGE);
+  // AI 一句话解读：id -> 文本；已请求过的 id 记到 ref 避免重复拉取
+  const [commentary, setCommentary] = useState<Record<string, string>>({});
+  const requestedRef = useRef<Set<string>>(new Set());
 
   const load = useCallback(async (initial: boolean) => {
     if (initial) setLoading(true);
@@ -164,6 +168,28 @@ export function AiNewsTimeline() {
     [feed],
   );
 
+  // 渐进拉取可见条目的「一句话 AI 解读」：每出现一批新 id 就请求一次（后端缓存 + 批量 LLM）
+  useEffect(() => {
+    const ids = shown.map((i) => i.id).filter((id) => id && !requestedRef.current.has(id));
+    if (ids.length === 0) return;
+    ids.forEach((id) => requestedRef.current.add(id));
+    let alive = true;
+    void (async () => {
+      // 分批（与后端单次上限对齐），逐批回填，体验上「逐条活起来」
+      for (let i = 0; i < ids.length; i += 10) {
+        if (!alive) return;
+        const chunk = ids.slice(i, i + 10);
+        const res = await getAiNewsCommentary(chunk);
+        if (alive && res.success && res.data) {
+          setCommentary((prev) => ({ ...prev, ...res.data }));
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [shown]);
+
   // ── 来源身份行：favicon + 来源名 + 站点名 + 相对时间 ──
   const sourceHeader = (it: AiNewsItem, meta: LabelMeta) => (
     <div className="flex items-center gap-2 min-w-0">
@@ -213,6 +239,28 @@ export function AiNewsTimeline() {
             {s}
           </span>
         ))}
+      </div>
+    );
+  };
+
+  // ── AI 一句话解读（内容主体）：未生成时呼吸占位，生成后淡入 ──
+  const commentaryBlock = (it: AiNewsItem, meta: LabelMeta) => {
+    const text = commentary[it.id];
+    return (
+      <div
+        className="mt-2.5 flex items-start gap-2 rounded-lg pl-2.5 pr-3 py-2"
+        style={{ background: `${meta.color}12`, borderLeft: `2px solid ${meta.color}` }}
+      >
+        <Quote size={12} className="shrink-0 mt-0.5" style={{ color: meta.color }} />
+        {text ? (
+          <span className="ainews-commentary text-[12.5px] leading-relaxed" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.82))' }}>
+            {text}
+          </span>
+        ) : (
+          <span className="ainews-shimmer text-[12.5px]" style={{ color: 'var(--text-muted)' }}>
+            AI 正在解读这条资讯…
+          </span>
+        )}
       </div>
     );
   };
@@ -351,42 +399,43 @@ export function AiNewsTimeline() {
                 </div>
 
                 {view === 'timeline' ? (
-                  // ── 单列新闻流：左侧绝对时间轴(HH:MM) + 时间脊 + 富信息卡片 ──
-                  <div className="relative flex flex-col gap-2.5">
-                    {/* 时间脊（贯穿时间轴列） */}
+                  // ── 单列新闻流：左侧绝对时间轴(HH:MM) + 贯穿时间脊 + 流动条目(不单独框) ──
+                  <div className="relative">
+                    {/* 时间脊（贯穿整组时间轴列） */}
                     <span
-                      className="absolute top-2 bottom-2 w-px"
-                      style={{ left: 47, background: 'var(--border-subtle, rgba(255,255,255,0.1))' }}
+                      className="absolute top-3 bottom-3 w-px"
+                      style={{ left: 47, background: 'var(--border-subtle, rgba(255,255,255,0.12))' }}
                     />
                     {g.items.map((it, idx) => {
                       const meta = labelMeta(it.aiLabel);
+                      const isLast = idx === g.items.length - 1;
                       return (
-                        <div key={it.id || it.url} className="flex items-stretch gap-3">
+                        <a
+                          key={it.id || it.url}
+                          href={it.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="ainews-item group relative flex items-stretch gap-3 transition-colors hover:bg-[rgba(255,255,255,0.025)] rounded-lg"
+                          style={{
+                            animationDelay: `${Math.min(idx, 12) * 24}ms`,
+                            borderBottom: isLast ? 'none' : '1px solid var(--border-subtle, rgba(255,255,255,0.06))',
+                          }}
+                        >
                           {/* 左：绝对时间 + 脊上节点 */}
                           <div className="shrink-0 relative" style={{ width: 40 }}>
                             <span
-                              className="block text-[12px] font-mono font-semibold pt-3 text-right"
-                              style={{ color: 'var(--text-secondary, rgba(255,255,255,0.7))' }}
+                              className="block text-[12px] font-mono font-semibold pt-4 text-right"
+                              style={{ color: 'var(--text-secondary, rgba(255,255,255,0.65))' }}
                             >
                               {clockLabel(itemTime(it), g.bucket)}
                             </span>
                             <span
                               className="absolute rounded-full z-10"
-                              style={{ left: 47 - 12, top: 16, width: 9, height: 9, background: meta.color, boxShadow: `0 0 0 3px var(--bg-card, #1E1F20), 0 0 8px ${meta.color}80` }}
+                              style={{ left: 47 - 12, top: 19, width: 9, height: 9, background: meta.color, boxShadow: `0 0 0 3px var(--bg-card, #1E1F20), 0 0 8px ${meta.color}80` }}
                             />
                           </div>
-                          {/* 右：富信息卡片 */}
-                          <a
-                            href={it.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="ainews-item group relative flex-1 min-w-0 rounded-xl p-3.5 transition-all duration-200 hover:-translate-y-0.5"
-                            style={{ ...glassPanel, animationDelay: `${Math.min(idx, 12) * 24}ms` }}
-                          >
-                            <span
-                              className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
-                              style={{ boxShadow: `inset 0 0 0 1px ${meta.color}4d, 0 0 20px ${meta.color}14` }}
-                            />
+                          {/* 右：流动内容（无边框卡） */}
+                          <div className="flex-1 min-w-0 py-3.5 pr-2">
                             {sourceHeader(it, meta)}
                             <div
                               className="text-[15px] font-semibold leading-snug line-clamp-2 mt-2 group-hover:underline"
@@ -399,9 +448,10 @@ export function AiNewsTimeline() {
                                 style={{ color: 'var(--text-muted)' }}
                               />
                             </div>
+                            {commentaryBlock(it, meta)}
                             {tagRow(it, meta)}
-                          </a>
-                        </div>
+                          </div>
+                        </a>
                       );
                     })}
                   </div>
@@ -426,11 +476,12 @@ export function AiNewsTimeline() {
                           />
                           {sourceHeader(it, meta)}
                           <div
-                            className="text-[13.5px] font-medium leading-snug line-clamp-3 transition-colors mt-2"
+                            className="text-[13.5px] font-medium leading-snug line-clamp-2 transition-colors mt-2"
                             style={{ color: 'var(--text-primary)' }}
                           >
                             {it.title}
                           </div>
+                          {commentaryBlock(it, meta)}
                           {tagRow(it, meta)}
                         </a>
                       );

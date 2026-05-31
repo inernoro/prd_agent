@@ -289,7 +289,9 @@ builder.Services.AddHttpClient("AiNews", c =>
     c.Timeout = TimeSpan.FromSeconds(8);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("PrdAgent-AiNewsRadar/1.0");
 });
-builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAiNewsService, PrdAgent.Infrastructure.Services.AiNewsService>();
+// Scoped：AiNewsService 依赖 Scoped 的 ILlmGateway（一句话解读），故不能是 Singleton；
+// 内存缓存走注入的单例 IMemoryCache，资讯流缓存不受 scoped 影响。
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAiNewsService, PrdAgent.Infrastructure.Services.AiNewsService>();
 
 // 知识库 Agent 后台执行器（字幕生成 + 文档再加工，复用 DoubaoStreamAsrService 和 ILlmGateway）
 builder.Services.AddHttpClient("DocStoreAgent");

@@ -9,4 +9,12 @@ namespace PrdAgent.Core.Interfaces;
 public interface IAiNewsService
 {
     Task<AiNewsFeed> GetLatestAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// 为指定资讯 id 生成 / 读取「一句话 AI 解读」。命中缓存直接返回，未命中批量调 LLM 生成并落库。
+    /// 返回 id -> commentary 的映射（仅含成功生成或已缓存的条目）。
+    /// </summary>
+    /// <param name="ids">要解读的资讯 id（取自当前 feed）。</param>
+    /// <param name="userId">触发用户 id（用于 LlmRequestContext）。</param>
+    Task<Dictionary<string, string>> EnrichCommentaryAsync(IReadOnlyList<string> ids, string userId, CancellationToken ct = default);
 }

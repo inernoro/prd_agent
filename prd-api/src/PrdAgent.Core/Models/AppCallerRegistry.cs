@@ -969,6 +969,17 @@ public static class Admin
         public const string AiSummary = "prd-admin.changelog.ai-summary::chat";
     }
 
+    public static class AiNews
+    {
+        [AppCallerMetadata(
+            "AI大事-一句话解读",
+            "更新中心「AI 大事」时间线对每条资讯标题生成一句话编辑解读/推荐理由（批量 JSON 输出，结果缓存）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Document"
+        )]
+        public const string Commentary = "prd-admin.ai-news.commentary::chat";
+    }
+
 }
 
 /// <summary>
