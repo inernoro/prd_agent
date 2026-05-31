@@ -466,6 +466,8 @@ export interface InfraAgentRuntimeDiagnostics {
   nextActions?: string[] | null;
   desiredRuntimeAdapter?: string | null;
   runtimeTransport?: string | null;
+  /** 是否存在可用的 Lite 只读审查降级路径（走现有 LLM Gateway）。true 时即便官方 SDK pool 未就绪也可发起只读审查。 */
+  liteReviewAvailable?: boolean | null;
   defaultRuntimeProfile?: {
     id: string;
     name: string;

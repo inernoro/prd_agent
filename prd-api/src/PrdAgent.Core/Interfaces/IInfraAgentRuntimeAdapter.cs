@@ -55,6 +55,8 @@ public sealed class InfraAgentRuntimeRunRequest
     public string? WorkspaceRoot { get; init; }
     public string? GitRepository { get; init; }
     public string? GitRef { get; init; }
+    /// <summary>会话所属用户。Lite gateway 审查路径必须用它设置 LlmRequestContext.UserId，否则访问控制层会拒绝。</summary>
+    public string? UserId { get; init; }
 }
 
 public sealed class InfraAgentRuntimeMessage

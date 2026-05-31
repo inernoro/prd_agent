@@ -316,6 +316,8 @@ function runtimeDiscoveryBlockReason(status: InfraAgentRuntimeDiagnostics): stri
 function runtimePoolBlockReason(status: InfraAgentRuntimeDiagnostics | null): string {
   if (!status) return '正在检测 CDS runtime pool，请稍后刷新。';
   if (status.instanceCount > 0 && status.healthyCount > 0) return '';
+  // Lite 只读审查降级可用时不阻塞：用户仍可发起只读审查（结果为预览级），官方 SDK pool 就绪后自动升级。
+  if (status.liteReviewAvailable) return '';
   const discoveryReason = runtimeDiscoveryBlockReason(status);
   if (discoveryReason) return discoveryReason;
   const firstBlocker = status.blockers?.find((item) => item.trim());
@@ -358,10 +360,65 @@ function parsePayload(event: InfraAgentEventView): Record<string, unknown> {
   }
 }
 
+// 判断某事件是否代表「本轮 run 结束」。收到即可停掉 SSE pump 和元数据轮询。
+const TERMINAL_SESSION_STATUSES = new Set(['stopped', 'failed', 'idle', 'completed', 'timed_out', 'canceled', 'cancelled']);
+function isRunFinishedEvent(event: InfraAgentEventView): boolean {
+  if (event.type === 'done' || event.type === 'error') return true;
+  if (event.type === 'status') {
+    const status = String(parsePayload(event).status ?? '').toLowerCase();
+    return TERMINAL_SESSION_STATUSES.has(status);
+  }
+  return false;
+}
+
+// 减少「无用的渲染」：底层传输/路由的 info 级 log（runtime tools exposed、
+// lite review runtime started、message dispatched 等）对用户没有意义，从对话时间线里隐去；
+// 但保留 warning/error 级（可能是真问题）。判定走结构化的 source/level 字段，不靠内容匹配，避免误伤真实输出。
+const PLUMBING_LOG_SOURCES = new Set(['runtime-router', 'runtime-adapter', 'sidecar-runtime-adapter', 'claude-sdk-sidecar']);
+const NOISE_LOG_KEYWORDS = [
+  'adapter started', 'runtime started', 'runtime tools exposed', 'lite review runtime',
+  'message dispatched', 'message accepted', 'queue stopped', 'cds logs unavailable',
+  'runtime run cancel', 'sidecar_runtime_started', 'session transport',
+];
+function isNoiseEvent(event: InfraAgentEventView): boolean {
+  if (event.type !== 'log') return false;
+  const payload = parsePayload(event);
+  const level = String(payload.level ?? '').toLowerCase();
+  if (level === 'warning' || level === 'error') return false; // 真问题始终保留
+  if (PLUMBING_LOG_SOURCES.has(String(payload.source ?? '').toLowerCase())) return true;
+  const msg = String(payload.message ?? '').trim().toLowerCase();
+  if (!msg) return true; // 空消息日志（被渲染成「后台运行日志」）零信息价值，隐去
+  return NOISE_LOG_KEYWORDS.some((k) => msg.includes(k));
+}
+
 function renderPayload(event: InfraAgentEventView): string {
   const payload = parsePayload(event);
+  const str = (k: string) => (typeof payload[k] === 'string' ? (payload[k] as string).trim() : '');
   if (event.type === 'text_delta' && typeof payload.text === 'string') return payload.text;
   if (event.type === 'done' && typeof payload.finalText === 'string') return payload.finalText;
+  // 展开后给人话细节，而不是裸 JSON。
+  if (event.type === 'error') {
+    const lines: string[] = [];
+    if (str('message')) lines.push(str('message'));
+    if (str('code')) lines.push(`代码：${str('code')}`);
+    const na = Array.isArray(payload.nextActions)
+      ? (payload.nextActions as unknown[]).filter((x): x is string => typeof x === 'string')
+      : [];
+    if (na.length) lines.push(`下一步：${na.join('；')}`);
+    if (str('traceId')) lines.push(`traceId：${str('traceId')}`);
+    if (lines.length) return lines.join('\n');
+  }
+  if (event.type === 'status') {
+    const mode = str('mode');
+    const parts: string[] = [];
+    if (mode) parts.push(`运行模式：${mode === 'lite' ? 'Lite 预览（只读）' : '官方 SDK'}`);
+    if (str('status')) parts.push(`状态：${str('status')}`);
+    const reason = str('degradeReason') || str('reason');
+    if (reason) parts.push(`原因：${reason}`);
+    if (str('model')) parts.push(`模型：${str('model')}`);
+    if (parts.length) return parts.join('\n');
+  }
+  if (event.type === 'log' && str('message')) return str('message');
   return JSON.stringify(payload, null, 2);
 }
 
@@ -889,6 +946,10 @@ export default function CdsAgentPage() {
   const [nowTick, setNowTick] = useState(() => Date.now());
   const timelineRef = useRef<HTMLDivElement>(null);
   const eventsRef = useRef<InfraAgentEventView[]>([]);
+  // 本轮 run 是否已结束（收到 done/error/终态 status）。用于立即停掉 SSE pump 与元数据轮询，
+  // 杜绝「跑完之后还在循环请求」——不依赖 session.status 在列表里的滞后翻转。
+  const runFinishedRef = useRef(false);
+  const pollTickRef = useRef(0);
   const [eventStreamHealthy, setEventStreamHealthy] = useState(false);
   const [sessionQuery, setSessionQuery] = useState('');
   const [eventReplayMode, setEventReplayMode] = useState(false);
@@ -991,12 +1052,17 @@ export default function CdsAgentPage() {
       ?? (runtimeStatusDefaultProfile?.id === activeSession.runtimeProfileId ? runtimeStatusDefaultProfile : null)
     : activeProfile;
   const desiredRuntimeAdapterForProfile = runtimeStatus?.desiredRuntimeAdapter || '';
-  const activeProfileBlockReason = profileBlockReason(activeProfile)
-    || profileCompatibilityBlockReason(activeProfile, desiredRuntimeAdapterForProfile);
-  const activeSessionProfileBlockReason = activeSession
-    ? profileBlockReason(activeSessionProfile)
-      || profileCompatibilityBlockReason(activeSessionProfile, desiredRuntimeAdapterForProfile)
-    : '';
+  // Lite 兜底可用时，整套「模型 profile」前置都不该挡路——Lite 只读审查走现有 LLM Gateway，
+  // 不依赖 profile 的 baseUrl/key/兼容性。没 profile、profile 不兼容、缺 key 都自动降级为 Lite。
+  const liteReviewAvailable = Boolean(runtimeStatus?.liteReviewAvailable);
+  const activeProfileBlockReason = liteReviewAvailable
+    ? ''
+    : profileBlockReason(activeProfile)
+      || profileCompatibilityBlockReason(activeProfile, desiredRuntimeAdapterForProfile);
+  const activeSessionProfileBlockReason = !activeSession || liteReviewAvailable
+    ? ''
+    : profileBlockReason(activeSessionProfile)
+      || profileCompatibilityBlockReason(activeSessionProfile, desiredRuntimeAdapterForProfile);
   const activeRuntimePoolBlockReason = runtimePoolBlockReason(runtimeStatus);
   const canReuseActiveProfileSecret = Boolean(activeProfile?.hasApiKey && !profileDraft.apiKey.trim());
   const canUpdateActiveProfile = Boolean(
@@ -1005,7 +1071,14 @@ export default function CdsAgentPage() {
     && profileDraft.model.trim()
     && (profileDraft.apiKey.trim() || activeProfile.hasApiKey),
   );
-  const canCreateSession = Boolean(activeConnection && activeProfile && !activeProfileBlockReason && !activeRuntimePoolBlockReason);
+  // Lite 可用时连 CDS 连接都不强制（对话模式后端走 Lite 本地，不需要授权）；否则仍要 active 连接 + 可用 profile。
+  // 需要一个 active CDS 连接（授权一次后，旧会话/新会话都会 remap 到它，不再反复授权）。
+  // 模型 profile 不强制：Lite 可用时 activeProfileBlockReason 已为空。
+  const canCreateSession = Boolean(
+    activeConnection
+    && !activeProfileBlockReason
+    && !activeRuntimePoolBlockReason,
+  );
   const canRunActiveSession = Boolean(activeSession && !activeSessionProfileBlockReason && !activeRuntimePoolBlockReason);
   const canStartActiveSession = Boolean(activeSession && !activeSessionTimedOut && !activeSession.manualTakeoverEnabled && canRunActiveSession && canStartFromStatus(activeSessionEffectiveStatus));
   const canSendActiveSession = Boolean(activeSession && !activeSessionTimedOut && !activeSession.manualTakeoverEnabled && canRunActiveSession && (activeSessionEffectiveStatus === 'running' || activeSessionEffectiveStatus === 'idle'));
@@ -2247,17 +2320,29 @@ export default function CdsAgentPage() {
   // 运行中自动刷新会话元数据；事件优先走 SSE afterSeq 续读，异常时由 refreshDetail 兜底。
   const activeSessionForPoll = sessions.find((item) => item.id === activeSessionId) ?? null;
   const isLiveStatus = resolveSessionRuntimeState(activeSessionForPoll, nowTick).isLive;
+  // 轻量时钟 + 节流的元数据轮询。事件不在这里拉（由下面的 SSE pump 独占），
+  // 会话列表也不再每 3s 拉 100 个——12s 一次足够刷新左侧状态。跑完即停。
   useEffect(() => {
     if (!isLiveStatus || !activeSessionId) return;
+    pollTickRef.current = 0;
     const tick = window.setInterval(() => {
       setNowTick(Date.now());
-      void refreshDetail(activeSessionId, { skipEvents: eventStreamHealthy });
-      void listInfraAgentSessions(100).then((res) => {
-        if (res.success && res.data?.items) setSessions(sortSessions(res.data.items));
-      });
+      if (runFinishedRef.current) return;
+      pollTickRef.current += 1;
+      const n = pollTickRef.current;
+      if (n % 2 === 0) {
+        // 6s：刷消息 / 日志（事件由 SSE pump 负责，这里 skipEvents 避免重复拉取）
+        void refreshDetail(activeSessionId, { skipEvents: true });
+      }
+      if (n % 4 === 0) {
+        // 12s：同步左侧列表状态，替代原来每 3s 拉 100 个会话的请求风暴
+        void listInfraAgentSessions(100).then((res) => {
+          if (res.success && res.data?.items) setSessions(sortSessions(res.data.items));
+        });
+      }
     }, 3000);
     return () => window.clearInterval(tick);
-  }, [isLiveStatus, activeSessionId, eventStreamHealthy, refreshDetail]);
+  }, [isLiveStatus, activeSessionId, refreshDetail]);
 
   useEffect(() => {
     if (!isLiveStatus || !activeSessionId) {
@@ -2267,6 +2352,7 @@ export default function CdsAgentPage() {
 
     const controller = new AbortController();
     let stopped = false;
+    runFinishedRef.current = false; // 新一轮 run 开始
 
     const sleep = (ms: number) => new Promise<void>((resolve) => {
       const timer = window.setTimeout(resolve, ms);
@@ -2277,6 +2363,8 @@ export default function CdsAgentPage() {
     });
 
     const mergeStreamEvent = (event: InfraAgentEventView) => {
+      // 收到 done / error / 终态 status 立即标记结束，停掉 pump 与轮询，杜绝跑完后空转。
+      if (isRunFinishedEvent(event)) runFinishedRef.current = true;
       setEvents((prev) => {
         const next = mergeEventsBySeq(prev, [event]);
         eventsRef.current = next;
@@ -2286,7 +2374,7 @@ export default function CdsAgentPage() {
 
     const pump = async () => {
       setEventStreamHealthy(false);
-      while (!controller.signal.aborted && !stopped) {
+      while (!controller.signal.aborted && !stopped && !runFinishedRef.current) {
         const afterSeq = latestEventSeq(eventsRef.current);
         let received = false;
         try {
@@ -2303,13 +2391,22 @@ export default function CdsAgentPage() {
               if (!controller.signal.aborted && !stopped) setEventStreamHealthy(true);
             },
           );
-          await sleep(received ? 250 : 1200);
+          if (runFinishedRef.current) break;
+          await sleep(received ? 250 : 1500);
         } catch {
           if (!controller.signal.aborted && !stopped) {
             setEventStreamHealthy(false);
             await sleep(3000);
           }
         }
+      }
+      // 跑完做一次最终同步 + 翻转左侧列表状态，让 isLiveStatus 落到终态后自然拆除两个 effect。
+      if (runFinishedRef.current && !controller.signal.aborted && !stopped) {
+        setEventStreamHealthy(false);
+        await refreshDetail(activeSessionId).catch(() => {});
+        await listInfraAgentSessions(100)
+          .then((res) => { if (res.success && res.data?.items) setSessions(sortSessions(res.data.items)); })
+          .catch(() => {});
       }
     };
 
@@ -2318,7 +2415,7 @@ export default function CdsAgentPage() {
       stopped = true;
       controller.abort();
     };
-  }, [isLiveStatus, activeSessionId]);
+  }, [isLiveStatus, activeSessionId, refreshDetail]);
 
   useEffect(() => {
     if (!activeSession?.id) {
@@ -2334,6 +2431,8 @@ export default function CdsAgentPage() {
     setEventReplayIndex(1);
     setAutoScrollPaused(false);
     eventsRef.current = [];
+    runFinishedRef.current = false;
+    pollTickRef.current = 0;
     setEvents([]);
     void refreshDetail(activeSession.id, { resetEvents: true });
   }, [activeSession?.id, refreshDetail]);
@@ -2559,7 +2658,7 @@ export default function CdsAgentPage() {
   }
 
   async function createSession() {
-    if (!activeConnection) {
+    if (!activeConnection && !liteReviewAvailable) {
       toast.warning('没有可用 CDS 连接', '请先到设置里的基础设施服务完成系统级授权');
       return;
     }
@@ -2574,7 +2673,7 @@ export default function CdsAgentPage() {
     setBusy(true);
     try {
       const res = await createInfraAgentSession({
-        connectionId: activeConnection.id,
+        connectionId: activeConnection!.id,
         runtime: activeProfile?.runtime ?? 'claude-sdk',
         model: activeProfile?.model,
         runtimeProfileId: activeProfile?.id,
@@ -2690,7 +2789,7 @@ export default function CdsAgentPage() {
     }
 
     let session = activeSessionTimedOut ? null : activeSession;
-    if (!session && !activeConnection) {
+    if (!session && !activeConnection && !liteReviewAvailable) {
       toast.warning('没有可用 CDS 连接', '请先到设置里的基础设施服务完成系统级授权');
       return;
     }
@@ -3469,7 +3568,7 @@ export default function CdsAgentPage() {
         },
       }] : []),
       ...displayedEvents
-        .filter((e) => PROCESS_TYPES.has(e.type))
+        .filter((e) => PROCESS_TYPES.has(e.type) && !isNoiseEvent(e))
         .map((e): TimelineItem => ({ kind: 'evt', at: new Date(e.createdAt).getTime(), seq: e.seq, key: `e-${e.id}`, ev: e })),
     ].sort((a, b) => {
       if (a.at !== b.at) return a.at - b.at; // 旧 → 新
@@ -3664,8 +3763,26 @@ export default function CdsAgentPage() {
 	        ))}
 	      </div>
 	    );
+	    const officialPoolReady = Boolean(runtimeStatus && runtimeStatus.instanceCount > 0 && runtimeStatus.healthyCount > 0);
+	    const liteModeActive = Boolean(runtimeStatus?.liteReviewAvailable && !officialPoolReady);
+	    const modeBadge = (
+	      <span
+	        className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-semibold"
+	        style={liteModeActive
+	          ? { background: 'rgba(96,165,250,0.16)', border: '1px solid rgba(96,165,250,0.32)', color: 'rgba(191,219,254,0.95)' }
+	          : { background: 'rgba(52,211,153,0.14)', border: '1px solid rgba(52,211,153,0.3)', color: 'rgba(167,243,208,0.95)' }}
+	      >
+	        {liteModeActive ? <FileSearch size={12} /> : <ShieldCheck size={12} />}
+	        {liteModeActive ? 'Lite 预览 · 只读' : '官方 SDK'}
+	      </span>
+	    );
 	    const simpleComposer = (
 	      <div className="mx-auto w-full max-w-[820px] rounded-2xl p-3" style={{ background: 'rgba(38,38,38,0.96)', border: '1px solid rgba(255,255,255,0.12)', boxShadow: '0 18px 60px rgba(0,0,0,0.34)' }}>
+	        {liteModeActive && (
+	          <div className="mb-2 rounded-lg px-3 py-2 text-[11px] leading-relaxed text-blue-100/82" style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.22)' }}>
+	            当前为 <strong>Lite 预览模式</strong>：尚未配置 Claude/Anthropic provider，系统改用现有模型做<strong>只读</strong>代码审查（不修改文件、不执行命令、无需审批）。结果为预览级，配置官方 provider 后自动升级为商业级审查。
+	          </div>
+	        )}
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <div className="inline-flex rounded-lg p-1" style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.08)' }}>
               {([
@@ -3690,9 +3807,12 @@ export default function CdsAgentPage() {
                 );
               })}
             </div>
-            <span className="text-xs text-white/36">
-              {simpleTaskMode === 'code' ? '面向代码、测试、构建和 PR 建议' : '不要求仓库，先按普通 Agent 对话处理'}
-            </span>
+            <div className="flex items-center gap-2">
+              {modeBadge}
+              <span className="text-xs text-white/36">
+                {simpleTaskMode === 'code' ? '面向代码、测试、构建和 PR 建议' : '不要求仓库，先按普通 Agent 对话处理'}
+              </span>
+            </div>
           </div>
 	        <textarea
 	          value={prompt}
@@ -4052,7 +4172,8 @@ export default function CdsAgentPage() {
                               const waitingApproval = event.type === 'tool_call' && approvalId && payload.status === 'waiting';
                               const stepOpen = simpleExpandedEventId === event.id;
                               const label = processEventLabel(event);
-                              const canExpand = event.type === 'tool_call' || event.type === 'tool_result';
+                              // 任何事件都能展开看细节（错误码/traceId、状态原因、工具入参/结果），不再只有工具调用可展开。
+                              const canExpand = event.type !== 'log' || Boolean(String(parsePayload(event).message ?? '').trim());
                               return (
                                 <div key={event.id} className="rounded-md px-2 py-1.5 text-xs" style={{ background: 'rgba(0,0,0,0.2)' }}>
                                   <button

@@ -20,6 +20,8 @@ internal static class CdsAgentRuntimeEventRenderer
                     finalText.GetString() ?? string.Empty,
                 InfraAgentEventTypes.Error =>
                     RenderError(root),
+                InfraAgentEventTypes.Status =>
+                    RenderStatus(root),
                 InfraAgentEventTypes.ToolCall =>
                     $"工具调用：{root}",
                 InfraAgentEventTypes.ToolResult =>
@@ -33,6 +35,40 @@ internal static class CdsAgentRuntimeEventRenderer
         {
             return evt.PayloadJson;
         }
+    }
+
+    /// <summary>
+    /// 渲染运行状态事件，让工作流输出明确显示当前是 official 还是 lite（优雅降级）模式，
+    /// 而不是只在 /cds-agent 页面才看得到。仅渲染 running 这类带 mode 的状态，避免噪音。
+    /// </summary>
+    internal static string RenderStatus(JsonElement root)
+    {
+        var status = TryString(root, "status");
+        var mode = TryString(root, "mode");
+        if (string.IsNullOrWhiteSpace(mode))
+        {
+            return string.Empty;
+        }
+
+        var modeLabel = string.Equals(mode, "lite", StringComparison.OrdinalIgnoreCase)
+            ? "Lite 预览（只读）"
+            : "官方 SDK";
+        var parts = new List<string> { $"运行模式：{modeLabel}" };
+        if (!string.IsNullOrWhiteSpace(status)) parts.Add($"状态={status}");
+
+        var degradeReason = TryString(root, "degradeReason");
+        if (string.Equals(mode, "lite", StringComparison.OrdinalIgnoreCase))
+        {
+            var reasonNote = degradeReason switch
+            {
+                "r1_profile_incompatible" => "默认模型非 Claude/Anthropic 兼容，已降级为只读审查",
+                "sidecar_not_configured" => "官方 SDK runtime 未就绪，已降级为只读审查",
+                _ => "已降级为只读审查（不修改文件、不执行命令、无需审批）"
+            };
+            parts.Add(reasonNote);
+        }
+
+        return string.Join(" · ", parts);
     }
 
     private static string RenderError(JsonElement root)

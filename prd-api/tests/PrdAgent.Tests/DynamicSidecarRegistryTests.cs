@@ -880,6 +880,9 @@ public class DynamicSidecarRegistryTests
         public Task<string?> TryUnprotectLongTokenAsync(string id, CancellationToken ct, bool revokeOnFailure = true) =>
             Task.FromResult<string?>(_items.Any(x => x.Id == id) ? _token : null);
 
+        public Task<bool> TryReactivateIfTokenValidAsync(string id, CancellationToken ct) =>
+            Task.FromResult(_items.Any(x => x.Id == id));
+
         public Task<bool> DeleteAsync(string id, CancellationToken ct) =>
             Task.FromResult(false);
 

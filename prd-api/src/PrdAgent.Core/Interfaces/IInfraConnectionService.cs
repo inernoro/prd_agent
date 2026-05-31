@@ -42,6 +42,13 @@ public interface IInfraConnectionService
     /// </summary>
     Task<string?> TryUnprotectLongTokenAsync(string id, CancellationToken ct, bool revokeOnFailure = true);
 
+    /// <summary>
+    /// 自愈：若连接被标记为 revoked，但本地长期凭据仍能成功解密（说明授权本身有效，
+    /// 多半是 DataProtection key 轮换/环境重建导致的误吊销），则把状态恢复为 active 并返回 true。
+    /// 用于「授权一次即可」——避免一次解密抖动逼用户反复重新授权。
+    /// </summary>
+    Task<bool> TryReactivateIfTokenValidAsync(string id, CancellationToken ct);
+
     /// <summary>删除本地系统级授权。long token 不按时间自动过期，删除即停止本系统继续使用。</summary>
     Task<bool> DeleteAsync(string id, CancellationToken ct);
 

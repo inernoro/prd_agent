@@ -1350,6 +1350,29 @@ public static class ProjectRouteAgent
         public const string RoutemapMatch = "project-route-agent.resolve.routemap::chat";
     }
 }
+
+/// <summary>
+/// CDS Agent 工作台 — 基础设施 Agent 会话
+/// </summary>
+public static class InfraAgent
+{
+    public const string AppName = "CDS Agent 工作台";
+
+    /// <summary>
+    /// Lite 只读审查降级路径：当默认 runtime profile 不是 Claude/Anthropic 兼容
+    /// （R1 未闭合）时，会话不再硬卡，改走本调用经现有 LLM Gateway 做只读代码审查。
+    /// </summary>
+    public static class ReviewLite
+    {
+        [AppCallerMetadata(
+            "CDS Agent-Lite只读审查",
+            "R1 未闭合时的优雅降级：读取工作区代码经 LLM Gateway 产出只读审查结论（非商业级、无危险工具）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Workflow"
+        )]
+        public const string Chat = "infra-agent.review-lite::chat";
+    }
+}
 }
 
 /// <summary>

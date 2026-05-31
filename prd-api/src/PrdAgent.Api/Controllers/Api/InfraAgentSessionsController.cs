@@ -27,6 +27,7 @@ public class InfraAgentSessionsController : ControllerBase
     private readonly IInfraAgentRuntimeAdapter? _runtimeAdapter;
     private readonly IInfraAgentRuntimeProfileService? _runtimeProfiles;
     private readonly IConfiguration? _configuration;
+    private readonly PrdAgent.Infrastructure.Services.AgentRuntime.GatewayReviewRuntimeAdapter? _liteReviewAdapter;
 
     public InfraAgentSessionsController(
         IInfraAgentSessionService service,
@@ -34,7 +35,8 @@ public class InfraAgentSessionsController : ControllerBase
         IDynamicSidecarRegistry? sidecarRegistry = null,
         IInfraAgentRuntimeAdapter? runtimeAdapter = null,
         IInfraAgentRuntimeProfileService? runtimeProfiles = null,
-        IConfiguration? configuration = null)
+        IConfiguration? configuration = null,
+        PrdAgent.Infrastructure.Services.AgentRuntime.GatewayReviewRuntimeAdapter? liteReviewAdapter = null)
     {
         _service = service;
         _sidecarRouter = sidecarRouter;
@@ -42,6 +44,7 @@ public class InfraAgentSessionsController : ControllerBase
         _runtimeAdapter = runtimeAdapter;
         _runtimeProfiles = runtimeProfiles;
         _configuration = configuration;
+        _liteReviewAdapter = liteReviewAdapter;
     }
 
     [HttpGet("event-schema")]
@@ -98,6 +101,7 @@ public class InfraAgentSessionsController : ControllerBase
             NextCyclePlan = nextCyclePlan,
             DebugCommands = debugCommands,
             ExecutionPanel = executionPanel,
+            LiteReviewAvailable = _liteReviewAdapter?.IsConfigured == true,
             NextActions = MergeNextActions(
                 baseDiagnostics.NextActions,
                 profile)

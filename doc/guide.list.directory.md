@@ -671,6 +671,9 @@
 - [Claude SDK 执行器 / Python sidecar 债务台账](debt.claude-sdk-executor) `debt.claude-sdk-executor`
   > claude-sdk 执行器与 Python sidecar 的已知债务与边界约束
 
+- [CDS Agent 工作台 · 债务台账](debt.cds-agent) `debt.cds-agent`
+  > 4 条 open：R1 商业级 provider 闭环 / Lite 只读模式能力边界 / CDS Agent 文档群熵减 / 无 profile 时 Lite 直跑
+
 - [CDS state.json 影子存储 · 债务台账](debt.cds-state-json) `debt.cds-state-json`
   > 4 条 open：webhook deliveries 全量刷盘 / StateService 内存全量加载 / mongo-split 模式 state.json 同步写 / 无独立清理策略
 
@@ -840,6 +843,7 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-05-30 | 新增 | `debt.cds-agent` | CDS Agent 工作台债务台账（R1 商业级 / Lite 只读边界 / 文档熵减 / 无 profile 直跑） |
 | 2026-05-22 | 新增 | `design.defect-agent-share-skill-architecture` `debt.share-link-security` `report.cds-mongo-log-split-incident-2026-05-23` | 缺陷分享架构设计、分享链接安全债务台账、CDS Mongo 事故复盘 |
 | 2026-05-15 | 新增 | `design.cds-agent-runtime-architecture` | CDS Agent 运行时架构设计 |
 | 2026-05-15 | 新增 | `report.cds-agent-workbench-2026-05-15` `guide.cds-agent-workbench-reproduce` `guide.cds-agent-next-agent-testing` | CDS Agent A10 完成复盘、复现教程、下一代测试与涌现建议 |
