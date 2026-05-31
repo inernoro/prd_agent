@@ -579,6 +579,12 @@ export default function WebPagesPage() {
           onFiles: async (files) => {
             const f = files[0];
             if (!f) return;
+            // 权限闸门：团队空间内必须有编辑权限才能投放（与上传按钮的显隐条件一致）。
+            // dropzone 始终挂载，不能让只读 viewer 通过拖拽绕过按钮把内容写进团队空间。
+            if (currentSpace.kind === 'team' && !canEditInWebHosting(myWebHostingRole)) {
+              toast.error('无权限', '你在该团队空间是只读角色，无法上传网页');
+              return;
+            }
             const up = await uploadSite({ file: f });
             if (!up.success || !up.data) {
               toast.error('上传失败', up.error?.message || '请稍后重试');
@@ -588,7 +594,15 @@ export default function WebPagesPage() {
             // 跟随当前空间投送：在团队空间内拖拽上传的网页必须归属该团队，
             // 否则会落到上传者的个人空间（与弹窗上传路径保持一致）
             if (currentSpace.kind === 'team') {
-              await setSiteTeams(site.id, [currentSpace.teamId]);
+              const assigned = await setSiteTeams(site.id, [currentSpace.teamId]);
+              // 归属失败（网络 / 无权限 / 404）时必须告知用户：站点已上传但仍在个人空间，
+              // 不能静默报“上传成功”，否则用户以为投到团队了却找不到
+              if (!assigned.success) {
+                load();
+                loadMeta();
+                toast.error('已上传，但归属团队失败', `${assigned.error?.message || '请稍后在卡片上手动移动到本团队'}（站点暂在个人空间）`);
+                return;
+              }
             }
             markSiteAsFresh(site.id);
             load();
