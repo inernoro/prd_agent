@@ -585,6 +585,11 @@ export default function WebPagesPage() {
               return;
             }
             const site = up.data;
+            // 跟随当前空间投送：在团队空间内拖拽上传的网页必须归属该团队，
+            // 否则会落到上传者的个人空间（与弹窗上传路径保持一致）
+            if (currentSpace.kind === 'team') {
+              await setSiteTeams(site.id, [currentSpace.teamId]);
+            }
             markSiteAsFresh(site.id);
             load();
             loadMeta();
