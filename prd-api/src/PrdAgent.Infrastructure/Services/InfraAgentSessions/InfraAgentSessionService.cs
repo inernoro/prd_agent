@@ -1653,8 +1653,11 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         var officialAdapterKind = ResolveSidecarRuntimeAdapter();
 
         // 优雅降级决策：官方 SDK 可用且 profile 兼容 → official；否则有 lite 兜底 → lite；都没有 → 失败。
+        // 关键：没有绑定 runtime profile（无 provider 凭据）时，官方 sidecar 跑不出结果（卡 R1），
+        // 视为「不适合 official」直接走 Lite，让「不配模型也能发一句话拿到回答」成立。
         var sidecarConfigured = _runtimeAdapter?.IsConfigured == true;
-        var profileCompatible = IsRuntimeProfileCompatibleWithAdapter(session.Runtime, runtimeProfile, officialAdapterKind);
+        var profileCompatible = runtimeProfile != null
+            && IsRuntimeProfileCompatibleWithAdapter(session.Runtime, runtimeProfile, officialAdapterKind);
         var liteAvailable = _liteReviewAdapter?.IsConfigured == true;
         var selection = DecideRuntimeSelection(sidecarConfigured, profileCompatible, liteAvailable);
 

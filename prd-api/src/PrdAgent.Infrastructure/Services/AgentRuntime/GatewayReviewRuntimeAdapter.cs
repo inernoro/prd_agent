@@ -93,11 +93,14 @@ public sealed class GatewayReviewRuntimeAdapter : IInfraAgentRuntimeAdapter
             };
 
             var (digest, fileCount) = BuildWorkspaceDigest(request.WorkspaceRoot, out var workspaceNote);
+            var hasWorkspace = fileCount > 0;
             yield return new InfraAgentRuntimeEvent
             {
                 Type = InfraAgentRuntimeEventType.TextDelta,
                 Source = SourceName,
-                Text = $"[Lite 预览] 已读取工作区 {fileCount} 个文件{workspaceNote}，开始只读审查。\n\n"
+                Text = hasWorkspace
+                    ? $"[Lite 预览] 已读取工作区 {fileCount} 个文件{workspaceNote}，开始只读审查。\n\n"
+                    : "[Lite 预览] 对话模式（未绑定仓库），直接回答。\n\n"
             };
 
             var userPrompt = request.Messages.LastOrDefault(m =>
@@ -110,7 +113,7 @@ public sealed class GatewayReviewRuntimeAdapter : IInfraAgentRuntimeAdapter
                 new()
                 {
                     Role = "user",
-                    Content = BuildUserMessage(userPrompt, request.GitRepository, request.GitRef, digest)
+                    Content = BuildUserMessage(userPrompt, request.GitRepository, request.GitRef, digest, hasWorkspace)
                 }
             };
 
@@ -134,7 +137,7 @@ public sealed class GatewayReviewRuntimeAdapter : IInfraAgentRuntimeAdapter
                 temperature: 0.2);
 
             long totalOutput = 0;
-            await foreach (var chunk in client.StreamGenerateAsync(BuildSystemPrompt(), messages, cts.Token))
+            await foreach (var chunk in client.StreamGenerateAsync(BuildSystemPrompt(hasWorkspace), messages, cts.Token))
             {
                 switch (chunk.Type)
                 {
@@ -199,17 +202,31 @@ public sealed class GatewayReviewRuntimeAdapter : IInfraAgentRuntimeAdapter
         return Task.FromResult(new InfraAgentRuntimeCancelResult(false, "run-not-found", SourceName));
     }
 
-    private static string BuildSystemPrompt() =>
-        "你是一名严谨的只读代码审查员，运行在 CDS Agent 的 Lite 预览模式下。\n" +
-        "约束：\n" +
-        "1. 只读分析，不修改任何文件、不执行任何命令；\n" +
-        "2. 基于提供的工作区文件片段作答，证据不足时明确说明还需要看哪些文件；\n" +
-        "3. 按风险输出：每条给出 文件路径、触发条件、影响、最小验证方式；\n" +
-        "4. 用中文，结论先行、可执行。\n" +
-        "说明：Lite 模式不是商业级官方 SDK 审查，结果用于快速预览。";
+    private static string BuildSystemPrompt(bool hasWorkspace) =>
+        hasWorkspace
+            ? "你是一名严谨的只读代码审查员，运行在 CDS Agent 的 Lite 预览模式下。\n" +
+              "约束：\n" +
+              "1. 只读分析，不修改任何文件、不执行任何命令；\n" +
+              "2. 基于提供的工作区文件片段作答，证据不足时明确说明还需要看哪些文件；\n" +
+              "3. 按风险输出：每条给出 文件路径、触发条件、影响、最小验证方式；\n" +
+              "4. 用中文，结论先行、可执行。\n" +
+              "说明：Lite 模式不是商业级官方 SDK 审查，结果用于快速预览。"
+            : "你是 CDS Agent 的助手，运行在 Lite 预览模式下（未绑定代码仓库）。\n" +
+              "约束：\n" +
+              "1. 直接、简洁地用中文回答用户问题；\n" +
+              "2. 当前没有可访问的工作区/代码，只能基于对话作答；若用户的问题需要读代码，请说明请切换到「Code 巡检」并指定仓库；\n" +
+              "3. 不杜撰不存在的能力。\n" +
+              "说明：Lite 是快速预览模式，不是商业级官方 SDK。";
 
-    private static string BuildUserMessage(string userPrompt, string? repo, string? gitRef, string digest)
+    private static string BuildUserMessage(string userPrompt, string? repo, string? gitRef, string digest, bool hasWorkspace)
     {
+        var prompt = string.IsNullOrWhiteSpace(userPrompt) ? "请简要说明你现在能做什么。" : userPrompt.Trim();
+        if (!hasWorkspace)
+        {
+            // 对话模式：直接把用户问题发给模型，不附带空的代码片段段落。
+            return prompt;
+        }
+
         var sb = new StringBuilder();
         if (!string.IsNullOrWhiteSpace(repo))
         {
@@ -218,11 +235,9 @@ public sealed class GatewayReviewRuntimeAdapter : IInfraAgentRuntimeAdapter
             sb.Append('\n');
         }
         sb.Append("审查请求：\n")
-          .Append(string.IsNullOrWhiteSpace(userPrompt)
-              ? "请只读审查本仓库中最可能影响稳定性的 3 个风险。"
-              : userPrompt.Trim())
+          .Append(prompt)
           .Append("\n\n=== 工作区代码片段（只读） ===\n")
-          .Append(string.IsNullOrWhiteSpace(digest) ? "（未能读取到工作区文件，请基于审查请求说明还需要哪些信息。）" : digest);
+          .Append(digest);
         return sb.ToString();
     }
 

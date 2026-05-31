@@ -1052,12 +1052,17 @@ export default function CdsAgentPage() {
       ?? (runtimeStatusDefaultProfile?.id === activeSession.runtimeProfileId ? runtimeStatusDefaultProfile : null)
     : activeProfile;
   const desiredRuntimeAdapterForProfile = runtimeStatus?.desiredRuntimeAdapter || '';
-  const activeProfileBlockReason = profileBlockReason(activeProfile)
-    || profileCompatibilityBlockReason(activeProfile, desiredRuntimeAdapterForProfile);
-  const activeSessionProfileBlockReason = activeSession
-    ? profileBlockReason(activeSessionProfile)
-      || profileCompatibilityBlockReason(activeSessionProfile, desiredRuntimeAdapterForProfile)
-    : '';
+  // Lite 兜底可用时，整套「模型 profile」前置都不该挡路——Lite 只读审查走现有 LLM Gateway，
+  // 不依赖 profile 的 baseUrl/key/兼容性。没 profile、profile 不兼容、缺 key 都自动降级为 Lite。
+  const liteReviewAvailable = Boolean(runtimeStatus?.liteReviewAvailable);
+  const activeProfileBlockReason = liteReviewAvailable
+    ? ''
+    : profileBlockReason(activeProfile)
+      || profileCompatibilityBlockReason(activeProfile, desiredRuntimeAdapterForProfile);
+  const activeSessionProfileBlockReason = !activeSession || liteReviewAvailable
+    ? ''
+    : profileBlockReason(activeSessionProfile)
+      || profileCompatibilityBlockReason(activeSessionProfile, desiredRuntimeAdapterForProfile);
   const activeRuntimePoolBlockReason = runtimePoolBlockReason(runtimeStatus);
   const canReuseActiveProfileSecret = Boolean(activeProfile?.hasApiKey && !profileDraft.apiKey.trim());
   const canUpdateActiveProfile = Boolean(
@@ -1066,7 +1071,13 @@ export default function CdsAgentPage() {
     && profileDraft.model.trim()
     && (profileDraft.apiKey.trim() || activeProfile.hasApiKey),
   );
-  const canCreateSession = Boolean(activeConnection && activeProfile && !activeProfileBlockReason && !activeRuntimePoolBlockReason);
+  // Lite 可用时只需一个 active CDS 连接即可发起（不强制 profile）；否则仍要一个可用 profile。
+  const canCreateSession = Boolean(
+    activeConnection
+    && (activeProfile || liteReviewAvailable)
+    && !activeProfileBlockReason
+    && !activeRuntimePoolBlockReason,
+  );
   const canRunActiveSession = Boolean(activeSession && !activeSessionProfileBlockReason && !activeRuntimePoolBlockReason);
   const canStartActiveSession = Boolean(activeSession && !activeSessionTimedOut && !activeSession.manualTakeoverEnabled && canRunActiveSession && canStartFromStatus(activeSessionEffectiveStatus));
   const canSendActiveSession = Boolean(activeSession && !activeSessionTimedOut && !activeSession.manualTakeoverEnabled && canRunActiveSession && (activeSessionEffectiveStatus === 'running' || activeSessionEffectiveStatus === 'idle'));
