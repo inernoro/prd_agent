@@ -5596,14 +5596,45 @@ def cmd_verify(args: argparse.Namespace) -> None:
                 die(f"写回 {compose_path} 失败: {e}", code=2, extra=payload)
 
     # ── 质量门禁:ERROR 或 score 不达标 ──
+    # 若 --fix --write 已落盘修复,门禁应基于修复后的剩余 issue,而非原始列表。
+    gate_summary = summary
+    gate_score = score
+    if payload.get("heal", {}).get("written"):
+        fixed_counter: dict = {}
+        for fx in heal["autoFixed"]:
+            k = (fx.get("rule"), fx.get("service"))
+            fixed_counter[k] = fixed_counter.get(k, 0) + 1
+        remaining: list[dict] = []
+        pending = dict(fixed_counter)
+        for iss in issues:
+            k = (iss.get("rule"), iss.get("service"))
+            if pending.get(k, 0) > 0:
+                pending[k] -= 1
+            else:
+                remaining.append(iss)
+        gate_score = _verify_score(remaining)
+        gate_summary = {
+            "errors":   sum(1 for i in remaining if i["severity"] == "ERROR"),
+            "warnings": sum(1 for i in remaining if i["severity"] == "WARNING"),
+            "infos":    sum(1 for i in remaining if i["severity"] == "INFO"),
+        }
+        gate_summary["score"] = gate_score["score"]
+        gate_summary["grade"] = gate_score["grade"]
+        payload["heal"]["remainingAfterWrite"] = {
+            "errors": gate_summary["errors"],
+            "warnings": gate_summary["warnings"],
+            "infos": gate_summary["infos"],
+            "score": gate_score["score"],
+            "grade": gate_score["grade"],
+        }
     min_score = getattr(args, "min_score", None)
-    gate_fail = summary["errors"] > 0 or (min_score is not None and score["score"] < min_score)
+    gate_fail = gate_summary["errors"] > 0 or (min_score is not None and gate_score["score"] < min_score)
     if gate_fail:
         reasons = []
-        if summary["errors"] > 0:
-            reasons.append(f"{summary['errors']} 个 ERROR")
-        if min_score is not None and score["score"] < min_score:
-            reasons.append(f"评分 {score['score']}(等级 {score['grade']})< 门槛 {min_score}")
+        if gate_summary["errors"] > 0:
+            reasons.append(f"{gate_summary['errors']} 个 ERROR")
+        if min_score is not None and gate_score["score"] < min_score:
+            reasons.append(f"评分 {gate_score['score']}(等级 {gate_score['grade']})< 门槛 {min_score}")
         die("verify 未过门禁: " + ", ".join(reasons), code=1, extra=payload)
 
     note = (f"verify 通过 评分={score['score']}({score['grade']}) "

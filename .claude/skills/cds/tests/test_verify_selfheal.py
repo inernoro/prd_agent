@@ -131,3 +131,38 @@ def test_fixer_without_meta_degrades_to_manual():
     heal = cdscli._verify_autofix(path, doc, issues)
     assert heal["autoFixed"] == []
     assert len(heal["manual"]) == 1
+
+
+def test_gate_uses_remaining_issues_after_write():
+    """--fix --write 后门禁应基于剩余 issue,全部修完则 ERROR 降为 0。"""
+    issues = [
+        {"severity": "ERROR", "service": None, "rule": "env-var-unresolved",
+         "message": "...", "fix": "...", "meta": {"var": "SECRET"}},
+        {"severity": "WARNING", "service": "api", "rule": "app-no-healthcheck",
+         "message": "...", "fix": "..."},
+    ]
+    auto_fixed = [{"rule": "env-var-unresolved", "service": None, "applied": "补了 SECRET"}]
+
+    # 模拟 cmd_verify 里 --fix --write 后的过滤逻辑
+    fixed_counter: dict = {}
+    for fx in auto_fixed:
+        k = (fx.get("rule"), fx.get("service"))
+        fixed_counter[k] = fixed_counter.get(k, 0) + 1
+    remaining = []
+    pending = dict(fixed_counter)
+    for iss in issues:
+        k = (iss.get("rule"), iss.get("service"))
+        if pending.get(k, 0) > 0:
+            pending[k] -= 1
+        else:
+            remaining.append(iss)
+
+    assert len(remaining) == 1
+    assert remaining[0]["severity"] == "WARNING"
+
+    gate_score = cdscli._verify_score(remaining)
+    assert gate_score["score"] == 92   # 100 - 8(WARNING) = 92
+    assert gate_score["grade"] == "A"
+
+    gate_errors = sum(1 for i in remaining if i["severity"] == "ERROR")
+    assert gate_errors == 0  # ERROR 已修,门禁应通过

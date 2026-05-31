@@ -102,12 +102,20 @@ def _req(method, path, base, key, user, body=None):
 
 
 def _find_store(base, key, user, name):
-    """在我的 store 列表里按 name 查重(同 appKey)。"""
-    data = _req("GET", "/api/document-store/stores?page=1&pageSize=200", base, key, user)
-    items = data.get("items") if isinstance(data, dict) else data
-    for s in items or []:
-        if s.get("name") == name and s.get("appKey") == APP_KEY:
-            return s
+    """在我的 store 列表里按 name 查重(同 appKey),逐页翻直到找到或遍历完。"""
+    page = 1
+    page_size = 100  # 服务端最大值
+    while True:
+        data = _req("GET", f"/api/document-store/stores?page={page}&pageSize={page_size}",
+                    base, key, user)
+        items = data.get("items") if isinstance(data, dict) else data
+        items = items or []
+        for s in items:
+            if s.get("name") == name and s.get("appKey") == APP_KEY:
+                return s
+        if len(items) < page_size:
+            break
+        page += 1
     return None
 
 
