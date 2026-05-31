@@ -549,16 +549,23 @@ public class HostedSiteService : IHostedSiteService
         var site = await _db.HostedSites.Find(x => x.Id == siteId && x.OwnerUserId == userId).FirstOrDefaultAsync(ct);
         if (site == null) return null;
 
-        // 角色门控：只保留「我在该团队有网页托管编辑权限（owner/editor）」的团队。
+        // 角色门控：要求「我在目标团队有网页托管编辑权限（owner/editor）」才能分享进去。
         // GetMyWebHostingTeamRolesAsync 仅返回我所属团队（已含成员校验），并解析出有效角色。
         // 关键：不能用 WebHostingPermission.Can(role, …, isSiteOwner) —— 上传者本身就是站点 owner，
         // isSiteOwner=true 会短路放行，导致只读 viewer 直调 API 把自己上传的站点分享进团队（越权）。
-        // 故此处直接比对团队级角色，viewer 一律剔除。
+        //
+        // 不再「静默剔除」越权团队：那样会返回 200 + 空/残缺 SharedTeamIds，前端只看 HTTP 成功，
+        // 会误报「投放/移动成功」而站点实际仍在个人空间。改为：请求里只要含一个我无编辑权的团队，
+        // 直接抛错让 controller 返回 403。空请求（取消全部分享/退出团队空间）属合法操作，不校验。
+        var requested = teamIds.Where(t => !string.IsNullOrWhiteSpace(t)).Distinct().ToList();
         var roles = await _teams.GetMyWebHostingTeamRolesAsync(userId, ct);
-        var sanitized = teamIds
-            .Where(t => roles.TryGetValue(t, out var r)
-                        && (r == WebHostingRoles.Owner || r == WebHostingRoles.Editor))
-            .Distinct().ToList();
+        var forbidden = requested
+            .Where(t => !(roles.TryGetValue(t, out var r)
+                          && (r == WebHostingRoles.Owner || r == WebHostingRoles.Editor)))
+            .ToList();
+        if (forbidden.Count > 0)
+            throw new UnauthorizedAccessException("无权将网页分享到部分团队：你在这些团队是只读或非成员角色");
+        var sanitized = requested;
         var added = sanitized.Except(site.SharedTeamIds).ToList();
 
         await _db.HostedSites.UpdateOneAsync(

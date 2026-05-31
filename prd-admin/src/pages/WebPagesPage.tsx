@@ -867,7 +867,11 @@ export default function WebPagesPage() {
             setPendingExternalFile(null);
             // 串数据修复：在团队空间内新建的站点必须归属该团队空间，否则会落到个人空间
             if (saved && isCreate && currentSpace.kind === 'team') {
-              await setSiteTeams(saved.id, [currentSpace.teamId]);
+              const assigned = await setSiteTeams(saved.id, [currentSpace.teamId]);
+              // 归属失败不能静默：告知用户站点暂在个人空间（与 dropzone 路径一致）
+              if (!assigned.success) {
+                toast.error('已上传，但归属团队失败', `${assigned.error?.message || '请稍后在卡片上手动移动到本团队'}（站点暂在个人空间）`);
+              }
             }
             load();
             loadMeta();

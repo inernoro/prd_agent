@@ -378,10 +378,18 @@ public class WebPagesController : ControllerBase
     [HttpPatch("{id}/teams")]
     public async Task<IActionResult> SetTeams(string id, [FromBody] SetSiteTeamsRequest req)
     {
-        var updated = await _siteService.SetSharedTeamsAsync(id, GetUserId(), req.TeamIds ?? new List<string>());
-        if (updated == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在或无权限"));
-        return Ok(ApiResponse<object>.Ok(updated));
+        try
+        {
+            var updated = await _siteService.SetSharedTeamsAsync(id, GetUserId(), req.TeamIds ?? new List<string>());
+            if (updated == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在或无权限"));
+            return Ok(ApiResponse<object>.Ok(updated));
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            // 请求包含我无编辑权的团队：返回 403，前端据此提示而非误报成功（默认走 ExceptionMiddleware 会变 401）
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, ex.Message));
+        }
     }
 
     /// <summary>批量加载用户展示卡（userId → 昵称 + 头像文件名），前端据此渲染头像</summary>
