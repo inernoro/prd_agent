@@ -366,7 +366,11 @@ export function TaskTreePage() {
           typing += String(data.text ?? '');
           setChatLog((l) => { const c = [...l]; c[c.length - 1] = { role: 'a', text: typing || '正在生成…' }; return c; });
         } else if (evt.event === 'node') {
-          if (treeIdRef.current !== extractTreeId) return; // 用户已切树，丢弃归属错误的节点
+          if (treeIdRef.current !== extractTreeId) {
+            // 用户已切到别的树：节点已按 server-authority 正确建到原树，给出反馈而非静默丢弃
+            toast.info('任务已创建到切换前的任务树');
+            return;
+          }
           const node = data as unknown as TaskNode;
           newIdsRef.current = new Set([node.id]);
           setNodes((ns) => [...ns, node]);

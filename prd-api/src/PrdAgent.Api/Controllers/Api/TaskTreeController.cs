@@ -201,6 +201,9 @@ public class TaskTreeController : ControllerBase
             // 根节点不可改父节点：否则整棵树将失去 ParentId==null 的根，前端布局塌陷
             if (node.ParentId == null && newParent != null)
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "根节点（创世支柱）不能改父节点"));
+            // 非根节点不可清空父节点：否则会产生第二个根，前端只渲染一个根，多出的节点消失
+            if (node.ParentId != null && newParent == null)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不能把任务变成根节点（请改挂到其它父任务）"));
             if (newParent != null)
             {
                 var p = await _db.TaskNodes.Find(n => n.Id == newParent && n.TreeId == node.TreeId).FirstOrDefaultAsync();
@@ -389,7 +392,7 @@ public class TaskTreeController : ControllerBase
                 ownerName = ownerNames.TryGetValue(n.OwnerId, out var on) ? on : "",
                 treeTitle = treeTitles.TryGetValue(n.TreeId, out var tt) ? tt : "",
                 stuckDays = n.BlockedSince.HasValue ? (int)Math.Floor((now - n.BlockedSince.Value).TotalDays) : 0,
-                blocks = scopedNodes.Where(x => x.DependsOn.Contains(n.Id)).Select(x => x.Title).ToList(),
+                blocks = scopedNodes.Where(x => x.DependsOn != null && x.DependsOn.Contains(n.Id)).Select(x => x.Title).ToList(),
             })
             .OrderByDescending(x => x.stuckDays)
             .ToList();
