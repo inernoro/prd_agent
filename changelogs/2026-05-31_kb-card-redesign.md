@@ -5,3 +5,4 @@
 | fix | cds | 教程04(及同源 fullstack-infra-smoke)init.sql 列名 name 改 label,与后端健康检查 INSERT/SELECT label 对齐,修复 /api/health 误报 MySQL down |
 | fix | prd-api | 知识库列表 with-preview 接口补 LikeCount/ViewCount/FavoriteCount 字段,修复「我的空间」卡片浏览/点赞数恒为 0 |
 | fix | prd-admin | 知识库卡片头像兼容两种来源字段:我的/团队列表用 ownerAvatarFileName,收藏/点赞列表用 ownerAvatar,修复互动列表头像空缺 |
+| fix | cds | 教程03 后端 Mongo 连接改退避重试,避免 depends_on 短语法下 mongo 慢启动导致 /ready 永久 503 |

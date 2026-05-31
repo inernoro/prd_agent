@@ -7,11 +7,22 @@ const mongoUrl = process.env.MONGODB_URL || "mongodb://mongodb:27017/app";
 
 let collection = null;
 
+// depends_on 短语法不会等 mongodb healthy 就启动本服务，首连可能撞上 mongo 仍在初始化。
+// 用退避重试代替一次性连接，避免 collection 永久为 null 导致 /ready 持续 503。
 async function connectMongo() {
-  const client = new MongoClient(mongoUrl);
-  await client.connect();
-  collection = client.db().collection("visits");
-  console.log("[tutorial-03-backend] mongo connected");
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const client = new MongoClient(mongoUrl, { serverSelectionTimeoutMS: 3000 });
+      await client.connect();
+      collection = client.db().collection("visits");
+      console.log("[tutorial-03-backend] mongo connected");
+      return;
+    } catch (e) {
+      const waitMs = Math.min(1000 * attempt, 5000);
+      console.error(`[tutorial-03-backend] mongo connect failed (attempt ${attempt}): ${e.message}; retry in ${waitMs}ms`);
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+  }
 }
 
 // 就绪探针：mongo 连上才算 ready。
@@ -28,9 +39,7 @@ app.get("/api/visit", async (_req, res) => {
   res.json({ ok: true, visits: count });
 });
 
-connectMongo().catch((e) => {
-  console.error("[tutorial-03-backend] mongo connect failed:", e.message);
-});
+connectMongo();
 
 app.listen(port, "0.0.0.0", () => {
   console.log(`[tutorial-03-backend] listening on ${port}`);
