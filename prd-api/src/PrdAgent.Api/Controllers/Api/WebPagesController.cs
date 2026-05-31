@@ -765,7 +765,7 @@ public class WebPagesController : ControllerBase
         var viewerUserId = User.Identity?.IsAuthenticated == true ? GetUserId() : null;
         var result = await _siteService.ListCommentsByShareAsync(token, password, viewerUserId);
         if (result.Error != null)
-            return MapCommentError(result.Error, result.HttpStatus, result.ErrorCode);
+            return MapCommentError(result.Error, result.HttpStatus, result.ErrorCode, result.RetryAfterSeconds);
         return Ok(ApiResponse<object>.Ok(result));
     }
 
@@ -799,18 +799,28 @@ public class WebPagesController : ControllerBase
     private IActionResult MapAddCommentResult(AddCommentResult result)
     {
         if (result.Error != null)
-            return MapCommentError(result.Error, result.HttpStatus, result.ErrorCode);
+            return MapCommentError(result.Error, result.HttpStatus, result.ErrorCode, result.RetryAfterSeconds);
         return Ok(ApiResponse<object>.Ok(result.Comment));
     }
 
-    private IActionResult MapCommentError(string error, int httpStatus, string? errorCode)
-        => httpStatus switch
+    private IActionResult MapCommentError(string error, int httpStatus, string? errorCode, int? retryAfterSeconds = null)
+    {
+        // 429 限流：与 ViewShare 一致，回 Retry-After 头 + RATE_LIMITED，让客户端倒计时重试，
+        // 不能 fall through 成 404 把"临时限流的受密码保护分享"误报成"不存在"（Codex P2）。
+        if (httpStatus == 429)
+        {
+            if (retryAfterSeconds is { } ra && ra > 0)
+                Response.Headers["Retry-After"] = ra.ToString();
+            return StatusCode(429, ApiResponse<object>.Fail("RATE_LIMITED", error));
+        }
+        return httpStatus switch
         {
             401 => Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, error)),
             403 => StatusCode(403, ApiResponse<object>.Fail(errorCode ?? "FORBIDDEN", error)),
             400 => BadRequest(ApiResponse<object>.Fail(errorCode ?? ErrorCodes.INVALID_FORMAT, error)),
             _ => NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, error)),
         };
+    }
 }
 
 // ─────────────────────────────────────────────

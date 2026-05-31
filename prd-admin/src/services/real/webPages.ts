@@ -419,6 +419,8 @@ export interface SiteCommentsResult {
   commentsEnabled: boolean;
   canComment: boolean;
   comments: HostedSiteCommentDto[];
+  /** 429 限流时后端返回的重试秒数（正常读取为 undefined） */
+  retryAfterSeconds?: number;
 }
 
 /** 切换站点是否允许评论（仅 owner / editor 可调） */

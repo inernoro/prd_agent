@@ -206,8 +206,10 @@ public class SiteCommentsResult
     public List<HostedSiteCommentDto> Comments { get; set; } = new();
     public string? Error { get; set; }
     public int HttpStatus { get; set; } = 200;
-    /// <summary>错误码：not_found / expired / VISIBILITY_DENIED / UNAUTHORIZED</summary>
+    /// <summary>错误码：not_found / expired / VISIBILITY_DENIED / UNAUTHORIZED / rate_limited</summary>
     public string? ErrorCode { get; set; }
+    /// <summary>HttpStatus = 429 时填充，告知前端 N 秒后再试</summary>
+    public int? RetryAfterSeconds { get; set; }
 }
 
 public class AddCommentResult
@@ -216,6 +218,8 @@ public class AddCommentResult
     public string? Error { get; set; }
     public int HttpStatus { get; set; } = 200;
     public string? ErrorCode { get; set; }
+    /// <summary>HttpStatus = 429 时填充，告知前端 N 秒后再试</summary>
+    public int? RetryAfterSeconds { get; set; }
 }
 
 public class TagCountResult

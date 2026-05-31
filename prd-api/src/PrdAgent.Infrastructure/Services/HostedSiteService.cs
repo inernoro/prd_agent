@@ -1776,7 +1776,7 @@ public class HostedSiteService : IHostedSiteService
     {
         var (sites, err) = await ResolveShareForCommentAsync(token, password, viewerUserId, ct);
         if (err != null)
-            return new SiteCommentsResult { Error = err.Value.Error, HttpStatus = err.Value.HttpStatus, ErrorCode = err.Value.ErrorCode };
+            return new SiteCommentsResult { Error = err.Value.Error, HttpStatus = err.Value.HttpStatus, ErrorCode = err.Value.ErrorCode, RetryAfterSeconds = err.Value.RetryAfter };
         if (sites.Count == 0)
             return new SiteCommentsResult { Error = "分享内无可评论站点", HttpStatus = 404, ErrorCode = "not_found" };
 
@@ -1813,7 +1813,7 @@ public class HostedSiteService : IHostedSiteService
 
         var (sites, err) = await ResolveShareForCommentAsync(token, password, authorUserId, ct);
         if (err != null)
-            return new AddCommentResult { Error = err.Value.Error, HttpStatus = err.Value.HttpStatus, ErrorCode = err.Value.ErrorCode };
+            return new AddCommentResult { Error = err.Value.Error, HttpStatus = err.Value.HttpStatus, ErrorCode = err.Value.ErrorCode, RetryAfterSeconds = err.Value.RetryAfter };
         if (sites.Count == 0)
             return new AddCommentResult { Error = "分享内无可评论站点", HttpStatus = 404, ErrorCode = "not_found" };
 
@@ -1913,20 +1913,20 @@ public class HostedSiteService : IHostedSiteService
     /// 评论专用分享门禁：撤销 / 过期 / 可见性 / 密码。复用 EnforceShareVisibilityAsync（与 ViewShareAsync 同款）；
     /// 密码仅校验不动滑动窗口（防爆破由 view 端点承担）。通过后内联解析分享目标站点。
     /// </summary>
-    private async Task<(List<HostedSite> Sites, (string Error, int HttpStatus, string ErrorCode)? Err)>
+    private async Task<(List<HostedSite> Sites, (string Error, int HttpStatus, string ErrorCode, int? RetryAfter)? Err)>
         ResolveShareForCommentAsync(string token, string? password, string? viewerUserId, CancellationToken ct)
     {
         var empty = new List<HostedSite>();
         var share = await _db.WebPageShareLinks.Find(x => x.Token == token).FirstOrDefaultAsync(ct);
         if (share == null || share.IsRevoked)
-            return (empty, ("分享链接不存在", 404, "not_found"));
+            return (empty, ("分享链接不存在", 404, "not_found", null));
 
         if (share.ExpiresAt.HasValue && share.ExpiresAt.Value < DateTime.UtcNow)
-            return (empty, ("分享链接已过期", 400, "expired"));
+            return (empty, ("分享链接已过期", 400, "expired", null));
 
         var visForbid = await EnforceShareVisibilityAsync(share, viewerUserId, ct);
         if (visForbid is { } vf)
-            return (empty, (vf.Error, vf.HttpStatus, vf.ErrorCode));
+            return (empty, (vf.Error, vf.HttpStatus, vf.ErrorCode, null));
 
         // 密码门控：复用 ViewShareAsync 同款 EnforceShareAccessAsync —— 它内置滑动窗口速率限制
         // （10 次/分钟）+ 持久化 RecentAttempts + 恒时比对。直接手写比对会绕过防爆破（Codex P1）。
@@ -1934,13 +1934,17 @@ public class HostedSiteService : IHostedSiteService
         if (gate is { } g)
         {
             var code = g.HttpStatus == 429 ? "rate_limited" : "UNAUTHORIZED";
-            return (empty, (g.Error, g.HttpStatus, code));
+            return (empty, (g.Error, g.HttpStatus, code, g.RetryAfter));
         }
 
         var siteIds = new List<string>(share.SiteIds ?? new List<string>());
         if (share.SiteId != null && !siteIds.Contains(share.SiteId))
             siteIds.Insert(0, share.SiteId);
-        var sites = await _db.HostedSites.Find(x => siteIds.Contains(x.Id)).ToListAsync(ct);
+        var fetched = await _db.HostedSites.Find(x => siteIds.Contains(x.Id)).ToListAsync(ct);
+        // Mongo Find 不保证返回顺序 == siteIds 顺序；调用方取 sites[0] 作为"分享首站点"挂评论，
+        // 必须按 share 定义的 siteIds 顺序重排，否则多站点合集分享会把评论挂到错误站点（Cursor medium）。
+        var byId = fetched.ToDictionary(s => s.Id);
+        var sites = siteIds.Where(byId.ContainsKey).Select(id => byId[id]).ToList();
         return (sites, null);
     }
 

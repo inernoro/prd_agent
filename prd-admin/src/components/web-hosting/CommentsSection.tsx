@@ -41,12 +41,24 @@ export default function CommentsSection(props: Props) {
 
   // 防竞态：token/password/siteId/登录态变化时旧请求回来不得覆盖新结果（Cursor learned rule）
   const fetchIdRef = useRef(0);
+  // 组件卸载后所有在途请求都作废（避免卸载后 setState / onStateLoaded 拿 stale 值回写父组件，Cursor high）
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      fetchIdRef.current++; // 让在途请求的 myId 失配，彻底丢弃
+    };
+  }, []);
 
   const mode = props.mode;
   const token = (props as { token?: string }).token;
   const password = (props as { password?: string }).password;
   const siteId = (props as { siteId?: string }).siteId;
-  const onStateLoaded = props.onStateLoaded;
+  // onStateLoaded 走 ref：父级每次 render 传新内联函数也不污染 load 的依赖，
+  // 避免 iframe onLoad 等无关 modal 重渲染触发评论列表重新拉取 + loading 闪烁（Cursor medium）
+  const onStateLoadedRef = useRef(props.onStateLoaded);
+  onStateLoadedRef.current = props.onStateLoaded;
 
   const load = useCallback(async () => {
     const myId = ++fetchIdRef.current;
@@ -56,22 +68,22 @@ export default function CommentsSection(props: Props) {
       const res = mode === 'share'
         ? await listShareComments(token!, password)
         : await listSiteComments(siteId!);
-      if (myId !== fetchIdRef.current) return; // 过期响应，丢弃
+      if (myId !== fetchIdRef.current || !mountedRef.current) return; // 过期/已卸载，丢弃
       if (res.success && res.data) {
         setComments(res.data.comments);
         setCommentsEnabled(res.data.commentsEnabled);
         setCanComment(res.data.canComment);
-        onStateLoaded?.(res.data.commentsEnabled);
+        onStateLoadedRef.current?.(res.data.commentsEnabled);
       } else {
         setError(res.error?.message || '加载评论失败');
       }
     } catch {
-      if (myId !== fetchIdRef.current) return;
+      if (myId !== fetchIdRef.current || !mountedRef.current) return;
       setError('网络错误，无法加载评论');
     } finally {
-      if (myId === fetchIdRef.current) setLoading(false);
+      if (myId === fetchIdRef.current && mountedRef.current) setLoading(false);
     }
-  }, [mode, token, password, siteId, onStateLoaded]);
+  }, [mode, token, password, siteId]);
 
   // isAuthenticated / authToken 纳入依赖：登录态就绪（含 persist rehydration）后重新拉取，
   // 让已登录用户拿到 canComment=true 的发表 UI，不必手动刷新。
