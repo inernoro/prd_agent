@@ -1534,6 +1534,14 @@ public class MongoDbContext
             Builders<ShareViewLog>.IndexKeys.Ascending(x => x.ShareToken).Descending(x => x.ViewedAt),
             new CreateIndexOptions { Name = "idx_share_view_logs_token_viewed" }));
 
+        // HostedSiteComments：评论按 站点 + 未删 + 时间倒序 查（站内/分享评论面板每次加载都走这条）。
+        // 共享集合跨多站点后无此索引会全表扫 + 内存排序（Codex P2）。CreateIndexes 不执行，
+        // 仅作 DBA 手建参考，落地见 doc/guide.mongodb-indexes.md。
+        HostedSiteComments.Indexes.CreateOne(new CreateIndexModel<HostedSiteComment>(
+            Builders<HostedSiteComment>.IndexKeys
+                .Ascending(x => x.SiteId).Ascending(x => x.IsDeleted).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_hosted_site_comments_site_deleted_created" }));
+
         // ========== 统一短链 ==========
         // ShortLinks：按 Seq 唯一（对外 URL 主键）
         try
