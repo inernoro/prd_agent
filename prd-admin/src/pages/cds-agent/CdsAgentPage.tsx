@@ -360,6 +360,29 @@ function parsePayload(event: InfraAgentEventView): Record<string, unknown> {
   }
 }
 
+// 判断某事件是否代表「本轮 run 结束」。收到即可停掉 SSE pump 和元数据轮询。
+const TERMINAL_SESSION_STATUSES = new Set(['stopped', 'failed', 'idle', 'completed', 'timed_out', 'canceled', 'cancelled']);
+function isRunFinishedEvent(event: InfraAgentEventView): boolean {
+  if (event.type === 'done' || event.type === 'error') return true;
+  if (event.type === 'status') {
+    const status = String(parsePayload(event).status ?? '').toLowerCase();
+    return TERMINAL_SESSION_STATUSES.has(status);
+  }
+  return false;
+}
+
+// 减少「无用的渲染」：底层传输/路由的 info 级 log（runtime tools exposed、
+// lite review runtime started、message dispatched 等）对用户没有意义，从对话时间线里隐去；
+// 但保留 warning/error 级（可能是真问题）。判定走结构化的 source/level 字段，不靠内容匹配，避免误伤真实输出。
+const PLUMBING_LOG_SOURCES = new Set(['runtime-router', 'runtime-adapter', 'sidecar-runtime-adapter']);
+function isNoiseEvent(event: InfraAgentEventView): boolean {
+  if (event.type !== 'log') return false;
+  const payload = parsePayload(event);
+  if (!PLUMBING_LOG_SOURCES.has(String(payload.source ?? '').toLowerCase())) return false;
+  const level = String(payload.level ?? '').toLowerCase();
+  return level !== 'warning' && level !== 'error';
+}
+
 function renderPayload(event: InfraAgentEventView): string {
   const payload = parsePayload(event);
   if (event.type === 'text_delta' && typeof payload.text === 'string') return payload.text;
@@ -891,6 +914,10 @@ export default function CdsAgentPage() {
   const [nowTick, setNowTick] = useState(() => Date.now());
   const timelineRef = useRef<HTMLDivElement>(null);
   const eventsRef = useRef<InfraAgentEventView[]>([]);
+  // 本轮 run 是否已结束（收到 done/error/终态 status）。用于立即停掉 SSE pump 与元数据轮询，
+  // 杜绝「跑完之后还在循环请求」——不依赖 session.status 在列表里的滞后翻转。
+  const runFinishedRef = useRef(false);
+  const pollTickRef = useRef(0);
   const [eventStreamHealthy, setEventStreamHealthy] = useState(false);
   const [sessionQuery, setSessionQuery] = useState('');
   const [eventReplayMode, setEventReplayMode] = useState(false);
@@ -2249,17 +2276,29 @@ export default function CdsAgentPage() {
   // 运行中自动刷新会话元数据；事件优先走 SSE afterSeq 续读，异常时由 refreshDetail 兜底。
   const activeSessionForPoll = sessions.find((item) => item.id === activeSessionId) ?? null;
   const isLiveStatus = resolveSessionRuntimeState(activeSessionForPoll, nowTick).isLive;
+  // 轻量时钟 + 节流的元数据轮询。事件不在这里拉（由下面的 SSE pump 独占），
+  // 会话列表也不再每 3s 拉 100 个——12s 一次足够刷新左侧状态。跑完即停。
   useEffect(() => {
     if (!isLiveStatus || !activeSessionId) return;
+    pollTickRef.current = 0;
     const tick = window.setInterval(() => {
       setNowTick(Date.now());
-      void refreshDetail(activeSessionId, { skipEvents: eventStreamHealthy });
-      void listInfraAgentSessions(100).then((res) => {
-        if (res.success && res.data?.items) setSessions(sortSessions(res.data.items));
-      });
+      if (runFinishedRef.current) return;
+      pollTickRef.current += 1;
+      const n = pollTickRef.current;
+      if (n % 2 === 0) {
+        // 6s：刷消息 / 日志（事件由 SSE pump 负责，这里 skipEvents 避免重复拉取）
+        void refreshDetail(activeSessionId, { skipEvents: true });
+      }
+      if (n % 4 === 0) {
+        // 12s：同步左侧列表状态，替代原来每 3s 拉 100 个会话的请求风暴
+        void listInfraAgentSessions(100).then((res) => {
+          if (res.success && res.data?.items) setSessions(sortSessions(res.data.items));
+        });
+      }
     }, 3000);
     return () => window.clearInterval(tick);
-  }, [isLiveStatus, activeSessionId, eventStreamHealthy, refreshDetail]);
+  }, [isLiveStatus, activeSessionId, refreshDetail]);
 
   useEffect(() => {
     if (!isLiveStatus || !activeSessionId) {
@@ -2269,6 +2308,7 @@ export default function CdsAgentPage() {
 
     const controller = new AbortController();
     let stopped = false;
+    runFinishedRef.current = false; // 新一轮 run 开始
 
     const sleep = (ms: number) => new Promise<void>((resolve) => {
       const timer = window.setTimeout(resolve, ms);
@@ -2279,6 +2319,8 @@ export default function CdsAgentPage() {
     });
 
     const mergeStreamEvent = (event: InfraAgentEventView) => {
+      // 收到 done / error / 终态 status 立即标记结束，停掉 pump 与轮询，杜绝跑完后空转。
+      if (isRunFinishedEvent(event)) runFinishedRef.current = true;
       setEvents((prev) => {
         const next = mergeEventsBySeq(prev, [event]);
         eventsRef.current = next;
@@ -2288,7 +2330,7 @@ export default function CdsAgentPage() {
 
     const pump = async () => {
       setEventStreamHealthy(false);
-      while (!controller.signal.aborted && !stopped) {
+      while (!controller.signal.aborted && !stopped && !runFinishedRef.current) {
         const afterSeq = latestEventSeq(eventsRef.current);
         let received = false;
         try {
@@ -2305,13 +2347,22 @@ export default function CdsAgentPage() {
               if (!controller.signal.aborted && !stopped) setEventStreamHealthy(true);
             },
           );
-          await sleep(received ? 250 : 1200);
+          if (runFinishedRef.current) break;
+          await sleep(received ? 250 : 1500);
         } catch {
           if (!controller.signal.aborted && !stopped) {
             setEventStreamHealthy(false);
             await sleep(3000);
           }
         }
+      }
+      // 跑完做一次最终同步 + 翻转左侧列表状态，让 isLiveStatus 落到终态后自然拆除两个 effect。
+      if (runFinishedRef.current && !controller.signal.aborted && !stopped) {
+        setEventStreamHealthy(false);
+        await refreshDetail(activeSessionId).catch(() => {});
+        await listInfraAgentSessions(100)
+          .then((res) => { if (res.success && res.data?.items) setSessions(sortSessions(res.data.items)); })
+          .catch(() => {});
       }
     };
 
@@ -2320,7 +2371,7 @@ export default function CdsAgentPage() {
       stopped = true;
       controller.abort();
     };
-  }, [isLiveStatus, activeSessionId]);
+  }, [isLiveStatus, activeSessionId, refreshDetail]);
 
   useEffect(() => {
     if (!activeSession?.id) {
@@ -2336,6 +2387,8 @@ export default function CdsAgentPage() {
     setEventReplayIndex(1);
     setAutoScrollPaused(false);
     eventsRef.current = [];
+    runFinishedRef.current = false;
+    pollTickRef.current = 0;
     setEvents([]);
     void refreshDetail(activeSession.id, { resetEvents: true });
   }, [activeSession?.id, refreshDetail]);
@@ -3471,7 +3524,7 @@ export default function CdsAgentPage() {
         },
       }] : []),
       ...displayedEvents
-        .filter((e) => PROCESS_TYPES.has(e.type))
+        .filter((e) => PROCESS_TYPES.has(e.type) && !isNoiseEvent(e))
         .map((e): TimelineItem => ({ kind: 'evt', at: new Date(e.createdAt).getTime(), seq: e.seq, key: `e-${e.id}`, ev: e })),
     ].sort((a, b) => {
       if (a.at !== b.at) return a.at - b.at; // 旧 → 新
