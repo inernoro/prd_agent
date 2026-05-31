@@ -723,6 +723,104 @@ public class WebPagesController : ControllerBase
 
         return Ok(ApiResponse<object>.Ok(new { saved = true, siteCount = result.Sites.Count }));
     }
+
+    // ─────────────────────────────────────────────
+    // 评论
+    // ─────────────────────────────────────────────
+
+    /// <summary>切换站点是否允许评论（仅 owner / editor 可调）</summary>
+    [HttpPatch("{id}/comments-enabled")]
+    public async Task<IActionResult> SetCommentsEnabled(string id, [FromBody] SetCommentsEnabledRequest req)
+    {
+        var updated = await _siteService.SetCommentsEnabledAsync(id, GetUserId(), req.Enabled);
+        if (updated == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在或无权限"));
+        return Ok(ApiResponse<object>.Ok(new { id = updated.Id, commentsEnabled = updated.CommentsEnabled }));
+    }
+
+    /// <summary>列出某站点的评论（owner / 团队成员视角，需登录）</summary>
+    [HttpGet("{siteId}/comments")]
+    public async Task<IActionResult> ListSiteComments(string siteId)
+    {
+        var result = await _siteService.ListCommentsBySiteAsync(siteId, GetUserId());
+        if (result == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在或无权访问"));
+        return Ok(ApiResponse<object>.Ok(result));
+    }
+
+    /// <summary>在某站点发表评论（owner / 团队成员视角，需登录）</summary>
+    [HttpPost("{siteId}/comments")]
+    public async Task<IActionResult> AddSiteComment(string siteId, [FromBody] AddSiteCommentRequest req)
+    {
+        var result = await _siteService.AddCommentBySiteAsync(
+            siteId, GetUserId(), GetDisplayName(), await GetAvatarFileNameAsync(GetUserId()), req.Content ?? string.Empty);
+        return MapAddCommentResult(result);
+    }
+
+    /// <summary>经分享链接列出评论（公开访问，无需登录即可读）</summary>
+    [HttpGet("shares/view/{token}/comments")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ListShareComments(string token, [FromQuery] string? password)
+    {
+        var viewerUserId = User.Identity?.IsAuthenticated == true ? GetUserId() : null;
+        var result = await _siteService.ListCommentsByShareAsync(token, password, viewerUserId);
+        if (result.Error != null)
+            return MapCommentError(result.Error, result.HttpStatus, result.ErrorCode, result.RetryAfterSeconds);
+        return Ok(ApiResponse<object>.Ok(result));
+    }
+
+    /// <summary>经分享链接发表评论（需登录）</summary>
+    [HttpPost("shares/view/{token}/comments")]
+    public async Task<IActionResult> AddShareComment(string token, [FromQuery] string? password, [FromBody] AddSiteCommentRequest req)
+    {
+        var userId = GetUserId();
+        var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var result = await _siteService.AddCommentByShareAsync(
+            token, password, userId, GetDisplayName(), await GetAvatarFileNameAsync(userId), req.Content ?? string.Empty, ip);
+        return MapAddCommentResult(result);
+    }
+
+    /// <summary>删除评论（作者本人或站点 owner）</summary>
+    [HttpDelete("comments/{commentId}")]
+    public async Task<IActionResult> DeleteComment(string commentId)
+    {
+        var ok = await _siteService.DeleteCommentAsync(commentId, GetUserId());
+        if (!ok)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "评论不存在或无权删除"));
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    private async Task<string?> GetAvatarFileNameAsync(string userId)
+    {
+        var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+        return user?.AvatarFileName;
+    }
+
+    private IActionResult MapAddCommentResult(AddCommentResult result)
+    {
+        if (result.Error != null)
+            return MapCommentError(result.Error, result.HttpStatus, result.ErrorCode, result.RetryAfterSeconds);
+        return Ok(ApiResponse<object>.Ok(result.Comment));
+    }
+
+    private IActionResult MapCommentError(string error, int httpStatus, string? errorCode, int? retryAfterSeconds = null)
+    {
+        // 429 限流：与 ViewShare 一致，回 Retry-After 头 + RATE_LIMITED，让客户端倒计时重试，
+        // 不能 fall through 成 404 把"临时限流的受密码保护分享"误报成"不存在"（Codex P2）。
+        if (httpStatus == 429)
+        {
+            if (retryAfterSeconds is { } ra && ra > 0)
+                Response.Headers["Retry-After"] = ra.ToString();
+            return StatusCode(429, ApiResponse<object>.Fail("RATE_LIMITED", error));
+        }
+        return httpStatus switch
+        {
+            401 => Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, error)),
+            403 => StatusCode(403, ApiResponse<object>.Fail(errorCode ?? "FORBIDDEN", error)),
+            400 => BadRequest(ApiResponse<object>.Fail(errorCode ?? ErrorCodes.INVALID_FORMAT, error)),
+            _ => NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, error)),
+        };
+    }
 }
 
 // ─────────────────────────────────────────────
@@ -792,4 +890,16 @@ public class RenewShareRequest
 {
     /// <summary>续期天数（1-365）</summary>
     public int ExtendDays { get; set; } = 30;
+}
+
+public class SetCommentsEnabledRequest
+{
+    /// <summary>true = 允许评论 | false = 关闭评论</summary>
+    public bool Enabled { get; set; }
+}
+
+public class AddSiteCommentRequest
+{
+    /// <summary>评论正文（1-2000 字）</summary>
+    public string? Content { get; set; }
 }

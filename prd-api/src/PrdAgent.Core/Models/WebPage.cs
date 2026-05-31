@@ -89,6 +89,15 @@ public class HostedSite
     /// <summary>首次设为 public 的时间（用于公开页排序）</summary>
     public DateTime? PublishedAt { get; set; }
 
+    /// <summary>
+    /// 是否允许被评论。默认 true（站点天然开放评论），owner 可在站点上关闭。
+    ///
+    /// 注意：默认值刻意为 true —— Mongo 反序列化老文档（无此字段）时保留初始化器的值，
+    /// 因此存量站点会被识别为"允许评论"，符合"网页托管允许被评论"的发布预期。
+    /// owner 关闭后写入 false，下游 ListComments / AddComment 据此放行或拒绝。
+    /// </summary>
+    public bool CommentsEnabled { get; set; } = true;
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 

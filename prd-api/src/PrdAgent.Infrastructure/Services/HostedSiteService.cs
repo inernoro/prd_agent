@@ -1732,6 +1732,248 @@ public class HostedSiteService : IHostedSiteService
         return System.Text.Encoding.UTF8.GetBytes(html);
     }
 
+    // ─────────────────────────────────────────────
+    // 评论
+    // ─────────────────────────────────────────────
+
+    public async Task<HostedSite?> SetCommentsEnabledAsync(string siteId, string userId, bool enabled, CancellationToken ct = default)
+    {
+        var site = await _db.HostedSites.Find(s => s.Id == siteId).FirstOrDefaultAsync(ct);
+        if (site == null) return null;
+
+        // 仅 owner / editor 可改评论开关（viewer / 非成员不行）
+        var role = site.OwnerUserId == userId ? "owner" : await ResolveSiteRoleAsync(site, userId, ct);
+        if (role != "owner" && role != "editor") return null;
+
+        await _db.HostedSites.UpdateOneAsync(
+            s => s.Id == siteId,
+            Builders<HostedSite>.Update
+                .Set(s => s.CommentsEnabled, enabled)
+                .Set(s => s.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: ct);
+
+        site.CommentsEnabled = enabled;
+        return site;
+    }
+
+    public async Task<SiteCommentsResult?> ListCommentsBySiteAsync(string siteId, string viewerUserId, CancellationToken ct = default)
+    {
+        // GetByIdAsync 已封装 "owner 本人 / 团队成员" 访问校验
+        var site = await GetByIdAsync(siteId, viewerUserId, ct);
+        if (site == null) return null;
+
+        var comments = await LoadCommentDtosAsync(site, viewerUserId, ct);
+        return new SiteCommentsResult
+        {
+            SiteId = site.Id,
+            CommentsEnabled = site.CommentsEnabled,
+            CanComment = !string.IsNullOrWhiteSpace(viewerUserId) && site.CommentsEnabled,
+            Comments = comments,
+        };
+    }
+
+    public async Task<SiteCommentsResult> ListCommentsByShareAsync(string token, string? password, string? viewerUserId, CancellationToken ct = default)
+    {
+        var (sites, err) = await ResolveShareForCommentAsync(token, password, viewerUserId, ct);
+        if (err != null)
+            return new SiteCommentsResult { Error = err.Value.Error, HttpStatus = err.Value.HttpStatus, ErrorCode = err.Value.ErrorCode, RetryAfterSeconds = err.Value.RetryAfter };
+        if (sites.Count == 0)
+            return new SiteCommentsResult { Error = "分享内无可评论站点", HttpStatus = 404, ErrorCode = "not_found" };
+
+        var site = sites[0];
+        var comments = await LoadCommentDtosAsync(site, viewerUserId, ct, maskUserId: true);
+        return new SiteCommentsResult
+        {
+            SiteId = site.Id,
+            CommentsEnabled = site.CommentsEnabled,
+            // 公开分享下发表评论必须登录（viewerUserId 非空）且站点开启评论
+            CanComment = !string.IsNullOrWhiteSpace(viewerUserId) && site.CommentsEnabled,
+            Comments = comments,
+        };
+    }
+
+    public async Task<AddCommentResult> AddCommentBySiteAsync(
+        string siteId, string authorUserId, string authorName, string? avatarFileName,
+        string content, CancellationToken ct = default)
+    {
+        var site = await GetByIdAsync(siteId, authorUserId, ct);
+        if (site == null)
+            return new AddCommentResult { Error = "站点不存在或无权访问", HttpStatus = 404, ErrorCode = "not_found" };
+
+        return await InsertCommentAsync(site, authorUserId, authorName, avatarFileName, content, shareToken: null, ipAddress: null, ct);
+    }
+
+    public async Task<AddCommentResult> AddCommentByShareAsync(
+        string token, string? password,
+        string authorUserId, string authorName, string? avatarFileName,
+        string content, string? ipAddress, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(authorUserId))
+            return new AddCommentResult { Error = "请登录后发表评论", HttpStatus = 401, ErrorCode = "UNAUTHORIZED" };
+
+        var (sites, err) = await ResolveShareForCommentAsync(token, password, authorUserId, ct);
+        if (err != null)
+            return new AddCommentResult { Error = err.Value.Error, HttpStatus = err.Value.HttpStatus, ErrorCode = err.Value.ErrorCode, RetryAfterSeconds = err.Value.RetryAfter };
+        if (sites.Count == 0)
+            return new AddCommentResult { Error = "分享内无可评论站点", HttpStatus = 404, ErrorCode = "not_found" };
+
+        return await InsertCommentAsync(sites[0], authorUserId, authorName, avatarFileName, content, shareToken: token, ipAddress, ct);
+    }
+
+    public async Task<bool> DeleteCommentAsync(string commentId, string userId, CancellationToken ct = default)
+    {
+        var comment = await _db.HostedSiteComments.Find(c => c.Id == commentId && !c.IsDeleted).FirstOrDefaultAsync(ct);
+        if (comment == null) return false;
+
+        // 作者本人，或被评论站点的 owner，可删除
+        bool canDelete = comment.AuthorUserId == userId;
+        if (!canDelete)
+        {
+            var site = await _db.HostedSites.Find(s => s.Id == comment.SiteId).FirstOrDefaultAsync(ct);
+            canDelete = site != null && site.OwnerUserId == userId;
+        }
+        if (!canDelete) return false;
+
+        await _db.HostedSiteComments.UpdateOneAsync(
+            c => c.Id == commentId,
+            Builders<HostedSiteComment>.Update
+                .Set(c => c.IsDeleted, true)
+                .Set(c => c.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: ct);
+        return true;
+    }
+
+    // ── 评论内部辅助 ──
+
+    private async Task<AddCommentResult> InsertCommentAsync(
+        HostedSite site, string authorUserId, string authorName, string? avatarFileName,
+        string content, string? shareToken, string? ipAddress, CancellationToken ct)
+    {
+        if (!site.CommentsEnabled)
+            return new AddCommentResult { Error = "该站点已关闭评论", HttpStatus = 403, ErrorCode = "COMMENTS_DISABLED" };
+
+        var trimmed = (content ?? string.Empty).Trim();
+        if (trimmed.Length == 0)
+            return new AddCommentResult { Error = "评论内容不能为空", HttpStatus = 400, ErrorCode = "invalid" };
+        if (trimmed.Length > 2000)
+            return new AddCommentResult { Error = "评论内容不能超过 2000 字", HttpStatus = 400, ErrorCode = "invalid" };
+
+        var comment = new HostedSiteComment
+        {
+            SiteId = site.Id,
+            ShareToken = shareToken,
+            AuthorUserId = authorUserId,
+            AuthorName = string.IsNullOrWhiteSpace(authorName) ? "用户" : authorName,
+            AuthorAvatarFileName = avatarFileName,
+            Content = trimmed,
+            IpAddress = ipAddress,
+        };
+        await _db.HostedSiteComments.InsertOneAsync(comment, cancellationToken: ct);
+
+        // 通知站点 owner：有人评论了你的站点。自评不通知；Key 幂等保证每条评论只产生一条系统通知（用户要求「1 次」）。
+        // best-effort + CancellationToken.None：通知失败不得影响评论本身，也不随客户端断开取消（server-authority）。
+        if (!string.IsNullOrWhiteSpace(site.OwnerUserId) && site.OwnerUserId != authorUserId)
+        {
+            try
+            {
+                var preview = trimmed.Length > 40 ? trimmed[..40] + "…" : trimmed;
+                await _db.AdminNotifications.InsertOneAsync(new AdminNotification
+                {
+                    Key = $"hosted-comment:{comment.Id}",
+                    TargetUserId = site.OwnerUserId,
+                    Title = $"{comment.AuthorName} 评论了你的站点「{site.Title}」",
+                    Message = preview,
+                    Level = "info",
+                    Source = "web-hosting",
+                    ActionLabel = "查看",
+                    ActionUrl = "/web-pages",
+                    ActionKind = "navigate",
+                }, cancellationToken: CancellationToken.None);
+            }
+            catch
+            {
+                // 通知是 best-effort，失败静默（评论已落库成功）
+            }
+        }
+
+        return new AddCommentResult
+        {
+            Comment = new HostedSiteCommentDto
+            {
+                Id = comment.Id,
+                SiteId = comment.SiteId,
+                Content = comment.Content,
+                AuthorUserId = comment.AuthorUserId,
+                AuthorName = comment.AuthorName,
+                AuthorAvatarFileName = comment.AuthorAvatarFileName,
+                CreatedAt = comment.CreatedAt,
+                CanDelete = true,
+            },
+        };
+    }
+
+    private async Task<List<HostedSiteCommentDto>> LoadCommentDtosAsync(HostedSite site, string? viewerUserId, CancellationToken ct, bool maskUserId = false)
+    {
+        var comments = await _db.HostedSiteComments
+            .Find(c => c.SiteId == site.Id && !c.IsDeleted)
+            .SortByDescending(c => c.CreatedAt)
+            .Limit(500)
+            .ToListAsync(ct);
+
+        bool viewerIsOwner = !string.IsNullOrWhiteSpace(viewerUserId) && site.OwnerUserId == viewerUserId;
+        return comments.Select(c => new HostedSiteCommentDto
+        {
+            Id = c.Id,
+            SiteId = c.SiteId,
+            Content = c.Content,
+            // 公开分享读取路径下抹掉内部 UserId，避免向匿名访客泄露账号标识（Codex P2）；CanDelete 已由服务端算好
+            AuthorUserId = maskUserId ? string.Empty : c.AuthorUserId,
+            AuthorName = c.AuthorName,
+            AuthorAvatarFileName = c.AuthorAvatarFileName,
+            CreatedAt = c.CreatedAt,
+            CanDelete = viewerIsOwner || (!string.IsNullOrWhiteSpace(viewerUserId) && c.AuthorUserId == viewerUserId),
+        }).ToList();
+    }
+
+    /// <summary>
+    /// 评论专用分享门禁：撤销 / 过期 / 可见性 / 密码。复用 EnforceShareVisibilityAsync（与 ViewShareAsync 同款）；
+    /// 密码仅校验不动滑动窗口（防爆破由 view 端点承担）。通过后内联解析分享目标站点。
+    /// </summary>
+    private async Task<(List<HostedSite> Sites, (string Error, int HttpStatus, string ErrorCode, int? RetryAfter)? Err)>
+        ResolveShareForCommentAsync(string token, string? password, string? viewerUserId, CancellationToken ct)
+    {
+        var empty = new List<HostedSite>();
+        var share = await _db.WebPageShareLinks.Find(x => x.Token == token).FirstOrDefaultAsync(ct);
+        if (share == null || share.IsRevoked)
+            return (empty, ("分享链接不存在", 404, "not_found", null));
+
+        if (share.ExpiresAt.HasValue && share.ExpiresAt.Value < DateTime.UtcNow)
+            return (empty, ("分享链接已过期", 400, "expired", null));
+
+        var visForbid = await EnforceShareVisibilityAsync(share, viewerUserId, ct);
+        if (visForbid is { } vf)
+            return (empty, (vf.Error, vf.HttpStatus, vf.ErrorCode, null));
+
+        // 密码门控：复用 ViewShareAsync 同款 EnforceShareAccessAsync —— 它内置滑动窗口速率限制
+        // （10 次/分钟）+ 持久化 RecentAttempts + 恒时比对。直接手写比对会绕过防爆破（Codex P1）。
+        var gate = await EnforceShareAccessAsync(share, password, ct);
+        if (gate is { } g)
+        {
+            var code = g.HttpStatus == 429 ? "rate_limited" : "UNAUTHORIZED";
+            return (empty, (g.Error, g.HttpStatus, code, g.RetryAfter));
+        }
+
+        var siteIds = new List<string>(share.SiteIds ?? new List<string>());
+        if (share.SiteId != null && !siteIds.Contains(share.SiteId))
+            siteIds.Insert(0, share.SiteId);
+        var fetched = await _db.HostedSites.Find(x => siteIds.Contains(x.Id)).ToListAsync(ct);
+        // Mongo Find 不保证返回顺序 == siteIds 顺序；调用方取 sites[0] 作为"分享首站点"挂评论，
+        // 必须按 share 定义的 siteIds 顺序重排，否则多站点合集分享会把评论挂到错误站点（Cursor medium）。
+        var byId = fetched.ToDictionary(s => s.Id);
+        var sites = siteIds.Where(byId.ContainsKey).Select(id => byId[id]).ToList();
+        return (sites, null);
+    }
+
     private sealed class ZipExtractResult
     {
         public List<HostedSiteFile> Files { get; set; } = new();

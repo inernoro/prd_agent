@@ -37,6 +37,8 @@ export interface HostedSite {
   visibility?: 'private' | 'public';
   /** 首次设为 public 的时间 */
   publishedAt?: string | null;
+  /** 是否允许被评论（默认 true，owner 可关闭） */
+  commentsEnabled?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -397,4 +399,78 @@ export async function getShareAnalytics(rangeDays = 7, siteId?: string): Promise
   const params = new URLSearchParams({ rangeDays: String(rangeDays) });
   if (siteId) params.set('siteId', siteId);
   return apiRequest(`/api/web-pages/shares/analytics?${params.toString()}`);
+}
+
+// ─── 评论 ───
+
+export interface HostedSiteCommentDto {
+  id: string;
+  siteId: string;
+  content: string;
+  authorUserId: string;
+  authorName: string;
+  authorAvatarFileName?: string;
+  createdAt: string;
+  canDelete: boolean;
+}
+
+export interface SiteCommentsResult {
+  siteId: string;
+  commentsEnabled: boolean;
+  canComment: boolean;
+  comments: HostedSiteCommentDto[];
+  /** 429 限流时后端返回的重试秒数（正常读取为 undefined） */
+  retryAfterSeconds?: number;
+}
+
+/** 切换站点是否允许评论（仅 owner / editor 可调） */
+export async function setSiteCommentsEnabled(siteId: string, enabled: boolean): Promise<ApiResponse<{ id: string; commentsEnabled: boolean }>> {
+  return apiRequest(`/api/web-pages/${encodeURIComponent(siteId)}/comments-enabled`, {
+    method: 'PATCH',
+    body: { enabled },
+  });
+}
+
+/** 列出某站点评论（owner / 团队成员视角，需登录） */
+export async function listSiteComments(siteId: string): Promise<ApiResponse<SiteCommentsResult>> {
+  return apiRequest(`/api/web-pages/${encodeURIComponent(siteId)}/comments`);
+}
+
+/** 在某站点发表评论（owner / 团队成员视角，需登录） */
+export async function addSiteComment(siteId: string, content: string): Promise<ApiResponse<HostedSiteCommentDto>> {
+  return apiRequest(`/api/web-pages/${encodeURIComponent(siteId)}/comments`, {
+    method: 'POST',
+    body: { content },
+  });
+}
+
+/** 经分享链接列出评论（无需登录即可读）。走 raw fetch（公开端点 + 可选携带 token 识别身份） */
+export async function listShareComments(token: string, password?: string): Promise<ApiResponse<SiteCommentsResult>> {
+  const q = password ? `?password=${encodeURIComponent(password)}` : '';
+  const url = joinUrl(getApiBaseUrl(), `/api/web-pages/shares/view/${encodeURIComponent(token)}/comments${q}`);
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  const authToken = useAuthStore.getState().token;
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  try {
+    const res = await fetch(url, { headers });
+    return (await res.json()) as ApiResponse<SiteCommentsResult>;
+  } catch {
+    return { success: false, data: null as never, error: { code: 'NETWORK_ERROR', message: '网络请求失败' } };
+  }
+}
+
+/** 经分享链接发表评论（需登录） */
+export async function addShareComment(token: string, content: string, password?: string): Promise<ApiResponse<HostedSiteCommentDto>> {
+  const q = password ? `?password=${encodeURIComponent(password)}` : '';
+  return apiRequest(`/api/web-pages/shares/view/${encodeURIComponent(token)}/comments${q}`, {
+    method: 'POST',
+    body: { content },
+  });
+}
+
+/** 删除评论（作者本人或站点 owner） */
+export async function deleteSiteComment(commentId: string): Promise<ApiResponse<{ deleted: boolean }>> {
+  return apiRequest(`/api/web-pages/comments/${encodeURIComponent(commentId)}`, {
+    method: 'DELETE',
+  });
 }

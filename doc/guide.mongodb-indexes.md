@@ -1113,6 +1113,17 @@ db.web_page_share_links.createIndex(
 )
 ```
 
+### hosted_site_comments
+
+```js
+// 评论面板按 站点 + 未删 + 时间倒序 加载（站内/分享公开读都走这条）；
+// 共享集合跨多站点后无此复合索引会全表扫 + 内存排序（PR #694）。
+db.hosted_site_comments.createIndex(
+  { "SiteId": 1, "IsDeleted": 1, "CreatedAt": -1 },
+  { name: "idx_hosted_site_comments_site_deleted_created" }
+)
+```
+
 ### share_view_logs
 
 ```js
