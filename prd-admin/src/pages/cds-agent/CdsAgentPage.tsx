@@ -1072,8 +1072,10 @@ export default function CdsAgentPage() {
     && (profileDraft.apiKey.trim() || activeProfile.hasApiKey),
   );
   // Lite 可用时连 CDS 连接都不强制（对话模式后端走 Lite 本地，不需要授权）；否则仍要 active 连接 + 可用 profile。
+  // 需要一个 active CDS 连接（授权一次后，旧会话/新会话都会 remap 到它，不再反复授权）。
+  // 模型 profile 不强制：Lite 可用时 activeProfileBlockReason 已为空。
   const canCreateSession = Boolean(
-    (activeConnection || liteReviewAvailable)
+    activeConnection
     && !activeProfileBlockReason
     && !activeRuntimePoolBlockReason,
   );
@@ -2671,7 +2673,7 @@ export default function CdsAgentPage() {
     setBusy(true);
     try {
       const res = await createInfraAgentSession({
-        connectionId: activeConnection?.id ?? '',
+        connectionId: activeConnection!.id,
         runtime: activeProfile?.runtime ?? 'claude-sdk',
         model: activeProfile?.model,
         runtimeProfileId: activeProfile?.id,
@@ -2820,7 +2822,7 @@ export default function CdsAgentPage() {
         const title = normalizedPrompt.slice(0, 28) || (simpleTaskMode === 'code' ? '只读代码巡检' : 'Agent 对话');
         setSimplePhase('creating', '正在创建会话', '绑定 connection、runtime profile 与工作区信息', session);
         const createRes = await createInfraAgentSession({
-          connectionId: activeConnection?.id ?? '',
+          connectionId: activeConnection!.id,
           runtime: activeProfile?.runtime ?? 'claude-sdk',
           model: activeProfile?.model,
           runtimeProfileId: activeProfile?.id,
