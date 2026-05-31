@@ -161,7 +161,7 @@ public class TaskTreeController : ControllerBase
             Status = status,
             Blocker = status == TaskNodeStatus.Blocked ? request.Blocker?.Trim() : null,
             BlockedSince = status == TaskNodeStatus.Blocked ? DateTime.UtcNow : null,
-            DependsOn = request.DependsOn ?? new List<string>(),
+            DependsOn = new List<string>(), // 依赖一律经 AddDependency 校验 + 防环添加，创建时不接受裸依赖
             Order = request.Order ?? 0,
         };
         await _db.TaskNodes.InsertOneAsync(node);
@@ -231,7 +231,9 @@ public class TaskTreeController : ControllerBase
             updates.Add(u.Set(n => n.Status, request.Status));
             if (request.Status == TaskNodeStatus.Blocked)
             {
-                updates.Add(u.Set(n => n.Blocker, request.Blocker?.Trim()));
+                // 仅在请求带了 blocker 时才覆盖，避免点"卡点"pill（不带 blocker）把已有卡点描述清空
+                if (request.Blocker != null)
+                    updates.Add(u.Set(n => n.Blocker, request.Blocker.Trim()));
                 // 仅在"刚进入 blocked"时记录起始时间，避免反复更新卡点描述把天数清零
                 if (node.Status != TaskNodeStatus.Blocked || node.BlockedSince == null)
                     updates.Add(u.Set(n => n.BlockedSince, DateTime.UtcNow));

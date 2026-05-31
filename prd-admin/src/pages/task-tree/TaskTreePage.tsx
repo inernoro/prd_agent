@@ -123,6 +123,7 @@ export function TaskTreePage() {
   const loadSeqRef = useRef(0);
   const blockersSeqRef = useRef(0);
   const treeIdRef = useRef<string | null>(null);
+  const firstLoadRef = useRef(true); // 仅首次加载播放整树生长动画，之后切树不重放
   useEffect(() => { treeIdRef.current = treeId; }, [treeId]);
 
   const pos = useMemo(() => computeLayout(nodes, layout), [nodes, layout]);
@@ -152,9 +153,17 @@ export function TaskTreePage() {
     const res = await getTaskTree(id);
     if (seq !== loadSeqRef.current) return; // 已切到别的树，丢弃陈旧响应
     if (res.success && res.data) {
-      newIdsRef.current = new Set(res.data.nodes.map((n) => n.id));
+      // 仅首次加载把已有节点当"新"播放生长动画；切树/刷新不重放整树
+      newIdsRef.current = firstLoadRef.current ? new Set(res.data.nodes.map((n) => n.id)) : new Set();
+      firstLoadRef.current = false;
       setNodes(res.data.nodes);
       setSelectedId(null);
+    } else {
+      // 加载失败不残留上一棵树的节点（否则头部显示新树、画布还是旧树）
+      newIdsRef.current = new Set();
+      setNodes([]);
+      setSelectedId(null);
+      toast.error(res.error?.message ?? '加载任务树失败');
     }
   }, []);
 
@@ -369,6 +378,7 @@ export function TaskTreePage() {
           if (treeIdRef.current !== extractTreeId) {
             // 用户已切到别的树：节点已按 server-authority 正确建到原树，给出反馈而非静默丢弃
             toast.info('任务已创建到切换前的任务树');
+            setChatLog((l) => { const c = [...l]; c[c.length - 1] = { role: 'a', text: '任务已创建到切换前的任务树' }; return c; });
             return;
           }
           const node = data as unknown as TaskNode;
