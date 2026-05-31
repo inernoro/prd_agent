@@ -1653,7 +1653,7 @@ export function DocumentStorePage() {
                               </span>
                             </div>
                           ))}
-                          {(s.recentEntries?.length ?? 0) >= 3 && (
+                          {(s.recentEntries?.length ?? 0) >= 3 && s.documentCount > (s.recentEntries?.length ?? 0) && (
                             <div className="flex items-center justify-center px-2.5 py-1.5 text-[10.5px]"
                               style={{ borderTop: '1px solid rgba(255,255,255,0.05)', color: 'var(--text-muted)' }}>
                               + 还有 {s.documentCount - (s.recentEntries?.length ?? 0)} 篇

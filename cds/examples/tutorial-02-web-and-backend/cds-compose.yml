@@ -2,7 +2,7 @@ services:
   frontend:
     image: node:20-alpine
     working_dir: /app
-    command: sh -lc "npx --yes serve -s . -l ${PORT}"
+    command: sh -lc "npx --yes serve -s . -l $$PORT"
     ports:
       - "4173:4173"
     volumes:

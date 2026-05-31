@@ -5437,7 +5437,10 @@ def _autofix_depends_on_hint(doc: dict, issue: dict) -> str | None:
             return None
         deps[infra] = {"condition": "service_started"}
     else:
-        deps = list(deps) if isinstance(deps, list) else []
+        if isinstance(deps, str):
+            deps = [deps]
+        elif not isinstance(deps, list):
+            deps = []
         if infra in deps:
             return None
         deps.append(infra)
