@@ -179,9 +179,13 @@ export default function CommentsSection(props: Props) {
         {loading ? (
           <MapSectionLoader text="正在加载评论…" />
         ) : comments.length === 0 ? (
-          <div className="text-center py-8 text-sm text-white/30">
-            还没有评论，来发表第一条吧
-          </div>
+          // 仅在"加载成功但确实没有评论"时显示空状态；加载失败已由上方 error 提示，
+          // 不能再叠一句"还没有评论"让用户误以为是成功的空列表（Cursor low）。
+          !error && (
+            <div className="text-center py-8 text-sm text-white/30">
+              还没有评论，来发表第一条吧
+            </div>
+          )
         ) : (
           <ul className="space-y-3">
             {comments.map((c) => (
