@@ -2091,7 +2091,10 @@ export function DocBrowser({
                     }}
                     placeholder="在此编辑文档内容..."
                   />
-                ) : preview ? (
+                ) : (preview || (() => {
+                    const s = entries.find(e => e.id === selectedEntryId);
+                    return s?.sourceType === 'github_directory' || s?.contentType === 'application/x-github-directory';
+                  })()) ? (
                   <FilePreview
                     entry={entries.find(e => e.id === selectedEntryId)}
                     preview={preview}
