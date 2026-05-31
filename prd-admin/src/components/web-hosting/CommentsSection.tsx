@@ -117,10 +117,12 @@ export default function CommentsSection(props: Props) {
   };
 
   const handleDelete = async (commentId: string) => {
-    const reqId = fetchIdRef.current;
     const res = await deleteSiteComment(commentId);
-    if (reqId !== fetchIdRef.current) return; // 删除在途时线程已切换，late 响应不动新线程的列表
+    if (!mountedRef.current) return;
     if (res.success) {
+      // 按 commentId 精确过滤：id 全局唯一，无论期间是否有并发 load 切了线程，
+      // "从当前列表移除这一条"永远是正确操作。不能用 fetchIdRef 守卫——那会在并发 load
+      // 撞号时把已成功的服务端删除丢掉、评论残留到下次刷新（Cursor medium）。
       setComments((prev) => prev.filter((c) => c.id !== commentId));
     } else {
       setError(res.error?.message || '删除失败');
