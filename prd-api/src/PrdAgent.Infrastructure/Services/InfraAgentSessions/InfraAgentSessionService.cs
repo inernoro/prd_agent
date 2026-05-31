@@ -1386,6 +1386,13 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             return replacement;
         }
 
+        // 自愈：凭据仍可解密就把被误吊销的连接恢复为 active，兑现「授权一次即可」。
+        if (await _connections.TryReactivateIfTokenValidAsync(connection.Id, ct))
+        {
+            var healed = await _connections.GetRawAsync(connection.Id, ct);
+            if (healed != null) return healed;
+        }
+
         EnsureConnectionNotRevoked(connection);
         return connection;
     }
@@ -1427,6 +1434,12 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 revokedReplacement.ProjectId,
                 session.Id);
             return revokedReplacement;
+        }
+
+        if (await _connections.TryReactivateIfTokenValidAsync(connection.Id, ct))
+        {
+            var healed = await _connections.GetRawAsync(connection.Id, ct);
+            if (healed != null) return healed;
         }
 
         EnsureConnectionNotRevoked(connection);
@@ -1493,7 +1506,9 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
     private async Task<string> GetLongTokenAsync(string connectionId, CancellationToken ct)
     {
-        var token = await _connections.TryUnprotectLongTokenAsync(connectionId, ct);
+        // 授权一次即可：解密失败（多见于 DataProtection key 轮换/环境重建）不得自动吊销用户的长期授权，
+        // 否则一次解密抖动就把「只需授权一次」变成「反复要求重新授权」。与 AgentToolsController 一致用 revokeOnFailure:false。
+        var token = await _connections.TryUnprotectLongTokenAsync(connectionId, ct, revokeOnFailure: false);
         if (string.IsNullOrWhiteSpace(token))
         {
             throw new InfraAgentSessionException(

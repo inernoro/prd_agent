@@ -374,19 +374,51 @@ function isRunFinishedEvent(event: InfraAgentEventView): boolean {
 // 减少「无用的渲染」：底层传输/路由的 info 级 log（runtime tools exposed、
 // lite review runtime started、message dispatched 等）对用户没有意义，从对话时间线里隐去；
 // 但保留 warning/error 级（可能是真问题）。判定走结构化的 source/level 字段，不靠内容匹配，避免误伤真实输出。
-const PLUMBING_LOG_SOURCES = new Set(['runtime-router', 'runtime-adapter', 'sidecar-runtime-adapter']);
+const PLUMBING_LOG_SOURCES = new Set(['runtime-router', 'runtime-adapter', 'sidecar-runtime-adapter', 'claude-sdk-sidecar']);
+const NOISE_LOG_KEYWORDS = [
+  'adapter started', 'runtime started', 'runtime tools exposed', 'lite review runtime',
+  'message dispatched', 'message accepted', 'queue stopped', 'cds logs unavailable',
+  'runtime run cancel', 'sidecar_runtime_started', 'session transport',
+];
 function isNoiseEvent(event: InfraAgentEventView): boolean {
   if (event.type !== 'log') return false;
   const payload = parsePayload(event);
-  if (!PLUMBING_LOG_SOURCES.has(String(payload.source ?? '').toLowerCase())) return false;
   const level = String(payload.level ?? '').toLowerCase();
-  return level !== 'warning' && level !== 'error';
+  if (level === 'warning' || level === 'error') return false; // 真问题始终保留
+  if (PLUMBING_LOG_SOURCES.has(String(payload.source ?? '').toLowerCase())) return true;
+  const msg = String(payload.message ?? '').trim().toLowerCase();
+  if (!msg) return true; // 空消息日志（被渲染成「后台运行日志」）零信息价值，隐去
+  return NOISE_LOG_KEYWORDS.some((k) => msg.includes(k));
 }
 
 function renderPayload(event: InfraAgentEventView): string {
   const payload = parsePayload(event);
+  const str = (k: string) => (typeof payload[k] === 'string' ? (payload[k] as string).trim() : '');
   if (event.type === 'text_delta' && typeof payload.text === 'string') return payload.text;
   if (event.type === 'done' && typeof payload.finalText === 'string') return payload.finalText;
+  // 展开后给人话细节，而不是裸 JSON。
+  if (event.type === 'error') {
+    const lines: string[] = [];
+    if (str('message')) lines.push(str('message'));
+    if (str('code')) lines.push(`代码：${str('code')}`);
+    const na = Array.isArray(payload.nextActions)
+      ? (payload.nextActions as unknown[]).filter((x): x is string => typeof x === 'string')
+      : [];
+    if (na.length) lines.push(`下一步：${na.join('；')}`);
+    if (str('traceId')) lines.push(`traceId：${str('traceId')}`);
+    if (lines.length) return lines.join('\n');
+  }
+  if (event.type === 'status') {
+    const mode = str('mode');
+    const parts: string[] = [];
+    if (mode) parts.push(`运行模式：${mode === 'lite' ? 'Lite 预览（只读）' : '官方 SDK'}`);
+    if (str('status')) parts.push(`状态：${str('status')}`);
+    const reason = str('degradeReason') || str('reason');
+    if (reason) parts.push(`原因：${reason}`);
+    if (str('model')) parts.push(`模型：${str('model')}`);
+    if (parts.length) return parts.join('\n');
+  }
+  if (event.type === 'log' && str('message')) return str('message');
   return JSON.stringify(payload, null, 2);
 }
 
@@ -4128,7 +4160,8 @@ export default function CdsAgentPage() {
                               const waitingApproval = event.type === 'tool_call' && approvalId && payload.status === 'waiting';
                               const stepOpen = simpleExpandedEventId === event.id;
                               const label = processEventLabel(event);
-                              const canExpand = event.type === 'tool_call' || event.type === 'tool_result';
+                              // 任何事件都能展开看细节（错误码/traceId、状态原因、工具入参/结果），不再只有工具调用可展开。
+                              const canExpand = event.type !== 'log' || Boolean(String(parsePayload(event).message ?? '').trim());
                               return (
                                 <div key={event.id} className="rounded-md px-2 py-1.5 text-xs" style={{ background: 'rgba(0,0,0,0.2)' }}>
                                   <button

@@ -473,6 +473,36 @@ public class InfraConnectionService : IInfraConnectionService
         }
     }
 
+    public async Task<bool> TryReactivateIfTokenValidAsync(string id, CancellationToken ct)
+    {
+        var entity = await GetRawAsync(id, ct);
+        if (entity == null || string.IsNullOrEmpty(entity.LongTokenEncrypted)) return false;
+        // 仅当凭据确实能解密（授权本身有效）才恢复；解密不了说明是真失效，不自愈。
+        string token;
+        try
+        {
+            token = _protector.Unprotect(entity.LongTokenEncrypted);
+        }
+        catch
+        {
+            return false;
+        }
+        if (string.IsNullOrWhiteSpace(token)) return false;
+        if (string.Equals(entity.Status, "active", StringComparison.OrdinalIgnoreCase)) return true;
+
+        var now = DateTime.UtcNow;
+        await _db.InfraConnections.UpdateOneAsync(
+            c => c.Id == id,
+            Builders<InfraConnection>.Update
+                .Set(c => c.Status, "active")
+                .Set(c => c.LastProbeOk, true)
+                .Set(c => c.LastProbeError, null)
+                .Set(c => c.UpdatedAt, now),
+            cancellationToken: ct);
+        _logger.LogInformation("InfraConnection self-healed revoked -> active id={Id} (token still decryptable)", id);
+        return true;
+    }
+
     private async Task MarkConnectionRevokedAsync(string id, string error, CancellationToken ct)
     {
         var now = DateTime.UtcNow;
