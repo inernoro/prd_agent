@@ -144,7 +144,7 @@ cut -f1 /tmp/today_real.tsv | sort | uniq -c | sort -rn
 
 按 `reference/report-template.md` 模板组织（分层权重见纪律 1）。语言全中文，用户视角，禁止 emoji（CLAUDE.md 规则 0）。
 
-> **零提交硬闸（纪律 5）**：若 Phase 2 统计当天主干提交数为 0，**到此为止**——写一句「{date} 主干无落地提交」回报用户，**不进入 Phase 4.5 / Phase 5**，绝不发布空壳条目。
+> **零提交硬闸（纪律 5）**：判据用 Phase 2.2 的**真实提交数**（`wc -l < /tmp/today_real.tsv`），**不是** 2.1 的 first-parent 行数——否则一条孤立的 merge 壳会被误当"有活动"，跳过硬闸却发出 header 显示 0 提交的报告。真实提交数为 0 即**到此为止**：写一句「{date} 主干无落地提交」回报用户，**不进入 Phase 4.5 / Phase 5**，绝不发布空壳条目。
 
 ### Phase 4.5：视觉验收取证（新增方向必做，与 create-visual-test-to-kb 联动）
 

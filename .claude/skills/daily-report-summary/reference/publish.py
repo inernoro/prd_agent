@@ -65,17 +65,21 @@ def find_store(base, H, name):
     page = 1
     while True:
         res = curl(H + [f"{base}/stores?page={page}&pageSize=100"])
-        data = res.get("data") or {}            # success:false 时 data 可能为 null
+        # 列表失败（鉴权/瞬时错误）绝不能当成"库不存在"——否则会误建重复同名私有库。
+        if not res.get("success"):
+            raise RuntimeError("列出知识库失败，无法判定「日报知识库」是否存在（拒绝盲目新建以免重复）："
+                               + (json.dumps(res.get("error"), ensure_ascii=False)[:160] if res.get("error") else "未知错误"))
+        data = res.get("data") or {}            # data 可能为 null
         items = data.get("items") or []         # items 可能为 null
         for s in items:
             if s.get("name") == name:
                 return s["id"]
         has_next = data.get("hasNextPage")
         if has_next is False or len(items) < 100:
-            return None
+            return None                          # 真·翻到尾仍无 → 确认不存在
         page += 1
-        if page > 50:
-            return None
+        if page > 1000:                          # 防无限循环（需 10 万+ 满页库才触顶）；触顶则报错而非误判不存在
+            raise RuntimeError("知识库分页超过 1000 页仍未翻到尾，疑似分页异常，停止以免误建重复库")
 
 
 def resolve_daily_date(daily_date, title):
