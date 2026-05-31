@@ -73,7 +73,7 @@ def find_store(base, H, name):
         items = data.get("items") or []         # items 可能为 null
         for s in items:
             if s.get("name") == name:
-                return s["id"]
+                return s                          # 返回整个 store 对象（含 isPublic），便于复用前校验可见性
         has_next = data.get("hasNextPage")
         if has_next is False or len(items) < 100:
             return None                          # 真·翻到尾仍无 → 确认不存在
@@ -188,10 +188,15 @@ def main():
     HJ = headers(a.impersonate, with_json=True)
 
     # find-or-create store（分页查找）
-    rid = find_store(base, H, STORE_NAME)
+    existing = find_store(base, H, STORE_NAME)
     created_store = False
-    if rid:
-        print(f"  复用知识库「{STORE_NAME}」id={rid}")
+    if existing:
+        rid = existing["id"]
+        # 日报库按私有创建；若复用到一个同名【公开】库，私有日报会悄悄进公开库——告警（对齐验收技能纪律 4）
+        if existing.get("isPublic"):
+            print(f"  [告警] 复用的「{STORE_NAME}」是公开库(isPublic=true)，日报通常应私有；"
+                  "如非本意请把该库设为私有，或改用别的库名。")
+        print(f"  复用知识库「{STORE_NAME}」id={rid}（isPublic={existing.get('isPublic')}）")
     else:
         rid = curl(HJ + ["-X", "POST", "-d", json.dumps(
             {"name": STORE_NAME, "description": STORE_DESC, "isPublic": False}

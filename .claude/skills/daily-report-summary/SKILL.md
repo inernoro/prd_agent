@@ -89,9 +89,11 @@ git log --first-parent "$DEFAULT_BRANCH" --format="%cd%x09%H%x09%an%x09%s" --dat
 ### Phase 1：确定目标日期
 
 ```bash
-TODAY=${ARG_DATE:-$(date +%Y-%m-%d)}
+# 全流程唯一日期变量：TODAY。后续 Phase 2 的 git 过滤、Phase 5 的 --title/--daily-date
+# 一律复用这个 TODAY，禁止再引入 ARG_DATE 等别名，避免补历史日报时各处日期对不上。
+TODAY=${1:-$(date +%Y-%m-%d)}
 ```
-用户可指定日期（如「补 5-30 的日报」）；缺省取今天。
+用户可指定日期（如「补 2026-05-30 的日报」时 `TODAY=2026-05-30`）；缺省取今天。纪律 2 与 Phase 2 的代码块都直接用这个 `TODAY`，不重新定义。
 
 ### Phase 2：数据收集（按纪律 2/3）
 
@@ -172,7 +174,7 @@ node /tmp/daily-driver.mjs "$PREVIEW_URL"      # 产出 OUT/*.png + OUT/manifest
 
 ### Phase 5：发布到知识库
 
-仅当 Phase 2 提交数 > 0 才执行。调 `reference/publish.py` 完成 find-or-create「日报知识库」+ 建条目 + 写正文（含 Phase 4.5 截图）+ 出分享链：
+仅当**真实提交数 > 0**（`wc -l < /tmp/today_real.tsv`，与 Phase 4 零提交硬闸同一判据，不是 2.1 的 first-parent 行数）才执行。调 `reference/publish.py` 完成 find-or-create「日报知识库」+ 建条目 + 写正文（含 Phase 4.5 截图）+ 出分享链：
 
 ```bash
 export AI_ACCESS_KEY=...            # 已在 CDS 远端环境注入
@@ -208,7 +210,7 @@ python3 .claude/skills/daily-report-summary/reference/publish.py \
 
 | 场景 | 处理 |
 |------|------|
-| 当日零提交 | 写「今日主干无落地提交」，不发布空报告 |
+| 当日真实提交数为 0（`wc -l /tmp/today_real.tsv`，非 first-parent 行数） | 写「今日主干无落地提交」，不发布空报告 |
 | 预览环境 524 / 不可达 | 正文已就绪，提示稍后用同命令重跑（publish.py 自带退避重试 + 空壳兜底） |
 | 「日报知识库」已存在 | 复用，不重复建；同日重复发布会生成新条目（标题相同，metadata.dailyDate 去重可选） |
 | 没有 AI 密钥 / 无文档空间 | 退化为 `--local` 落 `doc/` 外的本地 md（仅自查，不算交付） |
