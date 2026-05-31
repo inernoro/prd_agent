@@ -1870,6 +1870,32 @@ public class HostedSiteService : IHostedSiteService
         };
         await _db.HostedSiteComments.InsertOneAsync(comment, cancellationToken: ct);
 
+        // 通知站点 owner：有人评论了你的站点。自评不通知；Key 幂等保证每条评论只产生一条系统通知（用户要求「1 次」）。
+        // best-effort + CancellationToken.None：通知失败不得影响评论本身，也不随客户端断开取消（server-authority）。
+        if (!string.IsNullOrWhiteSpace(site.OwnerUserId) && site.OwnerUserId != authorUserId)
+        {
+            try
+            {
+                var preview = trimmed.Length > 40 ? trimmed[..40] + "…" : trimmed;
+                await _db.AdminNotifications.InsertOneAsync(new AdminNotification
+                {
+                    Key = $"hosted-comment:{comment.Id}",
+                    TargetUserId = site.OwnerUserId,
+                    Title = $"{comment.AuthorName} 评论了你的站点「{site.Title}」",
+                    Message = preview,
+                    Level = "info",
+                    Source = "web-hosting",
+                    ActionLabel = "查看",
+                    ActionUrl = "/web-pages",
+                    ActionKind = "navigate",
+                }, cancellationToken: CancellationToken.None);
+            }
+            catch
+            {
+                // 通知是 best-effort，失败静默（评论已落库成功）
+            }
+        }
+
         return new AddCommentResult
         {
             Comment = new HostedSiteCommentDto

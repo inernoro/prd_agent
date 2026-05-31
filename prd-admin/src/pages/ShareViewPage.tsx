@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { viewSiteShare, saveSharedSite } from '@/services';
 import type { ShareViewData } from '@/services';
+import { listShareComments } from '@/services/real/webPages';
 import { useAuthStore } from '@/stores/authStore';
 import { Lock, ExternalLink, FileCode2, Eye, EyeOff, AlertCircle, ShieldCheck, Unlock, Download, Check, LogIn, MessageSquare, X } from 'lucide-react';
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
@@ -37,8 +38,10 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const inputRef = useRef<HTMLInputElement>(null);
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'already'>('idle');
-  // 评论抽屉：单站点分享页右下角浮动「评论」按钮打开（避免只在 iframe 下方、需往下滚才看见）
+  // 评论抽屉：由顶栏「评论 N」按钮打开（PPT/全屏页无滚动条，评论不能放底部）
   const [showComments, setShowComments] = useState(false);
+  // 顶栏按钮上展示的评论数。初始拉一次，抽屉打开后由 CommentsSection 的 onCountChange 接管实时同步
+  const [commentCount, setCommentCount] = useState<number | null>(null);
 
   const handleSave = useCallback(async () => {
     if (!token) return;
@@ -90,6 +93,16 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     fetchShare();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
+
+  // 顶栏「评论 N」初始计数：单站点分享 + token 就绪后拉一次（抽屉打开后由 onCountChange 接管）
+  useEffect(() => {
+    if (!token || !data || data.sites.length !== 1) return;
+    let alive = true;
+    listShareComments(token, password || undefined)
+      .then((res) => { if (alive && res.success && res.data) setCommentCount(res.data.comments.length); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [token, password, data]);
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -383,6 +396,17 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               <ExternalLink size={12} />
               新窗口打开
             </a>
+            {/* 评论入口放在顶栏（MAP 自己的 chrome）：PPT/全屏页无滚动条，底部放评论区不可达；
+                浮动按钮又会盖住 PPT 右下角的翻页控件。顶栏按钮零侵入页面布局，点击从右侧抽屉打开。 */}
+            {token && (
+              <button
+                onClick={() => setShowComments(true)}
+                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: 0, border: 'none', background: 'transparent', color: '#3b82f6', fontSize: 13, cursor: 'pointer' }}
+              >
+                <MessageSquare size={12} />
+                评论{commentCount != null && commentCount > 0 ? ` ${commentCount}` : ''}
+              </button>
+            )}
           </div>
         </div>
         {/* Iframe
@@ -396,66 +420,44 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
           sandbox={site.pdfAssetUrl ? undefined : 'allow-scripts allow-same-origin allow-popups allow-forms'}
         />
 
-        {/* 评论：右下角浮动按钮 + 右侧滑出抽屉。访客一眼可见入口，不必往下滚（token 必有） */}
-        {token && (
+        {/* 评论：右侧滑出抽屉（由顶栏「评论」按钮打开）。不占页面布局、不盖 PPT 控件（token 必有） */}
+        {token && showComments && (
           <>
-            {!showComments && (
-              <button
-                onClick={() => setShowComments(true)}
-                title="评论"
-                style={{
-                  position: 'fixed', right: 20, bottom: 20, zIndex: 50,
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '12px 18px', borderRadius: 9999, border: 'none', cursor: 'pointer',
-                  background: 'rgba(59, 130, 246, 0.95)', color: '#fff',
-                  fontSize: 14, fontWeight: 600,
-                  boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
-                  backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)',
-                }}
-              >
-                <MessageSquare size={16} />
-                评论
-              </button>
-            )}
-            {showComments && (
-              <>
-                {/* 遮罩：点击关闭 */}
-                <div
+            {/* 遮罩：点击关闭 */}
+            <div
+              onClick={() => setShowComments(false)}
+              style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,0.4)' }}
+            />
+            {/* 右侧抽屉 */}
+            <aside
+              style={{
+                position: 'fixed', top: 0, right: 0, bottom: 0, zIndex: 61,
+                width: 'min(420px, 92vw)', display: 'flex', flexDirection: 'column',
+                background: '#0f1014', borderLeft: '1px solid rgba(255,255,255,0.1)',
+                boxShadow: '-12px 0 40px rgba(0,0,0,0.5)',
+              }}
+            >
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.08)', flexShrink: 0,
+              }}>
+                <span style={{ color: '#fff', fontSize: 14, fontWeight: 600 }}>评论</span>
+                <button
                   onClick={() => setShowComments(false)}
-                  style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,0.4)' }}
-                />
-                {/* 右侧抽屉 */}
-                <aside
+                  title="关闭"
                   style={{
-                    position: 'fixed', top: 0, right: 0, bottom: 0, zIndex: 61,
-                    width: 'min(420px, 92vw)', display: 'flex', flexDirection: 'column',
-                    background: '#0f1014', borderLeft: '1px solid rgba(255,255,255,0.1)',
-                    boxShadow: '-12px 0 40px rgba(0,0,0,0.5)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    width: 28, height: 28, borderRadius: 8, border: 'none', cursor: 'pointer',
+                    background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.7)',
                   }}
                 >
-                  <div style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.08)', flexShrink: 0,
-                  }}>
-                    <span style={{ color: '#fff', fontSize: 14, fontWeight: 600 }}>评论</span>
-                    <button
-                      onClick={() => setShowComments(false)}
-                      title="关闭"
-                      style={{
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        width: 28, height: 28, borderRadius: 8, border: 'none', cursor: 'pointer',
-                        background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.7)',
-                      }}
-                    >
-                      <X size={16} />
-                    </button>
-                  </div>
-                  <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: 16 }}>
-                    <CommentsSection mode="share" token={token} password={password || undefined} />
-                  </div>
-                </aside>
-              </>
-            )}
+                  <X size={16} />
+                </button>
+              </div>
+              <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: 16 }}>
+                <CommentsSection mode="share" token={token} password={password || undefined} onCountChange={setCommentCount} />
+              </div>
+            </aside>
           </>
         )}
       </div>

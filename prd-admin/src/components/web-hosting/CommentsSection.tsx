@@ -25,6 +25,8 @@ type Props = (
 ) & {
   /** 服务端权威 commentsEnabled 拉到后回传，供父级（预览弹窗开关）与 stale site 快照对齐 */
   onStateLoaded?: (commentsEnabled: boolean) => void;
+  /** 评论数变化时回传（含首次加载、发表、删除），供父级在顶栏按钮等处展示「评论 N」 */
+  onCountChange?: (count: number) => void;
 };
 
 export default function CommentsSection(props: Props) {
@@ -58,6 +60,13 @@ export default function CommentsSection(props: Props) {
   // 避免 iframe onLoad 等无关 modal 重渲染触发评论列表重新拉取 + loading 闪烁（Cursor medium）
   const onStateLoadedRef = useRef(props.onStateLoaded);
   onStateLoadedRef.current = props.onStateLoaded;
+  // 走 ref 同理：父级内联函数每次 render 都换新引用，不该污染下面 effect 的依赖
+  const onCountChangeRef = useRef(props.onCountChange);
+  onCountChangeRef.current = props.onCountChange;
+  // 评论数变化（首次加载 / 乐观插入 / 删除 / 对账）回传父级，顶栏「评论 N」实时同步
+  useEffect(() => {
+    onCountChangeRef.current?.(comments.length);
+  }, [comments.length]);
 
   // silent=true：后台对账刷新，不翻 loading（否则全屏 section loader 会盖掉刚乐观插入的评论，
   // 让发表后的新评论"闪没"，慢/失败的刷新更像没发成功，Cursor medium）。
