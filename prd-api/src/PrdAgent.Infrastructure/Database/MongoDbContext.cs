@@ -40,6 +40,7 @@ public class MongoDbContext
     public IMongoCollection<Message> Messages => _database.GetCollection<Message>("messages");
     public IMongoCollection<GroupMessageCounter> GroupMessageCounters => _database.GetCollection<GroupMessageCounter>("group_message_counters");
     public IMongoCollection<ContentGap> ContentGaps => _database.GetCollection<ContentGap>("contentgaps");
+    public IMongoCollection<AiNewsEnrichment> AiNewsEnrichments => _database.GetCollection<AiNewsEnrichment>("ai_news_enrichments");
     public IMongoCollection<Attachment> Attachments => _database.GetCollection<Attachment>("attachments");
     public IMongoCollection<LLMConfig> LLMConfigs => _database.GetCollection<LLMConfig>("llmconfigs");
     public IMongoCollection<InviteCode> InviteCodes => _database.GetCollection<InviteCode>("invitecodes");

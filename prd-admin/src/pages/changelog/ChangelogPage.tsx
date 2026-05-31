@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   Sparkles, Calendar, Tag, RefreshCw, Filter, X, FileText,
   Wrench, Zap, Gauge, Shuffle, Shield, Package, FlaskConical, UploadCloud, Cog,
-  Github, GitCommit, ExternalLink, Brain, Wand2,
+  Github, GitCommit, ExternalLink, Brain, Wand2, Radio,
 } from 'lucide-react';
 import { useChangelogStore } from '@/stores/changelogStore';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
@@ -21,6 +21,7 @@ import {
   WeeklyReportSourceDialog,
 } from './components/WeeklyReportsTab';
 import { WeeklyReportSourcesProvider } from './components/weeklyReportSourcesContext';
+import { AiNewsTimeline } from '@/components/ai-news/AiNewsTimeline';
 
 
 /** 类型徽章注册表（禁止 switch / if-else） */
@@ -587,6 +588,7 @@ export default function ChangelogPage() {
         items={[
           { key: 'update_center', label: '更新中心', icon: <Sparkles size={14} /> },
           { key: 'weekly_reports', label: '周报', icon: <FileText size={14} /> },
+          { key: 'ai_news', label: 'AI 大事', icon: <Radio size={14} /> },
         ]}
         activeKey={activeTab}
         onChange={setActiveTab}
@@ -1248,6 +1250,12 @@ export default function ChangelogPage() {
       {activeTab === 'weekly_reports' && (
         <div className="flex-1 min-h-0 flex flex-col">
           <WeeklyReportsTab />
+        </div>
+      )}
+
+      {activeTab === 'ai_news' && (
+        <div className="flex-1 min-h-0 flex flex-col">
+          <AiNewsTimeline />
         </div>
       )}
 

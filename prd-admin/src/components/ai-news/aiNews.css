@@ -1,0 +1,71 @@
+/* AI 资讯共享动效：时间线（更新中心页）+ 卡片 teaser（首页更新中心卡） */
+
+@keyframes ainews-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.82); }
+}
+
+/* live 灯外圈雷达扩散 */
+@keyframes ainews-ring {
+  0% { transform: scale(1); opacity: 0.55; }
+  70% { transform: scale(2.6); opacity: 0; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+
+/* 时间线条目入场 */
+@keyframes ainews-slide-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 刷新图标旋转 */
+@keyframes ainews-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 卡片 teaser「跳出」：从下方淡入升起，停留后淡出落下 */
+@keyframes ainews-teaser-in {
+  0% { opacity: 0; transform: translateY(10px); }
+  12%, 88% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-6px); }
+}
+
+.ainews-live-dot { position: relative; }
+.ainews-live-dot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: inherit;
+  animation: ainews-ring 2.4s ease-out infinite;
+}
+.ainews-live-core { animation: ainews-pulse 2.4s ease-in-out infinite; }
+
+.ainews-item { animation: ainews-slide-in 0.42s ease both; }
+
+.ainews-spinning { animation: ainews-spin 0.9s linear infinite; transform-origin: center; }
+
+/* teaser 单条停留约 5.4s（含进出过渡），逐条循环 */
+.ainews-teaser-line { animation: ainews-teaser-in 5.4s ease both; }
+
+/* AI 解读生成中：呼吸微光占位 */
+@keyframes ainews-shimmer {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.7; }
+}
+.ainews-shimmer { animation: ainews-shimmer 1.4s ease-in-out infinite; }
+
+/* 解读文字淡入 */
+@keyframes ainews-fade-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.ainews-commentary { animation: ainews-fade-in 0.4s ease both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ainews-live-dot::after,
+  .ainews-live-core,
+  .ainews-item,
+  .ainews-spinning { animation: none; }
+  .ainews-teaser-line { animation: none; opacity: 1; transform: none; }
+}

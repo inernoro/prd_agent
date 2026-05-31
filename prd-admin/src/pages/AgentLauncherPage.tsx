@@ -53,6 +53,7 @@ import { PmAgentCardArt } from '@/pages/ai-toolbox/components/PmAgentCardArt';
 import { HomeAmbientBackdrop } from '@/components/effects/HomeAmbientBackdrop';
 import { Reveal } from '@/pages/home/components/Reveal';
 import { TipsRotator } from '@/components/daily-tips/TipsRotator';
+import { UpdateCenterNewsTeaser } from '@/components/ai-news/UpdateCenterNewsTeaser';
 
 /**
  * 进场动效节奏 —— 与 /home LandingPage 同款 Reveal 组件，duration 减半（1000ms）让整体速度翻倍。
@@ -1053,6 +1054,9 @@ export default function AgentLauncherPage() {
                         {link.desc}
                       </div>
                     </div>
+
+                    {/* 更新中心卡：底部偶尔「跳出」一条 AI 资讯标题，点卡进入「AI 大事」时间线 */}
+                    {isUpdates && <UpdateCenterNewsTeaser />}
                   </button>
                   </Reveal>
                 );
