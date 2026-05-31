@@ -284,11 +284,15 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.TranscriptRunWorker>();
 builder.Services.AddSingleton<PrdAgent.Api.Services.DoubaoStreamAsrService>();
 
 // 首页「AI 大事早知道」资讯雷达：代理拉取 ai-news-radar 公共静态 JSON（5min 内存缓存 + 6h stale 保底）
+// 摘要抓取会请求 feed 内的任意文章 URL（外部不可信），必须走 SafeOutbound 处理器：
+// 禁用自动重定向 + 逐 IP 校验，挡住「文章 URL 重定向到 localhost / 169.254.169.254 等内网」的 SSRF。
 builder.Services.AddHttpClient("AiNews", c =>
 {
     c.Timeout = TimeSpan.FromSeconds(8);
     c.DefaultRequestHeaders.UserAgent.ParseAdd("PrdAgent-AiNewsRadar/1.0");
-});
+})
+    .ConfigurePrimaryHttpMessageHandler(sp =>
+        sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
 // Scoped：AiNewsService 依赖 Scoped 的 ILlmGateway（一句话解读），故不能是 Singleton；
 // 内存缓存走注入的单例 IMemoryCache，资讯流缓存不受 scoped 影响。
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAiNewsService, PrdAgent.Infrastructure.Services.AiNewsService>();
