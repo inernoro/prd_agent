@@ -626,6 +626,7 @@ function TreeNode({
   expandedFolders,
   useContentTitle,
   showUpdatedTime,
+  timeField,
   contentFirstLines,
   contentMatchIds,
   reprocessingMap,
@@ -649,6 +650,7 @@ function TreeNode({
   expandedFolders: Set<string>;
   useContentTitle: boolean;
   showUpdatedTime: boolean;
+  timeField: 'createdAt' | 'updatedAt';
   contentFirstLines: Map<string, string>;
   contentMatchIds: Set<string>;
   reprocessingMap?: Record<string, number>;
@@ -705,7 +707,7 @@ function TreeNode({
             onMoveEntry(draggedId, entry.id);
           }
         }}
-        className={`relative w-full flex items-center gap-2 text-left cursor-pointer transition-all duration-150 group ${isFolder ? 'py-[7px]' : 'py-[6px] hover-bg-soft'}`}
+        className={`relative w-full flex flex-col gap-1 text-left cursor-pointer transition-all duration-150 group ${isFolder ? 'py-[7px]' : 'py-[7px] hover-bg-soft'}`}
         style={{
           // 整块圆角高亮：左右留 6px 内缩，hover/选中不贴边
           paddingLeft: `${10 + depth * 14}px`,
@@ -744,20 +746,39 @@ function TreeNode({
             }}
           />
         )}
-        <EntryIcon entry={entry} isPrimary={isPrimary} isPinned={isPinned} isOpen={isOpen} />
+        {/* 第一行：图标 + 标题（标题独占一行，不再被徽章挤成 prd-age...） */}
+        <div className="flex items-center gap-2 w-full min-w-0">
+          <EntryIcon entry={entry} isPrimary={isPrimary} isPinned={isPinned} isOpen={isOpen} />
 
-        <span className="flex-1 truncate"
-          style={{
-            color: isFolder
-              ? 'var(--text-muted)'
-              : (isSelected ? 'var(--text-primary)' : 'var(--text-secondary)'),
-            fontWeight: isFolder ? 600 : (isSelected ? 500 : 400),
-            fontSize: isFolder ? '10.5px' : '12px',
-            letterSpacing: isFolder ? '0.06em' : 'normal',
-            textTransform: isFolder ? 'uppercase' : 'none',
-          }}>
-          {displayTitle}
-        </span>
+          <span className="flex-1 truncate"
+            style={{
+              color: isFolder
+                ? 'var(--text-muted)'
+                : (isSelected ? 'var(--text-primary)' : 'var(--text-secondary)'),
+              fontWeight: isFolder ? 600 : (isSelected ? 500 : 400),
+              fontSize: isFolder ? '10.5px' : '12px',
+              letterSpacing: isFolder ? '0.06em' : 'normal',
+              textTransform: isFolder ? 'uppercase' : 'none',
+            }}>
+            {displayTitle}
+          </span>
+
+          {/* 文件夹的计数 + 折叠箭头留在第一行右侧 */}
+          {isFolder && (
+            <span className="flex items-center gap-1.5 flex-shrink-0">
+              <span className="text-[10px] tabular-nums" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
+                {children.length}
+              </span>
+              {isOpen
+                ? <ChevronDown size={13} style={{ color: 'var(--text-muted)' }} />
+                : <ChevronRight size={13} style={{ color: 'var(--text-muted)' }} />}
+            </span>
+          )}
+        </div>
+
+        {/* 第二行：徽章（状态/标签/NEW…）+ 时间，仅非文件夹。缩进对齐到标题下方。 */}
+        {!isFolder && (
+        <div className="flex items-center gap-1.5 flex-wrap w-full" style={{ paddingLeft: '22px' }}>
 
         {/* 已分享：黄色标识，点击打开分享弹窗查看/复制链接（不只是撤销） */}
         {isShared && (
@@ -891,29 +912,19 @@ function TreeNode({
           <Pin size={10} className="flex-shrink-0" style={{ color: 'rgba(59,130,246,0.5)' }} />
         )}
 
-        {/* 更新时间：默认显示，且永远固定在最右边（外层 span marginLeft:auto 把它推到行尾，
-            其余徽章靠左排）。由"显示设置 → 显示更新时间"开关可关。 */}
-        {!isFolder && showUpdatedTime && entry.updatedAt && (
+        {/* 时间：默认显示、永远固定在最右边。显示哪个时间跟随排序键——
+            created-desc 显示创建时间、其余显示更新时间，避免"按创建排序却显更新时间"的错位。 */}
+        {!isFolder && showUpdatedTime && entry[timeField] && (
           <span className="flex-shrink-0" style={{ marginLeft: 'auto', paddingLeft: '6px' }}>
             <RelativeTime
-              value={entry.updatedAt}
+              value={entry[timeField]!}
               refreshIntervalMs={0}
               className="text-[9.5px] tabular-nums text-token-muted"
-              title={`最后更新：${new Date(entry.updatedAt).toLocaleString('zh-CN')}${entry.updatedByName ? ` · ${entry.updatedByName}` : ''}`}
+              title={`${timeField === 'createdAt' ? '创建于' : '最后更新'}：${new Date(entry[timeField]!).toLocaleString('zh-CN')}${timeField === 'updatedAt' && entry.updatedByName ? ` · ${entry.updatedByName}` : ''}`}
             />
           </span>
         )}
-
-        {/* F3：文件夹章节——右侧文件计数 + 折叠箭头（文档站目录习惯：箭头在右） */}
-        {isFolder && (
-          <span className="flex items-center gap-1.5 flex-shrink-0">
-            <span className="text-[10px] tabular-nums" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
-              {children.length}
-            </span>
-            {isOpen
-              ? <ChevronDown size={13} style={{ color: 'var(--text-muted)' }} />
-              : <ChevronRight size={13} style={{ color: 'var(--text-muted)' }} />}
-          </span>
+        </div>
         )}
       </button>
 
@@ -931,6 +942,7 @@ function TreeNode({
           expandedFolders={expandedFolders}
           useContentTitle={useContentTitle}
           showUpdatedTime={showUpdatedTime}
+          timeField={timeField}
           contentFirstLines={contentFirstLines}
           contentMatchIds={contentMatchIds}
           reprocessingMap={reprocessingMap}
@@ -1045,6 +1057,8 @@ export function DocBrowser({
     if (saved === '0') return false;
     return showUpdatedTimeDefault; // 用户未显式选择时走调用方默认（验收库默认显示时间）
   });
+  // 列表时间显示哪个字段：跟随排序键，避免"按创建排序却显更新时间"的错位。
+  const timeField: 'createdAt' | 'updatedAt' = sortMode === 'created-desc' ? 'createdAt' : 'updatedAt';
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
   const [contentFirstLines, setContentFirstLines] = useState<Map<string, string>>(new Map());
@@ -1776,6 +1790,7 @@ export function DocBrowser({
               expandedFolders={expandedFolders}
               useContentTitle={useContentTitle}
               showUpdatedTime={showUpdatedTime}
+              timeField={timeField}
               contentFirstLines={contentFirstLines}
               contentMatchIds={contentMatchIds}
               reprocessingMap={reprocessingMap}
