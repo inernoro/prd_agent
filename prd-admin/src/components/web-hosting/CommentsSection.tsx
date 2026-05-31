@@ -101,10 +101,13 @@ export default function CommentsSection(props: Props) {
         : await addSiteComment(siteId!, content);
       if (!mountedRef.current) return;
       if (res.success && res.data) {
+        const created = res.data;
         setDraft('');
-        // 发表成功后用 load() 重新拉取作为唯一真相：load 在 server commit 之后发起、自带 fetchId/mounted
-        // 守卫，因此新评论必然出现，且不会被"提交前发起、提交后才返回"的并发 reload 覆盖（Cursor medium）。
-        // 不再做乐观 prepend —— 乐观更新与并发 reload 的竞态正是这一系列 bug 的根源。
+        // 1) 乐观插入（按 id 去重）：服务端已落库，立即上屏 —— 即使下面 load() 失败，评论也已可见，
+        //    用户不会以为没发出去而重复提交导致重复评论（Cursor medium: refresh fail → duplicate）。
+        setComments((prev) => (prev.some((c) => c.id === created.id) ? prev : [created, ...prev]));
+        // 2) 再 load() 对账拿服务端真相（含他人新评论 / 准确时间戳）。best-effort：失败也无妨，
+        //    乐观插入已兜底；若并发 reload 漏掉本条，本次 load 会补正。
         await load();
       } else {
         setError(res.error?.message || '发表失败');
