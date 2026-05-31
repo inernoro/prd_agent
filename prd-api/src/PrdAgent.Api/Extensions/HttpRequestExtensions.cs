@@ -40,10 +40,12 @@ public static class HttpRequestExtensions
                 var norm = NormalizeIp(parts[i]);
                 if (IsPublicIp(norm)) return norm;
             }
-            // 全是内网：取最左段（最接近客户端的一跳）
-            if (parts.Length > 0) return NormalizeIp(parts[0]);
+            // 全是内网（纯内网/LAN/VPN 部署）：绝不回退到 XFF 最左段——那是客户端自带、可伪造
+            // （`X-Forwarded-For: 10.0.0.123` 也能污染统计）。直接 fall through 到代理覆盖写的
+            // X-Real-IP / socket 地址，两者都不可被客户端伪造。
         }
 
+        // X-Real-IP：反代用 $remote_addr 覆盖写，客户端不可伪造（多层下是内网跳，但仍是可信值）
         var xRealIp = context.Request.Headers["X-Real-IP"].FirstOrDefault();
         if (!string.IsNullOrWhiteSpace(xRealIp))
             return NormalizeIp(xRealIp.Trim());
