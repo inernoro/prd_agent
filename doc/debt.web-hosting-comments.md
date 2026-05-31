@@ -25,12 +25,14 @@
 - 删：评论作者本人 或 站点 owner。
 - 开关：仅 owner / editor 可切换 `CommentsEnabled`（默认 true，存量站点反序列化为 true）。
 
-## 验收状态（2026-05-30）
+## 验收状态（2026-05-31 已通过）
 
-- 前端：`pnpm tsc --noEmit` 0 error、`pnpm lint` 改动文件 0 告警（已自测通过）。
-- 后端 C#：本地无 dotnet SDK，依赖 CDS 远端编译验证。**截至交付，CDS 分支 `claude-fervent-meitner-lcue8` 持续 `building` 近 30 分钟，预览域名 `/api/v` 恒 503，deploy 触发返回 HTTP 500（git 操作成功但部署链路失败）** —— 属 CDS 构建侧外部阻塞，非本次代码可自解。
-- 视觉验收（create-visual-test-to-kb）**未执行**：(a) 预览未就绪；(b) `MAP_ACCEPT_PASS` 登录密码 env 缺失，harness 无法走真人登录路径发表评论。两者均为外部不可自产输入。
-- 待 CDS 构建绿灯 + 提供登录密码后，按既定 driver（登录 → 点「网页托管」→ 站点卡「评论管理」→ 截图；分享页评论区双主题）补跑视觉验收并归档。
+- 前端：`pnpm tsc --noEmit` 0 error、`pnpm lint` 改动文件 0 告警。
+- 后端：CDS 远端编译——期间修复 3 轮真实编译错误（接口未实现 CS0535×6、`AddCommentRequest` 与 PmAgent 重名 CS0101、前端评论入口未接线 TS6133），最终 deploy 流水线全绿、L1/L2/L3 探针 200。
+- API E2E（灰度直连，AI 密钥 impersonate）：列表/发表/再查/开关/关闭后发表 403/重开/删除 8 条用例全过；存量站点 `commentsEnabled` 反序列化为 true。
+- 视觉验收：Playwright 真人路径 10 张截图（站点卡评论管理弹窗发表/开关 + 分享页访客只读 + 登录可评）全部通过，已归档知识库并自查可打开。
+- 报告分享链：https://fervent-meitner-lcue8-claude-prd-agent.miduo.org/s/lib/ftDV5mobkfHt?entry=7f3cdff238d640448019536ba23f75a7
+- 早前「CDS building 30 分钟」判断有误：实为容器构建失败进入 error 态（CDS proxy 把 error 也包成 `status` JSON 返回 200，误导了轮询）；真正根因是编译错误，看 `branch logs --profile api-prd-agent` 才暴露。
 
 ## 关联
 
