@@ -1,6 +1,6 @@
 # Codebase Skill（代码库快照）
 
-> **最后更新**：2026-04-14 | **总提交数**：~360 | **文档版本**：SRS v3.0, PRD v3.0
+> **最后更新**：2026-05-31 | **总提交数**：~375 | **文档版本**：SRS v3.0, PRD v3.0
 >
 > AI 读取此段落即可跳过全盘扫描，仅对增量变更定点校验。
 
@@ -38,6 +38,10 @@ prd_agent/
 **CDS (P4 Part 18, 2026-04-14)**: 多项目隔离 (Project model + dockerNetwork) + **多仓库 git clone (G1 — Project.repoPath + 无状态 WorktreeService + POST /projects/:id/clone SSE)** + Topology 视图 Deploy 按钮 + Public URL 卡片 + Infra 连接串 + **MongoDB 存储后端 (D.1-D.3, JSON ↔ Mongo 运行时切换 + auto-fallback + seed-from-json)** + **GitHub Device Flow 仓库选择器 (E.1-E.3, /api/github/oauth/device-start + repos picker + Settings tab)** + **Stack auto-detect (G10, 8 种栈 nodejs/python/go/rust/java/ruby/php/dockerfile)** + **Self-update pre-check 防护 (validateBuildReadiness + /api/self-update-dry-run + module-load smoke test)** + 空模板 → 创建 → clone → detect → 自动 build profile 端到端 zero-friction 流程
 
 **CDS GitHub 集成 (PR #450, 2026-04-19)**: **push 即部署** —— GitHub App webhook (POST /api/github/webhook) + check-run runner 实时把构建状态推回 PR Checks 面板 + `/cds help|redeploy|stop|logs` PR 评论 slash 命令 + 自动删分支/归档 + 注入防御 + orphan check run 回收。**AI Agent 交付流程相应更新**：对已 link 项目不再提示跑 `/cds-deploy-pipeline`(那是旧版流),push 后 CDS 自动建分支 + 构建 + 部署,2-5 分钟后预览域名就位。后端发 `branch.created/status` SSE 事件(GET /api/branches/stream),前端 Dashboard 打开时能实时看到分支出现 + 构建动画,无需刷新。详见 `.claude/rules/cds-auto-deploy.md`
+
+**CDS 教程 + cdscli 评分/自愈 (PR #696, 2026-05-31)**: 4 个隔离示例工程 (`cds/examples/tutorial-0{1..4}-*/`) + 教程指南 (`doc/guide.cds-tutorial.md`) + 知识库发布脚本 (`scripts/publish-cds-tutorial-kb.py`，4 个独立 DocumentStore，appKey=cds-tutorial)。cdscli verify 扩展：**评分 0-100 分**（ERROR -25/WARNING -8/INFO -2，A≥90/B≥75/C≥60/D≥40/F<40）+ `--min-score N` 门禁 + `--fix/--write` 自愈（env-var 自动注入 placeholder、depends-on 自动补 healthcheck 提示，不可修项输出建议清单）。规则 SSOT 见 `doc/spec.cds-compose-contract.md` §4.4/§4.5，pytest 覆盖 `.claude/skills/cds/tests/test_verify_{score,selfheal}.py`。
+
+**知识库卡片改版 (PR #696, 2026-05-31)**: `DocumentStorePage.tsx` — 多彩渐变图标（按库 ID hash 取色，6 色板）+ 文章迷你目录（序号+标题+标签+相对时间，露前 3 篇+「还有 N 篇」）+ 浏览/点赞 meta + 右下角（相对修改时间+贡献者头像）+ 视图切换（我的空间/收藏/点赞）上移到标题行。移除底部蓝条。后端 `recentEntries` 补 `tags` 字段，`with-preview` 补 LikeCount/ViewCount/FavoriteCount，RelativeTime 列表场景 `refreshIntervalMs={0}`。
 
 **部分完成**：知识库 (多文档上传+类型管理+三阶段格式检测+UTF-16 BOM 支持已实现, RAG/embedding 未实现)
 
