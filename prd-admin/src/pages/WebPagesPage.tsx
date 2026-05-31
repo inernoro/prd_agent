@@ -259,6 +259,13 @@ export default function WebPagesPage() {
   const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [editItem, setEditItem] = useState<HostedSite | null>(null);
   const [pendingExternalFile, setPendingExternalFile] = useState<File | null>(null);
+  // 快照「打开新建上传弹窗时」的空间：弹窗内上传期间用户若切换空间，onSaved 仍按打开时的目标归属
+  const uploadDialogSpaceRef = useRef<Space>({ kind: 'personal' });
+  const openCreateUploadDialog = () => {
+    uploadDialogSpaceRef.current = currentSpace;
+    setEditItem(null);
+    setShowUploadDialog(true);
+  };
   // 上传成功的站点 ID 集合，触发"滑入 + 光环"入场动效。
   // 事件驱动（onSaved 回调）—— 不再用 sites diff 推断，避免筛选/排序变化误触发动效。
   const [freshIds, setFreshIds] = useState<Set<string>>(new Set());
@@ -579,9 +586,12 @@ export default function WebPagesPage() {
           onFiles: async (files) => {
             const f = files[0];
             if (!f) return;
+            // 在 await 之前快照「发起上传时」的空间：上传期间用户若切换个人/其它团队空间，
+            // 仍按发起时的目标投送，避免归属到错误团队（异步竞态防护）
+            const targetSpace = currentSpace;
             // 权限闸门：团队空间内必须有编辑权限才能投放（与上传按钮的显隐条件一致）。
             // dropzone 始终挂载，不能让只读 viewer 通过拖拽绕过按钮把内容写进团队空间。
-            if (currentSpace.kind === 'team' && !canEditInWebHosting(myWebHostingRole)) {
+            if (targetSpace.kind === 'team' && !canEditInWebHosting(myWebHostingRole)) {
               toast.error('无权限', '你在该团队空间是只读角色，无法上传网页');
               return;
             }
@@ -591,10 +601,10 @@ export default function WebPagesPage() {
               return;
             }
             const site = up.data;
-            // 跟随当前空间投送：在团队空间内拖拽上传的网页必须归属该团队，
+            // 跟随发起时空间投送：在团队空间内拖拽上传的网页必须归属该团队，
             // 否则会落到上传者的个人空间（与弹窗上传路径保持一致）
-            if (currentSpace.kind === 'team') {
-              const assigned = await setSiteTeams(site.id, [currentSpace.teamId]);
+            if (targetSpace.kind === 'team') {
+              const assigned = await setSiteTeams(site.id, [targetSpace.teamId]);
               // 归属失败（网络 / 无权限 / 404）时必须告知用户：站点已上传但仍在个人空间，
               // 不能静默报“上传成功”，否则用户以为投到团队了却找不到
               if (!assigned.success) {
@@ -686,7 +696,7 @@ export default function WebPagesPage() {
               <Link2 size={14} className="mr-1" /> 分享管理
             </Button>
             {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
-              <Button size="sm" variant="primary" onClick={() => { setEditItem(null); setShowUploadDialog(true); }}>
+              <Button size="sm" variant="primary" onClick={openCreateUploadDialog}>
                 <Upload size={14} className="mr-1" /> 上传站点
               </Button>
             )}
@@ -836,7 +846,7 @@ export default function WebPagesPage() {
           {/* 与顶部上传按钮同款权限闸门：团队空间只读 viewer 不展示上传入口，
               避免点开弹窗 uploadSite 后被 setTeams 403、徒留站点在个人空间 */}
           {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
-            <Button size="sm" variant="primary" onClick={() => { setEditItem(null); setShowUploadDialog(true); }}>
+            <Button size="sm" variant="primary" onClick={openCreateUploadDialog}>
               <Upload size={14} className="mr-1" /> 上传第一个站点
             </Button>
           )}
@@ -869,9 +879,11 @@ export default function WebPagesPage() {
             setShowUploadDialog(false);
             setEditItem(null);
             setPendingExternalFile(null);
-            // 串数据修复：在团队空间内新建的站点必须归属该团队空间，否则会落到个人空间
-            if (saved && isCreate && currentSpace.kind === 'team') {
-              const assigned = await setSiteTeams(saved.id, [currentSpace.teamId]);
+            // 串数据修复：在团队空间内新建的站点必须归属该团队空间，否则会落到个人空间。
+            // 用打开弹窗时快照的空间（uploadDialogSpaceRef），避免上传期间切换空间归错团队
+            const dialogSpace = uploadDialogSpaceRef.current;
+            if (saved && isCreate && dialogSpace.kind === 'team') {
+              const assigned = await setSiteTeams(saved.id, [dialogSpace.teamId]);
               // 归属失败不能静默：告知用户站点暂在个人空间（与 dropzone 路径一致）
               if (!assigned.success) {
                 toast.error('已上传，但归属团队失败', `${assigned.error?.message || '请稍后在卡片上手动移动到本团队'}（站点暂在个人空间）`);

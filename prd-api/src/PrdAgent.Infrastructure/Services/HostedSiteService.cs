@@ -559,7 +559,11 @@ public class HostedSiteService : IHostedSiteService
         // 直接抛错让 controller 返回 403。空请求（取消全部分享/退出团队空间）属合法操作，不校验。
         var requested = teamIds.Where(t => !string.IsNullOrWhiteSpace(t)).Distinct().ToList();
         var roles = await _teams.GetMyWebHostingTeamRolesAsync(userId, ct);
-        var forbidden = requested
+        // 仅对「新增的目标团队」做编辑权校验：保留已分享团队（即便我已被降级为 viewer）属合法 no-op，
+        // 移除团队也始终允许（move 对话框仅改文件夹时会把当前团队原样回传，不应 403）。
+        // 只有把站点投进一个我无编辑权的新团队才需要拦截。
+        var newlyAdded = requested.Where(t => !site.SharedTeamIds.Contains(t)).ToList();
+        var forbidden = newlyAdded
             .Where(t => !(roles.TryGetValue(t, out var r)
                           && (r == WebHostingRoles.Owner || r == WebHostingRoles.Editor)))
             .ToList();
