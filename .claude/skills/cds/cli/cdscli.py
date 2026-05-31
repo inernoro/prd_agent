@@ -5572,7 +5572,8 @@ def cmd_verify(args: argparse.Namespace) -> None:
         "summary": summary,
     }
 
-    # ── 自愈(--fix)──
+    # ── 自愈(--fix) — 先在内存中计算 patch,不落盘 ──
+    heal: dict | None = None
     if getattr(args, "fix", False):
         heal = _verify_autofix(compose_path, doc, issues)
         payload["heal"] = {
@@ -5582,29 +5583,21 @@ def cmd_verify(args: argparse.Namespace) -> None:
             "diff": heal["diff"],
             "written": False,
         }
-        if getattr(args, "write", False) and heal["autoFixed"]:
-            backup = compose_path + ".bak"
-            try:
-                with open(compose_path, "r", encoding="utf-8") as f:
-                    with open(backup, "w", encoding="utf-8") as b:
-                        b.write(f.read())
-                with open(compose_path, "w", encoding="utf-8") as f:
-                    f.write(heal["patchedYaml"])
-                payload["heal"]["written"] = True
-                payload["heal"]["backup"] = os.path.relpath(backup, root)
-            except OSError as e:
-                die(f"写回 {compose_path} 失败: {e}", code=2, extra=payload)
 
     # ── 质量门禁:ERROR 或 score 不达标 ──
-    # 若 --fix --write 已落盘修复,门禁应基于修复后的剩余 issue,而非原始列表。
+    # 若 --fix --write 请求且有可自愈项,先按修复后剩余 issue 评分,再决定是否写盘。
+    # 这样保证:门禁失败时磁盘不被改动;门禁通过后再落盘并用修复后状态作为输出。
     gate_summary = summary
     gate_score = score
-    if payload.get("heal", {}).get("written"):
+    remaining: list[dict] = issues  # 默认指向原始列表
+    will_write = (heal is not None and getattr(args, "write", False)
+                  and bool(heal["autoFixed"]))
+    if will_write:
         fixed_counter: dict = {}
-        for fx in heal["autoFixed"]:
+        for fx in heal["autoFixed"]:  # type: ignore[index]
             k = (fx.get("rule"), fx.get("service"))
             fixed_counter[k] = fixed_counter.get(k, 0) + 1
-        remaining: list[dict] = []
+        remaining = []
         pending = dict(fixed_counter)
         for iss in issues:
             k = (iss.get("rule"), iss.get("service"))
@@ -5620,13 +5613,7 @@ def cmd_verify(args: argparse.Namespace) -> None:
         }
         gate_summary["score"] = gate_score["score"]
         gate_summary["grade"] = gate_score["grade"]
-        payload["heal"]["remainingAfterWrite"] = {
-            "errors": gate_summary["errors"],
-            "warnings": gate_summary["warnings"],
-            "infos": gate_summary["infos"],
-            "score": gate_score["score"],
-            "grade": gate_score["grade"],
-        }
+
     min_score = getattr(args, "min_score", None)
     gate_fail = gate_summary["errors"] > 0 or (min_score is not None and gate_score["score"] < min_score)
     if gate_fail:
@@ -5637,8 +5624,25 @@ def cmd_verify(args: argparse.Namespace) -> None:
             reasons.append(f"评分 {gate_score['score']}(等级 {gate_score['grade']})< 门槛 {min_score}")
         die("verify 未过门禁: " + ", ".join(reasons), code=1, extra=payload)
 
-    note = (f"verify 通过 评分={score['score']}({score['grade']}) "
-            f"WARNING={summary['warnings']} INFO={summary['infos']}")
+    # ── 门禁通过后才落盘 ──
+    if will_write:
+        backup = compose_path + ".bak"
+        try:
+            with open(compose_path, "r", encoding="utf-8") as f:
+                with open(backup, "w", encoding="utf-8") as b:
+                    b.write(f.read())
+            with open(compose_path, "w", encoding="utf-8") as f:
+                f.write(heal["patchedYaml"])  # type: ignore[index]
+            payload["heal"]["written"] = True  # type: ignore[index]
+            payload["heal"]["backup"] = os.path.relpath(backup, root)  # type: ignore[index]
+        except OSError as e:
+            die(f"写回 {compose_path} 失败: {e}", code=2, extra=payload)
+        # 用修复后状态更新 payload 顶层字段,使解析方读到一致的输出
+        payload["issues"] = remaining
+        payload["summary"] = gate_summary
+
+    note = (f"verify 通过 评分={gate_score['score']}({gate_score['grade']}) "
+            f"WARNING={gate_summary['warnings']} INFO={gate_summary['infos']}")
     ok(payload, note=note)
 
 
