@@ -249,8 +249,14 @@ def validate_inputs(a, body, manifest):
         p = m.get("path", "")
         if not os.path.isfile(p) or os.path.getsize(p) < 1024:
             errs.append(f"[证据] 截图缺失/过小(<1KB)：{m.get('name', p)}")
-        if not (m.get("caption") or "").strip():
+        cap = (m.get("caption") or "").strip()
+        nm = (m.get("name") or "").strip()
+        if not cap:
             errs.append(f"[证据] 截图无 caption：{m.get('name', p)}")
+        elif cap == nm or len(cap) < 6:
+            # 落实 SKILL「取证选材与标注」§B：caption 必须写清"验证了什么"，
+            # 只写名字 / 过短（如「首页截图」「AI 大事」）一律拒收，不能蒙混成合规证据。
+            errs.append(f"[证据] caption 太弱（只写名字/过短，需写清验证点）：{m.get('name', p)} -> {cap!r}")
         # v2.2: harness 在截图前后做了就绪等待 + 内容校验，把 warning 写进 manifest；
         # 这里把 warning 提升为拒收硬条件，让"页面没加载完就拍"无法蒙混过关。
         ws = m.get("warnings") or []
