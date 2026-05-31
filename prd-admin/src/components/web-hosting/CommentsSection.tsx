@@ -45,10 +45,9 @@ export default function CommentsSection(props: Props) {
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      fetchIdRef.current++; // 让在途请求的 myId 失配，彻底丢弃
-    };
+    // 卸载只翻 mountedRef：所有在途 handler（load/submit/delete）都已用 !mountedRef.current 兜底丢弃，
+    // 无需再动 fetchIdRef（动它会触发 react-hooks/exhaustive-deps 的 ref-in-cleanup 告警）。
+    return () => { mountedRef.current = false; };
   }, []);
 
   const mode = props.mode;
@@ -94,25 +93,26 @@ export default function CommentsSection(props: Props) {
   const handleSubmit = async () => {
     const content = draft.trim();
     if (!content || submitting) return;
-    const reqId = fetchIdRef.current; // 锁定当前线程，回来后变了就丢弃（防串线程，Cursor learned rule）
     setSubmitting(true);
     setError(null);
     try {
       const res = mode === 'share'
         ? await addShareComment(token!, content, password)
         : await addSiteComment(siteId!, content);
-      if (reqId !== fetchIdRef.current) return; // token/siteId/password/登录态已变，结果作废
+      if (!mountedRef.current) return;
       if (res.success && res.data) {
-        setComments((prev) => [res.data!, ...prev]);
         setDraft('');
+        // 发表成功后用 load() 重新拉取作为唯一真相：load 在 server commit 之后发起、自带 fetchId/mounted
+        // 守卫，因此新评论必然出现，且不会被"提交前发起、提交后才返回"的并发 reload 覆盖（Cursor medium）。
+        // 不再做乐观 prepend —— 乐观更新与并发 reload 的竞态正是这一系列 bug 的根源。
+        await load();
       } else {
         setError(res.error?.message || '发表失败');
       }
     } catch {
-      if (reqId !== fetchIdRef.current) return;
-      setError('网络错误，发表失败');
+      if (mountedRef.current) setError('网络错误，发表失败');
     } finally {
-      if (reqId === fetchIdRef.current) setSubmitting(false);
+      if (mountedRef.current) setSubmitting(false);
     }
   };
 
