@@ -16,6 +16,9 @@ public class AiNewsController : ControllerBase
 {
     private readonly IAiNewsService _service;
 
+    // 单次请求最多处理多少个 id：防止超大 ids 列表造成大 $in 查询 / 抓取压力（前端按可见条目分批,远小于此）
+    private const int MaxIdsPerRequest = 60;
+
     public AiNewsController(IAiNewsService service)
     {
         _service = service;
@@ -40,7 +43,7 @@ public class AiNewsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<IActionResult> Commentary([FromBody] AiNewsCommentaryRequest body, CancellationToken ct)
     {
-        var ids = body?.Ids ?? new List<string>();
+        var ids = (body?.Ids ?? new List<string>()).Take(MaxIdsPerRequest).ToList();
         if (ids.Count == 0)
         {
             return Ok(ApiResponse<Dictionary<string, string>>.Ok(new()));
@@ -59,7 +62,7 @@ public class AiNewsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<IActionResult> Excerpt([FromBody] AiNewsCommentaryRequest body, CancellationToken ct)
     {
-        var ids = body?.Ids ?? new List<string>();
+        var ids = (body?.Ids ?? new List<string>()).Take(MaxIdsPerRequest).ToList();
         if (ids.Count == 0)
         {
             return Ok(ApiResponse<Dictionary<string, string>>.Ok(new()));

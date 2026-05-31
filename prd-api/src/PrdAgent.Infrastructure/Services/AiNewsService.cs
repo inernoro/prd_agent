@@ -202,19 +202,20 @@ public class AiNewsService : IAiNewsService
         var toFetch = missing.Where(byId.ContainsKey).ToList();
         if (toFetch.Count == 0) return result;
 
-        // 并发抓取（限流），抓不到也写空串标记已抓
+        // 并发抓取（限流）。区分「抓到了（含确实没 meta）」与「抓取失败（瞬时/被拦）」：
+        // 只有真正抓到（Fetched=true）才写缓存，失败的不落库，留待后续重试，避免瞬时故障被永久缓存为「无摘要」。
         using var sem = new SemaphoreSlim(6);
         var tasks = toFetch.Select(async id =>
         {
             await sem.WaitAsync(ct);
             try
             {
-                var ex = await FetchExcerptAsync(byId[id].Url, ct);
-                return (Id: id, Excerpt: ex ?? "");
+                var (ok, ex) = await FetchExcerptAsync(byId[id].Url, ct);
+                return (Id: id, Fetched: ok, Excerpt: ex);
             }
             catch
             {
-                return (Id: id, Excerpt: "");
+                return (Id: id, Fetched: false, Excerpt: "");
             }
             finally
             {
@@ -223,8 +224,9 @@ public class AiNewsService : IAiNewsService
         });
         var fetched = await Task.WhenAll(tasks);
 
-        foreach (var (id, ex) in fetched)
+        foreach (var (id, ok, ex) in fetched)
         {
+            if (!ok) continue; // 抓取失败：不缓存，下次可重试
             if (ex.Length > 0) result[id] = ex;
             await _db.AiNewsEnrichments.UpdateOneAsync(
                 Builders<AiNewsEnrichment>.Filter.Eq(x => x.Id, id),
@@ -238,10 +240,14 @@ public class AiNewsService : IAiNewsService
         return result;
     }
 
-    /// <summary>抓取目标页 meta 摘要（og:description / twitter:description / description）。</summary>
-    private async Task<string?> FetchExcerptAsync(string url, CancellationToken ct)
+    /// <summary>
+    /// 抓取目标页 meta 摘要。返回 (Fetched, Excerpt)：
+    /// Fetched=true 表示成功取到页面（Excerpt 可能为空串=确实没 meta，可缓存）；
+    /// Fetched=false 表示请求失败/被拦/非 2xx（瞬时性，不缓存、待重试）。
+    /// </summary>
+    private async Task<(bool Fetched, string Excerpt)> FetchExcerptAsync(string url, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(url)) return null;
+        if (string.IsNullOrWhiteSpace(url)) return (false, "");
         var client = _httpFactory.CreateClient("AiNews");
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         req.Headers.TryAddWithoutValidation("User-Agent",
@@ -252,9 +258,10 @@ public class AiNewsService : IAiNewsService
         cts.CancelAfter(TimeSpan.FromSeconds(5));
 
         using var resp = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cts.Token);
-        if (!resp.IsSuccessStatusCode) return null;
+        if (!resp.IsSuccessStatusCode) return (false, ""); // 非 2xx（含重定向被禁/被拦）：瞬时性，不缓存
         var mediaType = resp.Content.Headers.ContentType?.MediaType ?? "";
-        if (!mediaType.Contains("html", StringComparison.OrdinalIgnoreCase)) return null;
+        // 非 HTML（PDF/图片等）是稳定属性，算「抓到但无摘要」，缓存空串避免反复抓
+        if (!mediaType.Contains("html", StringComparison.OrdinalIgnoreCase)) return (true, "");
 
         // 只读 head 区域（前 ~256KB 足够拿到 <meta>）
         await using var stream = await resp.Content.ReadAsStreamAsync(cts.Token);
@@ -266,7 +273,7 @@ public class AiNewsService : IAiNewsService
             read += n;
         }
         var html = Encoding.UTF8.GetString(buf, 0, read);
-        return ExtractMetaDescription(html);
+        return (true, ExtractMetaDescription(html) ?? ""); // 抓到了；摘要可能为空（页面无 meta）
     }
 
     private static readonly string[] DescKeys = { "og:description", "twitter:description", "description" };
@@ -438,7 +445,8 @@ public class AiNewsService : IAiNewsService
         var source = raw.Items ?? raw.ItemsAi ?? new List<UpstreamItem>();
 
         var items = source
-            .Where(x => !string.IsNullOrWhiteSpace(x.Url) && HasTitle(x))
+            // 仅保留绝对 http/https 链接：外部源不可信，挡掉 javascript: / data: / 协议相对等会被前端直接当 href 渲染的危险方案。
+            .Where(x => IsSafeHttpUrl(x.Url) && HasTitle(x))
             .Select(MapItem)
             // 按可用时间倒序（优先 published_at，缺失用 first_seen_at）。
             .OrderByDescending(x => ParseTime(x.PublishedAt) ?? ParseTime(x.FirstSeenAt) ?? DateTimeOffset.MinValue)
@@ -454,6 +462,12 @@ public class AiNewsService : IAiNewsService
             Stale = false,
         };
     }
+
+    /// <summary>仅接受绝对 http/https URL（前端会直接当 href 渲染，挡掉 javascript:/data:/相对 等危险方案）。</summary>
+    private static bool IsSafeHttpUrl(string? url) =>
+        !string.IsNullOrWhiteSpace(url)
+        && Uri.TryCreate(url, UriKind.Absolute, out var uri)
+        && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
 
     private static bool HasTitle(UpstreamItem x) =>
         !string.IsNullOrWhiteSpace(x.TitleZh)

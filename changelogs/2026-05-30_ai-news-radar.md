@@ -14,3 +14,5 @@
 | fix | prd-admin | 「AI 大事」分类补全:上游 ai_label 实际有 11 种,之前只映了 2 种,补全 热榜/产品更新/开发工具/智能体/机器人/行业商业/算力基建/技术/研究论文,chip 完整(注:上游分类本身可能不准,此为治标映射) |
 | feat | prd-admin | 「AI 大事」改双栏布局:主 feed 居左铺主区(去掉居中留白),右侧新增侧栏(今日概览+分类分布 mini bar 可点筛选 + 精选速览列表),宽屏填充右侧;窄屏侧栏自动隐藏 |
 | fix | prd-api | 安全:AI 资讯 HttpClient 改走 SafeOutbound 处理器(禁用自动重定向+逐 IP 内网校验),堵住摘要抓取「文章 URL 重定向到内网/元数据地址」的 SSRF(PR #697 Codex P1) |
+| fix | prd-admin | AI 大事健壮性(PR审查):feed 并发 load 加 seq 防陈旧覆盖;摘要/解读请求失败撤销占位可重试;摘要+解读都为空标记已解析避免永久「加载中」;无 id 条目不显示加载占位 |
+| fix | prd-api | AI 资讯健壮性/安全(PR审查):摘要抓取区分「失败」与「确实无摘要」,失败不缓存待重试;commentary/excerpt 端点 ids 上限 60 防超大 $in;上游 feed 仅接受绝对 http/https URL,挡 javascript:/data: 危险 href |

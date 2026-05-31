@@ -100,20 +100,28 @@ export function AiNewsTimeline() {
   const [excerpt, setExcerpt] = useState<Record<string, string>>({});
   const [noExcerpt, setNoExcerpt] = useState<Set<string>>(new Set());
   const [commentary, setCommentary] = useState<Record<string, string>>({});
+  // 摘要与解读都试过且都没有 → 标记「已解析为空」，内容块不再卡在「加载中」
+  const [resolvedEmpty, setResolvedEmpty] = useState<Set<string>>(new Set());
   const excerptReqRef = useRef<Set<string>>(new Set());
   const commentaryReqRef = useRef<Set<string>>(new Set());
+  // 并发 load 防陈旧：轮询/切回标签页/手动刷新可能重叠，只采纳最新一次的结果
+  const loadSeqRef = useRef(0);
 
   const load = useCallback(async (initial: boolean) => {
+    const seq = ++loadSeqRef.current;
     if (initial) setLoading(true);
     else setRefreshing(true);
     const res = await getAiNewsLatest();
-    if (res.success && res.data) {
-      setFeed(res.data);
-      setError(false);
-    } else if (initial) {
-      setError(true);
+    // 旧请求晚到则丢弃其结果，避免覆盖更新的 feed/同步元信息
+    if (seq === loadSeqRef.current) {
+      if (res.success && res.data) {
+        setFeed(res.data);
+        setError(false);
+      } else if (initial) {
+        setError(true);
+      }
+      setNow(Date.now());
     }
-    setNow(Date.now());
     if (initial) setLoading(false);
     else setRefreshing(false);
   }, []);
@@ -207,15 +215,21 @@ export function AiNewsTimeline() {
         const chunk = ids.slice(i, i + 12);
         const res = await getAiNewsExcerpt(chunk);
         if (!alive) return;
-        const data = res.success && res.data ? res.data : {};
-        setExcerpt((prev) => ({ ...prev, ...data }));
-        const missing = chunk.filter((id) => !data[id]);
-        if (missing.length > 0) {
-          setNoExcerpt((prev) => {
-            const next = new Set(prev);
-            missing.forEach((id) => next.add(id));
-            return next;
-          });
+        if (res.success && res.data) {
+          const data = res.data;
+          setExcerpt((prev) => ({ ...prev, ...data }));
+          // 请求成功但确实没摘要 → 进入解读兜底队列
+          const missing = chunk.filter((id) => !data[id]);
+          if (missing.length > 0) {
+            setNoExcerpt((prev) => {
+              const next = new Set(prev);
+              missing.forEach((id) => next.add(id));
+              return next;
+            });
+          }
+        } else {
+          // 请求失败（瞬时错误）：撤销占位，下次轮询/滚动可重试，不误判为「无摘要」
+          chunk.forEach((id) => excerptReqRef.current.delete(id));
         }
       }
     })();
@@ -235,8 +249,22 @@ export function AiNewsTimeline() {
         if (!alive) return;
         const chunk = ids.slice(i, i + 6);
         const res = await getAiNewsCommentary(chunk);
-        if (alive && res.success && res.data) {
-          setCommentary((prev) => ({ ...prev, ...res.data }));
+        if (!alive) return;
+        if (res.success && res.data) {
+          const data = res.data;
+          setCommentary((prev) => ({ ...prev, ...data }));
+          // 成功但某些 id 没解读（LLM 漏/解析失败）→ 标记已解析为空，避免永远「加载中」
+          const empties = chunk.filter((id) => !data[id]);
+          if (empties.length > 0) {
+            setResolvedEmpty((prev) => {
+              const next = new Set(prev);
+              empties.forEach((id) => next.add(id));
+              return next;
+            });
+          }
+        } else {
+          // 请求失败（网络/鉴权过期）：撤销占位，后续可重试
+          chunk.forEach((id) => commentaryReqRef.current.delete(id));
         }
       }
     })();
@@ -300,6 +328,8 @@ export function AiNewsTimeline() {
 
   // ── 内容片段：默认文章摘要(无标签,纯新闻 dek)；抓不到时回退 AI 解读(带「AI解读」小标签);都没有则占位 ──
   const contentBlock = (it: AiNewsItem, meta: LabelMeta) => {
+    // 无 id 的条目无法走增强（按 id 请求），不显示「加载中」占位，留标题/标签即可
+    if (!it.id) return null;
     const ex = excerpt[it.id];
     const cm = commentary[it.id];
     if (ex) {
@@ -323,6 +353,8 @@ export function AiNewsTimeline() {
         </div>
       );
     }
+    // 摘要 + 解读都已尝试且都没有 → 不再显示「加载中」，留标题/标签即可
+    if (resolvedEmpty.has(it.id)) return null;
     return (
       <div
         className="mt-2 pl-3"
