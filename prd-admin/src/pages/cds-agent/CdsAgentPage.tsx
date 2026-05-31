@@ -1071,10 +1071,9 @@ export default function CdsAgentPage() {
     && profileDraft.model.trim()
     && (profileDraft.apiKey.trim() || activeProfile.hasApiKey),
   );
-  // Lite 可用时只需一个 active CDS 连接即可发起（不强制 profile）；否则仍要一个可用 profile。
+  // Lite 可用时连 CDS 连接都不强制（对话模式后端走 Lite 本地，不需要授权）；否则仍要 active 连接 + 可用 profile。
   const canCreateSession = Boolean(
-    activeConnection
-    && (activeProfile || liteReviewAvailable)
+    (activeConnection || liteReviewAvailable)
     && !activeProfileBlockReason
     && !activeRuntimePoolBlockReason,
   );
@@ -2657,7 +2656,7 @@ export default function CdsAgentPage() {
   }
 
   async function createSession() {
-    if (!activeConnection) {
+    if (!activeConnection && !liteReviewAvailable) {
       toast.warning('没有可用 CDS 连接', '请先到设置里的基础设施服务完成系统级授权');
       return;
     }
@@ -2672,7 +2671,7 @@ export default function CdsAgentPage() {
     setBusy(true);
     try {
       const res = await createInfraAgentSession({
-        connectionId: activeConnection.id,
+        connectionId: activeConnection?.id ?? '',
         runtime: activeProfile?.runtime ?? 'claude-sdk',
         model: activeProfile?.model,
         runtimeProfileId: activeProfile?.id,
@@ -2788,7 +2787,7 @@ export default function CdsAgentPage() {
     }
 
     let session = activeSessionTimedOut ? null : activeSession;
-    if (!session && !activeConnection) {
+    if (!session && !activeConnection && !liteReviewAvailable) {
       toast.warning('没有可用 CDS 连接', '请先到设置里的基础设施服务完成系统级授权');
       return;
     }
@@ -2821,7 +2820,7 @@ export default function CdsAgentPage() {
         const title = normalizedPrompt.slice(0, 28) || (simpleTaskMode === 'code' ? '只读代码巡检' : 'Agent 对话');
         setSimplePhase('creating', '正在创建会话', '绑定 connection、runtime profile 与工作区信息', session);
         const createRes = await createInfraAgentSession({
-          connectionId: activeConnection!.id,
+          connectionId: activeConnection?.id ?? '',
           runtime: activeProfile?.runtime ?? 'claude-sdk',
           model: activeProfile?.model,
           runtimeProfileId: activeProfile?.id,
