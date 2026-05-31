@@ -1464,12 +1464,14 @@ export function DocBrowser({
 
   useEffect(() => {
     if (selectedEntryId) {
-      const entry = entries.find(e => e.id === selectedEntryId);
+      // 用 selectedEntryData（含 searchResults 回退），否则搜索命中、不在已加载 entries 里的
+      // 条目不会触发 loadContent，preview 停在上一篇，正文/证据图显示错位（Bugbot High）。
+      const entry = selectedEntryData;
       if (entry && !entry.isFolder) {
         loadEntryContent(selectedEntryId, `${selectedEntryId}:${entry.updatedAt ?? ''}`);
       }
     }
-  }, [selectedEntryId, loadEntryContent, entries]);
+  }, [selectedEntryId, loadEntryContent, selectedEntryData]);
 
   // 新建文档默认进入编辑态：autoEditEntryId 命中且内容加载完成后自动开编辑（一次性）
   useEffect(() => {

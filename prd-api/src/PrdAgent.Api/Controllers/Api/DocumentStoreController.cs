@@ -841,7 +841,9 @@ public class DocumentStoreController : ControllerBase
             var sectionProblems = AcceptanceTemplateRegistry.ValidateContentSections(contentTemplate, content);
             if (sectionProblems.Count > 0 && IsMachineTemplatedWrite(entry.Metadata))
                 return TemplateValidationError(contentTemplate, sectionProblems);
-            contentCompliant = sectionProblems.Count == 0; // 人工写入：记录是否合规（软提醒持久化）
+            // 合规 = 正文 section 齐 且 必填 metadata 齐。否则会把 AddEntry 标的 false 误覆盖成 true。
+            var metaProblems = AcceptanceTemplateRegistry.ValidateMetadata(contentTemplate, entry.Metadata);
+            contentCompliant = sectionProblems.Count == 0 && metaProblems.Count == 0;
         }
 
         // 更新或创建 ParsedPrd
@@ -1588,8 +1590,9 @@ public class DocumentStoreController : ControllerBase
         {
             try
             {
-                // 跳过"只有二进制、导出时未带正文"的条目：建出来也是空壳（导出端已标 binarySkipped）。
-                if (fe.BinarySkipped && string.IsNullOrEmpty(fe.Content)) { skipped++; continue; }
+                // 跳过无正文的非文件夹条目：本期同步只搬文本正文，无正文（含二进制 skipped、
+                // 或纯标题空壳）建出来也是空壳，且无 reportId 时重复同步会重复插入，一律跳过。
+                if (string.IsNullOrEmpty(fe.Content)) { skipped++; continue; }
 
                 var reportId = fe.Metadata != null && fe.Metadata.TryGetValue("reportId", out var rid) ? rid : null;
                 if (!string.IsNullOrEmpty(reportId) && existingReportIds.Contains(reportId)) { skipped++; continue; }

@@ -87,7 +87,11 @@ def main():
         print(f"[错误] 源环境找不到库「{a.store}」")
         sys.exit(2)
     print(f"源库 id={sid}，导出中…")
-    bundle = curl(Hs + [f"{src}{API_BASE}/stores/{sid}/export"])["data"]
+    exp = curl(Hs + [f"{src}{API_BASE}/stores/{sid}/export"])
+    if not exp.get("success") or not exp.get("data"):
+        print(f"[错误] 导出失败：{json.dumps(exp.get('error'), ensure_ascii=False)}（write-only key 也需要读权限，确认 scope 或换 AI_ACCESS_KEY）")
+        sys.exit(3)
+    bundle = exp["data"]
     stats = bundle.get("stats", {})
     print(f"导出完成：共 {stats.get('total', '?')} 条，二进制跳过 {stats.get('binarySkipped', 0)} 条")
 

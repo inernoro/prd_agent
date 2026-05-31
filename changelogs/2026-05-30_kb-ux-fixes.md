@@ -13,3 +13,7 @@
 | fix | prd-api | 移除 DocumentStoreController 里用 NUL 字节做字典分隔符（致全文件被 grep/rg 当二进制），改用元组键 |
 | fix | prd-api | ImportStore 复用已存在同名库时补 templateKey；跳过 binary-only 空条目；人工写入持久化 templateCompliant 软标记 |
 | fix | prd-admin | 证据图按钮 + 祖先展开 parentMap 合并 searchResults，搜索命中的验收报告也能显示证据图按钮/展开定位 |
+| fix | prd-admin | 搜索命中条目正文加载错位修复(High)：内容加载 effect 改用 selectedEntryData(含 searchResults)，避免选中搜索结果时 preview 停在上一篇 |
+| fix | create-visual-test-to-kb | kb_sync export 失败显式报错(不再 KeyError) |
+| fix | prd-api | 跨环境导入跳过所有无正文非文件夹条目(空壳/二进制)，避免重复同步重复插入 |
+| fix | prd-api | templateCompliant 标记同时依据 metadata + 正文 section，避免补正文时把缺 metadata 的报告误标合规 |
