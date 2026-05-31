@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Radio, RefreshCw, ExternalLink, Newspaper, Sparkles, ChevronDown } from 'lucide-react';
+import {
+  Radio,
+  RefreshCw,
+  ExternalLink,
+  Newspaper,
+  Sparkles,
+  ChevronDown,
+  List,
+  LayoutGrid,
+  type LucideIcon,
+} from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { glassPanel } from '@/lib/glassStyles';
 import { getAiNewsLatest, type AiNewsFeed, type AiNewsItem } from '@/services/real/aiNews';
@@ -12,17 +22,20 @@ import {
   BUCKET_LABEL,
   FEATURED_THRESHOLD,
   sortByRecency,
+  type LabelMeta,
   type Bucket,
 } from './aiNewsShared';
 import './aiNews.css';
 
 /**
- * 更新中心「AI 大事」时间线。
+ * 更新中心「AI 大事」资讯阅读区。
  *
- * 时间分组（刚刚 / 今天 / 昨天 / 更早）+ 响应式资讯卡网格，比首页小卡 teaser 看得更全、更远。
+ * 默认单列新闻流时间线（像新闻 App / RSS 阅读器，逐条从上到下，配来源站图标），
+ * 可切换到网格视图。比首页小卡 teaser 看得更全、更远。
  * - live 脉冲 + 90s 轮询 + 切回标签页刷新 + 相对时间跳秒
- * - 全部 / 精选筛选
- * - 「加载更多」逐批揭示，可一直往下看（后端返回上限已提到 200 条）
+ * - 全部 / 精选筛选 + 时间线 / 网格视图切换
+ * - 「加载更多」逐批揭示（后端返回上限已提到 200 条）
+ * - 图片：阶段一用来源站 favicon（失败回退分类图标），阶段二再上文章 og:image 大图
  */
 
 const POLL_MS = 90_000;
@@ -30,6 +43,45 @@ const TICK_MS = 30_000;
 const PAGE = 24; // 每批揭示条数
 
 type Tab = 'all' | 'featured';
+type View = 'timeline' | 'grid';
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return '';
+  }
+}
+
+/** 来源站图标：favicon 优先，加载失败回退到分类图标色块。 */
+function SourceAvatar({ url, meta, size = 40 }: { url: string; meta: LabelMeta; size?: number }) {
+  const host = useMemo(() => hostOf(url), [url]);
+  const [failed, setFailed] = useState(false);
+  const Icon = meta.icon;
+
+  if (!host || failed) {
+    return (
+      <div
+        className="shrink-0 inline-flex items-center justify-center rounded-lg"
+        style={{ width: size, height: size, background: `${meta.color}24`, border: `1px solid ${meta.color}40` }}
+      >
+        <Icon size={Math.round(size * 0.46)} style={{ color: meta.color }} />
+      </div>
+    );
+  }
+  return (
+    <img
+      src={`https://${host}/favicon.ico`}
+      alt=""
+      width={size}
+      height={size}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className="shrink-0 rounded-lg object-cover"
+      style={{ width: size, height: size, background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-subtle, rgba(255,255,255,0.08))' }}
+    />
+  );
+}
 
 export function AiNewsTimeline() {
   const [feed, setFeed] = useState<AiNewsFeed | null>(null);
@@ -37,6 +89,7 @@ export function AiNewsTimeline() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(false);
   const [tab, setTab] = useState<Tab>('all');
+  const [view, setView] = useState<View>('timeline');
   const [now, setNow] = useState(() => Date.now());
   const [visible, setVisible] = useState(PAGE);
 
@@ -110,6 +163,59 @@ export function AiNewsTimeline() {
     [feed],
   );
 
+  // ── 单条 meta 行（时间线 / 网格 共用）──
+  const metaRow = (it: AiNewsItem, meta: LabelMeta) => {
+    const Icon = meta.icon;
+    const featured = it.aiScore >= FEATURED_THRESHOLD;
+    return (
+      <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+        <span
+          className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded"
+          style={{ background: `${meta.color}1f`, color: meta.color }}
+        >
+          <Icon size={10} />
+          {meta.label}
+        </span>
+        {featured && (
+          <span
+            className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded"
+            style={{ background: 'rgba(34,211,238,0.14)', color: '#67e8f9' }}
+          >
+            <Sparkles size={9} /> 精选
+          </span>
+        )}
+        {it.source && (
+          <span className="text-[11px] truncate max-w-[160px]" style={{ color: 'var(--text-muted)' }}>
+            {it.source}
+          </span>
+        )}
+        <span className="text-[10px] ml-auto shrink-0" style={{ color: 'var(--text-muted)' }}>
+          {relTime(itemTime(it), now)}
+        </span>
+      </div>
+    );
+  };
+
+  const ViewToggleBtn = ({ v, icon: Icon, label }: { v: View; icon: LucideIcon; label: string }) => {
+    const on = view === v;
+    return (
+      <button
+        type="button"
+        onClick={() => setView(v)}
+        aria-label={label}
+        title={label}
+        className="w-8 h-8 rounded-lg inline-flex items-center justify-center transition-colors"
+        style={{
+          background: on ? 'rgba(34,211,238,0.14)' : 'transparent',
+          border: `1px solid ${on ? 'rgba(34,211,238,0.34)' : 'var(--border-subtle, rgba(255,255,255,0.08))'}`,
+          color: on ? '#67e8f9' : 'var(--text-muted)',
+        }}
+      >
+        <Icon size={15} />
+      </button>
+    );
+  };
+
   return (
     <div className="flex flex-col gap-4 h-full min-h-0">
       {/* ── Header ── */}
@@ -144,7 +250,7 @@ export function AiNewsTimeline() {
           </div>
         </div>
 
-        {/* 筛选 */}
+        {/* 筛选 + 视图切换 + 刷新 */}
         <div className="flex items-center gap-1.5 ml-auto shrink-0">
           {(['all', 'featured'] as Tab[]).map((t) => {
             const on = tab === t;
@@ -166,6 +272,9 @@ export function AiNewsTimeline() {
               </button>
             );
           })}
+          <span className="w-px h-5 mx-0.5" style={{ background: 'var(--border-subtle, rgba(255,255,255,0.1))' }} />
+          <ViewToggleBtn v="timeline" icon={List} label="时间线视图" />
+          <ViewToggleBtn v="grid" icon={LayoutGrid} label="网格视图" />
           <button
             type="button"
             onClick={() => void load(false)}
@@ -180,10 +289,7 @@ export function AiNewsTimeline() {
       </header>
 
       {/* ── Body ── */}
-      <div
-        className="flex-1 min-h-0 overflow-y-auto pr-1"
-        style={{ overscrollBehavior: 'contain' }}
-      >
+      <div className="flex-1 min-h-0 overflow-y-auto pr-1" style={{ overscrollBehavior: 'contain' }}>
         {loading ? (
           <div className="flex items-center justify-center py-24">
             <MapSpinner size={26} color="#22d3ee" />
@@ -210,7 +316,8 @@ export function AiNewsTimeline() {
             <div className="text-[13px]" style={{ color: 'var(--text-muted)' }}>该筛选下暂无资讯，试试「全部」</div>
           </div>
         ) : (
-          <div className="flex flex-col gap-5">
+          // 单列新闻流时间线居中阅读列；网格视图铺满宽度
+          <div style={view === 'timeline' ? { maxWidth: 900, margin: '0 auto' } : undefined} className="flex flex-col gap-5">
             {groups.map((g, gi) => (
               <section key={`${g.bucket}-${gi}`} className="flex flex-col gap-3">
                 {/* 分组标题 */}
@@ -222,76 +329,88 @@ export function AiNewsTimeline() {
                   <span className="flex-1 h-px" style={{ background: 'var(--border-subtle, rgba(255,255,255,0.08))' }} />
                 </div>
 
-                {/* 资讯卡网格 */}
-                <div
-                  className="grid"
-                  style={{ gap: 12, gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' }}
-                >
-                  {g.items.map((it, idx) => {
-                    const meta = labelMeta(it.aiLabel);
-                    const Icon = meta.icon;
-                    const featured = it.aiScore >= FEATURED_THRESHOLD;
-                    return (
-                      <a
-                        key={it.id || it.url}
-                        href={it.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="ainews-item group relative rounded-xl overflow-hidden flex flex-col p-4 transition-all duration-200 hover:-translate-y-0.5"
-                        style={{
-                          ...glassPanel,
-                          animationDelay: `${Math.min(idx, 10) * 26}ms`,
-                        }}
-                      >
-                        {/* 左侧类别色条 */}
-                        <span className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: meta.color }} />
-                        {/* hover 辉光 */}
-                        <span
-                          className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
-                          style={{ boxShadow: `inset 0 0 0 1px ${meta.color}55, 0 0 22px ${meta.color}1a` }}
-                        />
-
-                        <div
-                          className="text-[13.5px] font-medium leading-snug line-clamp-3 transition-colors"
-                          style={{ color: 'var(--text-primary)' }}
-                        >
-                          {it.title}
-                          <ExternalLink
-                            size={12}
-                            className="inline-block ml-1 mb-0.5 opacity-0 group-hover:opacity-60 transition-opacity"
-                            style={{ color: 'var(--text-muted)' }}
-                          />
-                        </div>
-
-                        <div className="flex items-center gap-2 mt-auto pt-3 flex-wrap">
-                          <span
-                            className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded"
-                            style={{ background: `${meta.color}1f`, color: meta.color }}
+                {view === 'timeline' ? (
+                  // ── 单列新闻流：左侧时间脊 + favicon + 标题 + meta ──
+                  <div className="relative">
+                    {/* 时间脊 */}
+                    <span
+                      className="absolute top-1 bottom-1 w-px"
+                      style={{ left: 19, background: 'var(--border-subtle, rgba(255,255,255,0.09))' }}
+                    />
+                    <div className="flex flex-col">
+                      {g.items.map((it, idx) => {
+                        const meta = labelMeta(it.aiLabel);
+                        return (
+                          <a
+                            key={it.id || it.url}
+                            href={it.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="ainews-item group relative flex items-start gap-3 rounded-xl px-3 py-3 transition-colors hover:bg-[rgba(255,255,255,0.04)]"
+                            style={{ animationDelay: `${Math.min(idx, 12) * 24}ms` }}
                           >
-                            <Icon size={10} />
-                            {meta.label}
-                          </span>
-                          {featured && (
+                            {/* 节点色点（脊上） */}
                             <span
-                              className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded"
-                              style={{ background: 'rgba(34,211,238,0.14)', color: '#67e8f9' }}
+                              className="absolute rounded-full z-10"
+                              style={{ left: 16, top: 18, width: 7, height: 7, background: meta.color, boxShadow: `0 0 0 3px ${meta.color}26` }}
+                            />
+                            {/* favicon（缩进让出时间脊） */}
+                            <div className="shrink-0 ml-5">
+                              <SourceAvatar url={it.url} meta={meta} size={40} />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div
+                                className="text-[14.5px] font-medium leading-snug line-clamp-2 group-hover:underline"
+                                style={{ color: 'var(--text-primary)', textDecorationColor: meta.color }}
+                              >
+                                {it.title}
+                                <ExternalLink
+                                  size={12}
+                                  className="inline-block ml-1 mb-0.5 opacity-0 group-hover:opacity-60 transition-opacity"
+                                  style={{ color: 'var(--text-muted)' }}
+                                />
+                              </div>
+                              {metaRow(it, meta)}
+                            </div>
+                          </a>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  // ── 网格视图 ──
+                  <div className="grid" style={{ gap: 12, gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' }}>
+                    {g.items.map((it, idx) => {
+                      const meta = labelMeta(it.aiLabel);
+                      return (
+                        <a
+                          key={it.id || it.url}
+                          href={it.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="ainews-item group relative rounded-xl overflow-hidden flex flex-col p-4 transition-all duration-200 hover:-translate-y-0.5"
+                          style={{ ...glassPanel, animationDelay: `${Math.min(idx, 10) * 26}ms` }}
+                        >
+                          <span className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: meta.color }} />
+                          <span
+                            className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+                            style={{ boxShadow: `inset 0 0 0 1px ${meta.color}55, 0 0 22px ${meta.color}1a` }}
+                          />
+                          <div className="flex items-start gap-2.5">
+                            <SourceAvatar url={it.url} meta={meta} size={34} />
+                            <div
+                              className="text-[13.5px] font-medium leading-snug line-clamp-3 transition-colors"
+                              style={{ color: 'var(--text-primary)' }}
                             >
-                              <Sparkles size={9} /> 精选
-                            </span>
-                          )}
-                          {it.source && (
-                            <span className="text-[11px] truncate max-w-[140px]" style={{ color: 'var(--text-muted)' }}>
-                              {it.source}
-                            </span>
-                          )}
-                          <span className="text-[10px] ml-auto shrink-0" style={{ color: 'var(--text-muted)' }}>
-                            {relTime(itemTime(it), now)}
-                          </span>
-                        </div>
-                      </a>
-                    );
-                  })}
-                </div>
+                              {it.title}
+                            </div>
+                          </div>
+                          {metaRow(it, meta)}
+                        </a>
+                      );
+                    })}
+                  </div>
+                )}
               </section>
             ))}
 
