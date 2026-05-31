@@ -750,7 +750,7 @@ public class WebPagesController : ControllerBase
 
     /// <summary>在某站点发表评论（owner / 团队成员视角，需登录）</summary>
     [HttpPost("{siteId}/comments")]
-    public async Task<IActionResult> AddSiteComment(string siteId, [FromBody] AddCommentRequest req)
+    public async Task<IActionResult> AddSiteComment(string siteId, [FromBody] AddSiteCommentRequest req)
     {
         var result = await _siteService.AddCommentBySiteAsync(
             siteId, GetUserId(), GetDisplayName(), await GetAvatarFileNameAsync(GetUserId()), req.Content ?? string.Empty);
@@ -771,7 +771,7 @@ public class WebPagesController : ControllerBase
 
     /// <summary>经分享链接发表评论（需登录）</summary>
     [HttpPost("shares/view/{token}/comments")]
-    public async Task<IActionResult> AddShareComment(string token, [FromQuery] string? password, [FromBody] AddCommentRequest req)
+    public async Task<IActionResult> AddShareComment(string token, [FromQuery] string? password, [FromBody] AddSiteCommentRequest req)
     {
         var userId = GetUserId();
         var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
@@ -888,7 +888,7 @@ public class SetCommentsEnabledRequest
     public bool Enabled { get; set; }
 }
 
-public class AddCommentRequest
+public class AddSiteCommentRequest
 {
     /// <summary>评论正文（1-2000 字）</summary>
     public string? Content { get; set; }
