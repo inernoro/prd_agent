@@ -252,6 +252,15 @@ public class TaskTreeController : ControllerBase
         await _db.TaskNodes.UpdateOneAsync(n => n.Id == nodeId, u.Combine(updates));
         await TouchTreeAsync(node.TreeId, 0);
 
+        // 重命名根节点（创世支柱）时同步树标题：树下拉/列表/ListTrees 用的是 TaskTree.Title
+        if (request.Title != null && node.ParentId == null)
+        {
+            var rt = request.Title.Trim();
+            if (rt.Length > 0)
+                await _db.TaskTrees.UpdateOneAsync(t => t.Id == node.TreeId,
+                    Builders<TaskTree>.Update.Set(t => t.Title, rt.Length > 60 ? rt[..60] : rt));
+        }
+
         var updated = await _db.TaskNodes.Find(n => n.Id == nodeId).FirstOrDefaultAsync();
         return Ok(ApiResponse<object>.Ok(updated));
     }

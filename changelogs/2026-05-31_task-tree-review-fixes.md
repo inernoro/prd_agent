@@ -5,3 +5,4 @@
 | fix | prd-api | 任务树 ListBlockers 对 DependsOn 做 null 防护，避免卡点墙聚合时空引用崩溃（High） |
 | fix | prd-api | 任务树 UpdateNode 禁止把非根节点清空父节点（防止产生第二个根导致节点消失） |
 | fix | prd-admin | 对话摘取切树后节点落到原树时弹 toast 反馈（遵循 server-authority 不中断服务端任务） |
+| fix | prd-api | 任务树重命名根节点时同步 TaskTree.Title，避免树下拉/列表仍显示旧名（Codex P2） |
