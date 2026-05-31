@@ -38,6 +38,7 @@ export type TaskNode = {
 /** 卡点上报项 */
 export type TaskBlockerItem = {
   node: TaskNode;
+  ownerName: string;
   treeTitle: string;
   stuckDays: number;
   blocks: string[];
@@ -114,6 +115,8 @@ export type RemoveTaskDependencyContract = (
   dependsOnId: string
 ) => Promise<ApiResponse<{ removed: boolean }>>;
 
-export type ListTaskBlockersContract = () => Promise<
-  ApiResponse<{ items: TaskBlockerItem[]; total: number }>
+export type ListTaskBlockersContract = (
+  scope?: 'mine' | 'all'
+) => Promise<
+  ApiResponse<{ items: TaskBlockerItem[]; total: number; canViewAll: boolean; scope: string }>
 >;

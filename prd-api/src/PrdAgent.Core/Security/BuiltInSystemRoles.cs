@@ -41,6 +41,7 @@ public static class BuiltInSystemRoles
                 AdminPermissionCatalog.CcasAgentUse,
                 AdminPermissionCatalog.PaAgentUse,
                 AdminPermissionCatalog.ProjectRouteAgentUse,
+                AdminPermissionCatalog.TaskTreeViewAll,
                 // 管理权限
                 AdminPermissionCatalog.ModelsRead,
                 AdminPermissionCatalog.ModelsWrite,

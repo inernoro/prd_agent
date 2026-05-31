@@ -67,6 +67,6 @@ export const removeTaskDependencyReal: RemoveTaskDependencyContract = async (nod
   );
 };
 
-export const listTaskBlockersReal: ListTaskBlockersContract = async () => {
-  return await apiRequest(api.taskTree.blockers(), { method: 'GET' });
+export const listTaskBlockersReal: ListTaskBlockersContract = async (scope = 'mine') => {
+  return await apiRequest(`${api.taskTree.blockers()}?scope=${scope}`, { method: 'GET' });
 };

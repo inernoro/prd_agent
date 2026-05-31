@@ -85,6 +85,27 @@
 .tt-chips .chip:hover { background: rgba(127, 127, 127, 0.16); }
 .tt-hint { color: var(--tt-dim); font-size: 13px; line-height: 1.8; }
 
+.tt-newtree { display: inline-flex; gap: 6px; align-items: center; }
+.tt-newtree input { padding: 7px 11px; border-radius: 9px; border: 1px solid var(--tt-border); background: var(--tt-panel2); color: var(--tt-text); font-size: 12.5px; outline: none; width: 160px; }
+.tt-titleedit { font-size: 16px; font-weight: 700; background: transparent; border: 1px solid transparent; border-radius: 8px; color: var(--tt-text); padding: 4px 6px; margin: -4px -6px; outline: none; width: 100%; }
+.tt-titleedit:hover { border-color: var(--tt-border); }
+.tt-titleedit:focus { border-color: var(--accent, #7c5cff); background: var(--tt-panel2); }
+.tt-inline-add { width: 100%; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--accent, #7c5cff); background: var(--tt-panel2); color: var(--tt-text); font-size: 12.5px; outline: none; }
+.tt-depselect { width: 100%; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--tt-border); background: var(--tt-panel2); color: var(--tt-text); font-size: 12.5px; outline: none; }
+.tt-mini { display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; border-radius: 8px; border: 1px dashed var(--tt-border); background: transparent; color: var(--tt-dim); font-size: 12px; cursor: pointer; align-self: flex-start; }
+.tt-mini:hover:not(:disabled) { color: var(--tt-text); border-color: var(--tt-dim); }
+.tt-mini:disabled { opacity: .4; cursor: default; }
+.tt-danger { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 12px; border-radius: 10px; border: 1px solid rgba(224, 86, 59, 0.4); background: rgba(224, 86, 59, 0.08); color: #e0563b; font-size: 12.5px; cursor: pointer; margin-top: 4px; }
+.tt-danger:hover { background: rgba(224, 86, 59, 0.16); }
+.tt-chips .chip { display: inline-flex; align-items: center; gap: 5px; }
+.tt-chips .chip .chip-x { opacity: .55; cursor: pointer; }
+.tt-chips .chip .chip-x:hover { opacity: 1; color: #e0563b; }
+
+.tt-wallhead { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
+.tt-scope { display: flex; gap: 3px; background: var(--tt-chip); padding: 3px; border-radius: 10px; }
+.tt-scope button { padding: 6px 14px; border-radius: 8px; font-size: 12.5px; cursor: pointer; color: var(--tt-dim); background: transparent; border: none; }
+.tt-scope button.on { background: var(--tt-panel2); color: var(--tt-text); }
+
 .tt-chat { flex-shrink: 0; border-top: 1px solid var(--tt-border); padding: 11px 18px; background: var(--tt-panel); }
 .tt-chatlog { max-height: 76px; overflow-y: auto; font-size: 12.5px; line-height: 1.7; margin-bottom: 8px; }
 .tt-chatlog .u { color: var(--tt-text); }

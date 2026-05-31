@@ -34,6 +34,13 @@ public class TaskTreeController : ControllerBase
 
     private string GetUserId() => this.GetRequiredUserId();
 
+    /// <summary>是否具备指定权限（中间件已把有效权限注入 permissions claim）。super 视为全通过。</summary>
+    private bool HasPermission(string perm)
+    {
+        var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
+        return permissions.Contains(perm) || permissions.Contains(AdminPermissionCatalog.Super);
+    }
+
     // ─────────────────────────────────────────────
     // 任务树 CRUD
     // ─────────────────────────────────────────────
@@ -308,36 +315,49 @@ public class TaskTreeController : ControllerBase
     // ─────────────────────────────────────────────
 
     /// <summary>
-    /// 当前用户的卡点清单，按卡住时长降序（卡最久的在前）。
-    /// 注：当前仅聚合本人卡点；跨人/团队聚合（给上级看）需团队模型支撑，列为后续能力（见 debt 台账）。
+    /// 卡点清单，按卡住时长降序（卡最久的在前）。
+    /// scope=mine（默认）只看本人；scope=all 聚合所有人的卡点（需 task-tree.view-all 权限，给上级看）。
     /// </summary>
     [HttpGet("blockers")]
-    public async Task<IActionResult> ListBlockers()
+    public async Task<IActionResult> ListBlockers([FromQuery] string scope = "mine")
     {
         var userId = GetUserId();
-        var blocked = await _db.TaskNodes
-            .Find(n => n.OwnerId == userId && n.Status == TaskNodeStatus.Blocked)
-            .ToListAsync();
+        var canViewAll = HasPermission(AdminPermissionCatalog.TaskTreeViewAll);
+        var allScope = scope == "all" && canViewAll;
 
-        var now = DateTime.UtcNow;
-        var trees = await _db.TaskTrees.Find(t => t.OwnerId == userId).ToListAsync();
+        var nodeFilter = allScope
+            ? Builders<TaskNode>.Filter.Empty
+            : Builders<TaskNode>.Filter.Eq(n => n.OwnerId, userId);
+
+        var blockedFilter = Builders<TaskNode>.Filter.And(
+            nodeFilter,
+            Builders<TaskNode>.Filter.Eq(n => n.Status, TaskNodeStatus.Blocked));
+        var blocked = await _db.TaskNodes.Find(blockedFilter).ToListAsync();
+
+        // 下游引用 + 树标题 + 负责人：按 scope 取相应范围
+        var scopedNodes = await _db.TaskNodes.Find(nodeFilter).ToListAsync();
+        var treeIds = blocked.Select(n => n.TreeId).Distinct().ToList();
+        var trees = await _db.TaskTrees.Find(t => treeIds.Contains(t.Id)).ToListAsync();
         var treeTitles = trees.ToDictionary(t => t.Id, t => t.Title);
 
-        // 计算每个卡点下游阻塞了哪些任务
-        var allNodes = await _db.TaskNodes.Find(n => n.OwnerId == userId).ToListAsync();
+        var ownerIds = blocked.Select(n => n.OwnerId).Distinct().ToList();
+        var owners = await _db.Users.Find(u => ownerIds.Contains(u.UserId)).ToListAsync();
+        var ownerNames = owners.ToDictionary(u => u.UserId, u => string.IsNullOrEmpty(u.DisplayName) ? u.Username : u.DisplayName);
 
+        var now = DateTime.UtcNow;
         var items = blocked
             .Select(n => new
             {
                 node = n,
+                ownerName = ownerNames.TryGetValue(n.OwnerId, out var on) ? on : "",
                 treeTitle = treeTitles.TryGetValue(n.TreeId, out var tt) ? tt : "",
                 stuckDays = n.BlockedSince.HasValue ? (int)Math.Floor((now - n.BlockedSince.Value).TotalDays) : 0,
-                blocks = allNodes.Where(x => x.DependsOn.Contains(n.Id)).Select(x => x.Title).ToList(),
+                blocks = scopedNodes.Where(x => x.DependsOn.Contains(n.Id)).Select(x => x.Title).ToList(),
             })
             .OrderByDescending(x => x.stuckDays)
             .ToList();
 
-        return Ok(ApiResponse<object>.Ok(new { items, total = items.Count }));
+        return Ok(ApiResponse<object>.Ok(new { items, total = items.Count, canViewAll, scope = allScope ? "all" : "mine" }));
     }
 
     // ─────────────────────────────────────────────

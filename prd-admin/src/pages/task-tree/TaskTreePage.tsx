@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, RotateCcw } from 'lucide-react';
+import { Plus, RotateCcw, Trash2, GitBranch, X } from 'lucide-react';
 import {
   listTaskTrees,
   getTaskTree,
   createTaskTree,
+  createTaskNode,
   updateTaskNode,
+  deleteTaskNode,
+  addTaskDependency,
+  removeTaskDependency,
   listTaskBlockers,
   type TaskTree,
   type TaskNode,
@@ -106,6 +110,10 @@ export function TaskTreePage() {
   const [chatLog, setChatLog] = useState<{ role: 'u' | 'a'; text: string }[]>([]);
   const [extracting, setExtracting] = useState(false);
   const [blockers, setBlockers] = useState<TaskBlockerItem[]>([]);
+  const [wallScope, setWallScope] = useState<'mine' | 'all'>('mine');
+  const [canViewAll, setCanViewAll] = useState(false);
+  const [showNewTree, setShowNewTree] = useState(false);
+  const [newTreeTitle, setNewTreeTitle] = useState('');
   const [cam, setCam] = useState<Cam>({ x: -100, y: -100, w: 1200, h: 800 });
 
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -168,11 +176,14 @@ export function TaskTreePage() {
   useEffect(() => {
     if (view === 'wall') {
       void (async () => {
-        const res = await listTaskBlockers();
-        if (res.success && res.data) setBlockers(res.data.items);
+        const res = await listTaskBlockers(wallScope);
+        if (res.success && res.data) {
+          setBlockers(res.data.items);
+          setCanViewAll(res.data.canViewAll);
+        }
       })();
     }
-  }, [view]);
+  }, [view, wallScope]);
 
   // wheel 缩放/平移（passive:false 才能 preventDefault）
   useEffect(() => {
@@ -240,6 +251,84 @@ export function TaskTreePage() {
   const saveBlocker = async (node: TaskNode, blocker: string) => {
     const res = await updateTaskNode(node.id, { status: 'blocked', blocker });
     if (res.success && res.data) setNodes((ns) => ns.map((n) => (n.id === node.id ? res.data! : n)));
+  };
+
+  const addChild = async (parent: TaskNode, title: string) => {
+    if (!treeId || !title.trim()) return;
+    const res = await createTaskNode(treeId, { parentId: parent.id, title: title.trim() });
+    if (res.success && res.data) {
+      newIdsRef.current = new Set([res.data.id]);
+      setNodes((ns) => [...ns, res.data!]);
+      setSelectedId(res.data.id);
+      setTimeout(() => fit(), 80);
+    } else {
+      toast.error(res.error?.message ?? '添加失败');
+    }
+  };
+
+  const renameNode = async (node: TaskNode, title: string) => {
+    if (!title.trim() || title.trim() === node.title) return;
+    const res = await updateTaskNode(node.id, { title: title.trim() });
+    if (res.success && res.data) setNodes((ns) => ns.map((n) => (n.id === node.id ? res.data! : n)));
+  };
+
+  const removeNode = async (node: TaskNode) => {
+    if (!node.parentId) { toast.error('根节点不可删除'); return; }
+    const res = await deleteTaskNode(node.id);
+    if (res.success) {
+      // 本地剔除该节点及其子孙 + 清理依赖引用
+      setNodes((ns) => {
+        const dead = new Set<string>([node.id]);
+        let changed = true;
+        while (changed) {
+          changed = false;
+          for (const n of ns) {
+            if (n.parentId && dead.has(n.parentId) && !dead.has(n.id)) { dead.add(n.id); changed = true; }
+          }
+        }
+        return ns.filter((n) => !dead.has(n.id)).map((n) => ({ ...n, dependsOn: n.dependsOn.filter((d) => !dead.has(d)) }));
+      });
+      setSelectedId(null);
+      setTimeout(() => fit(), 80);
+    } else {
+      toast.error(res.error?.message ?? '删除失败');
+    }
+  };
+
+  const addDep = async (node: TaskNode, depId: string) => {
+    const res = await addTaskDependency(node.id, depId);
+    if (res.success) setNodes((ns) => ns.map((n) => (n.id === node.id ? { ...n, dependsOn: [...new Set([...n.dependsOn, depId])] } : n)));
+    else toast.error(res.error?.message ?? '添加依赖失败');
+  };
+
+  const removeDep = async (node: TaskNode, depId: string) => {
+    const res = await removeTaskDependency(node.id, depId);
+    if (res.success) setNodes((ns) => ns.map((n) => (n.id === node.id ? { ...n, dependsOn: n.dependsOn.filter((d) => d !== depId) } : n)));
+  };
+
+  const createNewTree = async () => {
+    const title = newTreeTitle.trim();
+    if (!title) return;
+    const res = await createTaskTree({ title });
+    if (res.success && res.data) {
+      setNewTreeTitle('');
+      setShowNewTree(false);
+      const list = await listTaskTrees();
+      if (list.success && list.data) setTrees(list.data.items);
+      setTreeId(res.data.tree.id);
+      await loadTree(res.data.tree.id);
+      toast.success('任务树已创建');
+    } else {
+      toast.error(res.error?.message ?? '创建失败');
+    }
+  };
+
+  // 计算某节点的所有子孙（用于依赖选择时排除，避免环）
+  const descendantsOf = (id: string): Set<string> => {
+    const out = new Set<string>();
+    const walk = (pid: string) => nodes.filter((n) => n.parentId === pid).forEach((c) => { if (!out.has(c.id)) { out.add(c.id); walk(c.id); } });
+    walk(id);
+    return out;
   };
 
   const sendExtract = async () => {
@@ -338,6 +427,21 @@ export function TaskTreePage() {
           <option value="r">径向生命树</option>
         </select>
         <button className="tt-btn" onClick={() => fit()}><RotateCcw size={13} /> 适配</button>
+        {showNewTree ? (
+          <span className="tt-newtree">
+            <input
+              autoFocus
+              value={newTreeTitle}
+              onChange={(e) => setNewTreeTitle(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') void createNewTree(); if (e.key === 'Escape') setShowNewTree(false); }}
+              placeholder="新任务树标题"
+            />
+            <button className="tt-btn tt-primary" onClick={() => void createNewTree()}>创建</button>
+            <button className="tt-btn" onClick={() => setShowNewTree(false)}>取消</button>
+          </span>
+        ) : (
+          <button className="tt-btn" onClick={() => setShowNewTree(true)}><Plus size={13} /> 新建树</button>
+        )}
       </header>
 
       <div className="tt-main" style={{ flex: 1, minHeight: 0, display: 'flex' }}>
@@ -403,7 +507,7 @@ export function TaskTreePage() {
               })}
             </svg>
           ) : (
-            <BlockersWall items={blockers} />
+            <BlockersWall items={blockers} scope={wallScope} canViewAll={canViewAll} onScope={setWallScope} />
           )}
 
           {view === 'tree' && (
@@ -421,9 +525,15 @@ export function TaskTreePage() {
             node={selected}
             childrenNodes={selected ? childrenOf(selected.id) : []}
             allNodes={nodes}
+            descendants={selected ? descendantsOf(selected.id) : new Set()}
             onSelect={setSelectedId}
             onStatus={changeStatus}
             onSaveBlocker={saveBlocker}
+            onAddChild={addChild}
+            onRename={renameNode}
+            onRemove={removeNode}
+            onAddDep={addDep}
+            onRemoveDep={removeDep}
           />
         </aside>
       </div>
@@ -452,31 +562,53 @@ export function TaskTreePage() {
 }
 
 function SidePanel({
-  view, node, childrenNodes, allNodes, onSelect, onStatus, onSaveBlocker,
+  view, node, childrenNodes, allNodes, descendants, onSelect, onStatus, onSaveBlocker,
+  onAddChild, onRename, onRemove, onAddDep, onRemoveDep,
 }: {
   view: 'tree' | 'wall';
   node: TaskNode | null;
   childrenNodes: TaskNode[];
   allNodes: TaskNode[];
+  descendants: Set<string>;
   onSelect: (id: string) => void;
   onStatus: (node: TaskNode, s: TaskStatus) => void;
   onSaveBlocker: (node: TaskNode, text: string) => void;
+  onAddChild: (parent: TaskNode, title: string) => void;
+  onRename: (node: TaskNode, title: string) => void;
+  onRemove: (node: TaskNode) => void;
+  onAddDep: (node: TaskNode, depId: string) => void;
+  onRemoveDep: (node: TaskNode, depId: string) => void;
 }) {
   const [blockerDraft, setBlockerDraft] = useState('');
-  useEffect(() => { setBlockerDraft(node?.blocker ?? ''); }, [node?.id, node?.blocker]);
+  const [titleDraft, setTitleDraft] = useState('');
+  const [childDraft, setChildDraft] = useState('');
+  const [addingChild, setAddingChild] = useState(false);
+  const [addingDep, setAddingDep] = useState(false);
+  useEffect(() => {
+    setBlockerDraft(node?.blocker ?? '');
+    setTitleDraft(node?.title ?? '');
+    setAddingChild(false); setAddingDep(false); setChildDraft('');
+  }, [node?.id, node?.blocker, node?.title]);
 
   if (view === 'wall') {
-    return <div className="tt-hint">卡点墙是只读上报视图：把卡点聚到一起按卡住时长排序，并标出每个卡点<b>下游阻塞了谁</b>。当前聚合本人卡点；跨人/团队聚合需团队模型支撑，后续补充。</div>;
+    return <div className="tt-hint">卡点墙是只读上报视图：把卡点聚到一起按卡住时长排序，并标出每个卡点<b>下游阻塞了谁</b>。「我的」只看自己；有管理权限时可切「全员」聚合所有人的卡点（给上级看）。</div>;
   }
   if (!node) {
-    return <div className="tt-hint">点一个节点看详情。<br /><br />卡片=任务，左侧色条=进度，<span style={{ color: '#e0563b' }}>红点闪烁</span>=卡点。实线=父子（被依赖→下一步），<span style={{ color: '#e7b24a' }}>黄色流动虚线</span>=跨枝/跨人依赖。<br /><br />画布可拖拽平移、滚轮缩放。底部输入框用对话摘取任务。</div>;
+    return <div className="tt-hint">点一个节点看详情。<br /><br />卡片=任务，左侧色条=进度，<span style={{ color: '#e0563b' }}>红点闪烁</span>=卡点。实线=父子（被依赖→下一步），<span style={{ color: '#e7b24a' }}>黄色流动虚线</span>=跨枝/跨人依赖。<br /><br />选中节点后可加子任务、改进度、加依赖、改名、删除。底部输入框用对话摘取任务。</div>;
   }
   const parent = node.parentId ? allNodes.find((n) => n.id === node.parentId) : null;
   const deps = (node.dependsOn || []).map((id) => allNodes.find((n) => n.id === id)).filter(Boolean) as TaskNode[];
+  const depCandidates = allNodes.filter((n) => n.id !== node.id && !descendants.has(n.id) && !(node.dependsOn || []).includes(n.id));
 
   return (
     <div className="tt-detail">
-      <h2>{node.title}</h2>
+      <input
+        className="tt-titleedit"
+        value={titleDraft}
+        onChange={(e) => setTitleDraft(e.target.value)}
+        onBlur={() => onRename(node, titleDraft)}
+        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+      />
       <div className="tt-meta">{parent ? `属于：${parent.title}` : '创世支柱（根任务）'}</div>
       <div className="tt-field">
         <label>进度</label>
@@ -504,41 +636,88 @@ function SidePanel({
         </div>
       )}
       <div className="tt-field">
-        <label>{childrenNodes.length ? '下一个任务（枝干）' : '下一步'}</label>
-        {childrenNodes.length ? (
+        <label>下一个任务（枝干）</label>
+        {childrenNodes.length > 0 && (
           <div className="tt-chips">
             {childrenNodes.map((c) => (
               <span key={c.id} className="chip" style={{ borderLeft: `3px solid ${STATUS[c.status].color}` }} onClick={() => onSelect(c.id)}>{c.title}</span>
             ))}
           </div>
-        ) : <div className="tt-hint">末梢任务，可在下方摘出下一步。</div>}
+        )}
+        {addingChild ? (
+          <input
+            className="tt-inline-add" autoFocus value={childDraft}
+            onChange={(e) => setChildDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { onAddChild(node, childDraft); setChildDraft(''); setAddingChild(false); } if (e.key === 'Escape') setAddingChild(false); }}
+            placeholder="子任务标题，回车添加"
+          />
+        ) : (
+          <button className="tt-mini" onClick={() => setAddingChild(true)}><Plus size={12} /> 加子任务</button>
+        )}
       </div>
-      {deps.length > 0 && (
-        <div className="tt-field">
-          <label>依赖（前置）</label>
+      <div className="tt-field">
+        <label>依赖（前置）</label>
+        {deps.length > 0 && (
           <div className="tt-chips">
             {deps.map((d) => (
-              <span key={d.id} className="chip" style={{ borderLeft: '3px solid #e7b24a' }} onClick={() => onSelect(d.id)}>{d.title}</span>
+              <span key={d.id} className="chip" style={{ borderLeft: '3px solid #e7b24a' }}>
+                <span onClick={() => onSelect(d.id)}>{d.title}</span>
+                <X size={11} className="chip-x" onClick={() => onRemoveDep(node, d.id)} />
+              </span>
             ))}
           </div>
-        </div>
+        )}
+        {addingDep ? (
+          <select
+            className="tt-depselect" autoFocus defaultValue=""
+            onChange={(e) => { if (e.target.value) { onAddDep(node, e.target.value); setAddingDep(false); } }}
+          >
+            <option value="" disabled>选择前置任务…</option>
+            {depCandidates.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
+          </select>
+        ) : (
+          <button className="tt-mini" onClick={() => setAddingDep(true)} disabled={depCandidates.length === 0}><GitBranch size={12} /> 加依赖</button>
+        )}
+      </div>
+      {node.parentId && (
+        <button className="tt-danger" onClick={() => onRemove(node)}><Trash2 size={13} /> 删除任务（含子任务）</button>
       )}
     </div>
   );
 }
 
-function BlockersWall({ items }: { items: TaskBlockerItem[] }) {
+function BlockersWall({
+  items, scope, canViewAll, onScope,
+}: {
+  items: TaskBlockerItem[];
+  scope: 'mine' | 'all';
+  canViewAll: boolean;
+  onScope: (s: 'mine' | 'all') => void;
+}) {
   return (
     <div className="tt-wall">
-      <h1>卡点墙 · 一眼看清</h1>
-      <div className="sub">卡点按卡住时长排序，最久的在前。共 {items.length} 个。</div>
+      <div className="tt-wallhead">
+        <div>
+          <h1>卡点墙 · 一眼看清</h1>
+          <div className="sub">卡点按卡住时长排序，最久的在前。共 {items.length} 个。</div>
+        </div>
+        {canViewAll && (
+          <div className="tt-scope">
+            <button className={scope === 'mine' ? 'on' : ''} onClick={() => onScope('mine')}>我的</button>
+            <button className={scope === 'all' ? 'on' : ''} onClick={() => onScope('all')}>全员</button>
+          </div>
+        )}
+      </div>
       {items.length === 0 ? (
         <div className="tt-hint">当前没有卡点，一切顺畅。</div>
       ) : (
         <div className="tt-wallgrid">
           {items.map((it) => (
             <div key={it.node.id} className="tt-bc">
-              <div className="t"><span className="o">{it.treeTitle}</span><span className="d">卡 {it.stuckDays} 天</span></div>
+              <div className="t">
+                <span className="o">{scope === 'all' ? `${it.ownerName} · ` : ''}{it.treeTitle}</span>
+                <span className="d">卡 {it.stuckDays} 天</span>
+              </div>
               <div className="ttl">{it.node.title}</div>
               <div className="r">{it.node.blocker}</div>
               {it.blocks.length > 0 && <div className="dn">阻塞了：{it.blocks.join('、')}</div>}
