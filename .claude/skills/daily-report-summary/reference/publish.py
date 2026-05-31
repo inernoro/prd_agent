@@ -97,12 +97,17 @@ def load_manifest(path):
 
 
 def apply_evidence(body, name_to_md):
-    """把 {{IMG:<name>}} 换成对应图、{{EVIDENCE}} 换成全部图集中段。"""
+    """把 {{IMG:<name>}} 换成对应图、{{EVIDENCE}} 换成全部图集中段。
+
+    无截图时**不**把 {{EVIDENCE}} 替换成空串——保留占位，让 assert_no_placeholder 拒发，
+    避免"要求配图却静默发出空证据段"。{{IMG:<name>}} 同理：无对应截图就留着占位被拒。
+    """
     content = body
     for name, md in name_to_md.items():
         content = content.replace("{{IMG:%s}}" % name, md)
-    evidence = "\n\n".join(name_to_md.values())
-    content = content.replace("{{EVIDENCE}}", evidence)
+    if name_to_md:  # 仅在确有截图时才回填 {{EVIDENCE}}
+        evidence = "\n\n".join(name_to_md.values())
+        content = content.replace("{{EVIDENCE}}", evidence)
     return content
 
 
@@ -245,14 +250,16 @@ def main():
     put_ok = put_content()
     print(f"  写正文 put_ok={put_ok}")
     state = content_state()
-    if not put_ok and state is False:   # 既没 PUT 成功又确认为空 → 再写一次
+    # 先处理"确认为空"：即便 PUT 返回 success，但 GET 明确 hasContent=false（returned-but-not-persisted）
+    # 也必须再写一次；仍为空才算失败（Codex：put_ok 单独不足以判定已发布）。
+    if state is False:
         put_ok = put_content()
         state = content_state()
 
-    if put_ok or state is True:
-        print(f"  正文已落库（put_ok={put_ok}, verified={state}）")
+    if state is True:
+        print(f"  正文已校验落库 hasContent=true（put_ok={put_ok}）")
     elif state is False:
-        # 确认为空壳（PUT 没成功且 GET 明确 hasContent=false）→ 清理，不留断头报告
+        # 重试后仍确认为空壳 → 清理，不留断头报告
         try:
             curl(H + ["-X", "DELETE", f"{base}/entries/{eid}"], retries=2)
             print(f"  正文确认为空，已删空壳条目 {eid}")
@@ -260,8 +267,11 @@ def main():
             print(f"  正文确认为空且删除失败；稳定后请手动删条目 {eid}")
         rollback_store_if_new()
         raise RuntimeError("正文写入未生效(hasContent=false)，请稍后重跑")
+    elif put_ok:
+        # state=None：验证接口不可达，但 PUT 已返回成功 → 接受，不删（Cursor High：勿误删已落库正文）
+        print(f"  正文 PUT 成功，但验证接口暂不可达(state=None)——按已发布处理，不删条目")
     else:
-        # state=None：验证接口不可达，无法证明为空 → 保留条目，绝不误删可能已落库的正文（High 修复）
+        # 既没 PUT 成功又无法验证 → 保留条目（可能空壳，也可能已落库），交人工确认，不盲删不盲重跑
         raise RuntimeError(
             f"正文写入结果未确认（PUT 未返回成功且验证接口不可达）。已保留条目 {eid} 避免误删，"
             "请稍后登录该库人工确认/重写，勿盲目重跑造成重复。")
