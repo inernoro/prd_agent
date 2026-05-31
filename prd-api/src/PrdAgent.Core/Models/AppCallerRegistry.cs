@@ -1112,6 +1112,25 @@ public static class EmergenceExplorer
 }
 
 /// <summary>
+/// 个人任务树智能体（Task Tree Agent）
+/// </summary>
+public static class TaskTreeAgent
+{
+    public const string AppName = "个人任务树";
+
+    public static class Extract
+    {
+        [AppCallerMetadata(
+            "任务树-对话摘取",
+            "把一段自然语言描述解析成任务节点：标题、进度状态、卡点、建议挂载位置",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Extract"
+        )]
+        public const string Chat = "task-tree-agent.extract::chat";
+    }
+}
+
+/// <summary>
 /// 项目管理智能体（PM Agent）
 /// </summary>
 public static class ProjectManagement

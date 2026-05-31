@@ -1290,6 +1290,26 @@ export const api = {
     },
   },
 
+  // ============ 个人任务树 ============
+  taskTree: {
+    trees: {
+      list: () => '/api/task-tree/trees',
+      create: () => '/api/task-tree/trees',
+      detail: (treeId: string) => `/api/task-tree/trees/${treeId}`,
+      delete: (treeId: string) => `/api/task-tree/trees/${treeId}`,
+      nodes: (treeId: string) => `/api/task-tree/trees/${treeId}/nodes`,
+      extract: (treeId: string) => `/api/task-tree/trees/${treeId}/extract`,
+    },
+    nodes: {
+      update: (nodeId: string) => `/api/task-tree/nodes/${nodeId}`,
+      delete: (nodeId: string) => `/api/task-tree/nodes/${nodeId}`,
+      addDependency: (nodeId: string) => `/api/task-tree/nodes/${nodeId}/dependencies`,
+      removeDependency: (nodeId: string, depId: string) =>
+        `/api/task-tree/nodes/${nodeId}/dependencies/${depId}`,
+    },
+    blockers: () => '/api/task-tree/blockers',
+  },
+
   // ============ Project Management 项目管理 ============
   pm: {
     projects: {
