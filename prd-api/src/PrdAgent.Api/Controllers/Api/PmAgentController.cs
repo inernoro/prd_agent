@@ -116,17 +116,21 @@ public class PmAgentController : ControllerBase
         var b = Builders<PmProject>.Filter;
         var conds = new List<FilterDefinition<PmProject>> { b.Eq(p => p.IsDeleted, false) };
 
-        // 访问范围（与 FindAccessibleProjectAsync 对齐：owner/leader/member/stakeholder）
+        // 访问范围（与 FindAccessibleProjectAsync 对齐：owner/leader/member/observer/stakeholder）
         var managed = b.Eq(p => p.LeaderId, userId);
-        // 我相关的：我被设为干系人的项目，且我不是项目经理
+        // 我相关的：我是成员/观察者/干系人，且我不是项目经理（排除「我管理的」避免两 Tab 重复）
         var related = b.And(
-            b.ElemMatch(p => p.Stakeholders, s => s.UserId == userId),
+            b.Or(
+                b.AnyEq(p => p.MemberIds, userId),
+                b.AnyEq(p => p.ObserverIds, userId),
+                b.ElemMatch(p => p.Stakeholders, s => s.UserId == userId)),
             b.Ne(p => p.LeaderId, userId));
         if (scope == "managed") conds.Add(managed);
         else if (scope == "related") conds.Add(related);
         else conds.Add(b.Or(
             b.Eq(p => p.OwnerId, userId), b.Eq(p => p.LeaderId, userId),
-            b.AnyEq(p => p.MemberIds, userId), b.ElemMatch(p => p.Stakeholders, s => s.UserId == userId)));
+            b.AnyEq(p => p.MemberIds, userId), b.AnyEq(p => p.ObserverIds, userId),
+            b.ElemMatch(p => p.Stakeholders, s => s.UserId == userId)));
 
         if (!string.IsNullOrWhiteSpace(type) && PmProjectType.All.Contains(type))
             conds.Add(b.Eq(p => p.ProjectType, type));
@@ -223,7 +227,10 @@ public class PmAgentController : ControllerBase
         // 项目经理始终视为成员（兼容历史项目：即便没存进 MemberIds 也展示）
         var memberIds = project.MemberIds.Append(project.LeaderId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
         var members = await ResolveMembersAsync(memberIds);
-        return Ok(ApiResponse<object>.Ok(new { members, leaderId = project.LeaderId, ownerId = project.OwnerId }));
+        // 观察者：剔除与成员/Leader 重复的（互斥兜底，兼容历史脏数据）
+        var observerIds = project.ObserverIds.Where(x => !string.IsNullOrWhiteSpace(x) && !memberIds.Contains(x)).Distinct().ToList();
+        var observers = await ResolveMembersAsync(observerIds);
+        return Ok(ApiResponse<object>.Ok(new { members, observers, leaderId = project.LeaderId, ownerId = project.OwnerId }));
     }
 
     /// <summary>整体替换项目成员。仅 owner/leader 可改</summary>
@@ -241,12 +248,38 @@ public class PmAgentController : ControllerBase
         var ids = (request.MemberIds ?? new()).Append(project.LeaderId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
         var valid = await _db.Users.Find(u => ids.Contains(u.UserId)).Project(u => u.UserId).ToListAsync();
         var members = ids.Where(valid.Contains).ToList();
+        // 互斥：新成员从观察者列表中剔除
+        var observers = project.ObserverIds.Where(x => !members.Contains(x)).Distinct().ToList();
 
         await _db.PmProjects.UpdateOneAsync(p => p.Id == projectId,
-            Builders<PmProject>.Update.Set(p => p.MemberIds, members).Set(p => p.UpdatedAt, DateTime.UtcNow));
+            Builders<PmProject>.Update.Set(p => p.MemberIds, members).Set(p => p.ObserverIds, observers).Set(p => p.UpdatedAt, DateTime.UtcNow));
 
         var resolved = await ResolveMembersAsync(members);
         return Ok(ApiResponse<object>.Ok(new { members = resolved, memberIds = members }));
+    }
+
+    /// <summary>整体替换项目观察者（拥有与成员一样的权限，主要是看）。仅 owner/leader 可改。与成员/Leader 互斥。</summary>
+    [HttpPut("projects/{projectId}/observers")]
+    public async Task<IActionResult> SetObservers(string projectId, [FromBody] SetObserversRequest request)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (project.OwnerId != userId && project.LeaderId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅立项人或负责人可管理观察者"));
+
+        // 成员（含 Leader）不能同时是观察者：互斥剔除
+        var excluded = project.MemberIds.Append(project.LeaderId).Where(x => !string.IsNullOrWhiteSpace(x)).ToHashSet();
+        var ids = (request.ObserverIds ?? new()).Where(x => !string.IsNullOrWhiteSpace(x) && !excluded.Contains(x)).Distinct().ToList();
+        var valid = await _db.Users.Find(u => ids.Contains(u.UserId)).Project(u => u.UserId).ToListAsync();
+        var observers = ids.Where(valid.Contains).ToList();
+
+        await _db.PmProjects.UpdateOneAsync(p => p.Id == projectId,
+            Builders<PmProject>.Update.Set(p => p.ObserverIds, observers).Set(p => p.UpdatedAt, DateTime.UtcNow));
+
+        var resolved = await ResolveMembersAsync(observers);
+        return Ok(ApiResponse<object>.Ok(new { observers = resolved, observerIds = observers }));
     }
 
     /// <summary>把成员 UserId 列表解析为含显示名/头像的对象</summary>
@@ -1775,6 +1808,8 @@ public class PmAgentController : ControllerBase
                 b.Eq(p => p.OwnerId, userId),
                 b.Eq(p => p.LeaderId, userId),
                 b.AnyEq(p => p.MemberIds, userId),
+                // 观察者拥有与成员一样的访问权限（主要是看）
+                b.AnyEq(p => p.ObserverIds, userId),
                 // 干系人(系统用户)可访问项目以提交自己的评分
                 b.ElemMatch(p => p.Stakeholders, s => s.UserId == userId))
         )).FirstOrDefaultAsync();
@@ -1839,6 +1874,11 @@ public class CreatePmProjectRequest
 public class SetMembersRequest
 {
     public List<string> MemberIds { get; set; } = new();
+}
+
+public class SetObserversRequest
+{
+    public List<string> ObserverIds { get; set; } = new();
 }
 
 public class UpdateKnowledgeFileRequest

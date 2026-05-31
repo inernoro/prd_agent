@@ -1303,6 +1303,7 @@ export const api = {
       batchTasks: (projectId: string) => `/api/pm/projects/${projectId}/tasks/batch`,
       bulkTasks: (projectId: string) => `/api/pm/projects/${projectId}/tasks/bulk`,
       members: (projectId: string) => `/api/pm/projects/${projectId}/members`,
+      observers: (projectId: string) => `/api/pm/projects/${projectId}/observers`,
       knowledgeFiles: (projectId: string) => `/api/pm/projects/${projectId}/knowledge/files`,
       memberSites: (projectId: string) => `/api/pm/projects/${projectId}/member-sites`,
       decisions: (projectId: string) => `/api/pm/projects/${projectId}/decisions`,
