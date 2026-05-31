@@ -833,9 +833,13 @@ export default function WebPagesPage() {
         <div className="flex-1 flex flex-col items-center justify-center gap-3" style={{ color: 'var(--text-muted)' }}>
           <UploadCloud size={48} strokeWidth={1} />
           <p>{currentSpace.kind === 'team' ? '这个团队空间还没有网页' : activeFolder ? '这个文件夹还没有网页' : '还没有托管的网页'}</p>
-          <Button size="sm" variant="primary" onClick={() => { setEditItem(null); setShowUploadDialog(true); }}>
-            <Upload size={14} className="mr-1" /> 上传第一个站点
-          </Button>
+          {/* 与顶部上传按钮同款权限闸门：团队空间只读 viewer 不展示上传入口，
+              避免点开弹窗 uploadSite 后被 setTeams 403、徒留站点在个人空间 */}
+          {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
+            <Button size="sm" variant="primary" onClick={() => { setEditItem(null); setShowUploadDialog(true); }}>
+              <Upload size={14} className="mr-1" /> 上传第一个站点
+            </Button>
+          )}
         </div>
       ) : (
         <div className="flex flex-col gap-5">
