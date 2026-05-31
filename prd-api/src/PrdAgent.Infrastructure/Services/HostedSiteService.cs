@@ -1416,16 +1416,24 @@ public class HostedSiteService : IHostedSiteService
 
     // 历史遗留：旧分享链接的 Title 里 baked 了「{用户} 分享给你的「站点名」」/「… N 个站点合集」前缀。
     // 新链接已不再写入前缀；此处在展示侧剥掉旧前缀，老数据无需迁移即可干净显示。
+    //
+    // 只匹配后端当年生成的「精确两种形状」，避免误伤用户自定义标题：
+    //   单站点： {名字} 分享给你的「{站点名}」  → 返回 站点名
+    //   合集：   {名字} 分享给你的 {N} 个站点合集 → 返回 N 个站点合集
+    // 形如「客户 分享给你的方案」这种普通标题（无「」、非合集格式）一律原样保留，不剥离。
+    private static readonly Regex LegacySingleSharePrefix =
+        new(@"^.+? 分享给你的「(?<t>.+)」$", RegexOptions.Compiled | RegexOptions.Singleline);
+    private static readonly Regex LegacyCollectionSharePrefix =
+        new(@"^.+? 分享给你的 (?<c>\d+ 个站点合集)$", RegexOptions.Compiled);
+
     private static string? StripLegacySharePrefix(string? title)
     {
         if (string.IsNullOrWhiteSpace(title)) return title;
-        const string marker = " 分享给你的";
-        var idx = title.IndexOf(marker, StringComparison.Ordinal);
-        if (idx <= 0) return title;
-        var rest = title[(idx + marker.Length)..].Trim();
-        if (rest.Length >= 2 && rest[0] == '「' && rest[^1] == '」')
-            rest = rest[1..^1];
-        return string.IsNullOrWhiteSpace(rest) ? title : rest;
+        var single = LegacySingleSharePrefix.Match(title);
+        if (single.Success) return single.Groups["t"].Value;
+        var collection = LegacyCollectionSharePrefix.Match(title);
+        if (collection.Success) return collection.Groups["c"].Value;
+        return title;
     }
 
     public async Task<ShareDiagnosticsResult?> GetShareDiagnosticsAsync(string token, CancellationToken ct = default)
