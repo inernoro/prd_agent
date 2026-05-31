@@ -24,6 +24,11 @@ namespace PrdAgent.Api.Controllers.Api;
     WritePermission = AdminPermissionCatalog.DocumentStoreWrite)]
 public class DocumentStoreController : ControllerBase
 {
+    /// <summary>AgentApiKey scope：读文档空间（满足 admin 权限 document-store.read，见 AdminPermissionMiddleware.HasScopeGrant）</summary>
+    public const string ScopeRead = "document-store:read";
+    /// <summary>AgentApiKey scope：写文档空间（替代 AI 超级密钥，最小权限归档验收报告）</summary>
+    public const string ScopeWrite = "document-store:write";
+
     private readonly MongoDbContext _db;
     private readonly IAssetStorage _assetStorage;
     private readonly IFileContentExtractor _fileContentExtractor;
@@ -86,6 +91,20 @@ public class DocumentStoreController : ControllerBase
     /// <summary>可读：拥有者 或 公开 或 团队成员</summary>
     private static bool CanReadStore(DocumentStore s, string userId, List<string> myTeamIds)
         => s.OwnerId == userId || s.IsPublic || IsTeamShared(s, myTeamIds);
+
+    /// <summary>
+    /// 判定本次写入是否"机器归档"（带 kind=acceptance-report 标记）。
+    /// 机器归档对模板硬卡（缺项 422），人工手写软提醒（标记不合规但放行）。
+    /// </summary>
+    private static bool IsMachineTemplatedWrite(IReadOnlyDictionary<string, string>? metadata)
+        => metadata != null && metadata.TryGetValue("kind", out var kind)
+           && string.Equals(kind, "acceptance-report", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>构造模板校验失败的 422 响应（缺失项清单写入 message）</summary>
+    private IActionResult TemplateValidationError(KbTemplate template, IReadOnlyList<string> problems)
+        => StatusCode(422, ApiResponse<object>.Fail(
+            ErrorCodes.TEMPLATE_VALIDATION_FAILED,
+            $"不符合知识库模板「{template.Label}」要求：{string.Join("；", problems)}"));
 
     /// <summary>加载并校验可写空间。无权返回错误 IActionResult，调用方据此短路</summary>
     private async Task<(DocumentStore? store, IActionResult? error)> LoadWritableStoreAsync(string storeId, string userId)
@@ -225,7 +244,8 @@ public class DocumentStoreController : ControllerBase
             OwnerId = userId,
             AppKey = request.AppKey?.Trim(),
             Tags = request.Tags ?? new List<string>(),
-            IsPublic = request.IsPublic
+            IsPublic = request.IsPublic,
+            TemplateKey = string.IsNullOrWhiteSpace(request.TemplateKey) ? null : request.TemplateKey.Trim()
         };
 
         await _db.DocumentStores.InsertOneAsync(store);
@@ -303,6 +323,9 @@ public class DocumentStoreController : ControllerBase
             updates.Add(Builders<DocumentStore>.Update.Set(s => s.Tags, request.Tags));
         if (request.IsPublic.HasValue)
             updates.Add(Builders<DocumentStore>.Update.Set(s => s.IsPublic, request.IsPublic.Value));
+        if (request.TemplateKey != null)
+            updates.Add(Builders<DocumentStore>.Update.Set(s => s.TemplateKey,
+                string.IsNullOrWhiteSpace(request.TemplateKey) ? null : request.TemplateKey.Trim()));
 
         updates.Add(Builders<DocumentStore>.Update.Set(s => s.UpdatedAt, DateTime.UtcNow));
 
@@ -427,6 +450,21 @@ public class DocumentStoreController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Title))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文档标题不能为空"));
 
+        // 模板校验：store 命中模板时校验必填 metadata。
+        // 机器归档（kind=acceptance-report）缺项硬卡 422；人工手写软提醒（标记 templateCompliant=false 放行）。
+        var metadata = request.Metadata ?? new Dictionary<string, string>();
+        var template = AcceptanceTemplateRegistry.FindByKey(store!.TemplateKey);
+        if (template != null)
+        {
+            var problems = AcceptanceTemplateRegistry.ValidateMetadata(template, metadata);
+            if (problems.Count > 0)
+            {
+                if (IsMachineTemplatedWrite(metadata))
+                    return TemplateValidationError(template, problems);
+                metadata["templateCompliant"] = "false";
+            }
+        }
+
         var entry = new DocumentEntry
         {
             StoreId = storeId,
@@ -441,7 +479,7 @@ public class DocumentStoreController : ControllerBase
             ContentType = request.ContentType ?? string.Empty,
             FileSize = request.FileSize,
             Tags = request.Tags ?? new List<string>(),
-            Metadata = request.Metadata ?? new Dictionary<string, string>(),
+            Metadata = metadata,
             CreatedBy = userId,
             CreatedByName = userName,
             CreatedByAvatarFileName = avatarFileName,
@@ -794,6 +832,20 @@ public class DocumentStoreController : ControllerBase
 
         var content = request.Content ?? string.Empty;
 
+        // 模板校验：store 命中模板时校验正文必备 section。
+        // 机器归档（entry.metadata.kind=acceptance-report）缺 section 硬卡 422；人工手写软提醒放行。
+        var contentTemplate = AcceptanceTemplateRegistry.FindByKey(store.TemplateKey);
+        bool? contentCompliant = null;
+        if (contentTemplate != null)
+        {
+            var sectionProblems = AcceptanceTemplateRegistry.ValidateContentSections(contentTemplate, content);
+            if (sectionProblems.Count > 0 && IsMachineTemplatedWrite(entry.Metadata))
+                return TemplateValidationError(contentTemplate, sectionProblems);
+            // 合规 = 正文 section 齐 且 必填 metadata 齐。否则会把 AddEntry 标的 false 误覆盖成 true。
+            var metaProblems = AcceptanceTemplateRegistry.ValidateMetadata(contentTemplate, entry.Metadata);
+            contentCompliant = sectionProblems.Count == 0 && metaProblems.Count == 0;
+        }
+
         // 更新或创建 ParsedPrd
         if (!string.IsNullOrEmpty(entry.DocumentId))
         {
@@ -829,6 +881,14 @@ public class DocumentStoreController : ControllerBase
                 .Set(e => e.UpdatedBy, userId)
                 .Set(e => e.UpdatedByName, userName)
                 .Set(e => e.UpdatedAt, DateTime.UtcNow));
+
+        // 模板库的人工写入：持久化合规标记，前端可据此提示「缺 需求一一对应表」
+        if (contentCompliant.HasValue)
+        {
+            await _db.DocumentEntries.UpdateOneAsync(
+                e => e.Id == entryId,
+                Builders<DocumentEntry>.Update.Set("Metadata.templateCompliant", contentCompliant.Value ? "true" : "false"));
+        }
 
         // 重锚定划词评论：正文更新后，遍历所有 active 评论，用 SelectedText + context 重新定位
         var rebindStats = await RebindInlineCommentsAsync(entryId, content);
@@ -1358,6 +1418,239 @@ public class DocumentStoreController : ControllerBase
             fileUrl,
             hasContent = !string.IsNullOrEmpty(content),
         }));
+    }
+
+    // ─────────────────────────────────────────────
+    // 跨环境同步：导出 / 导入（design.acceptance-kb.md §5.C）
+    // ─────────────────────────────────────────────
+
+    /// <summary>
+    /// 导出整库为 bundle JSON（测试↔正式环境同步用）。
+    /// 文本类条目导出正文 markdown；二进制附件本期只标 skipped，不打包文件体。
+    /// </summary>
+    [HttpGet("stores/{storeId}/export")]
+    public async Task<IActionResult> ExportStore(string storeId)
+    {
+        var userId = GetUserId();
+        var (store, error) = await LoadWritableStoreAsync(storeId, userId);
+        if (error != null) return error;
+
+        var entries = await _db.DocumentEntries.Find(e => e.StoreId == storeId).ToListAsync();
+        var exported = new List<object>();
+        var skippedBinary = 0;
+
+        foreach (var e in entries)
+        {
+            string? content = null;
+            if (!e.IsFolder && !string.IsNullOrEmpty(e.DocumentId))
+            {
+                var doc = await _documentService.GetByIdAsync(e.DocumentId);
+                content = doc?.RawContent;
+            }
+            var binaryOnly = !e.IsFolder && string.IsNullOrEmpty(content) && !string.IsNullOrEmpty(e.AttachmentId);
+            if (binaryOnly) skippedBinary++;
+
+            exported.Add(new
+            {
+                exportId = e.Id,
+                parentExportId = e.ParentId,
+                isFolder = e.IsFolder,
+                title = e.Title,
+                summary = e.Summary,
+                sourceType = e.SourceType,
+                contentType = e.ContentType,
+                fileSize = e.FileSize,
+                tags = e.Tags,
+                metadata = e.Metadata,
+                content,
+                binarySkipped = binaryOnly,
+            });
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            version = 1,
+            store = new
+            {
+                store!.Name,
+                store.Description,
+                store.Tags,
+                store.IsPublic,
+                store.TemplateKey,
+                store.CoverImageUrl,
+            },
+            entries = exported,
+            stats = new { total = entries.Count, binarySkipped = skippedBinary },
+        }));
+    }
+
+    /// <summary>
+    /// 导入 bundle（跨环境同步用）。按库名 find-or-create（owner=调用方），
+    /// 按 metadata.reportId 幂等去重（已存在跳过），保留文件夹层级。
+    /// 导入的是已验收报告，不再过模板校验。
+    /// </summary>
+    [HttpPost("stores/import")]
+    public async Task<IActionResult> ImportStore([FromBody] ImportStoreBundle bundle)
+    {
+        var (userId, userName, avatarFileName) = await GetActorWithAvatarAsync();
+        if (bundle == null || bundle.Store == null || string.IsNullOrWhiteSpace(bundle.Store.Name) || bundle.Entries == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "bundle 格式不正确"));
+
+        var meta = bundle.Store;
+        var entries = bundle.Entries;
+        var store = await _db.DocumentStores
+            .Find(s => s.OwnerId == userId && s.Name == meta.Name).FirstOrDefaultAsync();
+        if (store == null)
+        {
+            store = new DocumentStore
+            {
+                Name = meta.Name.Trim(),
+                Description = meta.Description,
+                OwnerId = userId,
+                Tags = meta.Tags ?? new List<string>(),
+                IsPublic = meta.IsPublic,
+                TemplateKey = string.IsNullOrWhiteSpace(meta.TemplateKey) ? null : meta.TemplateKey.Trim(),
+                CoverImageUrl = meta.CoverImageUrl,
+            };
+            await _db.DocumentStores.InsertOneAsync(store);
+        }
+        else if (!string.IsNullOrWhiteSpace(meta.TemplateKey) && store.TemplateKey != meta.TemplateKey.Trim())
+        {
+            // 复用已存在的同名库：补 bundle 带来的 templateKey，否则目标库 templateKey 为 null，
+            // 排序/校验不生效（与归档脚本复用库补 templateKey 同理）。
+            var tk = meta.TemplateKey.Trim();
+            await _db.DocumentStores.UpdateOneAsync(s => s.Id == store.Id,
+                Builders<DocumentStore>.Update.Set(s => s.TemplateKey, tk).Set(s => s.UpdatedAt, DateTime.UtcNow));
+            store.TemplateKey = tk;
+        }
+
+        var existing = await _db.DocumentEntries.Find(e => e.StoreId == store.Id).ToListAsync();
+        var existingReportIds = new HashSet<string>(existing
+            .Where(e => e.Metadata != null && e.Metadata.ContainsKey("reportId"))
+            .Select(e => e.Metadata["reportId"]));
+        // 已存在文件夹按 (parentId, title) 索引，重复导入时复用而非重建（保证幂等）
+        var existingFolders = existing.Where(e => e.IsFolder)
+            .GroupBy(e => (e.ParentId ?? "", e.Title))
+            .ToDictionary(g => g.Key, g => g.First().Id);
+
+        var idMap = new Dictionary<string, string>(); // exportId -> 新 entryId
+        int created = 0, skipped = 0, failed = 0;
+
+        // 文件夹先建（按层级 parent-first，多趟扫描直到无进展）
+        var pendingFolders = entries.Where(e => e.IsFolder).ToList();
+        var guard = 0;
+        while (pendingFolders.Count > 0 && guard++ < 1000)
+        {
+            var progressed = false;
+            foreach (var f in pendingFolders.ToList())
+            {
+                string? newParent = null;
+                if (!string.IsNullOrEmpty(f.ParentExportId) && !idMap.TryGetValue(f.ParentExportId, out newParent))
+                    continue; // 父文件夹还没建，下一趟再来
+
+                // 幂等：同 (parent, title) 已存在则复用，不重复建
+                var folderKey = (newParent ?? "", f.Title);
+                if (existingFolders.TryGetValue(folderKey, out var reuseId))
+                {
+                    idMap[f.ExportId] = reuseId;
+                    skipped++;
+                    pendingFolders.Remove(f);
+                    progressed = true;
+                    continue;
+                }
+
+                var folder = new DocumentEntry
+                {
+                    StoreId = store.Id,
+                    ParentId = newParent,
+                    IsFolder = true,
+                    Title = f.Title,
+                    SourceType = DocumentSourceType.Upload,
+                    ContentType = "application/x-folder",
+                    Tags = f.Tags ?? new List<string>(),
+                    Metadata = f.Metadata ?? new Dictionary<string, string>(),
+                    CreatedBy = userId,
+                    CreatedByName = userName,
+                    CreatedByAvatarFileName = avatarFileName,
+                    UpdatedBy = userId,
+                    UpdatedByName = userName,
+                };
+                await _db.DocumentEntries.InsertOneAsync(folder);
+                idMap[f.ExportId] = folder.Id;
+                existingFolders[folderKey] = folder.Id; // 同次导入内也复用
+                created++;
+                pendingFolders.Remove(f);
+                progressed = true;
+            }
+            if (!progressed) break; // 剩下的是孤儿父引用，停止
+        }
+
+        // 文件类条目
+        foreach (var fe in entries.Where(e => !e.IsFolder))
+        {
+            try
+            {
+                // 跳过无正文的非文件夹条目：本期同步只搬文本正文，无正文（含二进制 skipped、
+                // 或纯标题空壳）建出来也是空壳，且无 reportId 时重复同步会重复插入，一律跳过。
+                if (string.IsNullOrEmpty(fe.Content)) { skipped++; continue; }
+
+                var reportId = fe.Metadata != null && fe.Metadata.TryGetValue("reportId", out var rid) ? rid : null;
+                if (!string.IsNullOrEmpty(reportId) && existingReportIds.Contains(reportId)) { skipped++; continue; }
+
+                string? parentId = null;
+                if (!string.IsNullOrEmpty(fe.ParentExportId)) idMap.TryGetValue(fe.ParentExportId, out parentId);
+
+                var entry = new DocumentEntry
+                {
+                    StoreId = store.Id,
+                    ParentId = parentId,
+                    IsFolder = false,
+                    Title = fe.Title,
+                    Summary = fe.Summary,
+                    SourceType = DocumentSourceType.Import,
+                    ContentType = string.IsNullOrEmpty(fe.ContentType) ? "text/markdown" : fe.ContentType,
+                    FileSize = fe.FileSize,
+                    Tags = fe.Tags ?? new List<string>(),
+                    Metadata = fe.Metadata ?? new Dictionary<string, string>(),
+                    CreatedBy = userId,
+                    CreatedByName = userName,
+                    CreatedByAvatarFileName = avatarFileName,
+                    UpdatedBy = userId,
+                    UpdatedByName = userName,
+                    LastChangedAt = DateTime.UtcNow,
+                };
+
+                if (!string.IsNullOrEmpty(fe.Content))
+                {
+                    var parsed = await _documentService.ParseAsync(fe.Content);
+                    parsed.Title = fe.Title;
+                    await _documentService.SaveAsync(parsed);
+                    entry.DocumentId = parsed.Id;
+                    entry.ContentIndex = fe.Content.Length > 2000 ? fe.Content[..2000] : fe.Content;
+                }
+
+                await _db.DocumentEntries.InsertOneAsync(entry);
+                if (!string.IsNullOrEmpty(reportId)) existingReportIds.Add(reportId);
+                created++;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[document-store] import entry failed: {Title}", fe.Title);
+                failed++;
+            }
+        }
+
+        var count = await _db.DocumentEntries.CountDocumentsAsync(e => e.StoreId == store.Id);
+        await _db.DocumentStores.UpdateOneAsync(
+            s => s.Id == store.Id,
+            Builders<DocumentStore>.Update
+                .Set(s => s.DocumentCount, (int)count)
+                .Set(s => s.UpdatedAt, DateTime.UtcNow));
+
+        _logger.LogInformation("[document-store] Imported into store {StoreId}: +{Created} ~{Skipped} skipped, {Failed} failed",
+            store.Id, created, skipped, failed);
+
+        return Ok(ApiResponse<object>.Ok(new { storeId = store.Id, created, skipped, failed }));
     }
 
     // ─────────────────────────────────────────────
@@ -3070,6 +3363,8 @@ public class CreateDocumentStoreRequest
     public string? AppKey { get; set; }
     public List<string>? Tags { get; set; }
     public bool IsPublic { get; set; }
+    /// <summary>知识库模板键（如 acceptance-report-v2）。非空时写入条目按模板校验。</summary>
+    public string? TemplateKey { get; set; }
 }
 
 public class UpdateDocumentStoreRequest
@@ -3078,6 +3373,8 @@ public class UpdateDocumentStoreRequest
     public string? Description { get; set; }
     public List<string>? Tags { get; set; }
     public bool? IsPublic { get; set; }
+    /// <summary>知识库模板键（传空字符串可清除约束）。</summary>
+    public string? TemplateKey { get; set; }
 }
 
 public class SetStoreTeamsRequest
@@ -3104,6 +3401,42 @@ public class CreateDocStoreFolderRequest
 {
     public string Name { get; set; } = string.Empty;
     public string? ParentId { get; set; }
+}
+
+// ── 跨环境同步 bundle（design.acceptance-kb.md §5.C）──
+
+public class ImportStoreBundle
+{
+    public int Version { get; set; }
+    public ImportStoreMeta? Store { get; set; }
+    public List<ImportEntry>? Entries { get; set; }
+}
+
+public class ImportStoreMeta
+{
+    public string Name { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public List<string>? Tags { get; set; }
+    public bool IsPublic { get; set; }
+    public string? TemplateKey { get; set; }
+    public string? CoverImageUrl { get; set; }
+}
+
+public class ImportEntry
+{
+    /// <summary>源环境的 entry id（仅用于重建文件夹层级映射，不直接复用）</summary>
+    public string ExportId { get; set; } = string.Empty;
+    public string? ParentExportId { get; set; }
+    public bool IsFolder { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public string? Summary { get; set; }
+    public string? SourceType { get; set; }
+    public string? ContentType { get; set; }
+    public long FileSize { get; set; }
+    public List<string>? Tags { get; set; }
+    public Dictionary<string, string>? Metadata { get; set; }
+    public string? Content { get; set; }
+    public bool BinarySkipped { get; set; }
 }
 
 public class UpdateDocumentEntryRequest

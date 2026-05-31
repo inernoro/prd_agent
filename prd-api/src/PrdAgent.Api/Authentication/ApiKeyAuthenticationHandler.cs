@@ -107,6 +107,10 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<ApiKeyAuthentic
                 new Claim("appId", key.Id),
                 new Claim("appName", key.Name),
                 new Claim("boundUserId", key.OwnerUserId),
+                // 注意：故意【不】在这里设 sub/NameIdentifier。否则 AgentApiKey 会在所有
+                // 仅需登录（[Authorize] 但非 scope 门禁）的用户端点上满足 GetRequiredUserId()，
+                // 等于 document-store:write 这种最小权限 key 越权成 owner 身份访问全站。
+                // owner 身份只在「通过 scope 门禁的 AdminController 端点」上注入（见 AdminPermissionMiddleware）。
                 new Claim("authType", "agent-apikey"),
                 new Claim("agentApiKeyId", key.Id)
             };

@@ -79,6 +79,7 @@ import type {
   InteractionStoreCard,
 } from '@/services/contracts/documentStore';
 import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/DocBrowser';
+import { ACCEPTANCE_TEMPLATE_KEY } from '@/lib/acceptanceVerdictRegistry';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
 import { SubscriptionDetailDrawer } from './SubscriptionDetailDrawer';
@@ -954,6 +955,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
       <div className="flex-1 min-h-0 flex flex-col pt-3">
         <DocBrowser
           entries={entries}
+          /* 验收报告库：最新在前（design.acceptance-kb.md §5.A）；时间默认显示由 DocBrowser 默认值兜底 */
+          sortMode={store.templateKey === ACCEPTANCE_TEMPLATE_KEY ? 'created-desc' : 'default'}
           primaryEntryId={store.primaryEntryId}
           pinnedEntryIds={store.pinnedEntryIds ?? []}
           selectedEntryId={selectedEntryId}

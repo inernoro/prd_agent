@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState, memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -61,7 +61,7 @@ const docSanitizeSchema = {
   ],
 };
 
-export function MarkdownViewer({ content }: { content: string }) {
+function MarkdownViewerBase({ content }: { content: string }) {
   // 剥离首个 YAML frontmatter 块，避免 ---/title:/description: 被当正文渲染。
   // 与左侧标题提取共用 parseFrontmatter（SSOT）。
   const body = useMemo(() => parseFrontmatter(content).body, [content]);
@@ -288,5 +288,13 @@ export function MarkdownViewer({ content }: { content: string }) {
     </div>
   );
 }
+
+// memo：content 不变时不再 re-render。
+// 关键修复（划词选区"自动撤销"）——本组件给 ReactMarkdown 传的 components 里
+// p/a/ul/li/blockquote 等是每次渲染新建的内联函数，父级因 liveSelection 等 state 变化
+// 触发 re-render 时，ReactMarkdown 会按新函数标识 remount 整棵正文 DOM，
+// 进而把用户正在进行的原生选区清空。memo 让 content 不变时彻底跳过 re-render，
+// 正文 DOM 稳定，选区得以保留。
+export const MarkdownViewer = memo(MarkdownViewerBase);
 
 export default MarkdownViewer;

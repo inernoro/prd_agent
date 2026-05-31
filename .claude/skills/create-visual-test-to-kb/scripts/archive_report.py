@@ -96,14 +96,26 @@ def run_local(cfg, a, title, report_id, body, manifest, meta, tags=None):
 
 def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=None):
     api = cfg["auth"]["api"]
-    key = os.environ[api["keyEnv"]]
-    imp = os.environ[api["impersonateEnv"]]
-    H = ["-H", f"{api['keyHeader']}: {key}", "-H", f"{api['impersonateHeader']}: {imp}"]
+    # 简便方式（推荐）：设 MAP_DOC_STORE_KEY=sk-ak-...（带 document-store:write scope 的最小权限长效 Key），
+    # 走 Authorization: Bearer，无需 impersonate、无需 AI 超级密钥。
+    # 未设时回退 AI 超级密钥 + X-AI-Impersonate（向后兼容）。
+    agent_key_env = api.get("agentKeyEnv", "MAP_DOC_STORE_KEY")
+    agent_key = os.environ.get(agent_key_env, "").strip()
+    if agent_key:
+        H = ["-H", f"Authorization: Bearer {agent_key}"]
+        imp = os.environ.get(api.get("impersonateEnv", ""), "") or "(scoped-key-owner)"
+        print(f"  鉴权：AgentApiKey scope（{agent_key_env}，最小权限 document-store:write）")
+    else:
+        key = os.environ[api["keyEnv"]]
+        imp = os.environ[api["impersonateEnv"]]
+        H = ["-H", f"{api['keyHeader']}: {key}", "-H", f"{api['impersonateHeader']}: {imp}"]
+        print("  鉴权：AI 超级密钥 + impersonate（建议改用 MAP_DOC_STORE_KEY scoped key）")
     HJ = H + ["-H", "Content-Type: application/json"]
     base = preview.rstrip("/") + cfg["report"]["apiBasePath"]
 
     store_name = cfg["report"]["storeName"]
     want_public = bool(cfg["report"].get("isPublic", False))
+    want_template = cfg["report"].get("templateKey")
     stores = curl(H + [f"{base}/stores?pageSize=100"])["data"]["items"]
     match = [s for s in stores if s["name"] == store_name]
     if match:
@@ -115,10 +127,18 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
             print(f"  [告警] 复用库「{store_name}」isPublic={cur_public}，但 config 要 {want_public}："
                   + ("该库当前公开在殿堂(对所有人可见)，验收报告通常应私有；如非本意请把库设私有后重跑。"
                      if cur_public else "config 想公开但库是私有；如需进殿堂请手动设公开。"))
+        # 补 templateKey：早就存在的库（find-or-create 复用）可能缺 templateKey，
+        # 导致前端排序退化为字典序、最新报告不在最前。缺了就补，让 created-desc 生效。
+        if want_template and match[0].get("templateKey") != want_template:
+            curl(HJ + ["-X", "PUT", "-d", json.dumps({"templateKey": want_template}), f"{base}/stores/{rid}"])
+            print(f"  复用库缺 templateKey，已补设为 {want_template}（让最新报告排最前）")
     else:
         rid = curl(HJ + ["-X", "POST", "-d", json.dumps(
             {"name": store_name, "description": cfg["report"].get("storeDescription", ""),
-             "isPublic": want_public}
+             "isPublic": want_public,
+             # 模板键：让"验收报告库"对写入条目做结构约束（design.acceptance-kb.md §5.B）。
+             # 机器归档缺必填 metadata/正文 section 会被后端 422 拒收。
+             "templateKey": want_template}
         ), f"{base}/stores"])["data"]["id"]
     print(f"  报告库 id={rid}")
 
@@ -134,10 +154,25 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
     meta = build_meta(report_id, now, imp, a, preview)
     content = assemble(title, body, evidence, meta, img_md)
 
+    # metadata：结论可视(前端按 verdict 渲染绿/琥珀/红徽章) + 跨环境同步幂等(reportId 去重)。
+    # kind=acceptance-report 让后端模板校验对本次写入"硬卡"(缺项 422 而非软放行)。
+    entry_meta = {
+        "kind": "acceptance-report",
+        "verdict": a.verdict,          # pass / conditional / fail
+        "tier": a.tier,                # L0 / L1 / L2
+        "target": a.target,
+        "reportId": report_id,
+        "acceptedAt": now.isoformat(timespec="seconds"),
+    }
+    # 报告平铺在库根级（不自动分子文件夹）：用户最看重"最新报告一眼可见"，
+    # 配合库的 created-desc 排序，新报告永远在最顶。曾经按模块自动建子文件夹，
+    # 反而把最新报告藏进文件夹、与"最新最前"打架，已撤销。
+    # （原始诉求 Q5 问的是"验收报告是否独立成库"，是库级隔离，不是库内再分子文件夹。）
     eid = curl(HJ + ["-X", "POST", "-d", json.dumps({
         "title": title, "summary": f"# {title}",  # 双保险:summary 也以标题打头
         "sourceType": "reference", "contentType": "text/markdown",
         "tags": tags or [],  # 状态(通过/不通过)+操作方式+档位走标签，不进标题
+        "metadata": entry_meta,
     }), f"{base}/stores/{rid}/entries"])["data"]["id"]
     print(f"  报告条目 id={eid} title={title} tags={tags or []}")
     # 防「断头报告」：标题建了但 PUT 524 丢了正文 → 留下能看到标题、点开却空白的空壳条目。

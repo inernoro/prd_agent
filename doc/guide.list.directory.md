@@ -84,6 +84,7 @@
   > 右下角悬浮教程书 + SpotlightOverlay 多步 Tour + 推送/批量/dismiss 闭环
 
 - [功能验收体系设计](design.acceptance-system) `design.acceptance-system`
+- [验收报告知识库设计](design.acceptance-kb) `design.acceptance-kb`
   > 业界对标(IEEE 829 / ISO·IEC·IEEE 29119-3 / 29148 / ISTQB / BDD)的标准化验收：为何而写、踩过的坑、v2 落地与 v3 演进、涌现与未来
 
 - [服务器权威性设计](design.server-authority) `design.server-authority`

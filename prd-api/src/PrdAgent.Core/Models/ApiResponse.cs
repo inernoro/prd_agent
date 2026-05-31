@@ -118,4 +118,7 @@ public static class ErrorCodes
 
     // 通用业务
     public const string DUPLICATE = "DUPLICATE";
+
+    /// <summary>知识库模板校验失败（缺必填 metadata / 正文 section）</summary>
+    public const string TEMPLATE_VALIDATION_FAILED = "TEMPLATE_VALIDATION_FAILED";
 }

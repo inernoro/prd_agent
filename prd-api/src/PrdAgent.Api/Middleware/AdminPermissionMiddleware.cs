@@ -47,6 +47,31 @@ public sealed class AdminPermissionMiddleware
         return false;
     }
 
+    /// <summary>
+    /// AgentApiKey scope 授权：scope "a:b"（冒号）满足 admin 权限 "a.b"（点分）。
+    /// 让持 document-store:write scope 的最小权限 M2M Key 能写文档空间，
+    /// 无需 admin 账户权限位、无需 AI 超级密钥。精确等值匹配，不跨资源泄漏。
+    /// 约定：写蕴含读 —— "{res}:write" 同时满足 "{res}.read"（写入流程通常要先读，
+    /// 避免推荐的 write key 在 GET 上 403；仍不跨资源）。
+    /// </summary>
+    private static bool HasScopeGrant(HttpContext ctx, string requiredPermission)
+    {
+        var scopes = ctx.User?.FindAll("scope");
+        if (scopes == null) return false;
+        foreach (var c in scopes)
+        {
+            var perm = c.Value.Replace(':', '.');
+            if (string.Equals(perm, requiredPermission, StringComparison.OrdinalIgnoreCase))
+                return true;
+            // 写蕴含读：{res}.write 满足 {res}.read
+            if (perm.EndsWith(".write", StringComparison.OrdinalIgnoreCase)
+                && requiredPermission.EndsWith(".read", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(perm[..^6], requiredPermission[..^5], StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
 
     public async Task Invoke(HttpContext context, IAdminPermissionService permissionService)
     {
@@ -75,6 +100,39 @@ public sealed class AdminPermissionMiddleware
             context.Response.ContentType = "application/json; charset=utf-8";
             var payload = ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未授权");
             await context.Response.WriteAsync(JsonSerializer.Serialize(payload, _jsonOptions));
+            return;
+        }
+
+        // AgentApiKey 走"纯 scope"授权，保证最小权限：M2M Key 命中匹配 scope 才放行，
+        // 且【绝不】继承 owner 的 admin 权限/root（否则 root 名下的 scoped key 等于全权，最小权限失效）。
+        // scope "a:b"（冒号）精确满足 admin 权限 "a.b"（点分），不跨资源泄漏。
+        var isAgentKey = string.Equals(context.User.FindFirst("authType")?.Value, "agent-apikey", StringComparison.Ordinal);
+        if (isAgentKey)
+        {
+            if (HasScopeGrant(context, required))
+            {
+                // 仅在通过 scope 门禁后，才把 owner 身份(sub)注入到本次请求的 principal，
+                // 让 scope 门禁内的 AdminController（如 document-store）的 GetRequiredUserId() 可用。
+                // 这样 owner 身份不会泄漏到任意 [Authorize] 用户端点（P1 安全修复）。
+                var boundUserId = context.User.FindFirst("boundUserId")?.Value;
+                if (!string.IsNullOrEmpty(boundUserId)
+                    && context.User.Identity is System.Security.Claims.ClaimsIdentity idAgent
+                    && idAgent.FindFirst(JwtRegisteredClaimNames.Sub) == null)
+                {
+                    idAgent.AddClaim(new System.Security.Claims.Claim(JwtRegisteredClaimNames.Sub, boundUserId));
+                    idAgent.AddClaim(new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.NameIdentifier, boundUserId));
+                }
+                await _next(context);
+                return;
+            }
+            var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            _logger.LogWarning("[403] AgentApiKey scope 不足 - Path: {Path}, Method: {Method}, IP: {IP}, Required: {Required}",
+                path, method, ip, required);
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            context.Response.ContentType = "application/json; charset=utf-8";
+            var denied = ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED,
+                $"此接口要求 scope: {required.Replace('.', ':')}。当前 AgentApiKey 未授权该范围。");
+            await context.Response.WriteAsync(JsonSerializer.Serialize(denied, _jsonOptions));
             return;
         }
 

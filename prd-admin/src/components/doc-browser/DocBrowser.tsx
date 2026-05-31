@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
+import { getVerdictConfig } from '@/lib/acceptanceVerdictRegistry';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { motion } from 'motion/react';
@@ -19,6 +20,8 @@ import { useViewTracking } from '@/lib/useViewTracking';
 import { useContentSelection, type ContentSelectionInfo } from '@/lib/useContentSelection';
 import { MessageSquareText, MessageSquarePlus } from 'lucide-react';
 import { InlineCommentDrawer, type PendingSelection } from '@/pages/document-store/InlineCommentDrawer';
+import { AcceptanceEvidenceGraph } from './AcceptanceEvidenceGraph';
+import { Workflow } from 'lucide-react';
 import { listInlineComments } from '@/services';
 import { DocToc } from './DocToc';
 
@@ -108,6 +111,12 @@ export type DocBrowserProps = {
   loading?: boolean;
   /** 目录排序模式，默认 'default'（置顶+folder+主文档+标题）。阅读/分享场景建议 'created-desc'。 */
   sortMode?: DocBrowserSortMode;
+  /**
+   * "显示更新时间"的默认值（仅在用户未显式切换过开关时生效）。
+   * 默认 true：时间默认显示（用户反馈要求），且时间永远固定在每行最右边。
+   * 用户手动开/关后以其 sessionStorage 选择为准。
+   */
+  showUpdatedTimeDefault?: boolean;
   /**
    * 分享视图传入分享 token，用于私有库读取划词评论气泡（PR #685 Codex P1）。
    * 后端凭此 token 验证调用方确实通过有效分享访问，而非靠"存在分享链"放行。
@@ -617,6 +626,7 @@ function TreeNode({
   expandedFolders,
   useContentTitle,
   showUpdatedTime,
+  timeField,
   contentFirstLines,
   contentMatchIds,
   reprocessingMap,
@@ -640,6 +650,7 @@ function TreeNode({
   expandedFolders: Set<string>;
   useContentTitle: boolean;
   showUpdatedTime: boolean;
+  timeField: 'createdAt' | 'updatedAt';
   contentFirstLines: Map<string, string>;
   contentMatchIds: Set<string>;
   reprocessingMap?: Record<string, number>;
@@ -665,6 +676,7 @@ function TreeNode({
   return (
     <>
       <button
+        data-entry-id={entry.id}
         onClick={() => {
           if (isFolder) onToggleFolder(entry.id);
           else onSelectEntry(entry.id);
@@ -695,14 +707,15 @@ function TreeNode({
             onMoveEntry(draggedId, entry.id);
           }
         }}
-        className={`relative w-full flex items-center gap-2 text-left cursor-pointer transition-all duration-150 group ${isFolder ? 'py-[7px]' : 'py-[6px] hover-bg-soft'}`}
+        className={`relative flex flex-col gap-0.5 text-left cursor-pointer transition-all duration-150 group ${isFolder ? 'py-[7px]' : 'py-[9px] hover-bg-soft'}`}
         style={{
-          // 整块圆角高亮：左右留 6px 内缩，hover/选中不贴边
+          // 整块圆角高亮：左右留 6px 内缩，hover/选中不贴边。
+          // 宽度扣掉左右 12px 外边距，避免 w-full(100%)+margin 超出容器、撑出横向滚动条。
+          width: 'calc(100% - 12px)',
           paddingLeft: `${10 + depth * 14}px`,
           paddingRight: '10px',
           marginLeft: '6px',
           marginRight: '6px',
-          borderRadius: '9px',
           // 仅在拖拽/选中时显式给背景，未高亮时留空让 hover-bg-soft 类的 :hover 生效
           background: dragOver
             ? 'var(--accent-soft, rgba(99,102,241,0.14))'
@@ -717,7 +730,11 @@ function TreeNode({
                 borderTop: '1px solid var(--border-faint)',
                 borderRadius: 0,
               }
-            : {}),
+            : {
+                borderRadius: '9px',
+                // 条目之间一条淡分隔线（内缩对齐圆角块），让两行布局下相邻条目不糊在一起
+                borderBottom: '1px solid var(--border-faint)',
+              }),
         }}
         title={isFolder ? '点击展开/折叠（可拖拽文件到此）' : isPrimary ? '主文档' : '右键打开菜单'}
       >
@@ -734,20 +751,39 @@ function TreeNode({
             }}
           />
         )}
-        <EntryIcon entry={entry} isPrimary={isPrimary} isPinned={isPinned} isOpen={isOpen} />
+        {/* 第一行：图标 + 标题（标题独占一行，不再被徽章挤成 prd-age...） */}
+        <div className="flex items-center gap-2 w-full min-w-0">
+          <EntryIcon entry={entry} isPrimary={isPrimary} isPinned={isPinned} isOpen={isOpen} />
 
-        <span className="flex-1 truncate"
-          style={{
-            color: isFolder
-              ? 'var(--text-muted)'
-              : (isSelected ? 'var(--text-primary)' : 'var(--text-secondary)'),
-            fontWeight: isFolder ? 600 : (isSelected ? 500 : 400),
-            fontSize: isFolder ? '10.5px' : '12px',
-            letterSpacing: isFolder ? '0.06em' : 'normal',
-            textTransform: isFolder ? 'uppercase' : 'none',
-          }}>
-          {displayTitle}
-        </span>
+          <span className="flex-1 truncate"
+            style={{
+              color: isFolder
+                ? 'var(--text-muted)'
+                : (isSelected ? 'var(--text-primary)' : 'var(--text-secondary)'),
+              fontWeight: isFolder ? 600 : (isSelected ? 500 : 400),
+              fontSize: isFolder ? '10.5px' : '12px',
+              letterSpacing: isFolder ? '0.06em' : 'normal',
+              textTransform: isFolder ? 'uppercase' : 'none',
+            }}>
+            {displayTitle}
+          </span>
+
+          {/* 文件夹的计数 + 折叠箭头留在第一行右侧 */}
+          {isFolder && (
+            <span className="flex items-center gap-1.5 flex-shrink-0">
+              <span className="text-[10px] tabular-nums" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
+                {children.length}
+              </span>
+              {isOpen
+                ? <ChevronDown size={13} style={{ color: 'var(--text-muted)' }} />
+                : <ChevronRight size={13} style={{ color: 'var(--text-muted)' }} />}
+            </span>
+          )}
+        </div>
+
+        {/* 第二行：徽章（状态/标签/NEW…）+ 时间，仅非文件夹。缩进对齐到标题下方。 */}
+        {!isFolder && (
+        <div className="flex items-center gap-1.5 flex-wrap w-full" style={{ paddingLeft: '22px' }}>
 
         {/* 已分享：黄色标识，点击打开分享弹窗查看/复制链接（不只是撤销） */}
         {isShared && (
@@ -781,6 +817,22 @@ function TreeNode({
           </span>
         )}
 
+        {/* 验收结论徽章：验收报告条目按 metadata.verdict 渲染绿/琥珀/红，列表里一眼看出通过没通过 */}
+        {!isFolder && (() => {
+          const vc = getVerdictConfig(entry.metadata?.verdict);
+          if (!vc) return null;
+          const tier = entry.metadata?.tier;
+          return (
+            <span
+              className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0 font-bold"
+              style={{ background: vc.background, color: vc.color, border: vc.border }}
+              title={`验收结论：${vc.label}${tier ? ` · 档位 ${tier}` : ''}`}
+            >
+              {vc.label}{tier ? ` ${tier}` : ''}
+            </span>
+          );
+        })()}
+
         {!isFolder && (entry.tags?.length ?? 0) > 0 && (
           <span
             className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0"
@@ -794,16 +846,6 @@ function TreeNode({
             #{entry.tags![0]}
             {(entry.tags?.length ?? 0) > 1 ? ` +${entry.tags!.length - 1}` : ''}
           </span>
-        )}
-
-        {/* 更新时间副标题：由"显示设置 → 显示更新时间"开关控制，默认关 */}
-        {!isFolder && showUpdatedTime && entry.updatedAt && (
-          <RelativeTime
-            value={entry.updatedAt}
-            refreshIntervalMs={0}
-            className="text-[9.5px] tabular-nums flex-shrink-0 text-token-muted"
-            title={`最后更新：${new Date(entry.updatedAt).toLocaleString('zh-CN')}${entry.updatedByName ? ` · ${entry.updatedByName}` : ''}`}
-          />
         )}
 
         {/* 内容命中标记：标题未含关键词但因正文命中被返回 */}
@@ -875,16 +917,19 @@ function TreeNode({
           <Pin size={10} className="flex-shrink-0" style={{ color: 'rgba(59,130,246,0.5)' }} />
         )}
 
-        {/* F3：文件夹章节——右侧文件计数 + 折叠箭头（文档站目录习惯：箭头在右） */}
-        {isFolder && (
-          <span className="flex items-center gap-1.5 flex-shrink-0">
-            <span className="text-[10px] tabular-nums" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
-              {children.length}
-            </span>
-            {isOpen
-              ? <ChevronDown size={13} style={{ color: 'var(--text-muted)' }} />
-              : <ChevronRight size={13} style={{ color: 'var(--text-muted)' }} />}
+        {/* 时间：默认显示、永远固定在最右边。显示哪个时间跟随排序键——
+            created-desc 显示创建时间、其余显示更新时间，避免"按创建排序却显更新时间"的错位。 */}
+        {!isFolder && showUpdatedTime && entry[timeField] && (
+          <span className="flex-shrink-0" style={{ marginLeft: 'auto', paddingLeft: '6px' }}>
+            <RelativeTime
+              value={entry[timeField]!}
+              refreshIntervalMs={0}
+              className="text-[9.5px] tabular-nums text-token-muted"
+              title={`${timeField === 'createdAt' ? '创建于' : '最后更新'}：${new Date(entry[timeField]!).toLocaleString('zh-CN')}${timeField === 'updatedAt' && entry.updatedByName ? ` · ${entry.updatedByName}` : ''}`}
+            />
           </span>
+        )}
+        </div>
         )}
       </button>
 
@@ -902,6 +947,7 @@ function TreeNode({
           expandedFolders={expandedFolders}
           useContentTitle={useContentTitle}
           showUpdatedTime={showUpdatedTime}
+          timeField={timeField}
           contentFirstLines={contentFirstLines}
           contentMatchIds={contentMatchIds}
           reprocessingMap={reprocessingMap}
@@ -993,6 +1039,7 @@ export function DocBrowser({
   emptyState,
   loading,
   sortMode = 'default',
+  showUpdatedTimeDefault = true,
   appearance = 'inset',
   isEntryFresh,
   sidebarHeader,
@@ -1009,9 +1056,14 @@ export function DocBrowser({
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [useContentTitle, setUseContentTitle] = useState(true);
-  const [showUpdatedTime, setShowUpdatedTime] = useState<boolean>(
-    () => sessionStorage.getItem('doc-browser-show-updated-time') === '1',
-  );
+  const [showUpdatedTime, setShowUpdatedTime] = useState<boolean>(() => {
+    const saved = sessionStorage.getItem('doc-browser-show-updated-time');
+    if (saved === '1') return true;
+    if (saved === '0') return false;
+    return showUpdatedTimeDefault; // 用户未显式选择时走调用方默认（验收库默认显示时间）
+  });
+  // 列表时间显示哪个字段：跟随排序键，避免"按创建排序却显更新时间"的错位。
+  const timeField: 'createdAt' | 'updatedAt' = sortMode === 'created-desc' ? 'createdAt' : 'updatedAt';
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
   const [contentFirstLines, setContentFirstLines] = useState<Map<string, string>>(new Map());
@@ -1039,6 +1091,50 @@ export function DocBrowser({
   const addMenuRef = useRef<HTMLDivElement>(null);
   const pinnedSet = useMemo(() => new Set(pinnedIds), [pinnedIds]);
 
+  // 解析"当前选中条目"的数据：优先主 entries，回退搜索结果（后端搜索命中的条目可能
+  // 不在已加载的 entries 里，如 200 条分页之外、或 github_directory 这类靠搜索才浮现的条目）。
+  const selectedEntryData = useMemo(
+    () => entries.find(e => e.id === selectedEntryId) ?? searchResults?.find(e => e.id === selectedEntryId),
+    [entries, searchResults, selectedEntryId],
+  );
+
+  // 父链映射（entryId → parentId），用于展开选中条目的所有祖先文件夹。
+  // 合并 searchResults：搜索命中 / 深链 ?entry 的条目可能不在已加载的 entries 里，
+  // 否则祖先链断、文件夹不展开、滚不到位。
+  const parentMap = useMemo(() => {
+    const m = new Map<string, string | undefined>();
+    for (const e of entries) m.set(e.id, e.parentId);
+    for (const e of (searchResults ?? [])) if (!m.has(e.id)) m.set(e.id, e.parentId);
+    return m;
+  }, [entries, searchResults]);
+
+  // 选中条目（含通过 ?entry 传入的初始选中）自动展开其所有祖先文件夹 + 滚动到可见。
+  // 否则在分享链 / 子文件夹归档场景下，选中的那篇藏在折叠文件夹里，用户看不到"当前在读哪一篇"。
+  useEffect(() => {
+    if (!selectedEntryId) return;
+    const ancestors: string[] = [];
+    let pid = parentMap.get(selectedEntryId);
+    let guard = 0;
+    while (pid && guard++ < 50) {
+      ancestors.push(pid);
+      pid = parentMap.get(pid);
+    }
+    if (ancestors.length) {
+      setExpandedFolders(prev => {
+        let changed = false;
+        const next = new Set(prev);
+        for (const a of ancestors) if (!next.has(a)) { next.add(a); changed = true; }
+        return changed ? next : prev;
+      });
+    }
+    // 展开后下一帧把选中行滚到可见区
+    const t = setTimeout(() => {
+      const el = sidebarRef.current?.querySelector(`[data-entry-id="${selectedEntryId}"]`);
+      el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }, 80);
+    return () => clearTimeout(t);
+  }, [selectedEntryId, parentMap]);
+
   // 批次 C：只对选中的非文件夹条目埋点
   const trackedEntryId = useMemo(() => {
     if (!selectedEntryId) return null;
@@ -1050,6 +1146,7 @@ export function DocBrowser({
   // 批次 D：划词评论
   const contentAreaRef = useRef<HTMLDivElement>(null);
   const [inlineCommentsOpen, setInlineCommentsOpen] = useState(false);
+  const [evidenceGraphOpen, setEvidenceGraphOpen] = useState(false);
   const [pendingSelection, setPendingSelection] = useState<PendingSelection | null>(null);
   // 2026-05-28 用户反馈："看不到别人留在这里的评论气泡"。
   // 进入条目时主动预拉评论计数，让正文上方常驻一颗 chip：
@@ -1367,12 +1464,14 @@ export function DocBrowser({
 
   useEffect(() => {
     if (selectedEntryId) {
-      const entry = entries.find(e => e.id === selectedEntryId);
+      // 用 selectedEntryData（含 searchResults 回退），否则搜索命中、不在已加载 entries 里的
+      // 条目不会触发 loadContent，preview 停在上一篇，正文/证据图显示错位（Bugbot High）。
+      const entry = selectedEntryData;
       if (entry && !entry.isFolder) {
         loadEntryContent(selectedEntryId, `${selectedEntryId}:${entry.updatedAt ?? ''}`);
       }
     }
-  }, [selectedEntryId, loadEntryContent, entries]);
+  }, [selectedEntryId, loadEntryContent, selectedEntryData]);
 
   // 新建文档默认进入编辑态：autoEditEntryId 命中且内容加载完成后自动开编辑（一次性）
   useEffect(() => {
@@ -1626,7 +1725,7 @@ export function DocBrowser({
         {/* 文件树 */}
         <div
           className="flex-1 py-1"
-          style={{ minHeight: 0, overflowY: 'auto' }}
+          style={{ minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}
         >
           {filteredRoots.length === 0 ? (
             <div className="px-3 py-10 flex flex-col items-center gap-3 text-center">
@@ -1701,6 +1800,7 @@ export function DocBrowser({
               expandedFolders={expandedFolders}
               useContentTitle={useContentTitle}
               showUpdatedTime={showUpdatedTime}
+              timeField={timeField}
               contentFirstLines={contentFirstLines}
               contentMatchIds={contentMatchIds}
               reprocessingMap={reprocessingMap}
@@ -1916,6 +2016,28 @@ export function DocBrowser({
                   </>
                 );
               })()}
+              {/* 验收报告「证据关系图」按钮：仅验收类条目 + 有正文时显示，放在工具栏（非文章正中） */}
+              {(() => {
+                // 用 selectedEntryData（含 searchResults 回退），与正文/GitHub 渲染一致，
+                // 否则搜索命中的验收报告点开后「证据图」按钮不显示。
+                const sel = selectedEntryData;
+                const isAcc = !!(sel?.metadata?.kind === 'acceptance-report' || sel?.metadata?.verdict);
+                if (!isAcc || !preview?.text || editMode) return null;
+                return (
+                  <button
+                    onClick={() => setEvidenceGraphOpen(true)}
+                    className="h-6 px-2 rounded-[8px] text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors flex-shrink-0"
+                    style={{
+                      background: 'rgba(99,102,241,0.1)',
+                      border: '1px solid rgba(99,102,241,0.22)',
+                      color: 'rgba(165,180,252,0.95)',
+                    }}
+                    title="证据关系图 — 把报告里的步骤连成页面跳转关系图（探案证据板）"
+                  >
+                    <Workflow size={11} /> 证据图
+                  </button>
+                );
+              })()}
               {/* 批次 D：划词评论开关按钮 */}
               {trackedEntryForComments && (
                 <button
@@ -2003,15 +2125,17 @@ export function DocBrowser({
                     }}
                     placeholder="在此编辑文档内容..."
                   />
-                ) : preview ? (
+                ) : (preview
+                      || selectedEntryData?.sourceType === 'github_directory'
+                      || selectedEntryData?.contentType === 'application/x-github-directory') ? (
                   <FilePreview
-                    entry={entries.find(e => e.id === selectedEntryId)}
+                    entry={selectedEntryData}
                     preview={preview}
                   />
                 ) : (
                   <div className="flex flex-col items-center justify-center h-full text-center text-gray-400 gap-2">
                     <FolderOpen size={48} className="opacity-20 mb-2" />
-                    <p className="text-[13px]">{entries.find(e => e.id === selectedEntryId)?.isFolder ? '这是一个目录' : '无法预览该文件'}</p>
+                    <p className="text-[13px]">{selectedEntryData?.isFolder ? '这是一个目录' : '无法预览该文件'}</p>
                   </div>
                 )}
                 {/* 划词选中时的浮层"添加评论"按钮 */}
@@ -2112,6 +2236,15 @@ export function DocBrowser({
           onSave={async (newTitle) => {
             await onRenameEntry(renameEntry.id, newTitle);
           }}
+        />
+      )}
+
+      {/* 验收报告证据关系图（探案证据板） */}
+      {evidenceGraphOpen && preview?.text && (
+        <AcceptanceEvidenceGraph
+          content={preview.text}
+          title={entries.find(e => e.id === selectedEntryId)?.title ?? '验收报告'}
+          onClose={() => setEvidenceGraphOpen(false)}
         />
       )}
 

@@ -138,6 +138,43 @@ export function FilePreview({ entry, preview }: { entry?: DocBrowserEntry; previ
     );
   }
 
+  // GitHub 目录订阅父条目：本身无正文（它是一个目录容器，正文在它同步下来的各文件里）。
+  // 历史上它被建成"无内容的可点击叶子"，点开就空白 ——这里给一张目录卡片，
+  // 展示仓库/路径/分支 + 跳转 GitHub，避免"打不开"。
+  const md = entry.metadata ?? {};
+  const isGithubDir = entry.sourceType === 'github_directory' || entry.contentType === 'application/x-github-directory';
+  if (isGithubDir) {
+    const owner = md.github_owner;
+    const repo = md.github_repo;
+    const path = md.github_path;
+    const branch = md.github_branch || 'main';
+    const ghUrl = owner && repo
+      ? `https://github.com/${owner}/${repo}/tree/${branch}/${path ?? ''}`.replace(/\/$/, '')
+      : (md.sourceUrl || entry.metadata?.sourceUrl);
+    return (
+      <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
+        <cfg.icon size={44} style={{ color: cfg.color }} />
+        <p className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>{entry.title}</p>
+        <p className="text-[12px] max-w-[420px]" style={{ color: 'var(--text-muted)' }}>
+          这是一个 GitHub 目录订阅。它本身不含正文——同步下来的文件已作为独立文档收录在本知识库中，可在左侧目录里查看。
+        </p>
+        {(owner && repo) && (
+          <div className="text-[11px] font-mono px-3 py-2 rounded-[8px]"
+            style={{ background: 'var(--bg-tertiary, rgba(255,255,255,0.04))', color: 'var(--text-secondary)', border: '1px solid var(--border-faint)' }}>
+            {owner}/{repo} · {path || '/'} · {branch}
+          </div>
+        )}
+        {ghUrl && (
+          <a href={ghUrl} target="_blank" rel="noopener noreferrer"
+            className="h-8 px-4 rounded-[8px] text-[12px] font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+            style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)', color: 'rgba(59,130,246,0.9)' }}>
+            在 GitHub 打开
+          </a>
+        )}
+      </div>
+    );
+  }
+
   // 完全无内容
   return (
     <div className="text-center py-12 text-[12px]" style={{ color: 'var(--text-muted)' }}>

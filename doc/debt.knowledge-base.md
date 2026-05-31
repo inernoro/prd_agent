@@ -49,6 +49,18 @@
 
 ---
 
+## 待办：github_directory 父条目结构修正（2026-05-30）
+
+现象：GitHub 目录订阅的**父条目**被建成 `IsFolder=false`、无 `DocumentId/AttachmentId` 的"可点击叶子"，点开走 `GetEntryContent` 返回空内容 → 前端"打不开/空白"。子文件健康，但因 `ParentId=null` 全部平铺在根级（父子关系只存在 `Metadata["github_parent_id"]`，而树构建只认 `ParentId`）。
+
+已修（本次）：前端 `FilePreview.tsx` 对 `github_directory` / `application/x-github-directory` 渲染目录卡片（仓库/路径/分支 + 跳 GitHub），消除"空白打不开"。**对全部存量数据立即生效，无需迁移。**
+
+未修（债务，需后端 + 数据迁移，避免动 GitHub 同步 worker 引入回归）：
+1. `DocumentStoreController.AddGitHubSubscription` 创建父条目时设 `IsFolder=true`（点击即展开，不取内容）。
+2. `GitHubDirectorySyncService` 子条目创建时设 `ParentId = parentEntry.Id`（真正嵌套）。
+3. 存量回填脚本：父条目 `IsFolder=true` + 子条目 `ParentId ← github_parent_id`。
+4. 需真实 GitHub 订阅 + worker 跑一轮验证，确认同步/增量/删除路径不因结构变化回归。
+
 ## 相关文档
 
 - `design.document-store.md` —— 文档空间设计
