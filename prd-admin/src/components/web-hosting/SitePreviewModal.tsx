@@ -10,13 +10,15 @@ interface Props {
   onClose: () => void;
   /** 评论开关变更后回传给父组件，避免关闭再打开时从 stale site.commentsEnabled 重新初始化 */
   onCommentsEnabledChange?: (siteId: string, enabled: boolean) => void;
+  /** 是否可改「允许访客评论」开关（仅 owner/editor）。viewer 角色只读评论、不显示开关 */
+  canToggleComments?: boolean;
 }
 
 /**
  * 站点预览模态框 —— 在 iframe 中加载站点入口 URL，右侧可展开评论面板
  * 遵循 frontend-modal.md 三硬约束: inline style 高度 + createPortal + min-h-0
  */
-export default function SitePreviewModal({ site, onClose, onCommentsEnabledChange }: Props) {
+export default function SitePreviewModal({ site, onClose, onCommentsEnabledChange, canToggleComments = true }: Props) {
   const [loading, setLoading] = useState(true);
   const [errored, setErrored] = useState(false);
   const [showComments, setShowComments] = useState(false);
@@ -144,7 +146,8 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
             <aside
               className="w-[360px] shrink-0 border-l border-white/10 flex flex-col min-h-0 bg-[#0f1014]"
             >
-              {/* 允许评论开关 */}
+              {/* 允许评论开关：仅 owner/editor 显示（viewer 无权改，显示了点不动反而困惑） */}
+              {canToggleComments && (
               <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-white/10 shrink-0">
                 <span className="text-xs text-white/60">允许访客评论</span>
                 <button
@@ -163,6 +166,7 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
                   />
                 </button>
               </div>
+              )}
               <div
                 className="flex-1 min-h-0 overflow-y-auto p-3"
                 style={{ overscrollBehavior: 'contain' }}

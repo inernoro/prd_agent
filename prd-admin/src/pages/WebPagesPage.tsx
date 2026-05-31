@@ -532,7 +532,7 @@ export default function WebPagesPage() {
             onReplaceFile={(file) => setReplaceTarget({ site, file })}
             onViewers={() => setViewersTarget({ siteId: site.id, siteTitle: site.title })}
             onMove={() => setMovingSite(site)}
-            onComments={siteCaps(site).canShare ? () => setCommentSite(site) : undefined}
+            onComments={() => setCommentSite(site)}
           />
         ))}
       </div>
@@ -551,7 +551,7 @@ export default function WebPagesPage() {
             onShare={() => handleShare(site.id)}
             onCancelShare={() => cancelShareForSite(site.id)}
             onQrCode={() => setQrSite(site)}
-            onComments={siteCaps(site).canShare ? () => setCommentSite(site) : undefined}
+            onComments={() => setCommentSite(site)}
           />
         ))}
       </div>
@@ -953,6 +953,7 @@ export default function WebPagesPage() {
         <SitePreviewModal
           site={commentSite}
           onClose={() => setCommentSite(null)}
+          canToggleComments={siteCaps(commentSite).canEdit}
           onCommentsEnabledChange={(sid, enabled) => {
             // 同步父组件持有的 site 快照 + 列表，避免关闭再开开关回退到旧值
             setCommentSite((prev) => (prev && prev.id === sid ? { ...prev, commentsEnabled: enabled } : prev));
