@@ -707,9 +707,11 @@ function TreeNode({
             onMoveEntry(draggedId, entry.id);
           }
         }}
-        className={`relative w-full flex flex-col gap-0.5 text-left cursor-pointer transition-all duration-150 group ${isFolder ? 'py-[7px]' : 'py-[9px] hover-bg-soft'}`}
+        className={`relative flex flex-col gap-0.5 text-left cursor-pointer transition-all duration-150 group ${isFolder ? 'py-[7px]' : 'py-[9px] hover-bg-soft'}`}
         style={{
-          // 整块圆角高亮：左右留 6px 内缩，hover/选中不贴边
+          // 整块圆角高亮：左右留 6px 内缩，hover/选中不贴边。
+          // 宽度扣掉左右 12px 外边距，避免 w-full(100%)+margin 超出容器、撑出横向滚动条。
+          width: 'calc(100% - 12px)',
           paddingLeft: `${10 + depth * 14}px`,
           paddingRight: '10px',
           marginLeft: '6px',
@@ -1718,7 +1720,7 @@ export function DocBrowser({
         {/* 文件树 */}
         <div
           className="flex-1 py-1"
-          style={{ minHeight: 0, overflowY: 'auto' }}
+          style={{ minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}
         >
           {filteredRoots.length === 0 ? (
             <div className="px-3 py-10 flex flex-col items-center gap-3 text-center">
