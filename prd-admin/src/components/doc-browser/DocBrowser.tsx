@@ -1098,12 +1098,15 @@ export function DocBrowser({
     [entries, searchResults, selectedEntryId],
   );
 
-  // 父链映射（entryId → parentId），用于展开选中条目的所有祖先文件夹
+  // 父链映射（entryId → parentId），用于展开选中条目的所有祖先文件夹。
+  // 合并 searchResults：搜索命中 / 深链 ?entry 的条目可能不在已加载的 entries 里，
+  // 否则祖先链断、文件夹不展开、滚不到位。
   const parentMap = useMemo(() => {
     const m = new Map<string, string | undefined>();
     for (const e of entries) m.set(e.id, e.parentId);
+    for (const e of (searchResults ?? [])) if (!m.has(e.id)) m.set(e.id, e.parentId);
     return m;
-  }, [entries]);
+  }, [entries, searchResults]);
 
   // 选中条目（含通过 ?entry 传入的初始选中）自动展开其所有祖先文件夹 + 滚动到可见。
   // 否则在分享链 / 子文件夹归档场景下，选中的那篇藏在折叠文件夹里，用户看不到"当前在读哪一篇"。
@@ -2013,7 +2016,9 @@ export function DocBrowser({
               })()}
               {/* 验收报告「证据关系图」按钮：仅验收类条目 + 有正文时显示，放在工具栏（非文章正中） */}
               {(() => {
-                const sel = entries.find(e => e.id === selectedEntryId);
+                // 用 selectedEntryData（含 searchResults 回退），与正文/GitHub 渲染一致，
+                // 否则搜索命中的验收报告点开后「证据图」按钮不显示。
+                const sel = selectedEntryData;
                 const isAcc = !!(sel?.metadata?.kind === 'acceptance-report' || sel?.metadata?.verdict);
                 if (!isAcc || !preview?.text || editMode) return null;
                 return (

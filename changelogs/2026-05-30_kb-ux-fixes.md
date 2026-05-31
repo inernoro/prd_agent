@@ -8,3 +8,8 @@
 | feat | prd-admin | 文档列表条目改两行布局：第一行图标+标题（不再被徽章挤成 prd-age...），第二行徽章（状态/标签/NEW）+时间；文件夹保持单行 |
 | fix | prd-admin | 证据关系图清晰度优化：节点放大(320px)+纵向单列自上而下、连边加粗、缩略图点击弹全屏大图灯箱、默认缩放不过度缩小、模态加大(95vw)，解决"太小看不清" |
 | fix | prd-admin | 文档列表条目层次感：两行内部收紧(gap 0.5)成一组、条目间加淡分隔线+增大行距，相邻条目不再糊在一起 |
+| fix | prd-api | 安全(P1)：移除 AgentApiKey 全局 sub claim，owner 身份只在通过 scope 门禁的 AdminController 端点注入，避免 document-store:write key 越权访问任意用户端点 |
+| fix | prd-api | scope 写蕴含读：document-store:write 自动满足 document-store.read，修复推荐的 write-only key 在 GET 上 403 |
+| fix | prd-api | 移除 DocumentStoreController 里用 NUL 字节做字典分隔符（致全文件被 grep/rg 当二进制），改用元组键 |
+| fix | prd-api | ImportStore 复用已存在同名库时补 templateKey；跳过 binary-only 空条目；人工写入持久化 templateCompliant 软标记 |
+| fix | prd-admin | 证据图按钮 + 祖先展开 parentMap 合并 searchResults，搜索命中的验收报告也能显示证据图按钮/展开定位 |

@@ -835,11 +835,13 @@ public class DocumentStoreController : ControllerBase
         // 模板校验：store 命中模板时校验正文必备 section。
         // 机器归档（entry.metadata.kind=acceptance-report）缺 section 硬卡 422；人工手写软提醒放行。
         var contentTemplate = AcceptanceTemplateRegistry.FindByKey(store.TemplateKey);
+        bool? contentCompliant = null;
         if (contentTemplate != null)
         {
             var sectionProblems = AcceptanceTemplateRegistry.ValidateContentSections(contentTemplate, content);
             if (sectionProblems.Count > 0 && IsMachineTemplatedWrite(entry.Metadata))
                 return TemplateValidationError(contentTemplate, sectionProblems);
+            contentCompliant = sectionProblems.Count == 0; // 人工写入：记录是否合规（软提醒持久化）
         }
 
         // 更新或创建 ParsedPrd
@@ -877,6 +879,14 @@ public class DocumentStoreController : ControllerBase
                 .Set(e => e.UpdatedBy, userId)
                 .Set(e => e.UpdatedByName, userName)
                 .Set(e => e.UpdatedAt, DateTime.UtcNow));
+
+        // 模板库的人工写入：持久化合规标记，前端可据此提示「缺 需求一一对应表」
+        if (contentCompliant.HasValue)
+        {
+            await _db.DocumentEntries.UpdateOneAsync(
+                e => e.Id == entryId,
+                Builders<DocumentEntry>.Update.Set("Metadata.templateCompliant", contentCompliant.Value ? "true" : "false"));
+        }
 
         // 重锚定划词评论：正文更新后，遍历所有 active 评论，用 SelectedText + context 重新定位
         var rebindStats = await RebindInlineCommentsAsync(entryId, content);
@@ -1502,6 +1512,15 @@ public class DocumentStoreController : ControllerBase
             };
             await _db.DocumentStores.InsertOneAsync(store);
         }
+        else if (!string.IsNullOrWhiteSpace(meta.TemplateKey) && store.TemplateKey != meta.TemplateKey.Trim())
+        {
+            // 复用已存在的同名库：补 bundle 带来的 templateKey，否则目标库 templateKey 为 null，
+            // 排序/校验不生效（与归档脚本复用库补 templateKey 同理）。
+            var tk = meta.TemplateKey.Trim();
+            await _db.DocumentStores.UpdateOneAsync(s => s.Id == store.Id,
+                Builders<DocumentStore>.Update.Set(s => s.TemplateKey, tk).Set(s => s.UpdatedAt, DateTime.UtcNow));
+            store.TemplateKey = tk;
+        }
 
         var existing = await _db.DocumentEntries.Find(e => e.StoreId == store.Id).ToListAsync();
         var existingReportIds = new HashSet<string>(existing
@@ -1509,7 +1528,7 @@ public class DocumentStoreController : ControllerBase
             .Select(e => e.Metadata["reportId"]));
         // 已存在文件夹按 (parentId, title) 索引，重复导入时复用而非重建（保证幂等）
         var existingFolders = existing.Where(e => e.IsFolder)
-            .GroupBy(e => $"{e.ParentId ?? ""} {e.Title}")
+            .GroupBy(e => (e.ParentId ?? "", e.Title))
             .ToDictionary(g => g.Key, g => g.First().Id);
 
         var idMap = new Dictionary<string, string>(); // exportId -> 新 entryId
@@ -1528,7 +1547,7 @@ public class DocumentStoreController : ControllerBase
                     continue; // 父文件夹还没建，下一趟再来
 
                 // 幂等：同 (parent, title) 已存在则复用，不重复建
-                var folderKey = $"{newParent ?? ""} {f.Title}";
+                var folderKey = (newParent ?? "", f.Title);
                 if (existingFolders.TryGetValue(folderKey, out var reuseId))
                 {
                     idMap[f.ExportId] = reuseId;
@@ -1569,6 +1588,9 @@ public class DocumentStoreController : ControllerBase
         {
             try
             {
+                // 跳过"只有二进制、导出时未带正文"的条目：建出来也是空壳（导出端已标 binarySkipped）。
+                if (fe.BinarySkipped && string.IsNullOrEmpty(fe.Content)) { skipped++; continue; }
+
                 var reportId = fe.Metadata != null && fe.Metadata.TryGetValue("reportId", out var rid) ? rid : null;
                 if (!string.IsNullOrEmpty(reportId) && existingReportIds.Contains(reportId)) { skipped++; continue; }
 
