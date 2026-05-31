@@ -42,8 +42,8 @@ cdscli auth check
 ```bash
 cd cds/examples/tutorial-0X-...
 cdscli verify . --min-score 90                 # 1. 评分门禁：必须 A 级再往下
-cdscli scan . --apply-to-cds <projectId>       # 2. 提交导入到 CDS，等审批
-cdscli import-wait                             # 3. 阻塞到导入终态
+IMPORT_ID=$(cdscli scan . --apply-to-cds <projectId> | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['importId'])")
+cdscli import-wait "$IMPORT_ID"               # 3. 阻塞到导入终态（需传 importId）
 cdscli deploy                                  # 4. push + 部署 + 冒烟
 cdscli --human preview-url                     # 5. 拿预览地址验收
 ```
