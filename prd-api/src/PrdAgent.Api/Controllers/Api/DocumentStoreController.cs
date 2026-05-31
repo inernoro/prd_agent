@@ -1623,6 +1623,9 @@ public class DocumentStoreController : ControllerBase
                 s.PrimaryEntryId,
                 s.PinnedEntryIds,
                 s.DocumentCount,
+                s.LikeCount,
+                s.ViewCount,
+                s.FavoriteCount,
                 s.CreatedAt,
                 s.UpdatedAt,
                 hasActiveShare = sharedStoreIds.Contains(s.Id),
@@ -2325,6 +2328,7 @@ public class DocumentStoreController : ControllerBase
                 title = e.Title,
                 updatedAt = e.UpdatedAt,
                 contentType = e.ContentType,
+                tags = e.Tags ?? new List<string>(),
             }).ToList();
             return (sid, list);
         }).ToList();

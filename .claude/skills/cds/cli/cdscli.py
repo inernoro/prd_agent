@@ -5062,6 +5062,7 @@ def _verify_env_resolves(svc_name: str, svc: dict, env_keys: set[str]) -> list[d
                 "rule": "env-var-unresolved",
                 "message": f"{svc_name}.{field_label} 引用 ${{{var}}},但 x-cds-env 里没该变量也无默认值",
                 "fix": f"在 x-cds-env 加 {var}: <值>,或改成 ${{{var}:-fallback}}",
+                "meta": {"var": var},
             })
 
     if isinstance(env, dict):
@@ -5273,6 +5274,7 @@ def _verify_dependsOn_hint(app_services: dict, infra_services: dict) -> list[dic
                 "rule": "depends-on-hint",
                 "message": f"{app_name} environment 引用了 {matched_infra} 连接串,但 depends_on 没声明该 infra",
                 "fix": f"考虑加 depends_on: [{matched_infra}](Phase 2 后即使不写也兜底自动起,但显式声明利于自文档化)",
+                "meta": {"service": app_name, "infra": matched_infra},
             })
     return issues
 
@@ -5358,16 +5360,184 @@ def _verify_run_all(doc: dict, root: str) -> list[dict]:
     return issues
 
 
+# ── 评分(WS4)+ 自愈(WS5):SSOT doc/spec.cds-compose-contract.md § 4.4 / § 4.5 ──
+
+# 每级严重度扣分。垃圾 compose(多 ERROR)分数被快速压到 F,挡在部署门外。
+_VERIFY_SEVERITY_PENALTY = {"ERROR": 25, "WARNING": 8, "INFO": 2}
+# 等级分档(score >= threshold → grade)。从高到低匹配。
+_VERIFY_GRADE_BANDS = [(90, "A"), (75, "B"), (60, "C"), (40, "D"), (0, "F")]
+
+
+def _verify_grade(score: int) -> str:
+    for threshold, grade in _VERIFY_GRADE_BANDS:
+        if score >= threshold:
+            return grade
+    return "F"
+
+
+def _verify_score(issues: list[dict]) -> dict:
+    """把 ERROR/WARNING/INFO 聚合成 0-100 评分 + 字母等级。
+
+    SSOT:doc/spec.cds-compose-contract.md § 4.4。评分只看 issue 严重度,
+    满分 100,逐条扣分,下限 0。等级用于教程示例与 CI 的质量门禁。
+    """
+    deductions = {sev: 0 for sev in _VERIFY_SEVERITY_PENALTY}
+    for i in issues:
+        sev = i.get("severity")
+        if sev in _VERIFY_SEVERITY_PENALTY:
+            deductions[sev] += _VERIFY_SEVERITY_PENALTY[sev]
+    total = sum(deductions.values())
+    score = max(0, 100 - total)
+    return {
+        "score": score,
+        "grade": _verify_grade(score),
+        "deductions": deductions,
+    }
+
+
+# ── 自愈 fixer 注册表 ──
+# 只对"机器能确定地修对"的规则做自动修补;其余只给建议(复用 issue 的 fix 文案)。
+# fixer 签名:fixer(doc: dict, issue: dict) -> str | None
+#   返回人类可读的"我改了什么";返回 None 表示本条无法自动修(降级为建议)。
+
+
+def _autofix_env_var_unresolved(doc: dict, issue: dict) -> str | None:
+    """ERROR env-var-unresolved → 在 x-cds-env 补一个占位变量,让 ${VAR} 闭环解析。
+
+    占位值是 CHANGE_ME,verify 会通过但**仍需人工填真值**——输出里会标注。
+    """
+    var = (issue.get("meta") or {}).get("var")
+    if not var:
+        return None
+    env = doc.get("x-cds-env")
+    if not isinstance(env, dict):
+        env = {}
+        doc["x-cds-env"] = env
+    if var in env:
+        # 同一次修复循环里已被前一条 issue 补入;视为已修,不降级为 manual。
+        return f"x-cds-env 已含 {var}(同次修复,无需重复写入)"
+    env[var] = "CHANGE_ME"
+    return f"x-cds-env 新增 {var}: CHANGE_ME(占位,需人工改成真实值)"
+
+
+def _autofix_depends_on_hint(doc: dict, issue: dict) -> str | None:
+    """INFO depends-on-hint → 给应用 service 的 depends_on 补上引用到的 infra。"""
+    meta = issue.get("meta") or {}
+    svc_name, infra = meta.get("service"), meta.get("infra")
+    if not svc_name or not infra:
+        return None
+    services = doc.get("services")
+    if not isinstance(services, dict) or svc_name not in services:
+        return None
+    svc = services[svc_name]
+    if not isinstance(svc, dict):
+        return None
+    deps = svc.get("depends_on")
+    if isinstance(deps, dict):
+        if infra in deps:
+            return None
+        deps[infra] = {"condition": "service_started"}
+    else:
+        if isinstance(deps, str):
+            deps = [deps]
+        elif not isinstance(deps, list):
+            deps = []
+        if infra in deps:
+            return None
+        deps.append(infra)
+        svc["depends_on"] = deps
+    return f"{svc_name}.depends_on 补上 {infra}"
+
+
+# rule → (fixer, 是否需人工复核)。needsReview=True 表示自动修了但值是占位/需确认。
+_AUTOFIX_RULES: dict[str, tuple] = {
+    "env-var-unresolved": (_autofix_env_var_unresolved, True),
+    "depends-on-hint": (_autofix_depends_on_hint, False),
+}
+
+
+def _verify_autofix(compose_path: str, doc: dict, issues: list[dict]) -> dict:
+    """对可自愈的 issue 逐条修补 doc,产出 patched YAML + diff + 建议清单。
+
+    返回 {autoFixed: [...], needsReview: bool, manual: [...], patchedYaml, diff}。
+    不落盘——是否写文件由调用方按 --write 决定。
+    """
+    import copy as _copy
+    import difflib as _difflib
+    try:
+        import yaml  # type: ignore
+    except ImportError:
+        die("verify --fix 需要 PyYAML", code=4)
+
+    with open(compose_path, "r", encoding="utf-8") as f:
+        original_text = f.read()
+
+    patched = _copy.deepcopy(doc)
+    auto_fixed: list[dict] = []
+    needs_review = False
+    manual: list[dict] = []
+
+    for issue in issues:
+        rule = issue.get("rule")
+        entry = _AUTOFIX_RULES.get(rule) if rule else None
+        if entry is None:
+            # 不可自动修 → 收进建议清单
+            manual.append({
+                "severity": issue.get("severity"),
+                "service": issue.get("service"),
+                "rule": rule,
+                "message": issue.get("message"),
+                "fix": issue.get("fix"),
+            })
+            continue
+        fixer, review = entry
+        desc = fixer(patched, issue)
+        if desc is None:
+            # fixer 放弃(信息不足)→ 也降级为建议
+            manual.append({
+                "severity": issue.get("severity"),
+                "service": issue.get("service"),
+                "rule": rule,
+                "message": issue.get("message"),
+                "fix": issue.get("fix"),
+            })
+            continue
+        auto_fixed.append({"rule": rule, "service": issue.get("service"), "applied": desc})
+        if review:
+            needs_review = True
+
+    patched_text = yaml.safe_dump(
+        patched, sort_keys=False, default_flow_style=False, allow_unicode=True
+    )
+    diff = "".join(_difflib.unified_diff(
+        original_text.splitlines(keepends=True),
+        patched_text.splitlines(keepends=True),
+        fromfile=os.path.basename(compose_path),
+        tofile=os.path.basename(compose_path) + " (patched)",
+    ))
+    return {
+        "autoFixed": auto_fixed,
+        "needsReview": needs_review,
+        "manual": manual,
+        "patchedYaml": patched_text,
+        "diff": diff,
+    }
+
+
 def cmd_verify(args: argparse.Namespace) -> None:
-    """校验 cds-compose 文件:三级严重度(ERROR / WARNING / INFO)分级输出。
+    """校验 cds-compose 文件:三级严重度(ERROR / WARNING / INFO)分级输出 + 评分 + 自愈。
 
     退出码:
-      0 — 无 ERROR(可能含 WARNING/INFO,部署多半能跑)
-      1 — 至少一个 ERROR(部署一定挂,先修)
+      0 — 无 ERROR 且(若指定)score >= --min-score(可能含 WARNING/INFO,部署多半能跑)
+      1 — 至少一个 ERROR,或 score < --min-score(质量门禁未过)
       2 — 解析失败 / yaml 不合法 / 文件找不到
       4 — 缺 PyYAML 等环境问题
 
     支持直接传入文件路径（如 cdscli verify cds-comose.yml）。
+    可选 flag:
+      --min-score N   评分 < N 时 exit 1(垃圾 compose 门禁)
+      --fix           输出自愈修补(diff + 建议),不落盘
+      --write         配合 --fix,把修补写回文件(先备份 .bak)
     校验规则 SSOT:doc/spec.cds-compose-contract.md § 4。
     """
     target = os.path.abspath(args.path or ".")
@@ -5393,15 +5563,87 @@ def cmd_verify(args: argparse.Namespace) -> None:
         "warnings": sum(1 for i in issues if i["severity"] == "WARNING"),
         "infos":    sum(1 for i in issues if i["severity"] == "INFO"),
     }
-    payload = {
+    score = _verify_score(issues)
+    summary["score"] = score["score"]
+    summary["grade"] = score["grade"]
+
+    payload: dict[str, Any] = {
         "composeFile": os.path.relpath(compose_path, root),
         "issues": issues,
         "summary": summary,
     }
-    if summary["errors"] > 0:
-        die(f"verify 发现 {summary['errors']} 个 ERROR,{summary['warnings']} 个 WARNING",
-            code=1, extra=payload)
-    note = f"verify 通过(WARNING={summary['warnings']}, INFO={summary['infos']})"
+
+    # ── 自愈(--fix) — 先在内存中计算 patch,不落盘 ──
+    heal: dict | None = None
+    if getattr(args, "fix", False):
+        heal = _verify_autofix(compose_path, doc, issues)
+        payload["heal"] = {
+            "autoFixed": heal["autoFixed"],
+            "needsReview": heal["needsReview"],
+            "manual": heal["manual"],
+            "diff": heal["diff"],
+            "written": False,
+        }
+
+    # ── 质量门禁:ERROR 或 score 不达标 ──
+    # 若 --fix --write 请求且有可自愈项,先按修复后剩余 issue 评分,再决定是否写盘。
+    # 这样保证:门禁失败时磁盘不被改动;门禁通过后再落盘并用修复后状态作为输出。
+    gate_summary = summary
+    gate_score = score
+    remaining: list[dict] = issues  # 默认指向原始列表
+    will_write = (heal is not None and getattr(args, "write", False)
+                  and bool(heal["autoFixed"]))
+    if will_write:
+        fixed_counter: dict = {}
+        for fx in heal["autoFixed"]:  # type: ignore[index]
+            k = (fx.get("rule"), fx.get("service"))
+            fixed_counter[k] = fixed_counter.get(k, 0) + 1
+        remaining = []
+        pending = dict(fixed_counter)
+        for iss in issues:
+            k = (iss.get("rule"), iss.get("service"))
+            if pending.get(k, 0) > 0:
+                pending[k] -= 1
+            else:
+                remaining.append(iss)
+        gate_score = _verify_score(remaining)
+        gate_summary = {
+            "errors":   sum(1 for i in remaining if i["severity"] == "ERROR"),
+            "warnings": sum(1 for i in remaining if i["severity"] == "WARNING"),
+            "infos":    sum(1 for i in remaining if i["severity"] == "INFO"),
+        }
+        gate_summary["score"] = gate_score["score"]
+        gate_summary["grade"] = gate_score["grade"]
+
+    min_score = getattr(args, "min_score", None)
+    gate_fail = gate_summary["errors"] > 0 or (min_score is not None and gate_score["score"] < min_score)
+    if gate_fail:
+        reasons = []
+        if gate_summary["errors"] > 0:
+            reasons.append(f"{gate_summary['errors']} 个 ERROR")
+        if min_score is not None and gate_score["score"] < min_score:
+            reasons.append(f"评分 {gate_score['score']}(等级 {gate_score['grade']})< 门槛 {min_score}")
+        die("verify 未过门禁: " + ", ".join(reasons), code=1, extra=payload)
+
+    # ── 门禁通过后才落盘 ──
+    if will_write:
+        backup = compose_path + ".bak"
+        try:
+            with open(compose_path, "r", encoding="utf-8") as f:
+                with open(backup, "w", encoding="utf-8") as b:
+                    b.write(f.read())
+            with open(compose_path, "w", encoding="utf-8") as f:
+                f.write(heal["patchedYaml"])  # type: ignore[index]
+            payload["heal"]["written"] = True  # type: ignore[index]
+            payload["heal"]["backup"] = os.path.relpath(backup, root)  # type: ignore[index]
+        except OSError as e:
+            die(f"写回 {compose_path} 失败: {e}", code=2, extra=payload)
+        # 用修复后状态更新 payload 顶层字段,使解析方读到一致的输出
+        payload["issues"] = remaining
+        payload["summary"] = gate_summary
+
+    note = (f"verify 通过 评分={gate_score['score']}({gate_score['grade']}) "
+            f"WARNING={gate_summary['warnings']} INFO={gate_summary['infos']}")
     ok(payload, note=note)
 
 
@@ -6166,8 +6408,14 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="跳过根目录 cds-compose.yml 缓存，强制重新扫描")
     sc.set_defaults(func=cmd_scan)
 
-    vf = sub.add_parser("verify", help="校验 cds-compose 文件(部署前预检,SSOT: spec.cds-compose-contract.md)")
-    vf.add_argument("path", nargs="?", default=".", help="项目根目录,默认当前目录")
+    vf = sub.add_parser("verify", help="校验 cds-compose 文件(部署前预检 + 评分 + 自愈,SSOT: spec.cds-compose-contract.md)")
+    vf.add_argument("path", nargs="?", default=".", help="项目根目录或 compose 文件路径,默认当前目录")
+    vf.add_argument("--min-score", type=int, metavar="N",
+                    help="评分 < N 时 exit 1(垃圾 compose 质量门禁,0-100)")
+    vf.add_argument("--fix", action="store_true",
+                    help="输出自愈修补(diff + 建议),默认不落盘")
+    vf.add_argument("--write", action="store_true",
+                    help="配合 --fix:把可自动修复的改动写回文件(先备份 .bak)")
     vf.set_defaults(func=cmd_verify)
 
     sm = sub.add_parser("smoke", help="分层冒烟（L1+L2+L3）")

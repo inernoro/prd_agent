@@ -251,6 +251,36 @@ services:
 
 实现位置:`.claude/skills/cds/cli/cdscli.py:cmd_verify`。
 
+### 4.4 评分(Score / Grade)
+
+`cdscli verify` 在分级 issue 基础上聚合一个 **0-100 评分 + 字母等级**,用于教程示例与 CI 的质量门禁,挡掉垃圾 compose。
+
+| 项 | 规则 |
+|---|---|
+| 满分 | 100 |
+| 扣分 | 每 ERROR −25,每 WARNING −8,每 INFO −2,下限 0 |
+| 等级 | A(≥90) / B(≥75) / C(≥60) / D(≥40) / F(<40) |
+| 输出 | 并入 `payload.summary` 的 `score` / `grade` 字段 |
+| 门禁 | `--min-score N`:评分 < N 时 exit 1(叠加在 ERROR exit 1 之上) |
+
+实现位置:`_verify_score` / `_verify_grade`。`_VERIFY_SEVERITY_PENALTY` / `_VERIFY_GRADE_BANDS` 是 SSOT,改分值/分档只动这两个常量。
+
+### 4.5 自愈(Self-Heal / --fix)
+
+`cdscli verify --fix` 对**机器能确定地修对**的 issue 自动修补 compose,对其余降级为可执行建议(复用 issue 的 `fix` 文案)。默认打印 unified diff + 建议;`--write` 落盘(先备份 `.bak`)。
+
+| rule | 自动修? | 修法 | 需人工复核 |
+|---|---|---|---|
+| `env-var-unresolved` | 是 | x-cds-env 补占位 `CHANGE_ME` | 是(占位值需改真值) |
+| `depends-on-hint` | 是 | 给 app service 的 depends_on 补 infra | 否 |
+| `app-ports-missing` | 否(需真实端口) | — 只给建议 | — |
+| `infra-image-missing` | 否(需人选镜像) | — 只给建议 | — |
+| 其余 WARNING/INFO | 否 | — 只给建议 | — |
+
+实现位置:`_AUTOFIX_RULES`(rule → fixer 注册表)+ `_verify_autofix`。新增可自愈规则 = 写一个 `_autofix_<rule>(doc, issue)` fixer 并注册到 `_AUTOFIX_RULES`。需自动修的 issue 必须在生产端带结构化 `meta`(如 `{"var": ...}` / `{"service":..., "infra":...}`),fixer 不靠解析 message。
+
+> 限制:`--write` 用 PyYAML 重序列化整文件,注释会丢、缩进风格会变。务必先看 diff 再 write。详见 `doc/debt.cds-tutorial.md`。
+
 ---
 
 ## 5. 实现 SSOT 索引
@@ -265,8 +295,12 @@ services:
 | 预览域名公式 | `cds/src/services/preview-slug.ts` | `computePreviewSlug(branch, projectSlug)` |
 | cdscli scan | `.claude/skills/cds/cli/cdscli.py` | `cmd_scan` / `_parse_compose_services` / `_yaml_from_compose_services` |
 | cdscli verify | 同上 | `cmd_verify`(Phase 2.5 新增) |
+| cdscli verify 评分 | 同上 | `_verify_score` / `_verify_grade`(§4.4) |
+| cdscli verify 自愈 | 同上 | `_AUTOFIX_RULES` / `_verify_autofix`(§4.5) |
 
 每次改这些文件之前,**必须**通读对应函数注释 + 跑配套测试:
+- `.claude/skills/cds/tests/test_verify_score.py` — 评分聚合 / 分档(§4.4)
+- `.claude/skills/cds/tests/test_verify_selfheal.py` — 自愈修补 / 建议降级(§4.5)
 - `cds/tests/services/compose-parser.test.ts` — env 展开、resource limits
 - `cds/tests/services/container-network-isolation.test.ts` — 多项目网络隔离
 - `cds/tests/services/discover-infra-cross-project.test.ts` — 跨项目同名 infra(Phase 2.5)

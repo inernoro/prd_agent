@@ -185,7 +185,7 @@ export type SubscriptionDetail = {
 };
 
 export type DocumentStoreWithPreview = DocumentStore & {
-  recentEntries: { id: string; title: string; updatedAt: string; contentType: string }[];
+  recentEntries: { id: string; title: string; updatedAt: string; contentType: string; tags?: string[] }[];
   /** 是否存在「整库级」有效分享（用于卡片标黄） */
   hasActiveShare?: boolean;
   /** 团队作用域下后端附带的创建者昵称（卡片顶部成员归属展示） */

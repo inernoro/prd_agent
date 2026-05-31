@@ -1,0 +1,88 @@
+services:
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -lc "corepack enable && pnpm install --frozen-lockfile=false && pnpm exec vite --host 0.0.0.0 --port 4173"
+    ports:
+      - "4173:4173"
+    volumes:
+      - ./frontend:/app
+    environment:
+      PORT: "4173"
+      VITE_API_BASE: /api
+    labels:
+      cds.path-prefix: /
+      cds.readiness-path: /
+
+  backend:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -lc "corepack enable && pnpm install --frozen-lockfile=false && pnpm start"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - mysql
+      - redis
+      - rabbitmq
+    environment:
+      PORT: "3000"
+      MYSQL_URL: mysql://app:app-pass@mysql:3306/app
+      REDIS_URL: redis://redis:6379
+      RABBITMQ_URL: amqp://app:app-pass@rabbitmq:5672
+    labels:
+      cds.path-prefix: /api/
+      cds.readiness-path: /ready
+
+  mysql:
+    image: mysql:8
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root-pass
+      MYSQL_DATABASE: app
+      MYSQL_USER: app
+      MYSQL_PASSWORD: app-pass
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: app
+      RABBITMQ_DEFAULT_PASS: app-pass
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+
+volumes:
+  mysql-data:
+  redis-data:
+  rabbitmq-data:
+
+x-cds-env:
+  MYSQL_URL: mysql://app:app-pass@mysql:3306/app
+  REDIS_URL: redis://redis:6379
+  RABBITMQ_URL: amqp://app:app-pass@rabbitmq:5672
+
+x-cds-env-meta:
+  MYSQL_URL:
+    kind: infra-derived
+    hint: MySQL connection string for the backend smoke check.
+  REDIS_URL:
+    kind: infra-derived
+    hint: Redis connection string for the backend smoke check.
+  RABBITMQ_URL:
+    kind: infra-derived
+    hint: RabbitMQ connection string for the backend smoke check.

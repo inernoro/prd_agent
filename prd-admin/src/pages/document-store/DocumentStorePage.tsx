@@ -68,6 +68,7 @@ import {
 } from '@/services';
 import { ShareToTeamDialog } from '@/components/team/ShareToTeamDialog';
 import { UserAvatar } from '@/components/ui/UserAvatar';
+import { RelativeTime } from '@/components/ui/RelativeTime';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
 import type {
@@ -1407,46 +1408,48 @@ export function DocumentStorePage() {
         title="知识库"
         icon={<Library size={14} />}
         actions={
-          tab === 'mine' ? (
-            <div className="flex items-center gap-2">
-              <TeamScopeBar
-                moduleKey="document-store"
-                value={teamScope}
-                onChange={setTeamScope}
-              />
-              <Button
-                variant="primary"
-                size="xs"
-                data-tour-id="document-store-create"
-                onClick={() => setShowCreate(true)}
-              >
-                <Plus size={13} /> 新建空间
-              </Button>
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            {/* 视图切换：我的空间 / 我的收藏 / 我的点赞（上移到标题行，与作用域控件同排） */}
+            <div className="flex items-center gap-1.5">
+              {tabs.map(t => {
+                const active = tab === t.key;
+                const Icon = t.icon;
+                return (
+                  <button
+                    key={t.key}
+                    onClick={() => setTab(t.key)}
+                    className="h-8 px-3 rounded-[10px] text-[12px] font-semibold flex items-center gap-1.5 cursor-pointer transition-all duration-200"
+                    style={{
+                      background: active ? 'rgba(59,130,246,0.1)' : 'rgba(255,255,255,0.03)',
+                      border: active ? '1px solid rgba(59,130,246,0.2)' : '1px solid rgba(255,255,255,0.06)',
+                      color: active ? 'rgba(59,130,246,0.9)' : 'var(--text-muted)',
+                    }}>
+                    <Icon size={12} /> {t.label}
+                  </button>
+                );
+              })}
             </div>
-          ) : null
+            {tab === 'mine' && (
+              <>
+                <span className="w-px h-5 self-center" style={{ background: 'rgba(255,255,255,0.08)' }} />
+                <TeamScopeBar
+                  moduleKey="document-store"
+                  value={teamScope}
+                  onChange={setTeamScope}
+                />
+                <Button
+                  variant="primary"
+                  size="xs"
+                  data-tour-id="document-store-create"
+                  onClick={() => setShowCreate(true)}
+                >
+                  <Plus size={13} /> 新建空间
+                </Button>
+              </>
+            )}
+          </div>
         }
       />
-
-      {/* 标签切换 */}
-      <div className="px-5 flex items-center gap-2">
-        {tabs.map(t => {
-          const active = tab === t.key;
-          const Icon = t.icon;
-          return (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              className="h-8 px-3 rounded-[10px] text-[12px] font-semibold flex items-center gap-1.5 cursor-pointer transition-all duration-200"
-              style={{
-                background: active ? 'rgba(59,130,246,0.1)' : 'rgba(255,255,255,0.03)',
-                border: active ? '1px solid rgba(59,130,246,0.2)' : '1px solid rgba(255,255,255,0.06)',
-                color: active ? 'rgba(59,130,246,0.9)' : 'var(--text-muted)',
-              }}>
-              <Icon size={12} /> {t.label}
-            </button>
-          );
-        })}
-      </div>
 
       <div className="px-5 pb-6 w-full">
         {loading ? (
@@ -1510,6 +1513,18 @@ export function DocumentStorePage() {
               const isInteraction = tab !== 'mine';
               const ownerName = isInteraction ? (s as InteractionStoreCard).ownerName : undefined;
               const isOwnInteraction = isInteraction && (s as InteractionStoreCard).isOwner;
+              // 按库 id 稳定取色（复刻设计稿图1的多彩图标）
+              const ICON_PALETTE: [string, string][] = [
+                ['#3ecf8e', '#27a06b'], ['#5b8cff', '#3a6fe0'], ['#f5a623', '#d98314'],
+                ['#ff6b9c', '#e0467a'], ['#7c5cff', '#5b3fd0'], ['#26c0c0', '#159191'],
+              ];
+              const ci = Math.abs([...s.id].reduce((a, c) => (a * 31 + c.charCodeAt(0)) | 0, 0)) % ICON_PALETTE.length;
+              const [c1, c2] = ICON_PALETTE[ci];
+              const category = s.tags?.[0];
+              // 头像文件名字段名因来源而异：我的/团队列表是 ownerAvatarFileName，收藏/点赞列表是 ownerAvatar
+              const ownerAvatarFileName = (s as DocumentStoreWithPreview).ownerAvatarFileName
+                ?? (s as InteractionStoreCard).ownerAvatar;
+              const hasOwner = Boolean((s as DocumentStoreWithPreview).ownerName || ownerName);
               return (
                 <GlassCard key={s.id} animated interactive padding="none"
                   className="group flex flex-col h-full"
@@ -1523,9 +1538,9 @@ export function DocumentStorePage() {
                   <div className="p-4 pb-2 flex-1 flex flex-col">
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                        <div className="w-9 h-9 rounded-[10px] flex items-center justify-center flex-shrink-0"
-                          style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.12)' }}>
-                          <Library size={16} style={{ color: 'rgba(59,130,246,0.85)' }} />
+                        <div className="w-10 h-10 rounded-[11px] flex items-center justify-center flex-shrink-0"
+                          style={{ background: `linear-gradient(135deg, ${c1}, ${c2})`, boxShadow: `0 4px 12px -4px ${c1}99` }}>
+                          <Library size={18} style={{ color: '#fff' }} />
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5 min-w-0">
@@ -1541,27 +1556,10 @@ export function DocumentStorePage() {
                               </span>
                             )}
                           </div>
-                          {/* 团队作用域：顶部显示创建者头像 + 昵称 */}
-                          {teamScope.scope === 'team' && (s as DocumentStoreWithPreview).ownerName && (
-                            <div className="flex items-center gap-1 mt-0.5">
-                              <UserAvatar
-                                src={resolveAvatarUrl({ avatarFileName: (s as DocumentStoreWithPreview).ownerAvatarFileName })}
-                                className="w-3.5 h-3.5 rounded-full"
-                              />
-                              <span className="text-[11px] truncate" style={{ color: 'var(--text-secondary)' }}>
-                                {(s as DocumentStoreWithPreview).ownerName}
-                              </span>
-                            </div>
-                          )}
-                          {s.description ? (
-                            <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                              {s.description}
-                            </p>
-                          ) : ownerName ? (
-                            <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                              @{ownerName}
-                            </p>
-                          ) : null}
+                          {/* 副标题行：分类(首个标签) · N 篇文章 —— 复刻设计稿图1 */}
+                          <p className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                            {category ? `${category} · ` : ownerName ? `@${ownerName} · ` : ''}{s.documentCount} 篇文章
+                          </p>
                         </div>
                       </div>
                       {tab === 'mine' && (
@@ -1586,97 +1584,122 @@ export function DocumentStorePage() {
                             style={{ color: 'rgba(59,130,246,0.7)' }}>
                             <Pencil size={11} />
                           </button>
+                          <button
+                            className="surface-row h-6 w-6 rounded-[6px] flex items-center justify-center cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="删除知识库"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              const entryCount = s.documentCount ?? 0;
+                              const confirmed = await systemDialog.confirm({
+                                title: '确认删除知识库',
+                                message: `删除「${s.name}」将永久清除：\n  · ${entryCount} 个文档条目\n  · 所有订阅同步日志\n  · 所有附件文件与解析正文\n  · 所有点赞 / 收藏 / 分享链接\n\n此操作不可恢复。`,
+                                tone: 'danger',
+                                confirmText: '永久删除',
+                                cancelText: '取消',
+                              });
+                              if (!confirmed) return;
+                              const res = await deleteDocumentStore(s.id);
+                              if (res.success) {
+                                setStores(prev => prev.filter(x => x.id !== s.id));
+                                toast.success('知识库已删除', '关联数据已全部清理');
+                              } else {
+                                toast.error('删除失败', res.error?.message);
+                              }
+                            }}
+                            style={{ color: 'rgba(239,68,68,0.6)' }}>
+                            <Trash2 size={11} />
+                          </button>
                         </div>
                       )}
                     </div>
 
-                    {/* 标签展示 */}
-                    {(s.tags?.length ?? 0) > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-1.5">
-                        {s.tags.slice(0, 4).map(t => (
-                          <span key={t}
-                            className="inline-flex items-center h-5 px-1.5 rounded-[5px] text-[10px] font-medium"
-                            style={{
-                              background: 'rgba(59,130,246,0.08)',
-                              border: '1px solid rgba(59,130,246,0.15)',
-                              color: 'rgba(59,130,246,0.85)',
-                            }}>
-                            # {t}
-                          </span>
-                        ))}
-                        {s.tags.length > 4 && (
-                          <span className="text-[10px] self-center" style={{ color: 'var(--text-muted)' }}>
-                            +{s.tags.length - 4}
-                          </span>
-                        )}
-                      </div>
+                    {/* 描述（整卡宽，复刻设计稿图1） */}
+                    {s.description && (
+                      <p className="text-[12px] mt-2 line-clamp-1" style={{ color: 'var(--text-secondary)' }}>
+                        {s.description}
+                      </p>
                     )}
 
-                    {/* 最近文档预览列表 */}
-                    <div className="flex-1 mt-1.5 space-y-0.5 min-h-[60px]">
+                    {/* 最近文档预览列表 — 文章迷你目录（序号 + 标题 + 更多计数） */}
+                    <div className="flex-1 mt-2.5 min-h-[88px]">
                       {(s.recentEntries?.length ?? 0) > 0 ? (
-                        s.recentEntries.map((entry) => (
-                          <div key={entry.id} className="flex items-center gap-1.5 py-1 px-1 rounded-[6px] transition-colors hover:bg-white/3">
-                            <FileText size={11} className="flex-shrink-0" style={{ color: 'rgba(59,130,246,0.5)' }} />
-                            <span className="flex-1 text-[11px] truncate" style={{ color: 'var(--text-secondary)' }}>
-                              {entry.title}
-                            </span>
-                            <span className="text-[9px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
-                              {new Date(entry.updatedAt).toLocaleDateString()}
-                            </span>
-                          </div>
-                        ))
+                        <div className="rounded-[9px] overflow-hidden"
+                          style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                          {s.recentEntries.slice(0, 3).map((entry, idx) => (
+                            <div key={entry.id}
+                              className="flex items-center gap-2 px-2.5 py-1.5 transition-colors hover:bg-white/[0.04]"
+                              style={{ borderTop: idx === 0 ? 'none' : '1px solid rgba(255,255,255,0.05)' }}>
+                              <span className="text-[10px] w-3.5 text-center flex-shrink-0 tabular-nums" style={{ color: 'var(--text-muted)' }}>
+                                {idx + 1}
+                              </span>
+                              <FileText size={12} className="flex-shrink-0" style={{ color: 'rgba(59,130,246,0.6)' }} />
+                              <span className="min-w-0 text-[11.5px] truncate" style={{ color: 'var(--text-secondary)' }}>
+                                {entry.title}
+                              </span>
+                              {(entry.tags?.length ?? 0) > 0 && (
+                                <span className="hidden xl:flex items-center gap-1 flex-shrink-0">
+                                  {entry.tags!.slice(0, 2).map(t => (
+                                    <span key={t}
+                                      className="inline-flex items-center h-[15px] px-1.5 rounded-[4px] text-[9px] font-medium max-w-[68px] truncate"
+                                      style={{ background: 'rgba(59,130,246,0.1)', color: 'rgba(59,130,246,0.85)' }}>
+                                      {t}
+                                    </span>
+                                  ))}
+                                </span>
+                              )}
+                              <span className="flex-1" />
+                              <span className="text-[10px] flex-shrink-0 tabular-nums" style={{ color: 'var(--text-muted)' }}>
+                                <RelativeTime value={entry.updatedAt} refreshIntervalMs={0} />
+                              </span>
+                            </div>
+                          ))}
+                          {(s.recentEntries?.length ?? 0) >= 3 && s.documentCount > (s.recentEntries?.length ?? 0) && (
+                            <div className="flex items-center justify-center px-2.5 py-1.5 text-[10.5px]"
+                              style={{ borderTop: '1px solid rgba(255,255,255,0.05)', color: 'var(--text-muted)' }}>
+                              + 还有 {s.documentCount - (s.recentEntries?.length ?? 0)} 篇
+                            </div>
+                          )}
+                        </div>
                       ) : (
-                        <div className="flex items-center justify-center h-full">
+                        <div className="flex items-center justify-center h-full rounded-[9px]"
+                          style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.08)', minHeight: '88px' }}>
                           <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>知识库暂无内容</span>
                         </div>
                       )}
                     </div>
 
-                    <div className="flex items-center justify-between mt-2 pt-2.5"
+                    <div className="flex items-center justify-between mt-2.5 pt-3"
                       style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                      <div className="flex items-center gap-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                        <span><span style={{ color: 'var(--text-secondary)' }}>{s.documentCount}</span> 个文档</span>
+                      <div className="flex items-center gap-3.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        <span className="inline-flex items-center gap-1" title="文档数">
+                          <FileText size={11} /> {s.documentCount}
+                        </span>
+                        <span className="inline-flex items-center gap-1" title="浏览">
+                          <Eye size={11} /> {s.viewCount ?? 0}
+                        </span>
+                        <span className="inline-flex items-center gap-1" title="点赞">
+                          <Heart size={11} /> {s.likeCount ?? 0}
+                        </span>
                       </div>
-                      <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                        {new Date(s.updatedAt).toLocaleDateString()}
-                      </span>
+                      {/* 右下角：相对修改时间 + 贡献者头像（两者都保留，不再二选一） */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                          <RelativeTime value={s.updatedAt} refreshIntervalMs={0} />
+                        </span>
+                        {hasOwner ? (
+                          <UserAvatar
+                            src={resolveAvatarUrl({ avatarFileName: ownerAvatarFileName })}
+                            className="w-6 h-6 rounded-full"
+                            style={{ border: '2px solid var(--bg-card, #1b1b1e)' }}
+                          />
+                        ) : (
+                          <span className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white"
+                            style={{ background: `linear-gradient(135deg, ${c1}, ${c2})`, border: '2px solid var(--bg-card, #1b1b1e)' }}>
+                            {s.name.trim().charAt(0).toUpperCase()}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  </div>
-
-                  <div className="flex items-center gap-1.5 px-4 py-2.5 mt-auto"
-                    style={{ background: 'rgba(255,255,255,0.03)', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                    <button className="surface-row flex-1 h-7 rounded-[8px] text-[11px] font-semibold flex items-center justify-center gap-1 cursor-pointer"
-                      style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.15)', color: 'rgba(59,130,246,0.85)' }}>
-                      <FolderOpen size={11} /> 打开
-                    </button>
-                    {tab === 'mine' && (
-                      <button
-                        className="surface-row h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
-                        title="删除空间"
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          const entryCount = s.documentCount ?? 0;
-                          const confirmed = await systemDialog.confirm({
-                            title: '确认删除知识库',
-                            message: `删除「${s.name}」将永久清除：\n  · ${entryCount} 个文档条目\n  · 所有订阅同步日志\n  · 所有附件文件与解析正文\n  · 所有点赞 / 收藏 / 分享链接\n\n此操作不可恢复。`,
-                            tone: 'danger',
-                            confirmText: '永久删除',
-                            cancelText: '取消',
-                          });
-                          if (!confirmed) return;
-                          const res = await deleteDocumentStore(s.id);
-                          if (res.success) {
-                            setStores(prev => prev.filter(x => x.id !== s.id));
-                            toast.success('知识库已删除', '关联数据已全部清理');
-                          } else {
-                            toast.error('删除失败', res.error?.message);
-                          }
-                        }}
-                        style={{ color: 'rgba(239,68,68,0.5)' }}>
-                        <Trash2 size={12} />
-                      </button>
-                    )}
                   </div>
                 </GlassCard>
               );

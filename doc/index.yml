@@ -155,6 +155,7 @@ docs:
   guide.cds-github-webhook-events: CDS GitHub Webhook 订阅配置指南
   guide.cds-cli-swarm: CDS CLI 蜂群优化操作手册（多 agent 并行反馈+修复+复测）
   guide.cds-deploy-three-paths: CDS 三种部署方式指南
+  guide.cds-tutorial: 从零开始的 CDS 教程指南（4 横向场景 × 2 纵向路径）
   guide.cds-fullstack-infra-smoke: CDS 全栈基础设施冒烟样例指南
   guide.skill-workflow: AI 技能工作流指南
   guide.skill-removal-checklist: 删技能前置检查清单指南
@@ -254,6 +255,7 @@ docs:
   debt.claude-sdk-executor: Claude SDK 执行器 / Python sidecar 债务台账
   debt.cds-state-json: CDS state.json 影子存储债务台账
   debt.cds-compose-secrets: CDS compose 模板 TODO secrets / 全量 import 被拒债务台账
+  debt.cds-tutorial: CDS 教程（示例工程 + 隔离知识库 + 评分/自愈）债务台账
   debt.knowledge-base: 知识库（AI Toolbox attachment + 文档空间）债务台账
   debt.share-link-security: 分享链接安全债务台账
   debt.team-feature: 团队（网页托管 + 知识库）债务台账
