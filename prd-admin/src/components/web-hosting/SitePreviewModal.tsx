@@ -8,13 +8,15 @@ import CommentsSection from './CommentsSection';
 interface Props {
   site: HostedSite;
   onClose: () => void;
+  /** 评论开关变更后回传给父组件，避免关闭再打开时从 stale site.commentsEnabled 重新初始化 */
+  onCommentsEnabledChange?: (siteId: string, enabled: boolean) => void;
 }
 
 /**
  * 站点预览模态框 —— 在 iframe 中加载站点入口 URL，右侧可展开评论面板
  * 遵循 frontend-modal.md 三硬约束: inline style 高度 + createPortal + min-h-0
  */
-export default function SitePreviewModal({ site, onClose }: Props) {
+export default function SitePreviewModal({ site, onClose, onCommentsEnabledChange }: Props) {
   const [loading, setLoading] = useState(true);
   const [errored, setErrored] = useState(false);
   const [showComments, setShowComments] = useState(false);
@@ -50,7 +52,11 @@ export default function SitePreviewModal({ site, onClose }: Props) {
     const next = !commentsEnabled;
     setTogglingComments(true);
     const res = await setSiteCommentsEnabled(site.id, next);
-    if (res.success) setCommentsEnabled(next);
+    if (res.success) {
+      setCommentsEnabled(next);
+      // 回传父组件，更新其持有的 site 快照（修复关闭再打开开关回退到旧值）
+      onCommentsEnabledChange?.(site.id, next);
+    }
     setTogglingComments(false);
   };
 
@@ -99,8 +105,8 @@ export default function SitePreviewModal({ site, onClose }: Props) {
 
         {/* 主体：iframe + 可选评论面板 */}
         <div className="flex-1 min-h-0 flex">
-          {/* iframe 容器 */}
-          <div className="flex-1 min-w-0 relative bg-white">
+          {/* iframe 容器（底色用面板深色，避免站点白底加载瞬间在暗色后台里突兀闪白） */}
+          <div className="flex-1 min-w-0 relative bg-[#0f1014]">
             {loading && (
               <div className="absolute inset-0 flex items-center justify-center bg-[#0f1014]">
                 <Loader2 className="w-8 h-8 animate-spin text-white/40" />
@@ -122,7 +128,12 @@ export default function SitePreviewModal({ site, onClose }: Props) {
               ref={iframeRef}
               src={site.siteUrl}
               className="w-full h-full"
-              onLoad={() => setLoading(false)}
+              onLoad={() => {
+                // iframe 成功加载：清 loading 同时清 errored
+                // 修复"超时已置 errored，但站点随后加载成功，错误遮罩却一直盖住"（Cursor medium）
+                setLoading(false);
+                setErrored(false);
+              }}
               sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-modals"
               title={site.title}
             />

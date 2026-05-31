@@ -950,7 +950,15 @@ export default function WebPagesPage() {
 
       {/* 评论管理：站点预览 iframe + 评论面板 + 允许评论开关 */}
       {commentSite && (
-        <SitePreviewModal site={commentSite} onClose={() => setCommentSite(null)} />
+        <SitePreviewModal
+          site={commentSite}
+          onClose={() => setCommentSite(null)}
+          onCommentsEnabledChange={(sid, enabled) => {
+            // 同步父组件持有的 site 快照 + 列表，避免关闭再开开关回退到旧值
+            setCommentSite((prev) => (prev && prev.id === sid ? { ...prev, commentsEnabled: enabled } : prev));
+            setSites((prev) => prev.map((x) => (x.id === sid ? { ...x, commentsEnabled: enabled } : x)));
+          }}
+        />
       )}
 
       {movingSite && (
@@ -1563,6 +1571,7 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
   onShare: () => void;
   onCancelShare: () => void;
   onQrCode: () => void;
+  onComments?: () => void;
 }) {
   const c = caps ?? { canEdit: true, canDelete: true, canShare: true, canSetVisibility: true };
   const isPublic = site.visibility === 'public';

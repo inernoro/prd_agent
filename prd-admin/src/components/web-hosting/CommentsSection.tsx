@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { MessageSquare, Send, Trash2, Lock } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '../ui/VideoLoader';
 import { getUserAvatarUrl } from '../../lib/avatar';
@@ -17,14 +17,16 @@ import {
  * - mode='share'：经分享 token 读写（公开访问路径，读不需登录、写需登录）
  * - mode='site' ：经 siteId 读写（owner / 团队成员视角，恒需登录）
  *
- * 走 prd-admin 暗色面板配色（与 SharedSitePage / SitePreviewModal 一致）。
+ * 走 prd-admin 暗色面板配色（与 ShareViewPage / SitePreviewModal 一致）。
  */
 type Props =
   | { mode: 'share'; token: string; password?: string; siteId?: never }
   | { mode: 'site'; siteId: string; token?: never; password?: never };
 
 export default function CommentsSection(props: Props) {
-  const { isAuthenticated } = useAuthStore();
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  // 鉴权 token：persist rehydration 后才有值；纳入 load 依赖，避免首帧匿名拉取后 canComment 卡 false
+  const authToken = useAuthStore((s) => s.token);
   const [loading, setLoading] = useState(true);
   const [comments, setComments] = useState<HostedSiteCommentDto[]>([]);
   const [commentsEnabled, setCommentsEnabled] = useState(true);
@@ -33,13 +35,23 @@ export default function CommentsSection(props: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // 防竞态：token/password/siteId/登录态变化时旧请求回来不得覆盖新结果（Cursor learned rule）
+  const fetchIdRef = useRef(0);
+
+  const mode = props.mode;
+  const token = (props as { token?: string }).token;
+  const password = (props as { password?: string }).password;
+  const siteId = (props as { siteId?: string }).siteId;
+
   const load = useCallback(async () => {
+    const myId = ++fetchIdRef.current;
     setLoading(true);
     setError(null);
     try {
-      const res = props.mode === 'share'
-        ? await listShareComments(props.token, props.password)
-        : await listSiteComments(props.siteId);
+      const res = mode === 'share'
+        ? await listShareComments(token!, password)
+        : await listSiteComments(siteId!);
+      if (myId !== fetchIdRef.current) return; // 过期响应，丢弃
       if (res.success && res.data) {
         setComments(res.data.comments);
         setCommentsEnabled(res.data.commentsEnabled);
@@ -48,16 +60,18 @@ export default function CommentsSection(props: Props) {
         setError(res.error?.message || '加载评论失败');
       }
     } catch {
+      if (myId !== fetchIdRef.current) return;
       setError('网络错误，无法加载评论');
     } finally {
-      setLoading(false);
+      if (myId === fetchIdRef.current) setLoading(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.mode, (props as { token?: string }).token, (props as { password?: string }).password, (props as { siteId?: string }).siteId]);
+  }, [mode, token, password, siteId]);
 
+  // isAuthenticated / authToken 纳入依赖：登录态就绪（含 persist rehydration）后重新拉取，
+  // 让已登录用户拿到 canComment=true 的发表 UI，不必手动刷新。
   useEffect(() => {
-    load();
-  }, [load]);
+    void load();
+  }, [load, isAuthenticated, authToken]);
 
   const handleSubmit = async () => {
     const content = draft.trim();
@@ -65,9 +79,9 @@ export default function CommentsSection(props: Props) {
     setSubmitting(true);
     setError(null);
     try {
-      const res = props.mode === 'share'
-        ? await addShareComment(props.token, content, props.password)
-        : await addSiteComment(props.siteId, content);
+      const res = mode === 'share'
+        ? await addShareComment(token!, content, password)
+        : await addSiteComment(siteId!, content);
       if (res.success && res.data) {
         setComments((prev) => [res.data!, ...prev]);
         setDraft('');

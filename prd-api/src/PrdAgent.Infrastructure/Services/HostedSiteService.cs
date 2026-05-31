@@ -1927,16 +1927,13 @@ public class HostedSiteService : IHostedSiteService
         if (visForbid is { } vf)
             return (empty, (vf.Error, vf.HttpStatus, vf.ErrorCode));
 
-        if (share.AccessLevel == "password")
+        // 密码门控：复用 ViewShareAsync 同款 EnforceShareAccessAsync —— 它内置滑动窗口速率限制
+        // （10 次/分钟）+ 持久化 RecentAttempts + 恒时比对。直接手写比对会绕过防爆破（Codex P1）。
+        var gate = await EnforceShareAccessAsync(share, password, ct);
+        if (gate is { } g)
         {
-            var provided = (password ?? string.Empty).Trim();
-            if (string.IsNullOrEmpty(provided))
-                return (empty, ("需要访问密码", 401, "UNAUTHORIZED"));
-            bool ok = !string.IsNullOrEmpty(share.PasswordHash) && !string.IsNullOrEmpty(share.PasswordSalt)
-                ? _sharePwd.Verify(provided, share.PasswordHash, share.PasswordSalt)
-                : _sharePwd.ConstantTimeStringEquals(provided, share.Password ?? string.Empty);
-            if (!ok)
-                return (empty, ("密码错误", 401, "UNAUTHORIZED"));
+            var code = g.HttpStatus == 429 ? "rate_limited" : "UNAUTHORIZED";
+            return (empty, (g.Error, g.HttpStatus, code));
         }
 
         var siteIds = new List<string>(share.SiteIds ?? new List<string>());
