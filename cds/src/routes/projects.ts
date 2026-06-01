@@ -1358,6 +1358,32 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     res.json({ ok: true, body: settings.body, updatedAt: settings.updatedAt });
   });
 
+  // 项目级：对已存在项目按基建目录(infra-catalog SSOT)应用预设，生成真随机密码 +
+  // 自动注入连接环境变量(与一键部署同一条 applyInfraPresets 路径)。拓扑页「新增基础设施」
+  // 选预设时走这里，而不是手填 change-me 占位。custom 镜像仍走 POST /api/infra。
+  router.post('/projects/:id/infra-presets', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    const body = (req.body || {}) as { presetIds?: unknown };
+    const presetIds = (Array.isArray(body.presetIds) ? body.presetIds : [])
+      .filter((id): id is string => typeof id === 'string');
+    if (presetIds.length === 0) {
+      res.status(400).json({ error: 'presetIds 必须是非空字符串数组（基建目录 id，见 GET /api/infra/catalog）' });
+      return;
+    }
+    const unknown = presetIds.filter((id) => !INFRA_PRESETS.has(id));
+    if (unknown.length > 0) {
+      res.status(400).json({ error: `未知基建预设: ${unknown.join(', ')}（见 GET /api/infra/catalog）` });
+      return;
+    }
+    const applied = applyInfraPresets(project, presetIds);
+    const services = stateService.getInfraServicesForProject(project.id).filter((s) => applied.includes(s.id));
+    res.json({ applied, services });
+  });
+
   // PR_C.4: 项目活动日志（供 UI 渲染时间线 / 浮窗）。
   // limit 默认 50，最大 200（与 ring buffer 上限一致，避免一次拉爆）。
   router.get('/projects/:id/activity-logs', (req, res) => {

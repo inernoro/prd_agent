@@ -1005,6 +1005,35 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       expect(stateService.getEnvMeta(pid).RABBITMQ_URL?.kind).toBe('infra-derived');
     });
 
+    it('applies infra presets (real secrets + env) to an existing project via /infra-presets', async () => {
+      const created = await request(server, 'POST', '/api/projects', { name: 'Topo Preset' });
+      expect(created.status).toBe(201);
+      const pid = created.body.project.id;
+
+      const res = await request(server, 'POST', `/api/projects/${pid}/infra-presets`, {
+        presetIds: ['postgres', 'kafka'],
+      });
+      expect(res.status).toBe(200);
+      expect([...res.body.applied].sort()).toEqual(['kafka', 'postgres']);
+      expect(Array.isArray(res.body.services)).toBe(true);
+
+      const infra = stateService.getInfraServicesForProject(pid);
+      expect(infra.map((s) => s.id).sort()).toEqual(['kafka', 'postgres']);
+
+      const env = stateService.getCustomEnv(pid);
+      expect(env.DATABASE_URL).toMatch(/^postgresql:\/\/app:/);
+      expect(env.KAFKA_BROKERS).toBe('kafka:9092');
+    });
+
+    it('rejects unknown infra presets on /infra-presets', async () => {
+      const created = await request(server, 'POST', '/api/projects', { name: 'Topo Bad' });
+      const pid = created.body.project.id;
+      const res = await request(server, 'POST', `/api/projects/${pid}/infra-presets`, {
+        presetIds: ['not-a-real-db'],
+      });
+      expect(res.status).toBe(400);
+    });
+
     it('does NOT set repoPath when gitRepoUrl is missing (no-op project)', async () => {
       const res = await request(server, 'POST', '/api/projects', {
         name: 'No Git',
