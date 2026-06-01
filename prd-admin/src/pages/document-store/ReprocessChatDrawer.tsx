@@ -404,8 +404,7 @@ export function ReprocessChatDrawer({
                 ))}
                 <button
                   onClick={() => setShowCreateAgent(true)}
-                  disabled={isBusy}
-                  className="rounded-full px-3 py-1.5 text-[11px] font-medium hover:bg-white/8 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
+                  className="rounded-full px-3 py-1.5 text-[11px] font-medium hover:bg-white/8 transition-colors flex items-center gap-1"
                   style={{
                     background: 'rgba(96,165,250,0.10)',
                     border: '1px dashed rgba(96,165,250,0.4)',
