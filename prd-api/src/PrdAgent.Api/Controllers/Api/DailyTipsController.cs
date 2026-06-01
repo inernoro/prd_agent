@@ -124,22 +124,9 @@ public sealed class DailyTipsController : ControllerBase
         seedFillers = FilterLearned(seedFillers, learnedMap);
         items.AddRange(seedFillers);
 
-        // 数据库没有任何 tip 且无 seed 兜底时仍可走旧的兜底分支（保留以防 BuildDefaultTips 也为空）
-        if (items.Count == 0)
-        {
-            items = BuildDefaultTips(now);
-            items = items.Where(t =>
-                (t.StartAt == null || t.StartAt <= now)
-                && (t.EndAt == null || t.EndAt > now)).ToList();
-            if (foreverDismissed.Count > 0)
-            {
-                items = items.Where(t =>
-                    !foreverDismissed.Contains(t.Id)
-                    && !(t.SourceId != null && foreverDismissed.Contains(t.SourceId))
-                ).ToList();
-            }
-            items = FilterLearned(items, learnedMap);
-        }
+        // 注：不再保留「items.Count == 0 时重建 BuildDefaultTips」的旧 fallback。
+        // 上方 seedFillers 已经覆盖空 DB 场景（dbSourceIds 为空集，seedFillers = 全套合规 seed），
+        // 旧 fallback 会绕过 dbSourceIds 让 admin 禁用 (IsActive=false) 的 seed 复活 (Codex P2)。
 
         // 定向 tip / 被投递 tip 永远置顶,保证「为你修复」类消息被最先看到
         var ordered = items
