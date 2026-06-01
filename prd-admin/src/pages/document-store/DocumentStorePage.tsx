@@ -26,6 +26,9 @@ import {
   Wand2,
   CheckCircle2,
   AlertCircle,
+  Search,
+  ArrowUpDown,
+  Check,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -124,7 +127,7 @@ function CreateStoreDialog({ onClose, onCreated }: {
               <Library size={15} />
             </div>
             <span className="text-[15px] font-semibold text-token-primary">
-              新建空间
+              新建知识库
             </span>
           </div>
           <button onClick={onClose}
@@ -236,7 +239,7 @@ function EditStoreDialog({ storeId, initialName, initialTags, onClose, onSaved }
               <Pencil size={14} />
             </div>
             <span className="text-[15px] font-semibold text-token-primary">
-              编辑空间
+              编辑知识库
             </span>
           </div>
           <button onClick={onClose}
@@ -842,7 +845,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
       setStore(prev => prev ? { ...prev, isPublic: newVal } : prev);
       toast.success(
         newVal ? '已发布到智识殿堂' : '已取消发布',
-        newVal ? '其他用户现在可以浏览你的空间了' : '空间已设为私有',
+        newVal ? '其他用户现在可以浏览你的知识库了' : '知识库已设为私有',
       );
     } else {
       toast.error('操作失败', res.error?.message);
@@ -1327,6 +1330,14 @@ function SubscribeDialog({ storeId, onClose, onCreated }: {
 
 type StoreTab = 'mine' | 'team' | 'favorites' | 'likes';
 
+type StoreSort = 'updated-desc' | 'created-desc' | 'name-asc' | 'docs-desc';
+const SORT_OPTIONS: { key: StoreSort; label: string }[] = [
+  { key: 'updated-desc', label: '最近更新' },
+  { key: 'created-desc', label: '最近创建' },
+  { key: 'name-asc', label: '名称 A→Z' },
+  { key: 'docs-desc', label: '文章数最多' },
+];
+
 // ── 主页面 ──
 export function DocumentStorePage() {
   const navigate = useNavigate();
@@ -1347,6 +1358,26 @@ export function DocumentStorePage() {
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(() => {
     return sessionStorage.getItem('doc-store-selected-id');
   });
+
+  // 第二排：搜索 + 排序（sessionStorage 持久化；CLAUDE.md no-localStorage 规则）
+  const [search, setSearch] = useState<string>(() => sessionStorage.getItem('doc-store-search') ?? '');
+  const [sortKey, setSortKey] = useState<StoreSort>(() => {
+    const saved = sessionStorage.getItem('doc-store-sort') as StoreSort | null;
+    return saved && SORT_OPTIONS.some(o => o.key === saved) ? saved : 'updated-desc';
+  });
+  const [sortOpen, setSortOpen] = useState(false);
+  const sortWrapRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => { sessionStorage.setItem('doc-store-search', search); }, [search]);
+  useEffect(() => { sessionStorage.setItem('doc-store-sort', sortKey); }, [sortKey]);
+  useEffect(() => {
+    if (!sortOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (sortWrapRef.current && !sortWrapRef.current.contains(e.target as Node)) setSortOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [sortOpen]);
 
   const loadStores = useCallback(async () => {
     setLoading(true);
@@ -1410,11 +1441,6 @@ export function DocumentStorePage() {
     sessionStorage.setItem('doc-store-tab', tab);
   }, [tab]);
 
-  // 空间详情视图（仅 mine 标签下可进入编辑视图）
-  if (selectedStoreId) {
-    return <StoreDetailView storeId={selectedStoreId} onBack={() => { setSelectedStoreId(null); loadStores(); }} onOpenLibrary={(id) => navigate(`/library/${id}`)} />;
-  }
-
   const tabs: { key: StoreTab; label: string; icon: typeof Library }[] = [
     { key: 'mine', label: '我的空间', icon: Library },
     { key: 'team', label: '共享空间', icon: Users },
@@ -1423,10 +1449,44 @@ export function DocumentStorePage() {
   ];
 
   const isStoreTab = tab === 'mine' || tab === 'team';
-  const currentList: InteractionStoreCard[] | DocumentStoreWithPreview[] =
+  const rawList: InteractionStoreCard[] | DocumentStoreWithPreview[] =
     isStoreTab ? stores : tab === 'favorites' ? favorites : likes;
 
+  // 搜索 + 排序（仅 store tab 生效；收藏/点赞页签不参与本页 toolbar 状态以避免混淆）
+  const currentList = useMemo(() => {
+    if (!isStoreTab) return rawList;
+    const kw = search.trim().toLowerCase();
+    const filtered = kw
+      ? (rawList as DocumentStoreWithPreview[]).filter(s =>
+          s.name.toLowerCase().includes(kw) || (s.tags ?? []).some(t => t.toLowerCase().includes(kw)),
+        )
+      : (rawList as DocumentStoreWithPreview[]);
+    const cmp = (a: DocumentStoreWithPreview, b: DocumentStoreWithPreview) => {
+      switch (sortKey) {
+        case 'updated-desc': return (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '');
+        case 'created-desc': return (b.createdAt ?? '').localeCompare(a.createdAt ?? '');
+        case 'name-asc': return a.name.localeCompare(b.name, 'zh-CN');
+        case 'docs-desc': return (b.documentCount ?? 0) - (a.documentCount ?? 0);
+      }
+    };
+    return [...filtered].sort(cmp);
+  }, [rawList, isStoreTab, search, sortKey]);
+
+  // 空间详情视图（仅 mine 标签下可进入编辑视图）—— 早返回必须放在所有 hook 之后
+  if (selectedStoreId) {
+    return <StoreDetailView storeId={selectedStoreId} onBack={() => { setSelectedStoreId(null); loadStores(); }} onOpenLibrary={(id) => navigate(`/library/${id}`)} />;
+  }
+
+  // 统计概览（基于未筛选的原始列表，反映"我拥有/我看到的"全量）
+  const totalStores = isStoreTab ? (stores as DocumentStoreWithPreview[]).length : 0;
+  const totalDocs = isStoreTab
+    ? (stores as DocumentStoreWithPreview[]).reduce((sum, s) => sum + (s.documentCount ?? 0), 0)
+    : 0;
+  const activeSortLabel = SORT_OPTIONS.find(o => o.key === sortKey)?.label ?? '最近更新';
+
   const isEmpty = currentList.length === 0;
+  // 真·空（未筛选时就没数据）vs 筛选后无结果
+  const isFilteredOut = isEmpty && isStoreTab && search.trim().length > 0;
 
   // 空间列表视图
   return (
@@ -1442,11 +1502,93 @@ export function DocumentStorePage() {
         onChange={(k) => setTab(k as StoreTab)}
       />
 
-      {/* 第二排：随顶部空间切换而变化的操作区
-          - 我的空间：只显示「+ 新建空间」（创建个人空间）
-          - 共享空间：显示 TeamScopeBar（成员/邀请/活动/新建共享空间），创建动作由其内部承担 */}
-      {tab === 'mine' && (
+      {/* 第二排：按顶部 tab 联动的工具栏
+          - 我的空间 / 共享空间：统计 + 搜索 + 排序 + 新建知识库（共享空间多一个 TeamScopeBar）
+          - 收藏 / 点赞：不显示 */}
+      {isStoreTab && (
         <div className="px-5 flex items-center gap-2 flex-wrap">
+          {tab === 'team' && (
+            <TeamScopeBar
+              moduleKey="document-store"
+              value={teamScope}
+              onChange={setTeamScope}
+              hideScopeToggle
+            />
+          )}
+          {/* 统计概览 */}
+          <span className="text-[12px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
+            共 <strong style={{ color: 'var(--text-primary)' }}>{totalStores}</strong> 个知识库
+            <span className="opacity-50 mx-1.5">·</span>
+            <strong style={{ color: 'var(--text-primary)' }}>{totalDocs}</strong> 篇文章
+          </span>
+
+          {/* 搜索 */}
+          <div className="relative">
+            <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--text-muted)' }} />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="按名称或标签筛选…"
+              className="h-8 pl-7 pr-7 rounded-[8px] text-[12px] outline-none w-[200px] focus:w-[260px] transition-all"
+              style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-primary)' }}
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 rounded-full flex items-center justify-center hover:bg-white/10 transition-colors"
+                title="清除搜索"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                <X size={10} />
+              </button>
+            )}
+          </div>
+
+          {/* 排序（带高亮 active 状态，让用户一眼知道当前排序规则） */}
+          <div className="relative" ref={sortWrapRef}>
+            <button
+              type="button"
+              onClick={() => setSortOpen(o => !o)}
+              className="h-8 px-2.5 rounded-[8px] text-[12px] flex items-center gap-1.5 transition-colors"
+              style={{
+                background: 'rgba(59,130,246,0.08)',
+                border: '1px solid rgba(59,130,246,0.2)',
+                color: 'rgba(59,130,246,0.95)',
+              }}
+              title="排序方式"
+            >
+              <ArrowUpDown size={12} />
+              <span>{activeSortLabel}</span>
+            </button>
+            {sortOpen && (
+              <div
+                className="absolute right-0 top-[36px] z-[120] min-w-[160px] rounded-[10px] py-1 shadow-lg"
+                style={{
+                  background: 'var(--bg-elevated)',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  boxShadow: '0 12px 40px rgba(0,0,0,0.4)',
+                }}
+              >
+                {SORT_OPTIONS.map(opt => {
+                  const active = opt.key === sortKey;
+                  return (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      onClick={() => { setSortKey(opt.key); setSortOpen(false); }}
+                      className="w-full text-left px-3 py-1.5 text-[12px] flex items-center justify-between hover:bg-white/6 transition-colors"
+                      style={{ color: active ? 'rgba(59,130,246,0.95)' : 'var(--text-primary)' }}
+                    >
+                      <span>{opt.label}</span>
+                      {active && <Check size={12} />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           <span className="flex-1" />
           <Button
             variant="primary"
@@ -1454,24 +1596,28 @@ export function DocumentStorePage() {
             data-tour-id="document-store-create"
             onClick={() => setShowCreate(true)}
           >
-            <Plus size={13} /> 新建空间
+            <Plus size={13} /> 新建知识库
           </Button>
-        </div>
-      )}
-      {tab === 'team' && (
-        <div className="px-5 flex items-center gap-2 flex-wrap">
-          <TeamScopeBar
-            moduleKey="document-store"
-            value={teamScope}
-            onChange={setTeamScope}
-            hideScopeToggle
-          />
         </div>
       )}
 
       <div className="px-5 pb-6 w-full">
         {loading ? (
           <MapSectionLoader text="加载中..." />
+        ) : isFilteredOut ? (
+          /* 筛选无结果 */
+          <div className="flex flex-col items-center justify-center py-16">
+            <Search size={36} style={{ color: 'var(--text-muted)', opacity: 0.3, marginBottom: 14 }} />
+            <p className="text-[13px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
+              没有匹配「{search}」的知识库
+            </p>
+            <p className="text-[11px] mb-4" style={{ color: 'var(--text-muted)' }}>
+              换个关键词，或清除搜索看全部
+            </p>
+            <Button variant="ghost" size="xs" onClick={() => setSearch('')}>
+              <X size={12} /> 清除搜索
+            </Button>
+          </div>
         ) : isEmpty && isStoreTab ? (
           /* 我的空间 / 共享空间 空状态引导 */
           <div className="flex flex-col items-center justify-center py-16">
@@ -1489,7 +1635,7 @@ export function DocumentStorePage() {
             {/* 三步引导 */}
             <div className="grid grid-cols-3 gap-4 mb-8 max-w-[560px] w-full">
               {[
-                { icon: Library, title: '创建空间', desc: '按项目或主题组织文档' },
+                { icon: Library, title: '创建知识库', desc: '按项目或主题组织文档' },
                 { icon: Upload, title: '上传文档', desc: '拖拽文件即可上传' },
                 { icon: Sparkle, title: '涌现探索', desc: '从文档出发，发现新可能' },
               ].map(s => (
@@ -1506,12 +1652,12 @@ export function DocumentStorePage() {
 
             {tab === 'mine' ? (
               <Button variant="primary" size="md" onClick={() => setShowCreate(true)}>
-                <Plus size={15} /> 创建第一个空间
+                <Plus size={15} /> 创建第一个知识库
               </Button>
             ) : (
               <p className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
                 {teamScope.teamId
-                  ? '当前共享空间还没有任何内容，从「我的空间」分享空间过来吧'
+                  ? '当前共享空间还没有任何知识库，从「我的空间」把知识库分享过来吧'
                   : '在上方选择或新建一个共享空间'}
               </p>
             )}
@@ -1526,7 +1672,7 @@ export function DocumentStorePage() {
               {tab === 'favorites' ? '还没有收藏' : '还没有点赞'}
             </p>
             <p className="text-[11px] mb-4" style={{ color: 'var(--text-muted)' }}>
-              去智识殿堂发现感兴趣的空间吧
+              去智识殿堂发现感兴趣的知识库吧
             </p>
             <Button variant="ghost" size="xs" onClick={() => navigate('/library')}>
               <Globe size={12} /> 浏览智识殿堂
@@ -1577,7 +1723,7 @@ export function DocumentStorePage() {
                               <span
                                 className="inline-flex items-center gap-1 flex-shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold"
                                 style={{ background: 'rgba(234,179,8,0.14)', color: 'rgba(234,179,8,0.95)', border: '1px solid rgba(234,179,8,0.32)' }}
-                                title="该空间已对外分享">
+                                title="该知识库已对外分享">
                                 <Share2 size={9} /> 已分享
                               </span>
                             )}
@@ -1612,12 +1758,12 @@ export function DocumentStorePage() {
                           </button>
                           <button
                             className="surface-row h-6 w-6 rounded-[6px] flex items-center justify-center cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
-                            title="删除空间"
+                            title="删除知识库"
                             onClick={async (e) => {
                               e.stopPropagation();
                               const entryCount = s.documentCount ?? 0;
                               const confirmed = await systemDialog.confirm({
-                                title: '确认删除空间',
+                                title: '确认删除知识库',
                                 message: `删除「${s.name}」将永久清除：\n  · ${entryCount} 个文档条目\n  · 所有订阅同步日志\n  · 所有附件文件与解析正文\n  · 所有点赞 / 收藏 / 分享链接\n\n此操作不可恢复。`,
                                 tone: 'danger',
                                 confirmText: '永久删除',
@@ -1627,7 +1773,7 @@ export function DocumentStorePage() {
                               const res = await deleteDocumentStore(s.id);
                               if (res.success) {
                                 setStores(prev => prev.filter(x => x.id !== s.id));
-                                toast.success('空间已删除', '关联数据已全部清理');
+                                toast.success('知识库已删除', '关联数据已全部清理');
                               } else {
                                 toast.error('删除失败', res.error?.message);
                               }
@@ -1689,7 +1835,7 @@ export function DocumentStorePage() {
                       ) : (
                         <div className="flex items-center justify-center h-full rounded-[9px]"
                           style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.08)', minHeight: '88px' }}>
-                          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>空间暂无内容</span>
+                          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>知识库暂无内容</span>
                         </div>
                       )}
                     </div>
