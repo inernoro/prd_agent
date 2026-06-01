@@ -1413,7 +1413,13 @@ export function DocumentStorePage() {
     setLoading(true);
     const res = await listDocumentStoresWithPreview(1, 50, { scope, teamId });
     if (listFetchSeq.current !== mySeq) return; // 已被更新的请求超车,丢弃
-    if (res.success) setStores(res.data.items);
+    if (res.success) {
+      setStores(res.data.items);
+    } else {
+      // 失败也必须清空,否则上一个 tab/team 的数据会"卡"在屏上让用户误判
+      setStores([]);
+      toast.error('加载失败', res.error?.message);
+    }
     setLoading(false);
   }, []);
 
@@ -1422,7 +1428,12 @@ export function DocumentStorePage() {
     setLoading(true);
     const res = await listMyFavoriteDocumentStores();
     if (listFetchSeq.current !== mySeq) return;
-    if (res.success) setFavorites(res.data.items);
+    if (res.success) {
+      setFavorites(res.data.items);
+    } else {
+      setFavorites([]);
+      toast.error('加载收藏失败', res.error?.message);
+    }
     setLoading(false);
   }, []);
 
@@ -1431,7 +1442,12 @@ export function DocumentStorePage() {
     setLoading(true);
     const res = await listMyLikedDocumentStores();
     if (listFetchSeq.current !== mySeq) return;
-    if (res.success) setLikes(res.data.items);
+    if (res.success) {
+      setLikes(res.data.items);
+    } else {
+      setLikes([]);
+      toast.error('加载点赞失败', res.error?.message);
+    }
     setLoading(false);
   }, []);
 
@@ -2094,12 +2110,15 @@ export function DocumentStorePage() {
         <CreateStoreDialog
           onClose={() => setShowCreate(false)}
           onCreated={async (s) => {
-            setShowCreate(false);
-            // 团队空间下创建:自动 share 到当前选中的 team,避免新建后"消失"(后端 createDocumentStore 不接受 teamId)
+            // 团队空间下创建:自动 share 到当前选中的 team,避免新建后"消失"
+            // (后端 createDocumentStore 不接受 teamId)。
+            // 在 share 完成前先把创建态"锁住":snapshot 当前 tab/teamId,
+            // 避免 await 期间用户切 tab 导致 onBack 刷错列表。
             if (tab === 'team' && teamScope.teamId) {
               const res = await setStoreTeams(s.id, [teamScope.teamId]);
               if (!res.success) toast.error('已创建,但分享到团队空间失败', res.error?.message);
             }
+            setShowCreate(false);
             setSelectedStoreId(s.id);
           }}
         />
