@@ -319,6 +319,7 @@ export function ShareDock({
     return (
       <div
         ref={dockRef}
+        data-tour-id="share-dock-panel"
         className="fixed z-40 select-none"
         style={{ left: pos.left + dockW - 36, top: pos.top }}
       >

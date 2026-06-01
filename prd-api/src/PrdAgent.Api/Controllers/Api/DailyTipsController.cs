@@ -103,11 +103,16 @@ public sealed class DailyTipsController : ControllerBase
 
         // 合并代码内置 seed 集合：即使 DB 已有其他 tip，也要让新加的 BuildDefaultTips seed
         // （如本周发的 feature-release 公告）自动出现，不需要管理员手动跑 /seed。
-        // 去重规则：已有 DB 记录的 SourceId 跳过 — DB 优先（管理员可能编辑过内容），
-        // code seed 只填空白。这样老环境也能自动获取新版本的 advanced 通知。
-        var dbSourceIds = items
-            .Where(t => !string.IsNullOrEmpty(t.SourceId))
-            .Select(t => t.SourceId!)
+        // 去重规则：DB 中存在该 SourceId 的记录就跳过 — 包括 IsActive=false 或在发布窗口外的，
+        // 否则 admin 显式禁用 / 排期未到 / 已过期的 seed 会被 code seed 重新复活
+        // (Codex P2)。直接查 DB 全量 SourceId，不依赖已过滤的 items 列表。
+        var allDbSourceIds = await _db.DailyTips
+            .Find(Builders<DailyTip>.Filter.Ne<string?>(t => t.SourceId, null))
+            .Project(t => t.SourceId)
+            .ToListAsync(ct);
+        var dbSourceIds = allDbSourceIds
+            .Where(s => !string.IsNullOrEmpty(s))
+            .Select(s => s!)
             .ToHashSet();
         var seedFillers = BuildDefaultTips(now)
             .Where(seed => seed.SourceId != null && !dbSourceIds.Contains(seed.SourceId))
@@ -327,11 +332,12 @@ public sealed class DailyTipsController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "tip 不存在"));
         }
 
-        // 分层逻辑核心：
-        // - basic 写入 sentinel Version = int.MaxValue，FilterLearned 的 learnedVer >= t.Version
-        //   永远成立 → 用户完成一次永不再弹，即使管理员升 Version。
-        // - advanced 写入真实 Version，管理员升 Version 后 learnedVer < t.Version → 再次弹出（层叠推进）。
-        var learnedVersion = tier == "basic" ? int.MaxValue : version;
+        // 分层逻辑核心（容错：null / 缺字段 / 未来扩展的新 tier 都默认走 basic 路径，
+        // 只有显式 "advanced" 才按版本号层叠推进。这样老 DB 记录 Tier 反序列化为 null
+        // 不会破坏「basic 永不再弹」的承诺）：
+        // - basic / null / 其他: 写入 sentinel Version = int.MaxValue。
+        // - advanced: 写入真实 Version，管理员升 Version 后 learnedVer < t.Version → 再次弹出。
+        var learnedVersion = tier == "advanced" ? version : int.MaxValue;
 
         // 幂等写入:先剔除同 SourceId 的旧记录,再 push 新的 (SourceId, Version)。
         // Mongo 的 $pull 和 $push 不能在同一次 update 里作用于同一字段(冲突),
@@ -361,7 +367,12 @@ public sealed class DailyTipsController : ControllerBase
         return items.Where(t =>
         {
             var key = t.SourceId ?? t.Id;
-            return !(learnedMap.TryGetValue(key, out var learnedVer) && learnedVer >= t.Version);
+            if (!learnedMap.TryGetValue(key, out var learnedVer)) return true;
+            // 分层过滤：basic（默认 / null / 未来 tier）一旦学过任意版本就永远隐藏，
+            // 哪怕老 learned 记录里写的是真实 Version 而非 sentinel（兼容本 PR 之前的数据）。
+            // advanced 仍按版本对比，升 Version 让旧 learned 失效再弹。
+            if (t.Tier != "advanced") return false;
+            return learnedVer < t.Version;
         }).ToList();
     }
 
@@ -467,15 +478,15 @@ public sealed class DailyTipsController : ControllerBase
                         },
                         new()
                         {
-                            Selector = "[data-tour-id=webpages-dropzone]",
-                            Title = "第 3 步：直接把文件拖进来",
-                            Body = "不用点按钮，HTML/ZIP/Markdown/PDF/视频 都能拖到投放面板上传，自动生成访问链接。",
+                            Selector = "[data-tour-id=share-dock-panel]",
+                            Title = "第 3 步：直接把文件拖到投放面板",
+                            Body = "不用点按钮，HTML/ZIP/Markdown/PDF/视频 都能拖到右侧投放面板的虚线 dropzone 上传（面板若已折叠，先点一下展开）。",
                         },
                         new()
                         {
                             Selector = "[data-tour-id=share-dock-panel]",
                             Title = "第 4 步：投放面板三个槽位",
-                            Body = "拖任意站点卡片到右侧「公开 / 分享 / 回收」槽位，鼠标手势完成操作，无需弹窗确认。",
+                            Body = "展开后会看到「公开 / 分享 / 回收」三个槽位，拖任意站点卡片过去即可完成操作，无需弹窗确认。",
                         },
                     },
                 },
