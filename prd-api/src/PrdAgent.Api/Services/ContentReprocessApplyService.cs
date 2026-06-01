@@ -75,7 +75,25 @@ public class ContentReprocessApplyService
 
     private async Task<ApplyResult> AppendAsync(DocumentEntry entry, string content, string actorId, MongoDbContext db)
     {
-        var existing = await LoadEntryContentAsync(entry);
+        // 严格模式：entry 有 DocumentId 时必须能读到完整 RawContent；
+        // 否则用 ContentIndex 当作"既有正文"再 append 会把完整文档替换成"2000 字前缀 + AI 输出"
+        // 把整个文档截了（Bugbot 十五轮 High）。无 DocumentId 的 entry 本来就是短文，
+        // ContentIndex 等于完整正文，那种情况允许 fallback。
+        string existing;
+        if (!string.IsNullOrEmpty(entry.DocumentId))
+        {
+            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
+            if (doc == null || string.IsNullOrEmpty(doc.RawContent))
+            {
+                throw new InvalidOperationException(
+                    "无法读取文档完整正文以执行追加。请稍后再试，或用「另存为新文档」生成新条目，避免把原文截断到 2000 字预览。");
+            }
+            existing = doc.RawContent;
+        }
+        else
+        {
+            existing = entry.ContentIndex ?? string.Empty;
+        }
         var merged = string.IsNullOrEmpty(existing)
             ? content
             : existing.TrimEnd() + "\n\n" + content;
