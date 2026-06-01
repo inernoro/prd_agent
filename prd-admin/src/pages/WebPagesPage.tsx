@@ -248,7 +248,7 @@ export default function WebPagesPage() {
       : { scope: 'mine' as const, teamId: null }),
     [currentSpace],
   );
-  const groupMode: GroupMode = 'time';
+  const [groupMode, setGroupMode] = useState<GroupMode>('time');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   // 已分享站点集合（单站点分享）：驱动卡片「已分享」标记 + 分享按钮转「取消分享」 + 投放槽读心
   const [sharedSiteIds, setSharedSiteIds] = useState<Set<string>>(new Set());
@@ -751,6 +751,18 @@ export default function WebPagesPage() {
             </Select>
           </div>
 
+          {/* Group mode */}
+          <div className="w-[120px] shrink-0">
+            <Select
+              uiSize="sm"
+              value={groupMode}
+              onChange={e => setGroupMode(e.target.value as GroupMode)}
+            >
+              <option value="time">按日期</option>
+              <option value="folder">按文件夹</option>
+            </Select>
+          </div>
+
           {/* View mode */}
           <div className="flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid var(--border-default)' }}>
             <button
@@ -865,7 +877,11 @@ export default function WebPagesPage() {
             <div key={group.key} className="flex flex-col gap-2">
               {/* 分节标题：时间桶（今天/昨天/M月D日）或文件夹名 */}
               <div className="flex items-center gap-2 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
-                <Clock size={12} style={{ color: 'var(--accent-primary)' }} />
+                {groupMode === 'folder' ? (
+                  <Folder size={12} style={{ color: 'var(--accent-primary)' }} />
+                ) : (
+                  <Clock size={12} style={{ color: 'var(--accent-primary)' }} />
+                )}
                 <span>{group.label}</span>
                 <span style={{ color: 'var(--text-faint, var(--text-muted))' }}>· {group.items.length}</span>
                 <div className="flex-1 h-px" style={{ background: 'var(--border-default)' }} />
@@ -1637,9 +1653,13 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
     resolveVisitUrl(site).then(url => { if (w) w.location.href = url; });
   };
   return (
-    <GlassCard
-      className="group flex items-center gap-4 p-3 cursor-grab active:cursor-grabbing touch-none"
-      style={{ border: selected ? '2px solid var(--accent-primary)' : undefined }}
+    <div
+      className="group flex items-center gap-4 px-3 py-2 rounded-lg cursor-grab active:cursor-grabbing touch-none transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.04))]"
+      style={{
+        borderBottom: '1px solid var(--border-default)',
+        background: selected ? 'rgba(99,102,241,0.08)' : 'transparent',
+        outline: selected ? '1px solid var(--accent-primary)' : 'none',
+      }}
       onPointerDown={onPointerDown}
     >
       <input
@@ -1738,7 +1758,7 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
           </button>
         )}
       </div>
-    </GlassCard>
+    </div>
   );
 }
 
