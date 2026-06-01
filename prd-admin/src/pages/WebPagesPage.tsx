@@ -82,7 +82,6 @@ import {
   FolderInput,
   BarChart3,
   MessageSquare,
-  ArrowDownUp,
   Plus,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
@@ -216,16 +215,62 @@ function buildSiteGroups(items: HostedSite[], mode: GroupMode): SiteGroup[] {
 // ─── 排序循环：单击在 5 个选项之间下一步 ───
 
 const SORT_OPTIONS: { value: string; label: string }[] = [
-  { value: 'newest', label: '最新创建' },
-  { value: 'oldest', label: '最早创建' },
-  { value: 'title', label: '按标题' },
-  { value: 'most-viewed', label: '最多浏览' },
-  { value: 'largest', label: '最大体积' },
+  { value: 'newest', label: '最新' },
+  { value: 'oldest', label: '最早' },
+  { value: 'title', label: '标题' },
+  { value: 'most-viewed', label: '浏览' },
+  { value: 'largest', label: '体积' },
 ];
 
-function nextSort(current: string): string {
-  const idx = SORT_OPTIONS.findIndex(o => o.value === current);
-  return SORT_OPTIONS[(idx + 1) % SORT_OPTIONS.length].value;
+// ─── 分段 pill 组件：当前项 pill 高亮 + 平铺所有选项，单击即切 ───
+function SegmentPills({
+  options,
+  value,
+  onChange,
+}: {
+  options: { value: string; label: string }[];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div
+      className="inline-flex items-center gap-1 p-1 rounded-lg shrink-0"
+      style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-default)' }}
+    >
+      {options.map((opt) => {
+        const active = opt.value === value;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => onChange(opt.value)}
+            className="h-7 px-3 rounded-md text-[13px] transition-colors"
+            style={
+              active
+                ? {
+                    background: 'rgba(99,102,241,0.22)',
+                    color: '#c7d2fe',
+                    fontWeight: 500,
+                    boxShadow: 'inset 0 0 0 1px rgba(99,102,241,0.45)',
+                  }
+                : {
+                    background: 'transparent',
+                    color: 'var(--text-muted)',
+                  }
+            }
+            onMouseEnter={(e) => {
+              if (!active) e.currentTarget.style.color = 'var(--text-primary)';
+            }}
+            onMouseLeave={(e) => {
+              if (!active) e.currentTarget.style.color = 'var(--text-muted)';
+            }}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 // ─── Main Page ───
@@ -772,30 +817,22 @@ export default function WebPagesPage() {
             />
           </div>
 
-          {/* 排序 + 分组：单击循环切换，中间一条细竖线分隔 */}
-          <div className="flex items-center shrink-0 rounded-md" style={{ border: '1px solid var(--border-default)' }}>
-            <button
-              type="button"
-              onClick={() => setSort(nextSort(sort))}
-              title="点击切到下一种排序"
-              className="h-8 inline-flex items-center gap-1.5 px-2.5 text-[13px] transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.06))]"
-              style={{ color: 'var(--text-primary)' }}
-            >
-              <ArrowDownUp size={14} />
-              <span>{SORT_OPTIONS.find(o => o.value === sort)?.label ?? '排序'}</span>
-            </button>
-            <span className="h-4 w-px" style={{ background: 'var(--border-default)' }} />
-            <button
-              type="button"
-              onClick={() => setGroupMode(groupMode === 'time' ? 'folder' : 'time')}
-              title="点击切换分组方式"
-              className="h-8 inline-flex items-center gap-1.5 px-2.5 text-[13px] transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.06))]"
-              style={{ color: 'var(--text-primary)' }}
-            >
-              {groupMode === 'time' ? <Clock size={14} /> : <Folder size={14} />}
-              <span>{groupMode === 'time' ? '按日期' : '按文件夹'}</span>
-            </button>
-          </div>
+          {/* 排序 segment pill group：当前项 pill 高亮，点击任意切到那个 */}
+          <SegmentPills
+            options={SORT_OPTIONS}
+            value={sort}
+            onChange={setSort}
+          />
+
+          {/* 分组 segment pill group：二选一 */}
+          <SegmentPills
+            options={[
+              { value: 'time', label: '日期' },
+              { value: 'folder', label: '文件夹' },
+            ]}
+            value={groupMode}
+            onChange={(v) => setGroupMode(v as GroupMode)}
+          />
 
           {/* View mode */}
           <div className="flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid var(--border-default)' }}>
