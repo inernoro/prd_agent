@@ -104,7 +104,7 @@ function GoalsCanvasInner({ projectId, businessGoal, canManage, goals, onReload 
         minZoom={0.2}
         maxZoom={2}
         proOptions={{ hideAttribution: true }}
-        defaultEdgeOptions={{ type: 'smoothstep', style: { stroke: 'var(--border-strong)', strokeWidth: 1.5 } }}
+        defaultEdgeOptions={{ type: 'smoothstep' }}
         /* 手势统一（.claude/rules/gesture-unification.md 标准 B） */
         panOnScroll
         panOnScrollSpeed={0.8}

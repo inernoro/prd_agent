@@ -1,5 +1,5 @@
 import dagre from '@dagrejs/dagre';
-import type { Node, Edge } from '@xyflow/react';
+import { MarkerType, type Node, type Edge } from '@xyflow/react';
 import type { PmGoal, PmGoalScope } from '@/services/contracts/pmAgent';
 
 export const TEAM_ROOT_ID = '__root_team__';
@@ -115,7 +115,13 @@ export function buildGoalGraph(opts: BuildGoalGraphOpts): { nodes: Node<GoalNode
     const source = parentVisible ? g.parentId! : (g.scope === 'team' ? TEAM_ROOT_ID : PERSONAL_ROOT_ID);
     // 根节点可能被过滤掉（personal 根无 personal 目标时不会发生），确保 source 存在
     if (rfNodes.some((n) => n.id === source)) {
-      rfEdges.push({ id: `${source}->${g.id}`, source, target: g.id, type: 'smoothstep' });
+      // 按目标 scope 着色（团队蓝 / 个人紫），用 rgba 保证深浅主题都可见；带箭头表达方向
+      const edgeColor = g.scope === 'personal' ? 'rgba(168,85,247,0.75)' : 'rgba(59,130,246,0.75)';
+      rfEdges.push({
+        id: `${source}->${g.id}`, source, target: g.id, type: 'smoothstep',
+        style: { stroke: edgeColor, strokeWidth: 2 },
+        markerEnd: { type: MarkerType.ArrowClosed, color: edgeColor, width: 14, height: 14 },
+      });
     }
   }
 
