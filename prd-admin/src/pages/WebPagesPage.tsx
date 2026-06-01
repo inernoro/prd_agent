@@ -571,7 +571,13 @@ export default function WebPagesPage() {
     );
 
   return (
-    <div className="h-full flex flex-col gap-4 p-4 overflow-auto" style={{ background: 'var(--bg-base)' }}>
+    <div
+      className="h-full flex flex-col gap-4 p-4 overflow-auto"
+      style={{
+        background:
+          'radial-gradient(ellipse 80% 50% at 50% 0%, rgba(99,102,241,0.06) 0%, transparent 60%), linear-gradient(180deg, var(--bg-elevated) 0%, var(--bg-base) 320px)',
+      }}
+    >
       {/* 右侧投放面板：可拖动 + 可收起，拖站点卡片到槽位即可公开/分享/删除 */}
       <ShareDock
         mime={WEB_PAGE_MIME}
@@ -696,13 +702,28 @@ export default function WebPagesPage() {
         title="网页托管"
         description="上传 HTML/ZIP、Markdown、PDF 或视频，自动托管并生成可分享的访问链接"
         actions={
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="ghost" onClick={() => setShowAnalytics(true)} title="查看分享统计（PV/IP/时间线）">
-              <BarChart3 size={14} className="mr-1" /> 分享统计
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => { setShareTargetId(null); setShowSharesPanel(true); }}>
-              <Link2 size={14} className="mr-1" /> 分享管理
-            </Button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setShowAnalytics(true)}
+              title="分享统计（PV/IP/时间线）"
+              aria-label="分享统计"
+              className="h-8 w-8 inline-flex items-center justify-center rounded-md transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.06))]"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              <BarChart3 size={15} />
+            </button>
+            <button
+              type="button"
+              onClick={() => { setShareTargetId(null); setShowSharesPanel(true); }}
+              title="分享管理"
+              aria-label="分享管理"
+              className="h-8 w-8 inline-flex items-center justify-center rounded-md transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.06))]"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              <Link2 size={15} />
+            </button>
+            <span className="mx-1 h-5 w-px" style={{ background: 'var(--border-default)' }} />
             {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
               <Button size="sm" variant="primary" onClick={openCreateUploadDialog}>
                 <Upload size={14} className="mr-1" /> 上传站点
