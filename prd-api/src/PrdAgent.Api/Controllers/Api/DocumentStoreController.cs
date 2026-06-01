@@ -1846,7 +1846,9 @@ public class DocumentStoreController : ControllerBase
         [FromQuery] string? scope = null, [FromQuery] string? teamId = null)
     {
         var userId = GetUserId();
-        pageSize = Math.Clamp(pageSize, 1, 100);
+        // 上限提到 500：前端工具栏(搜索/标签/排序)在客户端做，需要拿全量。
+        // 真正用户突破 500 时再切到服务端 search/sort。
+        pageSize = Math.Clamp(pageSize, 1, 500);
         page = Math.Max(1, page);
 
         var isTeamScope = string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(teamId);

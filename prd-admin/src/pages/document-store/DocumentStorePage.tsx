@@ -1422,7 +1422,9 @@ export function DocumentStorePage() {
   const loadStores = useCallback(async (scope: 'mine' | 'team', teamId: string | null) => {
     const mySeq = ++listFetchSeq.current;
     setLoading(true);
-    const res = await listDocumentStoresWithPreview(1, 50, { scope, teamId });
+    // pageSize=500：搜索/标签/排序由前端做,需要拿到全量数据(实际用户 KB 数远低于此天花板)。
+    // 真正越过 500 时需要后端 search/sort 端点支持,届时再切到分页+服务端筛选。
+    const res = await listDocumentStoresWithPreview(1, 500, { scope, teamId });
     if (listFetchSeq.current !== mySeq) return; // 已被更新的请求超车,丢弃
     if (res.success) {
       setStores(res.data.items);
