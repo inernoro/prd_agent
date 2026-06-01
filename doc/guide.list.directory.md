@@ -397,6 +397,7 @@
   > 从 cds-compose.yml、CDS 技能扫描、从 0 创建三条路径完成部署的步骤和验收标准
 
 - [从零开始的 CDS 教程 · 指南](guide.cds-tutorial) `guide.cds-tutorial`
+- [CDS 可视化部署与验收指南](guide.cds-deploy-acceptance) `guide.cds-deploy-acceptance`
   > 4 个横向场景（静态/网页+后台/+MongoDB/+redis+mysql+rabbitmq）× 2 条纵向路径（直配/compose 导入）+ compose 评分/自愈 + 每场景独立知识库
 
 - [CDS 全栈基础设施冒烟样例指南](guide.cds-fullstack-infra-smoke) `guide.cds-fullstack-infra-smoke`
@@ -848,7 +849,7 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
-| 2026-06-01 | 新增 | `design.cds-ai-compose` `plan.cds-visual-deploy` | CDS AI 生成 compose 草稿设计、绝对可视化部署计划看板 |
+| 2026-06-01 | 新增 | `design.cds-ai-compose` `plan.cds-visual-deploy` `guide.cds-deploy-acceptance` | CDS AI 生成 compose 草稿设计、绝对可视化部署计划看板、可视化部署与验收指南（已发布到 KB） |
 | 2026-05-30 | 新增 | `debt.cds-agent` | CDS Agent 工作台债务台账（R1 商业级 / Lite 只读边界 / 文档熵减 / 无 profile 直跑） |
 | 2026-05-22 | 新增 | `design.defect-agent-share-skill-architecture` `debt.share-link-security` `report.cds-mongo-log-split-incident-2026-05-23` | 缺陷分享架构设计、分享链接安全债务台账、CDS Mongo 事故复盘 |
 | 2026-05-15 | 新增 | `design.cds-agent-runtime-architecture` | CDS Agent 运行时架构设计 |

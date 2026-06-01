@@ -158,6 +158,7 @@ docs:
   guide.cds-cli-swarm: CDS CLI 蜂群优化操作手册（多 agent 并行反馈+修复+复测）
   guide.cds-deploy-three-paths: CDS 三种部署方式指南
   guide.cds-tutorial: 从零开始的 CDS 教程指南（4 横向场景 × 2 纵向路径）
+  guide.cds-deploy-acceptance: CDS 可视化部署与验收指南（一键部署前后端+基建步骤 + 基础设施目录 + 验收清单）
   guide.cds-fullstack-infra-smoke: CDS 全栈基础设施冒烟样例指南
   guide.skill-workflow: AI 技能工作流指南
   guide.skill-removal-checklist: 删技能前置检查清单指南
