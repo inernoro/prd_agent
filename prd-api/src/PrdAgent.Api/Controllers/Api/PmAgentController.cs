@@ -2258,6 +2258,73 @@ public class PmAgentController : ControllerBase
         await WriteSseEvent("done", new { totalNew = count, error = llmError });
     }
 
+    /// <summary>AI 生成结案报告（SSE 流式，仅 owner/leader）。汇总项目执行数据后让 LLM 起草 Markdown 报告。</summary>
+    [HttpPost("projects/{projectId}/closure-report")]
+    [Produces("text/event-stream")]
+    public async Task GenerateClosureReport(string projectId)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null) { Response.StatusCode = 404; return; }
+        if (project.OwnerId != userId && project.LeaderId != userId) { Response.StatusCode = 403; return; }
+
+        Response.ContentType = "text/event-stream; charset=utf-8";
+        Response.Headers.CacheControl = "no-cache";
+        await WriteSseEvent("stage", new { stage = "analyzing", message = "正在汇总项目数据并生成结案报告…" });
+
+        var summary = await BuildClosureSummaryAsync(project);
+        string? err = null;
+        await _pmService.GenerateClosureReportAsync(project, summary, userId,
+            onContent: async text => await WriteSseEvent("typing", new { text }),
+            onThinking: async text => await WriteSseEvent("thinking", new { text }),
+            onError: e => err = e);
+        if (err != null) await WriteSseEvent("error", new { message = err });
+        await WriteSseEvent("done", new { error = err });
+    }
+
+    /// <summary>汇总项目执行数据为结案报告输入文本</summary>
+    private async Task<string> BuildClosureSummaryAsync(PmProject p)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"项目名称：{p.Title}（{p.ProjectNo}）");
+        sb.AppendLine($"业务目标：{p.BusinessGoal}");
+        if (!string.IsNullOrWhiteSpace(p.Description)) sb.AppendLine($"项目背景：{p.Description}");
+        sb.AppendLine($"项目类型：{p.ProjectType}");
+        if (p.PlannedStartAt.HasValue || p.PlannedEndAt.HasValue)
+            sb.AppendLine($"计划周期：{p.PlannedStartAt:yyyy-MM-dd} ~ {p.PlannedEndAt:yyyy-MM-dd}");
+        if (p.Budget.HasValue) sb.AppendLine($"预算：{p.Budget}，实际成本：{(p.ActualCost.HasValue ? p.ActualCost.ToString() : "未填")}");
+
+        var tasks = await _db.PmTasks.Find(t => t.ProjectId == p.Id).ToListAsync();
+        var done = tasks.Count(t => t.Status == PmTaskStatus.Done);
+        var cancelled = tasks.Count(t => t.Status == PmTaskStatus.Cancelled);
+        var active = tasks.Count - cancelled;
+        sb.AppendLine($"任务：共 {tasks.Count}，完成 {done}，取消 {cancelled}，完成率 {(active > 0 ? (int)Math.Round(done * 100.0 / active) : 0)}%");
+
+        var goals = await _db.PmGoals.Find(g => g.ProjectId == p.Id && g.Scope == PmGoalScope.Team).ToListAsync();
+        if (goals.Count > 0)
+        {
+            sb.AppendLine("团队目标：");
+            foreach (var g in goals.Take(20))
+                sb.AppendLine($"- {g.Title}（状态 {g.Status}{(string.IsNullOrWhiteSpace(g.Metric) ? "" : $"，指标 {g.Metric}")}）");
+        }
+        var milestones = await _db.PmMilestones.Find(m => m.ProjectId == p.Id).ToListAsync();
+        if (milestones.Count > 0)
+            sb.AppendLine($"里程碑：共 {milestones.Count}，已达成 {milestones.Count(m => m.Status == PmMilestoneStatus.Reached)}");
+        if (p.Evaluation != null)
+            sb.AppendLine($"干系人评价 NPSS：满意度 {p.Evaluation.SatisfactionScore}，等级 {p.Evaluation.Grade}");
+        var risks = await _db.PmRisks.Find(r => r.ProjectId == p.Id).ToListAsync();
+        if (risks.Count > 0)
+            sb.AppendLine($"风险：共 {risks.Count}，未关闭 {risks.Count(r => r.Status != PmRiskStatus.Closed)}");
+        var decided = await _db.PmDecisions.Find(d => d.ProjectId == p.Id && d.Type == PmDecisionType.Decided).ToListAsync();
+        if (decided.Count > 0)
+        {
+            sb.AppendLine("关键决策：");
+            foreach (var d in decided.Take(10)) sb.AppendLine($"- {d.Title}");
+        }
+        sb.AppendLine("请基于以上数据撰写结案报告（Markdown 正文）。");
+        return sb.ToString();
+    }
+
     // ── 辅助方法 ──
 
     private async Task<PmProject?> FindAccessibleProjectAsync(string projectId, string userId)

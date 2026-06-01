@@ -1169,6 +1169,17 @@ public static class ProjectManagement
         )]
         public const string Chat = "pm-agent.goal-decompose::chat";
     }
+
+    public static class ClosureReport
+    {
+        [AppCallerMetadata(
+            "AI 结案报告",
+            "基于项目执行数据(目标/里程碑/任务/NPSS 评价/决策)自动生成结案总结报告",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Workflow"
+        )]
+        public const string Chat = "pm-agent.closure-report::chat";
+    }
 }
 
 /// <summary>

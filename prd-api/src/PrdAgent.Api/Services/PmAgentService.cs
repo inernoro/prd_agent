@@ -170,6 +170,43 @@ public class PmAgentService
         return PmTaskPriority.All.Contains(p) ? p! : PmTaskPriority.Medium;
     }
 
+    // ── AI 结案报告 ──
+
+    /// <summary>基于项目执行数据摘要流式生成 Markdown 结案报告（不落库，前端审核后存知识库）。</summary>
+    public async Task<string?> GenerateClosureReportAsync(
+        PmProject project, string statsSummary, string userId,
+        Func<string, Task>? onContent, Func<string, Task>? onThinking, Action<string>? onError)
+    {
+        var request = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.ProjectManagement.ClosureReport.Chat,
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = BuildClosureReportSystemPrompt() },
+                    new JsonObject { ["role"] = "user", ["content"] = statsSummary }
+                },
+                ["temperature"] = 0.5,
+                ["include_reasoning"] = true,
+                ["reasoning"] = new JsonObject { ["exclude"] = false },
+            },
+            TimeoutSeconds = 180,
+            IncludeThinking = true,
+            Context = new GatewayRequestContext { UserId = userId }
+        };
+        var (full, err) = await StreamAndAccumulateAsync(request, onContent, onThinking);
+        if (err != null) { onError?.Invoke(err); return null; }
+        return full;
+    }
+
+    private static string BuildClosureReportSystemPrompt()
+        => "你是资深项目管理专家，正在为一个已结案的项目撰写【结案报告】。基于用户提供的项目执行数据"
+         + "（业务目标、目标达成、里程碑、任务完成、成本、NPSS 评价、风险、关键决策等），输出一份结构化 Markdown 结案报告。"
+         + "结构：## 一、项目概述 / ## 二、目标达成情况 / ## 三、关键里程碑与交付 / ## 四、数据回顾（任务·进度·成本）/ "
+         + "## 五、干系人评价(NPSS) / ## 六、经验与不足 / ## 七、后续建议。客观、具体、可追溯，避免空话套话。只输出 Markdown 正文。";
+
     // ── 工具方法 ──
 
     private async Task<(string content, string? error)> StreamAndAccumulateAsync(

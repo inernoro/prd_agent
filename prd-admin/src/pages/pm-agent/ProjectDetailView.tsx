@@ -22,6 +22,7 @@ import { GoalsPanel } from './GoalsPanel';
 import { MilestonesBar } from './MilestonesBar';
 import { MilestonesPanel } from './MilestonesPanel';
 import { RiskPanel } from './RiskPanel';
+import { ClosureReportPanel } from './ClosureReportPanel';
 import { EvaluatePanel } from './EvaluatePanel';
 import { TaskDetailDrawer } from './TaskDetailDrawer';
 import { PROJECT_TYPE_REGISTRY, LIFECYCLE_REGISTRY, TASK_STATUS_REGISTRY, PRIORITY_REGISTRY, GRADE_REGISTRY } from './pmConstants';
@@ -75,6 +76,7 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
   const [viewMode, setViewMode] = useState<TaskViewMode>('board');
   const [showDecompose, setShowDecompose] = useState(false);
   const [showEvaluate, setShowEvaluate] = useState(false);
+  const [showClosure, setShowClosure] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [adding, setAdding] = useState(false);
   const [costEdit, setCostEdit] = useState<{ budget: string; actualCost: string } | null>(null);
@@ -312,6 +314,9 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {(project.ownerId === myId || project.leaderId === myId) && (
+              <Button variant="ghost" onClick={() => setShowClosure(true)}><Sparkles size={14} />AI 结案报告</Button>
+            )}
             <Button variant="secondary" onClick={() => setShowEvaluate(true)}><Award size={14} />结案评价</Button>
           </div>
         </div>
@@ -559,6 +564,10 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
 
       {showEvaluate && (
         <EvaluatePanel project={project} onClose={() => setShowEvaluate(false)} onChanged={load} />
+      )}
+
+      {showClosure && (
+        <ClosureReportPanel projectId={projectId} projectNo={project.projectNo} onClose={() => setShowClosure(false)} />
       )}
     </div>
   );
