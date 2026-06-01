@@ -272,9 +272,17 @@ export function ReprocessChatDrawer({
       if (agentRes.success) setKbAgents(loadedKbAgents);
       setLoadingAgents(false);
 
+      // 优先以 sessionStorage 持久化为准：新架构走 direct-chat 不写后端 Run，
+      // 后端 active-run 是历史遗物，如果用户上次跑过旧 worker，那条会一直是
+      // "最新 run"反复污染新会话（Bugbot 十四轮 Medium）。所以只在没有客户端缓存
+      // 时才合并后端历史，作为"刚 clean session 后给个起点"的兜底。
+      const persistedSnapshot = loadPersistedChat(entryId);
+      const hasFreshPersisted = !!persistedSnapshot
+        && (persistedSnapshot.messages.length > 0 || !!persistedSnapshot.activeRef);
+
       // 恢复后端持久化的对话：旧 /reprocess/chat 路径会把 messages 存到 run 里。
       // 重开抽屉时把它还原成 ChatMessage，让用户能看见上一次没读完的对话（Bugbot #4 五轮 Medium）
-      const activeRun = activeRunRes.success ? activeRunRes.data : null;
+      const activeRun = (!hasFreshPersisted && activeRunRes.success) ? activeRunRes.data : null;
       if (activeRun && activeRun.messages && activeRun.messages.length > 0) {
         const restored: ChatMessage[] = activeRun.messages.map((m, idx) => {
           // 反查 user 消息的 templateKey 对应的 agent 名字，让气泡能显示徽章
@@ -309,28 +317,26 @@ export function ReprocessChatDrawer({
         }
       }
 
-      // 客户端 sessionStorage 里 direct-chat 留下的对话也合并（Bugbot 九轮 Medium）
-      // 注意：后端 active-run 只有走过旧 worker 路径的会话；direct-chat 完全不存后端，
-      // 必须靠这一份 client-side cache 才不会"关了抽屉就丢"
-      const persisted = loadPersistedChat(entryId);
-      if (persisted) {
-        if (persisted.messages.length > 0) {
+      // 客户端 sessionStorage 里 direct-chat 留下的对话——新架构的主要持久化路径
+      // （Bugbot 九轮 Medium）。复用上面已读出的 persistedSnapshot，不再二次 load。
+      if (persistedSnapshot) {
+        if (persistedSnapshot.messages.length > 0) {
           setMessages((prev) => {
-            // id 去重（同会话同次创建）+ 内容去重（worker 历史和 direct-chat cache
-            // 可能记同一份对话，client id 不同但 role+content 相同）（Bugbot #3 十轮 Medium）
+            // id 去重（同会话同次创建）+ 内容去重（同条消息可能既在 worker run 里也在
+            // sessionStorage 里，client id 不同但 role+content 相同）（Bugbot #3 十轮 Medium）
             const seenById = new Set(prev.map((m) => m.id));
             const seenByContent = new Set(prev.map((m) => `${m.role}::${(m.content || '').slice(0, 200)}`));
-            const fresh = persisted.messages.filter((m) =>
+            const fresh = persistedSnapshot.messages.filter((m) =>
               !seenById.has(m.id)
               && !seenByContent.has(`${m.role}::${(m.content || '').slice(0, 200)}`));
             return [...prev, ...fresh];
           });
         }
-        // 旧 worker restored 块若已经设过 setActive 就跳过 persisted 的 activeRef，避免冲突
+        // 旧 worker 路径若已经设过 setActive 就跳过 persisted 的 activeRef，避免冲突
         const workerSetActive = !!(activeRun
           && (activeRun.messages || []).slice().reverse().find((m) => m.role === 'user')?.templateKey);
-        if (persisted.activeRef && !workerSetActive) {
-          const ref = persisted.activeRef;
+        if (persistedSnapshot.activeRef && !workerSetActive) {
+          const ref = persistedSnapshot.activeRef;
           if (ref.kind === 'toolbox') {
             const tb = ordered.find((t) => t.id === ref.itemId)
               ?? userOwnedToolbox.find((t) => t.id === ref.itemId);
