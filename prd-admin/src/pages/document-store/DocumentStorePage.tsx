@@ -29,6 +29,7 @@ import {
   Search,
   ArrowUpDown,
   Check,
+  Tag,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -1368,8 +1369,22 @@ export function DocumentStorePage() {
   const [sortOpen, setSortOpen] = useState(false);
   const sortWrapRef = useRef<HTMLDivElement | null>(null);
 
+  // 标签筛选（多选，sessionStorage 持久化）
+  const [tagFilter, setTagFilter] = useState<string[]>(() => {
+    try {
+      const raw = sessionStorage.getItem('doc-store-tag-filter');
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
+    } catch { return []; }
+  });
+  const [tagOpen, setTagOpen] = useState(false);
+  const tagWrapRef = useRef<HTMLDivElement | null>(null);
+  const [tagQuery, setTagQuery] = useState('');
+
   useEffect(() => { sessionStorage.setItem('doc-store-search', search); }, [search]);
   useEffect(() => { sessionStorage.setItem('doc-store-sort', sortKey); }, [sortKey]);
+  useEffect(() => { sessionStorage.setItem('doc-store-tag-filter', JSON.stringify(tagFilter)); }, [tagFilter]);
   useEffect(() => {
     if (!sortOpen) return;
     const onDown = (e: MouseEvent) => {
@@ -1378,6 +1393,14 @@ export function DocumentStorePage() {
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, [sortOpen]);
+  useEffect(() => {
+    if (!tagOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (tagWrapRef.current && !tagWrapRef.current.contains(e.target as Node)) setTagOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [tagOpen]);
 
   const loadStores = useCallback(async () => {
     setLoading(true);
@@ -1406,7 +1429,7 @@ export function DocumentStorePage() {
       setTeamScope({ scope: 'mine', teamId: null });
       useTeamStore.getState().setScope('document-store', 'mine', null);
     } else if (tab === 'team' && teamScope.scope !== 'team') {
-      // 切到共享空间：若已记忆过 teamId 则恢复，否则等用户在下拉里选/新建
+      // 切到团队空间：若已记忆过 teamId 则恢复，否则等用户在下拉里选/新建
       const remembered = useTeamStore.getState().getScope('document-store');
       const nextTeamId = remembered.scope === 'team' ? remembered.teamId : null;
       setTeamScope({ scope: 'team', teamId: nextTeamId });
@@ -1418,7 +1441,7 @@ export function DocumentStorePage() {
     if (tab === 'mine') {
       loadStores();
     } else if (tab === 'team') {
-      // 共享空间未选具体空间时不拉数据（避免回退到 mine 列表造成误解）
+      // 团队空间未选具体空间时不拉数据（避免回退到 mine 列表造成误解）
       if (teamScope.teamId) loadStores();
       else setStores([]);
     } else if (tab === 'favorites') {
@@ -1443,7 +1466,7 @@ export function DocumentStorePage() {
 
   const tabs: { key: StoreTab; label: string; icon: typeof Library }[] = [
     { key: 'mine', label: '我的空间', icon: Library },
-    { key: 'team', label: '共享空间', icon: Users },
+    { key: 'team', label: '团队空间', icon: Users },
     { key: 'favorites', label: '我的收藏', icon: Bookmark },
     { key: 'likes', label: '我的点赞', icon: Heart },
   ];
@@ -1452,15 +1475,21 @@ export function DocumentStorePage() {
   const rawList: InteractionStoreCard[] | DocumentStoreWithPreview[] =
     isStoreTab ? stores : tab === 'favorites' ? favorites : likes;
 
-  // 搜索 + 排序（仅 store tab 生效；收藏/点赞页签不参与本页 toolbar 状态以避免混淆）
+  // 搜索 + 标签 + 排序（仅 store tab 生效；收藏/点赞页签不参与本页 toolbar 状态以避免混淆）
   const currentList = useMemo(() => {
     if (!isStoreTab) return rawList;
     const kw = search.trim().toLowerCase();
-    const filtered = kw
-      ? (rawList as DocumentStoreWithPreview[]).filter(s =>
-          s.name.toLowerCase().includes(kw) || (s.tags ?? []).some(t => t.toLowerCase().includes(kw)),
-        )
-      : (rawList as DocumentStoreWithPreview[]);
+    let filtered = rawList as DocumentStoreWithPreview[];
+    if (kw) {
+      filtered = filtered.filter(s =>
+        s.name.toLowerCase().includes(kw) || (s.tags ?? []).some(t => t.toLowerCase().includes(kw)),
+      );
+    }
+    if (tagFilter.length > 0) {
+      // 多选标签为"任一匹配"(OR)
+      const want = new Set(tagFilter);
+      filtered = filtered.filter(s => (s.tags ?? []).some(t => want.has(t)));
+    }
     const cmp = (a: DocumentStoreWithPreview, b: DocumentStoreWithPreview) => {
       switch (sortKey) {
         case 'updated-desc': return (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '');
@@ -1470,7 +1499,24 @@ export function DocumentStorePage() {
       }
     };
     return [...filtered].sort(cmp);
-  }, [rawList, isStoreTab, search, sortKey]);
+  }, [rawList, isStoreTab, search, sortKey, tagFilter]);
+
+  // 所有可用标签 + 各自的库数量（基于未筛选原始列表，避免筛选后标签消失抖动）
+  const tagStats = useMemo(() => {
+    if (!isStoreTab) return [] as { tag: string; count: number }[];
+    const map = new Map<string, number>();
+    for (const s of stores as DocumentStoreWithPreview[]) {
+      for (const t of s.tags ?? []) {
+        map.set(t, (map.get(t) ?? 0) + 1);
+      }
+    }
+    return [...map.entries()].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count);
+  }, [stores, isStoreTab]);
+
+  const visibleTagStats = useMemo(() => {
+    const q = tagQuery.trim().toLowerCase();
+    return q ? tagStats.filter(s => s.tag.toLowerCase().includes(q)) : tagStats;
+  }, [tagStats, tagQuery]);
 
   // 空间详情视图（仅 mine 标签下可进入编辑视图）—— 早返回必须放在所有 hook 之后
   if (selectedStoreId) {
@@ -1486,7 +1532,7 @@ export function DocumentStorePage() {
 
   const isEmpty = currentList.length === 0;
   // 真·空（未筛选时就没数据）vs 筛选后无结果
-  const isFilteredOut = isEmpty && isStoreTab && search.trim().length > 0;
+  const isFilteredOut = isEmpty && isStoreTab && (search.trim().length > 0 || tagFilter.length > 0);
 
   // 空间列表视图
   return (
@@ -1503,7 +1549,7 @@ export function DocumentStorePage() {
       />
 
       {/* 第二排：按顶部 tab 联动的工具栏
-          - 我的空间 / 共享空间：统计 + 搜索 + 排序 + 新建知识库（共享空间多一个 TeamScopeBar）
+          - 我的空间 / 团队空间：统计 + 搜索 + 排序 + 新建知识库（团队空间多一个 TeamScopeBar）
           - 收藏 / 点赞：不显示 */}
       {isStoreTab && (
         <div className="px-5 flex items-center gap-2 flex-wrap">
@@ -1542,6 +1588,108 @@ export function DocumentStorePage() {
               >
                 <X size={10} />
               </button>
+            )}
+          </div>
+
+          {/* 标签筛选（多选；激活后用主题色高亮 + 数字徽章） */}
+          <div className="relative" ref={tagWrapRef}>
+            <button
+              type="button"
+              onClick={() => setTagOpen(o => !o)}
+              disabled={tagStats.length === 0}
+              className="h-8 px-2.5 rounded-[8px] text-[12px] flex items-center gap-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              style={tagFilter.length > 0
+                ? { background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.2)', color: 'rgba(59,130,246,0.95)' }
+                : { background: 'transparent', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-muted)' }}
+              title={tagStats.length === 0 ? '当前没有可用的标签' : '按标签筛选'}
+            >
+              <Tag size={12} />
+              <span>标签</span>
+              {tagFilter.length > 0 && (
+                <span
+                  className="ml-0.5 h-4 min-w-[16px] px-1 rounded-full text-[10px] font-semibold flex items-center justify-center"
+                  style={{ background: 'rgba(59,130,246,0.25)', color: 'rgba(59,130,246,0.95)' }}
+                >
+                  {tagFilter.length}
+                </span>
+              )}
+            </button>
+            {tagOpen && (
+              <div
+                className="absolute right-0 top-[36px] z-[120] w-[260px] rounded-[10px] shadow-lg overflow-hidden"
+                style={{
+                  background: 'var(--bg-elevated)',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  boxShadow: '0 12px 40px rgba(0,0,0,0.4)',
+                }}
+              >
+                {/* 标签搜索 */}
+                <div className="p-2 border-b" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+                  <div className="relative">
+                    <Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--text-muted)' }} />
+                    <input
+                      autoFocus
+                      value={tagQuery}
+                      onChange={(e) => setTagQuery(e.target.value)}
+                      placeholder="搜索标签"
+                      className="w-full h-7 pl-7 pr-2 rounded-[6px] text-[12px] outline-none"
+                      style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-primary)' }}
+                    />
+                  </div>
+                </div>
+                {/* 标签列表 */}
+                <div className="max-h-[280px] overflow-auto py-1" style={{ overscrollBehavior: 'contain' }}>
+                  {visibleTagStats.length === 0 ? (
+                    <p className="px-3 py-3 text-[12px] text-center" style={{ color: 'var(--text-muted)' }}>
+                      {tagQuery ? '无匹配标签' : '暂无标签'}
+                    </p>
+                  ) : visibleTagStats.map(({ tag, count }) => {
+                    const active = tagFilter.includes(tag);
+                    return (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => {
+                          setTagFilter(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
+                        }}
+                        className="w-full text-left px-3 py-1.5 text-[12px] flex items-center justify-between hover:bg-white/6 transition-colors"
+                        style={{ color: active ? 'rgba(59,130,246,0.95)' : 'var(--text-primary)' }}
+                      >
+                        <span className="flex items-center gap-2 min-w-0">
+                          <span
+                            className="w-3.5 h-3.5 rounded-[3px] flex items-center justify-center flex-shrink-0"
+                            style={active
+                              ? { background: 'rgba(59,130,246,0.95)', border: '1px solid rgba(59,130,246,0.95)' }
+                              : { background: 'transparent', border: '1px solid rgba(255,255,255,0.25)' }}
+                          >
+                            {active && <Check size={9} style={{ color: '#fff' }} />}
+                          </span>
+                          <span className="truncate">{tag}</span>
+                        </span>
+                        <span className="text-[10px] tabular-nums flex-shrink-0 ml-2" style={{ color: 'var(--text-muted)' }}>
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {/* 底部操作行 */}
+                {tagFilter.length > 0 && (
+                  <div className="p-2 border-t flex items-center justify-between" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+                    <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      已选 {tagFilter.length} 个
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setTagFilter([])}
+                      className="text-[11px] px-2 h-6 rounded-[6px] hover:bg-white/6 transition-colors"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      清除全部
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
           </div>
 
@@ -1609,21 +1757,25 @@ export function DocumentStorePage() {
           <div className="flex flex-col items-center justify-center py-16">
             <Search size={36} style={{ color: 'var(--text-muted)', opacity: 0.3, marginBottom: 14 }} />
             <p className="text-[13px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
-              没有匹配「{search}」的知识库
+              {search.trim() && tagFilter.length > 0
+                ? `没有同时匹配「${search}」和所选标签的知识库`
+                : search.trim()
+                  ? `没有匹配「${search}」的知识库`
+                  : `没有匹配所选标签（${tagFilter.length} 个）的知识库`}
             </p>
             <p className="text-[11px] mb-4" style={{ color: 'var(--text-muted)' }}>
-              换个关键词，或清除搜索看全部
+              换个条件，或清除筛选看全部
             </p>
-            <Button variant="ghost" size="xs" onClick={() => setSearch('')}>
-              <X size={12} /> 清除搜索
+            <Button variant="ghost" size="xs" onClick={() => { setSearch(''); setTagFilter([]); }}>
+              <X size={12} /> 清除筛选
             </Button>
           </div>
         ) : isEmpty && isStoreTab ? (
-          /* 我的空间 / 共享空间 空状态引导 */
+          /* 我的空间 / 团队空间 空状态引导 */
           <div className="flex flex-col items-center justify-center py-16">
             <Library size={48} style={{ color: 'var(--text-muted)', opacity: 0.3, marginBottom: 20 }} />
             <p className="text-[16px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
-              {tab === 'team' ? '共享空间' : '我的空间'}
+              {tab === 'team' ? '团队空间' : '我的空间'}
             </p>
             <p className="text-[12px] mb-2" style={{ color: 'var(--text-muted)' }}>
               集中存储文档，作为 AI 涌现探索的种子来源
@@ -1657,8 +1809,8 @@ export function DocumentStorePage() {
             ) : (
               <p className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
                 {teamScope.teamId
-                  ? '当前共享空间还没有任何知识库，从「我的空间」把知识库分享过来吧'
-                  : '在上方选择或新建一个共享空间'}
+                  ? '当前团队空间还没有任何知识库，从「我的空间」把知识库分享过来吧'
+                  : '在上方选择或新建一个团队空间'}
               </p>
             )}
           </div>
@@ -1738,7 +1890,7 @@ export function DocumentStorePage() {
                         <div className="flex items-center gap-1 flex-shrink-0">
                           <button
                             className="surface-row h-6 w-6 rounded-[6px] flex items-center justify-center cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
-                            title="分享到共享空间"
+                            title="分享到团队空间"
                             onClick={(e) => {
                               e.stopPropagation();
                               setShareTeamTarget({ id: s.id, name: s.name, teamIds: (s as DocumentStoreWithPreview).sharedTeamIds ?? [] });
@@ -1901,7 +2053,7 @@ export function DocumentStorePage() {
 
       {shareTeamTarget && (
         <ShareToTeamDialog
-          title={`分享「${shareTeamTarget.name}」到共享空间`}
+          title={`分享「${shareTeamTarget.name}」到团队空间`}
           initialTeamIds={shareTeamTarget.teamIds}
           onConfirm={async (teamIds) => {
             await setStoreTeams(shareTeamTarget.id, teamIds);
