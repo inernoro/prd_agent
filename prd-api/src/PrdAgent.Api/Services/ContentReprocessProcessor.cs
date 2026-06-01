@@ -56,13 +56,17 @@ public class ContentReprocessProcessor
         string? sourceContent = null;
         if (!string.IsNullOrEmpty(entry.DocumentId))
         {
-            // 给 GetByIdAsync 套 5s 超时，避免 Redis/Mongo 偶发抖动让整个 worker 卡死
+            // 给 GetByIdAsync 套 15s 超时（原来 5s 太短，复杂文档的 Mongo 查询正常就要 3-8s），
+            // 避免 Redis/Mongo 偶发抖动让整个 worker 卡死。注意：ContentIndex 是 2000 字预览，
+            // 不是合规的"完整文档"，超时降级到它会让用户以为模型读了全文实际只读了开头
+            // （Bugbot 十一轮 Medium）。所以超时直接 throw，让 worker 标 Failed + error SSE，
+            // 让用户重试或检查文档健康，而不是用残缺数据糊弄。
             using var docCts = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken.None);
-            docCts.CancelAfter(TimeSpan.FromSeconds(5));
+            docCts.CancelAfter(TimeSpan.FromSeconds(15));
             try
             {
                 var docTask = _documentService.GetByIdAsync(entry.DocumentId);
-                var completed = await Task.WhenAny(docTask, Task.Delay(TimeSpan.FromSeconds(5), docCts.Token));
+                var completed = await Task.WhenAny(docTask, Task.Delay(TimeSpan.FromSeconds(15), docCts.Token));
                 if (completed == docTask)
                 {
                     var doc = await docTask;
@@ -72,14 +76,21 @@ public class ContentReprocessProcessor
                 }
                 else
                 {
-                    _logger.LogWarning("[doc-store-agent] [reprocess] GetByIdAsync 5s 超时，降级用 ContentIndex docId={DocId}", entry.DocumentId);
+                    _logger.LogWarning("[doc-store-agent] [reprocess] GetByIdAsync 15s 超时 docId={DocId}", entry.DocumentId);
+                    throw new InvalidOperationException(
+                        "读取文档正文超时（>15s），请稍后重试。注意：不会回退到 2000 字预览索引，避免模型只看到开头。");
                 }
             }
+            catch (InvalidOperationException) { throw; }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "[doc-store-agent] [reprocess] GetByIdAsync 失败，降级用 ContentIndex");
+                _logger.LogWarning(ex, "[doc-store-agent] [reprocess] GetByIdAsync 失败 docId={DocId}", entry.DocumentId);
+                throw new InvalidOperationException(
+                    $"读取文档正文失败：{ex.Message}。不会用 ContentIndex 预览作为兜底，请稍后重试。", ex);
             }
         }
+        // entry.DocumentId 为空时（没关联 ParsedPrd），用 ContentIndex 也合理——这种 entry 本来
+        // 就是纯短文，ContentIndex 是它的完整正文，不存在"被截断"问题。
         if (string.IsNullOrWhiteSpace(sourceContent))
             sourceContent = entry.ContentIndex;
         if (string.IsNullOrWhiteSpace(sourceContent))

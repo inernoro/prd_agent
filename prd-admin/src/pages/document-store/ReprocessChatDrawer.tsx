@@ -122,6 +122,14 @@ const FOCUSED_TOOLBOX_IDS = [
   'builtin-task-tree',
 ];
 
+// 后端 /api/ai-toolbox/direct-chat 的 GetBuiltinAgentSystemPrompt 只为这些 agentKey 提供
+// 专属 system prompt；其余会 fall-through 到"百宝箱通用助手"，用户选了"周报智能体"得到
+// 通用 chat 会很奇怪（Codex P2 十一轮）。只放行 backend 真正支持的 key。
+const DIRECT_CHAT_SUPPORTED_AGENT_KEYS = new Set([
+  'code-reviewer', 'translator', 'summarizer', 'data-analyst',
+  'prd-agent', 'visual-agent', 'literary-agent', 'defect-agent',
+]);
+
 export function ReprocessChatDrawer({
   entryId,
   entryTitle,
@@ -243,7 +251,10 @@ export function ReprocessChatDrawer({
       ]);
       if (cancelled || entryIdRef.current !== entryId) return;
 
-      const builtinAgents = BUILTIN_TOOLS.filter((t) => t.kind === 'agent' && !t.wip);
+      const builtinAgents = BUILTIN_TOOLS.filter((t) =>
+        t.kind === 'agent' && !t.wip
+        // 只保留后端 direct-chat 真正有专属 prompt 的 builtin（Codex P2 十一轮）
+        && !!t.agentKey && DIRECT_CHAT_SUPPORTED_AGENT_KEYS.has(t.agentKey));
       const userOwnedToolbox = toolboxRes.success
         ? (toolboxRes.data.items as ToolboxItem[]).filter((t) => !!t.systemPrompt)
         : [];
@@ -500,10 +511,24 @@ export function ReprocessChatDrawer({
         setStreamingId(null);
         sendLockRef.current = false;
       },
-      onDone: () => {
+      onDone: (tokenInfo) => {
         if (!isOwnedByCurrentEntry()) return;
-        setMessages((prev) => prev.map((m) =>
-          m.id === asstMsgId ? { ...m, streaming: false, phase: 'done' } : m));
+        // streamDirectChat 的 onDone 在两种情况下都会触发：(a) 收到 SSE done 事件
+        // 时带 tokenInfo；(b) reader 流被关闭（连接中断）时不带 tokenInfo。后者
+        // 内容可能是截断的，写回会把残缺文本落库（Bugbot 十一轮 High）
+        if (!tokenInfo) {
+          setError('连接意外断开，AI 回复可能不完整，已禁用写回。请重新发起。');
+          setMessages((prev) => prev.map((m) =>
+            m.id === asstMsgId
+              ? { ...m, streaming: false, phase: 'error',
+                  content: m.content
+                    ? m.content + '\n\n（⚠ 连接中断，回复可能未完成）'
+                    : '（连接中断，未收到任何回复）' }
+              : m));
+        } else {
+          setMessages((prev) => prev.map((m) =>
+            m.id === asstMsgId ? { ...m, streaming: false, phase: 'done' } : m));
+        }
         setStreamingId(null);
         sendLockRef.current = false;
       },

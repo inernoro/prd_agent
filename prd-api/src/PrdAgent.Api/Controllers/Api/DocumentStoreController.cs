@@ -2381,6 +2381,18 @@ public class DocumentStoreController : ControllerBase
                 DocumentStoreRunStatus.Failed,
                 DocumentStoreRunStatus.Cancelled,
             };
+            // 先把 legacy BSON 里 null/missing 的 Messages 归一为 [] —— 否则下面 CAS 的
+            // r.Messages.Count == 0 永远不匹配，旧 Run 续 chat 会被 409 拒绝（Codex P2 十一轮）
+            if (prevSeq == 0)
+            {
+                await _db.DocumentStoreAgentRuns.UpdateOneAsync(
+                    Builders<DocumentStoreAgentRun>.Filter.And(
+                        Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Id, run.Id),
+                        Builders<DocumentStoreAgentRun>.Filter.Not(
+                            Builders<DocumentStoreAgentRun>.Filter.Type(r => r.Messages, MongoDB.Bson.BsonType.Array))),
+                    Builders<DocumentStoreAgentRun>.Update.Set(r => r.Messages, new List<ReprocessChatMessage>()),
+                    cancellationToken: CancellationToken.None);
+            }
             var updateResult = await _db.DocumentStoreAgentRuns.UpdateOneAsync(
                 r => r.Id == run.Id
                     && terminalStates.Contains(r.Status)
