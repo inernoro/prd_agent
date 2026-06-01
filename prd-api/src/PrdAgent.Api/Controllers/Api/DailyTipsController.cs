@@ -364,15 +364,16 @@ public sealed class DailyTipsController : ControllerBase
     private static List<DailyTip> FilterLearned(List<DailyTip> items, Dictionary<string, int> learnedMap)
     {
         if (learnedMap.Count == 0) return items;
+        // 单一对比即可覆盖两层语义，不需要在过滤端区分 Tier：
+        // - basic: MarkLearned 写入 sentinel int.MaxValue → learnedVer (MaxValue) >= t.Version
+        //   永远成立 → 永久隐藏。
+        // - advanced: MarkLearned 写入真实 Version → 管理员 bump 后 learnedVer < t.Version → 重弹。
+        // - 兼容性：本 PR 之前已学的 tip 仍按 Version 对比，行为完全不变；这些用户在 tip
+        //   下次升 Version 时会再看到一次，重新「完成」后按当前 Tier 写入 sentinel 或新 Version。
         return items.Where(t =>
         {
             var key = t.SourceId ?? t.Id;
-            if (!learnedMap.TryGetValue(key, out var learnedVer)) return true;
-            // 分层过滤：basic（默认 / null / 未来 tier）一旦学过任意版本就永远隐藏，
-            // 哪怕老 learned 记录里写的是真实 Version 而非 sentinel（兼容本 PR 之前的数据）。
-            // advanced 仍按版本对比，升 Version 让旧 learned 失效再弹。
-            if (t.Tier != "advanced") return false;
-            return learnedVer < t.Version;
+            return !(learnedMap.TryGetValue(key, out var learnedVer) && learnedVer >= t.Version);
         }).ToList();
     }
 
