@@ -1407,52 +1407,36 @@ export function DocumentStorePage() {
   // 空间列表视图
   return (
     <div className="h-full min-h-0 flex flex-col overflow-x-hidden overflow-y-auto gap-5">
+      {/* 顶部第一排：左上角空间切换（我的空间 / 我的收藏 / 我的点赞） */}
       <TabBar
-        title="知识库"
-        icon={<Library size={14} />}
-        actions={
-          <div className="flex items-center gap-2 flex-wrap justify-end">
-            {/* 视图切换：我的空间 / 我的收藏 / 我的点赞（上移到标题行，与作用域控件同排） */}
-            <div className="flex items-center gap-1.5">
-              {tabs.map(t => {
-                const active = tab === t.key;
-                const Icon = t.icon;
-                return (
-                  <button
-                    key={t.key}
-                    onClick={() => setTab(t.key)}
-                    className="h-8 px-3 rounded-[10px] text-[12px] font-semibold flex items-center gap-1.5 cursor-pointer transition-all duration-200"
-                    style={{
-                      background: active ? 'rgba(59,130,246,0.1)' : 'rgba(255,255,255,0.03)',
-                      border: active ? '1px solid rgba(59,130,246,0.2)' : '1px solid rgba(255,255,255,0.06)',
-                      color: active ? 'rgba(59,130,246,0.9)' : 'var(--text-muted)',
-                    }}>
-                    <Icon size={12} /> {t.label}
-                  </button>
-                );
-              })}
-            </div>
-            {tab === 'mine' && (
-              <>
-                <span className="w-px h-5 self-center" style={{ background: 'rgba(255,255,255,0.08)' }} />
-                <TeamScopeBar
-                  moduleKey="document-store"
-                  value={teamScope}
-                  onChange={setTeamScope}
-                />
-                <Button
-                  variant="primary"
-                  size="xs"
-                  data-tour-id="document-store-create"
-                  onClick={() => setShowCreate(true)}
-                >
-                  <Plus size={13} /> 新建空间
-                </Button>
-              </>
-            )}
-          </div>
-        }
+        items={tabs.map(t => ({
+          key: t.key,
+          label: t.label,
+          icon: <t.icon size={12} />,
+        }))}
+        activeKey={tab}
+        onChange={(k) => setTab(k as StoreTab)}
       />
+
+      {/* 第二排：随顶部空间切换而变化的操作区 */}
+      {tab === 'mine' && (
+        <div className="px-5 flex items-center gap-2 flex-wrap">
+          <TeamScopeBar
+            moduleKey="document-store"
+            value={teamScope}
+            onChange={setTeamScope}
+          />
+          <span className="flex-1" />
+          <Button
+            variant="primary"
+            size="xs"
+            data-tour-id="document-store-create"
+            onClick={() => setShowCreate(true)}
+          >
+            <Plus size={13} /> 新建空间
+          </Button>
+        </div>
+      )}
 
       <div className="px-5 pb-6 w-full">
         {loading ? (
