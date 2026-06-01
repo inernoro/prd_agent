@@ -170,6 +170,31 @@ export type PmDashboard = {
   quarters: PmQuarterStats[];
   excellentProjects: PmProjectBonus[];
   costMetrics: PmCostMetrics;
+  portfolioHealth?: PmPortfolioHealth;
+};
+
+export type PmProjectHealthRow = {
+  id: string;
+  projectNo: string;
+  title: string;
+  projectType: PmProjectType;
+  health: 'red' | 'yellow' | 'green';
+  reason: string;
+  progress: number;
+  taskCount: number;
+  doneTaskCount: number;
+  overdueCount: number;
+  highRiskCount: number;
+  budgetUtil: number; // -1=未设预算
+  leaderName?: string | null;
+};
+export type PmPortfolioHealth = {
+  activeCount: number;
+  redCount: number;
+  yellowCount: number;
+  greenCount: number;
+  avgProgress: number;
+  projects: PmProjectHealthRow[];
 };
 
 export type PmTask = {

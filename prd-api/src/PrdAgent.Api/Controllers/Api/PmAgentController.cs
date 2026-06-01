@@ -1683,6 +1683,55 @@ public class PmAgentController : ControllerBase
         var scopeFail = scope.Count(p => p.Evaluation!.Grade == PmEvaluationGrade.Fail);
         var scopeNpss = scope.Count > 0 ? (int)Math.Round((scopeSuccess - scopeFail) * 100.0 / scope.Count) : 0;
 
+        // ── 在管项目健康总览（PMO portfolio health）：统计 lifecycle=running 的项目 ──
+        var running = await _db.PmProjects.Find(p => !p.IsDeleted && p.Lifecycle == PmProjectLifecycle.Running).ToListAsync();
+        var nowUtc = DateTime.UtcNow;
+        var runningIds = running.Select(p => p.Id).ToList();
+        var overdueByProject = new Dictionary<string, int>();
+        var highRiskByProject = new Dictionary<string, int>();
+        if (runningIds.Count > 0)
+        {
+            var od = await _db.PmTasks.Find(t => runningIds.Contains(t.ProjectId) && t.DueAt < nowUtc
+                && t.Status != PmTaskStatus.Done && t.Status != PmTaskStatus.Cancelled).Project(t => t.ProjectId).ToListAsync();
+            foreach (var pid in od) overdueByProject[pid] = overdueByProject.GetValueOrDefault(pid) + 1;
+            var hr = await _db.PmRisks.Find(r => runningIds.Contains(r.ProjectId)
+                && r.Status != PmRiskStatus.Closed && r.Probability == PmRiskLevel.High && r.Impact == PmRiskLevel.High)
+                .Project(r => r.ProjectId).ToListAsync();
+            foreach (var pid in hr) highRiskByProject[pid] = highRiskByProject.GetValueOrDefault(pid) + 1;
+        }
+        var healthRows = running.Select(p =>
+        {
+            var overdue = overdueByProject.GetValueOrDefault(p.Id);
+            var highRisk = highRiskByProject.GetValueOrDefault(p.Id);
+            var progress = p.TaskCount > 0 ? p.DoneTaskCount * 100.0 / p.TaskCount : 0;
+            var budgetUtil = (p.Budget.HasValue && p.Budget > 0) ? (double)(p.ActualCost ?? 0) / (double)p.Budget.Value * 100 : -1;
+            var reasons = new List<string>();
+            if (overdue > 0) reasons.Add($"{overdue} 个任务逾期");
+            if (highRisk > 0) reasons.Add($"{highRisk} 个高风险");
+            if (budgetUtil > 100) reasons.Add("超预算");
+            if (p.TaskCount > 0 && progress < 50) reasons.Add("进度<50%");
+            var health = (overdue > 0 || budgetUtil > 100 || highRisk > 0) ? "red"
+                : ((p.TaskCount > 0 && progress < 50) || (budgetUtil >= 0 && budgetUtil > 80)) ? "yellow" : "green";
+            return new
+            {
+                id = p.Id, projectNo = p.ProjectNo, title = p.Title, projectType = p.ProjectType,
+                health, reason = string.Join("、", reasons),
+                progress = (int)Math.Round(progress), taskCount = p.TaskCount, doneTaskCount = p.DoneTaskCount,
+                overdueCount = overdue, highRiskCount = highRisk,
+                budgetUtil = budgetUtil >= 0 ? (int)Math.Round(budgetUtil) : -1, leaderName = p.LeaderName,
+            };
+        }).OrderBy(r => r.health == "red" ? 0 : r.health == "yellow" ? 1 : 2)
+          .ThenByDescending(r => r.overdueCount + r.highRiskCount).ToList();
+        var portfolioHealth = new
+        {
+            activeCount = running.Count,
+            redCount = healthRows.Count(r => r.health == "red"),
+            yellowCount = healthRows.Count(r => r.health == "yellow"),
+            greenCount = healthRows.Count(r => r.health == "green"),
+            avgProgress = running.Count > 0 ? (int)Math.Round(healthRows.Average(r => r.progress)) : 0,
+            projects = healthRows,
+        };
+
         return Ok(ApiResponse<object>.Ok(new
         {
             // 兼容旧字段（前端总览直接用）
@@ -1709,6 +1758,7 @@ public class PmAgentController : ControllerBase
                 totalBudget = scope.Sum(p => p.Budget ?? 0),
                 totalActualCost = scope.Sum(p => p.ActualCost ?? 0),
             },
+            portfolioHealth,
         }));
     }
 
