@@ -337,11 +337,20 @@ export function ReprocessChatDrawer({
 
     // 多轮 history 用「当时实际发出去的 message」而不是 bubble text，让前几轮的 doc
     // 上下文不丢；assistant 历史用原内容（就是 LLM 实际产出的）。
+    //
+    // 对从后端 getActiveReprocessRun 恢复的 user 消息：sentForLlmRef 没有它们的
+    // 记录（不是本会话发出去的）。如果直接用 bubble text，历史就丢了 [参考文档]，
+    // 后续轮模型只能从本轮 message 看到文档（Bugbot #2 七轮 Medium）。
+    // 用当前 docContent 现拼一份 wrapper 作为合理近似——文档可能已被 apply 改过，
+    // 但拿当前服务器版本起码比纯 bubble text 信息密度高得多。
+    const docWrapperPrefix = `[参考文档${docTruncated ? '（已截取前 4 万字）' : ''}]\n${docContent}\n\n[用户指令]\n`;
     const history = messages
       .map((m) => {
         if (m.role === 'user') {
           const sent = sentForLlmRef.current.get(m.id);
-          return { role: m.role, content: sent ?? m.content };
+          if (sent) return { role: m.role, content: sent };
+          // 没记录的（restored）：现拼 wrapper
+          return { role: m.role, content: docWrapperPrefix + m.content };
         }
         return { role: m.role, content: m.content };
       })
@@ -1024,7 +1033,8 @@ function MessageBubble({
     );
   }
 
-  const canApply = !msg.streaming && !!msg.content;
+  // 不允许把失败占位字符串（"（调用失败：...）"）写回文档（Bugbot #1 七轮 High）
+  const canApply = !msg.streaming && !!msg.content && msg.phase !== 'error';
   const busyMode = applying && applying.startsWith(`${msg.id}:`)
     ? applying.split(':')[1]
     : null;
