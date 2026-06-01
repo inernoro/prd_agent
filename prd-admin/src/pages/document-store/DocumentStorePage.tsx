@@ -1537,16 +1537,26 @@ export function DocumentStorePage() {
   // 空间列表视图
   return (
     <div className="h-full min-h-0 flex flex-col overflow-x-hidden overflow-y-auto gap-5">
-      {/* 顶部第一排：左上角空间切换（我的空间 / 我的收藏 / 我的点赞） */}
-      <TabBar
-        items={tabs.map(t => ({
-          key: t.key,
-          label: t.label,
-          icon: <t.icon size={12} />,
-        }))}
-        activeKey={tab}
-        onChange={(k) => setTab(k as StoreTab)}
-      />
+      {/* 顶部 tab + 工具栏：滚动时整体悬浮（sticky）— 知识库多时菜单不消失
+          -mb-5 + pb-5 用于"吃掉"父级 gap-5 间距，避免卡片从间隙缝隙里穿过 */}
+      <div
+        className="sticky top-0 z-20 flex flex-col gap-3 pb-5 -mb-5"
+        style={{
+          background: 'var(--bg-primary)',
+          backdropFilter: 'saturate(180%) blur(8px)',
+          WebkitBackdropFilter: 'saturate(180%) blur(8px)',
+        }}
+      >
+        {/* 顶部第一排：左上角空间切换（我的空间 / 团队空间 / 我的收藏 / 我的点赞） */}
+        <TabBar
+          items={tabs.map(t => ({
+            key: t.key,
+            label: t.label,
+            icon: <t.icon size={12} />,
+          }))}
+          activeKey={tab}
+          onChange={(k) => setTab(k as StoreTab)}
+        />
 
       {/* 第二排：按顶部 tab 联动的工具栏
           - 我的空间 / 团队空间：统计 + 搜索 + 排序 + 新建知识库（团队空间多一个 TeamScopeBar）
@@ -1748,6 +1758,7 @@ export function DocumentStorePage() {
           </Button>
         </div>
       )}
+      </div>
 
       <div className="px-5 pb-6 w-full">
         {loading ? (
