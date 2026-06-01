@@ -291,7 +291,6 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'toolbox',
       appKey: 'ccas-agent',
       tags: ['赋码', '采集', '产线', 'PRD', '流程图'],
-      wip: true,
     },
   },
   {

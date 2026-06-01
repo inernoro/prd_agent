@@ -18,15 +18,14 @@ import { Button } from '@/components/design/Button';
  * 业务规则：
  *   - 列空间：当前用户拥有的全部空间，按「appKey === 'ccas-agent'」优先排序
  *   - 列条目：默认隐藏文件夹（`isFolder=true`）；空间内支持关键词搜索（标题+摘要+内容索引）
- *   - 选择上限：20 条；单条提示按 8K 字符截断，总预算 24K（与后端一致）
+ *   - 支持整库引用与单篇引用；整库引用在后端展开成空间内文档并统一去重
  *   - 字符 → token 估算：1 token ≈ 1.5 中文字符（粗估），用于显示进度条
  */
 
-const MAX_SELECT = 20;
 /** 估算 token：粗略按 1.5 字符/token（中文 1，英文 ~3 字符/token，混合大致这个值） */
 const CHARS_PER_TOKEN = 1.5;
 /** 与后端 ReferenceTotalBudget 一致 */
-const TOTAL_BUDGET_CHARS = 24000;
+const TOTAL_BUDGET_CHARS = 120000;
 
 interface Props {
   open: boolean;
@@ -39,11 +38,13 @@ interface Props {
 }
 
 export interface SelectedEntrySnapshot {
-  entryId: string;
+  kind: 'store' | 'entry';
+  entryId?: string;
   storeId: string;
   storeName: string;
   title: string;
   approxChars: number;
+  documentCount?: number;
 }
 
 export function CcasKnowledgePickerDrawer({
@@ -69,7 +70,7 @@ export function CcasKnowledgePickerDrawer({
   useEffect(() => {
     if (open) {
       const m = new Map<string, SelectedEntrySnapshot>();
-      selectedSnapshot.forEach((s) => m.set(s.entryId, s));
+      selectedSnapshot.forEach((s) => m.set(selectionKey(s), normalizeSnapshot(s)));
       setPendingSelected(m);
     }
   }, [open, selectedSnapshot]);
@@ -136,7 +137,7 @@ export function CcasKnowledgePickerDrawer({
     return () => clearTimeout(t);
   }, [keyword]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const toggleStore = useCallback((storeId: string) => {
+  const toggleStoreExpanded = useCallback((storeId: string) => {
     setExpandedStoreIds((prev) => {
       const next = new Set(prev);
       if (next.has(storeId)) next.delete(storeId);
@@ -145,17 +146,44 @@ export function CcasKnowledgePickerDrawer({
     });
   }, []);
 
+  const toggleStoreSelection = useCallback((store: CcasKnowledgeStore) => {
+    const key = storeSelectionKey(store.id);
+    setPendingSelected((prev) => {
+      const next = new Map(prev);
+      if (next.has(key)) {
+        next.delete(key);
+        return next;
+      }
+
+      // 整库引用覆盖该空间下的单篇引用，避免后端重复注入。
+      for (const [selectedKey, selected] of next) {
+        if (selected.kind === 'entry' && selected.storeId === store.id) {
+          next.delete(selectedKey);
+        }
+      }
+      next.set(key, {
+        kind: 'store',
+        storeId: store.id,
+        storeName: store.name,
+        title: store.name,
+        approxChars: estimateStoreChars(store),
+        documentCount: store.documentCount,
+      });
+      return next;
+    });
+  }, []);
+
   const toggleEntry = useCallback((store: CcasKnowledgeStore, entry: CcasKnowledgeEntry) => {
     setPendingSelected((prev) => {
       const next = new Map(prev);
-      if (next.has(entry.id)) {
-        next.delete(entry.id);
+      const key = entrySelectionKey(entry.id);
+      if (next.has(key)) {
+        next.delete(key);
       } else {
-        if (next.size >= MAX_SELECT) {
-          // 不报错（避免点击没反应又没解释），但通过下方提示让用户感知
-          return next;
-        }
-        next.set(entry.id, {
+        // 单篇引用会取消同空间的整库引用，让用户可以从粗粒度切回精确选择。
+        next.delete(storeSelectionKey(store.id));
+        next.set(key, {
+          kind: 'entry',
           entryId: entry.id,
           storeId: store.id,
           storeName: store.name,
@@ -210,7 +238,7 @@ export function CcasKnowledgePickerDrawer({
             <BookOpen className="w-4 h-4 text-amber-300" />
             <h2 className="text-sm font-semibold text-white">引用知识库</h2>
             <span className="text-[11px] text-white/40">
-              已选 {pendingSelected.size}/{MAX_SELECT}
+              已选 {pendingSelected.size} 个来源
             </span>
           </div>
           <button onClick={onClose} className="p-1 rounded hover:bg-white/10 text-white/60">
@@ -281,7 +309,7 @@ export function CcasKnowledgePickerDrawer({
                   >
                     <header
                       className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-white/5 select-none"
-                      onClick={() => toggleStore(store.id)}
+                      onClick={() => toggleStoreExpanded(store.id)}
                     >
                       {isExpanded ? (
                         <ChevronDown className="w-3.5 h-3.5 text-white/60" />
@@ -296,6 +324,26 @@ export function CcasKnowledgePickerDrawer({
                         )}
                       </div>
                       <div className="flex items-center gap-1.5 text-[10px] text-white/45">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleStoreSelection(store);
+                          }}
+                          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border transition ${
+                            pendingSelected.has(storeSelectionKey(store.id))
+                              ? 'bg-amber-500/15 border-amber-400/40 text-amber-200'
+                              : 'bg-white/5 border-white/10 text-white/55 hover:text-white/80'
+                          }`}
+                          title="选择整个知识库，后端会展开该空间内所有可读文档并按上下文预算注入"
+                        >
+                          {pendingSelected.has(storeSelectionKey(store.id)) ? (
+                            <CheckCircle2 className="w-3 h-3" />
+                          ) : (
+                            <Square className="w-3 h-3" />
+                          )}
+                          整库
+                        </button>
                         {store.appKey === 'ccas-agent' && (
                           <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-200/85">赋码</span>
                         )}
@@ -319,7 +367,7 @@ export function CcasKnowledgePickerDrawer({
                         ) : (
                           <ul className="divide-y divide-white/5">
                             {entriesState.items.map((entry) => {
-                              const checked = pendingSelected.has(entry.id);
+                              const checked = pendingSelected.has(storeSelectionKey(store.id)) || pendingSelected.has(entrySelectionKey(entry.id));
                               return (
                                 <li
                                   key={entry.id}
@@ -377,17 +425,14 @@ export function CcasKnowledgePickerDrawer({
         <footer className="shrink-0 px-5 py-3 border-t border-white/10 flex flex-col gap-2">
           <div className="flex items-center justify-between text-[11px] text-white/55">
             <span>
-              已选 <span className="text-white">{pendingSelected.size}</span> 条 · 约{' '}
+              已选 <span className="text-white">{pendingSelected.size}</span> 个来源 · 约{' '}
               <span className={overBudget ? 'text-orange-400' : 'text-white'}>{totalChars.toLocaleString()}</span>{' '}
               字符 ≈ <span className="text-white/70">{Math.round(totalChars / CHARS_PER_TOKEN).toLocaleString()}</span>{' '}
-              tokens / 上限{' '}
+              tokens / 上下文预算{' '}
               <span className="text-white/70">{TOTAL_BUDGET_CHARS.toLocaleString()}</span> 字符
             </span>
             {overBudget && (
               <span className="text-[10px] text-orange-300/85">超出预算的部分会按选中顺序裁剪</span>
-            )}
-            {pendingSelected.size >= MAX_SELECT && (
-              <span className="text-[10px] text-orange-300/85">已达 {MAX_SELECT} 条上限</span>
             )}
           </div>
           <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
@@ -410,4 +455,29 @@ export function CcasKnowledgePickerDrawer({
   );
 
   return createPortal(drawer, document.body);
+}
+function entrySelectionKey(entryId: string) {
+  return `entry:${entryId}`;
+}
+
+function storeSelectionKey(storeId: string) {
+  return `store:${storeId}`;
+}
+
+function selectionKey(snapshot: SelectedEntrySnapshot) {
+  return snapshot.kind === 'store'
+    ? storeSelectionKey(snapshot.storeId)
+    : entrySelectionKey(snapshot.entryId ?? snapshot.storeId);
+}
+
+function normalizeSnapshot(snapshot: SelectedEntrySnapshot): SelectedEntrySnapshot {
+  return {
+    ...snapshot,
+    kind: snapshot.kind ?? 'entry',
+  };
+}
+
+function estimateStoreChars(store: CcasKnowledgeStore) {
+  // 整库引用的真实字符数以后端读取正文为准，这里只做抽屉里的预算提示。
+  return Math.max(2000, store.documentCount * 4000);
 }
