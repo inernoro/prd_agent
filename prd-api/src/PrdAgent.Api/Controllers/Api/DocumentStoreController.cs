@@ -2370,8 +2370,21 @@ public class DocumentStoreController : ControllerBase
         else
         {
             // 已 Done 的 Run：追加 user 消息 + 重置 status=queued 让 worker 再 pick 一次
-            await _db.DocumentStoreAgentRuns.UpdateOneAsync(
-                r => r.Id == run.Id,
+            // 加 status 终态作为 filter 条件做原子 CAS：两个客户端同时基于同一份"已 Done"
+            // 快照发追问时，第二个的 UpdateOne 会因为 run.Status 已被第一个改成 Queued 而
+            // ModifiedCount=0，从而拒绝它。否则两条 user 消息都会被 Push 进去但只 queue 一
+            // 次，processor 只处理最后一条 → 前一条永远没回复（Codex P2 八轮）
+            var prevSeq = run.Messages.Count;
+            var terminalStates = new[]
+            {
+                DocumentStoreRunStatus.Done,
+                DocumentStoreRunStatus.Failed,
+                DocumentStoreRunStatus.Cancelled,
+            };
+            var updateResult = await _db.DocumentStoreAgentRuns.UpdateOneAsync(
+                r => r.Id == run.Id
+                    && terminalStates.Contains(r.Status)
+                    && r.Messages.Count == prevSeq,
                 Builders<DocumentStoreAgentRun>.Update
                     .Push(r => r.Messages, userMsg)
                     .Set(r => r.Status, DocumentStoreRunStatus.Queued)
@@ -2381,6 +2394,11 @@ public class DocumentStoreController : ControllerBase
                     .Set(r => r.EndedAt, (DateTime?)null)
                     .Set(r => r.ErrorMessage, null),
                 cancellationToken: CancellationToken.None);
+            if (updateResult.ModifiedCount == 0)
+            {
+                return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                    "上一轮还未结束或已被其他客户端接力，请稍候再试"));
+            }
             // 同步内存里的 run.Status，否则下面 return 时仍然返回旧的 "done"，
             // 客户端会误以为任务已经完成（Bugbot #1 三轮 Medium）
             run.Status = DocumentStoreRunStatus.Queued;

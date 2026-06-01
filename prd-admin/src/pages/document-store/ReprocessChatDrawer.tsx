@@ -125,10 +125,10 @@ export function ReprocessChatDrawer({
   // 当前 entry id 锁：异步任务（fetch / apply）返回时校验 entry 没变才能写 state
   // 否则 apply 在 doc A 上跑，返回时 doc 已切到 B，错把"成功"绑到 B（Bugbot #3 二轮 Medium）。
   const entryIdRef = useRef(entryId);
-  // 「实际发给 LLM 的 message」镜像：用户 / assistant 气泡里渲染的是简短 bubble text，
-  // 但当时发出去的 message 包了 [参考文档] / [智能体角色设定] 等上下文。
-  // 多轮 history 必须与模型当时收到的一致，否则前几轮的 doc 上下文就丢了（Bugbot #2 三轮 Medium）。
-  const sentForLlmRef = useRef<Map<string, string>>(new Map());
+  // 历史注：曾经维护过 sentForLlmRef 想把每轮发给 LLM 的完整 wrapper（含 doc）
+  // 塞进 history，让"模型 N 轮后看到的还是 N 轮前那份 doc"。但 doc 可能 40k 字，
+  // 多轮放大成 N × 40k token，得不偿失。改为标准 chat-with-doc 模式：history 走
+  // 短 bubble text，doc 只放本轮 message。该 ref 已彻底移除（Bugbot 八轮 Medium）。
 
   const scrollToBottom = useCallback(() => {
     requestAnimationFrame(() => {
@@ -153,7 +153,6 @@ export function ReprocessChatDrawer({
     let cancelled = false;
     entryIdRef.current = entryId;
     sendLockRef.current = false;
-    sentForLlmRef.current = new Map();
     abortCurrentStream();
     setMessages([]);
     setActive(null);
@@ -163,6 +162,11 @@ export function ReprocessChatDrawer({
     setDocContent('');
     setDocTruncated(false);
     setDocLoadError(null);
+    // 同样清掉智能体列表 + 关闭下拉，避免新文档 fetch 期间下拉短暂展示上一篇的
+    // toolbox/kbAgent 数据（Bugbot #2 八轮 Low）
+    setToolboxItems([]);
+    setKbAgents([]);
+    setPickerOpen(false);
     setLoadingDoc(true);
     setLoadingAgents(true);
 
@@ -335,29 +339,16 @@ export function ReprocessChatDrawer({
     }
     composed += `[参考文档${docTruncated ? '（已截取前 4 万字）' : ''}]\n${docContent}\n\n[用户指令]\n${userText.trim()}`;
 
-    // 多轮 history 用「当时实际发出去的 message」而不是 bubble text，让前几轮的 doc
-    // 上下文不丢；assistant 历史用原内容（就是 LLM 实际产出的）。
+    // 多轮 history 故意只塞 bubble text（用户原话 / AI 原回复），不重复嵌
+    // [参考文档]。doc 只放在本轮 message wrapper 里，模型靠当前消息看最新文档，
+    // 靠 history 看对话脉络。这是 chat-with-doc 模式的标准做法，避免每轮把 40k
+    // 字文档塞进 history × N 条吃光 token / 推高成本（Bugbot 八轮 Medium）。
     //
-    // 对从后端 getActiveReprocessRun 恢复的 user 消息：sentForLlmRef 没有它们的
-    // 记录（不是本会话发出去的）。如果直接用 bubble text，历史就丢了 [参考文档]，
-    // 后续轮模型只能从本轮 message 看到文档（Bugbot #2 七轮 Medium）。
-    // 用当前 docContent 现拼一份 wrapper 作为合理近似——文档可能已被 apply 改过，
-    // 但拿当前服务器版本起码比纯 bubble text 信息密度高得多。
-    const docWrapperPrefix = `[参考文档${docTruncated ? '（已截取前 4 万字）' : ''}]\n${docContent}\n\n[用户指令]\n`;
+    // 注：早先一版用 sentForLlmRef 缓存"当时发出去的完整 wrapper"想让 history
+    // "和模型当时看到的一致"，那样会导致 doc 被复述 N 遍。这里改回更经济的模式。
     const history = messages
-      .map((m) => {
-        if (m.role === 'user') {
-          const sent = sentForLlmRef.current.get(m.id);
-          if (sent) return { role: m.role, content: sent };
-          // 没记录的（restored）：现拼 wrapper
-          return { role: m.role, content: docWrapperPrefix + m.content };
-        }
-        return { role: m.role, content: m.content };
-      })
+      .map((m) => ({ role: m.role, content: m.content }))
       .filter((m) => m.content);
-
-    // 记录本轮发出去的 message 内容，给后续轮的 history 用
-    sentForLlmRef.current.set(userMsgId, composed);
 
     setMessages((prev) => [...prev, userMsg, asstMsg]);
     setStreamingId(asstMsgId);
@@ -506,15 +497,8 @@ export function ReprocessChatDrawer({
     const label = mode === 'replace' ? '替换原文' : mode === 'append' ? '追加末尾' : '另存为新文档';
     toast.success(`${label}成功`, mode === 'new' ? '新文档已生成' : '文档已更新');
 
-    // replace/append 改了源文档正文；后续轮的 prompt 还引用旧 docContent 会让模型读到
-    // 过期的"参考文档"，写回也基于陈旧上下文。重新拉一次 entry content 拿到服务器的
-    // 最新版本（Bugbot #2 五轮 High）。
-    //
-    // 同时清空 sentForLlmRef：里面缓存的是历史轮"当时发出去的 message"，每条 user 都
-    // 包了那个版本的 [参考文档]。文档已经变了，这些缓存就过期了——再用它们填 history
-    // 会把过期 doc 重新喂给模型（Bugbot 六轮 High）。清掉后，下一轮 history 自动 fall
-    // back 到 bubble text（短文本，没有 doc 包装），模型只从本轮 message 的新 [参考文档]
-    // 看最新版，多轮历史的 doc fidelity 在覆写后本来就难以保留，这是合理 trade-off。
+    // replace/append 改了源文档正文；后续轮 message 还引用旧 docContent 会让模型
+    // 读到过期版本。重新拉一次 entry content 拿到服务器最新（Bugbot #2 五轮 High）。
     if (mode === 'replace' || mode === 'append') {
       try {
         const refreshed = await getDocumentContent(requestedEntryId);
@@ -527,7 +511,6 @@ export function ReprocessChatDrawer({
             setDocContent(raw);
             setDocTruncated(false);
           }
-          sentForLlmRef.current = new Map();
         }
       } catch { /* 拉取失败保留旧 docContent，下一轮 toast 提示已能让用户感知 */ }
     }
