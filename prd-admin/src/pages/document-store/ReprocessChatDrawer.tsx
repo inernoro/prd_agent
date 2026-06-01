@@ -314,7 +314,9 @@ export function ReprocessChatDrawer({
 
   // ── 渲染 ──
   const isBusy = sending || streamingSeq !== null;
-  const showTemplateRow = !hasFirstTemplate;
+  // chip 行常驻：用户可以在多轮对话过程中随时切换模板或新建智能体
+  const showTemplateRow = true;
+  void hasFirstTemplate;
 
   const modal = (
     <motion.div
