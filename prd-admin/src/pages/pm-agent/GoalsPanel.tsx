@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus, Trash2, Pencil, Check, X, Target, Lock, Users, Compass, Flag, Sparkles, ChevronRight, ChevronDown, GitBranch } from 'lucide-react';
+import { Plus, Trash2, Pencil, Check, X, Target, Lock, Users, Compass, Flag, Sparkles, ChevronRight, ChevronDown, GitBranch, Network, List } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
@@ -8,6 +8,7 @@ import {
 } from '@/services';
 import type { PmGoal, PmGoalScope, PmGoalStatus, SavePmGoalInput, PmMilestone } from '@/services/contracts/pmAgent';
 import { GOAL_STATUS_REGISTRY, GOAL_SCOPE, MILESTONE_HEALTH_REGISTRY, GOAL_MAX_DEPTH } from './pmConstants';
+import { GoalsCanvas } from './goals-canvas/GoalsCanvas';
 import { GoalDecomposePanel } from './GoalDecomposePanel';
 
 interface Props {
@@ -38,6 +39,7 @@ export function GoalsPanel({ projectId, businessGoal, canManage }: Props) {
   const [editing, setEditing] = useState<string | null>(null); // null | `new:{scope}:{parentId|root}` | id
   const [draft, setDraft] = useState<SavePmGoalInput>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [view, setView] = useState<'canvas' | 'list'>('canvas');
   // AI 拆解目标：null=未打开；{scope} 项目级拆顶层；{parentGoalId,...} 针对某目标拆子目标
   const [aiTarget, setAiTarget] = useState<{ parentGoalId?: string; parentTitle?: string; scope: PmGoalScope } | null>(null);
 
@@ -264,7 +266,26 @@ export function GoalsPanel({ projectId, businessGoal, canManage }: Props) {
   };
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col gap-5 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+    <div className="flex-1 min-h-0 flex flex-col">
+      {/* 视图切换：画布（思维导图）/ 列表（缩进树） */}
+      <div className="flex items-center gap-2 pb-3 shrink-0">
+        <div className="flex gap-0.5 rounded-lg p-0.5" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}>
+          {([['canvas', '画布', Network], ['list', '列表', List]] as const).map(([k, label, Ic]) => (
+            <button key={k} onClick={() => setView(k)} className="px-2.5 py-1 rounded text-[12px] flex items-center gap-1"
+              style={{ background: view === k ? 'var(--bg-card)' : 'transparent', color: view === k ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+              <Ic size={13} />{label}
+            </button>
+          ))}
+        </div>
+        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+          {view === 'canvas' ? '拖动平移 · ⌘/Ctrl+滚轮缩放 · 点节点编辑 · 节点上 AI 拆细' : '缩进树 · 逐卡 AI 拆细'}
+        </span>
+      </div>
+
+      {view === 'canvas' ? (
+        <GoalsCanvas projectId={projectId} businessGoal={businessGoal} canManage={canManage} goals={goals} onReload={load} />
+      ) : (
+      <div className="flex-1 min-h-0 flex flex-col gap-5 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
       {/* 业务目标北极星 */}
       <div className="rounded-xl border p-4" style={{ borderColor: 'rgba(245,158,11,0.4)', background: 'rgba(245,158,11,0.06)' }}>
         <div className="flex items-center gap-2 mb-1">
@@ -308,6 +329,8 @@ export function GoalsPanel({ projectId, businessGoal, canManage }: Props) {
         <GoalDecomposePanel projectId={projectId} businessGoal={businessGoal}
           parentGoalId={aiTarget.parentGoalId} parentTitle={aiTarget.parentTitle} scope={aiTarget.scope}
           onClose={() => setAiTarget(null)} onCreated={() => { setAiTarget(null); load(); }} />
+      )}
+      </div>
       )}
     </div>
   );
