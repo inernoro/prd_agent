@@ -99,7 +99,9 @@ const ACCEPT_TYPES = '.md,.txt,.pdf,.doc,.docx,.json,.yaml,.yml,.csv';
 // ── 创建空间对话框 ──
 function CreateStoreDialog({ onClose, onCreated }: {
   onClose: () => void;
-  onCreated: (store: DocumentStore) => void;
+  // 父级可能在 onCreated 内执行 setStoreTeams 等异步动作,
+  // 必须返回 Promise 才能在它真正完成前继续 loading + 阻塞按钮。
+  onCreated: (store: DocumentStore) => void | Promise<void>;
 }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -107,21 +109,30 @@ function CreateStoreDialog({ onClose, onCreated }: {
   const [error, setError] = useState('');
 
   const handleCreate = async () => {
+    if (loading) return; // 双保险:即使父级没及时禁用,也不允许重复触发
     if (!name.trim()) { setError('空间名称不能为空'); return; }
     setLoading(true);
     setError('');
     const res = await createDocumentStore({ name: name.trim(), description: description.trim() || undefined });
     if (res.success) {
-      onCreated(res.data);
+      try {
+        await onCreated(res.data); // 等父级 share/导航完成再放行
+      } catch (e) {
+        setError((e as Error)?.message ?? '后续操作失败');
+      }
     } else {
       setError(res.error?.message ?? '创建失败');
     }
     setLoading(false);
   };
 
+  // 创建/分享 in-flight 时阻断所有关闭路径(backdrop / X / 取消),避免对话框过早消失
+  // 让后续 await 在"无主"状态下完成导航 → 用户误点其他 tab。
+  const safeClose = () => { if (!loading) onClose(); };
+
   return (
     <div className="surface-backdrop fixed inset-0 z-50 flex items-center justify-center"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      onClick={(e) => { if (e.target === e.currentTarget) safeClose(); }}>
       <div className="surface-popover w-[420px] max-w-[92vw] rounded-[16px] p-6">
         <div className="flex items-center justify-between mb-5">
           <div className="flex items-center gap-2.5">
@@ -132,30 +143,30 @@ function CreateStoreDialog({ onClose, onCreated }: {
               新建知识库
             </span>
           </div>
-          <button onClick={onClose}
-            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted transition-colors duration-200 hover:bg-white/6">
+          <button onClick={safeClose} disabled={loading}
+            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted transition-colors duration-200 hover:bg-white/6 disabled:opacity-40 disabled:cursor-not-allowed">
             <X size={15} />
           </button>
         </div>
 
         <div className="mb-4">
           <label className="mb-1.5 block text-[12px] text-token-muted">空间名称</label>
-          <input value={name} onChange={e => setName(e.target.value)} placeholder="如：产品文档库"
-            className="prd-field h-9 w-full rounded-[10px] px-3 text-[13px] outline-none transition-colors duration-200"
+          <input value={name} onChange={e => setName(e.target.value)} placeholder="如：产品文档库" disabled={loading}
+            className="prd-field h-9 w-full rounded-[10px] px-3 text-[13px] outline-none transition-colors duration-200 disabled:opacity-60"
             onKeyDown={e => { if (e.key === 'Enter') handleCreate(); }}
           />
         </div>
         <div className="mb-4">
           <label className="mb-1.5 block text-[12px] text-token-muted">描述（可选）</label>
-          <input value={description} onChange={e => setDescription(e.target.value)} placeholder="这个空间用来存放什么文档"
-            className="prd-field h-9 w-full rounded-[10px] px-3 text-[13px] outline-none transition-colors duration-200"
+          <input value={description} onChange={e => setDescription(e.target.value)} placeholder="这个空间用来存放什么文档" disabled={loading}
+            className="prd-field h-9 w-full rounded-[10px] px-3 text-[13px] outline-none transition-colors duration-200 disabled:opacity-60"
           />
         </div>
 
         {error && <p className="mb-3 text-[12px] text-token-error">{error}</p>}
 
         <div className="flex justify-end gap-2">
-          <Button variant="ghost" size="xs" onClick={onClose}>取消</Button>
+          <Button variant="ghost" size="xs" onClick={safeClose} disabled={loading}>取消</Button>
           <Button variant="primary" size="xs" onClick={handleCreate} disabled={loading}>
             {loading ? '创建中…' : '创建'}
           </Button>
@@ -1607,7 +1618,19 @@ export function DocumentStorePage() {
             icon: <t.icon size={12} />,
           }))}
           activeKey={tab}
-          onChange={(k) => setTab(k as StoreTab)}
+          onChange={(k) => {
+            const next = k as StoreTab;
+            if (next === tab) return;
+            // 同步清空 + 进入 loading,避免本帧仍渲染上一 tab 的卡片让用户误点。
+            // 真实数据由 useEffect 异步拉取覆盖。
+            ++listFetchSeq.current; // 作废任何 in-flight 请求
+            const goingToStores = next === 'mine' || next === 'team';
+            if (goingToStores) setStores([]);
+            else if (next === 'favorites') setFavorites([]);
+            else setLikes([]);
+            setLoading(true);
+            setTab(next);
+          }}
         />
 
       {/* 第二排：按顶部 tab 联动的工具栏
