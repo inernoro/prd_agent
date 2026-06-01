@@ -4,41 +4,34 @@
 
 ## 背景
 
-PR #699 修复「分享统计取到 Docker 内网 IP（172.20.* / ::ffff:）」时，新增
-`HttpRequestExtensions.GetRealClientIp`，从 `X-Forwarded-For` 解析真实客户端 IP。
-经多轮 review 收敛后，当前实现为：**XFF 从右向左扫，返回第一个公网段；全为内网时回退到
-代理覆盖写的 `X-Real-IP` / socket 地址**（绝不回退 XFF 最左段，杜绝纯内网链下的私网 IP 伪造）。
+PR #699 修复「分享统计取到 Docker 内网 IP（172.20.* / ::ffff:）」时新增
+`HttpRequestExtensions.GetRealClientIp`。经多轮 review，方案在「防伪造」与「穿透多层代理拿真实
+访客 IP」之间存在本质冲突——二者不可兼得，除非提供部署侧「可信代理地址」配置。
 
-## 已知边界（刻意留尾，用户 2026-06-01 拍板「保持启发式 + 记 debt」）
+维护者 2026-06-01 最终决策：**只信不可伪造的代理覆盖值，不解析 X-Forwarded-For**。
+即 `X-Real-IP`（反代 `$remote_addr` 覆盖写）→ `RemoteIpAddress`（socket 对端）。
 
-| 项 | 现状 | 风险 / 触发条件 | 后续可补 |
-|----|------|----------------|---------|
-| 私网链下公网 XFF 伪造 | 启发式取「右起首个公网段」。在 **无可信公网反代** 的部署（LAN/VPN、branch-nginx 直连）下，客户端发 `X-Forwarded-For: 8.8.8.8`，nginx 仅追加私网 remote_addr，扫描会先命中伪造的 8.8.8.8 | 仅在内网直连部署且攻击者已在内网时成立；只能污染 **其自己请求** 记录的访问 IP / 独立 IP 计数，无法越权、无法读他人数据 | 见下「彻底方案」 |
-| 多层 public 链 vs 私网链不可兼得 | 生产 `public-nginx→gateway→branch-nginx→api` 拓扑下启发式正确（最外层 public-nginx 收真实公网客户端）；纯内网拓扑下则可被伪造 | 同一份启发式无法同时满足两种拓扑——这是 XFF 解析的本质限制 | 同上 |
+## 已知边界（刻意留尾，维护者已知并接受）
 
-## 为什么不在本 PR 彻底修
+| 项 | 现状 | 影响 | 后续可补 |
+|----|------|------|---------|
+| 多层 public 拓扑下记到代理 IP | `public-nginx→gateway→branch-nginx→api`，内层 nginx 用 `$remote_addr` 覆盖 `X-Real-IP` = gateway 内网地址 | 生产环境分享/站点访问统计的 IP、独立 IP 计数会**坍缩到 gateway 代理 IP**，而非真实访客——即原始诉求「正式环境拿真实访客 IP」在此方案下未达成 | 见下「彻底方案」 |
+| 单层/直连拓扑正确 | CDS 预览（Cloudflare→branch-nginx 直连）下 `X-Real-IP` = Cloudflare 边缘公网 IP | 预览域名统计能看到边缘 IP（非内网），可用 | — |
 
-彻底 spoof-safe 的 XFF 解析**必须知道「可信代理地址」**（ASP.NET `ForwardedHeadersMiddleware`
-的 `KnownProxies` / `KnownNetworks`，或等价的可信跳数）。该输入是**部署侧拓扑配置**，代码无法
-推断：
+为何取此方案：彻底 spoof-safe 的 XFF 解析必须知道「可信代理地址」（hop 数 / CIDR），而该输入
+是部署侧拓扑配置，代码推断不出来；且该统计字段语义为「仅用于访问统计 / 审计展示，不作安全判定」。
+权衡后维护者选择「绝不接受可伪造值」优先于「穿透多层代理的精确性」。
 
-- public-gateway 路径有约 3 跳，branch-nginx 直连只有 1 跳；
-- 「私网段即可信代理」也不成立——LAN 客户端与反代同处私网段，无法据此区分。
+## 彻底方案（需要部署侧输入时再做，可同时满足防伪 + 真实访客 IP）
 
-且本统计字段的语义已明确标注「仅用于访问统计 / 审计展示，不作安全判定依据」，伪造的影响面
-极低（攻击者污染自己视图的计数），故按用户决策保持启发式，不引入需要运维侧维护可信代理清单的
-全局中间件。
-
-## 彻底方案（需要部署侧输入时再做）
-
-1. 启用 `app.UseForwardedHeaders(new ForwardedHeadersOptions { ForwardedHeaders = ForwardedHeaders.XForwardedFor, KnownNetworks = <内网反代 CIDR>, ForwardLimit = <可信跳数> })`；
-2. 由运维提供 public-nginx / gateway / branch-nginx 的确切内网 IP 段作为 `KnownNetworks`；
-3. 改用框架填好的 `HttpContext.Connection.RemoteIpAddress`，删除本启发式；
-4. 注意这是**全局中间件**，会影响所有 `RemoteIpAddress` 消费方（限流、其它日志），需回归。
+1. `app.UseForwardedHeaders(new ForwardedHeadersOptions { ForwardedHeaders = ForwardedHeaders.XForwardedFor, KnownNetworks = <内层反代 CIDR>, ForwardLimit = <可信跳数> })`；
+2. 由运维提供 public-nginx / gateway / branch-nginx 的确切内网 IP 段作为 `KnownNetworks`（注意不能放整段私网，否则 LAN 客户端会被当可信代理）；
+3. 改用框架填好的 `HttpContext.Connection.RemoteIpAddress`，删除本 helper 的 X-Real-IP 优先逻辑；
+4. 这是**全局中间件**，影响所有 `RemoteIpAddress` 消费方（限流、其它日志），需回归。
 
 ## 关联
 
-- 实现：`prd-api/src/PrdAgent.Api/Extensions/HttpRequestExtensions.cs`（`GetRealClientIp` / `IsPublicIp`）
+- 实现：`prd-api/src/PrdAgent.Api/Extensions/HttpRequestExtensions.cs`（`GetRealClientIp`）
 - 消费：`WebPagesController.cs`（分享 view / 评论）、`WebPageAnalyticsController.cs`（record-view）、`HostedSiteService.cs`（`MaskIp` 脱敏展示）
 - 部署拓扑：`deploy/nginx/nginx.conf`、`deploy/nginx/public-nginx.example.conf`
-- 来源：PR #699 Codex/Bugbot 多轮 review
+- 来源：PR #699 Codex/Bugbot 多轮 review + 维护者决策
