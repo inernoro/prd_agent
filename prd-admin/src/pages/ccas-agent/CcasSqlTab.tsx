@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Braces, ListChecks } from 'lucide-react';
+import { Braces, ListChecks, BookOpen } from 'lucide-react';
 import { TabBar } from '@/components/design/TabBar';
 import { CcasSqlInConverter } from './sql/CcasSqlInConverter';
 import { CcasSqlDeduper } from './sql/CcasSqlDeduper';
+import { CcasSqlSnippets } from './sql/CcasSqlSnippets';
 
-type SqlSubTab = 'in' | 'dedup';
+type SqlSubTab = 'in' | 'dedup' | 'snippets';
 
 interface SubTabDef {
   key: SqlSubTab;
@@ -35,6 +36,12 @@ const SUB_TABS: SubTabDef[] = [
     label: '去重',
     icon: <ListChecks className="w-4 h-4" />,
     render: () => <CcasSqlDeduper />,
+  },
+  {
+    key: 'snippets',
+    label: '常用语句',
+    icon: <BookOpen className="w-4 h-4" />,
+    render: () => <CcasSqlSnippets />,
   },
 ];
 
