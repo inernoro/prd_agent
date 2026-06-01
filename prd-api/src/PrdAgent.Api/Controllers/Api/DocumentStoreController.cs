@@ -2319,12 +2319,13 @@ public class DocumentStoreController : ControllerBase
     private async Task<IActionResult> SendReprocessChatInternal(
         string entryId, string? runId, string content, string? templateKey)
     {
-        var (entry, store, err) = await LoadOwnedEntryAsync(entryId);
+        // 同 apply-content / active-run / agent-runs apply：team writable。否则团队成员能写回
+        // AI 输出却起不来对话 worker，反而 404（Bugbot 十三轮 Medium）
+        var userId = GetUserId();
+        var (entry, store, err) = await LoadWritableEntryAsync(entryId, userId);
         if (err != null) return err;
         if (entry!.IsFolder)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持再加工"));
-
-        var userId = GetUserId();
 
         DocumentStoreAgentRun? run = null;
         if (!string.IsNullOrEmpty(runId))
