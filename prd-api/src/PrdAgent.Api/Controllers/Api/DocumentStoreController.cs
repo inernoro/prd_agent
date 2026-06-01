@@ -1556,6 +1556,27 @@ public class DocumentStoreController : ControllerBase
             store.TemplateKey = tk;
         }
 
+        // 同名库复用时也合并 bundle 的 TagColors（白名单 sanitize，merge 优先 bundle 值）。
+        // 不 merge 的话跨环境同步会丢失自定义颜色。
+        if (meta.TagColors != null && meta.TagColors.Count > 0)
+        {
+            var allowedColors = new HashSet<string> { "red", "orange", "yellow", "green", "teal", "blue", "purple", "gray" };
+            var merged = store.TagColors ?? new Dictionary<string, string>();
+            var dirty = false;
+            foreach (var kv in meta.TagColors)
+            {
+                if (string.IsNullOrWhiteSpace(kv.Key) || !allowedColors.Contains(kv.Value)) continue;
+                var k = kv.Key.Trim();
+                if (!merged.TryGetValue(k, out var cur) || cur != kv.Value) { merged[k] = kv.Value; dirty = true; }
+            }
+            if (dirty)
+            {
+                await _db.DocumentStores.UpdateOneAsync(s => s.Id == store.Id,
+                    Builders<DocumentStore>.Update.Set(s => s.TagColors, merged).Set(s => s.UpdatedAt, DateTime.UtcNow));
+                store.TagColors = merged;
+            }
+        }
+
         var existing = await _db.DocumentEntries.Find(e => e.StoreId == store.Id).ToListAsync();
         var existingReportIds = new HashSet<string>(existing
             .Where(e => e.Metadata != null && e.Metadata.ContainsKey("reportId"))

@@ -258,6 +258,8 @@ public class DocumentSyncWorker : BackgroundService
                 var freshParsed = await documentService.ParseAsync(freshContent);
                 freshParsed.Title = entry.Title;
                 await documentService.SaveAsync(freshParsed);
+                // 自愈：源内容并没真变，只是重建被误删的 Document。
+                // 不更新 LastChangedAt，避免错误触发 DocBrowser 的 NEW 徽标。
                 await db.DocumentEntries.UpdateOneAsync(
                     e => e.Id == entry.Id,
                     Builders<DocumentEntry>.Update
@@ -267,7 +269,6 @@ public class DocumentSyncWorker : BackgroundService
                         .Set(e => e.SyncStatus, DocumentSyncStatus.Idle)
                         .Set(e => e.SyncError, null)
                         .Set(e => e.LastSyncAt, DateTime.UtcNow)
-                        .Set(e => e.LastChangedAt, DateTime.UtcNow)
                         .Set(e => e.UpdatedAt, DateTime.UtcNow)
                         .Unset(e => e.SyncLeaseOwner)
                         .Unset(e => e.SyncLeaseExpiresAt),
@@ -292,6 +293,8 @@ public class DocumentSyncWorker : BackgroundService
             var newETag = response.Headers.ETag?.Tag;
             var newLastModified = response.Content.Headers.LastModified?.ToString("R");
             var responseContentType = response.Content.Headers.ContentType?.MediaType ?? "text/html";
+            // 自愈标志：内容 hash 没变但 Document 丢了，需要重建 → 不算"真实变化"，不动 LastChangedAt
+            var isSelfHeal = false;
 
             if (!string.IsNullOrEmpty(entry.ContentHash) && entry.ContentHash == newHash)
             {
@@ -321,6 +324,7 @@ public class DocumentSyncWorker : BackgroundService
                 _logger.LogWarning(
                     "[DocumentSyncWorker] {EntryId} hash unchanged but Document {DocId} missing/empty; forcing re-save",
                     entry.Id, entry.DocumentId);
+                isSelfHeal = true;
                 // fall through 到下面的"重新解析、保存、落日志"分支，把 Document 重建回来
             }
 
@@ -334,23 +338,25 @@ public class DocumentSyncWorker : BackgroundService
             var previousHash = entry.ContentHash;
             var previousLength = entry.FileSize;
 
+            var entryUpdate = Builders<DocumentEntry>.Update
+                .Set(e => e.DocumentId, parsed.Id)
+                .Set(e => e.ContentType, responseContentType)
+                .Set(e => e.FileSize, newLength)
+                .Set(e => e.Summary, summary.Trim())
+                .Set(e => e.SyncStatus, DocumentSyncStatus.Idle)
+                .Set(e => e.SyncError, null)
+                .Set(e => e.LastSyncAt, DateTime.UtcNow)
+                .Set(e => e.UpdatedAt, DateTime.UtcNow)
+                .Set(e => e.ContentHash, newHash)
+                .Set(e => e.LastETag, newETag)
+                .Set(e => e.LastModifiedHeader, newLastModified)
+                .Unset(e => e.SyncLeaseOwner)
+                .Unset(e => e.SyncLeaseExpiresAt);
+            // 自愈分支：源内容并没真变，只是重建被误删 Document → 不动 LastChangedAt 避免误亮 NEW
+            if (!isSelfHeal) entryUpdate = entryUpdate.Set(e => e.LastChangedAt, DateTime.UtcNow);
             await db.DocumentEntries.UpdateOneAsync(
                 e => e.Id == entry.Id,
-                Builders<DocumentEntry>.Update
-                    .Set(e => e.DocumentId, parsed.Id)
-                    .Set(e => e.ContentType, responseContentType)
-                    .Set(e => e.FileSize, newLength)
-                    .Set(e => e.Summary, summary.Trim())
-                    .Set(e => e.SyncStatus, DocumentSyncStatus.Idle)
-                    .Set(e => e.SyncError, null)
-                    .Set(e => e.LastSyncAt, DateTime.UtcNow)
-                    .Set(e => e.LastChangedAt, DateTime.UtcNow)
-                    .Set(e => e.UpdatedAt, DateTime.UtcNow)
-                    .Set(e => e.ContentHash, newHash)
-                    .Set(e => e.LastETag, newETag)
-                    .Set(e => e.LastModifiedHeader, newLastModified)
-                    .Unset(e => e.SyncLeaseOwner)
-                    .Unset(e => e.SyncLeaseExpiresAt),
+                entryUpdate,
                 cancellationToken: CancellationToken.None);
 
             sw.Stop();
