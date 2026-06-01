@@ -500,6 +500,12 @@ export function ReprocessChatDrawer({
     // replace/append 改了源文档正文；后续轮的 prompt 还引用旧 docContent 会让模型读到
     // 过期的"参考文档"，写回也基于陈旧上下文。重新拉一次 entry content 拿到服务器的
     // 最新版本（Bugbot #2 五轮 High）。
+    //
+    // 同时清空 sentForLlmRef：里面缓存的是历史轮"当时发出去的 message"，每条 user 都
+    // 包了那个版本的 [参考文档]。文档已经变了，这些缓存就过期了——再用它们填 history
+    // 会把过期 doc 重新喂给模型（Bugbot 六轮 High）。清掉后，下一轮 history 自动 fall
+    // back 到 bubble text（短文本，没有 doc 包装），模型只从本轮 message 的新 [参考文档]
+    // 看最新版，多轮历史的 doc fidelity 在覆写后本来就难以保留，这是合理 trade-off。
     if (mode === 'replace' || mode === 'append') {
       try {
         const refreshed = await getDocumentContent(requestedEntryId);
@@ -512,6 +518,7 @@ export function ReprocessChatDrawer({
             setDocContent(raw);
             setDocTruncated(false);
           }
+          sentForLlmRef.current = new Map();
         }
       } catch { /* 拉取失败保留旧 docContent，下一轮 toast 提示已能让用户感知 */ }
     }
