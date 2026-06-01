@@ -1,0 +1,1 @@
+| fix | prd-admin | 知识库 PR #704 二轮评审修复：loadFavorites/loadLikes 加 stale guard、三个加载器共用 listFetchSeq 实现跨 tab 互相失效、StoreDetailView 返回按当前 tab 路由对应 reload；团队空间新建知识库自动 share 到所选 team（避免新建后消失），未选 team 时按钮 disabled 并附 tooltip |

@@ -1404,28 +1404,33 @@ export function DocumentStorePage() {
     return () => document.removeEventListener('mousedown', onDown);
   }, [tagOpen]);
 
-  // 防 stale 响应：tab/teamId 快速切换时,旧请求回填会覆盖新数据。
+  // 防 stale 响应:tab/teamId/筛选 快速切换时,旧请求回填会覆盖新数据。
   // 用单调递增序号锁住"只有最新一次请求才能 setState"。
-  const storesFetchSeq = useRef(0);
+  // 三个加载器共用同一个序号,跨 tab 切换也能互相失效(例如 mine→收藏 时未完成的 loadStores 会被废弃)。
+  const listFetchSeq = useRef(0);
   const loadStores = useCallback(async (scope: 'mine' | 'team', teamId: string | null) => {
-    const mySeq = ++storesFetchSeq.current;
+    const mySeq = ++listFetchSeq.current;
     setLoading(true);
     const res = await listDocumentStoresWithPreview(1, 50, { scope, teamId });
-    if (storesFetchSeq.current !== mySeq) return; // 已被更新的请求超车,丢弃
+    if (listFetchSeq.current !== mySeq) return; // 已被更新的请求超车,丢弃
     if (res.success) setStores(res.data.items);
     setLoading(false);
   }, []);
 
   const loadFavorites = useCallback(async () => {
+    const mySeq = ++listFetchSeq.current;
     setLoading(true);
     const res = await listMyFavoriteDocumentStores();
+    if (listFetchSeq.current !== mySeq) return;
     if (res.success) setFavorites(res.data.items);
     setLoading(false);
   }, []);
 
   const loadLikes = useCallback(async () => {
+    const mySeq = ++listFetchSeq.current;
     setLoading(true);
     const res = await listMyLikedDocumentStores();
+    if (listFetchSeq.current !== mySeq) return;
     if (res.success) setLikes(res.data.items);
     setLoading(false);
   }, []);
@@ -1453,7 +1458,7 @@ export function DocumentStorePage() {
         loadStores('team', teamScope.teamId);
       } else {
         // 团队空间未选具体空间时不拉数据，明确转为空态（而非永远 loading）
-        ++storesFetchSeq.current; // 让任何 in-flight 请求作废
+        ++listFetchSeq.current; // 让任何 in-flight 请求作废
         setStores([]);
         setLoading(false);
       }
@@ -1533,7 +1538,17 @@ export function DocumentStorePage() {
 
   // 空间详情视图（仅 mine 标签下可进入编辑视图）—— 早返回必须放在所有 hook 之后
   if (selectedStoreId) {
-    return <StoreDetailView storeId={selectedStoreId} onBack={() => { setSelectedStoreId(null); loadStores(teamScope.scope, teamScope.teamId); }} onOpenLibrary={(id) => navigate(`/library/${id}`)} />;
+    return <StoreDetailView storeId={selectedStoreId} onBack={() => {
+      setSelectedStoreId(null);
+      // 按当前 tab 重新拉对应列表,避免从收藏/点赞返回时仍刷 stores
+      if (tab === 'mine') loadStores('mine', null);
+      else if (tab === 'team') {
+        if (teamScope.teamId) loadStores('team', teamScope.teamId);
+        else { ++listFetchSeq.current; setStores([]); setLoading(false); }
+      }
+      else if (tab === 'favorites') loadFavorites();
+      else loadLikes();
+    }} onOpenLibrary={(id) => navigate(`/library/${id}`)} />;
   }
 
   // 统计概览（基于未筛选的原始列表，反映"我拥有/我看到的"全量）
@@ -1769,6 +1784,10 @@ export function DocumentStorePage() {
             size="xs"
             data-tour-id="document-store-create"
             onClick={() => setShowCreate(true)}
+            disabled={tab === 'team' && !teamScope.teamId}
+            title={tab === 'team' && !teamScope.teamId
+              ? '请先在上方选择或新建团队空间,新建的知识库会自动分享到所选团队空间'
+              : tab === 'team' ? '新建后自动分享到当前团队空间' : undefined}
           >
             <Plus size={13} /> 新建知识库
           </Button>
@@ -2068,7 +2087,15 @@ export function DocumentStorePage() {
       {showCreate && (
         <CreateStoreDialog
           onClose={() => setShowCreate(false)}
-          onCreated={(s) => { setShowCreate(false); setSelectedStoreId(s.id); }}
+          onCreated={async (s) => {
+            setShowCreate(false);
+            // 团队空间下创建:自动 share 到当前选中的 team,避免新建后"消失"(后端 createDocumentStore 不接受 teamId)
+            if (tab === 'team' && teamScope.teamId) {
+              const res = await setStoreTeams(s.id, [teamScope.teamId]);
+              if (!res.success) toast.error('已创建,但分享到团队空间失败', res.error?.message);
+            }
+            setSelectedStoreId(s.id);
+          }}
         />
       )}
 
