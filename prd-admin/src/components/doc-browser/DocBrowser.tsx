@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext } from 'react';
 import { createPortal } from 'react-dom';
 import { FilePreview } from '@/components/file-preview';
 import {
@@ -11,7 +11,133 @@ import {
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import { getVerdictConfig } from '@/lib/acceptanceVerdictRegistry';
-import { getTagColor, truncateTagDisplay } from '@/lib/tagPalette';
+import { getTagColor, truncateTagDisplay, TAG_PALETTE, type TagColorKey } from '@/lib/tagPalette';
+
+// Tag 颜色覆盖：用户在编辑器里手动选的颜色，sessionStorage 全局共享
+// （后端持久化作为 follow-up，先确保 UI 路径走通）
+const TagColorsContext = createContext<{
+  colors: Record<string, TagColorKey>;
+  setColor: (tag: string, color: TagColorKey | undefined) => void;
+}>({ colors: {}, setColor: () => {} });
+
+// Finder 风格颜色选择圆点（编辑器内点击 tag 时弹出）
+function TagColorSwatchPicker({
+  current,
+  onPick,
+}: {
+  current: TagColorKey;
+  onPick: (color: TagColorKey | undefined) => void;
+}) {
+  const order: TagColorKey[] = ['red', 'orange', 'yellow', 'green', 'teal', 'blue', 'purple', 'gray'];
+  return (
+    <div
+      className="surface-popover absolute z-[80] mt-1 flex items-center gap-1.5 rounded-full px-2 py-1.5"
+      style={{ left: 0, top: '100%', boxShadow: '0 4px 16px rgba(0,0,0,0.18)' }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {order.map(k => {
+        const spec = TAG_PALETTE[k];
+        const selected = k === current;
+        return (
+          <button
+            key={k}
+            onClick={() => onPick(k)}
+            title={spec.label}
+            className="rounded-full cursor-pointer transition-transform hover:scale-110"
+            style={{
+              width: 16,
+              height: 16,
+              background: spec.dot,
+              border: selected ? '2px solid #fff' : '2px solid transparent',
+              boxShadow: selected ? `0 0 0 1.5px ${spec.dot}` : 'none',
+            }}
+          />
+        );
+      })}
+      <span style={{ width: 1, height: 14, background: 'rgba(255,255,255,0.15)', margin: '0 2px' }} />
+      <button
+        onClick={() => onPick(undefined)}
+        title="重置为默认（哈希自动色）"
+        className="text-[10px] text-token-muted cursor-pointer hover:text-token-secondary"
+      >
+        默认
+      </button>
+    </div>
+  );
+}
+
+// 编辑器内的 tag chip：显示当前色 + 点击切换颜色（弹 7 色圆点）+ 删除按钮
+function TagPickerChip({ tag, onRemove }: { tag: string; onRemove: () => void }) {
+  const { colors, setColor } = useContext(TagColorsContext);
+  const [picking, setPicking] = useState(false);
+  const c = getTagColor(tag, colors);
+  const pickerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!picking) return;
+    const handler = (e: MouseEvent) => {
+      if (!pickerRef.current?.contains(e.target as Node)) setPicking(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [picking]);
+
+  return (
+    <span ref={pickerRef} className="relative inline-flex items-center">
+      <span
+        onClick={(e) => { e.stopPropagation(); setPicking(v => !v); }}
+        className="inline-flex h-6 items-center gap-1 rounded-[6px] px-2 text-[11px] font-medium cursor-pointer"
+        style={{ background: c.bg, color: c.text, border: `1px solid ${c.border}` }}
+        title="点击换颜色"
+      >
+        # {tag}
+        <button
+          onClick={(e) => { e.stopPropagation(); onRemove(); }}
+          className="ml-0.5 flex cursor-pointer items-center justify-center"
+          title="移除">
+          <X size={10} />
+        </button>
+      </span>
+      {picking && (
+        <TagColorSwatchPicker
+          current={c.key}
+          onPick={(k) => { setColor(tag, k); setPicking(false); }}
+        />
+      )}
+    </span>
+  );
+}
+
+// 条目行内 tag 小药丸（前 2 个完整渲染 + 多余折叠 +N），颜色读 Context 覆盖
+function TagRowChips({ tags }: { tags: string[] }) {
+  const { colors } = useContext(TagColorsContext);
+  return (
+    <span className="inline-flex items-center gap-[3px] flex-shrink-0">
+      {tags.slice(0, 2).map(t => {
+        const c = getTagColor(t, colors);
+        return (
+          <span
+            key={t}
+            className="text-[9px] px-1.5 rounded-full font-medium tabular-nums"
+            style={{ height: 16, lineHeight: '16px', background: c.bg, color: c.text, border: `1px solid ${c.border}` }}
+            title={`#${t}`}
+          >
+            {truncateTagDisplay(t)}
+          </span>
+        );
+      })}
+      {tags.length > 2 && (
+        <span
+          className="text-[9px] tabular-nums"
+          style={{ color: 'var(--text-muted)', opacity: 0.7 }}
+          title={tags.slice(2).map(tag => `#${tag}`).join(' ')}
+        >
+          +{tags.length - 2}
+        </span>
+      )}
+    </span>
+  );
+}
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { motion } from 'motion/react';
@@ -460,21 +586,12 @@ function EntryTagEditor({
 
         <div className="mb-4">
           <label className="mb-1.5 block text-[12px] text-token-muted">
-            标签 <span className="text-[10px] text-token-muted">（回车或逗号分隔，最多 10 个）</span>
+            标签 <span className="text-[10px] text-token-muted">（回车或逗号分隔，最多 10 个；点击标签可换颜色）</span>
           </label>
           <div
             className="prd-field flex min-h-9 flex-wrap items-center gap-1.5 rounded-[10px] px-2 py-1.5">
             {tags.map(tag => (
-              <span key={tag}
-                className="surface-action-accent inline-flex h-6 items-center gap-1 rounded-[6px] px-2 text-[11px] font-medium">
-                # {tag}
-                <button
-                  onClick={() => removeTag(tag)}
-                  className="ml-0.5 flex cursor-pointer items-center justify-center"
-                  title="移除">
-                  <X size={10} />
-                </button>
-              </span>
+              <TagPickerChip key={tag} tag={tag} onRemove={() => removeTag(tag)} />
             ))}
             <input
               autoFocus
@@ -826,32 +943,9 @@ function TreeNode({
           );
         })()}
 
-        {/* tag：每个 tag 一个小药丸，颜色按 tagPalette 自动分配 */}
+        {/* tag：每个 tag 一个小药丸，颜色走 tagPalette + 用户覆盖 */}
         {!isFolder && (entry.tags?.length ?? 0) > 0 && (
-          <span className="inline-flex items-center gap-[3px] flex-shrink-0">
-            {entry.tags!.slice(0, 2).map(t => {
-              const c = getTagColor(t);
-              return (
-                <span
-                  key={t}
-                  className="text-[9px] px-1.5 rounded-full font-medium tabular-nums"
-                  style={{ height: 16, lineHeight: '16px', background: c.bg, color: c.text, border: `1px solid ${c.border}` }}
-                  title={`#${t}`}
-                >
-                  {truncateTagDisplay(t)}
-                </span>
-              );
-            })}
-            {(entry.tags?.length ?? 0) > 2 && (
-              <span
-                className="text-[9px] tabular-nums"
-                style={{ color: 'var(--text-muted)', opacity: 0.7 }}
-                title={(entry.tags ?? []).slice(2).map(tag => `#${tag}`).join(' ')}
-              >
-                +{entry.tags!.length - 2}
-              </span>
-            )}
-          </span>
+          <TagRowChips tags={entry.tags!} />
         )}
 
         {/* 内容命中标记 */}
@@ -1099,6 +1193,22 @@ export function DocBrowser({
       return next;
     });
   }, []);
+  // tag 颜色覆盖：用户自定义颜色，sessionStorage 持久化
+  const [tagColorMap, setTagColorMap] = useState<Record<string, TagColorKey>>(() => {
+    try {
+      const saved = sessionStorage.getItem('doc-browser-tag-colors');
+      return saved ? JSON.parse(saved) : {};
+    } catch { return {}; }
+  });
+  const setTagColor = useCallback((tag: string, color: TagColorKey | undefined) => {
+    setTagColorMap(prev => {
+      const next = { ...prev };
+      if (color) next[tag] = color; else delete next[tag];
+      sessionStorage.setItem('doc-browser-tag-colors', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+  const tagColorsCtxValue = useMemo(() => ({ colors: tagColorMap, setColor: setTagColor }), [tagColorMap, setTagColor]);
   const [resizing, setResizing] = useState(false);
   // 侧栏 DOM 引用 + 拖拽起始时量出的真实左边界，避免用写死偏移导致"不跟手/跳动"
   const sidebarRef = useRef<HTMLDivElement>(null);
@@ -1610,6 +1720,7 @@ export function DocBrowser({
     : 'bg-token-nested relative flex flex-shrink-0 flex-col border-r border-token-subtle';
 
   return (
+    <TagColorsContext.Provider value={tagColorsCtxValue}>
     <div className={rootClass} style={{ minHeight: 0 }}>
 
       {/* 左侧：文件树（液态玻璃效果 + 可拖拽调整宽度） */}
@@ -1778,7 +1889,7 @@ export function DocBrowser({
                 </button>
               )}
               {allTagsRanked.map(tag => {
-                const c = getTagColor(tag);
+                const c = getTagColor(tag, tagColorMap);
                 const active = selectedTags.has(tag);
                 return (
                   <button
@@ -2375,6 +2486,7 @@ export function DocBrowser({
         />
       )}
     </div>
+    </TagColorsContext.Provider>
   );
 }
 
