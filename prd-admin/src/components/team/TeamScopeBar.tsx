@@ -28,16 +28,16 @@ export interface TeamScope {
 type Panel = 'members' | 'invite' | 'activity' | 'create' | null;
 
 const ACTION_LABEL: Record<string, string> = {
-  'team.created': '创建了共享文件夹',
-  'team.updated': '更新了共享文件夹',
+  'team.created': '创建了团队空间',
+  'team.updated': '更新了团队空间',
   'member.added': '添加了成员',
-  'member.joined': '加入了共享文件夹',
+  'member.joined': '加入了团队空间',
   'member.removed': '移除了成员',
   'member.role_changed': '调整了成员角色',
   'site.shared': '分享了网页',
   'site.updated': '更新了网页',
   'site.deleted': '删除了网页',
-  'store.shared': '分享了知识库',
+  'store.shared': '分享了空间',
   'entry.created': '新增了文档',
   'entry.updated': '更新了文档',
   'entry.deleted': '删除了文档',
@@ -51,10 +51,14 @@ export function TeamScopeBar({
   moduleKey,
   value,
   onChange,
+  hideScopeToggle = false,
 }: {
   moduleKey: string;
   value: TeamScope;
   onChange: (next: TeamScope) => void;
+  /** 隐藏「我的 / 团队空间」双 pill toggle 及「新建团队空间」inline 入口。
+   *  调用方已通过外部 tab 控制作用域时（如 DocumentStorePage 顶部 tab），传 true 避免重复入口。 */
+  hideScopeToggle?: boolean;
 }) {
   const { teams, loadTeams, setScope } = useTeamStore();
   const [managerOpen, setManagerOpen] = useState(false);
@@ -221,29 +225,31 @@ export function TeamScopeBar({
   return (
     <>
       <div className="relative flex items-center gap-2" ref={wrapRef}>
-        {/* 我的 / 共享文件夹 双 pill */}
-        <div
-          className="flex items-center gap-1 p-1 rounded-[10px]"
-          style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.08)' }}
-        >
-          <button
-            type="button"
-            className={pillBase}
-            style={value.scope === 'mine' ? { background: 'var(--accent-gold, #d4af37)', color: '#1a1a1a' } : { color: 'var(--text-muted)' }}
-            onClick={applyMine}
+        {/* 我的 / 团队空间 双 pill（外部 tab 接管作用域切换时由 hideScopeToggle 隐藏） */}
+        {!hideScopeToggle && (
+          <div
+            className="flex items-center gap-1 p-1 rounded-[10px]"
+            style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.08)' }}
           >
-            我的
-          </button>
-          <button
-            type="button"
-            className={pillBase}
-            style={value.scope === 'team' ? { background: 'var(--accent-gold, #d4af37)', color: '#1a1a1a' } : { color: 'var(--text-muted)' }}
-            onClick={onTeamPillClick}
-          >
-            <Users size={13} />
-            共享文件夹
-          </button>
-        </div>
+            <button
+              type="button"
+              className={pillBase}
+              style={value.scope === 'mine' ? { background: 'var(--accent-gold, #d4af37)', color: '#1a1a1a' } : { color: 'var(--text-muted)' }}
+              onClick={applyMine}
+            >
+              我的
+            </button>
+            <button
+              type="button"
+              className={pillBase}
+              style={value.scope === 'team' ? { background: 'var(--accent-gold, #d4af37)', color: '#1a1a1a' } : { color: 'var(--text-muted)' }}
+              onClick={onTeamPillClick}
+            >
+              <Users size={13} />
+              团队空间
+            </button>
+          </div>
+        )}
 
         {/* 选择下拉（仅共享文件夹作用域且有空间时） */}
         {inTeam && (
@@ -254,7 +260,7 @@ export function TeamScopeBar({
               style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
               onClick={() => setTeamDropdownOpen((o) => !o)}
             >
-              {selectedTeam?.team.name ?? '选择共享文件夹'}
+              {selectedTeam?.team.name ?? '选择团队空间'}
               <ChevronDown size={13} style={{ color: 'var(--text-muted)' }} />
             </button>
             {teamDropdownOpen && (
@@ -276,7 +282,7 @@ export function TeamScopeBar({
           </div>
         )}
 
-        {/* banner 操作行：仅共享文件夹页签出现 */}
+        {/* banner 操作行：仅团队空间页签出现 */}
         {inTeam && (
           <div className="flex items-center gap-1.5">
             <button type="button" className={actionBtn} style={actionStyle} onClick={() => openPanel('members')}>
@@ -289,15 +295,22 @@ export function TeamScopeBar({
               <Activity size={13} /> 活动日志
             </button>
             <button type="button" className={actionBtn} style={actionStyle} onClick={() => openPanel('create')}>
-              <FolderPlus size={13} /> 新建
+              <FolderPlus size={13} /> 新建团队空间
             </button>
           </div>
         )}
 
-        {/* 我的作用域：仅留一个轻量「新建共享文件夹」入口 */}
-        {value.scope === 'mine' && (
+        {/* 我的作用域：仅留一个轻量「新建团队空间」入口（hideScopeToggle 时由外部控制，无需此入口） */}
+        {!hideScopeToggle && value.scope === 'mine' && (
           <button type="button" className={actionBtn} style={actionStyle} onClick={() => setPanel('create')}>
-            <FolderPlus size={13} /> 新建共享文件夹
+            <FolderPlus size={13} /> 新建团队空间
+          </button>
+        )}
+
+        {/* hideScopeToggle 且 team 作用域但还没选 team：给一个空态入口 */}
+        {hideScopeToggle && value.scope === 'team' && teams.length === 0 && (
+          <button type="button" className={actionBtn} style={actionStyle} onClick={() => setPanel('create')}>
+            <FolderPlus size={13} /> 新建团队空间
           </button>
         )}
 
@@ -408,7 +421,7 @@ export function TeamScopeBar({
         {panel === 'create' && (
           <div className="absolute left-0 top-[40px] z-[130] w-[320px] rounded-[12px] p-3 space-y-3" style={popStyle}>
             <div className="flex items-center justify-between">
-              <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>新建 / 加入共享文件夹</span>
+              <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>新建 / 加入团队空间</span>
               <button type="button" onClick={() => setPanel(null)} style={{ color: 'var(--text-muted)' }}><X size={14} /></button>
             </div>
             <div className="flex gap-1.5">
@@ -416,7 +429,7 @@ export function TeamScopeBar({
                 autoFocus
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
-                placeholder="共享文件夹名称"
+                placeholder="团队空间名称"
                 className="flex-1 h-8 px-2 rounded-[8px] text-[13px] outline-none"
                 style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
                 onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
