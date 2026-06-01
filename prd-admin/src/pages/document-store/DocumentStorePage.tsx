@@ -563,6 +563,12 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
   // 替换文件：记录待替换的 entryId + 独立 file input
   const replaceTargetRef = useRef<string | null>(null);
   const replaceInputRef = useRef<HTMLInputElement>(null);
+  // tag 颜色保存的 single-flight 队列：
+  // 不只是防 rollback race，还要保证"老请求成功后到达"不会覆盖新意图。
+  // 实现：当前在飞 = inFlight=true；新意图来了写 pending；当前结束后若 pending 非空则继续发，
+  // 总是把最后一个意图作为终态推到服务器（latest-write-wins）。
+  const tagColorInFlightRef = useRef(false);
+  const tagColorPendingRef = useRef<Record<string, import('@/lib/tagPalette').TagColorKey> | null>(null);
 
   // 加载空间详情和条目
   const loadStore = useCallback(async () => {
@@ -964,6 +970,33 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
       <div className="flex-1 min-h-0 flex flex-col pt-3">
         <DocBrowser
           entries={entries}
+          tagColors={(store.tagColors ?? {}) as Record<string, import('@/lib/tagPalette').TagColorKey>}
+          onTagColorsChange={(next) => {
+            // 乐观更新本地立刻反映；服务器保存走 single-flight 队列。
+            // 用 ref 队列保证：1) 同一时刻最多 1 个 PUT 在飞 2) 队列末尾永远是最新意图
+            // → 老请求即使成功也不会覆盖新意图（服务器最终一致到 latest）。
+            setStore(s => s ? { ...s, tagColors: next } : s);
+            tagColorPendingRef.current = next;
+            if (tagColorInFlightRef.current) return;
+            (async () => {
+              tagColorInFlightRef.current = true;
+              try {
+                while (tagColorPendingRef.current) {
+                  const payload = tagColorPendingRef.current;
+                  tagColorPendingRef.current = null;
+                  const res = await updateDocumentStore(storeId, { tagColors: payload });
+                  // 失败时仅当没有更新的 pending 时才提示，避免 toast 风暴
+                  if (!res.success && !tagColorPendingRef.current) {
+                    toast.error('保存 tag 颜色失败', res.error?.message);
+                    // 失败不主动 rollback UI：再次失败 + 没有 pending = 用户最后意图未落库，
+                    // 下次刷新会从服务器拉到真实状态自动纠正
+                  }
+                }
+              } finally {
+                tagColorInFlightRef.current = false;
+              }
+            })();
+          }}
           /* 验收报告库：最新在前（design.acceptance-kb.md §5.A）；时间默认显示由 DocBrowser 默认值兜底 */
           sortMode={store.templateKey === ACCEPTANCE_TEMPLATE_KEY ? 'created-desc' : 'default'}
           primaryEntryId={store.primaryEntryId}

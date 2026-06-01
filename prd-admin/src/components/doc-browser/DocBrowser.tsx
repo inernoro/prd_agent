@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext } from 'react';
 import { createPortal } from 'react-dom';
 import { FilePreview } from '@/components/file-preview';
 import {
@@ -11,6 +11,133 @@ import {
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import { getVerdictConfig } from '@/lib/acceptanceVerdictRegistry';
+import { getTagColor, truncateTagDisplay, TAG_PALETTE, type TagColorKey } from '@/lib/tagPalette';
+
+// Tag 颜色覆盖：用户在编辑器里手动选的颜色，sessionStorage 全局共享
+// （后端持久化作为 follow-up，先确保 UI 路径走通）
+const TagColorsContext = createContext<{
+  colors: Record<string, TagColorKey>;
+  setColor: (tag: string, color: TagColorKey | undefined) => void;
+}>({ colors: {}, setColor: () => {} });
+
+// Finder 风格颜色选择圆点（编辑器内点击 tag 时弹出）
+function TagColorSwatchPicker({
+  current,
+  onPick,
+}: {
+  current: TagColorKey;
+  onPick: (color: TagColorKey | undefined) => void;
+}) {
+  const order: TagColorKey[] = ['red', 'orange', 'yellow', 'green', 'teal', 'blue', 'purple', 'gray'];
+  return (
+    <div
+      className="surface-popover absolute z-[80] mt-1 flex items-center gap-1.5 rounded-full px-2 py-1.5"
+      style={{ left: 0, top: '100%', boxShadow: '0 4px 16px rgba(0,0,0,0.18)' }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {order.map(k => {
+        const spec = TAG_PALETTE[k];
+        const selected = k === current;
+        return (
+          <button
+            key={k}
+            onClick={() => onPick(k)}
+            title={spec.label}
+            className="rounded-full cursor-pointer transition-transform hover:scale-110"
+            style={{
+              width: 16,
+              height: 16,
+              background: spec.dot,
+              border: selected ? '2px solid #fff' : '2px solid transparent',
+              boxShadow: selected ? `0 0 0 1.5px ${spec.dot}` : 'none',
+            }}
+          />
+        );
+      })}
+      <span style={{ width: 1, height: 14, background: 'rgba(255,255,255,0.15)', margin: '0 2px' }} />
+      <button
+        onClick={() => onPick(undefined)}
+        title="重置为默认（哈希自动色）"
+        className="text-[10px] text-token-muted cursor-pointer hover:text-token-secondary"
+      >
+        默认
+      </button>
+    </div>
+  );
+}
+
+// 编辑器内的 tag chip：显示当前色 + 点击切换颜色（弹 7 色圆点）+ 删除按钮
+function TagPickerChip({ tag, onRemove }: { tag: string; onRemove: () => void }) {
+  const { colors, setColor } = useContext(TagColorsContext);
+  const [picking, setPicking] = useState(false);
+  const c = getTagColor(tag, colors);
+  const pickerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!picking) return;
+    const handler = (e: MouseEvent) => {
+      if (!pickerRef.current?.contains(e.target as Node)) setPicking(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [picking]);
+
+  return (
+    <span ref={pickerRef} className="relative inline-flex items-center">
+      <span
+        onClick={(e) => { e.stopPropagation(); setPicking(v => !v); }}
+        className="inline-flex h-6 items-center gap-1 rounded-[6px] px-2 text-[11px] font-medium cursor-pointer"
+        style={{ background: c.bg, color: c.text, border: `1px solid ${c.border}` }}
+        title="点击换颜色"
+      >
+        # {tag}
+        <button
+          onClick={(e) => { e.stopPropagation(); onRemove(); }}
+          className="ml-0.5 flex cursor-pointer items-center justify-center"
+          title="移除">
+          <X size={10} />
+        </button>
+      </span>
+      {picking && (
+        <TagColorSwatchPicker
+          current={c.key}
+          onPick={(k) => { setColor(tag, k); setPicking(false); }}
+        />
+      )}
+    </span>
+  );
+}
+
+// 条目行内 tag 小药丸（前 2 个完整渲染 + 多余折叠 +N），颜色读 Context 覆盖
+function TagRowChips({ tags }: { tags: string[] }) {
+  const { colors } = useContext(TagColorsContext);
+  return (
+    <span className="inline-flex items-center gap-[3px] flex-shrink-0">
+      {tags.slice(0, 2).map(t => {
+        const c = getTagColor(t, colors);
+        return (
+          <span
+            key={t}
+            className="text-[9px] px-1.5 rounded-full font-medium tabular-nums"
+            style={{ height: 16, lineHeight: '16px', background: c.bg, color: c.text, border: `1px solid ${c.border}` }}
+            title={`#${t}`}
+          >
+            {truncateTagDisplay(t)}
+          </span>
+        );
+      })}
+      {tags.length > 2 && (
+        <span
+          className="text-[9px] tabular-nums"
+          style={{ color: 'var(--text-muted)', opacity: 0.7 }}
+          title={tags.slice(2).map(tag => `#${tag}`).join(' ')}
+        >
+          +{tags.length - 2}
+        </span>
+      )}
+    </span>
+  );
+}
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { motion } from 'motion/react';
@@ -141,6 +268,12 @@ export type DocBrowserProps = {
    * 不传则不渲染。
    */
   sidebarHeader?: React.ReactNode;
+  /**
+   * 用户自定义 tag 颜色映射（tagName → 调色板 key）。
+   * 不传时回退到 sessionStorage（仅本 tab）；传入时持久化由调用方负责（onTagColorsChange）。
+   */
+  tagColors?: Record<string, TagColorKey>;
+  onTagColorsChange?: (next: Record<string, TagColorKey>) => void;
 };
 
 // ── (new) 徽标判定：lastChangedAt 在 24 小时以内 ──
@@ -459,21 +592,12 @@ function EntryTagEditor({
 
         <div className="mb-4">
           <label className="mb-1.5 block text-[12px] text-token-muted">
-            标签 <span className="text-[10px] text-token-muted">（回车或逗号分隔，最多 10 个）</span>
+            标签 <span className="text-[10px] text-token-muted">（回车或逗号分隔，最多 10 个；点击标签可换颜色）</span>
           </label>
           <div
             className="prd-field flex min-h-9 flex-wrap items-center gap-1.5 rounded-[10px] px-2 py-1.5">
             {tags.map(tag => (
-              <span key={tag}
-                className="surface-action-accent inline-flex h-6 items-center gap-1 rounded-[6px] px-2 text-[11px] font-medium">
-                # {tag}
-                <button
-                  onClick={() => removeTag(tag)}
-                  className="ml-0.5 flex cursor-pointer items-center justify-center"
-                  title="移除">
-                  <X size={10} />
-                </button>
-              </span>
+              <TagPickerChip key={tag} tag={tag} onRemove={() => removeTag(tag)} />
             ))}
             <input
               autoFocus
@@ -673,6 +797,20 @@ function TreeNode({
   const isShared = !isFolder && (sharedEntryIds?.has(entry.id) ?? false);
   const [dragOver, setDragOver] = useState(false);
 
+  // 是否需要渲染右上角徽章行
+  const verdictForRow = !isFolder ? getVerdictConfig(entry.metadata?.verdict) : null;
+  const isFreshForRow = !isFolder && (isEntryFresh ? isEntryFresh(entry) : isRecentlyChanged(entry.lastChangedAt));
+  const isContentMatch = !isFolder && contentMatchIds.has(entry.id);
+  const isSubscriptionDot = !isFolder && entry.sourceType === 'subscription' && !!onOpenSubscription;
+  const hasTags = !isFolder && (entry.tags?.length ?? 0) > 0;
+  const hasBadgeRow =
+    !isFolder && (
+      isShared || reprocessing !== undefined || !!verdictForRow ||
+      hasTags || isContentMatch || isFreshForRow ||
+      isSubscriptionDot || isPrimary || (isPinned && !isPrimary)
+    );
+
+
   return (
     <>
       <button
@@ -707,7 +845,7 @@ function TreeNode({
             onMoveEntry(draggedId, entry.id);
           }
         }}
-        className={`relative flex flex-col gap-0.5 text-left cursor-pointer transition-all duration-150 group ${isFolder ? 'py-[7px]' : 'py-[9px] hover-bg-soft'}`}
+        className={`relative flex items-center gap-2 text-left cursor-pointer transition-all duration-150 group ${isFolder ? 'py-[7px]' : 'py-[8px] hover-bg-soft'}`}
         style={{
           // 整块圆角高亮：左右留 6px 内缩，hover/选中不贴边。
           // 宽度扣掉左右 12px 外边距，避免 w-full(100%)+margin 超出容器、撑出横向滚动条。
@@ -716,6 +854,8 @@ function TreeNode({
           paddingRight: '10px',
           marginLeft: '6px',
           marginRight: '6px',
+          // 非文件夹条目固定 minHeight，避免「有 badges 的两层 vs 无 badges 的单行」导致列表高度跳变
+          minHeight: isFolder ? undefined : 44,
           // 仅在拖拽/选中时显式给背景，未高亮时留空让 hover-bg-soft 类的 :hover 生效
           background: dragOver
             ? 'var(--accent-soft, rgba(99,102,241,0.14))'
@@ -751,81 +891,77 @@ function TreeNode({
             }}
           />
         )}
-        {/* 第一行：图标 + 标题（标题独占一行，不再被徽章挤成 prd-age...） */}
-        <div className="flex items-center gap-2 w-full min-w-0">
-          <EntryIcon entry={entry} isPrimary={isPrimary} isPinned={isPinned} isOpen={isOpen} />
+        {/* 单行布局：图标 + 标题（吃剩余宽度）+ 徽章序列 + 时间。徽章统一压扁到 ~16px 高度，避免行高跳变 */}
+        <EntryIcon entry={entry} isPrimary={isPrimary} isPinned={isPinned} isOpen={isOpen} />
 
-          <span className="flex-1 truncate"
-            style={{
-              color: isFolder
-                ? 'var(--text-muted)'
-                : (isSelected ? 'var(--text-primary)' : 'var(--text-secondary)'),
-              fontWeight: isFolder ? 600 : (isSelected ? 500 : 400),
-              fontSize: isFolder ? '10.5px' : '12px',
-              letterSpacing: isFolder ? '0.06em' : 'normal',
-              textTransform: isFolder ? 'uppercase' : 'none',
-            }}>
-            {displayTitle}
-          </span>
+        <span className="flex-1 truncate min-w-0"
+          style={{
+            color: isFolder
+              ? 'var(--text-muted)'
+              : (isSelected ? 'var(--text-primary)' : 'var(--text-secondary)'),
+            fontWeight: isFolder ? 600 : (isSelected ? 600 : 500),
+            fontSize: isFolder ? '10.5px' : '12.5px',
+            letterSpacing: isFolder ? '0.06em' : '-0.005em',
+            textTransform: isFolder ? 'uppercase' : 'none',
+          }}>
+          {displayTitle}
+        </span>
 
-          {/* 文件夹的计数 + 折叠箭头留在第一行右侧 */}
-          {isFolder && (
-            <span className="flex items-center gap-1.5 flex-shrink-0">
-              <span className="text-[10px] tabular-nums" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
-                {children.length}
-              </span>
-              {isOpen
-                ? <ChevronDown size={13} style={{ color: 'var(--text-muted)' }} />
-                : <ChevronRight size={13} style={{ color: 'var(--text-muted)' }} />}
+        {/* 文件夹的计数 + 折叠箭头 */}
+        {isFolder && (
+          <span className="flex items-center gap-1.5 flex-shrink-0">
+            <span className="text-[10px] tabular-nums" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
+              {children.length}
             </span>
-          )}
-        </div>
-
-        {/* 第二行：徽章（状态/标签/NEW…）+ 时间，仅非文件夹。缩进对齐到标题下方。 */}
-        {!isFolder && (
-        <div className="flex items-center gap-1.5 flex-wrap w-full" style={{ paddingLeft: '22px' }}>
-
-        {/* 已分享：黄色标识，点击打开分享弹窗查看/复制链接（不只是撤销） */}
-        {isShared && (
-          <span
-            onClick={onShareEntry ? (e) => { e.stopPropagation(); onShareEntry(entry.id); } : undefined}
-            className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0 font-bold cursor-pointer"
-            style={{
-              background: 'rgba(234,179,8,0.14)',
-              color: 'rgba(234,179,8,0.95)',
-              border: '1px solid rgba(234,179,8,0.32)',
-            }}
-            title="已分享 · 点击查看或复制链接"
-          >
-            <Share2 size={9} /> 已分享
+            {isOpen
+              ? <ChevronDown size={13} style={{ color: 'var(--text-muted)' }} />
+              : <ChevronRight size={13} style={{ color: 'var(--text-muted)' }} />}
           </span>
         )}
 
-        {/* 再加工进行中：源文档行显示"加工中 N%"——关闭抽屉后仍可见 */}
-        {reprocessing !== undefined && (
+        {/* 右侧两层堆叠：上层徽章 + 下层时间。无徽章时仅时间居中右对齐 */}
+        {!isFolder && (
+        <div className="flex flex-col items-end justify-center gap-1 flex-shrink-0 ml-auto">
+        {hasBadgeRow && (
+        <div className="flex items-center gap-1.5">
+        {/* 已分享：icon-only 节省宽度，hover/点击复用原行为 */}
+        {isShared && (
           <span
-            className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0 font-semibold"
+            onClick={onShareEntry ? (e) => { e.stopPropagation(); onShareEntry(entry.id); } : undefined}
+            className="flex-shrink-0 cursor-pointer"
+            style={{ color: 'rgba(234,179,8,0.85)' }}
+            title="已分享 · 点击查看或复制链接"
+          >
+            <Share2 size={11} />
+          </span>
+        )}
+
+        {/* 再加工进行中：保留文字让用户看进度 */}
+        {!isFolder && reprocessing !== undefined && (
+          <span
+            className="inline-flex items-center gap-1 text-[9px] px-1.5 rounded-full flex-shrink-0 font-semibold tabular-nums"
             style={{
+              height: 16,
+              lineHeight: '16px',
               background: 'rgba(59,130,246,0.12)',
               color: 'rgba(96,165,250,0.95)',
-              border: '1px solid rgba(59,130,246,0.25)',
             }}
             title="正在再加工"
           >
             <MapSpinner size={9} />
-            加工中 {Math.round(reprocessing)}%
+            {Math.round(reprocessing)}%
           </span>
         )}
 
-        {/* 验收结论徽章：验收报告条目按 metadata.verdict 渲染绿/琥珀/红，列表里一眼看出通过没通过 */}
+        {/* 验收结论：保留小药丸（"通过 L1" 是关键扫读信号） */}
         {!isFolder && (() => {
           const vc = getVerdictConfig(entry.metadata?.verdict);
           if (!vc) return null;
           const tier = entry.metadata?.tier;
           return (
             <span
-              className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0 font-bold"
-              style={{ background: vc.background, color: vc.color, border: vc.border }}
+              className="text-[9px] px-1.5 rounded-full flex-shrink-0 font-bold tabular-nums"
+              style={{ height: 16, lineHeight: '16px', background: vc.background, color: vc.color, border: vc.border }}
               title={`验收结论：${vc.label}${tier ? ` · 档位 ${tier}` : ''}`}
             >
               {vc.label}{tier ? ` ${tier}` : ''}
@@ -833,31 +969,21 @@ function TreeNode({
           );
         })()}
 
+        {/* tag：每个 tag 一个小药丸，颜色走 tagPalette + 用户覆盖 */}
         {!isFolder && (entry.tags?.length ?? 0) > 0 && (
-          <span
-            className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0"
-            style={{
-              background: 'rgba(168,85,247,0.08)',
-              color: 'rgba(216,180,254,0.9)',
-              border: '1px solid rgba(168,85,247,0.16)',
-            }}
-            title={(entry.tags ?? []).map(tag => `#${tag}`).join(' ')}
-          >
-            #{entry.tags![0]}
-            {(entry.tags?.length ?? 0) > 1 ? ` +${entry.tags!.length - 1}` : ''}
-          </span>
+          <TagRowChips tags={entry.tags!} />
         )}
 
-        {/* 内容命中标记：标题未含关键词但因正文命中被返回 */}
+        {/* 内容命中标记 */}
         {!isFolder && contentMatchIds.has(entry.id) && (
           <span
-            className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0"
+            className="text-[9px] px-1.5 rounded-full flex-shrink-0"
             style={{
+              height: 16,
+              lineHeight: '16px',
               background: 'var(--bg-tertiary)',
               color: 'var(--text-muted)',
-              border: '1px solid var(--border-faint)',
               letterSpacing: '0.2px',
-              lineHeight: 1.4,
             }}
             title="该文件因正文内容命中而被搜出（标题未含关键词）"
           >
@@ -865,15 +991,15 @@ function TreeNode({
           </span>
         )}
 
-        {/* (new) 徽标：默认 lastChangedAt 24 小时内；外部可通过 isEntryFresh 自定义规则 */}
+        {/* NEW 徽标 */}
         {!isFolder && (isEntryFresh ? isEntryFresh(entry) : isRecentlyChanged(entry.lastChangedAt)) && (
           <span
-            className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0 font-bold"
+            className="text-[9px] px-1.5 rounded-full flex-shrink-0 font-bold"
             style={{
+              height: 16,
+              lineHeight: '16px',
               background: 'rgba(34,197,94,0.12)',
-              border: '1px solid rgba(34,197,94,0.25)',
               letterSpacing: '0.3px',
-              lineHeight: 1.4,
             }}
             title={`最近更新: ${entry.lastChangedAt ? new Date(entry.lastChangedAt).toLocaleString('zh-CN') : ''}`}
           >
@@ -881,7 +1007,7 @@ function TreeNode({
           </span>
         )}
 
-        {/* 订阅状态徽标：点击打开订阅详情面板 */}
+        {/* 订阅状态点 */}
         {!isFolder && entry.sourceType === 'subscription' && onOpenSubscription && (
           <span
             onClick={(e) => { e.stopPropagation(); onOpenSubscription(entry.id); }}
@@ -906,9 +1032,9 @@ function TreeNode({
           </span>
         )}
 
-        {isPrimary && (
-          <span className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0"
-            style={{ background: 'rgba(234,179,8,0.1)', color: 'rgba(234,179,8,0.8)' }}>
+        {/* README / Pin 简化为 icon */}
+        {!isFolder && isPrimary && (
+          <span className="flex-shrink-0" title="主文档（README）" style={{ color: 'rgba(234,179,8,0.85)', fontSize: 9, fontWeight: 700, letterSpacing: '0.04em' }}>
             README
           </span>
         )}
@@ -916,11 +1042,12 @@ function TreeNode({
         {isPinned && !isPrimary && (
           <Pin size={10} className="flex-shrink-0" style={{ color: 'rgba(59,130,246,0.5)' }} />
         )}
+        </div>
+        )}
 
-        {/* 时间：默认显示、永远固定在最右边。显示哪个时间跟随排序键——
-            created-desc 显示创建时间、其余显示更新时间，避免"按创建排序却显更新时间"的错位。 */}
-        {!isFolder && showUpdatedTime && entry[timeField] && (
-          <span className="flex-shrink-0" style={{ marginLeft: 'auto', paddingLeft: '6px' }}>
+        {/* 时间：右下角，所有条目可见，跟随排序键显示 createdAt 或 updatedAt */}
+        {showUpdatedTime && entry[timeField] && (
+          <span style={{ opacity: 0.65 }}>
             <RelativeTime
               value={entry[timeField]!}
               refreshIntervalMs={0}
@@ -1043,6 +1170,8 @@ export function DocBrowser({
   appearance = 'inset',
   isEntryFresh,
   sidebarHeader,
+  tagColors: tagColorsProp,
+  onTagColorsChange,
   inlineCommentShareToken,
 }: DocBrowserProps) {
   const [search, setSearch] = useState('');
@@ -1079,6 +1208,55 @@ export function DocBrowser({
     const saved = sessionStorage.getItem('doc-browser-sidebar-width');
     return saved ? parseInt(saved, 10) : 280;
   });
+  // tag 筛选（多选，sessionStorage 持久化）
+  const [selectedTags, setSelectedTags] = useState<Set<string>>(() => {
+    try {
+      const saved = sessionStorage.getItem('doc-browser-selected-tags');
+      return saved ? new Set(JSON.parse(saved) as string[]) : new Set();
+    } catch { return new Set(); }
+  });
+  useEffect(() => {
+    sessionStorage.setItem('doc-browser-selected-tags', JSON.stringify([...selectedTags]));
+  }, [selectedTags]);
+  const toggleTag = useCallback((tag: string) => {
+    setSelectedTags(prev => {
+      const next = new Set(prev);
+      if (next.has(tag)) next.delete(tag); else next.add(tag);
+      return next;
+    });
+  }, []);
+  // tag 颜色覆盖：受控优先（onTagColorsChange 用于持久化到后端），
+  // 否则回退 sessionStorage（仅本 tab 生效）
+  const [tagColorMapLocal, setTagColorMapLocal] = useState<Record<string, TagColorKey>>(() => {
+    if (tagColorsProp) return tagColorsProp;
+    try {
+      const saved = sessionStorage.getItem('doc-browser-tag-colors');
+      return saved ? JSON.parse(saved) : {};
+    } catch { return {}; }
+  });
+  // 受控时跟随 prop 同步
+  useEffect(() => {
+    if (tagColorsProp) setTagColorMapLocal(tagColorsProp);
+  }, [tagColorsProp]);
+  const tagColorMap = tagColorsProp ?? tagColorMapLocal;
+  // intentRef 跟踪"最新想要的"色板状态，避免快速连点两个 tag 时，第二次回调从
+  // 过时的 prop/state 起始 spread，丢掉第一次的改动（Bugbot Medium）。
+  const tagColorIntentRef = useRef(tagColorMap);
+  useEffect(() => { tagColorIntentRef.current = tagColorMap; }, [tagColorMap]);
+  const setTagColor = useCallback((tag: string, color: TagColorKey | undefined) => {
+    const next = { ...tagColorIntentRef.current };
+    if (color) next[tag] = color; else delete next[tag];
+    tagColorIntentRef.current = next;
+    if (onTagColorsChange) {
+      // 受控：先本地立即反映（让 UI 不等 parent 来回 round-trip），再上报
+      setTagColorMapLocal(next);
+      onTagColorsChange(next);
+    } else {
+      setTagColorMapLocal(next);
+      sessionStorage.setItem('doc-browser-tag-colors', JSON.stringify(next));
+    }
+  }, [onTagColorsChange]);
+  const tagColorsCtxValue = useMemo(() => ({ colors: tagColorMap, setColor: setTagColor }), [tagColorMap, setTagColor]);
   const [resizing, setResizing] = useState(false);
   // 侧栏 DOM 引用 + 拖拽起始时量出的真实左边界，避免用写死偏移导致"不跟手/跳动"
   const sidebarRef = useRef<HTMLDivElement>(null);
@@ -1327,26 +1505,40 @@ export function DocBrowser({
     return () => document.removeEventListener('mousedown', handleClick);
   }, [showSettingsMenu]);
 
-  // 搜索过滤（本地 title 搜索 + 可选后端内容搜索）
+  // 搜索过滤（本地 title 搜索 + 可选后端内容搜索） + tag 过滤
   const { filteredRoots, filteredChildrenMap } = useMemo(() => {
-    if (!search.trim() || searchResults !== null) {
-      // 使用后端搜索结果或不搜索
-      if (searchResults !== null) {
-        // 后端搜索结果扁平展示
-        return { filteredRoots: searchResults, filteredChildrenMap: new Map() };
-      }
+    const hasTagFilter = selectedTags.size > 0;
+    const kw = search.trim().toLowerCase();
+    const hasLocalSearch = kw.length > 0 && searchResults === null;
+
+    // 无过滤 → 原样
+    if (!hasLocalSearch && !hasTagFilter) {
+      if (searchResults !== null) return { filteredRoots: searchResults, filteredChildrenMap: new Map() };
       return { filteredRoots: rootEntries, filteredChildrenMap: childrenMap };
     }
 
-    // 本地搜索（title + summary + 正文第一行）
-    const kw = search.toLowerCase();
+    // 后端搜索结果：仅叠加 tag 过滤
+    if (searchResults !== null) {
+      const list = hasTagFilter
+        ? searchResults.filter(e => (e.tags ?? []).some(t => selectedTags.has(t)))
+        : searchResults;
+      return { filteredRoots: list, filteredChildrenMap: new Map() };
+    }
+
+    // 本地搜索 / tag 过滤（两者 AND）
     const matchIds = new Set<string>();
     const entryMap = new Map(entries.map(e => [e.id, e]));
     for (const e of entries) {
-      const titleMatch = e.title.toLowerCase().includes(kw);
-      const summaryMatch = e.summary?.toLowerCase().includes(kw) ?? false;
-      const firstLineMatch = contentFirstLines.get(e.id)?.toLowerCase().includes(kw) ?? false;
-      if (titleMatch || summaryMatch || firstLineMatch) {
+      let searchHit = !hasLocalSearch;
+      if (hasLocalSearch) {
+        const titleMatch = e.title.toLowerCase().includes(kw);
+        const summaryMatch = e.summary?.toLowerCase().includes(kw) ?? false;
+        const firstLineMatch = contentFirstLines.get(e.id)?.toLowerCase().includes(kw) ?? false;
+        searchHit = titleMatch || summaryMatch || firstLineMatch;
+      }
+      // 文件夹本身不参与 tag 过滤（无 tag），但若其后代命中则保留
+      const tagHit = !hasTagFilter || (!e.isFolder && (e.tags ?? []).some(t => selectedTags.has(t)));
+      if (searchHit && tagHit && !e.isFolder) {
         matchIds.add(e.id);
         let cur = e;
         while (cur.parentId) {
@@ -1355,6 +1547,9 @@ export function DocBrowser({
           if (!parent) break;
           cur = parent;
         }
+      } else if (hasLocalSearch && !hasTagFilter && e.isFolder && e.title.toLowerCase().includes(kw)) {
+        // 仅文本搜索时文件夹标题命中仍保留（与原逻辑保持兼容）
+        matchIds.add(e.id);
       }
     }
 
@@ -1366,7 +1561,34 @@ export function DocBrowser({
     }
 
     return { filteredRoots: fRoots, filteredChildrenMap: fMap };
-  }, [search, searchResults, rootEntries, childrenMap, entries, contentFirstLines]);
+  }, [search, selectedTags, searchResults, rootEntries, childrenMap, entries, contentFirstLines]);
+
+  // 收集 entries 中所有出现过的 tag（按出现频次排序，热门 tag 排前）
+  const allTagsRanked = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const e of entries) {
+      if (e.isFolder) continue;
+      for (const t of e.tags ?? []) counts.set(t, (counts.get(t) ?? 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([tag]) => tag);
+  }, [entries]);
+
+  // 自动剔除当前 entries 不存在的已选 tag：
+  // sessionStorage 是全局共享（DocBrowser 三处调用），跨知识库切换时上一个库选的 tag 可能
+  // 当前库根本没有 → filter 拒绝所有文件 + chip 条因 allTagsRanked 为空不渲染，用户卡死无法清空。
+  // 等 entries 加载完后剔除幽灵 tag。entries 为空（加载中）时不动，避免误清。
+  useEffect(() => {
+    if (entries.length === 0) return;
+    const available = new Set(allTagsRanked);
+    setSelectedTags(prev => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const t of prev) {
+        if (available.has(t)) next.add(t); else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [allTagsRanked, entries.length]);
 
   // 内容命中标记：搜索时若条目在结果中但关键词不在标题里 → 标「（内容包含）」
   const contentMatchIds = useMemo(() => {
@@ -1563,6 +1785,7 @@ export function DocBrowser({
     : 'bg-token-nested relative flex flex-shrink-0 flex-col border-r border-token-subtle';
 
   return (
+    <TagColorsContext.Provider value={tagColorsCtxValue}>
     <div className={rootClass} style={{ minHeight: 0 }}>
 
       {/* 左侧：文件树（液态玻璃效果 + 可拖拽调整宽度） */}
@@ -1702,6 +1925,58 @@ export function DocBrowser({
               )}
             </div>
           </div>
+          {/* tag 筛选条：水平 chip 行，颜色按 tagPalette 自动分配；横向滚动避免被压缩 */}
+          {allTagsRanked.length > 0 && (
+            <div
+              className="flex items-center gap-1 overflow-x-auto"
+              style={{
+                paddingTop: 2,
+                paddingBottom: 2,
+                scrollbarWidth: 'thin',
+                scrollbarColor: 'rgba(255,255,255,0.15) transparent',
+              }}
+              title="点击筛选；多选取并集；再次点击取消"
+            >
+              {selectedTags.size > 0 && (
+                <button
+                  onClick={() => setSelectedTags(new Set())}
+                  className="flex-shrink-0 text-[9.5px] px-1.5 rounded-full cursor-pointer transition-colors"
+                  style={{
+                    height: 18,
+                    lineHeight: '18px',
+                    color: 'var(--text-muted)',
+                    background: 'var(--bg-input)',
+                    border: '1px solid var(--border-faint)',
+                  }}
+                  title="清空筛选"
+                >
+                  清空
+                </button>
+              )}
+              {allTagsRanked.map(tag => {
+                const c = getTagColor(tag, tagColorMap);
+                const active = selectedTags.has(tag);
+                return (
+                  <button
+                    key={tag}
+                    onClick={() => toggleTag(tag)}
+                    className="flex-shrink-0 text-[10px] px-2 rounded-full cursor-pointer font-medium transition-all"
+                    style={{
+                      height: 20,
+                      lineHeight: '20px',
+                      color: active ? '#fff' : c.text,
+                      background: active ? c.dot : c.bg,
+                      border: `1px solid ${active ? c.dot : c.border}`,
+                      letterSpacing: '0.01em',
+                    }}
+                    title={`#${tag}`}
+                  >
+                    {truncateTagDisplay(tag)}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           {creatingFolder && (
             <div className="flex gap-1.5">
               <input
@@ -2276,6 +2551,7 @@ export function DocBrowser({
         />
       )}
     </div>
+    </TagColorsContext.Provider>
   );
 }
 

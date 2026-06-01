@@ -21,6 +21,8 @@ export type DocumentStore = {
   sharedTeamIds?: string[];
   /** 知识库模板键（如 acceptance-report-v2）。非空时写入条目按模板校验。 */
   templateKey?: string;
+  /** 用户自定义 tag 颜色映射（tagName → 调色板 key：red/orange/yellow/green/teal/blue/purple/gray） */
+  tagColors?: Record<string, string>;
   createdAt: string;
   updatedAt: string;
 };
@@ -245,6 +247,8 @@ export type UpdateDocumentStoreInput = {
   tags?: string[];
   isPublic?: boolean;
   templateKey?: string;
+  /** 用户自定义 tag 颜色映射（tagName → 调色板 key） */
+  tagColors?: Record<string, string>;
 };
 
 export type AddDocumentEntryInput = {

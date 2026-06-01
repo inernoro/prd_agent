@@ -326,6 +326,15 @@ public class DocumentStoreController : ControllerBase
         if (request.TemplateKey != null)
             updates.Add(Builders<DocumentStore>.Update.Set(s => s.TemplateKey,
                 string.IsNullOrWhiteSpace(request.TemplateKey) ? null : request.TemplateKey.Trim()));
+        if (request.TagColors != null)
+        {
+            // 仅接受白名单调色板 key，其他值丢弃
+            var allowed = new HashSet<string> { "red", "orange", "yellow", "green", "teal", "blue", "purple", "gray" };
+            var sanitized = request.TagColors
+                .Where(kv => !string.IsNullOrWhiteSpace(kv.Key) && allowed.Contains(kv.Value))
+                .ToDictionary(kv => kv.Key.Trim(), kv => kv.Value);
+            updates.Add(Builders<DocumentStore>.Update.Set(s => s.TagColors, sanitized));
+        }
 
         updates.Add(Builders<DocumentStore>.Update.Set(s => s.UpdatedAt, DateTime.UtcNow));
 
@@ -748,8 +757,22 @@ public class DocumentStoreController : ControllerBase
         long documentsDeleted = 0;
         if (documentIds.Count > 0)
         {
-            var r = await _db.Documents.DeleteManyAsync(d => documentIds.Contains(d.Id));
-            documentsDeleted = r.DeletedCount;
+            // 重要：DocumentId 是内容 SHA-256（content-addressable），多 entry 可能共享同一 Document
+            // （同内容文件被多处订阅 / 重命名 / 跨知识库订阅同一 URL）。
+            // 必须先确认本次删除范围之外没有其他 entry 还引用这个 DocumentId，才能删 Document。
+            // 否则会把别人共享的 Document 一并删掉，对方下次预览就空白（hash 短路又导致永久回不来）。
+            var safeToDeleteDocIds = new List<string>();
+            foreach (var docId in documentIds.Distinct())
+            {
+                var otherRefs = await _db.DocumentEntries.CountDocumentsAsync(
+                    e => e.DocumentId == docId && !idsToDelete.Contains(e.Id));
+                if (otherRefs == 0) safeToDeleteDocIds.Add(docId);
+            }
+            if (safeToDeleteDocIds.Count > 0)
+            {
+                var r = await _db.Documents.DeleteManyAsync(d => safeToDeleteDocIds.Contains(d.Id));
+                documentsDeleted = r.DeletedCount;
+            }
         }
         long attachmentsDeleted = 0;
         if (attachmentIds.Count > 0)
@@ -1478,6 +1501,7 @@ public class DocumentStoreController : ControllerBase
                 store.IsPublic,
                 store.TemplateKey,
                 store.CoverImageUrl,
+                store.TagColors,
             },
             entries = exported,
             stats = new { total = entries.Count, binarySkipped = skippedBinary },
@@ -1502,6 +1526,13 @@ public class DocumentStoreController : ControllerBase
             .Find(s => s.OwnerId == userId && s.Name == meta.Name).FirstOrDefaultAsync();
         if (store == null)
         {
+            // 仅接受白名单 8 色调色板 key，其他丢弃
+            var allowedColors = new HashSet<string> { "red", "orange", "yellow", "green", "teal", "blue", "purple", "gray" };
+            var importedColors = meta.TagColors == null
+                ? new Dictionary<string, string>()
+                : meta.TagColors
+                    .Where(kv => !string.IsNullOrWhiteSpace(kv.Key) && allowedColors.Contains(kv.Value))
+                    .ToDictionary(kv => kv.Key.Trim(), kv => kv.Value);
             store = new DocumentStore
             {
                 Name = meta.Name.Trim(),
@@ -1511,6 +1542,7 @@ public class DocumentStoreController : ControllerBase
                 IsPublic = meta.IsPublic,
                 TemplateKey = string.IsNullOrWhiteSpace(meta.TemplateKey) ? null : meta.TemplateKey.Trim(),
                 CoverImageUrl = meta.CoverImageUrl,
+                TagColors = importedColors,
             };
             await _db.DocumentStores.InsertOneAsync(store);
         }
@@ -1522,6 +1554,27 @@ public class DocumentStoreController : ControllerBase
             await _db.DocumentStores.UpdateOneAsync(s => s.Id == store.Id,
                 Builders<DocumentStore>.Update.Set(s => s.TemplateKey, tk).Set(s => s.UpdatedAt, DateTime.UtcNow));
             store.TemplateKey = tk;
+        }
+
+        // 同名库复用时也合并 bundle 的 TagColors（白名单 sanitize，merge 优先 bundle 值）。
+        // 不 merge 的话跨环境同步会丢失自定义颜色。
+        if (meta.TagColors != null && meta.TagColors.Count > 0)
+        {
+            var allowedColors = new HashSet<string> { "red", "orange", "yellow", "green", "teal", "blue", "purple", "gray" };
+            var merged = store.TagColors ?? new Dictionary<string, string>();
+            var dirty = false;
+            foreach (var kv in meta.TagColors)
+            {
+                if (string.IsNullOrWhiteSpace(kv.Key) || !allowedColors.Contains(kv.Value)) continue;
+                var k = kv.Key.Trim();
+                if (!merged.TryGetValue(k, out var cur) || cur != kv.Value) { merged[k] = kv.Value; dirty = true; }
+            }
+            if (dirty)
+            {
+                await _db.DocumentStores.UpdateOneAsync(s => s.Id == store.Id,
+                    Builders<DocumentStore>.Update.Set(s => s.TagColors, merged).Set(s => s.UpdatedAt, DateTime.UtcNow));
+                store.TagColors = merged;
+            }
         }
 
         var existing = await _db.DocumentEntries.Find(e => e.StoreId == store.Id).ToListAsync();
@@ -3838,6 +3891,8 @@ public class UpdateDocumentStoreRequest
     public bool? IsPublic { get; set; }
     /// <summary>知识库模板键（传空字符串可清除约束）。</summary>
     public string? TemplateKey { get; set; }
+    /// <summary>用户自定义 tag 颜色映射（null=不变；空字典=清空）</summary>
+    public Dictionary<string, string>? TagColors { get; set; }
 }
 
 public class SetStoreTeamsRequest
@@ -3883,6 +3938,7 @@ public class ImportStoreMeta
     public bool IsPublic { get; set; }
     public string? TemplateKey { get; set; }
     public string? CoverImageUrl { get; set; }
+    public Dictionary<string, string>? TagColors { get; set; }
 }
 
 public class ImportEntry

@@ -23,6 +23,41 @@ export function DocToc({
   const activeIdRef = useRef<string | null>(null);
   activeIdRef.current = activeId;
 
+  // 宽度可拖拽 + sessionStorage 持久化（同 sidebar 做法，遵循 no-localstorage 规则）
+  const [tocWidth, setTocWidth] = useState<number>(() => {
+    const saved = sessionStorage.getItem('doc-browser-toc-width');
+    const n = saved ? parseInt(saved, 10) : 210;
+    return Number.isFinite(n) ? Math.min(480, Math.max(160, n)) : 210;
+  });
+  const [resizing, setResizing] = useState(false);
+  const widthRef = useRef(tocWidth);
+  widthRef.current = tocWidth;
+  const dragStartRef = useRef<{ x: number; w: number }>({ x: 0, w: 0 });
+
+  useEffect(() => {
+    if (!resizing) return;
+    const handleMove = (e: MouseEvent) => {
+      // 把手在 toc 左边缘，向左拖 → x 减小 → 宽度增大
+      const delta = dragStartRef.current.x - e.clientX;
+      const next = Math.min(480, Math.max(160, dragStartRef.current.w + delta));
+      setTocWidth(next);
+    };
+    const handleUp = () => {
+      setResizing(false);
+      sessionStorage.setItem('doc-browser-toc-width', String(widthRef.current));
+    };
+    document.addEventListener('mousemove', handleMove);
+    document.addEventListener('mouseup', handleUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    return () => {
+      document.removeEventListener('mousemove', handleMove);
+      document.removeEventListener('mouseup', handleUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [resizing]);
+
   useEffect(() => {
     if (headings.length === 0) return;
     const root = scrollContainerRef.current;
@@ -90,14 +125,30 @@ export function DocToc({
 
   return (
     <nav
-      className="hidden xl:flex flex-shrink-0 flex-col"
+      className="hidden xl:flex flex-shrink-0 flex-col relative"
       style={{
-        width: '210px',
+        width: `${tocWidth}px`,
         borderLeft: '1px solid var(--border-subtle)',
         minHeight: 0,
       }}
       aria-label="本页章节导航"
     >
+      {/* 左边缘拖拽把手：向左拖增大宽度 */}
+      <div
+        className="absolute top-0 left-0 h-full w-1 cursor-col-resize group/tocresize"
+        style={{ marginLeft: '-2px', zIndex: 5 }}
+        onMouseDown={(e) => {
+          dragStartRef.current = { x: e.clientX, w: widthRef.current };
+          setResizing(true);
+        }}
+        title="拖动调整章节栏宽度"
+      >
+        <div
+          className="absolute top-0 left-0 h-full w-1 transition-colors duration-150"
+          style={{ background: resizing ? 'rgba(59,130,246,0.4)' : 'transparent' }}
+        />
+        <div className="absolute top-0 left-0 h-full w-1 group-hover/tocresize:bg-[rgba(59,130,246,0.3)] transition-colors duration-150" />
+      </div>
       <div
         className="flex items-center gap-1.5 px-4 py-3"
         style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
