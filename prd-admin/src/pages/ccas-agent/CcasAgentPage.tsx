@@ -55,9 +55,6 @@ export function CcasAgentPage() {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-semibold text-white truncate">赋码采集关联系统智能体</h1>
-            <span className="px-1.5 py-0.5 rounded text-[10px] bg-orange-500/15 text-orange-300 border border-orange-400/30">
-              施工中
-            </span>
           </div>
           <p className="text-xs text-white/50 truncate">{activeTabDef.desc}</p>
         </div>

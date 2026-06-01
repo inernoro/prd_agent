@@ -179,6 +179,7 @@ export interface CcasQaRequest {
   message: string;
   history?: CcasQaHistoryItem[];
   referenceEntryIds?: string[];
+  referenceStoreIds?: string[];
   webSearch?: boolean;
   sessionId?: string;
 }
@@ -186,6 +187,8 @@ export interface CcasQaRequest {
 /** SSE `reference` 事件 payload —— 后端注入实际命中的知识库条目 */
 export interface CcasQaReferencePayload {
   requested: number;
+  requestedStores?: number;
+  requestedEntries?: number;
   included: number;
   totalChars: number;
   budget: number;
