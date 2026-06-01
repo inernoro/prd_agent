@@ -772,7 +772,7 @@ export default function WebPagesPage() {
 
         {/* 空间内文件夹（内容派生）：全部 + 各文件夹 —— 放搜索行下方，切换空间不顶动搜索框 */}
         {spaceFolders.length > 0 && (
-          <div className="flex items-center gap-1.5 mt-3 overflow-x-auto pb-0.5" style={{ overscrollBehavior: 'contain' }}>
+          <div data-tour-id="webpages-folders" className="flex items-center gap-1.5 mt-3 overflow-x-auto pb-0.5" style={{ overscrollBehavior: 'contain' }}>
             <button type="button" onClick={() => setActiveFolder(null)} className="h-7 px-2.5 rounded-full text-[12px] shrink-0"
               style={activeFolder === null ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' } : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}>
               全部
