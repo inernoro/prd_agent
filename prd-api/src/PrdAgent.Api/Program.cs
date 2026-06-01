@@ -301,7 +301,10 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAiNewsService, PrdAgent.Inf
 builder.Services.AddHttpClient("DocStoreAgent");
 builder.Services.AddScoped<PrdAgent.Api.Services.SubtitleGenerationProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessProcessor>();
+builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessApplyService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.DocumentStoreAgentWorker>();
+// 启动时把内置「再加工·智能体」种入 DB（reprocess_agents 集合）
+builder.Services.AddHostedService<PrdAgent.Api.Services.ReprocessAgentSeeder>();
 
 // 权限字符串迁移服务（启动时自动迁移旧格式 admin.xxx → 新格式 appKey.action）
 builder.Services.AddHostedService<PrdAgent.Api.Services.PermissionMigrationService>();

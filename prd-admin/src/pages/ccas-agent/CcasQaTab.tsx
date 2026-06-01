@@ -111,10 +111,17 @@ export function CcasQaTab({ meta: _meta }: Props) {
     abortRef.current?.abort();
     abortRef.current = ac;
 
+    const referenceEntryIds = referenceSelected
+      .filter((s) => s.kind === 'entry' && !!s.entryId)
+      .map((s) => s.entryId!);
+    const referenceStoreIds = referenceSelected
+      .filter((s) => s.kind === 'store')
+      .map((s) => s.storeId);
     const body = {
       message: q,
       history,
-      referenceEntryIds: referenceSelected.length > 0 ? referenceSelected.map((s) => s.entryId) : undefined,
+      referenceEntryIds: referenceEntryIds.length > 0 ? referenceEntryIds : undefined,
+      referenceStoreIds: referenceStoreIds.length > 0 ? referenceStoreIds : undefined,
       webSearch,
       sessionId: sessionIdRef.current,
     };
@@ -199,7 +206,7 @@ export function CcasQaTab({ meta: _meta }: Props) {
         <span className="opacity-40">·</span>
         <span>{webSearch ? '联网检索：开（含模型公开知识）' : '联网检索：关（仅知识库）'}</span>
         <span className="opacity-40">·</span>
-        <span>已选 {referenceSelected.length} 条参考</span>
+        <span>已选 {referenceSelected.length} 个知识来源</span>
         <div className="flex-1" />
         <Button
           variant="ghost"
@@ -221,7 +228,7 @@ export function CcasQaTab({ meta: _meta }: Props) {
           >
             <span className="flex items-center gap-1.5">
               <BookOpen className="w-3.5 h-3.5" />
-              已挂载 {referenceSelected.length} 条知识库参考 · 约 {totalRefChars.toLocaleString()} 字符
+              已挂载 {referenceSelected.length} 个知识来源 · 约 {totalRefChars.toLocaleString()} 字符
             </span>
             {showRefList ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
           </button>
@@ -229,18 +236,18 @@ export function CcasQaTab({ meta: _meta }: Props) {
             <div className="mt-2 flex flex-col gap-1" style={{ maxHeight: 120, overflowY: 'auto', overscrollBehavior: 'contain' }}>
               {referenceSelected.map((s) => (
                 <div
-                  key={s.entryId}
+                  key={referenceKey(s)}
                   className="flex items-center gap-2 text-[11px] bg-amber-500/8 border border-amber-400/15 rounded px-2 py-1"
                 >
                   <span className="text-amber-200/85 flex-1 min-w-0 truncate">
                     <span className="opacity-60">{s.storeName}</span>
                     <span className="opacity-40 mx-1">/</span>
-                    {s.title}
+                    {s.kind === 'store' ? `整库：${s.title}` : s.title}
                   </span>
                   <span className="text-white/45 shrink-0">~{Math.round(s.approxChars / 1000)}k 字</span>
                   <button
                     type="button"
-                    onClick={() => setReferenceSelected((arr) => arr.filter((x) => x.entryId !== s.entryId))}
+                    onClick={() => setReferenceSelected((arr) => arr.filter((x) => referenceKey(x) !== referenceKey(s)))}
                     className="text-white/35 hover:text-white/70"
                     disabled={isStreaming}
                   >
@@ -349,7 +356,7 @@ export function CcasQaTab({ meta: _meta }: Props) {
         onConfirm={(arr) => {
           setReferenceSelected(arr);
           if (arr.length > 0 && referenceSelected.length === 0) {
-            toast.success(`已挂载 ${arr.length} 条知识库参考`);
+            toast.success(`已挂载 ${arr.length} 个知识来源`);
           }
         }}
       />
@@ -488,4 +495,8 @@ function safeJson(s: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+function referenceKey(ref: SelectedEntrySnapshot) {
+  return ref.kind === 'store' ? `store:${ref.storeId}` : `entry:${ref.entryId ?? ref.storeId}`;
 }

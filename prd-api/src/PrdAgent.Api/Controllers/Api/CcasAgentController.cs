@@ -100,18 +100,24 @@ public class CcasAgentController : ControllerBase
         public string? ConfirmedPartA { get; set; }
 
         /// <summary>
-        /// 可选：从「文档空间 / 知识库」（document_store）中选择的参考条目 ID 列表，
-        /// 后端会读取每条 entry 的内容（ParsedPrd.RawContent / Attachment.ExtractedText），
-        /// 按 token 预算（默认 24K 字符）拼接到 system prompt 末尾「## 领域参考资料」段。
+        /// 可选：从「文档空间 / 知识库」（document_store）中选择的参考条目 ID 列表。
+        /// 后端会读取每条 entry 的内容（ParsedPrd.RawContent / Attachment.ExtractedText）。
         /// 权限校验：只能引用「自己创建的空间」或「公开的空间（IsPublic=true）」中的条目。
         /// </summary>
         public List<string>? ReferenceEntryIds { get; set; }
+
+        /// <summary>整库引用的知识库空间 ID 列表，会展开为空间内所有非文件夹条目。</summary>
+        public List<string>? ReferenceStoreIds { get; set; }
     }
 
     /// <summary>知识库参考资料注入预算：单条最大字符数</summary>
-    private const int ReferenceEntryMaxChars = 8000;
+    private const int ReferenceEntryMaxChars = 40000;
     /// <summary>知识库参考资料注入预算：所有条目合计最大字符数</summary>
-    private const int ReferenceTotalBudget = 24000;
+    private const int ReferenceTotalBudget = 120000;
+    /// <summary>显式单篇引用最大数量，防止异常请求放大数据库读取。</summary>
+    private const int ReferenceMaxExplicitEntries = 200;
+    /// <summary>整库引用最大空间数量，支持多知识库但避免一次请求扫库过大。</summary>
+    private const int ReferenceMaxStores = 50;
 
     /// <summary>
     /// PRD 生成 SSE 流：每收到一个文本 chunk 就推 typing 事件，结束后推 done。
@@ -141,20 +147,23 @@ public class CcasAgentController : ControllerBase
 
         var systemPrompt = CcasPrdPrompts.BuildSystemPrompt(templateKey, phase);
 
-        // 知识库参考资料注入（可选）：从用户拥有的或公开的 document_store 条目中读内容，
-        // 按 token 预算追加到 system prompt 末尾。
-        var referenceInfo = await BuildReferenceContextAsync(req.ReferenceEntryIds, userId);
+        // 知识库参考资料注入（可选）：支持整库引用 + 单篇引用，按模型上下文预算追加到 system prompt 末尾。
+        var referenceInfo = await BuildReferenceContextAsync(req.ReferenceEntryIds, req.ReferenceStoreIds, userId);
         if (!string.IsNullOrEmpty(referenceInfo.AppendedContent))
         {
             systemPrompt += referenceInfo.AppendedContent;
         }
 
         // 即使没启用，只要前端传了 ID 也回个 reference 事件让用户知道实际状况（被跳过几条 / 注入几条）
-        if (req.ReferenceEntryIds != null && req.ReferenceEntryIds.Count > 0)
+        var requestedEntryCount = req.ReferenceEntryIds?.Count ?? 0;
+        var requestedStoreCount = req.ReferenceStoreIds?.Count ?? 0;
+        if (requestedEntryCount + requestedStoreCount > 0)
         {
             await WriteSseAsync("reference", new
             {
-                requested = req.ReferenceEntryIds.Count,
+                requested = requestedEntryCount + requestedStoreCount,
+                requestedEntries = requestedEntryCount,
+                requestedStores = requestedStoreCount,
                 included = referenceInfo.IncludedCount,
                 totalChars = referenceInfo.TotalChars,
                 budget = ReferenceTotalBudget,
@@ -517,6 +526,9 @@ public class CcasAgentController : ControllerBase
         /// <summary>引用的知识库条目 ID 列表（同 PRD 子能力，复用 BuildReferenceContextAsync）</summary>
         public List<string>? ReferenceEntryIds { get; set; }
 
+        /// <summary>整库引用的知识库空间 ID 列表，会展开为空间内所有非文件夹条目。</summary>
+        public List<string>? ReferenceStoreIds { get; set; }
+
         /// <summary>
         /// 联网检索开关：
         /// - false（默认）：严格 RAG，只依赖知识库；知识库没有就明说不杜撰。
@@ -567,7 +579,7 @@ public class CcasAgentController : ControllerBase
         // 拼接 system prompt：严格 RAG / 放宽 + 知识库参考块
         var systemPrompt = CcasQaPrompts.BuildSystemPrompt(webSearchOn);
 
-        var referenceInfo = await BuildReferenceContextAsync(req.ReferenceEntryIds, userId, "QA");
+        var referenceInfo = await BuildReferenceContextAsync(req.ReferenceEntryIds, req.ReferenceStoreIds, userId, "QA");
         if (!string.IsNullOrEmpty(referenceInfo.AppendedContent))
         {
             systemPrompt += referenceInfo.AppendedContent;
@@ -576,7 +588,9 @@ public class CcasAgentController : ControllerBase
         // reference 事件 — 始终发，让前端知道实际命中
         await WriteSseAsync("reference", new
         {
-            requested = req.ReferenceEntryIds?.Count ?? 0,
+            requested = (req.ReferenceEntryIds?.Count ?? 0) + (req.ReferenceStoreIds?.Count ?? 0),
+            requestedEntries = req.ReferenceEntryIds?.Count ?? 0,
+            requestedStores = req.ReferenceStoreIds?.Count ?? 0,
             included = referenceInfo.IncludedCount,
             totalChars = referenceInfo.TotalChars,
             budget = ReferenceTotalBudget,
@@ -979,39 +993,125 @@ public class CcasAgentController : ControllerBase
     /// 内容来源：优先 ParsedPrd.RawContent，回退 Attachment.ExtractedText。
     /// purposeNote：用于注入段落标题，避免 PRD/QA 共用 prompt 时语境混乱。
     /// </summary>
-    private async Task<ReferenceContext> BuildReferenceContextAsync(List<string>? entryIds, string userId, string purposeNote = "PRD")
+    private sealed record ReferenceEntryCandidate(DocumentEntry Entry, bool FromStoreSelection);
+
+    /// <summary>
+    /// 按用户传入的 entryIds / storeIds，从「文档空间」(document_store) 拉取内容拼装为 system prompt 末尾追加段。
+    /// 权限校验：只引用「自己创建的空间」或「公开空间（IsPublic=true）」中的条目。
+    /// 预算控制：单条 ≤ 40K 字符截断；总和 ≤ 120K 字符按选中顺序裁剪。
+    /// 内容来源：优先 ParsedPrd.RawContent，回退 Attachment.ExtractedText。
+    /// purposeNote：用于注入段落标题，避免 PRD/QA 共用 prompt 时语境混乱。
+    /// </summary>
+    private async Task<ReferenceContext> BuildReferenceContextAsync(
+        List<string>? entryIds,
+        List<string>? storeIds,
+        string userId,
+        string purposeNote = "PRD")
     {
-        if (entryIds == null || entryIds.Count == 0)
+        var ids = NormalizeIds(entryIds, ReferenceMaxExplicitEntries);
+        var selectedStoreIds = NormalizeIds(storeIds, ReferenceMaxStores);
+        if (ids.Count == 0 && selectedStoreIds.Count == 0)
         {
             return new ReferenceContext(string.Empty, 0, 0, new List<string>(), new List<ReferenceItem>());
         }
 
-        // 去重 + 限上限（最多 20 条，防止爆数据库查询）
-        var ids = entryIds
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Select(x => x.Trim())
-            .Distinct(StringComparer.Ordinal)
-            .Take(20)
+        var skipped = new List<string>();
+        var storeById = new Dictionary<string, DocumentStore>(StringComparer.Ordinal);
+        if (selectedStoreIds.Count > 0)
+        {
+            var selectedStores = await _db.DocumentStores
+                .Find(s => selectedStoreIds.Contains(s.Id))
+                .ToListAsync(CancellationToken.None);
+            storeById = selectedStores.ToDictionary(s => s.Id, s => s, StringComparer.Ordinal);
+            foreach (var storeId in selectedStoreIds)
+            {
+                if (!storeById.TryGetValue(storeId, out var store))
+                {
+                    skipped.Add($"知识库 {storeId}（不存在或已删除）");
+                    continue;
+                }
+                if (!CanReadReferenceStore(store, userId))
+                {
+                    skipped.Add($"{store.Name}（无访问权限）");
+                }
+            }
+        }
+
+        var candidates = new List<ReferenceEntryCandidate>();
+        if (ids.Count > 0)
+        {
+            var explicitEntries = await _db.DocumentEntries
+                .Find(e => ids.Contains(e.Id))
+                .ToListAsync(CancellationToken.None);
+            var orderMap = ids.Select((id, idx) => new { id, idx }).ToDictionary(x => x.id, x => x.idx);
+            candidates.AddRange(explicitEntries
+                .OrderBy(e => orderMap.TryGetValue(e.Id, out var i) ? i : int.MaxValue)
+                .Select(e => new ReferenceEntryCandidate(e, FromStoreSelection: false)));
+        }
+
+        var readableStoreIds = selectedStoreIds
+            .Where(id => storeById.TryGetValue(id, out var store) && CanReadReferenceStore(store, userId))
             .ToList();
-        if (ids.Count == 0)
+        if (readableStoreIds.Count > 0)
         {
-            return new ReferenceContext(string.Empty, 0, 0, new List<string>(), new List<ReferenceItem>());
+            var storeEntries = await _db.DocumentEntries
+                .Find(e => readableStoreIds.Contains(e.StoreId) && !e.IsFolder)
+                .ToListAsync(CancellationToken.None);
+            var storeOrder = readableStoreIds.Select((id, idx) => new { id, idx }).ToDictionary(x => x.id, x => x.idx);
+            candidates.AddRange(storeEntries
+                .OrderBy(e => storeOrder.TryGetValue(e.StoreId, out var i) ? i : int.MaxValue)
+                .ThenBy(e => GetPinnedOrder(storeById.GetValueOrDefault(e.StoreId), e.Id))
+                .ThenByDescending(e => e.UpdatedAt)
+                .Select(e => new ReferenceEntryCandidate(e, FromStoreSelection: true)));
         }
 
-        var entries = await _db.DocumentEntries
-            .Find(e => ids.Contains(e.Id))
-            .ToListAsync(CancellationToken.None);
+        var dedupedCandidates = new List<ReferenceEntryCandidate>();
+        var seenEntryIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var candidate in candidates)
+        {
+            if (seenEntryIds.Add(candidate.Entry.Id))
+            {
+                dedupedCandidates.Add(candidate);
+            }
+        }
 
-        // 按用户传入的 ID 顺序排序（用户在前端勾选的顺序应该被保留）
-        var orderMap = ids.Select((id, idx) => new { id, idx }).ToDictionary(x => x.id, x => x.idx);
-        entries = entries.OrderBy(e => orderMap.TryGetValue(e.Id, out var i) ? i : int.MaxValue).ToList();
+        if (dedupedCandidates.Count == 0)
+        {
+            return new ReferenceContext(string.Empty, 0, 0, skipped, new List<ReferenceItem>());
+        }
 
-        // 一次性把所有相关空间拉出来做权限映射，避免 N+1
-        var storeIds = entries.Select(e => e.StoreId).Distinct().ToList();
-        var stores = await _db.DocumentStores
-            .Find(s => storeIds.Contains(s.Id))
-            .ToListAsync(CancellationToken.None);
-        var storeById = stores.ToDictionary(s => s.Id, s => s);
+        var candidateStoreIds = dedupedCandidates.Select(c => c.Entry.StoreId).Distinct().Where(id => !storeById.ContainsKey(id)).ToList();
+        if (candidateStoreIds.Count > 0)
+        {
+            var stores = await _db.DocumentStores
+                .Find(s => candidateStoreIds.Contains(s.Id))
+                .ToListAsync(CancellationToken.None);
+            foreach (var store in stores)
+            {
+                storeById[store.Id] = store;
+            }
+        }
+
+        var documentIds = dedupedCandidates
+            .Select(c => c.Entry.DocumentId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Select(id => id!)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var attachmentIds = dedupedCandidates
+            .Select(c => c.Entry.AttachmentId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Select(id => id!)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var docById = documentIds.Count == 0
+            ? new Dictionary<string, ParsedPrd>(StringComparer.Ordinal)
+            : (await _db.Documents.Find(d => documentIds.Contains(d.Id)).ToListAsync(CancellationToken.None))
+                .ToDictionary(d => d.Id, d => d, StringComparer.Ordinal);
+        var attachmentById = attachmentIds.Count == 0
+            ? new Dictionary<string, Attachment>(StringComparer.Ordinal)
+            : (await _db.Attachments.Find(a => attachmentIds.Contains(a.AttachmentId)).ToListAsync(CancellationToken.None))
+                .ToDictionary(a => a.AttachmentId, a => a, StringComparer.Ordinal);
 
         var sb = new StringBuilder();
         sb.AppendLine();
@@ -1025,43 +1125,37 @@ public class CcasAgentController : ControllerBase
 
         var includedCount = 0;
         var totalChars = 0;
-        var skipped = new List<string>();
         var includedItems = new List<ReferenceItem>();
 
-        foreach (var entry in entries)
+        for (var idx = 0; idx < dedupedCandidates.Count; idx++)
         {
+            var entry = dedupedCandidates[idx].Entry;
             if (totalChars >= ReferenceTotalBudget)
             {
-                skipped.Add($"{entry.Title}（已达总预算 {ReferenceTotalBudget} 字符上限，跳过）");
-                continue;
+                skipped.Add($"后续 {dedupedCandidates.Count - idx} 条（已达上下文预算 {ReferenceTotalBudget} 字符，跳过）");
+                break;
             }
 
-            // 权限：必须是用户自己的空间或公开空间
-            if (!storeById.TryGetValue(entry.StoreId, out var store)
-                || (store.OwnerId != userId && !store.IsPublic))
+            if (!storeById.TryGetValue(entry.StoreId, out var store) || !CanReadReferenceStore(store, userId))
             {
                 skipped.Add($"{entry.Title}（无访问权限）");
                 continue;
             }
-
-            // 文件夹本身不带正文，跳过
             if (entry.IsFolder)
             {
                 skipped.Add($"{entry.Title}（是文件夹，无正文）");
                 continue;
             }
 
-            // 读内容：优先 ParsedPrd，回退 Attachment
             string? content = null;
-            if (!string.IsNullOrEmpty(entry.DocumentId))
+            if (!string.IsNullOrEmpty(entry.DocumentId) && docById.TryGetValue(entry.DocumentId, out var doc))
             {
-                var doc = await _db.Documents.Find(d => d.Id == entry.DocumentId).FirstOrDefaultAsync(CancellationToken.None);
-                if (doc != null) content = doc.RawContent;
+                content = doc.RawContent;
             }
-            if (string.IsNullOrEmpty(content) && !string.IsNullOrEmpty(entry.AttachmentId))
+            if (string.IsNullOrEmpty(content) && !string.IsNullOrEmpty(entry.AttachmentId)
+                && attachmentById.TryGetValue(entry.AttachmentId, out var att))
             {
-                var att = await _db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync(CancellationToken.None);
-                if (att != null) content = att.ExtractedText;
+                content = att.ExtractedText;
             }
 
             if (string.IsNullOrWhiteSpace(content))
@@ -1070,7 +1164,6 @@ public class CcasAgentController : ControllerBase
                 continue;
             }
 
-            // 单条裁剪
             var truncated = false;
             if (content.Length > ReferenceEntryMaxChars)
             {
@@ -1078,7 +1171,6 @@ public class CcasAgentController : ControllerBase
                 truncated = true;
             }
 
-            // 总预算裁剪：剩余预算 < 单条长度时进一步裁剪
             var remaining = ReferenceTotalBudget - totalChars;
             if (content.Length > remaining)
             {
@@ -1118,13 +1210,30 @@ public class CcasAgentController : ControllerBase
 
         if (includedCount == 0)
         {
-            // 没有任何条目可用，不污染 prompt
             return new ReferenceContext(string.Empty, 0, 0, skipped, new List<ReferenceItem>());
         }
 
         sb.AppendLine();
         sb.AppendLine($"_（共注入 {includedCount} 条参考资料，约 {totalChars} 字符）_");
         return new ReferenceContext(sb.ToString(), includedCount, totalChars, skipped, includedItems);
+    }
+
+    private static List<string> NormalizeIds(List<string>? ids, int max)
+        => (ids ?? new List<string>())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .Take(max)
+            .ToList();
+
+    private static bool CanReadReferenceStore(DocumentStore store, string userId)
+        => store.OwnerId == userId || store.IsPublic;
+
+    private static int GetPinnedOrder(DocumentStore? store, string entryId)
+    {
+        if (store?.PinnedEntryIds == null || store.PinnedEntryIds.Count == 0) return int.MaxValue;
+        var idx = store.PinnedEntryIds.IndexOf(entryId);
+        return idx < 0 ? int.MaxValue : idx;
     }
 
     private async Task WriteSseAsync(string eventType, object data)

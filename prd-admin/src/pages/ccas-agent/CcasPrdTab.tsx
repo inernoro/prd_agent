@@ -112,15 +112,20 @@ export function CcasPrdTab({ meta }: Props) {
       setPhase(target === 'A' ? 'A-streaming' : 'B-streaming');
       setPhaseMsg('连接中…');
 
+      const referenceEntryIds = referenceSelected
+        .filter((s) => s.kind === 'entry' && !!s.entryId)
+        .map((s) => s.entryId!);
+      const referenceStoreIds = referenceSelected
+        .filter((s) => s.kind === 'store')
+        .map((s) => s.storeId);
       const body = {
         templateKey,
         phase: target,
         input,
         existingMarkdown: existingMarkdown.trim() || undefined,
         confirmedPartA: target === 'B' ? partA : undefined,
-        referenceEntryIds: referenceSelected.length > 0
-          ? referenceSelected.map((s) => s.entryId)
-          : undefined,
+        referenceEntryIds: referenceEntryIds.length > 0 ? referenceEntryIds : undefined,
+        referenceStoreIds: referenceStoreIds.length > 0 ? referenceStoreIds : undefined,
       };
 
       const setText = target === 'A' ? setPartA : setPartB;
@@ -304,29 +309,29 @@ export function CcasPrdTab({ meta }: Props) {
               4. 引用知识库（可选）
             </h2>
             <Button variant="ghost" onClick={() => setPickerOpen(true)} className="!h-7 !px-2 !text-[11px]">
-              {referenceSelected.length > 0 ? `已选 ${referenceSelected.length} 条 · 编辑` : '选择参考条目'}
+              {referenceSelected.length > 0 ? `已选 ${referenceSelected.length} 个来源 · 编辑` : '选择知识库'}
             </Button>
           </div>
           <p className="text-[11px] text-white/45 mb-2">
-            从「左侧导航 → 知识库」中已上传的领域参考资料里挑几条，AI 生成时会作为事实依据注入。
-            预算上限 24K 字符，超出会按选中顺序裁剪。
+            从「左侧导航 → 知识库」中选择整个知识库或单篇资料，AI 生成时会作为事实依据注入。
+            多知识库会按模型上下文预算自动裁剪。
           </p>
           {referenceSelected.length > 0 && (
             <div className="flex flex-col gap-1 max-h-[120px] overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
               {referenceSelected.map((s) => (
                 <div
-                  key={s.entryId}
+                  key={referenceKey(s)}
                   className="flex items-center gap-2 text-[11px] bg-amber-500/8 border border-amber-400/15 rounded px-2 py-1"
                 >
                   <span className="text-amber-200/85 flex-1 min-w-0 truncate">
                     <span className="opacity-60">{s.storeName}</span>
                     <span className="opacity-40 mx-1">/</span>
-                    {s.title}
+                    {s.kind === 'store' ? `整库：${s.title}` : s.title}
                   </span>
                   <span className="text-white/45 shrink-0">~{Math.round(s.approxChars / 1000)}k 字</span>
                   <button
                     type="button"
-                    onClick={() => setReferenceSelected((arr) => arr.filter((x) => x.entryId !== s.entryId))}
+                    onClick={() => setReferenceSelected((arr) => arr.filter((x) => referenceKey(x) !== referenceKey(s)))}
                     className="text-white/35 hover:text-white/70"
                   >
                     <X className="w-3 h-3" />
@@ -337,8 +342,8 @@ export function CcasPrdTab({ meta }: Props) {
           )}
           {referenceInfo && (referenceInfo.requested > 0) && (
             <div className="mt-2 text-[10px] text-white/45">
-              本次生成已实际注入 <span className="text-amber-300/85">{referenceInfo.included}/{referenceInfo.requested}</span>{' '}
-              条 · 共 {referenceInfo.totalChars.toLocaleString()} 字符
+              本次生成已实际注入 <span className="text-amber-300/85">{referenceInfo.included}</span>{' '}
+              条文档 · 共 {referenceInfo.totalChars.toLocaleString()} 字符
               {referenceInfo.skipped.length > 0 && (
                 <span className="text-orange-300/65 ml-1">（{referenceInfo.skipped.length} 条被跳过）</span>
               )}
@@ -457,4 +462,8 @@ function safeJson(s: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+function referenceKey(ref: SelectedEntrySnapshot) {
+  return ref.kind === 'store' ? `store:${ref.storeId}` : `entry:${ref.entryId ?? ref.storeId}`;
 }

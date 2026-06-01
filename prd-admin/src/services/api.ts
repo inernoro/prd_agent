@@ -1167,6 +1167,9 @@ export const api = {
       shareLinkDetail: (linkId: string) => `/api/document-store/share-links/${linkId}`,
       // 知识库 Agent：再加工模板列表
       reprocessTemplates: () => `/api/document-store/reprocess-templates`,
+      // 知识库 Agent：可调用智能体（内置 + 用户自建）
+      reprocessAgents: () => `/api/document-store/reprocess-agents`,
+      reprocessAgentDetail: (id: string) => `/api/document-store/reprocess-agents/${id}`,
       // 知识库 Agent：Run 状态查询与 SSE 流
       agentRun: (runId: string) => `/api/document-store/agent-runs/${runId}`,
       agentRunStream: (runId: string) => `/api/document-store/agent-runs/${runId}/stream`,
@@ -1188,6 +1191,10 @@ export const api = {
       subscriptionUpdate: (entryId: string) => `/api/document-store/entries/${entryId}/subscription`,
       generateSubtitle: (entryId: string) => `/api/document-store/entries/${entryId}/generate-subtitle`,
       reprocess: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess`,
+      reprocessChat: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess/chat`,
+      reprocessActiveRun: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess/active-run`,
+      reprocessApply: (runId: string) => `/api/document-store/agent-runs/${runId}/apply`,
+      reprocessApplyContent: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess/apply-content`,
       latestAgentRun: (entryId: string) => `/api/document-store/entries/${entryId}/agent-runs/latest`,
       // 批次 C：浏览事件埋点
       logView: (entryId: string) => `/api/document-store/entries/${entryId}/view`,
