@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Sparkles, Plus, LayoutGrid, List, GanttChartSquare, Trash2, Users, UserCog, Award, Search, CalendarClock, BookOpen, Gavel, FileText, NotebookText, Target, Milestone, FolderOpen, ShieldAlert } from 'lucide-react';
+import { ArrowLeft, Sparkles, Plus, LayoutGrid, List, GanttChartSquare, Trash2, Users, UserCog, Award, Search, CalendarClock, BookOpen, Gavel, FileText, NotebookText, Target, Milestone, FolderOpen, ShieldAlert, Stethoscope } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
@@ -23,6 +23,7 @@ import { MilestonesBar } from './MilestonesBar';
 import { MilestonesPanel } from './MilestonesPanel';
 import { RiskPanel } from './RiskPanel';
 import { ClosureReportPanel } from './ClosureReportPanel';
+import { HealthDiagnosisPanel } from './HealthDiagnosisPanel';
 import { EvaluatePanel } from './EvaluatePanel';
 import { TaskDetailDrawer } from './TaskDetailDrawer';
 import { PROJECT_TYPE_REGISTRY, LIFECYCLE_REGISTRY, TASK_STATUS_REGISTRY, PRIORITY_REGISTRY, GRADE_REGISTRY } from './pmConstants';
@@ -77,6 +78,7 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
   const [showDecompose, setShowDecompose] = useState(false);
   const [showEvaluate, setShowEvaluate] = useState(false);
   const [showClosure, setShowClosure] = useState(false);
+  const [showDiagnosis, setShowDiagnosis] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [adding, setAdding] = useState(false);
   const [costEdit, setCostEdit] = useState<{ budget: string; actualCost: string } | null>(null);
@@ -315,7 +317,10 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
           </div>
           <div className="flex items-center gap-2">
             {(project.ownerId === myId || project.leaderId === myId) && (
-              <Button variant="ghost" onClick={() => setShowClosure(true)}><Sparkles size={14} />AI 结案报告</Button>
+              <>
+                <Button variant="ghost" onClick={() => setShowDiagnosis(true)}><Stethoscope size={14} />AI 健康诊断</Button>
+                <Button variant="ghost" onClick={() => setShowClosure(true)}><Sparkles size={14} />AI 结案报告</Button>
+              </>
             )}
             <Button variant="secondary" onClick={() => setShowEvaluate(true)}><Award size={14} />结案评价</Button>
           </div>
@@ -536,7 +541,7 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
         <MembersPanel projectId={projectId} canManage={project.ownerId === myId || project.leaderId === myId} />
       )}
 
-      {tab === 'decisions' && <DecisionsPanel projectId={projectId} />}
+      {tab === 'decisions' && <DecisionsPanel projectId={projectId} goals={goals} tasks={tasks} />}
 
       {tab === 'risks' && <RiskPanel projectId={projectId} canManage={project.ownerId === myId || project.leaderId === myId || project.memberIds.includes(myId)} goals={goals} tasks={tasks} />}
 
@@ -568,6 +573,10 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
 
       {showClosure && (
         <ClosureReportPanel projectId={projectId} projectNo={project.projectNo} onClose={() => setShowClosure(false)} />
+      )}
+
+      {showDiagnosis && (
+        <HealthDiagnosisPanel projectId={projectId} projectNo={project.projectNo} onClose={() => setShowDiagnosis(false)} />
       )}
     </div>
   );

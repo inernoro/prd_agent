@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus, Trash2, Pencil, Check, X, ArrowRight, CircleUser } from 'lucide-react';
+import { Plus, Trash2, Pencil, Check, X, ArrowRight, CircleUser, Target, ListTodo } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import {
   listPmDecisions, createPmDecision, updatePmDecision, deletePmDecision,
 } from '@/services';
-import type { PmDecision, PmDecisionType } from '@/services/contracts/pmAgent';
+import type { PmDecision, PmDecisionType, PmGoal, PmTask } from '@/services/contracts/pmAgent';
 import { DECISION_TYPE_REGISTRY, DECISION_COLUMNS } from './pmConstants';
 
 interface Props {
   projectId: string;
+  /** 项目目标（供决策关联，仅团队目标可关联） */
+  goals: PmGoal[];
+  /** 项目任务（供决策关联） */
+  tasks: PmTask[];
 }
 
 function fmtTime(s?: string | null) {
@@ -30,7 +34,7 @@ const NEXT_TYPE: Record<PmDecisionType, PmDecisionType | null> = {
  * 项目决策事项 — 三态分栏（待决策 / 已决策 / 备忘）。
  * 支持新建、内联编辑、状态流转（转入已决策落定案人/时间）、删除。
  */
-export function DecisionsPanel({ projectId }: Props) {
+export function DecisionsPanel({ projectId, goals, tasks }: Props) {
   const [items, setItems] = useState<PmDecision[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -38,6 +42,12 @@ export function DecisionsPanel({ projectId }: Props) {
   const [editing, setEditing] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState('');
   const [draftContent, setDraftContent] = useState('');
+  const [draftGoalIds, setDraftGoalIds] = useState<string[]>([]);
+  const [draftTaskIds, setDraftTaskIds] = useState<string[]>([]);
+
+  const teamGoals = useMemo(() => goals.filter((g) => g.scope === 'team'), [goals]);
+  const goalTitle = useCallback((id: string) => goals.find((g) => g.id === id)?.title ?? '已删除目标', [goals]);
+  const taskTitle = useCallback((id: string) => tasks.find((t) => t.id === id)?.title ?? '已删除任务', [tasks]);
 
   const load = useCallback(async () => {
     const res = await listPmDecisions(projectId);
@@ -54,9 +64,13 @@ export function DecisionsPanel({ projectId }: Props) {
     return m;
   }, [items]);
 
-  const startCreate = (type: PmDecisionType) => { setEditing(`new:${type}`); setDraftTitle(''); setDraftContent(''); };
-  const startEdit = (d: PmDecision) => { setEditing(d.id); setDraftTitle(d.title); setDraftContent(d.content || ''); };
-  const cancelEdit = () => { setEditing(null); setDraftTitle(''); setDraftContent(''); };
+  const startCreate = (type: PmDecisionType) => { setEditing(`new:${type}`); setDraftTitle(''); setDraftContent(''); setDraftGoalIds([]); setDraftTaskIds([]); };
+  const startEdit = (d: PmDecision) => { setEditing(d.id); setDraftTitle(d.title); setDraftContent(d.content || ''); setDraftGoalIds(d.relatedGoalIds ?? []); setDraftTaskIds(d.relatedTaskIds ?? []); };
+  const cancelEdit = () => { setEditing(null); setDraftTitle(''); setDraftContent(''); setDraftGoalIds([]); setDraftTaskIds([]); };
+
+  const toggleGoal = (id: string) => setDraftGoalIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+  const addTask = (id: string) => { if (id && !draftTaskIds.includes(id)) setDraftTaskIds((prev) => [...prev, id]); };
+  const removeTask = (id: string) => setDraftTaskIds((prev) => prev.filter((x) => x !== id));
 
   const saveDraft = async () => {
     if (!draftTitle.trim()) { toast.error('请填写决策标题', ''); return; }
@@ -64,11 +78,11 @@ export function DecisionsPanel({ projectId }: Props) {
     setBusyId(editing);
     if (editing.startsWith('new:')) {
       const type = editing.slice(4) as PmDecisionType;
-      const res = await createPmDecision(projectId, { title: draftTitle.trim(), content: draftContent.trim() || undefined, type });
+      const res = await createPmDecision(projectId, { title: draftTitle.trim(), content: draftContent.trim() || undefined, type, relatedGoalIds: draftGoalIds, relatedTaskIds: draftTaskIds });
       if (res.success) { toast.success('已新增', ''); cancelEdit(); await load(); }
       else toast.error('保存失败', res.error?.message || '');
     } else {
-      const res = await updatePmDecision(editing, { title: draftTitle.trim(), content: draftContent.trim() });
+      const res = await updatePmDecision(editing, { title: draftTitle.trim(), content: draftContent.trim(), relatedGoalIds: draftGoalIds, relatedTaskIds: draftTaskIds });
       if (res.success) { toast.success('已保存', ''); cancelEdit(); await load(); }
       else toast.error('保存失败', res.error?.message || '');
     }
@@ -102,6 +116,47 @@ export function DecisionsPanel({ projectId }: Props) {
       <textarea value={draftContent} onChange={(e) => setDraftContent(e.target.value)} placeholder="背景 / 决策内容 / 影响（可选）" rows={3}
         className="w-full text-[12px] rounded-md px-2 py-1.5 outline-none border resize-y"
         style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} />
+
+      {/* 关联目标：团队目标可切换 chip */}
+      {teamGoals.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <div className="text-[10.5px] flex items-center gap-1" style={{ color: 'var(--text-muted)' }}><Target size={11} />关联目标</div>
+          <div className="flex flex-wrap gap-1">
+            {teamGoals.map((g) => {
+              const on = draftGoalIds.includes(g.id);
+              return (
+                <button key={g.id} type="button" onClick={() => toggleGoal(g.id)}
+                  className="text-[11px] px-1.5 py-0.5 rounded-md border max-w-[160px] truncate"
+                  style={{ borderColor: on ? '#10B981' : 'var(--border-subtle)', background: on ? 'rgba(16,185,129,0.12)' : 'transparent', color: on ? '#10B981' : 'var(--text-secondary)' }}
+                  title={g.title}>{g.title}</button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 关联任务：下拉添加 + 可移除 chip */}
+      <div className="flex flex-col gap-1">
+        <div className="text-[10.5px] flex items-center gap-1" style={{ color: 'var(--text-muted)' }}><ListTodo size={11} />关联任务</div>
+        <select value="" onChange={(e) => { addTask(e.target.value); e.currentTarget.selectedIndex = 0; }}
+          className="w-full text-[12px] rounded-md px-2 py-1.5 outline-none border"
+          style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>
+          <option value="">+ 添加关联任务…</option>
+          {tasks.filter((t) => !draftTaskIds.includes(t.id)).map((t) => <option key={t.id} value={t.id}>{t.title}</option>)}
+        </select>
+        {draftTaskIds.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {draftTaskIds.map((id) => (
+              <span key={id} className="text-[11px] px-1.5 py-0.5 rounded-md border inline-flex items-center gap-1 max-w-[180px]"
+                style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-base)', color: 'var(--text-secondary)' }} title={taskTitle(id)}>
+                <span className="truncate">{taskTitle(id)}</span>
+                <button type="button" onClick={() => removeTask(id)} className="shrink-0 hover:opacity-70" style={{ color: 'var(--text-muted)' }}><X size={11} /></button>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="flex items-center gap-2 justify-end">
         <Button variant="ghost" size="sm" onClick={cancelEdit}><X size={13} />取消</Button>
         <Button variant="primary" size="sm" onClick={saveDraft} disabled={busyId === key}>
@@ -153,6 +208,22 @@ export function DecisionsPanel({ projectId }: Props) {
                           </div>
                         </div>
                         {d.content && <div className="text-[11.5px] whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary)' }}>{d.content}</div>}
+                        {((d.relatedGoalIds?.length ?? 0) > 0 || (d.relatedTaskIds?.length ?? 0) > 0) && (
+                          <div className="flex flex-wrap gap-1">
+                            {(d.relatedGoalIds ?? []).map((gid) => (
+                              <span key={`g-${gid}`} className="text-[10.5px] px-1.5 py-0.5 rounded inline-flex items-center gap-1 max-w-[150px]"
+                                style={{ background: 'rgba(16,185,129,0.12)', color: '#10B981' }} title={goalTitle(gid)}>
+                                <Target size={10} className="shrink-0" /><span className="truncate">{goalTitle(gid)}</span>
+                              </span>
+                            ))}
+                            {(d.relatedTaskIds ?? []).map((tid) => (
+                              <span key={`t-${tid}`} className="text-[10.5px] px-1.5 py-0.5 rounded inline-flex items-center gap-1 max-w-[150px]"
+                                style={{ background: 'var(--bg-base)', color: 'var(--text-muted)' }} title={taskTitle(tid)}>
+                                <ListTodo size={10} className="shrink-0" /><span className="truncate">{taskTitle(tid)}</span>
+                              </span>
+                            ))}
+                          </div>
+                        )}
                         {d.type === 'decided' && d.decidedByName && (
                           <div className="text-[11px] inline-flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
                             <CircleUser size={11} />定案：{d.decidedByName} · {fmtTime(d.decidedAt)}

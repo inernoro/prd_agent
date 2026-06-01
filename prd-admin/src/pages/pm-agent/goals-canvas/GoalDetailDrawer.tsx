@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Check, Sparkles, Plus, Trash2, ListTodo, FileText } from 'lucide-react';
+import { X, Check, Sparkles, Plus, Trash2, ListTodo, FileText, Gavel } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
-import { createPmGoal, updatePmGoal, deletePmGoal, getPmProject, listPmMilestones, listPmWeeklyReports } from '@/services';
-import type { PmGoal, PmGoalScope, PmGoalStatus, SavePmGoalInput, PmTask, PmWeeklyReport } from '@/services/contracts/pmAgent';
-import { GOAL_STATUS_REGISTRY, TASK_STATUS_REGISTRY } from '../pmConstants';
+import { createPmGoal, updatePmGoal, deletePmGoal, getPmProject, listPmMilestones, listPmWeeklyReports, listPmDecisions } from '@/services';
+import type { PmGoal, PmGoalScope, PmGoalStatus, SavePmGoalInput, PmTask, PmWeeklyReport, PmDecision } from '@/services/contracts/pmAgent';
+import { GOAL_STATUS_REGISTRY, TASK_STATUS_REGISTRY, DECISION_TYPE_REGISTRY } from '../pmConstants';
 
 const STATUS_KEYS: PmGoalStatus[] = ['on_track', 'at_risk', 'done', 'abandoned'];
 
@@ -39,9 +39,10 @@ export function GoalDetailDrawer({ projectId, goal, createCtx, canWrite, onClose
   const isCreate = !goal;
   const [draft, setDraft] = useState<SavePmGoalInput>({});
   const [saving, setSaving] = useState(false);
-  // 反查：关联任务（直接挂的 + 里程碑下的） + 提及本目标的周报
+  // 反查：关联任务（直接挂的 + 里程碑下的） + 提及本目标的周报 + 关联本目标的决策
   const [relTasks, setRelTasks] = useState<PmTask[]>([]);
   const [mentionReports, setMentionReports] = useState<PmWeeklyReport[]>([]);
+  const [relDecisions, setRelDecisions] = useState<PmDecision[]>([]);
 
   useEffect(() => {
     if (goal) {
@@ -59,11 +60,11 @@ export function GoalDetailDrawer({ projectId, goal, createCtx, canWrite, onClose
 
   // 加载目标侧反查（关联任务 + 提及周报）
   useEffect(() => {
-    if (!goal) { setRelTasks([]); setMentionReports([]); return; }
+    if (!goal) { setRelTasks([]); setMentionReports([]); setRelDecisions([]); return; }
     let alive = true;
     (async () => {
-      const [pr, mr, wr] = await Promise.all([
-        getPmProject(projectId), listPmMilestones(projectId), listPmWeeklyReports(projectId),
+      const [pr, mr, wr, dr] = await Promise.all([
+        getPmProject(projectId), listPmMilestones(projectId), listPmWeeklyReports(projectId), listPmDecisions(projectId),
       ]);
       if (!alive) return;
       if (pr.success && mr.success) {
@@ -71,6 +72,7 @@ export function GoalDetailDrawer({ projectId, goal, createCtx, canWrite, onClose
         setRelTasks(pr.data.tasks.filter((t) => t.goalId === goal.id || (t.milestoneId != null && goalMsIds.has(t.milestoneId))));
       }
       if (wr.success) setMentionReports(wr.data.items.filter((w) => (w.relatedGoalIds ?? []).includes(goal.id)));
+      if (dr.success) setRelDecisions(dr.data.items.filter((d) => (d.relatedGoalIds ?? []).includes(goal.id)));
     })();
     return () => { alive = false; };
   }, [goal, projectId]);
@@ -191,6 +193,22 @@ export function GoalDetailDrawer({ projectId, goal, createCtx, canWrite, onClose
                     className="text-[12px] truncate text-left rounded px-1 -mx-1 disabled:cursor-default enabled:hover:bg-white/5"
                     style={{ color: 'var(--text-secondary)' }} title={onNavigateWeekly ? '点击跳转到周报' : w.title}>· {w.title}</button>
                 ))}
+              </div>
+              {/* 关联本目标的决策（反查 relatedGoalIds） */}
+              <div className="flex flex-col gap-1.5">
+                <div className="text-[11px] flex items-center gap-1" style={{ color: '#A855F7' }}><Gavel size={12} />关联本目标的决策（{relDecisions.length}）</div>
+                {relDecisions.length === 0 ? (
+                  <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>暂无决策关联本目标。在「决策」里把决策关联到本目标。</div>
+                ) : relDecisions.map((d) => {
+                  const dt = DECISION_TYPE_REGISTRY[d.type];
+                  return (
+                    <div key={d.id} className="flex items-center gap-2 text-[12px]" style={{ color: 'var(--text-secondary)' }} title={d.title}>
+                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: dt.color }} />
+                      <span className="truncate flex-1">{d.title}</span>
+                      <span className="text-[10px] shrink-0" style={{ color: dt.color }}>{dt.label}</span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

@@ -517,6 +517,8 @@ public class PmAgentController : ControllerBase
             Title = request.Title!.Trim(),
             Content = request.Content?.Trim(),
             Type = type,
+            RelatedGoalIds = request.RelatedGoalIds ?? new(),
+            RelatedTaskIds = request.RelatedTaskIds ?? new(),
             CreatedBy = userId,
             CreatedByName = creatorName,
             OrderKey = DateTime.UtcNow.Ticks,
@@ -566,6 +568,8 @@ public class PmAgentController : ControllerBase
             }
         }
         if (request.OrderKey.HasValue) update = update.Set(x => x.OrderKey, request.OrderKey.Value);
+        if (request.RelatedGoalIds != null) update = update.Set(x => x.RelatedGoalIds, request.RelatedGoalIds);
+        if (request.RelatedTaskIds != null) update = update.Set(x => x.RelatedTaskIds, request.RelatedTaskIds);
 
         await _db.PmDecisions.UpdateOneAsync(x => x.Id == decisionId, update);
         return Ok(ApiResponse<object>.Ok(new { updated = true }));
@@ -2325,6 +2329,125 @@ public class PmAgentController : ControllerBase
         return sb.ToString();
     }
 
+    /// <summary>AI 项目健康诊断（SSE 流式，仅 owner/leader）。汇总项目实时执行信号后让 LLM 给出健康评级与纠偏建议。</summary>
+    [HttpPost("projects/{projectId}/health-diagnosis")]
+    [Produces("text/event-stream")]
+    public async Task GenerateHealthDiagnosis(string projectId)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null) { Response.StatusCode = 404; return; }
+        if (project.OwnerId != userId && project.LeaderId != userId) { Response.StatusCode = 403; return; }
+
+        Response.ContentType = "text/event-stream; charset=utf-8";
+        Response.Headers.CacheControl = "no-cache";
+        await WriteSseEvent("stage", new { stage = "analyzing", message = "正在扫描项目实时数据并生成健康诊断…" });
+
+        var summary = await BuildHealthDiagnosisSummaryAsync(project);
+        string? err = null;
+        await _pmService.DiagnoseHealthAsync(project, summary, userId,
+            onContent: async text => await WriteSseEvent("typing", new { text }),
+            onThinking: async text => await WriteSseEvent("thinking", new { text }),
+            onError: e => err = e);
+        if (err != null) await WriteSseEvent("error", new { message = err });
+        await WriteSseEvent("done", new { error = err });
+    }
+
+    /// <summary>汇总项目实时执行信号为健康诊断输入文本（与结案不同：聚焦"当下问题"而非"历史总结"）。</summary>
+    private async Task<string> BuildHealthDiagnosisSummaryAsync(PmProject p)
+    {
+        var sb = new System.Text.StringBuilder();
+        var now = DateTime.UtcNow;
+        sb.AppendLine($"项目名称：{p.Title}（{p.ProjectNo}）");
+        sb.AppendLine($"业务目标：{p.BusinessGoal}");
+        sb.AppendLine($"项目类型：{p.ProjectType}，生命周期：{p.Lifecycle}");
+        if (p.PlannedStartAt.HasValue || p.PlannedEndAt.HasValue)
+        {
+            sb.AppendLine($"计划周期：{p.PlannedStartAt:yyyy-MM-dd} ~ {p.PlannedEndAt:yyyy-MM-dd}");
+            if (p.PlannedEndAt.HasValue)
+            {
+                var days = (int)Math.Round((p.PlannedEndAt.Value.Date - now.Date).TotalDays);
+                sb.AppendLine(days < 0 ? $"计划结束日已过期 {-days} 天（项目尚未结案）"
+                    : $"距计划结束还有 {days} 天");
+            }
+        }
+        if (p.Budget.HasValue && p.Budget > 0)
+        {
+            var util = (double)(p.ActualCost ?? 0) / (double)p.Budget.Value * 100;
+            sb.AppendLine($"预算：{p.Budget}，实际成本：{p.ActualCost ?? 0}，使用率 {(int)Math.Round(util)}%{(util > 100 ? "（已超预算）" : "")}");
+        }
+
+        // 任务信号
+        var tasks = await _db.PmTasks.Find(t => t.ProjectId == p.Id).ToListAsync();
+        var active = tasks.Where(t => t.Status != PmTaskStatus.Cancelled).ToList();
+        var done = active.Count(t => t.Status == PmTaskStatus.Done);
+        var inProgress = active.Count(t => t.Status == PmTaskStatus.InProgress);
+        var overdue = active.Where(t => t.DueAt.HasValue && t.DueAt.Value < now
+            && t.Status != PmTaskStatus.Done).ToList();
+        sb.AppendLine($"任务：有效 {active.Count}，完成 {done}（完成率 {(active.Count > 0 ? (int)Math.Round(done * 100.0 / active.Count) : 0)}%），进行中 {inProgress}，逾期未完成 {overdue.Count}");
+        if (overdue.Count > 0)
+            foreach (var t in overdue.OrderBy(t => t.DueAt).Take(8))
+                sb.AppendLine($"  - 逾期任务：{t.Title}（截止 {t.DueAt:yyyy-MM-dd}，状态 {t.Status}{(string.IsNullOrWhiteSpace(t.AssigneeName) ? "" : $"，负责人 {t.AssigneeName}")}）");
+
+        // 里程碑信号
+        var milestones = await _db.PmMilestones.Find(m => m.ProjectId == p.Id).ToListAsync();
+        if (milestones.Count > 0)
+        {
+            var byHealth = milestones.GroupBy(m =>
+            {
+                var mine = active.Where(t => t.MilestoneId == m.Id).ToList();
+                return MilestoneHealth(m, mine.Count, mine.Count(t => t.Status == PmTaskStatus.Done));
+            }).ToDictionary(g => g.Key, g => g.Count());
+            sb.AppendLine($"里程碑：共 {milestones.Count}（已达成 {byHealth.GetValueOrDefault("reached")}，逾期 {byHealth.GetValueOrDefault("overdue")}，临近风险 {byHealth.GetValueOrDefault("at_risk")}，正常 {byHealth.GetValueOrDefault("on_track")}）");
+            foreach (var m in milestones.Where(m => m.Status == PmMilestoneStatus.Planned && m.DueAt.HasValue && m.DueAt.Value < now).OrderBy(m => m.DueAt).Take(5))
+                sb.AppendLine($"  - 逾期里程碑：{m.Title}（截止 {m.DueAt:yyyy-MM-dd}）");
+        }
+
+        // 目标信号
+        var goals = await _db.PmGoals.Find(g => g.ProjectId == p.Id && g.Scope == PmGoalScope.Team).ToListAsync();
+        if (goals.Count > 0)
+        {
+            sb.AppendLine($"团队目标：共 {goals.Count}（进度均值约 {(int)Math.Round(goals.Average(g => g.Progress))}%）");
+            foreach (var g in goals.OrderBy(g => g.Progress).Take(8))
+                sb.AppendLine($"  - {g.Title}（进度 {g.Progress}%，状态 {g.Status}{(string.IsNullOrWhiteSpace(g.Metric) ? "" : $"，指标 {g.Metric}")}）");
+        }
+
+        // 风险信号
+        var risks = await _db.PmRisks.Find(r => r.ProjectId == p.Id).ToListAsync();
+        var openRisks = risks.Where(r => r.Status != PmRiskStatus.Closed).ToList();
+        if (risks.Count > 0)
+        {
+            var highHigh = openRisks.Count(r => r.Probability == PmRiskLevel.High && r.Impact == PmRiskLevel.High);
+            sb.AppendLine($"风险：共 {risks.Count}，未关闭 {openRisks.Count}，其中高概率×高影响 {highHigh}");
+            foreach (var r in openRisks.Where(r => r.Probability == PmRiskLevel.High || r.Impact == PmRiskLevel.High).Take(8))
+                sb.AppendLine($"  - 风险：{r.Title}（概率 {r.Probability}/影响 {r.Impact}，应对 {r.Response}，状态 {r.Status}）");
+        }
+
+        // 决策信号（长期未决最值得关注）
+        var pending = await _db.PmDecisions.Find(d => d.ProjectId == p.Id && d.Type == PmDecisionType.Pending).ToListAsync();
+        if (pending.Count > 0)
+        {
+            sb.AppendLine($"待决策事项：{pending.Count} 项未拍板");
+            foreach (var d in pending.OrderBy(d => d.CreatedAt).Take(6))
+            {
+                var age = (int)Math.Round((now - d.CreatedAt).TotalDays);
+                sb.AppendLine($"  - {d.Title}（已挂起 {age} 天）");
+            }
+        }
+
+        // 最近周报趋势
+        var recentReports = await _db.PmWeeklyReports.Find(w => w.ProjectId == p.Id)
+            .SortByDescending(w => w.WeekStart).Limit(3).ToListAsync();
+        if (recentReports.Count > 0)
+            sb.AppendLine($"最近周报：{recentReports.Count} 篇（最新周起始 {recentReports[0].WeekStart:yyyy-MM-dd}）");
+        else
+            sb.AppendLine("最近周报：暂无（团队进展缺少书面同步）");
+
+        sb.AppendLine();
+        sb.AppendLine("请基于以上实时数据做项目健康诊断（Markdown 正文）。");
+        return sb.ToString();
+    }
+
     // ── 辅助方法 ──
 
     private async Task<PmProject?> FindAccessibleProjectAsync(string projectId, string userId)
@@ -2421,6 +2544,10 @@ public class CreateDecisionRequest
     public string? Title { get; set; }
     public string? Content { get; set; }
     public string? Type { get; set; }
+    /// <summary>关联目标 ID 列表（可空）</summary>
+    public List<string>? RelatedGoalIds { get; set; }
+    /// <summary>关联任务 ID 列表（可空）</summary>
+    public List<string>? RelatedTaskIds { get; set; }
 }
 
 public class UpdateDecisionRequest
@@ -2429,6 +2556,10 @@ public class UpdateDecisionRequest
     public string? Content { get; set; }
     public string? Type { get; set; }
     public long? OrderKey { get; set; }
+    /// <summary>关联目标 ID 列表（null=不变）</summary>
+    public List<string>? RelatedGoalIds { get; set; }
+    /// <summary>关联任务 ID 列表（null=不变）</summary>
+    public List<string>? RelatedTaskIds { get; set; }
 }
 
 public class WeeklyReportRequest

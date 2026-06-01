@@ -1338,6 +1338,7 @@ export const api = {
       milestones: (projectId: string) => `/api/pm/projects/${projectId}/milestones`,
       risks: (projectId: string) => `/api/pm/projects/${projectId}/risks`,
       closureReport: (projectId: string) => `/api/pm/projects/${projectId}/closure-report`,
+      healthDiagnosis: (projectId: string) => `/api/pm/projects/${projectId}/health-diagnosis`,
       stakeholders: (projectId: string) => `/api/pm/projects/${projectId}/stakeholders`,
       evaluationStart: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/start`,
       evaluationScore: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/score`,

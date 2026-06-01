@@ -1180,6 +1180,17 @@ public static class ProjectManagement
         )]
         public const string Chat = "pm-agent.closure-report::chat";
     }
+
+    public static class HealthDiagnosis
+    {
+        [AppCallerMetadata(
+            "AI 项目健康诊断",
+            "基于在管项目实时数据(进度/逾期/里程碑健康/风险分布/未决决策/预算)给出健康评级、风险信号与改进建议",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Analysis"
+        )]
+        public const string Chat = "pm-agent.health-diagnosis::chat";
+    }
 }
 
 /// <summary>

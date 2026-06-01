@@ -36,6 +36,12 @@ public class PmDecision
     /// <summary>创建人名称（冗余）</summary>
     public string? CreatedByName { get; set; }
 
+    /// <summary>关联目标 ID 列表（可空）—— 本决策影响/源自哪些业务目标，便于从目标反查决策。</summary>
+    public List<string> RelatedGoalIds { get; set; } = new();
+
+    /// <summary>关联任务 ID 列表（可空）—— 本决策影响/牵动哪些执行项。</summary>
+    public List<string> RelatedTaskIds { get; set; } = new();
+
     /// <summary>同状态内排序键（越小越靠前）</summary>
     public long OrderKey { get; set; }
 

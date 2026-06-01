@@ -359,14 +359,18 @@ export type PmDecision = {
   decidedBy?: string | null;
   decidedByName?: string | null;
   decidedAt?: string | null;
+  /** 关联目标 ID 列表 */
+  relatedGoalIds?: string[];
+  /** 关联任务 ID 列表 */
+  relatedTaskIds?: string[];
   createdBy: string;
   createdByName?: string | null;
   orderKey: number;
   createdAt: string;
   updatedAt: string;
 };
-export type CreatePmDecisionInput = { title: string; content?: string; type?: PmDecisionType };
-export type UpdatePmDecisionInput = Partial<{ title: string; content: string; type: PmDecisionType; orderKey: number }>;
+export type CreatePmDecisionInput = { title: string; content?: string; type?: PmDecisionType; relatedGoalIds?: string[]; relatedTaskIds?: string[] };
+export type UpdatePmDecisionInput = Partial<{ title: string; content: string; type: PmDecisionType; orderKey: number; relatedGoalIds: string[]; relatedTaskIds: string[] }>;
 export type ListPmDecisionsContract = (projectId: string) => Promise<ApiResponse<{ items: PmDecision[] }>>;
 export type CreatePmDecisionContract = (projectId: string, input: CreatePmDecisionInput) => Promise<ApiResponse<PmDecision>>;
 export type UpdatePmDecisionContract = (decisionId: string, input: UpdatePmDecisionInput) => Promise<ApiResponse<{ updated: boolean }>>;

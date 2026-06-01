@@ -207,6 +207,46 @@ public class PmAgentService
          + "结构：## 一、项目概述 / ## 二、目标达成情况 / ## 三、关键里程碑与交付 / ## 四、数据回顾（任务·进度·成本）/ "
          + "## 五、干系人评价(NPSS) / ## 六、经验与不足 / ## 七、后续建议。客观、具体、可追溯，避免空话套话。只输出 Markdown 正文。";
 
+    // ── AI 项目健康诊断 ──
+
+    /// <summary>基于在管项目实时数据摘要流式生成 Markdown 健康诊断（不落库，前端审核后可存知识库）。</summary>
+    public async Task<string?> DiagnoseHealthAsync(
+        PmProject project, string statsSummary, string userId,
+        Func<string, Task>? onContent, Func<string, Task>? onThinking, Action<string>? onError)
+    {
+        var request = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.ProjectManagement.HealthDiagnosis.Chat,
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = BuildHealthDiagnosisSystemPrompt() },
+                    new JsonObject { ["role"] = "user", ["content"] = statsSummary }
+                },
+                ["temperature"] = 0.4,
+                ["include_reasoning"] = true,
+                ["reasoning"] = new JsonObject { ["exclude"] = false },
+            },
+            TimeoutSeconds = 180,
+            IncludeThinking = true,
+            Context = new GatewayRequestContext { UserId = userId }
+        };
+        var (full, err) = await StreamAndAccumulateAsync(request, onContent, onThinking);
+        if (err != null) { onError?.Invoke(err); return null; }
+        return full;
+    }
+
+    private static string BuildHealthDiagnosisSystemPrompt()
+        => "你是资深项目管理顾问（PMO），正在为一个【进行中】的项目做健康诊断（注意：不是结案总结，而是发现当前问题、给出可立即执行的纠偏建议）。"
+         + "基于用户提供的项目实时数据（进度、逾期任务、里程碑健康、风险概率×影响分布、未决决策、预算使用、计划周期、最近周报趋势），输出结构化 Markdown 诊断。"
+         + "结构：## 一、健康总评（先给一句结论 + 评级：健康 / 需关注 / 高危，并说明判定依据）/ "
+         + "## 二、关键风险信号（按严重度排序，逐条说明现象→影响→根因推测）/ "
+         + "## 三、进度与里程碑诊断 / ## 四、风险与决策诊断（含长期未决的待决策事项）/ "
+         + "## 五、立即行动建议（3-6 条，每条给出建议负责角色与优先级，可落地、可验收）。"
+         + "诊断要尖锐、具体、对事不对人，引用真实数据佐证，避免空话套话与无依据的乐观。只输出 Markdown 正文。";
+
     // ── 工具方法 ──
 
     private async Task<(string content, string? error)> StreamAndAccumulateAsync(
