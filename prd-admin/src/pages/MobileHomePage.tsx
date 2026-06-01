@@ -102,7 +102,15 @@ export default function MobileHomePage() {
         setStats(statsRes.value.data);
       }
       if (notifRes.status === 'fulfilled' && notifRes.value.success) {
-        setNotifications(notifRes.value.data.items?.filter((n) => n.status === 'open') ?? []);
+        const items = (notifRes.value.data.items ?? [])
+          .filter((n) => n.status === 'open')
+          .slice()
+          .sort((a, b) => {
+            const ta = new Date(a.createdAt).getTime() || 0;
+            const tb = new Date(b.createdAt).getTime() || 0;
+            return tb - ta;
+          });
+        setNotifications(items);
       }
     })();
   }, []);

@@ -27,8 +27,32 @@ const PIN_KEY = 'tipsBookPinned';
 const HIDDEN_KEY = 'tipsBookHidden';
 /** 本 session 已自动弹过的 tip id 集合(按 id 记忆,新推送的 tip 还能再弹) */
 const AUTO_OPENED_IDS_KEY = 'tipsBookAutoOpenedIds';
-/** 首次访问自动弹过一次的标志(全域 session 级,只兜底提示新用户) */
-const FIRST_VISIT_SHOWN_KEY = 'tipsBookFirstVisitShown';
+/** 自动弹出的日级节流:记录今日已自动弹过的日期串(YYYY-M-D)。
+ *  无论是「首次兜底」还是「新推送定向 tip」,每天只允许自动弹一次。
+ *  受 no-localStorage 规则约束走 sessionStorage,同 tab 内严格只弹一次;
+ *  新 tab 同日仍会弹一次,这是 sessionStorage 的固有边界。 */
+const AUTO_OPEN_DATE_KEY = 'tipsBookAutoOpenedDate';
+
+function todayStr(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+}
+
+function hasAutoOpenedToday(): boolean {
+  try {
+    return sessionStorage.getItem(AUTO_OPEN_DATE_KEY) === todayStr();
+  } catch {
+    return false;
+  }
+}
+
+function markAutoOpenedToday() {
+  try {
+    sessionStorage.setItem(AUTO_OPEN_DATE_KEY, todayStr());
+  } catch {
+    /* noop */
+  }
+}
 /** 悬浮组整体折叠(书 + AppShell toast 铃铛联动):由任一端写,另一端订阅事件。
  *  AppShell 通过 import 这个常量读同一 key,避免字符串字面量漂移。 */
 export const FLOATING_DOCK_COLLAPSED_KEY = 'floatingDockCollapsed';
@@ -166,12 +190,14 @@ export function TipsDrawer() {
   // 已弹过集合里 → 再自动弹一次。解决「session 第二条推送不弹」的坑。
   useEffect(() => {
     if (!loaded) return;
+    if (hasAutoOpenedToday()) return; // 每天只自动弹一次
     const opened = readAutoOpenedIds();
     const newTargeted = tips.find((t) => t.isTargeted && !opened.has(t.id));
     if (!newTargeted) return;
 
     opened.add(newTargeted.id);
     writeAutoOpenedIds(opened);
+    markAutoOpenedToday();
 
     // hidden 状态时先把书拉回来
     if (hiddenByUser) {
@@ -183,15 +209,16 @@ export function TipsDrawer() {
 
   // ── 新用户兜底:本 session 第一次访问、有任意 tip 时自动弹一次 ──
   // 让用户第一次看到书时就知道它是做什么的(管理员没推送也能看到 seed 内容)
+  // 新用户兜底:本日第一次访问、有任意 tip 时自动弹一次
+  // 让用户第一次看到书时就知道它是做什么的(管理员没推送也能看到 seed 内容)
+  // 日级节流 AUTO_OPEN_DATE_KEY 是单一 source of truth;
+  // 历史的 FIRST_VISIT_SHOWN_KEY 已删除以避免与日级节流双 flag 不一致
+  // (bugbot ref1: 旧 flag 会在 targeted-tip 路径先触发时永远不被写入,跨日 remount 会让新用户路径误触发)
   useEffect(() => {
     if (!loaded) return;
     if (tips.length === 0) return;
-    try {
-      if (sessionStorage.getItem(FIRST_VISIT_SHOWN_KEY)) return;
-      sessionStorage.setItem(FIRST_VISIT_SHOWN_KEY, '1');
-    } catch {
-      return;
-    }
+    if (hasAutoOpenedToday()) return; // 每天只自动弹一次
+    markAutoOpenedToday();
     setExpanded(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, tips.length > 0]);

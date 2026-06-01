@@ -39,13 +39,19 @@ export default function MobileNotificationsPage() {
 
   useEffect(() => { void loadNotifications(); }, [loadNotifications]);
 
+  const sortByCreatedDesc = (a: AdminNotificationItem, b: AdminNotificationItem) => {
+    const ta = new Date(a.createdAt).getTime() || 0;
+    const tb = new Date(b.createdAt).getTime() || 0;
+    return tb - ta;
+  };
+
   const activeNotifications = useMemo(
-    () => notifications.filter((n) => n.status === 'open'),
+    () => notifications.filter((n) => n.status === 'open').slice().sort(sortByCreatedDesc),
     [notifications],
   );
 
   const handledNotifications = useMemo(
-    () => notifications.filter((n) => n.status === 'handled'),
+    () => notifications.filter((n) => n.status === 'handled').slice().sort(sortByCreatedDesc),
     [notifications],
   );
 

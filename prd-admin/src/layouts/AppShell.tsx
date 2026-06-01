@@ -473,9 +473,17 @@ export default function AppShell() {
 
   // 移动端底部 Tab 栏: 5 固定 Tab（首页/浏览/+/资产/我的），不再依赖后端菜单
 
-  // 过滤活跃通知：仅显示状态为 open 的通知
+  // 过滤活跃通知：仅显示状态为 open 的通知，按创建时间倒序（最新在前）
   const activeNotifications = useMemo(
-    () => notifications.filter((n) => n.status === 'open'),
+    () =>
+      notifications
+        .filter((n) => n.status === 'open')
+        .slice()
+        .sort((a, b) => {
+          const ta = new Date(a.createdAt).getTime() || 0;
+          const tb = new Date(b.createdAt).getTime() || 0;
+          return tb - ta;
+        }),
     [notifications]
   );
   const notificationCount = activeNotifications.length;
