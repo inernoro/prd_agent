@@ -66,6 +66,37 @@ function ToolboxIcon({ name, size = 14 }: { name?: string; size?: number }) {
 // 输入截断：避免 LLM context 爆
 const MAX_DOC_CHARS = 40000;
 
+// 客户端 chat 历史持久化：direct-chat 不在后端落 Run，
+// 关掉抽屉 / 切换标签后再开必须保留对话（Bugbot 九轮 Medium）。
+// 项目禁用 localStorage，统一走 sessionStorage（no-localstorage.md 规则）。
+const CHAT_HISTORY_STORAGE_KEY = 'reprocess-chat-drawer:history';
+const MAX_PERSISTED_ENTRIES = 30;
+type PersistedChatState = {
+  messages: ChatMessage[];
+  activeRef?: { kind: 'toolbox'; itemId: string } | { kind: 'kbAgent'; key: string };
+};
+function loadPersistedChat(entryId: string): PersistedChatState | null {
+  try {
+    const raw = sessionStorage.getItem(`${CHAT_HISTORY_STORAGE_KEY}:${entryId}`);
+    return raw ? JSON.parse(raw) as PersistedChatState : null;
+  } catch { return null; }
+}
+function savePersistedChat(entryId: string, state: PersistedChatState) {
+  try {
+    sessionStorage.setItem(`${CHAT_HISTORY_STORAGE_KEY}:${entryId}`, JSON.stringify(state));
+    // 简单 LRU 上限：超出 30 条 entry key 时清最早的那一批，避免 sessionStorage 无限增长
+    const indexKey = `${CHAT_HISTORY_STORAGE_KEY}:idx`;
+    const idx: string[] = JSON.parse(sessionStorage.getItem(indexKey) || '[]');
+    const next = idx.filter((id) => id !== entryId);
+    next.push(entryId);
+    while (next.length > MAX_PERSISTED_ENTRIES) {
+      const evicted = next.shift()!;
+      sessionStorage.removeItem(`${CHAT_HISTORY_STORAGE_KEY}:${evicted}`);
+    }
+    sessionStorage.setItem(indexKey, JSON.stringify(next));
+  } catch { /* 配额满了就放弃，下次再试 */ }
+}
+
 type ChatMessage = {
   id: string;
   role: 'user' | 'assistant';
@@ -257,6 +288,34 @@ export function ReprocessChatDrawer({
           else if (kb) setActive({ kind: 'kbAgent', agent: kb });
         }
       }
+
+      // 客户端 sessionStorage 里 direct-chat 留下的对话也合并（Bugbot 九轮 Medium）
+      // 注意：后端 active-run 只有走过旧 worker 路径的会话；direct-chat 完全不存后端，
+      // 必须靠这一份 client-side cache 才不会"关了抽屉就丢"
+      const persisted = loadPersistedChat(entryId);
+      if (persisted) {
+        if (persisted.messages.length > 0) {
+          setMessages((prev) => {
+            const seen = new Set(prev.map((m) => m.id));
+            const fresh = persisted.messages.filter((m) => !seen.has(m.id));
+            return [...prev, ...fresh];
+          });
+        }
+        // 旧 worker restored 块若已经设过 setActive 就跳过 persisted 的 activeRef，避免冲突
+        const workerSetActive = !!(activeRun
+          && (activeRun.messages || []).slice().reverse().find((m) => m.role === 'user')?.templateKey);
+        if (persisted.activeRef && !workerSetActive) {
+          const ref = persisted.activeRef;
+          if (ref.kind === 'toolbox') {
+            const tb = ordered.find((t) => t.id === ref.itemId)
+              ?? userOwnedToolbox.find((t) => t.id === ref.itemId);
+            if (tb) setActive({ kind: 'toolbox', item: tb });
+          } else {
+            const kb = loadedKbAgents.find((a) => a.key === ref.key);
+            if (kb) setActive({ kind: 'kbAgent', agent: kb });
+          }
+        }
+      }
     })();
 
     return () => {
@@ -269,6 +328,27 @@ export function ReprocessChatDrawer({
 
   // 关闭浮层时也走统一 abort，确保 streamingId 被清掉
   useEffect(() => () => abortCurrentStream(), [abortCurrentStream]);
+
+  // 把对话持久化到 sessionStorage：direct-chat 不存后端，关掉抽屉后再开必须能恢复
+  // （Bugbot 九轮 Medium）。streaming 状态不持久化——下次开抽屉时按已落地内容显示，
+  // 没必要带回流式态。
+  useEffect(() => {
+    if (loadingDoc || loadingAgents) return; // 初始化中还没合并完，先别覆盖
+    if (messages.length === 0 && !active) return; // 干净空状态不写
+    const activeRef: PersistedChatState['activeRef'] = active?.kind === 'toolbox'
+      ? { kind: 'toolbox', itemId: active.item.id }
+      : active?.kind === 'kbAgent'
+        ? { kind: 'kbAgent', key: active.agent.key }
+        : undefined;
+    savePersistedChat(entryId, {
+      messages: messages.map((m) => ({
+        ...m,
+        streaming: false,
+        phase: m.phase === 'thinking' || m.phase === 'streaming' ? 'done' : m.phase,
+      })),
+      activeRef,
+    });
+  }, [entryId, messages, active, loadingDoc, loadingAgents]);
 
   // 点击外面关闭 picker
   useEffect(() => {

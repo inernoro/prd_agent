@@ -2424,10 +2424,11 @@ public class DocumentStoreController : ControllerBase
     [HttpGet("entries/{entryId}/reprocess/active-run")]
     public async Task<IActionResult> GetActiveReprocessRun(string entryId)
     {
-        var (_, _, err) = await LoadOwnedEntryAsync(entryId);
-        if (err != null) return err;
-
+        // 同 apply-content：team writable。owner-only 会让协作成员看不到自己跑过的会话历史
+        // —— UI 里能写 AI 输出回去，却查不到自己的 chat run（Bugbot 九轮 Medium）
         var userId = GetUserId();
+        var (_, _, err) = await LoadWritableEntryAsync(entryId, userId);
+        if (err != null) return err;
         var run = await _db.DocumentStoreAgentRuns
             .Find(r => r.SourceEntryId == entryId
                        && r.UserId == userId
