@@ -101,23 +101,39 @@ public sealed class DailyTipsController : ControllerBase
         // tip.Version 升级后 learnedMap 里的旧 Version 不再匹配,用户会重新看到。
         items = FilterLearned(items, learnedMap);
 
-        // 数据库没有任何 tip 时,兜底返回内置默认集,避免新环境出现空白
-        if (items.Count == 0)
-        {
-            items = BuildDefaultTips(now);
-            // 兜底集合同样走发布窗口过滤,否则带固定 EndAt 的时效公告在空环境永不过期(与 DB 路径口径一致)
-            items = items.Where(t =>
-                (t.StartAt == null || t.StartAt <= now)
-                && (t.EndAt == null || t.EndAt > now)).ToList();
-            if (foreverDismissed.Count > 0)
-            {
-                items = items.Where(t =>
-                    !foreverDismissed.Contains(t.Id)
-                    && !(t.SourceId != null && foreverDismissed.Contains(t.SourceId))
-                ).ToList();
-            }
-            items = FilterLearned(items, learnedMap);
-        }
+        // 合并代码内置 seed 集合：即使 DB 已有其他 tip，也要让新加的 BuildDefaultTips seed
+        // （如本周发的 feature-release 公告）自动出现，不需要管理员手动跑 /seed。
+        // 去重规则：DB 中存在该 SourceId 的记录就跳过 — 包括 IsActive=false 或在发布窗口外的，
+        // 否则 admin 显式禁用 / 排期未到 / 已过期的 seed 会被 code seed 重新复活
+        // (Codex P2)。直接查 DB 全量 SourceId，不依赖已过滤的 items 列表。
+        var allDbSourceIds = await _db.DailyTips
+            .Find(Builders<DailyTip>.Filter.Ne<string?>(t => t.SourceId, null))
+            .Project(t => t.SourceId)
+            .ToListAsync(ct);
+        var dbSourceIds = allDbSourceIds
+            .Where(s => !string.IsNullOrEmpty(s))
+            .Select(s => s!)
+            .ToHashSet();
+        var seedFillers = BuildDefaultTips(now)
+            .Where(seed => seed.SourceId != null && !dbSourceIds.Contains(seed.SourceId))
+            .Where(t => (t.StartAt == null || t.StartAt <= now)
+                     && (t.EndAt == null || t.EndAt > now))
+            .Where(t => !foreverDismissed.Contains(t.Id)
+                     && !(t.SourceId != null && foreverDismissed.Contains(t.SourceId)))
+            .ToList();
+        seedFillers = FilterLearned(seedFillers, learnedMap);
+        items.AddRange(seedFillers);
+
+        // Code seed 是 Tier 的权威源（Codex P2）：pre-Tier 环境 DB 行 Tier 字段缺失，
+        // 反序列化为默认 "basic"，可能覆盖代码里改成 "advanced" 的真实意图。
+        // 这里建一份 SourceId → Tier 映射，下游响应和 MarkLearned 都按此覆盖。
+        var codeSeedTier = BuildDefaultTips(now)
+            .Where(s => !string.IsNullOrEmpty(s.SourceId))
+            .ToDictionary(s => s.SourceId!, s => s.Tier);
+
+        // 注：不再保留「items.Count == 0 时重建 BuildDefaultTips」的旧 fallback。
+        // 上方 seedFillers 已经覆盖空 DB 场景（dbSourceIds 为空集，seedFillers = 全套合规 seed），
+        // 旧 fallback 会绕过 dbSourceIds 让 admin 禁用 (IsActive=false) 的 seed 复活 (Codex P2)。
 
         // 定向 tip / 被投递 tip 永远置顶,保证「为你修复」类消息被最先看到
         var ordered = items
@@ -143,6 +159,9 @@ public sealed class DailyTipsController : ControllerBase
                     x.SourceType,
                     x.SourceId,
                     x.Version,
+                    Tier = (x.SourceId != null && codeSeedTier.TryGetValue(x.SourceId, out var codeTier))
+                        ? codeTier
+                        : x.Tier,
                     x.CreatedAt,
                     // 若用户有投递记录,附带 delivery 状态便于前端轻量展示
                     deliveryStatus = mine?.Status,
@@ -282,15 +301,23 @@ public sealed class DailyTipsController : ControllerBase
         var userId = this.GetRequiredUserId();
         var now = DateTime.UtcNow;
 
-        // 找 tip 拿 (SourceId, Version)。seed-* id 的兜底 tip 数据库里没有,
+        // 找 tip 拿 (SourceId, Version, Tier)。seed-* id 的兜底 tip 数据库里没有,
         // 直接从 BuildDefaultTips 里查;管理员创建的真实 tip 走数据库。
         string sourceId;
         int version;
+        string tier;
         var dbTip = await _db.DailyTips.Find(t => t.Id == id).FirstOrDefaultAsync(ct);
         if (dbTip != null)
         {
             sourceId = dbTip.SourceId ?? dbTip.Id;
             version = dbTip.Version;
+            // Code seed 是 Tier 的权威源（Codex P2）：pre-Tier 环境跑过 /seed 的 DB 行
+            // 没有 Tier 字段会反序列化为默认 "basic"，覆盖代码里改成 "advanced" 的意图。
+            // 当 SourceId 在 BuildDefaultTips 里匹配，使用 code seed 的 Tier，否则用 DB 值。
+            var codeSeed = !string.IsNullOrEmpty(dbTip.SourceId)
+                ? BuildDefaultTips(now).FirstOrDefault(s => s.SourceId == dbTip.SourceId)
+                : null;
+            tier = codeSeed?.Tier ?? dbTip.Tier;
         }
         else if (id.StartsWith("seed-"))
         {
@@ -300,11 +327,19 @@ public sealed class DailyTipsController : ControllerBase
                 return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "seed tip 不存在"));
             sourceId = seed.SourceId!;
             version = seed.Version;
+            tier = seed.Tier;
         }
         else
         {
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "tip 不存在"));
         }
+
+        // 分层逻辑核心（容错：null / 缺字段 / 未来扩展的新 tier 都默认走 basic 路径，
+        // 只有显式 "advanced" 才按版本号层叠推进。这样老 DB 记录 Tier 反序列化为 null
+        // 不会破坏「basic 永不再弹」的承诺）：
+        // - basic / null / 其他: 写入 sentinel Version = int.MaxValue。
+        // - advanced: 写入真实 Version，管理员升 Version 后 learnedVer < t.Version → 再次弹出。
+        var learnedVersion = tier == "advanced" ? version : int.MaxValue;
 
         // 幂等写入:先剔除同 SourceId 的旧记录,再 push 新的 (SourceId, Version)。
         // Mongo 的 $pull 和 $push 不能在同一次 update 里作用于同一字段(冲突),
@@ -320,17 +355,23 @@ public sealed class DailyTipsController : ControllerBase
             Builders<User>.Update.Push(u => u.LearnedTips!, new UserLearnedTip
             {
                 SourceId = sourceId,
-                Version = version,
+                Version = learnedVersion,
                 LearnedAt = now,
             }),
             cancellationToken: ct);
 
-        return Ok(ApiResponse<object>.Ok(new { learned = new { sourceId, version } }));
+        return Ok(ApiResponse<object>.Ok(new { learned = new { sourceId, version = learnedVersion, tier } }));
     }
 
     private static List<DailyTip> FilterLearned(List<DailyTip> items, Dictionary<string, int> learnedMap)
     {
         if (learnedMap.Count == 0) return items;
+        // 单一对比即可覆盖两层语义，不需要在过滤端区分 Tier：
+        // - basic: MarkLearned 写入 sentinel int.MaxValue → learnedVer (MaxValue) >= t.Version
+        //   永远成立 → 永久隐藏。
+        // - advanced: MarkLearned 写入真实 Version → 管理员 bump 后 learnedVer < t.Version → 重弹。
+        // - 兼容性：本 PR 之前已学的 tip 仍按 Version 对比，行为完全不变；这些用户在 tip
+        //   下次升 Version 时会再看到一次，重新「完成」后按当前 Tier 写入 sentinel 或新 Version。
         return items.Where(t =>
         {
             var key = t.SourceId ?? t.Id;
@@ -356,7 +397,8 @@ public sealed class DailyTipsController : ControllerBase
             string actionUrl, string ctaText,
             string? targetSelector, int order,
             DailyTipAutoAction? autoAction = null,
-            DateTime? endAt = null, string sourceType = "seed")
+            DateTime? endAt = null, string sourceType = "seed",
+            string tier = "basic")
             => new()
             {
                 Id = $"seed-{id}",
@@ -373,6 +415,7 @@ public sealed class DailyTipsController : ControllerBase
                 DisplayOrder = order,
                 IsActive = true,
                 EndAt = endAt,
+                Tier = tier,
                 CreatedBy = "system:seed",
                 CreatedAt = now,
                 UpdatedAt = now
@@ -394,7 +437,8 @@ public sealed class DailyTipsController : ControllerBase
                 2,
                 autoAction: null,
                 endAt: FeatureTip2026W21ExpireAt,
-                sourceType: "feature-release"),
+                sourceType: "feature-release",
+                tier: "advanced"),
 
             T("feature-2026w21-knowledge-browser", "card",
                 "知识库阅读体验升级",
@@ -405,7 +449,101 @@ public sealed class DailyTipsController : ControllerBase
                 3,
                 autoAction: null,
                 endAt: FeatureTip2026W21ExpireAt,
-                sourceType: "feature-release"),
+                sourceType: "feature-release",
+                tier: "advanced"),
+
+            // ===== 网页托管：basic 基础教程（空间模型 + 拖拽上传）=====
+            // 用户完成一次永不再弹（即使 Tier 升级也不再骚扰），适合"操作类常识"。
+            T("webpages-basics", "card",
+                "网页托管：空间、拖拽、分享 3 分钟上手",
+                "了解个人/团队空间的协作边界、拖文件直接上传、用投放面板一键公开或分享。",
+                "/web-pages",
+                "开始上手",
+                "[data-tour-id=webpages-space-bar]",
+                4,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new()
+                        {
+                            Selector = "[data-tour-id=webpages-space-bar]",
+                            Title = "第 1 步：三种空间并列",
+                            Body = "「个人空间 / 团队空间-A / 团队空间-B」chip 平铺，单击切换。每个 chip 后的数字是该空间下站点数。",
+                            NavigateTo = "/web-pages",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=webpages-space-add]",
+                            Title = "第 2 步：新建或加入团队空间",
+                            Body = "最右侧虚线「+」可新建团队空间或用邀请码加入别人的。团队空间是协作边界，站点在该空间内的成员都能看到。",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=share-dock-panel]",
+                            Title = "第 3 步：直接把文件拖到投放面板",
+                            Body = "不用点按钮，HTML/ZIP/Markdown/PDF/视频 都能拖到右侧投放面板的虚线 dropzone 上传（面板若已折叠，先点一下展开）。",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=share-dock-panel]",
+                            Title = "第 4 步：投放面板三个槽位",
+                            Body = "展开后会看到「公开 / 分享 / 回收」三个槽位，拖任意站点卡片过去即可完成操作，无需弹窗确认。",
+                        },
+                    },
+                },
+                tier: "basic"),
+
+            // ===== 网页托管：advanced 本周改动（带版本号，下次再大改可升 Version 重弹）=====
+            T("webpages-feature-2026w22-pill-controls", "card",
+                "网页托管这周改了啥",
+                "排序+分组从下拉框改成 segment pill，单击即切；列表视图去掉重背景和分隔线；头部分级降噪；整页背景提亮。",
+                "/web-pages",
+                "看本周改动",
+                "[data-tour-id=webpages-header-actions]",
+                1,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new()
+                        {
+                            Selector = "[data-tour-id=webpages-header-actions]",
+                            Title = "第 1 步：头部按钮分级",
+                            Body = "「上传站点」是唯一 primary；「分享统计 / 分享管理」收成 icon 按钮 + tooltip，视觉权重一目了然。",
+                            NavigateTo = "/web-pages",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=webpages-sort-pills]",
+                            Title = "第 2 步：排序 segment pill",
+                            Body = "五种排序（最新/最早/标题/浏览/体积）平铺成 pill，**单击任意一个直接切到**，0 次下拉。",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=webpages-group-pills]",
+                            Title = "第 3 步：分组 segment pill",
+                            Body = "「日期 / 文件夹」二选一，单击切换。被 5-27 误删的分组能力已恢复。",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=webpages-view-toggle]",
+                            Title = "第 4 步：视图切换 + 列表清爽",
+                            Body = "右侧 ⊞/☰ 切网格/列表。列表视图去掉了行底分隔线 + 日期组延伸线，靠空白和日期标签做分组。",
+                        },
+                        new()
+                        {
+                            Selector = "[data-tour-id=webpages-root]",
+                            Title = "第 5 步：整页提亮",
+                            Body = "页面背景加了 indigo 顶部光晕 + 三段渐变，告别死黑。下次还有改动会用「升级」徽章再推给你。",
+                        },
+                    },
+                },
+                endAt: new DateTime(2026, 6, 15, 0, 0, 0, DateTimeKind.Utc),
+                sourceType: "feature-release",
+                tier: "advanced"),
 
             // 1. 自定义导航顺序 —— 排第一,新用户上手第一件事就是配自己的菜单
             T("nav-order-customize", "card",

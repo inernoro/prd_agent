@@ -3,7 +3,6 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { PageHeader } from '@/components/design/PageHeader';
-import { Select } from '@/components/design/Select';
 import { toast } from '@/lib/toast';
 import { SitePreview } from '@/components/SitePreview';
 import { PdfThumbnail, isPdfSite } from '@/components/PdfThumbnail';
@@ -212,6 +211,67 @@ function buildSiteGroups(items: HostedSite[], mode: GroupMode): SiteGroup[] {
   return groups;
 }
 
+// ─── 排序循环：单击在 5 个选项之间下一步 ───
+
+const SORT_OPTIONS: { value: string; label: string }[] = [
+  { value: 'newest', label: '最新' },
+  { value: 'oldest', label: '最早' },
+  { value: 'title', label: '标题' },
+  { value: 'most-viewed', label: '浏览' },
+  { value: 'largest', label: '体积' },
+];
+
+// ─── 分段 pill 组件：当前项 pill 高亮 + 平铺所有选项，单击即切 ───
+function SegmentPills({
+  options,
+  value,
+  onChange,
+}: {
+  options: { value: string; label: string }[];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div
+      className="inline-flex items-center gap-1 p-1 rounded-lg shrink-0"
+      style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-default)' }}
+    >
+      {options.map((opt) => {
+        const active = opt.value === value;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => onChange(opt.value)}
+            className="h-7 px-3 rounded-md text-[13px] transition-colors"
+            style={
+              active
+                ? {
+                    background: 'rgba(99,102,241,0.22)',
+                    color: '#c7d2fe',
+                    fontWeight: 500,
+                    boxShadow: 'inset 0 0 0 1px rgba(99,102,241,0.45)',
+                  }
+                : {
+                    background: 'transparent',
+                    color: 'var(--text-muted)',
+                  }
+            }
+            onMouseEnter={(e) => {
+              if (!active) e.currentTarget.style.color = 'var(--text-primary)';
+            }}
+            onMouseLeave={(e) => {
+              if (!active) e.currentTarget.style.color = 'var(--text-muted)';
+            }}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── Main Page ───
 
 /** 单站点在当前作用域下的操作能力（团队作用域按角色 + 是否站点创建者解析；个人作用域全开） */
@@ -248,7 +308,7 @@ export default function WebPagesPage() {
       : { scope: 'mine' as const, teamId: null }),
     [currentSpace],
   );
-  const groupMode: GroupMode = 'time';
+  const [groupMode, setGroupMode] = useState<GroupMode>('time');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   // 已分享站点集合（单站点分享）：驱动卡片「已分享」标记 + 分享按钮转「取消分享」 + 投放槽读心
   const [sharedSiteIds, setSharedSiteIds] = useState<Set<string>>(new Set());
@@ -550,7 +610,7 @@ export default function WebPagesPage() {
         ))}
       </div>
     ) : (
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col">
         {items.map(site => (
           <SiteListItem
             key={site.id}
@@ -571,7 +631,14 @@ export default function WebPagesPage() {
     );
 
   return (
-    <div className="h-full flex flex-col gap-4 p-4 overflow-auto" style={{ background: 'var(--bg-base)' }}>
+    <div
+      data-tour-id="webpages-root"
+      className="h-full flex flex-col gap-4 p-4 overflow-auto"
+      style={{
+        background:
+          'radial-gradient(ellipse 70% 40% at 50% -10%, rgba(99,102,241,0.14) 0%, transparent 55%), linear-gradient(180deg, #20212a 0%, #181a22 480px, #16181f 100%)',
+      }}
+    >
       {/* 右侧投放面板：可拖动 + 可收起，拖站点卡片到槽位即可公开/分享/删除 */}
       <ShareDock
         mime={WEB_PAGE_MIME}
@@ -694,15 +761,29 @@ export default function WebPagesPage() {
       />
       <PageHeader
         title="网页托管"
-        description="上传 HTML/ZIP、Markdown、PDF 或视频，自动托管并生成可分享的访问链接"
         actions={
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="ghost" onClick={() => setShowAnalytics(true)} title="查看分享统计（PV/IP/时间线）">
-              <BarChart3 size={14} className="mr-1" /> 分享统计
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => { setShareTargetId(null); setShowSharesPanel(true); }}>
-              <Link2 size={14} className="mr-1" /> 分享管理
-            </Button>
+          <div data-tour-id="webpages-header-actions" className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setShowAnalytics(true)}
+              title="分享统计（PV/IP/时间线）"
+              aria-label="分享统计"
+              className="h-8 w-8 inline-flex items-center justify-center rounded-md transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.06))]"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              <BarChart3 size={15} />
+            </button>
+            <button
+              type="button"
+              onClick={() => { setShareTargetId(null); setShowSharesPanel(true); }}
+              title="分享管理"
+              aria-label="分享管理"
+              className="h-8 w-8 inline-flex items-center justify-center rounded-md transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.06))]"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              <Link2 size={15} />
+            </button>
+            <span className="mx-1 h-5 w-px" style={{ background: 'var(--border-default)' }} />
             {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
               <Button size="sm" variant="primary" onClick={openCreateUploadDialog}>
                 <Upload size={14} className="mr-1" /> 上传站点
@@ -736,23 +817,29 @@ export default function WebPagesPage() {
             />
           </div>
 
-          {/* Sort */}
-          <div className="w-[130px] shrink-0">
-            <Select
-              uiSize="sm"
+          {/* 排序 segment pill group：当前项 pill 高亮，点击任意切到那个 */}
+          <div data-tour-id="webpages-sort-pills">
+            <SegmentPills
+              options={SORT_OPTIONS}
               value={sort}
-              onChange={e => setSort(e.target.value)}
-            >
-              <option value="newest">最新创建</option>
-              <option value="oldest">最早创建</option>
-              <option value="title">按标题</option>
-              <option value="most-viewed">最多浏览</option>
-              <option value="largest">最大体积</option>
-            </Select>
+              onChange={setSort}
+            />
+          </div>
+
+          {/* 分组 segment pill group：二选一 */}
+          <div data-tour-id="webpages-group-pills">
+            <SegmentPills
+              options={[
+                { value: 'time', label: '日期' },
+                { value: 'folder', label: '文件夹' },
+              ]}
+              value={groupMode}
+              onChange={(v) => setGroupMode(v as GroupMode)}
+            />
           </div>
 
           {/* View mode */}
-          <div className="flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid var(--border-default)' }}>
+          <div data-tour-id="webpages-view-toggle" className="flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid var(--border-default)' }}>
             <button
               onClick={() => setViewMode('grid')}
               className="p-2 transition-colors"
@@ -865,10 +952,13 @@ export default function WebPagesPage() {
             <div key={group.key} className="flex flex-col gap-2">
               {/* 分节标题：时间桶（今天/昨天/M月D日）或文件夹名 */}
               <div className="flex items-center gap-2 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
-                <Clock size={12} style={{ color: 'var(--accent-primary)' }} />
+                {groupMode === 'folder' ? (
+                  <Folder size={12} style={{ color: 'var(--accent-primary)' }} />
+                ) : (
+                  <Clock size={12} style={{ color: 'var(--accent-primary)' }} />
+                )}
                 <span>{group.label}</span>
                 <span style={{ color: 'var(--text-faint, var(--text-muted))' }}>· {group.items.length}</span>
-                <div className="flex-1 h-px" style={{ background: 'var(--border-default)' }} />
               </div>
               {renderGroupItems(group.items)}
             </div>
@@ -1637,9 +1727,11 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
     resolveVisitUrl(site).then(url => { if (w) w.location.href = url; });
   };
   return (
-    <GlassCard
-      className="group flex items-center gap-4 p-3 cursor-grab active:cursor-grabbing touch-none"
-      style={{ border: selected ? '2px solid var(--accent-primary)' : undefined }}
+    <div
+      className="group flex items-center gap-4 px-3 py-2 rounded-md cursor-grab active:cursor-grabbing touch-none transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.04))]"
+      style={{
+        background: selected ? 'rgba(99,102,241,0.10)' : 'transparent',
+      }}
       onPointerDown={onPointerDown}
     >
       <input
@@ -1738,7 +1830,7 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
           </button>
         )}
       </div>
-    </GlassCard>
+    </div>
   );
 }
 

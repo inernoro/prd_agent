@@ -64,7 +64,7 @@ export function SpaceBar({
   );
 
   return (
-    <div className="flex items-center gap-2 overflow-x-auto pb-0.5 w-full" style={{ overscrollBehavior: 'contain' }}>
+    <div data-tour-id="webpages-space-bar" className="flex items-center gap-2 overflow-x-auto pb-0.5 w-full" style={{ overscrollBehavior: 'contain' }}>
       {pill(<><User size={13} /> 个人空间</>, current.kind === 'personal', () => onChange({ kind: 'personal' }), 'personal')}
       {teams.map((t) =>
         pill(
@@ -77,6 +77,7 @@ export function SpaceBar({
       <div className="relative shrink-0" ref={addRef}>
         <button
           type="button"
+          data-tour-id="webpages-space-add"
           title="新建 / 加入团队空间"
           onClick={() => setAdding((o) => !o)}
           className="h-8 w-8 rounded-[8px] flex items-center justify-center"

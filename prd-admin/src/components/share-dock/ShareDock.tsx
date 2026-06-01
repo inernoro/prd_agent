@@ -319,6 +319,7 @@ export function ShareDock({
     return (
       <div
         ref={dockRef}
+        data-tour-id="share-dock-panel"
         className="fixed z-40 select-none"
         style={{ left: pos.left + dockW - 36, top: pos.top }}
       >
@@ -352,6 +353,7 @@ export function ShareDock({
   return (
     <div
       ref={dockRef}
+      data-tour-id="share-dock-panel"
       className="fixed z-40 select-none"
       style={{ left: pos.left, top: pos.top, width: dockW }}
     >
@@ -414,6 +416,7 @@ export function ShareDock({
 
             <div
               data-no-drag
+              data-tour-id="webpages-dropzone"
               role={uploadState === 'idle' ? 'button' : undefined}
               tabIndex={uploadState === 'idle' ? 0 : undefined}
               aria-label={uploadState === 'idle' ? '点击或拖文件到此上传' : undefined}
