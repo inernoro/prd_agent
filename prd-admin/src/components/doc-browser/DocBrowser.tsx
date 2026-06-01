@@ -1239,16 +1239,23 @@ export function DocBrowser({
     if (tagColorsProp) setTagColorMapLocal(tagColorsProp);
   }, [tagColorsProp]);
   const tagColorMap = tagColorsProp ?? tagColorMapLocal;
+  // intentRef 跟踪"最新想要的"色板状态，避免快速连点两个 tag 时，第二次回调从
+  // 过时的 prop/state 起始 spread，丢掉第一次的改动（Bugbot Medium）。
+  const tagColorIntentRef = useRef(tagColorMap);
+  useEffect(() => { tagColorIntentRef.current = tagColorMap; }, [tagColorMap]);
   const setTagColor = useCallback((tag: string, color: TagColorKey | undefined) => {
-    const next = { ...(tagColorsProp ?? tagColorMapLocal) };
+    const next = { ...tagColorIntentRef.current };
     if (color) next[tag] = color; else delete next[tag];
+    tagColorIntentRef.current = next;
     if (onTagColorsChange) {
+      // 受控：先本地立即反映（让 UI 不等 parent 来回 round-trip），再上报
+      setTagColorMapLocal(next);
       onTagColorsChange(next);
     } else {
       setTagColorMapLocal(next);
       sessionStorage.setItem('doc-browser-tag-colors', JSON.stringify(next));
     }
-  }, [tagColorsProp, tagColorMapLocal, onTagColorsChange]);
+  }, [onTagColorsChange]);
   const tagColorsCtxValue = useMemo(() => ({ colors: tagColorMap, setColor: setTagColor }), [tagColorMap, setTagColor]);
   const [resizing, setResizing] = useState(false);
   // 侧栏 DOM 引用 + 拖拽起始时量出的真实左边界，避免用写死偏移导致"不跟手/跳动"
@@ -1565,6 +1572,23 @@ export function DocBrowser({
     }
     return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([tag]) => tag);
   }, [entries]);
+
+  // 自动剔除当前 entries 不存在的已选 tag：
+  // sessionStorage 是全局共享（DocBrowser 三处调用），跨知识库切换时上一个库选的 tag 可能
+  // 当前库根本没有 → filter 拒绝所有文件 + chip 条因 allTagsRanked 为空不渲染，用户卡死无法清空。
+  // 等 entries 加载完后剔除幽灵 tag。entries 为空（加载中）时不动，避免误清。
+  useEffect(() => {
+    if (entries.length === 0) return;
+    const available = new Set(allTagsRanked);
+    setSelectedTags(prev => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const t of prev) {
+        if (available.has(t)) next.add(t); else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [allTagsRanked, entries.length]);
 
   // 内容命中标记：搜索时若条目在结果中但关键词不在标题里 → 标「（内容包含）」
   const contentMatchIds = useMemo(() => {

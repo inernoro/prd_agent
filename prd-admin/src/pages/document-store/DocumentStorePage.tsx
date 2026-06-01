@@ -563,6 +563,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
   // 替换文件：记录待替换的 entryId + 独立 file input
   const replaceTargetRef = useRef<string | null>(null);
   const replaceInputRef = useRef<HTMLInputElement>(null);
+  // tag 颜色保存的序号守卫：快速连点多个颜色时，避免老请求 rollback 覆盖新成功的保存
+  const tagColorSaveSeqRef = useRef(0);
 
   // 加载空间详情和条目
   const loadStore = useCallback(async () => {
@@ -966,11 +968,16 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
           entries={entries}
           tagColors={(store.tagColors ?? {}) as Record<string, import('@/lib/tagPalette').TagColorKey>}
           onTagColorsChange={async (next) => {
-            // 乐观更新本地 + 异步落库，失败时回滚
+            // 乐观更新本地 + 异步落库，失败时回滚。
+            // seq 守卫：快速连点多次时，仅最新一次的 rollback 生效，避免老请求 rollback
+            // 把新成功的状态推回去（Bugbot Medium）。
+            const seq = ++tagColorSaveSeqRef.current;
             const prev = store.tagColors;
             setStore(s => s ? { ...s, tagColors: next } : s);
             const res = await updateDocumentStore(storeId, { tagColors: next });
-            if (!res.success) setStore(s => s ? { ...s, tagColors: prev } : s);
+            if (!res.success && seq === tagColorSaveSeqRef.current) {
+              setStore(s => s ? { ...s, tagColors: prev } : s);
+            }
           }}
           /* 验收报告库：最新在前（design.acceptance-kb.md §5.A）；时间默认显示由 DocBrowser 默认值兜底 */
           sortMode={store.templateKey === ACCEPTANCE_TEMPLATE_KEY ? 'created-desc' : 'default'}

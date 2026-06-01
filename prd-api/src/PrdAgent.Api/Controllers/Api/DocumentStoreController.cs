@@ -1501,6 +1501,7 @@ public class DocumentStoreController : ControllerBase
                 store.IsPublic,
                 store.TemplateKey,
                 store.CoverImageUrl,
+                store.TagColors,
             },
             entries = exported,
             stats = new { total = entries.Count, binarySkipped = skippedBinary },
@@ -1525,6 +1526,13 @@ public class DocumentStoreController : ControllerBase
             .Find(s => s.OwnerId == userId && s.Name == meta.Name).FirstOrDefaultAsync();
         if (store == null)
         {
+            // 仅接受白名单 8 色调色板 key，其他丢弃
+            var allowedColors = new HashSet<string> { "red", "orange", "yellow", "green", "teal", "blue", "purple", "gray" };
+            var importedColors = meta.TagColors == null
+                ? new Dictionary<string, string>()
+                : meta.TagColors
+                    .Where(kv => !string.IsNullOrWhiteSpace(kv.Key) && allowedColors.Contains(kv.Value))
+                    .ToDictionary(kv => kv.Key.Trim(), kv => kv.Value);
             store = new DocumentStore
             {
                 Name = meta.Name.Trim(),
@@ -1534,6 +1542,7 @@ public class DocumentStoreController : ControllerBase
                 IsPublic = meta.IsPublic,
                 TemplateKey = string.IsNullOrWhiteSpace(meta.TemplateKey) ? null : meta.TemplateKey.Trim(),
                 CoverImageUrl = meta.CoverImageUrl,
+                TagColors = importedColors,
             };
             await _db.DocumentStores.InsertOneAsync(store);
         }
@@ -3908,6 +3917,7 @@ public class ImportStoreMeta
     public bool IsPublic { get; set; }
     public string? TemplateKey { get; set; }
     public string? CoverImageUrl { get; set; }
+    public Dictionary<string, string>? TagColors { get; set; }
 }
 
 public class ImportEntry
