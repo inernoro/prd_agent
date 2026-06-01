@@ -28,6 +28,7 @@ import type {
   UpdatePmKnowledgeFileContract,
   DeletePmKnowledgeFileContract,
   GetPmMemberSitesContract,
+  GetPmKnowledgeStoreContract,
   PmKnowledgeFile,
   ListPmDecisionsContract,
   CreatePmDecisionContract,
@@ -109,6 +110,10 @@ export const deletePmKnowledgeFileReal: DeletePmKnowledgeFileContract = async (f
 
 export const getPmMemberSitesReal: GetPmMemberSitesContract = async (projectId) => {
   return await apiRequest(api.pm.projects.memberSites(encodeURIComponent(projectId)), { method: 'GET' });
+};
+
+export const getPmKnowledgeStoreReal: GetPmKnowledgeStoreContract = async (projectId) => {
+  return await apiRequest(api.pm.projects.knowledgeStore(encodeURIComponent(projectId)), { method: 'GET' });
 };
 
 // ── 决策事项 ──

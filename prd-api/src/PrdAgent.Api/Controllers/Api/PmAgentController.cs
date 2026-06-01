@@ -380,6 +380,71 @@ public class PmAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
+    /// <summary>
+    /// 解析项目知识库绑定的 DocumentStore（find-or-create）。首次创建时把旧版平铺文件尽力迁移为条目。
+    /// 之后前端复用 document-store 端点 + DocBrowser 渲染（文件夹/多格式/预览/标签全继承）。
+    /// </summary>
+    [HttpGet("projects/{projectId}/knowledge/store")]
+    public async Task<IActionResult> GetKnowledgeStore(string projectId)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+
+        var canWrite = project.OwnerId == userId || project.LeaderId == userId || project.MemberIds.Contains(userId);
+
+        DocumentStore? store = null;
+        if (!string.IsNullOrEmpty(project.KnowledgeStoreId))
+            store = await _db.DocumentStores.Find(s => s.Id == project.KnowledgeStoreId).FirstOrDefaultAsync();
+
+        if (store == null)
+        {
+            store = new DocumentStore
+            {
+                Name = $"{project.Title} · 知识库",
+                OwnerId = project.OwnerId,
+                AppKey = "pm-agent",
+                PmProjectId = projectId,
+            };
+            await _db.DocumentStores.InsertOneAsync(store);
+            await _db.PmProjects.UpdateOneAsync(p => p.Id == projectId,
+                Builders<PmProject>.Update.Set(p => p.KnowledgeStoreId, store.Id));
+
+            // 最大努力迁移：旧版 PmKnowledgeFile → DocumentEntry（Reference + metadata.sourceUrl，前端可预览/下载）
+            try
+            {
+                var olds = await _db.PmKnowledgeFiles.Find(f => f.ProjectId == projectId).ToListAsync();
+                if (olds.Count > 0)
+                {
+                    var entries = olds.Select(f => new DocumentEntry
+                    {
+                        StoreId = store.Id,
+                        Title = f.FileName,
+                        ContentType = f.ContentType,
+                        FileSize = f.FileSize,
+                        SourceType = DocumentSourceType.Reference,
+                        Tags = (!string.IsNullOrWhiteSpace(f.Category) && f.Category != "未分类")
+                            ? new List<string> { f.Category } : new List<string>(),
+                        Metadata = new Dictionary<string, string> { ["sourceUrl"] = f.Url, ["legacy"] = "pm-knowledge" },
+                        CreatedBy = f.UploaderId,
+                        CreatedByName = f.UploaderName,
+                        CreatedAt = f.CreatedAt,
+                    }).ToList();
+                    await _db.DocumentEntries.InsertManyAsync(entries);
+                    await _db.DocumentStores.UpdateOneAsync(s => s.Id == store.Id,
+                        Builders<DocumentStore>.Update.Set(s => s.DocumentCount, entries.Count));
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[PmKnowledge] 旧文件迁移失败 projectId={ProjectId}", projectId);
+            }
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { storeId = store.Id, canWrite }));
+    }
+
     /// <summary>聚合项目成员（创建人 + 负责人 + 成员）名下已公开的托管站点，免密查看</summary>
     [HttpGet("projects/{projectId}/member-sites")]
     public async Task<IActionResult> GetMemberSites(string projectId)

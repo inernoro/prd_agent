@@ -1326,6 +1326,7 @@ export const api = {
       observers: (projectId: string) => `/api/pm/projects/${projectId}/observers`,
       knowledgeFiles: (projectId: string) => `/api/pm/projects/${projectId}/knowledge/files`,
       memberSites: (projectId: string) => `/api/pm/projects/${projectId}/member-sites`,
+      knowledgeStore: (projectId: string) => `/api/pm/projects/${projectId}/knowledge/store`,
       decisions: (projectId: string) => `/api/pm/projects/${projectId}/decisions`,
       weeklyReports: (projectId: string) => `/api/pm/projects/${projectId}/weekly-reports`,
       weeklyReportImage: (projectId: string) => `/api/pm/projects/${projectId}/weekly-reports/image`,

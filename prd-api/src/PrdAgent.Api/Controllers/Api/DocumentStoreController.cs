@@ -84,13 +84,27 @@ public class DocumentStoreController : ControllerBase
     private static bool IsTeamShared(DocumentStore s, List<string> myTeamIds)
         => s.SharedTeamIds != null && s.SharedTeamIds.Any(myTeamIds.Contains);
 
-    /// <summary>可写：拥有者 或 团队成员（决策 10 全员可编辑；不含 public）</summary>
-    private static bool CanWriteStore(DocumentStore s, string userId, List<string> myTeamIds)
-        => s.OwnerId == userId || IsTeamShared(s, myTeamIds);
+    /// <summary>可写：拥有者 或 团队成员（决策 10 全员可编辑；不含 public）；项目库走项目成员判定</summary>
+    private async Task<bool> CanWriteStoreAsync(DocumentStore s, string userId, List<string> myTeamIds)
+        => s.OwnerId == userId || IsTeamShared(s, myTeamIds) || await IsPmProjectMemberAsync(s, userId, write: true);
 
-    /// <summary>可读：拥有者 或 公开 或 团队成员</summary>
-    private static bool CanReadStore(DocumentStore s, string userId, List<string> myTeamIds)
-        => s.OwnerId == userId || s.IsPublic || IsTeamShared(s, myTeamIds);
+    /// <summary>可读：拥有者 或 公开 或 团队成员；项目库走项目成员判定（含观察者/干系人）</summary>
+    private async Task<bool> CanReadStoreAsync(DocumentStore s, string userId, List<string> myTeamIds)
+        => s.OwnerId == userId || s.IsPublic || IsTeamShared(s, myTeamIds) || await IsPmProjectMemberAsync(s, userId, write: false);
+
+    /// <summary>
+    /// 项目知识库访问判定：仅当 store.PmProjectId 非空时生效。
+    /// write=true → owner/leader/成员；write=false（读）→ 额外放行观察者与干系人。
+    /// </summary>
+    private async Task<bool> IsPmProjectMemberAsync(DocumentStore s, string userId, bool write)
+    {
+        if (string.IsNullOrEmpty(s.PmProjectId)) return false;
+        var p = await _db.PmProjects.Find(x => x.Id == s.PmProjectId && !x.IsDeleted).FirstOrDefaultAsync();
+        if (p == null) return false;
+        if (p.OwnerId == userId || p.LeaderId == userId || p.MemberIds.Contains(userId)) return true;
+        if (write) return false;
+        return p.ObserverIds.Contains(userId) || (p.Stakeholders?.Any(st => st.UserId == userId) ?? false);
+    }
 
     /// <summary>
     /// 判定本次写入是否"机器归档"（带 kind=acceptance-report 标记）。
@@ -113,7 +127,7 @@ public class DocumentStoreController : ControllerBase
         if (store == null)
             return (null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在")));
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
-        if (!CanWriteStore(store, userId, myTeamIds))
+        if (!await CanWriteStoreAsync(store, userId, myTeamIds))
             return (null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在")));
         return (store, null);
     }
@@ -145,7 +159,7 @@ public class DocumentStoreController : ControllerBase
         if (store == null)
             return (null, null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在")));
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
-        if (!CanWriteStore(store, userId, myTeamIds))
+        if (!await CanWriteStoreAsync(store, userId, myTeamIds))
             return (null, null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在")));
         return (entry, store, null);
     }
@@ -160,7 +174,7 @@ public class DocumentStoreController : ControllerBase
         if (store == null)
             return (null, null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在")));
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
-        if (!CanReadStore(store, userId, myTeamIds))
+        if (!await CanReadStoreAsync(store, userId, myTeamIds))
             return (null, null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在")));
         return (entry, store, null);
     }
@@ -276,7 +290,10 @@ public class DocumentStoreController : ControllerBase
         }
         else
         {
-            filter = Builders<DocumentStore>.Filter.Eq(s => s.OwnerId, userId);
+            // 我的知识库：排除项目库（PmProjectId 非空的库只在对应 PM 项目的「知识库」tab 内访问）
+            filter = Builders<DocumentStore>.Filter.And(
+                Builders<DocumentStore>.Filter.Eq(s => s.OwnerId, userId),
+                Builders<DocumentStore>.Filter.Eq(s => s.PmProjectId, (string?)null));
         }
 
         var total = await _db.DocumentStores.CountDocumentsAsync(filter);
@@ -299,7 +316,7 @@ public class DocumentStoreController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
-        if (!CanReadStore(store, userId, myTeamIds))
+        if (!await CanReadStoreAsync(store, userId, myTeamIds))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
         return Ok(ApiResponse<DocumentStore>.Ok(store));
@@ -573,7 +590,7 @@ public class DocumentStoreController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
-        if (!CanReadStore(store, userId, myTeamIds))
+        if (!await CanReadStoreAsync(store, userId, myTeamIds))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
         pageSize = Math.Clamp(pageSize, 1, 500);
@@ -987,7 +1004,7 @@ public class DocumentStoreController : ControllerBase
 
         var store = await _db.DocumentStores.Find(s => s.Id == folder.StoreId).FirstOrDefaultAsync();
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
-        if (store == null || !CanWriteStore(store, userId, myTeamIds))
+        if (store == null || !await CanWriteStoreAsync(store, userId, myTeamIds))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文件夹不存在"));
 
         if (!string.IsNullOrEmpty(request.EntryId))
@@ -1083,7 +1100,7 @@ public class DocumentStoreController : ControllerBase
         var (userId, userName, avatarFileName) = await GetActorWithAvatarAsync();
         var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync(ct);
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
-        if (store == null || !CanWriteStore(store, userId, myTeamIds))
+        if (store == null || !await CanWriteStoreAsync(store, userId, myTeamIds))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
         if (file == null || file.Length == 0)
@@ -1212,7 +1229,7 @@ public class DocumentStoreController : ControllerBase
 
         var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId).FirstOrDefaultAsync(ct);
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
-        if (store == null || !CanWriteStore(store, userId, myTeamIds))
+        if (store == null || !await CanWriteStoreAsync(store, userId, myTeamIds))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
         if (file == null || file.Length == 0)
@@ -1860,7 +1877,10 @@ public class DocumentStoreController : ControllerBase
         }
         else
         {
-            filter = Builders<DocumentStore>.Filter.Eq(s => s.OwnerId, userId);
+            // 我的知识库：排除项目库（PmProjectId 非空的库只在对应 PM 项目的「知识库」tab 内访问）
+            filter = Builders<DocumentStore>.Filter.And(
+                Builders<DocumentStore>.Filter.Eq(s => s.OwnerId, userId),
+                Builders<DocumentStore>.Filter.Eq(s => s.PmProjectId, (string?)null));
         }
         var total = await _db.DocumentStores.CountDocumentsAsync(filter);
         var stores = await _db.DocumentStores.Find(filter)

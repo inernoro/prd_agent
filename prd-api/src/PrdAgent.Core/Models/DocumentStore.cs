@@ -61,6 +61,12 @@ public class DocumentStore
     /// </summary>
     public string? TemplateKey { get; set; }
 
+    /// <summary>
+    /// 绑定的 PM 项目 ID（非空表示这是某个项目的「项目知识库」）。
+    /// 非空时访问控制走「项目成员」判定，而非个人/团队三轴；并从个人/公开列表中隐藏。
+    /// </summary>
+    public string? PmProjectId { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

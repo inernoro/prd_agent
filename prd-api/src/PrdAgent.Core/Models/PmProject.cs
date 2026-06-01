@@ -88,6 +88,9 @@ public class PmProject
     /// <summary>所属者（创建人）UserId</summary>
     public string OwnerId { get; set; } = string.Empty;
 
+    /// <summary>项目知识库绑定的 DocumentStore ID（首次进入「知识库」tab 时 find-or-create）</summary>
+    public string? KnowledgeStoreId { get; set; }
+
     /// <summary>任务总数（反规范化缓存）</summary>
     public int TaskCount { get; set; }
 

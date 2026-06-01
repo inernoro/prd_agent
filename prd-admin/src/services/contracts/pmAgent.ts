@@ -318,6 +318,8 @@ export type ListPmKnowledgeFilesContract = (projectId: string, category?: string
 export type UpdatePmKnowledgeFileContract = (fileId: string, input: { fileName?: string; category?: string }) => Promise<ApiResponse<{ updated: boolean }>>;
 export type DeletePmKnowledgeFileContract = (fileId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
 export type GetPmMemberSitesContract = (projectId: string) => Promise<ApiResponse<{ sites: PmMemberSite[] }>>;
+/** 解析项目知识库绑定的 DocumentStore（find-or-create），前端据此渲染 DocBrowser */
+export type GetPmKnowledgeStoreContract = (projectId: string) => Promise<ApiResponse<{ storeId: string; canWrite: boolean }>>;
 
 // ── 决策事项 ──
 export type PmDecisionType = 'pending' | 'decided' | 'memo';

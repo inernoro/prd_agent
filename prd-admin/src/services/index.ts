@@ -1985,6 +1985,7 @@ export {
   updatePmKnowledgeFileReal as updatePmKnowledgeFile,
   deletePmKnowledgeFileReal as deletePmKnowledgeFile,
   getPmMemberSitesReal as getPmMemberSites,
+  getPmKnowledgeStoreReal as getPmKnowledgeStore,
   listPmDecisionsReal as listPmDecisions,
   createPmDecisionReal as createPmDecision,
   updatePmDecisionReal as updatePmDecision,
