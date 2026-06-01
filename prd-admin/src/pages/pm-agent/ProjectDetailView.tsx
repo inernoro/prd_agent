@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Sparkles, Plus, LayoutGrid, List, GanttChartSquare, Trash2, Users, UserCog, Award, Search, CalendarClock, BookOpen, Gavel, FileText, NotebookText, Target, Milestone, FolderOpen } from 'lucide-react';
+import { ArrowLeft, Sparkles, Plus, LayoutGrid, List, GanttChartSquare, Trash2, Users, UserCog, Award, Search, CalendarClock, BookOpen, Gavel, FileText, NotebookText, Target, Milestone, FolderOpen, ShieldAlert } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
@@ -21,6 +21,7 @@ import { MeetingsPanel } from './MeetingsPanel';
 import { GoalsPanel } from './GoalsPanel';
 import { MilestonesBar } from './MilestonesBar';
 import { MilestonesPanel } from './MilestonesPanel';
+import { RiskPanel } from './RiskPanel';
 import { EvaluatePanel } from './EvaluatePanel';
 import { TaskDetailDrawer } from './TaskDetailDrawer';
 import { PROJECT_TYPE_REGISTRY, LIFECYCLE_REGISTRY, TASK_STATUS_REGISTRY, PRIORITY_REGISTRY, GRADE_REGISTRY } from './pmConstants';
@@ -30,7 +31,7 @@ interface Props {
   onBack: () => void;
 }
 
-type ViewTab = 'goals' | 'milestones' | 'tasks' | 'decisions' | 'library' | 'members' | 'stakeholders';
+type ViewTab = 'goals' | 'milestones' | 'tasks' | 'decisions' | 'risks' | 'library' | 'members' | 'stakeholders';
 type LibraryTab = 'weekly' | 'meetings' | 'knowledge';
 type TaskViewMode = 'board' | 'list' | 'gantt';
 type GroupBy = 'none' | 'assignee' | 'priority';
@@ -40,6 +41,7 @@ const TABS: { key: ViewTab; label: string; icon: typeof LayoutGrid }[] = [
   { key: 'milestones', label: '里程碑', icon: Milestone },
   { key: 'tasks', label: '任务', icon: LayoutGrid },
   { key: 'decisions', label: '决策', icon: Gavel },
+  { key: 'risks', label: '风险', icon: ShieldAlert },
   { key: 'library', label: '资料', icon: FolderOpen },
   { key: 'members', label: '成员', icon: UserCog },
   { key: 'stakeholders', label: '干系人', icon: Users },
@@ -530,6 +532,8 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
       )}
 
       {tab === 'decisions' && <DecisionsPanel projectId={projectId} />}
+
+      {tab === 'risks' && <RiskPanel projectId={projectId} canManage={project.ownerId === myId || project.leaderId === myId || project.memberIds.includes(myId)} goals={goals} tasks={tasks} />}
 
       {tab === 'stakeholders' && (
         <StakeholderPanel projectId={projectId} stakeholders={project.stakeholders} onSaved={() => load()} />

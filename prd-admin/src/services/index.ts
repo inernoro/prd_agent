@@ -2010,6 +2010,10 @@ export {
   createPmMilestoneReal as createPmMilestone,
   updatePmMilestoneReal as updatePmMilestone,
   deletePmMilestoneReal as deletePmMilestone,
+  listPmRisksReal as listPmRisks,
+  createPmRiskReal as createPmRisk,
+  updatePmRiskReal as updatePmRisk,
+  deletePmRiskReal as deletePmRisk,
 } from '@/services/real/pmAgent';
 export type {
   PmProject,

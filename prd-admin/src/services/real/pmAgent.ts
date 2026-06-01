@@ -53,6 +53,10 @@ import type {
   CreatePmMilestoneContract,
   UpdatePmMilestoneContract,
   DeletePmMilestoneContract,
+  ListPmRisksContract,
+  CreatePmRiskContract,
+  UpdatePmRiskContract,
+  DeletePmRiskContract,
 } from '@/services/contracts/pmAgent';
 import type { ApiResponse } from '@/types/api';
 import { useAuthStore } from '@/stores/authStore';
@@ -231,6 +235,20 @@ export const updatePmMilestoneReal: UpdatePmMilestoneContract = async (milestone
 
 export const deletePmMilestoneReal: DeletePmMilestoneContract = async (milestoneId) => {
   return await apiRequest(api.pm.milestones.item(encodeURIComponent(milestoneId)), { method: 'DELETE' });
+};
+
+// ── 风险登记册 ──
+export const listPmRisksReal: ListPmRisksContract = async (projectId) => {
+  return await apiRequest(api.pm.projects.risks(encodeURIComponent(projectId)), { method: 'GET' });
+};
+export const createPmRiskReal: CreatePmRiskContract = async (projectId, input) => {
+  return await apiRequest(api.pm.projects.risks(encodeURIComponent(projectId)), { method: 'POST', body: input });
+};
+export const updatePmRiskReal: UpdatePmRiskContract = async (riskId, input) => {
+  return await apiRequest(api.pm.risks.item(encodeURIComponent(riskId)), { method: 'PUT', body: input });
+};
+export const deletePmRiskReal: DeletePmRiskContract = async (riskId) => {
+  return await apiRequest(api.pm.risks.item(encodeURIComponent(riskId)), { method: 'DELETE' });
 };
 
 export const getPmProjectReal: GetPmProjectContract = async (projectId) => {

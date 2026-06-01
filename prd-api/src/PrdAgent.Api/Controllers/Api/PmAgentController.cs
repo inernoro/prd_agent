@@ -1269,6 +1269,109 @@ public class PmAgentController : ControllerBase
     }
 
     // ─────────────────────────────────────────────
+    // 风险登记册（概率×影响 + 应对策略 + 责任人）
+    // ─────────────────────────────────────────────
+
+    /// <summary>风险列表（项目成员可见，按概率×影响降序、OrderKey 兜底）</summary>
+    [HttpGet("projects/{projectId}/risks")]
+    public async Task<IActionResult> ListRisks(string projectId)
+    {
+        var userId = GetUserId();
+        if (await FindAccessibleProjectAsync(projectId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        var items = await _db.PmRisks.Find(r => r.ProjectId == projectId)
+            .SortBy(r => r.OrderKey).ThenByDescending(r => r.CreatedAt).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>新建风险（owner/leader/成员可建）</summary>
+    [HttpPost("projects/{projectId}/risks")]
+    public async Task<IActionResult> CreateRisk(string projectId, [FromBody] RiskRequest request)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (project.OwnerId != userId && project.LeaderId != userId && !project.MemberIds.Contains(userId))
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅项目成员可登记风险"));
+        if (string.IsNullOrWhiteSpace(request.Title))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "风险标题不能为空"));
+
+        var ownerName = string.IsNullOrWhiteSpace(request.OwnerId) ? null
+            : (await _db.Users.Find(u => u.UserId == request.OwnerId).FirstOrDefaultAsync())?.DisplayName;
+        var creatorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+        var entity = new PmRisk
+        {
+            ProjectId = projectId,
+            Title = request.Title!.Trim(),
+            Description = request.Description?.Trim(),
+            Probability = PmRiskLevel.IsValid(request.Probability) ? request.Probability! : PmRiskLevel.Medium,
+            Impact = PmRiskLevel.IsValid(request.Impact) ? request.Impact! : PmRiskLevel.Medium,
+            Response = PmRiskResponse.IsValid(request.Response) ? request.Response! : PmRiskResponse.Open,
+            Status = PmRiskStatus.IsValid(request.Status) ? request.Status! : PmRiskStatus.Open,
+            OwnerId = string.IsNullOrWhiteSpace(request.OwnerId) ? null : request.OwnerId,
+            OwnerName = ownerName,
+            RelatedGoalId = string.IsNullOrWhiteSpace(request.RelatedGoalId) ? null : request.RelatedGoalId,
+            RelatedTaskId = string.IsNullOrWhiteSpace(request.RelatedTaskId) ? null : request.RelatedTaskId,
+            OrderKey = DateTime.UtcNow.Ticks,
+            CreatedBy = userId,
+            CreatedByName = creatorName,
+        };
+        await _db.PmRisks.InsertOneAsync(entity);
+        return Ok(ApiResponse<object>.Ok(entity));
+    }
+
+    /// <summary>更新风险（owner/leader/成员可改）</summary>
+    [HttpPut("risks/{riskId}")]
+    public async Task<IActionResult> UpdateRisk(string riskId, [FromBody] RiskRequest request)
+    {
+        var userId = GetUserId();
+        var r = await _db.PmRisks.Find(x => x.Id == riskId).FirstOrDefaultAsync();
+        if (r == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "风险不存在"));
+        var project = await FindAccessibleProjectAsync(r.ProjectId, userId);
+        if (project == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (project.OwnerId != userId && project.LeaderId != userId && !project.MemberIds.Contains(userId))
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅项目成员可修改风险"));
+
+        var update = Builders<PmRisk>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow);
+        if (request.Title != null)
+        {
+            if (string.IsNullOrWhiteSpace(request.Title)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "风险标题不能为空"));
+            update = update.Set(x => x.Title, request.Title.Trim());
+        }
+        if (request.Description != null) update = update.Set(x => x.Description, request.Description.Trim());
+        if (request.Probability != null && PmRiskLevel.IsValid(request.Probability)) update = update.Set(x => x.Probability, request.Probability);
+        if (request.Impact != null && PmRiskLevel.IsValid(request.Impact)) update = update.Set(x => x.Impact, request.Impact);
+        if (request.Response != null && PmRiskResponse.IsValid(request.Response)) update = update.Set(x => x.Response, request.Response);
+        if (request.Status != null && PmRiskStatus.IsValid(request.Status)) update = update.Set(x => x.Status, request.Status);
+        if (request.OwnerId != null)
+        {
+            var oid = string.IsNullOrWhiteSpace(request.OwnerId) ? null : request.OwnerId;
+            var oname = oid == null ? null : (await _db.Users.Find(u => u.UserId == oid).FirstOrDefaultAsync())?.DisplayName;
+            update = update.Set(x => x.OwnerId, oid).Set(x => x.OwnerName, oname);
+        }
+        if (request.RelatedGoalId != null) update = update.Set(x => x.RelatedGoalId, string.IsNullOrWhiteSpace(request.RelatedGoalId) ? null : request.RelatedGoalId);
+        if (request.RelatedTaskId != null) update = update.Set(x => x.RelatedTaskId, string.IsNullOrWhiteSpace(request.RelatedTaskId) ? null : request.RelatedTaskId);
+        if (request.OrderKey.HasValue) update = update.Set(x => x.OrderKey, request.OrderKey.Value);
+        await _db.PmRisks.UpdateOneAsync(x => x.Id == riskId, update);
+        return Ok(ApiResponse<object>.Ok(new { updated = true }));
+    }
+
+    /// <summary>删除风险（owner/leader/成员可删）</summary>
+    [HttpDelete("risks/{riskId}")]
+    public async Task<IActionResult> DeleteRisk(string riskId)
+    {
+        var userId = GetUserId();
+        var r = await _db.PmRisks.Find(x => x.Id == riskId).FirstOrDefaultAsync();
+        if (r == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "风险不存在"));
+        var project = await FindAccessibleProjectAsync(r.ProjectId, userId);
+        if (project == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (project.OwnerId != userId && project.LeaderId != userId && !project.MemberIds.Contains(userId))
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅项目成员可删除风险"));
+        await _db.PmRisks.DeleteOneAsync(x => x.Id == riskId);
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    // ─────────────────────────────────────────────
     // 审计日志（操作留痕，管理层可见）
     // ─────────────────────────────────────────────
 
@@ -2250,6 +2353,20 @@ public class GoalRequest
     public int? Progress { get; set; }
     public string? ProgressMode { get; set; }
     public string? Status { get; set; }
+    public long? OrderKey { get; set; }
+}
+
+public class RiskRequest
+{
+    public string? Title { get; set; }
+    public string? Description { get; set; }
+    public string? Probability { get; set; }
+    public string? Impact { get; set; }
+    public string? Response { get; set; }
+    public string? Status { get; set; }
+    public string? OwnerId { get; set; }
+    public string? RelatedGoalId { get; set; }
+    public string? RelatedTaskId { get; set; }
     public long? OrderKey { get; set; }
 }
 

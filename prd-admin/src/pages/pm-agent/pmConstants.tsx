@@ -9,6 +9,9 @@ import type {
   PmDecisionType,
   PmGoalStatus,
   PmMilestoneHealth,
+  PmRiskLevel,
+  PmRiskResponse,
+  PmRiskStatus,
 } from '@/services/contracts/pmAgent';
 
 // ── 项目类型注册表（S / I / O）──
@@ -107,6 +110,37 @@ export const GOAL_SCOPE = {
 
 /** 目标递归拆解最大层级（与后端 PmGoal.MaxGoalDepth 对齐，顶层 depth=0）。depth+1 < 此值才可继续拆子目标 */
 export const GOAL_MAX_DEPTH = 5;
+
+// ── 风险登记册注册表 ──
+export const RISK_LEVEL_REGISTRY: Record<PmRiskLevel, { label: string; weight: number }> = {
+  high: { label: '高', weight: 3 },
+  medium: { label: '中', weight: 2 },
+  low: { label: '低', weight: 1 },
+};
+
+export const RISK_RESPONSE_REGISTRY: Record<PmRiskResponse, { label: string }> = {
+  open: { label: '未应对' },
+  avoid: { label: '规避' },
+  transfer: { label: '转移' },
+  mitigate: { label: '减轻' },
+  accept: { label: '接受' },
+};
+
+export const RISK_STATUS_REGISTRY: Record<PmRiskStatus, { label: string; color: string }> = {
+  open: { label: '待处理', color: '#F59E0B' },
+  mitigating: { label: '应对中', color: '#3B82F6' },
+  closed: { label: '已关闭', color: '#9CA3AF' },
+};
+
+/** 风险等级 = 概率权重 × 影响权重（1-9）。≥6 红 / 3-4 黄 / ≤2 绿 */
+export function riskScore(probability: PmRiskLevel, impact: PmRiskLevel): number {
+  return RISK_LEVEL_REGISTRY[probability].weight * RISK_LEVEL_REGISTRY[impact].weight;
+}
+export function riskScoreColor(score: number): string {
+  if (score >= 6) return '#EF4444';
+  if (score >= 3) return '#F59E0B';
+  return '#10B981';
+}
 
 // ── 里程碑健康度注册表（派生，用于徽章/菱形配色）──
 export const MILESTONE_HEALTH_REGISTRY: Record<PmMilestoneHealth, { label: string; color: string }> = {
