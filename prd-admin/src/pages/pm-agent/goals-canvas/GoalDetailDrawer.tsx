@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Check, Sparkles, Plus, Trash2 } from 'lucide-react';
+import { X, Check, Sparkles, Plus, Trash2, ListTodo, FileText } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
-import { createPmGoal, updatePmGoal, deletePmGoal } from '@/services';
-import type { PmGoal, PmGoalScope, PmGoalStatus, SavePmGoalInput } from '@/services/contracts/pmAgent';
-import { GOAL_STATUS_REGISTRY } from '../pmConstants';
+import { createPmGoal, updatePmGoal, deletePmGoal, getPmProject, listPmMilestones, listPmWeeklyReports } from '@/services';
+import type { PmGoal, PmGoalScope, PmGoalStatus, SavePmGoalInput, PmTask, PmWeeklyReport } from '@/services/contracts/pmAgent';
+import { GOAL_STATUS_REGISTRY, TASK_STATUS_REGISTRY } from '../pmConstants';
 
 const STATUS_KEYS: PmGoalStatus[] = ['on_track', 'at_risk', 'done', 'abandoned'];
 
@@ -36,6 +36,9 @@ export function GoalDetailDrawer({ projectId, goal, createCtx, canWrite, onClose
   const isCreate = !goal;
   const [draft, setDraft] = useState<SavePmGoalInput>({});
   const [saving, setSaving] = useState(false);
+  // 反查：关联任务（直接挂的 + 里程碑下的） + 提及本目标的周报
+  const [relTasks, setRelTasks] = useState<PmTask[]>([]);
+  const [mentionReports, setMentionReports] = useState<PmWeeklyReport[]>([]);
 
   useEffect(() => {
     if (goal) {
@@ -50,6 +53,24 @@ export function GoalDetailDrawer({ projectId, goal, createCtx, canWrite, onClose
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  // 加载目标侧反查（关联任务 + 提及周报）
+  useEffect(() => {
+    if (!goal) { setRelTasks([]); setMentionReports([]); return; }
+    let alive = true;
+    (async () => {
+      const [pr, mr, wr] = await Promise.all([
+        getPmProject(projectId), listPmMilestones(projectId), listPmWeeklyReports(projectId),
+      ]);
+      if (!alive) return;
+      if (pr.success && mr.success) {
+        const goalMsIds = new Set(mr.data.items.filter((m) => m.goalId === goal.id).map((m) => m.id));
+        setRelTasks(pr.data.tasks.filter((t) => t.goalId === goal.id || (t.milestoneId != null && goalMsIds.has(t.milestoneId))));
+      }
+      if (wr.success) setMentionReports(wr.data.items.filter((w) => (w.relatedGoalIds ?? []).includes(goal.id)));
+    })();
+    return () => { alive = false; };
+  }, [goal, projectId]);
 
   const mode = draft.progressMode ?? 'auto';
 
@@ -134,6 +155,36 @@ export function GoalDetailDrawer({ projectId, goal, createCtx, canWrite, onClose
               <Button variant="ghost" size="sm" onClick={() => onDecompose?.(goal!)} disabled={!canHaveChildren}><Sparkles size={13} />AI 拆细</Button>
               <Button variant="ghost" size="sm" onClick={() => onAddChild?.(goal!)} disabled={!canHaveChildren}><Plus size={13} />加子目标</Button>
               <Button variant="ghost" size="sm" onClick={remove}><Trash2 size={13} />删除</Button>
+            </div>
+          )}
+
+          {!isCreate && (
+            <div className="flex flex-col gap-3 pt-3 mt-1 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+              {/* 关联任务（直接挂的 + 里程碑下的） */}
+              <div className="flex flex-col gap-1.5">
+                <div className="text-[11px] flex items-center gap-1" style={{ color: '#F59E0B' }}><ListTodo size={12} />关联任务（{relTasks.length}）</div>
+                {relTasks.length === 0 ? (
+                  <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>暂无任务关联本目标。在「任务」详情里设置任务的「所属目标」。</div>
+                ) : relTasks.map((t) => {
+                  const st = TASK_STATUS_REGISTRY[t.status];
+                  return (
+                    <div key={t.id} className="flex items-center gap-2 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: st.color }} />
+                      <span className="truncate flex-1" title={t.title}>{t.title}</span>
+                      <span className="text-[10px] shrink-0" style={{ color: st.color }}>{st.label}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              {/* 提及本目标的周报（反查 relatedGoalIds） */}
+              <div className="flex flex-col gap-1.5">
+                <div className="text-[11px] flex items-center gap-1" style={{ color: '#3B82F6' }}><FileText size={12} />提及本目标的周报（{mentionReports.length}）</div>
+                {mentionReports.length === 0 ? (
+                  <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>暂无周报关联本目标。在「周报」里勾选关联目标。</div>
+                ) : mentionReports.map((w) => (
+                  <div key={w.id} className="text-[12px] truncate" style={{ color: 'var(--text-secondary)' }} title={w.title}>· {w.title}</div>
+                ))}
+              </div>
             </div>
           )}
         </div>
