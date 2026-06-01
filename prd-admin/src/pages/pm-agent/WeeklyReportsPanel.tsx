@@ -13,6 +13,9 @@ import { ImportPersonalReportModal } from './ImportPersonalReportModal';
 
 interface Props {
   projectId: string;
+  /** 从目标画布跳转定位到某条周报 */
+  targetReportId?: string;
+  onTargetConsumed?: () => void;
 }
 
 function fmtDate(s?: string | null) {
@@ -25,7 +28,7 @@ function fmtDate(s?: string | null) {
  * 项目周报 — 左列周报列表 + 右侧 Markdown 阅读/编辑。
  * 支持 md 文档导入（客户端读取文本）、内嵌图片上传插入、舒适版式渲染（reading variant）。
  */
-export function WeeklyReportsPanel({ projectId }: Props) {
+export function WeeklyReportsPanel({ projectId, targetReportId, onTargetConsumed }: Props) {
   const [reports, setReports] = useState<PmWeeklyReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -65,6 +68,16 @@ export function WeeklyReportsPanel({ projectId }: Props) {
   }, [projectId]);
 
   useEffect(() => { load(); loadRefs(); }, [load, loadRefs]);
+
+  // 从目标画布跳转定位到指定周报（待列表载入后选中）
+  useEffect(() => {
+    if (!targetReportId) return;
+    if (reports.some((r) => r.id === targetReportId)) {
+      setEditing(null);
+      setSelectedId(targetReportId);
+      onTargetConsumed?.();
+    }
+  }, [targetReportId, reports, onTargetConsumed]);
 
   const selected = reports.find((r) => r.id === selectedId) || null;
   const goalTitle = (id: string) => goals.find((g) => g.id === id)?.title ?? '（已删除目标）';

@@ -27,12 +27,15 @@ interface Props {
   onAddChild?: (g: PmGoal) => void;
   /** 该目标是否还能拆子目标（未达层级上限） */
   canHaveChildren?: boolean;
+  /** 反查列表点击跳转：到任务详情 / 到周报 */
+  onNavigateTask?: (taskId: string) => void;
+  onNavigateWeekly?: (reportId: string) => void;
 }
 
 const inputCls = 'w-full text-[12.5px] rounded-md px-2.5 py-2 outline-none border';
 const inputStyle = { background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' } as const;
 
-export function GoalDetailDrawer({ projectId, goal, createCtx, canWrite, onClose, onSaved, onDecompose, onAddChild, canHaveChildren }: Props) {
+export function GoalDetailDrawer({ projectId, goal, createCtx, canWrite, onClose, onSaved, onDecompose, onAddChild, canHaveChildren, onNavigateTask, onNavigateWeekly }: Props) {
   const isCreate = !goal;
   const [draft, setDraft] = useState<SavePmGoalInput>({});
   const [saving, setSaving] = useState(false);
@@ -168,11 +171,13 @@ export function GoalDetailDrawer({ projectId, goal, createCtx, canWrite, onClose
                 ) : relTasks.map((t) => {
                   const st = TASK_STATUS_REGISTRY[t.status];
                   return (
-                    <div key={t.id} className="flex items-center gap-2 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                    <button key={t.id} onClick={() => { onNavigateTask?.(t.id); onClose(); }} disabled={!onNavigateTask}
+                      className="flex items-center gap-2 text-[12px] text-left rounded px-1 -mx-1 disabled:cursor-default enabled:hover:bg-white/5"
+                      style={{ color: 'var(--text-secondary)' }} title={onNavigateTask ? '点击跳转到任务' : t.title}>
                       <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: st.color }} />
-                      <span className="truncate flex-1" title={t.title}>{t.title}</span>
+                      <span className="truncate flex-1">{t.title}</span>
                       <span className="text-[10px] shrink-0" style={{ color: st.color }}>{st.label}</span>
-                    </div>
+                    </button>
                   );
                 })}
               </div>
@@ -182,7 +187,9 @@ export function GoalDetailDrawer({ projectId, goal, createCtx, canWrite, onClose
                 {mentionReports.length === 0 ? (
                   <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>暂无周报关联本目标。在「周报」里勾选关联目标。</div>
                 ) : mentionReports.map((w) => (
-                  <div key={w.id} className="text-[12px] truncate" style={{ color: 'var(--text-secondary)' }} title={w.title}>· {w.title}</div>
+                  <button key={w.id} onClick={() => { onNavigateWeekly?.(w.id); onClose(); }} disabled={!onNavigateWeekly}
+                    className="text-[12px] truncate text-left rounded px-1 -mx-1 disabled:cursor-default enabled:hover:bg-white/5"
+                    style={{ color: 'var(--text-secondary)' }} title={onNavigateWeekly ? '点击跳转到周报' : w.title}>· {w.title}</button>
                 ))}
               </div>
             </div>

@@ -21,6 +21,8 @@ interface Props {
   canManage: boolean;
   goals: PmGoal[];
   onReload: () => void;
+  onNavigateTask?: (taskId: string) => void;
+  onNavigateWeekly?: (reportId: string) => void;
 }
 
 const FILTER_CHIPS: { key: GoalScopeFilter; label: string }[] = [
@@ -29,7 +31,7 @@ const FILTER_CHIPS: { key: GoalScopeFilter; label: string }[] = [
   { key: 'personal', label: '个人' },
 ];
 
-function GoalsCanvasInner({ projectId, businessGoal, canManage, goals, onReload }: Props) {
+function GoalsCanvasInner({ projectId, businessGoal, canManage, goals, onReload, onNavigateTask, onNavigateWeekly }: Props) {
   const reactFlow = useReactFlow();
   const [scopeFilter, setScopeFilter] = useState<GoalScopeFilter>('all');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -163,6 +165,8 @@ function GoalsCanvasInner({ projectId, businessGoal, canManage, goals, onReload 
           onSaved={afterMutation}
           onDecompose={onDecompose}
           onAddChild={onAddChild}
+          onNavigateTask={onNavigateTask}
+          onNavigateWeekly={onNavigateWeekly}
         />
       )}
 

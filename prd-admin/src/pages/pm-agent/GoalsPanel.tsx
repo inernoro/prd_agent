@@ -17,6 +17,9 @@ interface Props {
   businessGoal: string;
   /** 是否可管理团队目标（owner/leader） */
   canManage: boolean;
+  /** 目标画布反查列表点击跳转 */
+  onNavigateTask?: (taskId: string) => void;
+  onNavigateWeekly?: (reportId: string) => void;
 }
 
 const STATUS_KEYS: PmGoalStatus[] = ['on_track', 'at_risk', 'done', 'abandoned'];
@@ -31,7 +34,7 @@ function fmtDate(s?: string | null) {
  * 项目目标 —— 以业务目标为北极星，团队目标（全员可见）+ 我的个人目标（仅本人）。
  * 团队目标进度可由关联里程碑自动滚动（auto）或手填（manual）。团队目标写操作限项目经理。
  */
-export function GoalsPanel({ projectId, businessGoal, canManage }: Props) {
+export function GoalsPanel({ projectId, businessGoal, canManage, onNavigateTask, onNavigateWeekly }: Props) {
   const [goals, setGoals] = useState<PmGoal[]>([]);
   const [milestones, setMilestones] = useState<PmMilestone[]>([]);
   const [loading, setLoading] = useState(true);
@@ -283,7 +286,7 @@ export function GoalsPanel({ projectId, businessGoal, canManage }: Props) {
       </div>
 
       {view === 'canvas' ? (
-        <GoalsCanvas projectId={projectId} businessGoal={businessGoal} canManage={canManage} goals={goals} onReload={load} />
+        <GoalsCanvas projectId={projectId} businessGoal={businessGoal} canManage={canManage} goals={goals} onReload={load} onNavigateTask={onNavigateTask} onNavigateWeekly={onNavigateWeekly} />
       ) : (
       <div className="flex-1 min-h-0 flex flex-col gap-5 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
       {/* 业务目标北极星 */}

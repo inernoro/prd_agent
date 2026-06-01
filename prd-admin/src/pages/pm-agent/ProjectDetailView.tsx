@@ -72,6 +72,14 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
   const [timeEdit, setTimeEdit] = useState<{ start: string; end: string } | null>(null);
   const [savingTime, setSavingTime] = useState(false);
   const [openTask, setOpenTask] = useState<PmTask | null>(null);
+  // 目标画布反查跳转：到任务（切 tab + 开抽屉）/ 到周报（切 tab + 定位）
+  const [targetWeeklyId, setTargetWeeklyId] = useState<string | undefined>(undefined);
+  const navigateToTask = useCallback((taskId: string) => {
+    const t = tasks.find((x) => x.id === taskId);
+    if (t) { setTab('tasks'); setViewMode('list'); setOpenTask(t); }
+    else toast.error('任务不存在', '可能已被删除');
+  }, [tasks]);
+  const navigateToWeekly = useCallback((reportId: string) => { setTab('weekly'); setTargetWeeklyId(reportId); }, []);
   // 立项后引导：成员只有项目经理一人、且无观察者时，引导去拉人协作（有人后自动消失，可手动收起）
   const [teamGuideDismissed, setTeamGuideDismissed] = useState(() => sessionStorage.getItem(`pm-team-guide-${projectId}`) === '1');
   const dismissTeamGuide = () => { sessionStorage.setItem(`pm-team-guide-${projectId}`, '1'); setTeamGuideDismissed(true); };
@@ -481,11 +489,11 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
 
       {tab === 'knowledge' && <KnowledgePanel projectId={projectId} />}
 
-      {tab === 'weekly' && <WeeklyReportsPanel projectId={projectId} />}
+      {tab === 'weekly' && <WeeklyReportsPanel projectId={projectId} targetReportId={targetWeeklyId} onTargetConsumed={() => setTargetWeeklyId(undefined)} />}
 
       {tab === 'meetings' && <MeetingsPanel projectId={projectId} />}
 
-      {tab === 'goals' && <GoalsPanel projectId={projectId} businessGoal={project.businessGoal} canManage={project.ownerId === myId || project.leaderId === myId} />}
+      {tab === 'goals' && <GoalsPanel projectId={projectId} businessGoal={project.businessGoal} canManage={project.ownerId === myId || project.leaderId === myId} onNavigateTask={navigateToTask} onNavigateWeekly={navigateToWeekly} />}
 
       {tab === 'members' && (
         <MembersPanel projectId={projectId} canManage={project.ownerId === myId || project.leaderId === myId} />
