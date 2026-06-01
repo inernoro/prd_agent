@@ -138,9 +138,20 @@ export type DocumentStoreAgentRun = {
   templateKey?: string;
   customPrompt?: string;
   generatedText?: string;
+  /** 多轮对话历史（仅 reprocess 模式有内容） */
+  messages?: ReprocessChatMessage[];
   createdAt: string;
   startedAt?: string;
   endedAt?: string;
+};
+
+/** 文档再加工对话历史中的单条消息 */
+export type ReprocessChatMessage = {
+  seq: number;
+  role: 'user' | 'assistant';
+  content: string;
+  templateKey?: string;
+  createdAt: string;
 };
 
 /** 再加工模板定义 */
@@ -148,6 +159,20 @@ export type ReprocessTemplate = {
   key: string;
   label: string;
   description: string;
+};
+
+/** 再加工·可调用智能体（system 内置 + personal 用户自建） */
+export type ReprocessAgent = {
+  id: string;
+  key: string;
+  label: string;
+  description: string;
+  /** 调用时叠加到百宝箱通用 chat 链路里的 system prompt */
+  systemPrompt: string;
+  visibility: 'system' | 'personal';
+  /** 当前登录用户是否为创建者（用于显示删除按钮） */
+  isOwn: boolean;
+  createdAt: string;
 };
 
 /** 订阅同步日志中的单条事件（只包含 change/error，不包含无变化的心跳） */

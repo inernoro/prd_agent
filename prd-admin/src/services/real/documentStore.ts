@@ -431,13 +431,66 @@ export async function listReprocessTemplates() {
   );
 }
 
-/** 发起文档再加工任务 */
+/** 列出当前用户可调用的「再加工·智能体」（system 内置 + 自己创建的 personal） */
+export async function listReprocessAgents() {
+  return await apiRequest<{ items: import('@/services/contracts/documentStore').ReprocessAgent[] }>(
+    api.documentStore.stores.reprocessAgents(),
+    { method: 'GET' },
+  );
+}
+
+/** 创建一个个人再加工智能体 */
+export async function createReprocessAgent(input: {
+  label: string;
+  description?: string;
+  systemPrompt: string;
+}) {
+  return await apiRequest<import('@/services/contracts/documentStore').ReprocessAgent>(
+    api.documentStore.stores.reprocessAgents(),
+    { method: 'POST', body: input },
+  );
+}
+
+/** 删除一个自己的个人再加工智能体 */
+export async function deleteReprocessAgent(id: string) {
+  return await apiRequest<{ deleted: boolean }>(
+    api.documentStore.stores.reprocessAgentDetail(id),
+    { method: 'DELETE' },
+  );
+}
+
+/** 发起文档再加工任务（旧接口，单轮兼容） */
 export async function startReprocess(entryId: string, input: {
   templateKey: string;
   customPrompt?: string;
 }) {
-  return await apiRequest<{ runId: string; status: string }>(
+  return await apiRequest<{ runId: string; status: string; messageSeq?: number }>(
     api.documentStore.entries.reprocess(entryId),
+    { method: 'POST', body: input },
+  );
+}
+
+// 已删除（Bugbot Low 反馈）：
+//   - sendReprocessChat：对应后端 /reprocess/chat 多轮端点，新架构走 streamDirectChat
+//   - applyReprocessMessage：对应后端 /agent-runs/{id}/apply，新架构走 applyReprocessContent
+// 后端端点保留向后兼容，但前端不再需要 wrapper。如未来其他模块要复用可重新导出。
+
+/** 获取某文档的活跃再加工会话（含完整 messages）—— 用于重开抽屉时恢复历史对话 */
+export async function getActiveReprocessRun(entryId: string) {
+  return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreAgentRun | null>(
+    api.documentStore.entries.reprocessActiveRun(entryId),
+    { method: 'GET' },
+  );
+}
+
+/** 写回任意内容到文档（不依赖 Run；用于通过 /ai-toolbox/direct-chat 直调拿回的内容） */
+export async function applyReprocessContent(entryId: string, input: {
+  mode: 'replace' | 'append' | 'new';
+  content: string;
+  title?: string;
+}) {
+  return await apiRequest<{ mode: string; outputEntryId?: string; updatedEntryId?: string }>(
+    api.documentStore.entries.reprocessApplyContent(entryId),
     { method: 'POST', body: input },
   );
 }

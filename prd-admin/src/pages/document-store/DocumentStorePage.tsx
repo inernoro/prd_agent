@@ -89,8 +89,7 @@ import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
 import { SubscriptionDetailDrawer } from './SubscriptionDetailDrawer';
 import { SubtitleGenerationDrawer } from './SubtitleGenerationDrawer';
-import { ReprocessDrawer } from './ReprocessDrawer';
-import { ReprocessRunHost } from './ReprocessRunHost';
+import { ReprocessChatDrawer } from './ReprocessChatDrawer';
 import { ViewersDrawer } from './ViewersDrawer';
 import { useReprocessRunStore, selectStreamingByEntry } from '@/stores/reprocessRunStore';
 
@@ -613,17 +612,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
     [reprocessSig, storeId],
   );
 
-  // Host 报告任务到达终态：完成则刷新文件树 + 选中新文档（与抽屉是否开着无关）
-  const handleReprocessCompleted = useCallback((status: 'done' | 'failed', outputEntryId?: string) => {
-    if (status === 'done' && outputEntryId) {
-      void loadEntries();
-      setSelectedEntryId(outputEntryId);
-      // 兜底再刷一次：兼容 DB 副本同步延迟
-      setTimeout(() => { void loadEntries(); }, 1500);
-      toast.success('文档加工完成', '已保存为新文档');
-    } else if (status === 'failed') {
-      toast.error('文档加工失败', '可在任务卡片查看原因');
-    }
+  // 写回成功时刷新文件树 + 在 mode='new' 时选中新条目
+  const handleReprocessApplied = useCallback((mode: 'replace' | 'append' | 'new', targetEntryId: string) => {
+    void loadEntries();
+    if (mode === 'new') setSelectedEntryId(targetEntryId);
+    setTimeout(() => { void loadEntries(); }, 1500);
   }, [loadEntries]);
 
   // 文件上传处理
@@ -1084,13 +1077,6 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
         )}
       </AnimatePresence>
 
-      {/* 文档再加工：无 UI 的 SSE 宿主（每个进行中任务一个，与抽屉解耦） */}
-      {storeRuns
-        .filter((r) => r.status === 'streaming')
-        .map((r) => (
-          <ReprocessRunHost key={r.runId} runId={r.runId} onCompleted={handleReprocessCompleted} />
-        ))}
-
       {/* 文档再加工：右下角常驻任务 pill —— 关抽屉后仍可见，点击重新展开 */}
       {storeRuns.length > 0 && (
         <div className="fixed bottom-5 right-5 z-40 flex flex-col gap-2" style={{ maxWidth: '300px' }}>
@@ -1141,14 +1127,15 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
         </div>
       )}
 
-      {/* 文档再加工抽屉 */}
+      {/* 文档再加工对话抽屉 */}
       <AnimatePresence>
         {reprocessTarget && (
-          <ReprocessDrawer
+          <ReprocessChatDrawer
             entryId={reprocessTarget.id}
             entryTitle={reprocessTarget.title}
             storeId={storeId}
             onClose={() => setReprocessTarget(null)}
+            onApplied={handleReprocessApplied}
           />
         )}
       </AnimatePresence>
