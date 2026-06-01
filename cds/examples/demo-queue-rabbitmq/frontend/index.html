@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>消息队列 Demo - RabbitMQ</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="head">
+        <div class="title-row">
+          <h1>消息队列演示</h1>
+          <span class="pill" id="broker-pill">连接检测中</span>
+        </div>
+        <p class="subtitle">前端投递消息 → RabbitMQ 队列 → 后端消费者处理 → 实时回显</p>
+      </header>
+
+      <section class="card send-card">
+        <form class="send-form" id="send-form">
+          <input
+            class="input"
+            id="msg-input"
+            type="text"
+            placeholder="输入要投递的消息内容"
+            autocomplete="off"
+          />
+          <button class="btn-primary" type="submit">发送消息</button>
+        </form>
+        <p class="hint" id="send-hint">消息会被发布到队列 demo.messages，由后端消费者异步处理。</p>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>已处理消息</h2>
+          <span class="count" id="count">0 条</span>
+        </div>
+        <ul class="msg-list" id="msg-list">
+          <li class="empty">还没有消息，先发送一条试试</li>
+        </ul>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

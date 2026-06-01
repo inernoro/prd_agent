@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>事件流 Demo - Kafka</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="head">
+        <div class="title-row">
+          <h1>事件流演示</h1>
+          <span class="pill" id="broker-pill">连接检测中</span>
+        </div>
+        <p class="subtitle">前端生产事件 → Kafka 主题 demo.events（KRaft 单节点，无 Zookeeper） → 后端消费者读取 → 实时回显</p>
+      </header>
+
+      <section class="card send-card">
+        <form class="send-form" id="send-form">
+          <input
+            class="input"
+            id="msg-input"
+            type="text"
+            placeholder="输入要生产的事件内容"
+            autocomplete="off"
+          />
+          <button class="btn-primary" type="submit">生产事件</button>
+        </form>
+        <p class="hint" id="send-hint">事件会写入 Kafka 主题，由后端消费组 demo-stream-consumer 读取。</p>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>已消费事件流</h2>
+          <span class="count" id="count">0 条</span>
+        </div>
+        <ul class="msg-list" id="msg-list">
+          <li class="empty">还没有事件，先生产一条试试</li>
+        </ul>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

@@ -92,6 +92,7 @@ docs:
   design.cds-agent-commercial-architecture-and-roadmap: CDS Agent 商业级架构与路线图
   design.cds-agent-managed-runtime-fact-source: CDS Agent R0 · CDS-managed runtime fact source 设计
   design.cds-onboarding: CDS 极简上手设计：一键配置 + 项目扫描技能
+  design.cds-ai-compose: CDS AI 生成 compose 草稿设计（可选路径，借用 CDS Agent/OpenRouter，确定性检测器为兜底）
   design.ai-report-systems: AI 周报系统市场调研报告
   design.exec-bt-deployment: CDS 部署架构与冲突分析
   design.model-pool-failover: 模型池故障转移与自动探活设计
@@ -236,6 +237,7 @@ docs:
   plan.cds-roadmap: CDS 产品路线图（Phase 0-3 长期）
   plan.cds-deployment: CDS 部署规划
   plan.cds-railway-ux-followup: CDS Railway 式体验补齐计划
+  plan.cds-visual-deploy: CDS 绝对可视化部署计划（基建注册表 SSOT + 部署时间线 + 数据层操作 + AI compose 备选）
   plan.report-agent-v3: Report Agent v3.0 升级方案 — 采集优先架构
   plan.visual-agent-video-gen-daily-limit: 视觉创作视频生成每日限额实施方案
   plan.design-doc-optimization: Design 文档优化项目进度

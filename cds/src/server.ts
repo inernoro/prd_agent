@@ -501,6 +501,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /env/categorize': '整理环境变量',
     'GET /config': '获取全局配置',
     'GET /infra': '获取基础设施列表',
+    'GET /infra/catalog': '获取基建目录',
     'GET /infra/discover': '发现基础设施',
     'POST /infra': '添加基础设施',
     'POST /infra/quickstart': '快速初始化基础设施',

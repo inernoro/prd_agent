@@ -49,6 +49,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { apiRequest, ApiError } from '@/lib/api';
+import { useInfraCatalog } from '@/lib/infraCatalog';
 import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
 import { SkillDownloadDialog } from '@/components/SkillDownloadDialog';
@@ -231,14 +232,6 @@ const RUNTIME_PRESETS: Array<{
     port: 8080,
     description: '手动填写镜像、命令和端口。',
   },
-];
-
-const INFRA_PRESETS = [
-  { id: 'mongodb', label: 'MongoDB', description: '文档数据库，自动生成 MONGODB_URL。' },
-  { id: 'postgres', label: 'PostgreSQL', description: '关系型数据库，自动生成 DATABASE_URL。' },
-  { id: 'mysql', label: 'MySQL', description: '关系型数据库，自动生成 DATABASE_URL。' },
-  { id: 'redis', label: 'Redis', description: '缓存与队列，自动生成 REDIS_URL。' },
-  { id: 'rabbitmq', label: 'RabbitMQ', description: '消息队列，自动生成 RABBITMQ_URL。' },
 ];
 
 function runtimePreset(id: RuntimeId): (typeof RUNTIME_PRESETS)[number] {
@@ -2675,6 +2668,7 @@ function CreateProjectDialog({
   const [autoDetectOnClone, setAutoDetectOnClone] = useState(true);
   const [appServices, setAppServices] = useState<AppServiceDraft[]>(() => defaultOnboardingServices());
   const [selectedInfra, setSelectedInfra] = useState<string[]>([]);
+  const { groups: infraGroups } = useInfraCatalog();
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [repoPickerOpen, setRepoPickerOpen] = useState(false);
@@ -2927,27 +2921,34 @@ function CreateProjectDialog({
                 <Database className="h-4 w-4" />
                 选择基础设施
               </div>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                {INFRA_PRESETS.map((preset) => {
-                  const checked = selectedInfra.includes(preset.id);
-                  return (
-                    <button
-                      key={preset.id}
-                      type="button"
-                      onClick={() => toggleInfra(preset.id)}
-                      className={[
-                        'min-h-24 rounded-md border px-3 py-3 text-left transition-colors',
-                        checked ? 'border-primary bg-primary/10' : 'border-border bg-background hover:border-primary/60',
-                      ].join(' ')}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-medium">{preset.label}</span>
-                        <span className={`h-4 w-4 rounded border ${checked ? 'border-primary bg-primary' : 'border-border'}`} />
-                      </div>
-                      <div className="mt-2 text-xs leading-5 text-muted-foreground">{preset.description}</div>
-                    </button>
-                  );
-                })}
+              <div className="space-y-3">
+                {infraGroups.map((group) => (
+                  <div key={group.category}>
+                    <div className="mb-1.5 text-xs font-medium text-muted-foreground">{group.label}</div>
+                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                      {group.items.map((preset) => {
+                        const checked = selectedInfra.includes(preset.id);
+                        return (
+                          <button
+                            key={preset.id}
+                            type="button"
+                            onClick={() => toggleInfra(preset.id)}
+                            className={[
+                              'min-h-24 rounded-md border px-3 py-3 text-left transition-colors',
+                              checked ? 'border-primary bg-primary/10' : 'border-border bg-background hover:border-primary/60',
+                            ].join(' ')}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-medium">{preset.name}</span>
+                              <span className={`h-4 w-4 rounded border ${checked ? 'border-primary bg-primary' : 'border-border'}`} />
+                            </div>
+                            <div className="mt-2 text-xs leading-5 text-muted-foreground">{preset.description}</div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
               </div>
               <div className="mt-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs leading-5 text-muted-foreground">
                 创建后会生成持久化卷和连接环境变量；进入拓扑页后可启动、重启、查看日志和打开数据库操作入口。

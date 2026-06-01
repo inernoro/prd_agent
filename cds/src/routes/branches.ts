@@ -22,6 +22,7 @@ import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
 import { combinedOutput } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
 import { detectStack } from '../services/stack-detector.js';
+import { getInfraCatalogPublic } from '../services/infra-catalog.js';
 import { assertProjectAccess } from './projects.js';
 import { CheckRunRunner } from '../services/check-run-runner.js';
 import { branchEvents, nowIso } from '../services/branch-events.js';
@@ -9423,6 +9424,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
 
     res.json({ services });
+  });
+
+  // Infra catalog (SSOT: services/infra-catalog.ts) — secret-free preset list for the
+  // visual picker. The frontend reads this instead of hard-coding images/ports/env names,
+  // so adding a new infra type to the catalog auto-surfaces it in the UI.
+  router.get('/infra/catalog', (_req, res) => {
+    res.json({ catalog: getInfraCatalogPublic() });
   });
 
   // Discover infrastructure services from compose files in the project repo

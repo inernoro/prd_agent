@@ -32,6 +32,12 @@ import { discoverComposeFiles, parseCdsCompose } from '../services/compose-parse
 import { deriveEnvMetaForVars } from '../services/env-classifier.js';
 import { ProjectFilesService, ProjectFileError, type ProjectFilePayload } from '../services/project-files.js';
 import { repoNameFromGitRef } from '../services/preview-slug.js';
+import {
+  getInfraCatalogEntry,
+  infraCatalogIds,
+  recommendedVolumePathsFromCatalog,
+  type InfraPresetDefinition,
+} from '../services/infra-catalog.js';
 import * as nodeFs from 'node:fs';
 import * as nodePath from 'node:path';
 import type { IShellExecutor, Project, CdsConfig, AgentKey, BuildProfile, InfraService } from '../types.js';
@@ -39,15 +45,6 @@ import { combinedOutput } from '../types.js';
 
 type OnboardingRuntime = NonNullable<Project['onboardingRuntime']>;
 type OnboardingService = NonNullable<Project['onboardingServices']>[number];
-
-interface InfraPresetDefinition {
-  id: string;
-  name: string;
-  dockerImage: string;
-  containerPort: number;
-  env?: Record<string, string>;
-  envVars?: Record<string, string>;
-}
 
 const ONBOARDING_RUNTIMES = new Set<OnboardingRuntime>([
   'auto',
@@ -62,7 +59,8 @@ const ONBOARDING_RUNTIMES = new Set<OnboardingRuntime>([
   'dockerfile',
   'custom',
 ]);
-const INFRA_PRESETS = new Set(['mongodb', 'postgres', 'mysql', 'redis', 'rabbitmq']);
+// Valid preset IDs derive from the infra-catalog SSOT (services/infra-catalog.ts).
+const INFRA_PRESETS = new Set(infraCatalogIds());
 
 export interface ProjectsRouterDeps {
   stateService: StateService;
@@ -583,15 +581,9 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   }
 
   function recommendedVolumePathsForImage(image: string): string[] | null {
-    const lower = (image || '').toLowerCase();
-    const baseRaw = lower.split('/').pop() || lower;
-    const base = baseRaw.split(':')[0];
-    if (base.startsWith('mysql') || base.startsWith('mariadb')) return ['/var/lib/mysql'];
-    if (base.startsWith('postgres')) return ['/var/lib/postgresql/data'];
-    if (base.startsWith('redis')) return ['/data'];
-    if (base.startsWith('mongo')) return ['/data/db'];
-    if (base.startsWith('rabbitmq')) return ['/var/lib/rabbitmq'];
-    return null;
+    // Catalog-driven (SSOT: services/infra-catalog.ts) with a heuristic fallback
+    // for user-supplied custom images that are not in the catalog.
+    return recommendedVolumePathsFromCatalog(image);
   }
 
   function recommendedInfraVolumes(project: Project, infraId: string, image: string): InfraService['volumes'] {
@@ -609,90 +601,26 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     return randomBytes(bytes).toString('hex');
   }
 
-  function createInfraPreset(project: Project, presetId: string): InfraPresetDefinition | null {
-    if (presetId === 'mongodb') {
-      const user = 'app';
-      const password = makeSecret();
-      return {
-        id: 'mongodb',
-        name: 'MongoDB',
-        dockerImage: 'mongo:7',
-        containerPort: 27017,
-        env: {
-          MONGO_INITDB_ROOT_USERNAME: user,
-          MONGO_INITDB_ROOT_PASSWORD: password,
-        },
-        envVars: {
-          MONGODB_URL: `mongodb://${user}:${password}@mongodb:27017/app?authSource=admin`,
-        },
-      };
+  function createInfraPreset(_project: Project, presetId: string): InfraPresetDefinition | null {
+    // SSOT: services/infra-catalog.ts. Generate this preset's secrets, then let the
+    // catalog entry build the concrete container env + app-visible connection strings.
+    const entry = getInfraCatalogEntry(presetId);
+    if (!entry) return null;
+    const secrets: Record<string, string> = {};
+    for (const key of entry.secretKeys || []) {
+      secrets[key] = makeSecret();
     }
-    if (presetId === 'postgres') {
-      const password = makeSecret();
-      return {
-        id: 'postgres',
-        name: 'PostgreSQL',
-        dockerImage: 'postgres:16-alpine',
-        containerPort: 5432,
-        env: {
-          POSTGRES_USER: 'app',
-          POSTGRES_PASSWORD: password,
-          POSTGRES_DB: 'app',
-        },
-        envVars: {
-          DATABASE_URL: `postgresql://app:${password}@postgres:5432/app`,
-          POSTGRES_URL: `postgresql://app:${password}@postgres:5432/app`,
-        },
-      };
-    }
-    if (presetId === 'mysql') {
-      const rootPassword = makeSecret();
-      const password = makeSecret();
-      return {
-        id: 'mysql',
-        name: 'MySQL',
-        dockerImage: 'mysql:8',
-        containerPort: 3306,
-        env: {
-          MYSQL_ROOT_PASSWORD: rootPassword,
-          MYSQL_DATABASE: 'app',
-          MYSQL_USER: 'app',
-          MYSQL_PASSWORD: password,
-        },
-        envVars: {
-          DATABASE_URL: `mysql://app:${password}@mysql:3306/app`,
-          MYSQL_URL: `mysql://app:${password}@mysql:3306/app`,
-        },
-      };
-    }
-    if (presetId === 'redis') {
-      return {
-        id: 'redis',
-        name: 'Redis',
-        dockerImage: 'redis:7-alpine',
-        containerPort: 6379,
-        envVars: {
-          REDIS_URL: 'redis://redis:6379',
-        },
-      };
-    }
-    if (presetId === 'rabbitmq') {
-      const password = makeSecret();
-      return {
-        id: 'rabbitmq',
-        name: 'RabbitMQ',
-        dockerImage: 'rabbitmq:3-management-alpine',
-        containerPort: 5672,
-        env: {
-          RABBITMQ_DEFAULT_USER: 'app',
-          RABBITMQ_DEFAULT_PASS: password,
-        },
-        envVars: {
-          RABBITMQ_URL: `amqp://app:${password}@rabbitmq:5672`,
-        },
-      };
-    }
-    return null;
+    const built = entry.build(secrets);
+    return {
+      id: entry.id,
+      name: entry.name,
+      dockerImage: entry.dockerImage,
+      containerPort: entry.containerPort,
+      env: built.env,
+      envVars: built.envVars,
+      command: entry.command,
+      labels: entry.labels,
+    };
   }
 
   function applyInfraPresets(project: Project, presetIds: string[]): string[] {
@@ -718,6 +646,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         status: 'stopped',
         volumes: recommendedInfraVolumes(project, preset.id, preset.dockerImage),
         env: preset.env || {},
+        ...(preset.command ? { command: preset.command } : {}),
         createdAt: new Date().toISOString(),
       };
       stateService.addInfraService(service);

@@ -1,0 +1,70 @@
+services:
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -lc "npx --yes serve -s . -l $$PORT"
+    ports:
+      - "4173:4173"
+    volumes:
+      - ./frontend:/app
+    environment:
+      PORT: "4173"
+    labels:
+      cds.path-prefix: /
+      cds.readiness-path: /
+
+  backend:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -lc "npm install --no-audit --no-fund && node server.js"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - kafka
+    environment:
+      PORT: "3000"
+      KAFKA_BROKERS: ${KAFKA_BROKERS}
+    labels:
+      cds.path-prefix: /api/
+      cds.readiness-path: /api/health
+
+  # Single-node Kafka in KRaft mode (no Zookeeper). The KAFKA_* values below
+  # are non-secret broker tuning, so literals are fine. The broker is both
+  # controller and broker; internal clients reach it at kafka:9092.
+  kafka:
+    image: apache/kafka:3.7.0
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      CLUSTER_ID: "demo-kafka-cluster-0001"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+
+volumes:
+  kafka-data:
+
+x-cds-project:
+  name: 事件流 Demo (Kafka KRaft)
+  description: 前端生产事件到单节点 Kafka（KRaft 模式，无 Zookeeper），后端消费者读取并回显。纯 image + command + bind-mount 一键部署。
+
+x-cds-env:
+  KAFKA_BROKERS: kafka:9092
+
+x-cds-env-meta:
+  KAFKA_BROKERS:
+    kind: infra-derived
+    hint: 后端连接的 Kafka broker 地址（容器网络内通过服务名 kafka 访问）。
