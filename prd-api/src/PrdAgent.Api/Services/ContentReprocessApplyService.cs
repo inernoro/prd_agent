@@ -25,7 +25,13 @@ public class ContentReprocessApplyService
         _logger = logger;
     }
 
-    public record ApplyResult(string Mode, string? OutputEntryId, string? UpdatedEntryId);
+    /// <summary>
+    /// 写回结果。FinalBody 是真正落到 entry / 新 entry 上的最终正文，调用方需要在写回后
+    /// 重绑划词评论 offset 时直接拿这份字符串用，不要再去 DB 重新读 —— 因为这时候 DB 已经
+    /// 是后置状态，对 append 模式会让"重新拼"再 append 一次 aiContent，造成 offset 偏移
+    /// （Codex P2 反馈）。
+    /// </summary>
+    public record ApplyResult(string Mode, string? OutputEntryId, string? UpdatedEntryId, string FinalBody);
 
     public async Task<ApplyResult> ApplyAsync(
         DocumentStoreAgentRun run,
@@ -58,7 +64,7 @@ public class ContentReprocessApplyService
     private async Task<ApplyResult> ReplaceAsync(DocumentEntry entry, string content, MongoDbContext db)
     {
         await SaveContentToEntryAsync(entry, content, db);
-        return new ApplyResult("replace", null, entry.Id);
+        return new ApplyResult("replace", null, entry.Id, FinalBody: content);
     }
 
     private async Task<ApplyResult> AppendAsync(DocumentEntry entry, string content, MongoDbContext db)
@@ -68,7 +74,7 @@ public class ContentReprocessApplyService
             ? content
             : existing.TrimEnd() + "\n\n" + content;
         await SaveContentToEntryAsync(entry, merged, db);
-        return new ApplyResult("append", null, entry.Id);
+        return new ApplyResult("append", null, entry.Id, FinalBody: merged);
     }
 
     private async Task<ApplyResult> CreateNewAsync(
@@ -111,7 +117,7 @@ public class ContentReprocessApplyService
 
         _logger.LogInformation(
             "[doc-store-agent] Apply mode=new src={SrcId} → new={NewId}", sourceEntry.Id, newEntry.Id);
-        return new ApplyResult("new", newEntry.Id, null);
+        return new ApplyResult("new", newEntry.Id, null, FinalBody: content);
     }
 
     private async Task<string> LoadEntryContentAsync(DocumentEntry entry)

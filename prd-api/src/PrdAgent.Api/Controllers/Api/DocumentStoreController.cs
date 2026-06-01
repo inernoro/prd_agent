@@ -2378,6 +2378,9 @@ public class DocumentStoreController : ControllerBase
                     .Set(r => r.EndedAt, (DateTime?)null)
                     .Set(r => r.ErrorMessage, null),
                 cancellationToken: CancellationToken.None);
+            // 同步内存里的 run.Status，否则下面 return 时仍然返回旧的 "done"，
+            // 客户端会误以为任务已经完成（Bugbot #1 三轮 Medium）
+            run.Status = DocumentStoreRunStatus.Queued;
         }
 
         // 给 SSE 端推一条 userMessage 事件方便前端镜像（不影响处理流程）
@@ -2459,14 +2462,16 @@ public class DocumentStoreController : ControllerBase
             // 替换 / 追加修改了原 entry 的正文 —— 必须按 UpdateEntryContent 同款逻辑
             // 重绑划词评论的 offset，否则旧评论高亮会指向新文本的错误位置（Codex P2 #2）。
             // mode=new 是创建新 entry，源 entry 内容没动，无需重绑。
+            // 必须用 ApplyService 返回的 FinalBody 而不是再去 DB 读 —— 这时候 DB 已经是
+            // 后置状态，对 append 模式重读再拼会把 aiContent 多 append 一次，造成偏移
+            // （Codex P2 #3 反馈）。
             int? rebound = null;
             int? orphaned = null;
             if ((mode == "replace" || mode == "append") && !string.IsNullOrEmpty(result.UpdatedEntryId))
             {
                 try
                 {
-                    var newBody = await BuildBodyAfterApplyAsync(entry, mode, content);
-                    var stats = await RebindInlineCommentsAsync(result.UpdatedEntryId, newBody);
+                    var stats = await RebindInlineCommentsAsync(result.UpdatedEntryId, result.FinalBody);
                     rebound = stats.rebound;
                     orphaned = stats.orphaned;
                 }
@@ -2491,25 +2496,6 @@ public class DocumentStoreController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// 计算 replace/append 之后 entry 的最终正文，喂给 RebindInlineCommentsAsync 做评论 offset 重绑。
-    /// （只读：不写盘，写盘已经在 ApplyService 里完成）
-    /// </summary>
-    private async Task<string> BuildBodyAfterApplyAsync(DocumentEntry entry, string mode, string aiContent)
-    {
-        if (mode == "replace") return aiContent;
-        // append：用 ApplyService 一致的拼接规则
-        var existing = string.Empty;
-        if (!string.IsNullOrEmpty(entry.DocumentId))
-        {
-            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
-            existing = doc?.RawContent ?? string.Empty;
-        }
-        if (string.IsNullOrEmpty(existing))
-            existing = entry.ContentIndex ?? string.Empty;
-        return string.IsNullOrEmpty(existing) ? aiContent : existing.TrimEnd() + "\n\n" + aiContent;
-    }
-
     /// <summary>把对话中某条 assistant 消息写回文档（replace / append / new）</summary>
     [HttpPost("agent-runs/{runId}/apply")]
     public async Task<IActionResult> ApplyReprocess(
@@ -2524,7 +2510,8 @@ public class DocumentStoreController : ControllerBase
         if (run == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "Run 不存在"));
 
-        var (entry, _, err) = await LoadOwnedEntryAsync(run.SourceEntryId);
+        // 同 apply-content：team writable，让协作成员也能用 AI 写回（Bugbot #4 三轮 Medium）
+        var (entry, _, err) = await LoadWritableEntryAsync(run.SourceEntryId, userId);
         if (err != null) return err;
 
         var mode = (request.Mode ?? "").Trim().ToLowerInvariant();
@@ -2544,11 +2531,30 @@ public class DocumentStoreController : ControllerBase
                     cancellationToken: CancellationToken.None);
             }
 
+            // 与 apply-content 同款重绑划词评论 offset（Codex P2）
+            int? rebound = null;
+            int? orphaned = null;
+            if ((result.Mode == "replace" || result.Mode == "append") && !string.IsNullOrEmpty(result.UpdatedEntryId))
+            {
+                try
+                {
+                    var stats = await RebindInlineCommentsAsync(result.UpdatedEntryId, result.FinalBody);
+                    rebound = stats.rebound;
+                    orphaned = stats.orphaned;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "[doc-store-agent] agent-runs apply rebind inline comments failed (non-fatal) entry={EntryId}", result.UpdatedEntryId);
+                }
+            }
+
             return Ok(ApiResponse<object>.Ok(new
             {
                 mode = result.Mode,
                 outputEntryId = result.OutputEntryId,
                 updatedEntryId = result.UpdatedEntryId,
+                reboundComments = rebound,
+                orphanedComments = orphaned,
             }));
         }
         catch (InvalidOperationException ex)

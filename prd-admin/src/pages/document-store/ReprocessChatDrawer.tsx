@@ -124,6 +124,10 @@ export function ReprocessChatDrawer({
   // 当前 entry id 锁：异步任务（fetch / apply）返回时校验 entry 没变才能写 state
   // 否则 apply 在 doc A 上跑，返回时 doc 已切到 B，错把"成功"绑到 B（Bugbot #3 二轮 Medium）。
   const entryIdRef = useRef(entryId);
+  // 「实际发给 LLM 的 message」镜像：用户 / assistant 气泡里渲染的是简短 bubble text，
+  // 但当时发出去的 message 包了 [参考文档] / [智能体角色设定] 等上下文。
+  // 多轮 history 必须与模型当时收到的一致，否则前几轮的 doc 上下文就丢了（Bugbot #2 三轮 Medium）。
+  const sentForLlmRef = useRef<Map<string, string>>(new Map());
 
   const scrollToBottom = useCallback(() => {
     requestAnimationFrame(() => {
@@ -148,6 +152,7 @@ export function ReprocessChatDrawer({
     let cancelled = false;
     entryIdRef.current = entryId;
     sendLockRef.current = false;
+    sentForLlmRef.current = new Map();
     abortCurrentStream();
     setMessages([]);
     setActive(null);
@@ -283,23 +288,32 @@ export function ReprocessChatDrawer({
       id: asstMsgId, role: 'assistant', content: '', streaming: true, phase: 'thinking', invoker,
     };
 
-    // 取当前对话历史发给 direct-chat（多轮上下文）
-    const history = messages.map((m) => ({
-      role: m.role,
-      content: m.content,
-    })).filter((m) => m.content);
-
-    setMessages((prev) => [...prev, userMsg, asstMsg]);
-    setStreamingId(asstMsgId);
-    setInput('');
-    scrollToBottom();
-
-    // 组装首条 message：把文档全文 + 用户指令拼起来；KB agent 时叠加 system prompt
+    // 组装本轮发给 LLM 的 message：[智能体角色设定]?[参考文档][用户指令]
     let composed = '';
     if (kbSystemPrompt) {
       composed += `[智能体角色设定]\n${kbSystemPrompt}\n\n`;
     }
     composed += `[参考文档${docTruncated ? '（已截取前 4 万字）' : ''}]\n${docContent}\n\n[用户指令]\n${userText.trim()}`;
+
+    // 多轮 history 用「当时实际发出去的 message」而不是 bubble text，让前几轮的 doc
+    // 上下文不丢；assistant 历史用原内容（就是 LLM 实际产出的）。
+    const history = messages
+      .map((m) => {
+        if (m.role === 'user') {
+          const sent = sentForLlmRef.current.get(m.id);
+          return { role: m.role, content: sent ?? m.content };
+        }
+        return { role: m.role, content: m.content };
+      })
+      .filter((m) => m.content);
+
+    // 记录本轮发出去的 message 内容，给后续轮的 history 用
+    sentForLlmRef.current.set(userMsgId, composed);
+
+    setMessages((prev) => [...prev, userMsg, asstMsg]);
+    setStreamingId(asstMsgId);
+    setInput('');
+    scrollToBottom();
 
     let hasFirstChunk = false;
     const stop = streamDirectChat({
@@ -414,16 +428,17 @@ export function ReprocessChatDrawer({
     try {
       res = await applyReprocessContent(requestedEntryId, { mode, content: msg.content });
     } catch (e) {
-      if (entryIdRef.current !== requestedEntryId) return; // 切走了，静默丢弃
+      // 即使 entry 切走也得清 applying，不然新 doc 的写回按钮永远 disabled（Bugbot #3 三轮 Low）
       setApplying(null);
+      if (entryIdRef.current !== requestedEntryId) return; // 切走了，静默丢弃错误 toast
       toast.error('写回失败', e instanceof Error ? e.message : '网络异常');
       return;
     }
+    setApplying(null);
     if (entryIdRef.current !== requestedEntryId) {
       // entry 在 await 期间被切换：丢弃这次结果，避免错认归属
       return;
     }
-    setApplying(null);
     if (!res.success) {
       toast.error('写回失败', res.error?.message);
       return;
