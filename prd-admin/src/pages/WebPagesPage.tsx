@@ -82,6 +82,8 @@ import {
   FolderInput,
   BarChart3,
   MessageSquare,
+  ArrowDownUp,
+  ChevronDown,
   Plus,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
@@ -210,6 +212,67 @@ function buildSiteGroups(items: HostedSite[], mode: GroupMode): SiteGroup[] {
     });
   }
   return groups;
+}
+
+// ─── Sort chip：icon + 文字按钮 + floating menu，替代表单 select ───
+
+const SORT_OPTIONS: { value: string; label: string }[] = [
+  { value: 'newest', label: '最新创建' },
+  { value: 'oldest', label: '最早创建' },
+  { value: 'title', label: '按标题' },
+  { value: 'most-viewed', label: '最多浏览' },
+  { value: 'largest', label: '最大体积' },
+];
+
+function SortChip({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const currentLabel = SORT_OPTIONS.find(o => o.value === value)?.label ?? '排序';
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [open]);
+  return (
+    <div ref={ref} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="h-8 inline-flex items-center gap-1.5 px-2.5 rounded-md text-[13px] transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.06))]"
+        style={{ color: 'var(--text-primary)' }}
+      >
+        <ArrowDownUp size={14} />
+        <span>{currentLabel}</span>
+        <ChevronDown size={12} style={{ color: 'var(--text-muted)' }} />
+      </button>
+      {open && (
+        <div
+          className="absolute right-0 mt-1 min-w-[140px] rounded-lg py-1 z-50"
+          style={{
+            background: 'var(--bg-elevated)',
+            border: '1px solid var(--border-default)',
+            boxShadow: '0 8px 24px -6px rgba(0,0,0,0.45)',
+          }}
+        >
+          {SORT_OPTIONS.map(opt => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => { onChange(opt.value); setOpen(false); }}
+              className="w-full text-left px-3 py-1.5 text-[13px] flex items-center gap-2 transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.06))]"
+              style={{ color: opt.value === value ? 'var(--accent-primary)' : 'var(--text-primary)' }}
+            >
+              {opt.value === value && <Check size={12} />}
+              <span className={opt.value === value ? '' : 'pl-[20px]'}>{opt.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ─── Main Page ───
@@ -550,7 +613,7 @@ export default function WebPagesPage() {
         ))}
       </div>
     ) : (
-      <div className="flex flex-col" style={{ borderTop: '1px solid var(--border-default)' }}>
+      <div className="flex flex-col">
         {items.map(site => (
           <SiteListItem
             key={site.id}
@@ -756,32 +819,20 @@ export default function WebPagesPage() {
             />
           </div>
 
-          {/* Sort */}
-          <div className="w-[130px] shrink-0">
-            <Select
-              uiSize="sm"
-              value={sort}
-              onChange={e => setSort(e.target.value)}
-            >
-              <option value="newest">最新创建</option>
-              <option value="oldest">最早创建</option>
-              <option value="title">按标题</option>
-              <option value="most-viewed">最多浏览</option>
-              <option value="largest">最大体积</option>
-            </Select>
-          </div>
+          {/* Sort chip — 点击展开 floating menu，避免 select 表单壳 */}
+          <SortChip value={sort} onChange={setSort} />
 
-          {/* Group mode */}
-          <div className="w-[120px] shrink-0">
-            <Select
-              uiSize="sm"
-              value={groupMode}
-              onChange={e => setGroupMode(e.target.value as GroupMode)}
-            >
-              <option value="time">按日期</option>
-              <option value="folder">按文件夹</option>
-            </Select>
-          </div>
+          {/* Group toggle — 二选一，单击切换（icon + 文字） */}
+          <button
+            type="button"
+            onClick={() => setGroupMode(groupMode === 'time' ? 'folder' : 'time')}
+            title={groupMode === 'time' ? '当前按日期分组，点击切到按文件夹' : '当前按文件夹分组，点击切到按日期'}
+            className="h-8 inline-flex items-center gap-1.5 px-2.5 rounded-md text-[13px] shrink-0 transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.06))]"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            {groupMode === 'time' ? <Clock size={14} /> : <Folder size={14} />}
+            <span>{groupMode === 'time' ? '按日期' : '按文件夹'}</span>
+          </button>
 
           {/* View mode */}
           <div className="flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid var(--border-default)' }}>
@@ -904,7 +955,6 @@ export default function WebPagesPage() {
                 )}
                 <span>{group.label}</span>
                 <span style={{ color: 'var(--text-faint, var(--text-muted))' }}>· {group.items.length}</span>
-                <div className="flex-1 h-px" style={{ background: 'var(--border-default)' }} />
               </div>
               {renderGroupItems(group.items)}
             </div>
@@ -1674,10 +1724,9 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
   };
   return (
     <div
-      className="group flex items-center gap-4 px-3 py-2 cursor-grab active:cursor-grabbing touch-none transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.04))]"
+      className="group flex items-center gap-4 px-3 py-2 rounded-md cursor-grab active:cursor-grabbing touch-none transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.04))]"
       style={{
-        borderBottom: '1px solid var(--border-default)',
-        background: selected ? 'rgba(99,102,241,0.08)' : 'transparent',
+        background: selected ? 'rgba(99,102,241,0.10)' : 'transparent',
       }}
       onPointerDown={onPointerDown}
     >
