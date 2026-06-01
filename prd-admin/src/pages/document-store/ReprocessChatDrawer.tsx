@@ -284,6 +284,15 @@ export function ReprocessChatDrawer({
       // 重开抽屉时把它还原成 ChatMessage，让用户能看见上一次没读完的对话（Bugbot #4 五轮 Medium）
       const activeRun = (!hasFreshPersisted && activeRunRes.success) ? activeRunRes.data : null;
       if (activeRun && activeRun.messages && activeRun.messages.length > 0) {
+        // 旧 worker 路径 done 后会把 finalContent 自动落盘成新 DocumentEntry 并写
+        // outputEntryId 回 run。这意味着对应的 assistant 内容已经"另存为新文档"过
+        // 一次了，重开抽屉时如果让那一条的写回按钮再可点，用户会再创建一份重复
+        // 文档（Codex P2 十四轮）。把最后一条 assistant 标 applied:'new'。
+        const autoSavedAsstSeq = activeRun.outputEntryId
+          ? activeRun.messages.map((m, i) => ({ m, i }))
+              .filter((x) => x.m.role === 'assistant')
+              .pop()?.i ?? -1
+          : -1;
         const restored: ChatMessage[] = activeRun.messages.map((m, idx) => {
           // 反查 user 消息的 templateKey 对应的 agent 名字，让气泡能显示徽章
           let invoker: ChatMessage['invoker'] | undefined;
@@ -303,6 +312,7 @@ export function ReprocessChatDrawer({
             content: m.content,
             invoker,
             phase: 'done',
+            ...(idx === autoSavedAsstSeq ? { applied: 'new' as const } : {}),
           };
         });
         setMessages(restored);
