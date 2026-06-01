@@ -247,9 +247,14 @@ public class PmAgentService
 
     // ── AI 目标拆解（业务目标 → 目标/关键结果）──
 
-    /// <summary>依据项目业务目标拆解为目标/关键结果草稿（不落库，供前端确认后创建）。</summary>
+    /// <summary>
+    /// 拆解目标草稿（不落库，供前端确认后创建）。parentGoal 为 null 时依据项目业务目标拆顶层目标；
+    /// 非 null 时把该父目标拆为更具体的子目标，ancestorChain 提供从顶到父的祖先上下文使「越深越具体」。
+    /// </summary>
     public async IAsyncEnumerable<PmGoalDraft> DecomposeGoalsAsync(
         PmProject project,
+        PmGoal? parentGoal,
+        List<PmGoal> ancestorChain,
         string userId,
         Action<string>? onError = null,
         Func<string, Task>? onContent = null,
@@ -264,8 +269,8 @@ public class PmAgentService
             {
                 ["messages"] = new JsonArray
                 {
-                    new JsonObject { ["role"] = "system", ["content"] = BuildGoalDecomposeSystemPrompt() },
-                    new JsonObject { ["role"] = "user", ["content"] = BuildGoalDecomposeUserMessage(project) }
+                    new JsonObject { ["role"] = "system", ["content"] = BuildGoalDecomposeSystemPrompt(parentGoal != null) },
+                    new JsonObject { ["role"] = "user", ["content"] = BuildGoalDecomposeUserMessage(project, parentGoal, ancestorChain) }
                 },
                 ["temperature"] = 0.6,
                 ["include_reasoning"] = true,
@@ -304,20 +309,55 @@ public class PmAgentService
         return list;
     }
 
-    private static string BuildGoalDecomposeSystemPrompt()
-        => "你是资深项目管理专家。请把项目的业务目标拆解为 3-6 个可量化的【目标/关键结果(OKR)】。"
-         + "每个目标聚焦结果而非动作，尽量可衡量。严格只输出 JSON 数组，元素形如："
-         + "{\"title\":\"目标标题\",\"description\":\"简要说明\",\"metric\":\"衡量指标/关键结果\",\"period\":\"周期(可选,如 2026 Q2)\"}。"
-         + "不要输出数组以外的任何文字。";
+    private static string BuildGoalDecomposeSystemPrompt(bool isSubGoal)
+    {
+        var jsonShape = "{\"title\":\"目标标题\",\"description\":\"详细说明（落地思路/可行性）\",\"metric\":\"衡量指标/关键结果\",\"period\":\"周期(可选,如 2026 Q2)\"}";
+        if (!isSubGoal)
+            return "你是资深项目管理专家。请把项目的业务目标拆解为 3-6 个可量化的【目标/关键结果(OKR)】。"
+                 + "每个目标聚焦结果而非动作，尽量可衡量。严格只输出 JSON 数组，元素形如：" + jsonShape + "。"
+                 + "不要输出数组以外的任何文字。";
+        return "你是资深项目管理专家。现在要把一个【上级目标】拆解为更具体、更可落地的 2-5 个【子目标/关键结果】。"
+             + "要求：① 每深一层应更聚焦执行与可验证的结果，比上级更具体；② 探索不同的可行性路径，子目标之间尽量正交、可独立推进；"
+             + "③ 不要重复上级目标的措辞，要往下细化一层；④ description 写清这个子目标的落地思路或可行性考量。"
+             + "严格只输出 JSON 数组，元素形如：" + jsonShape + "。不要输出数组以外的任何文字。";
+    }
 
-    private static string BuildGoalDecomposeUserMessage(PmProject project)
+    private static string BuildGoalDecomposeUserMessage(PmProject project, PmGoal? parentGoal, List<PmGoal> ancestorChain)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"项目名称：{project.Title}");
-        sb.AppendLine($"业务目标：{project.BusinessGoal}");
+        sb.AppendLine($"业务目标（北极星）：{project.BusinessGoal}");
         if (!string.IsNullOrWhiteSpace(project.Description)) sb.AppendLine($"项目描述：{project.Description}");
         if (!string.IsNullOrWhiteSpace(project.StrategyAlignment)) sb.AppendLine($"战略对齐：{project.StrategyAlignment}");
-        sb.AppendLine("请据此拆解目标/关键结果，只输出 JSON 数组。");
+
+        if (parentGoal == null)
+        {
+            sb.AppendLine("请据此拆解 3-6 个目标/关键结果，只输出 JSON 数组。");
+            return sb.ToString();
+        }
+
+        // 子目标拆解：给出从顶到父的祖先链，让模型理解当前拆的是这条链最末端的目标
+        if (ancestorChain.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("目标层级路径（从上到下）：");
+            var level = 1;
+            foreach (var a in ancestorChain)
+            {
+                var extra = string.IsNullOrWhiteSpace(a.Metric) ? "" : $"（指标：{a.Metric}）";
+                sb.AppendLine($"  L{level}. {a.Title}{extra}");
+                level++;
+            }
+            sb.AppendLine($"  L{level}.（待拆解的上级目标，见下）");
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("待拆解的上级目标：");
+        sb.AppendLine($"  标题：{parentGoal.Title}");
+        if (!string.IsNullOrWhiteSpace(parentGoal.Description)) sb.AppendLine($"  说明：{parentGoal.Description}");
+        if (!string.IsNullOrWhiteSpace(parentGoal.Metric)) sb.AppendLine($"  指标：{parentGoal.Metric}");
+        if (!string.IsNullOrWhiteSpace(parentGoal.Period)) sb.AppendLine($"  周期：{parentGoal.Period}");
+        sb.AppendLine("请把上面这个上级目标拆解为更具体的 2-5 个子目标/关键结果，只输出 JSON 数组。");
         return sb.ToString();
     }
 }

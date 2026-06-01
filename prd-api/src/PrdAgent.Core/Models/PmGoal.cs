@@ -11,8 +11,14 @@ public class PmGoal
     /// <summary>所属项目</summary>
     public string ProjectId { get; set; } = string.Empty;
 
-    /// <summary>范围：team（团队目标，全员可见）| personal（个人目标，仅本人可见）</summary>
+    /// <summary>范围：team（团队目标，全员可见）| personal（个人目标，仅本人可见）。子目标强制继承父目标 Scope</summary>
     public string Scope { get; set; } = PmGoalScope.Team;
+
+    /// <summary>父目标 Id；null/空 表示顶层目标。一经创建不可改（从根杜绝循环引用）</summary>
+    public string? ParentId { get; set; }
+
+    /// <summary>层级深度，顶层=0，每深一层 +1（冗余，用于缩进展示与递归深度防护）</summary>
+    public int Depth { get; set; }
 
     /// <summary>归属人 UserId（个人目标=本人；团队目标=创建人，仅作展示）</summary>
     public string OwnerId { get; set; } = string.Empty;
@@ -49,6 +55,9 @@ public class PmGoal
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>目标递归拆解的最大层级（顶层 Depth=0，故最深节点 Depth=MaxGoalDepth-1）</summary>
+    public const int MaxGoalDepth = 5;
 }
 
 /// <summary>目标进度模式</summary>

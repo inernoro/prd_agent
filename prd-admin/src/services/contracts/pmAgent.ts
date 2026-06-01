@@ -388,6 +388,12 @@ export type PmGoal = {
   id: string;
   projectId: string;
   scope: PmGoalScope;
+  /** 父目标 id；null/缺省=顶层目标 */
+  parentId?: string | null;
+  /** 层级深度，顶层=0 */
+  depth?: number;
+  /** 直接子目标数量 */
+  childCount?: number;
   ownerId: string;
   title: string;
   description?: string | null;
@@ -403,7 +409,7 @@ export type PmGoal = {
   createdAt: string;
   updatedAt: string;
 };
-export type SavePmGoalInput = Partial<{ scope: PmGoalScope; title: string; description: string; metric: string; period: string; progress: number; progressMode: 'auto' | 'manual'; status: PmGoalStatus; orderKey: number }>;
+export type SavePmGoalInput = Partial<{ scope: PmGoalScope; parentId: string; title: string; description: string; metric: string; period: string; progress: number; progressMode: 'auto' | 'manual'; status: PmGoalStatus; orderKey: number }>;
 /** AI 拆解出的目标草稿（SSE 返回，未落库） */
 export type PmGoalDraft = { title: string; description?: string | null; metric?: string | null; period?: string | null };
 export type ListPmGoalsContract = (projectId: string) => Promise<ApiResponse<{ items: PmGoal[] }>>;

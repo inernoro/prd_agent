@@ -740,15 +740,44 @@ public class PmAgentController : ControllerBase
             return mine.Count > 0 ? (int)Math.Round(mine.Count(t => t.Status == PmTaskStatus.Done) * 100.0 / mine.Count) : 0;
         }
 
+        // 进度三级回退：有子目标→子目标 effective 均值（递归）；否则 auto+有里程碑→里程碑滚动；否则→手填/兜底
+        var byId = goals.ToDictionary(g => g.Id);
+        var childrenByParent = goals.Where(g => !string.IsNullOrEmpty(g.ParentId))
+            .GroupBy(g => g.ParentId!)
+            .ToDictionary(grp => grp.Key, grp => grp.ToList());
+        var progressMemo = new Dictionary<string, int>();
+        int EffectiveProgress(string goalId, HashSet<string> visited)
+        {
+            if (progressMemo.TryGetValue(goalId, out var cached)) return cached;
+            if (!visited.Add(goalId)) return 0; // 防御循环引用
+            if (!byId.TryGetValue(goalId, out var g)) { visited.Remove(goalId); return 0; }
+            int result;
+            var kids = childrenByParent.TryGetValue(goalId, out var cs) ? cs : null;
+            if (kids is { Count: > 0 })
+            {
+                result = (int)Math.Round(kids.Average(c => EffectiveProgress(c.Id, visited)));
+            }
+            else
+            {
+                var linked = milestones.Where(m => m.GoalId == g.Id).ToList();
+                result = (g.ProgressMode == PmGoalProgressMode.Auto && linked.Count > 0)
+                    ? (int)Math.Round(linked.Average(m => MsProgress(m.Id)))
+                    : g.Progress;
+            }
+            visited.Remove(goalId);
+            progressMemo[goalId] = result;
+            return result;
+        }
+
         var items = goals.Select(g =>
         {
             var linked = milestones.Where(m => m.GoalId == g.Id).ToList();
-            var effective = (g.ProgressMode == PmGoalProgressMode.Auto && linked.Count > 0)
-                ? (int)Math.Round(linked.Average(m => MsProgress(m.Id)))
-                : g.Progress;
+            var effective = EffectiveProgress(g.Id, new HashSet<string>());
+            var childCount = childrenByParent.TryGetValue(g.Id, out var cs2) ? cs2.Count : 0;
             return new
             {
                 id = g.Id, projectId = g.ProjectId, scope = g.Scope, ownerId = g.OwnerId,
+                parentId = g.ParentId, depth = g.Depth, childCount,
                 title = g.Title, description = g.Description, metric = g.Metric, period = g.Period,
                 progress = effective, progressMode = g.ProgressMode, linkedMilestoneCount = linked.Count,
                 status = g.Status, createdBy = g.CreatedBy, createdByName = g.CreatedByName,
@@ -770,14 +799,32 @@ public class PmAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "目标标题不能为空"));
 
         var scope = PmGoalScope.IsValid(request.Scope) ? request.Scope! : PmGoalScope.Team;
+
+        // 子目标：加载父目标，强制继承 Scope，校验深度上限（ParentId 一经创建不可改，从根杜绝循环引用）
+        PmGoal? parent = null;
+        if (!string.IsNullOrWhiteSpace(request.ParentId))
+        {
+            parent = await _db.PmGoals.Find(x => x.Id == request.ParentId && x.ProjectId == projectId).FirstOrDefaultAsync();
+            if (parent == null)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "父目标不存在"));
+            scope = parent.Scope; // 不信任前端传入的 scope，强制继承父
+            if (parent.Depth + 1 >= PmGoal.MaxGoalDepth)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"目标拆解层级已达上限（最多 {PmGoal.MaxGoalDepth} 层）"));
+        }
+
+        // 权限按（继承后的）scope 判定
         if (scope == PmGoalScope.Team && project.OwnerId != userId && project.LeaderId != userId)
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "团队目标仅立项人或负责人可创建"));
+        if (scope == PmGoalScope.Personal && parent != null && parent.OwnerId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "个人目标仅本人可拆解"));
 
         var creatorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
         var entity = new PmGoal
         {
             ProjectId = projectId,
             Scope = scope,
+            ParentId = parent?.Id,
+            Depth = parent != null ? parent.Depth + 1 : 0,
             OwnerId = userId, // 个人目标=本人；团队目标记录创建人
             Title = request.Title!.Trim(),
             Description = request.Description?.Trim(),
@@ -851,8 +898,25 @@ public class PmAgentController : ControllerBase
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "个人目标仅本人可删除"));
         if (g.Scope == PmGoalScope.Team && project.OwnerId != userId && project.LeaderId != userId)
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "团队目标仅立项人或负责人可删除"));
-        await _db.PmGoals.DeleteOneAsync(x => x.Id == goalId);
-        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+
+        // 级联删除整棵子树（BFS，带计数上限自保防御循环引用）
+        var siblings = await _db.PmGoals.Find(x => x.ProjectId == g.ProjectId)
+            .Project(x => new { x.Id, x.ParentId }).ToListAsync();
+        var childrenMap = siblings.Where(x => !string.IsNullOrEmpty(x.ParentId))
+            .GroupBy(x => x.ParentId!).ToDictionary(grp => grp.Key, grp => grp.Select(x => x.Id).ToList());
+        var toDelete = new HashSet<string>();
+        var queue = new Queue<string>();
+        queue.Enqueue(goalId);
+        var guard = 0;
+        while (queue.Count > 0 && guard++ < 10000)
+        {
+            var cur = queue.Dequeue();
+            if (!toDelete.Add(cur)) continue;
+            if (childrenMap.TryGetValue(cur, out var kids))
+                foreach (var k in kids) queue.Enqueue(k);
+        }
+        await _db.PmGoals.DeleteManyAsync(x => toDelete.Contains(x.Id));
+        return Ok(ApiResponse<object>.Ok(new { deleted = true, count = toDelete.Count }));
     }
 
     // ─────────────────────────────────────────────
@@ -1764,24 +1828,64 @@ public class PmAgentController : ControllerBase
         await WriteSseEvent("done", new { totalNew = count, error = llmError });
     }
 
-    /// <summary>AI 依据业务目标拆解目标/关键结果（SSE 流式，仅 owner/leader）</summary>
+    /// <summary>
+    /// AI 拆解目标（SSE 流式）。无 parentGoalId → 依据业务目标拆顶层团队 OKR（仅 owner/leader）；
+    /// 有 parentGoalId → 把该目标拆为更具体的子目标，权限按父目标 scope 判定，子目标继承父 scope。
+    /// </summary>
     [HttpPost("projects/{projectId}/goals/decompose")]
     [Produces("text/event-stream")]
-    public async Task GoalDecompose(string projectId)
+    public async Task GoalDecompose(string projectId, [FromQuery] string? parentGoalId)
     {
         var userId = GetUserId();
         var project = await FindAccessibleProjectAsync(projectId, userId);
         if (project == null) { Response.StatusCode = 404; return; }
-        if (project.OwnerId != userId && project.LeaderId != userId) { Response.StatusCode = 403; return; }
+
+        PmGoal? parentGoal = null;
+        var ancestorChain = new List<PmGoal>();
+        var depthExceeded = false;
+        if (string.IsNullOrWhiteSpace(parentGoalId))
+        {
+            // 项目级：拆顶层团队目标，仅 owner/leader
+            if (project.OwnerId != userId && project.LeaderId != userId) { Response.StatusCode = 403; return; }
+        }
+        else
+        {
+            var allGoals = await _db.PmGoals.Find(x => x.ProjectId == projectId).ToListAsync();
+            var byId = allGoals.ToDictionary(x => x.Id);
+            if (!byId.TryGetValue(parentGoalId, out parentGoal)) { Response.StatusCode = 404; return; }
+            // 权限按父目标 scope：team 要 owner/leader；personal 要本人
+            if (parentGoal.Scope == PmGoalScope.Team)
+            { if (project.OwnerId != userId && project.LeaderId != userId) { Response.StatusCode = 403; return; } }
+            else
+            { if (parentGoal.OwnerId != userId) { Response.StatusCode = 403; return; } }
+            // 祖先链：从顶到父（不含父自身），带遍历上限防御循环引用
+            var cur = parentGoal; var guard = 0; var chainRev = new List<PmGoal>();
+            while (!string.IsNullOrEmpty(cur.ParentId) && byId.TryGetValue(cur.ParentId!, out var p) && guard++ < PmGoal.MaxGoalDepth)
+            { chainRev.Add(p); cur = p; }
+            chainRev.Reverse();
+            ancestorChain = chainRev;
+            depthExceeded = parentGoal.Depth + 1 >= PmGoal.MaxGoalDepth;
+        }
 
         Response.ContentType = "text/event-stream; charset=utf-8";
         Response.Headers.CacheControl = "no-cache";
-        await WriteSseEvent("stage", new { stage = "decomposing", message = "正在依据业务目标拆解目标/关键结果…" });
+
+        if (depthExceeded)
+        {
+            await WriteSseEvent("error", new { message = $"目标拆解层级已达上限（最多 {PmGoal.MaxGoalDepth} 层）" });
+            await WriteSseEvent("done", new { totalNew = 0, error = "层级已达上限" });
+            return;
+        }
+
+        var stageMsg = parentGoal == null
+            ? "正在依据业务目标拆解目标/关键结果…"
+            : $"正在把「{parentGoal.Title}」拆解为更具体的子目标…";
+        await WriteSseEvent("stage", new { stage = "decomposing", message = stageMsg });
 
         string? llmError = null;
         var count = 0;
         await foreach (var draft in _pmService.DecomposeGoalsAsync(
-            project, userId,
+            project, parentGoal, ancestorChain, userId,
             onError: err => llmError = err,
             onContent: async text => await WriteSseEvent("typing", new { text }),
             onThinking: async text => await WriteSseEvent("thinking", new { text })))
@@ -1921,6 +2025,7 @@ public class MeetingRequest
 public class GoalRequest
 {
     public string? Scope { get; set; }
+    public string? ParentId { get; set; }
     public string? Title { get; set; }
     public string? Description { get; set; }
     public string? Metric { get; set; }

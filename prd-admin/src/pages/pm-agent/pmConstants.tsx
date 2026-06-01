@@ -105,6 +105,9 @@ export const GOAL_SCOPE = {
   personal: { label: '个人目标', desc: '仅自己可见的个人计划' },
 } as const;
 
+/** 目标递归拆解最大层级（与后端 PmGoal.MaxGoalDepth 对齐，顶层 depth=0）。depth+1 < 此值才可继续拆子目标 */
+export const GOAL_MAX_DEPTH = 5;
+
 // ── 里程碑健康度注册表（派生，用于徽章/菱形配色）──
 export const MILESTONE_HEALTH_REGISTRY: Record<PmMilestoneHealth, { label: string; color: string }> = {
   on_track: { label: '正常', color: '#3B82F6' },
