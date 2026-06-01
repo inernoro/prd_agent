@@ -103,6 +103,25 @@ export const useReprocessRunStore = create<ReprocessRunState>()(
           ),
         ),
       }),
+      // 旧架构里 ReprocessRunHost 订阅 SSE 把 streaming → done/failed。新架构走 direct-chat，
+      // 不再创建 Run / 不挂 Host，sessionStorage 里残留的 streaming run 没人推进会永远卡住。
+      // 重开后把它们当作"失败"显式标注，用户能点 X 关掉。（Bugbot #4 二轮 Medium）
+      onRehydrateStorage: () => (state) => {
+        if (!state) return;
+        const scrubbed: Record<string, ReprocessRun> = {};
+        for (const [id, r] of Object.entries(state.runs)) {
+          if (r.status === 'streaming') {
+            scrubbed[id] = {
+              ...r,
+              status: 'failed',
+              errorMessage: r.errorMessage ?? '上次任务未完成（已切换到新架构，请直接重试）',
+            };
+          } else {
+            scrubbed[id] = r;
+          }
+        }
+        state.runs = scrubbed;
+      },
     },
   ),
 );

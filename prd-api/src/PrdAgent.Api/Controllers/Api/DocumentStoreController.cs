@@ -2423,7 +2423,10 @@ public class DocumentStoreController : ControllerBase
         [FromBody] ApplyContentRequest request,
         [FromServices] ContentReprocessApplyService applyService)
     {
-        var (entry, _, err) = await LoadOwnedEntryAsync(entryId);
+        // 团队协作场景：team 成员能通过 UpdateEntryContent 编辑分享给团队的条目，
+        // 这里写回 AI 输出也是"修改内容"，得用同款 Writable 鉴权，否则非 owner 永远 404（Codex P2）
+        var userId = GetUserId();
+        var (entry, _, err) = await LoadWritableEntryAsync(entryId, userId);
         if (err != null) return err;
         if (entry!.IsFolder)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持写入"));
@@ -2436,7 +2439,6 @@ public class DocumentStoreController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "content 不能为空"));
 
         // 复用 ApplyService 内部逻辑：构造一个临时 Run+Message 喂给它，避免重复实现写盘细节
-        var userId = GetUserId();
         var tmpRun = new DocumentStoreAgentRun
         {
             Id = Guid.NewGuid().ToString("N"),
@@ -2453,17 +2455,59 @@ public class DocumentStoreController : ControllerBase
         try
         {
             var result = await applyService.ApplyAsync(tmpRun, entry, messageSeq: 0, mode, request.Title, _db);
+
+            // 替换 / 追加修改了原 entry 的正文 —— 必须按 UpdateEntryContent 同款逻辑
+            // 重绑划词评论的 offset，否则旧评论高亮会指向新文本的错误位置（Codex P2 #2）。
+            // mode=new 是创建新 entry，源 entry 内容没动，无需重绑。
+            int? rebound = null;
+            int? orphaned = null;
+            if ((mode == "replace" || mode == "append") && !string.IsNullOrEmpty(result.UpdatedEntryId))
+            {
+                try
+                {
+                    var newBody = await BuildBodyAfterApplyAsync(entry, mode, content);
+                    var stats = await RebindInlineCommentsAsync(result.UpdatedEntryId, newBody);
+                    rebound = stats.rebound;
+                    orphaned = stats.orphaned;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "[doc-store-agent] apply-content rebind inline comments failed (non-fatal) entry={EntryId}", result.UpdatedEntryId);
+                }
+            }
+
             return Ok(ApiResponse<object>.Ok(new
             {
                 mode = result.Mode,
                 outputEntryId = result.OutputEntryId,
                 updatedEntryId = result.UpdatedEntryId,
+                reboundComments = rebound,
+                orphanedComments = orphaned,
             }));
         }
         catch (InvalidOperationException ex)
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
         }
+    }
+
+    /// <summary>
+    /// 计算 replace/append 之后 entry 的最终正文，喂给 RebindInlineCommentsAsync 做评论 offset 重绑。
+    /// （只读：不写盘，写盘已经在 ApplyService 里完成）
+    /// </summary>
+    private async Task<string> BuildBodyAfterApplyAsync(DocumentEntry entry, string mode, string aiContent)
+    {
+        if (mode == "replace") return aiContent;
+        // append：用 ApplyService 一致的拼接规则
+        var existing = string.Empty;
+        if (!string.IsNullOrEmpty(entry.DocumentId))
+        {
+            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
+            existing = doc?.RawContent ?? string.Empty;
+        }
+        if (string.IsNullOrEmpty(existing))
+            existing = entry.ContentIndex ?? string.Empty;
+        return string.IsNullOrEmpty(existing) ? aiContent : existing.TrimEnd() + "\n\n" + aiContent;
     }
 
     /// <summary>把对话中某条 assistant 消息写回文档（replace / append / new）</summary>

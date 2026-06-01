@@ -103,6 +103,7 @@ export function ReprocessChatDrawer({
   const [docTruncated, setDocTruncated] = useState(false);
   const [loadingDoc, setLoadingDoc] = useState(true);
   const [loadingAgents, setLoadingAgents] = useState(true);
+  const [docLoadError, setDocLoadError] = useState<string | null>(null);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -116,6 +117,13 @@ export function ReprocessChatDrawer({
   const cancelStreamRef = useRef<(() => void) | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const pickerBtnRef = useRef<HTMLButtonElement>(null);
+  // 同步发送锁：state 是异步的，React 还没提交 setStreamingId 之前
+  // 第二次点击/双击可能溜过 isBusy 检查同时跑两条流（Bugbot #2 二轮 Medium）。
+  // 用 ref 立刻翻转，发送入口先抢这把 ref 锁，再触发任何 state 变更。
+  const sendLockRef = useRef(false);
+  // 当前 entry id 锁：异步任务（fetch / apply）返回时校验 entry 没变才能写 state
+  // 否则 apply 在 doc A 上跑，返回时 doc 已切到 B，错把"成功"绑到 B（Bugbot #3 二轮 Medium）。
+  const entryIdRef = useRef(entryId);
 
   const scrollToBottom = useCallback(() => {
     requestAnimationFrame(() => {
@@ -123,11 +131,12 @@ export function ReprocessChatDrawer({
     });
   }, []);
 
-  // 中止当前 stream 的统一入口：除了 abort fetch，还要清 streamingId，
+  // 中止当前 stream 的统一入口：除了 abort fetch，还要清 streamingId 和 sendLockRef，
   // 否则 chip / 输入框会一直 disabled（Bugbot #2）
   const abortCurrentStream = useCallback(() => {
     cancelStreamRef.current?.();
     cancelStreamRef.current = null;
+    sendLockRef.current = false;
     setStreamingId(null);
   }, []);
 
@@ -137,6 +146,8 @@ export function ReprocessChatDrawer({
   // 否则会出现"显示新文档但写回上一篇"的串数据（Bugbot #1，High）
   useEffect(() => {
     let cancelled = false;
+    entryIdRef.current = entryId;
+    sendLockRef.current = false;
     abortCurrentStream();
     setMessages([]);
     setActive(null);
@@ -145,23 +156,33 @@ export function ReprocessChatDrawer({
     setInput('');
     setDocContent('');
     setDocTruncated(false);
+    setDocLoadError(null);
     setLoadingDoc(true);
     setLoadingAgents(true);
 
     (async () => {
-      const docRes = await getDocumentContent(entryId);
-      if (cancelled) return;
-      if (docRes.success) {
-        const raw = docRes.data.content ?? '';
-        if (raw.length > MAX_DOC_CHARS) {
-          setDocContent(raw.slice(0, MAX_DOC_CHARS));
-          setDocTruncated(true);
-        } else {
+      try {
+        const docRes = await getDocumentContent(entryId);
+        if (cancelled || entryIdRef.current !== entryId) return;
+        if (docRes.success) {
+          const raw = docRes.data.content ?? '';
+          if (!raw || raw.trim().length === 0) {
+            // 文档本来就空（无 DocumentId 且无 ContentIndex）—— 这是合法状态
+            // 但禁止把"空文档"喂给 LLM，否则智能体回的内容跟当前文档无关，写回还会污染数据
+            setDocLoadError('文档没有可读正文，无法作为输入喂给智能体');
+          }
           setDocContent(raw);
-          setDocTruncated(false);
+          setDocTruncated(raw.length > MAX_DOC_CHARS);
+          if (raw.length > MAX_DOC_CHARS) setDocContent(raw.slice(0, MAX_DOC_CHARS));
+        } else {
+          setDocLoadError(docRes.error?.message || '读取文档失败');
         }
+      } catch (e) {
+        if (cancelled || entryIdRef.current !== entryId) return;
+        setDocLoadError(e instanceof Error ? e.message : '读取文档异常');
+      } finally {
+        if (!cancelled && entryIdRef.current === entryId) setLoadingDoc(false);
       }
-      setLoadingDoc(false);
     })();
 
     (async () => {
@@ -219,12 +240,23 @@ export function ReprocessChatDrawer({
     invoker: ChatMessage['invoker'],
     agent: ActiveAgent,
   ) => {
-    if (streamingId) return;
+    // ⚠ 用 ref 同步锁，杜绝 React state 还没提交时双击/快速回车跑两条流（Bugbot #2 二轮）
+    if (sendLockRef.current) return;
     if (!userText.trim()) return;
     if (loadingDoc) {
       toast.warning('请稍候', '文档还在加载');
       return;
     }
+    if (docLoadError) {
+      toast.warning('无法调用', docLoadError);
+      return;
+    }
+    if (!docContent || docContent.trim().length === 0) {
+      // 防御：文档为空时不让发送（Bugbot #1 二轮 Medium）
+      toast.warning('文档无正文', '没有可读正文喂给智能体');
+      return;
+    }
+    sendLockRef.current = true;
 
     let agentKey: string | undefined;
     let itemId: string | undefined;
@@ -293,15 +325,17 @@ export function ReprocessChatDrawer({
                 content: m.content || `（调用失败：${msg || '未知错误'}）` }
             : m));
         setStreamingId(null);
+        sendLockRef.current = false;
       },
       onDone: () => {
         setMessages((prev) => prev.map((m) =>
           m.id === asstMsgId ? { ...m, streaming: false, phase: 'done' } : m));
         setStreamingId(null);
+        sendLockRef.current = false;
       },
     });
     cancelStreamRef.current = stop;
-  }, [streamingId, loadingDoc, messages, docContent, docTruncated, scrollToBottom]);
+  }, [loadingDoc, docLoadError, messages, docContent, docTruncated, scrollToBottom]);
 
   const handleSendInput = useCallback(() => {
     if (!input.trim()) return;
@@ -371,8 +405,24 @@ export function ReprocessChatDrawer({
     if (!msg || msg.role !== 'assistant' || !msg.content) return;
     const key = `${msgId}:${mode}`;
     if (applying) return;
+    // 锁定调用瞬间的 entryId；若 await 期间用户切到了别的文档，绝对不能把 success/error
+    // 状态再写到当前抽屉里，也不能给 onApplied 回调（会让外层选中错的 entry）。
+    // Bugbot #3（二轮 Medium）。
+    const requestedEntryId = entryId;
     setApplying(key);
-    const res = await applyReprocessContent(entryId, { mode, content: msg.content });
+    let res;
+    try {
+      res = await applyReprocessContent(requestedEntryId, { mode, content: msg.content });
+    } catch (e) {
+      if (entryIdRef.current !== requestedEntryId) return; // 切走了，静默丢弃
+      setApplying(null);
+      toast.error('写回失败', e instanceof Error ? e.message : '网络异常');
+      return;
+    }
+    if (entryIdRef.current !== requestedEntryId) {
+      // entry 在 await 期间被切换：丢弃这次结果，避免错认归属
+      return;
+    }
     setApplying(null);
     if (!res.success) {
       toast.error('写回失败', res.error?.message);
@@ -443,7 +493,7 @@ export function ReprocessChatDrawer({
           <button
             ref={pickerBtnRef}
             onClick={() => setPickerOpen((v) => !v)}
-            disabled={loadingAgents}
+            disabled={loadingAgents || !!docLoadError}
             className="w-full flex items-center gap-2.5 rounded-[10px] px-3 py-2.5 transition-all disabled:opacity-60"
             style={{
               background: active
@@ -622,7 +672,12 @@ export function ReprocessChatDrawer({
           style={{ minHeight: 0, overscrollBehavior: 'contain' }}
         >
           {messages.length === 0 ? (
-            <EmptyState loadingDoc={loadingDoc} entryTitle={entryTitle} hasAgent={!!active} />
+            <EmptyState
+              loadingDoc={loadingDoc}
+              entryTitle={entryTitle}
+              hasAgent={!!active}
+              docLoadError={docLoadError}
+            />
           ) : (
             messages.map((m) => (
               <MessageBubble
@@ -661,20 +716,22 @@ export function ReprocessChatDrawer({
                 }
               }}
               placeholder={
-                isBusy
-                  ? 'AI 正在回复，请稍候…'
-                  : active
-                    ? `继续追问「${active.kind === 'toolbox' ? active.item.name : active.agent.label}」，Enter 发送`
-                    : '先选个智能体，然后输入指令'
+                docLoadError
+                  ? '文档未加载，无法对话'
+                  : isBusy
+                    ? 'AI 正在回复，请稍候…'
+                    : active
+                      ? `继续追问「${active.kind === 'toolbox' ? active.item.name : active.agent.label}」，Enter 发送`
+                      : '先选个智能体，然后输入指令'
               }
-              disabled={isBusy}
+              disabled={isBusy || !!docLoadError}
               rows={2}
               className="prd-field flex-1 resize-none rounded-[10px] px-3 py-2 text-[12px] outline-none disabled:opacity-60"
             />
             <Button
               variant="primary"
               size="sm"
-              disabled={isBusy || !input.trim()}
+              disabled={isBusy || !input.trim() || !!docLoadError}
               onClick={handleSendInput}
             >
               {isBusy ? <MapSpinner size={12} /> : <Send size={12} />}
@@ -767,10 +824,11 @@ function DropdownRow({
 }
 
 // ── 空状态（含加载分阶段反馈，满足 2 秒原则） ──
-function EmptyState({ loadingDoc, entryTitle, hasAgent }: {
+function EmptyState({ loadingDoc, entryTitle, hasAgent, docLoadError }: {
   loadingDoc: boolean;
   entryTitle: string;
   hasAgent: boolean;
+  docLoadError?: string | null;
 }) {
   if (loadingDoc) {
     return (
@@ -784,6 +842,29 @@ function EmptyState({ loadingDoc, entryTitle, hasAgent }: {
           </p>
           <p className="text-[11px] text-token-muted">
             「{entryTitle}」
+          </p>
+        </div>
+      </div>
+    );
+  }
+  if (docLoadError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-center gap-3 py-12">
+        <div className="flex h-12 w-12 items-center justify-center rounded-[14px]"
+          style={{
+            background: 'rgba(239,68,68,0.12)',
+            border: '1px solid rgba(239,68,68,0.25)',
+            color: 'rgba(252,165,165,0.95)',
+          }}>
+          <AlertCircle size={20} />
+        </div>
+        <div>
+          <p className="text-[13px] font-semibold text-token-primary mb-1">无法加载文档</p>
+          <p className="text-[11px] max-w-[340px] leading-relaxed" style={{ color: 'rgba(252,165,165,0.85)' }}>
+            {docLoadError}
+          </p>
+          <p className="text-[10px] text-token-muted mt-2 max-w-[340px] leading-relaxed">
+            智能体调用 / 写回均已禁用，避免误把空内容当成文档喂给 LLM。
           </p>
         </div>
       </div>
