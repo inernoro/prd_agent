@@ -1454,8 +1454,13 @@ export function DocumentStorePage() {
       // 直接传 scope='mine'，不依赖 teamScope 闭包，避免切 tab 同帧 teamScope 还没同步的 race
       loadStores('mine', null);
     } else if (tab === 'team') {
-      if (teamScope.teamId) {
-        loadStores('team', teamScope.teamId);
+      // 切到 team tab 时 teamScope 还未被 scope-sync effect 更新到记忆值,
+      // 这里直接读 useTeamStore 兜底取记忆 teamId,避免"刚切过来闪一下未选 team 空态"。
+      const remembered = useTeamStore.getState().getScope('document-store');
+      const effectiveTeamId = teamScope.teamId
+        ?? (remembered.scope === 'team' ? remembered.teamId : null);
+      if (effectiveTeamId) {
+        loadStores('team', effectiveTeamId);
       } else {
         // 团队空间未选具体空间时不拉数据，明确转为空态（而非永远 loading）
         ++listFetchSeq.current; // 让任何 in-flight 请求作废
