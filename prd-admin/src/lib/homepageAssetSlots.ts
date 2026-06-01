@@ -44,6 +44,7 @@ export const HOMEPAGE_AGENT_SLOTS: HomepageAgentSlot[] = [
   { agentKey: 'defect-agent', label: '缺陷管理智能体', description: '缺陷提交与跟踪' },
   { agentKey: 'video-agent', label: '视频创作智能体', description: '文章转视频教程' },
   { agentKey: 'report-agent', label: '周报智能体', description: '周报创建/审阅' },
+  { agentKey: 'ccas-agent', label: '赋码采集关联智能体', description: '产线赋码 PRD / 素材 / 流程图' },
   { agentKey: 'pa-agent', label: '毒舌秘书', description: 'MBB 级私人执行助理' },
   { agentKey: 'arena', label: 'AI 竞技场智能体', description: '多模型盲测对战' },
   { agentKey: 'workflow-agent', label: '工作流引擎', description: '可视化工作流编排' },
