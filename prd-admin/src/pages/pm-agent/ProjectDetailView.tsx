@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Sparkles, Plus, LayoutGrid, List, GanttChartSquare, Trash2, Users, UserCog, Award, Search, CalendarClock, BookOpen, Gavel, FileText, NotebookText, Target } from 'lucide-react';
+import { ArrowLeft, Sparkles, Plus, LayoutGrid, List, GanttChartSquare, Trash2, Users, UserCog, Award, Search, CalendarClock, BookOpen, Gavel, FileText, NotebookText, Target, Milestone, FolderOpen } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
@@ -20,6 +20,7 @@ import { WeeklyReportsPanel } from './WeeklyReportsPanel';
 import { MeetingsPanel } from './MeetingsPanel';
 import { GoalsPanel } from './GoalsPanel';
 import { MilestonesBar } from './MilestonesBar';
+import { MilestonesPanel } from './MilestonesPanel';
 import { EvaluatePanel } from './EvaluatePanel';
 import { TaskDetailDrawer } from './TaskDetailDrawer';
 import { PROJECT_TYPE_REGISTRY, LIFECYCLE_REGISTRY, TASK_STATUS_REGISTRY, PRIORITY_REGISTRY, GRADE_REGISTRY } from './pmConstants';
@@ -29,19 +30,26 @@ interface Props {
   onBack: () => void;
 }
 
-type ViewTab = 'goals' | 'tasks' | 'decisions' | 'weekly' | 'meetings' | 'knowledge' | 'members' | 'stakeholders';
+type ViewTab = 'goals' | 'milestones' | 'tasks' | 'decisions' | 'library' | 'members' | 'stakeholders';
+type LibraryTab = 'weekly' | 'meetings' | 'knowledge';
 type TaskViewMode = 'board' | 'list' | 'gantt';
 type GroupBy = 'none' | 'assignee' | 'priority';
 
 const TABS: { key: ViewTab; label: string; icon: typeof LayoutGrid }[] = [
   { key: 'goals', label: '目标', icon: Target },
+  { key: 'milestones', label: '里程碑', icon: Milestone },
   { key: 'tasks', label: '任务', icon: LayoutGrid },
   { key: 'decisions', label: '决策', icon: Gavel },
+  { key: 'library', label: '资料', icon: FolderOpen },
+  { key: 'members', label: '成员', icon: UserCog },
+  { key: 'stakeholders', label: '干系人', icon: Users },
+];
+
+// 「资料」二级子 tab（周报 / 会议纪要 / 知识库）
+const LIBRARY_TABS: { key: LibraryTab; label: string; icon: typeof LayoutGrid }[] = [
   { key: 'weekly', label: '周报', icon: FileText },
   { key: 'meetings', label: '会议纪要', icon: NotebookText },
   { key: 'knowledge', label: '知识库', icon: BookOpen },
-  { key: 'members', label: '成员', icon: UserCog },
-  { key: 'stakeholders', label: '干系人', icon: Users },
 ];
 
 // 任务 Tab 内部三视图（看板/列表/甘特）
@@ -72,14 +80,16 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
   const [timeEdit, setTimeEdit] = useState<{ start: string; end: string } | null>(null);
   const [savingTime, setSavingTime] = useState(false);
   const [openTask, setOpenTask] = useState<PmTask | null>(null);
-  // 目标画布反查跳转：到任务（切 tab + 开抽屉）/ 到周报（切 tab + 定位）
+  // 「资料」二级子 tab
+  const [libraryTab, setLibraryTab] = useState<LibraryTab>('weekly');
+  // 目标画布反查跳转：到任务（切 tab + 开抽屉）/ 到周报（切资料-周报 + 定位）
   const [targetWeeklyId, setTargetWeeklyId] = useState<string | undefined>(undefined);
   const navigateToTask = useCallback((taskId: string) => {
     const t = tasks.find((x) => x.id === taskId);
     if (t) { setTab('tasks'); setViewMode('list'); setOpenTask(t); }
     else toast.error('任务不存在', '可能已被删除');
   }, [tasks]);
-  const navigateToWeekly = useCallback((reportId: string) => { setTab('weekly'); setTargetWeeklyId(reportId); }, []);
+  const navigateToWeekly = useCallback((reportId: string) => { setTab('library'); setLibraryTab('weekly'); setTargetWeeklyId(reportId); }, []);
   // 立项后引导：成员只有项目经理一人、且无观察者时，引导去拉人协作（有人后自动消失，可手动收起）
   const [teamGuideDismissed, setTeamGuideDismissed] = useState(() => sessionStorage.getItem(`pm-team-guide-${projectId}`) === '1');
   const dismissTeamGuide = () => { sessionStorage.setItem(`pm-team-guide-${projectId}`, '1'); setTeamGuideDismissed(true); };
@@ -487,11 +497,31 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
       )}
       {tasks.length > 0 && tab === 'tasks' && viewMode === 'gantt' && <GanttChart tasks={filtered} milestones={milestones} onOpen={setOpenTask} />}
 
-      {tab === 'knowledge' && <KnowledgePanel projectId={projectId} />}
+      {tab === 'milestones' && (
+        <MilestonesPanel projectId={projectId} milestones={milestones} goals={goals} tasks={tasks}
+          canManage={project.ownerId === myId || project.leaderId === myId} onChanged={loadMilestones} />
+      )}
 
-      {tab === 'weekly' && <WeeklyReportsPanel projectId={projectId} targetReportId={targetWeeklyId} onTargetConsumed={() => setTargetWeeklyId(undefined)} />}
-
-      {tab === 'meetings' && <MeetingsPanel projectId={projectId} />}
+      {tab === 'library' && (
+        <div className="flex-1 min-h-0 flex flex-col gap-3">
+          <div className="shrink-0 inline-flex gap-1 rounded-lg p-1 self-start" style={{ background: 'var(--bg-base)' }}>
+            {LIBRARY_TABS.map((lt) => {
+              const Icon = lt.icon;
+              const active = libraryTab === lt.key;
+              return (
+                <button key={lt.key} onClick={() => setLibraryTab(lt.key)}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11.5px] transition-colors shrink-0"
+                  style={{ background: active ? 'var(--bg-card)' : 'transparent', color: active ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+                  <Icon size={13} /> {lt.label}
+                </button>
+              );
+            })}
+          </div>
+          {libraryTab === 'weekly' && <WeeklyReportsPanel projectId={projectId} targetReportId={targetWeeklyId} onTargetConsumed={() => setTargetWeeklyId(undefined)} />}
+          {libraryTab === 'meetings' && <MeetingsPanel projectId={projectId} />}
+          {libraryTab === 'knowledge' && <KnowledgePanel projectId={projectId} />}
+        </div>
+      )}
 
       {tab === 'goals' && <GoalsPanel projectId={projectId} businessGoal={project.businessGoal} canManage={project.ownerId === myId || project.leaderId === myId} onNavigateTask={navigateToTask} onNavigateWeekly={navigateToWeekly} />}
 
