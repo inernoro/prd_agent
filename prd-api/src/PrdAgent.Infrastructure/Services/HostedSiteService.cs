@@ -549,9 +549,27 @@ public class HostedSiteService : IHostedSiteService
         var site = await _db.HostedSites.Find(x => x.Id == siteId && x.OwnerUserId == userId).FirstOrDefaultAsync(ct);
         if (site == null) return null;
 
-        // 只保留我确实所属的团队，避免分享到不存在 / 越权的团队
-        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
-        var sanitized = teamIds.Where(t => myTeamIds.Contains(t)).Distinct().ToList();
+        // 角色门控：要求「我在目标团队有网页托管编辑权限（owner/editor）」才能分享进去。
+        // GetMyWebHostingTeamRolesAsync 仅返回我所属团队（已含成员校验），并解析出有效角色。
+        // 关键：不能用 WebHostingPermission.Can(role, …, isSiteOwner) —— 上传者本身就是站点 owner，
+        // isSiteOwner=true 会短路放行，导致只读 viewer 直调 API 把自己上传的站点分享进团队（越权）。
+        //
+        // 不再「静默剔除」越权团队：那样会返回 200 + 空/残缺 SharedTeamIds，前端只看 HTTP 成功，
+        // 会误报「投放/移动成功」而站点实际仍在个人空间。改为：请求里只要含一个我无编辑权的团队，
+        // 直接抛错让 controller 返回 403。空请求（取消全部分享/退出团队空间）属合法操作，不校验。
+        var requested = teamIds.Where(t => !string.IsNullOrWhiteSpace(t)).Distinct().ToList();
+        var roles = await _teams.GetMyWebHostingTeamRolesAsync(userId, ct);
+        // 仅对「新增的目标团队」做编辑权校验：保留已分享团队（即便我已被降级为 viewer）属合法 no-op，
+        // 移除团队也始终允许（move 对话框仅改文件夹时会把当前团队原样回传，不应 403）。
+        // 只有把站点投进一个我无编辑权的新团队才需要拦截。
+        var newlyAdded = requested.Where(t => !site.SharedTeamIds.Contains(t)).ToList();
+        var forbidden = newlyAdded
+            .Where(t => !(roles.TryGetValue(t, out var r)
+                          && (r == WebHostingRoles.Owner || r == WebHostingRoles.Editor)))
+            .ToList();
+        if (forbidden.Count > 0)
+            throw new UnauthorizedAccessException("无权将网页分享到部分团队：你在这些团队是只读或非成员角色");
+        var sanitized = requested;
         var added = sanitized.Except(site.SharedTeamIds).ToList();
 
         await _db.HostedSites.UpdateOneAsync(
@@ -721,9 +739,10 @@ public class HostedSiteService : IHostedSiteService
             var firstSite = await _db.HostedSites.Find(x => x.Id == allIds[0])
                 .Project(Builders<HostedSite>.Projection.Expression(s => s.Title))
                 .FirstOrDefaultAsync(ct);
+            // 不再加「{用户} 分享给你的」前缀，直接用站点名/合集名作为标题
             shareTitle = shareType == "collection"
-                ? $"{displayName} 分享给你的 {allIds.Count} 个站点合集"
-                : $"{displayName} 分享给你的「{firstSite ?? "站点"}」";
+                ? $"{allIds.Count} 个站点合集"
+                : (firstSite ?? "站点");
         }
         var effDescription = description?.Trim();
 
@@ -1104,7 +1123,7 @@ public class HostedSiteService : IHostedSiteService
 
         return new ShareViewResult
         {
-            Title = share.Title,
+            Title = StripLegacySharePrefix(share.Title),
             Description = share.Description,
             ShareType = share.ShareType,
             CreatedAt = share.CreatedAt,
@@ -1336,7 +1355,7 @@ public class HostedSiteService : IHostedSiteService
         {
             ViewedAt = l.ViewedAt,
             ShareToken = l.ShareToken,
-            ShareTitle = titleByToken.TryGetValue(l.ShareToken, out var t) ? t : null,
+            ShareTitle = StripLegacySharePrefix(titleByToken.TryGetValue(l.ShareToken, out var t) ? t : null),
             ViewerName = l.ViewerName,
             IpAddress = MaskIp(l.IpAddress),
             UserAgent = l.UserAgent,
@@ -1351,7 +1370,7 @@ public class HostedSiteService : IHostedSiteService
             {
                 ShareId = s.Id,
                 Token = s.Token,
-                Title = s.Title,
+                Title = StripLegacySharePrefix(s.Title),
                 ViewCount = s.ViewCount,
                 UniqueIpCount = s.UniqueIpCount,
                 LastViewedAt = s.LastViewedAt,
@@ -1379,6 +1398,9 @@ public class HostedSiteService : IHostedSiteService
     private static string? MaskIp(string? ip)
     {
         if (string.IsNullOrWhiteSpace(ip)) return ip;
+        // 历史数据可能存了 IPv4-mapped IPv6（::ffff:1.2.3.4），先规整回点分十进制再脱敏
+        if (ip.StartsWith("::ffff:", StringComparison.OrdinalIgnoreCase) && ip.Contains('.'))
+            ip = ip["::ffff:".Length..];
         if (ip.Contains('.'))
         {
             var parts = ip.Split('.');
@@ -1390,6 +1412,28 @@ public class HostedSiteService : IHostedSiteService
             return parts.Length >= 3 ? $"{parts[0]}:{parts[1]}:{parts[2]}::*" : ip;
         }
         return ip;
+    }
+
+    // 历史遗留：旧分享链接的 Title 里 baked 了「{用户} 分享给你的「站点名」」/「… N 个站点合集」前缀。
+    // 新链接已不再写入前缀；此处在展示侧剥掉旧前缀，老数据无需迁移即可干净显示。
+    //
+    // 只匹配后端当年生成的「精确两种形状」，避免误伤用户自定义标题：
+    //   单站点： {名字} 分享给你的「{站点名}」  → 返回 站点名
+    //   合集：   {名字} 分享给你的 {N} 个站点合集 → 返回 N 个站点合集
+    // 形如「客户 分享给你的方案」这种普通标题（无「」、非合集格式）一律原样保留，不剥离。
+    private static readonly Regex LegacySingleSharePrefix =
+        new(@"^.+? 分享给你的「(?<t>.+)」$", RegexOptions.Compiled | RegexOptions.Singleline);
+    private static readonly Regex LegacyCollectionSharePrefix =
+        new(@"^.+? 分享给你的 (?<c>\d+ 个站点合集)$", RegexOptions.Compiled);
+
+    private static string? StripLegacySharePrefix(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title)) return title;
+        var single = LegacySingleSharePrefix.Match(title);
+        if (single.Success) return single.Groups["t"].Value;
+        var collection = LegacyCollectionSharePrefix.Match(title);
+        if (collection.Success) return collection.Groups["c"].Value;
+        return title;
     }
 
     public async Task<ShareDiagnosticsResult?> GetShareDiagnosticsAsync(string token, CancellationToken ct = default)

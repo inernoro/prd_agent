@@ -38,7 +38,7 @@ public class WebPageAnalyticsController : ControllerBase
         if (string.IsNullOrWhiteSpace(id))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "站点 ID 不能为空"));
 
-        var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var ip = HttpContext.GetRealClientIp();
         var ua = Request.Headers.UserAgent.ToString();
         await _views.RecordAsync(id, GetUserId(), ip, ua);
 

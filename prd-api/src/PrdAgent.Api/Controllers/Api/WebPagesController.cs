@@ -52,11 +52,24 @@ public class WebPagesController : ControllerBase
 
     private string GetUserId() => this.GetRequiredUserId();
 
-    private string GetDisplayName()
-        => User.FindFirst("name")?.Value
-           ?? User.FindFirst("display_name")?.Value
+    // JwtService 写入的 display name claim 名为 "displayName"（MapInboundClaims=false，保持原样）。
+    // 历史 bug：这里读 "name"/"display_name"/ClaimTypes.Name 都不匹配，恒兜底成 "用户"。
+    private string GetDisplayNameFromClaims()
+        => User.FindFirst("displayName")?.Value
+           ?? User.FindFirst("unique_name")?.Value  // JwtRegisteredClaimNames.UniqueName = username
+           ?? User.FindFirst("name")?.Value
            ?? User.FindFirst(ClaimTypes.Name)?.Value
-           ?? "用户";
+           ?? string.Empty;
+
+    // claim 缺失/为空时回查 DB，最后才退化成 "用户"
+    private async Task<string> ResolveDisplayNameAsync(string userId)
+    {
+        var fromClaim = GetDisplayNameFromClaims();
+        if (!string.IsNullOrWhiteSpace(fromClaim)) return fromClaim;
+        var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+        var name = string.IsNullOrWhiteSpace(user?.DisplayName) ? user?.Username : user!.DisplayName;
+        return string.IsNullOrWhiteSpace(name) ? "用户" : name;
+    }
 
     // ─────────────────────────────────────────────
     // 上传 / 创建
@@ -365,10 +378,18 @@ public class WebPagesController : ControllerBase
     [HttpPatch("{id}/teams")]
     public async Task<IActionResult> SetTeams(string id, [FromBody] SetSiteTeamsRequest req)
     {
-        var updated = await _siteService.SetSharedTeamsAsync(id, GetUserId(), req.TeamIds ?? new List<string>());
-        if (updated == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在或无权限"));
-        return Ok(ApiResponse<object>.Ok(updated));
+        try
+        {
+            var updated = await _siteService.SetSharedTeamsAsync(id, GetUserId(), req.TeamIds ?? new List<string>());
+            if (updated == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在或无权限"));
+            return Ok(ApiResponse<object>.Ok(updated));
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            // 请求包含我无编辑权的团队：返回 403，前端据此提示而非误报成功（默认走 ExceptionMiddleware 会变 401）
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, ex.Message));
+        }
     }
 
     /// <summary>批量加载用户展示卡（userId → 昵称 + 头像文件名），前端据此渲染头像</summary>
@@ -534,7 +555,7 @@ public class WebPagesController : ControllerBase
             var visibility = isVisit ? "public" : (req.Visibility ?? "owner-only");
 
             var share = await _siteService.CreateShareAsync(
-                GetUserId(), GetDisplayName(),
+                GetUserId(), await ResolveDisplayNameAsync(GetUserId()),
                 req.SiteId, req.SiteIds, req.ShareType ?? "single",
                 req.Title, req.Description,
                 req.Password, req.ExpiresInDays,
@@ -650,8 +671,8 @@ public class WebPagesController : ControllerBase
     {
         // 尝试获取登录用户信息（AllowAnonymous 但可能带 token）
         var viewerUserId = User.Identity?.IsAuthenticated == true ? GetUserId() : null;
-        var viewerName = User.Identity?.IsAuthenticated == true ? GetDisplayName() : null;
-        var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var viewerName = viewerUserId != null ? await ResolveDisplayNameAsync(viewerUserId) : null;
+        var ip = HttpContext.GetRealClientIp();
         var ua = Request.Headers.UserAgent.ToString();
 
         var result = await _siteService.ViewShareAsync(token, password,
@@ -753,7 +774,7 @@ public class WebPagesController : ControllerBase
     public async Task<IActionResult> AddSiteComment(string siteId, [FromBody] AddSiteCommentRequest req)
     {
         var result = await _siteService.AddCommentBySiteAsync(
-            siteId, GetUserId(), GetDisplayName(), await GetAvatarFileNameAsync(GetUserId()), req.Content ?? string.Empty);
+            siteId, GetUserId(), await ResolveDisplayNameAsync(GetUserId()), await GetAvatarFileNameAsync(GetUserId()), req.Content ?? string.Empty);
         return MapAddCommentResult(result);
     }
 
@@ -774,9 +795,9 @@ public class WebPagesController : ControllerBase
     public async Task<IActionResult> AddShareComment(string token, [FromQuery] string? password, [FromBody] AddSiteCommentRequest req)
     {
         var userId = GetUserId();
-        var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var ip = HttpContext.GetRealClientIp();
         var result = await _siteService.AddCommentByShareAsync(
-            token, password, userId, GetDisplayName(), await GetAvatarFileNameAsync(userId), req.Content ?? string.Empty, ip);
+            token, password, userId, await ResolveDisplayNameAsync(userId), await GetAvatarFileNameAsync(userId), req.Content ?? string.Empty, ip);
         return MapAddCommentResult(result);
     }
 
