@@ -11,6 +11,7 @@ import {
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import { getVerdictConfig } from '@/lib/acceptanceVerdictRegistry';
+import { getTagColor, truncateTagDisplay } from '@/lib/tagPalette';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { motion } from 'motion/react';
@@ -825,15 +826,31 @@ function TreeNode({
           );
         })()}
 
-        {/* tag：幽灵文字风格 */}
+        {/* tag：每个 tag 一个小药丸，颜色按 tagPalette 自动分配 */}
         {!isFolder && (entry.tags?.length ?? 0) > 0 && (
-          <span
-            className="text-[9px] flex-shrink-0 tabular-nums"
-            style={{ color: 'rgba(216,180,254,0.75)', letterSpacing: '0.01em' }}
-            title={(entry.tags ?? []).map(tag => `#${tag}`).join(' ')}
-          >
-            #{entry.tags![0]}
-            {(entry.tags?.length ?? 0) > 1 ? ` +${entry.tags!.length - 1}` : ''}
+          <span className="inline-flex items-center gap-[3px] flex-shrink-0">
+            {entry.tags!.slice(0, 2).map(t => {
+              const c = getTagColor(t);
+              return (
+                <span
+                  key={t}
+                  className="text-[9px] px-1.5 rounded-full font-medium tabular-nums"
+                  style={{ height: 16, lineHeight: '16px', background: c.bg, color: c.text, border: `1px solid ${c.border}` }}
+                  title={`#${t}`}
+                >
+                  {truncateTagDisplay(t)}
+                </span>
+              );
+            })}
+            {(entry.tags?.length ?? 0) > 2 && (
+              <span
+                className="text-[9px] tabular-nums"
+                style={{ color: 'var(--text-muted)', opacity: 0.7 }}
+                title={(entry.tags ?? []).slice(2).map(tag => `#${tag}`).join(' ')}
+              >
+                +{entry.tags!.length - 2}
+              </span>
+            )}
           </span>
         )}
 
@@ -1065,6 +1082,23 @@ export function DocBrowser({
     const saved = sessionStorage.getItem('doc-browser-sidebar-width');
     return saved ? parseInt(saved, 10) : 280;
   });
+  // tag 筛选（多选，sessionStorage 持久化）
+  const [selectedTags, setSelectedTags] = useState<Set<string>>(() => {
+    try {
+      const saved = sessionStorage.getItem('doc-browser-selected-tags');
+      return saved ? new Set(JSON.parse(saved) as string[]) : new Set();
+    } catch { return new Set(); }
+  });
+  useEffect(() => {
+    sessionStorage.setItem('doc-browser-selected-tags', JSON.stringify([...selectedTags]));
+  }, [selectedTags]);
+  const toggleTag = useCallback((tag: string) => {
+    setSelectedTags(prev => {
+      const next = new Set(prev);
+      if (next.has(tag)) next.delete(tag); else next.add(tag);
+      return next;
+    });
+  }, []);
   const [resizing, setResizing] = useState(false);
   // 侧栏 DOM 引用 + 拖拽起始时量出的真实左边界，避免用写死偏移导致"不跟手/跳动"
   const sidebarRef = useRef<HTMLDivElement>(null);
@@ -1313,26 +1347,40 @@ export function DocBrowser({
     return () => document.removeEventListener('mousedown', handleClick);
   }, [showSettingsMenu]);
 
-  // 搜索过滤（本地 title 搜索 + 可选后端内容搜索）
+  // 搜索过滤（本地 title 搜索 + 可选后端内容搜索） + tag 过滤
   const { filteredRoots, filteredChildrenMap } = useMemo(() => {
-    if (!search.trim() || searchResults !== null) {
-      // 使用后端搜索结果或不搜索
-      if (searchResults !== null) {
-        // 后端搜索结果扁平展示
-        return { filteredRoots: searchResults, filteredChildrenMap: new Map() };
-      }
+    const hasTagFilter = selectedTags.size > 0;
+    const kw = search.trim().toLowerCase();
+    const hasLocalSearch = kw.length > 0 && searchResults === null;
+
+    // 无过滤 → 原样
+    if (!hasLocalSearch && !hasTagFilter) {
+      if (searchResults !== null) return { filteredRoots: searchResults, filteredChildrenMap: new Map() };
       return { filteredRoots: rootEntries, filteredChildrenMap: childrenMap };
     }
 
-    // 本地搜索（title + summary + 正文第一行）
-    const kw = search.toLowerCase();
+    // 后端搜索结果：仅叠加 tag 过滤
+    if (searchResults !== null) {
+      const list = hasTagFilter
+        ? searchResults.filter(e => (e.tags ?? []).some(t => selectedTags.has(t)))
+        : searchResults;
+      return { filteredRoots: list, filteredChildrenMap: new Map() };
+    }
+
+    // 本地搜索 / tag 过滤（两者 AND）
     const matchIds = new Set<string>();
     const entryMap = new Map(entries.map(e => [e.id, e]));
     for (const e of entries) {
-      const titleMatch = e.title.toLowerCase().includes(kw);
-      const summaryMatch = e.summary?.toLowerCase().includes(kw) ?? false;
-      const firstLineMatch = contentFirstLines.get(e.id)?.toLowerCase().includes(kw) ?? false;
-      if (titleMatch || summaryMatch || firstLineMatch) {
+      let searchHit = !hasLocalSearch;
+      if (hasLocalSearch) {
+        const titleMatch = e.title.toLowerCase().includes(kw);
+        const summaryMatch = e.summary?.toLowerCase().includes(kw) ?? false;
+        const firstLineMatch = contentFirstLines.get(e.id)?.toLowerCase().includes(kw) ?? false;
+        searchHit = titleMatch || summaryMatch || firstLineMatch;
+      }
+      // 文件夹本身不参与 tag 过滤（无 tag），但若其后代命中则保留
+      const tagHit = !hasTagFilter || (!e.isFolder && (e.tags ?? []).some(t => selectedTags.has(t)));
+      if (searchHit && tagHit && !e.isFolder) {
         matchIds.add(e.id);
         let cur = e;
         while (cur.parentId) {
@@ -1341,6 +1389,9 @@ export function DocBrowser({
           if (!parent) break;
           cur = parent;
         }
+      } else if (hasLocalSearch && !hasTagFilter && e.isFolder && e.title.toLowerCase().includes(kw)) {
+        // 仅文本搜索时文件夹标题命中仍保留（与原逻辑保持兼容）
+        matchIds.add(e.id);
       }
     }
 
@@ -1352,7 +1403,17 @@ export function DocBrowser({
     }
 
     return { filteredRoots: fRoots, filteredChildrenMap: fMap };
-  }, [search, searchResults, rootEntries, childrenMap, entries, contentFirstLines]);
+  }, [search, selectedTags, searchResults, rootEntries, childrenMap, entries, contentFirstLines]);
+
+  // 收集 entries 中所有出现过的 tag（按出现频次排序，热门 tag 排前）
+  const allTagsRanked = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const e of entries) {
+      if (e.isFolder) continue;
+      for (const t of e.tags ?? []) counts.set(t, (counts.get(t) ?? 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([tag]) => tag);
+  }, [entries]);
 
   // 内容命中标记：搜索时若条目在结果中但关键词不在标题里 → 标「（内容包含）」
   const contentMatchIds = useMemo(() => {
@@ -1688,6 +1749,58 @@ export function DocBrowser({
               )}
             </div>
           </div>
+          {/* tag 筛选条：水平 chip 行，颜色按 tagPalette 自动分配；横向滚动避免被压缩 */}
+          {allTagsRanked.length > 0 && (
+            <div
+              className="flex items-center gap-1 overflow-x-auto"
+              style={{
+                paddingTop: 2,
+                paddingBottom: 2,
+                scrollbarWidth: 'thin',
+                scrollbarColor: 'rgba(255,255,255,0.15) transparent',
+              }}
+              title="点击筛选；多选取并集；再次点击取消"
+            >
+              {selectedTags.size > 0 && (
+                <button
+                  onClick={() => setSelectedTags(new Set())}
+                  className="flex-shrink-0 text-[9.5px] px-1.5 rounded-full cursor-pointer transition-colors"
+                  style={{
+                    height: 18,
+                    lineHeight: '18px',
+                    color: 'var(--text-muted)',
+                    background: 'var(--bg-input)',
+                    border: '1px solid var(--border-faint)',
+                  }}
+                  title="清空筛选"
+                >
+                  清空
+                </button>
+              )}
+              {allTagsRanked.map(tag => {
+                const c = getTagColor(tag);
+                const active = selectedTags.has(tag);
+                return (
+                  <button
+                    key={tag}
+                    onClick={() => toggleTag(tag)}
+                    className="flex-shrink-0 text-[10px] px-2 rounded-full cursor-pointer font-medium transition-all"
+                    style={{
+                      height: 20,
+                      lineHeight: '20px',
+                      color: active ? '#fff' : c.text,
+                      background: active ? c.dot : c.bg,
+                      border: `1px solid ${active ? c.dot : c.border}`,
+                      letterSpacing: '0.01em',
+                    }}
+                    title={`#${tag}`}
+                  >
+                    {truncateTagDisplay(tag)}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           {creatingFolder && (
             <div className="flex gap-1.5">
               <input
