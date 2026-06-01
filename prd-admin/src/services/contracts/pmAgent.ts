@@ -532,17 +532,47 @@ export type PmRisk = {
   ownerName?: string | null;
   relatedGoalId?: string | null;
   relatedTaskId?: string | null;
+  /** 来源决策 ID —— 本风险由哪条决策衍生 */
+  relatedDecisionId?: string | null;
   orderKey: number;
   createdBy: string;
   createdByName?: string | null;
   createdAt: string;
   updatedAt: string;
 };
-export type SavePmRiskInput = Partial<{ title: string; description: string; probability: PmRiskLevel; impact: PmRiskLevel; response: PmRiskResponse; status: PmRiskStatus; ownerId: string; relatedGoalId: string; relatedTaskId: string; orderKey: number }>;
+export type SavePmRiskInput = Partial<{ title: string; description: string; probability: PmRiskLevel; impact: PmRiskLevel; response: PmRiskResponse; status: PmRiskStatus; ownerId: string; relatedGoalId: string; relatedTaskId: string; relatedDecisionId: string; orderKey: number }>;
 export type ListPmRisksContract = (projectId: string) => Promise<ApiResponse<{ items: PmRisk[] }>>;
 export type CreatePmRiskContract = (projectId: string, input: SavePmRiskInput) => Promise<ApiResponse<PmRisk>>;
 export type UpdatePmRiskContract = (riskId: string, input: SavePmRiskInput) => Promise<ApiResponse<{ updated: boolean }>>;
 export type DeletePmRiskContract = (riskId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
+
+// ── 项目级燃尽 / 预算挣值报表 ──
+export type PmBurndownPoint = {
+  date: string;
+  scope: number;
+  done: number | null;
+  remaining: number | null;
+  ideal: number;
+  pv: number | null;
+  ev: number | null;
+};
+export type PmBurndown = {
+  start: string;
+  plannedEnd: string;
+  today: string;
+  totalScope: number;
+  doneCount: number;
+  remaining: number;
+  completionRate: number;
+  overdue: boolean;
+  spi: number | null;
+  budget: number | null;
+  actualCost: number | null;
+  earnedValue: number | null;
+  plannedValue: number | null;
+  points: PmBurndownPoint[];
+};
+export type GetPmBurndownContract = (projectId: string) => Promise<ApiResponse<PmBurndown>>;
 export type GetPmProjectContract = (projectId: string) => Promise<ApiResponse<{ project: PmProject; tasks: PmTask[] }>>;
 export type UpdatePmProjectContract = (projectId: string, input: UpdatePmProjectInput) => Promise<ApiResponse<{ updated: boolean }>>;
 export type DeletePmProjectContract = (projectId: string) => Promise<ApiResponse<{ deleted: boolean }>>;

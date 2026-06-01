@@ -2014,6 +2014,7 @@ export {
   createPmRiskReal as createPmRisk,
   updatePmRiskReal as updatePmRisk,
   deletePmRiskReal as deletePmRisk,
+  getPmBurndownReal as getPmBurndown,
 } from '@/services/real/pmAgent';
 export type {
   PmProject,

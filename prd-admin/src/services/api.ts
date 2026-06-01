@@ -1337,6 +1337,7 @@ export const api = {
         `/api/pm/projects/${projectId}/goals/decompose${parentGoalId ? `?parentGoalId=${encodeURIComponent(parentGoalId)}` : ''}`,
       milestones: (projectId: string) => `/api/pm/projects/${projectId}/milestones`,
       risks: (projectId: string) => `/api/pm/projects/${projectId}/risks`,
+      burndown: (projectId: string) => `/api/pm/projects/${projectId}/burndown`,
       closureReport: (projectId: string) => `/api/pm/projects/${projectId}/closure-report`,
       healthDiagnosis: (projectId: string) => `/api/pm/projects/${projectId}/health-diagnosis`,
       stakeholders: (projectId: string) => `/api/pm/projects/${projectId}/stakeholders`,

@@ -1316,6 +1316,7 @@ public class PmAgentController : ControllerBase
             OwnerName = ownerName,
             RelatedGoalId = string.IsNullOrWhiteSpace(request.RelatedGoalId) ? null : request.RelatedGoalId,
             RelatedTaskId = string.IsNullOrWhiteSpace(request.RelatedTaskId) ? null : request.RelatedTaskId,
+            RelatedDecisionId = string.IsNullOrWhiteSpace(request.RelatedDecisionId) ? null : request.RelatedDecisionId,
             OrderKey = DateTime.UtcNow.Ticks,
             CreatedBy = userId,
             CreatedByName = creatorName,
@@ -1355,6 +1356,7 @@ public class PmAgentController : ControllerBase
         }
         if (request.RelatedGoalId != null) update = update.Set(x => x.RelatedGoalId, string.IsNullOrWhiteSpace(request.RelatedGoalId) ? null : request.RelatedGoalId);
         if (request.RelatedTaskId != null) update = update.Set(x => x.RelatedTaskId, string.IsNullOrWhiteSpace(request.RelatedTaskId) ? null : request.RelatedTaskId);
+        if (request.RelatedDecisionId != null) update = update.Set(x => x.RelatedDecisionId, string.IsNullOrWhiteSpace(request.RelatedDecisionId) ? null : request.RelatedDecisionId);
         if (request.OrderKey.HasValue) update = update.Set(x => x.OrderKey, request.OrderKey.Value);
         await _db.PmRisks.UpdateOneAsync(x => x.Id == riskId, update);
         return Ok(ApiResponse<object>.Ok(new { updated = true }));
@@ -1373,6 +1375,100 @@ public class PmAgentController : ControllerBase
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅项目成员可删除风险"));
         await _db.PmRisks.DeleteOneAsync(x => x.Id == riskId);
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    /// <summary>
+    /// 项目级燃尽 + 预算/挣值曲线报表（任意项目成员可看）。
+    /// 燃尽：剩余任务数随时间下降 vs 理想线；挣值：计划价值(PV 线性)/挣值(EV=预算×完成率)/实际成本(AC 当前点)。
+    /// 完成时间从 pm_task_activities(status→done) 重建，旧数据回退用任务 UpdatedAt。
+    /// </summary>
+    [HttpGet("projects/{projectId}/burndown")]
+    public async Task<IActionResult> Burndown(string projectId)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+
+        var tasks = await _db.PmTasks.Find(t => t.ProjectId == projectId).ToListAsync();
+        var active = tasks.Where(t => t.Status != PmTaskStatus.Cancelled).ToList();
+        var totalScope = active.Count;
+
+        // 每个「当前为完成态」的任务的完成时间：优先取 status→done 的最后一次活动，回退任务 UpdatedAt
+        var doneTasks = active.Where(t => t.Status == PmTaskStatus.Done).ToList();
+        var doneIds = doneTasks.Select(t => t.Id).ToHashSet();
+        var doneActs = await _db.PmTaskActivities.Find(a => a.ProjectId == projectId
+            && a.Field == "status" && a.ToValue == PmTaskStatus.Done).ToListAsync();
+        var doneAtByTask = new Dictionary<string, DateTime>();
+        foreach (var a in doneActs.Where(a => doneIds.Contains(a.TaskId)))
+            if (!doneAtByTask.TryGetValue(a.TaskId, out var cur) || a.CreatedAt > cur)
+                doneAtByTask[a.TaskId] = a.CreatedAt;
+        foreach (var t in doneTasks)
+            if (!doneAtByTask.ContainsKey(t.Id)) doneAtByTask[t.Id] = t.UpdatedAt;
+        var doneDates = doneAtByTask.Values.Select(d => d.Date).OrderBy(d => d).ToList();
+
+        var today = DateTime.UtcNow.Date;
+        var start = (project.PlannedStartAt?.Date)
+            ?? (active.Count > 0 ? active.Min(t => t.CreatedAt).Date : project.CreatedAt.Date);
+        var plannedEnd = (project.PlannedEndAt?.Date) ?? today;
+        if (plannedEnd < start) plannedEnd = start;
+        var end = today > plannedEnd ? today : plannedEnd;
+
+        var totalDays = Math.Max(1, (int)(end - start).TotalDays);
+        var step = Math.Max(1, (int)Math.Ceiling(totalDays / 30.0));
+        var planSpanDays = Math.Max(1, (int)(plannedEnd - start).TotalDays);
+        var budget = project.Budget.HasValue ? (double)project.Budget.Value : 0;
+        var hasBudget = budget > 0;
+
+        var createdDates = active.Select(t => t.CreatedAt.Date).OrderBy(d => d).ToList();
+        var points = new List<object>();
+        for (var d = start; ; d = d.AddDays(step))
+        {
+            if (d > end) d = end;
+            var scope = createdDates.Count(c => c <= d);
+            var done = doneDates.Count(dd => dd <= d);
+            var remaining = scope - done;
+            var elapsedFrac = Math.Min(1.0, Math.Max(0.0, (d - start).TotalDays / planSpanDays));
+            var isFuture = d > today;
+            points.Add(new
+            {
+                date = d.ToString("yyyy-MM-dd"),
+                scope,
+                done = isFuture ? (int?)null : done,
+                remaining = isFuture ? (int?)null : remaining,
+                ideal = (int)Math.Round(totalScope * (1 - elapsedFrac)),
+                pv = hasBudget ? (int)Math.Round(budget * elapsedFrac) : (int?)null,
+                ev = (hasBudget && totalScope > 0 && !isFuture) ? (int)Math.Round(budget * done / totalScope) : (int?)null,
+            });
+            if (d >= end) break;
+        }
+
+        var doneCount = doneTasks.Count;
+        var completionRate = totalScope > 0 ? (int)Math.Round(doneCount * 100.0 / totalScope) : 0;
+        var todayElapsedFrac = Math.Min(1.0, Math.Max(0.0, (today - start).TotalDays / planSpanDays));
+        var spi = todayElapsedFrac > 0 && totalScope > 0
+            ? Math.Round((doneCount / (double)totalScope) / todayElapsedFrac, 2) : (double?)null;
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            start = start.ToString("yyyy-MM-dd"),
+            plannedEnd = plannedEnd.ToString("yyyy-MM-dd"),
+            today = today.ToString("yyyy-MM-dd"),
+            totalScope,
+            doneCount,
+            remaining = totalScope - doneCount,
+            completionRate,
+            overdue = today > plannedEnd,
+            // 进度绩效指数 SPI：>1 超前、<1 落后（基于任务完成比 vs 时间消耗比）
+            spi,
+            budget = hasBudget ? budget : (double?)null,
+            actualCost = project.ActualCost.HasValue ? (double)project.ActualCost.Value : (double?)null,
+            // 挣值（当前）= 预算 × 完成率
+            earnedValue = hasBudget ? (int)Math.Round(budget * completionRate / 100.0) : (int?)null,
+            // 计划价值（当前）= 预算 × 时间消耗比
+            plannedValue = hasBudget ? (int)Math.Round(budget * todayElapsedFrac) : (int?)null,
+            points,
+        }));
     }
 
     // ─────────────────────────────────────────────
@@ -2615,6 +2711,7 @@ public class RiskRequest
     public string? OwnerId { get; set; }
     public string? RelatedGoalId { get; set; }
     public string? RelatedTaskId { get; set; }
+    public string? RelatedDecisionId { get; set; }
     public long? OrderKey { get; set; }
 }
 

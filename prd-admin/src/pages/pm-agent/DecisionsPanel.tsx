@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus, Trash2, Pencil, Check, X, ArrowRight, CircleUser, Target, ListTodo } from 'lucide-react';
+import { Plus, Trash2, Pencil, Check, X, ArrowRight, CircleUser, Target, ListTodo, ShieldAlert } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import {
-  listPmDecisions, createPmDecision, updatePmDecision, deletePmDecision,
+  listPmDecisions, createPmDecision, updatePmDecision, deletePmDecision, listPmRisks, createPmRisk,
 } from '@/services';
-import type { PmDecision, PmDecisionType, PmGoal, PmTask } from '@/services/contracts/pmAgent';
-import { DECISION_TYPE_REGISTRY, DECISION_COLUMNS } from './pmConstants';
+import type { PmDecision, PmDecisionType, PmGoal, PmTask, PmRisk } from '@/services/contracts/pmAgent';
+import { DECISION_TYPE_REGISTRY, DECISION_COLUMNS, riskScore, riskScoreColor } from './pmConstants';
 
 interface Props {
   projectId: string;
@@ -15,6 +15,8 @@ interface Props {
   goals: PmGoal[];
   /** 项目任务（供决策关联） */
   tasks: PmTask[];
+  /** 是否可登记风险（项目成员） */
+  canManageRisk?: boolean;
 }
 
 function fmtTime(s?: string | null) {
@@ -34,8 +36,9 @@ const NEXT_TYPE: Record<PmDecisionType, PmDecisionType | null> = {
  * 项目决策事项 — 三态分栏（待决策 / 已决策 / 备忘）。
  * 支持新建、内联编辑、状态流转（转入已决策落定案人/时间）、删除。
  */
-export function DecisionsPanel({ projectId, goals, tasks }: Props) {
+export function DecisionsPanel({ projectId, goals, tasks, canManageRisk }: Props) {
   const [items, setItems] = useState<PmDecision[]>([]);
+  const [risks, setRisks] = useState<PmRisk[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   // 编辑态：existing decision id，或 `new:{type}` 表示在某列新建
@@ -57,6 +60,30 @@ export function DecisionsPanel({ projectId, goals, tasks }: Props) {
   }, [projectId]);
 
   useEffect(() => { load(); }, [load]);
+
+  const loadRisks = useCallback(async () => {
+    const res = await listPmRisks(projectId);
+    if (res.success) setRisks(res.data.items);
+  }, [projectId]);
+  useEffect(() => { loadRisks(); }, [loadRisks]);
+
+  const risksByDecision = useMemo(() => {
+    const m: Record<string, PmRisk[]> = {};
+    for (const r of risks) if (r.relatedDecisionId) (m[r.relatedDecisionId] ??= []).push(r);
+    return m;
+  }, [risks]);
+
+  const registerRisk = async (d: PmDecision) => {
+    setBusyId(`risk:${d.id}`);
+    const res = await createPmRisk(projectId, {
+      title: d.title, description: d.content?.trim() || undefined,
+      probability: 'medium', impact: 'medium', response: 'open', status: 'open',
+      relatedDecisionId: d.id, relatedGoalId: d.relatedGoalIds?.[0], relatedTaskId: d.relatedTaskIds?.[0],
+    });
+    setBusyId(null);
+    if (res.success) { toast.success('已登记关联风险', '去「风险」Tab 完善概率/影响/应对'); await loadRisks(); }
+    else toast.error('登记失败', res.error?.message || '');
+  };
 
   const grouped = useMemo(() => {
     const m: Record<PmDecisionType, PmDecision[]> = { pending: [], decided: [], memo: [] };
@@ -224,10 +251,30 @@ export function DecisionsPanel({ projectId, goals, tasks }: Props) {
                             ))}
                           </div>
                         )}
+                        {(risksByDecision[d.id]?.length ?? 0) > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {risksByDecision[d.id].map((r) => {
+                              const sc = riskScore(r.probability, r.impact);
+                              return (
+                                <span key={r.id} className="text-[10.5px] px-1.5 py-0.5 rounded inline-flex items-center gap-1 max-w-[160px]"
+                                  style={{ background: `${riskScoreColor(sc)}22`, color: riskScoreColor(sc) }} title={`衍生风险 · 风险值 ${sc}`}>
+                                  <ShieldAlert size={10} className="shrink-0" /><span className="truncate">{r.title}</span>
+                                </span>
+                              );
+                            })}
+                          </div>
+                        )}
                         {d.type === 'decided' && d.decidedByName && (
                           <div className="text-[11px] inline-flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
                             <CircleUser size={11} />定案：{d.decidedByName} · {fmtTime(d.decidedAt)}
                           </div>
+                        )}
+                        {canManageRisk && (
+                          <button onClick={() => registerRisk(d)} disabled={busyId === `risk:${d.id}`}
+                            className="self-start mt-0.5 text-[11px] inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border"
+                            style={{ borderColor: 'var(--border-subtle)', color: '#EF4444' }} title="据此决策登记一条风险（自动回链本决策）">
+                            {busyId === `risk:${d.id}` ? <MapSpinner size={11} /> : <ShieldAlert size={11} />}据此登记风险
+                          </button>
                         )}
                         {NEXT_TYPE[type] && (
                           <button onClick={() => moveTo(d, NEXT_TYPE[type]!)} disabled={busyId === d.id}

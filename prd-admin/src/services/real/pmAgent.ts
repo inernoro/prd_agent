@@ -57,6 +57,7 @@ import type {
   CreatePmRiskContract,
   UpdatePmRiskContract,
   DeletePmRiskContract,
+  GetPmBurndownContract,
 } from '@/services/contracts/pmAgent';
 import type { ApiResponse } from '@/types/api';
 import { useAuthStore } from '@/stores/authStore';
@@ -249,6 +250,10 @@ export const updatePmRiskReal: UpdatePmRiskContract = async (riskId, input) => {
 };
 export const deletePmRiskReal: DeletePmRiskContract = async (riskId) => {
   return await apiRequest(api.pm.risks.item(encodeURIComponent(riskId)), { method: 'DELETE' });
+};
+
+export const getPmBurndownReal: GetPmBurndownContract = async (projectId) => {
+  return await apiRequest(api.pm.projects.burndown(encodeURIComponent(projectId)), { method: 'GET' });
 };
 
 export const getPmProjectReal: GetPmProjectContract = async (projectId) => {

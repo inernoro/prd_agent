@@ -1,11 +1,11 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus, Trash2, Pencil, Check, X, ShieldAlert, Target, ListTodo } from 'lucide-react';
+import { Plus, Trash2, Pencil, Check, X, ShieldAlert, Target, ListTodo, Gavel } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { toast } from '@/lib/toast';
-import { listPmRisks, createPmRisk, updatePmRisk, deletePmRisk } from '@/services';
-import type { PmRisk, PmRiskLevel, PmRiskResponse, PmRiskStatus, SavePmRiskInput, PmGoal, PmTask } from '@/services/contracts/pmAgent';
+import { listPmRisks, createPmRisk, updatePmRisk, deletePmRisk, listPmDecisions } from '@/services';
+import type { PmRisk, PmRiskLevel, PmRiskResponse, PmRiskStatus, SavePmRiskInput, PmGoal, PmTask, PmDecision } from '@/services/contracts/pmAgent';
 import { RISK_LEVEL_REGISTRY, RISK_RESPONSE_REGISTRY, RISK_STATUS_REGISTRY, riskScore, riskScoreColor } from './pmConstants';
 
 interface Props {
@@ -32,6 +32,7 @@ export function RiskPanel({ projectId, canManage, goals, tasks }: Props) {
   const [draft, setDraft] = useState<SavePmRiskInput>({});
   const [busy, setBusy] = useState(false);
   const [cellFilter, setCellFilter] = useState<{ p: PmRiskLevel; i: PmRiskLevel } | null>(null);
+  const [decisions, setDecisions] = useState<PmDecision[]>([]);
 
   const load = useCallback(async () => {
     const res = await listPmRisks(projectId);
@@ -39,10 +40,12 @@ export function RiskPanel({ projectId, canManage, goals, tasks }: Props) {
     setLoading(false);
   }, [projectId]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { listPmDecisions(projectId).then((r) => { if (r.success) setDecisions(r.data.items); }); }, [projectId]);
 
   const teamGoals = goals.filter((g) => g.scope === 'team');
   const goalTitle = (id?: string | null) => (id ? goals.find((g) => g.id === id)?.title : null);
   const taskTitle = (id?: string | null) => (id ? tasks.find((t) => t.id === id)?.title : null);
+  const decisionTitle = (id?: string | null) => (id ? decisions.find((d) => d.id === id)?.title : null);
 
   // 矩阵单元格统计（开放风险，已关闭不计入热力）
   const activeRisks = useMemo(() => risks.filter((r) => r.status !== 'closed'), [risks]);
@@ -54,7 +57,7 @@ export function RiskPanel({ projectId, canManage, goals, tasks }: Props) {
   }, [risks, cellFilter]);
 
   const startNew = () => { setEditing('new'); setDraft({ probability: 'medium', impact: 'medium', response: 'open', status: 'open' }); };
-  const startEdit = (r: PmRisk) => { setEditing(r.id); setDraft({ title: r.title, description: r.description || '', probability: r.probability, impact: r.impact, response: r.response, status: r.status, ownerId: r.ownerId || undefined, relatedGoalId: r.relatedGoalId || undefined, relatedTaskId: r.relatedTaskId || undefined }); };
+  const startEdit = (r: PmRisk) => { setEditing(r.id); setDraft({ title: r.title, description: r.description || '', probability: r.probability, impact: r.impact, response: r.response, status: r.status, ownerId: r.ownerId || undefined, relatedGoalId: r.relatedGoalId || undefined, relatedTaskId: r.relatedTaskId || undefined, relatedDecisionId: r.relatedDecisionId || undefined }); };
   const cancel = () => { setEditing(null); setDraft({}); };
 
   const save = async () => {
@@ -108,6 +111,10 @@ export function RiskPanel({ projectId, canManage, goals, tasks }: Props) {
         <select value={draft.relatedTaskId || ''} onChange={(e) => setDraft((d) => ({ ...d, relatedTaskId: e.target.value || undefined }))} className={inputCls} style={inputStyle} title="关联任务">
           <option value="">不关联任务</option>
           {tasks.map((t) => <option key={t.id} value={t.id}>{t.title}</option>)}
+        </select>
+        <select value={draft.relatedDecisionId || ''} onChange={(e) => setDraft((d) => ({ ...d, relatedDecisionId: e.target.value || undefined }))} className={inputCls} style={inputStyle} title="来源决策">
+          <option value="">无来源决策</option>
+          {decisions.map((dc) => <option key={dc.id} value={dc.id}>{dc.title}</option>)}
         </select>
         <div className="ml-auto flex items-center gap-2">
           <Button variant="ghost" size="sm" onClick={cancel}><X size={13} />取消</Button>
@@ -175,6 +182,7 @@ export function RiskPanel({ projectId, canManage, goals, tasks }: Props) {
             const st = RISK_STATUS_REGISTRY[r.status];
             const gName = goalTitle(r.relatedGoalId);
             const tName = taskTitle(r.relatedTaskId);
+            const dName = decisionTitle(r.relatedDecisionId);
             return (
               <div key={r.id} className="group rounded-lg border p-3 flex flex-col gap-1.5" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)', opacity: r.status === 'closed' ? 0.6 : 1 }}>
                 <div className="flex items-center gap-2">
@@ -195,6 +203,7 @@ export function RiskPanel({ projectId, canManage, goals, tasks }: Props) {
                   {r.ownerName && <span>责任人：{r.ownerName}</span>}
                   {gName && <span className="inline-flex items-center gap-1"><Target size={10} />{gName}</span>}
                   {tName && <span className="inline-flex items-center gap-1"><ListTodo size={10} />{tName}</span>}
+                  {dName && <span className="inline-flex items-center gap-1" style={{ color: '#A855F7' }} title="来源决策"><Gavel size={10} />{dName}</span>}
                 </div>
               </div>
             );
