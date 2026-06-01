@@ -1904,8 +1904,9 @@ export function DocumentStorePage() {
                 <GlassCard key={s.id} animated interactive padding="none"
                   className="group flex flex-col h-full"
                   onClick={() => {
-                    // owner 进编辑视图,非 owner(团队共享/他人公开/收藏点赞)走只读 library 页
-                    if (canManage || isOwnInteraction) {
+                    // 团队共享的库:成员也能写(后端 CanWriteStore = owner OR IsTeamShared),
+                    // 所以 store tab 全部进 StoreDetailView。收藏/点赞:owner 进编辑,其他人走只读 library。
+                    if (isStoreTab || isOwnInteraction) {
                       setSelectedStoreId(s.id);
                     } else {
                       navigate(`/library/${s.id}`);
