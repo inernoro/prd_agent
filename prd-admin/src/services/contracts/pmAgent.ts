@@ -179,6 +179,7 @@ export type PmTask = {
   description?: string;
   parentTaskId?: string | null;
   milestoneId?: string | null;
+  goalId?: string | null;
   status: PmTaskStatus;
   priority: PmTaskPriority;
   assigneeId?: string | null;
@@ -270,6 +271,7 @@ export type UpdatePmTaskInput = Partial<{
   labels: string[];
   orderKey: number;
   milestoneId: string;
+  goalId: string;
 }>;
 
 export type BatchCreatePmTasksInput = {
@@ -354,14 +356,36 @@ export type PmWeeklyReport = {
   content: string;
   authorId: string;
   authorName?: string | null;
+  relatedGoalIds?: string[];
+  relatedTaskIds?: string[];
+  sourceType?: string | null;
+  sourceReportId?: string | null;
   createdAt: string;
   updatedAt: string;
 };
-export type SavePmWeeklyReportInput = { title?: string; content?: string; weekStart?: string };
+export type SavePmWeeklyReportInput = { title?: string; content?: string; weekStart?: string; relatedGoalIds?: string[]; relatedTaskIds?: string[] };
 export type ListPmWeeklyReportsContract = (projectId: string) => Promise<ApiResponse<{ items: PmWeeklyReport[] }>>;
 export type CreatePmWeeklyReportContract = (projectId: string, input: SavePmWeeklyReportInput) => Promise<ApiResponse<PmWeeklyReport>>;
 export type UpdatePmWeeklyReportContract = (reportId: string, input: SavePmWeeklyReportInput) => Promise<ApiResponse<{ updated: boolean }>>;
 export type DeletePmWeeklyReportContract = (reportId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
+
+/** 可导入的个人周报（report-agent，当前用户可见范围内） */
+export type ImportableWeeklyReport = {
+  id: string;
+  userId: string;
+  userName?: string | null;
+  teamId: string;
+  teamName?: string | null;
+  weekYear: number;
+  weekNumber: number;
+  status: string;
+  periodStart: string;
+  periodEnd: string;
+  isMine: boolean;
+  sectionCount: number;
+};
+export type ListImportableWeeklyReportsContract = (params?: { weekYear?: number; weekNumber?: number }) => Promise<ApiResponse<{ items: ImportableWeeklyReport[] }>>;
+export type ImportWeeklyReportContract = (projectId: string, input: { sourceReportId: string; relatedGoalIds?: string[]; relatedTaskIds?: string[] }) => Promise<ApiResponse<PmWeeklyReport>>;
 
 // ── 会议纪要 ──
 export type PmMeeting = {

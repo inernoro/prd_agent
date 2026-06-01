@@ -622,6 +622,8 @@ public class PmAgentController : ControllerBase
             Content = request.Content ?? string.Empty,
             AuthorId = userId,
             AuthorName = authorName,
+            RelatedGoalIds = request.RelatedGoalIds ?? new(),
+            RelatedTaskIds = request.RelatedTaskIds ?? new(),
         };
         await _db.PmWeeklyReports.InsertOneAsync(entity);
         return Ok(ApiResponse<object>.Ok(entity));
@@ -646,6 +648,8 @@ public class PmAgentController : ControllerBase
         }
         if (request.Content != null) update = update.Set(x => x.Content, request.Content);
         if (request.WeekStart.HasValue) update = update.Set(x => x.WeekStart, request.WeekStart);
+        if (request.RelatedGoalIds != null) update = update.Set(x => x.RelatedGoalIds, request.RelatedGoalIds);
+        if (request.RelatedTaskIds != null) update = update.Set(x => x.RelatedTaskIds, request.RelatedTaskIds);
         await _db.PmWeeklyReports.UpdateOneAsync(x => x.Id == reportId, update);
         return Ok(ApiResponse<object>.Ok(new { updated = true }));
     }
@@ -687,6 +691,133 @@ public class PmAgentController : ControllerBase
         }
         var stored = await _assetStorage.SaveAsync(bytes, mime, CancellationToken.None, domain: "prd-agent", type: "img", fileName: file.FileName);
         return Ok(ApiResponse<object>.Ok(new { url = stored.Url }));
+    }
+
+    // ── 从周报Agent 个人周报导入到项目周报（含数据权限校验）──
+
+    /// <summary>
+    /// 列出当前用户【可见范围内】的个人周报（report-agent），供项目周报导入选择。
+    /// 可见性：自己的 + 作为 leader/deputy 团队的 + all_members 团队其他成员已提交的 + 全局 ReportAgentViewAll。
+    /// </summary>
+    [HttpGet("weekly-reports/importable")]
+    public async Task<IActionResult> ListImportableWeeklyReports([FromQuery] int? weekYear, [FromQuery] int? weekNumber)
+    {
+        var userId = GetUserId();
+        var b = Builders<WeeklyReport>.Filter;
+        FilterDefinition<WeeklyReport> visFilter;
+        if (HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
+        {
+            visFilter = b.Empty;
+        }
+        else
+        {
+            var orVisible = new List<FilterDefinition<WeeklyReport>> { b.Eq(r => r.UserId, userId) };
+            // 我作为 leader/deputy 的团队（含 ReportTeam.LeaderUserId）
+            var mgrTeamIds = await _db.ReportTeamMembers
+                .Find(m => m.UserId == userId && (m.Role == ReportTeamRole.Leader || m.Role == ReportTeamRole.Deputy))
+                .Project(m => m.TeamId).ToListAsync();
+            var leaderTeamIds = await _db.ReportTeams.Find(t => t.LeaderUserId == userId).Project(t => t.Id).ToListAsync();
+            var allMgr = mgrTeamIds.Concat(leaderTeamIds).Distinct().ToList();
+            if (allMgr.Count > 0) orVisible.Add(b.In(r => r.TeamId, allMgr));
+            // all_members 团队（我是成员）→ 其他成员已提交/已审阅/已查看的
+            var myTeamIds = await _db.ReportTeamMembers.Find(m => m.UserId == userId).Project(m => m.TeamId).ToListAsync();
+            var allMemberTeams = await _db.ReportTeams
+                .Find(t => myTeamIds.Contains(t.Id) && t.ReportVisibility == ReportVisibilityMode.AllMembers)
+                .Project(t => t.Id).ToListAsync();
+            if (allMemberTeams.Count > 0)
+                orVisible.Add(b.And(
+                    b.In(r => r.TeamId, allMemberTeams),
+                    b.In(r => r.Status, new[] { WeeklyReportStatus.Submitted, WeeklyReportStatus.Reviewed, WeeklyReportStatus.Viewed })));
+            visFilter = b.Or(orVisible);
+        }
+
+        var conds = new List<FilterDefinition<WeeklyReport>> { visFilter };
+        if (weekYear.HasValue) conds.Add(b.Eq(r => r.WeekYear, weekYear.Value));
+        if (weekNumber.HasValue) conds.Add(b.Eq(r => r.WeekNumber, weekNumber.Value));
+
+        var reports = await _db.WeeklyReports.Find(b.And(conds))
+            .SortByDescending(r => r.WeekYear).ThenByDescending(r => r.WeekNumber).ThenByDescending(r => r.UpdatedAt)
+            .Limit(200).ToListAsync();
+        var items = reports.Select(r => new
+        {
+            id = r.Id, userId = r.UserId, userName = r.UserName, teamId = r.TeamId, teamName = r.TeamName,
+            weekYear = r.WeekYear, weekNumber = r.WeekNumber, status = r.Status,
+            periodStart = r.PeriodStart, periodEnd = r.PeriodEnd,
+            isMine = r.UserId == userId, sectionCount = r.Sections.Count,
+        }).ToList();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>把一份个人周报快照导入为项目周报（服务端二次校验可见性，渲染为 Markdown）</summary>
+    [HttpPost("projects/{projectId}/weekly-reports/import")]
+    public async Task<IActionResult> ImportWeeklyReport(string projectId, [FromBody] ImportWeeklyReportRequest request)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (string.IsNullOrWhiteSpace(request.SourceReportId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺少来源周报 ID"));
+
+        var src = await _db.WeeklyReports.Find(r => r.Id == request.SourceReportId).FirstOrDefaultAsync();
+        if (src == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "来源周报不存在"));
+        if (!await CanViewPersonalWeeklyReportAsync(src, userId))
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权导入该周报（超出你的可见范围）"));
+
+        var entity = new PmWeeklyReport
+        {
+            ProjectId = projectId,
+            Title = $"{src.UserName ?? "成员"} · {src.WeekYear} 年第 {src.WeekNumber} 周",
+            WeekStart = src.PeriodStart,
+            Content = RenderWeeklyReportMarkdown(src),
+            AuthorId = src.UserId,        // 归属原作者（真实工作产出人），SourceReportId 提供回溯
+            AuthorName = src.UserName,
+            SourceType = "report-agent",
+            SourceReportId = src.Id,
+            RelatedGoalIds = request.RelatedGoalIds ?? new(),
+            RelatedTaskIds = request.RelatedTaskIds ?? new(),
+        };
+        await _db.PmWeeklyReports.InsertOneAsync(entity);
+        return Ok(ApiResponse<object>.Ok(entity));
+    }
+
+    /// <summary>个人周报可见性判定（与 report-agent 规则一致），用于导入授权</summary>
+    private async Task<bool> CanViewPersonalWeeklyReportAsync(WeeklyReport report, string userId)
+    {
+        if (report.UserId == userId) return true;
+        if (HasPermission(AdminPermissionCatalog.ReportAgentViewAll)) return true;
+        var isManager = await _db.ReportTeamMembers
+            .Find(m => m.TeamId == report.TeamId && m.UserId == userId
+                && (m.Role == ReportTeamRole.Leader || m.Role == ReportTeamRole.Deputy)).AnyAsync();
+        if (isManager) return true;
+        var team = await _db.ReportTeams.Find(t => t.Id == report.TeamId).FirstOrDefaultAsync();
+        if (team == null) return false;
+        if (team.LeaderUserId == userId) return true;
+        if (team.ReportVisibility == ReportVisibilityMode.AllMembers
+            && report.Status != WeeklyReportStatus.Draft && report.Status != WeeklyReportStatus.NotStarted)
+        {
+            return await _db.ReportTeamMembers.Find(m => m.TeamId == report.TeamId && m.UserId == userId).AnyAsync();
+        }
+        return false;
+    }
+
+    /// <summary>把个人周报的结构化章节渲染成 Markdown（## 章节标题 + 列表条目）</summary>
+    private static string RenderWeeklyReportMarkdown(WeeklyReport r)
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var sec in r.Sections)
+        {
+            var title = sec.TemplateSection?.Title;
+            if (!string.IsNullOrWhiteSpace(title)) sb.AppendLine($"## {title}").AppendLine();
+            foreach (var item in sec.Items)
+            {
+                if (string.IsNullOrWhiteSpace(item.Content)) continue;
+                sb.AppendLine($"- {item.Content.Trim()}");
+            }
+            sb.AppendLine();
+        }
+        return sb.ToString().Trim();
     }
 
     // ─────────────────────────────────────────────
@@ -795,17 +926,21 @@ public class PmAgentController : ControllerBase
                 b.And(b.Eq(g => g.Scope, PmGoalScope.Personal), b.Eq(g => g.OwnerId, userId))));
         var goals = await _db.PmGoals.Find(filter).SortBy(g => g.OrderKey).ThenByDescending(g => g.CreatedAt).ToListAsync();
 
-        // auto 模式进度：由关联里程碑(Milestone.GoalId==目标)的任务完成度滚动平均
+        // auto 模式进度：目标的任务池 =「直接挂的任务(GoalId==目标) ∪ 其里程碑下的任务」的完成率
         var milestones = await _db.PmMilestones.Find(m => m.ProjectId == projectId).ToListAsync();
         var tasks = await _db.PmTasks.Find(t => t.ProjectId == projectId)
-            .Project(t => new { t.MilestoneId, t.Status }).ToListAsync();
-        int MsProgress(string msId)
+            .Project(t => new { t.MilestoneId, t.GoalId, t.Status }).ToListAsync();
+
+        // 叶子目标 auto 进度：直接挂的任务 + 其里程碑下的任务，按完成率（排除已取消）
+        int LeafTaskProgress(string goalId)
         {
-            var mine = tasks.Where(t => t.MilestoneId == msId && t.Status != PmTaskStatus.Cancelled).ToList();
-            return mine.Count > 0 ? (int)Math.Round(mine.Count(t => t.Status == PmTaskStatus.Done) * 100.0 / mine.Count) : 0;
+            var goalMsIds = milestones.Where(m => m.GoalId == goalId).Select(m => m.Id).ToHashSet();
+            var pool = tasks.Where(t => t.Status != PmTaskStatus.Cancelled
+                && (t.GoalId == goalId || (t.MilestoneId != null && goalMsIds.Contains(t.MilestoneId)))).ToList();
+            return pool.Count > 0 ? (int)Math.Round(pool.Count(t => t.Status == PmTaskStatus.Done) * 100.0 / pool.Count) : -1;
         }
 
-        // 进度三级回退：有子目标→子目标 effective 均值（递归）；否则 auto+有里程碑→里程碑滚动；否则→手填/兜底
+        // 进度三级回退：有子目标→子目标 effective 均值（递归）；否则 auto+有关联任务→任务完成率；否则→手填/兜底
         var byId = goals.ToDictionary(g => g.Id);
         var childrenByParent = goals.Where(g => !string.IsNullOrEmpty(g.ParentId))
             .GroupBy(g => g.ParentId!)
@@ -822,12 +957,14 @@ public class PmAgentController : ControllerBase
             {
                 result = (int)Math.Round(kids.Average(c => EffectiveProgress(c.Id, visited)));
             }
+            else if (g.ProgressMode == PmGoalProgressMode.Auto)
+            {
+                var taskProg = LeafTaskProgress(g.Id);
+                result = taskProg >= 0 ? taskProg : g.Progress;
+            }
             else
             {
-                var linked = milestones.Where(m => m.GoalId == g.Id).ToList();
-                result = (g.ProgressMode == PmGoalProgressMode.Auto && linked.Count > 0)
-                    ? (int)Math.Round(linked.Average(m => MsProgress(m.Id)))
-                    : g.Progress;
+                result = g.Progress;
             }
             visited.Remove(goalId);
             progressMemo[goalId] = result;
@@ -1578,6 +1715,7 @@ public class PmAgentController : ControllerBase
             Description = request.Description?.Trim(),
             ParentTaskId = request.ParentTaskId,
             MilestoneId = string.IsNullOrWhiteSpace(request.MilestoneId) ? null : request.MilestoneId,
+            GoalId = string.IsNullOrWhiteSpace(request.GoalId) ? null : request.GoalId,
             Status = PmTaskStatus.All.Contains(request.Status ?? "") ? request.Status! : PmTaskStatus.Backlog,
             Priority = PmTaskPriority.All.Contains(request.Priority ?? "") ? request.Priority! : PmTaskPriority.None,
             AssigneeId = request.AssigneeId,
@@ -1678,6 +1816,8 @@ public class PmAgentController : ControllerBase
         if (request.OrderKey.HasValue) update = update.Set(t => t.OrderKey, request.OrderKey.Value);
         // MilestoneId：空串=解除归属（置 null），非空=归属
         if (request.MilestoneId != null) update = update.Set(t => t.MilestoneId, string.IsNullOrWhiteSpace(request.MilestoneId) ? null : request.MilestoneId);
+        // GoalId：空串=解除归属（置 null），非空=归属
+        if (request.GoalId != null) update = update.Set(t => t.GoalId, string.IsNullOrWhiteSpace(request.GoalId) ? null : request.GoalId);
 
         await _db.PmTasks.UpdateOneAsync(t => t.Id == taskId, update);
         if (request.Status != null) await RecalcTaskCountAsync(task.ProjectId);
@@ -2076,6 +2216,18 @@ public class WeeklyReportRequest
     public string? Title { get; set; }
     public string? Content { get; set; }
     public DateTime? WeekStart { get; set; }
+    /// <summary>关联目标 ID 列表（null=不变）</summary>
+    public List<string>? RelatedGoalIds { get; set; }
+    /// <summary>关联任务 ID 列表（null=不变）</summary>
+    public List<string>? RelatedTaskIds { get; set; }
+}
+
+/// <summary>从个人周报（report-agent）导入到项目周报的请求</summary>
+public class ImportWeeklyReportRequest
+{
+    public string SourceReportId { get; set; } = string.Empty;
+    public List<string>? RelatedGoalIds { get; set; }
+    public List<string>? RelatedTaskIds { get; set; }
 }
 
 public class MeetingRequest
@@ -2158,6 +2310,8 @@ public class CreatePmTaskRequest
     public string? Description { get; set; }
     public string? ParentTaskId { get; set; }
     public string? MilestoneId { get; set; }
+    /// <summary>所属目标 ID（成果轴，可选）</summary>
+    public string? GoalId { get; set; }
     public string? Status { get; set; }
     public string? Priority { get; set; }
     public string? AssigneeId { get; set; }
@@ -2200,6 +2354,8 @@ public class UpdatePmTaskRequest
     public double? OrderKey { get; set; }
     /// <summary>所属里程碑：传空串=解除归属，非空=归属，null=不变</summary>
     public string? MilestoneId { get; set; }
+    /// <summary>所属目标：传空串=解除归属，非空=归属，null=不变</summary>
+    public string? GoalId { get; set; }
 }
 
 public class MilestoneRequest

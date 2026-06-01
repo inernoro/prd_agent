@@ -1994,6 +1994,8 @@ export {
   createPmWeeklyReportReal as createPmWeeklyReport,
   updatePmWeeklyReportReal as updatePmWeeklyReport,
   deletePmWeeklyReportReal as deletePmWeeklyReport,
+  listImportableWeeklyReportsReal as listImportableWeeklyReports,
+  importWeeklyReportReal as importWeeklyReport,
   uploadPmWeeklyReportImageReal as uploadPmWeeklyReportImage,
   listPmMeetingsReal as listPmMeetings,
   createPmMeetingReal as createPmMeeting,

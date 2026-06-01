@@ -37,6 +37,8 @@ import type {
   ListPmWeeklyReportsContract,
   CreatePmWeeklyReportContract,
   UpdatePmWeeklyReportContract,
+  ListImportableWeeklyReportsContract,
+  ImportWeeklyReportContract,
   DeletePmWeeklyReportContract,
   ListPmMeetingsContract,
   CreatePmMeetingContract,
@@ -148,6 +150,14 @@ export const updatePmWeeklyReportReal: UpdatePmWeeklyReportContract = async (rep
 
 export const deletePmWeeklyReportReal: DeletePmWeeklyReportContract = async (reportId) => {
   return await apiRequest(api.pm.weeklyReports.item(encodeURIComponent(reportId)), { method: 'DELETE' });
+};
+
+export const listImportableWeeklyReportsReal: ListImportableWeeklyReportsContract = async (params) => {
+  return await apiRequest(api.pm.weeklyReportsImportable(params), { method: 'GET' });
+};
+
+export const importWeeklyReportReal: ImportWeeklyReportContract = async (projectId, input) => {
+  return await apiRequest(api.pm.projects.weeklyReportImport(encodeURIComponent(projectId)), { method: 'POST', body: input });
 };
 
 /** 周报内嵌图片上传：FormData 必须走原生 fetch（apiRequest 会 JSON 序列化，见规则 #7） */

@@ -6,9 +6,9 @@ import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { toast } from '@/lib/toast';
 import { useAuthStore } from '@/stores/authStore';
 import {
-  getPmProject, createPmTask, updatePmTask, deletePmTask, updatePmProject, bulkPmTasks, listPmMilestones,
+  getPmProject, createPmTask, updatePmTask, deletePmTask, updatePmProject, bulkPmTasks, listPmMilestones, listPmGoals,
 } from '@/services';
-import type { PmProject, PmTask, PmTaskStatus, PmTaskPriority, PmMilestone } from '@/services/contracts/pmAgent';
+import type { PmProject, PmTask, PmTaskStatus, PmTaskPriority, PmMilestone, PmGoal } from '@/services/contracts/pmAgent';
 import { KanbanBoard } from './KanbanBoard';
 import { GanttChart } from './GanttChart';
 import { DecomposePanel } from './DecomposePanel';
@@ -59,6 +59,7 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
   const [project, setProject] = useState<PmProject | null>(null);
   const [tasks, setTasks] = useState<PmTask[]>([]);
   const [milestones, setMilestones] = useState<PmMilestone[]>([]);
+  const [goals, setGoals] = useState<PmGoal[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<ViewTab>('tasks');
   const [viewMode, setViewMode] = useState<TaskViewMode>('board');
@@ -90,13 +91,19 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
     if (res.success) setMilestones(res.data.items);
   }, [projectId]);
 
+  const loadGoals = useCallback(async () => {
+    const res = await listPmGoals(projectId);
+    if (res.success) setGoals(res.data.items);
+  }, [projectId]);
+
   const load = useCallback(async () => {
     const res = await getPmProject(projectId);
     if (res.success) { setProject(res.data.project); setTasks(res.data.tasks); }
     else toast.error('加载失败', res.error?.message || '');
     loadMilestones();
+    loadGoals();
     setLoading(false);
-  }, [projectId, loadMilestones]);
+  }, [projectId, loadMilestones, loadGoals]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -495,6 +502,7 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
           task={openTask}
           allTasks={tasks}
           milestones={milestones}
+          goals={goals}
           onClose={() => setOpenTask(null)}
           onSaved={(u) => { setTasks((prev) => prev.map((t) => (t.id === u.id ? u : t))); setOpenTask(null); loadMilestones(); }}
           onDeleted={(id) => { setTasks((prev) => prev.filter((t) => t.id !== id)); setOpenTask(null); loadMilestones(); }}

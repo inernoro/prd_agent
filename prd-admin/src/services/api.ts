@@ -1330,6 +1330,7 @@ export const api = {
       decisions: (projectId: string) => `/api/pm/projects/${projectId}/decisions`,
       weeklyReports: (projectId: string) => `/api/pm/projects/${projectId}/weekly-reports`,
       weeklyReportImage: (projectId: string) => `/api/pm/projects/${projectId}/weekly-reports/image`,
+      weeklyReportImport: (projectId: string) => `/api/pm/projects/${projectId}/weekly-reports/import`,
       meetings: (projectId: string) => `/api/pm/projects/${projectId}/meetings`,
       goals: (projectId: string) => `/api/pm/projects/${projectId}/goals`,
       goalsDecompose: (projectId: string, parentGoalId?: string) =>
@@ -1349,6 +1350,13 @@ export const api = {
     },
     knowledge: {
       file: (fileId: string) => `/api/pm/knowledge/files/${fileId}`,
+    },
+    weeklyReportsImportable: (params?: { weekYear?: number; weekNumber?: number }) => {
+      const q = new URLSearchParams();
+      if (params?.weekYear) q.set('weekYear', String(params.weekYear));
+      if (params?.weekNumber) q.set('weekNumber', String(params.weekNumber));
+      const s = q.toString();
+      return `/api/pm/weekly-reports/importable${s ? `?${s}` : ''}`;
     },
     decisions: {
       item: (decisionId: string) => `/api/pm/decisions/${decisionId}`,

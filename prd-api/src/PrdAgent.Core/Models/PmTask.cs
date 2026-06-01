@@ -22,8 +22,11 @@ public class PmTask
     /// <summary>父任务 ID（子任务，null 为顶层任务）</summary>
     public string? ParentTaskId { get; set; }
 
-    /// <summary>所属里程碑 ID（可空；用于阶段聚合与甘特菱形归属）</summary>
+    /// <summary>所属里程碑 ID（可空；时间阶段轴：用于阶段聚合与甘特菱形归属）</summary>
     public string? MilestoneId { get; set; }
+
+    /// <summary>所属目标 ID（可空；成果轴：与 MilestoneId 正交，无里程碑的任务也可直接归属目标）</summary>
+    public string? GoalId { get; set; }
 
     /// <summary>
     /// 状态：backlog(待规划) / todo(待办) / in_progress(进行中) / done(已完成) / cancelled(已取消)
