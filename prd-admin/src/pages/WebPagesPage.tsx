@@ -550,7 +550,7 @@ export default function WebPagesPage() {
         ))}
       </div>
     ) : (
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col" style={{ borderTop: '1px solid var(--border-default)' }}>
         {items.map(site => (
           <SiteListItem
             key={site.id}
@@ -575,7 +575,7 @@ export default function WebPagesPage() {
       className="h-full flex flex-col gap-4 p-4 overflow-auto"
       style={{
         background:
-          'radial-gradient(ellipse 80% 50% at 50% 0%, rgba(99,102,241,0.06) 0%, transparent 60%), linear-gradient(180deg, var(--bg-elevated) 0%, var(--bg-base) 320px)',
+          'radial-gradient(ellipse 70% 40% at 50% -10%, rgba(99,102,241,0.14) 0%, transparent 55%), linear-gradient(180deg, #20212a 0%, #181a22 480px, #16181f 100%)',
       }}
     >
       {/* 右侧投放面板：可拖动 + 可收起，拖站点卡片到槽位即可公开/分享/删除 */}
@@ -700,7 +700,6 @@ export default function WebPagesPage() {
       />
       <PageHeader
         title="网页托管"
-        description="上传 HTML/ZIP、Markdown、PDF 或视频，自动托管并生成可分享的访问链接"
         actions={
           <div className="flex items-center gap-1.5">
             <button
@@ -1675,11 +1674,10 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
   };
   return (
     <div
-      className="group flex items-center gap-4 px-3 py-2 rounded-lg cursor-grab active:cursor-grabbing touch-none transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.04))]"
+      className="group flex items-center gap-4 px-3 py-2 cursor-grab active:cursor-grabbing touch-none transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.04))]"
       style={{
         borderBottom: '1px solid var(--border-default)',
         background: selected ? 'rgba(99,102,241,0.08)' : 'transparent',
-        outline: selected ? '1px solid var(--accent-primary)' : 'none',
       }}
       onPointerDown={onPointerDown}
     >
