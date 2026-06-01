@@ -955,6 +955,14 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
       <div className="flex-1 min-h-0 flex flex-col pt-3">
         <DocBrowser
           entries={entries}
+          tagColors={(store.tagColors ?? {}) as Record<string, import('@/lib/tagPalette').TagColorKey>}
+          onTagColorsChange={async (next) => {
+            // 乐观更新本地 + 异步落库，失败时回滚
+            const prev = store.tagColors;
+            setStore(s => s ? { ...s, tagColors: next } : s);
+            const res = await updateDocumentStore(storeId, { tagColors: next });
+            if (!res.success) setStore(s => s ? { ...s, tagColors: prev } : s);
+          }}
           /* 验收报告库：最新在前（design.acceptance-kb.md §5.A）；时间默认显示由 DocBrowser 默认值兜底 */
           sortMode={store.templateKey === ACCEPTANCE_TEMPLATE_KEY ? 'created-desc' : 'default'}
           primaryEntryId={store.primaryEntryId}

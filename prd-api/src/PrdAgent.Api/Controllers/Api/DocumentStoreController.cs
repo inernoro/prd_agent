@@ -326,6 +326,15 @@ public class DocumentStoreController : ControllerBase
         if (request.TemplateKey != null)
             updates.Add(Builders<DocumentStore>.Update.Set(s => s.TemplateKey,
                 string.IsNullOrWhiteSpace(request.TemplateKey) ? null : request.TemplateKey.Trim()));
+        if (request.TagColors != null)
+        {
+            // 仅接受白名单调色板 key，其他值丢弃
+            var allowed = new HashSet<string> { "red", "orange", "yellow", "green", "teal", "blue", "purple", "gray" };
+            var sanitized = request.TagColors
+                .Where(kv => !string.IsNullOrWhiteSpace(kv.Key) && allowed.Contains(kv.Value))
+                .ToDictionary(kv => kv.Key.Trim(), kv => kv.Value);
+            updates.Add(Builders<DocumentStore>.Update.Set(s => s.TagColors, sanitized));
+        }
 
         updates.Add(Builders<DocumentStore>.Update.Set(s => s.UpdatedAt, DateTime.UtcNow));
 
@@ -3375,6 +3384,8 @@ public class UpdateDocumentStoreRequest
     public bool? IsPublic { get; set; }
     /// <summary>知识库模板键（传空字符串可清除约束）。</summary>
     public string? TemplateKey { get; set; }
+    /// <summary>用户自定义 tag 颜色映射（null=不变；空字典=清空）</summary>
+    public Dictionary<string, string>? TagColors { get; set; }
 }
 
 public class SetStoreTeamsRequest

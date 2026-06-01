@@ -268,6 +268,12 @@ export type DocBrowserProps = {
    * 不传则不渲染。
    */
   sidebarHeader?: React.ReactNode;
+  /**
+   * 用户自定义 tag 颜色映射（tagName → 调色板 key）。
+   * 不传时回退到 sessionStorage（仅本 tab）；传入时持久化由调用方负责（onTagColorsChange）。
+   */
+  tagColors?: Record<string, TagColorKey>;
+  onTagColorsChange?: (next: Record<string, TagColorKey>) => void;
 };
 
 // ── (new) 徽标判定：lastChangedAt 在 24 小时以内 ──
@@ -1140,6 +1146,8 @@ export function DocBrowser({
   appearance = 'inset',
   isEntryFresh,
   sidebarHeader,
+  tagColors: tagColorsProp,
+  onTagColorsChange,
   inlineCommentShareToken,
 }: DocBrowserProps) {
   const [search, setSearch] = useState('');
@@ -1193,21 +1201,30 @@ export function DocBrowser({
       return next;
     });
   }, []);
-  // tag 颜色覆盖：用户自定义颜色，sessionStorage 持久化
-  const [tagColorMap, setTagColorMap] = useState<Record<string, TagColorKey>>(() => {
+  // tag 颜色覆盖：受控优先（onTagColorsChange 用于持久化到后端），
+  // 否则回退 sessionStorage（仅本 tab 生效）
+  const [tagColorMapLocal, setTagColorMapLocal] = useState<Record<string, TagColorKey>>(() => {
+    if (tagColorsProp) return tagColorsProp;
     try {
       const saved = sessionStorage.getItem('doc-browser-tag-colors');
       return saved ? JSON.parse(saved) : {};
     } catch { return {}; }
   });
+  // 受控时跟随 prop 同步
+  useEffect(() => {
+    if (tagColorsProp) setTagColorMapLocal(tagColorsProp);
+  }, [tagColorsProp]);
+  const tagColorMap = tagColorsProp ?? tagColorMapLocal;
   const setTagColor = useCallback((tag: string, color: TagColorKey | undefined) => {
-    setTagColorMap(prev => {
-      const next = { ...prev };
-      if (color) next[tag] = color; else delete next[tag];
+    const next = { ...(tagColorsProp ?? tagColorMapLocal) };
+    if (color) next[tag] = color; else delete next[tag];
+    if (onTagColorsChange) {
+      onTagColorsChange(next);
+    } else {
+      setTagColorMapLocal(next);
       sessionStorage.setItem('doc-browser-tag-colors', JSON.stringify(next));
-      return next;
-    });
-  }, []);
+    }
+  }, [tagColorsProp, tagColorMapLocal, onTagColorsChange]);
   const tagColorsCtxValue = useMemo(() => ({ colors: tagColorMap, setColor: setTagColor }), [tagColorMap, setTagColor]);
   const [resizing, setResizing] = useState(false);
   // 侧栏 DOM 引用 + 拖拽起始时量出的真实左边界，避免用写死偏移导致"不跟手/跳动"
