@@ -770,21 +770,29 @@ export default function WebPagesPage() {
           </div>
         </div>
 
-        {/* 空间内文件夹（内容派生）：全部 + 各文件夹 —— 放搜索行下方，切换空间不顶动搜索框 */}
-        {spaceFolders.length > 0 && (
-          <div data-tour-id="webpages-folders" className="flex items-center gap-1.5 mt-3 overflow-x-auto pb-0.5" style={{ overscrollBehavior: 'contain' }}>
-            <button type="button" onClick={() => setActiveFolder(null)} className="h-7 px-2.5 rounded-full text-[12px] shrink-0"
-              style={activeFolder === null ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' } : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}>
-              全部
-            </button>
-            {spaceFolders.map((f) => (
-              <button key={f} type="button" onClick={() => setActiveFolder(f)} className="h-7 px-2.5 rounded-full text-[12px] shrink-0 flex items-center gap-1"
-                style={activeFolder === f ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' } : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}>
-                <Folder size={11} /> {f}
+        {/* 空间内文件夹（内容派生）：锚点容器永远渲染（教程引导依赖该 selector）；
+            有文件夹时显示全部 + 各文件夹按钮，无文件夹时显示一句空态引导。 */}
+        <div data-tour-id="webpages-folders" className="mt-3">
+          {spaceFolders.length > 0 ? (
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5" style={{ overscrollBehavior: 'contain' }}>
+              <button type="button" onClick={() => setActiveFolder(null)} className="h-7 px-2.5 rounded-full text-[12px] shrink-0"
+                style={activeFolder === null ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' } : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}>
+                全部
               </button>
-            ))}
-          </div>
-        )}
+              {spaceFolders.map((f) => (
+                <button key={f} type="button" onClick={() => setActiveFolder(f)} className="h-7 px-2.5 rounded-full text-[12px] shrink-0 flex items-center gap-1"
+                  style={activeFolder === f ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' } : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}>
+                  <Folder size={11} /> {f}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full text-[11px]"
+              style={{ background: 'var(--bg-input)', border: '1px dashed rgba(255,255,255,0.12)', color: 'var(--text-muted)' }}>
+              <Folder size={11} /> 文件夹（上传站点时填写「文件夹」字段即可在此分类）
+            </div>
+          )}
+        </div>
 
         {/* 团队空间协作头部：放最下方，出现/消失不顶动上方搜索框（切换统一性） */}
         {currentSpace.kind === 'team' && (
@@ -858,6 +866,18 @@ export default function WebPagesPage() {
               <Upload size={14} className="mr-1" /> 上传第一个站点
             </Button>
           )}
+          {/* 教程引导锚点占位：空态下也让「网页托管 3 步」教程能找到 webpages-card / webpages-viewcount 目标，
+              避免「没找到目标元素」报错。占位卡是一张轻量预览卡，告诉新用户站点卡长什么样。 */}
+          <div
+            data-tour-id="webpages-card"
+            className="mt-2 inline-flex items-center gap-2 px-3 py-2 rounded-lg text-[11px]"
+            style={{ background: 'var(--bg-input)', border: '1px dashed rgba(255,255,255,0.12)', color: 'var(--text-muted)' }}
+          >
+            示例卡片预览：标题 · 描述
+            <span data-tour-id="webpages-viewcount" className="inline-flex items-center gap-0.5">
+              <Eye size={11} /> 0
+            </span>
+          </div>
         </div>
       ) : (
         <div className="flex flex-col gap-5">
