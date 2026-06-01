@@ -169,16 +169,6 @@ function CcasHelpDrawer({ open, onClose }: { open: boolean; onClose: () => void 
             </div>
           </section>
 
-          <section className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
-            <h3 className="text-sm font-medium text-white mb-2">封面图在哪加</h3>
-            <p className="text-white/65 leading-relaxed">
-              入口在「资源管理」的「首页资源」Tab，找到「智能体封面（图片 + 动态视频）」分区，
-              给「赋码采集关联智能体」上传封面图即可。底层资源 slot 是
-              <code className="mx-1 px-1.5 py-0.5 rounded bg-black/35 text-amber-200">agent.ccas-agent.image</code>。
-              如果还要 hover 动态视频，对应 slot 是
-              <code className="mx-1 px-1.5 py-0.5 rounded bg-black/35 text-amber-200">agent.ccas-agent.video</code>。
-            </p>
-          </section>
         </div>
       </aside>
     </div>
