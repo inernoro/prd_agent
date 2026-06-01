@@ -1,6 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Wand2, X, Send, Replace, FileDown, FilePlus2, RotateCw, AlertCircle, Bot, Plus, Trash2, Sparkles } from 'lucide-react';
+import {
+  Wand2, X, Send, Replace, FileDown, FilePlus2, RotateCw, AlertCircle,
+  Bot, Plus, Trash2, Sparkles, ChevronDown, Check, FileText, Palette,
+  PenTool, Bug, Video, FileBarChart, Brain, Lightbulb, Search, Layers,
+} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -16,9 +21,7 @@ import {
 import { streamDirectChat, listToolboxItems } from '@/services/real/aiToolbox';
 import type { ToolboxItem } from '@/services/real/aiToolbox';
 import { BUILTIN_TOOLS } from '@/stores/toolboxStore';
-import type {
-  ReprocessAgent,
-} from '@/services/contracts/documentStore';
+import type { ReprocessAgent } from '@/services/contracts/documentStore';
 import { toast } from '@/lib/toast';
 
 export type ReprocessChatDrawerProps = {
@@ -29,18 +32,57 @@ export type ReprocessChatDrawerProps = {
   onApplied?: (mode: 'replace' | 'append' | 'new', entryId: string) => void;
 };
 
+// 简易图标 map（lucide name → component）覆盖 BUILTIN_TOOLS 用到的图标
+const TOOLBOX_ICON_MAP: Record<string, LucideIcon> = {
+  Palette, PenTool, Bug, Video, FileBarChart, Bot, FileText, Sparkles,
+  Brain, Lightbulb, Search, Layers,
+};
+
+const TOOLBOX_ICON_HUE: Record<string, number> = {
+  Palette: 330, PenTool: 45, Bug: 0, Video: 270, FileBarChart: 200,
+  Bot: 210, FileText: 220, Sparkles: 280,
+};
+
+function ToolboxIcon({ name, size = 14 }: { name?: string; size?: number }) {
+  const Comp = (name && TOOLBOX_ICON_MAP[name]) || Bot;
+  const hue = (name && TOOLBOX_ICON_HUE[name]) ?? 210;
+  return (
+    <span
+      className="inline-flex items-center justify-center rounded-[6px]"
+      style={{
+        width: size + 12,
+        height: size + 12,
+        background: `hsl(${hue} 70% 55% / 0.18)`,
+        color: `hsl(${hue} 80% 75%)`,
+        border: `1px solid hsl(${hue} 70% 50% / 0.30)`,
+      }}
+    >
+      <Comp size={size} />
+    </span>
+  );
+}
+
+// 输入截断：避免 LLM context 爆
+const MAX_DOC_CHARS = 40000;
+
 type ChatMessage = {
   id: string;
   role: 'user' | 'assistant';
-  /** 标记来源："templateLabel" / "百宝箱:agentKey" / "我的:agentKey" */
-  invoker?: { kind: 'toolbox' | 'kbAgent'; label: string; ref: string };
+  invoker?: { kind: 'toolbox' | 'kbAgent'; label: string; ref: string; icon?: string };
   content: string;
   streaming?: boolean;
+  /** 流式阶段：thinking / streaming / done */
+  phase?: 'thinking' | 'streaming' | 'done' | 'error';
   applied?: 'replace' | 'append' | 'new';
 };
 
-const PRIMARY_TOOLBOX_KEYS = [
-  // 优先呈现"最适合纯文本输入"的智能体——视觉/视频/缺陷等需要复杂上下文的放到次要分组
+type ActiveAgent =
+  | { kind: 'toolbox'; item: ToolboxItem }
+  | { kind: 'kbAgent'; agent: ReprocessAgent }
+  | null;
+
+const FOCUSED_TOOLBOX_IDS = [
+  // 偏文本对话型 builtin agent 排前；视觉/视频/缺陷管理放后面
   'builtin-literary-agent',
   'builtin-report-agent',
   'builtin-pa-agent',
@@ -48,17 +90,6 @@ const PRIMARY_TOOLBOX_KEYS = [
   'builtin-task-tree',
 ];
 
-/**
- * 文档再加工 · Chat 抽屉 v2 —— 直接调用百宝箱智能体 + 用户自建轻量智能体。
- *
- * 设计变更（按用户反馈）：
- *   1. 不再走我自建的 reprocess Worker/Processor。当前文档全文 + 用户消息直接走
- *      `/api/ai-toolbox/direct-chat` 复用百宝箱的 LLM 调度（百宝箱才是系统智能体 SSOT）。
- *   2. 「百宝箱」chip 行从 BUILTIN_TOOLS + 用户自建百宝箱工具拼出。
- *   3. 「我的快捷智能体」chip 行保留：用户能在抽屉里一键创建自己的 system prompt 简化版智能体；
- *      它们在前端展开为 `system prompt + 文档 + 用户消息` 拼一段发给同一个 direct-chat。
- *   4. 三种写回（替换原文 / 追加末尾 / 另存为新文档）调新的 `apply-content` 接口，不依赖 Run。
- */
 export function ReprocessChatDrawer({
   entryId,
   entryTitle,
@@ -66,24 +97,25 @@ export function ReprocessChatDrawer({
   onClose,
   onApplied,
 }: ReprocessChatDrawerProps) {
-  // 数据
-  const [toolboxItems, setToolboxItems] = useState<ToolboxItem[]>([]); // 百宝箱（内置 + 用户自建）
-  const [kbAgents, setKbAgents] = useState<ReprocessAgent[]>([]);      // 知识库轻量智能体
-  const [docContent, setDocContent] = useState<string>('');             // 文档全文
-  const [loading, setLoading] = useState(true);
+  const [toolboxItems, setToolboxItems] = useState<ToolboxItem[]>([]);
+  const [kbAgents, setKbAgents] = useState<ReprocessAgent[]>([]);
+  const [docContent, setDocContent] = useState<string>('');
+  const [docTruncated, setDocTruncated] = useState(false);
+  const [loadingDoc, setLoadingDoc] = useState(true);
+  const [loadingAgents, setLoadingAgents] = useState(true);
 
-  // 会话
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [streamingId, setStreamingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [applying, setApplying] = useState<string | null>(null);
   const [showCreateAgent, setShowCreateAgent] = useState(false);
+  const [active, setActive] = useState<ActiveAgent>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
   const cancelStreamRef = useRef<(() => void) | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-
-  // 当前选定的智能体（影响"如果只输入而不点 chip，按谁的语境跑"）
-  const [activeInvoker, setActiveInvoker] = useState<ChatMessage['invoker']>();
+  const pickerBtnRef = useRef<HTMLButtonElement>(null);
 
   const scrollToBottom = useCallback(() => {
     requestAnimationFrame(() => {
@@ -91,28 +123,42 @@ export function ReprocessChatDrawer({
     });
   }, []);
 
-  // 加载：文档全文 + 百宝箱（内置 + 用户自建）+ 我的轻量智能体
+  // 加载：文档全文 + 百宝箱 + KB 智能体（并行）
   useEffect(() => {
     let cancelled = false;
+    setLoadingDoc(true);
+    setLoadingAgents(true);
+
     (async () => {
-      setLoading(true);
-      const [docRes, agentRes, customToolboxRes] = await Promise.all([
-        getDocumentContent(entryId),
+      const docRes = await getDocumentContent(entryId);
+      if (cancelled) return;
+      if (docRes.success) {
+        const raw = docRes.data.content ?? '';
+        if (raw.length > MAX_DOC_CHARS) {
+          setDocContent(raw.slice(0, MAX_DOC_CHARS));
+          setDocTruncated(true);
+        } else {
+          setDocContent(raw);
+          setDocTruncated(false);
+        }
+      }
+      setLoadingDoc(false);
+    })();
+
+    (async () => {
+      const [agentRes, toolboxRes] = await Promise.all([
         listReprocessAgents(),
         listToolboxItems(),
       ]);
       if (cancelled) return;
 
-      if (docRes.success) setDocContent(docRes.data.content ?? '');
-
-      const userOwnedToolbox = customToolboxRes.success
-        ? (customToolboxRes.data.items as ToolboxItem[]).filter((t) => t.kind !== 'tool' || t.systemPrompt)
-        : [];
-      // 把"最适合文本对话"的内置智能体排前
       const builtinAgents = BUILTIN_TOOLS.filter((t) => t.kind === 'agent' && !t.wip);
+      const userOwnedToolbox = toolboxRes.success
+        ? (toolboxRes.data.items as ToolboxItem[]).filter((t) => !!t.systemPrompt)
+        : [];
       const ordered = builtinAgents.sort((a, b) => {
-        const ia = PRIMARY_TOOLBOX_KEYS.indexOf(a.id);
-        const ib = PRIMARY_TOOLBOX_KEYS.indexOf(b.id);
+        const ia = FOCUSED_TOOLBOX_IDS.indexOf(a.id);
+        const ib = FOCUSED_TOOLBOX_IDS.indexOf(b.id);
         if (ia < 0 && ib < 0) return 0;
         if (ia < 0) return 1;
         if (ib < 0) return -1;
@@ -121,42 +167,56 @@ export function ReprocessChatDrawer({
       setToolboxItems([...ordered, ...userOwnedToolbox]);
 
       if (agentRes.success) setKbAgents(agentRes.data.items);
-
-      setLoading(false);
+      setLoadingAgents(false);
     })();
+
     return () => {
       cancelled = true;
       cancelStreamRef.current?.();
     };
   }, [entryId]);
 
-  // 取消上一次流（切换智能体或关闭）
+  // 关闭浮层
   useEffect(() => () => { cancelStreamRef.current?.(); }, []);
 
-  // ── 发送消息（核心：组装 message 并调 direct-chat） ──
+  // 点击外面关闭 picker
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (!pickerBtnRef.current?.contains(e.target as Node)) {
+        const dropdown = document.getElementById('reprocess-agent-picker-dropdown');
+        if (dropdown && !dropdown.contains(e.target as Node)) setPickerOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [pickerOpen]);
+
+  // ── 发送消息 ──
   const sendMessage = useCallback(async (
     userText: string,
     invoker: ChatMessage['invoker'],
+    agent: ActiveAgent,
   ) => {
     if (streamingId) return;
     if (!userText.trim()) return;
+    if (loadingDoc) {
+      toast.warning('请稍候', '文档还在加载');
+      return;
+    }
 
-    // 找智能体定义
     let agentKey: string | undefined;
     let itemId: string | undefined;
     let kbSystemPrompt: string | undefined;
 
-    if (invoker?.kind === 'toolbox') {
-      const tb = toolboxItems.find((t) => t.id === invoker.ref);
-      if (tb?.type === 'builtin' && tb.agentKey) {
-        agentKey = tb.agentKey;
+    if (agent?.kind === 'toolbox') {
+      if (agent.item.type === 'builtin' && agent.item.agentKey) {
+        agentKey = agent.item.agentKey;
       } else {
-        itemId = invoker.ref;
+        itemId = agent.item.id;
       }
-    } else if (invoker?.kind === 'kbAgent') {
-      const agent = kbAgents.find((a) => a.key === invoker.ref);
-      kbSystemPrompt = agent?.systemPrompt;
-      // 没有匹配 agentKey 时，让 direct-chat 走默认 chat 调度（不传 agentKey/itemId）
+    } else if (agent?.kind === 'kbAgent') {
+      kbSystemPrompt = agent.agent.systemPrompt;
     }
 
     setError(null);
@@ -164,78 +224,101 @@ export function ReprocessChatDrawer({
     const userMsgId = 'u-' + Date.now();
     const asstMsgId = 'a-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
     const userMsg: ChatMessage = {
-      id: userMsgId,
-      role: 'user',
-      content: userText.trim(),
-      invoker,
+      id: userMsgId, role: 'user', content: userText.trim(), invoker,
     };
     const asstMsg: ChatMessage = {
-      id: asstMsgId,
-      role: 'assistant',
-      content: '',
-      streaming: true,
-      invoker,
+      id: asstMsgId, role: 'assistant', content: '', streaming: true, phase: 'thinking', invoker,
     };
+
+    // 取当前对话历史发给 direct-chat（多轮上下文）
+    const history = messages.map((m) => ({
+      role: m.role,
+      content: m.content,
+    })).filter((m) => m.content);
+
     setMessages((prev) => [...prev, userMsg, asstMsg]);
     setStreamingId(asstMsgId);
     setInput('');
     scrollToBottom();
 
-    // 组装 message：把文档全文 + 用户指令拼起来。若是 kbAgent，叠加 system prompt 段。
+    // 组装首条 message：把文档全文 + 用户指令拼起来；KB agent 时叠加 system prompt
     let composed = '';
     if (kbSystemPrompt) {
       composed += `[智能体角色设定]\n${kbSystemPrompt}\n\n`;
     }
-    composed += `[参考文档]\n${docContent}\n\n[用户指令]\n${userText.trim()}`;
+    composed += `[参考文档${docTruncated ? '（已截取前 4 万字）' : ''}]\n${docContent}\n\n[用户指令]\n${userText.trim()}`;
 
+    let hasFirstChunk = false;
     const stop = streamDirectChat({
       message: composed,
       agentKey,
       itemId,
+      history: history.length > 0 ? history : undefined,
       onText: (chunk) => {
+        if (!hasFirstChunk) {
+          hasFirstChunk = true;
+        }
         setMessages((prev) => prev.map((m) =>
-          m.id === asstMsgId ? { ...m, content: m.content + chunk } : m));
+          m.id === asstMsgId
+            ? { ...m, content: m.content + chunk, phase: 'streaming' }
+            : m));
         scrollToBottom();
       },
       onError: (msg) => {
         setError(msg || '调用失败');
         setMessages((prev) => prev.map((m) =>
-          m.id === asstMsgId ? { ...m, streaming: false, content: m.content || '（调用失败：' + (msg || '未知错误') + '）' } : m));
+          m.id === asstMsgId
+            ? { ...m, streaming: false, phase: 'error',
+                content: m.content || `（调用失败：${msg || '未知错误'}）` }
+            : m));
         setStreamingId(null);
       },
       onDone: () => {
         setMessages((prev) => prev.map((m) =>
-          m.id === asstMsgId ? { ...m, streaming: false } : m));
+          m.id === asstMsgId ? { ...m, streaming: false, phase: 'done' } : m));
         setStreamingId(null);
       },
     });
     cancelStreamRef.current = stop;
-  }, [streamingId, toolboxItems, kbAgents, docContent, scrollToBottom]);
+  }, [streamingId, loadingDoc, messages, docContent, docTruncated, scrollToBottom]);
 
   const handleSendInput = useCallback(() => {
     if (!input.trim()) return;
-    // 默认调用激活的智能体；未选时走通用 chat
-    void sendMessage(input, activeInvoker);
-  }, [input, activeInvoker, sendMessage]);
+    if (!active) {
+      toast.warning('请先选择智能体', '点上方选择器挑一个');
+      setPickerOpen(true);
+      return;
+    }
+    const invoker: ChatMessage['invoker'] =
+      active.kind === 'toolbox'
+        ? { kind: 'toolbox', label: active.item.name, ref: active.item.id, icon: active.item.icon }
+        : { kind: 'kbAgent', label: active.agent.label, ref: active.agent.key };
+    void sendMessage(input, invoker, active);
+  }, [input, active, sendMessage]);
 
-  const handleToolboxChip = useCallback((item: ToolboxItem) => {
-    if (streamingId) return;
-    const invoker: ChatMessage['invoker'] = { kind: 'toolbox', label: item.name, ref: item.id };
-    setActiveInvoker(invoker);
-    void sendMessage(`请用「${item.name}」处理这篇文档。`, invoker);
-  }, [streamingId, sendMessage]);
+  const pickToolbox = useCallback((item: ToolboxItem) => {
+    setActive({ kind: 'toolbox', item });
+    setPickerOpen(false);
+    setError(null);
+    // 选完立即跑一轮，文档全文+默认指令
+    const invoker: ChatMessage['invoker'] = {
+      kind: 'toolbox', label: item.name, ref: item.id, icon: item.icon,
+    };
+    void sendMessage(`请用「${item.name}」处理这篇文档。`, invoker, { kind: 'toolbox', item });
+  }, [sendMessage]);
 
-  const handleKbAgentChip = useCallback((agent: ReprocessAgent) => {
-    if (streamingId) return;
-    const invoker: ChatMessage['invoker'] = { kind: 'kbAgent', label: agent.label, ref: agent.key };
-    setActiveInvoker(invoker);
-    void sendMessage(`请用「${agent.label}」智能体处理这篇文档。`, invoker);
-  }, [streamingId, sendMessage]);
+  const pickKbAgent = useCallback((agent: ReprocessAgent) => {
+    setActive({ kind: 'kbAgent', agent });
+    setPickerOpen(false);
+    setError(null);
+    const invoker: ChatMessage['invoker'] = {
+      kind: 'kbAgent', label: agent.label, ref: agent.key,
+    };
+    void sendMessage(`请用「${agent.label}」智能体处理这篇文档。`, invoker, { kind: 'kbAgent', agent });
+  }, [sendMessage]);
 
   const handleCreateAgent = useCallback(async (in_: {
-    label: string;
-    description: string;
-    systemPrompt: string;
+    label: string; description: string; systemPrompt: string;
   }) => {
     const res = await createReprocessAgent(in_);
     if (!res.success) {
@@ -243,7 +326,8 @@ export function ReprocessChatDrawer({
       return false;
     }
     setKbAgents((prev) => [...prev, res.data]);
-    toast.success('智能体创建成功', '可立即点击调用');
+    toast.success('智能体创建成功', '已选中，可立即使用');
+    setActive({ kind: 'kbAgent', agent: res.data });
     return true;
   }, []);
 
@@ -256,11 +340,11 @@ export function ReprocessChatDrawer({
       return;
     }
     setKbAgents((prev) => prev.filter((a) => a.id !== agent.id));
-  }, []);
+    if (active?.kind === 'kbAgent' && active.agent.id === agent.id) setActive(null);
+  }, [active]);
 
   const handleApply = useCallback(async (
-    msgId: string,
-    mode: 'replace' | 'append' | 'new',
+    msgId: string, mode: 'replace' | 'append' | 'new',
   ) => {
     const msg = messages.find((m) => m.id === msgId);
     if (!msg || msg.role !== 'assistant' || !msg.content) return;
@@ -282,12 +366,19 @@ export function ReprocessChatDrawer({
 
   const isBusy = streamingId !== null;
 
-  // ── 渲染 ──
+  const activeLabel = useMemo(() => {
+    if (!active) return null;
+    if (active.kind === 'toolbox') {
+      return { icon: active.item.icon, name: active.item.name, kind: 'toolbox' as const, sub: active.item.description };
+    }
+    return { icon: undefined, name: active.agent.label, kind: 'kbAgent' as const, sub: active.agent.description };
+  }, [active]);
+
   const modal = (
     <motion.div
       className="surface-backdrop fixed inset-0 z-[100] flex justify-end"
       initial={{ backgroundColor: 'rgba(0,0,0,0)' }}
-      animate={{ backgroundColor: 'rgba(0,0,0,0.4)' }}
+      animate={{ backgroundColor: 'rgba(0,0,0,0.45)' }}
       exit={{ backgroundColor: 'rgba(0,0,0,0)' }}
       transition={{ duration: 0.2 }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
@@ -301,90 +392,196 @@ export function ReprocessChatDrawer({
         transition={{ type: 'spring', stiffness: 320, damping: 32 }}
       >
         {/* Header */}
-        <div className="surface-panel-header flex items-center justify-between px-5 py-4 shrink-0">
+        <div className="surface-panel-header flex items-center justify-between px-5 py-4 shrink-0 border-b border-token-subtle">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="surface-action-accent flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[10px]">
-              <Wand2 size={15} />
+            <div className="surface-action-accent flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[10px]">
+              <Wand2 size={16} />
             </div>
             <div className="min-w-0">
               <p className="truncate text-[13px] font-semibold text-token-primary">AI 文档对话</p>
-              <p className="truncate text-[10px] text-token-muted">{entryTitle}</p>
+              <p className="truncate text-[10px] text-token-muted mt-0.5">
+                {entryTitle}
+                {docTruncated && (
+                  <span className="ml-2 text-[9.5px]" style={{ color: 'rgba(251,191,36,0.95)' }}>
+                    · 已截取前 4 万字喂给 AI
+                  </span>
+                )}
+              </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted hover:bg-white/6"
+            className="flex h-7 w-7 items-center justify-center rounded-[8px] text-token-muted hover:bg-white/8 transition-colors"
           >
-            <X size={15} />
+            <X size={16} />
           </button>
         </div>
 
-        {/* 智能体选区（常驻） */}
-        <div className="px-5 pt-3 pb-2 shrink-0 space-y-2 border-b border-token-subtle">
-          {/* 百宝箱智能体 */}
-          <div>
-            <p className="mb-1.5 text-[10px] text-token-muted flex items-center gap-1">
-              <Sparkles size={10} /> 百宝箱智能体（系统注册的通用智能体，文档作为输入直接调用）
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              {toolboxItems.length === 0 && !loading ? (
-                <span className="text-[10px] text-token-muted">加载中…</span>
+        {/* 智能体选择器（精简版 - 顶部下拉） */}
+        <div className="px-5 pt-3 pb-3 shrink-0 relative">
+          <button
+            ref={pickerBtnRef}
+            onClick={() => setPickerOpen((v) => !v)}
+            disabled={loadingAgents}
+            className="w-full flex items-center gap-2.5 rounded-[10px] px-3 py-2.5 transition-all disabled:opacity-60"
+            style={{
+              background: active
+                ? 'rgba(168,85,247,0.12)'
+                : 'rgba(255,255,255,0.04)',
+              border: active
+                ? '1px solid rgba(168,85,247,0.4)'
+                : '1px dashed rgba(255,255,255,0.18)',
+            }}
+          >
+            {activeLabel ? (
+              activeLabel.kind === 'toolbox' ? (
+                <ToolboxIcon name={activeLabel.icon} size={13} />
               ) : (
-                toolboxItems.map((item) => (
-                  <ToolboxChip
-                    key={item.id}
-                    item={item}
-                    active={activeInvoker?.kind === 'toolbox' && activeInvoker.ref === item.id}
-                    disabled={isBusy}
-                    onClick={() => handleToolboxChip(item)}
-                  />
-                ))
+                <span
+                  className="inline-flex items-center justify-center rounded-[6px]"
+                  style={{
+                    width: 25, height: 25,
+                    background: 'rgba(34,197,94,0.18)',
+                    color: 'rgba(110,231,158,0.95)',
+                    border: '1px solid rgba(34,197,94,0.30)',
+                  }}
+                >
+                  <Bot size={13} />
+                </span>
+              )
+            ) : (
+              <span className="inline-flex items-center justify-center rounded-[6px]"
+                style={{
+                  width: 25, height: 25,
+                  background: 'rgba(255,255,255,0.06)',
+                  color: 'rgba(255,255,255,0.4)',
+                  border: '1px dashed rgba(255,255,255,0.18)',
+                }}
+              >
+                <Bot size={13} />
+              </span>
+            )}
+            <div className="flex-1 min-w-0 text-left">
+              {activeLabel ? (
+                <>
+                  <p className="text-[12px] font-semibold text-token-primary truncate">{activeLabel.name}</p>
+                  {activeLabel.sub && (
+                    <p className="text-[10px] text-token-muted truncate mt-0.5">{activeLabel.sub}</p>
+                  )}
+                </>
+              ) : (
+                <>
+                  <p className="text-[12px] font-semibold text-token-primary">选择智能体</p>
+                  <p className="text-[10px] text-token-muted mt-0.5">百宝箱 / 我的快捷智能体 / 新建</p>
+                </>
               )}
             </div>
-          </div>
+            <ChevronDown
+              size={14}
+              className="text-token-muted shrink-0 transition-transform"
+              style={{ transform: pickerOpen ? 'rotate(180deg)' : undefined }}
+            />
+          </button>
 
-          {/* 我的快捷智能体（轻量 system prompt） */}
-          <div>
-            <p className="mb-1.5 text-[10px] text-token-muted flex items-center gap-1">
-              <Bot size={10} /> 我的快捷智能体（一键 system prompt，调用时叠加到百宝箱通用链路）
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              {kbAgents.filter((a) => a.visibility === 'system').map((a) => (
-                <KbAgentChip
-                  key={a.id}
-                  agent={a}
-                  active={activeInvoker?.kind === 'kbAgent' && activeInvoker.ref === a.key}
-                  disabled={isBusy}
-                  onClick={() => handleKbAgentChip(a)}
-                />
-              ))}
-              {kbAgents.filter((a) => a.visibility === 'personal').map((a) => (
-                <KbAgentChip
-                  key={a.id}
-                  agent={a}
-                  active={activeInvoker?.kind === 'kbAgent' && activeInvoker.ref === a.key}
-                  disabled={isBusy}
-                  onClick={() => handleKbAgentChip(a)}
-                  onDelete={() => handleDeleteAgent(a)}
-                />
-              ))}
-              <button
-                onClick={() => setShowCreateAgent(true)}
-                className="rounded-full px-3 py-1.5 text-[11px] font-medium hover:bg-white/8 transition-colors flex items-center gap-1"
+          <AnimatePresence>
+            {pickerOpen && (
+              <motion.div
+                id="reprocess-agent-picker-dropdown"
+                className="absolute left-5 right-5 mt-1.5 rounded-[12px] shadow-2xl overflow-hidden"
                 style={{
-                  background: 'rgba(96,165,250,0.10)',
-                  border: '1px dashed rgba(96,165,250,0.4)',
-                  color: 'rgba(96,165,250,0.95)',
+                  background: 'rgba(20, 18, 26, 0.98)',
+                  border: '1px solid rgba(255,255,255,0.10)',
+                  backdropFilter: 'blur(20px)',
+                  zIndex: 50,
+                  maxHeight: '60vh',
                 }}
-                title="创建一个新的快捷智能体（自定义 system prompt）"
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.15 }}
               >
-                <Plus size={10} /> 新建智能体
-              </button>
-            </div>
-          </div>
+                <div className="overflow-y-auto" style={{ maxHeight: '60vh' }}>
+                  {/* 百宝箱 section */}
+                  <DropdownSection
+                    title="百宝箱智能体"
+                    subtitle="系统已注册的通用智能体，文档作为输入直接调用"
+                  >
+                    {toolboxItems.length === 0 && loadingAgents ? (
+                      <div className="px-3 py-3 text-[10px] text-token-muted">
+                        <MapSpinner size={10} /> 加载中…
+                      </div>
+                    ) : toolboxItems.map((item) => (
+                      <DropdownRow
+                        key={item.id}
+                        icon={<ToolboxIcon name={item.icon} size={14} />}
+                        title={item.name}
+                        subtitle={item.description}
+                        badge={item.type !== 'builtin' ? '我的工具' : undefined}
+                        active={active?.kind === 'toolbox' && active.item.id === item.id}
+                        onClick={() => pickToolbox(item)}
+                      />
+                    ))}
+                  </DropdownSection>
+
+                  {/* 我的快捷智能体 section */}
+                  <DropdownSection
+                    title="我的快捷智能体"
+                    subtitle="一键 system prompt，叠加到百宝箱通用 chat 链路"
+                  >
+                    {kbAgents.map((agent) => (
+                      <DropdownRow
+                        key={agent.id}
+                        icon={
+                          <span
+                            className="inline-flex items-center justify-center rounded-[6px]"
+                            style={{
+                              width: 26, height: 26,
+                              background: 'rgba(34,197,94,0.18)',
+                              color: 'rgba(110,231,158,0.95)',
+                              border: '1px solid rgba(34,197,94,0.30)',
+                            }}
+                          >
+                            <Bot size={14} />
+                          </span>
+                        }
+                        title={agent.label}
+                        subtitle={agent.description}
+                        badge={agent.visibility === 'system' ? '系统' : '我的'}
+                        badgeColor={agent.visibility === 'system' ? 'rgba(168,85,247,0.20)' : 'rgba(34,197,94,0.20)'}
+                        active={active?.kind === 'kbAgent' && active.agent.id === agent.id}
+                        onClick={() => pickKbAgent(agent)}
+                        onDelete={agent.isOwn ? () => handleDeleteAgent(agent) : undefined}
+                      />
+                    ))}
+
+                    <button
+                      onClick={() => { setShowCreateAgent(true); setPickerOpen(false); }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/4 transition-colors text-left"
+                      style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}
+                    >
+                      <span
+                        className="inline-flex items-center justify-center rounded-[6px]"
+                        style={{
+                          width: 26, height: 26,
+                          background: 'rgba(96,165,250,0.18)',
+                          color: 'rgba(147,197,253,0.95)',
+                          border: '1px dashed rgba(96,165,250,0.40)',
+                        }}
+                      >
+                        <Plus size={14} />
+                      </span>
+                      <span className="text-[12px] font-medium" style={{ color: 'rgba(147,197,253,0.95)' }}>
+                        新建快捷智能体
+                      </span>
+                    </button>
+                  </DropdownSection>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
-        {/* 创建智能体浮层 */}
+        {/* 创建浮层 */}
         <AnimatePresence>
           {showCreateAgent && (
             <CreateAgentModal
@@ -400,23 +597,11 @@ export function ReprocessChatDrawer({
         {/* 消息流 */}
         <div
           ref={scrollRef}
-          className="flex-1 overflow-y-auto px-5 py-4 space-y-4"
+          className="flex-1 overflow-y-auto px-5 py-4 space-y-3.5"
           style={{ minHeight: 0, overscrollBehavior: 'contain' }}
         >
-          {loading ? (
-            <MapSectionLoader text="加载会话…" />
-          ) : messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-center gap-3 py-12">
-              <div className="surface-action-accent flex h-12 w-12 items-center justify-center rounded-[14px]">
-                <Wand2 size={20} />
-              </div>
-              <div>
-                <p className="text-[13px] font-semibold text-token-primary mb-1">选个智能体开始处理这篇文档</p>
-                <p className="text-[11px] text-token-muted max-w-[340px] leading-relaxed">
-                  上方任选一个百宝箱智能体（或自建快捷智能体）点击调用；也可以在下方输入框写指令配合任一智能体使用。文档全文会作为输入自动传给智能体。
-                </p>
-              </div>
-            </div>
+          {messages.length === 0 ? (
+            <EmptyState loadingDoc={loadingDoc} entryTitle={entryTitle} hasAgent={!!active} />
           ) : (
             messages.map((m) => (
               <MessageBubble
@@ -430,9 +615,9 @@ export function ReprocessChatDrawer({
           {error && (
             <div className="rounded-[10px] p-3 text-[11px] flex items-start gap-2"
               style={{
-                background: 'rgba(239,68,68,0.08)',
-                border: '1px solid rgba(239,68,68,0.2)',
-                color: 'rgba(248,113,113,0.95)',
+                background: 'rgba(239,68,68,0.10)',
+                border: '1px solid rgba(239,68,68,0.25)',
+                color: 'rgba(252,165,165,0.95)',
               }}
             >
               <AlertCircle size={12} className="mt-0.5 shrink-0" />
@@ -457,9 +642,9 @@ export function ReprocessChatDrawer({
               placeholder={
                 isBusy
                   ? 'AI 正在回复，请稍候…'
-                  : activeInvoker
-                    ? `继续向「${activeInvoker.label}」追问，Enter 发送`
-                    : '直接输入指令，Enter 发送（不选智能体时走通用 chat）'
+                  : active
+                    ? `继续追问「${active.kind === 'toolbox' ? active.item.name : active.agent.label}」，Enter 发送`
+                    : '先选个智能体，然后输入指令'
               }
               disabled={isBusy}
               rows={2}
@@ -477,8 +662,8 @@ export function ReprocessChatDrawer({
           </div>
           <p className="mt-1.5 text-[10px] text-token-muted">
             {isBusy
-              ? '正在调用百宝箱智能体…文档全文已经作为输入发送'
-              : '点击上方智能体 chip 立即跑一轮；或在这里写指令配合当前激活的智能体使用'}
+              ? '调用百宝箱通用 chat 链路；文档全文已作为输入发送'
+              : '点击上方下拉选智能体一键跑一轮；或直接输入指令配合当前智能体使用'}
           </p>
         </div>
       </motion.div>
@@ -488,94 +673,119 @@ export function ReprocessChatDrawer({
   return createPortal(modal, document.body);
 }
 
-// ── 百宝箱智能体 chip ──
-function ToolboxChip({
-  item, active, disabled, onClick,
+// ── 子组件：dropdown section ──
+function DropdownSection({
+  title, subtitle, children,
 }: {
-  item: ToolboxItem;
-  active: boolean;
-  disabled: boolean;
-  onClick: () => void;
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
 }) {
-  const isBuiltin = item.type === 'builtin';
   return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      title={item.description || item.name}
-      className="rounded-full px-3 py-1.5 text-[11px] font-medium hover:bg-white/8 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
-      style={{
-        background: active
-          ? 'rgba(168,85,247,0.22)'
-          : isBuiltin ? 'rgba(168,85,247,0.10)' : 'rgba(96,165,250,0.10)',
-        border: active
-          ? '1px solid rgba(168,85,247,0.55)'
-          : isBuiltin ? '1px solid rgba(168,85,247,0.28)' : '1px solid rgba(96,165,250,0.28)',
-        color: isBuiltin ? 'rgba(196,166,255,0.95)' : 'rgba(147,197,253,0.95)',
-      }}
-    >
-      <Sparkles size={10} />
-      {item.name}
-      {!isBuiltin && (
-        <span className="ml-1 px-1 rounded text-[9px] font-semibold"
-          style={{ background: 'rgba(255,255,255,0.10)' }}
-        >我的工具</span>
-      )}
-    </button>
+    <div className="py-1.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+      <div className="px-3 pt-2 pb-1.5">
+        <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.55)' }}>
+          {title}
+        </p>
+        {subtitle && (
+          <p className="text-[9.5px] text-token-muted mt-0.5">{subtitle}</p>
+        )}
+      </div>
+      {children}
+    </div>
   );
 }
 
-// ── 我的快捷智能体 chip ──
-function KbAgentChip({
-  agent, active, disabled, onClick, onDelete,
+function DropdownRow({
+  icon, title, subtitle, badge, badgeColor, active, onClick, onDelete,
 }: {
-  agent: ReprocessAgent;
+  icon: React.ReactNode;
+  title: string;
+  subtitle?: string;
+  badge?: string;
+  badgeColor?: string;
   active: boolean;
-  disabled: boolean;
   onClick: () => void;
   onDelete?: () => void;
 }) {
-  const isSystem = agent.visibility === 'system';
   return (
     <div
-      className="inline-flex items-center gap-1 rounded-full text-[11px] font-medium transition-colors group"
+      className="group flex items-center gap-2.5 px-3 py-2 hover:bg-white/5 transition-colors cursor-pointer"
       style={{
-        background: active
-          ? (isSystem ? 'rgba(34,197,94,0.25)' : 'rgba(34,197,94,0.2)')
-          : 'rgba(34,197,94,0.10)',
-        border: active ? '1px solid rgba(34,197,94,0.55)' : '1px solid rgba(34,197,94,0.28)',
-        color: 'rgba(110,231,158,0.95)',
+        background: active ? 'rgba(168,85,247,0.10)' : undefined,
+        borderLeft: active ? '2px solid rgba(168,85,247,0.6)' : '2px solid transparent',
       }}
+      onClick={onClick}
     >
-      <button
-        onClick={onClick}
-        disabled={disabled}
-        title={agent.description || agent.label}
-        className="pl-3 pr-2 py-1.5 hover:bg-white/8 rounded-l-full disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
-      >
-        <Bot size={10} />
-        {agent.label}
-        {!isSystem && (
-          <span className="ml-1 px-1 rounded text-[9px] font-semibold"
-            style={{ background: 'rgba(255,255,255,0.10)' }}
-          >我的</span>
+      {icon}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5">
+          <p className="text-[12px] font-semibold text-token-primary truncate">{title}</p>
+          {badge && (
+            <span className="text-[9px] font-semibold px-1.5 rounded shrink-0"
+              style={{ background: badgeColor ?? 'rgba(255,255,255,0.10)', color: 'rgba(255,255,255,0.85)' }}
+            >{badge}</span>
+          )}
+        </div>
+        {subtitle && (
+          <p className="text-[10px] text-token-muted truncate mt-0.5">{subtitle}</p>
         )}
-      </button>
+      </div>
+      {active && <Check size={12} className="text-token-primary shrink-0" />}
       {onDelete && (
         <button
-          onClick={onDelete}
-          disabled={disabled}
-          className="pr-2 py-1.5 hover:opacity-100 opacity-40 transition-opacity"
+          className="opacity-0 group-hover:opacity-100 transition-opacity text-token-muted hover:text-red-300 shrink-0"
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
           title="删除"
         >
-          <Trash2 size={10} />
+          <Trash2 size={12} />
         </button>
       )}
     </div>
   );
 }
 
-// ── 单条消息 + 写回按钮 ──
+// ── 空状态（含加载分阶段反馈，满足 2 秒原则） ──
+function EmptyState({ loadingDoc, entryTitle, hasAgent }: {
+  loadingDoc: boolean;
+  entryTitle: string;
+  hasAgent: boolean;
+}) {
+  if (loadingDoc) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-center gap-3 py-12">
+        <div className="surface-action-accent flex h-12 w-12 items-center justify-center rounded-[14px] animate-pulse">
+          <FileText size={20} />
+        </div>
+        <div>
+          <p className="text-[13px] font-semibold text-token-primary mb-1">
+            <MapSpinner size={10} /> 正在读取文档…
+          </p>
+          <p className="text-[11px] text-token-muted">
+            「{entryTitle}」
+          </p>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col items-center justify-center h-full text-center gap-3 py-12">
+      <div className="surface-action-accent flex h-12 w-12 items-center justify-center rounded-[14px]">
+        <Wand2 size={20} />
+      </div>
+      <div>
+        <p className="text-[13px] font-semibold text-token-primary mb-1">和这篇文档对话</p>
+        <p className="text-[11px] text-token-muted max-w-[340px] leading-relaxed">
+          {hasAgent
+            ? '已选择智能体，在下方输入指令开始对话；或重新打开上方下拉换个智能体一键跑一轮。'
+            : '点击上方下拉选择一个智能体（百宝箱内置 / 我的快捷智能体 / 新建）后即可开始。'}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ── 消息气泡 ──
 function MessageBubble({
   msg, applying, onApply,
 }: {
@@ -587,17 +797,22 @@ function MessageBubble({
     return (
       <div className="flex justify-end">
         <div
-          className="rounded-[12px] px-3 py-2 text-[12px] text-token-primary max-w-[88%] break-words whitespace-pre-wrap"
-          style={{ background: 'rgba(96,165,250,0.14)', border: '1px solid rgba(96,165,250,0.22)' }}
+          className="rounded-[14px] px-3.5 py-2 text-[12px] max-w-[80%] break-words whitespace-pre-wrap"
+          style={{
+            background: 'linear-gradient(135deg, rgba(96,165,250,0.18), rgba(168,85,247,0.14))',
+            border: '1px solid rgba(96,165,250,0.25)',
+            color: 'rgba(241,245,255,0.96)',
+          }}
         >
           {msg.invoker && (
-            <span className="inline-flex items-center gap-1 mr-2 px-1.5 py-0.5 rounded text-[10px] font-semibold"
-              style={{ background: 'rgba(96,165,250,0.22)' }}
+            <span className="inline-flex items-center gap-1 mr-2 mb-1 px-1.5 py-0.5 rounded-[5px] text-[9.5px] font-semibold"
+              style={{ background: 'rgba(255,255,255,0.10)' }}
             >
+              {msg.invoker.kind === 'toolbox' ? <Sparkles size={9} /> : <Bot size={9} />}
               {msg.invoker.label}
             </span>
           )}
-          {msg.content}
+          <div>{msg.content}</div>
         </div>
       </div>
     );
@@ -611,51 +826,76 @@ function MessageBubble({
   return (
     <div className="flex">
       <div
-        className="rounded-[12px] p-3 text-[12px] surface-row max-w-[92%] w-full"
-        style={{ border: '1px solid rgba(255,255,255,0.06)' }}
+        className="rounded-[14px] p-3 text-[12px] max-w-[88%] w-full"
+        style={{
+          background: 'rgba(255,255,255,0.04)',
+          border: '1px solid rgba(255,255,255,0.08)',
+        }}
       >
-        <div className="text-[10px] text-token-muted mb-1 flex items-center gap-1.5">
-          <Wand2 size={10} /> {msg.invoker?.label ?? 'AI'} 回复
-          {msg.streaming && <MapSpinner size={9} />}
+        <div className="text-[10px] text-token-muted mb-1.5 flex items-center gap-1.5">
+          {msg.invoker?.kind === 'toolbox'
+            ? <Sparkles size={10} className="text-purple-300" />
+            : <Bot size={10} className="text-green-300" />}
+          {msg.invoker?.label ?? 'AI'} 回复
+          {msg.phase === 'thinking' && (
+            <span className="inline-flex items-center gap-1 ml-1">
+              <ThinkingDots />
+              <span style={{ color: 'rgba(96,165,250,0.85)' }}>正在思考…</span>
+            </span>
+          )}
+          {msg.phase === 'streaming' && (
+            <span className="inline-flex items-center gap-1 ml-1" style={{ color: 'rgba(110,231,158,0.85)' }}>
+              <MapSpinner size={8} /> 流式回复中
+            </span>
+          )}
         </div>
         {msg.streaming && msg.content ? (
           <StreamingText text={msg.content} streaming mode="blur" />
         ) : msg.content ? (
           <ChatMarkdown content={msg.content} />
         ) : (
-          <span className="text-token-muted">AI 正在思考…</span>
+          <ThinkingDots />
         )}
 
         {canApply && (
-          <div className="flex flex-wrap gap-1.5 mt-2.5 pt-2 border-t border-token-subtle">
-            <ApplyBtn
-              icon={<Replace size={10} />}
-              label="替换原文"
-              busy={busyMode === 'replace'}
-              applied={msg.applied === 'replace'}
-              disabled={!!applying}
-              onClick={() => onApply(msg.id, 'replace')}
-            />
-            <ApplyBtn
-              icon={<FileDown size={10} />}
-              label="追加末尾"
-              busy={busyMode === 'append'}
-              applied={msg.applied === 'append'}
-              disabled={!!applying}
-              onClick={() => onApply(msg.id, 'append')}
-            />
-            <ApplyBtn
-              icon={<FilePlus2 size={10} />}
-              label="另存为新文档"
-              busy={busyMode === 'new'}
-              applied={msg.applied === 'new'}
-              disabled={!!applying}
-              onClick={() => onApply(msg.id, 'new')}
-            />
+          <div className="flex flex-wrap gap-1.5 mt-3 pt-2.5 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+            <ApplyBtn icon={<Replace size={10} />} label="替换原文"
+              busy={busyMode === 'replace'} applied={msg.applied === 'replace'}
+              disabled={!!applying} onClick={() => onApply(msg.id, 'replace')} />
+            <ApplyBtn icon={<FileDown size={10} />} label="追加末尾"
+              busy={busyMode === 'append'} applied={msg.applied === 'append'}
+              disabled={!!applying} onClick={() => onApply(msg.id, 'append')} />
+            <ApplyBtn icon={<FilePlus2 size={10} />} label="另存为新文档"
+              busy={busyMode === 'new'} applied={msg.applied === 'new'}
+              disabled={!!applying} onClick={() => onApply(msg.id, 'new')} />
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+function ThinkingDots() {
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="inline-block w-1 h-1 rounded-full"
+          style={{
+            background: 'rgba(147,197,253,0.85)',
+            animation: `pulse-dot 1.2s ease-in-out infinite`,
+            animationDelay: `${i * 0.15}s`,
+          }}
+        />
+      ))}
+      <style>{`
+        @keyframes pulse-dot {
+          0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+          40% { opacity: 1; transform: scale(1.2); }
+        }
+      `}</style>
+    </span>
   );
 }
 
@@ -673,11 +913,11 @@ function ApplyBtn({
     <button
       onClick={onClick}
       disabled={disabled || busy}
-      className="inline-flex items-center gap-1 rounded-[6px] px-2 py-1 text-[10px] font-medium hover:bg-white/6 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+      className="inline-flex items-center gap-1 rounded-[7px] px-2.5 py-1.5 text-[10px] font-medium hover:bg-white/8 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       style={{
-        background: applied ? 'rgba(74,222,128,0.12)' : 'rgba(255,255,255,0.04)',
-        color: applied ? 'rgba(74,222,128,0.95)' : 'inherit',
-        border: applied ? '1px solid rgba(74,222,128,0.25)' : '1px solid rgba(255,255,255,0.08)',
+        background: applied ? 'rgba(74,222,128,0.14)' : 'rgba(255,255,255,0.04)',
+        color: applied ? 'rgba(110,231,158,0.95)' : 'rgba(255,255,255,0.80)',
+        border: applied ? '1px solid rgba(74,222,128,0.30)' : '1px solid rgba(255,255,255,0.08)',
       }}
     >
       {busy ? <RotateCw size={10} className="animate-spin" /> : icon}
@@ -686,7 +926,7 @@ function ApplyBtn({
   );
 }
 
-// ── 创建快捷智能体浮层 ──
+// ── 创建快捷智能体浮层（保留旧版） ──
 function CreateAgentModal({
   onClose, onSubmit,
 }: {
@@ -738,7 +978,7 @@ function CreateAgentModal({
             </div>
           </div>
           <button onClick={onClose}
-            className="flex h-7 w-7 items-center justify-center rounded-[8px] text-token-muted hover:bg-white/6"
+            className="flex h-7 w-7 items-center justify-center rounded-[8px] text-token-muted hover:bg-white/8"
           >
             <X size={14} />
           </button>
@@ -795,7 +1035,7 @@ function CreateAgentModal({
             onClick={handleSubmit}
           >
             {submitting ? <MapSpinner size={12} /> : <Plus size={12} />}
-            创建并可立即调用
+            创建并立即选用
           </Button>
         </div>
       </motion.div>
@@ -805,3 +1045,4 @@ function CreateAgentModal({
 }
 
 void AnimatePresence;
+void MapSectionLoader;
