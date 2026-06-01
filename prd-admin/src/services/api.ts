@@ -1167,6 +1167,9 @@ export const api = {
       shareLinkDetail: (linkId: string) => `/api/document-store/share-links/${linkId}`,
       // 知识库 Agent：再加工模板列表
       reprocessTemplates: () => `/api/document-store/reprocess-templates`,
+      // 知识库 Agent：可调用智能体（内置 + 用户自建）
+      reprocessAgents: () => `/api/document-store/reprocess-agents`,
+      reprocessAgentDetail: (id: string) => `/api/document-store/reprocess-agents/${id}`,
       // 知识库 Agent：Run 状态查询与 SSE 流
       agentRun: (runId: string) => `/api/document-store/agent-runs/${runId}`,
       agentRunStream: (runId: string) => `/api/document-store/agent-runs/${runId}/stream`,

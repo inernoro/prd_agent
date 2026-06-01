@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Wand2, X, Send, Sparkle, Replace, FileDown, FilePlus2, RotateCw, AlertCircle } from 'lucide-react';
+import { Wand2, X, Send, Sparkle, Replace, FileDown, FilePlus2, RotateCw, AlertCircle, Bot, Plus, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -10,11 +10,18 @@ import { useSseStream } from '@/lib/useSseStream';
 import { api } from '@/services/api';
 import {
   listReprocessTemplates,
+  listReprocessAgents,
+  createReprocessAgent,
+  deleteReprocessAgent,
   sendReprocessChat,
   getActiveReprocessRun,
   applyReprocessMessage,
 } from '@/services';
-import type { ReprocessTemplate, ReprocessChatMessage } from '@/services/contracts/documentStore';
+import type {
+  ReprocessTemplate,
+  ReprocessChatMessage,
+  ReprocessAgent,
+} from '@/services/contracts/documentStore';
 import { useReprocessRunStore } from '@/stores/reprocessRunStore';
 import { toast } from '@/lib/toast';
 
@@ -52,6 +59,7 @@ export function ReprocessChatDrawer({
   onApplied,
 }: ReprocessChatDrawerProps) {
   const [templates, setTemplates] = useState<ReprocessTemplate[] | null>(null);
+  const [agents, setAgents] = useState<ReprocessAgent[] | null>(null);
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [runId, setRunId] = useState<string | null>(null);
   const [input, setInput] = useState('');
@@ -61,6 +69,7 @@ export function ReprocessChatDrawer({
   const [streamingSeq, setStreamingSeq] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [applying, setApplying] = useState<string | null>(null); // `${seq}:${mode}`
+  const [showCreateAgent, setShowCreateAgent] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<LocalMessage[]>([]);
 
@@ -157,12 +166,14 @@ export function ReprocessChatDrawer({
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const [tplRes, runRes] = await Promise.all([
+      const [tplRes, agentRes, runRes] = await Promise.all([
         listReprocessTemplates(),
+        listReprocessAgents(),
         getActiveReprocessRun(entryId),
       ]);
       if (cancelled) return;
       if (tplRes.success) setTemplates(tplRes.data.items);
+      if (agentRes.success) setAgents(agentRes.data.items);
       if (runRes.success && runRes.data) {
         const r = runRes.data;
         const msgs: LocalMessage[] = (r.messages ?? []).map((m) => ({ ...m }));
@@ -249,6 +260,37 @@ export function ReprocessChatDrawer({
     void sendMessage(`请用「${tpl.label}」方式处理这篇文档。`, tpl.key);
   }, [sending, streamingSeq, sendMessage]);
 
+  const handleAgentChip = useCallback((agent: ReprocessAgent) => {
+    if (sending || streamingSeq !== null) return;
+    void sendMessage(`请用「${agent.label}」智能体处理这篇文档。`, agent.key);
+  }, [sending, streamingSeq, sendMessage]);
+
+  const handleCreateAgent = useCallback(async (input: {
+    label: string;
+    description: string;
+    systemPrompt: string;
+  }) => {
+    const res = await createReprocessAgent(input);
+    if (!res.success) {
+      toast.error('创建失败', res.error?.message);
+      return false;
+    }
+    setAgents((prev) => [...(prev ?? []), res.data]);
+    toast.success('智能体创建成功', '可立即在上方点击调用');
+    return true;
+  }, []);
+
+  const handleDeleteAgent = useCallback(async (agent: ReprocessAgent) => {
+    if (!agent.isOwn) return;
+    if (!window.confirm(`删除「${agent.label}」？此操作不可撤销。`)) return;
+    const res = await deleteReprocessAgent(agent.id);
+    if (!res.success) {
+      toast.error('删除失败', res.error?.message);
+      return;
+    }
+    setAgents((prev) => (prev ?? []).filter((a) => a.id !== agent.id));
+  }, []);
+
   const handleApply = useCallback(async (
     seq: number,
     mode: 'replace' | 'append' | 'new',
@@ -310,33 +352,68 @@ export function ReprocessChatDrawer({
           </button>
         </div>
 
-        {/* 模板 chip 行（仅首次：尚未选定模板时显示） */}
+        {/* 模板 + 智能体 chip 行（仅首次：尚未选定时显示） */}
         {showTemplateRow && (
-          <div className="px-5 pt-3 pb-2 shrink-0">
-            <p className="mb-2 text-[10px] text-token-muted">
-              一键模板（点击立即开始）或在下方直接输入你的指令
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              {templates?.map((t) => (
+          <div className="px-5 pt-3 pb-2 shrink-0 space-y-2 border-b border-token-subtle">
+            {/* 模板 */}
+            <div>
+              <p className="mb-1.5 text-[10px] text-token-muted">一键模板</p>
+              <div className="flex flex-wrap gap-1.5">
+                {templates?.map((t) => (
+                  <button
+                    key={t.key}
+                    onClick={() => handleChip(t)}
+                    disabled={isBusy}
+                    className="rounded-full px-3 py-1.5 text-[11px] font-medium text-token-primary hover:bg-white/8 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
+                    title={t.description}
+                  >
+                    {t.label}
+                  </button>
+                ))}
                 <button
-                  key={t.key}
-                  onClick={() => handleChip(t)}
+                  onClick={() => handleChip({ key: 'custom', label: '自定义' })}
                   disabled={isBusy}
-                  className="rounded-full px-3 py-1.5 text-[11px] font-medium text-token-primary hover:bg-white/8 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="rounded-full px-3 py-1.5 text-[11px] font-medium text-token-primary hover:bg-white/8 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
                   style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
-                  title={t.description}
                 >
-                  {t.label}
+                  <Sparkle size={10} /> 自定义
                 </button>
-              ))}
-              <button
-                onClick={() => handleChip({ key: 'custom', label: '自定义' })}
-                disabled={isBusy}
-                className="rounded-full px-3 py-1.5 text-[11px] font-medium text-token-primary hover:bg-white/8 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
-                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
-              >
-                <Sparkle size={10} /> 自定义
-              </button>
+              </div>
+            </div>
+
+            {/* 智能体 */}
+            <div>
+              <p className="mb-1.5 text-[10px] text-token-muted flex items-center gap-1">
+                <Bot size={10} /> 智能体（点击直接调用本系统已注册的智能体）
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {agents?.filter((a) => a.visibility === 'system').map((a) => (
+                  <AgentChip key={a.id} agent={a} disabled={isBusy} onClick={() => handleAgentChip(a)} />
+                ))}
+                {agents?.filter((a) => a.visibility === 'personal').map((a) => (
+                  <AgentChip
+                    key={a.id}
+                    agent={a}
+                    disabled={isBusy}
+                    onClick={() => handleAgentChip(a)}
+                    onDelete={() => handleDeleteAgent(a)}
+                  />
+                ))}
+                <button
+                  onClick={() => setShowCreateAgent(true)}
+                  disabled={isBusy}
+                  className="rounded-full px-3 py-1.5 text-[11px] font-medium hover:bg-white/8 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
+                  style={{
+                    background: 'rgba(96,165,250,0.10)',
+                    border: '1px dashed rgba(96,165,250,0.4)',
+                    color: 'rgba(96,165,250,0.95)',
+                  }}
+                  title="创建一个新的智能体（自定义 system prompt）"
+                >
+                  <Plus size={10} /> 新建智能体
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -391,6 +468,19 @@ export function ReprocessChatDrawer({
             </div>
           )}
         </div>
+
+        {/* 创建智能体浮层（嵌在抽屉内） */}
+        <AnimatePresence>
+          {showCreateAgent && (
+            <CreateAgentModal
+              onClose={() => setShowCreateAgent(false)}
+              onSubmit={async (input) => {
+                const ok = await handleCreateAgent(input);
+                if (ok) setShowCreateAgent(false);
+              }}
+            />
+          )}
+        </AnimatePresence>
 
         {/* 输入区 */}
         <div className="surface-panel-footer px-5 py-3 shrink-0 border-t border-token-subtle">
@@ -546,6 +636,172 @@ function ApplyBtn({
       {busy ? <RotateCw size={10} className="animate-spin" /> : icon}
       {applied ? `${label}（已写回）` : label}
     </button>
+  );
+}
+
+// ── 智能体 chip（带可选删除按钮） ──
+function AgentChip({
+  agent, disabled, onClick, onDelete,
+}: {
+  agent: ReprocessAgent;
+  disabled: boolean;
+  onClick: () => void;
+  onDelete?: () => void;
+}) {
+  const isSystem = agent.visibility === 'system';
+  return (
+    <div
+      className="inline-flex items-center gap-1 rounded-full text-[11px] font-medium transition-colors group"
+      style={{
+        background: isSystem ? 'rgba(168,85,247,0.10)' : 'rgba(34,197,94,0.10)',
+        border: isSystem ? '1px solid rgba(168,85,247,0.28)' : '1px solid rgba(34,197,94,0.28)',
+        color: isSystem ? 'rgba(196,166,255,0.95)' : 'rgba(110,231,158,0.95)',
+      }}
+    >
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        title={agent.description || agent.label}
+        className="pl-3 pr-2 py-1.5 hover:bg-white/8 rounded-l-full disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+      >
+        <Bot size={10} />
+        {agent.label}
+        {!isSystem && (
+          <span className="ml-1 px-1 rounded text-[9px] font-semibold"
+            style={{ background: 'rgba(255,255,255,0.10)' }}
+          >我的</span>
+        )}
+      </button>
+      {onDelete && (
+        <button
+          onClick={onDelete}
+          disabled={disabled}
+          className="pr-2 py-1.5 hover:opacity-100 opacity-40 transition-opacity"
+          title="删除"
+        >
+          <Trash2 size={10} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── 创建智能体浮层 ──
+function CreateAgentModal({
+  onClose,
+  onSubmit,
+}: {
+  onClose: () => void;
+  onSubmit: (input: { label: string; description: string; systemPrompt: string }) => Promise<void>;
+}) {
+  const [label, setLabel] = useState('');
+  const [description, setDescription] = useState('');
+  const [systemPrompt, setSystemPrompt] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async () => {
+    if (submitting) return;
+    if (!label.trim() || !systemPrompt.trim()) return;
+    setSubmitting(true);
+    await onSubmit({
+      label: label.trim(),
+      description: description.trim(),
+      systemPrompt: systemPrompt.trim(),
+    });
+    setSubmitting(false);
+  };
+
+  return createPortal(
+    <motion.div
+      className="surface-backdrop fixed inset-0 z-[110] flex items-center justify-center px-4"
+      initial={{ backgroundColor: 'rgba(0,0,0,0)' }}
+      animate={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
+      exit={{ backgroundColor: 'rgba(0,0,0,0)' }}
+      transition={{ duration: 0.18 }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <motion.div
+        className="surface-popover flex flex-col rounded-[14px] border border-token-subtle"
+        style={{ width: 'min(560px, 96vw)', maxHeight: '85vh', minHeight: 0 }}
+        initial={{ scale: 0.96, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.96, opacity: 0 }}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-token-subtle shrink-0">
+          <div className="flex items-center gap-2">
+            <div className="surface-action-accent flex h-7 w-7 items-center justify-center rounded-[8px]">
+              <Bot size={14} />
+            </div>
+            <p className="text-[13px] font-semibold text-token-primary">新建智能体</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="flex h-7 w-7 items-center justify-center rounded-[8px] text-token-muted hover:bg-white/6"
+          >
+            <X size={14} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3" style={{ minHeight: 0 }}>
+          <div>
+            <label className="block mb-1 text-[11px] font-semibold text-token-muted">
+              名称 <span className="text-[10px] font-normal" style={{ color: 'rgba(248,113,113,0.85)' }}>必填</span>
+            </label>
+            <input
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              maxLength={30}
+              placeholder="例如：高级摘要 / 故事改写 / 风险扫描"
+              className="prd-field w-full rounded-[8px] px-3 py-2 text-[12px] outline-none"
+            />
+          </div>
+          <div>
+            <label className="block mb-1 text-[11px] font-semibold text-token-muted">描述（可选）</label>
+            <input
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              maxLength={200}
+              placeholder="一句话说明这个智能体擅长什么"
+              className="prd-field w-full rounded-[8px] px-3 py-2 text-[12px] outline-none"
+            />
+          </div>
+          <div>
+            <label className="block mb-1 text-[11px] font-semibold text-token-muted">
+              System Prompt <span className="text-[10px] font-normal" style={{ color: 'rgba(248,113,113,0.85)' }}>必填</span>
+            </label>
+            <textarea
+              value={systemPrompt}
+              onChange={(e) => setSystemPrompt(e.target.value)}
+              maxLength={8000}
+              rows={10}
+              placeholder={'例：你是产品文档质量审计员。任务：对用户给的文档输出 Markdown 报告，包含：\n## 整体观感\n## 结构问题（最多5条）\n## 表达问题（最多5条）\n## 修改建议\n严格基于原文事实。'}
+              className="prd-field w-full resize-y rounded-[8px] px-3 py-2 text-[12px] outline-none font-mono leading-relaxed"
+              style={{ minHeight: 200 }}
+            />
+            <p className="mt-1 text-[10px] text-token-muted">
+              {systemPrompt.length}/8000 字 · 调用时会把当前文档全文自动拼到 system 之后，无需在 prompt 里说明"用户会给文档"
+            </p>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-token-subtle shrink-0">
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={submitting}>取消</Button>
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={submitting || !label.trim() || !systemPrompt.trim()}
+            onClick={handleSubmit}
+          >
+            {submitting ? <MapSpinner size={12} /> : <Plus size={12} />}
+            创建并可立即调用
+          </Button>
+        </div>
+      </motion.div>
+    </motion.div>,
+    document.body,
   );
 }
 

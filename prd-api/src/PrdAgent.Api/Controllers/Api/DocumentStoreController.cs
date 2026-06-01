@@ -2103,6 +2103,123 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
+    /// <summary>
+    /// 列出当前用户可调用的「再加工·智能体」：系统内置 + 自己创建的个人智能体。
+    /// 不包含其他用户的 personal 智能体。
+    /// </summary>
+    [HttpGet("reprocess-agents")]
+    public async Task<IActionResult> ListReprocessAgents()
+    {
+        var userId = GetUserId();
+        var filter = Builders<ReprocessAgent>.Filter.Or(
+            Builders<ReprocessAgent>.Filter.Eq(a => a.Visibility, ReprocessAgentVisibility.System),
+            Builders<ReprocessAgent>.Filter.And(
+                Builders<ReprocessAgent>.Filter.Eq(a => a.Visibility, ReprocessAgentVisibility.Personal),
+                Builders<ReprocessAgent>.Filter.Eq(a => a.OwnerUserId, userId)));
+
+        var list = await _db.ReprocessAgents.Find(filter)
+            .Sort(Builders<ReprocessAgent>.Sort
+                .Ascending(a => a.Visibility) // system 在前（"personal" 字典序在 "system" 前，反转: 见下）
+                .Ascending(a => a.SortOrder)
+                .Ascending(a => a.CreatedAt))
+            .ToListAsync();
+
+        // 手动稳定排序：system 在前，再按 SortOrder / CreatedAt
+        var items = list
+            .OrderBy(a => a.Visibility == ReprocessAgentVisibility.System ? 0 : 1)
+            .ThenBy(a => a.SortOrder)
+            .ThenBy(a => a.CreatedAt)
+            .Select(a => new
+            {
+                id = a.Id,
+                key = a.Key,
+                label = a.Label,
+                description = a.Description,
+                visibility = a.Visibility,
+                isOwn = a.OwnerUserId == userId,
+                createdAt = a.CreatedAt,
+            }).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>创建一个个人再加工智能体（Visibility=personal）</summary>
+    [HttpPost("reprocess-agents")]
+    public async Task<IActionResult> CreateReprocessAgent([FromBody] CreateReprocessAgentRequest request)
+    {
+        var label = (request.Label ?? "").Trim();
+        var systemPrompt = (request.SystemPrompt ?? "").Trim();
+        var description = (request.Description ?? "").Trim();
+        if (string.IsNullOrEmpty(label))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "label 不能为空"));
+        if (string.IsNullOrEmpty(systemPrompt))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "systemPrompt 不能为空"));
+        if (label.Length > 30)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "label 不超过 30 字"));
+        if (description.Length > 200)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "description 不超过 200 字"));
+        if (systemPrompt.Length > 8000)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "systemPrompt 不超过 8000 字"));
+
+        var userId = GetUserId();
+        // 个人智能体 Key 自动加用户前缀避免与 system 冲突
+        var rawSlug = SlugifyLabel(label);
+        var key = $"u-{userId[..Math.Min(6, userId.Length)]}-{rawSlug}-{Guid.NewGuid().ToString("N")[..6]}";
+
+        var agent = new ReprocessAgent
+        {
+            Key = key,
+            Label = label,
+            Description = description,
+            SystemPrompt = systemPrompt,
+            Visibility = ReprocessAgentVisibility.Personal,
+            OwnerUserId = userId,
+            SortOrder = 100,
+            CreatedAt = DateTime.UtcNow,
+        };
+        await _db.ReprocessAgents.InsertOneAsync(agent);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            id = agent.Id,
+            key = agent.Key,
+            label = agent.Label,
+            description = agent.Description,
+            visibility = agent.Visibility,
+            isOwn = true,
+            createdAt = agent.CreatedAt,
+        }));
+    }
+
+    /// <summary>删除一个自己的个人再加工智能体（system 不允许删）</summary>
+    [HttpDelete("reprocess-agents/{id}")]
+    public async Task<IActionResult> DeleteReprocessAgent(string id)
+    {
+        var userId = GetUserId();
+        var agent = await _db.ReprocessAgents.Find(a => a.Id == id).FirstOrDefaultAsync();
+        if (agent == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "智能体不存在"));
+        if (agent.Visibility != ReprocessAgentVisibility.Personal || agent.OwnerUserId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "只能删除自己创建的智能体"));
+
+        await _db.ReprocessAgents.DeleteOneAsync(a => a.Id == id);
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    private static string SlugifyLabel(string label)
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var ch in label.ToLowerInvariant())
+        {
+            if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')) sb.Append(ch);
+            else if (sb.Length > 0 && sb[^1] != '-') sb.Append('-');
+        }
+        var s = sb.ToString().Trim('-');
+        if (string.IsNullOrEmpty(s)) s = "agent";
+        if (s.Length > 20) s = s[..20];
+        return s;
+    }
+
     /// <summary>发起字幕生成任务（音视频 → ASR，图片 → Vision）</summary>
     [HttpPost("entries/{entryId}/generate-subtitle")]
     public async Task<IActionResult> GenerateSubtitle(string entryId)
@@ -2169,8 +2286,19 @@ public class DocumentStoreController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "content 不能为空"));
 
         var templateKey = string.IsNullOrWhiteSpace(request.TemplateKey) ? null : request.TemplateKey!.Trim();
-        if (templateKey != null && templateKey != "custom" && ReprocessTemplateRegistry.FindByKey(templateKey) == null)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"未知模板: {templateKey}"));
+        if (templateKey != null && templateKey != "custom"
+            && ReprocessTemplateRegistry.FindByKey(templateKey) == null)
+        {
+            // 不在内置模板里，再看是不是当前用户可访问的智能体
+            var userId = GetUserId();
+            var agentExists = await _db.ReprocessAgents.Find(a =>
+                a.Key == templateKey
+                && (a.Visibility == ReprocessAgentVisibility.System
+                    || (a.Visibility == ReprocessAgentVisibility.Personal && a.OwnerUserId == userId)))
+                .AnyAsync();
+            if (!agentExists)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"未知模板/智能体: {templateKey}"));
+        }
 
         return await SendReprocessChatInternal(entryId, request.RunId, content, templateKey);
     }
@@ -3640,6 +3768,18 @@ public class ReprocessApplyRequest
 
     /// <summary>mode=new 时的标题（可选，默认 "{源标题}-AI 再加工.md"）</summary>
     public string? Title { get; set; }
+}
+
+public class CreateReprocessAgentRequest
+{
+    /// <summary>智能体展示名（必填，≤30 字）</summary>
+    public string Label { get; set; } = string.Empty;
+
+    /// <summary>简短描述（可选，≤200 字）</summary>
+    public string? Description { get; set; }
+
+    /// <summary>system prompt（必填，≤8000 字）</summary>
+    public string SystemPrompt { get; set; } = string.Empty;
 }
 
 public class SetPrimaryEntryRequest

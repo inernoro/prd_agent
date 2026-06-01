@@ -161,6 +161,18 @@ export type ReprocessTemplate = {
   description: string;
 };
 
+/** 再加工·可调用智能体（system 内置 + personal 用户自建） */
+export type ReprocessAgent = {
+  id: string;
+  key: string;
+  label: string;
+  description: string;
+  visibility: 'system' | 'personal';
+  /** 当前登录用户是否为创建者（用于显示删除按钮） */
+  isOwn: boolean;
+  createdAt: string;
+};
+
 /** 订阅同步日志中的单条事件（只包含 change/error，不包含无变化的心跳） */
 export type DocumentSyncLogEntry = {
   id: string;

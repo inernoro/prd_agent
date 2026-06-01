@@ -431,6 +431,34 @@ export async function listReprocessTemplates() {
   );
 }
 
+/** 列出当前用户可调用的「再加工·智能体」（system 内置 + 自己创建的 personal） */
+export async function listReprocessAgents() {
+  return await apiRequest<{ items: import('@/services/contracts/documentStore').ReprocessAgent[] }>(
+    api.documentStore.stores.reprocessAgents(),
+    { method: 'GET' },
+  );
+}
+
+/** 创建一个个人再加工智能体 */
+export async function createReprocessAgent(input: {
+  label: string;
+  description?: string;
+  systemPrompt: string;
+}) {
+  return await apiRequest<import('@/services/contracts/documentStore').ReprocessAgent>(
+    api.documentStore.stores.reprocessAgents(),
+    { method: 'POST', body: input },
+  );
+}
+
+/** 删除一个自己的个人再加工智能体 */
+export async function deleteReprocessAgent(id: string) {
+  return await apiRequest<{ deleted: boolean }>(
+    api.documentStore.stores.reprocessAgentDetail(id),
+    { method: 'DELETE' },
+  );
+}
+
 /** 发起文档再加工任务（旧接口，单轮兼容） */
 export async function startReprocess(entryId: string, input: {
   templateKey: string;

@@ -63,8 +63,8 @@ public class ContentReprocessProcessor
             return;
         }
 
-        // 3) 构建 LLM messages：system = 模板 + 源文档；历史 user/assistant 交替；本轮 user 在末尾
-        var (systemPrompt, templateLabel) = BuildSystemPrompt(run, sourceContent, lastMsg);
+        // 3) 构建 LLM messages：system = 模板/智能体 + 源文档；历史 user/assistant 交替；本轮 user 在末尾
+        var (systemPrompt, templateLabel) = await BuildSystemPromptAsync(run, sourceContent, db);
 
         var llmMessages = new List<LLMMessage>();
         for (int i = 0; i < run.Messages.Count; i++)
@@ -169,13 +169,12 @@ public class ContentReprocessProcessor
     }
 
     /// <summary>
-    /// 构建 system prompt：选模板（若 lastMsg.TemplateKey 非空）+ 拼接源文档全文。
-    /// 后续轮次（lastMsg.TemplateKey 为空）保留同一个 system，让 LLM 围绕原文继续答复。
+    /// 构建 system prompt：优先匹配 reprocess_agents 智能体，再回退到 ReprocessTemplateRegistry 内置模板，
+    /// 最后兜底 generic 助理。后续轮次会沿用首条 user 消息的 templateKey 持续生效。
     /// </summary>
-    private static (string systemPrompt, string templateLabel) BuildSystemPrompt(
-        DocumentStoreAgentRun run, string sourceContent, ReprocessChatMessage lastMsg)
+    private async Task<(string systemPrompt, string templateLabel)> BuildSystemPromptAsync(
+        DocumentStoreAgentRun run, string sourceContent, MongoDbContext db)
     {
-        // 找到本会话首条带 templateKey 的 user 消息（默认 run.TemplateKey 兜底）
         var firstTemplateKey = run.Messages
             .Where(m => m.Role == "user" && !string.IsNullOrEmpty(m.TemplateKey))
             .Select(m => m.TemplateKey)
@@ -191,16 +190,28 @@ public class ContentReprocessProcessor
         }
         else
         {
-            var tmpl = ReprocessTemplateRegistry.FindByKey(firstTemplateKey);
-            if (tmpl == null)
+            // 先查智能体（system + 任意 owner 都可命中，权限校验已在 Controller 入口层做过）
+            var agent = await db.ReprocessAgents
+                .Find(a => a.Key == firstTemplateKey)
+                .FirstOrDefaultAsync();
+            if (agent != null && !string.IsNullOrWhiteSpace(agent.SystemPrompt))
             {
-                instruction = "你是知识库文档助理。基于「参考文档」按用户要求改写内容。";
-                label = "自定义";
+                instruction = agent.SystemPrompt;
+                label = agent.Label;
             }
             else
             {
-                instruction = tmpl.SystemPrompt;
-                label = tmpl.Label;
+                var tmpl = ReprocessTemplateRegistry.FindByKey(firstTemplateKey);
+                if (tmpl == null)
+                {
+                    instruction = "你是知识库文档助理。基于「参考文档」按用户要求改写内容。";
+                    label = "自定义";
+                }
+                else
+                {
+                    instruction = tmpl.SystemPrompt;
+                    label = tmpl.Label;
+                }
             }
         }
 
