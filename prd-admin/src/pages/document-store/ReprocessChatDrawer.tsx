@@ -17,6 +17,7 @@ import {
   deleteReprocessAgent,
   applyReprocessContent,
   getDocumentContent,
+  getActiveReprocessRun,
 } from '@/services';
 import { streamDirectChat, listToolboxItems } from '@/services/real/aiToolbox';
 import type { ToolboxItem } from '@/services/real/aiToolbox';
@@ -191,11 +192,12 @@ export function ReprocessChatDrawer({
     })();
 
     (async () => {
-      const [agentRes, toolboxRes] = await Promise.all([
+      const [agentRes, toolboxRes, activeRunRes] = await Promise.all([
         listReprocessAgents(),
         listToolboxItems(),
+        getActiveReprocessRun(entryId),
       ]);
-      if (cancelled) return;
+      if (cancelled || entryIdRef.current !== entryId) return;
 
       const builtinAgents = BUILTIN_TOOLS.filter((t) => t.kind === 'agent' && !t.wip);
       const userOwnedToolbox = toolboxRes.success
@@ -211,8 +213,46 @@ export function ReprocessChatDrawer({
       });
       setToolboxItems([...ordered, ...userOwnedToolbox]);
 
-      if (agentRes.success) setKbAgents(agentRes.data.items);
+      const loadedKbAgents = agentRes.success ? agentRes.data.items : [];
+      if (agentRes.success) setKbAgents(loadedKbAgents);
       setLoadingAgents(false);
+
+      // 恢复后端持久化的对话：旧 /reprocess/chat 路径会把 messages 存到 run 里。
+      // 重开抽屉时把它还原成 ChatMessage，让用户能看见上一次没读完的对话（Bugbot #4 五轮 Medium）
+      const activeRun = activeRunRes.success ? activeRunRes.data : null;
+      if (activeRun && activeRun.messages && activeRun.messages.length > 0) {
+        const restored: ChatMessage[] = activeRun.messages.map((m, idx) => {
+          // 反查 user 消息的 templateKey 对应的 agent 名字，让气泡能显示徽章
+          let invoker: ChatMessage['invoker'] | undefined;
+          if (m.role === 'user' && m.templateKey) {
+            const tb = ordered.find((t) => t.agentKey === m.templateKey)
+              ?? userOwnedToolbox.find((t) => t.id === m.templateKey);
+            const kb = loadedKbAgents.find((a) => a.key === m.templateKey);
+            if (tb) {
+              invoker = { kind: 'toolbox', label: tb.name, ref: tb.id, icon: tb.icon };
+            } else if (kb) {
+              invoker = { kind: 'kbAgent', label: kb.label, ref: kb.key };
+            }
+          }
+          return {
+            id: `restored-${activeRun.id}-${idx}`,
+            role: m.role,
+            content: m.content,
+            invoker,
+            phase: 'done',
+          };
+        });
+        setMessages(restored);
+        // 选中最近一次 user 消息对应的 agent，方便用户直接追问
+        const lastUserMsg = [...activeRun.messages].reverse().find((m) => m.role === 'user');
+        if (lastUserMsg?.templateKey) {
+          const tb = ordered.find((t) => t.agentKey === lastUserMsg.templateKey)
+            ?? userOwnedToolbox.find((t) => t.id === lastUserMsg.templateKey);
+          const kb = loadedKbAgents.find((a) => a.key === lastUserMsg.templateKey);
+          if (tb) setActive({ kind: 'toolbox', item: tb });
+          else if (kb) setActive({ kind: 'kbAgent', agent: kb });
+        }
+      }
     })();
 
     return () => {
@@ -315,6 +355,12 @@ export function ReprocessChatDrawer({
     setInput('');
     scrollToBottom();
 
+    // 锁定本次 stream 关联的 entry id：异步回调到来时如果用户已经切到别的文档，
+    // 不能再写当前 drawer 的 state（错把上一篇的错误/完成态绑到新文档上），也不能
+    // 释放 sendLockRef（新文档可能已经在 streaming）（Bugbot #3 五轮 Medium）
+    const streamOwnerEntryId = entryId;
+    const isOwnedByCurrentEntry = () => entryIdRef.current === streamOwnerEntryId;
+
     let hasFirstChunk = false;
     const stop = streamDirectChat({
       message: composed,
@@ -322,6 +368,7 @@ export function ReprocessChatDrawer({
       itemId,
       history: history.length > 0 ? history : undefined,
       onText: (chunk) => {
+        if (!isOwnedByCurrentEntry()) return;
         if (!hasFirstChunk) {
           hasFirstChunk = true;
         }
@@ -332,6 +379,7 @@ export function ReprocessChatDrawer({
         scrollToBottom();
       },
       onError: (msg) => {
+        if (!isOwnedByCurrentEntry()) return; // 来自上一篇文档的 stream，丢弃
         setError(msg || '调用失败');
         setMessages((prev) => prev.map((m) =>
           m.id === asstMsgId
@@ -342,6 +390,7 @@ export function ReprocessChatDrawer({
         sendLockRef.current = false;
       },
       onDone: () => {
+        if (!isOwnedByCurrentEntry()) return;
         setMessages((prev) => prev.map((m) =>
           m.id === asstMsgId ? { ...m, streaming: false, phase: 'done' } : m));
         setStreamingId(null);
@@ -447,6 +496,26 @@ export function ReprocessChatDrawer({
     setMessages((prev) => prev.map((m) => m.id === msgId ? { ...m, applied: mode } : m));
     const label = mode === 'replace' ? '替换原文' : mode === 'append' ? '追加末尾' : '另存为新文档';
     toast.success(`${label}成功`, mode === 'new' ? '新文档已生成' : '文档已更新');
+
+    // replace/append 改了源文档正文；后续轮的 prompt 还引用旧 docContent 会让模型读到
+    // 过期的"参考文档"，写回也基于陈旧上下文。重新拉一次 entry content 拿到服务器的
+    // 最新版本（Bugbot #2 五轮 High）。
+    if (mode === 'replace' || mode === 'append') {
+      try {
+        const refreshed = await getDocumentContent(requestedEntryId);
+        if (entryIdRef.current === requestedEntryId && refreshed.success) {
+          const raw = refreshed.data.content ?? '';
+          if (raw.length > MAX_DOC_CHARS) {
+            setDocContent(raw.slice(0, MAX_DOC_CHARS));
+            setDocTruncated(true);
+          } else {
+            setDocContent(raw);
+            setDocTruncated(false);
+          }
+        }
+      } catch { /* 拉取失败保留旧 docContent，下一轮 toast 提示已能让用户感知 */ }
+    }
+
     if (target && onApplied) onApplied(mode, target);
   }, [messages, applying, entryId, onApplied]);
 

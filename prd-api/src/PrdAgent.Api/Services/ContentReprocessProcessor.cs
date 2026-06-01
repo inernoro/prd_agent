@@ -34,6 +34,10 @@ public class ContentReprocessProcessor
 
     public async Task ProcessAsync(DocumentStoreAgentRun run, MongoDbContext db, IRunEventStore runStore)
     {
+        // 防御：旧 BSON 文档可能没 Messages 字段 → 反序列化为 null。
+        // 这一行必须在第一次访问 run.Messages 之前（包括下面日志里 Count）（Bugbot #1 五轮 High）
+        run.Messages ??= new List<ReprocessChatMessage>();
+
         _logger.LogInformation("[doc-store-agent] [reprocess] BEGIN run={RunId} user={UserId} entry={EntryId} msgs={MsgCount} tplKey={TplKey}",
             run.Id, run.UserId, run.SourceEntryId, run.Messages.Count, run.TemplateKey);
 
@@ -84,10 +88,8 @@ public class ContentReprocessProcessor
         _logger.LogInformation("[doc-store-agent] [reprocess] sourceContent ready chars={Len}", sourceContent.Length);
         await UpdateProgressAsync(db, runStore, run, 5, "准备中");
 
-        // 防御：旧 BSON 文档可能没有 Messages 字段 → 反序列化为 null（Bugbot #1 四轮 High）
-        run.Messages ??= new List<ReprocessChatMessage>();
-
         // 2) 定位本轮要处理的 user 消息：messages 末尾的 user（若 role=assistant 则无新消息可处理）
+        // （run.Messages ??= 已在 ProcessAsync 开头做过，这里直接用）
         if (run.Messages.Count == 0)
             throw new InvalidOperationException("对话历史为空");
 
