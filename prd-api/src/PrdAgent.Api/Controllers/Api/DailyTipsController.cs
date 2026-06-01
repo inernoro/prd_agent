@@ -124,6 +124,13 @@ public sealed class DailyTipsController : ControllerBase
         seedFillers = FilterLearned(seedFillers, learnedMap);
         items.AddRange(seedFillers);
 
+        // Code seed 是 Tier 的权威源（Codex P2）：pre-Tier 环境 DB 行 Tier 字段缺失，
+        // 反序列化为默认 "basic"，可能覆盖代码里改成 "advanced" 的真实意图。
+        // 这里建一份 SourceId → Tier 映射，下游响应和 MarkLearned 都按此覆盖。
+        var codeSeedTier = BuildDefaultTips(now)
+            .Where(s => !string.IsNullOrEmpty(s.SourceId))
+            .ToDictionary(s => s.SourceId!, s => s.Tier);
+
         // 注：不再保留「items.Count == 0 时重建 BuildDefaultTips」的旧 fallback。
         // 上方 seedFillers 已经覆盖空 DB 场景（dbSourceIds 为空集，seedFillers = 全套合规 seed），
         // 旧 fallback 会绕过 dbSourceIds 让 admin 禁用 (IsActive=false) 的 seed 复活 (Codex P2)。
@@ -152,7 +159,9 @@ public sealed class DailyTipsController : ControllerBase
                     x.SourceType,
                     x.SourceId,
                     x.Version,
-                    x.Tier,
+                    Tier = (x.SourceId != null && codeSeedTier.TryGetValue(x.SourceId, out var codeTier))
+                        ? codeTier
+                        : x.Tier,
                     x.CreatedAt,
                     // 若用户有投递记录,附带 delivery 状态便于前端轻量展示
                     deliveryStatus = mine?.Status,
@@ -302,7 +311,13 @@ public sealed class DailyTipsController : ControllerBase
         {
             sourceId = dbTip.SourceId ?? dbTip.Id;
             version = dbTip.Version;
-            tier = dbTip.Tier;
+            // Code seed 是 Tier 的权威源（Codex P2）：pre-Tier 环境跑过 /seed 的 DB 行
+            // 没有 Tier 字段会反序列化为默认 "basic"，覆盖代码里改成 "advanced" 的意图。
+            // 当 SourceId 在 BuildDefaultTips 里匹配，使用 code seed 的 Tier，否则用 DB 值。
+            var codeSeed = !string.IsNullOrEmpty(dbTip.SourceId)
+                ? BuildDefaultTips(now).FirstOrDefault(s => s.SourceId == dbTip.SourceId)
+                : null;
+            tier = codeSeed?.Tier ?? dbTip.Tier;
         }
         else if (id.StartsWith("seed-"))
         {
