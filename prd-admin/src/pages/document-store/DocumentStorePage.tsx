@@ -124,7 +124,7 @@ function CreateStoreDialog({ onClose, onCreated }: {
               <Library size={15} />
             </div>
             <span className="text-[15px] font-semibold text-token-primary">
-              新建知识库
+              新建空间
             </span>
           </div>
           <button onClick={onClose}
@@ -236,7 +236,7 @@ function EditStoreDialog({ storeId, initialName, initialTags, onClose, onSaved }
               <Pencil size={14} />
             </div>
             <span className="text-[15px] font-semibold text-token-primary">
-              编辑知识库
+              编辑空间
             </span>
           </div>
           <button onClick={onClose}
@@ -842,7 +842,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
       setStore(prev => prev ? { ...prev, isPublic: newVal } : prev);
       toast.success(
         newVal ? '已发布到智识殿堂' : '已取消发布',
-        newVal ? '其他用户现在可以浏览你的知识库了' : '知识库已设为私有',
+        newVal ? '其他用户现在可以浏览你的空间了' : '空间已设为私有',
       );
     } else {
       toast.error('操作失败', res.error?.message);
@@ -1325,14 +1325,14 @@ function SubscribeDialog({ storeId, onClose, onCreated }: {
   );
 }
 
-type StoreTab = 'mine' | 'favorites' | 'likes';
+type StoreTab = 'mine' | 'team' | 'favorites' | 'likes';
 
 // ── 主页面 ──
 export function DocumentStorePage() {
   const navigate = useNavigate();
   const [tab, setTab] = useState<StoreTab>(() => {
     const saved = sessionStorage.getItem('doc-store-tab') as StoreTab | null;
-    return saved === 'favorites' || saved === 'likes' ? saved : 'mine';
+    return saved === 'team' || saved === 'favorites' || saved === 'likes' ? saved : 'mine';
   });
   const [stores, setStores] = useState<DocumentStoreWithPreview[]>([]);
   const [favorites, setFavorites] = useState<InteractionStoreCard[]>([]);
@@ -1369,11 +1369,33 @@ export function DocumentStorePage() {
     setLoading(false);
   }, []);
 
+  // 顶部 tab 与 teamScope 双向绑定：mine → 个人作用域，team → 共享作用域
   useEffect(() => {
-    if (tab === 'mine') loadStores();
-    else if (tab === 'favorites') loadFavorites();
-    else loadLikes();
-  }, [tab, loadStores, loadFavorites, loadLikes]);
+    if (tab === 'mine' && teamScope.scope !== 'mine') {
+      setTeamScope({ scope: 'mine', teamId: null });
+      useTeamStore.getState().setScope('document-store', 'mine', null);
+    } else if (tab === 'team' && teamScope.scope !== 'team') {
+      // 切到共享空间：若已记忆过 teamId 则恢复，否则等用户在下拉里选/新建
+      const remembered = useTeamStore.getState().getScope('document-store');
+      const nextTeamId = remembered.scope === 'team' ? remembered.teamId : null;
+      setTeamScope({ scope: 'team', teamId: nextTeamId });
+      useTeamStore.getState().setScope('document-store', 'team', nextTeamId);
+    }
+  }, [tab, teamScope.scope]);
+
+  useEffect(() => {
+    if (tab === 'mine') {
+      loadStores();
+    } else if (tab === 'team') {
+      // 共享空间未选具体空间时不拉数据（避免回退到 mine 列表造成误解）
+      if (teamScope.teamId) loadStores();
+      else setStores([]);
+    } else if (tab === 'favorites') {
+      loadFavorites();
+    } else {
+      loadLikes();
+    }
+  }, [tab, teamScope.teamId, loadStores, loadFavorites, loadLikes]);
 
   // 持久化选中的 storeId / tab 到 sessionStorage
   useEffect(() => {
@@ -1395,12 +1417,14 @@ export function DocumentStorePage() {
 
   const tabs: { key: StoreTab; label: string; icon: typeof Library }[] = [
     { key: 'mine', label: '我的空间', icon: Library },
+    { key: 'team', label: '共享空间', icon: Users },
     { key: 'favorites', label: '我的收藏', icon: Bookmark },
     { key: 'likes', label: '我的点赞', icon: Heart },
   ];
 
+  const isStoreTab = tab === 'mine' || tab === 'team';
   const currentList: InteractionStoreCard[] | DocumentStoreWithPreview[] =
-    tab === 'mine' ? stores : tab === 'favorites' ? favorites : likes;
+    isStoreTab ? stores : tab === 'favorites' ? favorites : likes;
 
   const isEmpty = currentList.length === 0;
 
@@ -1418,14 +1442,11 @@ export function DocumentStorePage() {
         onChange={(k) => setTab(k as StoreTab)}
       />
 
-      {/* 第二排：随顶部空间切换而变化的操作区 */}
+      {/* 第二排：随顶部空间切换而变化的操作区
+          - 我的空间：只显示「+ 新建空间」（创建个人空间）
+          - 共享空间：显示 TeamScopeBar（成员/邀请/活动/新建共享空间），创建动作由其内部承担 */}
       {tab === 'mine' && (
         <div className="px-5 flex items-center gap-2 flex-wrap">
-          <TeamScopeBar
-            moduleKey="document-store"
-            value={teamScope}
-            onChange={setTeamScope}
-          />
           <span className="flex-1" />
           <Button
             variant="primary"
@@ -1437,16 +1458,26 @@ export function DocumentStorePage() {
           </Button>
         </div>
       )}
+      {tab === 'team' && (
+        <div className="px-5 flex items-center gap-2 flex-wrap">
+          <TeamScopeBar
+            moduleKey="document-store"
+            value={teamScope}
+            onChange={setTeamScope}
+            hideScopeToggle
+          />
+        </div>
+      )}
 
       <div className="px-5 pb-6 w-full">
         {loading ? (
           <MapSectionLoader text="加载中..." />
-        ) : isEmpty && tab === 'mine' ? (
-          /* 我的空间 空状态引导 */
+        ) : isEmpty && isStoreTab ? (
+          /* 我的空间 / 共享空间 空状态引导 */
           <div className="flex flex-col items-center justify-center py-16">
             <Library size={48} style={{ color: 'var(--text-muted)', opacity: 0.3, marginBottom: 20 }} />
             <p className="text-[16px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
-              知识库
+              {tab === 'team' ? '共享空间' : '我的空间'}
             </p>
             <p className="text-[12px] mb-2" style={{ color: 'var(--text-muted)' }}>
               集中存储文档，作为 AI 涌现探索的种子来源
@@ -1473,9 +1504,17 @@ export function DocumentStorePage() {
               ))}
             </div>
 
-            <Button variant="primary" size="md" onClick={() => setShowCreate(true)}>
-              <Plus size={15} /> 创建第一个空间
-            </Button>
+            {tab === 'mine' ? (
+              <Button variant="primary" size="md" onClick={() => setShowCreate(true)}>
+                <Plus size={15} /> 创建第一个空间
+              </Button>
+            ) : (
+              <p className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                {teamScope.teamId
+                  ? '当前共享空间还没有任何内容，从「我的空间」分享空间过来吧'
+                  : '在上方选择或新建一个共享空间'}
+              </p>
+            )}
           </div>
         ) : isEmpty ? (
           /* 收藏 / 点赞 空状态 */
@@ -1487,7 +1526,7 @@ export function DocumentStorePage() {
               {tab === 'favorites' ? '还没有收藏' : '还没有点赞'}
             </p>
             <p className="text-[11px] mb-4" style={{ color: 'var(--text-muted)' }}>
-              去智识殿堂发现感兴趣的知识库吧
+              去智识殿堂发现感兴趣的空间吧
             </p>
             <Button variant="ghost" size="xs" onClick={() => navigate('/library')}>
               <Globe size={12} /> 浏览智识殿堂
@@ -1497,7 +1536,7 @@ export function DocumentStorePage() {
           /* 空间列表 - 增大卡片高度，显示文档预览 */
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 items-stretch">
             {(currentList as (DocumentStoreWithPreview | InteractionStoreCard)[]).map(s => {
-              const isInteraction = tab !== 'mine';
+              const isInteraction = !isStoreTab;
               const ownerName = isInteraction ? (s as InteractionStoreCard).ownerName : undefined;
               const isOwnInteraction = isInteraction && (s as InteractionStoreCard).isOwner;
               // 按库 id 稳定取色（复刻设计稿图1的多彩图标）
@@ -1516,7 +1555,7 @@ export function DocumentStorePage() {
                 <GlassCard key={s.id} animated interactive padding="none"
                   className="group flex flex-col h-full"
                   onClick={() => {
-                    if (tab === 'mine' || isOwnInteraction) {
+                    if (isStoreTab || isOwnInteraction) {
                       setSelectedStoreId(s.id);
                     } else {
                       navigate(`/library/${s.id}`);
@@ -1538,7 +1577,7 @@ export function DocumentStorePage() {
                               <span
                                 className="inline-flex items-center gap-1 flex-shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold"
                                 style={{ background: 'rgba(234,179,8,0.14)', color: 'rgba(234,179,8,0.95)', border: '1px solid rgba(234,179,8,0.32)' }}
-                                title="该知识库已对外分享">
+                                title="该空间已对外分享">
                                 <Share2 size={9} /> 已分享
                               </span>
                             )}
@@ -1549,11 +1588,11 @@ export function DocumentStorePage() {
                           </p>
                         </div>
                       </div>
-                      {tab === 'mine' && (
+                      {isStoreTab && (
                         <div className="flex items-center gap-1 flex-shrink-0">
                           <button
                             className="surface-row h-6 w-6 rounded-[6px] flex items-center justify-center cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
-                            title="分享到共享文件夹"
+                            title="分享到共享空间"
                             onClick={(e) => {
                               e.stopPropagation();
                               setShareTeamTarget({ id: s.id, name: s.name, teamIds: (s as DocumentStoreWithPreview).sharedTeamIds ?? [] });
@@ -1573,12 +1612,12 @@ export function DocumentStorePage() {
                           </button>
                           <button
                             className="surface-row h-6 w-6 rounded-[6px] flex items-center justify-center cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
-                            title="删除知识库"
+                            title="删除空间"
                             onClick={async (e) => {
                               e.stopPropagation();
                               const entryCount = s.documentCount ?? 0;
                               const confirmed = await systemDialog.confirm({
-                                title: '确认删除知识库',
+                                title: '确认删除空间',
                                 message: `删除「${s.name}」将永久清除：\n  · ${entryCount} 个文档条目\n  · 所有订阅同步日志\n  · 所有附件文件与解析正文\n  · 所有点赞 / 收藏 / 分享链接\n\n此操作不可恢复。`,
                                 tone: 'danger',
                                 confirmText: '永久删除',
@@ -1588,7 +1627,7 @@ export function DocumentStorePage() {
                               const res = await deleteDocumentStore(s.id);
                               if (res.success) {
                                 setStores(prev => prev.filter(x => x.id !== s.id));
-                                toast.success('知识库已删除', '关联数据已全部清理');
+                                toast.success('空间已删除', '关联数据已全部清理');
                               } else {
                                 toast.error('删除失败', res.error?.message);
                               }
@@ -1650,7 +1689,7 @@ export function DocumentStorePage() {
                       ) : (
                         <div className="flex items-center justify-center h-full rounded-[9px]"
                           style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.08)', minHeight: '88px' }}>
-                          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>知识库暂无内容</span>
+                          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>空间暂无内容</span>
                         </div>
                       )}
                     </div>
@@ -1716,7 +1755,7 @@ export function DocumentStorePage() {
 
       {shareTeamTarget && (
         <ShareToTeamDialog
-          title={`分享「${shareTeamTarget.name}」到共享文件夹`}
+          title={`分享「${shareTeamTarget.name}」到共享空间`}
           initialTeamIds={shareTeamTarget.teamIds}
           onConfirm={async (teamIds) => {
             await setStoreTeams(shareTeamTarget.id, teamIds);
