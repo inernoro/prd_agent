@@ -1188,6 +1188,9 @@ export const api = {
       subscriptionUpdate: (entryId: string) => `/api/document-store/entries/${entryId}/subscription`,
       generateSubtitle: (entryId: string) => `/api/document-store/entries/${entryId}/generate-subtitle`,
       reprocess: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess`,
+      reprocessChat: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess/chat`,
+      reprocessActiveRun: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess/active-run`,
+      reprocessApply: (runId: string) => `/api/document-store/agent-runs/${runId}/apply`,
       latestAgentRun: (entryId: string) => `/api/document-store/entries/${entryId}/agent-runs/latest`,
       // 批次 C：浏览事件埋点
       logView: (entryId: string) => `/api/document-store/entries/${entryId}/view`,

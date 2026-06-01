@@ -1861,6 +1861,9 @@ export {
   generateSubtitle,
   listReprocessTemplates,
   startReprocess,
+  sendReprocessChat,
+  getActiveReprocessRun,
+  applyReprocessMessage,
   getAgentRun,
   getLatestAgentRun,
   // 批次 C：浏览事件埋点
@@ -1909,6 +1912,7 @@ export type {
   DocumentSyncLogEntry,
   SubscriptionDetail,
   DocumentStoreAgentRun,
+  ReprocessChatMessage,
   ReprocessTemplate,
   DocumentStoreViewEvent,
   DocumentStoreViewStats,

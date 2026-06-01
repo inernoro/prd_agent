@@ -45,12 +45,36 @@ public class DocumentStoreAgentRun
     /// <summary>再加工自定义提示词（templateKey == custom 时）</summary>
     public string? CustomPrompt { get; set; }
 
-    /// <summary>再加工流式写入的累计文本（断线续传兜底）</summary>
+    /// <summary>再加工流式写入的累计文本（断线续传兜底；多轮模式下为最近一条 assistant 消息的内容）</summary>
     public string? GeneratedText { get; set; }
+
+    /// <summary>
+    /// 多轮对话历史。再加工模式下，每条 user 消息都会触发一次 LLM 调用产出对应的 assistant 消息。
+    /// 字幕生成模式下保持为空。
+    /// </summary>
+    public List<ReprocessChatMessage> Messages { get; set; } = new();
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? StartedAt { get; set; }
     public DateTime? EndedAt { get; set; }
+}
+
+/// <summary>再加工对话历史消息</summary>
+public class ReprocessChatMessage
+{
+    /// <summary>序号，从 0 开始；SSE chunk 通过 messageSeq 路由到对应消息</summary>
+    public int Seq { get; set; }
+
+    /// <summary>"user" 或 "assistant"</summary>
+    public string Role { get; set; } = string.Empty;
+
+    /// <summary>消息内容</summary>
+    public string Content { get; set; } = string.Empty;
+
+    /// <summary>若由模板 chip 触发，记录所选模板 key（仅 user 消息）</summary>
+    public string? TemplateKey { get; set; }
+
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
 public static class DocumentStoreAgentRunKind

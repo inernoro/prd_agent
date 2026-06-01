@@ -1,0 +1,167 @@
+using System.Text;
+using MongoDB.Driver;
+using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
+
+namespace PrdAgent.Api.Services;
+
+/// <summary>
+/// 文档再加工「写回」服务 —— 不消耗 LLM，只把对话里某条 assistant 消息落到 DocumentEntry。
+///
+/// 三种模式：
+///   - replace : 覆盖源 entry 的正文
+///   - append  : 把生成内容追加到源 entry 正文末尾
+///   - new     : 落成一篇新 DocumentEntry（同父目录），返回新 entry id
+/// </summary>
+public class ContentReprocessApplyService
+{
+    private readonly IDocumentService _documentService;
+    private readonly ILogger<ContentReprocessApplyService> _logger;
+
+    public ContentReprocessApplyService(IDocumentService documentService, ILogger<ContentReprocessApplyService> logger)
+    {
+        _documentService = documentService;
+        _logger = logger;
+    }
+
+    public record ApplyResult(string Mode, string? OutputEntryId, string? UpdatedEntryId);
+
+    public async Task<ApplyResult> ApplyAsync(
+        DocumentStoreAgentRun run,
+        DocumentEntry sourceEntry,
+        int messageSeq,
+        string mode,
+        string? title,
+        MongoDbContext db)
+    {
+        if (run.Messages.Count <= messageSeq || messageSeq < 0)
+            throw new InvalidOperationException("messageSeq 越界");
+
+        var msg = run.Messages[messageSeq];
+        if (msg.Role != "assistant")
+            throw new InvalidOperationException("只有 assistant 消息可以写回");
+
+        var content = msg.Content?.Trim() ?? string.Empty;
+        if (string.IsNullOrEmpty(content))
+            throw new InvalidOperationException("消息内容为空");
+
+        return mode switch
+        {
+            "replace" => await ReplaceAsync(sourceEntry, content, db),
+            "append" => await AppendAsync(sourceEntry, content, db),
+            "new" => await CreateNewAsync(sourceEntry, content, title, run.UserId, db),
+            _ => throw new InvalidOperationException($"未知 mode: {mode}"),
+        };
+    }
+
+    private async Task<ApplyResult> ReplaceAsync(DocumentEntry entry, string content, MongoDbContext db)
+    {
+        await SaveContentToEntryAsync(entry, content, db);
+        return new ApplyResult("replace", null, entry.Id);
+    }
+
+    private async Task<ApplyResult> AppendAsync(DocumentEntry entry, string content, MongoDbContext db)
+    {
+        var existing = await LoadEntryContentAsync(entry);
+        var merged = string.IsNullOrEmpty(existing)
+            ? content
+            : existing.TrimEnd() + "\n\n" + content;
+        await SaveContentToEntryAsync(entry, merged, db);
+        return new ApplyResult("append", null, entry.Id);
+    }
+
+    private async Task<ApplyResult> CreateNewAsync(
+        DocumentEntry sourceEntry, string content, string? title, string userId, MongoDbContext db)
+    {
+        var parsed = await _documentService.ParseAsync(content);
+        var finalTitle = string.IsNullOrWhiteSpace(title)
+            ? BuildOutputTitle(sourceEntry.Title)
+            : title!.Trim();
+        parsed.Title = finalTitle;
+        await _documentService.SaveAsync(parsed);
+
+        var newEntry = new DocumentEntry
+        {
+            StoreId = sourceEntry.StoreId,
+            ParentId = sourceEntry.ParentId,
+            Title = finalTitle,
+            Summary = content.Length > 200 ? content[..200] : content,
+            SourceType = DocumentSourceType.Upload,
+            ContentType = "text/markdown",
+            FileSize = Encoding.UTF8.GetByteCount(content),
+            DocumentId = parsed.Id,
+            CreatedBy = userId,
+            ContentIndex = content.Length > 2000 ? content[..2000] : content,
+            LastChangedAt = DateTime.UtcNow,
+            Metadata = new Dictionary<string, string>
+            {
+                ["generated_kind"] = "reprocess",
+                ["source_entry_id"] = sourceEntry.Id,
+            },
+        };
+        await db.DocumentEntries.InsertOneAsync(newEntry);
+
+        await db.DocumentStores.UpdateOneAsync(
+            s => s.Id == sourceEntry.StoreId,
+            Builders<DocumentStore>.Update
+                .Inc(s => s.DocumentCount, 1)
+                .Set(s => s.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+
+        _logger.LogInformation(
+            "[doc-store-agent] Apply mode=new src={SrcId} → new={NewId}", sourceEntry.Id, newEntry.Id);
+        return new ApplyResult("new", newEntry.Id, null);
+    }
+
+    private async Task<string> LoadEntryContentAsync(DocumentEntry entry)
+    {
+        if (!string.IsNullOrEmpty(entry.DocumentId))
+        {
+            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
+            if (doc != null && !string.IsNullOrEmpty(doc.RawContent))
+                return doc.RawContent;
+        }
+        return entry.ContentIndex ?? string.Empty;
+    }
+
+    private async Task SaveContentToEntryAsync(DocumentEntry entry, string content, MongoDbContext db)
+    {
+        ParsedPrd parsed;
+        if (!string.IsNullOrEmpty(entry.DocumentId))
+        {
+            var existing = await _documentService.GetByIdAsync(entry.DocumentId);
+            parsed = await _documentService.ParseAsync(content);
+            parsed.Id = entry.DocumentId;
+            parsed.Title = existing?.Title ?? entry.Title;
+        }
+        else
+        {
+            parsed = await _documentService.ParseAsync(content);
+            parsed.Title = entry.Title;
+        }
+        await _documentService.SaveAsync(parsed);
+
+        await db.DocumentEntries.UpdateOneAsync(
+            e => e.Id == entry.Id,
+            Builders<DocumentEntry>.Update
+                .Set(e => e.DocumentId, parsed.Id)
+                .Set(e => e.Summary, content.Length > 200 ? content[..200] : content)
+                .Set(e => e.ContentIndex, content.Length > 2000 ? content[..2000] : content)
+                .Set(e => e.FileSize, Encoding.UTF8.GetByteCount(content))
+                .Set(e => e.ContentType, "text/markdown")
+                .Set(e => e.LastChangedAt, DateTime.UtcNow)
+                .Set(e => e.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+
+        _logger.LogInformation(
+            "[doc-store-agent] Apply entry={EntryId} chars={Len}", entry.Id, content.Length);
+    }
+
+    private static string BuildOutputTitle(string srcTitle)
+    {
+        var baseName = Path.GetFileNameWithoutExtension(srcTitle);
+        if (string.IsNullOrWhiteSpace(baseName)) baseName = srcTitle;
+        return $"{baseName}-AI 再加工.md";
+    }
+}

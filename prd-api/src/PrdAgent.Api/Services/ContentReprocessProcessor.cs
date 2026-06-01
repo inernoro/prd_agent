@@ -8,13 +8,10 @@ using PrdAgent.Infrastructure.Database;
 namespace PrdAgent.Api.Services;
 
 /// <summary>
-/// 文档再加工处理器 —— 基于已有文字 entry（含字幕），按模板或自定义 prompt 流式生成新文档。
+/// 文档再加工处理器 —— 支持多轮对话。
 ///
-/// 流程：
-///   1. 读源 entry 的正文（ParsedPrd.Content 或 ContentIndex 兜底）
-///   2. 选模板 system prompt（或用 CustomPrompt）
-///   3. ILlmGateway 流式调用 → 每个 chunk 推 SSE 事件 + 累积到 Run.GeneratedText
-///   4. 完成后把 GeneratedText 落成新 DocumentEntry
+/// 触发条件：worker 每次 pick 到 Status=Queued 且 Kind=reprocess 的 run 时调用 ProcessAsync。
+/// 一次调用处理「队列里末尾那条 user 消息」对应的一轮 LLM 生成，把 assistant 消息追加到 run.Messages。
 /// </summary>
 public class ContentReprocessProcessor
 {
@@ -37,7 +34,7 @@ public class ContentReprocessProcessor
 
     public async Task ProcessAsync(DocumentStoreAgentRun run, MongoDbContext db, IRunEventStore runStore)
     {
-        // 1) 读源 entry + 正文
+        // 1) 读源 entry + 正文（文档全文作为 system prompt 的一部分注入）
         var entry = await db.DocumentEntries.Find(e => e.Id == run.SourceEntryId).FirstOrDefaultAsync();
         if (entry == null) throw new InvalidOperationException("源文档条目不存在");
         if (entry.IsFolder) throw new InvalidOperationException("文件夹不支持再加工");
@@ -49,47 +46,42 @@ public class ContentReprocessProcessor
             sourceContent = doc?.RawContent;
         }
         if (string.IsNullOrWhiteSpace(sourceContent))
-            sourceContent = entry.ContentIndex; // 兜底用索引
+            sourceContent = entry.ContentIndex;
         if (string.IsNullOrWhiteSpace(sourceContent))
             throw new InvalidOperationException("源文档无正文可供再加工");
 
         await UpdateProgressAsync(db, runStore, run, 5, "准备中");
 
-        // 2) 选 prompt
-        //    - templateKey == "custom": customPrompt 是主 prompt（必填）
-        //    - templateKey == 其他模板: 使用模板 systemPrompt；如果 customPrompt 非空，作为额外指令拼到末尾
-        //      用户可以在选模板的同时补一句"用产品经理视角"之类的话，不必"模板 OR 自定义"二选一
-        string systemPrompt;
-        string templateLabel;
-        if (run.TemplateKey == "custom")
+        // 2) 定位本轮要处理的 user 消息：messages 末尾的 user（若 role=assistant 则无新消息可处理）
+        if (run.Messages.Count == 0)
+            throw new InvalidOperationException("对话历史为空");
+
+        var lastMsg = run.Messages[^1];
+        if (lastMsg.Role != "user")
         {
-            if (string.IsNullOrWhiteSpace(run.CustomPrompt))
-                throw new InvalidOperationException("自定义模板需要提供 prompt");
-            systemPrompt = run.CustomPrompt!;
-            templateLabel = "自定义";
+            _logger.LogInformation("[doc-store-agent] Reprocess run {RunId} has no pending user message, skip", run.Id);
+            return;
         }
-        else
+
+        // 3) 构建 LLM messages：system = 模板 + 源文档；历史 user/assistant 交替；本轮 user 在末尾
+        var (systemPrompt, templateLabel) = BuildSystemPrompt(run, sourceContent, lastMsg);
+
+        var llmMessages = new List<LLMMessage>();
+        for (int i = 0; i < run.Messages.Count; i++)
         {
-            var tmpl = ReprocessTemplateRegistry.FindByKey(run.TemplateKey)
-                ?? throw new InvalidOperationException($"未知模板: {run.TemplateKey}");
-            systemPrompt = tmpl.SystemPrompt;
-            if (!string.IsNullOrWhiteSpace(run.CustomPrompt))
-            {
-                // 把模板基础上的额外指令显式标注，避免 LLM 误以为是源文档内容
-                systemPrompt += "\n\n# 额外用户指令（在模板基础上补充）\n" + run.CustomPrompt!.Trim();
-            }
-            templateLabel = tmpl.Label;
+            var m = run.Messages[i];
+            // 跳过那些纯 template chip 触发但 content 为空的伪消息（实际上 BuildSystemPrompt 已展开）
+            if (string.IsNullOrWhiteSpace(m.Content)) continue;
+            llmMessages.Add(new LLMMessage { Role = m.Role, Content = m.Content });
         }
 
         await UpdateProgressAsync(db, runStore, run, 15, "调用 LLM");
 
-        // 3) 流式调用
-        // Worker 场景必须显式开 LlmRequestContext，UserId 从 run.UserId 取——否则
-        // Gateway 日志/配额/账单挂不到用户头上（llm-gateway.md：日志会打 "UserId 为空"）。
+        // 4) 流式调用 LLM —— UserId 必须从 run.UserId 取（llm-gateway.md 硬规则）
         using var _ctxScope = _llmCtx.BeginScope(new LlmRequestContext(
             RequestId: Guid.NewGuid().ToString("N"),
             GroupId: null,
-            SessionId: null,
+            SessionId: run.Id,
             UserId: run.UserId,
             ViewRole: null,
             DocumentChars: sourceContent.Length,
@@ -104,33 +96,26 @@ public class ContentReprocessProcessor
             maxTokens: 4096,
             temperature: 0.4);
 
-        var userMessage = "以下是原始内容，请按你收到的系统指令处理：\n\n---\n\n" + sourceContent;
-        var messages = new List<LLMMessage>
-        {
-            new() { Role = "user", Content = userMessage },
-        };
-
+        var assistantSeq = run.Messages.Count; // 即将追加的 assistant 消息序号
         var sb = new StringBuilder();
         long chunkCount = 0;
         var lastFlushAt = DateTime.UtcNow;
 
-        await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, messages, CancellationToken.None))
+        await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, llmMessages, CancellationToken.None))
         {
             if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
             {
                 sb.Append(chunk.Content);
                 chunkCount++;
 
-                // 推 SSE 事件（每个 chunk）
                 try
                 {
                     await runStore.AppendEventAsync(
                         DocumentStoreRunKinds.Reprocess, run.Id, "chunk",
-                        new { text = chunk.Content }, ct: CancellationToken.None);
+                        new { text = chunk.Content, messageSeq = assistantSeq }, ct: CancellationToken.None);
                 }
                 catch { /* ignore */ }
 
-                // 每秒或每 20 个 chunk 同步一次到 DB（断线续传兜底）
                 if ((DateTime.UtcNow - lastFlushAt).TotalSeconds >= 1 || chunkCount % 20 == 0)
                 {
                     lastFlushAt = DateTime.UtcNow;
@@ -150,61 +135,87 @@ public class ContentReprocessProcessor
         if (string.IsNullOrEmpty(finalContent))
             throw new InvalidOperationException("LLM 返回内容为空");
 
-        await UpdateProgressAsync(db, runStore, run, 85, "写入中");
+        await UpdateProgressAsync(db, runStore, run, 90, "整理中");
 
-        // 4) 落新 entry
-        var parsed = await _documentService.ParseAsync(finalContent);
-        parsed.Title = BuildOutputTitle(entry.Title, templateLabel);
-        await _documentService.SaveAsync(parsed);
-
-        var newEntry = new DocumentEntry
+        // 5) 追加 assistant 消息到 run.Messages，并更新 GeneratedText（保留兜底语义）
+        var assistantMsg = new ReprocessChatMessage
         {
-            StoreId = entry.StoreId,
-            ParentId = entry.ParentId,
-            Title = BuildOutputTitle(entry.Title, templateLabel),
-            Summary = finalContent.Length > 200 ? finalContent[..200] : finalContent,
-            SourceType = DocumentSourceType.Upload,
-            ContentType = "text/markdown",
-            FileSize = Encoding.UTF8.GetByteCount(finalContent),
-            DocumentId = parsed.Id,
-            CreatedBy = run.UserId,
-            ContentIndex = finalContent.Length > 2000 ? finalContent[..2000] : finalContent,
-            LastChangedAt = DateTime.UtcNow,
-            Metadata = new Dictionary<string, string>
-            {
-                ["generated_kind"] = "reprocess",
-                ["source_entry_id"] = entry.Id,
-                ["template_key"] = run.TemplateKey ?? "",
-                ["template_label"] = templateLabel,
-            },
+            Seq = assistantSeq,
+            Role = "assistant",
+            Content = finalContent,
+            CreatedAt = DateTime.UtcNow,
         };
-        await db.DocumentEntries.InsertOneAsync(newEntry);
-
-        await db.DocumentStores.UpdateOneAsync(
-            s => s.Id == entry.StoreId,
-            Builders<DocumentStore>.Update
-                .Inc(s => s.DocumentCount, 1)
-                .Set(s => s.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: CancellationToken.None);
-
         await db.DocumentStoreAgentRuns.UpdateOneAsync(
             r => r.Id == run.Id,
             Builders<DocumentStoreAgentRun>.Update
-                .Set(r => r.OutputEntryId, newEntry.Id)
+                .Push(r => r.Messages, assistantMsg)
                 .Set(r => r.GeneratedText, finalContent)
                 .Set(r => r.Progress, 95),
             cancellationToken: CancellationToken.None);
 
+        // 推一条 messageDone 事件让前端知道哪一条 assistant 已完整
+        try
+        {
+            await runStore.AppendEventAsync(
+                DocumentStoreRunKinds.Reprocess, run.Id, "messageDone",
+                new { messageSeq = assistantSeq, content = finalContent, templateLabel },
+                ct: CancellationToken.None);
+        }
+        catch { /* ignore */ }
+
         _logger.LogInformation(
-            "[doc-store-agent] Reprocess done for {EntryId} → {NewEntryId}, template={Template}, {Len} chars",
-            entry.Id, newEntry.Id, run.TemplateKey, finalContent.Length);
+            "[doc-store-agent] Reprocess turn done for run={RunId} seq={Seq} chars={Len}",
+            run.Id, assistantSeq, finalContent.Length);
     }
 
-    private static string BuildOutputTitle(string srcTitle, string templateLabel)
+    /// <summary>
+    /// 构建 system prompt：选模板（若 lastMsg.TemplateKey 非空）+ 拼接源文档全文。
+    /// 后续轮次（lastMsg.TemplateKey 为空）保留同一个 system，让 LLM 围绕原文继续答复。
+    /// </summary>
+    private static (string systemPrompt, string templateLabel) BuildSystemPrompt(
+        DocumentStoreAgentRun run, string sourceContent, ReprocessChatMessage lastMsg)
     {
-        var baseName = Path.GetFileNameWithoutExtension(srcTitle);
-        if (string.IsNullOrWhiteSpace(baseName)) baseName = srcTitle;
-        return $"{baseName}-{templateLabel}.md";
+        // 找到本会话首条带 templateKey 的 user 消息（默认 run.TemplateKey 兜底）
+        var firstTemplateKey = run.Messages
+            .Where(m => m.Role == "user" && !string.IsNullOrEmpty(m.TemplateKey))
+            .Select(m => m.TemplateKey)
+            .FirstOrDefault() ?? run.TemplateKey;
+
+        string instruction;
+        string label;
+        if (firstTemplateKey == "custom" || string.IsNullOrEmpty(firstTemplateKey))
+        {
+            instruction = "你是知识库文档助理。基于「参考文档」回答用户问题或按用户要求改写内容。" +
+                          "回答时如果涉及改写正文，输出 Markdown；如果是回答问题，可以用自然语言。";
+            label = "自定义";
+        }
+        else
+        {
+            var tmpl = ReprocessTemplateRegistry.FindByKey(firstTemplateKey);
+            if (tmpl == null)
+            {
+                instruction = "你是知识库文档助理。基于「参考文档」按用户要求改写内容。";
+                label = "自定义";
+            }
+            else
+            {
+                instruction = tmpl.SystemPrompt;
+                label = tmpl.Label;
+            }
+        }
+
+        var sb = new StringBuilder();
+        sb.AppendLine(instruction);
+        sb.AppendLine();
+        sb.AppendLine("# 参考文档");
+        sb.AppendLine("以下是用户当前讨论的源文档全文，所有改写/问答都应基于此：");
+        sb.AppendLine();
+        sb.AppendLine("---");
+        sb.AppendLine(sourceContent);
+        sb.AppendLine("---");
+        sb.AppendLine();
+        sb.AppendLine("用户接下来会通过对话给出处理指令。请始终用中文回答，输出尽量直接，不要重复前言。");
+        return (sb.ToString(), label);
     }
 
     private static async Task UpdateProgressAsync(

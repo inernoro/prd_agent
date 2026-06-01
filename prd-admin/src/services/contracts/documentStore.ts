@@ -138,9 +138,20 @@ export type DocumentStoreAgentRun = {
   templateKey?: string;
   customPrompt?: string;
   generatedText?: string;
+  /** 多轮对话历史（仅 reprocess 模式有内容） */
+  messages?: ReprocessChatMessage[];
   createdAt: string;
   startedAt?: string;
   endedAt?: string;
+};
+
+/** 文档再加工对话历史中的单条消息 */
+export type ReprocessChatMessage = {
+  seq: number;
+  role: 'user' | 'assistant';
+  content: string;
+  templateKey?: string;
+  createdAt: string;
 };
 
 /** 再加工模板定义 */

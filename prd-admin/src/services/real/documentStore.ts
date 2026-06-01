@@ -431,13 +431,45 @@ export async function listReprocessTemplates() {
   );
 }
 
-/** 发起文档再加工任务 */
+/** 发起文档再加工任务（旧接口，单轮兼容） */
 export async function startReprocess(entryId: string, input: {
   templateKey: string;
   customPrompt?: string;
 }) {
-  return await apiRequest<{ runId: string; status: string }>(
+  return await apiRequest<{ runId: string; status: string; messageSeq?: number }>(
     api.documentStore.entries.reprocess(entryId),
+    { method: 'POST', body: input },
+  );
+}
+
+/** 发送一条再加工对话消息（多轮） */
+export async function sendReprocessChat(entryId: string, input: {
+  runId?: string;
+  content: string;
+  templateKey?: string;
+}) {
+  return await apiRequest<{ runId: string; status: string; messageSeq: number }>(
+    api.documentStore.entries.reprocessChat(entryId),
+    { method: 'POST', body: input },
+  );
+}
+
+/** 获取某文档的活跃再加工会话（含完整 messages） */
+export async function getActiveReprocessRun(entryId: string) {
+  return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreAgentRun | null>(
+    api.documentStore.entries.reprocessActiveRun(entryId),
+    { method: 'GET' },
+  );
+}
+
+/** 把对话中某条 assistant 消息写回文档（replace / append / new） */
+export async function applyReprocessMessage(runId: string, input: {
+  messageSeq: number;
+  mode: 'replace' | 'append' | 'new';
+  title?: string;
+}) {
+  return await apiRequest<{ mode: string; outputEntryId?: string; updatedEntryId?: string }>(
+    api.documentStore.entries.reprocessApply(runId),
     { method: 'POST', body: input },
   );
 }

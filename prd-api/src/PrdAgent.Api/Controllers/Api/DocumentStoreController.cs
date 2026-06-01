@@ -2141,47 +2141,182 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { runId = run.Id, status = run.Status, reused = false }));
     }
 
-    /// <summary>发起文档再加工任务（流式 LLM 改写）</summary>
+    /// <summary>发起文档再加工任务（保留旧接口，等价于一次性发送首条 chat 消息）</summary>
     [HttpPost("entries/{entryId}/reprocess")]
     public async Task<IActionResult> Reprocess(string entryId, [FromBody] ReprocessRequest request)
+    {
+        var templateKey = (request.TemplateKey ?? "").Trim();
+        if (string.IsNullOrEmpty(templateKey))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "templateKey 不能为空"));
+
+        var content = (request.CustomPrompt ?? "").Trim();
+        if (templateKey == "custom" && string.IsNullOrEmpty(content))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "自定义模板需要提供 customPrompt"));
+
+        // 模板模式下若用户没填补充指令，给一句默认的 user 消息
+        if (string.IsNullOrEmpty(content))
+            content = "请按所选模板处理这篇文档。";
+
+        return await SendReprocessChatInternal(entryId, runId: null, content: content, templateKey: templateKey);
+    }
+
+    /// <summary>发送一条再加工对话消息（首次会自动建 Run；后续追加到同一 Run）</summary>
+    [HttpPost("entries/{entryId}/reprocess/chat")]
+    public async Task<IActionResult> SendReprocessChat(string entryId, [FromBody] ReprocessChatRequest request)
+    {
+        var content = (request.Content ?? "").Trim();
+        if (string.IsNullOrEmpty(content))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "content 不能为空"));
+
+        var templateKey = string.IsNullOrWhiteSpace(request.TemplateKey) ? null : request.TemplateKey!.Trim();
+        if (templateKey != null && templateKey != "custom" && ReprocessTemplateRegistry.FindByKey(templateKey) == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"未知模板: {templateKey}"));
+
+        return await SendReprocessChatInternal(entryId, request.RunId, content, templateKey);
+    }
+
+    private async Task<IActionResult> SendReprocessChatInternal(
+        string entryId, string? runId, string content, string? templateKey)
     {
         var (entry, store, err) = await LoadOwnedEntryAsync(entryId);
         if (err != null) return err;
         if (entry!.IsFolder)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持再加工"));
 
-        var templateKey = (request.TemplateKey ?? "").Trim();
-        if (string.IsNullOrEmpty(templateKey))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "templateKey 不能为空"));
-
-        if (templateKey == "custom")
-        {
-            if (string.IsNullOrWhiteSpace(request.CustomPrompt))
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "自定义模板需要提供 customPrompt"));
-        }
-        else if (ReprocessTemplateRegistry.FindByKey(templateKey) == null)
-        {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"未知模板: {templateKey}"));
-        }
-
         var userId = GetUserId();
-        var run = new DocumentStoreAgentRun
+
+        DocumentStoreAgentRun? run = null;
+        if (!string.IsNullOrEmpty(runId))
         {
-            Kind = DocumentStoreAgentRunKind.Reprocess,
-            SourceEntryId = entryId,
-            StoreId = store!.Id,
-            UserId = userId,
+            run = await _db.DocumentStoreAgentRuns
+                .Find(r => r.Id == runId && r.UserId == userId && r.SourceEntryId == entryId)
+                .FirstOrDefaultAsync();
+            if (run == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "Run 不存在"));
+            if (run.Status == DocumentStoreRunStatus.Running || run.Status == DocumentStoreRunStatus.Queued)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "上一轮还未结束，请稍候"));
+        }
+
+        var nextSeq = run?.Messages.Count ?? 0;
+        var userMsg = new ReprocessChatMessage
+        {
+            Seq = nextSeq,
+            Role = "user",
+            Content = content,
             TemplateKey = templateKey,
-            CustomPrompt = request.CustomPrompt,
-            Status = DocumentStoreRunStatus.Queued,
-            Phase = "排队中",
+            CreatedAt = DateTime.UtcNow,
         };
-        await _db.DocumentStoreAgentRuns.InsertOneAsync(run);
+
+        if (run == null)
+        {
+            run = new DocumentStoreAgentRun
+            {
+                Kind = DocumentStoreAgentRunKind.Reprocess,
+                SourceEntryId = entryId,
+                StoreId = store!.Id,
+                UserId = userId,
+                TemplateKey = templateKey,
+                CustomPrompt = templateKey == "custom" ? content : null,
+                Status = DocumentStoreRunStatus.Queued,
+                Phase = "排队中",
+                Messages = new List<ReprocessChatMessage> { userMsg },
+            };
+            await _db.DocumentStoreAgentRuns.InsertOneAsync(run);
+        }
+        else
+        {
+            // 已 Done 的 Run：追加 user 消息 + 重置 status=queued 让 worker 再 pick 一次
+            await _db.DocumentStoreAgentRuns.UpdateOneAsync(
+                r => r.Id == run.Id,
+                Builders<DocumentStoreAgentRun>.Update
+                    .Push(r => r.Messages, userMsg)
+                    .Set(r => r.Status, DocumentStoreRunStatus.Queued)
+                    .Set(r => r.Phase, "排队中")
+                    .Set(r => r.Progress, 0)
+                    .Set(r => r.GeneratedText, null)
+                    .Set(r => r.EndedAt, (DateTime?)null)
+                    .Set(r => r.ErrorMessage, null),
+                cancellationToken: CancellationToken.None);
+        }
+
+        // 给 SSE 端推一条 userMessage 事件方便前端镜像（不影响处理流程）
+        try
+        {
+            await _runEventStore.AppendEventAsync(
+                DocumentStoreRunKinds.Reprocess, run.Id, "userMessage",
+                new { messageSeq = userMsg.Seq, content = userMsg.Content, templateKey = userMsg.TemplateKey },
+                ct: CancellationToken.None);
+        }
+        catch { /* ignore */ }
 
         _logger.LogInformation(
-            "[doc-store-agent] Reprocess run queued: {RunId} entry={EntryId} template={Template}",
-            run.Id, entryId, templateKey);
-        return Ok(ApiResponse<object>.Ok(new { runId = run.Id, status = run.Status }));
+            "[doc-store-agent] Reprocess chat queued: run={RunId} entry={EntryId} seq={Seq}",
+            run.Id, entryId, userMsg.Seq);
+        return Ok(ApiResponse<object>.Ok(new { runId = run.Id, status = run.Status, messageSeq = userMsg.Seq }));
+    }
+
+    /// <summary>获取某文档的活跃再加工会话（按用户 + entry 取最近一条 Run，含完整 messages，用于打开抽屉恢复对话）</summary>
+    [HttpGet("entries/{entryId}/reprocess/active-run")]
+    public async Task<IActionResult> GetActiveReprocessRun(string entryId)
+    {
+        var (_, _, err) = await LoadOwnedEntryAsync(entryId);
+        if (err != null) return err;
+
+        var userId = GetUserId();
+        var run = await _db.DocumentStoreAgentRuns
+            .Find(r => r.SourceEntryId == entryId
+                       && r.UserId == userId
+                       && r.Kind == DocumentStoreAgentRunKind.Reprocess)
+            .SortByDescending(r => r.CreatedAt)
+            .FirstOrDefaultAsync();
+        return Ok(ApiResponse<DocumentStoreAgentRun?>.Ok(run));
+    }
+
+    /// <summary>把对话中某条 assistant 消息写回文档（replace / append / new）</summary>
+    [HttpPost("agent-runs/{runId}/apply")]
+    public async Task<IActionResult> ApplyReprocess(
+        string runId,
+        [FromBody] ReprocessApplyRequest request,
+        [FromServices] ContentReprocessApplyService applyService)
+    {
+        var userId = GetUserId();
+        var run = await _db.DocumentStoreAgentRuns
+            .Find(r => r.Id == runId && r.UserId == userId && r.Kind == DocumentStoreAgentRunKind.Reprocess)
+            .FirstOrDefaultAsync();
+        if (run == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "Run 不存在"));
+
+        var (entry, _, err) = await LoadOwnedEntryAsync(run.SourceEntryId);
+        if (err != null) return err;
+
+        var mode = (request.Mode ?? "").Trim().ToLowerInvariant();
+        if (mode != "replace" && mode != "append" && mode != "new")
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "mode 必须是 replace/append/new"));
+
+        try
+        {
+            var result = await applyService.ApplyAsync(run, entry!, request.MessageSeq, mode, request.Title, _db);
+
+            // 若是新建 entry，把 outputEntryId 记到 run 里，方便后续展示
+            if (result.Mode == "new" && !string.IsNullOrEmpty(result.OutputEntryId))
+            {
+                await _db.DocumentStoreAgentRuns.UpdateOneAsync(
+                    r => r.Id == run.Id,
+                    Builders<DocumentStoreAgentRun>.Update.Set(r => r.OutputEntryId, result.OutputEntryId),
+                    cancellationToken: CancellationToken.None);
+            }
+
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                mode = result.Mode,
+                outputEntryId = result.OutputEntryId,
+                updatedEntryId = result.UpdatedEntryId,
+            }));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
     }
 
     /// <summary>获取 Run 当前状态（用于 Drawer 打开时判断）</summary>
@@ -3481,6 +3616,30 @@ public class ReprocessRequest
 
     /// <summary>自定义提示词（templateKey == custom 时必填）</summary>
     public string? CustomPrompt { get; set; }
+}
+
+public class ReprocessChatRequest
+{
+    /// <summary>已有 Run id；空表示新建会话</summary>
+    public string? RunId { get; set; }
+
+    /// <summary>user 消息内容（非空）</summary>
+    public string Content { get; set; } = string.Empty;
+
+    /// <summary>若由模板 chip 触发，记录所选模板 key（仅首条消息生效，决定 system prompt）</summary>
+    public string? TemplateKey { get; set; }
+}
+
+public class ReprocessApplyRequest
+{
+    /// <summary>要写回的 assistant 消息序号</summary>
+    public int MessageSeq { get; set; }
+
+    /// <summary>replace / append / new</summary>
+    public string Mode { get; set; } = string.Empty;
+
+    /// <summary>mode=new 时的标题（可选，默认 "{源标题}-AI 再加工.md"）</summary>
+    public string? Title { get; set; }
 }
 
 public class SetPrimaryEntryRequest
