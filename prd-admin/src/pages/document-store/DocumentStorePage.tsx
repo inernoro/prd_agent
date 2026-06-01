@@ -38,6 +38,7 @@ import { Button } from '@/components/design/Button';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { TeamScopeBar, type TeamScope } from '@/components/team/TeamScopeBar';
 import { useTeamStore } from '@/stores/teamStore';
+import { useAuthStore } from '@/stores/authStore';
 import { AnimatePresence } from 'motion/react';
 import CountUp from '@/components/reactbits/CountUp';
 import {
@@ -1342,6 +1343,7 @@ const SORT_OPTIONS: { key: StoreSort; label: string }[] = [
 // ── 主页面 ──
 export function DocumentStorePage() {
   const navigate = useNavigate();
+  const currentUserId = useAuthStore((s) => s.user?.userId ?? null);
   const [tab, setTab] = useState<StoreTab>(() => {
     const saved = sessionStorage.getItem('doc-store-tab') as StoreTab | null;
     return saved === 'team' || saved === 'favorites' || saved === 'likes' ? saved : 'mine';
@@ -1402,12 +1404,17 @@ export function DocumentStorePage() {
     return () => document.removeEventListener('mousedown', onDown);
   }, [tagOpen]);
 
-  const loadStores = useCallback(async () => {
+  // 防 stale 响应：tab/teamId 快速切换时,旧请求回填会覆盖新数据。
+  // 用单调递增序号锁住"只有最新一次请求才能 setState"。
+  const storesFetchSeq = useRef(0);
+  const loadStores = useCallback(async (scope: 'mine' | 'team', teamId: string | null) => {
+    const mySeq = ++storesFetchSeq.current;
     setLoading(true);
-    const res = await listDocumentStoresWithPreview(1, 50, { scope: teamScope.scope, teamId: teamScope.teamId });
+    const res = await listDocumentStoresWithPreview(1, 50, { scope, teamId });
+    if (storesFetchSeq.current !== mySeq) return; // 已被更新的请求超车,丢弃
     if (res.success) setStores(res.data.items);
     setLoading(false);
-  }, [teamScope]);
+  }, []);
 
   const loadFavorites = useCallback(async () => {
     setLoading(true);
@@ -1424,10 +1431,10 @@ export function DocumentStorePage() {
   }, []);
 
   // 顶部 tab 与 teamScope 双向绑定：mine → 个人作用域，team → 共享作用域
+  // 注意：mine 分支不写 useTeamStore，以保留上次选中的 teamId 记忆，方便往返切换
   useEffect(() => {
     if (tab === 'mine' && teamScope.scope !== 'mine') {
       setTeamScope({ scope: 'mine', teamId: null });
-      useTeamStore.getState().setScope('document-store', 'mine', null);
     } else if (tab === 'team' && teamScope.scope !== 'team') {
       // 切到团队空间：若已记忆过 teamId 则恢复，否则等用户在下拉里选/新建
       const remembered = useTeamStore.getState().getScope('document-store');
@@ -1439,11 +1446,17 @@ export function DocumentStorePage() {
 
   useEffect(() => {
     if (tab === 'mine') {
-      loadStores();
+      // 直接传 scope='mine'，不依赖 teamScope 闭包，避免切 tab 同帧 teamScope 还没同步的 race
+      loadStores('mine', null);
     } else if (tab === 'team') {
-      // 团队空间未选具体空间时不拉数据（避免回退到 mine 列表造成误解）
-      if (teamScope.teamId) loadStores();
-      else setStores([]);
+      if (teamScope.teamId) {
+        loadStores('team', teamScope.teamId);
+      } else {
+        // 团队空间未选具体空间时不拉数据，明确转为空态（而非永远 loading）
+        ++storesFetchSeq.current; // 让任何 in-flight 请求作废
+        setStores([]);
+        setLoading(false);
+      }
     } else if (tab === 'favorites') {
       loadFavorites();
     } else {
@@ -1520,7 +1533,7 @@ export function DocumentStorePage() {
 
   // 空间详情视图（仅 mine 标签下可进入编辑视图）—— 早返回必须放在所有 hook 之后
   if (selectedStoreId) {
-    return <StoreDetailView storeId={selectedStoreId} onBack={() => { setSelectedStoreId(null); loadStores(); }} onOpenLibrary={(id) => navigate(`/library/${id}`)} />;
+    return <StoreDetailView storeId={selectedStoreId} onBack={() => { setSelectedStoreId(null); loadStores(teamScope.scope, teamScope.teamId); }} onOpenLibrary={(id) => navigate(`/library/${id}`)} />;
   }
 
   // 统计概览（基于未筛选的原始列表，反映"我拥有/我看到的"全量）
@@ -1531,8 +1544,11 @@ export function DocumentStorePage() {
   const activeSortLabel = SORT_OPTIONS.find(o => o.key === sortKey)?.label ?? '最近更新';
 
   const isEmpty = currentList.length === 0;
-  // 真·空（未筛选时就没数据）vs 筛选后无结果
-  const isFilteredOut = isEmpty && isStoreTab && (search.trim().length > 0 || tagFilter.length > 0);
+  // 区分三种空态：1) 筛选有但被过滤掉了；2) 真·空（onboarding 引导）；3) 团队空间未选 team
+  // 必须确认原始数据(stores)有内容才算"被筛选掉",否则 mine/team 真空态会被误判为"筛选无结果"
+  const isFilteredOut = isEmpty && isStoreTab
+    && (stores as DocumentStoreWithPreview[]).length > 0
+    && (search.trim().length > 0 || tagFilter.length > 0);
 
   // 空间列表视图
   return (
@@ -1846,6 +1862,11 @@ export function DocumentStorePage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 items-stretch">
             {(currentList as (DocumentStoreWithPreview | InteractionStoreCard)[]).map(s => {
               const isInteraction = !isStoreTab;
+              // 只有 owner 才能见 编辑/分享/删除 入口。
+              // 团队空间下其他成员分享进来的库 ownerId !== 当前用户 → 隐藏破坏性按钮(后端也会拒)
+              const canManage = isStoreTab
+                && currentUserId != null
+                && (s as DocumentStoreWithPreview).ownerId === currentUserId;
               const ownerName = isInteraction ? (s as InteractionStoreCard).ownerName : undefined;
               const isOwnInteraction = isInteraction && (s as InteractionStoreCard).isOwner;
               // 按库 id 稳定取色（复刻设计稿图1的多彩图标）
@@ -1864,7 +1885,8 @@ export function DocumentStorePage() {
                 <GlassCard key={s.id} animated interactive padding="none"
                   className="group flex flex-col h-full"
                   onClick={() => {
-                    if (isStoreTab || isOwnInteraction) {
+                    // owner 进编辑视图,非 owner(团队共享/他人公开/收藏点赞)走只读 library 页
+                    if (canManage || isOwnInteraction) {
                       setSelectedStoreId(s.id);
                     } else {
                       navigate(`/library/${s.id}`);
@@ -1897,7 +1919,7 @@ export function DocumentStorePage() {
                           </p>
                         </div>
                       </div>
-                      {isStoreTab && (
+                      {canManage && (
                         <div className="flex items-center gap-1 flex-shrink-0">
                           <button
                             className="surface-row h-6 w-6 rounded-[6px] flex items-center justify-center cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity"
