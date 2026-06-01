@@ -101,11 +101,28 @@ public sealed class DailyTipsController : ControllerBase
         // tip.Version 升级后 learnedMap 里的旧 Version 不再匹配,用户会重新看到。
         items = FilterLearned(items, learnedMap);
 
-        // 数据库没有任何 tip 时,兜底返回内置默认集,避免新环境出现空白
+        // 合并代码内置 seed 集合：即使 DB 已有其他 tip，也要让新加的 BuildDefaultTips seed
+        // （如本周发的 feature-release 公告）自动出现，不需要管理员手动跑 /seed。
+        // 去重规则：已有 DB 记录的 SourceId 跳过 — DB 优先（管理员可能编辑过内容），
+        // code seed 只填空白。这样老环境也能自动获取新版本的 advanced 通知。
+        var dbSourceIds = items
+            .Where(t => !string.IsNullOrEmpty(t.SourceId))
+            .Select(t => t.SourceId!)
+            .ToHashSet();
+        var seedFillers = BuildDefaultTips(now)
+            .Where(seed => seed.SourceId != null && !dbSourceIds.Contains(seed.SourceId))
+            .Where(t => (t.StartAt == null || t.StartAt <= now)
+                     && (t.EndAt == null || t.EndAt > now))
+            .Where(t => !foreverDismissed.Contains(t.Id)
+                     && !(t.SourceId != null && foreverDismissed.Contains(t.SourceId)))
+            .ToList();
+        seedFillers = FilterLearned(seedFillers, learnedMap);
+        items.AddRange(seedFillers);
+
+        // 数据库没有任何 tip 且无 seed 兜底时仍可走旧的兜底分支（保留以防 BuildDefaultTips 也为空）
         if (items.Count == 0)
         {
             items = BuildDefaultTips(now);
-            // 兜底集合同样走发布窗口过滤,否则带固定 EndAt 的时效公告在空环境永不过期(与 DB 路径口径一致)
             items = items.Where(t =>
                 (t.StartAt == null || t.StartAt <= now)
                 && (t.EndAt == null || t.EndAt > now)).ToList();
