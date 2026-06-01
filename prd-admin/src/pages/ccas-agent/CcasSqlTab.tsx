@@ -59,10 +59,7 @@ export function CcasSqlTab() {
         />
       </div>
 
-      <div
-        className="flex-1"
-        style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', paddingRight: 4 }}
-      >
+      <div className="flex-1 min-h-0 flex flex-col">
         {active.render()}
       </div>
     </div>

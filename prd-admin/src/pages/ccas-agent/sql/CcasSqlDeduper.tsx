@@ -107,7 +107,10 @@ export function CcasSqlDeduper() {
   }, [output]);
 
   return (
-    <div className="flex flex-col gap-4">
+    <div
+      className="flex-1 min-h-0 flex flex-col gap-4"
+      style={{ overflowY: 'auto', overscrollBehavior: 'contain', paddingRight: 4 }}
+    >
       <p className="text-xs text-white/55 leading-relaxed flex items-start gap-1.5">
         <HelpCircle className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-300/70" />
         <span>按行去重，空行自动忽略。下面三个开关分别控制：是否保留原始顺序、是否忽略大小写、比较前是否去掉首尾空白。</span>

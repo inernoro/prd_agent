@@ -54,7 +54,10 @@ export function CcasSqlInConverter() {
   }, [output]);
 
   return (
-    <div className="flex flex-col gap-4">
+    <div
+      className="flex-1 min-h-0 flex flex-col gap-4"
+      style={{ overflowY: 'auto', overscrollBehavior: 'contain', paddingRight: 4 }}
+    >
       <p className="text-xs text-white/55 leading-relaxed flex items-start gap-1.5">
         <HelpCircle className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-300/70" />
         <span>

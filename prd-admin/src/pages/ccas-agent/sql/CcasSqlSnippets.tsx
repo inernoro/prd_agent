@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useState } from 'react';
-import { Copy, Search, Info } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Copy, Search, Info, BookOpen } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import {
   DIALECT_LABEL,
@@ -7,6 +7,7 @@ import {
   SQL_SNIPPET_TOTAL,
   type SqlDialect,
   type SqlSnippet,
+  type SqlSnippetGroup,
 } from './sqlSnippetsData';
 
 const DIALECT_TONE: Record<SqlDialect, { bg: string; border: string; fg: string }> = {
@@ -39,64 +40,35 @@ function DialectBadge({ dialect }: { dialect: SqlDialect }) {
   );
 }
 
-function SnippetCard({ snippet }: { snippet: SqlSnippet }) {
-  const handleCopy = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(snippet.sql);
-      toast.success(`已复制「${snippet.title}」`);
-    } catch {
-      toast.error('复制失败', '请手动选中代码块文本复制');
-    }
-  }, [snippet]);
-
-  return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.03] overflow-hidden">
-      <div className="px-4 py-2.5 flex items-center justify-between gap-3 border-b border-white/8 bg-white/[0.02]">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-sm font-medium text-white/90 truncate">{snippet.title}</span>
-          <DialectBadge dialect={snippet.dialect} />
-        </div>
-        <button
-          type="button"
-          onClick={handleCopy}
-          className="shrink-0 inline-flex items-center gap-1 h-7 px-2.5 rounded-md text-xs text-white/75 hover:text-amber-200 border border-white/12 hover:border-amber-300/40 bg-white/5 hover:bg-amber-300/10 transition"
-          title="复制 SQL 到剪贴板"
-        >
-          <Copy className="w-3 h-3" />
-          复制
-        </button>
-      </div>
-
-      {snippet.note && (
-        <div className="px-4 py-2 text-[11.5px] text-white/55 flex items-start gap-1.5 border-b border-white/6 bg-white/[0.01]">
-          <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-300/60" />
-          <span>{snippet.note}</span>
-        </div>
-      )}
-
-      <pre
-        className="text-[12.5px] leading-[1.6] text-white/85 font-mono px-4 py-3 m-0 overflow-x-auto"
-        style={{ tabSize: 2 }}
-      >
-        <code>{snippet.sql}</code>
-      </pre>
-    </div>
-  );
+interface SnippetWithGroup extends SqlSnippet {
+  groupId: string;
+  groupName: string;
 }
 
 /**
- * 常用 SQL 语句库子 tab —— 内置预设按数据库版本分组展示。
+ * 常用 SQL 语句库子 tab —— 左侧目录 + 右侧详情布局。
  *
  * 行为：
- *   - 顶部搜索框过滤（匹配片段标题 / 备注 / SQL 内容，case-insensitive）
- *   - 每个分组展示组名 + 组说明 + 该组所有片段卡片
- *   - 每张卡：标题 + 方言徽章 + 复制按钮 + 备注 + SQL 代码块
+ *   - 搜索框 case-insensitive 过滤左侧目录（匹配标题 / 备注 / SQL 内容）
+ *   - 默认选中第一条；搜索结果不含当前选中时自动跳到首条匹配
+ *   - 左右两栏独立滚动，互不打架；移动端折叠为「上目录 + 下详情」
+ *   - 详情区右上角「复制 SQL」按钮 + 代码块 `tabSize:2 + overflow-x:auto`
  *   - 纯静态数据，零后端、零持久化
  */
 export function CcasSqlSnippets() {
   const [keyword, setKeyword] = useState('');
+  const firstSnippetId = SQL_SNIPPET_GROUPS[0]?.snippets[0]?.id ?? '';
+  const [selectedId, setSelectedId] = useState<string>(firstSnippetId);
 
-  const filteredGroups = useMemo(() => {
+  const allSnippets = useMemo<SnippetWithGroup[]>(
+    () =>
+      SQL_SNIPPET_GROUPS.flatMap((g) =>
+        g.snippets.map((s) => ({ ...s, groupId: g.id, groupName: g.name }))
+      ),
+    []
+  );
+
+  const filteredGroups = useMemo<SqlSnippetGroup[]>(() => {
     const k = keyword.trim().toLowerCase();
     if (!k) return SQL_SNIPPET_GROUPS;
     return SQL_SNIPPET_GROUPS
@@ -112,11 +84,33 @@ export function CcasSqlSnippets() {
 
   const matchedCount = filteredGroups.reduce((acc, g) => acc + g.snippets.length, 0);
 
+  useEffect(() => {
+    if (!keyword.trim()) return;
+    const visibleIds = new Set(filteredGroups.flatMap((g) => g.snippets.map((s) => s.id)));
+    if (!visibleIds.has(selectedId) && filteredGroups.length > 0) {
+      setSelectedId(filteredGroups[0].snippets[0].id);
+    }
+  }, [filteredGroups, selectedId, keyword]);
+
+  const selected = useMemo(
+    () => allSnippets.find((s) => s.id === selectedId) ?? allSnippets[0],
+    [allSnippets, selectedId]
+  );
+
+  const handleCopy = async (snippet: SqlSnippet) => {
+    try {
+      await navigator.clipboard.writeText(snippet.sql);
+      toast.success(`已复制「${snippet.title}」`);
+    } catch {
+      toast.error('复制失败', '请手动选中代码块文本复制');
+    }
+  };
+
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex-1 min-h-0 flex flex-col gap-3">
+      <div className="shrink-0 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs text-white/55 leading-relaxed">
-          团队公认的 CCAS 排查 SQL 集合，按数据库版本分组。点「复制」即可粘贴到 Navicat / DBeaver / SSMS 执行。
+          团队公认的 CCAS 排查 SQL 集合，按数据库版本分组。点左侧目录浏览，右上角一键复制。
         </p>
         <div className="relative shrink-0 w-full sm:w-72">
           <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-white/40" />
@@ -130,34 +124,104 @@ export function CcasSqlSnippets() {
         </div>
       </div>
 
-      <div className="text-[11px] text-white/40">
+      <div className="shrink-0 text-[11px] text-white/40">
         共 {SQL_SNIPPET_TOTAL} 条预设
-        {keyword.trim() && <span>，当前匹配 <span className="text-amber-300/85">{matchedCount}</span> 条</span>}
+        {keyword.trim() && (
+          <span>
+            ，当前匹配 <span className="text-amber-300/85">{matchedCount}</span> 条
+          </span>
+        )}
       </div>
 
-      {filteredGroups.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-white/12 bg-white/[0.02] px-6 py-10 text-center text-sm text-white/45">
-          没有匹配「{keyword.trim()}」的语句
+      <div className="flex-1 min-h-0 flex flex-col md:flex-row gap-0 rounded-xl border border-white/10 bg-white/[0.02] overflow-hidden">
+        <aside
+          className="shrink-0 md:w-64 lg:w-72 max-h-60 md:max-h-full md:border-r border-b md:border-b-0 border-white/8 bg-white/[0.015]"
+          style={{ overflowY: 'auto', minHeight: 0 }}
+        >
+          {filteredGroups.length === 0 ? (
+            <div className="px-4 py-6 text-center text-xs text-white/40">
+              没有匹配的语句
+            </div>
+          ) : (
+            <nav className="py-2">
+              {filteredGroups.map((group) => (
+                <div key={group.id} className="px-2 pb-2">
+                  <div className="px-2 pt-1.5 pb-1 text-[10.5px] uppercase tracking-wider text-white/40 font-semibold">
+                    {group.name}
+                  </div>
+                  <ul className="flex flex-col">
+                    {group.snippets.map((s) => {
+                      const isActive = s.id === selectedId;
+                      return (
+                        <li key={s.id}>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedId(s.id)}
+                            data-active={isActive}
+                            className="w-full text-left px-2.5 py-1.5 rounded-md text-xs text-white/75 hover:text-white hover:bg-white/[0.06] data-[active=true]:bg-amber-300/12 data-[active=true]:text-amber-200 data-[active=true]:font-medium transition flex items-center gap-2"
+                          >
+                            <span
+                              aria-hidden
+                              className="w-1 h-3.5 rounded-sm shrink-0"
+                              style={{ background: isActive ? 'rgba(252, 211, 77, 0.85)' : 'transparent' }}
+                            />
+                            <span className="truncate">{s.title}</span>
+                            <span className="ml-auto shrink-0">
+                              <DialectBadge dialect={s.dialect} />
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))}
+            </nav>
+          )}
+        </aside>
+
+        <div className="flex-1 min-h-0" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
+          {selected ? (
+            <article className="flex flex-col">
+              <header className="sticky top-0 z-10 px-4 py-3 border-b border-white/8 bg-[#0f1014]/95 backdrop-blur flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <h3 className="text-sm font-semibold text-white/95 truncate">{selected.title}</h3>
+                  <DialectBadge dialect={selected.dialect} />
+                  <span className="text-[10.5px] text-white/40 truncate">· {selected.groupName}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleCopy(selected)}
+                  className="shrink-0 inline-flex items-center gap-1 h-7 px-3 rounded-md text-xs text-amber-200 border border-amber-300/35 bg-amber-300/10 hover:bg-amber-300/20 hover:border-amber-300/55 transition"
+                  title="复制 SQL 到剪贴板"
+                >
+                  <Copy className="w-3 h-3" />
+                  复制 SQL
+                </button>
+              </header>
+
+              {selected.note && (
+                <div className="px-4 py-2 text-[11.5px] text-white/55 flex items-start gap-1.5 border-b border-white/6 bg-white/[0.01]">
+                  <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-300/60" />
+                  <span>{selected.note}</span>
+                </div>
+              )}
+
+              <pre
+                className="text-[13px] leading-[1.65] text-white/90 font-mono px-4 py-4 m-0 overflow-x-auto"
+                style={{ tabSize: 2 }}
+              >
+                <code>{selected.sql}</code>
+              </pre>
+            </article>
+          ) : (
+            <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-center gap-2 text-white/40 px-6">
+              <BookOpen className="w-6 h-6" />
+              <div className="text-xs">从左侧目录选一条 SQL 查看</div>
+            </div>
+          )}
         </div>
-      ) : (
-        <div className="flex flex-col gap-6">
-          {filteredGroups.map((group) => (
-            <section key={group.id} className="flex flex-col gap-2.5">
-              <div className="flex flex-col gap-1">
-                <h3 className="text-sm font-semibold text-white/90">{group.name}</h3>
-                {group.description && (
-                  <p className="text-[11.5px] text-white/50 leading-relaxed">{group.description}</p>
-                )}
-              </div>
-              <div className="flex flex-col gap-3">
-                {group.snippets.map((s) => (
-                  <SnippetCard key={s.id} snippet={s} />
-                ))}
-              </div>
-            </section>
-          ))}
-        </div>
-      )}
+      </div>
     </div>
   );
 }
