@@ -513,21 +513,29 @@ export function ReprocessChatDrawer({
       },
       onDone: (tokenInfo) => {
         if (!isOwnedByCurrentEntry()) return;
-        // streamDirectChat 的 onDone 在两种情况下都会触发：(a) 收到 SSE done 事件
-        // 时带 tokenInfo；(b) reader 流被关闭（连接中断）时不带 tokenInfo。后者
-        // 内容可能是截断的，写回会把残缺文本落库（Bugbot 十一轮 High）
-        if (!tokenInfo) {
-          setError('连接意外断开，AI 回复可能不完整，已禁用写回。请重新发起。');
-          setMessages((prev) => prev.map((m) =>
-            m.id === asstMsgId
-              ? { ...m, streaming: false, phase: 'error',
-                  content: m.content
-                    ? m.content + '\n\n（⚠ 连接中断，回复可能未完成）'
-                    : '（连接中断，未收到任何回复）' }
-              : m));
-        } else {
-          setMessages((prev) => prev.map((m) =>
-            m.id === asstMsgId ? { ...m, streaming: false, phase: 'done' } : m));
+        // streamDirectChat.onDone 的两类来源都可能不带 tokenInfo：
+        //   (a) SSE done 事件 + 上游未返回 token 用量（合法完成，部分 provider 就这样）
+        //   (b) reader 关闭无 done 事件（疑似截断）
+        // 上一轮（十一轮）我直接拿 !tokenInfo 当截断标志，把 (a) 也错判 error
+        // → 用户合法回复看不到写回按钮（Bugbot/Codex 十二轮 High/P2）。
+        //
+        // 折中规则：tokenInfo 不再作为唯一判据。
+        //   - content 非空 → 一律 done（让用户能写回；真截断的话用户自己读得到）
+        //   - content 完全空 + 没 tokenInfo → 当真异常 error（顶部 banner + 气泡占位）
+        //   - content 完全空但有 tokenInfo → 极少见的"空白成功"，按 done 处理
+        let emptyAndNoToken = false;
+        setMessages((prev) => prev.map((m) => {
+          if (m.id !== asstMsgId) return m;
+          const empty = !m.content || m.content.trim().length === 0;
+          if (empty && !tokenInfo) {
+            emptyAndNoToken = true;
+            return { ...m, streaming: false, phase: 'error',
+              content: '（连接中断或上游未返回任何内容）' };
+          }
+          return { ...m, streaming: false, phase: 'done' };
+        }));
+        if (emptyAndNoToken) {
+          setError('上游未返回任何内容，请重新发起。');
         }
         setStreamingId(null);
         sendLockRef.current = false;
