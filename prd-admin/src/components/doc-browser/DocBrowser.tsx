@@ -673,6 +673,24 @@ function TreeNode({
   const isShared = !isFolder && (sharedEntryIds?.has(entry.id) ?? false);
   const [dragOver, setDragOver] = useState(false);
 
+  const verdictForRow = !isFolder ? getVerdictConfig(entry.metadata?.verdict) : null;
+  const isFreshForRow = !isFolder && (isEntryFresh ? isEntryFresh(entry) : isRecentlyChanged(entry.lastChangedAt));
+  const isContentMatch = !isFolder && contentMatchIds.has(entry.id);
+  const isSubscriptionDot = !isFolder && entry.sourceType === 'subscription' && !!onOpenSubscription;
+  const hasTags = !isFolder && (entry.tags?.length ?? 0) > 0;
+  const hasSecondLineMeta =
+    !isFolder && (
+      isShared ||
+      reprocessing !== undefined ||
+      !!verdictForRow ||
+      hasTags ||
+      isContentMatch ||
+      isFreshForRow ||
+      isSubscriptionDot ||
+      isPrimary ||
+      (isPinned && !isPrimary)
+    );
+
   return (
     <>
       <button
@@ -760,9 +778,9 @@ function TreeNode({
               color: isFolder
                 ? 'var(--text-muted)'
                 : (isSelected ? 'var(--text-primary)' : 'var(--text-secondary)'),
-              fontWeight: isFolder ? 600 : (isSelected ? 500 : 400),
-              fontSize: isFolder ? '10.5px' : '12px',
-              letterSpacing: isFolder ? '0.06em' : 'normal',
+              fontWeight: isFolder ? 600 : (isSelected ? 600 : 500),
+              fontSize: isFolder ? '10.5px' : '12.5px',
+              letterSpacing: isFolder ? '0.06em' : '-0.005em',
               textTransform: isFolder ? 'uppercase' : 'none',
             }}>
             {displayTitle}
@@ -779,10 +797,22 @@ function TreeNode({
                 : <ChevronRight size={13} style={{ color: 'var(--text-muted)' }} />}
             </span>
           )}
+
+          {/* 无 meta 行时，时间紧贴标题右侧显示，避免出现空旷的第二行 */}
+          {!isFolder && !hasSecondLineMeta && showUpdatedTime && entry[timeField] && (
+            <span className="flex-shrink-0" style={{ marginLeft: 'auto', paddingLeft: '6px', opacity: 0.55 }}>
+              <RelativeTime
+                value={entry[timeField]!}
+                refreshIntervalMs={0}
+                className="text-[9.5px] tabular-nums text-token-muted"
+                title={`${timeField === 'createdAt' ? '创建于' : '最后更新'}：${new Date(entry[timeField]!).toLocaleString('zh-CN')}${timeField === 'updatedAt' && entry.updatedByName ? ` · ${entry.updatedByName}` : ''}`}
+              />
+            </span>
+          )}
         </div>
 
-        {/* 第二行：徽章（状态/标签/NEW…）+ 时间，仅非文件夹。缩进对齐到标题下方。 */}
-        {!isFolder && (
+        {/* 第二行：徽章（状态/标签/NEW…）+ 时间，仅非文件夹且有 meta 时才渲染。缩进对齐到标题下方。 */}
+        {hasSecondLineMeta && (
         <div className="flex items-center gap-1.5 flex-wrap w-full" style={{ paddingLeft: '22px' }}>
 
         {/* 已分享：黄色标识，点击打开分享弹窗查看/复制链接（不只是撤销） */}
@@ -835,11 +865,10 @@ function TreeNode({
 
         {!isFolder && (entry.tags?.length ?? 0) > 0 && (
           <span
-            className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0"
+            className="text-[9px] flex-shrink-0 tabular-nums"
             style={{
-              background: 'rgba(168,85,247,0.08)',
-              color: 'rgba(216,180,254,0.9)',
-              border: '1px solid rgba(168,85,247,0.16)',
+              color: 'rgba(216,180,254,0.75)',
+              letterSpacing: '0.01em',
             }}
             title={(entry.tags ?? []).map(tag => `#${tag}`).join(' ')}
           >
