@@ -1,7 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
-# Only run in Claude Code Web (remote) environment
+# Only run in Claude Code Web (remote) environment.
+# This hook prepares the exact baseline commands expected by Cloud Agents:
+#   - cd prd-admin && pnpm tsc --noEmit
+#   - cd prd-admin && pnpm lint
+#   - cd prd-api && dotnet build --no-restore
 if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
   exit 0
 fi
@@ -10,9 +14,20 @@ PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 
 log() { echo "[session-start] $*"; }
 
+run_or_warn() {
+  local label="$1"
+  shift
+  log "$label"
+  if "$@"; then
+    log "$label: OK"
+  else
+    log "WARNING: $label failed"
+  fi
+}
+
 ensure_pnpm() {
   if command -v pnpm &>/dev/null; then
-    return
+    return 0
   fi
 
   log "pnpm not found, enabling via corepack..."
@@ -44,20 +59,30 @@ fi
 
 log ".NET SDK: $(dotnet --version)"
 
-# Persist PATH via CLAUDE_ENV_FILE
+# Persist PATH via CLAUDE_ENV_FILE so every later terminal sees dotnet.
 if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
-  echo "export DOTNET_ROOT=\"$HOME/.dotnet\"" >> "$CLAUDE_ENV_FILE"
-  echo "export PATH=\"$HOME/.dotnet:$HOME/.dotnet/tools:\$PATH\"" >> "$CLAUDE_ENV_FILE"
+  {
+    echo "export DOTNET_ROOT=\"$HOME/.dotnet\""
+    echo "export PATH=\"$HOME/.dotnet:$HOME/.dotnet/tools:\$PATH\""
+  } >> "$CLAUDE_ENV_FILE"
+fi
+
+# Also persist for plain bash terminals when CLAUDE_ENV_FILE is unavailable.
+if ! grep -q "PRD_AGENT_DOTNET_ROOT" "$HOME/.bashrc" 2>/dev/null; then
+  {
+    echo ""
+    echo "# PRD_AGENT_DOTNET_ROOT"
+    echo "export DOTNET_ROOT=\"$HOME/.dotnet\""
+    echo "export PATH=\"$HOME/.dotnet:$HOME/.dotnet/tools:\$PATH\""
+  } >> "$HOME/.bashrc"
 fi
 
 # ------------------------------------------------------------------
 # 2. Start NuGet Proxy Relay (workaround for dotnet/runtime#114066)
-#    .NET HttpClient cannot send Proxy-Authorization with URL-embedded
-#    JWT credentials used by the Claude Code Web sandbox proxy.
 # ------------------------------------------------------------------
+RELAY_PID=""
 RELAY_SCRIPT="$PROJECT_DIR/scripts/nuget-proxy-relay.py"
 if [ -f "$RELAY_SCRIPT" ]; then
-  # Kill any stale relay
   pkill -f "nuget-proxy-relay.py" 2>/dev/null || true
   sleep 0.5
 
@@ -74,11 +99,10 @@ if [ -f "$RELAY_SCRIPT" ]; then
   fi
 else
   log "WARNING: nuget-proxy-relay.py not found at $RELAY_SCRIPT"
-  RELAY_PID=""
 fi
 
 # ------------------------------------------------------------------
-# 3. dotnet restore (through proxy relay)
+# 3. dotnet restore (through proxy relay when available)
 # ------------------------------------------------------------------
 SLN="$PROJECT_DIR/prd-api/PrdAgent.sln"
 if [ -f "$SLN" ]; then
@@ -86,35 +110,26 @@ if [ -f "$SLN" ]; then
   cd "$PROJECT_DIR/prd-api"
   if [ -n "${RELAY_PID:-}" ]; then
     HTTPS_PROXY=http://127.0.0.1:18080 HTTP_PROXY=http://127.0.0.1:18080 \
-      dotnet restore PrdAgent.sln
+      dotnet restore PrdAgent.sln || log "WARNING: dotnet restore failed through proxy relay"
   else
     dotnet restore PrdAgent.sln || log "WARNING: dotnet restore failed (proxy auth issue?)"
   fi
-  log "NuGet restore done"
+  log "NuGet restore step finished"
 fi
 
 # ------------------------------------------------------------------
-# 4. Frontend dependencies (pnpm install)
+# 4. prd-admin dependencies (pnpm install)
 # ------------------------------------------------------------------
 cd "$PROJECT_DIR"
 
-if ensure_pnpm; then
-  if [ -f "$PROJECT_DIR/prd-admin/package.json" ]; then
-    if [ -f "$PROJECT_DIR/prd-admin/pnpm-lock.yaml" ]; then
-      log "Warming pnpm store for prd-admin..."
-      pnpm -C "$PROJECT_DIR/prd-admin" fetch --frozen-lockfile 2>&1 || log "WARNING: pnpm fetch failed for prd-admin"
-    fi
-
-    log "Installing prd-admin dependencies (prefer offline)..."
-    pnpm -C "$PROJECT_DIR/prd-admin" install --frozen-lockfile --prefer-offline 2>&1 || log "WARNING: prd-admin install failed"
+if ensure_pnpm && [ -f "$PROJECT_DIR/prd-admin/package.json" ]; then
+  if [ -f "$PROJECT_DIR/prd-admin/pnpm-lock.yaml" ]; then
+    log "Warming pnpm store for prd-admin..."
+    pnpm -C "$PROJECT_DIR/prd-admin" fetch --frozen-lockfile 2>&1 || log "WARNING: pnpm fetch failed for prd-admin"
   fi
 
-  for subdir in prd-desktop prd-video; do
-    if [ -f "$PROJECT_DIR/$subdir/package.json" ]; then
-      log "Installing $subdir dependencies (pnpm)..."
-      pnpm -C "$PROJECT_DIR/$subdir" install --frozen-lockfile --prefer-offline 2>&1 || log "WARNING: $subdir install failed"
-    fi
-  done
+  log "Installing prd-admin dependencies (prefer offline)..."
+  pnpm -C "$PROJECT_DIR/prd-admin" install --frozen-lockfile --prefer-offline 2>&1 || log "WARNING: prd-admin install failed"
 fi
 
 cd "$PROJECT_DIR"
@@ -123,20 +138,23 @@ cd "$PROJECT_DIR"
 # 5. Verification commands required by cloud setup
 # ------------------------------------------------------------------
 if [ -d "$PROJECT_DIR/prd-api" ]; then
-  log "Verifying backend build command: dotnet build prd-api"
-  cd "$PROJECT_DIR"
-  dotnet build prd-api 2>&1 || log "WARNING: dotnet build prd-api failed"
+  cd "$PROJECT_DIR/prd-api"
+  run_or_warn "Verifying backend command: dotnet build --no-restore" \
+    dotnet build --no-restore
 fi
 
 if command -v pnpm &>/dev/null && [ -d "$PROJECT_DIR/prd-admin" ]; then
-  log "Verifying frontend command: pnpm -C prd-admin tsc --noEmit"
-  pnpm -C "$PROJECT_DIR/prd-admin" tsc --noEmit 2>&1 || log "WARNING: pnpm -C prd-admin tsc --noEmit failed"
+  cd "$PROJECT_DIR/prd-admin"
+  run_or_warn "Verifying frontend command: pnpm tsc --noEmit" \
+    pnpm tsc --noEmit
+  run_or_warn "Verifying frontend command: pnpm lint" \
+    pnpm lint
 fi
 
 cd "$PROJECT_DIR"
 
 # ------------------------------------------------------------------
-# 6. Stop proxy relay (no longer needed after restore)
+# 6. Stop proxy relay (no longer needed after restore/build)
 # ------------------------------------------------------------------
 if [ -n "${RELAY_PID:-}" ] && kill -0 "$RELAY_PID" 2>/dev/null; then
   kill "$RELAY_PID" 2>/dev/null || true

@@ -256,24 +256,34 @@ install_frontend_deps() {
 }
 
 verify_required_commands() {
-  info "Verifying required command: dotnet build prd-api"
-  cd "$PROJECT_ROOT"
-  if dotnet build prd-api >/tmp/prdapi-build.log 2>&1; then
-    info "dotnet build prd-api succeeded."
+  info "Verifying required command: cd prd-api && dotnet build --no-restore"
+  cd "$PROJECT_ROOT/prd-api"
+  if dotnet build --no-restore >/tmp/prdapi-build.log 2>&1; then
+    info "dotnet build --no-restore succeeded."
   else
-    warn "dotnet build prd-api failed. Last 10 lines:"
+    warn "dotnet build --no-restore failed. Last 10 lines:"
     tail -10 /tmp/prdapi-build.log || true
   fi
 
   if [ -d "$PROJECT_ROOT/prd-admin" ] && [ -f "$PROJECT_ROOT/prd-admin/package.json" ]; then
-    info "Verifying required command: pnpm -C prd-admin tsc --noEmit"
-    if pnpm -C "$PROJECT_ROOT/prd-admin" tsc --noEmit >/tmp/prdadmin-tsc.log 2>&1; then
-      info "pnpm -C prd-admin tsc --noEmit succeeded."
+    cd "$PROJECT_ROOT/prd-admin"
+    info "Verifying required command: cd prd-admin && pnpm tsc --noEmit"
+    if pnpm tsc --noEmit >/tmp/prdadmin-tsc.log 2>&1; then
+      info "pnpm tsc --noEmit succeeded."
     else
-      warn "pnpm -C prd-admin tsc --noEmit failed. Last 20 lines:"
+      warn "pnpm tsc --noEmit failed. Last 20 lines:"
       tail -20 /tmp/prdadmin-tsc.log || true
     fi
+
+    info "Verifying required command: cd prd-admin && pnpm lint"
+    if pnpm lint >/tmp/prdadmin-lint.log 2>&1; then
+      info "pnpm lint succeeded."
+    else
+      warn "pnpm lint failed. Last 20 lines:"
+      tail -20 /tmp/prdadmin-lint.log || true
+    fi
   fi
+  cd "$PROJECT_ROOT"
 }
 
 # ============================================================
