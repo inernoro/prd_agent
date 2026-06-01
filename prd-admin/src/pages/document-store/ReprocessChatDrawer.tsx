@@ -156,6 +156,13 @@ export function ReprocessChatDrawer({
   // 当前 entry id 锁：异步任务（fetch / apply）返回时校验 entry 没变才能写 state
   // 否则 apply 在 doc A 上跑，返回时 doc 已切到 B，错把"成功"绑到 B（Bugbot #3 二轮 Medium）。
   const entryIdRef = useRef(entryId);
+  // 同步 apply 锁：和 sendLockRef 同思路，state 异步 setApplying 之前快速双击会让
+  // 两次 handleApply 都跑过 if(applying) 检查，跑两次写回（Codex P2 十轮）
+  const applyLockRef = useRef(false);
+  // 标记本 entryId 的 load effect 已完整跑完（含 setMessages 等所有同步赋值）。
+  // 持久化 effect 只在 load 完成后才写 sessionStorage，避免在 entryId 切换瞬间把
+  // 上一篇 messages 错写到新 entryId 的 key 下（Bugbot #2 十轮 High）
+  const lastLoadedEntryRef = useRef<string | null>(null);
   // 历史注：曾经维护过 sentForLlmRef 想把每轮发给 LLM 的完整 wrapper（含 doc）
   // 塞进 history，让"模型 N 轮后看到的还是 N 轮前那份 doc"。但 doc 可能 40k 字，
   // 多轮放大成 N × 40k token，得不偿失。改为标准 chat-with-doc 模式：history 走
@@ -184,6 +191,8 @@ export function ReprocessChatDrawer({
     let cancelled = false;
     entryIdRef.current = entryId;
     sendLockRef.current = false;
+    applyLockRef.current = false;
+    lastLoadedEntryRef.current = null; // 新 entryId 还没初始化完，持久化先停
     abortCurrentStream();
     setMessages([]);
     setActive(null);
@@ -296,8 +305,13 @@ export function ReprocessChatDrawer({
       if (persisted) {
         if (persisted.messages.length > 0) {
           setMessages((prev) => {
-            const seen = new Set(prev.map((m) => m.id));
-            const fresh = persisted.messages.filter((m) => !seen.has(m.id));
+            // id 去重（同会话同次创建）+ 内容去重（worker 历史和 direct-chat cache
+            // 可能记同一份对话，client id 不同但 role+content 相同）（Bugbot #3 十轮 Medium）
+            const seenById = new Set(prev.map((m) => m.id));
+            const seenByContent = new Set(prev.map((m) => `${m.role}::${(m.content || '').slice(0, 200)}`));
+            const fresh = persisted.messages.filter((m) =>
+              !seenById.has(m.id)
+              && !seenByContent.has(`${m.role}::${(m.content || '').slice(0, 200)}`));
             return [...prev, ...fresh];
           });
         }
@@ -316,6 +330,10 @@ export function ReprocessChatDrawer({
           }
         }
       }
+
+      // 至此本 entryId 的初始化（doc 之外的部分）已全部 setState 完毕，标记 ready。
+      // 持久化 effect 看到这个 ref 才会开始写 sessionStorage（Bugbot #2 十轮 High）
+      if (entryIdRef.current === entryId) lastLoadedEntryRef.current = entryId;
     })();
 
     return () => {
@@ -330,25 +348,31 @@ export function ReprocessChatDrawer({
   useEffect(() => () => abortCurrentStream(), [abortCurrentStream]);
 
   // 把对话持久化到 sessionStorage：direct-chat 不存后端，关掉抽屉后再开必须能恢复
-  // （Bugbot 九轮 Medium）。streaming 状态不持久化——下次开抽屉时按已落地内容显示，
-  // 没必要带回流式态。
+  // （Bugbot 九轮 Medium）。
+  //
+  // 三重防护：
+  // 1) 流式中不写：onText 每收到一段 chunk 都会 setMessages，effect 会被触发；
+  //    如果照写就会把"未完成的 AI 回复"持久化为 phase=done，下次重开后用户能
+  //    把残缺文本写回文档（Bugbot #1 十轮 High）
+  // 2) entry 切换瞬间不写：useEffect 在 reset commit 之前可能跑一次，此时 entryId
+  //    已经是新的但 messages 还是旧的，会把上一篇内容写到新 entry key 下
+  //    （Bugbot #2 十轮 High）。靠 lastLoadedEntryRef 标记 load 完成才放行
+  // 3) 干净空状态不写
   useEffect(() => {
-    if (loadingDoc || loadingAgents) return; // 初始化中还没合并完，先别覆盖
-    if (messages.length === 0 && !active) return; // 干净空状态不写
+    if (loadingDoc || loadingAgents) return;
+    if (streamingId !== null) return;                      // 流式中不快照
+    if (lastLoadedEntryRef.current !== entryId) return;    // 初始化没完成不快照
+    if (messages.length === 0 && !active) return;
+    // 双保险：万一仍有 streaming/thinking 的气泡，过滤掉，避免落"未完成"成"完成"
+    const sanitized = messages.filter((m) => !m.streaming && m.phase !== 'streaming' && m.phase !== 'thinking');
+    if (sanitized.length === 0 && !active) return;
     const activeRef: PersistedChatState['activeRef'] = active?.kind === 'toolbox'
       ? { kind: 'toolbox', itemId: active.item.id }
       : active?.kind === 'kbAgent'
         ? { kind: 'kbAgent', key: active.agent.key }
         : undefined;
-    savePersistedChat(entryId, {
-      messages: messages.map((m) => ({
-        ...m,
-        streaming: false,
-        phase: m.phase === 'thinking' || m.phase === 'streaming' ? 'done' : m.phase,
-      })),
-      activeRef,
-    });
-  }, [entryId, messages, active, loadingDoc, loadingAgents]);
+    savePersistedChat(entryId, { messages: sanitized, activeRef });
+  }, [entryId, messages, active, loadingDoc, loadingAgents, streamingId]);
 
   // 点击外面关闭 picker
   useEffect(() => {
@@ -460,11 +484,18 @@ export function ReprocessChatDrawer({
       },
       onError: (msg) => {
         if (!isOwnedByCurrentEntry()) return; // 来自上一篇文档的 stream，丢弃
-        setError(msg || '调用失败');
+        // 把权限相关错误（403 / HTTP 403）特别标注，提示用户去申请 ai-toolbox.use
+        // 否则角色被允许编辑文档但没百宝箱权限时只会看到一句"HTTP 403"很迷茫（Codex P2 十轮）
+        const rawMsg = msg || '调用失败';
+        const isPermError = /\b403\b|权限|forbidden/i.test(rawMsg);
+        const friendlyMsg = isPermError
+          ? 'AI 写作链路需要「百宝箱使用」权限（ai-toolbox.use）。当前账号没有这个权限，请联系管理员开通后再试。'
+          : rawMsg;
+        setError(friendlyMsg);
         setMessages((prev) => prev.map((m) =>
           m.id === asstMsgId
             ? { ...m, streaming: false, phase: 'error',
-                content: m.content || `（调用失败：${msg || '未知错误'}）` }
+                content: m.content || `（调用失败：${friendlyMsg}）` }
             : m));
         setStreamingId(null);
         sendLockRef.current = false;
@@ -546,8 +577,14 @@ export function ReprocessChatDrawer({
   ) => {
     const msg = messages.find((m) => m.id === msgId);
     if (!msg || msg.role !== 'assistant' || !msg.content) return;
+    // 已写回的 message 拒绝重入（防止"已写回"按钮被重复点击造成 append 第二次或
+    // 又 new 一个）（Codex P2 十轮）
+    if (msg.applied) return;
     const key = `${msgId}:${mode}`;
+    // 同步 ref 锁：state-based applying 在 React 还没 commit 之前会让双击两次都漏过
+    if (applyLockRef.current) return;
     if (applying) return;
+    applyLockRef.current = true;
     // 锁定调用瞬间的 entryId；若 await 期间用户切到了别的文档，绝对不能把 success/error
     // 状态再写到当前抽屉里，也不能给 onApplied 回调（会让外层选中错的 entry）。
     // Bugbot #3（二轮 Medium）。
@@ -559,11 +596,13 @@ export function ReprocessChatDrawer({
     } catch (e) {
       // 即使 entry 切走也得清 applying，不然新 doc 的写回按钮永远 disabled（Bugbot #3 三轮 Low）
       setApplying(null);
+      applyLockRef.current = false;
       if (entryIdRef.current !== requestedEntryId) return; // 切走了，静默丢弃错误 toast
       toast.error('写回失败', e instanceof Error ? e.message : '网络异常');
       return;
     }
     setApplying(null);
+    applyLockRef.current = false;
     if (entryIdRef.current !== requestedEntryId) {
       // entry 在 await 期间被切换：丢弃这次结果，避免错认归属
       return;

@@ -54,28 +54,32 @@ public class ContentReprocessApplyService
         if (string.IsNullOrEmpty(content))
             throw new InvalidOperationException("消息内容为空");
 
+        // actor = 发起这次写回的用户。chat 路径上 run.UserId 就是登录用户；apply-content
+        // 路径上 controller 构造了 tmpRun 也用 GetUserId() 喂 UserId。两路径都正确。
+        var actorId = run.UserId;
+
         return mode switch
         {
-            "replace" => await ReplaceAsync(sourceEntry, content, db),
-            "append" => await AppendAsync(sourceEntry, content, db),
-            "new" => await CreateNewAsync(sourceEntry, content, title, run.UserId, db),
+            "replace" => await ReplaceAsync(sourceEntry, content, actorId, db),
+            "append" => await AppendAsync(sourceEntry, content, actorId, db),
+            "new" => await CreateNewAsync(sourceEntry, content, title, actorId, db),
             _ => throw new InvalidOperationException($"未知 mode: {mode}"),
         };
     }
 
-    private async Task<ApplyResult> ReplaceAsync(DocumentEntry entry, string content, MongoDbContext db)
+    private async Task<ApplyResult> ReplaceAsync(DocumentEntry entry, string content, string actorId, MongoDbContext db)
     {
-        await SaveContentToEntryAsync(entry, content, db);
+        await SaveContentToEntryAsync(entry, content, actorId, db);
         return new ApplyResult("replace", null, entry.Id, FinalBody: content);
     }
 
-    private async Task<ApplyResult> AppendAsync(DocumentEntry entry, string content, MongoDbContext db)
+    private async Task<ApplyResult> AppendAsync(DocumentEntry entry, string content, string actorId, MongoDbContext db)
     {
         var existing = await LoadEntryContentAsync(entry);
         var merged = string.IsNullOrEmpty(existing)
             ? content
             : existing.TrimEnd() + "\n\n" + content;
-        await SaveContentToEntryAsync(entry, merged, db);
+        await SaveContentToEntryAsync(entry, merged, actorId, db);
         return new ApplyResult("append", null, entry.Id, FinalBody: merged);
     }
 
@@ -133,7 +137,7 @@ public class ContentReprocessApplyService
         return entry.ContentIndex ?? string.Empty;
     }
 
-    private async Task SaveContentToEntryAsync(DocumentEntry entry, string content, MongoDbContext db)
+    private async Task SaveContentToEntryAsync(DocumentEntry entry, string content, string actorId, MongoDbContext db)
     {
         ParsedPrd parsed;
         if (!string.IsNullOrEmpty(entry.DocumentId))
@@ -150,6 +154,9 @@ public class ContentReprocessApplyService
         }
         await _documentService.SaveAsync(parsed);
 
+        // 与 UpdateEntryContent 保持一致：把"最近编辑者"更新到当前 actor，
+        // 否则团队场景下 audit/活动流会错误归属（Codex P2 十轮）
+        // run.UserId 就是发起这次 AI 写回的人（chat endpoint 写入 run 时校验过 GetUserId）。
         await db.DocumentEntries.UpdateOneAsync(
             e => e.Id == entry.Id,
             Builders<DocumentEntry>.Update
@@ -159,7 +166,8 @@ public class ContentReprocessApplyService
                 .Set(e => e.FileSize, Encoding.UTF8.GetByteCount(content))
                 .Set(e => e.ContentType, "text/markdown")
                 .Set(e => e.LastChangedAt, DateTime.UtcNow)
-                .Set(e => e.UpdatedAt, DateTime.UtcNow),
+                .Set(e => e.UpdatedAt, DateTime.UtcNow)
+                .Set(e => e.UpdatedBy, actorId),
             cancellationToken: CancellationToken.None);
 
         _logger.LogInformation(
