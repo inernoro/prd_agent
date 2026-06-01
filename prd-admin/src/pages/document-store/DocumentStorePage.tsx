@@ -1542,7 +1542,7 @@ export function DocumentStorePage() {
       <div
         className="sticky top-0 z-20 flex flex-col gap-3 pb-5 -mb-5"
         style={{
-          background: 'var(--bg-primary)',
+          background: 'var(--bg-base)',
           backdropFilter: 'saturate(180%) blur(8px)',
           WebkitBackdropFilter: 'saturate(180%) blur(8px)',
         }}
