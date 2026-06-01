@@ -757,8 +757,22 @@ public class DocumentStoreController : ControllerBase
         long documentsDeleted = 0;
         if (documentIds.Count > 0)
         {
-            var r = await _db.Documents.DeleteManyAsync(d => documentIds.Contains(d.Id));
-            documentsDeleted = r.DeletedCount;
+            // 重要：DocumentId 是内容 SHA-256（content-addressable），多 entry 可能共享同一 Document
+            // （同内容文件被多处订阅 / 重命名 / 跨知识库订阅同一 URL）。
+            // 必须先确认本次删除范围之外没有其他 entry 还引用这个 DocumentId，才能删 Document。
+            // 否则会把别人共享的 Document 一并删掉，对方下次预览就空白（hash 短路又导致永久回不来）。
+            var safeToDeleteDocIds = new List<string>();
+            foreach (var docId in documentIds.Distinct())
+            {
+                var otherRefs = await _db.DocumentEntries.CountDocumentsAsync(
+                    e => e.DocumentId == docId && !idsToDelete.Contains(e.Id));
+                if (otherRefs == 0) safeToDeleteDocIds.Add(docId);
+            }
+            if (safeToDeleteDocIds.Count > 0)
+            {
+                var r = await _db.Documents.DeleteManyAsync(d => safeToDeleteDocIds.Contains(d.Id));
+                documentsDeleted = r.DeletedCount;
+            }
         }
         long attachmentsDeleted = 0;
         if (attachmentIds.Count > 0)

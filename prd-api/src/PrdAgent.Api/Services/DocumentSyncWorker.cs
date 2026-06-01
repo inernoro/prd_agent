@@ -215,20 +215,64 @@ public class DocumentSyncWorker : BackgroundService
 
             using var response = await client.SendAsync(request, ct);
 
-            // 304 Not Modified → 服务端确认未变化，仅更新 LastSyncAt
+            // 304 Not Modified → 服务端确认未变化，仅更新 LastSyncAt（但要先确认 Document 仍存在）
             if (response.StatusCode == HttpStatusCode.NotModified)
             {
+                // 自愈：与 hash 短路同款保护——若 Document 已被它处删除，必须重拉
+                var docOk = !string.IsNullOrEmpty(entry.DocumentId)
+                    && await documentService.GetByIdAsync(entry.DocumentId) is { } d304
+                    && !string.IsNullOrWhiteSpace(d304.RawContent);
+                if (docOk)
+                {
+                    await db.DocumentEntries.UpdateOneAsync(
+                        e => e.Id == entry.Id,
+                        Builders<DocumentEntry>.Update
+                            .Set(e => e.SyncStatus, DocumentSyncStatus.Idle)
+                            .Set(e => e.SyncError, null)
+                            .Set(e => e.LastSyncAt, DateTime.UtcNow)
+                            .Set(e => e.UpdatedAt, DateTime.UtcNow)
+                            .Unset(e => e.SyncLeaseOwner)
+                            .Unset(e => e.SyncLeaseExpiresAt),
+                        cancellationToken: CancellationToken.None);
+                    _logger.LogDebug("[DocumentSyncWorker] {EntryId} returned 304, skipped", entry.Id);
+                    return;
+                }
+                _logger.LogWarning(
+                    "[DocumentSyncWorker] {EntryId} got 304 but Document {DocId} missing/empty; forcing live fetch (drop ETag)",
+                    entry.Id, entry.DocumentId);
+                // 304 但 Document 丢了 → 重发请求不带 If-None-Match，强制拉全量
+                using var freshReq = new HttpRequestMessage(HttpMethod.Get, sourceUri);
+                freshReq.Headers.UserAgent.ParseAdd("PrdAgent-DocumentSync/1.0");
+                using var freshResp = await client.SendAsync(freshReq, ct);
+                freshResp.EnsureSuccessStatusCode();
+                response.Dispose();
+                // 重新装载 response 变量本身不可（using 限制），改写为下面用 freshResp 复制状态
+                var freshContent = await freshResp.Content.ReadAsStringAsync(ct);
+                if (string.IsNullOrWhiteSpace(freshContent))
+                {
+                    sw.Stop();
+                    await MarkSyncError(db, entry, "重拉到的内容为空", startedAt, (int)sw.ElapsedMilliseconds);
+                    return;
+                }
+                var freshHash = ComputeHash(freshContent);
+                var freshParsed = await documentService.ParseAsync(freshContent);
+                freshParsed.Title = entry.Title;
+                await documentService.SaveAsync(freshParsed);
                 await db.DocumentEntries.UpdateOneAsync(
                     e => e.Id == entry.Id,
                     Builders<DocumentEntry>.Update
+                        .Set(e => e.DocumentId, freshParsed.Id)
+                        .Set(e => e.ContentHash, freshHash)
+                        .Set(e => e.FileSize, (long)Encoding.UTF8.GetByteCount(freshContent))
                         .Set(e => e.SyncStatus, DocumentSyncStatus.Idle)
                         .Set(e => e.SyncError, null)
                         .Set(e => e.LastSyncAt, DateTime.UtcNow)
+                        .Set(e => e.LastChangedAt, DateTime.UtcNow)
                         .Set(e => e.UpdatedAt, DateTime.UtcNow)
                         .Unset(e => e.SyncLeaseOwner)
                         .Unset(e => e.SyncLeaseExpiresAt),
                     cancellationToken: CancellationToken.None);
-                _logger.LogDebug("[DocumentSyncWorker] {EntryId} returned 304, skipped", entry.Id);
+                _logger.LogInformation("[DocumentSyncWorker] {EntryId} self-healed empty Document via live fetch", entry.Id);
                 return;
             }
 
@@ -251,21 +295,33 @@ public class DocumentSyncWorker : BackgroundService
 
             if (!string.IsNullOrEmpty(entry.ContentHash) && entry.ContentHash == newHash)
             {
-                // 内容未变 → 仅更新 LastSyncAt + 缓存头（如有更新），不落日志
-                await db.DocumentEntries.UpdateOneAsync(
-                    e => e.Id == entry.Id,
-                    Builders<DocumentEntry>.Update
-                        .Set(e => e.SyncStatus, DocumentSyncStatus.Idle)
-                        .Set(e => e.SyncError, null)
-                        .Set(e => e.LastSyncAt, DateTime.UtcNow)
-                        .Set(e => e.UpdatedAt, DateTime.UtcNow)
-                        .Set(e => e.LastETag, newETag)
-                        .Set(e => e.LastModifiedHeader, newLastModified)
-                        .Unset(e => e.SyncLeaseOwner)
-                        .Unset(e => e.SyncLeaseExpiresAt),
-                    cancellationToken: CancellationToken.None);
-                _logger.LogDebug("[DocumentSyncWorker] {EntryId} content hash unchanged, skipped", entry.Id);
-                return;
+                // 自愈：内容未变但 DocumentId 引用的 Document 可能已被其它 entry 删除路径误删
+                // （历史 bug：DeleteEntry 无条件级联删共享 Document，此处又短路不重写 → 永久空白）
+                var docStillExists = !string.IsNullOrEmpty(entry.DocumentId)
+                    && await documentService.GetByIdAsync(entry.DocumentId) is { } d
+                    && !string.IsNullOrWhiteSpace(d.RawContent);
+                if (docStillExists)
+                {
+                    // 内容未变 → 仅更新 LastSyncAt + 缓存头（如有更新），不落日志
+                    await db.DocumentEntries.UpdateOneAsync(
+                        e => e.Id == entry.Id,
+                        Builders<DocumentEntry>.Update
+                            .Set(e => e.SyncStatus, DocumentSyncStatus.Idle)
+                            .Set(e => e.SyncError, null)
+                            .Set(e => e.LastSyncAt, DateTime.UtcNow)
+                            .Set(e => e.UpdatedAt, DateTime.UtcNow)
+                            .Set(e => e.LastETag, newETag)
+                            .Set(e => e.LastModifiedHeader, newLastModified)
+                            .Unset(e => e.SyncLeaseOwner)
+                            .Unset(e => e.SyncLeaseExpiresAt),
+                        cancellationToken: CancellationToken.None);
+                    _logger.LogDebug("[DocumentSyncWorker] {EntryId} content hash unchanged, skipped", entry.Id);
+                    return;
+                }
+                _logger.LogWarning(
+                    "[DocumentSyncWorker] {EntryId} hash unchanged but Document {DocId} missing/empty; forcing re-save",
+                    entry.Id, entry.DocumentId);
+                // fall through 到下面的"重新解析、保存、落日志"分支，把 Document 重建回来
             }
 
             // 真的有变化 → 解析、保存、落日志
