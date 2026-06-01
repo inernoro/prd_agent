@@ -797,6 +797,19 @@ function TreeNode({
   const isShared = !isFolder && (sharedEntryIds?.has(entry.id) ?? false);
   const [dragOver, setDragOver] = useState(false);
 
+  // 是否需要渲染右上角徽章行
+  const verdictForRow = !isFolder ? getVerdictConfig(entry.metadata?.verdict) : null;
+  const isFreshForRow = !isFolder && (isEntryFresh ? isEntryFresh(entry) : isRecentlyChanged(entry.lastChangedAt));
+  const isContentMatch = !isFolder && contentMatchIds.has(entry.id);
+  const isSubscriptionDot = !isFolder && entry.sourceType === 'subscription' && !!onOpenSubscription;
+  const hasTags = !isFolder && (entry.tags?.length ?? 0) > 0;
+  const hasBadgeRow =
+    !isFolder && (
+      isShared || reprocessing !== undefined || !!verdictForRow ||
+      hasTags || isContentMatch || isFreshForRow ||
+      isSubscriptionDot || isPrimary || (isPinned && !isPrimary)
+    );
+
 
   return (
     <>
@@ -832,7 +845,7 @@ function TreeNode({
             onMoveEntry(draggedId, entry.id);
           }
         }}
-        className={`relative flex items-center gap-1.5 text-left cursor-pointer transition-all duration-150 group ${isFolder ? 'py-[7px]' : 'py-[10px] hover-bg-soft'}`}
+        className={`relative flex items-center gap-2 text-left cursor-pointer transition-all duration-150 group ${isFolder ? 'py-[7px]' : 'py-[8px] hover-bg-soft'}`}
         style={{
           // 整块圆角高亮：左右留 6px 内缩，hover/选中不贴边。
           // 宽度扣掉左右 12px 外边距，避免 w-full(100%)+margin 超出容器、撑出横向滚动条。
@@ -841,6 +854,8 @@ function TreeNode({
           paddingRight: '10px',
           marginLeft: '6px',
           marginRight: '6px',
+          // 非文件夹条目固定 minHeight，避免「有 badges 的两层 vs 无 badges 的单行」导致列表高度跳变
+          minHeight: isFolder ? undefined : 44,
           // 仅在拖拽/选中时显式给背景，未高亮时留空让 hover-bg-soft 类的 :hover 生效
           background: dragOver
             ? 'var(--accent-soft, rgba(99,102,241,0.14))'
@@ -904,8 +919,13 @@ function TreeNode({
           </span>
         )}
 
+        {/* 右侧两层堆叠：上层徽章 + 下层时间。无徽章时仅时间居中右对齐 */}
+        {!isFolder && (
+        <div className="flex flex-col items-end justify-center gap-1 flex-shrink-0 ml-auto">
+        {hasBadgeRow && (
+        <div className="flex items-center gap-1.5">
         {/* 已分享：icon-only 节省宽度，hover/点击复用原行为 */}
-        {!isFolder && isShared && (
+        {isShared && (
           <span
             onClick={onShareEntry ? (e) => { e.stopPropagation(); onShareEntry(entry.id); } : undefined}
             className="flex-shrink-0 cursor-pointer"
@@ -1019,13 +1039,15 @@ function TreeNode({
           </span>
         )}
 
-        {!isFolder && isPinned && !isPrimary && (
+        {isPinned && !isPrimary && (
           <Pin size={10} className="flex-shrink-0" style={{ color: 'rgba(59,130,246,0.5)' }} />
         )}
+        </div>
+        )}
 
-        {/* 时间：固定最右，所有条目可见，跟随排序键显示 createdAt 或 updatedAt */}
-        {!isFolder && showUpdatedTime && entry[timeField] && (
-          <span className="flex-shrink-0" style={{ paddingLeft: '4px', opacity: 0.6 }}>
+        {/* 时间：右下角，所有条目可见，跟随排序键显示 createdAt 或 updatedAt */}
+        {showUpdatedTime && entry[timeField] && (
+          <span style={{ opacity: 0.65 }}>
             <RelativeTime
               value={entry[timeField]!}
               refreshIntervalMs={0}
@@ -1033,6 +1055,8 @@ function TreeNode({
               title={`${timeField === 'createdAt' ? '创建于' : '最后更新'}：${new Date(entry[timeField]!).toLocaleString('zh-CN')}${timeField === 'updatedAt' && entry.updatedByName ? ` · ${entry.updatedByName}` : ''}`}
             />
           </span>
+        )}
+        </div>
         )}
       </button>
 
