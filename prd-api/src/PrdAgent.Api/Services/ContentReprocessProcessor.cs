@@ -210,6 +210,74 @@ public class ContentReprocessProcessor
         _logger.LogInformation(
             "[doc-store-agent] Reprocess turn done for run={RunId} seq={Seq} chars={Len}",
             run.Id, assistantSeq, finalContent.Length);
+
+        // 6) 兼容旧 /reprocess 单轮 API 的自动落盘语义：
+        //    旧客户端通过 SSE 监听 done 事件期望拿到 outputEntryId 即可看到新生成的文档条目，
+        //    不需要再额外调 apply-content。新的 Chat 抽屉走前端 direct-chat 链路不走 worker，
+        //    所以不会被此处影响；新的 /reprocess/chat 多轮也只在「首轮」自动落一次，避免每轮 LLM
+        //    都创建一个文档条目把文件树撑爆。
+        //    判定首轮：assistantSeq == 1（assistant 消息是序号 1，意味着 user 是序号 0）。
+        if (assistantSeq == 1)
+        {
+            try
+            {
+                var parsed = await _documentService.ParseAsync(finalContent);
+                var newTitle = BuildLegacyOutputTitle(entry.Title, templateLabel);
+                parsed.Title = newTitle;
+                await _documentService.SaveAsync(parsed);
+
+                var newEntry = new DocumentEntry
+                {
+                    StoreId = entry.StoreId,
+                    ParentId = entry.ParentId,
+                    Title = newTitle,
+                    Summary = finalContent.Length > 200 ? finalContent[..200] : finalContent,
+                    SourceType = DocumentSourceType.Upload,
+                    ContentType = "text/markdown",
+                    FileSize = Encoding.UTF8.GetByteCount(finalContent),
+                    DocumentId = parsed.Id,
+                    CreatedBy = run.UserId,
+                    ContentIndex = finalContent.Length > 2000 ? finalContent[..2000] : finalContent,
+                    LastChangedAt = DateTime.UtcNow,
+                    Metadata = new Dictionary<string, string>
+                    {
+                        ["generated_kind"] = "reprocess",
+                        ["source_entry_id"] = entry.Id,
+                        ["template_key"] = run.TemplateKey ?? "",
+                        ["template_label"] = templateLabel,
+                    },
+                };
+                await db.DocumentEntries.InsertOneAsync(newEntry);
+
+                await db.DocumentStores.UpdateOneAsync(
+                    s => s.Id == entry.StoreId,
+                    Builders<DocumentStore>.Update
+                        .Inc(s => s.DocumentCount, 1)
+                        .Set(s => s.UpdatedAt, DateTime.UtcNow),
+                    cancellationToken: CancellationToken.None);
+
+                await db.DocumentStoreAgentRuns.UpdateOneAsync(
+                    r => r.Id == run.Id,
+                    Builders<DocumentStoreAgentRun>.Update.Set(r => r.OutputEntryId, newEntry.Id),
+                    cancellationToken: CancellationToken.None);
+
+                _logger.LogInformation(
+                    "[doc-store-agent] Legacy auto-save: run={RunId} → newEntry={NewEntryId}",
+                    run.Id, newEntry.Id);
+            }
+            catch (Exception ex)
+            {
+                // 非致命：落盘失败不影响对话本身。前端可继续走 apply-content 显式写回。
+                _logger.LogWarning(ex, "[doc-store-agent] Legacy auto-save failed (non-fatal) run={RunId}", run.Id);
+            }
+        }
+    }
+
+    private static string BuildLegacyOutputTitle(string srcTitle, string templateLabel)
+    {
+        var baseName = Path.GetFileNameWithoutExtension(srcTitle);
+        if (string.IsNullOrWhiteSpace(baseName)) baseName = srcTitle;
+        return $"{baseName}-{templateLabel}.md";
     }
 
     /// <summary>

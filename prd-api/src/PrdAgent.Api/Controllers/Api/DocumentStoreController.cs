@@ -2276,6 +2276,11 @@ public class DocumentStoreController : ControllerBase
         if (string.IsNullOrEmpty(content))
             content = "请按所选模板处理这篇文档。";
 
+        // 与 SendReprocessChat 同一校验：templateKey 必须存在于内置模板或可见智能体里，否则 400
+        // 否则 typo / 旧 key 会静默走 generic prompt（Codex P2）
+        var keyError = await ValidateReprocessTemplateKeyAsync(templateKey);
+        if (keyError != null) return keyError;
+
         return await SendReprocessChatInternal(entryId, runId: null, content: content, templateKey: templateKey);
     }
 
@@ -2288,21 +2293,27 @@ public class DocumentStoreController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "content 不能为空"));
 
         var templateKey = string.IsNullOrWhiteSpace(request.TemplateKey) ? null : request.TemplateKey!.Trim();
-        if (templateKey != null && templateKey != "custom"
-            && ReprocessTemplateRegistry.FindByKey(templateKey) == null)
-        {
-            // 不在内置模板里，再看是不是当前用户可访问的智能体
-            var userId = GetUserId();
-            var agentExists = await _db.ReprocessAgents.Find(a =>
-                a.Key == templateKey
-                && (a.Visibility == ReprocessAgentVisibility.System
-                    || (a.Visibility == ReprocessAgentVisibility.Personal && a.OwnerUserId == userId)))
-                .AnyAsync();
-            if (!agentExists)
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"未知模板/智能体: {templateKey}"));
-        }
+        var keyError = await ValidateReprocessTemplateKeyAsync(templateKey);
+        if (keyError != null) return keyError;
 
         return await SendReprocessChatInternal(entryId, request.RunId, content, templateKey);
+    }
+
+    /// <summary>校验 templateKey：内置模板 / custom / 当前用户可访问的智能体 → 通过；否则 400</summary>
+    private async Task<IActionResult?> ValidateReprocessTemplateKeyAsync(string? templateKey)
+    {
+        if (templateKey == null || templateKey == "custom") return null;
+        if (ReprocessTemplateRegistry.FindByKey(templateKey) != null) return null;
+
+        var userId = GetUserId();
+        var agentExists = await _db.ReprocessAgents.Find(a =>
+            a.Key == templateKey
+            && (a.Visibility == ReprocessAgentVisibility.System
+                || (a.Visibility == ReprocessAgentVisibility.Personal && a.OwnerUserId == userId)))
+            .AnyAsync();
+        if (agentExists) return null;
+
+        return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"未知模板/智能体: {templateKey}"));
     }
 
     private async Task<IActionResult> SendReprocessChatInternal(

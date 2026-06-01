@@ -123,9 +123,28 @@ export function ReprocessChatDrawer({
     });
   }, []);
 
+  // 中止当前 stream 的统一入口：除了 abort fetch，还要清 streamingId，
+  // 否则 chip / 输入框会一直 disabled（Bugbot #2）
+  const abortCurrentStream = useCallback(() => {
+    cancelStreamRef.current?.();
+    cancelStreamRef.current = null;
+    setStreamingId(null);
+  }, []);
+
   // 加载：文档全文 + 百宝箱 + KB 智能体（并行）
+  //
+  // entryId 切换时必须把上一篇文档的对话 / 选中 / 错误 / 缓存正文全部清掉
+  // 否则会出现"显示新文档但写回上一篇"的串数据（Bugbot #1，High）
   useEffect(() => {
     let cancelled = false;
+    abortCurrentStream();
+    setMessages([]);
+    setActive(null);
+    setError(null);
+    setApplying(null);
+    setInput('');
+    setDocContent('');
+    setDocTruncated(false);
     setLoadingDoc(true);
     setLoadingAgents(true);
 
@@ -172,12 +191,14 @@ export function ReprocessChatDrawer({
 
     return () => {
       cancelled = true;
-      cancelStreamRef.current?.();
+      abortCurrentStream();
     };
+    // abortCurrentStream 是 stable useCallback，不会触发 effect 抖动
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entryId]);
 
-  // 关闭浮层
-  useEffect(() => () => { cancelStreamRef.current?.(); }, []);
+  // 关闭浮层时也走统一 abort，确保 streamingId 被清掉
+  useEffect(() => () => abortCurrentStream(), [abortCurrentStream]);
 
   // 点击外面关闭 picker
   useEffect(() => {
