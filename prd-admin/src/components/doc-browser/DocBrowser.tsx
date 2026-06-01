@@ -673,23 +673,6 @@ function TreeNode({
   const isShared = !isFolder && (sharedEntryIds?.has(entry.id) ?? false);
   const [dragOver, setDragOver] = useState(false);
 
-  const verdictForRow = !isFolder ? getVerdictConfig(entry.metadata?.verdict) : null;
-  const isFreshForRow = !isFolder && (isEntryFresh ? isEntryFresh(entry) : isRecentlyChanged(entry.lastChangedAt));
-  const isContentMatch = !isFolder && contentMatchIds.has(entry.id);
-  const isSubscriptionDot = !isFolder && entry.sourceType === 'subscription' && !!onOpenSubscription;
-  const hasTags = !isFolder && (entry.tags?.length ?? 0) > 0;
-  const hasSecondLineMeta =
-    !isFolder && (
-      isShared ||
-      reprocessing !== undefined ||
-      !!verdictForRow ||
-      hasTags ||
-      isContentMatch ||
-      isFreshForRow ||
-      isSubscriptionDot ||
-      isPrimary ||
-      (isPinned && !isPrimary)
-    );
 
   return (
     <>
@@ -725,7 +708,7 @@ function TreeNode({
             onMoveEntry(draggedId, entry.id);
           }
         }}
-        className={`relative flex flex-col gap-0.5 text-left cursor-pointer transition-all duration-150 group ${isFolder ? 'py-[7px]' : 'py-[9px] hover-bg-soft'}`}
+        className={`relative flex items-center gap-1.5 text-left cursor-pointer transition-all duration-150 group ${isFolder ? 'py-[7px]' : 'py-[10px] hover-bg-soft'}`}
         style={{
           // 整块圆角高亮：左右留 6px 内缩，hover/选中不贴边。
           // 宽度扣掉左右 12px 外边距，避免 w-full(100%)+margin 超出容器、撑出横向滚动条。
@@ -769,93 +752,72 @@ function TreeNode({
             }}
           />
         )}
-        {/* 第一行：图标 + 标题（标题独占一行，不再被徽章挤成 prd-age...） */}
-        <div className="flex items-center gap-2 w-full min-w-0">
-          <EntryIcon entry={entry} isPrimary={isPrimary} isPinned={isPinned} isOpen={isOpen} />
+        {/* 单行布局：图标 + 标题（吃剩余宽度）+ 徽章序列 + 时间。徽章统一压扁到 ~16px 高度，避免行高跳变 */}
+        <EntryIcon entry={entry} isPrimary={isPrimary} isPinned={isPinned} isOpen={isOpen} />
 
-          <span className="flex-1 truncate"
-            style={{
-              color: isFolder
-                ? 'var(--text-muted)'
-                : (isSelected ? 'var(--text-primary)' : 'var(--text-secondary)'),
-              fontWeight: isFolder ? 600 : (isSelected ? 600 : 500),
-              fontSize: isFolder ? '10.5px' : '12.5px',
-              letterSpacing: isFolder ? '0.06em' : '-0.005em',
-              textTransform: isFolder ? 'uppercase' : 'none',
-            }}>
-            {displayTitle}
-          </span>
+        <span className="flex-1 truncate min-w-0"
+          style={{
+            color: isFolder
+              ? 'var(--text-muted)'
+              : (isSelected ? 'var(--text-primary)' : 'var(--text-secondary)'),
+            fontWeight: isFolder ? 600 : (isSelected ? 600 : 500),
+            fontSize: isFolder ? '10.5px' : '12.5px',
+            letterSpacing: isFolder ? '0.06em' : '-0.005em',
+            textTransform: isFolder ? 'uppercase' : 'none',
+          }}>
+          {displayTitle}
+        </span>
 
-          {/* 文件夹的计数 + 折叠箭头留在第一行右侧 */}
-          {isFolder && (
-            <span className="flex items-center gap-1.5 flex-shrink-0">
-              <span className="text-[10px] tabular-nums" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
-                {children.length}
-              </span>
-              {isOpen
-                ? <ChevronDown size={13} style={{ color: 'var(--text-muted)' }} />
-                : <ChevronRight size={13} style={{ color: 'var(--text-muted)' }} />}
+        {/* 文件夹的计数 + 折叠箭头 */}
+        {isFolder && (
+          <span className="flex items-center gap-1.5 flex-shrink-0">
+            <span className="text-[10px] tabular-nums" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
+              {children.length}
             </span>
-          )}
-
-          {/* 无 meta 行时，时间紧贴标题右侧显示，避免出现空旷的第二行 */}
-          {!isFolder && !hasSecondLineMeta && showUpdatedTime && entry[timeField] && (
-            <span className="flex-shrink-0" style={{ marginLeft: 'auto', paddingLeft: '6px', opacity: 0.55 }}>
-              <RelativeTime
-                value={entry[timeField]!}
-                refreshIntervalMs={0}
-                className="text-[9.5px] tabular-nums text-token-muted"
-                title={`${timeField === 'createdAt' ? '创建于' : '最后更新'}：${new Date(entry[timeField]!).toLocaleString('zh-CN')}${timeField === 'updatedAt' && entry.updatedByName ? ` · ${entry.updatedByName}` : ''}`}
-              />
-            </span>
-          )}
-        </div>
-
-        {/* 第二行：徽章（状态/标签/NEW…）+ 时间，仅非文件夹且有 meta 时才渲染。缩进对齐到标题下方。 */}
-        {hasSecondLineMeta && (
-        <div className="flex items-center gap-1.5 flex-wrap w-full" style={{ paddingLeft: '22px' }}>
-
-        {/* 已分享：黄色标识，点击打开分享弹窗查看/复制链接（不只是撤销） */}
-        {isShared && (
-          <span
-            onClick={onShareEntry ? (e) => { e.stopPropagation(); onShareEntry(entry.id); } : undefined}
-            className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0 font-bold cursor-pointer"
-            style={{
-              background: 'rgba(234,179,8,0.14)',
-              color: 'rgba(234,179,8,0.95)',
-              border: '1px solid rgba(234,179,8,0.32)',
-            }}
-            title="已分享 · 点击查看或复制链接"
-          >
-            <Share2 size={9} /> 已分享
+            {isOpen
+              ? <ChevronDown size={13} style={{ color: 'var(--text-muted)' }} />
+              : <ChevronRight size={13} style={{ color: 'var(--text-muted)' }} />}
           </span>
         )}
 
-        {/* 再加工进行中：源文档行显示"加工中 N%"——关闭抽屉后仍可见 */}
-        {reprocessing !== undefined && (
+        {/* 已分享：icon-only 节省宽度，hover/点击复用原行为 */}
+        {!isFolder && isShared && (
           <span
-            className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0 font-semibold"
+            onClick={onShareEntry ? (e) => { e.stopPropagation(); onShareEntry(entry.id); } : undefined}
+            className="flex-shrink-0 cursor-pointer"
+            style={{ color: 'rgba(234,179,8,0.85)' }}
+            title="已分享 · 点击查看或复制链接"
+          >
+            <Share2 size={11} />
+          </span>
+        )}
+
+        {/* 再加工进行中：保留文字让用户看进度 */}
+        {!isFolder && reprocessing !== undefined && (
+          <span
+            className="inline-flex items-center gap-1 text-[9px] px-1.5 rounded-full flex-shrink-0 font-semibold tabular-nums"
             style={{
+              height: 16,
+              lineHeight: '16px',
               background: 'rgba(59,130,246,0.12)',
               color: 'rgba(96,165,250,0.95)',
-              border: '1px solid rgba(59,130,246,0.25)',
             }}
             title="正在再加工"
           >
             <MapSpinner size={9} />
-            加工中 {Math.round(reprocessing)}%
+            {Math.round(reprocessing)}%
           </span>
         )}
 
-        {/* 验收结论徽章：验收报告条目按 metadata.verdict 渲染绿/琥珀/红，列表里一眼看出通过没通过 */}
+        {/* 验收结论：保留小药丸（"通过 L1" 是关键扫读信号） */}
         {!isFolder && (() => {
           const vc = getVerdictConfig(entry.metadata?.verdict);
           if (!vc) return null;
           const tier = entry.metadata?.tier;
           return (
             <span
-              className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0 font-bold"
-              style={{ background: vc.background, color: vc.color, border: vc.border }}
+              className="text-[9px] px-1.5 rounded-full flex-shrink-0 font-bold tabular-nums"
+              style={{ height: 16, lineHeight: '16px', background: vc.background, color: vc.color, border: vc.border }}
               title={`验收结论：${vc.label}${tier ? ` · 档位 ${tier}` : ''}`}
             >
               {vc.label}{tier ? ` ${tier}` : ''}
@@ -863,13 +825,11 @@ function TreeNode({
           );
         })()}
 
+        {/* tag：幽灵文字风格 */}
         {!isFolder && (entry.tags?.length ?? 0) > 0 && (
           <span
             className="text-[9px] flex-shrink-0 tabular-nums"
-            style={{
-              color: 'rgba(216,180,254,0.75)',
-              letterSpacing: '0.01em',
-            }}
+            style={{ color: 'rgba(216,180,254,0.75)', letterSpacing: '0.01em' }}
             title={(entry.tags ?? []).map(tag => `#${tag}`).join(' ')}
           >
             #{entry.tags![0]}
@@ -877,16 +837,16 @@ function TreeNode({
           </span>
         )}
 
-        {/* 内容命中标记：标题未含关键词但因正文命中被返回 */}
+        {/* 内容命中标记 */}
         {!isFolder && contentMatchIds.has(entry.id) && (
           <span
-            className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0"
+            className="text-[9px] px-1.5 rounded-full flex-shrink-0"
             style={{
+              height: 16,
+              lineHeight: '16px',
               background: 'var(--bg-tertiary)',
               color: 'var(--text-muted)',
-              border: '1px solid var(--border-faint)',
               letterSpacing: '0.2px',
-              lineHeight: 1.4,
             }}
             title="该文件因正文内容命中而被搜出（标题未含关键词）"
           >
@@ -894,15 +854,15 @@ function TreeNode({
           </span>
         )}
 
-        {/* (new) 徽标：默认 lastChangedAt 24 小时内；外部可通过 isEntryFresh 自定义规则 */}
+        {/* NEW 徽标 */}
         {!isFolder && (isEntryFresh ? isEntryFresh(entry) : isRecentlyChanged(entry.lastChangedAt)) && (
           <span
-            className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0 font-bold"
+            className="text-[9px] px-1.5 rounded-full flex-shrink-0 font-bold"
             style={{
+              height: 16,
+              lineHeight: '16px',
               background: 'rgba(34,197,94,0.12)',
-              border: '1px solid rgba(34,197,94,0.25)',
               letterSpacing: '0.3px',
-              lineHeight: 1.4,
             }}
             title={`最近更新: ${entry.lastChangedAt ? new Date(entry.lastChangedAt).toLocaleString('zh-CN') : ''}`}
           >
@@ -910,7 +870,7 @@ function TreeNode({
           </span>
         )}
 
-        {/* 订阅状态徽标：点击打开订阅详情面板 */}
+        {/* 订阅状态点 */}
         {!isFolder && entry.sourceType === 'subscription' && onOpenSubscription && (
           <span
             onClick={(e) => { e.stopPropagation(); onOpenSubscription(entry.id); }}
@@ -935,21 +895,20 @@ function TreeNode({
           </span>
         )}
 
-        {isPrimary && (
-          <span className="text-[9px] px-1.5 py-0.5 rounded-full flex-shrink-0"
-            style={{ background: 'rgba(234,179,8,0.1)', color: 'rgba(234,179,8,0.8)' }}>
+        {/* README / Pin 简化为 icon */}
+        {!isFolder && isPrimary && (
+          <span className="flex-shrink-0" title="主文档（README）" style={{ color: 'rgba(234,179,8,0.85)', fontSize: 9, fontWeight: 700, letterSpacing: '0.04em' }}>
             README
           </span>
         )}
 
-        {isPinned && !isPrimary && (
+        {!isFolder && isPinned && !isPrimary && (
           <Pin size={10} className="flex-shrink-0" style={{ color: 'rgba(59,130,246,0.5)' }} />
         )}
 
-        {/* 时间：默认显示、永远固定在最右边。显示哪个时间跟随排序键——
-            created-desc 显示创建时间、其余显示更新时间，避免"按创建排序却显更新时间"的错位。 */}
+        {/* 时间：固定最右，所有条目可见，跟随排序键显示 createdAt 或 updatedAt */}
         {!isFolder && showUpdatedTime && entry[timeField] && (
-          <span className="flex-shrink-0" style={{ marginLeft: 'auto', paddingLeft: '6px' }}>
+          <span className="flex-shrink-0" style={{ paddingLeft: '4px', opacity: 0.6 }}>
             <RelativeTime
               value={entry[timeField]!}
               refreshIntervalMs={0}
@@ -957,8 +916,6 @@ function TreeNode({
               title={`${timeField === 'createdAt' ? '创建于' : '最后更新'}：${new Date(entry[timeField]!).toLocaleString('zh-CN')}${timeField === 'updatedAt' && entry.updatedByName ? ` · ${entry.updatedByName}` : ''}`}
             />
           </span>
-        )}
-        </div>
         )}
       </button>
 

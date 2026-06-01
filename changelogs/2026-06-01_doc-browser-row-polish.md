@@ -1,1 +1,2 @@
-| refactor | prd-admin | DocBrowser 条目行视觉打磨：标题字重加粗 + 字号 12→12.5px；无 meta 行时折叠空第二行（时间紧贴标题右侧）；tag 改为幽灵风格（无框单色更小） |
+| refactor | prd-admin | DocBrowser 条目改单行布局，所有徽章统一压扁 16px 高度，行高节奏一致不再忽高忽低 |
+| feat | prd-admin | DocToc 本页章节栏支持左边缘拖拽调整宽度，sessionStorage 持久化（同 sidebar 做法） |
