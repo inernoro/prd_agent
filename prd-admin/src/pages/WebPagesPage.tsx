@@ -633,6 +633,7 @@ export default function WebPagesPage() {
 
   return (
     <div
+      data-tour-id="webpages-root"
       className="h-full flex flex-col gap-4 p-4 overflow-auto"
       style={{
         background:
@@ -762,7 +763,7 @@ export default function WebPagesPage() {
       <PageHeader
         title="网页托管"
         actions={
-          <div className="flex items-center gap-1.5">
+          <div data-tour-id="webpages-header-actions" className="flex items-center gap-1.5">
             <button
               type="button"
               onClick={() => setShowAnalytics(true)}
@@ -818,24 +819,28 @@ export default function WebPagesPage() {
           </div>
 
           {/* 排序 segment pill group：当前项 pill 高亮，点击任意切到那个 */}
-          <SegmentPills
-            options={SORT_OPTIONS}
-            value={sort}
-            onChange={setSort}
-          />
+          <div data-tour-id="webpages-sort-pills">
+            <SegmentPills
+              options={SORT_OPTIONS}
+              value={sort}
+              onChange={setSort}
+            />
+          </div>
 
           {/* 分组 segment pill group：二选一 */}
-          <SegmentPills
-            options={[
-              { value: 'time', label: '日期' },
-              { value: 'folder', label: '文件夹' },
-            ]}
-            value={groupMode}
-            onChange={(v) => setGroupMode(v as GroupMode)}
-          />
+          <div data-tour-id="webpages-group-pills">
+            <SegmentPills
+              options={[
+                { value: 'time', label: '日期' },
+                { value: 'folder', label: '文件夹' },
+              ]}
+              value={groupMode}
+              onChange={(v) => setGroupMode(v as GroupMode)}
+            />
+          </div>
 
           {/* View mode */}
-          <div className="flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid var(--border-default)' }}>
+          <div data-tour-id="webpages-view-toggle" className="flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid var(--border-default)' }}>
             <button
               onClick={() => setViewMode('grid')}
               className="p-2 transition-colors"
