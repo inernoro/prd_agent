@@ -1194,6 +1194,7 @@ export const api = {
       reprocessChat: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess/chat`,
       reprocessActiveRun: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess/active-run`,
       reprocessApply: (runId: string) => `/api/document-store/agent-runs/${runId}/apply`,
+      reprocessApplyContent: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess/apply-content`,
       latestAgentRun: (entryId: string) => `/api/document-store/entries/${entryId}/agent-runs/latest`,
       // 批次 C：浏览事件埋点
       logView: (entryId: string) => `/api/document-store/entries/${entryId}/view`,

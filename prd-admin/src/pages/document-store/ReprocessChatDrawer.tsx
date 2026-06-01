@@ -1,28 +1,24 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Wand2, X, Send, Sparkle, Replace, FileDown, FilePlus2, RotateCw, AlertCircle, Bot, Plus, Trash2 } from 'lucide-react';
+import { Wand2, X, Send, Replace, FileDown, FilePlus2, RotateCw, AlertCircle, Bot, Plus, Trash2, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { StreamingText } from '@/components/streaming';
 import { ChatMarkdown } from '@/pages/pa-agent/ChatMarkdown';
-import { useSseStream } from '@/lib/useSseStream';
-import { api } from '@/services/api';
 import {
-  listReprocessTemplates,
   listReprocessAgents,
   createReprocessAgent,
   deleteReprocessAgent,
-  sendReprocessChat,
-  getActiveReprocessRun,
-  applyReprocessMessage,
+  applyReprocessContent,
+  getDocumentContent,
 } from '@/services';
+import { streamDirectChat, listToolboxItems } from '@/services/real/aiToolbox';
+import type { ToolboxItem } from '@/services/real/aiToolbox';
+import { BUILTIN_TOOLS } from '@/stores/toolboxStore';
 import type {
-  ReprocessTemplate,
-  ReprocessChatMessage,
   ReprocessAgent,
 } from '@/services/contracts/documentStore';
-import { useReprocessRunStore } from '@/stores/reprocessRunStore';
 import { toast } from '@/lib/toast';
 
 export type ReprocessChatDrawerProps = {
@@ -30,253 +26,224 @@ export type ReprocessChatDrawerProps = {
   entryTitle: string;
   storeId: string;
   onClose: () => void;
-  /** 写回成功后回调（mode + entryId）让上层刷新文件树 / 选中新条目 */
   onApplied?: (mode: 'replace' | 'append' | 'new', entryId: string) => void;
 };
 
-type LocalMessage = ReprocessChatMessage & {
-  /** 仅 assistant 用：当前是否还在流式接收 */
+type ChatMessage = {
+  id: string;
+  role: 'user' | 'assistant';
+  /** 标记来源："templateLabel" / "百宝箱:agentKey" / "我的:agentKey" */
+  invoker?: { kind: 'toolbox' | 'kbAgent'; label: string; ref: string };
+  content: string;
   streaming?: boolean;
-  /** 写回状态 */
   applied?: 'replace' | 'append' | 'new';
 };
 
+const PRIMARY_TOOLBOX_KEYS = [
+  // 优先呈现"最适合纯文本输入"的智能体——视觉/视频/缺陷等需要复杂上下文的放到次要分组
+  'builtin-literary-agent',
+  'builtin-report-agent',
+  'builtin-pa-agent',
+  'builtin-pm-agent',
+  'builtin-task-tree',
+];
+
 /**
- * 文档再加工 · Chat 抽屉 —— 支持多轮对话 + 三种写回 + 流式输出。
+ * 文档再加工 · Chat 抽屉 v2 —— 直接调用百宝箱智能体 + 用户自建轻量智能体。
  *
- * 关键点：
- *   1) 多轮：发送 → 后端追加 user 消息到 run.Messages + Status=Queued，worker 跑下一轮
- *   2) 流式：本组件订阅 SSE，按 messageSeq 路由 chunk 到对应 assistant 消息
- *   3) 写回：每条 assistant 消息下方三按钮（替换 / 追加 / 另存为新）
- *   4) 抽屉关掉不取消后端任务（server-authority），但流式订阅会断；
- *      重新打开时通过 getActiveReprocessRun 恢复完整对话
+ * 设计变更（按用户反馈）：
+ *   1. 不再走我自建的 reprocess Worker/Processor。当前文档全文 + 用户消息直接走
+ *      `/api/ai-toolbox/direct-chat` 复用百宝箱的 LLM 调度（百宝箱才是系统智能体 SSOT）。
+ *   2. 「百宝箱」chip 行从 BUILTIN_TOOLS + 用户自建百宝箱工具拼出。
+ *   3. 「我的快捷智能体」chip 行保留：用户能在抽屉里一键创建自己的 system prompt 简化版智能体；
+ *      它们在前端展开为 `system prompt + 文档 + 用户消息` 拼一段发给同一个 direct-chat。
+ *   4. 三种写回（替换原文 / 追加末尾 / 另存为新文档）调新的 `apply-content` 接口，不依赖 Run。
  */
 export function ReprocessChatDrawer({
   entryId,
   entryTitle,
-  storeId,
+  storeId: _storeId,
   onClose,
   onApplied,
 }: ReprocessChatDrawerProps) {
-  const [templates, setTemplates] = useState<ReprocessTemplate[] | null>(null);
-  const [agents, setAgents] = useState<ReprocessAgent[] | null>(null);
-  const [messages, setMessages] = useState<LocalMessage[]>([]);
-  const [runId, setRunId] = useState<string | null>(null);
-  const [input, setInput] = useState('');
-  const [sending, setSending] = useState(false);
-  const [hasFirstTemplate, setHasFirstTemplate] = useState(false);
+  // 数据
+  const [toolboxItems, setToolboxItems] = useState<ToolboxItem[]>([]); // 百宝箱（内置 + 用户自建）
+  const [kbAgents, setKbAgents] = useState<ReprocessAgent[]>([]);      // 知识库轻量智能体
+  const [docContent, setDocContent] = useState<string>('');             // 文档全文
   const [loading, setLoading] = useState(true);
-  const [streamingSeq, setStreamingSeq] = useState<number | null>(null);
+
+  // 会话
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput] = useState('');
+  const [streamingId, setStreamingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [applying, setApplying] = useState<string | null>(null); // `${seq}:${mode}`
+  const [applying, setApplying] = useState<string | null>(null);
   const [showCreateAgent, setShowCreateAgent] = useState(false);
+  const cancelStreamRef = useRef<(() => void) | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const messagesRef = useRef<LocalMessage[]>([]);
 
-  const startRun = useReprocessRunStore((s) => s.startRun);
-  const patchRun = useReprocessRunStore((s) => s.patchRun);
+  // 当前选定的智能体（影响"如果只输入而不点 chip，按谁的语境跑"）
+  const [activeInvoker, setActiveInvoker] = useState<ChatMessage['invoker']>();
 
-  // 保持 messagesRef 同步（给 SSE 回调用，避免闭包陈旧）
-  useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
-
-  // 滚到底部
   const scrollToBottom = useCallback(() => {
     requestAnimationFrame(() => {
       if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     });
   }, []);
 
-  // ── SSE：订阅当前 run 的 chunk / messageDone / done / error ──
-  const sseUrl = useMemo(() => runId
-    ? `${api.documentStore.stores.agentRunStream(runId)}?afterSeq=0`
-    : '', [runId]);
-
-  const { start: sseStart, abort: sseAbort } = useSseStream({
-    url: sseUrl,
-    onEvent: {
-      userMessage: (data) => {
-        const d = data as { messageSeq: number; content: string; templateKey?: string };
-        setMessages((prev) => {
-          if (prev.some((m) => m.seq === d.messageSeq)) return prev;
-          return [...prev, {
-            seq: d.messageSeq,
-            role: 'user',
-            content: d.content,
-            templateKey: d.templateKey,
-            createdAt: new Date().toISOString(),
-          }];
-        });
-        scrollToBottom();
-      },
-      chunk: (data) => {
-        const d = data as { text?: string; messageSeq?: number };
-        if (!d.text || typeof d.messageSeq !== 'number') return;
-        setStreamingSeq(d.messageSeq);
-        setMessages((prev) => {
-          const idx = prev.findIndex((m) => m.seq === d.messageSeq);
-          if (idx >= 0) {
-            const next = [...prev];
-            next[idx] = { ...next[idx], content: (next[idx].content || '') + d.text };
-            return next;
-          }
-          return [...prev, {
-            seq: d.messageSeq!,
-            role: 'assistant',
-            content: d.text!,
-            streaming: true,
-            createdAt: new Date().toISOString(),
-          }];
-        });
-        scrollToBottom();
-      },
-      progress: (data) => {
-        const d = data as { progress?: number; phase?: string };
-        if (runId) {
-          patchRun(runId, {
-            ...(typeof d.progress === 'number' ? { progress: d.progress } : {}),
-            ...(d.phase ? { phase: d.phase } : {}),
-          });
-        }
-      },
-      messageDone: (data) => {
-        const d = data as { messageSeq: number; content: string };
-        setMessages((prev) => prev.map((m) => m.seq === d.messageSeq
-          ? { ...m, content: d.content, streaming: false }
-          : m));
-        setStreamingSeq(null);
-      },
-      done: () => {
-        // 一轮结束，标记所有 assistant streaming=false
-        setMessages((prev) => prev.map((m) => m.streaming ? { ...m, streaming: false } : m));
-        setStreamingSeq(null);
-        if (runId) patchRun(runId, { status: 'done', progress: 100, phase: '完成' });
-      },
-    },
-    onError: (msg) => {
-      setError(msg || '连接出错');
-      setStreamingSeq(null);
-      if (runId) patchRun(runId, { status: 'failed', errorMessage: msg });
-    },
-  });
-
-  // 加载模板 + 恢复活跃会话
+  // 加载：文档全文 + 百宝箱（内置 + 用户自建）+ 我的轻量智能体
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const [tplRes, agentRes, runRes] = await Promise.all([
-        listReprocessTemplates(),
+      const [docRes, agentRes, customToolboxRes] = await Promise.all([
+        getDocumentContent(entryId),
         listReprocessAgents(),
-        getActiveReprocessRun(entryId),
+        listToolboxItems(),
       ]);
       if (cancelled) return;
-      if (tplRes.success) setTemplates(tplRes.data.items);
-      if (agentRes.success) setAgents(agentRes.data.items);
-      if (runRes.success && runRes.data) {
-        const r = runRes.data;
-        const msgs: LocalMessage[] = (r.messages ?? []).map((m) => ({ ...m }));
-        setMessages(msgs);
-        setRunId(r.id);
-        setHasFirstTemplate(msgs.some((m) => m.role === 'user' && !!m.templateKey));
-        if (r.status === 'running' || r.status === 'queued') {
-          // 末尾若是 user，意味着 assistant 还没产出 → 标记为 streamingSeq
-          const lastUser = [...msgs].reverse().find((m) => m.role === 'user');
-          if (lastUser) setStreamingSeq(lastUser.seq + 1);
-        }
-      }
+
+      if (docRes.success) setDocContent(docRes.data.content ?? '');
+
+      const userOwnedToolbox = customToolboxRes.success
+        ? (customToolboxRes.data.items as ToolboxItem[]).filter((t) => t.kind !== 'tool' || t.systemPrompt)
+        : [];
+      // 把"最适合文本对话"的内置智能体排前
+      const builtinAgents = BUILTIN_TOOLS.filter((t) => t.kind === 'agent' && !t.wip);
+      const ordered = builtinAgents.sort((a, b) => {
+        const ia = PRIMARY_TOOLBOX_KEYS.indexOf(a.id);
+        const ib = PRIMARY_TOOLBOX_KEYS.indexOf(b.id);
+        if (ia < 0 && ib < 0) return 0;
+        if (ia < 0) return 1;
+        if (ib < 0) return -1;
+        return ia - ib;
+      });
+      setToolboxItems([...ordered, ...userOwnedToolbox]);
+
+      if (agentRes.success) setKbAgents(agentRes.data.items);
+
       setLoading(false);
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      cancelStreamRef.current?.();
+    };
   }, [entryId]);
 
-  // runId 变化时启动 SSE
-  useEffect(() => {
-    if (!runId) return;
-    void sseStart();
-    return () => sseAbort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runId]);
+  // 取消上一次流（切换智能体或关闭）
+  useEffect(() => () => { cancelStreamRef.current?.(); }, []);
 
-  const sendMessage = useCallback(async (content: string, templateKey?: string) => {
-    if (sending || streamingSeq !== null) return;
-    if (!content.trim()) return;
+  // ── 发送消息（核心：组装 message 并调 direct-chat） ──
+  const sendMessage = useCallback(async (
+    userText: string,
+    invoker: ChatMessage['invoker'],
+  ) => {
+    if (streamingId) return;
+    if (!userText.trim()) return;
+
+    // 找智能体定义
+    let agentKey: string | undefined;
+    let itemId: string | undefined;
+    let kbSystemPrompt: string | undefined;
+
+    if (invoker?.kind === 'toolbox') {
+      const tb = toolboxItems.find((t) => t.id === invoker.ref);
+      if (tb?.type === 'builtin' && tb.agentKey) {
+        agentKey = tb.agentKey;
+      } else {
+        itemId = invoker.ref;
+      }
+    } else if (invoker?.kind === 'kbAgent') {
+      const agent = kbAgents.find((a) => a.key === invoker.ref);
+      kbSystemPrompt = agent?.systemPrompt;
+      // 没有匹配 agentKey 时，让 direct-chat 走默认 chat 调度（不传 agentKey/itemId）
+    }
+
     setError(null);
-    setSending(true);
-    const res = await sendReprocessChat(entryId, {
-      runId: runId ?? undefined,
-      content: content.trim(),
-      templateKey,
-    });
-    if (!res.success) {
-      setSending(false);
-      toast.error('发送失败', res.error?.message);
-      return;
-    }
-    const { runId: newRunId, messageSeq } = res.data;
-    // 本地立即追加 user 消息 + 占位 assistant 消息（SSE 还没到时也有占位）
-    setMessages((prev) => {
-      if (prev.some((m) => m.seq === messageSeq)) return prev;
-      return [...prev, {
-        seq: messageSeq,
-        role: 'user',
-        content: content.trim(),
-        templateKey,
-        createdAt: new Date().toISOString(),
-      }];
-    });
-    setStreamingSeq(messageSeq + 1);
+
+    const userMsgId = 'u-' + Date.now();
+    const asstMsgId = 'a-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+    const userMsg: ChatMessage = {
+      id: userMsgId,
+      role: 'user',
+      content: userText.trim(),
+      invoker,
+    };
+    const asstMsg: ChatMessage = {
+      id: asstMsgId,
+      role: 'assistant',
+      content: '',
+      streaming: true,
+      invoker,
+    };
+    setMessages((prev) => [...prev, userMsg, asstMsg]);
+    setStreamingId(asstMsgId);
     setInput('');
-    if (templateKey) setHasFirstTemplate(true);
-    if (!runId) {
-      setRunId(newRunId);
-      startRun({
-        runId: newRunId,
-        storeId,
-        sourceEntryId: entryId,
-        sourceTitle: entryTitle,
-      });
-    } else {
-      patchRun(runId, { status: 'streaming', progress: 0, phase: '排队中' });
-      // 已有 runId 时，SSE 已订阅；新一轮会继续推 chunk
-    }
-    setSending(false);
     scrollToBottom();
-  }, [sending, streamingSeq, runId, entryId, entryTitle, storeId, startRun, patchRun, scrollToBottom]);
 
-  const handleSend = useCallback(() => {
-    void sendMessage(input);
-  }, [input, sendMessage]);
-
-  const handleChip = useCallback((tpl: ReprocessTemplate | { key: 'custom'; label: string }) => {
-    if (sending || streamingSeq !== null) return;
-    if (tpl.key === 'custom') {
-      // 自定义：聚焦输入框，提示用户写自己的指令
-      const ta = document.getElementById('reprocess-chat-input') as HTMLTextAreaElement | null;
-      ta?.focus();
-      return;
+    // 组装 message：把文档全文 + 用户指令拼起来。若是 kbAgent，叠加 system prompt 段。
+    let composed = '';
+    if (kbSystemPrompt) {
+      composed += `[智能体角色设定]\n${kbSystemPrompt}\n\n`;
     }
-    void sendMessage(`请用「${tpl.label}」方式处理这篇文档。`, tpl.key);
-  }, [sending, streamingSeq, sendMessage]);
+    composed += `[参考文档]\n${docContent}\n\n[用户指令]\n${userText.trim()}`;
 
-  const handleAgentChip = useCallback((agent: ReprocessAgent) => {
-    if (sending || streamingSeq !== null) return;
-    void sendMessage(`请用「${agent.label}」智能体处理这篇文档。`, agent.key);
-  }, [sending, streamingSeq, sendMessage]);
+    const stop = streamDirectChat({
+      message: composed,
+      agentKey,
+      itemId,
+      onText: (chunk) => {
+        setMessages((prev) => prev.map((m) =>
+          m.id === asstMsgId ? { ...m, content: m.content + chunk } : m));
+        scrollToBottom();
+      },
+      onError: (msg) => {
+        setError(msg || '调用失败');
+        setMessages((prev) => prev.map((m) =>
+          m.id === asstMsgId ? { ...m, streaming: false, content: m.content || '（调用失败：' + (msg || '未知错误') + '）' } : m));
+        setStreamingId(null);
+      },
+      onDone: () => {
+        setMessages((prev) => prev.map((m) =>
+          m.id === asstMsgId ? { ...m, streaming: false } : m));
+        setStreamingId(null);
+      },
+    });
+    cancelStreamRef.current = stop;
+  }, [streamingId, toolboxItems, kbAgents, docContent, scrollToBottom]);
 
-  const handleCreateAgent = useCallback(async (input: {
+  const handleSendInput = useCallback(() => {
+    if (!input.trim()) return;
+    // 默认调用激活的智能体；未选时走通用 chat
+    void sendMessage(input, activeInvoker);
+  }, [input, activeInvoker, sendMessage]);
+
+  const handleToolboxChip = useCallback((item: ToolboxItem) => {
+    if (streamingId) return;
+    const invoker: ChatMessage['invoker'] = { kind: 'toolbox', label: item.name, ref: item.id };
+    setActiveInvoker(invoker);
+    void sendMessage(`请用「${item.name}」处理这篇文档。`, invoker);
+  }, [streamingId, sendMessage]);
+
+  const handleKbAgentChip = useCallback((agent: ReprocessAgent) => {
+    if (streamingId) return;
+    const invoker: ChatMessage['invoker'] = { kind: 'kbAgent', label: agent.label, ref: agent.key };
+    setActiveInvoker(invoker);
+    void sendMessage(`请用「${agent.label}」智能体处理这篇文档。`, invoker);
+  }, [streamingId, sendMessage]);
+
+  const handleCreateAgent = useCallback(async (in_: {
     label: string;
     description: string;
     systemPrompt: string;
   }) => {
-    const res = await createReprocessAgent(input);
+    const res = await createReprocessAgent(in_);
     if (!res.success) {
       toast.error('创建失败', res.error?.message);
       return false;
     }
-    setAgents((prev) => [...(prev ?? []), res.data]);
-    toast.success('智能体创建成功', '可立即在上方点击调用');
+    setKbAgents((prev) => [...prev, res.data]);
+    toast.success('智能体创建成功', '可立即点击调用');
     return true;
   }, []);
 
@@ -288,36 +255,34 @@ export function ReprocessChatDrawer({
       toast.error('删除失败', res.error?.message);
       return;
     }
-    setAgents((prev) => (prev ?? []).filter((a) => a.id !== agent.id));
+    setKbAgents((prev) => prev.filter((a) => a.id !== agent.id));
   }, []);
 
   const handleApply = useCallback(async (
-    seq: number,
+    msgId: string,
     mode: 'replace' | 'append' | 'new',
   ) => {
-    if (!runId) return;
-    const key = `${seq}:${mode}`;
+    const msg = messages.find((m) => m.id === msgId);
+    if (!msg || msg.role !== 'assistant' || !msg.content) return;
+    const key = `${msgId}:${mode}`;
     if (applying) return;
     setApplying(key);
-    const res = await applyReprocessMessage(runId, { messageSeq: seq, mode });
+    const res = await applyReprocessContent(entryId, { mode, content: msg.content });
     setApplying(null);
     if (!res.success) {
       toast.error('写回失败', res.error?.message);
       return;
     }
     const target = res.data.outputEntryId || res.data.updatedEntryId;
-    setMessages((prev) => prev.map((m) => m.seq === seq ? { ...m, applied: mode } : m));
+    setMessages((prev) => prev.map((m) => m.id === msgId ? { ...m, applied: mode } : m));
     const label = mode === 'replace' ? '替换原文' : mode === 'append' ? '追加末尾' : '另存为新文档';
     toast.success(`${label}成功`, mode === 'new' ? '新文档已生成' : '文档已更新');
     if (target && onApplied) onApplied(mode, target);
-  }, [runId, applying, onApplied]);
+  }, [messages, applying, entryId, onApplied]);
+
+  const isBusy = streamingId !== null;
 
   // ── 渲染 ──
-  const isBusy = sending || streamingSeq !== null;
-  // chip 行常驻：用户可以在多轮对话过程中随时切换模板或新建智能体
-  const showTemplateRow = true;
-  void hasFirstTemplate;
-
   const modal = (
     <motion.div
       className="surface-backdrop fixed inset-0 z-[100] flex justify-end"
@@ -329,7 +294,7 @@ export function ReprocessChatDrawer({
     >
       <motion.div
         className="surface-popover flex flex-col border-l border-token-subtle"
-        style={{ width: 'min(620px, 96vw)', height: '100vh', minHeight: 0 }}
+        style={{ width: 'min(640px, 96vw)', height: '100vh', minHeight: 0 }}
         initial={{ x: '100%' }}
         animate={{ x: 0 }}
         exit={{ x: '100%' }}
@@ -354,70 +319,83 @@ export function ReprocessChatDrawer({
           </button>
         </div>
 
-        {/* 模板 + 智能体 chip 行（仅首次：尚未选定时显示） */}
-        {showTemplateRow && (
-          <div className="px-5 pt-3 pb-2 shrink-0 space-y-2 border-b border-token-subtle">
-            {/* 模板 */}
-            <div>
-              <p className="mb-1.5 text-[10px] text-token-muted">一键模板</p>
-              <div className="flex flex-wrap gap-1.5">
-                {templates?.map((t) => (
-                  <button
-                    key={t.key}
-                    onClick={() => handleChip(t)}
+        {/* 智能体选区（常驻） */}
+        <div className="px-5 pt-3 pb-2 shrink-0 space-y-2 border-b border-token-subtle">
+          {/* 百宝箱智能体 */}
+          <div>
+            <p className="mb-1.5 text-[10px] text-token-muted flex items-center gap-1">
+              <Sparkles size={10} /> 百宝箱智能体（系统注册的通用智能体，文档作为输入直接调用）
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {toolboxItems.length === 0 && !loading ? (
+                <span className="text-[10px] text-token-muted">加载中…</span>
+              ) : (
+                toolboxItems.map((item) => (
+                  <ToolboxChip
+                    key={item.id}
+                    item={item}
+                    active={activeInvoker?.kind === 'toolbox' && activeInvoker.ref === item.id}
                     disabled={isBusy}
-                    className="rounded-full px-3 py-1.5 text-[11px] font-medium text-token-primary hover:bg-white/8 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
-                    title={t.description}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-                <button
-                  onClick={() => handleChip({ key: 'custom', label: '自定义' })}
-                  disabled={isBusy}
-                  className="rounded-full px-3 py-1.5 text-[11px] font-medium text-token-primary hover:bg-white/8 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
-                  style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
-                >
-                  <Sparkle size={10} /> 自定义
-                </button>
-              </div>
-            </div>
-
-            {/* 智能体 */}
-            <div>
-              <p className="mb-1.5 text-[10px] text-token-muted flex items-center gap-1">
-                <Bot size={10} /> 智能体（点击直接调用本系统已注册的智能体）
-              </p>
-              <div className="flex flex-wrap gap-1.5">
-                {agents?.filter((a) => a.visibility === 'system').map((a) => (
-                  <AgentChip key={a.id} agent={a} disabled={isBusy} onClick={() => handleAgentChip(a)} />
-                ))}
-                {agents?.filter((a) => a.visibility === 'personal').map((a) => (
-                  <AgentChip
-                    key={a.id}
-                    agent={a}
-                    disabled={isBusy}
-                    onClick={() => handleAgentChip(a)}
-                    onDelete={() => handleDeleteAgent(a)}
+                    onClick={() => handleToolboxChip(item)}
                   />
-                ))}
-                <button
-                  onClick={() => setShowCreateAgent(true)}
-                  className="rounded-full px-3 py-1.5 text-[11px] font-medium hover:bg-white/8 transition-colors flex items-center gap-1"
-                  style={{
-                    background: 'rgba(96,165,250,0.10)',
-                    border: '1px dashed rgba(96,165,250,0.4)',
-                    color: 'rgba(96,165,250,0.95)',
-                  }}
-                  title="创建一个新的智能体（自定义 system prompt）"
-                >
-                  <Plus size={10} /> 新建智能体
-                </button>
-              </div>
+                ))
+              )}
             </div>
           </div>
-        )}
+
+          {/* 我的快捷智能体（轻量 system prompt） */}
+          <div>
+            <p className="mb-1.5 text-[10px] text-token-muted flex items-center gap-1">
+              <Bot size={10} /> 我的快捷智能体（一键 system prompt，调用时叠加到百宝箱通用链路）
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {kbAgents.filter((a) => a.visibility === 'system').map((a) => (
+                <KbAgentChip
+                  key={a.id}
+                  agent={a}
+                  active={activeInvoker?.kind === 'kbAgent' && activeInvoker.ref === a.key}
+                  disabled={isBusy}
+                  onClick={() => handleKbAgentChip(a)}
+                />
+              ))}
+              {kbAgents.filter((a) => a.visibility === 'personal').map((a) => (
+                <KbAgentChip
+                  key={a.id}
+                  agent={a}
+                  active={activeInvoker?.kind === 'kbAgent' && activeInvoker.ref === a.key}
+                  disabled={isBusy}
+                  onClick={() => handleKbAgentChip(a)}
+                  onDelete={() => handleDeleteAgent(a)}
+                />
+              ))}
+              <button
+                onClick={() => setShowCreateAgent(true)}
+                className="rounded-full px-3 py-1.5 text-[11px] font-medium hover:bg-white/8 transition-colors flex items-center gap-1"
+                style={{
+                  background: 'rgba(96,165,250,0.10)',
+                  border: '1px dashed rgba(96,165,250,0.4)',
+                  color: 'rgba(96,165,250,0.95)',
+                }}
+                title="创建一个新的快捷智能体（自定义 system prompt）"
+              >
+                <Plus size={10} /> 新建智能体
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* 创建智能体浮层 */}
+        <AnimatePresence>
+          {showCreateAgent && (
+            <CreateAgentModal
+              onClose={() => setShowCreateAgent(false)}
+              onSubmit={async (in_) => {
+                const ok = await handleCreateAgent(in_);
+                if (ok) setShowCreateAgent(false);
+              }}
+            />
+          )}
+        </AnimatePresence>
 
         {/* 消息流 */}
         <div
@@ -433,28 +411,21 @@ export function ReprocessChatDrawer({
                 <Wand2 size={20} />
               </div>
               <div>
-                <p className="text-[13px] font-semibold text-token-primary mb-1">和这篇文档对话</p>
-                <p className="text-[11px] text-token-muted max-w-[320px] leading-relaxed">
-                  选一个上方模板快速开始，或直接输入你的指令。AI 会基于「{entryTitle}」的全文回答。
+                <p className="text-[13px] font-semibold text-token-primary mb-1">选个智能体开始处理这篇文档</p>
+                <p className="text-[11px] text-token-muted max-w-[340px] leading-relaxed">
+                  上方任选一个百宝箱智能体（或自建快捷智能体）点击调用；也可以在下方输入框写指令配合任一智能体使用。文档全文会作为输入自动传给智能体。
                 </p>
               </div>
             </div>
           ) : (
             messages.map((m) => (
               <MessageBubble
-                key={`${m.seq}`}
+                key={m.id}
                 msg={m}
                 applying={applying}
                 onApply={handleApply}
-                streaming={m.streaming || (m.role === 'assistant' && streamingSeq === m.seq)}
               />
             ))
-          )}
-          {/* assistant 占位（流式开始前 chunk 未到时显示） */}
-          {streamingSeq !== null && !messages.some((m) => m.role === 'assistant' && m.seq === streamingSeq) && (
-            <div className="rounded-[12px] p-3 surface-row text-[12px] text-token-muted flex items-center gap-2">
-              <MapSpinner size={12} /> AI 正在思考…
-            </div>
           )}
           {error && (
             <div className="rounded-[10px] p-3 text-[11px] flex items-start gap-2"
@@ -470,19 +441,6 @@ export function ReprocessChatDrawer({
           )}
         </div>
 
-        {/* 创建智能体浮层（嵌在抽屉内） */}
-        <AnimatePresence>
-          {showCreateAgent && (
-            <CreateAgentModal
-              onClose={() => setShowCreateAgent(false)}
-              onSubmit={async (input) => {
-                const ok = await handleCreateAgent(input);
-                if (ok) setShowCreateAgent(false);
-              }}
-            />
-          )}
-        </AnimatePresence>
-
         {/* 输入区 */}
         <div className="surface-panel-footer px-5 py-3 shrink-0 border-t border-token-subtle">
           <div className="flex gap-2 items-end">
@@ -493,10 +451,16 @@ export function ReprocessChatDrawer({
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
-                  handleSend();
+                  handleSendInput();
                 }
               }}
-              placeholder={isBusy ? 'AI 正在回复，请稍候…' : '输入你的指令，Enter 发送 / Shift+Enter 换行'}
+              placeholder={
+                isBusy
+                  ? 'AI 正在回复，请稍候…'
+                  : activeInvoker
+                    ? `继续向「${activeInvoker.label}」追问，Enter 发送`
+                    : '直接输入指令，Enter 发送（不选智能体时走通用 chat）'
+              }
               disabled={isBusy}
               rows={2}
               className="prd-field flex-1 resize-none rounded-[10px] px-3 py-2 text-[12px] outline-none disabled:opacity-60"
@@ -505,16 +469,16 @@ export function ReprocessChatDrawer({
               variant="primary"
               size="sm"
               disabled={isBusy || !input.trim()}
-              onClick={handleSend}
+              onClick={handleSendInput}
             >
               {isBusy ? <MapSpinner size={12} /> : <Send size={12} />}
               发送
             </Button>
           </div>
           <p className="mt-1.5 text-[10px] text-token-muted">
-            {streamingSeq !== null
-              ? 'AI 回复中…关闭抽屉不会中断任务，重开后可继续查看'
-              : '基于本文档全文回答，可多轮追问；满意后用每条回复下方按钮写回'}
+            {isBusy
+              ? '正在调用百宝箱智能体…文档全文已经作为输入发送'
+              : '点击上方智能体 chip 立即跑一轮；或在这里写指令配合当前激活的智能体使用'}
           </p>
         </div>
       </motion.div>
@@ -524,17 +488,100 @@ export function ReprocessChatDrawer({
   return createPortal(modal, document.body);
 }
 
-// ── 单条消息气泡 + 写回按钮 ──
-function MessageBubble({
-  msg,
-  applying,
-  onApply,
-  streaming,
+// ── 百宝箱智能体 chip ──
+function ToolboxChip({
+  item, active, disabled, onClick,
 }: {
-  msg: LocalMessage;
+  item: ToolboxItem;
+  active: boolean;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  const isBuiltin = item.type === 'builtin';
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={item.description || item.name}
+      className="rounded-full px-3 py-1.5 text-[11px] font-medium hover:bg-white/8 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
+      style={{
+        background: active
+          ? 'rgba(168,85,247,0.22)'
+          : isBuiltin ? 'rgba(168,85,247,0.10)' : 'rgba(96,165,250,0.10)',
+        border: active
+          ? '1px solid rgba(168,85,247,0.55)'
+          : isBuiltin ? '1px solid rgba(168,85,247,0.28)' : '1px solid rgba(96,165,250,0.28)',
+        color: isBuiltin ? 'rgba(196,166,255,0.95)' : 'rgba(147,197,253,0.95)',
+      }}
+    >
+      <Sparkles size={10} />
+      {item.name}
+      {!isBuiltin && (
+        <span className="ml-1 px-1 rounded text-[9px] font-semibold"
+          style={{ background: 'rgba(255,255,255,0.10)' }}
+        >我的工具</span>
+      )}
+    </button>
+  );
+}
+
+// ── 我的快捷智能体 chip ──
+function KbAgentChip({
+  agent, active, disabled, onClick, onDelete,
+}: {
+  agent: ReprocessAgent;
+  active: boolean;
+  disabled: boolean;
+  onClick: () => void;
+  onDelete?: () => void;
+}) {
+  const isSystem = agent.visibility === 'system';
+  return (
+    <div
+      className="inline-flex items-center gap-1 rounded-full text-[11px] font-medium transition-colors group"
+      style={{
+        background: active
+          ? (isSystem ? 'rgba(34,197,94,0.25)' : 'rgba(34,197,94,0.2)')
+          : 'rgba(34,197,94,0.10)',
+        border: active ? '1px solid rgba(34,197,94,0.55)' : '1px solid rgba(34,197,94,0.28)',
+        color: 'rgba(110,231,158,0.95)',
+      }}
+    >
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        title={agent.description || agent.label}
+        className="pl-3 pr-2 py-1.5 hover:bg-white/8 rounded-l-full disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+      >
+        <Bot size={10} />
+        {agent.label}
+        {!isSystem && (
+          <span className="ml-1 px-1 rounded text-[9px] font-semibold"
+            style={{ background: 'rgba(255,255,255,0.10)' }}
+          >我的</span>
+        )}
+      </button>
+      {onDelete && (
+        <button
+          onClick={onDelete}
+          disabled={disabled}
+          className="pr-2 py-1.5 hover:opacity-100 opacity-40 transition-opacity"
+          title="删除"
+        >
+          <Trash2 size={10} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── 单条消息 + 写回按钮 ──
+function MessageBubble({
+  msg, applying, onApply,
+}: {
+  msg: ChatMessage;
   applying: string | null;
-  onApply: (seq: number, mode: 'replace' | 'append' | 'new') => void;
-  streaming: boolean;
+  onApply: (msgId: string, mode: 'replace' | 'append' | 'new') => void;
 }) {
   if (msg.role === 'user') {
     return (
@@ -543,11 +590,11 @@ function MessageBubble({
           className="rounded-[12px] px-3 py-2 text-[12px] text-token-primary max-w-[88%] break-words whitespace-pre-wrap"
           style={{ background: 'rgba(96,165,250,0.14)', border: '1px solid rgba(96,165,250,0.22)' }}
         >
-          {msg.templateKey && (
+          {msg.invoker && (
             <span className="inline-flex items-center gap-1 mr-2 px-1.5 py-0.5 rounded text-[10px] font-semibold"
               style={{ background: 'rgba(96,165,250,0.22)' }}
             >
-              {msg.templateKey === 'custom' ? '自定义' : msg.templateKey}
+              {msg.invoker.label}
             </span>
           )}
           {msg.content}
@@ -556,9 +603,8 @@ function MessageBubble({
     );
   }
 
-  // assistant
-  const canApply = !streaming && !!msg.content;
-  const busyMode = applying && applying.startsWith(`${msg.seq}:`)
+  const canApply = !msg.streaming && !!msg.content;
+  const busyMode = applying && applying.startsWith(`${msg.id}:`)
     ? applying.split(':')[1]
     : null;
 
@@ -569,15 +615,15 @@ function MessageBubble({
         style={{ border: '1px solid rgba(255,255,255,0.06)' }}
       >
         <div className="text-[10px] text-token-muted mb-1 flex items-center gap-1.5">
-          <Wand2 size={10} /> AI 回复
-          {streaming && <MapSpinner size={9} />}
+          <Wand2 size={10} /> {msg.invoker?.label ?? 'AI'} 回复
+          {msg.streaming && <MapSpinner size={9} />}
         </div>
-        {streaming && msg.content ? (
+        {msg.streaming && msg.content ? (
           <StreamingText text={msg.content} streaming mode="blur" />
         ) : msg.content ? (
           <ChatMarkdown content={msg.content} />
         ) : (
-          <span className="text-token-muted">…</span>
+          <span className="text-token-muted">AI 正在思考…</span>
         )}
 
         {canApply && (
@@ -588,7 +634,7 @@ function MessageBubble({
               busy={busyMode === 'replace'}
               applied={msg.applied === 'replace'}
               disabled={!!applying}
-              onClick={() => onApply(msg.seq, 'replace')}
+              onClick={() => onApply(msg.id, 'replace')}
             />
             <ApplyBtn
               icon={<FileDown size={10} />}
@@ -596,7 +642,7 @@ function MessageBubble({
               busy={busyMode === 'append'}
               applied={msg.applied === 'append'}
               disabled={!!applying}
-              onClick={() => onApply(msg.seq, 'append')}
+              onClick={() => onApply(msg.id, 'append')}
             />
             <ApplyBtn
               icon={<FilePlus2 size={10} />}
@@ -604,7 +650,7 @@ function MessageBubble({
               busy={busyMode === 'new'}
               applied={msg.applied === 'new'}
               disabled={!!applying}
-              onClick={() => onApply(msg.seq, 'new')}
+              onClick={() => onApply(msg.id, 'new')}
             />
           </div>
         )}
@@ -640,57 +686,9 @@ function ApplyBtn({
   );
 }
 
-// ── 智能体 chip（带可选删除按钮） ──
-function AgentChip({
-  agent, disabled, onClick, onDelete,
-}: {
-  agent: ReprocessAgent;
-  disabled: boolean;
-  onClick: () => void;
-  onDelete?: () => void;
-}) {
-  const isSystem = agent.visibility === 'system';
-  return (
-    <div
-      className="inline-flex items-center gap-1 rounded-full text-[11px] font-medium transition-colors group"
-      style={{
-        background: isSystem ? 'rgba(168,85,247,0.10)' : 'rgba(34,197,94,0.10)',
-        border: isSystem ? '1px solid rgba(168,85,247,0.28)' : '1px solid rgba(34,197,94,0.28)',
-        color: isSystem ? 'rgba(196,166,255,0.95)' : 'rgba(110,231,158,0.95)',
-      }}
-    >
-      <button
-        onClick={onClick}
-        disabled={disabled}
-        title={agent.description || agent.label}
-        className="pl-3 pr-2 py-1.5 hover:bg-white/8 rounded-l-full disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
-      >
-        <Bot size={10} />
-        {agent.label}
-        {!isSystem && (
-          <span className="ml-1 px-1 rounded text-[9px] font-semibold"
-            style={{ background: 'rgba(255,255,255,0.10)' }}
-          >我的</span>
-        )}
-      </button>
-      {onDelete && (
-        <button
-          onClick={onDelete}
-          disabled={disabled}
-          className="pr-2 py-1.5 hover:opacity-100 opacity-40 transition-opacity"
-          title="删除"
-        >
-          <Trash2 size={10} />
-        </button>
-      )}
-    </div>
-  );
-}
-
-// ── 创建智能体浮层 ──
+// ── 创建快捷智能体浮层 ──
 function CreateAgentModal({
-  onClose,
-  onSubmit,
+  onClose, onSubmit,
 }: {
   onClose: () => void;
   onSubmit: (input: { label: string; description: string; systemPrompt: string }) => Promise<void>;
@@ -701,8 +699,7 @@ function CreateAgentModal({
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async () => {
-    if (submitting) return;
-    if (!label.trim() || !systemPrompt.trim()) return;
+    if (submitting || !label.trim() || !systemPrompt.trim()) return;
     setSubmitting(true);
     await onSubmit({
       label: label.trim(),
@@ -728,23 +725,25 @@ function CreateAgentModal({
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.96, opacity: 0 }}
       >
-        {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-token-subtle shrink-0">
           <div className="flex items-center gap-2">
             <div className="surface-action-accent flex h-7 w-7 items-center justify-center rounded-[8px]">
               <Bot size={14} />
             </div>
-            <p className="text-[13px] font-semibold text-token-primary">新建智能体</p>
+            <div>
+              <p className="text-[13px] font-semibold text-token-primary">新建快捷智能体</p>
+              <p className="text-[10px] text-token-muted">
+                轻量定义；调用时其 system prompt 会叠加到百宝箱通用 chat 链路
+              </p>
+            </div>
           </div>
-          <button
-            onClick={onClose}
+          <button onClick={onClose}
             className="flex h-7 w-7 items-center justify-center rounded-[8px] text-token-muted hover:bg-white/6"
           >
             <X size={14} />
           </button>
         </div>
 
-        {/* Body */}
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3" style={{ minHeight: 0 }}>
           <div>
             <label className="block mb-1 text-[11px] font-semibold text-token-muted">
@@ -777,17 +776,16 @@ function CreateAgentModal({
               onChange={(e) => setSystemPrompt(e.target.value)}
               maxLength={8000}
               rows={10}
-              placeholder={'例：你是产品文档质量审计员。任务：对用户给的文档输出 Markdown 报告，包含：\n## 整体观感\n## 结构问题（最多5条）\n## 表达问题（最多5条）\n## 修改建议\n严格基于原文事实。'}
+              placeholder={'例：你是文档质量审计员。任务：把用户给的文档输出 Markdown 报告 ...'}
               className="prd-field w-full resize-y rounded-[8px] px-3 py-2 text-[12px] outline-none font-mono leading-relaxed"
               style={{ minHeight: 200 }}
             />
             <p className="mt-1 text-[10px] text-token-muted">
-              {systemPrompt.length}/8000 字 · 调用时会把当前文档全文自动拼到 system 之后，无需在 prompt 里说明"用户会给文档"
+              {systemPrompt.length}/8000 字 · 调用时文档全文 + 用户指令会一起进入百宝箱通用 chat 链路
             </p>
           </div>
         </div>
 
-        {/* Footer */}
         <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-token-subtle shrink-0">
           <Button variant="ghost" size="sm" onClick={onClose} disabled={submitting}>取消</Button>
           <Button
@@ -806,5 +804,4 @@ function CreateAgentModal({
   );
 }
 
-// 静默 lint
 void AnimatePresence;

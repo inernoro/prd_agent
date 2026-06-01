@@ -502,6 +502,18 @@ export async function applyReprocessMessage(runId: string, input: {
   );
 }
 
+/** 写回任意内容到文档（不依赖 Run；用于通过 /ai-toolbox/direct-chat 直调拿回的内容） */
+export async function applyReprocessContent(entryId: string, input: {
+  mode: 'replace' | 'append' | 'new';
+  content: string;
+  title?: string;
+}) {
+  return await apiRequest<{ mode: string; outputEntryId?: string; updatedEntryId?: string }>(
+    api.documentStore.entries.reprocessApplyContent(entryId),
+    { method: 'POST', body: input },
+  );
+}
+
 /** 获取 Agent Run 当前状态 */
 export async function getAgentRun(runId: string) {
   return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreAgentRun>(

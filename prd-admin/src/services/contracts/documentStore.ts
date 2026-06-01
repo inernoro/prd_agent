@@ -167,6 +167,8 @@ export type ReprocessAgent = {
   key: string;
   label: string;
   description: string;
+  /** 调用时叠加到百宝箱通用 chat 链路里的 system prompt */
+  systemPrompt: string;
   visibility: 'system' | 'personal';
   /** 当前登录用户是否为创建者（用于显示删除按钮） */
   isOwn: boolean;

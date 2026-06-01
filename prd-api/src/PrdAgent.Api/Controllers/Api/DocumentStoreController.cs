@@ -2135,6 +2135,7 @@ public class DocumentStoreController : ControllerBase
                 key = a.Key,
                 label = a.Label,
                 description = a.Description,
+                systemPrompt = a.SystemPrompt,
                 visibility = a.Visibility,
                 isOwn = a.OwnerUserId == userId,
                 createdAt = a.CreatedAt,
@@ -2185,6 +2186,7 @@ public class DocumentStoreController : ControllerBase
             key = agent.Key,
             label = agent.Label,
             description = agent.Description,
+            systemPrompt = agent.SystemPrompt,
             visibility = agent.Visibility,
             isOwn = true,
             createdAt = agent.CreatedAt,
@@ -2398,6 +2400,59 @@ public class DocumentStoreController : ControllerBase
             .SortByDescending(r => r.CreatedAt)
             .FirstOrDefaultAsync();
         return Ok(ApiResponse<DocumentStoreAgentRun?>.Ok(run));
+    }
+
+    /// <summary>
+    /// 写回任意一段内容到文档（replace / append / new），不依赖 reprocess Run。
+    /// 用于：抽屉直接通过 /ai-toolbox/direct-chat 拿到的回复内容，前端把字符串塞进来就能落库。
+    /// </summary>
+    [HttpPost("entries/{entryId}/reprocess/apply-content")]
+    public async Task<IActionResult> ApplyContent(
+        string entryId,
+        [FromBody] ApplyContentRequest request,
+        [FromServices] ContentReprocessApplyService applyService)
+    {
+        var (entry, _, err) = await LoadOwnedEntryAsync(entryId);
+        if (err != null) return err;
+        if (entry!.IsFolder)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持写入"));
+
+        var mode = (request.Mode ?? "").Trim().ToLowerInvariant();
+        if (mode != "replace" && mode != "append" && mode != "new")
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "mode 必须是 replace/append/new"));
+        var content = (request.Content ?? "").Trim();
+        if (string.IsNullOrEmpty(content))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "content 不能为空"));
+
+        // 复用 ApplyService 内部逻辑：构造一个临时 Run+Message 喂给它，避免重复实现写盘细节
+        var userId = GetUserId();
+        var tmpRun = new DocumentStoreAgentRun
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Kind = DocumentStoreAgentRunKind.Reprocess,
+            SourceEntryId = entryId,
+            StoreId = entry.StoreId,
+            UserId = userId,
+            Status = DocumentStoreRunStatus.Done,
+            Messages = new List<ReprocessChatMessage>
+            {
+                new() { Seq = 0, Role = "assistant", Content = content, CreatedAt = DateTime.UtcNow },
+            },
+        };
+        try
+        {
+            var result = await applyService.ApplyAsync(tmpRun, entry, messageSeq: 0, mode, request.Title, _db);
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                mode = result.Mode,
+                outputEntryId = result.OutputEntryId,
+                updatedEntryId = result.UpdatedEntryId,
+            }));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
     }
 
     /// <summary>把对话中某条 assistant 消息写回文档（replace / append / new）</summary>
@@ -3767,6 +3822,18 @@ public class ReprocessApplyRequest
     public string Mode { get; set; } = string.Empty;
 
     /// <summary>mode=new 时的标题（可选，默认 "{源标题}-AI 再加工.md"）</summary>
+    public string? Title { get; set; }
+}
+
+public class ApplyContentRequest
+{
+    /// <summary>replace / append / new</summary>
+    public string Mode { get; set; } = string.Empty;
+
+    /// <summary>要写回的正文（必填）</summary>
+    public string Content { get; set; } = string.Empty;
+
+    /// <summary>mode=new 时的标题（可选）</summary>
     public string? Title { get; set; }
 }
 
