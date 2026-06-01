@@ -83,7 +83,6 @@ import {
   BarChart3,
   MessageSquare,
   ArrowDownUp,
-  ChevronDown,
   Plus,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
@@ -214,7 +213,7 @@ function buildSiteGroups(items: HostedSite[], mode: GroupMode): SiteGroup[] {
   return groups;
 }
 
-// ─── Sort chip：icon + 文字按钮 + floating menu，替代表单 select ───
+// ─── 排序循环：单击在 5 个选项之间下一步 ───
 
 const SORT_OPTIONS: { value: string; label: string }[] = [
   { value: 'newest', label: '最新创建' },
@@ -224,55 +223,9 @@ const SORT_OPTIONS: { value: string; label: string }[] = [
   { value: 'largest', label: '最大体积' },
 ];
 
-function SortChip({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const currentLabel = SORT_OPTIONS.find(o => o.value === value)?.label ?? '排序';
-  useEffect(() => {
-    if (!open) return;
-    const onDocClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onDocClick);
-    return () => document.removeEventListener('mousedown', onDocClick);
-  }, [open]);
-  return (
-    <div ref={ref} className="relative shrink-0">
-      <button
-        type="button"
-        onClick={() => setOpen(o => !o)}
-        className="h-8 inline-flex items-center gap-1.5 px-2.5 rounded-md text-[13px] transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.06))]"
-        style={{ color: 'var(--text-primary)' }}
-      >
-        <ArrowDownUp size={14} />
-        <span>{currentLabel}</span>
-        <ChevronDown size={12} style={{ color: 'var(--text-muted)' }} />
-      </button>
-      {open && (
-        <div
-          className="absolute right-0 mt-1 min-w-[140px] rounded-lg py-1 z-50"
-          style={{
-            background: 'var(--bg-elevated)',
-            border: '1px solid var(--border-default)',
-            boxShadow: '0 8px 24px -6px rgba(0,0,0,0.45)',
-          }}
-        >
-          {SORT_OPTIONS.map(opt => (
-            <button
-              key={opt.value}
-              type="button"
-              onClick={() => { onChange(opt.value); setOpen(false); }}
-              className="w-full text-left px-3 py-1.5 text-[13px] flex items-center gap-2 transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.06))]"
-              style={{ color: opt.value === value ? 'var(--accent-primary)' : 'var(--text-primary)' }}
-            >
-              {opt.value === value && <Check size={12} />}
-              <span className={opt.value === value ? '' : 'pl-[20px]'}>{opt.label}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+function nextSort(current: string): string {
+  const idx = SORT_OPTIONS.findIndex(o => o.value === current);
+  return SORT_OPTIONS[(idx + 1) % SORT_OPTIONS.length].value;
 }
 
 // ─── Main Page ───
@@ -819,20 +772,30 @@ export default function WebPagesPage() {
             />
           </div>
 
-          {/* Sort chip — 点击展开 floating menu，避免 select 表单壳 */}
-          <SortChip value={sort} onChange={setSort} />
-
-          {/* Group toggle — 二选一，单击切换（icon + 文字） */}
-          <button
-            type="button"
-            onClick={() => setGroupMode(groupMode === 'time' ? 'folder' : 'time')}
-            title={groupMode === 'time' ? '当前按日期分组，点击切到按文件夹' : '当前按文件夹分组，点击切到按日期'}
-            className="h-8 inline-flex items-center gap-1.5 px-2.5 rounded-md text-[13px] shrink-0 transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.06))]"
-            style={{ color: 'var(--text-primary)' }}
-          >
-            {groupMode === 'time' ? <Clock size={14} /> : <Folder size={14} />}
-            <span>{groupMode === 'time' ? '按日期' : '按文件夹'}</span>
-          </button>
+          {/* 排序 + 分组：单击循环切换，中间一条细竖线分隔 */}
+          <div className="flex items-center shrink-0 rounded-md" style={{ border: '1px solid var(--border-default)' }}>
+            <button
+              type="button"
+              onClick={() => setSort(nextSort(sort))}
+              title="点击切到下一种排序"
+              className="h-8 inline-flex items-center gap-1.5 px-2.5 text-[13px] transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.06))]"
+              style={{ color: 'var(--text-primary)' }}
+            >
+              <ArrowDownUp size={14} />
+              <span>{SORT_OPTIONS.find(o => o.value === sort)?.label ?? '排序'}</span>
+            </button>
+            <span className="h-4 w-px" style={{ background: 'var(--border-default)' }} />
+            <button
+              type="button"
+              onClick={() => setGroupMode(groupMode === 'time' ? 'folder' : 'time')}
+              title="点击切换分组方式"
+              className="h-8 inline-flex items-center gap-1.5 px-2.5 text-[13px] transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.06))]"
+              style={{ color: 'var(--text-primary)' }}
+            >
+              {groupMode === 'time' ? <Clock size={14} /> : <Folder size={14} />}
+              <span>{groupMode === 'time' ? '按日期' : '按文件夹'}</span>
+            </button>
+          </div>
 
           {/* View mode */}
           <div className="flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid var(--border-default)' }}>
