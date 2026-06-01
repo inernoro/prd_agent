@@ -604,6 +604,7 @@ export function ReprocessChatDrawer({
                         subtitle={item.description}
                         badge={item.type !== 'builtin' ? '我的工具' : undefined}
                         active={active?.kind === 'toolbox' && active.item.id === item.id}
+                        disabled={isBusy}
                         onClick={() => pickToolbox(item)}
                       />
                     ))}
@@ -635,6 +636,7 @@ export function ReprocessChatDrawer({
                         badge={agent.visibility === 'system' ? '系统' : '我的'}
                         badgeColor={agent.visibility === 'system' ? 'rgba(168,85,247,0.20)' : 'rgba(34,197,94,0.20)'}
                         active={active?.kind === 'kbAgent' && active.agent.id === agent.id}
+                        disabled={isBusy}
                         onClick={() => pickKbAgent(agent)}
                         onDelete={agent.isOwn ? () => handleDeleteAgent(agent) : undefined}
                       />
@@ -790,7 +792,7 @@ function DropdownSection({
 }
 
 function DropdownRow({
-  icon, title, subtitle, badge, badgeColor, active, onClick, onDelete,
+  icon, title, subtitle, badge, badgeColor, active, disabled, onClick, onDelete,
 }: {
   icon: React.ReactNode;
   title: string;
@@ -798,17 +800,28 @@ function DropdownRow({
   badge?: string;
   badgeColor?: string;
   active: boolean;
+  disabled?: boolean;
   onClick: () => void;
   onDelete?: () => void;
 }) {
   return (
     <div
-      className="group flex items-center gap-2.5 px-3 py-2 hover:bg-white/5 transition-colors cursor-pointer"
+      className="group flex items-center gap-2.5 px-3 py-2 transition-colors"
       style={{
         background: active ? 'rgba(168,85,247,0.10)' : undefined,
         borderLeft: active ? '2px solid rgba(168,85,247,0.6)' : '2px solid transparent',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.45 : 1,
       }}
-      onClick={onClick}
+      onClick={() => { if (!disabled) onClick(); }}
+      onMouseEnter={(e) => {
+        if (!disabled) (e.currentTarget as HTMLDivElement).style.background = active
+          ? 'rgba(168,85,247,0.15)' : 'rgba(255,255,255,0.05)';
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLDivElement).style.background = active
+          ? 'rgba(168,85,247,0.10)' : 'transparent';
+      }}
     >
       {icon}
       <div className="flex-1 min-w-0">

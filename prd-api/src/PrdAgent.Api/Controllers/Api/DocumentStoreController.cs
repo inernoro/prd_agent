@@ -2338,6 +2338,9 @@ public class DocumentStoreController : ControllerBase
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "上一轮还未结束，请稍候"));
         }
 
+        // 防御：BSON 里 older run 可能没有 Messages 字段 → 反序列化后是 null。
+        // run.Messages 的 default initializer 只在新建对象时跑，从 DB 读出来的 null 不会被填（Bugbot #1 四轮 High）
+        if (run != null && run.Messages == null) run.Messages = new List<ReprocessChatMessage>();
         var nextSeq = run?.Messages.Count ?? 0;
         var userMsg = new ReprocessChatMessage
         {
@@ -2429,7 +2432,7 @@ public class DocumentStoreController : ControllerBase
         // 团队协作场景：team 成员能通过 UpdateEntryContent 编辑分享给团队的条目，
         // 这里写回 AI 输出也是"修改内容"，得用同款 Writable 鉴权，否则非 owner 永远 404（Codex P2）
         var userId = GetUserId();
-        var (entry, _, err) = await LoadWritableEntryAsync(entryId, userId);
+        var (entry, store, err) = await LoadWritableEntryAsync(entryId, userId);
         if (err != null) return err;
         if (entry!.IsFolder)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持写入"));
@@ -2440,6 +2443,20 @@ public class DocumentStoreController : ControllerBase
         var content = (request.Content ?? "").Trim();
         if (string.IsNullOrEmpty(content))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "content 不能为空"));
+
+        // 模板合规校验：store 命中模板时和 UpdateEntryContent 同款 —— 缺 section 且是
+        // machine-templated（如 acceptance-report）就硬卡 422，避免 AI 写回把验收报告搞残
+        // （Codex P2 四轮）。replace/append 在原 entry 上跑校验；new 创建新 entry 走 generated_kind=reprocess
+        // 不算 machine-templated，软提醒即可。
+        var template = AcceptanceTemplateRegistry.FindByKey(store?.TemplateKey);
+        if (template != null && (mode == "replace" || mode == "append"))
+        {
+            // 对 replace 直接验 content；对 append 验 existing+content 的合并结果
+            var bodyToValidate = mode == "replace" ? content : await ComputeAppendedBodyAsync(entry, content);
+            var problems = AcceptanceTemplateRegistry.ValidateContentSections(template, bodyToValidate);
+            if (problems.Count > 0 && IsMachineTemplatedWrite(entry.Metadata))
+                return TemplateValidationError(template, problems);
+        }
 
         // 复用 ApplyService 内部逻辑：构造一个临时 Run+Message 喂给它，避免重复实现写盘细节
         var tmpRun = new DocumentStoreAgentRun
@@ -2496,6 +2513,20 @@ public class DocumentStoreController : ControllerBase
         }
     }
 
+    /// <summary>读源 entry 既有正文 + AI 输出拼成 append 后的最终 body。供模板校验用，不写盘。</summary>
+    private async Task<string> ComputeAppendedBodyAsync(DocumentEntry entry, string aiContent)
+    {
+        var existing = string.Empty;
+        if (!string.IsNullOrEmpty(entry.DocumentId))
+        {
+            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
+            existing = doc?.RawContent ?? string.Empty;
+        }
+        if (string.IsNullOrEmpty(existing))
+            existing = entry.ContentIndex ?? string.Empty;
+        return string.IsNullOrEmpty(existing) ? aiContent : existing.TrimEnd() + "\n\n" + aiContent;
+    }
+
     /// <summary>把对话中某条 assistant 消息写回文档（replace / append / new）</summary>
     [HttpPost("agent-runs/{runId}/apply")]
     public async Task<IActionResult> ApplyReprocess(
@@ -2511,12 +2542,31 @@ public class DocumentStoreController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "Run 不存在"));
 
         // 同 apply-content：team writable，让协作成员也能用 AI 写回（Bugbot #4 三轮 Medium）
-        var (entry, _, err) = await LoadWritableEntryAsync(run.SourceEntryId, userId);
+        var (entry, store, err) = await LoadWritableEntryAsync(run.SourceEntryId, userId);
         if (err != null) return err;
 
         var mode = (request.Mode ?? "").Trim().ToLowerInvariant();
         if (mode != "replace" && mode != "append" && mode != "new")
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "mode 必须是 replace/append/new"));
+
+        // 同 apply-content：模板合规校验（Codex P2 四轮）
+        var runApplyTemplate = AcceptanceTemplateRegistry.FindByKey(store?.TemplateKey);
+        if (runApplyTemplate != null && (mode == "replace" || mode == "append"))
+        {
+            run.Messages ??= new List<ReprocessChatMessage>();
+            if (request.MessageSeq >= 0 && request.MessageSeq < run.Messages.Count)
+            {
+                var msg = run.Messages[request.MessageSeq];
+                var aiContent = (msg.Content ?? "").Trim();
+                if (msg.Role == "assistant" && !string.IsNullOrEmpty(aiContent))
+                {
+                    var bodyToValidate = mode == "replace" ? aiContent : await ComputeAppendedBodyAsync(entry!, aiContent);
+                    var problems = AcceptanceTemplateRegistry.ValidateContentSections(runApplyTemplate, bodyToValidate);
+                    if (problems.Count > 0 && IsMachineTemplatedWrite(entry!.Metadata))
+                        return TemplateValidationError(runApplyTemplate, problems);
+                }
+            }
+        }
 
         try
         {

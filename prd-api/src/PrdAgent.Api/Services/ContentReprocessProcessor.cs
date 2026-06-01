@@ -84,6 +84,9 @@ public class ContentReprocessProcessor
         _logger.LogInformation("[doc-store-agent] [reprocess] sourceContent ready chars={Len}", sourceContent.Length);
         await UpdateProgressAsync(db, runStore, run, 5, "准备中");
 
+        // 防御：旧 BSON 文档可能没有 Messages 字段 → 反序列化为 null（Bugbot #1 四轮 High）
+        run.Messages ??= new List<ReprocessChatMessage>();
+
         // 2) 定位本轮要处理的 user 消息：messages 末尾的 user（若 role=assistant 则无新消息可处理）
         if (run.Messages.Count == 0)
             throw new InvalidOperationException("对话历史为空");
@@ -91,8 +94,11 @@ public class ContentReprocessProcessor
         var lastMsg = run.Messages[^1];
         if (lastMsg.Role != "user")
         {
-            _logger.LogInformation("[doc-store-agent] Reprocess run {RunId} has no pending user message, skip", run.Id);
-            return;
+            // 早返回 + worker 默认收尾会把 run 标 Done 并发 success SSE，前端会看到一条
+            // "成功的空回复"（Bugbot #3 四轮 Medium）。改为抛异常让 worker 走 catch 路径
+            // 标 Failed + error SSE，符合"无事可做"的实际语义。
+            _logger.LogInformation("[doc-store-agent] Reprocess run {RunId} has no pending user message, mark failed", run.Id);
+            throw new InvalidOperationException("没有待处理的用户消息（最后一条不是 user）");
         }
 
         await UpdateProgressAsync(db, runStore, run, 8, "构建提示词");

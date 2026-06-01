@@ -41,10 +41,12 @@ public class ContentReprocessApplyService
         string? title,
         MongoDbContext db)
     {
-        if (run.Messages.Count <= messageSeq || messageSeq < 0)
+        // 旧 BSON 文档可能没 Messages 字段（Bugbot #1 四轮 High）
+        var messages = run.Messages ?? new List<ReprocessChatMessage>();
+        if (messages.Count <= messageSeq || messageSeq < 0)
             throw new InvalidOperationException("messageSeq 越界");
 
-        var msg = run.Messages[messageSeq];
+        var msg = messages[messageSeq];
         if (msg.Role != "assistant")
             throw new InvalidOperationException("只有 assistant 消息可以写回");
 
