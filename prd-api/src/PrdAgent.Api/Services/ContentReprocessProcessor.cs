@@ -34,22 +34,54 @@ public class ContentReprocessProcessor
 
     public async Task ProcessAsync(DocumentStoreAgentRun run, MongoDbContext db, IRunEventStore runStore)
     {
+        _logger.LogInformation("[doc-store-agent] [reprocess] BEGIN run={RunId} user={UserId} entry={EntryId} msgs={MsgCount} tplKey={TplKey}",
+            run.Id, run.UserId, run.SourceEntryId, run.Messages.Count, run.TemplateKey);
+
+        // 进入第一阶段的可观察 marker（即使后续 await hang 也能从 DB 看到）
+        await UpdateProgressAsync(db, runStore, run, 1, "读取条目");
+
         // 1) 读源 entry + 正文（文档全文作为 system prompt 的一部分注入）
         var entry = await db.DocumentEntries.Find(e => e.Id == run.SourceEntryId).FirstOrDefaultAsync();
+        _logger.LogInformation("[doc-store-agent] [reprocess] entry loaded id={EntryId} hasDocId={HasDoc} idxLen={IdxLen}",
+            entry?.Id, !string.IsNullOrEmpty(entry?.DocumentId), entry?.ContentIndex?.Length ?? 0);
         if (entry == null) throw new InvalidOperationException("源文档条目不存在");
         if (entry.IsFolder) throw new InvalidOperationException("文件夹不支持再加工");
+
+        await UpdateProgressAsync(db, runStore, run, 2, "读取正文");
 
         string? sourceContent = null;
         if (!string.IsNullOrEmpty(entry.DocumentId))
         {
-            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
-            sourceContent = doc?.RawContent;
+            // 给 GetByIdAsync 套 5s 超时，避免 Redis/Mongo 偶发抖动让整个 worker 卡死
+            using var docCts = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken.None);
+            docCts.CancelAfter(TimeSpan.FromSeconds(5));
+            try
+            {
+                var docTask = _documentService.GetByIdAsync(entry.DocumentId);
+                var completed = await Task.WhenAny(docTask, Task.Delay(TimeSpan.FromSeconds(5), docCts.Token));
+                if (completed == docTask)
+                {
+                    var doc = await docTask;
+                    sourceContent = doc?.RawContent;
+                    _logger.LogInformation("[doc-store-agent] [reprocess] doc loaded id={DocId} len={Len}",
+                        entry.DocumentId, sourceContent?.Length ?? 0);
+                }
+                else
+                {
+                    _logger.LogWarning("[doc-store-agent] [reprocess] GetByIdAsync 5s 超时，降级用 ContentIndex docId={DocId}", entry.DocumentId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[doc-store-agent] [reprocess] GetByIdAsync 失败，降级用 ContentIndex");
+            }
         }
         if (string.IsNullOrWhiteSpace(sourceContent))
             sourceContent = entry.ContentIndex;
         if (string.IsNullOrWhiteSpace(sourceContent))
             throw new InvalidOperationException("源文档无正文可供再加工");
 
+        _logger.LogInformation("[doc-store-agent] [reprocess] sourceContent ready chars={Len}", sourceContent.Length);
         await UpdateProgressAsync(db, runStore, run, 5, "准备中");
 
         // 2) 定位本轮要处理的 user 消息：messages 末尾的 user（若 role=assistant 则无新消息可处理）
@@ -63,8 +95,12 @@ public class ContentReprocessProcessor
             return;
         }
 
+        await UpdateProgressAsync(db, runStore, run, 8, "构建提示词");
+
         // 3) 构建 LLM messages：system = 模板/智能体 + 源文档；历史 user/assistant 交替；本轮 user 在末尾
         var (systemPrompt, templateLabel) = await BuildSystemPromptAsync(run, sourceContent, db);
+        _logger.LogInformation("[doc-store-agent] [reprocess] systemPrompt built label={Label} sysLen={SysLen}",
+            templateLabel, systemPrompt.Length);
 
         var llmMessages = new List<LLMMessage>();
         for (int i = 0; i < run.Messages.Count; i++)
@@ -74,6 +110,7 @@ public class ContentReprocessProcessor
             if (string.IsNullOrWhiteSpace(m.Content)) continue;
             llmMessages.Add(new LLMMessage { Role = m.Role, Content = m.Content });
         }
+        _logger.LogInformation("[doc-store-agent] [reprocess] llmMessages built count={Count}", llmMessages.Count);
 
         await UpdateProgressAsync(db, runStore, run, 15, "调用 LLM");
 
@@ -101,8 +138,15 @@ public class ContentReprocessProcessor
         long chunkCount = 0;
         var lastFlushAt = DateTime.UtcNow;
 
+        _logger.LogInformation("[doc-store-agent] [reprocess] about to StreamGenerateAsync sysLen={SysLen} msgCount={Mc}",
+            systemPrompt.Length, llmMessages.Count);
+
         await foreach (var chunk in client.StreamGenerateAsync(systemPrompt, llmMessages, CancellationToken.None))
         {
+            // 记录前 3 个 chunk 的类型，方便排查"LLM 实际产出但被 type 过滤吞掉"的情况
+            if (chunkCount < 3)
+                _logger.LogInformation("[doc-store-agent] [reprocess] chunk #{N} type={Type} contentLen={Len} err={Err}",
+                    chunkCount, chunk.Type, chunk.Content?.Length ?? 0, chunk.ErrorMessage);
             if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
             {
                 sb.Append(chunk.Content);
