@@ -908,6 +908,46 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=showcase-back]", Title = "第 6 步：返回首页", Body = "左上角返回按钮回到首页。看完点「完成」🎉" },
                     },
                 }),
+
+            // 13. 视觉创作 编辑器 —— 进入项目后(/visual-agent/:id)自动开讲,贯通到创作流程
+            // sourceId 含 "editor" → 前端 TipsDrawer 自动开讲匹配器只在「深层路由」触发它(列表页走 visual-page-guide)。
+            T("visual-editor-page-guide", "card",
+                "视觉编辑器：进入项目后这样创作",
+                "进入项目后,认识画布、输入区、生成流程,真正上手出图。",
+                "/visual-agent",
+                "看编辑器教程",
+                "[data-tour-id=visual-editor-root]",
+                0,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new() { Selector = "[data-tour-id=visual-editor-root]", Title = "第 1 步：你已进入视觉编辑器", Body = "这里是单个项目的创作空间——左侧是无限画布，底部是创作输入区。" },
+                        new() { Selector = "[data-tour-id=visual-editor-canvas]", Title = "第 2 步：无限画布", Body = "两指拖动平移、双指捏合或 ⌘/Ctrl+滚轮缩放；把图片直接拖进来即可作为参考或编辑对象。" },
+                        new() { Selector = "[data-tour-id=visual-editor-canvas]", Title = "第 3 步：开始创作", Body = "在底部输入框写指令、选模型与尺寸，点生成，结果会出现在画布上；左上角返回退出。看完点「完成」🎉" },
+                    },
+                }),
+
+            // 14. 文学创作 编辑器 —— 进入文章后(/literary-agent/:id)自动开讲
+            T("literary-editor-page-guide", "card",
+                "文学编辑器：进入文章后这样配图",
+                "进入文章后,认识正文区、配图标记、生成流程。",
+                "/literary-agent",
+                "看编辑器教程",
+                "[data-tour-id=literary-editor-root]",
+                0,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new() { Selector = "[data-tour-id=literary-editor-root]", Title = "第 1 步：你已进入文学编辑器", Body = "左侧是文章正文区，右侧是配图标记列表。" },
+                        new() { Selector = "[data-tour-id=literary-editor-content]", Title = "第 2 步：正文区", Body = "上传或粘贴文章后在这里预览；把 .md / .txt 文件拖进来也能上传。" },
+                        new() { Selector = "[data-tour-id=literary-editor-content]", Title = "第 3 步：生成配图", Body = "AI 会按正文自动标出配图点并逐张生成，右侧可逐个查看或重生成。" },
+                        new() { Selector = "[data-tour-id=literary-editor-back]", Title = "第 4 步：返回", Body = "左上角返回按钮回到文章列表。看完点「完成」🎉" },
+                    },
+                }),
         };
     }
 }

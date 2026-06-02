@@ -5363,7 +5363,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }, [selectedGenerator]);
 
   return (
-    <div ref={containerRef} className="h-full min-h-0 bg-token-nested">
+    <div ref={containerRef} data-tour-id="visual-editor-root" className="h-full min-h-0 bg-token-nested">
       {uploadToast ? (
         <div
           className="fixed left-1/2 z-9999"
@@ -5390,6 +5390,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           {/* 主画布（无限视口） */}
           <div
             ref={stageRef}
+            data-tour-id="visual-editor-canvas"
             className="absolute inset-0 overflow-hidden outline-none focus:outline-none focus-visible:outline-none! focus-visible:shadow-none!"
             style={{
               backgroundColor: '#1e1e1e',

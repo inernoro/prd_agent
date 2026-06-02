@@ -234,12 +234,15 @@ export function TipsDrawer() {
   //   本 session 每条只自动弹一次(sessionStorage 记忆),避免同 session 内切来切去反复打断。
   useEffect(() => {
     if (!loaded) return;
-    const guide = tips.find(
-      (t) => typeof t.sourceId === 'string'
-        && t.sourceId.endsWith('-page-guide')
-        && !!t.actionUrl
-        && (location.pathname === t.actionUrl || location.pathname.startsWith(t.actionUrl + '/')),
-    );
+    const guide = tips.find((t) => {
+      if (typeof t.sourceId !== 'string' || !t.sourceId.endsWith('-page-guide') || !t.actionUrl) return false;
+      // *-editor-page-guide 走深层(编辑器)路由;普通 *-page-guide 走列表路由。
+      // 这样在 /visual-agent 弹列表教程,进入 /visual-agent/:id 编辑器弹编辑器教程,各管各的。
+      const isEditorGuide = t.sourceId.includes('editor');
+      if (location.pathname === t.actionUrl) return !isEditorGuide;
+      if (location.pathname.startsWith(t.actionUrl + '/')) return isEditorGuide;
+      return false;
+    });
     if (!guide || !guide.sourceId) return;
     let started: Set<string>;
     try { started = new Set(JSON.parse(sessionStorage.getItem(AUTO_STARTED_GUIDES_KEY) || '[]')); }
@@ -358,10 +361,14 @@ export function TipsDrawer() {
       writeSpotlightPayload(tip);
       // 抽屉故意保留打开,让用户边跟着 Spotlight 引导,边对照教程步骤 /
       // 决定点「不再提示」;不再像以前那样 setExpanded(false) 把引导面板秒关。
-      // 跳转后如果 5s 没 hover 抽屉,自动 collapse 的定时器会把它收起。
-      navigate(tip.actionUrl || '/');
+      const url = tip.actionUrl || '/';
+      // 已经在该 url 或其子路由(如编辑器页)时不要再 navigate,
+      // 否则点编辑器教程的 CTA 会把用户从编辑器弹回列表页。
+      if (location.pathname !== url && !location.pathname.startsWith(url + '/')) {
+        navigate(url);
+      }
     },
-    [navigate],
+    [navigate, location.pathname],
   );
 
   const handleDismissTip = (tipId: string) => {
