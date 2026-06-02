@@ -2935,6 +2935,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
     }
 
+    // 每个分支带上预览地址(SSOT slug + previewHost),前端在 running 时显示"应用已上线 · 打开预览"。
+    const previewHost = (config.previewDomain || config.rootDomains?.[0] || '').replace(/^https?:\/\//, '').replace(/\/+$/, '');
+    for (const b of branchesWithSubject as Array<{ previewSlug?: string; previewUrl?: string }>) {
+      b.previewUrl = previewHost && b.previewSlug ? `https://${b.previewSlug}.${previewHost}` : '';
+    }
+
     res.json({
       branches: branchesWithSubject,
       defaultBranch: state.defaultBranch,
