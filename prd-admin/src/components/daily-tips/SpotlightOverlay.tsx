@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { X, ChevronRight, Sparkles } from 'lucide-react';
+import { X, ChevronRight, Sparkles, Check, Circle, CircleDot } from 'lucide-react';
 import {
   SPOTLIGHT_ACTION_KEY,
   SPOTLIGHT_TARGET_KEY,
@@ -35,6 +35,11 @@ export function SpotlightOverlay() {
   const autoClickTimerRef = useRef<number | null>(null);
   /** 每个 payload 只允许 autoClick 触发一次,避免多步 Tour 里每切一步都自动点击 */
   const autoClickFiredForPayloadRef = useRef<SpotlightActionPayload | null>(null);
+  /** 任务清单里「当前步骤」的行,切步时滚动到可见,长清单也不丢当前任务 */
+  const curStepRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    curStepRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [stepIndex]);
 
   // ---- 启动 + 同路由事件:读 sessionStorage 解析 payload ----
   // 初次 mount 读一次;TipsRotator 写完 payload 会广播 SPOTLIGHT_PAYLOAD_UPDATED_EVENT,
@@ -404,7 +409,7 @@ export function SpotlightOverlay() {
             position: 'fixed',
             left: bubbleLeft,
             top: bubbleTop,
-            width: 340,
+            width: 360,
             padding: '12px 14px 14px',
             borderRadius: 14,
             background: 'linear-gradient(180deg, rgba(26,26,34,0.98), rgba(15,16,20,0.98))',
@@ -448,6 +453,34 @@ export function SpotlightOverlay() {
             <Sparkles size={12} />
             {bubbleTitle}
           </div>
+          {/* 任务式进度 + 步骤清单(多步教程):像做任务一样,有进度、有步骤,一个个打勾完成 */}
+          {steps && steps.length > 1 && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>
+                <span>任务进度</span>
+                <span style={{ fontVariantNumeric: 'tabular-nums' }}>{stepIndex + 1} / {steps.length}</span>
+              </div>
+              <div style={{ height: 5, borderRadius: 999, background: 'rgba(255,255,255,0.08)', overflow: 'hidden', marginBottom: 8 }}>
+                <div style={{ height: '100%', width: `${((stepIndex + 1) / steps.length) * 100}%`, background: 'linear-gradient(90deg,#818cf8,#a78bfa)', transition: 'width 260ms cubic-bezier(.2,.8,.2,1)' }} />
+              </div>
+              <div style={{ maxHeight: 128, overflowY: 'auto', overscrollBehavior: 'contain', margin: '0 -2px', padding: '0 2px' }}>
+                {steps.map((s, i) => {
+                  const done = i < stepIndex;
+                  const cur = i === stepIndex;
+                  return (
+                    <div key={i} ref={cur ? curStepRef : undefined} style={{ display: 'flex', alignItems: 'flex-start', gap: 7, padding: '3px 0', opacity: cur ? 1 : done ? 0.75 : 0.45 }}>
+                      <span style={{ marginTop: 1, flexShrink: 0, display: 'inline-flex', color: done ? '#34d399' : cur ? '#c4b5fd' : 'rgba(255,255,255,0.3)' }}>
+                        {done ? <Check size={13} strokeWidth={2.6} /> : cur ? <CircleDot size={13} /> : <Circle size={13} />}
+                      </span>
+                      <span style={{ fontSize: 11.5, lineHeight: 1.4, color: cur ? '#e9d5ff' : 'rgba(255,255,255,0.72)', fontWeight: cur ? 600 : 400, textDecoration: done ? 'line-through' : 'none' }}>
+                        {s.title}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           {bubbleBody && (
             <div
               style={{
@@ -469,14 +502,8 @@ export function SpotlightOverlay() {
               gap: 10,
             }}
           >
-            {steps && (
-              <div
-                style={{
-                  fontSize: 11,
-                  color: 'rgba(255,255,255,0.45)',
-                  fontVariantNumeric: 'tabular-nums',
-                }}
-              >
+            {steps && steps.length <= 1 && (
+              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', fontVariantNumeric: 'tabular-nums' }}>
                 步骤 {stepIndex + 1} / {steps.length}
               </div>
             )}

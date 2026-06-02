@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/authStore';
 import type { ReviewSubmission } from '@/services';
 import { ReviewAgentDimensionsModal } from './ReviewAgentDimensionsModal';
 import { ReviewAgentWebhookModal } from './ReviewAgentWebhookModal';
+import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 
 function getStatusDisplay(item: ReviewSubmission): { label: string; color: string; icon: React.ReactNode } {
   if (item.status === 'Done') {
@@ -83,6 +84,7 @@ export function ReviewAgentPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <TipsEntryButton compact />
           {canManage && (
             <>
               <button
