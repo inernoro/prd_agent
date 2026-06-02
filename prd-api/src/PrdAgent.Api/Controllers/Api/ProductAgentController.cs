@@ -230,6 +230,9 @@ public class ProductAgentController : ControllerBase
         if (request.FeatureVersionIds != null) u = u.Set(v => v.FeatureVersionIds, request.FeatureVersionIds);
         if (request.FormData != null) u = u.Set(v => v.FormData, request.FormData);
         await _db.ProductVersions.UpdateOneAsync(v => v.Id == versionId, u);
+        // 版本关联需求：维护需求侧反向引用
+        if (request.RequirementIds != null)
+            await SyncVersionToRequirementsAsync(version.ProductId, versionId, request.RequirementIds);
         var updated = await _db.ProductVersions.Find(v => v.Id == versionId).FirstOrDefaultAsync();
         return Ok(ApiResponse<object>.Ok(updated));
     }
@@ -324,6 +327,9 @@ public class ProductAgentController : ControllerBase
         if (request.AssigneeId != null) u = u.Set(r => r.AssigneeId, request.AssigneeId);
         if (request.FormData != null) u = u.Set(r => r.FormData, request.FormData);
         await _db.Requirements.UpdateOneAsync(r => r.Id == requirementId, u);
+        // 需求关联版本：维护版本侧反向引用
+        if (request.VersionIds != null)
+            await SyncRequirementToVersionsAsync(req.ProductId, requirementId, request.VersionIds);
         var updated = await _db.Requirements.Find(r => r.Id == requirementId).FirstOrDefaultAsync();
         return Ok(ApiResponse<object>.Ok(updated));
     }
@@ -778,6 +784,143 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { entityId = request.EntityId, newState = transition.ToState }));
     }
 
+    // ════════════════════════ 知识库挂载（复用 DocumentStore，P1）════════════════════════
+
+    /// <summary>产品整体知识库（find-or-create 绑定的 DocumentStore；前端复用 document-store 渲染）</summary>
+    [HttpGet("products/{productId}/knowledge/store")]
+    public async Task<IActionResult> GetProductKnowledgeStore(string productId)
+    {
+        var product = await FindAccessibleProductAsync(productId, GetUserId());
+        if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+
+        DocumentStore? store = null;
+        if (!string.IsNullOrEmpty(product.KnowledgeStoreId))
+            store = await _db.DocumentStores.Find(s => s.Id == product.KnowledgeStoreId).FirstOrDefaultAsync();
+        if (store == null)
+        {
+            store = new DocumentStore
+            {
+                Name = $"{product.Name} · 整体知识库",
+                OwnerId = product.OwnerId,
+                AppKey = "product-agent",
+                ProductKnowledgeRef = $"product:{productId}",
+            };
+            await _db.DocumentStores.InsertOneAsync(store);
+            await _db.Products.UpdateOneAsync(p => p.Id == productId,
+                Builders<Product>.Update.Set(p => p.KnowledgeStoreId, store.Id).Set(p => p.UpdatedAt, DateTime.UtcNow));
+        }
+        return Ok(ApiResponse<object>.Ok(store));
+    }
+
+    /// <summary>版本知识库（含 MRD/SRS/PRD；find-or-create 绑定的 DocumentStore）</summary>
+    [HttpGet("versions/{versionId}/knowledge/store")]
+    public async Task<IActionResult> GetVersionKnowledgeStore(string versionId)
+    {
+        var version = await _db.ProductVersions.Find(v => v.Id == versionId && !v.IsDeleted).FirstOrDefaultAsync();
+        if (version == null || await FindAccessibleProductAsync(version.ProductId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "版本不存在或无权访问"));
+
+        DocumentStore? store = null;
+        if (!string.IsNullOrEmpty(version.KnowledgeStoreId))
+            store = await _db.DocumentStores.Find(s => s.Id == version.KnowledgeStoreId).FirstOrDefaultAsync();
+        if (store == null)
+        {
+            store = new DocumentStore
+            {
+                Name = $"{version.VersionName} · 版本知识库",
+                OwnerId = version.OwnerId,
+                AppKey = "product-agent",
+                ProductKnowledgeRef = $"version:{versionId}",
+            };
+            await _db.DocumentStores.InsertOneAsync(store);
+            await _db.ProductVersions.UpdateOneAsync(v => v.Id == versionId,
+                Builders<ProductVersion>.Update.Set(v => v.KnowledgeStoreId, store.Id).Set(v => v.UpdatedAt, DateTime.UtcNow));
+        }
+        return Ok(ApiResponse<object>.Ok(store));
+    }
+
+    // ════════════════════════ 缺陷追溯（复用 defect-agent，P1）════════════════════════
+
+    /// <summary>列出追溯到本产品（可按需求/版本/功能细分）的缺陷。</summary>
+    [HttpGet("products/{productId}/defects")]
+    public async Task<IActionResult> ListTracedDefects(string productId, [FromQuery] string? requirementId = null, [FromQuery] string? versionId = null, [FromQuery] string? featureId = null)
+    {
+        if (await FindAccessibleProductAsync(productId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        var b = Builders<DefectReport>.Filter;
+        var conds = new List<FilterDefinition<DefectReport>> { b.Eq(d => d.TracedProductId, productId), b.Eq(d => d.IsDeleted, false) };
+        if (!string.IsNullOrWhiteSpace(requirementId)) conds.Add(b.Eq(d => d.TracedRequirementId, requirementId));
+        if (!string.IsNullOrWhiteSpace(versionId)) conds.Add(b.Eq(d => d.TracedVersionId, versionId));
+        if (!string.IsNullOrWhiteSpace(featureId)) conds.Add(b.Eq(d => d.TracedFeatureId, featureId));
+        var items = await _db.DefectReports.Find(b.And(conds)).SortByDescending(d => d.CreatedAt).Limit(200).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>列出可被关联（追溯）的缺陷：当前用户可见、尚未追溯到任何产品。</summary>
+    [HttpGet("products/{productId}/defects/linkable")]
+    public async Task<IActionResult> ListLinkableDefects(string productId, [FromQuery] string? keyword = null)
+    {
+        var userId = GetUserId();
+        if (await FindAccessibleProductAsync(productId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        var b = Builders<DefectReport>.Filter;
+        var conds = new List<FilterDefinition<DefectReport>>
+        {
+            b.Eq(d => d.IsDeleted, false),
+            b.Eq(d => d.TracedProductId, (string?)null),
+        };
+        if (!HasPermission(AdminPermissionCatalog.ProductAgentManage))
+            conds.Add(b.Or(b.Eq(d => d.ReporterId, userId), b.Eq(d => d.AssigneeId, userId)));
+        if (!string.IsNullOrWhiteSpace(keyword))
+            conds.Add(b.Or(
+                b.Regex(d => d.Title, new MongoDB.Bson.BsonRegularExpression(keyword, "i")),
+                b.Regex(d => d.DefectNo, new MongoDB.Bson.BsonRegularExpression(keyword, "i"))));
+        var items = await _db.DefectReports.Find(b.And(conds)).SortByDescending(d => d.CreatedAt).Limit(30).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>把一个缺陷追溯到产品/需求/版本/功能（写 defect 侧 Traced* 字段）。</summary>
+    [HttpPost("trace-defect")]
+    public async Task<IActionResult> TraceDefect([FromBody] TraceDefectRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.DefectId) || string.IsNullOrWhiteSpace(request.ProductId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺少缺陷或产品 ID"));
+        if (await FindAccessibleProductAsync(request.ProductId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        var defect = await _db.DefectReports.Find(d => d.Id == request.DefectId && !d.IsDeleted).FirstOrDefaultAsync();
+        if (defect == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "缺陷不存在"));
+
+        var u = Builders<DefectReport>.Update
+            .Set(d => d.TracedProductId, request.ProductId)
+            .Set(d => d.TracedRequirementId, request.RequirementId)
+            .Set(d => d.TracedVersionId, request.VersionId)
+            .Set(d => d.TracedFeatureId, request.FeatureId);
+        await _db.DefectReports.UpdateOneAsync(d => d.Id == request.DefectId, u);
+        await RecalcDefectCountAsync(request.ProductId);
+        return Ok(ApiResponse<object>.Ok(new { traced = true }));
+    }
+
+    /// <summary>解除缺陷的产品追溯。</summary>
+    [HttpPost("untrace-defect")]
+    public async Task<IActionResult> UntraceDefect([FromBody] UntraceDefectRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.DefectId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺少缺陷 ID"));
+        var defect = await _db.DefectReports.Find(d => d.Id == request.DefectId && !d.IsDeleted).FirstOrDefaultAsync();
+        if (defect == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "缺陷不存在"));
+        if (!string.IsNullOrEmpty(defect.TracedProductId) && await FindAccessibleProductAsync(defect.TracedProductId, GetUserId()) == null)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权解除该缺陷追溯"));
+        var productId = defect.TracedProductId;
+        await _db.DefectReports.UpdateOneAsync(d => d.Id == request.DefectId,
+            Builders<DefectReport>.Update
+                .Set(d => d.TracedProductId, (string?)null)
+                .Set(d => d.TracedRequirementId, (string?)null)
+                .Set(d => d.TracedVersionId, (string?)null)
+                .Set(d => d.TracedFeatureId, (string?)null));
+        if (!string.IsNullOrEmpty(productId)) await RecalcDefectCountAsync(productId);
+        return Ok(ApiResponse<object>.Ok(new { untraced = true }));
+    }
+
     // ════════════════════════ 私有工具 ════════════════════════
 
     /// <summary>按 {PREFIX}-{YEAR}-{NNNN} 生成业务编号。fieldName 为编号字段名（FieldDefinition 由 string 隐式转换）。</summary>
@@ -810,6 +953,34 @@ public class ProductAgentController : ControllerBase
                 .Set(p => p.RequirementCount, (int)requirements)
                 .Set(p => p.FeatureCount, (int)features)
                 .Set(p => p.UpdatedAt, DateTime.UtcNow));
+    }
+
+    /// <summary>重算产品的追溯缺陷计数（缺陷侧 TracedProductId 命中数）。</summary>
+    private async Task RecalcDefectCountAsync(string productId)
+    {
+        var defects = await _db.DefectReports.CountDocumentsAsync(d => d.TracedProductId == productId && !d.IsDeleted);
+        await _db.Products.UpdateOneAsync(p => p.Id == productId,
+            Builders<Product>.Update.Set(p => p.DefectCount, (int)defects).Set(p => p.UpdatedAt, DateTime.UtcNow));
+    }
+
+    /// <summary>版本→需求 反向同步：把 versionId 从该产品所有需求的 VersionIds 移除，再加到选中的需求。</summary>
+    private async Task SyncVersionToRequirementsAsync(string productId, string versionId, List<string> requirementIds)
+    {
+        await _db.Requirements.UpdateManyAsync(r => r.ProductId == productId,
+            Builders<Requirement>.Update.Pull(r => r.VersionIds, versionId));
+        if (requirementIds.Count > 0)
+            await _db.Requirements.UpdateManyAsync(r => requirementIds.Contains(r.Id),
+                Builders<Requirement>.Update.AddToSet(r => r.VersionIds, versionId));
+    }
+
+    /// <summary>需求→版本 反向同步：把 requirementId 从该产品所有版本的 RequirementIds 移除，再加到选中的版本。</summary>
+    private async Task SyncRequirementToVersionsAsync(string productId, string requirementId, List<string> versionIds)
+    {
+        await _db.ProductVersions.UpdateManyAsync(v => v.ProductId == productId,
+            Builders<ProductVersion>.Update.Pull(v => v.RequirementIds, requirementId));
+        if (versionIds.Count > 0)
+            await _db.ProductVersions.UpdateManyAsync(v => versionIds.Contains(v.Id),
+                Builders<ProductVersion>.Update.AddToSet(v => v.RequirementIds, requirementId));
     }
 }
 
@@ -918,4 +1089,18 @@ public class TransitionRequest
     public string EntityId { get; set; } = string.Empty;
     public string TransitionKey { get; set; } = string.Empty;
     public string? Comment { get; set; }
+}
+
+public class TraceDefectRequest
+{
+    public string DefectId { get; set; } = string.Empty;
+    public string ProductId { get; set; } = string.Empty;
+    public string? RequirementId { get; set; }
+    public string? VersionId { get; set; }
+    public string? FeatureId { get; set; }
+}
+
+public class UntraceDefectRequest
+{
+    public string DefectId { get; set; } = string.Empty;
 }

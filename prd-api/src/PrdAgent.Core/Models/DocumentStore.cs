@@ -71,6 +71,13 @@ public class DocumentStore
     /// </summary>
     public string? PmProjectId { get; set; }
 
+    /// <summary>
+    /// 绑定的产品管理对象（product-agent），格式 "product:{id}" 或 "version:{id}"。
+    /// 非空表示这是某产品/版本的知识库（整体库 / 版本库），从个人/公开列表中隐藏，
+    /// 只在 product-agent 对应 tab 内访问。
+    /// </summary>
+    public string? ProductKnowledgeRef { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

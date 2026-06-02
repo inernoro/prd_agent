@@ -8,8 +8,9 @@
  * 空状态遵循 .claude/rules/guided-exploration.md：给说明 + 主操作 CTA。
  */
 import { useCallback, useEffect, useState } from 'react';
-import { Boxes, Plus, Trash2, GitBranch, ListChecks, Puzzle, Users } from 'lucide-react';
+import { Boxes, Plus, Trash2, GitBranch, ListChecks, Puzzle, Users, BookOpen } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+import { VersionRelationModal, RequirementRelationModal, ProductKnowledgePanel } from './ProductRelationModals';
 import {
   listProducts,
   createProduct,
@@ -38,7 +39,7 @@ import type {
 } from './types';
 import { PRODUCT_GRADE_LABEL, ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL } from './types';
 
-type DetailTab = 'overview' | 'versions' | 'requirements' | 'features' | 'customers';
+type DetailTab = 'overview' | 'versions' | 'requirements' | 'features' | 'customers' | 'knowledge';
 
 const PRODUCT_GRADES: ProductGrade[] = ['core', 'important', 'normal', 'experimental'];
 const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
@@ -242,6 +243,7 @@ const TABS: { key: DetailTab; label: string; icon: typeof GitBranch }[] = [
   { key: 'requirements', label: '需求', icon: ListChecks },
   { key: 'features', label: '功能', icon: Puzzle },
   { key: 'customers', label: '客户', icon: Users },
+  { key: 'knowledge', label: '知识库', icon: BookOpen },
 ];
 
 function ProductDetail({
@@ -290,13 +292,19 @@ function ProductDetail({
         })}
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto p-4" style={{ overscrollBehavior: 'contain' }}>
-        {tab === 'overview' && <OverviewTab product={product} />}
-        {tab === 'versions' && <VersionsTab productId={product.id} />}
-        {tab === 'requirements' && <RequirementsTab productId={product.id} />}
-        {tab === 'features' && <FeaturesTab productId={product.id} />}
-        {tab === 'customers' && <CustomersTab productId={product.id} />}
-      </div>
+      {tab === 'knowledge' ? (
+        <div className="flex-1 min-h-0">
+          <ProductKnowledgePanel productId={product.id} />
+        </div>
+      ) : (
+        <div className="flex-1 min-h-0 overflow-y-auto p-4" style={{ overscrollBehavior: 'contain' }}>
+          {tab === 'overview' && <OverviewTab product={product} />}
+          {tab === 'versions' && <VersionsTab productId={product.id} />}
+          {tab === 'requirements' && <RequirementsTab productId={product.id} />}
+          {tab === 'features' && <FeaturesTab productId={product.id} />}
+          {tab === 'customers' && <CustomersTab productId={product.id} />}
+        </div>
+      )}
     </div>
   );
 }
@@ -344,6 +352,7 @@ function VersionsTab({ productId }: { productId: string }) {
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
+  const [relVersion, setRelVersion] = useState<ProductVersion | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -380,6 +389,8 @@ function VersionsTab({ productId }: { productId: string }) {
               key={v.id}
               title={v.versionName}
               sub={`${VERSION_LIFECYCLE_LABEL[v.lifecycle]} · 需求 ${v.requirementIds.length} · 功能 ${v.featureVersionIds.length}${v.isMajor ? ' · 大版本' : ''}`}
+              onClick={() => setRelVersion(v)}
+              actionLabel="关联需求/功能 · 知识库"
               onDelete={async () => {
                 await deleteVersion(v.id);
                 await reload();
@@ -387,6 +398,14 @@ function VersionsTab({ productId }: { productId: string }) {
             />
           ))}
         </div>
+      )}
+      {relVersion && (
+        <VersionRelationModal
+          productId={productId}
+          version={relVersion}
+          onClose={() => setRelVersion(null)}
+          onSaved={() => void reload()}
+        />
       )}
     </div>
   );
@@ -399,6 +418,7 @@ function RequirementsTab({ productId }: { productId: string }) {
   const [title, setTitle] = useState('');
   const [grade, setGrade] = useState<ItemGrade>('p2');
   const [saving, setSaving] = useState(false);
+  const [relReq, setRelReq] = useState<Requirement | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -436,6 +456,8 @@ function RequirementsTab({ productId }: { productId: string }) {
               title={r.title}
               badge={ITEM_GRADE_LABEL[r.grade]}
               sub={`${r.requirementNo} · 客户 ${r.customerIds.length} · 版本 ${r.versionIds.length}`}
+              onClick={() => setRelReq(r)}
+              actionLabel="关联客户/版本 · 缺陷追溯"
               onDelete={async () => {
                 await deleteRequirement(r.id);
                 await reload();
@@ -443,6 +465,14 @@ function RequirementsTab({ productId }: { productId: string }) {
             />
           ))}
         </div>
+      )}
+      {relReq && (
+        <RequirementRelationModal
+          productId={productId}
+          requirement={relReq}
+          onClose={() => setRelReq(null)}
+          onSaved={() => void reload()}
+        />
       )}
     </div>
   );
@@ -619,27 +649,40 @@ function Row({
   sub,
   badge,
   onDelete,
+  onClick,
+  actionLabel,
 }: {
   title: string;
   sub?: string;
   badge?: string;
   onDelete: () => void;
+  onClick?: () => void;
+  actionLabel?: string;
 }) {
   return (
     <div className="group flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-white/10 bg-white/[0.02] hover:bg-white/[0.04]">
-      <div className="min-w-0">
+      <button
+        onClick={onClick}
+        disabled={!onClick}
+        className={`min-w-0 text-left flex-1 ${onClick ? 'cursor-pointer' : 'cursor-default'}`}
+      >
         <div className="flex items-center gap-2">
           <span className="text-sm text-white/90 truncate">{title}</span>
           {badge && <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/60 shrink-0">{badge}</span>}
         </div>
         {sub && <div className="text-[11px] text-white/40 mt-0.5 truncate">{sub}</div>}
-      </div>
-      <button
-        onClick={onDelete}
-        className="opacity-0 group-hover:opacity-100 text-white/30 hover:text-red-300 transition-opacity shrink-0"
-      >
-        <Trash2 size={14} />
       </button>
+      <div className="flex items-center gap-2 shrink-0">
+        {onClick && actionLabel && (
+          <span className="opacity-0 group-hover:opacity-100 text-[11px] text-cyan-300/70 transition-opacity">{actionLabel}</span>
+        )}
+        <button
+          onClick={onDelete}
+          className="opacity-0 group-hover:opacity-100 text-white/30 hover:text-red-300 transition-opacity"
+        >
+          <Trash2 size={14} />
+        </button>
+      </div>
     </div>
   );
 }

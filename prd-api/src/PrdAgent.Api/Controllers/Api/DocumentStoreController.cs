@@ -290,10 +290,11 @@ public class DocumentStoreController : ControllerBase
         }
         else
         {
-            // 我的知识库：排除项目库（PmProjectId 非空的库只在对应 PM 项目的「知识库」tab 内访问）
+            // 我的知识库：排除项目库 / 产品库（PmProjectId / ProductKnowledgeRef 非空的库只在对应 Agent 的「知识库」tab 内访问）
             filter = Builders<DocumentStore>.Filter.And(
                 Builders<DocumentStore>.Filter.Eq(s => s.OwnerId, userId),
-                Builders<DocumentStore>.Filter.Eq(s => s.PmProjectId, (string?)null));
+                Builders<DocumentStore>.Filter.Eq(s => s.PmProjectId, (string?)null),
+                Builders<DocumentStore>.Filter.Eq(s => s.ProductKnowledgeRef, (string?)null));
         }
 
         var total = await _db.DocumentStores.CountDocumentsAsync(filter);
@@ -1932,10 +1933,11 @@ public class DocumentStoreController : ControllerBase
         }
         else
         {
-            // 我的知识库：排除项目库（PmProjectId 非空的库只在对应 PM 项目的「知识库」tab 内访问）
+            // 我的知识库：排除项目库 / 产品库（PmProjectId / ProductKnowledgeRef 非空的库只在对应 Agent 的「知识库」tab 内访问）
             filter = Builders<DocumentStore>.Filter.And(
                 Builders<DocumentStore>.Filter.Eq(s => s.OwnerId, userId),
-                Builders<DocumentStore>.Filter.Eq(s => s.PmProjectId, (string?)null));
+                Builders<DocumentStore>.Filter.Eq(s => s.PmProjectId, (string?)null),
+                Builders<DocumentStore>.Filter.Eq(s => s.ProductKnowledgeRef, (string?)null));
         }
         var total = await _db.DocumentStores.CountDocumentsAsync(filter);
         var stores = await _db.DocumentStores.Find(filter)

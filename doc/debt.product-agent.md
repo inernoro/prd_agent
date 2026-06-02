@@ -9,13 +9,19 @@ updated: 2026-06-02
 
 记录已知边界、TODO 留尾与后续可补项。P0 交付时的"已知边界"固化于此，避免下一个 session 失忆。
 
-## P0 已知边界（地基波次交付时）
+## 进度
+
+- P0（地基）：已交付（commit 0524446）。
+- P1（关系与追溯）：已交付——版本↔需求/功能连边 UI、需求↔客户/版本连边、缺陷追溯（trace/untrace/列出/可关联）、知识库 find-or-create 挂载（产品整体库 + 版本库，嵌入 DocumentStoreBrowser）。
+
+## 已知边界
 
 | # | 边界 | 说明 | 计划波次 |
 |---|------|------|---------|
-| 1 | 关系连边只能在创建/更新时填 id 数组 | 还没有"在版本详情里勾选需求/功能"的连边 UI | P1 |
-| 2 | 缺陷追溯未打通 | 缺陷实体在 defect-agent，product-agent 侧暂无追溯引用字段写入路径 | P1 |
-| 3 | 知识库未挂载 | Product/Version 的 KnowledgeStoreId 字段已留，但未接 DocumentStore 的 find-or-create | P1 |
+| 1 | ~~关系连边只能填 id 数组~~ | 已做连边 UI（版本/需求弹层多选 + 缺陷追溯选择器） | P1 已解决 |
+| 2 | ~~缺陷追溯未打通~~ | 已加 DefectReport.Traced* 字段 + trace/untrace/列出端点 + 前端选择器 | P1 已解决 |
+| 3 | ~~知识库未挂载~~ | 已 find-or-create（ProductKnowledgeRef scoping）+ 嵌入 DocumentStoreBrowser | P1 已解决 |
+| 3b | 产品/版本知识库的非 owner 成员访问未授权 | DocumentStoreController 对 ProductKnowledgeRef 库未加"产品成员"访问判定（pm-agent 用 PmProjectId 做了）；当前仅 owner 能在文档空间端点读写，产品成员打开知识库 tab 可能被拒 | P2 |
 | 4 | 知识图谱未实现 | 关系可视化（ReactFlow）未做 | P2 |
 | 5 | 大版本升级申请表单未实现 | VersionUpgradeRequest 对象与可配置申请流程未建 | P2 |
 | 6 | 表单/流程为"数据可配"但无可视化编辑器 | 模板与流程定义只能通过 API 传 JSON，前端没有拖拽编辑器 | P2 |

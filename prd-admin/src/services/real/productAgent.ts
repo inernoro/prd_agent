@@ -168,3 +168,52 @@ export function deleteWorkflowDefinition(definitionId: string) {
 export function transition(body: { entityType: ProductEntityType; entityId: string; transitionKey: string; comment?: string }) {
   return apiRequest<{ entityId: string; newState: string }>('/api/product/transition', { method: 'POST', body });
 }
+
+// ── 知识库挂载（复用 DocumentStore，P1）──
+/** 知识库精简类型（DocumentStore 的子集，足够 product-agent 展示与嵌入 DocumentStoreBrowser） */
+export interface KnowledgeStore {
+  id: string;
+  name: string;
+  documentCount: number;
+  productKnowledgeRef?: string | null;
+}
+export function getProductKnowledgeStore(productId: string) {
+  return apiRequest<KnowledgeStore>(`/api/product/products/${productId}/knowledge/store`);
+}
+export function getVersionKnowledgeStore(versionId: string) {
+  return apiRequest<KnowledgeStore>(`/api/product/versions/${versionId}/knowledge/store`);
+}
+
+// ── 缺陷追溯（复用 defect-agent，P1）──
+/** 追溯缺陷精简类型（DefectReport 子集） */
+export interface TracedDefect {
+  id: string;
+  defectNo: string;
+  title?: string | null;
+  status: string;
+  severity?: string | null;
+  priority?: string | null;
+  tracedRequirementId?: string | null;
+  tracedVersionId?: string | null;
+  tracedFeatureId?: string | null;
+}
+export function listTracedDefects(productId: string, params?: { requirementId?: string; versionId?: string; featureId?: string }) {
+  const q = new URLSearchParams();
+  if (params?.requirementId) q.set('requirementId', params.requirementId);
+  if (params?.versionId) q.set('versionId', params.versionId);
+  if (params?.featureId) q.set('featureId', params.featureId);
+  const qs = q.toString();
+  return apiRequest<ListWrap<TracedDefect>>(`/api/product/products/${productId}/defects${qs ? `?${qs}` : ''}`);
+}
+export function listLinkableDefects(productId: string, params?: { keyword?: string }) {
+  const q = new URLSearchParams();
+  if (params?.keyword) q.set('keyword', params.keyword);
+  const qs = q.toString();
+  return apiRequest<ListWrap<TracedDefect>>(`/api/product/products/${productId}/defects/linkable${qs ? `?${qs}` : ''}`);
+}
+export function traceDefect(body: { defectId: string; productId: string; requirementId?: string; versionId?: string; featureId?: string }) {
+  return apiRequest<{ traced: boolean }>('/api/product/trace-defect', { method: 'POST', body });
+}
+export function untraceDefect(defectId: string) {
+  return apiRequest<{ untraced: boolean }>('/api/product/untrace-defect', { method: 'POST', body: { defectId } });
+}
