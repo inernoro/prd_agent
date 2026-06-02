@@ -1,5 +1,3 @@
-using System.Text.Json.Serialization;
-
 namespace PrdAgent.Core.Models.AgentUniverse;
 
 /// <summary>
@@ -9,8 +7,9 @@ namespace PrdAgent.Core.Models.AgentUniverse;
 /// 这是前后端共享的 SSOT：后端 <see cref="AgentCapabilityRegistry"/> 是权威源，前端通过
 /// GET /api/agent-universe/capabilities 消费，禁止前端再维护一份业务映射表（frontend-architecture.md）。
 ///
-/// 调用模式（<see cref="InvokeMode"/>）决定后端把请求路由到 <c>IAgentAdapter</c>（真实生图/结构化）
-/// 还是通用 chat 链路；交互形态（<see cref="Interaction"/>）决定前端渲染聊天流 / 文生图 / 表单。
+/// 关键原则：契约**只描述边界**（I/O + 调用方式），**不携带任何业务行为**（提示词 / 模型）。
+/// 业务行为一律由该智能体的真实组件（<c>IAgentAdapter</c>）承载——统一信封只"打通管道"，
+/// 绝不在此复制一份提示词去仿冒智能体。这样用户改了智能体配置，本契约无需同步、不会漂移。
 /// </summary>
 public class AgentCapability
 {
@@ -35,13 +34,13 @@ public class AgentCapability
     /// <summary>产出的输出数据类型（取值见 <see cref="AgentDataKinds"/>）。</summary>
     public string[] Outputs { get; set; } = Array.Empty<string>();
 
-    /// <summary>调用模式（取值见 <see cref="AgentInvokeModes"/>）：决定后端路由到适配器还是通用 chat。</summary>
+    /// <summary>调用模式（取值见 <see cref="AgentInvokeModes"/>）：决定输入如何组装给真实适配器。</summary>
     public string InvokeMode { get; set; } = AgentInvokeModes.Chat;
 
     /// <summary>前端交互形态（取值见 <see cref="AgentInteractions"/>）。</summary>
     public string Interaction { get; set; } = AgentInteractions.ChatStream;
 
-    /// <summary>默认适配器动作（IAgentAdapter 的 action，如 text2img）。仅 generation/structured 模式有意义。</summary>
+    /// <summary>真实适配器动作（IAgentAdapter 的 action，如 text2img / extract_defect）。统一信封据此路由。</summary>
     public string DefaultAction { get; set; } = string.Empty;
 
     /// <summary>输入框占位提示，引导用户该输入什么。</summary>
@@ -49,19 +48,6 @@ public class AgentCapability
 
     /// <summary>提交按钮文案（如"生成图片" / "发送" / "提取缺陷"）。</summary>
     public string ActionLabel { get; set; } = "发送";
-
-    /// <summary>
-    /// chat 模式的系统提示词。仅后端使用，<see cref="JsonIgnore"/> 禁止下发前端
-    /// （避免泄露 prompt + 保持前端无业务逻辑）。
-    /// </summary>
-    [JsonIgnore]
-    public string SystemPrompt { get; set; } = string.Empty;
-
-    /// <summary>
-    /// chat 模式使用的 AppCallerCode（来自 AppCallerRegistry）。仅后端使用，不下发前端。
-    /// </summary>
-    [JsonIgnore]
-    public string ChatAppCallerCode { get; set; } = string.Empty;
 }
 
 /// <summary>输入/输出数据类型常量。统一前后端对"数据形态"的命名，杜绝各处自定义字符串。</summary>
@@ -75,16 +61,16 @@ public static class AgentDataKinds
     public const string Video = "video";
 }
 
-/// <summary>调用模式常量。</summary>
+/// <summary>调用模式常量。决定统一信封把"用户指令 + 文档"如何组装给真实适配器。</summary>
 public static class AgentInvokeModes
 {
-    /// <summary>流式文本对话（走 LLM Gateway chat）。</summary>
+    /// <summary>流式文本对话：用户指令 + 参考文档合成后交给适配器。</summary>
     public const string Chat = "chat";
 
-    /// <summary>媒体生成（图片/视频），路由到对应 IAgentAdapter 产出 artifact。</summary>
+    /// <summary>媒体生成（图片/视频）：用户输入即生成描述（prompt），文档不强制注入。</summary>
     public const string Generation = "generation";
 
-    /// <summary>结构化抽取（JSON / 缺陷字段 / 表单），输出带结构的文本。</summary>
+    /// <summary>结构化抽取（JSON / 缺陷字段）：与 chat 同样合成输入，输出带结构。</summary>
     public const string Structured = "structured";
 
     /// <summary>文档转换（doc→doc，整篇改写）。</summary>

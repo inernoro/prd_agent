@@ -17,10 +17,12 @@
 
 本设计立两根支柱解决：
 
-- **能力契约（Capability Contract）**：每个智能体声明四件事——接受什么输入、产出什么输出、以什么模式被调用、前端该渲染什么交互。后端是唯一权威源（SSOT），前端拉取后据此渲染，不再各自硬编码。
-- **调用信封（Invocation Envelope）**：所有入口（再加工 / 未来的 @艾特 / 工作流节点）都走同一个 `invoke` 接口，按契约的调用模式路由——生成型路由到真实生图适配器、文本型走网关聊天——产出统一为带类型的事件（文本 / 思考 / 图片 / 完成 / 错误）。
+- **能力契约（Capability Contract）**：每个智能体声明四件事——接受什么输入、产出什么输出、以什么模式被调用、前端该渲染什么交互。后端是唯一权威源（SSOT），前端拉取后据此渲染，不再各自硬编码。契约**只描述边界，不携带业务行为**（提示词/模型一概不放）。
+- **调用信封（Invocation Envelope）**：所有入口（再加工 / 未来的 @艾特 / 工作流节点）都走同一个 `invoke` 接口，**一律把请求交给该智能体的真实组件（`IAgentAdapter`）去跑业务**，产出统一为带类型的事件（文本 / 图片 / 完成 / 错误）。
 
-落地后："选了不再自动发"，"视觉创作真出图、可一键插进文档"，"加新智能体只改注册表一处、前端自动适配"。
+> **最高原则：只打通管道，绝不仿冒智能体。** 业务逻辑必须由真实智能体承载，统一信封只做调度；找不到真实组件就明确报错（`NO_REAL_AGENT`），绝不复制一份提示词去假装某个智能体。否则用户一改业务配置，仿冒副本就漂移、产生异常。没有真实组件的能力宁可不暴露。
+
+落地后："选了不再自动发"，"视觉创作真出图、可一键插进文档"，"每个智能体走自己的真实实现，改一处全同步"。
 
 ---
 
@@ -69,20 +71,20 @@
 调用模式枚举：`chat / generation / structured / transform`。
 交互形态枚举：`chat-stream / prompt-to-image / article-to-illustrated / form-submit`。
 
-### 4.2 调用模式路由
+### 4.2 调用路由（一律走真实适配器，绝不仿冒）
 
-| invokeMode | 后端路由 | 产出 |
-|------------|----------|------|
-| `generation` | 对应 `IAgentAdapter`（如 `VisualAgentAdapter.text2img`） | 文本进度 + 图片 artifact |
-| `chat` | LLM Gateway 流式（用契约里的专属 SystemPrompt） | 流式文本 |
-| `structured` | LLM Gateway 流式（结构化输出提示词） | 结构化文本 |
-| `transform` | LLM Gateway 流式（整篇改写） | 文本 |
+| invokeMode | 输入如何组装 | 后端路由 | 产出 |
+|------------|--------------|----------|------|
+| `generation` | text 即画面描述（prompt） | 真实 `IAgentAdapter`（`VisualAgentAdapter.text2img`） | 文本进度 + 真实图片 artifact |
+| `chat` / `structured` | 用户指令 + 参考文档合成 | 真实 `IAgentAdapter`（literary/defect/prd 的对应 action） | 流式文本（缺陷为结构化）|
 
-> 当前只有 `visual-agent`（generation）会路由到适配器产出真实图片；其余智能体走网关聊天链路，但每个都有**专属、具体**的系统提示词（来自注册表 SSOT），不再是"通用百宝箱助手"。
+> **核心原则：只打通管道，绝不仿冒。** invoke 永远把请求交给该智能体的真实组件（adapter）去跑业务；找不到真实适配器就明确报错（`NO_REAL_AGENT`），**不降级成硬编码提示词的"假聊天"**。这样用户改了某个智能体的业务配置，本面板自动同步（系统里只有一处实现），不会漂移。
 
-### 4.3 已登记的智能体（12 个）
+### 4.3 已登记的智能体（只登记有真实组件的）
 
-视觉创作、文学创作、缺陷管理、周报、任务树、项目管理、行政秘书、PRD 解读、代码审查、翻译、摘要、数据分析。新增只需在 `AgentCapabilityRegistry.All` 加一条。
+当前 4 个，**均有真实 `IAgentAdapter`**：视觉创作（text2img 真实生图）、文学创作（write_content）、缺陷管理（extract_defect）、PRD 解读（analyze_prd）。其中视觉/文学/缺陷在再加工面板有卡片可选，PRD 经 API 可用。
+
+**没有真实组件的一律不登记**（周报/PM/PA/翻译/摘要等）——宁可不暴露，也不伪装。等它们接入各自真实服务后再按契约登记。
 
 ---
 
@@ -95,11 +97,12 @@
    ▼
 AgentUniverseController
    ├─ 按 agentKey 查 AgentCapabilityRegistry（SSOT）
-   ├─ invokeMode==generation 且有适配器 → IAgentAdapter.StreamExecuteAsync
-   │        └─ VisualAgentAdapter → LLM Gateway 生图 → 图片 artifact
-   └─ 否则 → ILlmGateway.StreamAsync（契约的 SystemPrompt）→ 文本
+   ├─ 找到真实适配器（agentKey + CanHandle(action)）→ IAgentAdapter.StreamExecuteAsync【唯一路径】
+   │        ├─ VisualAgentAdapter.text2img → 真实生图 → 图片 artifact
+   │        └─ Literary / Defect / Prd Adapter → 真实文本产出
+   └─ 找不到真实适配器 → 报错 NO_REAL_AGENT（绝不仿冒降级）
    ▼
-统一 SSE 事件：start / thinking / text / artifact / done / error
+统一 SSE 事件：start / text / artifact / done / error
 ```
 
 关键点：契约是**唯一**新增的抽象层；适配器、网关、Artifact 全是系统已有的砖块。控制器复用 `ai-toolbox` 应用身份与 `ai-toolbox.use` 权限（与 `TranscriptAgentController` 同样复用，符合 `app-identity.md`）。

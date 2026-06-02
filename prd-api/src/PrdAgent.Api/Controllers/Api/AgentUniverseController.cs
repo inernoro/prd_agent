@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Api.Extensions;
@@ -7,7 +6,6 @@ using PrdAgent.Api.Services.Toolbox;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Models.AgentUniverse;
 using PrdAgent.Core.Security;
-using PrdAgent.Infrastructure.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -16,11 +14,13 @@ namespace PrdAgent.Api.Controllers.Api;
 ///
 /// 一套标准把所有智能体接到一起（漫威宇宙式互通）：
 /// 1) GET  capabilities —— 下发每个智能体的输入/输出/调用模式/交互形态契约（前后端 SSOT）
-/// 2) POST invoke       —— 统一调用信封：根据契约的 InvokeMode 路由
-///       generation → 对应 IAgentAdapter（真实生图，产出 image artifact）
-///       chat/structured/transform → LLM Gateway 文本链路（用契约里的专属 SystemPrompt）
+/// 2) POST invoke       —— 统一调用信封，一律路由到该智能体的**真实组件**（IAgentAdapter）
 ///
-/// 所有产出统一为带类型的 SSE 事件（text / thinking / artifact / done / error），
+/// 核心原则：**只打通管道，绝不仿冒智能体**。invoke 永远把请求交给真实适配器去跑业务；
+/// 找不到真实适配器就明确报错（NO_REAL_AGENT），不降级成硬编码提示词的"假聊天"。
+/// 这样用户改了某个智能体的业务配置，本面板自动同步（系统里只有一处实现），不会漂移。
+///
+/// 所有产出统一为带类型的 SSE 事件（text / artifact / done / error），
 /// 调用方（再加工抽屉 / 未来的 @艾特 / 工作流节点）只认这一套信封。
 /// </summary>
 [ApiController]
@@ -29,7 +29,6 @@ namespace PrdAgent.Api.Controllers.Api;
 [AdminController("ai-toolbox", AdminPermissionCatalog.AiToolboxUse)]
 public class AgentUniverseController : ControllerBase
 {
-    private readonly ILlmGateway _gateway;
     private readonly IEnumerable<IAgentAdapter> _adapters;
     private readonly ILogger<AgentUniverseController> _logger;
 
@@ -37,11 +36,9 @@ public class AgentUniverseController : ControllerBase
         new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     public AgentUniverseController(
-        ILlmGateway gateway,
         IEnumerable<IAgentAdapter> adapters,
         ILogger<AgentUniverseController> logger)
     {
-        _gateway = gateway;
         _adapters = adapters;
         _logger = logger;
     }
@@ -56,7 +53,7 @@ public class AgentUniverseController : ControllerBase
     }
 
     /// <summary>
-    /// 统一调用信封（SSE 流式）。按能力契约的 InvokeMode 路由到适配器或通用 chat。
+    /// 统一调用信封（SSE 流式）。一律路由到真实 IAgentAdapter，绝不仿冒。
     /// </summary>
     [HttpPost("invoke")]
     [Produces("text/event-stream")]
@@ -78,31 +75,26 @@ public class AgentUniverseController : ControllerBase
         var text = (request.Text ?? string.Empty).Trim();
         var action = string.IsNullOrWhiteSpace(request.Action) ? cap.DefaultAction : request.Action!.Trim();
 
-        // 生成型：路由到对应适配器，产出真实图片 artifact。找不到适配器则降级 chat。
-        if (cap.InvokeMode == AgentInvokeModes.Generation)
+        // 一律路由到真实组件（IAgentAdapter）。找不到就报错，绝不用硬编码提示词仿冒。
+        var adapter = _adapters.FirstOrDefault(a => a.AgentKey == cap.AgentKey && a.CanHandle(action));
+        if (adapter == null)
         {
-            var adapter = _adapters.FirstOrDefault(a => a.AgentKey == cap.AgentKey && a.CanHandle(action));
-            if (adapter != null)
+            await WriteSseEventAsync("error", new
             {
-                await RunAdapterAsync(adapter, cap, action, text, request, userId);
-                return;
-            }
-            _logger.LogWarning("Agent universe: generation 智能体 {AgentKey} 未找到适配器动作 {Action}，降级 chat", cap.AgentKey, action);
+                code = "NO_REAL_AGENT",
+                message = $"智能体 {cap.AgentKey} 暂无可用的真实组件（action={action}）",
+            });
+            return;
         }
 
-        await RunChatAsync(cap, text, request, userId);
-    }
+        // 生成型：text 即画面描述（prompt）；其余把用户指令 + 参考文档合成为智能体输入
+        var userMessage = cap.InvokeMode == AgentInvokeModes.Generation
+            ? text
+            : BuildDocUserMessage(text, request.DocumentContent);
 
-    /// <summary>
-    /// 适配器路径：把 IAgentAdapter 的流式块映射成统一信封事件。
-    /// </summary>
-    private async Task RunAdapterAsync(
-        IAgentAdapter adapter, AgentCapability cap, string action,
-        string text, AgentInvokeRequest request, string userId)
-    {
-        if (string.IsNullOrWhiteSpace(text))
+        if (string.IsNullOrWhiteSpace(userMessage))
         {
-            await WriteSseEventAsync("error", new { code = "EMPTY_INPUT", message = "请先输入描述内容" });
+            await WriteSseEventAsync("error", new { code = "EMPTY_INPUT", message = "请先输入内容" });
             return;
         }
 
@@ -112,13 +104,22 @@ public class AgentUniverseController : ControllerBase
             TraceId = "agent-universe-" + Guid.NewGuid().ToString("N"),
             StepId = Guid.NewGuid().ToString("N"),
             UserId = userId,
-            UserMessage = text,
+            UserMessage = userMessage,
             Action = action,
             Input = new Dictionary<string, object>(),
         };
         if (request.ImageUrls is { Count: > 0 })
         {
             context.Input["imageUrl"] = request.ImageUrls[0];
+        }
+        // 透传面板选择的参数（如尺寸/模型）给真实智能体；适配器按需读取（无则用其默认）
+        if (request.Parameters != null)
+        {
+            foreach (var kv in request.Parameters)
+            {
+                if (!string.IsNullOrWhiteSpace(kv.Value))
+                    context.Input[kv.Key] = kv.Value;
+            }
         }
 
         await WriteSseEventAsync("start", new
@@ -167,125 +168,18 @@ public class AgentUniverseController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Agent universe adapter invoke failed: {AgentKey}", cap.AgentKey);
+            _logger.LogError(ex, "Agent universe invoke failed: {AgentKey}", cap.AgentKey);
             try { await WriteSseEventAsync("error", new { message = "智能体执行异常，请稍后重试" }); }
             catch { /* ignore */ }
         }
     }
 
-    /// <summary>
-    /// Chat 路径：用契约里的专属 SystemPrompt 走 LLM Gateway 文本链路。
-    /// </summary>
-    private async Task RunChatAsync(
-        AgentCapability cap, string text, AgentInvokeRequest request, string userId)
+    /// <summary>chat / 结构化模式下，把用户指令与参考文档合成为适配器的 UserMessage。</summary>
+    private static string BuildDocUserMessage(string text, string? documentContent)
     {
-        if (string.IsNullOrWhiteSpace(text) && string.IsNullOrWhiteSpace(request.DocumentContent))
-        {
-            await WriteSseEventAsync("error", new { code = "INVALID", message = "消息内容不能为空" });
-            return;
-        }
-
-        var systemPrompt = string.IsNullOrWhiteSpace(cap.SystemPrompt)
-            ? "你是一位专业的智能助手，请根据用户需求提供准确、有条理的回答。"
-            : cap.SystemPrompt;
-
-        var messages = new JsonArray
-        {
-            new JsonObject { ["role"] = "system", ["content"] = systemPrompt }
-        };
-
-        if (request.History != null)
-        {
-            foreach (var h in request.History.TakeLast(20))
-            {
-                if (string.IsNullOrWhiteSpace(h.Content)) continue;
-                messages.Add(new JsonObject { ["role"] = h.Role, ["content"] = h.Content });
-            }
-        }
-
-        // 当前轮：用户指令 + 参考文档（文档作为输入上下文，与历史里的短气泡解耦，避免重复嵌文档）
-        var userContent = text;
-        if (!string.IsNullOrWhiteSpace(request.DocumentContent))
-        {
-            userContent = string.IsNullOrWhiteSpace(text)
-                ? request.DocumentContent!
-                : $"{text}\n\n[参考文档]\n{request.DocumentContent}";
-        }
-        messages.Add(new JsonObject { ["role"] = "user", ["content"] = userContent });
-
-        var appCaller = string.IsNullOrWhiteSpace(cap.ChatAppCallerCode)
-            ? AppCallerRegistry.AiToolbox.Orchestration.Chat
-            : cap.ChatAppCallerCode;
-
-        var gatewayRequest = new GatewayRequest
-        {
-            AppCallerCode = appCaller,
-            ModelType = ModelTypes.Chat,
-            Stream = true,
-            IncludeThinking = true,
-            RequestBody = new JsonObject
-            {
-                ["messages"] = messages,
-                ["temperature"] = 0.7,
-                ["max_tokens"] = 4000,
-            },
-            Context = new GatewayRequestContext { UserId = userId, QuestionText = text },
-        };
-
-        try
-        {
-            GatewayTokenUsage? tokenUsage = null;
-
-            await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
-            {
-                if (chunk.Type == GatewayChunkType.Start)
-                {
-                    await WriteSseEventAsync("start", new
-                    {
-                        agentKey = cap.AgentKey,
-                        invokeMode = cap.InvokeMode,
-                        model = chunk.Resolution?.ActualModel,
-                        platform = chunk.Resolution?.ActualPlatformName,
-                        timestamp = DateTime.UtcNow,
-                    });
-                }
-                else if (chunk.Type == GatewayChunkType.Thinking && !string.IsNullOrEmpty(chunk.Content))
-                {
-                    try { await WriteSseEventAsync("thinking", new { content = chunk.Content }); }
-                    catch (OperationCanceledException) { }
-                    catch (ObjectDisposedException) { }
-                }
-                else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
-                {
-                    try { await WriteSseEventAsync("text", new { content = chunk.Content }); }
-                    catch (OperationCanceledException) { }
-                    catch (ObjectDisposedException) { }
-                }
-                else if (chunk.Type == GatewayChunkType.Done)
-                {
-                    tokenUsage = chunk.TokenUsage;
-                }
-                else if (chunk.Type == GatewayChunkType.Error)
-                {
-                    await WriteSseEventAsync("error", new { message = chunk.Error ?? "LLM 调用失败" });
-                    return;
-                }
-            }
-
-            await WriteSseEventAsync("done", new
-            {
-                promptTokens = tokenUsage?.InputTokens,
-                completionTokens = tokenUsage?.OutputTokens,
-                totalTokens = tokenUsage?.TotalTokens,
-                timestamp = DateTime.UtcNow,
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Agent universe chat invoke failed: {AgentKey}", cap.AgentKey);
-            try { await WriteSseEventAsync("error", new { message = "服务处理异常，请稍后重试" }); }
-            catch { /* ignore */ }
-        }
+        if (string.IsNullOrWhiteSpace(documentContent)) return text;
+        if (string.IsNullOrWhiteSpace(text)) return documentContent!;
+        return $"{text}\n\n[参考文档]\n{documentContent}";
     }
 
     private async Task WriteSseEventAsync(string eventName, object data)
@@ -314,11 +208,14 @@ public class AgentInvokeRequest
     /// <summary>用户指令 / 文生图的画面描述。</summary>
     public string Text { get; set; } = string.Empty;
 
-    /// <summary>参考文档全文（可选，chat 模式作为输入上下文注入）。</summary>
+    /// <summary>参考文档全文（可选，chat / 结构化模式作为输入上下文合成）。</summary>
     public string? DocumentContent { get; set; }
 
     /// <summary>参考图 URL（可选，img2img / vision 用）。</summary>
     public List<string>? ImageUrls { get; set; }
+
+    /// <summary>面板选择的智能体参数（如 size / model），透传给真实适配器。</summary>
+    public Dictionary<string, string>? Parameters { get; set; }
 
     /// <summary>多轮历史（仅短气泡文本，不含文档）。</summary>
     public List<AgentInvokeHistoryItem>? History { get; set; }
