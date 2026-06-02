@@ -21,6 +21,7 @@
 | fix | prd-api | PR #712 Codex P2:涌现教程 4 步锚点改逗号兜底选择器(intro 落地页 hero/steps/seed/dimensions + 树列表 about/create-tree/tree-list 两套都给)，新老用户任一视图都不留空步骤；同时清除全部本页教程文案里的装饰性 emoji(违反最高优先 no-emoji 规则) |
 | fix | prd-admin | PR #712 评审四连：①handleOpenTip 编辑器教程的 alreadyAtTarget 去掉 pathname===url 精确匹配(列表页不算「已在编辑器」,否则手动轮播到编辑器教程在列表页点 CTA 会起找不到锚点的 tour，Bugbot Medium) ②删除右上角抽屉的空转 ResizeObserver(dockBottom 恒为 20，改挂载时广播一次，Bugbot Low) | 
 | fix | prd-api | PR #712 Codex P2:知识库教程全部 8 步 + TargetSelector 逗号兜底到常驻 library-tabs(顶部 tab 栏)——返回用户上次停在收藏/点赞 tab 时工具栏不渲染会卡「目标未找到」；新增 DocumentStorePage sticky 顶栏 data-tour-id=library-tabs |
+| fix | prd-admin | PR #712 Codex P2:App 根教程浮层排除名单补 '/library/'(带尾斜杠)——智识殿堂公开详情页 /library/:storeId 是免登录只读页,登录用户访问时不再冒出内部新手教程;'/library' 落地页(带 library-landing 教程)因无尾斜杠不受影响保留 |
 | fix | prd-api | PR #712 Codex P2:缺陷管理教程第 3 步(缺陷列表)逗号兜底到常驻 defect-view-mode-switcher——返回用户上次停在看板/统计视图时 defect-list-container 不渲染会卡「目标未找到」 |
 | fix | prd-api | PR #712 Codex P2:网页托管教程第 7 步(上传站点)逗号兜底到常驻 webpages-header-actions——团队空间只读成员无上传按钮时不再卡死,同时避免上一步 share-mgmt 按钮被自动点击误开抽屉 |
 | fix | prd-admin | PR #712 Codex P2:pageMatchedIndex(抽屉打开时选哪条 tip)也改用编辑器感知的 matchPageGuide —— 在 /visual-agent/:id 等编辑器子路由上优先选 *-editor-page-guide，不再误选同 actionUrl 前缀的列表教程(其 CTA 会把用户导离编辑器)；非教程 tip 仍走原前缀兜底 |

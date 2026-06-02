@@ -339,11 +339,13 @@ export default function App() {
           这样跨任意路由(含 shell→全屏编辑器)导航时都不卸载,本页教程能从列表「贯通」进编辑器;
           入口也始终在右上角常驻。
           仅在「登录后的真实应用页」渲染:登录页/落地页/各种分享只读页(/s/、/shared/、/join)、
-          开发页(/_dev/)、CDS 终端(/cds-agent)一律不挂——分享页不该有新手教程(用户 2026-06-02 指出)。 */}
+          开发页(/_dev/)、CDS 终端(/cds-agent)、公开主页(/u/)、智识殿堂公开详情(/library/:storeId)
+          一律不挂——这些公开只读页不该冒出内部新手教程(用户 2026-06-02 指出;Codex P2)。
+          注意 '/library/' 带尾斜杠:只排除详情子路由,'/library' 落地页(带 library-landing 教程)保留。 */}
       {isAuthenticated
         && location.pathname !== '/home'
         && location.pathname !== '/login'
-        && !['/s/', '/shared/', '/join/', '/_dev/', '/cds-agent', '/u/'].some((p) => location.pathname.startsWith(p))
+        && !['/s/', '/shared/', '/join/', '/_dev/', '/cds-agent', '/u/', '/library/'].some((p) => location.pathname.startsWith(p))
         && (
         <>
           <TipsDrawer />
