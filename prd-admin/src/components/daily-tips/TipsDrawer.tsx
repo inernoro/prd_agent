@@ -241,7 +241,8 @@ export function TipsDrawer() {
       // 这样在 /visual-agent 弹列表教程,进入 /visual-agent/:id 编辑器弹编辑器教程,各管各的。
       const isEditorGuide = t.sourceId.includes('editor');
       if (location.pathname === t.actionUrl) return !isEditorGuide;
-      if (location.pathname.startsWith(t.actionUrl + '/')) return isEditorGuide;
+      // 深层(编辑器)路由:含旧版全屏兼容路由 /{agent}-fullscreen/:id(如 /visual-agent-fullscreen/）
+      if (location.pathname.startsWith(t.actionUrl + '/') || location.pathname.startsWith(t.actionUrl + '-fullscreen/')) return isEditorGuide;
       return false;
     });
     if (!guide || !guide.sourceId) return;

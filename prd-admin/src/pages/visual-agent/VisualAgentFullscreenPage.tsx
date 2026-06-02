@@ -8,6 +8,7 @@ import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
 import { GlobalDefectSubmitDialog } from '@/components/ui/GlobalDefectSubmitDialog';
 import VisualAgentWorkspaceListPage from './VisualAgentWorkspaceListPage';
 import VisualAgentWorkspaceEditorPage from './VisualAgentWorkspaceEditorPage';
+import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 
 export default function VisualAgentFullscreenPage() {
   const navigate = useNavigate();
@@ -60,6 +61,14 @@ export default function VisualAgentFullscreenPage() {
       >
         <ArrowLeft size={18} />
       </button>
+
+      {/* 编辑器(全屏画布,无页头行)的本页教程入口:放右上角,与左上角返回按钮对称,属该页固定 chrome。
+          列表页(VisualAgentWorkspaceListPage)自己已在 HeroSection 内嵌入口,故此处仅编辑器渲染避免重复。 */}
+      {isEditor && (
+        <div className="fixed top-5 right-5 z-50">
+          <TipsEntryButton compact />
+        </div>
+      )}
 
       {/* 根据路由显示列表页或编辑页 */}
       {isEditor ? (

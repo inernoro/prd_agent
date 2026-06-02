@@ -30,7 +30,7 @@ export function TipsEntryButton({ className, compact = false }: { className?: st
       if (typeof t.sourceId !== 'string' || !t.sourceId.endsWith('-page-guide') || !t.actionUrl) return false;
       const isEditor = t.sourceId.includes('editor');
       if (location.pathname === t.actionUrl) return !isEditor;
-      if (location.pathname.startsWith(t.actionUrl + '/')) return isEditor;
+      if (location.pathname.startsWith(t.actionUrl + '/') || location.pathname.startsWith(t.actionUrl + '-fullscreen/')) return isEditor;
       return false;
     });
   }, [items, dismissed, location.pathname]);
