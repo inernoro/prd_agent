@@ -264,18 +264,25 @@ export function TipsDrawer() {
     }
   }, [tips.length, carouselIndex]);
 
-  // 抽屉每次「打开」时随机选一条 tip,避免用户每次都看到同一条;
-  // 优先级:当前页面有匹配 actionUrl 的 tip → 选它(让用户在正确位置看到「这页有教程」);
-  // 否则随机。本次打开持续到下次重开。
+  // 抽屉每次「打开」时选一条 tip,避免用户每次都看到同一条;
+  // 优先级:当前页面有匹配的「本页教程」→ 选它(让用户在正确位置看到「这页有教程」);否则随机。
   const pageMatchedIndex = useMemo(() => {
     if (tips.length === 0) return -1;
+    // 先按 matchPageGuide 的编辑器感知规则定位本页教程:在 /visual-agent/:id 这类编辑器子路由
+    // 上,它只命中 *-editor-page-guide,不会误选同 actionUrl 前缀的列表教程(后者 CTA 会把用户
+    // 导离编辑器,Codex P2)。
+    const guide = matchPageGuide(tips, dismissed, location.pathname);
+    if (guide) {
+      const gi = tips.findIndex((t) => t.id === guide.id);
+      if (gi >= 0) return gi;
+    }
+    // 非教程类 tip 兜底:完整匹配 / 列表路由前缀匹配(/defect-agent 匹配 /defect-agent/123)
     return tips.findIndex((t) => {
       if (!t.actionUrl) return false;
-      // 完整匹配 / 路径前缀匹配(/defect-agent 匹配 /defect-agent/123)
       return location.pathname === t.actionUrl
         || location.pathname.startsWith(t.actionUrl + '/');
     });
-  }, [tips, location.pathname]);
+  }, [tips, dismissed, location.pathname]);
 
   const lastExpandedRef = useRef(false);
   useEffect(() => {
