@@ -50,6 +50,7 @@ import {
 } from '@/components/ui/dialog';
 import { apiRequest, ApiError } from '@/lib/api';
 import { useInfraCatalog } from '@/lib/infraCatalog';
+import { RuntimeValidateButton } from '@/components/deployment/RuntimeValidateButton';
 import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
 import { SkillDownloadDialog } from '@/components/SkillDownloadDialog';
@@ -2980,6 +2981,15 @@ function CreateProjectDialog({
                               按所选运行时给的最佳努力默认，可直接改；想完全交给仓库识别就把运行环境选「自动识别」。
                             </span>
                           </label>
+                          <div className="md:col-span-2">
+                            <RuntimeValidateButton
+                              gitRepoUrl={gitRepoUrl}
+                              gitRef={gitDefaultBranch}
+                              image={service.runtimeImage}
+                              command={service.runtimeCommand}
+                              port={service.runtimePort}
+                            />
+                          </div>
                         </div>
                       ) : null}
                     </div>

@@ -32,6 +32,7 @@ import { discoverComposeFiles, parseCdsCompose } from '../services/compose-parse
 import { deriveEnvMetaForVars } from '../services/env-classifier.js';
 import { ProjectFilesService, ProjectFileError, type ProjectFilePayload } from '../services/project-files.js';
 import { repoNameFromGitRef } from '../services/preview-slug.js';
+import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import {
   getInfraCatalogEntry,
   infraCatalogIds,
@@ -42,6 +43,8 @@ import {
 } from '../services/infra-catalog.js';
 import * as nodeFs from 'node:fs';
 import * as nodePath from 'node:path';
+import * as nodeOs from 'node:os';
+import { spawn } from 'node:child_process';
 import type { IShellExecutor, Project, CdsConfig, AgentKey, BuildProfile, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
 
@@ -1453,6 +1456,118 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     const applied = applyInfraPresets(project, presetIds, parseInfraConfigs(body.infraConfigs), parseInfraExtra(body.infraExtra));
     const services = stateService.getInfraServicesForProject(project.id).filter((s) => applied.includes(s.id));
     res.json({ applied, services });
+  });
+
+  // 试运行验证(配置闭环):用一次性容器在真实仓库上测「镜像 + 启动命令 + 端口」能否跑通。
+  // 验证 → 流式日志 → 不行就地改命令/镜像 → 再验证 → 绿灯才正式部署。容器跑完即销毁,临时目录清理。
+  router.post('/validate-runtime', async (req, res) => {
+    const body = (req.body || {}) as { gitRepoUrl?: string; gitRef?: string; image?: string; command?: string; port?: number };
+    const gitRepoUrl = (body.gitRepoUrl || '').trim();
+    const gitRef = (body.gitRef || '').trim();
+    const image = (body.image || '').trim();
+    const command = (body.command || '').trim();
+    const port = Number(body.port) || 0;
+    const q = (s: string) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    const send = (event: string, data: unknown): void => { try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* client gone */ } };
+    const log = (line: string): void => send('log', { line });
+
+    if (!gitRepoUrl) { send('error', { message: '试运行需要 Git 仓库 URL——要在真实代码上测命令。请先在上面填仓库地址。' }); res.end(); return; }
+    if (!image) { send('error', { message: '请填 Docker 镜像(或在运行环境选一个具体运行时带出镜像)。' }); res.end(); return; }
+    if (!command) { send('error', { message: '请填启动命令(或选具体运行时带出默认命令)。' }); res.end(); return; }
+    if (gitRef && !isSafeGitRef(gitRef)) { send('error', { message: `分支名不合法: ${gitRef}` }); res.end(); return; }
+
+    const token = randomBytes(5).toString('hex');
+    const containerName = `cds-validate-${token}`;
+    const workDir = nodePath.join(nodeOs.tmpdir(), `cds-validate-${token}`);
+    const cleanup = async (): Promise<void> => {
+      try { await shell.exec(`docker rm -f ${containerName} 2>/dev/null`, { timeout: 20000 }); } catch { /* noop */ }
+      try { nodeFs.rmSync(workDir, { recursive: true, force: true }); } catch { /* noop */ }
+    };
+
+    try {
+      send('step', { step: 'clone', status: 'running', title: '浅克隆仓库…' });
+      const cloneRes = await shell.exec(`git clone --depth 1 ${gitRef ? `--branch ${q(gitRef)} ` : ''}${q(gitRepoUrl)} ${q(workDir)}`, { timeout: 120000 });
+      if (cloneRes.exitCode !== 0) {
+        send('step', { step: 'clone', status: 'error', title: '克隆失败' });
+        log(combinedOutput(cloneRes).slice(-1500));
+        send('result', { verdict: 'fail', summary: '仓库克隆失败——检查 URL / 分支 / 访问权限。' });
+        await cleanup(); res.end(); return;
+      }
+      send('step', { step: 'clone', status: 'done', title: '克隆完成' });
+
+      send('step', { step: 'pull', status: 'running', title: `拉取镜像 ${image}…` });
+      const pullRes = await shell.exec(`docker pull ${q(image)}`, { timeout: 240000 });
+      if (pullRes.exitCode !== 0) {
+        send('step', { step: 'pull', status: 'error', title: '拉取镜像失败' });
+        log(combinedOutput(pullRes).slice(-1500));
+        send('result', { verdict: 'fail', summary: `镜像 ${image} 拉取失败——检查镜像名是否正确。` });
+        await cleanup(); res.end(); return;
+      }
+      send('step', { step: 'pull', status: 'done', title: '镜像就绪' });
+
+      send('step', { step: 'run', status: 'running', title: '启动一次性容器,跑安装 + 启动命令…' });
+      const runRes = await shell.exec(
+        `docker run -d --name ${containerName} --label cds.validate=1 --memory=1536m --cpus=1.5 -w /workspace -v ${q(workDir)}:/workspace ${port ? `-e PORT=${port} ` : ''}${q(image)} sh -lc ${q(command)}`,
+        { timeout: 30000 },
+      );
+      if (runRes.exitCode !== 0) {
+        send('step', { step: 'run', status: 'error', title: '容器启动失败' });
+        log(combinedOutput(runRes).slice(-1500));
+        send('result', { verdict: 'fail', summary: '容器无法启动——多半是镜像或命令格式问题。' });
+        await cleanup(); res.end(); return;
+      }
+      send('step', { step: 'run', status: 'done', title: '容器已启动,跟踪日志(最多 120s)…' });
+
+      const startedAt = Date.now();
+      const MAX_MS = 120000;
+      await new Promise<void>((resolve) => {
+        const proc = spawn('docker', ['logs', '-f', containerName], { stdio: ['ignore', 'pipe', 'pipe'] });
+        const onData = (b: Buffer): void => { for (const line of b.toString().split('\n')) { if (line.trim()) log(line); } };
+        proc.stdout.on('data', onData);
+        proc.stderr.on('data', onData);
+        const timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* noop */ } resolve(); }, MAX_MS);
+        proc.on('close', () => { clearTimeout(timer); resolve(); });
+        proc.on('error', () => { clearTimeout(timer); resolve(); });
+      });
+
+      send('step', { step: 'probe', status: 'running', title: '检查容器状态 + 端口探活…' });
+      const inspect = await shell.exec(`docker inspect -f '{{.State.Running}} {{.State.ExitCode}}' ${containerName}`, { timeout: 10000 });
+      const [runningStr, exitStr] = (inspect.stdout || '').trim().split(/\s+/);
+      const running = runningStr === 'true';
+      const exitCode = Number(exitStr || '0');
+      let verdict: 'pass' | 'warn' | 'fail' = 'fail';
+      let summary = '';
+      if (running) {
+        let portOk = false;
+        if (port) {
+          const probe = await shell.exec(
+            `docker exec ${containerName} sh -lc ${q(`(wget -qO- -T2 http://127.0.0.1:${port} >/dev/null 2>&1 || curl -sf -m2 http://127.0.0.1:${port} >/dev/null 2>&1) && echo CDSPORTOK || true`)}`,
+            { timeout: 12000 },
+          );
+          portOk = (probe.stdout || '').includes('CDSPORTOK');
+        }
+        if (portOk) { verdict = 'pass'; summary = `容器常驻且端口 ${port} 已响应——这套配置能跑通。`; }
+        else { verdict = 'warn'; summary = port ? `容器还活着没崩,但端口 ${port} 暂未响应(可能仍在安装/构建,或端口填错)。看上面日志确认,需要就改端口再试。` : '容器常驻未崩(没填端口,跳过端口探活)。'; }
+      } else if (exitCode === 0) {
+        verdict = 'warn'; summary = '命令跑完就退出了——若这是常驻服务说明它没起住(可能少了 serve/start);若只是一次性构建则正常。';
+      } else {
+        verdict = 'fail'; summary = `命令以退出码 ${exitCode} 失败——照上面日志改命令或镜像后再试一次。`;
+      }
+      send('step', { step: 'probe', status: verdict === 'pass' ? 'done' : 'warning', title: '检查完成' });
+      send('result', { verdict, summary, elapsedMs: Date.now() - startedAt });
+    } catch (err) {
+      send('error', { message: (err as Error).message });
+    } finally {
+      await cleanup();
+      try { res.end(); } catch { /* noop */ }
+    }
   });
 
   // PR_C.4: 项目活动日志（供 UI 渲染时间线 / 浮窗）。
