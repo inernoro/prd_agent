@@ -625,6 +625,16 @@ public class HostedSiteService : IHostedSiteService
             .ToListAsync(ct);
     }
 
+    public async Task<List<HostedSite>> ListAllByUserIdAsync(string ownerUserId, int limit, CancellationToken ct)
+    {
+        if (limit <= 0 || limit > 200) limit = 60;
+        return await _db.HostedSites
+            .Find(x => x.OwnerUserId == ownerUserId)
+            .Sort(Builders<HostedSite>.Sort.Descending(x => x.UpdatedAt))
+            .Limit(limit)
+            .ToListAsync(ct);
+    }
+
     // ─────────────────────────────────────────────
     // 分享
     // ─────────────────────────────────────────────

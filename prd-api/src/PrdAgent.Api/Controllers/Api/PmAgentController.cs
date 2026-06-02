@@ -445,7 +445,8 @@ public class PmAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { storeId = store.Id, canWrite }));
     }
 
-    /// <summary>聚合项目成员（创建人 + 负责人 + 成员）名下已公开的托管站点，免密查看</summary>
+    /// <summary>聚合项目相关人员（创建人 + 负责人 + 成员 + 观察者）名下的托管站点（公开 + 私有均可见可访问，
+    /// 站点文件按 URL 直达，Visibility 仅控制公开页是否列出），供项目空间内免门禁查看成员作品。</summary>
     [HttpGet("projects/{projectId}/member-sites")]
     public async Task<IActionResult> GetMemberSites(string projectId)
     {
@@ -456,6 +457,7 @@ public class PmAgentController : ControllerBase
 
         var ownerIds = new List<string> { project.OwnerId, project.LeaderId };
         ownerIds.AddRange(project.MemberIds);
+        ownerIds.AddRange(project.ObserverIds);
         var distinctIds = ownerIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
 
         var nameMap = (await _db.Users.Find(u => distinctIds.Contains(u.UserId)).ToListAsync())
@@ -464,7 +466,7 @@ public class PmAgentController : ControllerBase
         var sites = new List<object>();
         foreach (var ownerId in distinctIds)
         {
-            var hosted = await _hostedSites.ListPublicByUserIdAsync(ownerId, 60, CancellationToken.None);
+            var hosted = await _hostedSites.ListAllByUserIdAsync(ownerId, 60, CancellationToken.None);
             foreach (var s in hosted)
             {
                 sites.Add(new
@@ -474,6 +476,11 @@ public class PmAgentController : ControllerBase
                     siteId = s.Id,
                     title = s.Title,
                     url = s.SiteUrl,
+                    visibility = s.Visibility,
+                    coverImageUrl = s.CoverImageUrl,
+                    viewCount = s.ViewCount,
+                    tags = s.Tags,
+                    updatedAt = s.UpdatedAt,
                 });
             }
         }

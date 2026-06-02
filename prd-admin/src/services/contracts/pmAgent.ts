@@ -339,7 +339,19 @@ export type PmKnowledgeFile = {
   createdAt: string;
   updatedAt: string;
 };
-export type PmMemberSite = { userId: string; userName: string; siteId: string; title: string; url: string };
+export type PmMemberSite = {
+  userId: string;
+  userName: string;
+  siteId: string;
+  title: string;
+  url: string;
+  /** public | private —— private 仅表示未在公开页列出，项目内仍可访问 */
+  visibility?: string;
+  coverImageUrl?: string | null;
+  viewCount?: number;
+  tags?: string[];
+  updatedAt?: string;
+};
 
 export type ListPmKnowledgeFilesContract = (projectId: string, category?: string) => Promise<ApiResponse<{ files: PmKnowledgeFile[]; categories: string[] }>>;
 export type UpdatePmKnowledgeFileContract = (fileId: string, input: { fileName?: string; category?: string }) => Promise<ApiResponse<{ updated: boolean }>>;
