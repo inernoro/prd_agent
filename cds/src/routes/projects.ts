@@ -662,6 +662,12 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     const envMeta = stateService.getEnvMeta(project.id);
     for (const req of requests) {
       const idx = countByPreset.get(req.presetId) || 0; // 0-based:0=第一个实例(沿用原行为)
+      // 单例型基建(缓存/队列/搜索/对象存储等非数据库)不支持同类型多实例:它们的容器自我广播地址
+      // (如 Kafka 的 KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092、controller quorum=1@kafka:9093)
+      // 和连接串都写死为基础别名,第 2 个实例会与第 1 个串号。仅"可命名库"的数据库预设(supportsDbName)
+      // 的连接串带可改写的 `@host:` 段,才能安全多实例。这一守卫覆盖所有创建路径(含重复调用
+      // infra-presets 时由 existing 计数推出的 idx>0),不止 extraInstances 那一处入口。
+      if (idx > 0 && !getInfraCatalogEntry(req.presetId)?.supportsDbName) continue;
       const instanceId = idx === 0 ? req.presetId : `${req.presetId}-${idx + 1}`;
       countByPreset.set(req.presetId, idx + 1);
       if (existingIds.has(instanceId)) continue;
@@ -1439,6 +1445,15 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     const project = stateService.getProject(req.params.id);
     if (!project) {
       res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    // 创建基础设施会生成密码并写入项目环境变量,属于项目级写操作。项目级 key 不得跨项目应用预设。
+    const mismatch = assertProjectAccess(
+      req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } },
+      project.id,
+    );
+    if (mismatch) {
+      res.status(mismatch.status).json(mismatch.body);
       return;
     }
     const body = (req.body || {}) as { presetIds?: unknown; infraConfigs?: unknown; infraExtra?: unknown };

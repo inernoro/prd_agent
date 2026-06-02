@@ -26,6 +26,8 @@ import type { IShellExecutor, InfraService } from '../types.js';
 export interface InfraDataRouterDeps {
   stateService: StateService;
   shell: IShellExecutor;
+  /** Inline project-scope guard. No-op for admin/cookie auth; 403 for a project-scoped key reaching another project. */
+  assertProjectAccess: (req: any, projectId: string) => { status: number; body: unknown } | null;
 }
 
 export type InfraDataKind = 'postgres' | 'mysql' | 'mongo' | 'redis' | 'clickhouse';
@@ -95,15 +97,21 @@ export function buildInfraDataExec(svc: InfraService, action: InfraDataAction, s
   if (kind === 'mongo') {
     const user = env.MONGO_INITDB_ROOT_USERNAME || '';
     const pw = env.MONGO_INITDB_ROOT_PASSWORD || '';
+    // Connect to the app's configured database (not admin) so query/schema/init-sql
+    // operate on the user's own data. The root user still authenticates via admin.
+    const dbName = svc.dbName || env.MONGO_INITDB_DATABASE || 'app';
     const uri = user
-      ? `mongodb://${user}:${pw}@localhost:27017/admin?authSource=admin`
-      : 'mongodb://localhost:27017';
+      ? `mongodb://${user}:${pw}@localhost:27017/${dbName}?authSource=admin`
+      : `mongodb://localhost:27017/${dbName}`;
     const argv = ['exec', '-i', c, 'mongosh', uri, '--quiet'];
     return { kind, argv, stdin: body, secretValues: [pw].filter(Boolean) };
   }
   if (kind === 'redis') {
-    const argv = ['exec', '-i', c, 'redis-cli'];
-    return { kind, argv, stdin: body, secretValues: [] };
+    // Honour requirepass: read the password from common env keys and pass -a.
+    // --no-auth-warning keeps the "insecure -a" notice out of the returned output.
+    const pw = env.REDIS_PASSWORD || env.REDIS_PASS || env.REDISCLI_AUTH || '';
+    const argv = ['exec', '-i', c, 'redis-cli', ...(pw ? ['-a', pw, '--no-auth-warning'] : [])];
+    return { kind, argv, stdin: body, secretValues: [pw].filter(Boolean) };
   }
   // clickhouse
   const user = env.CLICKHOUSE_USER || 'default';
@@ -150,17 +158,25 @@ function runDockerExec(argv: string[], stdin: string, timeoutMs = 30_000, maxByt
 }
 
 export function createInfraDataRouter(deps: InfraDataRouterDeps): Router {
-  const { stateService } = deps;
+  const { stateService, assertProjectAccess } = deps;
   const router = Router();
 
   async function handle(req: import('express').Request, res: import('express').Response, action: InfraDataAction): Promise<void> {
-    // infra id 在多项目下并非全局唯一,带 ?project= 时按项目精确定位(比 getInfraService 全局查更安全)。
+    // infra id 在多项目下并非全局唯一,带 ?project= 时按项目精确定位(也用于消歧)。
     const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
     const svc = projectFilter
       ? (stateService.getInfraServicesForProject(projectFilter).find((s) => s.id === req.params.id) || null)
       : stateService.getInfraService(req.params.id);
     if (!svc) {
       res.status(404).json({ error: `基础设施服务不存在: ${req.params.id}` });
+      return;
+    }
+    // 强制项目隔离:这些端点会执行任意查询/初始化 SQL 并回显数据库内容(含应用敏感数据),
+    // 项目级 key 必须只能操作自己项目的基础设施,否则 403 project_mismatch。对 admin/cookie
+    // 鉴权(无 cdsProjectKey)为 no-op——与 branches.ts / project-compose.ts 同一守卫。
+    const mismatch = assertProjectAccess(req, svc.projectId);
+    if (mismatch) {
+      res.status(mismatch.status).json(mismatch.body as Record<string, unknown>);
       return;
     }
     if (svc.status !== 'running') {

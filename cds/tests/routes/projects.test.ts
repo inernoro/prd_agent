@@ -1034,6 +1034,42 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       expect(res.status).toBe(400);
     });
 
+    it('singleton guard: a 2nd same-type non-DB preset (kafka) is never created across repeated calls', async () => {
+      // Kafka self-advertises as kafka:9092 in its container env; a 2nd instance would
+      // collide with the 1st. Only DBs (supportsDbName) may multi-instance. The guard
+      // must hold even when the 2nd request comes from a separate infra-presets call
+      // whose idx is seeded from the existing service count.
+      const created = await request(server, 'POST', '/api/projects', { name: 'Singleton Kafka' });
+      const pid = created.body.project.id;
+
+      const first = await request(server, 'POST', `/api/projects/${pid}/infra-presets`, { presetIds: ['kafka'] });
+      expect(first.status).toBe(200);
+      expect(first.body.applied).toEqual(['kafka']);
+
+      const second = await request(server, 'POST', `/api/projects/${pid}/infra-presets`, { presetIds: ['kafka'] });
+      expect(second.status).toBe(200);
+      expect(second.body.applied).toEqual([]); // guard skipped the would-be kafka-2
+
+      const ids = stateService.getInfraServicesForProject(pid).map((s) => s.id).sort();
+      expect(ids).toEqual(['kafka']); // exactly one kafka, no kafka-2
+    });
+
+    it('DB presets still multi-instance: a 2nd postgres call yields postgres-2 with its own connection string', async () => {
+      const created = await request(server, 'POST', '/api/projects', { name: 'Multi PG' });
+      const pid = created.body.project.id;
+
+      await request(server, 'POST', `/api/projects/${pid}/infra-presets`, { presetIds: ['postgres'] });
+      const second = await request(server, 'POST', `/api/projects/${pid}/infra-presets`, { presetIds: ['postgres'] });
+      expect(second.body.applied).toEqual(['postgres-2']);
+
+      const ids = stateService.getInfraServicesForProject(pid).map((s) => s.id).sort();
+      expect(ids).toEqual(['postgres', 'postgres-2']);
+
+      const env = stateService.getCustomEnv(pid);
+      expect(env.DATABASE_URL).toMatch(/@postgres:5432\//);   // 1st instance host unchanged
+      expect(env.DATABASE_URL_2).toMatch(/@postgres-2:5432\//); // 2nd instance host rewritten
+    });
+
     it('does NOT set repoPath when gitRepoUrl is missing (no-op project)', async () => {
       const res = await request(server, 'POST', '/api/projects', {
         name: 'No Git',

@@ -16,12 +16,14 @@
  */
 import { Router } from 'express';
 import type { StateService } from '../services/state.js';
-import type { IShellExecutor } from '../types.js';
+import type { IShellExecutor, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
 
 export interface InfraBackupRouterDeps {
   stateService: StateService;
   shell: IShellExecutor;
+  /** Inline project-scope guard. No-op for admin/cookie auth; 403 for a project-scoped key reaching another project. */
+  assertProjectAccess: (req: any, projectId: string) => { status: number; body: unknown } | null;
 }
 
 function detectKind(dockerImage: string): 'mongo' | 'redis' | 'generic' {
@@ -44,8 +46,32 @@ function extractMongoAuth(env: Record<string, string>): { user?: string; passwor
 }
 
 export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
-  const { stateService, shell } = deps;
+  const { stateService, shell, assertProjectAccess } = deps;
   const router = Router();
+
+  /**
+   * Resolve a project-owned infra service for this request and enforce that a
+   * project-scoped key only touches its own project. Returns the service, or
+   * null after already writing the 404/403 response. These endpoints stream
+   * full DB dumps (mongodump / dump.rdb / tar) so cross-project access would
+   * leak another tenant's data. No-op for admin / cookie auth.
+   */
+  function resolveScoped(
+    req: import('express').Request,
+    res: import('express').Response,
+  ): InfraService | null {
+    const svc = stateService.getInfraService(req.params.id);
+    if (!svc) {
+      res.status(404).json({ error: `基础设施服务不存在: ${req.params.id}` });
+      return null;
+    }
+    const mismatch = assertProjectAccess(req, svc.projectId);
+    if (mismatch) {
+      res.status(mismatch.status).json(mismatch.body as Record<string, unknown>);
+      return null;
+    }
+    return svc;
+  }
 
   /**
    * GET /api/infra/:id/backup
@@ -53,11 +79,8 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
    * 其他走 `tar` 包 /data 目录。
    */
   router.get('/infra/:id/backup', async (req, res) => {
-    const svc = stateService.getInfraService(req.params.id);
-    if (!svc) {
-      res.status(404).json({ error: `基础设施服务不存在: ${req.params.id}` });
-      return;
-    }
+    const svc = resolveScoped(req, res);
+    if (!svc) return;
     if (svc.status !== 'running') {
       res.status(409).json({ error: `服务 "${svc.id}" 当前未运行（status=${svc.status}），无法备份。请先启动。` });
       return;
@@ -133,11 +156,8 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
    * 并记 DestructiveOperationLog，这样用户还能还原回恢复前的状态。
    */
   router.post('/infra/:id/restore', async (req, res) => {
-    const svc = stateService.getInfraService(req.params.id);
-    if (!svc) {
-      res.status(404).json({ error: `基础设施服务不存在: ${req.params.id}` });
-      return;
-    }
+    const svc = resolveScoped(req, res);
+    if (!svc) return;
     if (svc.status !== 'running') {
       res.status(409).json({ error: `服务未运行，无法恢复` });
       return;
@@ -225,11 +245,8 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
    * 列出保存在 CDS 服务器 /data/cds/<slug>/backups/ 下的自动备份。
    */
   router.get('/infra/:id/backup-history', async (req, res) => {
-    const svc = stateService.getInfraService(req.params.id);
-    if (!svc) {
-      res.status(404).json({ error: '服务不存在' });
-      return;
-    }
+    const svc = resolveScoped(req, res);
+    if (!svc) return;
     const backupDir = `/data/cds/${stateService.projectSlug}/backups`;
     const result = await shell.exec(`ls -la ${shq(backupDir)} 2>/dev/null | grep ${shq(svc.id)} || true`);
     const lines = (result.stdout || '').split('\n').filter(Boolean);
