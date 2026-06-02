@@ -338,6 +338,7 @@ export default function PortfolioShowcasePage() {
         <div className="flex items-center gap-3">
           <button
             type="button"
+            data-tour-id="showcase-back"
             onClick={() => navigate('/')}
             className="w-9 h-9 rounded-xl flex items-center justify-center transition-all duration-200 hover:scale-105"
             style={{
@@ -367,6 +368,7 @@ export default function PortfolioShowcasePage() {
           />
           <input
             type="text"
+            data-tour-id="showcase-search"
             placeholder="搜索作品..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -465,6 +467,7 @@ export default function PortfolioShowcasePage() {
             </div>
 
             <h1
+              data-tour-id="showcase-hero-title"
               className="font-bold tracking-tight text-center"
               style={{
                 fontSize: isMobile ? 32 : 48,
@@ -526,7 +529,7 @@ export default function PortfolioShowcasePage() {
             style={{ padding: isMobile ? '12px 16px' : '14px 48px' }}
           >
             {/* Tabs */}
-            <div className="flex items-center gap-1.5" role="tablist">
+            <div data-tour-id="showcase-tabs" className="flex items-center gap-1.5" role="tablist">
               {TABS.map((tab) => {
                 const Icon = tab.icon;
                 const isActive = activeTab === tab.key;
@@ -555,7 +558,7 @@ export default function PortfolioShowcasePage() {
             </div>
 
             {/* Sort indicator */}
-            <div className="flex items-center gap-1.5 text-[11px]" style={{ color: 'rgba(255,255,255,0.3)' }}>
+            <div data-tour-id="showcase-sort" className="flex items-center gap-1.5 text-[11px]" style={{ color: 'rgba(255,255,255,0.3)' }}>
               <Flame size={12} />
               <span>最受欢迎</span>
             </div>
@@ -575,7 +578,7 @@ export default function PortfolioShowcasePage() {
         </div>
 
         {/* ── Gallery content ── */}
-        <div ref={gridRef} style={{ padding: isMobile ? '20px 12px 80px' : '32px 48px 80px' }}>
+        <div data-tour-id="showcase-gallery" ref={gridRef} style={{ padding: isMobile ? '20px 12px 80px' : '32px 48px 80px' }}>
           {/* Loading skeleton — waterfall */}
           {loading && (
             <div style={{ display: 'flex', gap, alignItems: 'flex-start' }}>

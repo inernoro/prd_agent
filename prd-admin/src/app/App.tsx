@@ -3,7 +3,8 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-
 import { useAuthStore } from '@/stores/authStore';
 import { initializeTheme } from '@/stores/themeStore';
 import AppShell from '@/layouts/AppShell';
-import { FullscreenTipsDock } from '@/components/daily-tips/FullscreenTipsDock';
+import { TipsDrawer } from '@/components/daily-tips/TipsDrawer';
+import { SpotlightOverlay } from '@/components/daily-tips/SpotlightOverlay';
 import { getAdminAuthzMe, getAdminMenuCatalog } from '@/services';
 import { ToastContainer } from '@/components/ui/Toast';
 import { AgentSwitcherProvider } from '@/components/agent-switcher';
@@ -203,9 +204,9 @@ export default function App() {
         <Route path="/_dev/streaming-text-lab" element={<StreamingTextLab />} />
 
         {/* ── NAV_REGISTRY 中 placement='fullscreen' 的条目（独立全屏，不进 AppShell） */}
-        {/* 全屏页绕过 AppShell，需补挂 FullscreenTipsDock 才有右下角「小技巧」+ 本页教程引导。 */}
+        {/* 教程入口/引导由 App 根挂载的 TipsDrawer + SpotlightOverlay 统一承载（跨全屏路由不丢失）。 */}
         {NAV_REGISTRY.filter((e) => e.placement === 'fullscreen').map((e) => (
-          <Route key={e.path} path={e.path} element={<>{e.element}<FullscreenTipsDock /></>} />
+          <Route key={e.path} path={e.path} element={e.element} />
         ))}
 
         {/* 自动加入共享文件夹（邀请链接）：登录后自动加入并跳网页托管 */}
@@ -334,6 +335,15 @@ export default function App() {
         <Route path="*" element={<Navigate to="/home" replace />} />
       </Routes>
       </Suspense>
+      {/* 教程入口 + 引导:挂在 App 根(Router 内、Routes 外),全局唯一实例。
+          这样跨任意路由(含 shell→全屏编辑器)导航时都不卸载,本页教程能从列表「贯通」进编辑器;
+          入口也始终在右上角常驻。仅登录后、非 CDS 终端页渲染。 */}
+      {isAuthenticated && !location.pathname.startsWith('/cds-agent') && (
+        <>
+          <TipsDrawer />
+          <SpotlightOverlay />
+        </>
+      )}
     </AgentSwitcherProvider>
   );
 }

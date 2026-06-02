@@ -841,6 +841,73 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=literary-content]", Title = "第 8 步：右键快捷菜单", Body = "在空白处右键也能快速新建文件夹或文章；还没有文章时这里会给出引导。看完点「完成」🎉" },
                     },
                 }),
+
+            // 10. 海鲜市场 —— 本页教程
+            T("marketplace-page-guide", "card",
+                "海鲜市场：本页 6 步上手教程",
+                "搜索、筛选、上传技能，一键 fork 到自己的 Agent。",
+                "/marketplace",
+                "开始本页教程",
+                "[data-tour-id=marketplace-page-title]",
+                0,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new() { Selector = "[data-tour-id=marketplace-page-title]", Title = "第 1 步：欢迎来到海鲜市场", Body = "这里能搜索、下载、上传技能 / 提示词 / 配置，一键 fork 到自己的 Agent。", NavigateTo = "/marketplace" },
+                        new() { Selector = "[data-tour-id=marketplace-category-tabs]", Title = "第 2 步：先选类型", Body = "技能 / 提示词 / 配置，点 tab 过滤你想找的那一类。" },
+                        new() { Selector = "[data-tour-id=marketplace-search]", Title = "第 3 步：搜索", Body = "按名称快速找到目标配置。" },
+                        new() { Selector = "[data-tour-id=marketplace-sort]", Title = "第 4 步：热门 / 最新", Body = "想看大家在用什么点「热门」，想看新货点「最新」。" },
+                        new() { Selector = "[data-tour-id=marketplace-list]", Title = "第 5 步：浏览卡片", Body = "每张卡是一个可 fork 的配置，点进去看详情和 fork 数。" },
+                        new() { Selector = "[data-tour-id=marketplace-upload-skill-btn]", Title = "第 6 步：上传你的技能", Body = "在「技能」分类下点「上传技能」，传 zip + 填标题描述即可发布；同分类下的「接入 AI」还能一键生成 API Key 让 Claude Code / Cursor 直连市场。看完点「完成」🎉" },
+                    },
+                }),
+
+            // 11. 智识殿堂 —— 本页教程
+            T("library-landing-page-guide", "card",
+                "智识殿堂：本页 7 步上手教程",
+                "浏览、搜索全平台公开知识库，向各领域专家学习。",
+                "/library",
+                "开始本页教程",
+                "[data-tour-id=library-hero-title]",
+                0,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new() { Selector = "[data-tour-id=library-hero-title]", Title = "第 1 步：欢迎来到智识殿堂", Body = "这里汇聚全平台公开的知识库，可浏览、搜索、点赞、收藏。", NavigateTo = "/library" },
+                        new() { Selector = "[data-tour-id=library-hero-desc]", Title = "第 2 步：它是什么", Body = "各领域开发者分享的知识库集合，向专家学习真实世界的经验与洞见。" },
+                        new() { Selector = "[data-tour-id=library-explore]", Title = "第 3 步：开始探索", Body = "点「开始探索」滚动到下方的公开知识库列表。" },
+                        new() { Selector = "[data-tour-id=library-create]", Title = "第 4 步：发布我的知识", Body = "想分享自己的？点「发布我的知识」去新建知识库（跳到知识库页）。" },
+                        new() { Selector = "[data-tour-id=library-catalog-title]", Title = "第 5 步：热门知识库区", Body = "下面是按热度排序的公开知识库，点卡片进入阅读。" },
+                        new() { Selector = "[data-tour-id=library-search]", Title = "第 6 步：搜索", Body = "按名称 / 作者 / 标签找你感兴趣的库。" },
+                        new() { Selector = "[data-tour-id=library-sort]", Title = "第 7 步：排序", Body = "热门 / 高赞 / 高阅 / 最新 切换不同维度。看完点「完成」🎉" },
+                    },
+                }),
+
+            // 12. 作品广场 —— 本页教程
+            T("showcase-page-guide", "card",
+                "作品广场：本页 6 步上手教程",
+                "浏览全平台 AI 生成的优秀作品（视觉 + 文学），发现灵感。",
+                "/showcase",
+                "开始本页教程",
+                "[data-tour-id=showcase-hero-title]",
+                0,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new() { Selector = "[data-tour-id=showcase-hero-title]", Title = "第 1 步：欢迎来到作品广场", Body = "这里展示全平台由 AI 生成的优秀作品（视觉创作 + 文学创作），逛一逛找灵感。", NavigateTo = "/showcase" },
+                        new() { Selector = "[data-tour-id=showcase-tabs]", Title = "第 2 步：按类型筛选", Body = "全部 / 视觉创作 / 文学创作 三个 tab 切换。" },
+                        new() { Selector = "[data-tour-id=showcase-sort]", Title = "第 3 步：排序", Body = "默认按「最受欢迎」展示，热门作品靠前。" },
+                        new() { Selector = "[data-tour-id=showcase-search]", Title = "第 4 步：搜索作品", Body = "顶部搜索框按关键词找作品。" },
+                        new() { Selector = "[data-tour-id=showcase-gallery]", Title = "第 5 步：浏览作品墙", Body = "瀑布流展示作品，点开看大图和作者主页。" },
+                        new() { Selector = "[data-tour-id=showcase-back]", Title = "第 6 步：返回首页", Body = "左上角返回按钮回到首页。看完点「完成」🎉" },
+                    },
+                }),
         };
     }
 }

@@ -152,6 +152,7 @@ export function LibraryLandingPage() {
 
               {/* 超大标题 */}
               <h1
+                data-tour-id="library-hero-title"
                 className="mb-6 leading-[0.9]"
                 style={{
                   fontFamily: "'Fredoka', 'Nunito', sans-serif",
@@ -166,6 +167,7 @@ export function LibraryLandingPage() {
               </h1>
 
               <p
+                data-tour-id="library-hero-desc"
                 className="text-[16px] md:text-[18px] mb-10 max-w-md leading-relaxed"
                 style={{ color: '#475569', fontWeight: 500 }}
               >
@@ -175,16 +177,18 @@ export function LibraryLandingPage() {
 
               {/* 双按钮 */}
               <div className="flex flex-wrap gap-4 mb-14">
-                <ClayButton
-                  size="lg"
-                  variant="primary"
-                  onClick={() => {
-                    const el = document.getElementById('catalog');
-                    el?.scrollIntoView({ behavior: 'smooth' });
-                  }}
-                >
-                  开始探索 <ArrowRight size={18} strokeWidth={3} />
-                </ClayButton>
+                <span data-tour-id="library-explore" className="inline-block">
+                  <ClayButton
+                    size="lg"
+                    variant="primary"
+                    onClick={() => {
+                      const el = document.getElementById('catalog');
+                      el?.scrollIntoView({ behavior: 'smooth' });
+                    }}
+                  >
+                    开始探索 <ArrowRight size={18} strokeWidth={3} />
+                  </ClayButton>
+                </span>
                 <span data-tour-id="library-create" className="inline-block">
                   <ClayButton size="lg" variant="secondary" onClick={() => navigate('/document-store')}>
                     发布我的知识
@@ -242,6 +246,7 @@ export function LibraryLandingPage() {
               letterSpacing: '-0.02em',
               lineHeight: 1.05,
             }}
+            data-tour-id="library-catalog-title"
           >
             探索热门知识库
           </h2>
@@ -264,6 +269,7 @@ export function LibraryLandingPage() {
               <Search size={18} strokeWidth={3} style={{ color: '#6366F1', flexShrink: 0 }} />
               <input
                 type="text"
+                data-tour-id="library-search"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="搜索知识库名称 / 作者 / 标签..."
@@ -289,7 +295,7 @@ export function LibraryLandingPage() {
           </div>
 
           {/* 排序切换 */}
-          <div className="flex items-center justify-center gap-3 mb-12 flex-wrap">
+          <div data-tour-id="library-sort" className="flex items-center justify-center gap-3 mb-12 flex-wrap">
             {SORT_OPTIONS.map((opt) => (
               <ClayButton
                 key={opt.key}
