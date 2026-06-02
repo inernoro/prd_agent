@@ -482,6 +482,8 @@ export type PmGoal = {
   scoredAt?: string | null;
   scoredByName?: string | null;
   period?: string | null;
+  /** 所属 OKR 周期 Id */
+  cycleId?: string | null;
   progress: number;
   progressMode: 'auto' | 'manual';
   linkedMilestoneCount?: number;
@@ -493,7 +495,7 @@ export type PmGoal = {
   updatedAt: string;
 };
 export type SavePmGoalInput = Partial<{
-  scope: PmGoalScope; parentId: string; title: string; description: string; metric: string; period: string;
+  scope: PmGoalScope; parentId: string; title: string; description: string; metric: string; period: string; cycleId: string;
   progress: number; progressMode: 'auto' | 'manual'; status: PmGoalStatus;
   leadId: string;
   keyResults: { id?: string; title: string; type: PmKeyResultType; startValue: number; targetValue: number; currentValue: number; unit?: string }[];
@@ -503,6 +505,15 @@ export type PmGoalCheckIn = { id: string; goalId: string; projectId: string; aut
 export type ListPmGoalCheckInsContract = (goalId: string) => Promise<ApiResponse<{ items: PmGoalCheckIn[] }>>;
 export type AddPmGoalCheckInContract = (goalId: string, input: { progress?: number; confidence?: PmGoalConfidence; note?: string }) => Promise<ApiResponse<PmGoalCheckIn>>;
 export type ScorePmGoalContract = (goalId: string, input: { score?: number; note?: string; clear?: boolean }) => Promise<ApiResponse<{ updated: boolean }>>;
+
+// ── OKR 周期 ──
+export type PmGoalCycleStatus = 'active' | 'closed';
+export type PmGoalCycle = { id: string; projectId: string; name: string; startAt?: string | null; endAt?: string | null; status: PmGoalCycleStatus; orderKey: number; createdAt: string; updatedAt: string };
+export type SavePmGoalCycleInput = Partial<{ name: string; startAt: string; endAt: string; status: PmGoalCycleStatus; orderKey: number }>;
+export type ListPmGoalCyclesContract = (projectId: string) => Promise<ApiResponse<{ items: PmGoalCycle[] }>>;
+export type CreatePmGoalCycleContract = (projectId: string, input: SavePmGoalCycleInput) => Promise<ApiResponse<PmGoalCycle>>;
+export type UpdatePmGoalCycleContract = (cycleId: string, input: SavePmGoalCycleInput) => Promise<ApiResponse<{ updated: boolean }>>;
+export type DeletePmGoalCycleContract = (cycleId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
 /** AI 拆解出的目标草稿（SSE 返回，未落库） */
 export type PmGoalDraft = { title: string; description?: string | null; metric?: string | null; period?: string | null };
 export type ListPmGoalsContract = (projectId: string) => Promise<ApiResponse<{ items: PmGoal[] }>>;

@@ -1333,6 +1333,7 @@ export const api = {
       weeklyReportImport: (projectId: string) => `/api/pm/projects/${projectId}/weekly-reports/import`,
       meetings: (projectId: string) => `/api/pm/projects/${projectId}/meetings`,
       goals: (projectId: string) => `/api/pm/projects/${projectId}/goals`,
+      goalCycles: (projectId: string) => `/api/pm/projects/${projectId}/goal-cycles`,
       goalsDecompose: (projectId: string, parentGoalId?: string) =>
         `/api/pm/projects/${projectId}/goals/decompose${parentGoalId ? `?parentGoalId=${encodeURIComponent(parentGoalId)}` : ''}`,
       milestones: (projectId: string) => `/api/pm/projects/${projectId}/milestones`,
@@ -1376,6 +1377,9 @@ export const api = {
       item: (goalId: string) => `/api/pm/goals/${goalId}`,
       checkins: (goalId: string) => `/api/pm/goals/${goalId}/checkins`,
       score: (goalId: string) => `/api/pm/goals/${goalId}/score`,
+    },
+    goalCycles: {
+      item: (cycleId: string) => `/api/pm/goal-cycles/${cycleId}`,
     },
     milestones: {
       item: (milestoneId: string) => `/api/pm/milestones/${milestoneId}`,

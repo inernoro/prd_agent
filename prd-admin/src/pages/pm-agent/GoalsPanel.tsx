@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus, Trash2, Pencil, Check, X, Target, Lock, Users, Compass, Flag, Sparkles, ChevronRight, ChevronDown, GitBranch, Network, List, User, BarChart3, Award } from 'lucide-react';
+import { Plus, Trash2, Pencil, Check, X, Target, Lock, Users, Compass, Flag, Sparkles, ChevronRight, ChevronDown, GitBranch, Network, List, User, BarChart3, Award, CalendarRange } from 'lucide-react';
 import { GoalsDashboard } from './goals-canvas/GoalsDashboard';
 
 const CONFIDENCE_DOT: Record<string, { label: string; color: string }> = {
@@ -9,12 +9,13 @@ import { Button } from '@/components/design/Button';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import {
-  listPmGoals, createPmGoal, updatePmGoal, deletePmGoal, listPmMilestones,
+  listPmGoals, createPmGoal, updatePmGoal, deletePmGoal, listPmMilestones, listPmGoalCycles,
 } from '@/services';
-import type { PmGoal, PmGoalScope, PmGoalStatus, SavePmGoalInput, PmMilestone } from '@/services/contracts/pmAgent';
+import type { PmGoal, PmGoalScope, PmGoalStatus, SavePmGoalInput, PmMilestone, PmGoalCycle } from '@/services/contracts/pmAgent';
 import { GOAL_STATUS_REGISTRY, GOAL_SCOPE, MILESTONE_HEALTH_REGISTRY, GOAL_MAX_DEPTH } from './pmConstants';
 import { GoalsCanvas } from './goals-canvas/GoalsCanvas';
 import { GoalDecomposePanel } from './GoalDecomposePanel';
+import { CycleManagerModal } from './CycleManagerModal';
 
 interface Props {
   projectId: string;
@@ -48,15 +49,19 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onNavigateTask,
   const [draft, setDraft] = useState<SavePmGoalInput>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [view, setView] = useState<'canvas' | 'list' | 'dashboard'>('canvas');
+  const [cycles, setCycles] = useState<PmGoalCycle[]>([]);
+  const [showCycleMgr, setShowCycleMgr] = useState(false);
   // AI 拆解目标：null=未打开；{scope} 项目级拆顶层；{parentGoalId,...} 针对某目标拆子目标
   const [aiTarget, setAiTarget] = useState<{ parentGoalId?: string; parentTitle?: string; scope: PmGoalScope } | null>(null);
 
   const load = useCallback(async () => {
-    const [gr, mr] = await Promise.all([listPmGoals(projectId), listPmMilestones(projectId)]);
+    const [gr, mr, cr] = await Promise.all([listPmGoals(projectId), listPmMilestones(projectId), listPmGoalCycles(projectId)]);
     if (gr.success) setGoals(gr.data.items); else toast.error('加载失败', gr.error?.message || '');
     if (mr.success) setMilestones(mr.data.items);
+    if (cr.success) setCycles(cr.data.items);
     setLoading(false);
   }, [projectId]);
+  const cycleName = useMemo(() => new Map(cycles.map((c) => [c.id, c.name])), [cycles]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -217,6 +222,7 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onNavigateTask,
           {g.leadName && <span className="inline-flex items-center gap-1"><User size={10} />{g.leadName}</span>}
           {typeof g.score === 'number' && <span className="inline-flex items-center gap-1" style={{ color: '#F59E0B' }}><Award size={10} />评分 {g.score.toFixed(1)}</span>}
           {g.metric && <span className="truncate">指标：{g.metric}</span>}
+          {g.cycleId && cycleName.get(g.cycleId) && <span className="inline-flex items-center gap-1" style={{ color: '#A855F7' }}><CalendarRange size={10} />{cycleName.get(g.cycleId)}</span>}
           {g.period && <span className="shrink-0">周期：{g.period}</span>}
         </div>
       </div>
@@ -293,12 +299,16 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onNavigateTask,
         <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
           {view === 'canvas' ? '拖动平移 · ⌘/Ctrl+滚轮缩放 · 点节点编辑 · 节点上 AI 拆细' : view === 'dashboard' ? 'OKR 进度 / 达成 / 信心 / 评分 总览' : '缩进树 · 逐卡 AI 拆细'}
         </span>
+        <button onClick={() => setShowCycleMgr(true)} className="ml-auto px-2 py-1 rounded text-[11.5px] inline-flex items-center gap-1 border"
+          style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }} title="OKR 周期管理">
+          <CalendarRange size={12} />周期{cycles.length > 0 ? ` (${cycles.length})` : ''}
+        </button>
       </div>
 
       {view === 'canvas' ? (
         <GoalsCanvas projectId={projectId} businessGoal={businessGoal} canManage={canManage} goals={goals} onReload={load} onNavigateTask={onNavigateTask} onNavigateWeekly={onNavigateWeekly} />
       ) : view === 'dashboard' ? (
-        <GoalsDashboard goals={goals} />
+        <GoalsDashboard goals={goals} cycles={cycles} />
       ) : (
       <div className="flex-1 min-h-0 flex flex-col gap-5 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
       {/* 业务目标北极星 */}
@@ -346,6 +356,10 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onNavigateTask,
           onClose={() => setAiTarget(null)} onCreated={() => { setAiTarget(null); load(); }} />
       )}
       </div>
+      )}
+
+      {showCycleMgr && (
+        <CycleManagerModal projectId={projectId} cycles={cycles} onClose={() => setShowCycleMgr(false)} onChanged={load} />
       )}
     </div>
   );

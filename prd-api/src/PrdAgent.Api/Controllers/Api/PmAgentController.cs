@@ -996,7 +996,7 @@ public class PmAgentController : ControllerBase
             {
                 id = g.Id, projectId = g.ProjectId, scope = g.Scope, ownerId = g.OwnerId,
                 parentId = g.ParentId, depth = g.Depth, childCount,
-                title = g.Title, description = g.Description, metric = g.Metric, period = g.Period,
+                title = g.Title, description = g.Description, metric = g.Metric, period = g.Period, cycleId = g.CycleId,
                 keyResults = g.KeyResults, keyResultCount = g.KeyResults.Count,
                 leadId = g.LeadId, leadName = g.LeadName, confidence = g.Confidence,
                 score = g.Score, scoreNote = g.ScoreNote, scoredAt = g.ScoredAt, scoredByName = g.ScoredByName,
@@ -1056,6 +1056,7 @@ public class PmAgentController : ControllerBase
             Metric = request.Metric?.Trim(),
             KeyResults = MapKeyResults(request.KeyResults),
             Period = request.Period?.Trim(),
+            CycleId = string.IsNullOrWhiteSpace(request.CycleId) ? null : request.CycleId,
             Progress = Math.Clamp(request.Progress ?? 0, 0, 100),
             ProgressMode = PmGoalProgressMode.IsValid(request.ProgressMode) ? request.ProgressMode! : PmGoalProgressMode.Auto,
             Status = PmGoalStatus.IsValid(request.Status) ? request.Status! : PmGoalStatus.OnTrack,
@@ -1098,6 +1099,7 @@ public class PmAgentController : ControllerBase
         if (request.Description != null) update = update.Set(x => x.Description, request.Description.Trim());
         if (request.Metric != null) update = update.Set(x => x.Metric, request.Metric.Trim());
         if (request.Period != null) update = update.Set(x => x.Period, request.Period.Trim());
+        if (request.CycleId != null) update = update.Set(x => x.CycleId, string.IsNullOrWhiteSpace(request.CycleId) ? null : request.CycleId);
         if (request.LeadId != null)
         {
             var lid = string.IsNullOrWhiteSpace(request.LeadId) ? null : request.LeadId;
@@ -1238,6 +1240,93 @@ public class PmAgentController : ControllerBase
         }
         await _db.PmGoals.UpdateOneAsync(x => x.Id == goalId, update);
         return Ok(ApiResponse<object>.Ok(new { updated = true }));
+    }
+
+    // ── OKR 周期 ──
+
+    /// <summary>项目 OKR 周期列表（按 OrderKey 倒序，新周期在前）</summary>
+    [HttpGet("projects/{projectId}/goal-cycles")]
+    public async Task<IActionResult> ListGoalCycles(string projectId)
+    {
+        var userId = GetUserId();
+        if (await FindAccessibleProjectAsync(projectId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        var items = await _db.PmGoalCycles.Find(c => c.ProjectId == projectId)
+            .SortByDescending(c => c.OrderKey).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>新建 OKR 周期（仅 owner/leader）</summary>
+    [HttpPost("projects/{projectId}/goal-cycles")]
+    public async Task<IActionResult> CreateGoalCycle(string projectId, [FromBody] GoalCycleRequest request)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (project.OwnerId != userId && project.LeaderId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅立项人或负责人可管理周期"));
+        if (string.IsNullOrWhiteSpace(request.Name))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "周期名称不能为空"));
+        var creatorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+        var entity = new PmGoalCycle
+        {
+            ProjectId = projectId,
+            Name = request.Name!.Trim(),
+            StartAt = request.StartAt,
+            EndAt = request.EndAt,
+            Status = PmGoalCycleStatus.Active,
+            OrderKey = DateTime.UtcNow.Ticks,
+            CreatedBy = userId,
+            CreatedByName = creatorName,
+        };
+        await _db.PmGoalCycles.InsertOneAsync(entity);
+        return Ok(ApiResponse<object>.Ok(entity));
+    }
+
+    /// <summary>更新 OKR 周期（名称/起止/状态，仅 owner/leader）</summary>
+    [HttpPut("goal-cycles/{cycleId}")]
+    public async Task<IActionResult> UpdateGoalCycle(string cycleId, [FromBody] GoalCycleRequest request)
+    {
+        var userId = GetUserId();
+        var c = await _db.PmGoalCycles.Find(x => x.Id == cycleId).FirstOrDefaultAsync();
+        if (c == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "周期不存在"));
+        var project = await FindAccessibleProjectAsync(c.ProjectId, userId);
+        if (project == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (project.OwnerId != userId && project.LeaderId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅立项人或负责人可管理周期"));
+
+        var update = Builders<PmGoalCycle>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow);
+        if (request.Name != null)
+        {
+            if (string.IsNullOrWhiteSpace(request.Name)) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "周期名称不能为空"));
+            update = update.Set(x => x.Name, request.Name.Trim());
+        }
+        if (request.StartAt.HasValue) update = update.Set(x => x.StartAt, request.StartAt);
+        if (request.EndAt.HasValue) update = update.Set(x => x.EndAt, request.EndAt);
+        if (request.Status != null)
+        {
+            if (!PmGoalCycleStatus.IsValid(request.Status))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的周期状态"));
+            update = update.Set(x => x.Status, request.Status);
+        }
+        await _db.PmGoalCycles.UpdateOneAsync(x => x.Id == cycleId, update);
+        return Ok(ApiResponse<object>.Ok(new { updated = true }));
+    }
+
+    /// <summary>删除 OKR 周期（仅 owner/leader）。不删目标，仅清空其下目标的 CycleId。</summary>
+    [HttpDelete("goal-cycles/{cycleId}")]
+    public async Task<IActionResult> DeleteGoalCycle(string cycleId)
+    {
+        var userId = GetUserId();
+        var c = await _db.PmGoalCycles.Find(x => x.Id == cycleId).FirstOrDefaultAsync();
+        if (c == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "周期不存在"));
+        var project = await FindAccessibleProjectAsync(c.ProjectId, userId);
+        if (project == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (project.OwnerId != userId && project.LeaderId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅立项人或负责人可管理周期"));
+        await _db.PmGoalCycles.DeleteOneAsync(x => x.Id == cycleId);
+        await _db.PmGoals.UpdateManyAsync(g => g.CycleId == cycleId, Builders<PmGoal>.Update.Set(x => x.CycleId, (string?)null));
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
     // ─────────────────────────────────────────────
@@ -2997,6 +3086,8 @@ public class GoalRequest
     public string? Description { get; set; }
     public string? Metric { get; set; }
     public string? Period { get; set; }
+    /// <summary>所属 OKR 周期 Id（null=不变；空串=清除）</summary>
+    public string? CycleId { get; set; }
     public int? Progress { get; set; }
     public string? ProgressMode { get; set; }
     public string? Status { get; set; }
@@ -3031,6 +3122,15 @@ public class GoalScoreRequest
     public double? Score { get; set; }
     public string? Note { get; set; }
     public bool? Clear { get; set; }
+}
+
+public class GoalCycleRequest
+{
+    public string? Name { get; set; }
+    public DateTime? StartAt { get; set; }
+    public DateTime? EndAt { get; set; }
+    public string? Status { get; set; }
+    public long? OrderKey { get; set; }
 }
 
 public class RiskRequest

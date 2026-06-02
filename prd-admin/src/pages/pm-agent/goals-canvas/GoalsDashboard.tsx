@@ -1,10 +1,11 @@
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { Target, TrendingUp, Award, AlertTriangle, User, CalendarRange } from 'lucide-react';
-import type { PmGoal } from '@/services/contracts/pmAgent';
+import type { PmGoal, PmGoalCycle } from '@/services/contracts/pmAgent';
 import { GOAL_STATUS_REGISTRY } from '../pmConstants';
 
 interface Props {
   goals: PmGoal[];
+  cycles?: PmGoalCycle[];
   onOpen?: (g: PmGoal) => void;
 }
 
@@ -17,8 +18,14 @@ const CONF_META: Record<string, { label: string; color: string }> = {
  * OKR 仪表盘 —— 团队目标的进度/达成/信心/评分总览（客户端聚合）。
  * KPI 卡 + 状态分布 + 按负责人/周期聚合 + 需关注（低信心 / 风险 / 落后）目标预警。
  */
-export function GoalsDashboard({ goals, onOpen }: Props) {
-  const team = useMemo(() => goals.filter((g) => g.scope === 'team'), [goals]);
+export function GoalsDashboard({ goals, cycles = [], onOpen }: Props) {
+  const [cycleFilter, setCycleFilter] = useState<string>('all'); // all | none | cycleId
+  const team = useMemo(() => goals.filter((g) => {
+    if (g.scope !== 'team') return false;
+    if (cycleFilter === 'all') return true;
+    if (cycleFilter === 'none') return !g.cycleId;
+    return g.cycleId === cycleFilter;
+  }), [goals, cycleFilter]);
 
   const stat = useMemo(() => {
     const total = team.length;
@@ -36,7 +43,8 @@ export function GoalsDashboard({ goals, onOpen }: Props) {
     return { total, avg, achieved, lowConf, scored: scored.length, avgScore, statusDist, byLead, byPeriod, watch };
   }, [team]);
 
-  if (team.length === 0) {
+  const allTeamCount = goals.filter((g) => g.scope === 'team').length;
+  if (allTeamCount === 0) {
     return (
       <div className="flex-1 min-h-0 flex flex-col items-center justify-center gap-3 text-center" style={{ color: 'var(--text-muted)' }}>
         <Target size={30} style={{ opacity: 0.4 }} />
@@ -45,6 +53,18 @@ export function GoalsDashboard({ goals, onOpen }: Props) {
       </div>
     );
   }
+
+  const cycleBar = (
+    <div className="shrink-0 flex items-center gap-2 flex-wrap">
+      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>周期</span>
+      <select value={cycleFilter} onChange={(e) => setCycleFilter(e.target.value)} className="text-[12px] rounded-md px-2 py-1 outline-none border"
+        style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}>
+        <option value="all">全部周期</option>
+        {cycles.map((c) => <option key={c.id} value={c.id}>{c.name}{c.status === 'closed' ? '（已归档）' : ''}</option>)}
+        <option value="none">未归类</option>
+      </select>
+    </div>
+  );
 
   const Kpi = ({ icon, label, value, sub, color }: { icon: ReactNode; label: string; value: string; sub?: string; color?: string }) => (
     <div className="rounded-xl border px-3 py-2.5 flex flex-col gap-0.5" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
@@ -69,8 +89,18 @@ export function GoalsDashboard({ goals, onOpen }: Props) {
     </div>
   );
 
+  if (team.length === 0) {
+    return (
+      <div className="flex-1 min-h-0 flex flex-col gap-3">
+        {cycleBar}
+        <div className="flex-1 flex items-center justify-center text-[12.5px]" style={{ color: 'var(--text-muted)' }}>该周期下暂无团队目标</div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3" style={{ overscrollBehavior: 'contain' }}>
+      {cycleBar}
       <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))' }}>
         <Kpi icon={<Target size={11} />} label="团队目标" value={String(stat.total)} sub={`平均进度 ${stat.avg}%`} color="#3B82F6" />
         <Kpi icon={<TrendingUp size={11} />} label="达成率" value={`${stat.total ? Math.round(stat.achieved * 100 / stat.total) : 0}%`} sub={`已达成 ${stat.achieved}`} color="#10B981" />

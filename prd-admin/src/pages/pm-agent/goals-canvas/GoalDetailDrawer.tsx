@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Check, Sparkles, Plus, Trash2, ListTodo, FileText, Gavel, User, Target, TrendingUp, Send, Compass, Award } from 'lucide-react';
+import { X, Check, Sparkles, Plus, Trash2, ListTodo, FileText, Gavel, User, Target, TrendingUp, Send, Compass, Award, CalendarRange } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { toast } from '@/lib/toast';
-import { createPmGoal, updatePmGoal, deletePmGoal, getPmProject, listPmMilestones, listPmWeeklyReports, listPmDecisions, listPmGoalCheckIns, addPmGoalCheckIn, scorePmGoal } from '@/services';
-import type { PmGoal, PmGoalScope, PmGoalStatus, SavePmGoalInput, PmTask, PmWeeklyReport, PmDecision, PmKeyResult, PmKeyResultType, PmGoalConfidence, PmGoalCheckIn } from '@/services/contracts/pmAgent';
+import { createPmGoal, updatePmGoal, deletePmGoal, getPmProject, listPmMilestones, listPmWeeklyReports, listPmDecisions, listPmGoalCheckIns, addPmGoalCheckIn, scorePmGoal, listPmGoalCycles } from '@/services';
+import type { PmGoal, PmGoalScope, PmGoalStatus, SavePmGoalInput, PmTask, PmWeeklyReport, PmDecision, PmKeyResult, PmKeyResultType, PmGoalConfidence, PmGoalCheckIn, PmGoalCycle } from '@/services/contracts/pmAgent';
 import { GOAL_STATUS_REGISTRY, TASK_STATUS_REGISTRY, DECISION_TYPE_REGISTRY } from '../pmConstants';
 
 const STATUS_KEYS: PmGoalStatus[] = ['on_track', 'at_risk', 'done', 'abandoned'];
@@ -60,6 +60,8 @@ export function GoalDetailDrawer({ projectId, goal, allGoals, businessGoal, crea
   const isCreate = !goal;
   const [draft, setDraft] = useState<SavePmGoalInput>({});
   const [leadId, setLeadId] = useState('');
+  const [cycleId, setCycleId] = useState('');
+  const [cycles, setCycles] = useState<PmGoalCycle[]>([]);
   const [krs, setKrs] = useState<PmKeyResult[]>([]);
   const [saving, setSaving] = useState(false);
   // 反查：关联任务（直接挂的 + 里程碑下的） + 提及本目标的周报 + 关联本目标的决策
@@ -81,14 +83,22 @@ export function GoalDetailDrawer({ projectId, goal, allGoals, businessGoal, crea
     if (goal) {
       setDraft({ title: goal.title, description: goal.description || '', metric: goal.metric || '', period: goal.period || '', progress: goal.progress, progressMode: goal.progressMode, status: goal.status });
       setLeadId(goal.leadId || '');
+      setCycleId(goal.cycleId || '');
       setKrs((goal.keyResults ?? []).map((k) => ({ ...k })));
       setScoreVal(goal.score != null ? String(goal.score) : '');
       setScoreNote(goal.scoreNote || '');
     } else if (createCtx) {
       setDraft({ scope: createCtx.scope, parentId: createCtx.parentId, status: 'on_track', progress: 0, progressMode: 'auto' });
-      setLeadId(''); setKrs([]);
+      setLeadId(''); setCycleId(''); setKrs([]);
     }
   }, [goal, createCtx]);
+
+  // 拉取周期（新建/编辑都可选周期）
+  useEffect(() => {
+    let alive = true;
+    listPmGoalCycles(projectId).then((r) => { if (alive && r.success) setCycles(r.data.items); });
+    return () => { alive = false; };
+  }, [projectId]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -150,6 +160,7 @@ export function GoalDetailDrawer({ projectId, goal, allGoals, businessGoal, crea
     const payload: SavePmGoalInput = {
       ...draft,
       leadId,
+      cycleId,
       keyResults: krs.filter((k) => k.title.trim()).map((k) => ({
         id: k.id.startsWith('tmp-') ? undefined : k.id, title: k.title.trim(), type: k.type,
         startValue: k.startValue, targetValue: k.targetValue, currentValue: k.currentValue, unit: k.unit || undefined,
@@ -226,10 +237,15 @@ export function GoalDetailDrawer({ projectId, goal, allGoals, businessGoal, crea
               <input value={draft.metric || ''} disabled={!canWrite} onChange={(e) => setDraft((d) => ({ ...d, metric: e.target.value }))} placeholder="如：核心指标达 95%" className={inputCls} style={inputStyle} />
             </div>
             <div className="w-[120px] flex flex-col gap-1">
-              <label className="text-[11px]" style={{ color: 'var(--text-muted)' }}>周期</label>
+              <label className="text-[11px]" style={{ color: 'var(--text-muted)' }}>周期(文本)</label>
               <input value={draft.period || ''} disabled={!canWrite} onChange={(e) => setDraft((d) => ({ ...d, period: e.target.value }))} placeholder="2026 Q2" className={inputCls} style={inputStyle} />
             </div>
           </div>
+          <label className="text-[11px] inline-flex items-center gap-1" style={{ color: 'var(--text-muted)' }}><CalendarRange size={11} />OKR 周期</label>
+          <select value={cycleId} disabled={!canWrite} onChange={(e) => setCycleId(e.target.value)} className={inputCls} style={inputStyle}>
+            <option value="">未归类</option>
+            {cycles.map((c) => <option key={c.id} value={c.id}>{c.name}{c.status === 'closed' ? '（已归档）' : ''}</option>)}
+          </select>
 
           {/* 关键结果 KR（结构化、可量化） */}
           <div className="flex items-center gap-1.5">
@@ -366,6 +382,7 @@ export function GoalDetailDrawer({ projectId, goal, allGoals, businessGoal, crea
                         {['0.0', '0.1', '0.2', '0.3', '0.4', '0.5', '0.6', '0.7', '0.8', '0.9', '1.0'].map((s) => <option key={s} value={s}>{s}</option>)}
                       </select>
                       <span className="text-[10.5px]" style={{ color: 'var(--text-muted)' }}>0.7 左右为理想达成</span>
+                      {krAvg != null && <Button variant="ghost" size="sm" onClick={() => setScoreVal((Math.round(krAvg / 10) / 10).toFixed(1))} title={`按 KR 均值 ${krAvg}% 折算`}>按 KR 算分</Button>}
                     </div>
                     <textarea value={scoreNote} onChange={(e) => setScoreNote(e.target.value)} placeholder="复盘：达成情况 / 经验 / 不足…" rows={2} className="w-full text-[12px] rounded-md px-2 py-1.5 outline-none border resize-y" style={inputStyle} />
                     <div className="flex items-center gap-1.5">

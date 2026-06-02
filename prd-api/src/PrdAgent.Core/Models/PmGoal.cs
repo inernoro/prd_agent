@@ -44,8 +44,11 @@ public class PmGoal
     /// <summary>信心指数：high | medium | low（取自最近一次 check-in，冗余便于列表展示）</summary>
     public string? Confidence { get; set; }
 
-    /// <summary>周期（如「2026 Q2」「6 月」）</summary>
+    /// <summary>周期（如「2026 Q2」「6 月」）—— 自由文本，兼容旧数据</summary>
     public string? Period { get; set; }
+
+    /// <summary>所属 OKR 周期 Id（结构化周期，可空）</summary>
+    public string? CycleId { get; set; }
 
     /// <summary>进度 0-100（manual 模式下为手填值；auto 模式下作为无关联里程碑时的兜底）</summary>
     public int Progress { get; set; }
