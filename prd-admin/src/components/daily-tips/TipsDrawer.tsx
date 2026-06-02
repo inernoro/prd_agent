@@ -297,28 +297,12 @@ export function TipsDrawer() {
     lastExpandedRef.current = expanded;
   }, [expanded, pageMatchedIndex, tips.length]);
 
-  // ── dock 总高度广播:AppShell 通知卡据此动态定位,避免与书/drawer 重叠 ──
-  const drawerRef = useRef<HTMLDivElement>(null);
+  // ── dock 总高度广播:小书移除后底部不再有悬浮组,抽屉也改到右上角,dockBottom 恒为 20 ──
+  // 不再随 expanded 变化、也不需要 ResizeObserver(它过去测书的高度,现在恒定 20,纯属空转,Bugbot)。
+  // 只需在挂载时广播一次,把 AppShell 通知卡从书时代的默认底距(136)纠正到 20。
   useEffect(() => {
-    if (expanded) return; // expanded 时由 ResizeObserver 处理
-    // dock 已移到右上角,底部不再有悬浮组,通知卡按默认底距即可(避免把铃铛顶上去)
     window.dispatchEvent(new CustomEvent(FLOATING_DOCK_HEIGHT_EVENT, { detail: { dockBottom: 20 } }));
-  }, [expanded]);
-  useEffect(() => {
-    if (!expanded) return;
-    const el = drawerRef.current;
-    if (!el) return;
-    const dispatch = () => {
-      // drawer 在右上角展开,不占用底部空间,通知卡保持默认底距
-      window.dispatchEvent(new CustomEvent(FLOATING_DOCK_HEIGHT_EVENT, {
-        detail: { dockBottom: 20 },
-      }));
-    };
-    dispatch();
-    const ro = new ResizeObserver(dispatch);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [expanded]);
+  }, []);
 
   // ── 自动收起:expanded 5s 内无 hover / 点击就 collapsed ──────
   const drawerHoveredRef = useRef(false);
@@ -356,9 +340,11 @@ export function TipsDrawer() {
       // actionUrl 前缀的列表教程),也必须回到 actionUrl,否则 tour 在编辑器里找不到锚点,
       // 卡在「目标未找到」(Codex P2)。
       const isEditorGuide = typeof tip.sourceId === 'string' && tip.sourceId.includes('editor');
+      // 编辑器教程的锚点只在深层路由(/{agent}/:id、旧版 -fullscreen/)存在 —— 停在列表页(pathname === url)
+      // 不算「已在目标」,否则手动轮播到编辑器教程并在列表页点 CTA 会跳过导航、起一个找不到锚点的 tour(Bugbot)。
+      // 故编辑器教程只认深层前缀;普通列表教程才用精确匹配。
       const alreadyAtTarget = isEditorGuide
-        ? (location.pathname === url
-          || location.pathname.startsWith(url + '/')
+        ? (location.pathname.startsWith(url + '/')
           || location.pathname.startsWith(url + '-fullscreen/'))
         : location.pathname === url;
       if (!alreadyAtTarget) {
@@ -396,7 +382,6 @@ export function TipsDrawer() {
   const drawer =
     expanded ? (
       <div
-        ref={drawerRef}
         onMouseEnter={() => {
           drawerHoveredRef.current = true;
         }}

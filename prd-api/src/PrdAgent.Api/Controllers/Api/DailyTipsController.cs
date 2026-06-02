@@ -473,7 +473,7 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=webpages-header-actions]", Title = "第 4 步：顶部工具栏", Body = "右上角集中了「分享统计 / 分享管理 / 上传站点」三个入口。" },
                         new() { Selector = "[data-tour-id=webpages-stats-btn]", Title = "第 5 步：分享数据统计", Body = "点图表图标查看每个站点的 PV、独立访客、访问时间线。" },
                         new() { Selector = "[data-tour-id=webpages-share-mgmt-btn]", Title = "第 6 步：分享链接管理", Body = "点链接图标统一管理所有分享链接的密码、有效期和开关。" },
-                        new() { Selector = "[data-tour-id=webpages-upload-primary]", Title = "第 7 步：上传第一个站点", Body = "点「上传站点」选文件 + 填标题即可发布，整个 ZIP 站点也能直接上传。" },
+                        new() { Selector = "[data-tour-id=webpages-upload-primary], [data-tour-id=webpages-header-actions]", Title = "第 7 步：上传第一个站点", Body = "有编辑权限时这里会出现「上传站点」按钮，选文件 + 填标题即可发布，整个 ZIP 站点也能直接上传；团队空间的只读成员看不到该按钮。" },
                         new() { Selector = "[data-tour-id=webpages-sort-pills]", Title = "第 8 步：排序", Body = "最新 / 最早 / 标题 / 浏览 / 体积 五种排序平铺成 pill，单击直接切。" },
                         new() { Selector = "[data-tour-id=webpages-group-pills]", Title = "第 9 步：分组", Body = "「日期 / 文件夹」二选一，把站点按时间或自建文件夹归类。" },
                         new() { Selector = "[data-tour-id=webpages-view-toggle]", Title = "第 10 步：网格 / 列表视图", Body = "右侧 ⊞ / ☰ 切换；网格有缩略图，列表更紧凑。" },
@@ -800,21 +800,24 @@ public sealed class DailyTipsController : ControllerBase
                 "从总览、搜索筛选排序到新建、上传、发布到智识殿堂，一次走遍。",
                 "/document-store",
                 "开始本页教程",
-                "[data-tour-id=library-toolbar]",
+                "[data-tour-id=library-toolbar], [data-tour-id=library-tabs]",
                 0,
                 new DailyTipAutoAction
                 {
                     Scroll = "center",
+                    // 工具栏(stats/search/sort/create)只在「我的空间/团队空间」tab 渲染;若返回用户上次停在
+                    // 收藏/点赞 tab,这些锚点不存在。逗号兜底到常驻的 library-tabs(顶部 tab 栏 sticky 容器),
+                    // 让教程在任一 tab 都能推进而不卡「目标未找到」(Codex P2)。新用户默认 mine tab,锚点齐全。
                     Steps = new List<DailyTipTourStep>
                     {
-                        new() { Selector = "[data-tour-id=library-stats]", Title = "第 1 步：欢迎来到知识库", Body = "把文档、订阅源整理成知识库，可私藏也可发布到智识殿堂。这里实时显示你有多少个库、多少篇文章。", NavigateTo = "/document-store" },
-                        new() { Selector = "[data-tour-id=library-stats]", Title = "第 2 步：库房总览", Body = "这里实时显示你有多少个知识库、多少篇文章。" },
-                        new() { Selector = "[data-tour-id=library-search]", Title = "第 3 步：搜索", Body = "按名称或标签快速找到目标知识库。" },
-                        new() { Selector = "[data-tour-id=library-tag-filter]", Title = "第 4 步：标签筛选", Body = "给知识库打标签后，可在这里按标签多选过滤。" },
-                        new() { Selector = "[data-tour-id=library-sort]", Title = "第 5 步：排序", Body = "按最近更新 / 创建时间 / 名称 / 文章数切换列表顺序。" },
-                        new() { Selector = "[data-tour-id=document-store-create]", Title = "第 6 步：新建知识库", Body = "点「新建知识库」取个名字，这就是你的第一个库。" },
-                        new() { Selector = "[data-tour-id=document-store-create]", Title = "第 7 步：进库后上传文档", Body = "点卡片「打开」进入空间，右上角会出现「上传文档」按钮，支持拖入 PDF/Markdown/Word，或粘贴 URL 自动抓取。" },
-                        new() { Selector = "[data-tour-id=document-store-create]", Title = "第 8 步：发布到智识殿堂", Body = "空间里点「发布」，勾选公开后就能被全平台搜到、收藏、点赞。看完点「完成」" },
+                        new() { Selector = "[data-tour-id=library-stats], [data-tour-id=library-tabs]", Title = "第 1 步：欢迎来到知识库", Body = "把文档、订阅源整理成知识库，可私藏也可发布到智识殿堂。顶部可切换「我的空间 / 团队空间 / 收藏 / 点赞」。", NavigateTo = "/document-store" },
+                        new() { Selector = "[data-tour-id=library-stats], [data-tour-id=library-tabs]", Title = "第 2 步：库房总览", Body = "在「我的空间 / 团队空间」tab 下，这里实时显示你有多少个知识库、多少篇文章。" },
+                        new() { Selector = "[data-tour-id=library-search], [data-tour-id=library-tabs]", Title = "第 3 步：搜索", Body = "按名称或标签快速找到目标知识库。" },
+                        new() { Selector = "[data-tour-id=library-tag-filter], [data-tour-id=library-tabs]", Title = "第 4 步：标签筛选", Body = "给知识库打标签后，可在这里按标签多选过滤。" },
+                        new() { Selector = "[data-tour-id=library-sort], [data-tour-id=library-tabs]", Title = "第 5 步：排序", Body = "按最近更新 / 创建时间 / 名称 / 文章数切换列表顺序。" },
+                        new() { Selector = "[data-tour-id=document-store-create], [data-tour-id=library-tabs]", Title = "第 6 步：新建知识库", Body = "点「新建知识库」取个名字，这就是你的第一个库。" },
+                        new() { Selector = "[data-tour-id=document-store-create], [data-tour-id=library-tabs]", Title = "第 7 步：进库后上传文档", Body = "点卡片「打开」进入空间，右上角会出现「上传文档」按钮，支持拖入 PDF/Markdown/Word，或粘贴 URL 自动抓取。" },
+                        new() { Selector = "[data-tour-id=document-store-create], [data-tour-id=library-tabs]", Title = "第 8 步：发布到智识殿堂", Body = "空间里点「发布」，勾选公开后就能被全平台搜到、收藏、点赞。看完点「完成」" },
                     },
                 }),
 
