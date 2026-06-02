@@ -38,6 +38,21 @@ export interface AgentCapability {
   actionLabel: string;
 }
 
+/** 智能体可选参数的单个选项 */
+export interface AgentParameterOption {
+  value: string;
+  label: string;
+}
+
+/** 智能体可选参数（如视觉的尺寸/模型）。选项来自真实池/模型配置，只有有多个可选项时才下发 */
+export interface AgentParameter {
+  key: string;          // 透传给后端 parameters（如 'size' / 'model'）
+  label: string;        // 展示标签
+  type: string;         // 目前只有 'select'
+  options: AgentParameterOption[];
+  default?: string | null;
+}
+
 /** 调用产出的成果物（目前主要是图片） */
 export interface AgentArtifact {
   kind: string;          // 'image' | 'markdown' | 'json' | ...
@@ -66,6 +81,14 @@ export async function listAgentCapabilities(): Promise<ApiResponse<{ capabilitie
 }
 
 /**
+ * 拉取某智能体的「可选参数」（如视觉的尺寸/模型）。选项来自后端真实池/模型配置；
+ * 只有确实有多个可选项时才返回对应参数，没有就返回空（前端不渲染选择器）。
+ */
+export async function getAgentParameters(agentKey: string): Promise<ApiResponse<{ parameters: AgentParameter[] }>> {
+  return await apiRequest(api.agentUniverse.parameters(agentKey), { method: 'GET' });
+}
+
+/**
  * 统一调用信封（SSE 流式）。无论文本还是生图，调用方只认这一套回调。
  * 返回中止函数。
  */
@@ -75,6 +98,8 @@ export function invokeAgent(options: {
   action?: string;
   documentContent?: string;
   imageUrls?: string[];
+  /** 面板选择的参数（如 { size, model }），透传给真实适配器 */
+  parameters?: Record<string, string>;
   history?: AgentInvokeHistoryItem[];
   onStart?: (info: { agentKey?: string; invokeMode?: string; model?: string; platform?: string }) => void;
   onText: (content: string) => void;
@@ -104,6 +129,7 @@ export function invokeAgent(options: {
           action: options.action,
           documentContent: options.documentContent,
           imageUrls: options.imageUrls,
+          parameters: options.parameters,
           history: options.history,
         }),
         signal: abortController.signal,

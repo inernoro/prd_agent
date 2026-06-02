@@ -22,8 +22,8 @@ import {
 } from '@/services';
 import { streamDirectChat, listToolboxItems } from '@/services/real/aiToolbox';
 import type { ToolboxItem } from '@/services/real/aiToolbox';
-import { invokeAgent, listAgentCapabilities } from '@/services/real/agentUniverse';
-import type { AgentCapability, AgentArtifact } from '@/services/real/agentUniverse';
+import { invokeAgent, listAgentCapabilities, getAgentParameters } from '@/services/real/agentUniverse';
+import type { AgentCapability, AgentArtifact, AgentParameter } from '@/services/real/agentUniverse';
 import { BUILTIN_TOOLS } from '@/stores/toolboxStore';
 import type { ReprocessAgent } from '@/services/contracts/documentStore';
 import { toast } from '@/lib/toast';
@@ -156,6 +156,9 @@ export function ReprocessChatDrawer({
   const [pickerOpen, setPickerOpen] = useState(false);
   // 智能体能力契约（后端 SSOT 下发）：决定哪些 builtin 智能体可选 + 各自交互形态
   const [capabilities, setCapabilities] = useState<AgentCapability[]>([]);
+  // 当前生成型智能体的可选参数（尺寸/模型，后端按真实池下发）+ 用户的选择
+  const [agentParams, setAgentParams] = useState<AgentParameter[]>([]);
+  const [selectedParams, setSelectedParams] = useState<Record<string, string>>({});
 
   const cancelStreamRef = useRef<(() => void) | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -442,6 +445,33 @@ export function ReprocessChatDrawer({
     [active, capabilityForAgent],
   );
 
+  // 选中生成型智能体时，拉它的「可选参数」（尺寸/模型，后端按真实池下发）。
+  // 非生成型 / 无可选项 → 清空，不渲染选择器（"如果可选才选"）。
+  useEffect(() => {
+    const cap = activeCapability;
+    if (!cap || cap.invokeMode !== 'generation') {
+      setAgentParams([]);
+      setSelectedParams({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const res = await getAgentParameters(cap.agentKey);
+      if (cancelled) return;
+      if (res.success) {
+        const ps = res.data.parameters ?? [];
+        setAgentParams(ps);
+        const defaults: Record<string, string> = {};
+        for (const p of ps) if (p.default) defaults[p.key] = p.default;
+        setSelectedParams(defaults);
+      } else {
+        setAgentParams([]);
+        setSelectedParams({});
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeCapability]);
+
   // ── 发送消息 ──
   const sendMessage = useCallback(async (
     userText: string,
@@ -551,6 +581,8 @@ export function ReprocessChatDrawer({
         agentKey: cap.agentKey,
         text: userText.trim(),
         documentContent: isGeneration ? undefined : docContent,
+        // 面板选择的尺寸/模型透传给真实适配器（仅生成型、且确有选择时）
+        parameters: isGeneration && Object.keys(selectedParams).length > 0 ? selectedParams : undefined,
         history: isGeneration ? undefined : (history.length > 0 ? history : undefined),
         onText,
         onArtifact: (art) => {
@@ -593,7 +625,7 @@ export function ReprocessChatDrawer({
       onDone,
     });
     cancelStreamRef.current = stop;
-  }, [loadingDoc, docLoadError, messages, docContent, docTruncated, scrollToBottom, capabilityForAgent, entryId]);
+  }, [loadingDoc, docLoadError, messages, docContent, docTruncated, scrollToBottom, capabilityForAgent, entryId, selectedParams]);
 
   const handleSendInput = useCallback(() => {
     if (!input.trim()) return;
@@ -1034,6 +1066,26 @@ export function ReprocessChatDrawer({
 
         {/* 输入区 */}
         <div className="surface-panel-footer px-5 py-3 shrink-0 border-t border-token-subtle">
+          {/* 可选参数（尺寸/模型）—— 仅生成型且后端有真实可选项时出现 */}
+          {isGenerationActive && agentParams.length > 0 && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mb-2">
+              {agentParams.map((p) => (
+                <label key={p.key} className="flex items-center gap-1.5 text-[10px] text-token-muted">
+                  <span className="shrink-0">{p.label}</span>
+                  <select
+                    value={selectedParams[p.key] ?? p.default ?? ''}
+                    onChange={(e) => setSelectedParams((prev) => ({ ...prev, [p.key]: e.target.value }))}
+                    disabled={isBusy}
+                    className="prd-field rounded-[8px] px-2 py-1 text-[11px] text-token-primary outline-none disabled:opacity-60"
+                  >
+                    {p.options.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+            </div>
+          )}
           <div className="flex gap-2 items-end">
             <textarea
               id="reprocess-chat-input"

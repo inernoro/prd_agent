@@ -7,6 +7,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Models.AgentUniverse;
 using PrdAgent.Core.Security;
+using PrdAgent.Infrastructure.LLM;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -31,6 +32,7 @@ namespace PrdAgent.Api.Controllers.Api;
 public class AgentUniverseController : ControllerBase
 {
     private readonly IEnumerable<IAgentAdapter> _adapters;
+    private readonly IModelPoolQueryService _modelPoolQuery;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<AgentUniverseController> _logger;
 
@@ -39,10 +41,12 @@ public class AgentUniverseController : ControllerBase
 
     public AgentUniverseController(
         IEnumerable<IAgentAdapter> adapters,
+        IModelPoolQueryService modelPoolQuery,
         ILLMRequestContextAccessor llmRequestContext,
         ILogger<AgentUniverseController> logger)
     {
         _adapters = adapters;
+        _modelPoolQuery = modelPoolQuery;
         _llmRequestContext = llmRequestContext;
         _logger = logger;
     }
@@ -54,6 +58,69 @@ public class AgentUniverseController : ControllerBase
     public IActionResult Capabilities()
     {
         return Ok(ApiResponse<object>.Ok(new { capabilities = AgentCapabilityRegistry.All }));
+    }
+
+    /// <summary>
+    /// 下发某智能体的「可选参数」（如视觉的尺寸/模型）。
+    /// 选项一律来自该智能体**真实**的池/模型配置（不另起炉灶、不编造）；
+    /// 只有确实存在多个可选项时才下发对应选择器（"如果可选则自己选"）。
+    /// </summary>
+    [HttpGet("agents/{agentKey}/parameters")]
+    public async Task<IActionResult> AgentParameters(string agentKey, CancellationToken ct)
+    {
+        var parameters = new List<AgentParameter>();
+
+        var cap = AgentCapabilityRegistry.Find(agentKey);
+        if (cap == null)
+            return Ok(ApiResponse<object>.Ok(new { parameters }));
+
+        if (agentKey == "visual-agent")
+        {
+            // 模型：从该智能体自己原有的池拉真实可选模型（ai-toolbox.agent.visual::generation），
+            // 不去碰/统一别的池。
+            var pools = await _modelPoolQuery.GetModelPoolsAsync(
+                AppCallerRegistry.AiToolbox.Agents.VisualGeneration, "generation", ct);
+            var modelIds = pools
+                .SelectMany(p => p.Models)
+                .Select(m => m.ModelId)
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct()
+                .ToList();
+
+            // 「如果可选」：≥2 个模型才给选择器；只有 1 个就别假装能选
+            if (modelIds.Count >= 2)
+            {
+                parameters.Add(new AgentParameter
+                {
+                    Key = "model",
+                    Label = "模型",
+                    Options = modelIds.Select(id => new AgentParameterOption { Value = id, Label = id }).ToList(),
+                    Default = modelIds[0],
+                });
+            }
+
+            // 尺寸：取首个（最高优先级）模型在适配器注册表里的真实尺寸列表
+            var primaryModel = modelIds.FirstOrDefault();
+            var sizes = new List<string>();
+            if (!string.IsNullOrWhiteSpace(primaryModel))
+            {
+                var cfg = ImageGenModelAdapterRegistry.TryMatch(primaryModel);
+                if (cfg != null)
+                    sizes = ImageGenModelAdapterRegistry.GetAllSizesFromConfig(cfg).Distinct().ToList();
+            }
+            if (sizes.Count >= 2)
+            {
+                parameters.Add(new AgentParameter
+                {
+                    Key = "size",
+                    Label = "尺寸",
+                    Options = sizes.Select(s => new AgentParameterOption { Value = s, Label = s }).ToList(),
+                    Default = sizes[0],
+                });
+            }
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { parameters }));
     }
 
     /// <summary>

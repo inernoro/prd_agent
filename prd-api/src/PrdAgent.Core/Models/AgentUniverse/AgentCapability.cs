@@ -92,3 +92,33 @@ public static class AgentInteractions
     /// <summary>表单提交：填写/粘贴后提交，产出结构化结果。</summary>
     public const string FormSubmit = "form-submit";
 }
+
+/// <summary>
+/// 智能体可选参数（如视觉的尺寸/模型）。选项一律来自该智能体**真实**的池/模型配置，
+/// 绝不编造；只有「确实有多个可选项」时才下发（如果不可选就不给选择器，避免假选项）。
+/// 用户在面板上选好后，经统一信封 invoke 的 parameters 透传给真实适配器。
+/// </summary>
+public class AgentParameter
+{
+    /// <summary>参数键，透传给适配器 Input（如 "size" / "model"）。</summary>
+    public string Key { get; set; } = string.Empty;
+
+    /// <summary>展示标签（如「尺寸」「模型」）。</summary>
+    public string Label { get; set; } = string.Empty;
+
+    /// <summary>控件类型，目前只有 select。</summary>
+    public string Type { get; set; } = "select";
+
+    /// <summary>真实可选项。</summary>
+    public List<AgentParameterOption> Options { get; set; } = new();
+
+    /// <summary>默认值（取真实选项里的第一个/最高优先级）。</summary>
+    public string? Default { get; set; }
+}
+
+/// <summary>单个可选项。</summary>
+public class AgentParameterOption
+{
+    public string Value { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+}

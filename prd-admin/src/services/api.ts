@@ -918,6 +918,7 @@ export const api = {
   agentUniverse: {
     capabilities: () => '/api/agent-universe/capabilities',
     invoke: () => '/api/agent-universe/invoke',
+    parameters: (agentKey: string) => `/api/agent-universe/agents/${agentKey}/parameters`,
   },
 
   // ============ Transcript Agent 音视频转录 ============
