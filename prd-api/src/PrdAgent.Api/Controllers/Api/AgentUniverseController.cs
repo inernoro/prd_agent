@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services.Toolbox;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Models.AgentUniverse;
 using PrdAgent.Core.Security;
@@ -30,6 +31,7 @@ namespace PrdAgent.Api.Controllers.Api;
 public class AgentUniverseController : ControllerBase
 {
     private readonly IEnumerable<IAgentAdapter> _adapters;
+    private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<AgentUniverseController> _logger;
 
     private static readonly JsonSerializerOptions JsonOptions =
@@ -37,9 +39,11 @@ public class AgentUniverseController : ControllerBase
 
     public AgentUniverseController(
         IEnumerable<IAgentAdapter> adapters,
+        ILLMRequestContextAccessor llmRequestContext,
         ILogger<AgentUniverseController> logger)
     {
         _adapters = adapters;
+        _llmRequestContext = llmRequestContext;
         _logger = logger;
     }
 
@@ -121,6 +125,20 @@ public class AgentUniverseController : ControllerBase
                     context.Input[kv.Key] = kv.Value;
             }
         }
+
+        // 设置 LLM 请求上下文，让真实适配器 / 生图客户端拿到 UserId
+        // （否则 [LlmLog] UserId 为空 告警 + 生成资产归属丢失；llm-gateway.md 规则）
+        using var _llmScope = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null,
+            SessionId: null,
+            UserId: userId,
+            ViewRole: null,
+            DocumentChars: request.DocumentContent?.Length,
+            DocumentHash: null,
+            SystemPromptRedacted: $"agent-universe:{cap.AgentKey}:{action}",
+            RequestType: cap.InvokeMode,
+            AppCallerCode: null));
 
         await WriteSseEventAsync("start", new
         {
