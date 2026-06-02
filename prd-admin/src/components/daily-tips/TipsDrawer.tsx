@@ -110,7 +110,16 @@ export function TipsDrawer() {
     return () => window.removeEventListener(OPEN_TIPS_DRAWER_EVENT, onOpen);
   }, [load]);
 
-  const tips = cardTips();
+  // 编辑器教程(*-editor-page-guide)的锚点只在编辑器深层路由(/{agent}/:id、旧版 -fullscreen/)内存在。
+  // 不在对应编辑器路由时,把它从抽屉轮播里过滤掉 —— 否则用户手动翻页到它、点 CTA 会跳到列表页起一个
+  // 找不到 visual-editor-* 锚点的 tour,卡 10 秒超时(Codex P2)。在编辑器内则保留,供用户手动重开。
+  const tips = cardTips().filter((t) => {
+    const isEditorGuide = typeof t.sourceId === 'string'
+      && t.sourceId.includes('editor') && t.sourceId.endsWith('-page-guide');
+    if (!isEditorGuide) return true;
+    const url = t.actionUrl || '';
+    return location.pathname.startsWith(url + '/') || location.pathname.startsWith(url + '-fullscreen/');
+  });
   // 触发(重新)挂钩:items / dismissed 变化时列表应刷新
   void items;
   void dismissed;

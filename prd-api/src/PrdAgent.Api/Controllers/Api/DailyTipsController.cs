@@ -101,6 +101,14 @@ public sealed class DailyTipsController : ControllerBase
         // tip.Version 升级后 learnedMap 里的旧 Version 不再匹配,用户会重新看到。
         items = FilterLearned(items, learnedMap);
 
+        // 过滤「已退役 seed」:老环境跑过 /seed 落库的旧短教程(webpages-basics 等)被新版
+        // *-page-guide 取代,新旧 SourceId 不冲突 → 不主动滤掉就会新旧并存。这里直接从结果里剔除,
+        // 用户无需等管理员重置即不再看到(Codex P2);DB 行的彻底清理在 Admin /seed 时做。
+        if (RetiredSeedSourceIds.Length > 0)
+        {
+            items = items.Where(t => t.SourceId == null || !RetiredSeedSourceIds.Contains(t.SourceId)).ToList();
+        }
+
         // 合并代码内置 seed 集合：即使 DB 已有其他 tip，也要让新加的 BuildDefaultTips seed
         // （如本周发的 feature-release 公告）自动出现，不需要管理员手动跑 /seed。
         // 去重规则：DB 中存在该 SourceId 的记录就跳过 — 包括 IsActive=false 或在发布窗口外的，
@@ -389,6 +397,17 @@ public sealed class DailyTipsController : ControllerBase
     // （Cursor Bugbot / Codex review）。过此日期后两条公告在全平台（含兜底）消失。
     private static readonly DateTime FeatureTip2026W21ExpireAt =
         new(2026, 6, 2, 0, 0, 0, DateTimeKind.Utc);
+
+    /// <summary>
+    /// 已退役的 seed SourceId：被新版各页 *-page-guide 完整教程取代的旧版精简短教程。
+    /// 老环境若曾跑过 /seed 把它们落了库，新旧 SourceId 不冲突会导致新旧并存（Codex P2）。
+    /// SSOT：Visible() 主动过滤掉这些 DB 行（用户无需等管理员手动重置即不再看到），
+    /// AdminDailyTipsController.Seed() 重新植入时也按此清单删除残留。
+    /// </summary>
+    internal static readonly string[] RetiredSeedSourceIds =
+    {
+        "webpages-basics", "visual-first-image", "library-publish",
+    };
 
     internal static List<DailyTip> BuildDefaultTips(DateTime now)
     {
