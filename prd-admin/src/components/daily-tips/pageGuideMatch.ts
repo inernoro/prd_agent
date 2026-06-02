@@ -1,6 +1,18 @@
 import type { DailyTip } from '@/services/real/dailyTips';
 
 /**
+ * sourceId 是否为「编辑器页教程」(*-editor-page-guide)——锚点只在编辑器深层路由
+ * (/{agent}/:id、旧版 -fullscreen/) 内存在。统一判定,避免 TipsDrawer 的轮播过滤、
+ * handleOpenTip 的导航守卫、matchPageGuide 三处各写各的 includes('editor') 而漂移(Bugbot)。
+ * 必须同时满足 endsWith('-page-guide'),否则未来出现 sourceId 含 "editor" 的普通 tip 会被误判。
+ */
+export function isEditorPageGuide(sourceId: string | null | undefined): boolean {
+  return typeof sourceId === 'string'
+    && sourceId.endsWith('-page-guide')
+    && sourceId.includes('editor');
+}
+
+/**
  * 当前路由是否有「未走完的本页教程」——TipsDrawer(自动开讲 + 抑制抽屉自动展开)与
  * TipsEntryButton(入口闪烁/强调态)共用的单一匹配逻辑,避免两份 inline 拷贝随规则漂移(Bugbot)。
  *
@@ -22,7 +34,7 @@ export function matchPageGuide(
     if (dismissed.has(t.id)) return false;
     if (t.kind !== 'card' && t.kind !== 'spotlight') return false;
     if (typeof t.sourceId !== 'string' || !t.sourceId.endsWith('-page-guide') || !t.actionUrl) return false;
-    const isEditor = t.sourceId.includes('editor');
+    const isEditor = isEditorPageGuide(t.sourceId);
     if (pathname === t.actionUrl) return !isEditor;
     if (pathname.startsWith(t.actionUrl + '/') || pathname.startsWith(t.actionUrl + '-fullscreen/')) return isEditor;
     return false;

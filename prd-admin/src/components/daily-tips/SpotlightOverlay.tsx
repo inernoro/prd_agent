@@ -502,11 +502,7 @@ export function SpotlightOverlay() {
               gap: 10,
             }}
           >
-            {steps && steps.length === 1 && (
-              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', fontVariantNumeric: 'tabular-nums' }}>
-                步骤 {stepIndex + 1} / {steps.length}
-              </div>
-            )}
+            {/* 多步教程的进度在上方任务进度条展示;单步/零步无需「步骤 N/M」计数(1/1、1/0 都无意义,Bugbot)。 */}
             <div style={{ flex: 1 }} />
             {steps && !isLastStep && (
               <button

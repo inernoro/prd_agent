@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Sparkles, X, Pin, PinOff, MapPin, ChevronLeft, ChevronRight, GraduationCap } from 'lucide-react';
 import { OPEN_TIPS_DRAWER_EVENT } from './TipsEntryButton';
-import { matchPageGuide } from './pageGuideMatch';
+import { matchPageGuide, isEditorPageGuide } from './pageGuideMatch';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { writeSpotlightPayload } from './TipsRotator';
 import { trackTip, dismissTipForever } from '@/services/real/dailyTips';
@@ -114,9 +114,7 @@ export function TipsDrawer() {
   // 不在对应编辑器路由时,把它从抽屉轮播里过滤掉 —— 否则用户手动翻页到它、点 CTA 会跳到列表页起一个
   // 找不到 visual-editor-* 锚点的 tour,卡 10 秒超时(Codex P2)。在编辑器内则保留,供用户手动重开。
   const tips = cardTips().filter((t) => {
-    const isEditorGuide = typeof t.sourceId === 'string'
-      && t.sourceId.includes('editor') && t.sourceId.endsWith('-page-guide');
-    if (!isEditorGuide) return true;
+    if (!isEditorPageGuide(t.sourceId)) return true;
     const url = t.actionUrl || '';
     return location.pathname.startsWith(url + '/') || location.pathname.startsWith(url + '-fullscreen/');
   });
@@ -348,7 +346,7 @@ export function TipsDrawer() {
       // 普通(列表页)教程的锚点只在列表页存在 → 即便当前停在编辑器子路由(轮播可能先选中同
       // actionUrl 前缀的列表教程),也必须回到 actionUrl,否则 tour 在编辑器里找不到锚点,
       // 卡在「目标未找到」(Codex P2)。
-      const isEditorGuide = typeof tip.sourceId === 'string' && tip.sourceId.includes('editor');
+      const isEditorGuide = isEditorPageGuide(tip.sourceId);
       // 编辑器教程的锚点只在深层路由(/{agent}/:id、旧版 -fullscreen/)存在 —— 停在列表页(pathname === url)
       // 不算「已在目标」,否则手动轮播到编辑器教程并在列表页点 CTA 会跳过导航、起一个找不到锚点的 tour(Bugbot)。
       // 故编辑器教程只认深层前缀;普通列表教程才用精确匹配。
