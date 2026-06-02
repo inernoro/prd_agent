@@ -1221,6 +1221,17 @@ public static class CcasAgent
         )]
         public const string Chat = "ccas-agent.qa::chat";
     }
+
+    public static class SqlAi
+    {
+        [AppCallerMetadata(
+            "SQL 助手-自然语言写 SQL",
+            "把陈智版 / 米多版数据库 schema 内化进系统提示词，用户用自然语言提问 → AI 流式输出可执行 SQL + 中文业务说明",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Chat"
+        )]
+        public const string Chat = "ccas-agent.sql-ai::chat";
+    }
 }
 
 /// <summary>

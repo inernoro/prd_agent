@@ -708,6 +708,147 @@ public class CcasAgentController : ControllerBase
     }
 
     // ──────────────────────────────────────────────
+    // SQL 助手：把陈智版 / 米多版 schema 内化为 system prompt，SSE 流式应答
+    // ──────────────────────────────────────────────
+
+    public class SqlAiRequest
+    {
+        /// <summary>方言：chenzhi-mssql / miduo-mysql / miduo-mssql；未传 = AI 在回复里先确认</summary>
+        public string? Dialect { get; set; }
+
+        /// <summary>关联模式（仅陈智版）：bottle-pack / bottle-pack-box / bottle-pack-box-stack / unspecified</summary>
+        public string? AssociationMode { get; set; }
+
+        /// <summary>用户问题（必填）</summary>
+        public string Question { get; set; } = string.Empty;
+
+        /// <summary>会话 ID（仅用于日志关联）</summary>
+        public string? SessionId { get; set; }
+    }
+
+    /// <summary>
+    /// SQL 助手 SSE 流式问答。事件协议：
+    ///   - phase   { phase, message }
+    ///   - model   { model, platform }
+    ///   - typing  { text }
+    ///   - done    { elapsedMs, dialect, associationMode }
+    ///   - error   { message }
+    /// </summary>
+    [HttpPost("sql-ai/stream")]
+    [Produces("text/event-stream")]
+    public async Task SqlAiStream([FromBody] SqlAiRequest req, CancellationToken cancellationToken)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Connection = "keep-alive";
+
+        var userId = GetUserId();
+
+        if (req == null || string.IsNullOrWhiteSpace(req.Question))
+        {
+            await WriteSseAsync("error", new { message = "请输入问题（question 不能为空）" });
+            return;
+        }
+
+        var question = req.Question.Trim();
+        var dialect = req.Dialect;
+        var associationMode = req.AssociationMode;
+
+        var systemPrompt = CcasSqlAiPrompts.BuildSystemPrompt(dialect, associationMode);
+
+        var dialectLabel = (dialect != null && CcasSqlAiPrompts.DialectLabels.TryGetValue(dialect, out var dl))
+            ? dl : "未指定";
+        var modeLabel = (associationMode != null && CcasSqlAiPrompts.AssociationLabels.TryGetValue(associationMode, out var ml))
+            ? ml : "未指定";
+
+        var gatewayRequest = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.CcasAgent.SqlAi.Chat,
+            ModelType = ModelTypes.Chat,
+            Stream = true,
+            IncludeThinking = false,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                    new JsonObject { ["role"] = "user", ["content"] = question },
+                },
+                // SQL 生成温度低一点，减少创造性发散
+                ["temperature"] = 0.2,
+                ["max_tokens"] = 3072,
+            },
+        };
+
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null,
+            SessionId: req.SessionId,
+            UserId: userId,
+            ViewRole: null,
+            DocumentChars: question.Length,
+            DocumentHash: null,
+            SystemPromptRedacted: CcasSqlAiPrompts.BuildRedactedTag(dialect, associationMode),
+            RequestType: "chat",
+            AppCallerCode: AppCallerRegistry.CcasAgent.SqlAi.Chat));
+
+        await WriteSseAsync("phase", new
+        {
+            phase = "preparing",
+            message = $"准备中（数据库：{dialectLabel}，关联模式：{modeLabel}）…",
+        });
+
+        var sentModel = false;
+        var startedAt = DateTime.UtcNow;
+
+        try
+        {
+            await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
+            {
+                if (chunk.Type == GatewayChunkType.Start && !sentModel && chunk.Resolution != null)
+                {
+                    sentModel = true;
+                    await WriteSseAsync("model", new
+                    {
+                        model = chunk.Resolution.ActualModel,
+                        platform = chunk.Resolution.ActualPlatformName,
+                    });
+                    await WriteSseAsync("phase", new { phase = "answering", message = "AI 正在生成 SQL…" });
+                }
+                else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    try { await WriteSseAsync("typing", new { text = chunk.Content }); }
+                    catch (ObjectDisposedException) { break; }
+                }
+                else if (chunk.Type == GatewayChunkType.Error)
+                {
+                    var err = chunk.Error ?? chunk.Content ?? "网关返回未知错误";
+                    _logger.LogError("CcasAgent SqlAi 网关错误 user={UserId}: {Error}", userId, err);
+                    try { await WriteSseAsync("error", new { message = $"LLM 网关错误: {err}" }); }
+                    catch { }
+                    return;
+                }
+            }
+
+            try
+            {
+                await WriteSseAsync("done", new
+                {
+                    elapsedMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds,
+                    dialect,
+                    associationMode,
+                });
+            }
+            catch (ObjectDisposedException) { }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "CcasAgent SqlAi 失败 user={UserId}", userId);
+            try { await WriteSseAsync("error", new { message = "SQL 助手失败：" + ex.Message }); } catch { }
+        }
+    }
+
+    // ──────────────────────────────────────────────
     // 子能力 3：流程示意图
     // ──────────────────────────────────────────────
 
