@@ -49,7 +49,7 @@ const TOOLBOX_ICON_HUE: Record<string, number> = {
 
 // 出站动作图标（lucide name → component）。后端 AgentOutboundAction.icon 取这里的 key。
 const OUTBOUND_ICON_MAP: Record<string, LucideIcon> = {
-  Bug, Send, FilePlus2, FileText, Sparkles, Video, FileBarChart,
+  Bug, Send, FilePlus2, FileText, Sparkles, Video, FileBarChart, ImagePlus,
 };
 
 function ToolboxIcon({ name, size = 14 }: { name?: string; size?: number }) {
@@ -776,9 +776,73 @@ export function ReprocessChatDrawer({
     if (target && onApplied) onApplied(mode, target);
   }, [messages, applying, entryId, onApplied]);
 
+  // 智能体接力（E9）：文学 generate_illustration（构思插画描述）→ 视觉 text2img（生图）→ 图片可插文档。
+  // 复用同一个 invoke 信封跑两次，前一步的文本喂给后一步，全程进度托管在一条消息里。
+  const handleChainIllustration = useCallback(async (sourceContent: string) => {
+    if (sendLockRef.current) return;
+    if (!sourceContent || !sourceContent.trim()) return;
+    sendLockRef.current = true;
+    setError(null);
+    const owner = entryId;
+    const guard = () => entryIdRef.current === owner;
+    const chainId = 'chain-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+    setMessages((prev) => [...prev, {
+      id: chainId, role: 'assistant',
+      content: '① 文学构思插画描述…',
+      streaming: true, phase: 'thinking',
+      invoker: { kind: 'toolbox', label: '文学 → 视觉 · 配图', ref: 'chain' },
+    }]);
+    setStreamingId(chainId);
+    scrollToBottom();
+
+    // 把一次 invokeAgent 包成 Promise，收集文本 / 图片
+    const runStep = (opts: {
+      agentKey: string; action: string; text: string;
+      onText?: (full: string) => void; onArt?: (a: AgentArtifact) => void;
+    }) => new Promise<{ text: string; artifacts: AgentArtifact[]; error?: string }>((resolve) => {
+      let text = ''; const artifacts: AgentArtifact[] = []; let err: string | undefined;
+      const stop = invokeAgent({
+        agentKey: opts.agentKey,
+        action: opts.action,
+        text: opts.text,
+        onText: (c) => { text += c; opts.onText?.(text); },
+        onArtifact: (a) => { artifacts.push(a); opts.onArt?.(a); },
+        onError: (e) => { err = e; resolve({ text, artifacts, error: e }); },
+        onDone: () => resolve({ text, artifacts, error: err }),
+      });
+      cancelStreamRef.current = stop;
+    });
+
+    // 步骤 1：文学构思插画描述
+    const s1 = await runStep({
+      agentKey: 'literary-agent', action: 'generate_illustration', text: sourceContent,
+      onText: (full) => { if (guard()) setMessages((prev) => prev.map((m) => m.id === chainId ? { ...m, content: '① 构思插画描述：\n' + full, phase: 'streaming' } : m)); },
+    });
+    if (!guard()) { sendLockRef.current = false; return; }
+    if (s1.error || !s1.text.trim()) {
+      setMessages((prev) => prev.map((m) => m.id === chainId ? { ...m, streaming: false, phase: 'error', content: '配图失败（构思阶段）：' + (s1.error || '未生成插画描述') } : m));
+      setStreamingId(null); sendLockRef.current = false; return;
+    }
+
+    // 步骤 2：视觉据描述生图
+    setMessages((prev) => prev.map((m) => m.id === chainId ? { ...m, content: '① 插画描述：\n' + s1.text + '\n\n② 正在据描述生成配图…', phase: 'thinking' } : m));
+    scrollToBottom();
+    const s2 = await runStep({
+      agentKey: 'visual-agent', action: 'text2img', text: s1.text,
+      onArt: (a) => { if (guard()) setMessages((prev) => prev.map((m) => m.id === chainId ? { ...m, artifacts: [...(m.artifacts ?? []), a], phase: 'streaming' } : m)); },
+    });
+    if (!guard()) { sendLockRef.current = false; return; }
+    setMessages((prev) => prev.map((m) => m.id === chainId ? {
+      ...m, streaming: false, phase: s2.error ? 'error' : 'done',
+      content: '① 插画描述：\n' + s1.text + (s2.error ? ('\n\n② 配图失败：' + s2.error) : '\n\n② 配图完成（下方图片可插入文档）'),
+    } : m));
+    setStreamingId(null); sendLockRef.current = false; scrollToBottom();
+  }, [entryId, scrollToBottom]);
+
   // 智能体专属出站动作：把产出送回它自己的原生系统（巧思）
   const handleOutbound = useCallback(async (actionKey: string, content: string) => {
     if (!content || !content.trim()) return;
+    if (actionKey === 'illustrate') { void handleChainIllustration(content); return; }
     if (actionKey === 'create-defect') {
       const res = await createDefectFromContent(content);
       if (!res.success) {
@@ -789,7 +853,7 @@ export function ReprocessChatDrawer({
       }
       toast.success('缺陷已创建', `「${res.data?.title || '新缺陷'}」已建入缺陷库，可去缺陷管理指派/处理`);
     }
-  }, []);
+  }, [handleChainIllustration]);
 
   const isBusy = streamingId !== null;
   const isGenerationActive = activeCapability?.invokeMode === 'generation';

@@ -46,6 +46,16 @@ public static class AgentCapabilityRegistry
             DefaultAction = "write_content",
             InputHint = "告诉我怎么改写、续写或润色这篇文档",
             ActionLabel = "发送",
+            OutboundActions = new()
+            {
+                new AgentOutboundAction
+                {
+                    Key = "illustrate",
+                    Label = "为这段配图",
+                    Icon = "ImagePlus",
+                    Hint = "用这段文字自动生成配图（文学构思插画描述 → 视觉生图，一键接力）",
+                },
+            },
         },
 
         // ── 缺陷管理：文档/描述 → 结构化缺陷（路由到 DefectAgentAdapter.extract_defect）──
