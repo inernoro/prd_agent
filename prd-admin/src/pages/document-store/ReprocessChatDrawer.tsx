@@ -22,8 +22,8 @@ import {
 } from '@/services';
 import { streamDirectChat, listToolboxItems } from '@/services/real/aiToolbox';
 import type { ToolboxItem } from '@/services/real/aiToolbox';
-import { invokeAgent, listAgentCapabilities, getAgentParameters } from '@/services/real/agentUniverse';
-import type { AgentCapability, AgentArtifact, AgentParameter } from '@/services/real/agentUniverse';
+import { invokeAgent, listAgentCapabilities, getAgentParameters, createDefectFromContent } from '@/services/real/agentUniverse';
+import type { AgentCapability, AgentArtifact, AgentParameter, AgentOutboundAction } from '@/services/real/agentUniverse';
 import { BUILTIN_TOOLS } from '@/stores/toolboxStore';
 import type { ReprocessAgent } from '@/services/contracts/documentStore';
 import { toast } from '@/lib/toast';
@@ -45,6 +45,11 @@ const TOOLBOX_ICON_MAP: Record<string, LucideIcon> = {
 const TOOLBOX_ICON_HUE: Record<string, number> = {
   Palette: 330, PenTool: 45, Bug: 0, Video: 270, FileBarChart: 200,
   Bot: 210, FileText: 220, Sparkles: 280,
+};
+
+// 出站动作图标（lucide name → component）。后端 AgentOutboundAction.icon 取这里的 key。
+const OUTBOUND_ICON_MAP: Record<string, LucideIcon> = {
+  Bug, Send, FilePlus2, FileText, Sparkles, Video, FileBarChart,
 };
 
 function ToolboxIcon({ name, size = 14 }: { name?: string; size?: number }) {
@@ -107,6 +112,8 @@ type ChatMessage = {
   content: string;
   /** 生成型智能体产出的成果物（目前主要是图片），随流式逐个追加 */
   artifacts?: AgentArtifact[];
+  /** 产出该消息的智能体的专属出站动作（如缺陷→创建缺陷），随消息记忆，写回按钮旁额外渲染 */
+  outboundActions?: AgentOutboundAction[];
   streaming?: boolean;
   /** 流式阶段：thinking / streaming / done */
   phase?: 'thinking' | 'streaming' | 'done' | 'error';
@@ -511,6 +518,8 @@ export function ReprocessChatDrawer({
     };
     const asstMsg: ChatMessage = {
       id: asstMsgId, role: 'assistant', content: '', streaming: true, phase: 'thinking', invoker,
+      // 记住产出该消息的智能体的专属出站动作（如缺陷→创建缺陷），写回按钮旁额外渲染
+      outboundActions: cap?.outboundActions,
     };
 
     // 多轮 history 只塞 bubble text（用户原话 / AI 原回复），不重复嵌文档。
@@ -766,6 +775,21 @@ export function ReprocessChatDrawer({
 
     if (target && onApplied) onApplied(mode, target);
   }, [messages, applying, entryId, onApplied]);
+
+  // 智能体专属出站动作：把产出送回它自己的原生系统（巧思）
+  const handleOutbound = useCallback(async (actionKey: string, content: string) => {
+    if (!content || !content.trim()) return;
+    if (actionKey === 'create-defect') {
+      const res = await createDefectFromContent(content);
+      if (!res.success) {
+        const m = res.error?.message || '创建失败';
+        const perm = /\b403\b|权限|forbidden/i.test(m);
+        toast.error('创建缺陷失败', perm ? '需要缺陷管理权限（defect-agent.use），请联系管理员开通' : m);
+        return;
+      }
+      toast.success('缺陷已创建', `「${res.data?.title || '新缺陷'}」已建入缺陷库，可去缺陷管理指派/处理`);
+    }
+  }, []);
 
   const isBusy = streamingId !== null;
   const isGenerationActive = activeCapability?.invokeMode === 'generation';
@@ -1043,6 +1067,30 @@ export function ReprocessChatDrawer({
           </AnimatePresence>
         </div>
 
+        {/* 智能涌现提示：选中智能体后，告诉用户这个智能体能做什么特别的（专属出站动作） */}
+        {activeCapability && !docLoadError && (
+          <div className="px-5 pb-2 shrink-0">
+            <div
+              className="rounded-[8px] px-2.5 py-1.5 text-[10px] flex items-start gap-1.5"
+              style={{
+                background: 'rgba(168,85,247,0.10)',
+                border: '1px solid rgba(168,85,247,0.22)',
+                color: 'rgba(216,180,254,0.95)',
+              }}
+            >
+              <Sparkles size={11} className="shrink-0 mt-0.5" />
+              <span>
+                <b>智能涌现</b>：
+                {activeCapability.outboundActions && activeCapability.outboundActions.length > 0
+                  ? activeCapability.outboundActions.map((a) => a.hint || a.label).join('；')
+                  : activeCapability.invokeMode === 'generation'
+                    ? '生成结果可一键插入文档 / 另存为新文档'
+                    : '产出可替换 / 追加 / 另存到当前文档'}
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* 创建浮层 */}
         <AnimatePresence>
           {showCreateAgent && (
@@ -1077,6 +1125,7 @@ export function ReprocessChatDrawer({
                 applying={applying}
                 onApply={handleApply}
                 onApplyArtifact={handleApplyArtifact}
+                onOutbound={handleOutbound}
               />
             ))
           )}
@@ -1335,12 +1384,13 @@ function EmptyState({ loadingDoc, entryTitle, hasAgent, docLoadError }: {
 
 // ── 消息气泡 ──
 function MessageBubble({
-  msg, applying, onApply, onApplyArtifact,
+  msg, applying, onApply, onApplyArtifact, onOutbound,
 }: {
   msg: ChatMessage;
   applying: string | null;
   onApply: (msgId: string, mode: 'replace' | 'append' | 'new') => void;
   onApplyArtifact: (art: AgentArtifact, mode: 'replace' | 'append' | 'new') => void;
+  onOutbound: (actionKey: string, content: string) => void;
 }) {
   // 流式耗时计时：让用户分清"正在生成"还是"卡死"（hook 必须在任何 return 之前）
   const [elapsed, setElapsed] = useState(0);
@@ -1466,6 +1516,22 @@ function MessageBubble({
             <ApplyBtn icon={<FilePlus2 size={10} />} label="另存为新文档"
               busy={busyMode === 'new'} applied={msg.applied === 'new'}
               disabled={!!applying} onClick={() => onApply(msg.id, 'new')} />
+            {/* 智能体专属出站动作（巧思）：如缺陷智能体的「创建缺陷」 */}
+            {(msg.outboundActions ?? []).map((oa) => {
+              const OIcon = OUTBOUND_ICON_MAP[oa.icon] || Send;
+              return (
+                <ApplyBtn
+                  key={oa.key}
+                  icon={<OIcon size={10} />}
+                  label={oa.label}
+                  busy={false}
+                  applied={false}
+                  disabled={!!applying}
+                  accent
+                  onClick={() => onOutbound(oa.key, msg.content)}
+                />
+              );
+            })}
           </div>
         )}
       </div>
@@ -1498,7 +1564,7 @@ function ThinkingDots() {
 }
 
 function ApplyBtn({
-  icon, label, busy, applied, disabled, onClick,
+  icon, label, busy, applied, disabled, onClick, accent,
 }: {
   icon: React.ReactNode;
   label: string;
@@ -1506,17 +1572,24 @@ function ApplyBtn({
   applied: boolean;
   disabled: boolean;
   onClick: () => void;
+  /** 智能体专属出站动作（巧思）：紫色高亮，区别于通用写回 */
+  accent?: boolean;
 }) {
+  const bg = applied
+    ? 'rgba(74,222,128,0.14)'
+    : accent ? 'rgba(168,85,247,0.14)' : 'rgba(255,255,255,0.04)';
+  const color = applied
+    ? 'rgba(110,231,158,0.95)'
+    : accent ? 'rgba(216,180,254,0.98)' : 'rgba(255,255,255,0.80)';
+  const border = applied
+    ? '1px solid rgba(74,222,128,0.30)'
+    : accent ? '1px solid rgba(168,85,247,0.35)' : '1px solid rgba(255,255,255,0.08)';
   return (
     <button
       onClick={onClick}
       disabled={disabled || busy}
       className="inline-flex items-center gap-1 rounded-[7px] px-2.5 py-1.5 text-[10px] font-medium hover:bg-white/8 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-      style={{
-        background: applied ? 'rgba(74,222,128,0.14)' : 'rgba(255,255,255,0.04)',
-        color: applied ? 'rgba(110,231,158,0.95)' : 'rgba(255,255,255,0.80)',
-        border: applied ? '1px solid rgba(74,222,128,0.30)' : '1px solid rgba(255,255,255,0.08)',
-      }}
+      style={{ background: bg, color, border }}
     >
       {busy ? <RotateCw size={10} className="animate-spin" /> : icon}
       {applied ? `${label}（已写回）` : label}

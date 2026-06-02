@@ -63,6 +63,16 @@ public static class AgentCapabilityRegistry
             DefaultAction = "extract_defect",
             InputHint = "粘贴缺陷描述，或让我从这篇文档提取结构化缺陷",
             ActionLabel = "提取缺陷",
+            OutboundActions = new()
+            {
+                new AgentOutboundAction
+                {
+                    Key = "create-defect",
+                    Label = "创建缺陷",
+                    Icon = "Bug",
+                    Hint = "把抽取的缺陷直接建入缺陷库（标题自动归一，可后续指派）",
+                },
+            },
         },
 
         // ── PRD 解读：文档 → 需求分析（路由到 PrdAgentAdapter.analyze_prd）──

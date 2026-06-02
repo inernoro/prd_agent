@@ -48,6 +48,29 @@ public class AgentCapability
 
     /// <summary>提交按钮文案（如"生成图片" / "发送" / "提取缺陷"）。</summary>
     public string ActionLabel { get; set; } = "发送";
+
+    /// <summary>
+    /// 智能体专属"出站动作"（巧思）：把产出送回它自己的原生系统，而不只是写回文档。
+    /// 例：缺陷智能体 → 创建缺陷。选中智能体时前端会展示这些动作作为"智能涌现"提示。
+    /// 通用的"替换/追加/另存到当前文档"由前端默认提供，不在此列。
+    /// </summary>
+    public List<AgentOutboundAction> OutboundActions { get; set; } = new();
+}
+
+/// <summary>智能体专属出站动作：产出 → 该智能体的原生系统（缺陷库 / 工作流 / …）。</summary>
+public class AgentOutboundAction
+{
+    /// <summary>动作标识，前端据此路由到对应系统（如 "create-defect"）。</summary>
+    public string Key { get; set; } = string.Empty;
+
+    /// <summary>按钮文案（如"创建缺陷"）。</summary>
+    public string Label { get; set; } = string.Empty;
+
+    /// <summary>Lucide 图标名。</summary>
+    public string Icon { get; set; } = "Send";
+
+    /// <summary>一句话说明，用于"智能涌现"提示（如"把抽取的缺陷直接建入缺陷库"）。</summary>
+    public string Hint { get; set; } = string.Empty;
 }
 
 /// <summary>输入/输出数据类型常量。统一前后端对"数据形态"的命名，杜绝各处自定义字符串。</summary>

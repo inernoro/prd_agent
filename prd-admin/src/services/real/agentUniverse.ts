@@ -36,6 +36,16 @@ export interface AgentCapability {
   defaultAction: string;
   inputHint: string;
   actionLabel: string;
+  /** 智能体专属"出站动作"（巧思）：产出送回原生系统，如缺陷智能体→创建缺陷 */
+  outboundActions?: AgentOutboundAction[];
+}
+
+/** 智能体专属出站动作 */
+export interface AgentOutboundAction {
+  key: string;     // 'create-defect' 等，前端据此路由到对应系统
+  label: string;   // 按钮文案
+  icon: string;    // lucide 图标名
+  hint: string;    // "智能涌现"提示文案
 }
 
 /** 智能体可选参数的单个选项 */
@@ -86,6 +96,15 @@ export async function listAgentCapabilities(): Promise<ApiResponse<{ capabilitie
  */
 export async function getAgentParameters(agentKey: string): Promise<ApiResponse<{ parameters: AgentParameter[] }>> {
   return await apiRequest(api.agentUniverse.parameters(agentKey), { method: 'GET' });
+}
+
+/**
+ * 出站动作：缺陷智能体「创建缺陷」——把产出直接建入缺陷库。
+ * 复用现有 POST /api/defect-agent/defects（content 即智能体抽取的缺陷正文，标题后端自动归一，
+ * ProjectId 可空）。这是"统一信封产出 → 各智能体原生系统"巧思的第一个落地动作。
+ */
+export async function createDefectFromContent(content: string): Promise<ApiResponse<{ id: string; title: string }>> {
+  return await apiRequest(api.defectAgent.defects.list(), { method: 'POST', body: { content } });
 }
 
 /**
