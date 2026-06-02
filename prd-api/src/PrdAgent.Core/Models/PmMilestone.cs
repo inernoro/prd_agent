@@ -26,6 +26,15 @@ public class PmMilestone
     /// <summary>关联目标（可空）</summary>
     public string? GoalId { get; set; }
 
+    /// <summary>负责人 UserId（可空）—— 里程碑问责到人</summary>
+    public string? OwnerId { get; set; }
+
+    /// <summary>负责人名称（冗余，便于展示）</summary>
+    public string? OwnerName { get; set; }
+
+    /// <summary>验收标准 / 完成定义（DoD）。全部勾选才允许标记达成（二元签收）。</summary>
+    public List<PmMilestoneCriterion> AcceptanceCriteria { get; set; } = new();
+
     /// <summary>状态：planned | reached | cancelled（存储真值；健康度 overdue/at_risk 由日期+进度派生）</summary>
     public string Status { get; set; } = PmMilestoneStatus.Planned;
 
@@ -36,6 +45,14 @@ public class PmMilestone
     public string? CreatedByName { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>里程碑验收标准条目（完成定义 DoD）</summary>
+public class PmMilestoneCriterion
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string Text { get; set; } = string.Empty;
+    public bool Done { get; set; }
 }
 
 /// <summary>里程碑状态（存储真值）</summary>

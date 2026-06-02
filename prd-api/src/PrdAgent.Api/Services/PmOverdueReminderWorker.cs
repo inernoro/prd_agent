@@ -80,14 +80,16 @@ public class PmOverdueReminderWorker : BackgroundService
             Add(t.AssigneeId!, isOverdue, $"{(isOverdue ? "[逾期]" : "[临近]")} {t.Title}（{pidTitle.GetValueOrDefault(t.ProjectId, "项目")}）");
         }
 
-        // 逾期里程碑 → 通知项目 leader
+        // 里程碑逾期/临近 → 通知里程碑负责人（未设则回退项目 leader）
         var milestones = await db.PmMilestones.Find(m => pidSet.Contains(m.ProjectId)
-            && m.Status == PmMilestoneStatus.Planned && m.DueAt != null && m.DueAt < now).ToListAsync(ct);
+            && m.Status == PmMilestoneStatus.Planned && m.DueAt != null && m.DueAt < soon).ToListAsync(ct);
         foreach (var m in milestones)
         {
-            var leaderId = running.First(p => p.Id == m.ProjectId).LeaderId;
-            if (!string.IsNullOrEmpty(leaderId))
-                Add(leaderId, true, $"[里程碑逾期] {m.Title}（{pidTitle.GetValueOrDefault(m.ProjectId, "项目")}）");
+            var targetId = !string.IsNullOrEmpty(m.OwnerId) ? m.OwnerId
+                : running.First(p => p.Id == m.ProjectId).LeaderId;
+            if (string.IsNullOrEmpty(targetId)) continue;
+            var isOverdue = m.DueAt < now;
+            Add(targetId, isOverdue, $"{(isOverdue ? "[里程碑逾期]" : "[里程碑临近]")} {m.Title}（{pidTitle.GetValueOrDefault(m.ProjectId, "项目")}）");
         }
 
         var notifications = new List<AdminNotification>();

@@ -504,6 +504,7 @@ export type ListPmAuditLogsContract = (opts?: { projectId?: string; page?: numbe
 // ── 里程碑 ──
 export type PmMilestoneStatus = 'planned' | 'reached' | 'cancelled';
 export type PmMilestoneHealth = 'on_track' | 'at_risk' | 'overdue' | 'reached' | 'cancelled';
+export type PmMilestoneCriterion = { id: string; text: string; done: boolean };
 export type PmMilestone = {
   id: string;
   projectId: string;
@@ -512,16 +513,27 @@ export type PmMilestone = {
   dueAt?: string | null;
   reachedAt?: string | null;
   goalId?: string | null;
+  ownerId?: string | null;
+  ownerName?: string | null;
+  acceptanceCriteria?: PmMilestoneCriterion[];
+  criteriaTotal?: number;
+  criteriaDone?: number;
   status: PmMilestoneStatus;
   orderKey: number;
   taskTotal: number;
   taskDone: number;
   progress: number;
+  /** 达成日 - 计划截止日（天）：正=延期，负=提前 */
+  slippageDays?: number | null;
   health: PmMilestoneHealth;
   createdAt: string;
   updatedAt: string;
 };
-export type SavePmMilestoneInput = Partial<{ title: string; description: string; dueAt: string; goalId: string; status: PmMilestoneStatus; orderKey: number }>;
+export type SavePmMilestoneInput = Partial<{
+  title: string; description: string; dueAt: string; goalId: string; ownerId: string;
+  acceptanceCriteria: { id?: string; text: string; done: boolean }[];
+  status: PmMilestoneStatus; orderKey: number;
+}>;
 export type ListPmMilestonesContract = (projectId: string) => Promise<ApiResponse<{ items: PmMilestone[] }>>;
 export type CreatePmMilestoneContract = (projectId: string, input: SavePmMilestoneInput) => Promise<ApiResponse<PmMilestone>>;
 export type UpdatePmMilestoneContract = (milestoneId: string, input: SavePmMilestoneInput) => Promise<ApiResponse<{ updated: boolean }>>;

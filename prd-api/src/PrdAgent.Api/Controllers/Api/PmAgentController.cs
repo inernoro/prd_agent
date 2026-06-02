@@ -1157,6 +1157,10 @@ public class PmAgentController : ControllerBase
             var total = mine.Count;
             var done = mine.Count(t => t.Status == PmTaskStatus.Done);
             var progress = total > 0 ? (int)Math.Round(done * 100.0 / total) : 0;
+            // 计划 vs 实际偏差（slippage）：达成日 - 计划截止日（正=延期，负=提前），单位天
+            int? slippageDays = (m.ReachedAt.HasValue && m.DueAt.HasValue)
+                ? (int)Math.Round((m.ReachedAt.Value.Date - m.DueAt.Value.Date).TotalDays)
+                : null;
             return new
             {
                 id = m.Id,
@@ -1166,11 +1170,17 @@ public class PmAgentController : ControllerBase
                 dueAt = m.DueAt,
                 reachedAt = m.ReachedAt,
                 goalId = m.GoalId,
+                ownerId = m.OwnerId,
+                ownerName = m.OwnerName,
+                acceptanceCriteria = m.AcceptanceCriteria,
+                criteriaTotal = m.AcceptanceCriteria.Count,
+                criteriaDone = m.AcceptanceCriteria.Count(c => c.Done),
                 status = m.Status,
                 orderKey = m.OrderKey,
                 taskTotal = total,
                 taskDone = done,
                 progress,
+                slippageDays,
                 health = MilestoneHealth(m, total, done),
                 createdAt = m.CreatedAt,
                 updatedAt = m.UpdatedAt,
@@ -1179,7 +1189,8 @@ public class PmAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
-    /// <summary>派生健康度（不存储）：reached/cancelled/overdue/at_risk/on_track</summary>
+    /// <summary>派生健康度（不存储）：reached/cancelled/overdue/at_risk/on_track。
+    /// at_risk 采用前瞻判定：临近截止(≤3天) 或 进度落后于时间消耗(SPI&lt;0.85)，不必等逾期才报警。</summary>
     private static string MilestoneHealth(PmMilestone m, int total, int done)
     {
         if (m.Status == PmMilestoneStatus.Reached) return "reached";
@@ -1188,11 +1199,32 @@ public class PmAgentController : ControllerBase
         var today = DateTime.UtcNow.Date;
         if (m.DueAt.HasValue && !allDone)
         {
-            if (m.DueAt.Value.Date < today) return "overdue";
-            if (m.DueAt.Value.Date <= today.AddDays(3)) return "at_risk";
+            var due = m.DueAt.Value.Date;
+            if (due < today) return "overdue";
+            if (due <= today.AddDays(3)) return "at_risk";
+            // 前瞻：进度% 落后于时间消耗%（SPI<0.85）即预警，给足补救窗口
+            var spanDays = (due - m.CreatedAt.Date).TotalDays;
+            if (spanDays > 0 && total > 0)
+            {
+                var elapsedFrac = Math.Min(1.0, Math.Max(0.0, (today - m.CreatedAt.Date).TotalDays / spanDays));
+                var progressFrac = done / (double)total;
+                if (elapsedFrac > 0.1 && progressFrac < elapsedFrac * 0.85) return "at_risk";
+            }
         }
         return "on_track";
     }
+
+    /// <summary>请求验收标准 → 模型条目；条目缺 Id 时补 Guid，文本空白的丢弃。</summary>
+    private static List<PmMilestoneCriterion> MapCriteria(List<MilestoneCriterionInput>? input)
+        => (input ?? new())
+            .Where(c => !string.IsNullOrWhiteSpace(c.Text))
+            .Select(c => new PmMilestoneCriterion
+            {
+                Id = string.IsNullOrWhiteSpace(c.Id) ? Guid.NewGuid().ToString("N") : c.Id!,
+                Text = c.Text!.Trim(),
+                Done = c.Done,
+            })
+            .ToList();
 
     /// <summary>新建里程碑（仅 owner/leader 排计划）</summary>
     [HttpPost("projects/{projectId}/milestones")]
@@ -1208,6 +1240,8 @@ public class PmAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "里程碑名称不能为空"));
 
         var creatorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+        var ownerName = string.IsNullOrWhiteSpace(request.OwnerId) ? null
+            : (await _db.Users.Find(u => u.UserId == request.OwnerId).FirstOrDefaultAsync())?.DisplayName;
         var entity = new PmMilestone
         {
             ProjectId = projectId,
@@ -1215,6 +1249,9 @@ public class PmAgentController : ControllerBase
             Description = request.Description?.Trim(),
             DueAt = request.DueAt,
             GoalId = string.IsNullOrWhiteSpace(request.GoalId) ? null : request.GoalId,
+            OwnerId = string.IsNullOrWhiteSpace(request.OwnerId) ? null : request.OwnerId,
+            OwnerName = ownerName,
+            AcceptanceCriteria = MapCriteria(request.AcceptanceCriteria),
             Status = PmMilestoneStatus.Planned,
             OrderKey = DateTime.UtcNow.Ticks,
             CreatedBy = userId,
@@ -1246,11 +1283,25 @@ public class PmAgentController : ControllerBase
         if (request.Description != null) update = update.Set(x => x.Description, request.Description.Trim());
         if (request.DueAt.HasValue) update = update.Set(x => x.DueAt, request.DueAt);
         if (request.GoalId != null) update = update.Set(x => x.GoalId, string.IsNullOrWhiteSpace(request.GoalId) ? null : request.GoalId);
+        if (request.OwnerId != null)
+        {
+            var oid = string.IsNullOrWhiteSpace(request.OwnerId) ? null : request.OwnerId;
+            var oname = oid == null ? null : (await _db.Users.Find(u => u.UserId == oid).FirstOrDefaultAsync())?.DisplayName;
+            update = update.Set(x => x.OwnerId, oid).Set(x => x.OwnerName, oname);
+        }
+        // 验收标准更新：以请求为准全量替换（保留传入的 Done 勾选）
+        var effectiveCriteria = request.AcceptanceCriteria != null ? MapCriteria(request.AcceptanceCriteria) : m.AcceptanceCriteria;
+        if (request.AcceptanceCriteria != null) update = update.Set(x => x.AcceptanceCriteria, effectiveCriteria);
         if (request.OrderKey.HasValue) update = update.Set(x => x.OrderKey, request.OrderKey.Value);
         if (request.Status != null)
         {
             if (!PmMilestoneStatus.IsValid(request.Status))
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的里程碑状态"));
+            // 验收门禁：有验收标准且未全部勾选时，禁止标记达成（里程碑=被验收，不是到日期）
+            if (request.Status == PmMilestoneStatus.Reached && m.Status != PmMilestoneStatus.Reached
+                && effectiveCriteria.Count > 0 && effectiveCriteria.Any(c => !c.Done))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                    $"还有 {effectiveCriteria.Count(c => !c.Done)} 条验收标准未完成，无法标记达成"));
             update = update.Set(x => x.Status, request.Status);
             if (request.Status == PmMilestoneStatus.Reached && m.Status != PmMilestoneStatus.Reached)
                 update = update.Set(x => x.ReachedAt, DateTime.UtcNow);
@@ -2833,8 +2884,18 @@ public class MilestoneRequest
     public string? Description { get; set; }
     public DateTime? DueAt { get; set; }
     public string? GoalId { get; set; }
+    public string? OwnerId { get; set; }
+    /// <summary>验收标准（null=不变）。条目 Id 为空时服务端补 Guid。</summary>
+    public List<MilestoneCriterionInput>? AcceptanceCriteria { get; set; }
     public string? Status { get; set; }
     public long? OrderKey { get; set; }
+}
+
+public class MilestoneCriterionInput
+{
+    public string? Id { get; set; }
+    public string? Text { get; set; }
+    public bool Done { get; set; }
 }
 
 public class DecomposeRequest
