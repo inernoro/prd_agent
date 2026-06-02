@@ -191,6 +191,38 @@ async function validateShot(page, path, expectText) {
     if (!ok) warnings.push(`expectText 未命中: ${expectText}`);
   }
 
+  // 版式健康自动护栏（2026-06-02 反哺）：检测开启的 modal/弹窗是否「撑破」视口。
+  // 根因：一次 CDS「一键部署项目」弹窗内容飞出视口顶部、主操作按钮够不到，验收却被判 PASS——
+  // 因为旧 validateShot 只查"功能在不在"，不查"版式正不正"。frontend-modal.md / issues-system §5.2
+  // 明确 Modal 撑破 = P0。这里把它变成每张图都跑的自动检查，杜绝靠人眼漏判。
+  try {
+    const layout = await page.evaluate(() => {
+      const vh = window.innerHeight;
+      const sels = ['[role="dialog"]', '[aria-modal="true"]', '.modal', '.cds-modal', '.ReactModal__Content'];
+      const seen = new Set();
+      for (const s of sels) {
+        for (const el of Array.from(document.querySelectorAll(s))) {
+          if (seen.has(el)) continue; seen.add(el);
+          const r = el.getBoundingClientRect();
+          if (r.width < 60 || r.height < 60) continue;     // 跳过隐藏/极小
+          // 该容器或其子层是否提供了内部滚动？(cap 高度 + overflow 滚动 = 正确做法)
+          const st = getComputedStyle(el);
+          const selfScroll = /(auto|scroll)/.test(st.overflowY) && el.scrollHeight > el.clientHeight + 4;
+          const innerScroll = !!el.querySelector(
+            '[style*="overflow"], .overflow-auto, .overflow-y-auto, [class*="overflow-y-auto"]'
+          );
+          const cutTop = r.top < -8;                         // 顶部被切（"天上去了"）
+          const cutBottom = r.bottom > vh + 8;               // 底部超出视口（主操作够不到）
+          if ((cutTop || cutBottom) && !selfScroll && !innerScroll) {
+            return `modal 高 ${Math.round(r.height)}px 超出视口 ${vh}px（top=${Math.round(r.top)} bottom=${Math.round(r.bottom)}），且无内部滚动 → 疑似撑破/内容飞出，主操作可能够不到`;
+          }
+        }
+      }
+      return null;
+    });
+    if (layout) warnings.push(`版式撑破(P0,frontend-modal.md): ${layout}`);
+  } catch { /* 评估失败不阻塞 */ }
+
   return warnings;
 }
 
