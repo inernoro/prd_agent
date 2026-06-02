@@ -502,7 +502,7 @@ export function SpotlightOverlay() {
               gap: 10,
             }}
           >
-            {steps && steps.length <= 1 && (
+            {steps && steps.length === 1 && (
               <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', fontVariantNumeric: 'tabular-nums' }}>
                 步骤 {stepIndex + 1} / {steps.length}
               </div>

@@ -29,3 +29,4 @@
 | fix | prd-api | PR #712 Codex P2:网页托管教程第 7 步(上传站点)逗号兜底到常驻 webpages-header-actions——团队空间只读成员无上传按钮时不再卡死,同时避免上一步 share-mgmt 按钮被自动点击误开抽屉 |
 | fix | prd-admin | PR #712 Codex P2:pageMatchedIndex(抽屉打开时选哪条 tip)也改用编辑器感知的 matchPageGuide —— 在 /visual-agent/:id 等编辑器子路由上优先选 *-editor-page-guide，不再误选同 actionUrl 前缀的列表教程(其 CTA 会把用户导离编辑器)；非教程 tip 仍走原前缀兜底 |
 | fix | prd-admin | PR #712 评审三连(TipsDrawer)：①两个自动弹窗 effect 把 pageGuideHere 加进 deps —— 修复「首屏落在有教程页 → early-return → 切到无教程页后整 session 不再自动弹」的陈旧闭包(Bugbot) ②CTA 导航守卫按是否编辑器教程区分:编辑器教程留在深层路由,普通列表教程即便当前停在编辑器子路由也回 actionUrl,避免 tour 在编辑器找不到锚点卡死(Codex P2) ③删除小书移除后残留的 edge-peek 死代码(edgeHover/全局 mousemove 监听/EDGE_PEEK_ZONE/mode 状态机),抽屉只剩 expanded 单态;保留 hiddenByUser/pinned(仍与 AppShell 通知铃铛贴边联动,非死代码)(Bugbot) |
+| fix | prd-admin | PR #712 Bugbot:SpotlightOverlay 单步计数器条件 steps.length<=1 改为 ===1，避免 steps 为空时渲染「步骤 1 / 0」(多步走 >1 的进度条，0 步不显示) |
