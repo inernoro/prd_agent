@@ -42,6 +42,7 @@ import { useNavigate } from 'react-router-dom';
 import { buildInlineImageToken, computeRequestedSizeByRefRatio, readImageSizeFromFile } from '@/lib/visualAgentPromptUtils';
 import { normalizeFileToSquareDataUrl } from '@/lib/imageSquare';
 import { ParticleVortex } from '@/components/effects/ParticleVortex';
+import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 
 // ============ 夜景背景 Canvas 组件 ============
 function NightSkyBackground() {
@@ -423,6 +424,7 @@ function ToolbarButton(props: {
 
   return (
     <div className="relative">
+      <div className="absolute top-3 right-3 z-20"><TipsEntryButton compact /></div>
       <button
         type="button"
         className="h-10 w-10 rounded-xl inline-flex items-center justify-center transition-all duration-200 hover:bg-white/10 hover:scale-105 active:scale-95"

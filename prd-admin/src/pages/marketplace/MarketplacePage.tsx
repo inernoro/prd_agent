@@ -31,6 +31,7 @@ import { SkillUploadDialog } from './SkillUploadDialog';
 import { SkillOpenApiDialog } from './SkillOpenApiDialog';
 import { useAuthStore } from '@/stores/authStore';
 import type { MarketplaceSkillDto } from '@/services/contracts/marketplaceSkills';
+import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 
 type SortMode = 'hot' | 'new';
 
@@ -185,6 +186,7 @@ export const MarketplacePage: React.FC = () => {
             </div>
 
             <div className="marketplace-toolbar-actions">
+              <TipsEntryButton compact />
               <div data-tour-id="marketplace-search" className="marketplace-search">
                 <div className="relative">
                   <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />

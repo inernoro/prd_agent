@@ -36,6 +36,7 @@ import { listPublicDocumentStores } from '@/services';
 import type { PublicDocumentStore } from '@/services/contracts/documentStore';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { ClayButton } from './ClayButton';
+import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 
 type SortKey = 'hot' | 'new' | 'popular' | 'viewed';
 
@@ -527,6 +528,7 @@ function FloatingNavbar({ onStartExplore, onBack }: { onStartExplore: () => void
 
         {/* Right actions */}
         <div className="flex items-center gap-3">
+          <TipsEntryButton compact />
           <button
             onClick={onBack}
             className="hidden md:flex items-center gap-1.5 px-3 py-1.5 text-[14px] font-bold cursor-pointer transition-colors hover:opacity-60"

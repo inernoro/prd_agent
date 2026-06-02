@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 
 export interface TabBarItem {
   key: string;
@@ -132,9 +133,10 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
           </div>
         )}
 
-        {/* 右侧：操作按钮 */}
-        {actions && (
+        {/* 右侧：本页教程入口(内嵌页头,非悬浮) + 操作按钮。仅标题模式(页头)展示入口,tabs 模式不展示。 */}
+        {(actions || title) && (
           <div className="surface-nav-actions">
+            {title && <TipsEntryButton compact />}
             {actions}
           </div>
         )}

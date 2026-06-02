@@ -5,6 +5,7 @@ import { GitHubConnectCard } from './GitHubConnectCard';
 import { AddPrForm } from './AddPrForm';
 import { PrItemList } from './PrItemList';
 import { usePrReviewStore } from './usePrReviewStore';
+import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 
 /**
  * PR Review V2 主页面 —— 单文件不超过 200 行。
@@ -135,6 +136,9 @@ export function PrReviewPage() {
                 用你自己的 GitHub 账号审查任意有权访问的 PR
               </div>
             </div>
+          </div>
+          <div className="ml-auto">
+            <TipsEntryButton />
           </div>
         </div>
 

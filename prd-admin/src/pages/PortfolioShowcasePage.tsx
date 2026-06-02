@@ -27,6 +27,7 @@ import { useInViewport } from '@/hooks/useInViewport';
 import { useCreatorFilter } from '@/hooks/useCreatorFilter';
 import { distributeToColumns, getAspectRatio } from '@/components/showcase/waterfall';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 
 // ── Constants ──
 
@@ -359,7 +360,9 @@ export default function PortfolioShowcasePage() {
           </div>
         </div>
 
-        {/* Right: Search */}
+        {/* Right: 本页教程入口 + Search */}
+        <div className="flex items-center gap-2">
+        <TipsEntryButton compact />
         <div className="relative" style={{ width: isMobile ? 160 : 240 }}>
           <Search
             size={14}
@@ -390,6 +393,7 @@ export default function PortfolioShowcasePage() {
               <X size={12} style={{ color: 'rgba(255,255,255,0.4)' }} />
             </button>
           )}
+        </div>
         </div>
       </div>
 

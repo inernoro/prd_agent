@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Sparkles, X, BookOpen, Pin, PinOff, MapPin, ChevronLeft, ChevronRight, GraduationCap } from 'lucide-react';
+import { Sparkles, X, Pin, PinOff, MapPin, ChevronLeft, ChevronRight, GraduationCap } from 'lucide-react';
+import { OPEN_TIPS_DRAWER_EVENT } from './TipsEntryButton';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { writeSpotlightPayload } from './TipsRotator';
 import { trackTip, dismissTipForever } from '@/services/real/dailyTips';
@@ -104,6 +105,13 @@ export function TipsDrawer() {
     if (!loaded) load();
   }, [loaded, load]);
 
+  // 各页头部内嵌的 <TipsEntryButton/> 点击时派发 OPEN_TIPS_DRAWER_EVENT → 展开抽屉
+  useEffect(() => {
+    const onOpen = () => { void load({ force: true }); setExpanded(true); };
+    window.addEventListener(OPEN_TIPS_DRAWER_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_TIPS_DRAWER_EVENT, onOpen);
+  }, [load]);
+
   const tips = cardTips();
   // 触发(重新)挂钩:items / dismissed 变化时列表应刷新
   void items;
@@ -173,13 +181,6 @@ export function TipsDrawer() {
 
   // ── 悬浮组整体折叠(书 + 铃铛一起贴边) ───────────────────────
   // 这个状态通过 sessionStorage 广播,AppShell 的 toast 按钮订阅同样的 key
-  // 实现「两个一起收」的效果。hiddenByUser 是其别名(键名兼容)。
-  //
-  // ★ 实际 sessionStorage 写入 + 事件 dispatch 由上面的 hiddenByUser useEffect
-  //   统一处理,这里只负责 setState;避免双重写入导致 AppShell 收到两次事件。
-  const setDockCollapsed = useCallback((collapsed: boolean) => {
-    setHiddenByUser(collapsed);
-  }, []);
 
   // ── 当前最终模式 ─────────────────────────────────────
   const mode: Mode = (() => {
@@ -343,7 +344,6 @@ export function TipsDrawer() {
   }, [hiddenByUser]);
 
   // ── 徽章计数 ────────────────────────────────────────
-  const badgeCount = tips.filter((t) => t.isTargeted).length || tips.length;
 
   // ── 上报 seen(轮播模式下只上报当前展示的那一条,减少一次性打 4-5 条 API 的负载)──
   const seenReportedRef = useRef<Set<string>>(new Set());
@@ -395,116 +395,6 @@ export function TipsDrawer() {
   // 小书「永远存在」:即使 tips 为空、也没 pinned,依然在右下角悬浮,
   // 保证用户随时能点进来看有什么教程。没有 tip 时点开会显示空状态。
 
-  // ── 视觉:书图标本体 ──────────────────────────────────
-  // AppShell 的通知铃铛在 bottom:20 right:20(48x48),所以书放在它正上方,
-  // 间距 12px,bottom = 20 + 48 + 12 = 80。hidden 时挪到右边缘只露书脊。
-  // 用户 2026-06-02 要求:入口移到右上角、始终可见、带文字标签——右下角匿名图标像小广告,没人点。
-  const BOOK_TOP = 14;
-  const bookRight = 16; // 恒定可见,不再贴边隐藏
-  // 该页是否有「没走完」的本页教程(tips 已过滤掉已学会的 → 还在=没走完)。
-  // 新人(true):入口强调色 + 轻微脉冲,吸引注意;老人(false:走完/本页无教程):中性、安静、低存在感,不闪烁、不突兀。
-  const newbieGuideHere = tips.some((t) => {
-    if (typeof t.sourceId !== 'string' || !t.sourceId.endsWith('-page-guide') || !t.actionUrl) return false;
-    const isEditor = t.sourceId.includes('editor');
-    if (location.pathname === t.actionUrl) return !isEditor;
-    if (location.pathname.startsWith(t.actionUrl + '/')) return isEditor;
-    return false;
-  });
-
-  const bookBtn = (
-    <button
-      type="button"
-      onClick={() => {
-        // 任何打开动作都强制刷新一次,避免管理员刚推送但用户还在等 60s 轮询
-        void load({ force: true });
-        if (hiddenByUser) {
-          // 从 hidden 点击 → 取消 hidden(用户主动召回)
-          setDockCollapsed(false);
-          setExpanded(true);
-          return;
-        }
-        setExpanded((v) => !v);
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.opacity = '1';
-        e.currentTarget.style.transform = 'translateY(-1px)';
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.opacity = newbieGuideHere ? '1' : '0.5';
-        e.currentTarget.style.transform = 'translateY(0)';
-      }}
-      title={newbieGuideHere ? '本页教程 · 跟着走一遍' : '本页教程 / 新手指引'}
-      style={{
-        position: 'fixed',
-        top: BOOK_TOP,
-        right: bookRight,
-        height: 30,
-        padding: '0 10px',
-        borderRadius: 999,
-        // 新人:强调色吸引注意;老人:中性安静、低存在感(用主题 token,融入页面 chrome 而不突兀)
-        background: newbieGuideHere
-          ? 'linear-gradient(135deg, rgba(168,85,247,0.26), rgba(99,102,241,0.18))'
-          : 'var(--bg-card, rgba(255,255,255,0.045))',
-        border: newbieGuideHere
-          ? '1px solid rgba(196,181,253,0.45)'
-          : '1px solid var(--border-subtle, rgba(255,255,255,0.10))',
-        backdropFilter: 'blur(10px)',
-        WebkitBackdropFilter: 'blur(10px)',
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 5,
-        cursor: 'pointer',
-        zIndex: 300, // 高于页面常规内容,低于模态(z-9999+)
-        color: newbieGuideHere ? '#f3e8ff' : 'var(--text-muted)',
-        opacity: newbieGuideHere ? 1 : 0.5,
-        boxShadow: newbieGuideHere ? '0 6px 20px -10px rgba(139,92,246,0.5)' : 'none',
-        transition: 'opacity 200ms ease-out, transform 160ms ease-out, background 200ms ease-out, color 200ms ease-out',
-      }}
-    >
-      <BookOpen
-        size={14}
-        strokeWidth={2}
-        style={{
-          filter: newbieGuideHere ? 'drop-shadow(0 0 8px rgba(196,181,253,0.7))' : 'none',
-          animation: newbieGuideHere && !expanded ? 'tipsBookPulse 2s ease-in-out infinite' : undefined,
-        }}
-      />
-      <span style={{ fontSize: 12, fontWeight: newbieGuideHere ? 600 : 500, whiteSpace: 'nowrap', letterSpacing: '0.01em' }}>
-        {pageMatchedIndex >= 0 ? '本页教程' : '新手指引'}
-      </span>
-      <style>{`
-        @keyframes tipsBookPulse {
-          0%, 100% { transform: scale(1); }
-          50% { transform: scale(1.1); }
-        }
-      `}</style>
-      {newbieGuideHere && badgeCount > 0 && (
-        <span
-          style={{
-            position: 'absolute',
-            top: -2,
-            right: -2,
-            minWidth: 18,
-            height: 18,
-            padding: '0 5px',
-            borderRadius: 999,
-            background: 'linear-gradient(135deg, #f43f5e, #a855f7)',
-            color: '#fff',
-            fontSize: 10,
-            fontWeight: 700,
-            lineHeight: '18px',
-            textAlign: 'center',
-            boxShadow:
-              '0 0 10px rgba(244,63,94,0.6), 0 0 0 2px rgba(15,16,20,0.95)',
-          }}
-        >
-          {badgeCount}
-        </span>
-      )}
-    </button>
-  );
-
   // ── 抽屉本体 ────────────────────────────────────────
   const drawer =
     mode === 'expanded' ? (
@@ -518,7 +408,7 @@ export function TipsDrawer() {
         }}
         style={{
           position: 'fixed',
-          top: BOOK_TOP + 42, // 入口 pill 正下方(右上角)
+          top: 56, // 头部教程入口下方(右上角)作为下拉气泡展开
           right: 16,
           width: 360,
           maxHeight: 'min(360px, calc(100vh - 120px))',
@@ -778,17 +668,6 @@ export function TipsDrawer() {
       </div>
     ) : null;
 
-  // ── 悬浮组整体折叠把手 ──
-  // 用户要求入口「始终都在」,不再提供「贴边收起」——禁用此把手(保留代码以备回退)。
-  // 入口「始终都在」,不提供贴边收起,故把手恒为空。
-  const collapseHandle = null;
-
-  return createPortal(
-    <>
-      {bookBtn}
-      {collapseHandle}
-      {drawer}
-    </>,
-    document.body,
-  );
+  // 入口已改为内嵌进各页头部的 <TipsEntryButton/>(不再悬浮);本组件只负责展开后的教程抽屉气泡。
+  return createPortal(drawer, document.body);
 }

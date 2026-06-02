@@ -1,5 +1,6 @@
 import { TreePine, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/design/Button';
+import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 
 interface Props {
   onStart: () => void;
@@ -31,6 +32,7 @@ export function EmergenceIntroPage({ onStart, onCreateFirst, hasTrees }: Props) 
   return (
     <div className="h-full min-h-0 overflow-y-auto overflow-x-hidden">
       <div className="relative mx-auto w-full max-w-[1120px] px-8 py-16">
+        <div className="absolute top-4 right-8 z-10"><TipsEntryButton compact /></div>
         {/* 头顶柔光（单一、低饱和，暗/亮主题都成立） */}
         <div
           aria-hidden
