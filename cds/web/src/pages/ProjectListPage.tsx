@@ -2768,7 +2768,7 @@ function CreateProjectDialog({
     setDetectMsg('正在克隆并分析你的仓库…(几秒到几十秒)');
     try {
       const res = await apiRequest<{ services: Array<{ id: string; name: string; role: AppServiceRole; runtime: RuntimeId; dockerImage: string; command: string; port: number; summary?: string; manualSetupRequired?: boolean }>; moduleCount: number }>(
-        '/api/projects/detect-runtime',
+        '/api/detect-runtime',
         { method: 'POST', body: { gitRepoUrl: url, gitRef: gitDefaultBranch.trim() || undefined } },
       );
       const svcs = res.services || [];
