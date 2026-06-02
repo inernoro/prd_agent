@@ -17,6 +17,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowRight, ShieldCheck, BookOpen, AlertCircle, Eye, FileText } from 'lucide-react';
+import { useAuthStore } from '@/stores/authStore';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
 import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/DocBrowser';
 import {
@@ -33,6 +34,7 @@ const SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
 export function LibraryShareViewPage() {
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [searchParams] = useSearchParams();
   // URL ?entry={id} 优先级最高：归档脚本/外部链接可指定一打开就高亮某篇
   const entryFromUrl = searchParams.get('entry');
@@ -181,6 +183,23 @@ export function LibraryShareViewPage() {
             {isSingleDoc ? <><FileText size={11} /> 单篇</> : <><BookOpen size={11} /> 知识库</>}
           </span>
         </div>
+        {/* 登录用户：分享页右上角一键回到自己的知识库（对齐用户诉求；匿名访客不显示，避免点了去登录页） */}
+        {isAuthenticated && (
+          <button
+            onClick={() => navigate('/document-store')}
+            style={{
+              marginLeft: 'auto', flexShrink: 0,
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '6px 12px', borderRadius: 8,
+              border: '1px solid rgba(255,255,255,0.12)',
+              background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.85)',
+              fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap',
+            }}
+            title="回到我的知识库"
+          >
+            <BookOpen size={14} /> 返回我的知识库
+          </button>
+        )}
       </div>
 
       {/* 简介条：低饱和度 */}

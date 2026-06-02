@@ -1003,6 +1003,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
           pinnedEntryIds={store.pinnedEntryIds ?? []}
           selectedEntryId={selectedEntryId}
           onSelectEntry={setSelectedEntryId}
+          onBackToList={() => setSelectedEntryId(undefined)}
           onSetPrimary={handleSetPrimary}
           onTogglePin={handleTogglePin}
           onDeleteEntry={handleDeleteEntry}

@@ -306,7 +306,7 @@ import ShinyText from '@/components/reactbits/ShinyText';
 import { systemDialog } from '@/lib/systemDialog';
 import { useViewTracking } from '@/lib/useViewTracking';
 import { useContentSelection, type ContentSelectionInfo } from '@/lib/useContentSelection';
-import { MessageSquareText, MessageSquarePlus, Check } from 'lucide-react';
+import { MessageSquareText, MessageSquarePlus, Check, ChevronLeft } from 'lucide-react';
 import { InlineCommentDrawer, type PendingSelection } from '@/pages/document-store/InlineCommentDrawer';
 import type { DocumentInlineComment } from '@/services/contracts/documentStore';
 import { AcceptanceEvidenceGraph } from './AcceptanceEvidenceGraph';
@@ -366,6 +366,8 @@ export type DocBrowserProps = {
   onSetPrimary?: (entryId: string) => void;
   onTogglePin?: (entryId: string, pin: boolean) => void;
   onDeleteEntry?: (entryId: string) => void;
+  /** 阅读区「返回」：提供则在阅读头显示返回按钮（如返回当前空间的文档列表）。不传不显示。 */
+  onBackToList?: () => void;
   onUpdateEntryTags?: (entryId: string, tags: string[]) => Promise<void>;
   /** 重命名条目（修改 title）。提供时右键菜单会出现"重命名"项。 */
   onRenameEntry?: (entryId: string, newTitle: string) => Promise<void>;
@@ -1410,6 +1412,7 @@ export function DocBrowser({
   onSetPrimary,
   onTogglePin,
   onDeleteEntry,
+  onBackToList,
   onUpdateEntryTags,
   onRenameEntry,
   onMoveEntry,
@@ -2502,6 +2505,17 @@ export function DocBrowser({
           <>
             {/* 面包屑导航 header */}
             <div className="flex items-center gap-2 px-5 py-2.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+              {/* 阅读区返回按钮：返回当前空间的文档列表（上一层），仅调用方传 onBackToList 才显示 */}
+              {onBackToList && (
+                <button
+                  onClick={onBackToList}
+                  className="flex-shrink-0 inline-flex items-center gap-1 h-6 px-2 rounded-[8px] text-[11px] cursor-pointer transition-colors hover:opacity-80"
+                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)' }}
+                  title="返回文档列表"
+                >
+                  <ChevronLeft size={13} /> 返回列表
+                </button>
+              )}
               <Breadcrumbs entryId={selectedEntryId} entries={entries} />
               {/* 验收结论药丸：列表里有、阅读区原先缺失，这里补上让「通过 L1」在阅读视图也一眼可见 */}
               {(() => {
