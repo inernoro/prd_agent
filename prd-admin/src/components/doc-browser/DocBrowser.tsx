@@ -108,15 +108,17 @@ function TagPickerChip({ tag, onRemove }: { tag: string; onRemove: () => void })
   );
 }
 
-// 条目行内 tag 小药丸（按名字排序后前 2 个完整渲染 + 多余折叠 +N），颜色读 Context 覆盖。
-// 点击药丸 = 按该标签筛选（onToggleTag），与顶部筛选条共用同一份 selectedTags 状态（SSOT）。
-function TagRowChips({ tags, onToggleTag, activeTags }: { tags: string[]; onToggleTag?: (tag: string) => void; activeTags?: Set<string> }) {
+// 条目行内 tag 小药丸（按名字排序后前 max 个完整渲染 + 多余折叠 +N），颜色读 Context 覆盖。
+// max 随侧栏宽度自适应（拖宽后展示更多，不再一律压缩成 +N）。点击药丸 = 按该标签筛选（onToggleTag），
+// 与顶部筛选条共用同一份 selectedTags 状态（SSOT）。
+function TagRowChips({ tags, onToggleTag, activeTags, max = 2 }: { tags: string[]; onToggleTag?: (tag: string) => void; activeTags?: Set<string>; max?: number }) {
   const { colors } = useContext(TagColorsContext);
-  // 标签按名字从左到右排序（中文走本地化 collation）；先排再 slice，保证可见的 2 个与 +N 都基于排序结果
+  // 标签按名字从左到右排序（中文走本地化 collation）；先排再 slice，保证可见的 N 个与 +N 都基于排序结果
   const sorted = useMemo(() => [...tags].sort((a, b) => a.localeCompare(b, 'zh')), [tags]);
+  const visibleCount = Math.max(1, max);
   return (
-    <span className="inline-flex items-center gap-[3px] flex-shrink-0">
-      {sorted.slice(0, 2).map(t => {
+    <span className="inline-flex items-center gap-[3px] min-w-0 flex-wrap">
+      {sorted.slice(0, visibleCount).map(t => {
         const c = getTagColor(t, colors);
         const active = activeTags?.has(t) ?? false;
         return (
@@ -124,7 +126,7 @@ function TagRowChips({ tags, onToggleTag, activeTags }: { tags: string[]; onTogg
             key={t}
             role={onToggleTag ? 'button' : undefined}
             onClick={onToggleTag ? (e) => { e.stopPropagation(); onToggleTag(t); } : undefined}
-            className={`text-[9px] px-1.5 rounded-full tabular-nums ${onToggleTag ? 'cursor-pointer' : ''}`}
+            className={`text-[9px] px-1.5 rounded-full tabular-nums flex-shrink-0 ${onToggleTag ? 'cursor-pointer' : ''}`}
             style={{
               height: 15, lineHeight: '15px', background: c.bg, color: c.text,
               border: `1px solid ${active ? c.text : c.border}`,
@@ -132,20 +134,141 @@ function TagRowChips({ tags, onToggleTag, activeTags }: { tags: string[]; onTogg
             }}
             title={onToggleTag ? `#${t} · 点击${active ? '取消筛选' : '按此标签筛选'}` : `#${t}`}
           >
-            {truncateTagDisplay(t)}
+            {truncateTagDisplay(t, visibleCount > 2 ? 6 : 2)}
           </span>
         );
       })}
-      {sorted.length > 2 && (
+      {sorted.length > visibleCount && (
         <span
-          className="text-[9px] tabular-nums"
+          className="text-[9px] tabular-nums flex-shrink-0"
           style={{ color: 'var(--text-muted)', opacity: 0.7 }}
-          title={sorted.slice(2).map(tag => `#${tag}`).join(' ')}
+          title={sorted.slice(visibleCount).map(tag => `#${tag}`).join(' ')}
         >
-          +{sorted.length - 2}
+          +{sorted.length - visibleCount}
         </span>
       )}
     </span>
+  );
+}
+
+// 顶部标签筛选下拉：标签过多时收进一个"标签筛选"下拉按钮，点开弹出长方形面板多选筛选（createPortal 防裁剪）。
+function TagFilterDropdown({
+  tags, selected, colors, onToggle, onClear,
+}: {
+  tags: string[];
+  selected: Set<string>;
+  colors: Record<string, TagColorKey>;
+  onToggle: (tag: string) => void;
+  onClear: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [kw, setKw] = useState('');
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement;
+      if (t.closest('[data-tagfilter-pop]') || t.closest('[data-tagfilter-trigger]')) return;
+      setOpen(false);
+    };
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onEsc);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onEsc); };
+  }, [open]);
+
+  const toggleOpen = () => {
+    const r = triggerRef.current?.getBoundingClientRect();
+    if (r) setPos({ top: r.bottom + 4, left: r.left, width: Math.max(r.width, 240) });
+    setOpen(o => !o);
+  };
+
+  const shown = kw.trim() ? tags.filter(t => t.toLowerCase().includes(kw.trim().toLowerCase())) : tags;
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        data-tagfilter-trigger
+        onClick={toggleOpen}
+        className="flex-shrink-0 inline-flex items-center gap-1 text-[10px] px-2 rounded-full cursor-pointer transition-colors"
+        style={{
+          height: 22, lineHeight: '22px',
+          color: selected.size > 0 ? 'var(--text-primary)' : 'var(--text-muted)',
+          background: selected.size > 0 ? 'var(--accent-soft, rgba(129,140,248,0.12))' : 'var(--bg-input)',
+          border: '1px solid var(--border-faint)',
+        }}
+        title="按标签筛选（多选取并集；再次点击取消）"
+      >
+        <Tags size={12} />
+        标签筛选{selected.size > 0 ? ` · ${selected.size}` : ''}
+        <ChevronDown size={12} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }} />
+      </button>
+      {selected.size > 0 && (
+        <button
+          onClick={onClear}
+          className="flex-shrink-0 inline-flex items-center gap-0.5 text-[9.5px] px-1.5 rounded-full cursor-pointer"
+          style={{ height: 20, lineHeight: '20px', color: 'var(--text-muted)', background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
+          title="清空筛选"
+        >
+          <X size={9} /> 清空
+        </button>
+      )}
+      {open && pos && createPortal(
+        <div
+          data-tagfilter-pop
+          style={{
+            position: 'fixed', top: pos.top, left: pos.left, width: pos.width, maxWidth: 360,
+            maxHeight: 320, overflowY: 'auto', overscrollBehavior: 'contain',
+            zIndex: 10000, borderRadius: 10, padding: 10,
+            background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)',
+            boxShadow: '0 8px 28px rgba(0,0,0,0.28)',
+          }}
+        >
+          {tags.length > 12 && (
+            <div className="flex items-center gap-1.5 mb-2 px-2 rounded-md" style={{ height: 28, background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}>
+              <Search size={12} style={{ color: 'var(--text-muted)' }} />
+              <input
+                value={kw}
+                onChange={e => setKw(e.target.value)}
+                autoFocus
+                placeholder="搜索标签…"
+                className="flex-1 bg-transparent outline-none text-[11px]"
+                style={{ color: 'var(--text-primary)' }}
+              />
+            </div>
+          )}
+          <div className="flex flex-wrap gap-1.5">
+            {shown.map(tag => {
+              const c = getTagColor(tag, colors);
+              const active = selected.has(tag);
+              return (
+                <button
+                  key={tag}
+                  onClick={() => onToggle(tag)}
+                  className="text-[10px] px-2 rounded-full cursor-pointer font-medium transition-all"
+                  style={{
+                    height: 22, lineHeight: '22px',
+                    color: active ? '#fff' : c.text,
+                    background: active ? c.dot : c.bg,
+                    border: `1px solid ${active ? c.dot : c.border}`,
+                  }}
+                  title={`#${tag}`}
+                >
+                  {truncateTagDisplay(tag, 10)}
+                </button>
+              );
+            })}
+            {shown.length === 0 && (
+              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无匹配标签</span>
+            )}
+          </div>
+        </div>,
+        document.body,
+      )}
+    </>
   );
 }
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -822,6 +945,7 @@ function TreeNode({
   isEntryFresh,
   onToggleTag,
   activeTags,
+  tagMax,
 }: {
   entry: DocBrowserEntry;
   childrenMap: Map<string, DocBrowserEntry[]>;
@@ -847,6 +971,7 @@ function TreeNode({
   onOpenSubscription?: (entryId: string) => void;
   onToggleTag?: (tag: string) => void;
   activeTags?: Set<string>;
+  tagMax?: number;
 }) {
   const isFolder = entry.isFolder;
   const isOpen = expandedFolders.has(entry.id);
@@ -1051,7 +1176,7 @@ function TreeNode({
 
         {/* tag：每个 tag 一个小药丸，颜色走 tagPalette + 用户覆盖；点击按该标签筛选 */}
         {!isFolder && (entry.tags?.length ?? 0) > 0 && (
-          <TagRowChips tags={entry.tags!} onToggleTag={onToggleTag} activeTags={activeTags} />
+          <TagRowChips tags={entry.tags!} onToggleTag={onToggleTag} activeTags={activeTags} max={tagMax} />
         )}
 
         {/* 内容命中标记 */}
@@ -1165,6 +1290,7 @@ function TreeNode({
           isEntryFresh={isEntryFresh}
           onToggleTag={onToggleTag}
           activeTags={activeTags}
+          tagMax={tagMax}
         />
       ))}
     </>
@@ -1407,7 +1533,7 @@ export function DocBrowser({
   const [pendingSelection, setPendingSelection] = useState<PendingSelection | null>(null);
   // 2026-05-28 用户反馈："看不到别人留在这里的评论气泡"。
   // 进入条目时主动预拉评论计数，让正文上方常驻一颗 chip：
-  //   "💬 N 条评论" 点击打开 InlineCommentDrawer。
+  //   "N 条评论" 点击打开 InlineCommentDrawer。
   // 仅 best-effort：失败/无权（私有库无分享访问）默认 0，不影响主流程。
   const [commentCount, setCommentCount] = useState(0);
   // 评论计数 fetchIdRef 守卫（PR #685 Bugbot Low）：切换条目 / onClose 重拉时，
@@ -1658,6 +1784,9 @@ export function DocBrowser({
     () => buildDisplayItems(filteredRoots, { groupByTime: sortMode !== 'default' && !search.trim(), timeField }),
     [filteredRoots, sortMode, search, timeField],
   );
+
+  // 行内标签可见数随侧栏宽度自适应：侧栏越宽展示越多标签（拖宽后不再压缩成 +N）
+  const rowTagMax = sidebarWidth >= 560 ? 12 : sidebarWidth >= 460 ? 6 : sidebarWidth >= 380 ? 4 : sidebarWidth >= 320 ? 3 : 2;
 
   // 自动剔除当前 entries 不存在的已选 tag：
   // sessionStorage 是全局共享（DocBrowser 三处调用），跨知识库切换时上一个库选的 tag 可能
@@ -2011,7 +2140,7 @@ export function DocBrowser({
               )}
             </div>
           </div>
-          {/* tag 筛选条：水平 chip 行，颜色按 tagPalette 自动分配；横向滚动避免被压缩 */}
+          {/* tag 筛选条：≤6 个内联 chip 行；>6 个收进"标签筛选"下拉（点开弹长方形面板多选），避免一长串横向溢出 */}
           {allTagsRanked.length > 0 && (
             <div
               className="flex items-center gap-1 overflow-x-auto"
@@ -2023,44 +2152,56 @@ export function DocBrowser({
               }}
               title="点击筛选；多选取并集；再次点击取消"
             >
-              {selectedTags.size > 0 && (
-                <button
-                  onClick={() => setSelectedTags(new Set())}
-                  className="flex-shrink-0 text-[9.5px] px-1.5 rounded-full cursor-pointer transition-colors"
-                  style={{
-                    height: 18,
-                    lineHeight: '18px',
-                    color: 'var(--text-muted)',
-                    background: 'var(--bg-input)',
-                    border: '1px solid var(--border-faint)',
-                  }}
-                  title="清空筛选"
-                >
-                  清空
-                </button>
+              {allTagsRanked.length > 6 ? (
+                <TagFilterDropdown
+                  tags={allTagsRanked}
+                  selected={selectedTags}
+                  colors={tagColorMap}
+                  onToggle={toggleTag}
+                  onClear={() => setSelectedTags(new Set())}
+                />
+              ) : (
+                <>
+                  {selectedTags.size > 0 && (
+                    <button
+                      onClick={() => setSelectedTags(new Set())}
+                      className="flex-shrink-0 text-[9.5px] px-1.5 rounded-full cursor-pointer transition-colors"
+                      style={{
+                        height: 18,
+                        lineHeight: '18px',
+                        color: 'var(--text-muted)',
+                        background: 'var(--bg-input)',
+                        border: '1px solid var(--border-faint)',
+                      }}
+                      title="清空筛选"
+                    >
+                      清空
+                    </button>
+                  )}
+                  {allTagsRanked.map(tag => {
+                    const c = getTagColor(tag, tagColorMap);
+                    const active = selectedTags.has(tag);
+                    return (
+                      <button
+                        key={tag}
+                        onClick={() => toggleTag(tag)}
+                        className="flex-shrink-0 text-[10px] px-2 rounded-full cursor-pointer font-medium transition-all"
+                        style={{
+                          height: 20,
+                          lineHeight: '20px',
+                          color: active ? '#fff' : c.text,
+                          background: active ? c.dot : c.bg,
+                          border: `1px solid ${active ? c.dot : c.border}`,
+                          letterSpacing: '0.01em',
+                        }}
+                        title={`#${tag}`}
+                      >
+                        {truncateTagDisplay(tag)}
+                      </button>
+                    );
+                  })}
+                </>
               )}
-              {allTagsRanked.map(tag => {
-                const c = getTagColor(tag, tagColorMap);
-                const active = selectedTags.has(tag);
-                return (
-                  <button
-                    key={tag}
-                    onClick={() => toggleTag(tag)}
-                    className="flex-shrink-0 text-[10px] px-2 rounded-full cursor-pointer font-medium transition-all"
-                    style={{
-                      height: 20,
-                      lineHeight: '20px',
-                      color: active ? '#fff' : c.text,
-                      background: active ? c.dot : c.bg,
-                      border: `1px solid ${active ? c.dot : c.border}`,
-                      letterSpacing: '0.01em',
-                    }}
-                    title={`#${tag}`}
-                  >
-                    {truncateTagDisplay(tag)}
-                  </button>
-                );
-              })}
             </div>
           )}
           {creatingFolder && (
@@ -2189,6 +2330,7 @@ export function DocBrowser({
               isEntryFresh={isEntryFresh}
               onToggleTag={toggleTag}
               activeTags={selectedTags}
+              tagMax={rowTagMax}
             />
             </motion.div>
             )

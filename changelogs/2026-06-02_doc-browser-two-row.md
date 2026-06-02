@@ -3,3 +3,6 @@
 | feat | prd-admin | 知识库列表新增左侧验收状态色条（通过/有条件/不通过 → 绿/琥珀/红竖条），整列向下可扫读结论分布 |
 | feat | prd-admin | 知识库列表按时间分组小标题（今天/昨天/本周/本月/更早），仅 created/updated-desc 且非搜索态生效，文件夹不参与分组 |
 | feat | prd-admin | 条目标签可点击即按该标签筛选，与顶部筛选条共用 selectedTags（SSOT），激活态加描边；新增 buildDisplayItems 分组单测 |
+| fix | prd-admin | 知识库行内标签随侧栏宽度自适应：拖宽侧栏后展示更多标签（最多 12）+ 标签名展示更全，不再一律压缩成 +N |
+| feat | prd-admin | 顶部标签筛选条标签 >6 个时收进「标签筛选」下拉（createPortal 长方形面板 + 搜索框 + 多选），避免一长串横向溢出 |
+| chore | prd-admin | 移除 DocBrowser 代码注释里残留的 emoji，符合无 emoji 规则 |
