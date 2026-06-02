@@ -308,11 +308,13 @@ import { useViewTracking } from '@/lib/useViewTracking';
 import { useContentSelection, type ContentSelectionInfo } from '@/lib/useContentSelection';
 import { MessageSquareText, MessageSquarePlus } from 'lucide-react';
 import { InlineCommentDrawer, type PendingSelection } from '@/pages/document-store/InlineCommentDrawer';
+import type { DocumentInlineComment } from '@/services/contracts/documentStore';
 import { AcceptanceEvidenceGraph } from './AcceptanceEvidenceGraph';
 import { Workflow } from 'lucide-react';
 import { listInlineComments } from '@/services';
 import { DocToc } from './DocToc';
 import { DocEmptyState } from './DocEmptyState';
+import { InlineCommentOverlay } from './InlineCommentOverlay';
 
 // ── 类型 ──
 
@@ -1565,6 +1567,8 @@ export function DocBrowser({
   //   "N 条评论" 点击打开 InlineCommentDrawer。
   // 仅 best-effort：失败/无权（私有库无分享访问）默认 0，不影响主流程。
   const [commentCount, setCommentCount] = useState(0);
+  // 评论全量列表（驱动行内高亮气泡 InlineCommentOverlay；commentCount 仍用于上方 chip）
+  const [inlineCommentItems, setInlineCommentItems] = useState<DocumentInlineComment[]>([]);
   // 评论计数 fetchIdRef 守卫（PR #685 Bugbot Low）：切换条目 / onClose 重拉时，
   // 旧 entry 的慢响应不覆盖新 entry 已设的计数。
   const commentCountFetchIdRef = useRef(0);
@@ -1596,13 +1600,17 @@ export function DocBrowser({
   useEffect(() => {
     if (!trackedEntryForComments) {
       setCommentCount(0);
+      setInlineCommentItems([]);
       return;
     }
     const myId = ++commentCountFetchIdRef.current;
     (async () => {
       try {
         const res = await listInlineComments(trackedEntryForComments.id, inlineCommentShareToken);
-        if (myId === commentCountFetchIdRef.current && res.success) setCommentCount(res.data.items.length);
+        if (myId === commentCountFetchIdRef.current && res.success) {
+          setCommentCount(res.data.items.length);
+          setInlineCommentItems(res.data.items);
+        }
       } catch { /* 私有库 + 无分享 + 非 owner 会 404，正常 */ }
     })();
   }, [trackedEntryForComments, inlineCommentShareToken]);
@@ -2726,6 +2734,15 @@ export function DocBrowser({
                     }}
                   />
                 )}
+                {/* 行内评论高亮 + 气泡：把他人评论锚回正文，气泡点击打开评论抽屉 */}
+                {!editMode && !contentLoading && tocContent && inlineCommentItems.length > 0 && (
+                  <InlineCommentOverlay
+                    containerRef={contentAreaRef}
+                    comments={inlineCommentItems}
+                    reflowKey={`${selectedEntryId ?? ''}:${preview?.text?.length ?? 0}`}
+                    onOpenComment={() => setInlineCommentsOpen(true)}
+                  />
+                )}
               </div>
               {/* F1：本页章节导航——仅文本类预览且非编辑态显示，无标题时组件自身返回 null */}
               {!contentLoading && !editMode && tocContent && (
@@ -2849,7 +2866,10 @@ export function DocBrowser({
               const entryId = trackedEntryForComments.id;
               const myId = ++commentCountFetchIdRef.current;
               listInlineComments(entryId, inlineCommentShareToken).then((res) => {
-                if (myId === commentCountFetchIdRef.current && res.success) setCommentCount(res.data.items.length);
+                if (myId === commentCountFetchIdRef.current && res.success) {
+                  setCommentCount(res.data.items.length);
+                  setInlineCommentItems(res.data.items);
+                }
               }).catch(() => {});
             }
           }}
