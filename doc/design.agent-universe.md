@@ -170,6 +170,16 @@ flowchart TD
 
 可选：若该智能体**有真实可选项**（如视觉的尺寸/模型），在 `AgentParameters` 端点按其**自己原有的池/注册表**返回真实选项（有多个才给选择器，没的选就不给——不造假选项）。
 
+### 5.3 通用/自定义智能体：零步接入（最常用）
+
+百宝箱里**用户自建的通用智能体**（`ToolboxItem`，一条用户可编辑的 systemPrompt + 知识库）是最常用的一类，它们**不需要写适配器、不需要登记契约**——`invoke` 用 `agentKey = "custom:{itemId}"` 直接调用：实时从 `ToolboxItem` 读 systemPrompt（+ 知识库）跑真实网关 chat。
+
+- **systemPrompt 每次实时读库 = 单一数据源**：用户改了智能体配置，下一次调用立即生效，零漂移；这不是仿冒——自定义 chat 智能体的"真实组件"本就是它的 prompt + 网关。
+- **新建任意自定义智能体 → 立刻可用**：建好即出现在百宝箱列表 → 自动经同一 `invoke` 信封跑通，**零代码**。这正是统一管道的核心价值。
+- 内置智能体仍只走真实适配器（找不到照样 `NO_REAL_AGENT`），与自定义路径并存、互不降级。
+
+**验收（2026-06-02，HTTP + Playwright 双证据）**：API 新建一个自定义智能体 → `invoke custom:{id}` 实时流式产出（systemPrompt 生效）；浏览器登录预览域名 → 知识库 → 文档「再加工」→ 该自定义智能体与内置（视觉/文学/缺陷）并列于选择器（带"我的工具"标）→ 选中并发指令经统一信封跑通。
+
 ## 6. 接口设计
 
 ### GET /api/agent-universe/capabilities
@@ -186,6 +196,8 @@ flowchart TD
   "parameters": { "size": "1344x768" }, "history": [], "imageUrls": [] }
 ```
 `parameters` 是面板选择的可选参数（如尺寸/模型），透传给真实适配器的 `Input`。
+
+`agentKey` 取值：内置智能体用其 `agentKey`（如 `visual-agent`，路由到真实适配器）；**自定义百宝箱智能体用 `custom:{itemId}`**（实时读库 systemPrompt 跑真实网关，见 §5.3）。
 SSE 事件：
 | 事件 | data | 说明 |
 |------|------|------|
