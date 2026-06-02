@@ -36,12 +36,13 @@ export function GoalsDashboard({ goals, cycles = [], onOpen }: Props) {
     const avgScore = scored.length ? (scored.reduce((s, g) => s + (g.score ?? 0), 0) / scored.length) : null;
     const statusDist = STATUS_ORDER.map((k) => ({ key: k, n: team.filter((g) => g.status === k).length }));
     const byLead = aggregate(team, (g) => g.leadName || '未指派');
-    const byPeriod = aggregate(team, (g) => g.period || '未设周期');
+    const cycleName = new Map(cycles.map((c) => [c.id, c.name]));
+    const byPeriod = aggregate(team, (g) => g.cycleId ? (cycleName.get(g.cycleId) ?? '已删除周期') : (g.period?.trim() || '未归类'));
     const watch = team
       .filter((g) => g.status !== 'done' && g.status !== 'abandoned' && (g.confidence === 'low' || g.status === 'at_risk' || g.progress < 40))
       .sort((a, b) => a.progress - b.progress).slice(0, 8);
     return { total, avg, achieved, lowConf, scored: scored.length, avgScore, statusDist, byLead, byPeriod, watch };
-  }, [team]);
+  }, [team, cycles]);
 
   const allTeamCount = goals.filter((g) => g.scope === 'team').length;
   if (allTeamCount === 0) {
