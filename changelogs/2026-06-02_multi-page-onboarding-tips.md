@@ -21,6 +21,7 @@
 | fix | prd-api | PR #712 Codex P2:涌现教程 4 步锚点改逗号兜底选择器(intro 落地页 hero/steps/seed/dimensions + 树列表 about/create-tree/tree-list 两套都给)，新老用户任一视图都不留空步骤；同时清除全部本页教程文案里的装饰性 emoji(违反最高优先 no-emoji 规则) |
 | fix | prd-admin | PR #712 评审四连：①handleOpenTip 编辑器教程的 alreadyAtTarget 去掉 pathname===url 精确匹配(列表页不算「已在编辑器」,否则手动轮播到编辑器教程在列表页点 CTA 会起找不到锚点的 tour，Bugbot Medium) ②删除右上角抽屉的空转 ResizeObserver(dockBottom 恒为 20，改挂载时广播一次，Bugbot Low) | 
 | fix | prd-api | PR #712 Codex P2:知识库教程全部 8 步 + TargetSelector 逗号兜底到常驻 library-tabs(顶部 tab 栏)——返回用户上次停在收藏/点赞 tab 时工具栏不渲染会卡「目标未找到」；新增 DocumentStorePage sticky 顶栏 data-tour-id=library-tabs |
+| fix | prd-admin | PR #712 Bugbot:教程数据预加载与 TipsDrawer 条件挂载解耦——App 根在登录后无条件 load() 一次(幂等),修复停在 /home(登录默认落地页,不挂 TipsDrawer)时 tips 不预拉、进首个教程页才异步 fetch 导致开讲延迟;并补注 SpotlightOverlay 自动点击对逗号兜底选择器取「任一命中」的有意语义 |
 | fix | prd-admin | PR #712 Codex P2:TipsDrawer 轮播过滤掉「不在对应编辑器路由」的编辑器教程(*-editor-page-guide)——否则用户手动翻页到它点 CTA 会跳列表页起一个找不到 visual-editor-* 锚点的 tour 卡死;在编辑器内仍保留供手动重开 |
 | fix | prd-api | PR #712 Codex P2:新增 RetiredSeedSourceIds SSOT(webpages-basics/visual-first-image/library-publish 三条被新版 page-guide 取代的旧短教程)。Visible() 主动过滤这些 DB 残留(老环境无需管理员重置即不再新旧并存);Admin /seed 重植时一并删除 |
 | fix | prd-admin | PR #712 Codex P2:App 根教程浮层排除名单补 '/library/'(带尾斜杠)——智识殿堂公开详情页 /library/:storeId 是免登录只读页,登录用户访问时不再冒出内部新手教程;'/library' 落地页(带 library-landing 教程)因无尾斜杠不受影响保留 |

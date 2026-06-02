@@ -5,6 +5,7 @@ import { initializeTheme } from '@/stores/themeStore';
 import AppShell from '@/layouts/AppShell';
 import { TipsDrawer } from '@/components/daily-tips/TipsDrawer';
 import { SpotlightOverlay } from '@/components/daily-tips/SpotlightOverlay';
+import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { getAdminAuthzMe, getAdminMenuCatalog } from '@/services';
 import { ToastContainer } from '@/components/ui/Toast';
 import { AgentSwitcherProvider } from '@/components/agent-switcher';
@@ -131,6 +132,16 @@ export default function App() {
   useEffect(() => {
     initializeTheme();
   }, []);
+
+  // 教程数据预加载:与 TipsDrawer 的条件挂载解耦。TipsDrawer 在 /home/login 等页不挂载,
+  // 若只靠它 load(),用户停在登录后默认落地页 /home 时 tips 不会预拉,等导航到第一个有教程的
+  // 页面才 mount→异步 fetch→才能强制开讲,造成「人已经在操作了教程才弹」的延迟(Bugbot)。
+  // 这里在登录后无条件预拉一次(load 内部按 loaded 幂等),保证进任意教程页时数据已就绪。
+  const loadTips = useDailyTipsStore((s) => s.load);
+  const tipsLoaded = useDailyTipsStore((s) => s.loaded);
+  useEffect(() => {
+    if (isAuthenticated && !tipsLoaded) void loadTips();
+  }, [isAuthenticated, tipsLoaded, loadTips]);
 
   // 刷新/回到主页时补齐权限（避免"持久化 token 但 permissions 为空"导致误判）
   // cdnBaseUrl 每次都刷新（后端切换存储 Provider 后域名会变）

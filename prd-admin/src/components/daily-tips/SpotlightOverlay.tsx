@@ -520,6 +520,12 @@ export function SpotlightOverlay() {
                   // 但只在「下一步元素当前还不存在」时才自动点(说明确实需要这次点击来揭示它);
                   // 若下一步元素已在 DOM(如网页托管下一步是同排的另一个按钮),就别点——
                   // 否则点了像「分享统计」这种按钮会弹出 z-10000 抽屉挡住整个引导(Codex P2)。
+                  //
+                  // 关于逗号兜底选择器(如 "[data-tour-id=a], [data-tour-id=b]"):querySelector 取「任一」命中,
+                  // 这正是想要的语义 —— 只有「一个候选都不在 DOM」时才算需要揭示去点当前元素;只要常驻兜底在场
+                  // (权限/tab/视图门控下 primary 不在、但兜底在),就说明下一步「可展示」,不该强点当前元素
+                  // (那些 primary 由 app 状态门控,点当前按钮也揭示不出来,反而可能误开抽屉)。
+                  // 约束:别给「靠点击当前步才揭示」的揭示步配逗号兜底的 next selector,否则兜底在场会跳过该点击。
                   const nextNeedsReveal = !nextStep?.navigateTo
                     && (!nextStep?.selector || !document.querySelector(nextStep.selector));
                   try {
