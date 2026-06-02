@@ -256,7 +256,7 @@ export function MilestoneDetailDrawer({ projectId, milestone, allMilestones, goa
           </select>
 
           <label className="text-[11px]" style={{ color: 'var(--text-muted)' }}>说明</label>
-          <textarea value={description} disabled={!canManage} onChange={(e) => setDescription(e.target.value)} placeholder="里程碑的背景 / 交付物 / 关键说明" rows={3} className={`${inputCls} resize-y`} style={inputStyle} />
+          <textarea value={description} disabled={!canManage} onChange={(e) => setDescription(e.target.value)} placeholder="里程碑的背景 / 交付物 / 关键说明" rows={5} className={`${inputCls} resize-y`} style={{ ...inputStyle, minHeight: 120, lineHeight: 1.6 }} />
 
           {/* 验收标准 DoD */}
           <div className="flex items-center gap-1.5 mt-1">
