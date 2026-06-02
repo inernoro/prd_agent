@@ -368,9 +368,11 @@ export function TipsDrawer() {
       // 抽屉故意保留打开,让用户边跟着 Spotlight 引导,边对照教程步骤 /
       // 决定点「不再提示」;不再像以前那样 setExpanded(false) 把引导面板秒关。
       const url = tip.actionUrl || '/';
-      // 已经在该 url 或其子路由(如编辑器页)时不要再 navigate,
-      // 否则点编辑器教程的 CTA 会把用户从编辑器弹回列表页。
-      if (location.pathname !== url && !location.pathname.startsWith(url + '/')) {
+      // 已经在该 url 或其子路由(含编辑器页 /{agent}/:id、旧版全屏 /{agent}-fullscreen/:id)
+      // 时不要再 navigate,否则点编辑器教程的 CTA 会把用户从编辑器弹回列表页。
+      if (location.pathname !== url
+        && !location.pathname.startsWith(url + '/')
+        && !location.pathname.startsWith(url + '-fullscreen/')) {
         navigate(url);
       }
     },

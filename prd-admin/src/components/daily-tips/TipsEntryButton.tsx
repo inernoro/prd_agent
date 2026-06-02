@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import { BookOpen } from 'lucide-react';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
+import { useAuthStore } from '@/stores/authStore';
 
 /** 点击内嵌入口时派发,TipsDrawer 监听后展开抽屉。入口与抽屉解耦,入口可内嵌进任意页头。 */
 export const OPEN_TIPS_DRAWER_EVENT = 'open-tips-drawer';
@@ -18,10 +19,9 @@ export const OPEN_TIPS_DRAWER_EVENT = 'open-tips-drawer';
  */
 export function TipsEntryButton({ className, compact = false }: { className?: string; compact?: boolean }) {
   const location = useLocation();
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const items = useDailyTipsStore((s) => s.items);
   const dismissed = useDailyTipsStore((s) => s.dismissed);
-  const loaded = useDailyTipsStore((s) => s.loaded);
-  const load = useDailyTipsStore((s) => s.load);
 
   const newbie = useMemo(() => {
     return items.some((t) => {
@@ -35,13 +35,17 @@ export function TipsEntryButton({ className, compact = false }: { className?: st
     });
   }, [items, dismissed, location.pathname]);
 
+  // 未登录不渲染:像 /library 这种公开页匿名访客也会渲染头部,但根挂载的 TipsDrawer 仅登录后挂,
+  // 此时入口点了没人接、还会打 401 的 daily-tips 接口。所以匿名一律不显示入口(放在所有 hook 之后,满足 rules-of-hooks)。
+  if (!isAuthenticated) return null;
+
   return (
     <button
       type="button"
       className={className}
       title={newbie ? '本页教程 · 跟着走一遍' : '本页教程 / 新手指引'}
       onClick={() => {
-        if (!loaded) load(); else void load({ force: true });
+        // 只派发事件;拉取 tips 的职责统一在 TipsDrawer 的监听里(它会 load({force:true})),避免两处重复请求。
         window.dispatchEvent(new CustomEvent(OPEN_TIPS_DRAWER_EVENT));
       }}
       style={{
