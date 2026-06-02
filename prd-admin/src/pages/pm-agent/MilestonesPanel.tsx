@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, ChevronRight, ChevronDown, Target, Milestone as MilestoneIcon, User, CircleCheck } from 'lucide-react';
+import { Plus, ChevronRight, ChevronDown, Target, Milestone as MilestoneIcon, User, CircleCheck, Lock, Package } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import type { PmMilestone, PmGoal, PmTask } from '@/services/contracts/pmAgent';
 import { MILESTONE_HEALTH_REGISTRY, TASK_STATUS_REGISTRY } from './pmConstants';
@@ -76,6 +76,9 @@ export function MilestonesPanel({ projectId, milestones, goals, tasks, canManage
                       </button>
                     )}
                     <span className="text-[13px] font-medium truncate flex-1" style={{ color: 'var(--text-primary)' }}>{m.title}</span>
+                    {m.blocked && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0 inline-flex items-center gap-1" style={{ background: 'rgba(239,68,68,0.14)', color: '#EF4444' }} title={`受阻：${(m.blockedBy ?? []).join('、')} 未达成`}><Lock size={9} />受阻</span>
+                    )}
                     <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0" style={{ background: `${h.color}22`, color: h.color }}>{h.label}</span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -93,6 +96,8 @@ export function MilestonesPanel({ projectId, milestones, goals, tasks, canManage
                       </span>
                     )}
                     {m.ownerName && <span className="inline-flex items-center gap-1"><User size={10} />{m.ownerName}</span>}
+                    {(m.deliverables?.length ?? 0) > 0 && <span className="inline-flex items-center gap-1"><Package size={10} />交付物 {m.deliverables!.length}</span>}
+                    {(m.dependsOn?.length ?? 0) > 0 && <span className="inline-flex items-center gap-1"><Lock size={10} />前置 {m.dependsOn!.length}</span>}
                     {gName && <span className="inline-flex items-center gap-1"><Target size={10} />{gName}</span>}
                     {m.reachedAt && <span style={{ color: '#10B981' }}>已达成 {fmtDate(m.reachedAt)}</span>}
                     {typeof m.slippageDays === 'number' && m.slippageDays !== 0 && (
@@ -125,7 +130,7 @@ export function MilestonesPanel({ projectId, milestones, goals, tasks, canManage
 
       {drawer.open && (
         <MilestoneDetailDrawer
-          projectId={projectId} milestone={drawer.milestone} goals={goals} tasks={tasks}
+          projectId={projectId} milestone={drawer.milestone} allMilestones={milestones} goals={goals} tasks={tasks}
           canManage={canManage} onClose={closeDrawer}
           onSaved={() => { closeDrawer(); onChanged(); }}
         />

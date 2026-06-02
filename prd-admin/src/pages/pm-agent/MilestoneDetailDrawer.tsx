@@ -1,21 +1,24 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Check, Trash2, Plus, ListTodo, Milestone as MilestoneIcon, CircleCheck, Flag } from 'lucide-react';
+import { X, Check, Trash2, Plus, ListTodo, Milestone as MilestoneIcon, CircleCheck, Flag, Lock, Package, ShieldAlert, FileText, Gavel, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { toast } from '@/lib/toast';
-import { createPmMilestone, updatePmMilestone, deletePmMilestone } from '@/services';
-import type { PmMilestone, PmGoal, PmTask } from '@/services/contracts/pmAgent';
-import { MILESTONE_HEALTH_REGISTRY, TASK_STATUS_REGISTRY } from './pmConstants';
+import { createPmMilestone, updatePmMilestone, deletePmMilestone, listPmWeeklyReports, listPmDecisions, listPmRisks } from '@/services';
+import type { PmMilestone, PmGoal, PmTask, PmWeeklyReport, PmDecision, PmRisk, PmDeliverableType } from '@/services/contracts/pmAgent';
+import { MILESTONE_HEALTH_REGISTRY, TASK_STATUS_REGISTRY, riskScore, riskScoreColor } from './pmConstants';
 import { fmtDate } from './materialUtils';
 
 interface DraftCriterion { id: string; text: string; done: boolean }
+interface DraftDeliverable { type: PmDeliverableType; refId?: string; title: string; url?: string }
 
 interface Props {
   projectId: string;
   /** 编辑现有里程碑；null = 新建 */
   milestone: PmMilestone | null;
+  /** 同项目全部里程碑（供选前置 + 受阻判定） */
+  allMilestones: PmMilestone[];
   goals: PmGoal[];
   tasks: PmTask[];
   canManage: boolean;
@@ -33,7 +36,7 @@ const newCid = () => `tmp-${Date.now()}-${_cidSeq++}`;
  * 里程碑详情抽屉 —— 负责人 + 验收标准(DoD 清单) + 说明 + 关联目标 + 其下任务 + 计划/实际偏差。
  * 验收标准未全部勾选时禁止「标记达成」（里程碑=被验收，不是到日期）。
  */
-export function MilestoneDetailDrawer({ projectId, milestone, goals, tasks, canManage, onClose, onSaved }: Props) {
+export function MilestoneDetailDrawer({ projectId, milestone, allMilestones, goals, tasks, canManage, onClose, onSaved }: Props) {
   const isCreate = !milestone;
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -42,10 +45,25 @@ export function MilestoneDetailDrawer({ projectId, milestone, goals, tasks, canM
   const [ownerId, setOwnerId] = useState('');
   const [criteria, setCriteria] = useState<DraftCriterion[]>([]);
   const [newItem, setNewItem] = useState('');
+  const [dependsOn, setDependsOn] = useState<string[]>([]);
+  const [deliverables, setDeliverables] = useState<DraftDeliverable[]>([]);
   const [saving, setSaving] = useState(false);
+  // 交付物候选 + 反查风险
+  const [weeklies, setWeeklies] = useState<PmWeeklyReport[]>([]);
+  const [decisions, setDecisions] = useState<PmDecision[]>([]);
+  const [risks, setRisks] = useState<PmRisk[]>([]);
+  // 交付物 composer
+  const [delivType, setDelivType] = useState<PmDeliverableType>('weekly');
+  const [delivRefId, setDelivRefId] = useState('');
+  const [delivLinkTitle, setDelivLinkTitle] = useState('');
+  const [delivLinkUrl, setDelivLinkUrl] = useState('');
 
   const teamGoals = goals.filter((g) => g.scope === 'team');
   const kids = useMemo(() => (milestone ? tasks.filter((t) => t.milestoneId === milestone.id) : []), [milestone, tasks]);
+  const otherMilestones = useMemo(() => allMilestones.filter((x) => x.id !== milestone?.id), [allMilestones, milestone]);
+  const msById = useMemo(() => new Map(allMilestones.map((x) => [x.id, x])), [allMilestones]);
+  const linkedRisks = useMemo(() => (milestone ? risks.filter((r) => r.relatedMilestoneId === milestone.id) : []), [risks, milestone]);
+  const unreachedPrereqs = dependsOn.filter((id) => msById.get(id) && msById.get(id)!.status !== 'reached');
 
   useEffect(() => {
     if (milestone) {
@@ -55,10 +73,25 @@ export function MilestoneDetailDrawer({ projectId, milestone, goals, tasks, canM
       setGoalId(milestone.goalId || '');
       setOwnerId(milestone.ownerId || '');
       setCriteria((milestone.acceptanceCriteria ?? []).map((c) => ({ id: c.id, text: c.text, done: c.done })));
+      setDependsOn(milestone.dependsOn ?? []);
+      setDeliverables((milestone.deliverables ?? []).map((d) => ({ type: d.type, refId: d.refId ?? undefined, title: d.title, url: d.url ?? undefined })));
     } else {
-      setTitle(''); setDescription(''); setDueAt(''); setGoalId(''); setOwnerId(''); setCriteria([]);
+      setTitle(''); setDescription(''); setDueAt(''); setGoalId(''); setOwnerId(''); setCriteria([]); setDependsOn([]); setDeliverables([]);
     }
   }, [milestone]);
+
+  // 拉取交付物候选 + 反查风险（一次）
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const [wr, dr, rr] = await Promise.all([listPmWeeklyReports(projectId), listPmDecisions(projectId), listPmRisks(projectId)]);
+      if (!alive) return;
+      if (wr.success) setWeeklies(wr.data.items);
+      if (dr.success) setDecisions(dr.data.items);
+      if (rr.success) setRisks(rr.data.items);
+    })();
+    return () => { alive = false; };
+  }, [projectId]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -81,6 +114,22 @@ export function MilestoneDetailDrawer({ projectId, milestone, goals, tasks, canM
   const editCriterionText = (id: string, text: string) => setCriteria((p) => p.map((c) => c.id === id ? { ...c, text } : c));
   const removeCriterion = (id: string) => setCriteria((p) => p.filter((c) => c.id !== id));
 
+  const toggleDep = (id: string) => setDependsOn((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
+  const addDeliverable = () => {
+    if (delivType === 'link') {
+      if (!delivLinkTitle.trim() || !delivLinkUrl.trim()) { toast.error('请填写链接标题与地址', ''); return; }
+      setDeliverables((p) => [...p, { type: 'link', title: delivLinkTitle.trim(), url: delivLinkUrl.trim() }]);
+      setDelivLinkTitle(''); setDelivLinkUrl('');
+    } else {
+      if (!delivRefId) return;
+      const title = delivType === 'weekly' ? (weeklies.find((w) => w.id === delivRefId)?.title ?? '周报') : (decisions.find((d) => d.id === delivRefId)?.title ?? '决策');
+      if (deliverables.some((d) => d.type === delivType && d.refId === delivRefId)) { toast.error('已添加过该交付物', ''); return; }
+      setDeliverables((p) => [...p, { type: delivType, refId: delivRefId, title }]);
+      setDelivRefId('');
+    }
+  };
+  const removeDeliverable = (idx: number) => setDeliverables((p) => p.filter((_, i) => i !== idx));
+
   const buildPayload = (status?: 'planned' | 'reached' | 'cancelled') => ({
     title: title.trim(),
     description,
@@ -88,6 +137,8 @@ export function MilestoneDetailDrawer({ projectId, milestone, goals, tasks, canM
     goalId: goalId || undefined,
     ownerId: ownerId || '',
     acceptanceCriteria: criteria.filter((c) => c.text.trim()).map((c) => ({ id: c.id.startsWith('tmp-') ? undefined : c.id, text: c.text.trim(), done: c.done })),
+    dependsOn,
+    deliverables: deliverables.map((d) => ({ type: d.type, refId: d.refId, title: d.title, url: d.url })),
     ...(status ? { status } : {}),
   });
 
@@ -106,6 +157,10 @@ export function MilestoneDetailDrawer({ projectId, milestone, goals, tasks, canM
     if (!milestone) return;
     if (!isReached && !allCriteriaDone) {
       toast.error('还有验收项未完成', `请先勾选全部 ${criteria.length} 条验收标准`);
+      return;
+    }
+    if (!isReached && unreachedPrereqs.length > 0) {
+      toast.error('前置里程碑未达成', unreachedPrereqs.map((id) => msById.get(id)?.title).filter(Boolean).join('、'));
       return;
     }
     setSaving(true);
@@ -215,6 +270,72 @@ export function MilestoneDetailDrawer({ projectId, milestone, goals, tasks, canM
             )}
           </div>
 
+          {/* 前置里程碑（依赖门禁） */}
+          {otherMilestones.length > 0 && (
+            <div className="flex flex-col gap-1.5 pt-2 mt-1 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+              <div className="text-[12px] font-medium flex items-center gap-1.5" style={{ color: 'var(--text-primary)' }}><Lock size={12} style={{ color: '#A855F7' }} />前置里程碑</div>
+              <div className="text-[10.5px]" style={{ color: 'var(--text-muted)' }}>前置未达成时本里程碑受阻，且不能标记达成（保持 DAG，不可成环）</div>
+              {unreachedPrereqs.length > 0 && (
+                <div className="text-[11px] inline-flex items-center gap-1" style={{ color: '#EF4444' }}><Lock size={11} />受阻：{unreachedPrereqs.map((id) => msById.get(id)?.title).filter(Boolean).join('、')} 未达成</div>
+              )}
+              <div className="flex flex-wrap gap-1.5">
+                {otherMilestones.map((ms) => {
+                  const on = dependsOn.includes(ms.id);
+                  const reached = ms.status === 'reached';
+                  return (
+                    <button key={ms.id} type="button" disabled={!canManage} onClick={() => toggleDep(ms.id)}
+                      className="text-[11px] px-1.5 py-0.5 rounded-md border inline-flex items-center gap-1 max-w-[190px]"
+                      style={{ borderColor: on ? '#A855F7' : 'var(--border-subtle)', background: on ? 'rgba(168,85,247,0.12)' : 'transparent', color: on ? '#A855F7' : 'var(--text-secondary)' }} title={ms.title}>
+                      {reached ? <Check size={10} /> : <Flag size={10} />}<span className="truncate">{ms.title}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* 交付物 */}
+          <div className="flex flex-col gap-1.5 pt-2 mt-1 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+            <div className="text-[12px] font-medium flex items-center gap-1.5" style={{ color: 'var(--text-primary)' }}><Package size={12} style={{ color: '#10B981' }} />交付物</div>
+            <div className="text-[10.5px]" style={{ color: 'var(--text-muted)' }}>里程碑验收/批准的产物：周报 / 决策 / 外链</div>
+            {deliverables.length > 0 ? deliverables.map((d, i) => {
+              const Icon = d.type === 'weekly' ? FileText : d.type === 'decision' ? Gavel : ExternalLink;
+              return (
+                <div key={i} className="flex items-center gap-2 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                  <Icon size={11} className="shrink-0" style={{ color: '#10B981' }} />
+                  {d.type === 'link' && d.url
+                    ? <a href={d.url} target="_blank" rel="noopener noreferrer" className="truncate flex-1 hover:underline" style={{ color: '#3B82F6' }}>{d.title}</a>
+                    : <span className="truncate flex-1" title={d.title}>{d.title}</span>}
+                  {canManage && <button onClick={() => removeDeliverable(i)} style={{ color: 'var(--text-muted)' }}><Trash2 size={11} /></button>}
+                </div>
+              );
+            }) : <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>暂无交付物</div>}
+            {canManage && (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <select value={delivType} onChange={(e) => { setDelivType(e.target.value as PmDeliverableType); setDelivRefId(''); }} className="text-[12px] rounded-md px-2 py-1 outline-none border" style={inputStyle}>
+                  <option value="weekly">周报</option><option value="decision">决策</option><option value="link">外链</option>
+                </select>
+                {delivType === 'weekly' && (
+                  <select value={delivRefId} onChange={(e) => setDelivRefId(e.target.value)} className="flex-1 min-w-[120px] text-[12px] rounded-md px-2 py-1 outline-none border" style={inputStyle}>
+                    <option value="">选择周报…</option>{weeklies.map((w) => <option key={w.id} value={w.id}>{w.title}</option>)}
+                  </select>
+                )}
+                {delivType === 'decision' && (
+                  <select value={delivRefId} onChange={(e) => setDelivRefId(e.target.value)} className="flex-1 min-w-[120px] text-[12px] rounded-md px-2 py-1 outline-none border" style={inputStyle}>
+                    <option value="">选择决策…</option>{decisions.map((d) => <option key={d.id} value={d.id}>{d.title}</option>)}
+                  </select>
+                )}
+                {delivType === 'link' && (
+                  <>
+                    <input value={delivLinkTitle} onChange={(e) => setDelivLinkTitle(e.target.value)} placeholder="标题" className="text-[12px] rounded-md px-2 py-1 outline-none border" style={{ ...inputStyle, width: 96 }} />
+                    <input value={delivLinkUrl} onChange={(e) => setDelivLinkUrl(e.target.value)} placeholder="https://" className="flex-1 min-w-[120px] text-[12px] rounded-md px-2 py-1 outline-none border" style={inputStyle} />
+                  </>
+                )}
+                <Button variant="ghost" size="sm" onClick={addDeliverable}><Plus size={13} />添加</Button>
+              </div>
+            )}
+          </div>
+
           {/* 其下任务 */}
           {!isCreate && (
             <div className="flex flex-col gap-1.5 pt-2 mt-1 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
@@ -234,14 +355,32 @@ export function MilestoneDetailDrawer({ projectId, milestone, goals, tasks, canM
               })}
             </div>
           )}
+
+          {/* 威胁本里程碑的风险（反查 relatedMilestoneId） */}
+          {!isCreate && (
+            <div className="flex flex-col gap-1.5 pt-2 mt-1 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+              <div className="text-[11px] flex items-center gap-1" style={{ color: '#EF4444' }}><ShieldAlert size={12} />威胁本里程碑的风险（{linkedRisks.length}）</div>
+              {linkedRisks.length === 0 ? (
+                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>暂无风险关联本里程碑。在「风险」里把风险关联到本里程碑。</div>
+              ) : linkedRisks.map((r) => {
+                const sc = riskScore(r.probability, r.impact);
+                return (
+                  <div key={r.id} className="flex items-center gap-2 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                    <span className="text-[10px] font-semibold w-5 h-5 rounded flex items-center justify-center shrink-0" style={{ background: `${riskScoreColor(sc)}22`, color: riskScoreColor(sc) }}>{sc}</span>
+                    <span className="truncate flex-1" title={r.title}>{r.title}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {canManage && (
           <div className="flex items-center gap-2 px-5 py-3.5 shrink-0 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
             {!isCreate && (
               <>
-                <Button variant={isReached ? 'ghost' : 'secondary'} size="sm" onClick={toggleReached} disabled={saving || (!isReached && !allCriteriaDone)}
-                  title={!isReached && !allCriteriaDone ? '需先完成全部验收标准' : ''}>
+                <Button variant={isReached ? 'ghost' : 'secondary'} size="sm" onClick={toggleReached} disabled={saving || (!isReached && (!allCriteriaDone || unreachedPrereqs.length > 0))}
+                  title={!isReached && !allCriteriaDone ? '需先完成全部验收标准' : !isReached && unreachedPrereqs.length > 0 ? '前置里程碑未达成' : ''}>
                   <Flag size={13} />{isReached ? '取消达成' : '标记达成'}
                 </Button>
                 <Button variant="ghost" size="sm" onClick={remove} disabled={saving}><Trash2 size={13} />删除</Button>

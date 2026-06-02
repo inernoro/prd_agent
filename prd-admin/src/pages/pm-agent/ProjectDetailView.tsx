@@ -6,7 +6,7 @@ import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { toast } from '@/lib/toast';
 import { useAuthStore } from '@/stores/authStore';
 import {
-  getPmProject, createPmTask, updatePmTask, deletePmTask, updatePmProject, bulkPmTasks, listPmMilestones, listPmGoals,
+  getPmProject, createPmTask, updatePmTask, deletePmTask, updatePmProject, bulkPmTasks, listPmMilestones, listPmGoals, updatePmMilestone,
 } from '@/services';
 import type { PmProject, PmTask, PmTaskStatus, PmTaskPriority, PmMilestone, PmGoal } from '@/services/contracts/pmAgent';
 import { KanbanBoard } from './KanbanBoard';
@@ -509,7 +509,12 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
       {tab === 'tasks' && viewMode === 'gantt' && (
         <MilestonesBar projectId={projectId} milestones={milestones} canManage={project.ownerId === myId || project.leaderId === myId} onChanged={loadMilestones} />
       )}
-      {tasks.length > 0 && tab === 'tasks' && viewMode === 'gantt' && <GanttChart tasks={filtered} milestones={milestones} onOpen={setOpenTask} />}
+      {tasks.length > 0 && tab === 'tasks' && viewMode === 'gantt' && (
+        <GanttChart tasks={filtered} milestones={milestones} onOpen={setOpenTask}
+          onMilestoneMove={(project.ownerId === myId || project.leaderId === myId)
+            ? async (id, iso) => { const r = await updatePmMilestone(id, { dueAt: iso }); if (r.success) loadMilestones(); }
+            : undefined} />
+      )}
 
       {tab === 'milestones' && (
         <MilestonesPanel projectId={projectId} milestones={milestones} goals={goals} tasks={tasks}
@@ -545,7 +550,7 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
 
       {tab === 'decisions' && <DecisionsPanel projectId={projectId} goals={goals} tasks={tasks} canManageRisk={project.ownerId === myId || project.leaderId === myId || project.memberIds.includes(myId)} />}
 
-      {tab === 'risks' && <RiskPanel projectId={projectId} canManage={project.ownerId === myId || project.leaderId === myId || project.memberIds.includes(myId)} goals={goals} tasks={tasks} />}
+      {tab === 'risks' && <RiskPanel projectId={projectId} canManage={project.ownerId === myId || project.leaderId === myId || project.memberIds.includes(myId)} goals={goals} tasks={tasks} milestones={milestones} />}
 
       {tab === 'report' && <BurndownPanel projectId={projectId} />}
 

@@ -44,6 +44,9 @@ public class PmRisk
     /// <summary>来源决策 ID（可空）—— 本风险由哪条决策衍生/触发，支撑「决策→风险」联动追溯。</summary>
     public string? RelatedDecisionId { get; set; }
 
+    /// <summary>关联里程碑 ID（可空）—— 本风险威胁哪个阶段节点。</summary>
+    public string? RelatedMilestoneId { get; set; }
+
     /// <summary>同项目内排序键</summary>
     public long OrderKey { get; set; }
 

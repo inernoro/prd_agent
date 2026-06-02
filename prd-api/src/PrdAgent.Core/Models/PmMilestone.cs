@@ -35,6 +35,12 @@ public class PmMilestone
     /// <summary>验收标准 / 完成定义（DoD）。全部勾选才允许标记达成（二元签收）。</summary>
     public List<PmMilestoneCriterion> AcceptanceCriteria { get; set; } = new();
 
+    /// <summary>前置里程碑 Id 列表（本里程碑依赖它们先达成；保持 DAG，不可成环）。</summary>
+    public List<string> DependsOn { get; set; } = new();
+
+    /// <summary>交付物引用（被本里程碑验收/批准的产物：周报 / 决策 / 外链）。</summary>
+    public List<PmDeliverableRef> Deliverables { get; set; } = new();
+
     /// <summary>状态：planned | reached | cancelled（存储真值；健康度 overdue/at_risk 由日期+进度派生）</summary>
     public string Status { get; set; } = PmMilestoneStatus.Planned;
 
@@ -53,6 +59,19 @@ public class PmMilestoneCriterion
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string Text { get; set; } = string.Empty;
     public bool Done { get; set; }
+}
+
+/// <summary>里程碑交付物引用（被验收的产物快照）</summary>
+public class PmDeliverableRef
+{
+    /// <summary>类型：weekly(周报) | decision(决策) | link(外链)</summary>
+    public string Type { get; set; } = "link";
+    /// <summary>引用实体 Id（link 类型可空）</summary>
+    public string? RefId { get; set; }
+    /// <summary>标题快照（便于展示，避免被删后空白）</summary>
+    public string Title { get; set; } = string.Empty;
+    /// <summary>外链地址（type=link 时用）</summary>
+    public string? Url { get; set; }
 }
 
 /// <summary>里程碑状态（存储真值）</summary>

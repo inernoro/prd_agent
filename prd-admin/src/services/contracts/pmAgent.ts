@@ -505,6 +505,8 @@ export type ListPmAuditLogsContract = (opts?: { projectId?: string; page?: numbe
 export type PmMilestoneStatus = 'planned' | 'reached' | 'cancelled';
 export type PmMilestoneHealth = 'on_track' | 'at_risk' | 'overdue' | 'reached' | 'cancelled';
 export type PmMilestoneCriterion = { id: string; text: string; done: boolean };
+export type PmDeliverableType = 'weekly' | 'decision' | 'link';
+export type PmDeliverableRef = { type: PmDeliverableType; refId?: string | null; title: string; url?: string | null };
 export type PmMilestone = {
   id: string;
   projectId: string;
@@ -518,6 +520,12 @@ export type PmMilestone = {
   acceptanceCriteria?: PmMilestoneCriterion[];
   criteriaTotal?: number;
   criteriaDone?: number;
+  /** 前置里程碑 Id */
+  dependsOn?: string[];
+  deliverables?: PmDeliverableRef[];
+  /** 前置未达成 → 受阻 */
+  blocked?: boolean;
+  blockedBy?: string[];
   status: PmMilestoneStatus;
   orderKey: number;
   taskTotal: number;
@@ -532,6 +540,8 @@ export type PmMilestone = {
 export type SavePmMilestoneInput = Partial<{
   title: string; description: string; dueAt: string; goalId: string; ownerId: string;
   acceptanceCriteria: { id?: string; text: string; done: boolean }[];
+  dependsOn: string[];
+  deliverables: { type: PmDeliverableType; refId?: string; title: string; url?: string }[];
   status: PmMilestoneStatus; orderKey: number;
 }>;
 export type ListPmMilestonesContract = (projectId: string) => Promise<ApiResponse<{ items: PmMilestone[] }>>;
@@ -558,13 +568,15 @@ export type PmRisk = {
   relatedTaskId?: string | null;
   /** 来源决策 ID —— 本风险由哪条决策衍生 */
   relatedDecisionId?: string | null;
+  /** 关联里程碑 ID —— 本风险威胁哪个阶段节点 */
+  relatedMilestoneId?: string | null;
   orderKey: number;
   createdBy: string;
   createdByName?: string | null;
   createdAt: string;
   updatedAt: string;
 };
-export type SavePmRiskInput = Partial<{ title: string; description: string; probability: PmRiskLevel; impact: PmRiskLevel; response: PmRiskResponse; status: PmRiskStatus; ownerId: string; relatedGoalId: string; relatedTaskId: string; relatedDecisionId: string; orderKey: number }>;
+export type SavePmRiskInput = Partial<{ title: string; description: string; probability: PmRiskLevel; impact: PmRiskLevel; response: PmRiskResponse; status: PmRiskStatus; ownerId: string; relatedGoalId: string; relatedTaskId: string; relatedDecisionId: string; relatedMilestoneId: string; orderKey: number }>;
 export type ListPmRisksContract = (projectId: string) => Promise<ApiResponse<{ items: PmRisk[] }>>;
 export type CreatePmRiskContract = (projectId: string, input: SavePmRiskInput) => Promise<ApiResponse<PmRisk>>;
 export type UpdatePmRiskContract = (riskId: string, input: SavePmRiskInput) => Promise<ApiResponse<{ updated: boolean }>>;

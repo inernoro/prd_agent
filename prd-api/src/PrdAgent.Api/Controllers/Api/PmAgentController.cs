@@ -1151,6 +1151,10 @@ public class PmAgentController : ControllerBase
         var tasks = await _db.PmTasks.Find(t => t.ProjectId == projectId)
             .Project(t => new { t.MilestoneId, t.Status }).ToListAsync();
 
+        // 前置门禁：未达成的前置里程碑 → 本里程碑受阻
+        var titleById = milestones.ToDictionary(x => x.Id, x => x.Title);
+        var reachedIds = milestones.Where(x => x.Status == PmMilestoneStatus.Reached).Select(x => x.Id).ToHashSet();
+
         var items = milestones.Select(m =>
         {
             var mine = tasks.Where(t => t.MilestoneId == m.Id && t.Status != PmTaskStatus.Cancelled).ToList();
@@ -1161,6 +1165,10 @@ public class PmAgentController : ControllerBase
             int? slippageDays = (m.ReachedAt.HasValue && m.DueAt.HasValue)
                 ? (int)Math.Round((m.ReachedAt.Value.Date - m.DueAt.Value.Date).TotalDays)
                 : null;
+            var deps = m.DependsOn ?? new List<string>();
+            var blockedByTitles = deps.Where(id => !reachedIds.Contains(id))
+                .Select(id => titleById.GetValueOrDefault(id, "")).Where(t => t != "").ToList();
+            var blocked = m.Status != PmMilestoneStatus.Reached && m.Status != PmMilestoneStatus.Cancelled && blockedByTitles.Count > 0;
             return new
             {
                 id = m.Id,
@@ -1175,6 +1183,10 @@ public class PmAgentController : ControllerBase
                 acceptanceCriteria = m.AcceptanceCriteria,
                 criteriaTotal = m.AcceptanceCriteria.Count,
                 criteriaDone = m.AcceptanceCriteria.Count(c => c.Done),
+                dependsOn = deps,
+                deliverables = m.Deliverables ?? new List<PmDeliverableRef>(),
+                blocked,
+                blockedBy = blockedByTitles,
                 status = m.Status,
                 orderKey = m.OrderKey,
                 taskTotal = total,
@@ -1226,6 +1238,38 @@ public class PmAgentController : ControllerBase
             })
             .ToList();
 
+    /// <summary>请求交付物 → 模型；标题空白的丢弃，type 归一到 weekly/decision/link。</summary>
+    private static List<PmDeliverableRef> MapDeliverables(List<DeliverableInput>? input)
+        => (input ?? new())
+            .Where(d => !string.IsNullOrWhiteSpace(d.Title))
+            .Select(d => new PmDeliverableRef
+            {
+                Type = d.Type is "weekly" or "decision" or "link" ? d.Type! : "link",
+                RefId = string.IsNullOrWhiteSpace(d.RefId) ? null : d.RefId,
+                Title = d.Title!.Trim(),
+                Url = string.IsNullOrWhiteSpace(d.Url) ? null : d.Url!.Trim(),
+            })
+            .ToList();
+
+    /// <summary>把 milestoneId 的前置改为 newDeps 后，是否会形成循环依赖（DAG 守卫）。</summary>
+    private static bool WouldCreateCycle(List<PmMilestone> all, string milestoneId, List<string> newDeps)
+    {
+        var deps = all.ToDictionary(x => x.Id, x => x.DependsOn ?? new List<string>());
+        deps[milestoneId] = newDeps;
+        // 从 milestoneId 沿 DependsOn 出发能否回到自身（路径≥1）→ 有环
+        var visited = new HashSet<string>();
+        bool ReachesSelf(string cur)
+        {
+            foreach (var d in deps.GetValueOrDefault(cur, new List<string>()))
+            {
+                if (d == milestoneId) return true;
+                if (visited.Add(d) && ReachesSelf(d)) return true;
+            }
+            return false;
+        }
+        return ReachesSelf(milestoneId);
+    }
+
     /// <summary>新建里程碑（仅 owner/leader 排计划）</summary>
     [HttpPost("projects/{projectId}/milestones")]
     public async Task<IActionResult> CreateMilestone(string projectId, [FromBody] MilestoneRequest request)
@@ -1252,11 +1296,18 @@ public class PmAgentController : ControllerBase
             OwnerId = string.IsNullOrWhiteSpace(request.OwnerId) ? null : request.OwnerId,
             OwnerName = ownerName,
             AcceptanceCriteria = MapCriteria(request.AcceptanceCriteria),
+            Deliverables = MapDeliverables(request.Deliverables),
             Status = PmMilestoneStatus.Planned,
             OrderKey = DateTime.UtcNow.Ticks,
             CreatedBy = userId,
             CreatedByName = creatorName,
         };
+        // 新建时也允许设前置（环检测：新里程碑还没 id，只需过滤掉自身/非法）
+        if (request.DependsOn != null)
+        {
+            var validIds = (await _db.PmMilestones.Find(x => x.ProjectId == projectId).Project(x => x.Id).ToListAsync()).ToHashSet();
+            entity.DependsOn = request.DependsOn.Where(id => validIds.Contains(id)).Distinct().ToList();
+        }
         await _db.PmMilestones.InsertOneAsync(entity);
         return Ok(ApiResponse<object>.Ok(entity));
     }
@@ -1292,6 +1343,20 @@ public class PmAgentController : ControllerBase
         // 验收标准更新：以请求为准全量替换（保留传入的 Done 勾选）
         var effectiveCriteria = request.AcceptanceCriteria != null ? MapCriteria(request.AcceptanceCriteria) : m.AcceptanceCriteria;
         if (request.AcceptanceCriteria != null) update = update.Set(x => x.AcceptanceCriteria, effectiveCriteria);
+        if (request.Deliverables != null) update = update.Set(x => x.Deliverables, MapDeliverables(request.Deliverables));
+
+        // 前置里程碑更新（环检测：保持 DAG）
+        var allForGraph = await _db.PmMilestones.Find(x => x.ProjectId == m.ProjectId).ToListAsync();
+        var effectiveDeps = m.DependsOn;
+        if (request.DependsOn != null)
+        {
+            var validIds = allForGraph.Select(x => x.Id).ToHashSet();
+            effectiveDeps = request.DependsOn.Where(id => id != m.Id && validIds.Contains(id)).Distinct().ToList();
+            if (WouldCreateCycle(allForGraph, m.Id, effectiveDeps))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "前置里程碑会形成循环依赖，已拒绝"));
+            update = update.Set(x => x.DependsOn, effectiveDeps);
+        }
+
         if (request.OrderKey.HasValue) update = update.Set(x => x.OrderKey, request.OrderKey.Value);
         if (request.Status != null)
         {
@@ -1302,6 +1367,14 @@ public class PmAgentController : ControllerBase
                 && effectiveCriteria.Count > 0 && effectiveCriteria.Any(c => !c.Done))
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
                     $"还有 {effectiveCriteria.Count(c => !c.Done)} 条验收标准未完成，无法标记达成"));
+            // 依赖门禁：前置里程碑未全部达成时，禁止标记达成
+            if (request.Status == PmMilestoneStatus.Reached && m.Status != PmMilestoneStatus.Reached && effectiveDeps.Count > 0)
+            {
+                var unreached = allForGraph.Where(x => effectiveDeps.Contains(x.Id) && x.Status != PmMilestoneStatus.Reached).ToList();
+                if (unreached.Count > 0)
+                    return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                        $"前置里程碑「{string.Join("、", unreached.Take(3).Select(x => x.Title))}」尚未达成，无法标记达成"));
+            }
             update = update.Set(x => x.Status, request.Status);
             if (request.Status == PmMilestoneStatus.Reached && m.Status != PmMilestoneStatus.Reached)
                 update = update.Set(x => x.ReachedAt, DateTime.UtcNow);
@@ -1375,6 +1448,7 @@ public class PmAgentController : ControllerBase
             RelatedGoalId = string.IsNullOrWhiteSpace(request.RelatedGoalId) ? null : request.RelatedGoalId,
             RelatedTaskId = string.IsNullOrWhiteSpace(request.RelatedTaskId) ? null : request.RelatedTaskId,
             RelatedDecisionId = string.IsNullOrWhiteSpace(request.RelatedDecisionId) ? null : request.RelatedDecisionId,
+            RelatedMilestoneId = string.IsNullOrWhiteSpace(request.RelatedMilestoneId) ? null : request.RelatedMilestoneId,
             OrderKey = DateTime.UtcNow.Ticks,
             CreatedBy = userId,
             CreatedByName = creatorName,
@@ -1415,6 +1489,7 @@ public class PmAgentController : ControllerBase
         if (request.RelatedGoalId != null) update = update.Set(x => x.RelatedGoalId, string.IsNullOrWhiteSpace(request.RelatedGoalId) ? null : request.RelatedGoalId);
         if (request.RelatedTaskId != null) update = update.Set(x => x.RelatedTaskId, string.IsNullOrWhiteSpace(request.RelatedTaskId) ? null : request.RelatedTaskId);
         if (request.RelatedDecisionId != null) update = update.Set(x => x.RelatedDecisionId, string.IsNullOrWhiteSpace(request.RelatedDecisionId) ? null : request.RelatedDecisionId);
+        if (request.RelatedMilestoneId != null) update = update.Set(x => x.RelatedMilestoneId, string.IsNullOrWhiteSpace(request.RelatedMilestoneId) ? null : request.RelatedMilestoneId);
         if (request.OrderKey.HasValue) update = update.Set(x => x.OrderKey, request.OrderKey.Value);
         await _db.PmRisks.UpdateOneAsync(x => x.Id == riskId, update);
         return Ok(ApiResponse<object>.Ok(new { updated = true }));
@@ -2770,6 +2845,7 @@ public class RiskRequest
     public string? RelatedGoalId { get; set; }
     public string? RelatedTaskId { get; set; }
     public string? RelatedDecisionId { get; set; }
+    public string? RelatedMilestoneId { get; set; }
     public long? OrderKey { get; set; }
 }
 
@@ -2887,6 +2963,10 @@ public class MilestoneRequest
     public string? OwnerId { get; set; }
     /// <summary>验收标准（null=不变）。条目 Id 为空时服务端补 Guid。</summary>
     public List<MilestoneCriterionInput>? AcceptanceCriteria { get; set; }
+    /// <summary>前置里程碑 Id 列表（null=不变；服务端做环检测）。</summary>
+    public List<string>? DependsOn { get; set; }
+    /// <summary>交付物引用（null=不变）。</summary>
+    public List<DeliverableInput>? Deliverables { get; set; }
     public string? Status { get; set; }
     public long? OrderKey { get; set; }
 }
@@ -2896,6 +2976,14 @@ public class MilestoneCriterionInput
     public string? Id { get; set; }
     public string? Text { get; set; }
     public bool Done { get; set; }
+}
+
+public class DeliverableInput
+{
+    public string? Type { get; set; }
+    public string? RefId { get; set; }
+    public string? Title { get; set; }
+    public string? Url { get; set; }
 }
 
 public class DecomposeRequest
