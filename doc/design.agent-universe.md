@@ -1,6 +1,6 @@
 # 智能体宇宙 · 设计
 
-> **版本**：v1.0 | **日期**：2026-06-02 | **状态**：MVP 已落地（再加工抽屉接入；视觉创作走真实生图；后端待 CDS 编译验证）
+> **版本**：v2.0 | **日期**：2026-06-02 | **状态**：已落地并预览域名实测通过（no-fake 路由 + 真实生图 + 真实参数选择器；4 个智能体已登记，扩展指南见 §5.2）
 > **关联实现**：`prd-api/.../Models/AgentUniverse/AgentCapability.cs`、`AgentCapabilityRegistry.cs`、`prd-api/.../Controllers/Api/AgentUniverseController.cs`、`prd-admin/.../services/real/agentUniverse.ts`、`prd-admin/.../pages/document-store/ReprocessChatDrawer.tsx`
 > **关联设计**：`.claude/rules/app-identity.md`（应用身份）、`.claude/rules/llm-gateway.md`（网关）、`debt.agent-universe.md`（债务台账）
 > **一句话**：把"每个智能体各搞各的调用方式、再加工还把视觉创作降级成假聊天"升级为"一套能力契约 + 一套调用信封，让所有智能体像漫威宇宙那样按统一标准互通"。
@@ -80,44 +80,112 @@
 
 > **核心原则：只打通管道，绝不仿冒。** invoke 永远把请求交给该智能体的真实组件（adapter）去跑业务；找不到真实适配器就明确报错（`NO_REAL_AGENT`），**不降级成硬编码提示词的"假聊天"**。这样用户改了某个智能体的业务配置，本面板自动同步（系统里只有一处实现），不会漂移。
 
-### 4.3 已登记的智能体（只登记有真实组件的）
+### 4.3 智能体清单与接入
 
-当前 4 个，**均有真实 `IAgentAdapter`**：视觉创作（text2img 真实生图）、文学创作（write_content）、缺陷管理（extract_defect）、PRD 解读（analyze_prd）。其中视觉/文学/缺陷在再加工面板有卡片可选，PRD 经 API 可用。
+**当前已登记（universe-ready，4 个，均有真实 `IAgentAdapter`）**：
 
-**没有真实组件的一律不登记**（周报/PM/PA/翻译/摘要等）——宁可不暴露，也不伪装。等它们接入各自真实服务后再按契约登记。
+| 智能体 | agentKey | 默认动作 | 模式 | 再加工面板 |
+|--------|----------|----------|------|-----------|
+| 视觉创作 | `visual-agent` | text2img | generation | 卡片可选 |
+| 文学创作 | `literary-agent` | write_content | chat | 卡片可选 |
+| 缺陷管理 | `defect-agent` | extract_defect | structured | 卡片可选 |
+| PRD 解读 | `prd-agent` | analyze_prd | chat | 经 API（无卡片）|
+
+**系统现有 5 个真实 `IAgentAdapter`**：上面 4 个 + `CdsAgentAdapter`（`cds-agent`，CDS 运维类，可按需登记，但不适合"文档再加工"语境）。
+
+**可扩展池（接入成本分档）**：系统共 **9 个 appKey 级智能体**、**23 个百宝箱卡片智能体**。能否加入"宇宙"取决于**是否有真实 `IAgentAdapter`**：
+
+- **零成本**：已有 adapter（如 `cds-agent`）→ 只在 `AgentCapabilityRegistry` 加一条契约即可。
+- **一次性成本**：`video` / `report` / `review` / `pr-review` / `project-route` / `pa` / `pm` / 翻译 / 摘要 / 数据分析 等——它们有真实后端服务/Controller，但还没包成 `IAgentAdapter`。需先写一个适配器（**薄封装其真实服务，不是再抄一份提示词**），再登记契约。这是债务台账里待用户排优先级的分叉。
+
+**绝不为了凑数登记没有真实组件的智能体**——宁可不暴露，也不伪装（§1 最高原则）。
 
 ---
 
 ## 5. 架构
 
-```
-前端（再加工抽屉 / 未来 @艾特 / 工作流节点）
-   │  GET  /api/agent-universe/capabilities   ← 拉契约，渲染选择器 + 对应交互
-   │  POST /api/agent-universe/invoke (SSE)    ← 统一调用信封
-   ▼
-AgentUniverseController
-   ├─ 按 agentKey 查 AgentCapabilityRegistry（SSOT）
-   ├─ 找到真实适配器（agentKey + CanHandle(action)）→ IAgentAdapter.StreamExecuteAsync【唯一路径】
-   │        ├─ VisualAgentAdapter.text2img → 真实生图 → 图片 artifact
-   │        └─ Literary / Defect / Prd Adapter → 真实文本产出
-   └─ 找不到真实适配器 → 报错 NO_REAL_AGENT（绝不仿冒降级）
-   ▼
-统一 SSE 事件：start / text / artifact / done / error
+### 5.1 分层架构图
+
+```mermaid
+flowchart TD
+  subgraph ENTRY["入口层（都走同一套信封）"]
+    R["文档再加工抽屉"]
+    AT["@艾特行内调用（规划中）"]
+    WF["工作流节点（规划中）"]
+  end
+
+  ENTRY -->|"GET capabilities / parameters · POST invoke(SSE)"| CTRL
+
+  subgraph CTRL["AgentUniverseController（只打通管道，绝不仿冒）"]
+    ROUTE{"按 agentKey 找真实适配器"}
+  end
+
+  REG[("AgentCapabilityRegistry<br/>能力契约 SSOT · 只描述边界")]
+  ROUTE -. 读契约 .-> REG
+  ROUTE -->|找到| ADAPTERS
+  ROUTE -->|找不到| ERR["报错 NO_REAL_AGENT<br/>绝不降级仿冒"]
+
+  subgraph ADAPTERS["真实组件 IAgentAdapter（5 个，4 个已登记）"]
+    V["VisualAgentAdapter"]
+    L["LiteraryAgentAdapter"]
+    D["DefectAgentAdapter"]
+    P["PrdAgentAdapter"]
+    C2["CdsAgentAdapter（未登记）"]
+  end
+
+  V --> OIC["OpenAIImageClient<br/>真实生图引擎"]
+  L --> GW["ILlmGateway"]
+  D --> GW
+  P --> GW
+  OIC --> POOL[("模型池<br/>智能体各自原有的池")]
+  GW --> POOL
+
+  ADAPTERS --> EV["统一 SSE 事件<br/>start / text / artifact / done / error"]
+  EV --> ENTRY
 ```
 
-关键点：契约是**唯一**新增的抽象层；适配器、网关、Artifact 全是系统已有的砖块。控制器复用 `ai-toolbox` 应用身份与 `ai-toolbox.use` 权限（与 `TranscriptAgentController` 同样复用，符合 `app-identity.md`）。
+文字版调用链：
+
+```
+前端入口 → GET capabilities/parameters（渲染选择器+参数）→ POST invoke(SSE)
+   → Controller 按 agentKey 查契约 + 找真实 IAgentAdapter
+   → 找到：adapter.StreamExecuteAsync（唯一路径）→ 真实引擎（生图 / 网关）→ 各自原有模型池
+   → 找不到：NO_REAL_AGENT（绝不仿冒降级）
+   → 统一 SSE 事件回传前端
+```
+
+关键点：契约是**唯一**新增的抽象层；适配器、网关、Artifact、模型池全是系统已有的砖块。控制器复用 `ai-toolbox` 应用身份与 `ai-toolbox.use` 权限（符合 `app-identity.md`）。
+
+### 5.2 如何接入一个新智能体（扩展指南）
+
+这是一个**开放平台**，加新智能体永远是同一套两步（无须改前端、无须改入口）：
+
+1. **确保有真实组件**：该智能体必须有一个 `IAgentAdapter` 实现（`AgentKey` + `CanHandle(action)` + `StreamExecuteAsync`）。已有就跳过；没有就写一个**薄封装其真实服务/Controller** 的适配器——核心戒律：封装，不复制提示词。
+2. **登记一条契约**：在 `AgentCapabilityRegistry.All` 加一条 `AgentCapability`（agentKey / 名称 / inputs / outputs / invokeMode / interaction / defaultAction / 提示文案）。
+
+登记后自动生效的能力：
+- 再加工面板自动出现该智能体（若同时在 `BUILTIN_TOOLS` 有卡片）；
+- `capabilities` / `parameters` / `invoke` 三个接口自动支持它；
+- 未来的 @艾特、工作流节点等任何"会发信封"的入口自动可驱动它。
+
+可选：若该智能体**有真实可选项**（如视觉的尺寸/模型），在 `AgentParameters` 端点按其**自己原有的池/注册表**返回真实选项（有多个才给选择器，没的选就不给——不造假选项）。
 
 ## 6. 接口设计
 
 ### GET /api/agent-universe/capabilities
-返回 `{ success, data: { capabilities: AgentCapability[] } }`。`systemPrompt` / `appCallerCode` 不下发（`[JsonIgnore]`，前端无业务逻辑）。
+返回 `{ success, data: { capabilities: AgentCapability[] } }`。契约**只含边界字段**（I/O + 调用方式 + 交互），**不含任何提示词/模型**——业务行为全在真实适配器里。
+
+### GET /api/agent-universe/agents/{agentKey}/parameters
+返回 `{ success, data: { parameters: AgentParameter[] } }`。按该智能体**自己原有的池/注册表**列出真实可选项（如视觉的尺寸/模型）；只有"确实有多个可选项"时才返回对应参数（没的选就不给，不造假选项）。每个参数：`{ key, label, type, options:[{value,label}], default }`。
 
 ### POST /api/agent-universe/invoke （SSE）
 请求体：
 ```json
 { "agentKey": "visual-agent", "text": "赛博朋克城市夜景",
-  "documentContent": "可选，chat 模式作为输入上下文", "history": [], "imageUrls": [] }
+  "documentContent": "可选，chat 模式作为输入上下文",
+  "parameters": { "size": "1344x768" }, "history": [], "imageUrls": [] }
 ```
+`parameters` 是面板选择的可选参数（如尺寸/模型），透传给真实适配器的 `Input`。
 SSE 事件：
 | 事件 | data | 说明 |
 |------|------|------|
