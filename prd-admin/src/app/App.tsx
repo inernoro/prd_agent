@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-
 import { useAuthStore } from '@/stores/authStore';
 import { initializeTheme } from '@/stores/themeStore';
 import AppShell from '@/layouts/AppShell';
+import { FullscreenTipsDock } from '@/components/daily-tips/FullscreenTipsDock';
 import { getAdminAuthzMe, getAdminMenuCatalog } from '@/services';
 import { ToastContainer } from '@/components/ui/Toast';
 import { AgentSwitcherProvider } from '@/components/agent-switcher';
@@ -202,8 +203,9 @@ export default function App() {
         <Route path="/_dev/streaming-text-lab" element={<StreamingTextLab />} />
 
         {/* ── NAV_REGISTRY 中 placement='fullscreen' 的条目（独立全屏，不进 AppShell） */}
+        {/* 全屏页绕过 AppShell，需补挂 FullscreenTipsDock 才有右下角「小技巧」+ 本页教程引导。 */}
         {NAV_REGISTRY.filter((e) => e.placement === 'fullscreen').map((e) => (
-          <Route key={e.path} path={e.path} element={e.element} />
+          <Route key={e.path} path={e.path} element={<>{e.element}<FullscreenTipsDock /></>} />
         ))}
 
         {/* 自动加入共享文件夹（邀请链接）：登录后自动加入并跳网页托管 */}
