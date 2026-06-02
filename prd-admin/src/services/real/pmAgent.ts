@@ -48,6 +48,8 @@ import type {
   CreatePmGoalContract,
   UpdatePmGoalContract,
   DeletePmGoalContract,
+  ListPmGoalCheckInsContract,
+  AddPmGoalCheckInContract,
   ListPmAuditLogsContract,
   ListPmMilestonesContract,
   CreatePmMilestoneContract,
@@ -211,6 +213,13 @@ export const updatePmGoalReal: UpdatePmGoalContract = async (goalId, input) => {
 
 export const deletePmGoalReal: DeletePmGoalContract = async (goalId) => {
   return await apiRequest(api.pm.goals.item(encodeURIComponent(goalId)), { method: 'DELETE' });
+};
+
+export const listPmGoalCheckInsReal: ListPmGoalCheckInsContract = async (goalId) => {
+  return await apiRequest(api.pm.goals.checkins(encodeURIComponent(goalId)), { method: 'GET' });
+};
+export const addPmGoalCheckInReal: AddPmGoalCheckInContract = async (goalId, input) => {
+  return await apiRequest(api.pm.goals.checkins(encodeURIComponent(goalId)), { method: 'POST', body: input });
 };
 
 // ── 审计日志 ──

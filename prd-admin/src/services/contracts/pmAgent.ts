@@ -451,6 +451,9 @@ export type DeletePmMeetingContract = (meetingId: string) => Promise<ApiResponse
 // ── 目标 / 计划 ──
 export type PmGoalScope = 'team' | 'personal';
 export type PmGoalStatus = 'on_track' | 'at_risk' | 'done' | 'abandoned';
+export type PmGoalConfidence = 'high' | 'medium' | 'low';
+export type PmKeyResultType = 'percent' | 'number' | 'currency' | 'binary';
+export type PmKeyResult = { id: string; title: string; type: PmKeyResultType; startValue: number; targetValue: number; currentValue: number; unit?: string | null };
 export type PmGoal = {
   id: string;
   projectId: string;
@@ -465,6 +468,14 @@ export type PmGoal = {
   title: string;
   description?: string | null;
   metric?: string | null;
+  /** 结构化关键结果 KR */
+  keyResults?: PmKeyResult[];
+  keyResultCount?: number;
+  /** 负责人（可指派） */
+  leadId?: string | null;
+  leadName?: string | null;
+  /** 信心指数（最近一次 check-in） */
+  confidence?: PmGoalConfidence | null;
   period?: string | null;
   progress: number;
   progressMode: 'auto' | 'manual';
@@ -476,7 +487,16 @@ export type PmGoal = {
   createdAt: string;
   updatedAt: string;
 };
-export type SavePmGoalInput = Partial<{ scope: PmGoalScope; parentId: string; title: string; description: string; metric: string; period: string; progress: number; progressMode: 'auto' | 'manual'; status: PmGoalStatus; orderKey: number }>;
+export type SavePmGoalInput = Partial<{
+  scope: PmGoalScope; parentId: string; title: string; description: string; metric: string; period: string;
+  progress: number; progressMode: 'auto' | 'manual'; status: PmGoalStatus;
+  leadId: string;
+  keyResults: { id?: string; title: string; type: PmKeyResultType; startValue: number; targetValue: number; currentValue: number; unit?: string }[];
+  orderKey: number;
+}>;
+export type PmGoalCheckIn = { id: string; goalId: string; projectId: string; authorId: string; authorName?: string | null; progress?: number | null; confidence?: PmGoalConfidence | null; note: string; createdAt: string };
+export type ListPmGoalCheckInsContract = (goalId: string) => Promise<ApiResponse<{ items: PmGoalCheckIn[] }>>;
+export type AddPmGoalCheckInContract = (goalId: string, input: { progress?: number; confidence?: PmGoalConfidence; note?: string }) => Promise<ApiResponse<PmGoalCheckIn>>;
 /** AI 拆解出的目标草稿（SSE 返回，未落库） */
 export type PmGoalDraft = { title: string; description?: string | null; metric?: string | null; period?: string | null };
 export type ListPmGoalsContract = (projectId: string) => Promise<ApiResponse<{ items: PmGoal[] }>>;

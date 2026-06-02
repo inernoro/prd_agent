@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus, Trash2, Pencil, Check, X, Target, Lock, Users, Compass, Flag, Sparkles, ChevronRight, ChevronDown, GitBranch, Network, List } from 'lucide-react';
+import { Plus, Trash2, Pencil, Check, X, Target, Lock, Users, Compass, Flag, Sparkles, ChevronRight, ChevronDown, GitBranch, Network, List, User } from 'lucide-react';
+
+const CONFIDENCE_DOT: Record<string, { label: string; color: string }> = {
+  high: { label: '信心高', color: '#10B981' }, medium: { label: '信心中', color: '#F59E0B' }, low: { label: '信心低', color: '#EF4444' },
+};
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
@@ -203,9 +207,13 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onNavigateTask,
           <span className="text-[11px] tabular-nums w-9 text-right" style={{ color: 'var(--text-muted)' }}>{g.progress}%</span>
         </div>
         <div className="flex items-center gap-3 text-[11px] flex-wrap" style={{ color: 'var(--text-muted)' }}>
-          {g.progressMode === 'auto'
-            ? <span className="inline-flex items-center gap-1"><Flag size={10} />里程碑滚动{g.linkedMilestoneCount ? ` · 关联 ${g.linkedMilestoneCount}` : '（未关联）'}</span>
-            : <span>手填进度</span>}
+          {(g.keyResultCount ?? 0) > 0
+            ? <span className="inline-flex items-center gap-1"><Target size={10} />KR {g.keyResultCount}</span>
+            : g.progressMode === 'auto'
+              ? <span className="inline-flex items-center gap-1"><Flag size={10} />里程碑滚动{g.linkedMilestoneCount ? ` · 关联 ${g.linkedMilestoneCount}` : '（未关联）'}</span>
+              : <span>手填进度</span>}
+          {g.confidence && <span className="inline-flex items-center gap-1" style={{ color: CONFIDENCE_DOT[g.confidence].color }}><span className="w-1.5 h-1.5 rounded-full" style={{ background: CONFIDENCE_DOT[g.confidence].color }} />{CONFIDENCE_DOT[g.confidence].label}</span>}
+          {g.leadName && <span className="inline-flex items-center gap-1"><User size={10} />{g.leadName}</span>}
           {g.metric && <span className="truncate">指标：{g.metric}</span>}
           {g.period && <span className="shrink-0">周期：{g.period}</span>}
         </div>

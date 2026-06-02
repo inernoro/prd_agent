@@ -318,6 +318,7 @@ public class MongoDbContext
     public IMongoCollection<PmWeeklyReport> PmWeeklyReports => _database.GetCollection<PmWeeklyReport>("pm_weekly_reports");
     public IMongoCollection<PmMeeting> PmMeetings => _database.GetCollection<PmMeeting>("pm_meetings");
     public IMongoCollection<PmGoal> PmGoals => _database.GetCollection<PmGoal>("pm_goals");
+    public IMongoCollection<PmGoalCheckIn> PmGoalCheckIns => _database.GetCollection<PmGoalCheckIn>("pm_goal_checkins");
     public IMongoCollection<PmMilestone> PmMilestones => _database.GetCollection<PmMilestone>("pm_milestones");
     public IMongoCollection<PmRisk> PmRisks => _database.GetCollection<PmRisk>("pm_risks");
     public IMongoCollection<PmAuditLog> PmAuditLogs => _database.GetCollection<PmAuditLog>("pm_audit_logs");

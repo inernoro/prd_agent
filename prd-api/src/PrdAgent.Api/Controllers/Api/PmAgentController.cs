@@ -951,7 +951,7 @@ public class PmAgentController : ControllerBase
             return pool.Count > 0 ? (int)Math.Round(pool.Count(t => t.Status == PmTaskStatus.Done) * 100.0 / pool.Count) : -1;
         }
 
-        // 进度三级回退：有子目标→子目标 effective 均值（递归）；否则 auto+有关联任务→任务完成率；否则→手填/兜底
+        // 进度回退：有子目标→子目标 effective 均值（递归）；叶子 auto 模式→ KR 均值优先，无 KR 再→关联任务完成率；否则→手填/兜底
         var byId = goals.ToDictionary(g => g.Id);
         var childrenByParent = goals.Where(g => !string.IsNullOrEmpty(g.ParentId))
             .GroupBy(g => g.ParentId!)
@@ -970,8 +970,13 @@ public class PmAgentController : ControllerBase
             }
             else if (g.ProgressMode == PmGoalProgressMode.Auto)
             {
-                var taskProg = LeafTaskProgress(g.Id);
-                result = taskProg >= 0 ? taskProg : g.Progress;
+                if (g.KeyResults.Count > 0)
+                    result = (int)Math.Round(g.KeyResults.Average(k => k.ComputeProgress()));
+                else
+                {
+                    var taskProg = LeafTaskProgress(g.Id);
+                    result = taskProg >= 0 ? taskProg : g.Progress;
+                }
             }
             else
             {
@@ -992,6 +997,8 @@ public class PmAgentController : ControllerBase
                 id = g.Id, projectId = g.ProjectId, scope = g.Scope, ownerId = g.OwnerId,
                 parentId = g.ParentId, depth = g.Depth, childCount,
                 title = g.Title, description = g.Description, metric = g.Metric, period = g.Period,
+                keyResults = g.KeyResults, keyResultCount = g.KeyResults.Count,
+                leadId = g.LeadId, leadName = g.LeadName, confidence = g.Confidence,
                 progress = effective, progressMode = g.ProgressMode, linkedMilestoneCount = linked.Count,
                 status = g.Status, createdBy = g.CreatedBy, createdByName = g.CreatedByName,
                 orderKey = g.OrderKey, createdAt = g.CreatedAt, updatedAt = g.UpdatedAt,
@@ -1032,6 +1039,8 @@ public class PmAgentController : ControllerBase
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "个人目标仅本人可拆解"));
 
         var creatorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+        var leadName = string.IsNullOrWhiteSpace(request.LeadId) ? null
+            : (await _db.Users.Find(u => u.UserId == request.LeadId).FirstOrDefaultAsync())?.DisplayName;
         var entity = new PmGoal
         {
             ProjectId = projectId,
@@ -1039,9 +1048,12 @@ public class PmAgentController : ControllerBase
             ParentId = parent?.Id,
             Depth = parent != null ? parent.Depth + 1 : 0,
             OwnerId = userId, // 个人目标=本人；团队目标记录创建人
+            LeadId = string.IsNullOrWhiteSpace(request.LeadId) ? null : request.LeadId,
+            LeadName = leadName,
             Title = request.Title!.Trim(),
             Description = request.Description?.Trim(),
             Metric = request.Metric?.Trim(),
+            KeyResults = MapKeyResults(request.KeyResults),
             Period = request.Period?.Trim(),
             Progress = Math.Clamp(request.Progress ?? 0, 0, 100),
             ProgressMode = PmGoalProgressMode.IsValid(request.ProgressMode) ? request.ProgressMode! : PmGoalProgressMode.Auto,
@@ -1085,6 +1097,13 @@ public class PmAgentController : ControllerBase
         if (request.Description != null) update = update.Set(x => x.Description, request.Description.Trim());
         if (request.Metric != null) update = update.Set(x => x.Metric, request.Metric.Trim());
         if (request.Period != null) update = update.Set(x => x.Period, request.Period.Trim());
+        if (request.LeadId != null)
+        {
+            var lid = string.IsNullOrWhiteSpace(request.LeadId) ? null : request.LeadId;
+            var lname = lid == null ? null : (await _db.Users.Find(u => u.UserId == lid).FirstOrDefaultAsync())?.DisplayName;
+            update = update.Set(x => x.LeadId, lid).Set(x => x.LeadName, lname);
+        }
+        if (request.KeyResults != null) update = update.Set(x => x.KeyResults, MapKeyResults(request.KeyResults));
         if (request.Progress.HasValue) update = update.Set(x => x.Progress, Math.Clamp(request.Progress.Value, 0, 100));
         if (request.Status != null)
         {
@@ -1129,7 +1148,63 @@ public class PmAgentController : ControllerBase
                 foreach (var k in kids) queue.Enqueue(k);
         }
         await _db.PmGoals.DeleteManyAsync(x => toDelete.Contains(x.Id));
+        await _db.PmGoalCheckIns.DeleteManyAsync(x => toDelete.Contains(x.GoalId));
         return Ok(ApiResponse<object>.Ok(new { deleted = true, count = toDelete.Count }));
+    }
+
+    /// <summary>目标进展 check-in 时间线（最新在前）。可见性同目标：个人目标仅本人。</summary>
+    [HttpGet("goals/{goalId}/checkins")]
+    public async Task<IActionResult> ListGoalCheckIns(string goalId)
+    {
+        var userId = GetUserId();
+        var g = await _db.PmGoals.Find(x => x.Id == goalId).FirstOrDefaultAsync();
+        if (g == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "目标不存在"));
+        if (await FindAccessibleProjectAsync(g.ProjectId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (g.Scope == PmGoalScope.Personal && g.OwnerId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "个人目标仅本人可见"));
+
+        var items = await _db.PmGoalCheckIns.Find(c => c.GoalId == goalId)
+            .SortByDescending(c => c.CreatedAt).Limit(100).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>提交一条目标进展 check-in（进度/信心/说明）。更新目标的最新信心，进度若填则同步到目标手填值。</summary>
+    [HttpPost("goals/{goalId}/checkins")]
+    public async Task<IActionResult> AddGoalCheckIn(string goalId, [FromBody] GoalCheckInRequest request)
+    {
+        var userId = GetUserId();
+        var g = await _db.PmGoals.Find(x => x.Id == goalId).FirstOrDefaultAsync();
+        if (g == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "目标不存在"));
+        if (await FindAccessibleProjectAsync(g.ProjectId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (g.Scope == PmGoalScope.Personal && g.OwnerId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "个人目标仅本人可更新"));
+        if (string.IsNullOrWhiteSpace(request.Note) && request.Progress == null && string.IsNullOrWhiteSpace(request.Confidence))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请至少填写进展说明、进度或信心之一"));
+        if (request.Confidence != null && !PmGoalConfidence.IsValid(request.Confidence))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的信心值"));
+
+        var actorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+        var entity = new PmGoalCheckIn
+        {
+            GoalId = goalId,
+            ProjectId = g.ProjectId,
+            AuthorId = userId,
+            AuthorName = actorName,
+            Progress = request.Progress.HasValue ? Math.Clamp(request.Progress.Value, 0, 100) : null,
+            Confidence = request.Confidence,
+            Note = request.Note?.Trim() ?? string.Empty,
+        };
+        await _db.PmGoalCheckIns.InsertOneAsync(entity);
+
+        // 冗余更新目标：最新信心 +（手填进度时）同步进度
+        var gUpdate = Builders<PmGoal>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow);
+        if (!string.IsNullOrWhiteSpace(request.Confidence)) gUpdate = gUpdate.Set(x => x.Confidence, request.Confidence);
+        if (entity.Progress.HasValue) gUpdate = gUpdate.Set(x => x.Progress, entity.Progress.Value);
+        await _db.PmGoals.UpdateOneAsync(x => x.Id == goalId, gUpdate);
+
+        return Ok(ApiResponse<object>.Ok(entity));
     }
 
     // ─────────────────────────────────────────────
@@ -1241,6 +1316,22 @@ public class PmAgentController : ControllerBase
                 Id = string.IsNullOrWhiteSpace(c.Id) ? Guid.NewGuid().ToString("N") : c.Id!,
                 Text = c.Text!.Trim(),
                 Done = c.Done,
+            })
+            .ToList();
+
+    /// <summary>请求 KR → 模型；标题空白的丢弃，缺 Id 补 Guid，type 归一。</summary>
+    private static List<PmKeyResult> MapKeyResults(List<KeyResultInput>? input)
+        => (input ?? new())
+            .Where(k => !string.IsNullOrWhiteSpace(k.Title))
+            .Select(k => new PmKeyResult
+            {
+                Id = string.IsNullOrWhiteSpace(k.Id) ? Guid.NewGuid().ToString("N") : k.Id!,
+                Title = k.Title!.Trim(),
+                Type = PmKeyResultType.IsValid(k.Type) ? k.Type! : PmKeyResultType.Percent,
+                StartValue = k.StartValue ?? 0,
+                TargetValue = k.TargetValue ?? 100,
+                CurrentValue = k.CurrentValue ?? 0,
+                Unit = string.IsNullOrWhiteSpace(k.Unit) ? null : k.Unit!.Trim(),
             })
             .ToList();
 
@@ -2876,7 +2967,29 @@ public class GoalRequest
     public int? Progress { get; set; }
     public string? ProgressMode { get; set; }
     public string? Status { get; set; }
+    /// <summary>负责人 UserId（null=不变；空串=清除）</summary>
+    public string? LeadId { get; set; }
+    /// <summary>关键结果 KR（null=不变）</summary>
+    public List<KeyResultInput>? KeyResults { get; set; }
     public long? OrderKey { get; set; }
+}
+
+public class KeyResultInput
+{
+    public string? Id { get; set; }
+    public string? Title { get; set; }
+    public string? Type { get; set; }
+    public double? StartValue { get; set; }
+    public double? TargetValue { get; set; }
+    public double? CurrentValue { get; set; }
+    public string? Unit { get; set; }
+}
+
+public class GoalCheckInRequest
+{
+    public int? Progress { get; set; }
+    public string? Confidence { get; set; }
+    public string? Note { get; set; }
 }
 
 public class RiskRequest
