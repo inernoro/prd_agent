@@ -65,10 +65,9 @@ function markAutoOpenedToday() {
 export const FLOATING_DOCK_COLLAPSED_KEY = 'floatingDockCollapsed';
 /** 折叠状态变更事件名(同 tab 内 storage 事件不触发,必须用 CustomEvent) */
 export const FLOATING_DOCK_EVENT = 'floating-dock-collapsed-changed';
-/** dock 总高度变更事件:TipsDrawer 在 mode 切换时广播,AppShell 通知卡据此动态定位避免重叠 */
+/** dock 总高度变更事件:TipsDrawer 在抽屉展开/收起时广播,AppShell 通知卡据此动态定位避免重叠 */
 export const FLOATING_DOCK_HEIGHT_EVENT = 'floating-dock-height-changed';
 const AUTO_COLLAPSE_MS = 5000;
-const EDGE_PEEK_ZONE = 140; // 右下角触发区域大小(px)
 
 function readAutoOpenedIds(): Set<string> {
   try {
@@ -88,8 +87,6 @@ function writeAutoOpenedIds(ids: Set<string>) {
     /* noop */
   }
 }
-
-type Mode = 'collapsed' | 'expanded' | 'hidden' | 'edge-peek';
 
 export function TipsDrawer() {
   const navigate = useNavigate();
@@ -174,22 +171,15 @@ export function TipsDrawer() {
     return () => window.removeEventListener(FLOATING_DOCK_EVENT, onDockChange);
   }, []);
 
-  // ── expanded / edge-peek / hover 临时状态 ────────────────────────
+  // ── expanded / 轮播 临时状态 ────────────────────────
   const [expanded, setExpanded] = useState<boolean>(false);
-  const [edgeHover, setEdgeHover] = useState<boolean>(false);
   // 轮播索引(抽屉当前展示第几条 tip)
   const [carouselIndex, setCarouselIndex] = useState<number>(0);
 
-  // ── 悬浮组整体折叠(书 + 铃铛一起贴边) ───────────────────────
-  // 这个状态通过 sessionStorage 广播,AppShell 的 toast 按钮订阅同样的 key
-
-  // ── 当前最终模式 ─────────────────────────────────────
-  const mode: Mode = (() => {
-    if (expanded) return 'expanded';
-    if (pinned) return 'collapsed'; // pinned 时永远显示书
-    if (hiddenByUser) return edgeHover ? 'edge-peek' : 'hidden';
-    return 'collapsed';
-  })();
+  // 注:右下角「教程小书」入口已删除(改为各页头部内嵌 TipsEntryButton),
+  // 本组件只剩「展开后的教程抽屉气泡」一种可见形态——展开 = 渲染抽屉,未展开 = 不渲染。
+  // 原先的 collapsed/hidden/edge-peek 状态机随小书一并移除;hiddenByUser 仅保留
+  // 用于与 AppShell 通知铃铛的「整组贴边」联动(铃铛自带 edge-peek + 召回,见 AppShell)。
 
   // 当前页是否有「未走完的本页教程」(tips 已过滤掉已学会的)。渲染级单一真值:
   // 既供「强制自动开讲」用,也供下面两个抽屉自动展开 effect 做抑制判断——
@@ -221,8 +211,10 @@ export function TipsDrawer() {
       setHiddenByUser(false);
     }
     setExpanded(true);
+    // pageGuideHere 必须进 deps:否则首屏若落在「有教程页」early-return 后,
+    // 切到「无教程页」时本 effect 不再 fire,自动弹窗整 session 失效(Bugbot)。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, tips]);
+  }, [loaded, tips, pageGuideHere]);
 
   // ── 新用户兜底:本 session 第一次访问、有任意 tip 时自动弹一次 ──
   // 让用户第一次看到书时就知道它是做什么的(管理员没推送也能看到 seed 内容)
@@ -238,8 +230,10 @@ export function TipsDrawer() {
     if (hasAutoOpenedToday()) return; // 每天只自动弹一次
     markAutoOpenedToday();
     setExpanded(true);
+    // pageGuideHere 必须进 deps:deps 仅在 tips 首次加载时翻一次,若那一刻当前页有教程被
+    // early-return,切到无教程页后本 effect 永不再 fire → 抽屉整 session 不再自动弹(Bugbot)。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, tips.length > 0]);
+  }, [loaded, tips.length > 0, pageGuideHere]);
 
   // ── 强制新手引导:进入任意页面,若该页有「未走完」的本页教程(*-page-guide),自动开讲一次 ──
   // 目标(用户 2026-06-02 强调):人人都过一次,避免「不知道怎么操作」;每个应用走自己的完整教程。
@@ -299,12 +293,12 @@ export function TipsDrawer() {
   // ── dock 总高度广播:AppShell 通知卡据此动态定位,避免与书/drawer 重叠 ──
   const drawerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (mode === 'expanded') return; // expanded 时由 ResizeObserver 处理
+    if (expanded) return; // expanded 时由 ResizeObserver 处理
     // dock 已移到右上角,底部不再有悬浮组,通知卡按默认底距即可(避免把铃铛顶上去)
     window.dispatchEvent(new CustomEvent(FLOATING_DOCK_HEIGHT_EVENT, { detail: { dockBottom: 20 } }));
-  }, [mode]);
+  }, [expanded]);
   useEffect(() => {
-    if (mode !== 'expanded') return;
+    if (!expanded) return;
     const el = drawerRef.current;
     if (!el) return;
     const dispatch = () => {
@@ -317,7 +311,7 @@ export function TipsDrawer() {
     const ro = new ResizeObserver(dispatch);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [mode]);
+  }, [expanded]);
 
   // ── 自动收起:expanded 5s 内无 hover / 点击就 collapsed ──────
   const drawerHoveredRef = useRef(false);
@@ -329,23 +323,6 @@ export function TipsDrawer() {
     }, AUTO_COLLAPSE_MS);
     return () => window.clearTimeout(timer);
   }, [expanded]);
-
-  // ── 鼠标贴右下角触发 edge-peek ──────────────────────────
-  // 触发区域覆盖书的位置(右下 200px),hidden 时鼠标靠近就把书拉回来
-  useEffect(() => {
-    if (!hiddenByUser) {
-      setEdgeHover(false);
-      return;
-    }
-    const onMove = (e: MouseEvent) => {
-      const inZone =
-        window.innerWidth - e.clientX < EDGE_PEEK_ZONE &&
-        window.innerHeight - e.clientY < EDGE_PEEK_ZONE + 60;
-      setEdgeHover(inZone);
-    };
-    window.addEventListener('mousemove', onMove);
-    return () => window.removeEventListener('mousemove', onMove);
-  }, [hiddenByUser]);
 
   // ── 徽章计数 ────────────────────────────────────────
 
@@ -366,11 +343,18 @@ export function TipsDrawer() {
       // 抽屉故意保留打开,让用户边跟着 Spotlight 引导,边对照教程步骤 /
       // 决定点「不再提示」;不再像以前那样 setExpanded(false) 把引导面板秒关。
       const url = tip.actionUrl || '/';
-      // 已经在该 url 或其子路由(含编辑器页 /{agent}/:id、旧版全屏 /{agent}-fullscreen/:id)
-      // 时不要再 navigate,否则点编辑器教程的 CTA 会把用户从编辑器弹回列表页。
-      if (location.pathname !== url
-        && !location.pathname.startsWith(url + '/')
-        && !location.pathname.startsWith(url + '-fullscreen/')) {
+      // 编辑器教程(*-editor-page-guide)的锚点在编辑器深层路由内 → 已经在该 url 或其子路由
+      // (/{agent}/:id、旧版全屏 /{agent}-fullscreen/:id)时不 navigate,否则把用户从编辑器弹回列表页。
+      // 普通(列表页)教程的锚点只在列表页存在 → 即便当前停在编辑器子路由(轮播可能先选中同
+      // actionUrl 前缀的列表教程),也必须回到 actionUrl,否则 tour 在编辑器里找不到锚点,
+      // 卡在「目标未找到」(Codex P2)。
+      const isEditorGuide = typeof tip.sourceId === 'string' && tip.sourceId.includes('editor');
+      const alreadyAtTarget = isEditorGuide
+        ? (location.pathname === url
+          || location.pathname.startsWith(url + '/')
+          || location.pathname.startsWith(url + '-fullscreen/'))
+        : location.pathname === url;
+      if (!alreadyAtTarget) {
         navigate(url);
       }
     },
@@ -403,7 +387,7 @@ export function TipsDrawer() {
 
   // ── 抽屉本体 ────────────────────────────────────────
   const drawer =
-    mode === 'expanded' ? (
+    expanded ? (
       <div
         ref={drawerRef}
         onMouseEnter={() => {
