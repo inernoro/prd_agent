@@ -89,6 +89,28 @@ export function sanitizeDbName(raw: string | undefined): string {
 }
 
 /**
+ * Derive the customEnv connection entries for one same-type instance.
+ * - idx 0 (first instance): byte-identical to the catalog build (var names + host unchanged) → full backward compat.
+ * - idx > 0 (2nd+ instance): var name gets a `_${idx+1}` suffix, AND the connection host (the base preset
+ *   alias, e.g. `@postgres:`) is rewritten to the instance alias (`@postgres-2:`) so the app reaches THIS
+ *   instance's own container. This is what lets a project hold two databases of the same type with
+ *   independent connection strings.
+ */
+export function instanceConnectionEnv(
+  envVars: Record<string, string>,
+  basePresetId: string,
+  instanceId: string,
+  idx: number,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  const suffix = idx === 0 ? '' : `_${idx + 1}`;
+  for (const [key, value] of Object.entries(envVars)) {
+    out[`${key}${suffix}`] = idx === 0 ? value : value.split(`@${basePresetId}:`).join(`@${instanceId}:`);
+  }
+  return out;
+}
+
+/**
  * SQL Server's default password policy requires 3 of 4 character classes. Hex secrets
  * only cover lower+digit, so we append a fixed complexity suffix.
  */

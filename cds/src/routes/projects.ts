@@ -35,6 +35,7 @@ import { repoNameFromGitRef } from '../services/preview-slug.js';
 import {
   getInfraCatalogEntry,
   infraCatalogIds,
+  instanceConnectionEnv,
   recommendedVolumePathsFromCatalog,
   sanitizeDbName,
   type InfraPresetDefinition,
@@ -687,12 +688,9 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       };
       stateService.addInfraService(service);
       applied.push(service.id);
-      // 连接串:第 1 个实例(idx 0)完全沿用原变量名 + 原 host(向后兼容,零改动);
-      // 第 2+ 个实例:变量名加 _N 后缀、并把连接串里的 host(=presetId) 改写成实例别名(presetId-N)。
-      const suffix = idx === 0 ? '' : `_${idx + 1}`;
-      for (const [key, value] of Object.entries(preset.envVars || {})) {
-        const envKey = `${key}${suffix}`;
-        const envValue = idx === 0 ? value : value.split(`@${req.presetId}:`).join(`@${instanceId}:`);
+      // 连接串:第 1 个实例零改动;第 2+ 个加 _N 后缀 + host 改写到实例别名(纯函数,见单测)。
+      const connEnv = instanceConnectionEnv(preset.envVars || {}, req.presetId, instanceId, idx);
+      for (const [envKey, envValue] of Object.entries(connEnv)) {
         stateService.setCustomEnvVar(envKey, envValue, project.id);
         envMeta[envKey] = {
           kind: 'infra-derived',

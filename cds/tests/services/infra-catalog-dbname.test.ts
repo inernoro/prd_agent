@@ -5,7 +5,7 @@
  * 默认回落 app(向后兼容),非法字符被 sanitize。这就是"自动推导连接串"的确定性证明。
  */
 import { describe, it, expect } from 'vitest';
-import { getInfraCatalogEntry, sanitizeDbName } from '../../src/services/infra-catalog.js';
+import { getInfraCatalogEntry, sanitizeDbName, instanceConnectionEnv } from '../../src/services/infra-catalog.js';
 
 describe('infra-catalog 自定义数据库名', () => {
   it('postgres: dbName 同时进 env 与连接串', () => {
@@ -43,5 +43,33 @@ describe('infra-catalog 自定义数据库名', () => {
     expect(getInfraCatalogEntry('postgres')!.supportsInitSql).toBe(true);
     expect(getInfraCatalogEntry('redis')!.supportsDbName).toBeUndefined();
     expect(getInfraCatalogEntry('kafka')!.supportsDbName).toBeUndefined();
+  });
+});
+
+describe('同类型多数据库实例 (instanceConnectionEnv)', () => {
+  const pg = { DATABASE_URL: 'postgresql://app:pw@postgres:5432/analytics', POSTGRES_URL: 'postgresql://app:pw@postgres:5432/analytics' };
+
+  it('第 1 个实例(idx 0):变量名 + host 零改动(向后兼容)', () => {
+    const r = instanceConnectionEnv(pg, 'postgres', 'postgres', 0);
+    expect(r.DATABASE_URL).toBe('postgresql://app:pw@postgres:5432/analytics');
+    expect(r.DATABASE_URL_2).toBeUndefined();
+  });
+
+  it('第 2 个实例(idx 1):变量名加 _2 后缀 + host 改写到实例别名 postgres-2', () => {
+    const r = instanceConnectionEnv(pg, 'postgres', 'postgres-2', 1);
+    expect(r.DATABASE_URL_2).toBe('postgresql://app:pw@postgres-2:5432/analytics');
+    expect(r.POSTGRES_URL_2).toBe('postgresql://app:pw@postgres-2:5432/analytics');
+    expect(r.DATABASE_URL).toBeUndefined(); // 不污染第一个实例的变量名
+  });
+
+  it('第 3 个实例(idx 2):_3 后缀 + host=postgres-3', () => {
+    const r = instanceConnectionEnv(pg, 'postgres', 'postgres-3', 2);
+    expect(r.DATABASE_URL_3).toBe('postgresql://app:pw@postgres-3:5432/analytics');
+  });
+
+  it('mongodb 第 2 个实例:host 改写 + ?authSource 查询串保留', () => {
+    const mongo = { MONGODB_URL: 'mongodb://app:pw@mongodb:27017/orders?authSource=admin' };
+    const r = instanceConnectionEnv(mongo, 'mongodb', 'mongodb-2', 1);
+    expect(r.MONGODB_URL_2).toBe('mongodb://app:pw@mongodb-2:27017/orders?authSource=admin');
   });
 });
