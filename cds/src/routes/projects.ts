@@ -629,31 +629,56 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     project: Project,
     presetIds: string[],
     configMap?: Record<string, { dbName?: string; initSql?: string }>,
+    extraInstances?: Array<{ presetId: string; dbName?: string; initSql?: string }>,
   ): string[] {
-    const unique = Array.from(new Set(presetIds.filter((id) => INFRA_PRESETS.has(id))));
-    if (unique.length === 0) return [];
-    const existingInfraIds = new Set(stateService.getInfraServicesForProject(project.id).map((service) => service.id));
+    // 实例请求清单:每个被选预设的第 1 个实例(presetIds) + 额外同类型实例(extraInstances,第 2+ 个)。
+    const requests: Array<{ presetId: string; dbName?: string; initSql?: string }> = [];
+    for (const presetId of Array.from(new Set(presetIds.filter((id) => INFRA_PRESETS.has(id))))) {
+      const cfg = configMap?.[presetId];
+      requests.push({ presetId, dbName: cfg?.dbName, initSql: cfg?.initSql });
+    }
+    for (const ex of extraInstances || []) {
+      const entry = getInfraCatalogEntry(ex.presetId);
+      // 额外同类型实例仅对"可命名库"的预设(数据库)开放——其连接串 host 才能被安全改写到实例别名。
+      if (entry && entry.supportsDbName && INFRA_PRESETS.has(ex.presetId)) {
+        requests.push({ presetId: ex.presetId, dbName: ex.dbName, initSql: ex.initSql });
+      }
+    }
+    if (requests.length === 0) return [];
+
+    const existing = stateService.getInfraServicesForProject(project.id);
+    const existingIds = new Set(existing.map((service) => service.id));
+    const countByPreset = new Map<string, number>();
+    for (const service of existing) {
+      const base = service.basePresetId || service.id;
+      countByPreset.set(base, (countByPreset.get(base) || 0) + 1);
+    }
+
     const applied: string[] = [];
     const envMeta = stateService.getEnvMeta(project.id);
-    for (const presetId of unique) {
-      const cfg = configMap?.[presetId];
-      const dbName = cfg?.dbName ? sanitizeDbName(cfg.dbName) : undefined;
-      const initSql = cfg?.initSql && cfg.initSql.trim() ? cfg.initSql.trim() : undefined;
-      const preset = createInfraPreset(project, presetId, { dbName });
-      if (!preset || existingInfraIds.has(preset.id)) continue;
+    for (const req of requests) {
+      const idx = countByPreset.get(req.presetId) || 0; // 0-based:0=第一个实例(沿用原行为)
+      const instanceId = idx === 0 ? req.presetId : `${req.presetId}-${idx + 1}`;
+      countByPreset.set(req.presetId, idx + 1);
+      if (existingIds.has(instanceId)) continue;
+      const dbName = req.dbName ? sanitizeDbName(req.dbName) : undefined;
+      const initSql = req.initSql && req.initSql.trim() ? req.initSql.trim() : undefined;
+      const preset = createInfraPreset(project, req.presetId, { dbName });
+      if (!preset) continue;
       const containerName = project.legacyFlag
-        ? `cds-infra-${preset.id}`
-        : `cds-infra-${project.slug.slice(0, 12)}-${preset.id}`;
+        ? `cds-infra-${instanceId}`
+        : `cds-infra-${project.slug.slice(0, 12)}-${instanceId}`;
       const service: InfraService = {
-        id: preset.id,
+        id: instanceId,
+        basePresetId: req.presetId,
         projectId: project.id,
-        name: preset.name,
+        name: idx === 0 ? preset.name : `${preset.name} #${idx + 1}`,
         dockerImage: preset.dockerImage,
         containerPort: preset.containerPort,
         hostPort: stateService.allocatePort(config?.portStart || 10000),
         containerName,
         status: 'stopped',
-        volumes: recommendedInfraVolumes(project, preset.id, preset.dockerImage),
+        volumes: recommendedInfraVolumes(project, instanceId, preset.dockerImage),
         env: preset.env || {},
         ...(dbName ? { dbName } : {}),
         ...(initSql ? { initSql } : {}),
@@ -662,11 +687,16 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       };
       stateService.addInfraService(service);
       applied.push(service.id);
+      // 连接串:第 1 个实例(idx 0)完全沿用原变量名 + 原 host(向后兼容,零改动);
+      // 第 2+ 个实例:变量名加 _N 后缀、并把连接串里的 host(=presetId) 改写成实例别名(presetId-N)。
+      const suffix = idx === 0 ? '' : `_${idx + 1}`;
       for (const [key, value] of Object.entries(preset.envVars || {})) {
-        stateService.setCustomEnvVar(key, value, project.id);
-        envMeta[key] = {
+        const envKey = `${key}${suffix}`;
+        const envValue = idx === 0 ? value : value.split(`@${req.presetId}:`).join(`@${instanceId}:`);
+        stateService.setCustomEnvVar(envKey, envValue, project.id);
+        envMeta[envKey] = {
           kind: 'infra-derived',
-          hint: `${preset.name} 连接串，由 CDS 创建基础设施时生成`,
+          hint: `${service.name} 连接串，由 CDS 创建基础设施时生成`,
         };
       }
     }
@@ -692,6 +722,23 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       if (entry.dbName || entry.initSql) out[key] = entry;
     }
     return Object.keys(out).length > 0 ? out : undefined;
+  }
+
+  /** Parse the `infraExtra` array (additional same-type DB instances → 2nd+ instance) from a request body. */
+  function parseInfraExtra(raw: unknown): Array<{ presetId: string; dbName?: string; initSql?: string }> | undefined {
+    if (!Array.isArray(raw)) return undefined;
+    const out: Array<{ presetId: string; dbName?: string; initSql?: string }> = [];
+    for (const item of raw) {
+      if (!item || typeof item !== 'object') continue;
+      const it = item as { presetId?: unknown; dbName?: unknown; initSql?: unknown };
+      if (typeof it.presetId !== 'string' || !it.presetId.trim()) continue;
+      out.push({
+        presetId: it.presetId.trim(),
+        dbName: typeof it.dbName === 'string' && it.dbName.trim() ? it.dbName.trim() : undefined,
+        initSql: typeof it.initSql === 'string' && it.initSql.trim() ? it.initSql.trim() : undefined,
+      });
+    }
+    return out.length > 0 ? out : undefined;
   }
 
   function runtimeProfilePreset(project: Project, service?: OnboardingService): BuildProfile | null {
@@ -1393,7 +1440,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       res.status(404).json({ error: 'project_not_found' });
       return;
     }
-    const body = (req.body || {}) as { presetIds?: unknown; infraConfigs?: unknown };
+    const body = (req.body || {}) as { presetIds?: unknown; infraConfigs?: unknown; infraExtra?: unknown };
     const presetIds = (Array.isArray(body.presetIds) ? body.presetIds : [])
       .filter((id): id is string => typeof id === 'string');
     if (presetIds.length === 0) {
@@ -1405,7 +1452,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       res.status(400).json({ error: `未知基建预设: ${unknown.join(', ')}（见 GET /api/infra/catalog）` });
       return;
     }
-    const applied = applyInfraPresets(project, presetIds, parseInfraConfigs(body.infraConfigs));
+    const applied = applyInfraPresets(project, presetIds, parseInfraConfigs(body.infraConfigs), parseInfraExtra(body.infraExtra));
     const services = stateService.getInfraServicesForProject(project.id).filter((s) => applied.includes(s.id));
     res.json({ applied, services });
   });
@@ -1459,6 +1506,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       autoDetectOnClone: boolean;
       infraPresets: string[];
       infraConfigs: Record<string, { dbName?: string; initSql?: string }>;
+      infraExtra: Array<{ presetId: string; dbName?: string; initSql?: string }>;
+      customEnv: Record<string, string>;
       onboardingRuntime: OnboardingRuntime;
       onboardingDockerImage: string;
       onboardingCommand: string;
@@ -1738,7 +1787,15 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
       return;
     }
-    const appliedInfraPresets = applyInfraPresets(newProject, infraPresets, parseInfraConfigs(body.infraConfigs));
+    // 少绕路:创建弹窗就地粘贴的项目环境变量,在建项目时一并写入(不必等克隆后再单独配)。
+    if (body.customEnv && typeof body.customEnv === 'object') {
+      for (const [key, value] of Object.entries(body.customEnv)) {
+        if (typeof value !== 'string') continue;
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue; // 合法 env key
+        stateService.setCustomEnvVar(key, value, newProject.id);
+      }
+    }
+    const appliedInfraPresets = applyInfraPresets(newProject, infraPresets, parseInfraConfigs(body.infraConfigs), parseInfraExtra(body.infraExtra));
 
     // F11 — 沙盒模式 bootstrap:在 reposBase/<projectId>/ 本地 init 一个
     // git 仓库,写 cds-compose.yml + projectFiles[],模拟"clone 完成"状态,
