@@ -108,8 +108,9 @@ function TagPickerChip({ tag, onRemove }: { tag: string; onRemove: () => void })
   );
 }
 
-// 条目行内 tag 小药丸（按名字排序后前 2 个完整渲染 + 多余折叠 +N），颜色读 Context 覆盖
-function TagRowChips({ tags }: { tags: string[] }) {
+// 条目行内 tag 小药丸（按名字排序后前 2 个完整渲染 + 多余折叠 +N），颜色读 Context 覆盖。
+// 点击药丸 = 按该标签筛选（onToggleTag），与顶部筛选条共用同一份 selectedTags 状态（SSOT）。
+function TagRowChips({ tags, onToggleTag, activeTags }: { tags: string[]; onToggleTag?: (tag: string) => void; activeTags?: Set<string> }) {
   const { colors } = useContext(TagColorsContext);
   // 标签按名字从左到右排序（中文走本地化 collation）；先排再 slice，保证可见的 2 个与 +N 都基于排序结果
   const sorted = useMemo(() => [...tags].sort((a, b) => a.localeCompare(b, 'zh')), [tags]);
@@ -117,12 +118,19 @@ function TagRowChips({ tags }: { tags: string[] }) {
     <span className="inline-flex items-center gap-[3px] flex-shrink-0">
       {sorted.slice(0, 2).map(t => {
         const c = getTagColor(t, colors);
+        const active = activeTags?.has(t) ?? false;
         return (
           <span
             key={t}
-            className="text-[9px] px-1.5 rounded-full tabular-nums"
-            style={{ height: 15, lineHeight: '15px', background: c.bg, color: c.text, border: `1px solid ${c.border}` }}
-            title={`#${t}`}
+            role={onToggleTag ? 'button' : undefined}
+            onClick={onToggleTag ? (e) => { e.stopPropagation(); onToggleTag(t); } : undefined}
+            className={`text-[9px] px-1.5 rounded-full tabular-nums ${onToggleTag ? 'cursor-pointer' : ''}`}
+            style={{
+              height: 15, lineHeight: '15px', background: c.bg, color: c.text,
+              border: `1px solid ${active ? c.text : c.border}`,
+              boxShadow: active ? `0 0 0 1px ${c.border}` : 'none',
+            }}
+            title={onToggleTag ? `#${t} · 点击${active ? '取消筛选' : '按此标签筛选'}` : `#${t}`}
           >
             {truncateTagDisplay(t)}
           </span>
@@ -284,6 +292,54 @@ function isRecentlyChanged(iso?: string): boolean {
   const t = new Date(iso).getTime();
   if (Number.isNaN(t)) return false;
   return Date.now() - t < 24 * 60 * 60 * 1000;
+}
+
+// ── 时间分组桶：created-desc / updated-desc 模式下按时间给条目分组（今天/昨天/本周/本月/更早） ──
+export function timeBucket(iso: string | undefined, now: number): { key: string; label: string } {
+  if (!iso) return { key: 'none', label: '未知时间' };
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return { key: 'none', label: '未知时间' };
+  const start = new Date(now); start.setHours(0, 0, 0, 0);
+  const startMs = start.getTime();
+  const day = 24 * 60 * 60 * 1000;
+  if (t >= startMs) return { key: 'today', label: '今天' };
+  if (t >= startMs - day) return { key: 'yesterday', label: '昨天' };
+  if (t >= startMs - 7 * day) return { key: 'week', label: '本周' };
+  if (t >= startMs - 30 * day) return { key: 'month', label: '本月' };
+  return { key: 'earlier', label: '更早' };
+}
+
+// 列表渲染项（条目 / 时间分组头）
+export type DocBrowserDisplayItem =
+  | { kind: 'entry'; entry: DocBrowserEntry }
+  | { kind: 'header'; bucketKey: string; label: string; count: number };
+
+// 把根级条目构造为渲染项序列：groupByTime 时按时间桶插入分组头（文件夹不参与分组，遇文件夹重置桶边界）。
+// 纯函数便于单测；传 now 固定"今天"基准。
+export function buildDisplayItems(
+  roots: DocBrowserEntry[],
+  opts: { groupByTime: boolean; timeField: 'createdAt' | 'updatedAt'; now?: number },
+): DocBrowserDisplayItem[] {
+  if (!opts.groupByTime) return roots.map(e => ({ kind: 'entry', entry: e }));
+  const now = opts.now ?? Date.now();
+  const counts = new Map<string, number>();
+  for (const e of roots) {
+    if (e.isFolder) continue;
+    const key = timeBucket(e[opts.timeField], now).key;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const items: DocBrowserDisplayItem[] = [];
+  let lastKey: string | null = null;
+  for (const e of roots) {
+    if (e.isFolder) { items.push({ kind: 'entry', entry: e }); lastKey = null; continue; }
+    const b = timeBucket(e[opts.timeField], now);
+    if (b.key !== lastKey) {
+      items.push({ kind: 'header', bucketKey: b.key, label: b.label, count: counts.get(b.key) ?? 0 });
+      lastKey = b.key;
+    }
+    items.push({ kind: 'entry', entry: e });
+  }
+  return items;
 }
 
 // ── 文件图标（所有类型映射通过 FILE_TYPE_REGISTRY 注册表） ──
@@ -764,6 +820,8 @@ function TreeNode({
   onMoveEntry,
   onOpenSubscription,
   isEntryFresh,
+  onToggleTag,
+  activeTags,
 }: {
   entry: DocBrowserEntry;
   childrenMap: Map<string, DocBrowserEntry[]>;
@@ -787,6 +845,8 @@ function TreeNode({
   onShareEntry?: (entryId: string) => void;
   onMoveEntry?: (entryId: string, targetFolderId: string | null) => void;
   onOpenSubscription?: (entryId: string) => void;
+  onToggleTag?: (tag: string) => void;
+  activeTags?: Set<string>;
 }) {
   const isFolder = entry.isFolder;
   const isOpen = expandedFolders.has(entry.id);
@@ -880,8 +940,16 @@ function TreeNode({
         }}
         title={isFolder ? '点击展开/折叠（可拖拽文件到此）' : isPrimary ? '主文档' : '右键打开菜单'}
       >
-        {/* 选中态：圆角块内侧细 accent 条（不贴边、不粗方） */}
-        {isSelected && !isFolder && (
+        {/* 左侧状态色条：验收结论 → 绿/琥珀/红竖条，整列向下一扫即知通过率分布（颜色 + 文字双编码，满足无障碍） */}
+        {verdictForRow && (
+          <span
+            aria-hidden
+            className="absolute left-0 top-1/2 -translate-y-1/2 rounded-r-full"
+            style={{ width: '3px', height: '64%', background: verdictForRow.color, opacity: isSelected ? 1 : 0.9 }}
+          />
+        )}
+        {/* 选中态：圆角块内侧细 accent 条（无验收色条时才显示，避免与状态色条重叠） */}
+        {isSelected && !isFolder && !verdictForRow && (
           <span
             aria-hidden
             className="absolute left-[3px] top-1/2 -translate-y-1/2 rounded-full"
@@ -981,9 +1049,9 @@ function TreeNode({
           );
         })()}
 
-        {/* tag：每个 tag 一个小药丸，颜色走 tagPalette + 用户覆盖 */}
+        {/* tag：每个 tag 一个小药丸，颜色走 tagPalette + 用户覆盖；点击按该标签筛选 */}
         {!isFolder && (entry.tags?.length ?? 0) > 0 && (
-          <TagRowChips tags={entry.tags!} />
+          <TagRowChips tags={entry.tags!} onToggleTag={onToggleTag} activeTags={activeTags} />
         )}
 
         {/* 内容命中标记 */}
@@ -1095,6 +1163,8 @@ function TreeNode({
           onMoveEntry={onMoveEntry}
           onOpenSubscription={onOpenSubscription}
           isEntryFresh={isEntryFresh}
+          onToggleTag={onToggleTag}
+          activeTags={activeTags}
         />
       ))}
     </>
@@ -1582,6 +1652,13 @@ export function DocBrowser({
     return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([tag]) => tag);
   }, [entries]);
 
+  // 列表渲染项：chronological 排序（created/updated-desc）且非搜索态时按时间桶插入分组小标题；
+  // 否则纯条目列表（default 文件夹树 / 搜索结果保持原序）。逻辑提取为 buildDisplayItems 便于单测。
+  const displayItems = useMemo(
+    () => buildDisplayItems(filteredRoots, { groupByTime: sortMode !== 'default' && !search.trim(), timeField }),
+    [filteredRoots, sortMode, search, timeField],
+  );
+
   // 自动剔除当前 entries 不存在的已选 tag：
   // sessionStorage 是全局共享（DocBrowser 三处调用），跨知识库切换时上一个库选的 tag 可能
   // 当前库根本没有 → filter 拒绝所有文件 + chip 条因 allTagsRanked 为空不渲染，用户卡死无法清空。
@@ -2066,15 +2143,29 @@ export function DocBrowser({
                 </>
               )}
             </div>
-          ) : filteredRoots.map((entry, idx) => (
+          ) : displayItems.map((item, idx) => (
+            item.kind === 'header' ? (
+              <div
+                key={`grp-${item.bucketKey}`}
+                className="flex items-center justify-between"
+                style={{
+                  fontSize: '10px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase',
+                  color: 'var(--text-muted)', padding: '12px 12px 5px',
+                  borderTop: idx === 0 ? 'none' : '1px solid var(--border-faint)',
+                }}
+              >
+                <span>{item.label}</span>
+                <span style={{ fontWeight: 500, letterSpacing: 0, opacity: 0.8 }}>{item.count} 篇</span>
+              </div>
+            ) : (
             <motion.div
-              key={entry.id}
+              key={item.entry.id}
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.28, delay: Math.min(idx * 0.018, 0.5), ease: [0.25, 0.1, 0.25, 1] }}
             >
             <TreeNode
-              entry={entry}
+              entry={item.entry}
               childrenMap={search.trim() && searchResults !== null ? new Map() : (search.trim() ? filteredChildrenMap : childrenMap)}
               depth={0}
               selectedEntryId={selectedEntryId}
@@ -2096,8 +2187,11 @@ export function DocBrowser({
               onMoveEntry={onMoveEntry}
               onOpenSubscription={onOpenSubscription}
               isEntryFresh={isEntryFresh}
+              onToggleTag={toggleTag}
+              activeTags={selectedTags}
             />
             </motion.div>
+            )
           ))}
         </div>
         {/* 根级放置区域 - 允许拖到根级别 */}
