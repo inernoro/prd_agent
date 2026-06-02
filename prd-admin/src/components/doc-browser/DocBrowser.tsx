@@ -117,7 +117,9 @@ function TagRowChips({ tags, onToggleTag, activeTags, max = 2 }: { tags: string[
   const sorted = useMemo(() => [...tags].sort((a, b) => a.localeCompare(b, 'zh')), [tags]);
   const visibleCount = Math.max(1, max);
   return (
-    <span className="inline-flex items-center gap-[3px] min-w-0 flex-wrap">
+    <span className="inline-flex items-center gap-[3px] min-w-0">
+      {/* 可见 tag 放进 overflow-hidden 内层：单行、超宽裁切；+N 作为外层兄弟恒可见 */}
+      <span className="inline-flex items-center gap-[3px] min-w-0 overflow-hidden">
       {sorted.slice(0, visibleCount).map(t => {
         const c = getTagColor(t, colors);
         const active = activeTags?.has(t) ?? false;
@@ -138,6 +140,7 @@ function TagRowChips({ tags, onToggleTag, activeTags, max = 2 }: { tags: string[
           </span>
         );
       })}
+      </span>
       {sorted.length > visibleCount && (
         <span
           className="text-[9px] tabular-nums flex-shrink-0"
@@ -1787,7 +1790,8 @@ export function DocBrowser({
   );
 
   // 行内标签可见数随侧栏宽度自适应：侧栏越宽展示越多标签（拖宽后不再压缩成 +N）
-  const rowTagMax = sidebarWidth >= 560 ? 12 : sidebarWidth >= 460 ? 6 : sidebarWidth >= 380 ? 4 : sidebarWidth >= 320 ? 3 : 2;
+  // 窄栏更激进地收进 +N，保证徽章行恒为单行（绝不竖直堆叠）；宽栏才逐步多展示
+  const rowTagMax = sidebarWidth >= 560 ? 12 : sidebarWidth >= 460 ? 6 : sidebarWidth >= 380 ? 4 : sidebarWidth >= 340 ? 3 : sidebarWidth >= 300 ? 2 : 1;
 
   // 自动剔除当前 entries 不存在的已选 tag：
   // sessionStorage 是全局共享（DocBrowser 三处调用），跨知识库切换时上一个库选的 tag 可能

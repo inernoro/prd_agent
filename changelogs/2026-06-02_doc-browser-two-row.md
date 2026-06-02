@@ -8,3 +8,4 @@
 | chore | prd-admin | 移除 DocBrowser 代码注释里残留的 emoji，符合无 emoji 规则 |
 | feat | prd-admin | 知识库空库时右栏展示完整首访引导（DocEmptyState：线框插画+说明+CTA+「3步开始」），替代原「选择左侧文件」占位 |
 | chore | prd-admin | 新增 DocHeadCard（文档头卡片）/ BulkActionBar（批量操作条）展示组件，下一波接线进阅读区与列表多选 |
+| fix | prd-admin | 知识库条目徽章行恒为单行：行内 tag 去掉 flex-wrap 改 overflow 裁切（+N 永久可见）+ 窄栏更激进收进 +N，杜绝标签竖直堆叠 |
