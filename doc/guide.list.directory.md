@@ -289,6 +289,7 @@
   > 小服务器负载均衡到分布式集群的容量预算与故障隔离设计
 
 - [CDS Railway 式部署向导设计](design.cds-railway-onboarding-flow) `design.cds-railway-onboarding-flow`
+- [CDS 绝对可视化一键部署设计（含架构图）](design.cds-visual-deploy) `design.cds-visual-deploy`
 - [CDS AI 生成 compose 草稿设计](design.cds-ai-compose) `design.cds-ai-compose`
   > 从 Railway 首次部署路径抽象 CDS 一键部署、运行环境选择、基础设施创建和可观察性闭环
 
@@ -398,6 +399,7 @@
 
 - [从零开始的 CDS 教程 · 指南](guide.cds-tutorial) `guide.cds-tutorial`
 - [CDS 可视化部署与验收指南](guide.cds-deploy-acceptance) `guide.cds-deploy-acceptance`
+- [CDS 一键可视化部署使用教程](guide.cds-one-click-deploy) `guide.cds-one-click-deploy`
   > 4 个横向场景（静态/网页+后台/+MongoDB/+redis+mysql+rabbitmq）× 2 条纵向路径（直配/compose 导入）+ compose 评分/自愈 + 每场景独立知识库
 
 - [CDS 全栈基础设施冒烟样例指南](guide.cds-fullstack-infra-smoke) `guide.cds-fullstack-infra-smoke`
@@ -684,6 +686,7 @@
   > 2 条 open：x-cds-env TODO secrets 致全量 import 必被拒 / admin static 每次冷 vite build 就绪窗口紧绷
 
 - [CDS 教程（示例工程 + 隔离知识库 + 评分/自愈）· 债务台账](debt.cds-tutorial) `debt.cds-tutorial`
+- [CDS 绝对可视化一键部署 · 债务台账](debt.cds-visual-deploy) `debt.cds-visual-deploy`
   > 5 条 open：--write 重序列化丢注释 / 自愈覆盖面有限 / 占位值需人工 / 真机冒烟依赖 CDS / 发布脚本需真实 owner
 
 - [知识库（AI Toolbox attachment + 文档空间）债务台账](debt.knowledge-base) `debt.knowledge-base`
@@ -711,6 +714,7 @@
 
 ### 七、周报
 
+- [CDS 绝对可视化一键部署 · 完整报告](report.cds-visual-deploy) `report.cds-visual-deploy`
 - [CDS Agent 商业级可用闭环目标审计报告](report.cds-agent-goal-completion-audit-2026-05-19) `report.cds-agent-goal-completion-audit-2026-05-19`
   > CDS Agent 商业级可用闭环目标的完成度审计报告（2026-05-19）
 
@@ -849,6 +853,7 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-06-02 | 新增 | `design.cds-visual-deploy` `guide.cds-one-click-deploy` `report.cds-visual-deploy` `debt.cds-visual-deploy` | CDS 绝对可视化一键部署收尾:设计(含架构图)+使用教程+完整报告+债务台账;`plan.cds-visual-deploy` 状态更新为核心收尾 |
 | 2026-06-01 | 新增 | `design.cds-ai-compose` `plan.cds-visual-deploy` `guide.cds-deploy-acceptance` | CDS AI 生成 compose 草稿设计、绝对可视化部署计划看板、可视化部署与验收指南（已发布到 KB） |
 | 2026-05-30 | 新增 | `debt.cds-agent` | CDS Agent 工作台债务台账（R1 商业级 / Lite 只读边界 / 文档熵减 / 无 profile 直跑） |
 | 2026-05-22 | 新增 | `design.defect-agent-share-skill-architecture` `debt.share-link-security` `report.cds-mongo-log-split-incident-2026-05-23` | 缺陷分享架构设计、分享链接安全债务台账、CDS Mongo 事故复盘 |
