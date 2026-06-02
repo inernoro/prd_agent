@@ -306,7 +306,7 @@ import ShinyText from '@/components/reactbits/ShinyText';
 import { systemDialog } from '@/lib/systemDialog';
 import { useViewTracking } from '@/lib/useViewTracking';
 import { useContentSelection, type ContentSelectionInfo } from '@/lib/useContentSelection';
-import { MessageSquareText, MessageSquarePlus } from 'lucide-react';
+import { MessageSquareText, MessageSquarePlus, Check } from 'lucide-react';
 import { InlineCommentDrawer, type PendingSelection } from '@/pages/document-store/InlineCommentDrawer';
 import type { DocumentInlineComment } from '@/services/contracts/documentStore';
 import { AcceptanceEvidenceGraph } from './AcceptanceEvidenceGraph';
@@ -315,6 +315,7 @@ import { listInlineComments } from '@/services';
 import { DocToc } from './DocToc';
 import { DocEmptyState } from './DocEmptyState';
 import { InlineCommentOverlay } from './InlineCommentOverlay';
+import { BulkActionBar } from './BulkActionBar';
 
 // ── 类型 ──
 
@@ -977,6 +978,9 @@ function TreeNode({
   onToggleTag,
   activeTags,
   tagMax,
+  selectedIds,
+  onToggleSelect,
+  selectionActive,
 }: {
   entry: DocBrowserEntry;
   childrenMap: Map<string, DocBrowserEntry[]>;
@@ -1003,6 +1007,9 @@ function TreeNode({
   onToggleTag?: (tag: string) => void;
   activeTags?: Set<string>;
   tagMax?: number;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (id: string) => void;
+  selectionActive?: boolean;
 }) {
   const isFolder = entry.isFolder;
   const isOpen = expandedFolders.has(entry.id);
@@ -1012,6 +1019,7 @@ function TreeNode({
   const children = childrenMap.get(entry.id) ?? [];
   const displayTitle = getDisplayTitle(entry, useContentTitle, contentFirstLines);
   const reprocessing = !isFolder ? reprocessingMap?.[entry.id] : undefined;
+  const isChecked = !isFolder && (selectedIds?.has(entry.id) ?? false);
   const isShared = !isFolder && (sharedEntryIds?.has(entry.id) ?? false);
   const [dragOver, setDragOver] = useState(false);
 
@@ -1119,6 +1127,23 @@ function TreeNode({
         )}
         {/* 第一行：图标 + 标题独占整行（标题增强：更亮更粗略放大），徽章移到第二行，避免挤占标题宽度 */}
         <div className="flex items-center gap-2 w-full min-w-0">
+          {/* 批量多选勾选框：仅文件，hover 或已进入多选态时显示；点击只切换选择不打开文档 */}
+          {!isFolder && onToggleSelect && (
+            <span
+              role="checkbox"
+              aria-checked={isChecked}
+              onClick={(e) => { e.stopPropagation(); onToggleSelect(entry.id); }}
+              className={`flex-shrink-0 inline-flex items-center justify-center cursor-pointer transition-opacity ${isChecked || selectionActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+              style={{
+                width: 15, height: 15, borderRadius: 4,
+                border: `1.5px solid ${isChecked ? 'var(--accent-primary, #818cf8)' : 'var(--border-strong, rgba(255,255,255,0.28))'}`,
+                background: isChecked ? 'var(--accent-primary, #818cf8)' : 'transparent',
+              }}
+              title={isChecked ? '取消选择' : '选择（批量操作）'}
+            >
+              {isChecked && <Check size={10} style={{ color: '#fff' }} />}
+            </span>
+          )}
           <EntryIcon entry={entry} isPrimary={isPrimary} isPinned={isPinned} isOpen={isOpen} />
 
           <span className="flex-1 truncate min-w-0"
@@ -1322,6 +1347,9 @@ function TreeNode({
           onToggleTag={onToggleTag}
           activeTags={activeTags}
           tagMax={tagMax}
+          selectedIds={selectedIds}
+          onToggleSelect={onToggleSelect}
+          selectionActive={selectionActive}
         />
       ))}
     </>
@@ -2011,6 +2039,34 @@ export function DocBrowser({
     setCreatingFolder(false);
   }, [newFolderName, onCreateFolder]);
 
+  // 批量多选（仅非文件夹条目）：勾选若干条 → 底部浮出 BulkActionBar 批量删除
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+  const selectionActive = selectedIds.size > 0;
+  const handleBulkDelete = useCallback(async () => {
+    if (!onDeleteEntry || selectedIds.size === 0) return;
+    const ids = Array.from(selectedIds);
+    const confirmed = await systemDialog.confirm({
+      title: '批量删除文档',
+      message: `将永久删除选中的 ${ids.length} 个文件及其解析正文 / 附件。\n\n此操作不可恢复。`,
+      tone: 'danger',
+      confirmText: `永久删除 ${ids.length} 个`,
+      cancelText: '取消',
+    });
+    if (!confirmed) return;
+    for (const id of ids) {
+      try { await onDeleteEntry(id); } catch { /* 单个失败不阻断其余 */ }
+    }
+    setSelectedIds(new Set());
+  }, [onDeleteEntry, selectedIds]);
+
   const handleContextMenu = useCallback((e: React.MouseEvent, entry: DocBrowserEntry) => {
     setContextMenu({ x: e.clientX, y: e.clientY, entry });
   }, []);
@@ -2047,6 +2103,17 @@ export function DocBrowser({
           width: `${sidebarWidth}px`,
           minHeight: 0,
         }}>
+
+        {/* 批量操作条：选中条目后浮在侧栏底部，支持批量删除（取消即清空选择） */}
+        {selectionActive && onDeleteEntry && (
+          <div style={{ position: 'absolute', left: 8, right: 8, bottom: 10, zIndex: 20 }}>
+            <BulkActionBar
+              count={selectedIds.size}
+              onDelete={handleBulkDelete}
+              onCancel={clearSelection}
+            />
+          </div>
+        )}
 
         {/* 外部自定义 sidebar 头部（如「周报列表 · 按最近提交 · N 篇」），可选 */}
         {sidebarHeader && (
@@ -2369,6 +2436,9 @@ export function DocBrowser({
               onToggleTag={toggleTag}
               activeTags={selectedTags}
               tagMax={rowTagMax}
+              selectedIds={selectedIds}
+              onToggleSelect={toggleSelect}
+              selectionActive={selectionActive}
             />
             </motion.div>
             )
