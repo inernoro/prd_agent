@@ -108,31 +108,33 @@ function TagPickerChip({ tag, onRemove }: { tag: string; onRemove: () => void })
   );
 }
 
-// 条目行内 tag 小药丸（前 2 个完整渲染 + 多余折叠 +N），颜色读 Context 覆盖
+// 条目行内 tag 小药丸（按名字排序后前 2 个完整渲染 + 多余折叠 +N），颜色读 Context 覆盖
 function TagRowChips({ tags }: { tags: string[] }) {
   const { colors } = useContext(TagColorsContext);
+  // 标签按名字从左到右排序（中文走本地化 collation）；先排再 slice，保证可见的 2 个与 +N 都基于排序结果
+  const sorted = useMemo(() => [...tags].sort((a, b) => a.localeCompare(b, 'zh')), [tags]);
   return (
     <span className="inline-flex items-center gap-[3px] flex-shrink-0">
-      {tags.slice(0, 2).map(t => {
+      {sorted.slice(0, 2).map(t => {
         const c = getTagColor(t, colors);
         return (
           <span
             key={t}
-            className="text-[9px] px-1.5 rounded-full font-medium tabular-nums"
-            style={{ height: 16, lineHeight: '16px', background: c.bg, color: c.text, border: `1px solid ${c.border}` }}
+            className="text-[9px] px-1.5 rounded-full tabular-nums"
+            style={{ height: 15, lineHeight: '15px', background: c.bg, color: c.text, border: `1px solid ${c.border}` }}
             title={`#${t}`}
           >
             {truncateTagDisplay(t)}
           </span>
         );
       })}
-      {tags.length > 2 && (
+      {sorted.length > 2 && (
         <span
           className="text-[9px] tabular-nums"
           style={{ color: 'var(--text-muted)', opacity: 0.7 }}
-          title={tags.slice(2).map(tag => `#${tag}`).join(' ')}
+          title={sorted.slice(2).map(tag => `#${tag}`).join(' ')}
         >
-          +{tags.length - 2}
+          +{sorted.length - 2}
         </span>
       )}
     </span>
@@ -845,7 +847,7 @@ function TreeNode({
             onMoveEntry(draggedId, entry.id);
           }
         }}
-        className={`relative flex items-center gap-2 text-left cursor-pointer transition-all duration-150 group ${isFolder ? 'py-[7px]' : 'py-[8px] hover-bg-soft'}`}
+        className={`relative flex flex-col justify-center text-left cursor-pointer transition-all duration-150 group ${isFolder ? 'py-[7px]' : 'gap-1 py-[8px] hover-bg-soft'}`}
         style={{
           // 整块圆角高亮：左右留 6px 内缩，hover/选中不贴边。
           // 宽度扣掉左右 12px 外边距，避免 w-full(100%)+margin 超出容器、撑出横向滚动条。
@@ -891,39 +893,49 @@ function TreeNode({
             }}
           />
         )}
-        {/* 单行布局：图标 + 标题（吃剩余宽度）+ 徽章序列 + 时间。徽章统一压扁到 ~16px 高度，避免行高跳变 */}
-        <EntryIcon entry={entry} isPrimary={isPrimary} isPinned={isPinned} isOpen={isOpen} />
+        {/* 第一行：图标 + 标题独占整行（标题增强：更亮更粗略放大），徽章移到第二行，避免挤占标题宽度 */}
+        <div className="flex items-center gap-2 w-full min-w-0">
+          <EntryIcon entry={entry} isPrimary={isPrimary} isPinned={isPinned} isOpen={isOpen} />
 
-        <span className="flex-1 truncate min-w-0"
-          style={{
-            color: isFolder
-              ? 'var(--text-muted)'
-              : (isSelected ? 'var(--text-primary)' : 'var(--text-secondary)'),
-            fontWeight: isFolder ? 600 : (isSelected ? 600 : 500),
-            fontSize: isFolder ? '10.5px' : '12.5px',
-            letterSpacing: isFolder ? '0.06em' : '-0.005em',
-            textTransform: isFolder ? 'uppercase' : 'none',
-          }}>
-          {displayTitle}
-        </span>
-
-        {/* 文件夹的计数 + 折叠箭头 */}
-        {isFolder && (
-          <span className="flex items-center gap-1.5 flex-shrink-0">
-            <span className="text-[10px] tabular-nums" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
-              {children.length}
-            </span>
-            {isOpen
-              ? <ChevronDown size={13} style={{ color: 'var(--text-muted)' }} />
-              : <ChevronRight size={13} style={{ color: 'var(--text-muted)' }} />}
+          <span className="flex-1 truncate min-w-0"
+            style={{
+              color: isFolder ? 'var(--text-muted)' : 'var(--text-primary)',
+              fontWeight: isFolder ? 600 : (isSelected ? 700 : 600),
+              fontSize: isFolder ? '10.5px' : '13px',
+              letterSpacing: isFolder ? '0.06em' : '-0.01em',
+              textTransform: isFolder ? 'uppercase' : 'none',
+            }}>
+            {displayTitle}
           </span>
-        )}
 
-        {/* 右侧两层堆叠：上层徽章 + 下层时间。无徽章时仅时间居中右对齐 */}
-        {!isFolder && (
-        <div className="flex flex-col items-end justify-center gap-1 flex-shrink-0 ml-auto">
+          {/* 文件夹的计数 + 折叠箭头（第一行右侧） */}
+          {isFolder && (
+            <span className="flex items-center gap-1.5 flex-shrink-0">
+              <span className="text-[10px] tabular-nums" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
+                {children.length}
+              </span>
+              {isOpen
+                ? <ChevronDown size={13} style={{ color: 'var(--text-muted)' }} />
+                : <ChevronRight size={13} style={{ color: 'var(--text-muted)' }} />}
+            </span>
+          )}
+
+          {/* 无徽章行时：时间紧贴标题右侧，避免出现空旷的第二行 */}
+          {!isFolder && !hasBadgeRow && showUpdatedTime && entry[timeField] && (
+            <span className="flex-shrink-0 ml-auto" style={{ paddingLeft: '6px', opacity: 0.6 }}>
+              <RelativeTime
+                value={entry[timeField]!}
+                refreshIntervalMs={0}
+                className="text-[9.5px] tabular-nums text-token-muted"
+                title={`${timeField === 'createdAt' ? '创建于' : '最后更新'}：${new Date(entry[timeField]!).toLocaleString('zh-CN')}${timeField === 'updatedAt' && entry.updatedByName ? ` · ${entry.updatedByName}` : ''}`}
+              />
+            </span>
+          )}
+        </div>
+
+        {/* 第二行：徽章（左对齐，tag 按名字排序）+ 时间（右对齐）。仅非文件夹且有徽章时渲染，缩进对齐标题下方 */}
         {hasBadgeRow && (
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 w-full" style={{ paddingLeft: '22px' }}>
         {/* 已分享：icon-only 节省宽度，hover/点击复用原行为 */}
         {isShared && (
           <span
@@ -941,8 +953,8 @@ function TreeNode({
           <span
             className="inline-flex items-center gap-1 text-[9px] px-1.5 rounded-full flex-shrink-0 font-semibold tabular-nums"
             style={{
-              height: 16,
-              lineHeight: '16px',
+              height: 15,
+              lineHeight: '15px',
               background: 'rgba(59,130,246,0.12)',
               color: 'rgba(96,165,250,0.95)',
             }}
@@ -961,7 +973,7 @@ function TreeNode({
           return (
             <span
               className="text-[9px] px-1.5 rounded-full flex-shrink-0 font-bold tabular-nums"
-              style={{ height: 16, lineHeight: '16px', background: vc.background, color: vc.color, border: vc.border }}
+              style={{ height: 15, lineHeight: '15px', background: vc.background, color: vc.color, border: vc.border }}
               title={`验收结论：${vc.label}${tier ? ` · 档位 ${tier}` : ''}`}
             >
               {vc.label}{tier ? ` ${tier}` : ''}
@@ -979,8 +991,8 @@ function TreeNode({
           <span
             className="text-[9px] px-1.5 rounded-full flex-shrink-0"
             style={{
-              height: 16,
-              lineHeight: '16px',
+              height: 15,
+              lineHeight: '15px',
               background: 'var(--bg-tertiary)',
               color: 'var(--text-muted)',
               letterSpacing: '0.2px',
@@ -996,8 +1008,8 @@ function TreeNode({
           <span
             className="text-[9px] px-1.5 rounded-full flex-shrink-0 font-bold"
             style={{
-              height: 16,
-              lineHeight: '16px',
+              height: 15,
+              lineHeight: '15px',
               background: 'rgba(34,197,94,0.12)',
               letterSpacing: '0.3px',
             }}
@@ -1042,12 +1054,9 @@ function TreeNode({
         {isPinned && !isPrimary && (
           <Pin size={10} className="flex-shrink-0" style={{ color: 'rgba(59,130,246,0.5)' }} />
         )}
-        </div>
-        )}
-
-        {/* 时间：右下角，所有条目可见，跟随排序键显示 createdAt 或 updatedAt */}
+        {/* 时间：第二行右对齐，跟随排序键显示 createdAt 或 updatedAt */}
         {showUpdatedTime && entry[timeField] && (
-          <span style={{ opacity: 0.65 }}>
+          <span className="ml-auto flex-shrink-0" style={{ opacity: 0.65 }}>
             <RelativeTime
               value={entry[timeField]!}
               refreshIntervalMs={0}
