@@ -371,7 +371,7 @@ export function SpotlightOverlay() {
   const bubbleTop = useAbove ? Math.max(16, ringBox.top - 180) : bubbleBelow;
   const bubbleLeft = Math.max(
     16,
-    Math.min(window.innerWidth - 340 - 16, ringBox.left + ringBox.width / 2 - 170),
+    Math.min(window.innerWidth - 360 - 16, ringBox.left + ringBox.width / 2 - 180),
   );
 
   const ringStyle: React.CSSProperties = {
@@ -512,12 +512,18 @@ export function SpotlightOverlay() {
               <button
                 type="button"
                 onClick={() => {
+                  // 下一步如果配置了 navigateTo,先切路由,新页面元素会在 poll 里被找到
+                  const nextStep = payload.autoAction?.steps?.[stepIndex + 1];
                   // 先把当前 step 的元素「点」一下,再前进:解决「下一步后面板消失」的 bug
                   // —— 很多步骤的下一个 selector 依赖当前这步被点击后才出现
                   // (如 defect-full-flow:点「+ 提交缺陷」后 description 才存在)。
-                  // 可交互元素(按钮/input)直接 click;不是则跳过,让用户自己操作。
+                  // 但只在「下一步元素当前还不存在」时才自动点(说明确实需要这次点击来揭示它);
+                  // 若下一步元素已在 DOM(如网页托管下一步是同排的另一个按钮),就别点——
+                  // 否则点了像「分享统计」这种按钮会弹出 z-10000 抽屉挡住整个引导(Codex P2)。
+                  const nextNeedsReveal = !nextStep?.navigateTo
+                    && (!nextStep?.selector || !document.querySelector(nextStep.selector));
                   try {
-                    if (currentSelector) {
+                    if (currentSelector && nextNeedsReveal) {
                       const el = document.querySelector(currentSelector);
                       if (
                         el instanceof HTMLButtonElement ||
@@ -530,8 +536,6 @@ export function SpotlightOverlay() {
                   } catch {
                     /* noop */
                   }
-                  // 下一步如果配置了 navigateTo,先切路由,新页面元素会在 poll 里被找到
-                  const nextStep = payload.autoAction?.steps?.[stepIndex + 1];
                   if (nextStep?.navigateTo) navigate(nextStep.navigateTo);
                   // 不清 rect,保留旧光圈直到下一步元素找到再更新位置,
                   // 避免「点下一步面板消失、等 3s 再出现」的闪烁

@@ -424,7 +424,6 @@ function ToolbarButton(props: {
 
   return (
     <div className="relative">
-      <div className="absolute top-3 right-3 z-20"><TipsEntryButton compact /></div>
       <button
         type="button"
         className="h-10 w-10 rounded-xl inline-flex items-center justify-center transition-all duration-200 hover:bg-white/10 hover:scale-105 active:scale-95"
@@ -496,6 +495,8 @@ const SCENARIO_TAGS = [
 function HeroSection() {
   return (
     <div className="relative w-full" style={{ height: 260 }}>
+      {/* 本页教程入口(内嵌进页面右上角,页面级单实例,非悬浮浮层) */}
+      <div className="absolute top-3 right-3 z-20"><TipsEntryButton compact /></div>
       {/* 粒子漩涡背景 — trailColor 精确匹配 #0a0a0c，无 CSS opacity 避免矩形覆盖 */}
       <div
         className="absolute inset-0"
