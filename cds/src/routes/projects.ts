@@ -1485,15 +1485,16 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
 
     const token = randomBytes(5).toString('hex');
     const containerName = `cds-validate-${token}`;
-    const workDir = nodePath.join(nodeOs.tmpdir(), `cds-validate-${token}`);
+    const baseDir = nodePath.join(nodeOs.tmpdir(), `cds-validate-${token}`);
+    const cloneDir = nodePath.join(baseDir, 'app');
     const cleanup = async (): Promise<void> => {
       try { await shell.exec(`docker rm -f ${containerName} 2>/dev/null`, { timeout: 20000 }); } catch { /* noop */ }
-      try { nodeFs.rmSync(workDir, { recursive: true, force: true }); } catch { /* noop */ }
+      try { nodeFs.rmSync(baseDir, { recursive: true, force: true }); } catch { /* noop */ }
     };
 
     try {
       send('step', { step: 'clone', status: 'running', title: '浅克隆仓库…' });
-      const cloneRes = await shell.exec(`git clone --depth 1 ${gitRef ? `--branch ${q(gitRef)} ` : ''}${q(gitRepoUrl)} ${q(workDir)}`, { timeout: 120000 });
+      const cloneRes = await shell.exec(`git clone --depth 1 ${gitRef ? `--branch ${q(gitRef)} ` : ''}${q(gitRepoUrl)} ${q(cloneDir)}`, { timeout: 120000 });
       if (cloneRes.exitCode !== 0) {
         send('step', { step: 'clone', status: 'error', title: '克隆失败' });
         log(combinedOutput(cloneRes).slice(-1500));
@@ -1512,15 +1513,33 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
       send('step', { step: 'pull', status: 'done', title: '镜像就绪' });
 
-      send('step', { step: 'run', status: 'running', title: '启动一次性容器,跑安装 + 启动命令…' });
-      const runRes = await shell.exec(
-        `docker run -d --name ${containerName} --label cds.validate=1 --memory=1536m --cpus=1.5 -w /workspace -v ${q(workDir)}:/workspace ${port ? `-e PORT=${port} ` : ''}${q(image)} sh -lc ${q(command)}`,
+      send('step', { step: 'run', status: 'running', title: '创建容器 + 装载代码(docker cp)…' });
+      // 用 sh -c(不是 sh -lc):login shell 会重置 PATH,导致 golang/rust 等把工具放 ENV PATH 的镜像 "go: not found"。
+      const createRes = await shell.exec(
+        `docker create --name ${containerName} --label cds.validate=1 --memory=1536m --cpus=1.5 ${port ? `-e PORT=${port} ` : ''}${q(image)} sh -c ${q(`cd /app && ${command}`)}`,
         { timeout: 30000 },
       );
-      if (runRes.exitCode !== 0) {
+      if (createRes.exitCode !== 0) {
+        send('step', { step: 'run', status: 'error', title: '容器创建失败' });
+        log(combinedOutput(createRes).slice(-1500));
+        send('result', { verdict: 'fail', summary: '容器无法创建——多半是镜像名或命令格式问题。' });
+        await cleanup(); res.end(); return;
+      }
+      // 关键:用 docker cp 把克隆好的代码拷进 /app,而不是 bind-mount。容器化 CDS 用宿主 docker socket 时,
+      // `-v 主机路径` 指向的是宿主机文件系统(空的),挂进去是空目录 → 所有真实仓库都 "找不到 package.json"。
+      // docker cp 由 docker CLI 直接从 CDS 容器内读文件流给目标容器,不依赖宿主路径一致性。
+      const cpRes = await shell.exec(`docker cp ${q(cloneDir)} ${containerName}:/`, { timeout: 90000 });
+      if (cpRes.exitCode !== 0) {
+        send('step', { step: 'run', status: 'error', title: '装载代码失败' });
+        log(combinedOutput(cpRes).slice(-1500));
+        send('result', { verdict: 'fail', summary: '代码装载进容器失败。' });
+        await cleanup(); res.end(); return;
+      }
+      const startRes = await shell.exec(`docker start ${containerName}`, { timeout: 30000 });
+      if (startRes.exitCode !== 0) {
         send('step', { step: 'run', status: 'error', title: '容器启动失败' });
-        log(combinedOutput(runRes).slice(-1500));
-        send('result', { verdict: 'fail', summary: '容器无法启动——多半是镜像或命令格式问题。' });
+        log(combinedOutput(startRes).slice(-1500));
+        send('result', { verdict: 'fail', summary: '容器无法启动。' });
         await cleanup(); res.end(); return;
       }
       send('step', { step: 'run', status: 'done', title: '容器已启动,跟踪日志 + 端口探活(最多 150s,有结论就提前结束)…' });
@@ -1535,7 +1554,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       const probePort = async (): Promise<boolean> => {
         if (!port) return false;
         const r = await shell.exec(
-          `docker exec ${containerName} sh -lc ${q(`(wget -qO- -T2 http://127.0.0.1:${port} >/dev/null 2>&1 || curl -sf -m2 http://127.0.0.1:${port} >/dev/null 2>&1) && echo CDSPORTOK || true`)}`,
+          `docker exec ${containerName} sh -c ${q(`(wget -qO- -T2 http://127.0.0.1:${port} >/dev/null 2>&1 || curl -sf -m2 http://127.0.0.1:${port} >/dev/null 2>&1) && echo CDSPORTOK || true`)}`,
           { timeout: 10000 },
         );
         return (r.stdout || '').includes('CDSPORTOK');
