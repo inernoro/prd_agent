@@ -1333,13 +1333,22 @@ export const api = {
       observers: (projectId: string) => `/api/pm/projects/${projectId}/observers`,
       knowledgeFiles: (projectId: string) => `/api/pm/projects/${projectId}/knowledge/files`,
       memberSites: (projectId: string) => `/api/pm/projects/${projectId}/member-sites`,
+      knowledgeStore: (projectId: string) => `/api/pm/projects/${projectId}/knowledge/store`,
       decisions: (projectId: string) => `/api/pm/projects/${projectId}/decisions`,
       weeklyReports: (projectId: string) => `/api/pm/projects/${projectId}/weekly-reports`,
       weeklyReportImage: (projectId: string) => `/api/pm/projects/${projectId}/weekly-reports/image`,
+      weeklyReportImport: (projectId: string) => `/api/pm/projects/${projectId}/weekly-reports/import`,
       meetings: (projectId: string) => `/api/pm/projects/${projectId}/meetings`,
       goals: (projectId: string) => `/api/pm/projects/${projectId}/goals`,
-      goalsDecompose: (projectId: string) => `/api/pm/projects/${projectId}/goals/decompose`,
+      goalCycles: (projectId: string) => `/api/pm/projects/${projectId}/goal-cycles`,
+      goalsDecompose: (projectId: string, parentGoalId?: string) =>
+        `/api/pm/projects/${projectId}/goals/decompose${parentGoalId ? `?parentGoalId=${encodeURIComponent(parentGoalId)}` : ''}`,
       milestones: (projectId: string) => `/api/pm/projects/${projectId}/milestones`,
+      milestonesSuggest: (projectId: string) => `/api/pm/projects/${projectId}/milestones/suggest`,
+      risks: (projectId: string) => `/api/pm/projects/${projectId}/risks`,
+      burndown: (projectId: string) => `/api/pm/projects/${projectId}/burndown`,
+      closureReport: (projectId: string) => `/api/pm/projects/${projectId}/closure-report`,
+      healthDiagnosis: (projectId: string) => `/api/pm/projects/${projectId}/health-diagnosis`,
       stakeholders: (projectId: string) => `/api/pm/projects/${projectId}/stakeholders`,
       evaluationStart: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/start`,
       evaluationScore: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/score`,
@@ -1355,6 +1364,13 @@ export const api = {
     knowledge: {
       file: (fileId: string) => `/api/pm/knowledge/files/${fileId}`,
     },
+    weeklyReportsImportable: (params?: { weekYear?: number; weekNumber?: number }) => {
+      const q = new URLSearchParams();
+      if (params?.weekYear) q.set('weekYear', String(params.weekYear));
+      if (params?.weekNumber) q.set('weekNumber', String(params.weekNumber));
+      const s = q.toString();
+      return `/api/pm/weekly-reports/importable${s ? `?${s}` : ''}`;
+    },
     decisions: {
       item: (decisionId: string) => `/api/pm/decisions/${decisionId}`,
     },
@@ -1366,9 +1382,17 @@ export const api = {
     },
     goals: {
       item: (goalId: string) => `/api/pm/goals/${goalId}`,
+      checkins: (goalId: string) => `/api/pm/goals/${goalId}/checkins`,
+      score: (goalId: string) => `/api/pm/goals/${goalId}/score`,
+    },
+    goalCycles: {
+      item: (cycleId: string) => `/api/pm/goal-cycles/${cycleId}`,
     },
     milestones: {
       item: (milestoneId: string) => `/api/pm/milestones/${milestoneId}`,
+    },
+    risks: {
+      item: (riskId: string) => `/api/pm/risks/${riskId}`,
     },
     dashboard: () => '/api/pm/dashboard',
     auditLogs: () => '/api/pm/audit-logs',

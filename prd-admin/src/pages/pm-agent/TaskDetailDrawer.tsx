@@ -6,7 +6,7 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { toast } from '@/lib/toast';
 import { updatePmTask, deletePmTask, createPmTask, getPmTaskActivities, addPmTaskComment, getPmMembers } from '@/services';
-import type { PmMember, PmMilestone, PmTask, PmTaskStatus, PmTaskPriority, PmTaskActivity } from '@/services/contracts/pmAgent';
+import type { PmMember, PmMilestone, PmGoal, PmTask, PmTaskStatus, PmTaskPriority, PmTaskActivity } from '@/services/contracts/pmAgent';
 import { TASK_STATUS_REGISTRY, PRIORITY_REGISTRY } from './pmConstants';
 
 const FIELD_LABEL: Record<string, string> = { status: '状态', priority: '优先级', assignee: '负责人', title: '标题' };
@@ -22,6 +22,7 @@ interface Props {
   task: PmTask;
   allTasks: PmTask[];
   milestones?: PmMilestone[];
+  goals?: PmGoal[];
   onClose: () => void;
   onSaved: (task: PmTask) => void;
   onDeleted: (taskId: string) => void;
@@ -39,13 +40,14 @@ const fromDateInput = (v: string) => (v ? new Date(v + 'T00:00:00').toISOString(
  * 任务详情抽屉（P0）— 点卡片打开，集中编辑全部字段。
  * 接现有 updatePmTask（后端已支持全字段），右侧滑入，createPortal 到 body。
  */
-export function TaskDetailDrawer({ task, allTasks, milestones = [], onClose, onSaved, onDeleted, onChanged }: Props) {
+export function TaskDetailDrawer({ task, allTasks, milestones = [], goals = [], onClose, onSaved, onDeleted, onChanged }: Props) {
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description ?? '');
   const [status, setStatus] = useState<PmTaskStatus>(task.status);
   const [priority, setPriority] = useState<PmTaskPriority>(task.priority);
   const [assigneeId, setAssigneeId] = useState(task.assigneeId ?? '');
   const [milestoneId, setMilestoneId] = useState(task.milestoneId ?? '');
+  const [goalId, setGoalId] = useState(task.goalId ?? '');
   const [estimateDays, setEstimateDays] = useState(task.estimateDays != null ? String(task.estimateDays) : '');
   const [startAt, setStartAt] = useState(toDateInput(task.startAt));
   const [dueAt, setDueAt] = useState(toDateInput(task.dueAt));
@@ -145,6 +147,7 @@ export function TaskDetailDrawer({ task, allTasks, milestones = [], onClose, onS
       labels: labels.split(',').map((l) => l.trim()).filter(Boolean),
       dependsOn,
       milestoneId,
+      goalId,
     });
     setSaving(false);
     if (res.success) {
@@ -201,15 +204,26 @@ export function TaskDetailDrawer({ task, allTasks, milestones = [], onClose, onS
             <textarea className={inputCls} style={{ ...inputStyle, resize: 'vertical', minHeight: 72 }} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="任务说明 / 交付物" />
           </div>
 
-          {milestones.length > 0 && (
-            <div>
-              <label className={labelCls} style={{ color: 'var(--text-secondary)' }}>所属里程碑</label>
-              <select className={inputCls} style={inputStyle} value={milestoneId} onChange={(e) => setMilestoneId(e.target.value)}>
-                <option value="">未归属</option>
-                {milestones.map((m) => <option key={m.id} value={m.id}>{m.title}</option>)}
-              </select>
-            </div>
-          )}
+          <div className="grid grid-cols-2 gap-3">
+            {milestones.length > 0 && (
+              <div>
+                <label className={labelCls} style={{ color: 'var(--text-secondary)' }}>所属里程碑（时间阶段）</label>
+                <select className={inputCls} style={inputStyle} value={milestoneId} onChange={(e) => setMilestoneId(e.target.value)}>
+                  <option value="">未归属</option>
+                  {milestones.map((m) => <option key={m.id} value={m.id}>{m.title}</option>)}
+                </select>
+              </div>
+            )}
+            {goals.length > 0 && (
+              <div>
+                <label className={labelCls} style={{ color: 'var(--text-secondary)' }}>所属目标（成果）</label>
+                <select className={inputCls} style={inputStyle} value={goalId} onChange={(e) => setGoalId(e.target.value)}>
+                  <option value="">未归属</option>
+                  {goals.map((g) => <option key={g.id} value={g.id}>{g.title}</option>)}
+                </select>
+              </div>
+            )}
+          </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>

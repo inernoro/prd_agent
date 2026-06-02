@@ -252,6 +252,9 @@ builder.Services.AddScoped<PrdAgent.Api.Services.WorkflowAiFillService>();
 // 工作流调度轮询：每 30 秒扫一次到期的 once / cron 调度，自动入队
 builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowScheduleWorker>();
 
+// PM 逾期/临近截止提醒：每天给相关用户发一条站内汇总通知
+builder.Services.AddHostedService<PrdAgent.Api.Services.PmOverdueReminderWorker>();
+
 // 一次性回填存量 PDF 包装站的 WrappedAssetType marker（PR #612）
 builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteBackfillService>();
 

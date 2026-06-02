@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, Save, TrendingUp, Coins, Star, Clock, Wallet } from 'lucide-react';
+import { ArrowLeft, Save, TrendingUp, Coins, Star, Clock, Wallet, Activity } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
@@ -148,6 +148,48 @@ export function DashboardView({ onBack }: Props) {
             </div>
           </div>
         </div>
+
+        {/* 在管项目健康总览（PMO portfolio health）*/}
+        {data.portfolioHealth && data.portfolioHealth.activeCount > 0 && (() => {
+          const ph = data.portfolioHealth;
+          const HC: Record<string, string> = { red: '#EF4444', yellow: '#F59E0B', green: '#10B981' };
+          return (
+            <div className="rounded-xl border p-4" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
+              <div className="flex items-center gap-2 mb-3 flex-wrap">
+                <Activity size={15} style={{ color: '#3B82F6' }} />
+                <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>在管项目健康总览</span>
+                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{ph.activeCount} 个进行中 · 平均进度 {ph.avgProgress}%</span>
+                <div className="ml-auto flex items-center gap-3 text-[12px]">
+                  <span className="inline-flex items-center gap-1" style={{ color: HC.red }}><span className="w-2 h-2 rounded-full" style={{ background: HC.red }} />{ph.redCount} 风险</span>
+                  <span className="inline-flex items-center gap-1" style={{ color: HC.yellow }}><span className="w-2 h-2 rounded-full" style={{ background: HC.yellow }} />{ph.yellowCount} 关注</span>
+                  <span className="inline-flex items-center gap-1" style={{ color: HC.green }}><span className="w-2 h-2 rounded-full" style={{ background: HC.green }} />{ph.greenCount} 正常</span>
+                </div>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                {ph.projects.map((p) => (
+                  <div key={p.id} className="flex items-center gap-2.5 rounded-lg border px-3 py-2" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-base)' }}>
+                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: HC[p.health] }} title={p.health} />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[12.5px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{p.title}</div>
+                      <div className="text-[10.5px] truncate" style={{ color: 'var(--text-muted)' }}>{p.projectNo}{p.leaderName ? ` · ${p.leaderName}` : ''}{p.reason ? ` · ${p.reason}` : ''}</div>
+                    </div>
+                    <div className="w-24 shrink-0 hidden sm:block">
+                      <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--bg-card)' }}>
+                        <div style={{ width: `${p.progress}%`, height: '100%', background: HC[p.health] }} />
+                      </div>
+                    </div>
+                    <span className="text-[11px] tabular-nums w-9 text-right shrink-0" style={{ color: 'var(--text-muted)' }}>{p.progress}%</span>
+                    <div className="flex items-center gap-1.5 shrink-0 text-[10px]">
+                      {p.overdueCount > 0 && <span className="px-1.5 py-0.5 rounded" style={{ background: 'rgba(239,68,68,0.12)', color: '#EF4444' }}>逾期 {p.overdueCount}</span>}
+                      {p.highRiskCount > 0 && <span className="px-1.5 py-0.5 rounded" style={{ background: 'rgba(239,68,68,0.12)', color: '#EF4444' }}>高风险 {p.highRiskCount}</span>}
+                      {p.budgetUtil >= 0 && <span className="px-1.5 py-0.5 rounded" style={{ background: p.budgetUtil > 100 ? 'rgba(239,68,68,0.12)' : 'var(--bg-card)', color: p.budgetUtil > 100 ? '#EF4444' : 'var(--text-muted)' }}>预算 {p.budgetUtil}%</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* 季度盘点（选定财年时）*/}
         {data.quarters.length > 0 && (

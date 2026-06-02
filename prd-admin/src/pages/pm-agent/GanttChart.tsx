@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { PmTask, PmMilestone } from '@/services/contracts/pmAgent';
 import { TASK_STATUS_REGISTRY, PRIORITY_REGISTRY, MILESTONE_HEALTH_REGISTRY } from './pmConstants';
 
@@ -8,6 +8,8 @@ interface Props {
   milestones?: PmMilestone[];
   /** 点击任务名或时间条 → 打开统一的任务详情抽屉 */
   onOpen?: (task: PmTask) => void;
+  /** 拖拽里程碑菱形改期（仅 owner/leader 传入）。dueAtIso 为新计划截止日。 */
+  onMilestoneMove?: (milestoneId: string, dueAtIso: string) => void;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -23,10 +25,12 @@ function fmt(d: Date) { return `${d.getMonth() + 1}/${d.getDate()}`; }
  * 仅渲染带 startAt + dueAt 的任务；缺日期的任务在底部提示补全。
  * 采用横向滚动而非 pan/zoom 画布，故不涉及 gesture-unification 规则。
  */
-export function GanttChart({ tasks, milestones, onOpen }: Props) {
+export function GanttChart({ tasks, milestones, onOpen, onMilestoneMove }: Props) {
   const dated = useMemo(() => tasks.filter((t) => t.startAt && t.dueAt), [tasks]);
   const undatedCount = tasks.length - dated.length;
   const datedMilestones = useMemo(() => (milestones ?? []).filter((m) => m.dueAt), [milestones]);
+  // 拖拽改期临时态
+  const [drag, setDrag] = useState<{ id: string; startX: number; startOff: number; off: number } | null>(null);
 
   const range = useMemo(() => {
     if (dated.length === 0) return null;
@@ -86,12 +90,19 @@ export function GanttChart({ tasks, milestones, onOpen }: Props) {
               <div className="relative" style={{ width: days * COL_W, height: 30 }}>
                 {datedMilestones.map((m) => {
                   const off = Math.round((startOfDay(new Date(m.dueAt!)).getTime() - min) / DAY_MS);
+                  const liveOff = drag?.id === m.id ? drag.off : off;
                   const color = MILESTONE_HEALTH_REGISTRY[m.health].color;
+                  const dragging = drag?.id === m.id;
+                  const liveDate = new Date(min + liveOff * DAY_MS);
+                  const canDrag = !!onMilestoneMove;
                   return (
-                    <div key={m.id} className="absolute flex items-center gap-1" style={{ left: off * COL_W + COL_W / 2 - 6, top: 7 }}
-                      title={`${m.title}｜${fmt(new Date(m.dueAt!))}｜进度 ${m.progress}%（${MILESTONE_HEALTH_REGISTRY[m.health].label}）`}>
-                      <span style={{ width: 11, height: 11, background: color, transform: 'rotate(45deg)', display: 'inline-block', borderRadius: 2 }} />
-                      <span className="text-[10px] whitespace-nowrap" style={{ color: 'var(--text-secondary)' }}>{m.title}</span>
+                    <div key={m.id} className="absolute flex items-center gap-1" style={{ left: liveOff * COL_W + COL_W / 2 - 6, top: 7, zIndex: dragging ? 20 : undefined }}
+                      title={`${m.title}｜${fmt(liveDate)}｜进度 ${m.progress}%（${MILESTONE_HEALTH_REGISTRY[m.health].label}）${canDrag ? '｜拖拽改期' : ''}`}
+                      onPointerDown={canDrag ? (e) => { e.preventDefault(); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); setDrag({ id: m.id, startX: e.clientX, startOff: off, off }); } : undefined}
+                      onPointerMove={canDrag ? (e) => { if (!drag || drag.id !== m.id) return; const dd = Math.round((e.clientX - drag.startX) / COL_W); const no = Math.min(days - 1, Math.max(0, drag.startOff + dd)); if (no !== drag.off) setDrag({ ...drag, off: no }); } : undefined}
+                      onPointerUp={canDrag ? (e) => { if (!drag || drag.id !== m.id) return; const finalOff = drag.off; setDrag(null); (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId); if (finalOff !== off) onMilestoneMove!(m.id, new Date(min + finalOff * DAY_MS).toISOString()); } : undefined}>
+                      <span style={{ width: 11, height: 11, background: color, transform: 'rotate(45deg)', display: 'inline-block', borderRadius: 2, cursor: canDrag ? (dragging ? 'grabbing' : 'grab') : 'default', boxShadow: dragging ? `0 0 0 3px ${color}55` : undefined }} />
+                      <span className="text-[10px] whitespace-nowrap" style={{ color: dragging ? color : 'var(--text-secondary)' }}>{m.title}{dragging ? ` · ${fmt(liveDate)}` : ''}</span>
                     </div>
                   );
                 })}
