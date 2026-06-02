@@ -9,3 +9,4 @@
 | feat | prd-admin | 缺陷管理/PR审查/涌现探索/工作流四页补 data-tour-id 锚点（缺陷贯通到提交面板全流程） |
 | feat | prd-api | DailyTips 新增 defect/pr-review/emergence/workflow 四条 page-guide seed（4-8 步） |
 | fix | prd-admin | 涌现探索教程改锚到真实落地页 EmergenceIntroPage（hero/三步玩法/种子按钮/三维度），原锚的树列表视图非默认落地态导致定位失败 |
+| fix | prd-admin | 右上角教程入口降突兀：新人(本页教程没走完)才强调色+脉冲闪烁，老人(走完/本页无教程)变中性安静低存在感 chip(不闪、不发光、低透明度)，融入页面 chrome；老人态隐藏计数徽标 |

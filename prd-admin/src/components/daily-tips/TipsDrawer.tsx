@@ -401,7 +401,15 @@ export function TipsDrawer() {
   // 用户 2026-06-02 要求:入口移到右上角、始终可见、带文字标签——右下角匿名图标像小广告,没人点。
   const BOOK_TOP = 14;
   const bookRight = 16; // 恒定可见,不再贴边隐藏
-  const bookOpacity = 1;
+  // 该页是否有「没走完」的本页教程(tips 已过滤掉已学会的 → 还在=没走完)。
+  // 新人(true):入口强调色 + 轻微脉冲,吸引注意;老人(false:走完/本页无教程):中性、安静、低存在感,不闪烁、不突兀。
+  const newbieGuideHere = tips.some((t) => {
+    if (typeof t.sourceId !== 'string' || !t.sourceId.endsWith('-page-guide') || !t.actionUrl) return false;
+    const isEditor = t.sourceId.includes('editor');
+    if (location.pathname === t.actionUrl) return !isEditor;
+    if (location.pathname.startsWith(t.actionUrl + '/')) return isEditor;
+    return false;
+  });
 
   const bookBtn = (
     <button
@@ -418,53 +426,51 @@ export function TipsDrawer() {
         setExpanded((v) => !v);
       }}
       onMouseEnter={(e) => {
-        e.currentTarget.style.transform = 'translateY(-2px)';
-        e.currentTarget.style.boxShadow =
-          '0 14px 36px -8px rgba(139,92,246,0.65), 0 0 0 1px rgba(255,255,255,0.08) inset';
+        e.currentTarget.style.opacity = '1';
+        e.currentTarget.style.transform = 'translateY(-1px)';
       }}
       onMouseLeave={(e) => {
+        e.currentTarget.style.opacity = newbieGuideHere ? '1' : '0.5';
         e.currentTarget.style.transform = 'translateY(0)';
-        e.currentTarget.style.boxShadow =
-          '0 10px 30px -8px rgba(139,92,246,0.45), 0 0 0 1px rgba(255,255,255,0.06) inset, 0 1px 0 rgba(255,255,255,0.14) inset';
       }}
-      title={tips.length === 0 ? '本页教程(暂无)' : `本页教程 / 新手指引 (${badgeCount})`}
+      title={newbieGuideHere ? '本页教程 · 跟着走一遍' : '本页教程 / 新手指引'}
       style={{
         position: 'fixed',
         top: BOOK_TOP,
         right: bookRight,
-        height: 34,
-        padding: '0 12px',
+        height: 30,
+        padding: '0 10px',
         borderRadius: 999,
-        background:
-          'linear-gradient(135deg, rgba(168,85,247,0.30), rgba(99,102,241,0.22))',
-        border: '1px solid rgba(196,181,253,0.40)',
-        backdropFilter: 'blur(14px)',
-        WebkitBackdropFilter: 'blur(14px)',
+        // 新人:强调色吸引注意;老人:中性安静、低存在感(用主题 token,融入页面 chrome 而不突兀)
+        background: newbieGuideHere
+          ? 'linear-gradient(135deg, rgba(168,85,247,0.26), rgba(99,102,241,0.18))'
+          : 'var(--bg-card, rgba(255,255,255,0.045))',
+        border: newbieGuideHere
+          ? '1px solid rgba(196,181,253,0.45)'
+          : '1px solid var(--border-subtle, rgba(255,255,255,0.10))',
+        backdropFilter: 'blur(10px)',
+        WebkitBackdropFilter: 'blur(10px)',
         display: 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 6,
+        gap: 5,
         cursor: 'pointer',
-        zIndex: 300, // 高于页面常规内容(z-100/200),低于模态(z-9999+):确保右上角入口在每个页面都可见
-        color: '#f3e8ff',
-        opacity: bookOpacity,
-        boxShadow:
-          '0 10px 30px -8px rgba(139,92,246,0.45), 0 0 0 1px rgba(255,255,255,0.06) inset, 0 1px 0 rgba(255,255,255,0.14) inset',
-        transition:
-          'right 240ms cubic-bezier(.2,.8,.2,1), opacity 240ms ease-out, transform 180ms ease-out, box-shadow 180ms ease-out',
+        zIndex: 300, // 高于页面常规内容,低于模态(z-9999+)
+        color: newbieGuideHere ? '#f3e8ff' : 'var(--text-muted)',
+        opacity: newbieGuideHere ? 1 : 0.5,
+        boxShadow: newbieGuideHere ? '0 6px 20px -10px rgba(139,92,246,0.5)' : 'none',
+        transition: 'opacity 200ms ease-out, transform 160ms ease-out, background 200ms ease-out, color 200ms ease-out',
       }}
     >
       <BookOpen
-        size={15}
-        strokeWidth={2.1}
+        size={14}
+        strokeWidth={2}
         style={{
-          filter: pageMatchedIndex >= 0
-            ? 'drop-shadow(0 0 10px rgba(244,63,94,0.85))'
-            : 'drop-shadow(0 0 6px rgba(196,181,253,0.6))',
-          animation: pageMatchedIndex >= 0 && !expanded ? 'tipsBookPulse 2s ease-in-out infinite' : undefined,
+          filter: newbieGuideHere ? 'drop-shadow(0 0 8px rgba(196,181,253,0.7))' : 'none',
+          animation: newbieGuideHere && !expanded ? 'tipsBookPulse 2s ease-in-out infinite' : undefined,
         }}
       />
-      <span style={{ fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', letterSpacing: '0.01em' }}>
+      <span style={{ fontSize: 12, fontWeight: newbieGuideHere ? 600 : 500, whiteSpace: 'nowrap', letterSpacing: '0.01em' }}>
         {pageMatchedIndex >= 0 ? '本页教程' : '新手指引'}
       </span>
       <style>{`
@@ -473,7 +479,7 @@ export function TipsDrawer() {
           50% { transform: scale(1.1); }
         }
       `}</style>
-      {badgeCount > 0 && (
+      {newbieGuideHere && badgeCount > 0 && (
         <span
           style={{
             position: 'absolute',
