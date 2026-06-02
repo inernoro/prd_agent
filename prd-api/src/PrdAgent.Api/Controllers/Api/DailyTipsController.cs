@@ -480,7 +480,7 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=webpages-folders]", Title = "第 11 步：文件夹", Body = "用文件夹把同类站点收纳到一起，点文件夹名快速过滤。" },
                         new() { Selector = "[data-tour-id=webpages-card]", Title = "第 12 步：站点卡片", Body = "每个站点一张卡，显示标题、缩略图、访问量和快捷操作。" },
                         new() { Selector = "[data-tour-id=webpages-viewcount]", Title = "第 13 步：访问量", Body = "卡片底部的眼睛图标 + 数字，是该站点累计被打开的次数。" },
-                        new() { Selector = "[data-tour-id=share-dock-panel]", Title = "第 14 步：投放面板", Body = "右侧悬浮面板可把文件直接拖进来上传，并提供「公开 / 分享 / 回收」快捷槽位（折叠时先点一下展开）。看完点「完成」就上手啦 🎉" },
+                        new() { Selector = "[data-tour-id=share-dock-panel]", Title = "第 14 步：投放面板", Body = "右侧悬浮面板可把文件直接拖进来上传，并提供「公开 / 分享 / 回收」快捷槽位（折叠时先点一下展开）。看完点「完成」就上手啦" },
                     },
                 },
                 tier: "basic"),
@@ -673,7 +673,7 @@ public sealed class DailyTipsController : ControllerBase
                         {
                             Selector = "[data-tour-id=emergence-explore-btn]",
                             Title = "第 2 步:点节点上的「探索」",
-                            Body = "AI 会基于已有能力 + 全局基础设施,长出几条新维度。看到新分支就算完成 🎉",
+                            Body = "AI 会基于已有能力 + 全局基础设施,长出几条新维度。看到新分支就算完成",
                         },
                     },
                 }),
@@ -788,7 +788,7 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=visual-defect-btn]", Title = "第 8 步：随手反馈", Body = "遇到问题点 Bug 图标（或 Cmd/Ctrl+B）直接提交缺陷。" },
                         new() { Selector = "[data-tour-id=visual-submit-btn]", Title = "第 9 步：开始创作", Body = "填好后点「开始创作」，AI 流式生成、过程实时可见，出图后还能继续微调或加水印。" },
                         new() { Selector = "[data-tour-id=visual-projects]", Title = "第 10 步：最近项目", Body = "你创建过的项目都收在这里，点开继续编辑。" },
-                        new() { Selector = "[data-tour-id=visual-new-project]", Title = "第 11 步：从空白开始", Body = "想直接进编辑器？点「新建项目」创建空白画布。看到新卡片就算上手 🎉" },
+                        new() { Selector = "[data-tour-id=visual-new-project]", Title = "第 11 步：从空白开始", Body = "想直接进编辑器？点「新建项目」创建空白画布。看到新卡片就算上手" },
                     },
                 }),
 
@@ -814,7 +814,7 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=library-sort]", Title = "第 5 步：排序", Body = "按最近更新 / 创建时间 / 名称 / 文章数切换列表顺序。" },
                         new() { Selector = "[data-tour-id=document-store-create]", Title = "第 6 步：新建知识库", Body = "点「新建知识库」取个名字，这就是你的第一个库。" },
                         new() { Selector = "[data-tour-id=document-store-create]", Title = "第 7 步：进库后上传文档", Body = "点卡片「打开」进入空间，右上角会出现「上传文档」按钮，支持拖入 PDF/Markdown/Word，或粘贴 URL 自动抓取。" },
-                        new() { Selector = "[data-tour-id=document-store-create]", Title = "第 8 步：发布到智识殿堂", Body = "空间里点「发布」，勾选公开后就能被全平台搜到、收藏、点赞。看完点「完成」🎉" },
+                        new() { Selector = "[data-tour-id=document-store-create]", Title = "第 8 步：发布到智识殿堂", Body = "空间里点「发布」，勾选公开后就能被全平台搜到、收藏、点赞。看完点「完成」" },
                     },
                 }),
 
@@ -838,7 +838,7 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=literary-create-folder]", Title = "第 5 步：新建文件夹", Body = "点文件夹图标先建一个分类。" },
                         new() { Selector = "[data-tour-id=literary-create]", Title = "第 6 步：新建文章", Body = "点「新建」开始写第一篇，进入后即可用 AI 辅助创作。" },
                         new() { Selector = "[data-tour-id=literary-content]", Title = "第 7 步：作品区", Body = "你的文章会以卡片排在这里，点卡片进入编辑，右键可快速操作。" },
-                        new() { Selector = "[data-tour-id=literary-content]", Title = "第 8 步：右键快捷菜单", Body = "在空白处右键也能快速新建文件夹或文章；还没有文章时这里会给出引导。看完点「完成」🎉" },
+                        new() { Selector = "[data-tour-id=literary-content]", Title = "第 8 步：右键快捷菜单", Body = "在空白处右键也能快速新建文件夹或文章；还没有文章时这里会给出引导。看完点「完成」" },
                     },
                 }),
 
@@ -860,7 +860,7 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=marketplace-search]", Title = "第 3 步：搜索", Body = "按名称快速找到目标配置。" },
                         new() { Selector = "[data-tour-id=marketplace-sort]", Title = "第 4 步：热门 / 最新", Body = "想看大家在用什么点「热门」，想看新货点「最新」。" },
                         new() { Selector = "[data-tour-id=marketplace-list]", Title = "第 5 步：浏览卡片", Body = "每张卡是一个可 fork 的配置，点进去看详情和 fork 数。" },
-                        new() { Selector = "[data-tour-id=marketplace-upload-skill-btn]", Title = "第 6 步：上传你的技能", Body = "在「技能」分类下点「上传技能」，传 zip + 填标题描述即可发布；同分类下的「接入 AI」还能一键生成 API Key 让 Claude Code / Cursor 直连市场。看完点「完成」🎉" },
+                        new() { Selector = "[data-tour-id=marketplace-upload-skill-btn]", Title = "第 6 步：上传你的技能", Body = "在「技能」分类下点「上传技能」，传 zip + 填标题描述即可发布；同分类下的「接入 AI」还能一键生成 API Key 让 Claude Code / Cursor 直连市场。看完点「完成」" },
                     },
                 }),
 
@@ -883,7 +883,7 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=library-create]", Title = "第 4 步：发布我的知识", Body = "想分享自己的？点「发布我的知识」去新建知识库（跳到知识库页）。" },
                         new() { Selector = "[data-tour-id=library-catalog-title]", Title = "第 5 步：热门知识库区", Body = "下面是按热度排序的公开知识库，点卡片进入阅读。" },
                         new() { Selector = "[data-tour-id=library-search]", Title = "第 6 步：搜索", Body = "按名称 / 作者 / 标签找你感兴趣的库。" },
-                        new() { Selector = "[data-tour-id=library-sort]", Title = "第 7 步：排序", Body = "热门 / 高赞 / 高阅 / 最新 切换不同维度。看完点「完成」🎉" },
+                        new() { Selector = "[data-tour-id=library-sort]", Title = "第 7 步：排序", Body = "热门 / 高赞 / 高阅 / 最新 切换不同维度。看完点「完成」" },
                     },
                 }),
 
@@ -905,7 +905,7 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=showcase-sort]", Title = "第 3 步：排序", Body = "默认按「最受欢迎」展示，热门作品靠前。" },
                         new() { Selector = "[data-tour-id=showcase-search]", Title = "第 4 步：搜索作品", Body = "顶部搜索框按关键词找作品。" },
                         new() { Selector = "[data-tour-id=showcase-gallery]", Title = "第 5 步：浏览作品墙", Body = "瀑布流展示作品，点开看大图和作者主页。" },
-                        new() { Selector = "[data-tour-id=showcase-back]", Title = "第 6 步：返回首页", Body = "左上角返回按钮回到首页。看完点「完成」🎉" },
+                        new() { Selector = "[data-tour-id=showcase-back]", Title = "第 6 步：返回首页", Body = "左上角返回按钮回到首页。看完点「完成」" },
                     },
                 }),
 
@@ -925,7 +925,7 @@ public sealed class DailyTipsController : ControllerBase
                     {
                         new() { Selector = "[data-tour-id=visual-editor-canvas]", Title = "第 1 步：你已进入视觉编辑器", Body = "中间这块是无限画布——单个项目的创作空间，底部是创作输入区。" },
                         new() { Selector = "[data-tour-id=visual-editor-canvas]", Title = "第 2 步：无限画布", Body = "两指拖动平移、双指捏合或 ⌘/Ctrl+滚轮缩放；把图片直接拖进来即可作为参考或编辑对象。" },
-                        new() { Selector = "[data-tour-id=visual-editor-canvas]", Title = "第 3 步：开始创作", Body = "在底部输入框写指令、选模型与尺寸，点生成，结果会出现在画布上；左上角返回退出。看完点「完成」🎉" },
+                        new() { Selector = "[data-tour-id=visual-editor-canvas]", Title = "第 3 步：开始创作", Body = "在底部输入框写指令、选模型与尺寸，点生成，结果会出现在画布上；左上角返回退出。看完点「完成」" },
                     },
                 }),
 
@@ -945,7 +945,7 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=literary-editor-content]", Title = "第 1 步：你已进入文学编辑器", Body = "左侧这块是文章正文区，右侧是配图标记列表。" },
                         new() { Selector = "[data-tour-id=literary-editor-content]", Title = "第 2 步：正文区", Body = "上传或粘贴文章后在这里预览；把 .md / .txt 文件拖进来也能上传。" },
                         new() { Selector = "[data-tour-id=literary-editor-content]", Title = "第 3 步：生成配图", Body = "AI 会按正文自动标出配图点并逐张生成，右侧可逐个查看或重生成。" },
-                        new() { Selector = "[data-tour-id=literary-editor-back]", Title = "第 4 步：返回", Body = "左上角返回按钮回到文章列表。看完点「完成」🎉" },
+                        new() { Selector = "[data-tour-id=literary-editor-back]", Title = "第 4 步：返回", Body = "左上角返回按钮回到文章列表。看完点「完成」" },
                     },
                 }),
 
@@ -969,7 +969,7 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=defect-create]", Title = "第 5 步：提交缺陷", Body = "点「+ 提交缺陷」展开提交表单。" },
                         new() { Selector = "[data-tour-id=defect-description]", Title = "第 6 步：写标题 + 描述", Body = "第一行作为标题（一句话），下方可粘贴截图、拖文件。" },
                         new() { Selector = "[data-tour-id=defect-assignee-picker]", Title = "第 7 步：选负责人", Body = "搜用户名或选默认负责人，对方会立刻收到通知。" },
-                        new() { Selector = "[data-tour-id=defect-submit]", Title = "第 8 步：提交", Body = "提交后收到「已创建」，开发修好后再收「已修复」。看完点「完成」🎉" },
+                        new() { Selector = "[data-tour-id=defect-submit]", Title = "第 8 步：提交", Body = "提交后收到「已创建」，开发修好后再收「已修复」。看完点「完成」" },
                     },
                 }),
 
@@ -989,7 +989,7 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=pr-review-page-title]", Title = "第 1 步：欢迎来到 PR 审查工作台", Body = "用你自己的 GitHub 账号，对任意有权限的 PR 跑 AI 审查。", NavigateTo = "/pr-review" },
                         new() { Selector = "[data-tour-id=pr-review-sidebar]", Title = "第 2 步：左侧操作区", Body = "先「连接 GitHub」（Device Flow 授权）；连上后粘贴 PR 链接点「添加并同步」。" },
                         new() { Selector = "[data-tour-id=pr-review-list-container]", Title = "第 3 步：右侧 PR 列表", Body = "添加的 PR 按更新时间排序展示。" },
-                        new() { Selector = "[data-tour-id=pr-review-list-container]", Title = "第 4 步：查看 AI 审查", Body = "点开任一 PR 卡片：看一句话总结、与项目目标的对齐度评分、写你的审查笔记。看完点「完成」🎉" },
+                        new() { Selector = "[data-tour-id=pr-review-list-container]", Title = "第 4 步：查看 AI 审查", Body = "点开任一 PR 卡片：看一句话总结、与项目目标的对齐度评分、写你的审查笔记。看完点「完成」" },
                     },
                 }),
 
@@ -999,17 +999,20 @@ public sealed class DailyTipsController : ControllerBase
                 "从一颗种子开始，让 AI 帮你发现下一步做什么。",
                 "/emergence",
                 "开始本页教程",
-                "[data-tour-id=emergence-hero-title]",
+                // 锚点用逗号兜底:新用户落在 EmergenceIntroPage(hero-title/steps/seed-input/dimensions),
+                // 有树的老用户落在 EmergenceCanvas 树列表(about/create-tree/tree-list)。两套都给,
+                // querySelector 取首个命中,任一视图都不会留空步骤卡 10 秒超时(Codex P2)。
+                "[data-tour-id=emergence-hero-title], [data-tour-id=emergence-about]",
                 0,
                 new DailyTipAutoAction
                 {
                     Scroll = "center",
                     Steps = new List<DailyTipTourStep>
                     {
-                        new() { Selector = "[data-tour-id=emergence-hero-title]", Title = "第 1 步：欢迎来到涌现探索器", Body = "从一颗种子开始，AI 帮你长出整棵可能性之树、发现下一步做什么。", NavigateTo = "/emergence" },
-                        new() { Selector = "[data-tour-id=emergence-steps]", Title = "第 2 步：三步玩法", Body = "种下种子 → 探索生长 → 涌现组合，下面这三张卡说明了完整流程。" },
-                        new() { Selector = "[data-tour-id=emergence-seed-input]", Title = "第 3 步：种下第一颗种子", Body = "点这里上传一段文档 / 方案作为锚点，创建你的第一棵涌现树。" },
-                        new() { Selector = "[data-tour-id=emergence-dimensions]", Title = "第 4 步：三个维度", Body = "AI 沿「系统内 → 跨系统 → 幻想未来」生长；进入树后点节点「探索」、多节点还能「涌现」交叉组合。看完点「完成」🎉" },
+                        new() { Selector = "[data-tour-id=emergence-hero-title], [data-tour-id=emergence-about]", Title = "第 1 步：欢迎来到涌现探索器", Body = "从一颗种子开始，AI 帮你长出整棵可能性之树、发现下一步做什么。", NavigateTo = "/emergence" },
+                        new() { Selector = "[data-tour-id=emergence-steps], [data-tour-id=emergence-tree-list]", Title = "第 2 步：三步玩法", Body = "种下种子 → 探索生长 → 涌现组合，完整流程就这三步。" },
+                        new() { Selector = "[data-tour-id=emergence-seed-input], [data-tour-id=emergence-create-tree]", Title = "第 3 步：种下第一颗种子", Body = "点这里上传一段文档 / 方案作为锚点，创建你的第一棵涌现树。" },
+                        new() { Selector = "[data-tour-id=emergence-dimensions], [data-tour-id=emergence-tree-list]", Title = "第 4 步：三个维度", Body = "AI 沿「系统内 → 跨系统 → 幻想未来」生长；进入树后点节点「探索」、多节点还能「涌现」交叉组合。看完点「完成」。" },
                     },
                 }),
 
@@ -1029,7 +1032,7 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=workflow-create-btn]", Title = "第 1 步：欢迎来到工作流", Body = "把多个能力舱编排成自动化流程。点「新建工作流」进入画布。", NavigateTo = "/workflow-agent" },
                         new() { Selector = "[data-tour-id=workflow-from-template-btn]", Title = "第 2 步：从模板创建", Body = "不想从零搭？用预定义模板一键生成工作流。" },
                         new() { Selector = "[data-tour-id=workflow-list]", Title = "第 3 步：工作流列表", Body = "建好的工作流都在这；首次使用有空状态引导教你建第一个。" },
-                        new() { Selector = "[data-tour-id=workflow-list]", Title = "第 4 步：卡片操作与执行", Body = "每张卡可「编辑 / 画布 / 执行 / 删除」；进画布后拖舱、连线、点执行即可跑。看完点「完成」🎉" },
+                        new() { Selector = "[data-tour-id=workflow-list]", Title = "第 4 步：卡片操作与执行", Body = "每张卡可「编辑 / 画布 / 执行 / 删除」；进画布后拖舱、连线、点执行即可跑。看完点「完成」" },
                     },
                 }),
         };

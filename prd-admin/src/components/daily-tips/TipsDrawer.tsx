@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Sparkles, X, Pin, PinOff, MapPin, ChevronLeft, ChevronRight, GraduationCap } from 'lucide-react';
 import { OPEN_TIPS_DRAWER_EVENT } from './TipsEntryButton';
+import { matchPageGuide } from './pageGuideMatch';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { writeSpotlightPayload } from './TipsRotator';
 import { trackTip, dismissTipForever } from '@/services/real/dailyTips';
@@ -193,15 +194,12 @@ export function TipsDrawer() {
   // 当前页是否有「未走完的本页教程」(tips 已过滤掉已学会的)。渲染级单一真值:
   // 既供「强制自动开讲」用,也供下面两个抽屉自动展开 effect 做抑制判断——
   // 不依赖 effect 声明顺序(否则抽屉先展开、晚一步才标记节流,会和 Spotlight 叠加,Bugbot Medium)。
-  const pageGuideHere = useMemo(() => {
-    return tips.find((t) => {
-      if (typeof t.sourceId !== 'string' || !t.sourceId.endsWith('-page-guide') || !t.actionUrl) return false;
-      const isEditorGuide = t.sourceId.includes('editor');
-      if (location.pathname === t.actionUrl) return !isEditorGuide;
-      if (location.pathname.startsWith(t.actionUrl + '/') || location.pathname.startsWith(t.actionUrl + '-fullscreen/')) return isEditorGuide;
-      return false;
-    }) ?? null;
-  }, [tips, location.pathname]);
+  // 用 store 稳定引用 items + dismissed(而非 cardTips() 每次新建的 tips 数组),memo 才真正能缓存(Bugbot)。
+  // 与 TipsEntryButton 共用 matchPageGuide,避免两份 inline 拷贝随规则漂移。
+  const pageGuideHere = useMemo(
+    () => matchPageGuide(items, dismissed, location.pathname),
+    [items, dismissed, location.pathname],
+  );
 
   // ── 推送自动展开:按 tip.id 记忆,每条定向 tip 本 session 只弹一次 ──
   // 轮询时如果管理员新推了一条,tips 里会多出一个 isTargeted 的新 id,它不在
