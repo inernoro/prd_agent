@@ -57,6 +57,10 @@ export interface InfraCatalogEntry {
   volumePaths: string[];
   /** Schema-ful store: app usually needs a migration/init step before first use. */
   schemaful?: boolean;
+  /** This store has a named database the user may customise (default "app"). */
+  supportsDbName?: boolean;
+  /** Initialization SQL/commands can be run against this store (via the data panel). */
+  supportsInitSql?: boolean;
   /** Optional container start command. */
   command?: string | string[];
   /** Optional docker labels. */
@@ -64,11 +68,24 @@ export interface InfraCatalogEntry {
   /** Secret keys to generate (hex) before calling build(). */
   secretKeys?: string[];
   /**
-   * Pure builder: given freshly generated secrets, return the container env and the
-   * app-visible connection envVars. Must not perform I/O. The infra container is
-   * reachable on the project docker network by its `id` as hostname.
+   * Pure builder: given freshly generated secrets (and optional per-instance options
+   * like a custom database name), return the container env and the app-visible
+   * connection envVars. Must not perform I/O. The infra container is reachable on the
+   * project docker network by its `id` as hostname.
    */
-  build: (secrets: Record<string, string>) => { env?: Record<string, string>; envVars?: Record<string, string> };
+  build: (secrets: Record<string, string>, opts?: InfraBuildOptions) => { env?: Record<string, string>; envVars?: Record<string, string> };
+}
+
+/** Per-instance build options threaded from the create/add-infra request. */
+export interface InfraBuildOptions {
+  /** Custom database name (defaults to "app"). Only honoured by schemaful stores. */
+  dbName?: string;
+}
+
+/** Normalise a user-supplied database name to a safe identifier; fall back to "app". */
+export function sanitizeDbName(raw: string | undefined): string {
+  const cleaned = (raw || '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/^_+|_+$/g, '').slice(0, 48);
+  return cleaned || 'app';
 }
 
 /**
@@ -89,16 +106,22 @@ export const INFRA_CATALOG: InfraCatalogEntry[] = [
     dockerImage: 'mongo:7',
     containerPort: 27017,
     volumePaths: ['/data/db'],
+    supportsDbName: true,
+    supportsInitSql: true,
     secretKeys: ['password'],
-    build: (s) => ({
-      env: {
-        MONGO_INITDB_ROOT_USERNAME: 'app',
-        MONGO_INITDB_ROOT_PASSWORD: s.password,
-      },
-      envVars: {
-        MONGODB_URL: `mongodb://app:${s.password}@mongodb:27017/app?authSource=admin`,
-      },
-    }),
+    build: (s, o) => {
+      const db = sanitizeDbName(o?.dbName);
+      return {
+        env: {
+          MONGO_INITDB_ROOT_USERNAME: 'app',
+          MONGO_INITDB_ROOT_PASSWORD: s.password,
+          MONGO_INITDB_DATABASE: db,
+        },
+        envVars: {
+          MONGODB_URL: `mongodb://app:${s.password}@mongodb:27017/${db}?authSource=admin`,
+        },
+      };
+    },
   },
   {
     id: 'postgres',
@@ -109,18 +132,24 @@ export const INFRA_CATALOG: InfraCatalogEntry[] = [
     containerPort: 5432,
     volumePaths: ['/var/lib/postgresql/data'],
     schemaful: true,
+    supportsDbName: true,
+    supportsInitSql: true,
     secretKeys: ['password'],
-    build: (s) => ({
-      env: {
-        POSTGRES_USER: 'app',
-        POSTGRES_PASSWORD: s.password,
-        POSTGRES_DB: 'app',
-      },
-      envVars: {
-        DATABASE_URL: `postgresql://app:${s.password}@postgres:5432/app`,
-        POSTGRES_URL: `postgresql://app:${s.password}@postgres:5432/app`,
-      },
-    }),
+    build: (s, o) => {
+      const db = sanitizeDbName(o?.dbName);
+      const url = `postgresql://app:${s.password}@postgres:5432/${db}`;
+      return {
+        env: {
+          POSTGRES_USER: 'app',
+          POSTGRES_PASSWORD: s.password,
+          POSTGRES_DB: db,
+        },
+        envVars: {
+          DATABASE_URL: url,
+          POSTGRES_URL: url,
+        },
+      };
+    },
   },
   {
     id: 'mysql',
@@ -131,19 +160,25 @@ export const INFRA_CATALOG: InfraCatalogEntry[] = [
     containerPort: 3306,
     volumePaths: ['/var/lib/mysql'],
     schemaful: true,
+    supportsDbName: true,
+    supportsInitSql: true,
     secretKeys: ['rootPassword', 'password'],
-    build: (s) => ({
-      env: {
-        MYSQL_ROOT_PASSWORD: s.rootPassword,
-        MYSQL_DATABASE: 'app',
-        MYSQL_USER: 'app',
-        MYSQL_PASSWORD: s.password,
-      },
-      envVars: {
-        DATABASE_URL: `mysql://app:${s.password}@mysql:3306/app`,
-        MYSQL_URL: `mysql://app:${s.password}@mysql:3306/app`,
-      },
-    }),
+    build: (s, o) => {
+      const db = sanitizeDbName(o?.dbName);
+      const url = `mysql://app:${s.password}@mysql:3306/${db}`;
+      return {
+        env: {
+          MYSQL_ROOT_PASSWORD: s.rootPassword,
+          MYSQL_DATABASE: db,
+          MYSQL_USER: 'app',
+          MYSQL_PASSWORD: s.password,
+        },
+        envVars: {
+          DATABASE_URL: url,
+          MYSQL_URL: url,
+        },
+      };
+    },
   },
   {
     id: 'sqlserver',
@@ -177,18 +212,23 @@ export const INFRA_CATALOG: InfraCatalogEntry[] = [
     dockerImage: 'clickhouse/clickhouse-server:24-alpine',
     containerPort: 8123,
     volumePaths: ['/var/lib/clickhouse'],
+    supportsDbName: true,
+    supportsInitSql: true,
     secretKeys: ['password'],
-    build: (s) => ({
-      env: {
-        CLICKHOUSE_USER: 'app',
-        CLICKHOUSE_PASSWORD: s.password,
-        CLICKHOUSE_DB: 'app',
-        CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: '1',
-      },
-      envVars: {
-        CLICKHOUSE_URL: `http://app:${s.password}@clickhouse:8123/app`,
-      },
-    }),
+    build: (s, o) => {
+      const db = sanitizeDbName(o?.dbName);
+      return {
+        env: {
+          CLICKHOUSE_USER: 'app',
+          CLICKHOUSE_PASSWORD: s.password,
+          CLICKHOUSE_DB: db,
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: '1',
+        },
+        envVars: {
+          CLICKHOUSE_URL: `http://app:${s.password}@clickhouse:8123/${db}`,
+        },
+      };
+    },
   },
   // ---- caches ----
   {
@@ -395,6 +435,10 @@ export interface InfraCatalogPublicItem {
   containerPort: number;
   hasPersistence: boolean;
   schemaful: boolean;
+  /** User may customise the database name (default "app"). */
+  supportsDbName: boolean;
+  /** Initialization SQL can be configured + run against this store. */
+  supportsInitSql: boolean;
   /** App-visible connection env var names this preset injects (e.g. ['DATABASE_URL']). */
   connectionEnvKeys: string[];
 }
@@ -418,6 +462,8 @@ export function getInfraCatalogPublic(): InfraCatalogPublicItem[] {
       containerPort: entry.containerPort,
       hasPersistence: entry.volumePaths.length > 0,
       schemaful: Boolean(entry.schemaful),
+      supportsDbName: Boolean(entry.supportsDbName),
+      supportsInitSql: Boolean(entry.supportsInitSql),
       connectionEnvKeys: Object.keys(built.envVars || {}),
     };
   });

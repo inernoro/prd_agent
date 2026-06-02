@@ -36,6 +36,7 @@ import {
   getInfraCatalogEntry,
   infraCatalogIds,
   recommendedVolumePathsFromCatalog,
+  sanitizeDbName,
   type InfraPresetDefinition,
 } from '../services/infra-catalog.js';
 import * as nodeFs from 'node:fs';
@@ -601,16 +602,17 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     return randomBytes(bytes).toString('hex');
   }
 
-  function createInfraPreset(_project: Project, presetId: string): InfraPresetDefinition | null {
+  function createInfraPreset(_project: Project, presetId: string, opts?: { dbName?: string }): InfraPresetDefinition | null {
     // SSOT: services/infra-catalog.ts. Generate this preset's secrets, then let the
     // catalog entry build the concrete container env + app-visible connection strings.
+    // opts.dbName threads a user-chosen database name into env + connection strings.
     const entry = getInfraCatalogEntry(presetId);
     if (!entry) return null;
     const secrets: Record<string, string> = {};
     for (const key of entry.secretKeys || []) {
       secrets[key] = makeSecret();
     }
-    const built = entry.build(secrets);
+    const built = entry.build(secrets, opts);
     return {
       id: entry.id,
       name: entry.name,
@@ -623,14 +625,21 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     };
   }
 
-  function applyInfraPresets(project: Project, presetIds: string[]): string[] {
+  function applyInfraPresets(
+    project: Project,
+    presetIds: string[],
+    configMap?: Record<string, { dbName?: string; initSql?: string }>,
+  ): string[] {
     const unique = Array.from(new Set(presetIds.filter((id) => INFRA_PRESETS.has(id))));
     if (unique.length === 0) return [];
     const existingInfraIds = new Set(stateService.getInfraServicesForProject(project.id).map((service) => service.id));
     const applied: string[] = [];
     const envMeta = stateService.getEnvMeta(project.id);
     for (const presetId of unique) {
-      const preset = createInfraPreset(project, presetId);
+      const cfg = configMap?.[presetId];
+      const dbName = cfg?.dbName ? sanitizeDbName(cfg.dbName) : undefined;
+      const initSql = cfg?.initSql && cfg.initSql.trim() ? cfg.initSql.trim() : undefined;
+      const preset = createInfraPreset(project, presetId, { dbName });
       if (!preset || existingInfraIds.has(preset.id)) continue;
       const containerName = project.legacyFlag
         ? `cds-infra-${preset.id}`
@@ -646,6 +655,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         status: 'stopped',
         volumes: recommendedInfraVolumes(project, preset.id, preset.dockerImage),
         env: preset.env || {},
+        ...(dbName ? { dbName } : {}),
+        ...(initSql ? { initSql } : {}),
         ...(preset.command ? { command: preset.command } : {}),
         createdAt: new Date().toISOString(),
       };
@@ -666,6 +677,21 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       stateService.save();
     }
     return applied;
+  }
+
+  /** Parse the per-infra `infraConfigs` map (presetId -> { dbName, initSql }) from a request body. */
+  function parseInfraConfigs(raw: unknown): Record<string, { dbName?: string; initSql?: string }> | undefined {
+    if (!raw || typeof raw !== 'object') return undefined;
+    const out: Record<string, { dbName?: string; initSql?: string }> = {};
+    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+      if (!value || typeof value !== 'object') continue;
+      const cfg = value as { dbName?: unknown; initSql?: unknown };
+      const entry: { dbName?: string; initSql?: string } = {};
+      if (typeof cfg.dbName === 'string' && cfg.dbName.trim()) entry.dbName = cfg.dbName.trim();
+      if (typeof cfg.initSql === 'string' && cfg.initSql.trim()) entry.initSql = cfg.initSql.trim();
+      if (entry.dbName || entry.initSql) out[key] = entry;
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
   }
 
   function runtimeProfilePreset(project: Project, service?: OnboardingService): BuildProfile | null {
@@ -1367,7 +1393,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       res.status(404).json({ error: 'project_not_found' });
       return;
     }
-    const body = (req.body || {}) as { presetIds?: unknown };
+    const body = (req.body || {}) as { presetIds?: unknown; infraConfigs?: unknown };
     const presetIds = (Array.isArray(body.presetIds) ? body.presetIds : [])
       .filter((id): id is string => typeof id === 'string');
     if (presetIds.length === 0) {
@@ -1379,7 +1405,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       res.status(400).json({ error: `未知基建预设: ${unknown.join(', ')}（见 GET /api/infra/catalog）` });
       return;
     }
-    const applied = applyInfraPresets(project, presetIds);
+    const applied = applyInfraPresets(project, presetIds, parseInfraConfigs(body.infraConfigs));
     const services = stateService.getInfraServicesForProject(project.id).filter((s) => applied.includes(s.id));
     res.json({ applied, services });
   });
@@ -1432,6 +1458,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       projectFiles: ProjectFilePayload[];
       autoDetectOnClone: boolean;
       infraPresets: string[];
+      infraConfigs: Record<string, { dbName?: string; initSql?: string }>;
       onboardingRuntime: OnboardingRuntime;
       onboardingDockerImage: string;
       onboardingCommand: string;
@@ -1711,7 +1738,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
       return;
     }
-    const appliedInfraPresets = applyInfraPresets(newProject, infraPresets);
+    const appliedInfraPresets = applyInfraPresets(newProject, infraPresets, parseInfraConfigs(body.infraConfigs));
 
     // F11 — 沙盒模式 bootstrap:在 reposBase/<projectId>/ 本地 init 一个
     // git 仓库,写 cds-compose.yml + projectFiles[],模拟"clone 完成"状态,

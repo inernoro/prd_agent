@@ -25,11 +25,14 @@ export function InfraDataPanel({
   projectId,
   image,
   running,
+  initSql,
 }: {
   infraId: string;
   projectId: string;
   image: string;
   running: boolean;
+  /** Initialization SQL configured at project/infra creation; offered as a one-click prefill. */
+  initSql?: string;
 }): JSX.Element | null {
   const supported = SUPPORTED.test((image || '').toLowerCase());
   const [sql, setSql] = useState('');
@@ -69,16 +72,30 @@ export function InfraDataPanel({
           <Database className="h-4 w-4" />
           数据操作
         </div>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={!running || busy !== null}
-          onClick={() => void run('schema')}
-        >
-          {busy === 'schema' ? <Loader2 className="animate-spin" /> : <Search />}
-          查看结构
-        </Button>
+        <div className="flex items-center gap-2">
+          {initSql && initSql.trim() ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={busy !== null}
+              onClick={() => { setSql(initSql); setAsInit(true); }}
+              title="载入创建项目时配置的初始化 SQL"
+            >
+              载入初始化 SQL
+            </Button>
+          ) : null}
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={!running || busy !== null}
+            onClick={() => void run('schema')}
+          >
+            {busy === 'schema' ? <Loader2 className="animate-spin" /> : <Search />}
+            查看结构
+          </Button>
+        </div>
       </div>
       <textarea
         className="min-h-24 w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-xs outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"

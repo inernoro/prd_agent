@@ -2071,6 +2071,10 @@ export interface InfraService {
   status: 'running' | 'stopped' | 'error';
   /** Error message if status is 'error' */
   errorMessage?: string;
+  /** User-chosen database name for schemaful stores (default "app"). Threaded into env + connection strings. */
+  dbName?: string;
+  /** Initialization SQL/commands configured at creation; run against the store via the data panel. */
+  initSql?: string;
   /** Persistent volumes */
   volumes: InfraVolume[];
   /** Environment variables for the container itself */

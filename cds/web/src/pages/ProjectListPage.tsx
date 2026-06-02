@@ -123,10 +123,10 @@ interface GithubReposResponse {
 }
 
 type RuntimeId = 'auto' | 'node' | 'python' | 'dotnet' | 'java' | 'go' | 'rust' | 'php' | 'static' | 'dockerfile' | 'custom';
-type AppServiceRole = 'frontend' | 'backend';
+type AppServiceRole = 'frontend' | 'backend' | 'worker';
 
 interface AppServiceDraft {
-  id: AppServiceRole;
+  id: string;
   name: string;
   role: AppServiceRole;
   enabled: boolean;
@@ -135,6 +135,12 @@ interface AppServiceDraft {
   runtimeCommand: string;
   runtimePort: number;
 }
+
+const APP_SERVICE_ROLES: Array<{ id: AppServiceRole; label: string; entryHint: string }> = [
+  { id: 'frontend', label: '前端', entryHint: '入口 /' },
+  { id: 'backend', label: '后端', entryHint: '入口 /api' },
+  { id: 'worker', label: '后台任务', entryHint: '无 HTTP 入口' },
+];
 
 const RUNTIME_PRESETS: Array<{
   id: RuntimeId;
@@ -238,30 +244,24 @@ function runtimePreset(id: RuntimeId): (typeof RUNTIME_PRESETS)[number] {
   return RUNTIME_PRESETS.find((preset) => preset.id === id) || RUNTIME_PRESETS[0];
 }
 
+function makeOnboardingService(id: string, role: AppServiceRole, name: string, runtimeId: RuntimeId): AppServiceDraft {
+  const preset = runtimePreset(runtimeId);
+  return {
+    id,
+    name,
+    role,
+    enabled: true,
+    runtimeId,
+    runtimeImage: preset.image,
+    runtimeCommand: preset.command,
+    runtimePort: preset.port,
+  };
+}
+
 function defaultOnboardingServices(): AppServiceDraft[] {
-  const frontend = runtimePreset('static');
-  const backend = runtimePreset('node');
   return [
-    {
-      id: 'frontend',
-      name: '前端服务',
-      role: 'frontend',
-      enabled: true,
-      runtimeId: frontend.id,
-      runtimeImage: frontend.image,
-      runtimeCommand: frontend.command,
-      runtimePort: frontend.port,
-    },
-    {
-      id: 'backend',
-      name: '后端服务',
-      role: 'backend',
-      enabled: true,
-      runtimeId: backend.id,
-      runtimeImage: backend.image,
-      runtimeCommand: backend.command,
-      runtimePort: backend.port,
-    },
+    makeOnboardingService('frontend', 'frontend', '前端服务', 'static'),
+    makeOnboardingService('backend', 'backend', '后端服务', 'node'),
   ];
 }
 
@@ -2668,6 +2668,7 @@ function CreateProjectDialog({
   const [autoDetectOnClone, setAutoDetectOnClone] = useState(true);
   const [appServices, setAppServices] = useState<AppServiceDraft[]>(() => defaultOnboardingServices());
   const [selectedInfra, setSelectedInfra] = useState<string[]>([]);
+  const [infraConfig, setInfraConfig] = useState<Record<string, { dbName?: string; initSql?: string }>>({});
   const { groups: infraGroups } = useInfraCatalog();
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -2680,16 +2681,17 @@ function CreateProjectDialog({
       setAutoDetectOnClone(true);
       setAppServices(defaultOnboardingServices());
       setSelectedInfra([]);
+      setInfraConfig({});
       return;
     }
     if (autoOpenPicker) setRepoPickerOpen(true);
   }, [open, autoOpenPicker]);
 
-  function updateService(id: AppServiceRole, patch: Partial<AppServiceDraft>): void {
+  function updateService(id: string, patch: Partial<AppServiceDraft>): void {
     setAppServices((current) => current.map((service) => service.id === id ? { ...service, ...patch } : service));
   }
 
-  function chooseServiceRuntime(id: AppServiceRole, next: RuntimeId): void {
+  function chooseServiceRuntime(id: string, next: RuntimeId): void {
     const preset = runtimePreset(next);
     updateService(id, {
       runtimeId: next,
@@ -2699,8 +2701,23 @@ function CreateProjectDialog({
     });
   }
 
+  function addService(): void {
+    setAppServices((current) => [
+      ...current,
+      makeOnboardingService(`service-${Date.now().toString(36)}`, 'backend', `应用服务 ${current.length + 1}`, 'node'),
+    ]);
+  }
+
+  function removeService(id: string): void {
+    setAppServices((current) => (current.length <= 1 ? current : current.filter((service) => service.id !== id)));
+  }
+
   function toggleInfra(id: string): void {
     setSelectedInfra((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  }
+
+  function setInfraConfigField(id: string, field: 'dbName' | 'initSql', value: string): void {
+    setInfraConfig((current) => ({ ...current, [id]: { ...current[id], [field]: value } }));
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -2723,6 +2740,7 @@ function CreateProjectDialog({
           description: description.trim() || undefined,
           autoDetectOnClone: trimmedRepoUrl ? autoDetectOnClone : undefined,
           infraPresets: selectedInfra,
+          infraConfigs: infraConfig,
           onboardingServices: appServices.map((service) => ({
             id: service.id,
             name: service.name,
@@ -2821,28 +2839,55 @@ function CreateProjectDialog({
                 <Settings className="h-4 w-4" />
                 选择应用服务
                 <span className="ml-auto rounded-full border border-border px-2 py-0.5 text-xs font-normal text-muted-foreground">
-                  前端 + 后端
+                  {appServices.length} 个服务
                 </span>
               </div>
               <div className="grid gap-3 lg:grid-cols-2">
                 {appServices.map((service) => {
                   const preset = runtimePreset(service.runtimeId);
                   const editableRuntime = service.runtimeId !== 'auto' && service.runtimeId !== 'dockerfile';
+                  const roleMeta = APP_SERVICE_ROLES.find((r) => r.id === service.role);
                   return (
                     <div key={service.id} className="rounded-md border border-border bg-background p-3">
-                      <div className="mb-3 flex items-center justify-between gap-3">
-                        <label className="flex items-center gap-2 text-sm font-semibold">
-                          <input
-                            type="checkbox"
-                            className="h-4 w-4 rounded border-input"
-                            checked={service.enabled}
-                            onChange={(event) => updateService(service.id, { enabled: event.target.checked })}
-                          />
-                          {service.name}
-                        </label>
-                        <span className="rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
-                          {service.role === 'frontend' ? '入口 /' : '入口 /api'}
-                        </span>
+                      <div className="mb-3 flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 shrink-0 rounded border-input"
+                          checked={service.enabled}
+                          onChange={(event) => updateService(service.id, { enabled: event.target.checked })}
+                          aria-label="启用该服务"
+                        />
+                        <input
+                          className="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm font-semibold outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                          value={service.name}
+                          onChange={(event) => updateService(service.id, { name: event.target.value })}
+                          disabled={!service.enabled}
+                          placeholder="服务名称"
+                          aria-label="服务名称"
+                        />
+                        <select
+                          className="h-8 shrink-0 rounded-md border border-input bg-background px-2 text-xs outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                          value={service.role}
+                          onChange={(event) => updateService(service.id, { role: event.target.value as AppServiceRole })}
+                          disabled={!service.enabled}
+                          title={roleMeta?.entryHint}
+                          aria-label="服务角色"
+                        >
+                          {APP_SERVICE_ROLES.map((r) => (
+                            <option key={r.id} value={r.id}>{r.label}</option>
+                          ))}
+                        </select>
+                        {appServices.length > 1 ? (
+                          <button
+                            type="button"
+                            className="shrink-0 rounded-md border border-border p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                            onClick={() => removeService(service.id)}
+                            aria-label="移除该服务"
+                            title="移除该服务"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        ) : null}
                       </div>
                       <label className="block space-y-1.5">
                         <span className="text-xs font-medium text-muted-foreground">运行环境</span>
@@ -2898,6 +2943,17 @@ function CreateProjectDialog({
                   );
                 })}
               </div>
+              <div className="mt-3 flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={addService}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-border px-3 py-2 text-sm text-muted-foreground hover:border-primary hover:text-foreground"
+                >
+                  <Plus className="h-4 w-4" />
+                  添加服务
+                </button>
+                <span className="text-xs text-muted-foreground">默认前端 + 后端，多入口应用可继续添加(后端 / 后台任务)</span>
+              </div>
               {gitRepoUrl.trim() ? (
                 <label className="mt-3 flex items-start gap-3 rounded-md border border-border bg-muted/30 px-3 py-3 text-sm">
                   <input
@@ -2950,6 +3006,52 @@ function CreateProjectDialog({
                   </div>
                 ))}
               </div>
+              {(() => {
+                const dbPresets = infraGroups
+                  .flatMap((g) => g.items)
+                  .filter((i) => selectedInfra.includes(i.id) && (i.supportsDbName || i.supportsInitSql));
+                if (dbPresets.length === 0) return null;
+                return (
+                  <div className="mt-3 space-y-3">
+                    {dbPresets.map((preset) => (
+                      <div key={preset.id} className="rounded-md border border-border bg-background p-3">
+                        <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+                          <Database className="h-3.5 w-3.5" />
+                          {preset.name} · 数据库配置
+                        </div>
+                        {preset.supportsDbName ? (
+                          <label className="block space-y-1.5">
+                            <span className="text-xs font-medium text-muted-foreground">数据库名</span>
+                            <input
+                              className="h-10 w-full rounded-md border border-input bg-background px-3 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                              value={infraConfig[preset.id]?.dbName || ''}
+                              onChange={(event) => setInfraConfigField(preset.id, 'dbName', event.target.value)}
+                              placeholder="app（默认）"
+                            />
+                            <span className="block text-[11px] leading-4 text-muted-foreground">
+                              会写入容器初始化变量并拼进连接串（如 {preset.connectionEnvKeys[0] || 'DATABASE_URL'}）。
+                            </span>
+                          </label>
+                        ) : null}
+                        {preset.supportsInitSql ? (
+                          <label className="mt-2 block space-y-1.5">
+                            <span className="text-xs font-medium text-muted-foreground">初始化 SQL（可选）</span>
+                            <textarea
+                              className="min-h-20 w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                              value={infraConfig[preset.id]?.initSql || ''}
+                              onChange={(event) => setInfraConfigField(preset.id, 'initSql', event.target.value)}
+                              placeholder={'CREATE TABLE items (id serial primary key, name text);'}
+                            />
+                            <span className="block text-[11px] leading-4 text-muted-foreground">
+                              随项目保存；数据库就绪后进入拓扑页数据面板，预填这段 SQL 一键执行初始化。
+                            </span>
+                          </label>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
               <div className="mt-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs leading-5 text-muted-foreground">
                 创建后会生成持久化卷和连接环境变量；进入拓扑页后可启动、重启、查看日志和打开数据库操作入口。
               </div>

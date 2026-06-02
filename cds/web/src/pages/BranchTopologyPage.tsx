@@ -110,6 +110,8 @@ interface InfraService {
   status: 'running' | 'stopped' | 'error';
   errorMessage?: string;
   env?: Record<string, string>;
+  dbName?: string;
+  initSql?: string;
 }
 
 interface InfraResponse {
@@ -1839,6 +1841,7 @@ function InfraDetails({
         projectId={projectId}
         image={selectedInfra.dockerImage}
         running={selectedInfra.status === 'running'}
+        initSql={selectedInfra.initSql}
       />
       <DisclosurePanel icon={<FileText className="h-4 w-4" />} title="容器日志" subtitle="最近 docker logs 输出">
         {logsState.status === 'idle' ? (

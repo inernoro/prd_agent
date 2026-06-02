@@ -21,6 +21,10 @@ export interface InfraCatalogItem {
   containerPort: number;
   hasPersistence: boolean;
   schemaful: boolean;
+  /** User may customise the database name (default "app"). */
+  supportsDbName?: boolean;
+  /** Initialization SQL can be configured + run against this store. */
+  supportsInitSql?: boolean;
   /** App-visible connection env var names this preset injects (e.g. ['DATABASE_URL']). */
   connectionEnvKeys: string[];
 }
