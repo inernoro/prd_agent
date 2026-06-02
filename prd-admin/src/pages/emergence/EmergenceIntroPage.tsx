@@ -65,6 +65,7 @@ export function EmergenceIntroPage({ onStart, onCreateFirst, hasTrees }: Props) 
 
             {/* 主标题 */}
             <h1
+              data-tour-id="emergence-hero-title"
               className="font-semibold tracking-tight"
               style={{ fontSize: 'clamp(32px, 4.6vw, 52px)', lineHeight: 1.1, color: 'var(--text-primary)' }}
             >
@@ -113,7 +114,7 @@ export function EmergenceIntroPage({ onStart, onCreateFirst, hasTrees }: Props) 
         <div className="my-14 h-px w-full" style={{ background: 'var(--border-subtle, rgba(255,255,255,0.07))' }} />
 
         {/* 三步序列 —— surface 卡片，序号走强调渐变 */}
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div data-tour-id="emergence-steps" className="grid gap-4 sm:grid-cols-3">
           {STEPS.map((s) => (
             <div key={s.n} className="surface rounded-2xl p-6">
               <span
@@ -138,7 +139,7 @@ export function EmergenceIntroPage({ onStart, onCreateFirst, hasTrees }: Props) 
         </div>
 
         {/* 三维度 —— surface-inset 一行，强调标签 + 分隔 */}
-        <div className="surface-inset mt-4 flex flex-wrap items-center gap-x-7 gap-y-2 rounded-2xl px-6 py-4 text-[12px]">
+        <div data-tour-id="emergence-dimensions" className="surface-inset mt-4 flex flex-wrap items-center gap-x-7 gap-y-2 rounded-2xl px-6 py-4 text-[12px]">
           {DIMENSIONS.map((d, i) => (
             <span key={d.label} className="inline-flex items-center gap-2.5">
               {i > 0 && <span style={{ color: 'var(--text-muted)', opacity: 0.4 }}>→</span>}

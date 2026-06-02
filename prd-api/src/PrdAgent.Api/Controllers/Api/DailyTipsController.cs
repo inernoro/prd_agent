@@ -999,17 +999,17 @@ public sealed class DailyTipsController : ControllerBase
                 "从一颗种子开始，让 AI 帮你发现下一步做什么。",
                 "/emergence",
                 "开始本页教程",
-                "[data-tour-id=emergence-create-tree]",
+                "[data-tour-id=emergence-hero-title]",
                 0,
                 new DailyTipAutoAction
                 {
                     Scroll = "center",
                     Steps = new List<DailyTipTourStep>
                     {
-                        new() { Selector = "[data-tour-id=emergence-create-tree]", Title = "第 1 步：欢迎来到涌现探索器", Body = "从一颗种子开始，AI 帮你发现下一步做什么。点「新建涌现树」开始。", NavigateTo = "/emergence" },
-                        new() { Selector = "[data-tour-id=emergence-about]", Title = "第 2 步：不懂玩法？", Body = "点「关于涌现」看「种种子 → 探索生长 → 涌现组合」三步说明。" },
-                        new() { Selector = "[data-tour-id=emergence-tree-list]", Title = "第 3 步：你的涌现树", Body = "创建过的树都在这；首次使用这里有「种下第一颗种子」引导。" },
-                        new() { Selector = "[data-tour-id=emergence-tree-list]", Title = "第 4 步：进入树后怎么玩", Body = "点开一棵树进入画布：点节点「探索」让 AI 基于现有能力长出子功能，多个节点还能「涌现」交叉组合。看完点「完成」🎉" },
+                        new() { Selector = "[data-tour-id=emergence-hero-title]", Title = "第 1 步：欢迎来到涌现探索器", Body = "从一颗种子开始，AI 帮你长出整棵可能性之树、发现下一步做什么。", NavigateTo = "/emergence" },
+                        new() { Selector = "[data-tour-id=emergence-steps]", Title = "第 2 步：三步玩法", Body = "种下种子 → 探索生长 → 涌现组合，下面这三张卡说明了完整流程。" },
+                        new() { Selector = "[data-tour-id=emergence-seed-input]", Title = "第 3 步：种下第一颗种子", Body = "点这里上传一段文档 / 方案作为锚点，创建你的第一棵涌现树。" },
+                        new() { Selector = "[data-tour-id=emergence-dimensions]", Title = "第 4 步：三个维度", Body = "AI 沿「系统内 → 跨系统 → 幻想未来」生长；进入树后点节点「探索」、多节点还能「涌现」交叉组合。看完点「完成」🎉" },
                     },
                 }),
 

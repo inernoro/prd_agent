@@ -8,3 +8,4 @@
 | fix | prd-admin | 修正三处反馈：①分享/落地/登录/开发页不再挂教程入口（之前 /s/* 分享页误显示）②每条教程第 1 步从整页 root 改指向具体元素（高亮框不再框整屏看不出）③入口 pill z-index 50→300，确保各页右上角都在常规内容之上可见 |
 | feat | prd-admin | 缺陷管理/PR审查/涌现探索/工作流四页补 data-tour-id 锚点（缺陷贯通到提交面板全流程） |
 | feat | prd-api | DailyTips 新增 defect/pr-review/emergence/workflow 四条 page-guide seed（4-8 步） |
+| fix | prd-admin | 涌现探索教程改锚到真实落地页 EmergenceIntroPage（hero/三步玩法/种子按钮/三维度），原锚的树列表视图非默认落地态导致定位失败 |
