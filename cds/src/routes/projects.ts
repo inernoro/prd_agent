@@ -1476,7 +1476,19 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       'X-Accel-Buffering': 'no',
     });
     const send = (event: string, data: unknown): void => { try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* client gone */ } };
-    const log = (line: string): void => send('log', { line });
+    const logTail: string[] = [];
+    const log = (line: string): void => { logTail.push(line); if (logTail.length > 80) logTail.shift(); send('log', { line }); };
+    // 失败时从日志里认出常见根因,把"退出码 X"升级成可操作的提示。
+    const diagnose = (): string => {
+      const t = logTail.join('\n');
+      if (/Could not read package\.json|ENOENT.*package\.json|no such file.*package\.json/i.test(t)) return ' 提示:/app 里没有 package.json——可能不是 Node 项目,或代码在子目录(把命令改成 cd 子目录 && ...)。';
+      if (/Could not open requirements|requirements\.txt.*No such file|No such file.*requirements/i.test(t)) return ' 提示:没找到 requirements.txt——可能不是 Python 项目,或代码在子目录。';
+      if (/no Go files in/i.test(t)) return ' 提示:/app 下没有 Go 主包——代码可能在子目录(cd 子目录 && go run .),或这不是 Go 项目。';
+      if (/MSB1003|NETSDK\d|Specify a project or solution|no project or solution/i.test(t)) return ' 提示:.NET 没找到工程文件或 SDK 版本不匹配——核对镜像 SDK 版本与代码目录。';
+      if (/EADDRINUSE|address already in use/i.test(t)) return ' 提示:端口被占用,换个端口试试。';
+      if (/not found|command not found/i.test(t)) return ' 提示:镜像里缺这个命令/工具链——换一个自带它的镜像。';
+      return '';
+    };
 
     if (!gitRepoUrl) { send('error', { message: '试运行需要 Git 仓库 URL——要在真实代码上测命令。请先在上面填仓库地址。' }); res.end(); return; }
     if (!image) { send('error', { message: '请填 Docker 镜像(或在运行环境选一个具体运行时带出镜像)。' }); res.end(); return; }
@@ -1553,11 +1565,22 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       };
       const probePort = async (): Promise<boolean> => {
         if (!port) return false;
-        const r = await shell.exec(
+        const hex = port.toString(16).toUpperCase().padStart(4, '0');
+        // 首选 /proc/net/tcp:任何 Linux 容器都有,不依赖镜像里有没有 wget/curl(slim/distroless 常没有,
+        // 否则像 python:slim 跑 Flask 明明起来了却被误判"端口未响应")。st=0A 表示 LISTEN。
+        const proc = await shell.exec(`docker exec ${containerName} sh -c ${q('cat /proc/net/tcp /proc/net/tcp6 2>/dev/null')}`, { timeout: 8000 }).catch(() => null);
+        if (proc && proc.exitCode === 0) {
+          for (const line of (proc.stdout || '').split('\n')) {
+            const cols = line.trim().split(/\s+/);
+            if (cols.length >= 4 && (cols[1] || '').toUpperCase().endsWith(`:${hex}`) && cols[3] === '0A') return true;
+          }
+        }
+        // 兜底:镜像若带 wget/curl,再做一次真实 HTTP 请求
+        const http = await shell.exec(
           `docker exec ${containerName} sh -c ${q(`(wget -qO- -T2 http://127.0.0.1:${port} >/dev/null 2>&1 || curl -sf -m2 http://127.0.0.1:${port} >/dev/null 2>&1) && echo CDSPORTOK || true`)}`,
-          { timeout: 10000 },
-        );
-        return (r.stdout || '').includes('CDSPORTOK');
+          { timeout: 8000 },
+        ).catch(() => null);
+        return Boolean(http && (http.stdout || '').includes('CDSPORTOK'));
       };
 
       let verdict: 'pass' | 'warn' | 'fail' | null = null;
@@ -1607,7 +1630,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         }
       }
       send('step', { step: 'probe', status: verdict === 'pass' ? 'done' : 'warning', title: '检查完成' });
-      send('result', { verdict, summary, elapsedMs: Date.now() - startedAt });
+      send('result', { verdict, summary: verdict === 'pass' ? summary : summary + diagnose(), elapsedMs: Date.now() - startedAt });
     } catch (err) {
       send('error', { message: (err as Error).message });
     } finally {
