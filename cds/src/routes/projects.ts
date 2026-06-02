@@ -1523,42 +1523,69 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         send('result', { verdict: 'fail', summary: '容器无法启动——多半是镜像或命令格式问题。' });
         await cleanup(); res.end(); return;
       }
-      send('step', { step: 'run', status: 'done', title: '容器已启动,跟踪日志(最多 120s)…' });
-
+      send('step', { step: 'run', status: 'done', title: '容器已启动,跟踪日志 + 端口探活(最多 150s,有结论就提前结束)…' });
       const startedAt = Date.now();
-      const MAX_MS = 120000;
+      const MAX_MS = 150000;
+
+      const inspectState = async (): Promise<{ running: boolean; exitCode: number }> => {
+        const r = await shell.exec(`docker inspect -f '{{.State.Running}} {{.State.ExitCode}}' ${containerName}`, { timeout: 8000 });
+        const [run, ec] = (r.stdout || '').trim().split(/\s+/);
+        return { running: run === 'true', exitCode: Number(ec || '0') };
+      };
+      const probePort = async (): Promise<boolean> => {
+        if (!port) return false;
+        const r = await shell.exec(
+          `docker exec ${containerName} sh -lc ${q(`(wget -qO- -T2 http://127.0.0.1:${port} >/dev/null 2>&1 || curl -sf -m2 http://127.0.0.1:${port} >/dev/null 2>&1) && echo CDSPORTOK || true`)}`,
+          { timeout: 10000 },
+        );
+        return (r.stdout || '').includes('CDSPORTOK');
+      };
+
+      let verdict: 'pass' | 'warn' | 'fail' | null = null;
+      let summary = '';
       await new Promise<void>((resolve) => {
         const proc = spawn('docker', ['logs', '-f', containerName], { stdio: ['ignore', 'pipe', 'pipe'] });
         const onData = (b: Buffer): void => { for (const line of b.toString().split('\n')) { if (line.trim()) log(line); } };
         proc.stdout.on('data', onData);
         proc.stderr.on('data', onData);
-        const timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* noop */ } resolve(); }, MAX_MS);
-        proc.on('close', () => { clearTimeout(timer); resolve(); });
-        proc.on('error', () => { clearTimeout(timer); resolve(); });
+        let stopped = false;
+        const finish = (): void => { if (stopped) return; stopped = true; clearTimeout(timer); clearInterval(poll); try { proc.kill('SIGKILL'); } catch { /* noop */ } resolve(); };
+        const timer = setTimeout(finish, MAX_MS);
+        const poll = setInterval(() => { void (async (): Promise<void> => {
+          try {
+            const st = await inspectState();
+            if (!st.running) {
+              verdict = st.exitCode === 0 ? 'warn' : 'fail';
+              summary = st.exitCode === 0
+                ? '命令跑完就退出了——若这是常驻服务说明它没起住(可能少了 serve/start);若只是一次性构建则正常。'
+                : `命令以退出码 ${st.exitCode} 失败——照上面日志改命令或镜像后再试一次。`;
+              finish();
+              return;
+            }
+            if (port && (await probePort())) {
+              verdict = 'pass';
+              summary = `容器常驻且端口 ${port} 已响应——这套配置能跑通。`;
+              finish();
+            }
+          } catch { /* 容器可能正忙,继续等 */ }
+        })(); }, 5000);
+        proc.on('close', () => finish());
+        proc.on('error', () => finish());
       });
 
-      send('step', { step: 'probe', status: 'running', title: '检查容器状态 + 端口探活…' });
-      const inspect = await shell.exec(`docker inspect -f '{{.State.Running}} {{.State.ExitCode}}' ${containerName}`, { timeout: 10000 });
-      const [runningStr, exitStr] = (inspect.stdout || '').trim().split(/\s+/);
-      const running = runningStr === 'true';
-      const exitCode = Number(exitStr || '0');
-      let verdict: 'pass' | 'warn' | 'fail' = 'fail';
-      let summary = '';
-      if (running) {
-        let portOk = false;
-        if (port) {
-          const probe = await shell.exec(
-            `docker exec ${containerName} sh -lc ${q(`(wget -qO- -T2 http://127.0.0.1:${port} >/dev/null 2>&1 || curl -sf -m2 http://127.0.0.1:${port} >/dev/null 2>&1) && echo CDSPORTOK || true`)}`,
-            { timeout: 12000 },
-          );
-          portOk = (probe.stdout || '').includes('CDSPORTOK');
+      send('step', { step: 'probe', status: 'running', title: '复核容器状态 + 端口…' });
+      if (verdict === null) {
+        const st = await inspectState();
+        if (st.running) {
+          const portOk = await probePort();
+          verdict = portOk ? 'pass' : 'warn';
+          summary = portOk
+            ? `容器常驻且端口 ${port} 已响应——这套配置能跑通。`
+            : (port ? `容器还活着没崩,但端口 ${port} 暂未响应(可能仍在安装/构建,或端口填错)。看上面日志确认,需要就改端口再试。` : '容器常驻未崩(没填端口,跳过端口探活)。');
+        } else {
+          verdict = st.exitCode === 0 ? 'warn' : 'fail';
+          summary = st.exitCode === 0 ? '命令跑完就退出了——常驻服务的话说明没起住。' : `命令以退出码 ${st.exitCode} 失败——照日志改命令/镜像后再试。`;
         }
-        if (portOk) { verdict = 'pass'; summary = `容器常驻且端口 ${port} 已响应——这套配置能跑通。`; }
-        else { verdict = 'warn'; summary = port ? `容器还活着没崩,但端口 ${port} 暂未响应(可能仍在安装/构建,或端口填错)。看上面日志确认,需要就改端口再试。` : '容器常驻未崩(没填端口,跳过端口探活)。'; }
-      } else if (exitCode === 0) {
-        verdict = 'warn'; summary = '命令跑完就退出了——若这是常驻服务说明它没起住(可能少了 serve/start);若只是一次性构建则正常。';
-      } else {
-        verdict = 'fail'; summary = `命令以退出码 ${exitCode} 失败——照上面日志改命令或镜像后再试一次。`;
       }
       send('step', { step: 'probe', status: verdict === 'pass' ? 'done' : 'warning', title: '检查完成' });
       send('result', { verdict, summary, elapsedMs: Date.now() - startedAt });
