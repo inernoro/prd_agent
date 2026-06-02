@@ -1037,7 +1037,7 @@ function TreeNode({
   const hasBadgeRow =
     !isFolder && (
       isShared || reprocessing !== undefined || !!verdictForRow ||
-      hasTags || isContentMatch || isFreshForRow ||
+      hasTags || isContentMatch ||
       isSubscriptionDot || isPrimary || (isPinned && !isPrimary)
     );
 
@@ -1151,7 +1151,8 @@ function TreeNode({
           )}
           <EntryIcon entry={entry} isPrimary={isPrimary} isPinned={isPinned} isOpen={isOpen} />
 
-          <span className="flex-1 truncate min-w-0"
+          {/* 非文件夹标题不再 flex-1 撑满：取自然宽度，让 NEW 紧贴标题末尾（时间靠 ml-auto 顶右） */}
+          <span className={`${isFolder ? 'flex-1 ' : ''}truncate min-w-0`}
             style={{
               color: isFolder ? 'var(--text-muted)' : 'var(--text-primary)',
               fontWeight: isFolder ? 600 : (isSelected ? 700 : 600),
@@ -1161,6 +1162,17 @@ function TreeNode({
             }}>
             {displayTitle}
           </span>
+
+          {/* NEW 与标题同行、贴标题末尾：标题过长截断时与标题一起省略，并与右侧时间归为"近期"信号 */}
+          {isFreshForRow && (
+            <span
+              className="text-[9px] px-1.5 rounded-full flex-shrink-0 font-bold"
+              style={{ height: 15, lineHeight: '15px', background: 'rgba(34,197,94,0.12)', letterSpacing: '0.3px' }}
+              title={`最近更新: ${entry.lastChangedAt ? new Date(entry.lastChangedAt).toLocaleString('zh-CN') : ''}`}
+            >
+              <ShinyText text="NEW" speed={2.4} color="rgba(74,222,128,0.95)" shineColor="rgba(255,255,255,0.95)" spread={120} />
+            </span>
+          )}
 
           {/* 文件夹的计数 + 折叠箭头（第一行右侧） */}
           {isFolder && (
@@ -1254,22 +1266,6 @@ function TreeNode({
             title="该文件因正文内容命中而被搜出（标题未含关键词）"
           >
             内容包含
-          </span>
-        )}
-
-        {/* NEW 徽标 */}
-        {!isFolder && (isEntryFresh ? isEntryFresh(entry) : isRecentlyChanged(entry.lastChangedAt)) && (
-          <span
-            className="text-[9px] px-1.5 rounded-full flex-shrink-0 font-bold"
-            style={{
-              height: 15,
-              lineHeight: '15px',
-              background: 'rgba(34,197,94,0.12)',
-              letterSpacing: '0.3px',
-            }}
-            title={`最近更新: ${entry.lastChangedAt ? new Date(entry.lastChangedAt).toLocaleString('zh-CN') : ''}`}
-          >
-            <ShinyText text="NEW" speed={2.4} color="rgba(74,222,128,0.95)" shineColor="rgba(255,255,255,0.95)" spread={120} />
           </span>
         )}
 
