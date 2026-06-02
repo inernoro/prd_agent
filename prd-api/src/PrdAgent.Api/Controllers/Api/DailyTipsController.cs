@@ -948,6 +948,90 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=literary-editor-back]", Title = "第 4 步：返回", Body = "左上角返回按钮回到文章列表。看完点「完成」🎉" },
                     },
                 }),
+
+            // 15. 缺陷管理 —— 本页 8 步教程(贯通:浏览 → 打开提交面板 → 填写 → 提交)
+            T("defect-page-guide", "card",
+                "缺陷管理：本页 8 步上手教程",
+                "从切换视图、筛选，到提交一条缺陷的完整流程。",
+                "/defect-agent",
+                "开始本页教程",
+                "[data-tour-id=defect-view-mode-switcher]",
+                0,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new() { Selector = "[data-tour-id=defect-view-mode-switcher]", Title = "第 1 步：欢迎来到缺陷管理", Body = "这里提交、跟踪、协作修复缺陷。右上四个图标切换 列表 / 卡片 / 看板 / 统计 视图。", NavigateTo = "/defect-agent" },
+                        new() { Selector = "[data-tour-id=defect-project-filter]", Title = "第 2 步：按项目筛选", Body = "用「全部项目」下拉按项目 / 团队过滤缺陷列表。" },
+                        new() { Selector = "[data-tour-id=defect-list-container]", Title = "第 3 步：缺陷列表", Body = "这里展示你「收到的」和「我提交的」缺陷，含标题、状态、严重度、负责人。" },
+                        new() { Selector = "[data-tour-id=defect-template-btn]", Title = "第 4 步：我的模板", Body = "常用缺陷可存成模板，下次提交更快。" },
+                        new() { Selector = "[data-tour-id=defect-create]", Title = "第 5 步：提交缺陷", Body = "点「+ 提交缺陷」展开提交表单。" },
+                        new() { Selector = "[data-tour-id=defect-description]", Title = "第 6 步：写标题 + 描述", Body = "第一行作为标题（一句话），下方可粘贴截图、拖文件。" },
+                        new() { Selector = "[data-tour-id=defect-assignee-picker]", Title = "第 7 步：选负责人", Body = "搜用户名或选默认负责人，对方会立刻收到通知。" },
+                        new() { Selector = "[data-tour-id=defect-submit]", Title = "第 8 步：提交", Body = "提交后收到「已创建」，开发修好后再收「已修复」。看完点「完成」🎉" },
+                    },
+                }),
+
+            // 16. PR 审查工作台 —— 本页 4 步教程
+            T("pr-review-page-guide", "card",
+                "PR 审查：本页 4 步上手教程",
+                "连接 GitHub，添加 PR，看 AI 审查与对齐度评分。",
+                "/pr-review",
+                "开始本页教程",
+                "[data-tour-id=pr-review-page-title]",
+                0,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new() { Selector = "[data-tour-id=pr-review-page-title]", Title = "第 1 步：欢迎来到 PR 审查工作台", Body = "用你自己的 GitHub 账号，对任意有权限的 PR 跑 AI 审查。", NavigateTo = "/pr-review" },
+                        new() { Selector = "[data-tour-id=pr-review-sidebar]", Title = "第 2 步：左侧操作区", Body = "先「连接 GitHub」（Device Flow 授权）；连上后粘贴 PR 链接点「添加并同步」。" },
+                        new() { Selector = "[data-tour-id=pr-review-list-container]", Title = "第 3 步：右侧 PR 列表", Body = "添加的 PR 按更新时间排序展示。" },
+                        new() { Selector = "[data-tour-id=pr-review-list-container]", Title = "第 4 步：查看 AI 审查", Body = "点开任一 PR 卡片：看一句话总结、与项目目标的对齐度评分、写你的审查笔记。看完点「完成」🎉" },
+                    },
+                }),
+
+            // 17. 涌现探索器 —— 本页 4 步教程
+            T("emergence-page-guide", "card",
+                "涌现探索器：本页 4 步上手教程",
+                "从一颗种子开始，让 AI 帮你发现下一步做什么。",
+                "/emergence",
+                "开始本页教程",
+                "[data-tour-id=emergence-create-tree]",
+                0,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new() { Selector = "[data-tour-id=emergence-create-tree]", Title = "第 1 步：欢迎来到涌现探索器", Body = "从一颗种子开始，AI 帮你发现下一步做什么。点「新建涌现树」开始。", NavigateTo = "/emergence" },
+                        new() { Selector = "[data-tour-id=emergence-about]", Title = "第 2 步：不懂玩法？", Body = "点「关于涌现」看「种种子 → 探索生长 → 涌现组合」三步说明。" },
+                        new() { Selector = "[data-tour-id=emergence-tree-list]", Title = "第 3 步：你的涌现树", Body = "创建过的树都在这；首次使用这里有「种下第一颗种子」引导。" },
+                        new() { Selector = "[data-tour-id=emergence-tree-list]", Title = "第 4 步：进入树后怎么玩", Body = "点开一棵树进入画布：点节点「探索」让 AI 基于现有能力长出子功能，多个节点还能「涌现」交叉组合。看完点「完成」🎉" },
+                    },
+                }),
+
+            // 18. 工作流 —— 本页 4 步教程
+            T("workflow-page-guide", "card",
+                "工作流：本页 4 步上手教程",
+                "把多个能力舱编排成自动化流程并执行。",
+                "/workflow-agent",
+                "开始本页教程",
+                "[data-tour-id=workflow-create-btn]",
+                0,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new() { Selector = "[data-tour-id=workflow-create-btn]", Title = "第 1 步：欢迎来到工作流", Body = "把多个能力舱编排成自动化流程。点「新建工作流」进入画布。", NavigateTo = "/workflow-agent" },
+                        new() { Selector = "[data-tour-id=workflow-from-template-btn]", Title = "第 2 步：从模板创建", Body = "不想从零搭？用预定义模板一键生成工作流。" },
+                        new() { Selector = "[data-tour-id=workflow-list]", Title = "第 3 步：工作流列表", Body = "建好的工作流都在这；首次使用有空状态引导教你建第一个。" },
+                        new() { Selector = "[data-tour-id=workflow-list]", Title = "第 4 步：卡片操作与执行", Body = "每张卡可「编辑 / 画布 / 执行 / 删除」；进画布后拖舱、连线、点执行即可跑。看完点「完成」🎉" },
+                    },
+                }),
         };
     }
 }

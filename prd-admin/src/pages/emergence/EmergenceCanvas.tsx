@@ -1024,17 +1024,17 @@ export function EmergenceExplorerPage() {
         icon={<TreePine size={14} />}
         actions={
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="xs" onClick={() => setShowIntro(true)}>
+            <Button data-tour-id="emergence-about" variant="ghost" size="xs" onClick={() => setShowIntro(true)}>
               <Info size={13} /> 关于涌现
             </Button>
-            <Button variant="primary" size="xs" onClick={() => setShowCreate(true)}>
+            <Button data-tour-id="emergence-create-tree" variant="primary" size="xs" onClick={() => setShowCreate(true)}>
               <Plus size={13} /> 新建涌现树
             </Button>
           </div>
         }
       />
 
-      <div className="px-5 pb-6 w-full">
+      <div data-tour-id="emergence-tree-list" className="px-5 pb-6 w-full">
         {loading ? (
           <MapSectionLoader text="加载中..." />
         ) : trees.length === 0 ? (

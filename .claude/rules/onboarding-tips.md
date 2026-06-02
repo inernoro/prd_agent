@@ -24,6 +24,12 @@
   | 海鲜市场 | `/marketplace` | `marketplace-page-guide` | 6 |
   | 智识殿堂 | `/library` | `library-landing-page-guide` | 7 |
   | 作品广场 | `/showcase` | `showcase-page-guide` | 6 |
+  | 缺陷管理 | `/defect-agent` | `defect-page-guide` | 8（贯通:浏览→打开提交面板→填写→提交） |
+  | PR 审查 | `/pr-review` | `pr-review-page-guide` | 4 |
+  | 涌现探索器 | `/emergence` | `emergence-page-guide` | 4 |
+  | 工作流 | `/workflow-agent` | `workflow-page-guide` | 4 |
+  | 视觉创作·编辑器 | `/visual-agent/:id` | `visual-editor-page-guide` | 3 |
+  | 文学创作·编辑器 | `/literary-agent/:id` | `literary-editor-page-guide` | 4 |
 
   周报（`/report-agent`）按用户要求**不做**本页教程。
 
