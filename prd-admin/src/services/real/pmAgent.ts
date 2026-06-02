@@ -50,6 +50,7 @@ import type {
   DeletePmGoalContract,
   ListPmGoalCheckInsContract,
   AddPmGoalCheckInContract,
+  ScorePmGoalContract,
   ListPmAuditLogsContract,
   ListPmMilestonesContract,
   CreatePmMilestoneContract,
@@ -220,6 +221,9 @@ export const listPmGoalCheckInsReal: ListPmGoalCheckInsContract = async (goalId)
 };
 export const addPmGoalCheckInReal: AddPmGoalCheckInContract = async (goalId, input) => {
   return await apiRequest(api.pm.goals.checkins(encodeURIComponent(goalId)), { method: 'POST', body: input });
+};
+export const scorePmGoalReal: ScorePmGoalContract = async (goalId, input) => {
+  return await apiRequest(api.pm.goals.score(encodeURIComponent(goalId)), { method: 'POST', body: input });
 };
 
 // ── 审计日志 ──

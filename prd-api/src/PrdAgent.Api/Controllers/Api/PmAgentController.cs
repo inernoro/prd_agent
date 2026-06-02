@@ -999,6 +999,7 @@ public class PmAgentController : ControllerBase
                 title = g.Title, description = g.Description, metric = g.Metric, period = g.Period,
                 keyResults = g.KeyResults, keyResultCount = g.KeyResults.Count,
                 leadId = g.LeadId, leadName = g.LeadName, confidence = g.Confidence,
+                score = g.Score, scoreNote = g.ScoreNote, scoredAt = g.ScoredAt, scoredByName = g.ScoredByName,
                 progress = effective, progressMode = g.ProgressMode, linkedMilestoneCount = linked.Count,
                 status = g.Status, createdBy = g.CreatedBy, createdByName = g.CreatedByName,
                 orderKey = g.OrderKey, createdAt = g.CreatedAt, updatedAt = g.UpdatedAt,
@@ -1205,6 +1206,38 @@ public class PmAgentController : ControllerBase
         await _db.PmGoals.UpdateOneAsync(x => x.Id == goalId, gUpdate);
 
         return Ok(ApiResponse<object>.Ok(entity));
+    }
+
+    /// <summary>期末评分 / 复盘（OKR 0.0-1.0）。团队目标仅 owner/leader；个人目标仅本人。</summary>
+    [HttpPost("goals/{goalId}/score")]
+    public async Task<IActionResult> ScoreGoal(string goalId, [FromBody] GoalScoreRequest request)
+    {
+        var userId = GetUserId();
+        var g = await _db.PmGoals.Find(x => x.Id == goalId).FirstOrDefaultAsync();
+        if (g == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "目标不存在"));
+        var project = await FindAccessibleProjectAsync(g.ProjectId, userId);
+        if (project == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (g.Scope == PmGoalScope.Personal && g.OwnerId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "个人目标仅本人可评分"));
+        if (g.Scope == PmGoalScope.Team && project.OwnerId != userId && project.LeaderId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "团队目标仅立项人或负责人可评分"));
+
+        var actorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+        var update = Builders<PmGoal>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow);
+        if (request.Clear == true)
+        {
+            update = update.Set(x => x.Score, (double?)null).Set(x => x.ScoreNote, (string?)null)
+                .Set(x => x.ScoredAt, (DateTime?)null).Set(x => x.ScoredByName, (string?)null);
+        }
+        else
+        {
+            if (request.Score == null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请提供评分"));
+            var score = Math.Clamp(request.Score.Value, 0, 1);
+            update = update.Set(x => x.Score, score).Set(x => x.ScoreNote, request.Note?.Trim())
+                .Set(x => x.ScoredAt, DateTime.UtcNow).Set(x => x.ScoredByName, actorName);
+        }
+        await _db.PmGoals.UpdateOneAsync(x => x.Id == goalId, update);
+        return Ok(ApiResponse<object>.Ok(new { updated = true }));
     }
 
     // ─────────────────────────────────────────────
@@ -2990,6 +3023,14 @@ public class GoalCheckInRequest
     public int? Progress { get; set; }
     public string? Confidence { get; set; }
     public string? Note { get; set; }
+}
+
+public class GoalScoreRequest
+{
+    /// <summary>0.0-1.0；Clear=true 时忽略</summary>
+    public double? Score { get; set; }
+    public string? Note { get; set; }
+    public bool? Clear { get; set; }
 }
 
 public class RiskRequest

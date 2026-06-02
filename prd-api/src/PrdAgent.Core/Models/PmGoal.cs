@@ -56,6 +56,18 @@ public class PmGoal
     /// <summary>状态：on_track | at_risk | done | abandoned</summary>
     public string Status { get; set; } = PmGoalStatus.OnTrack;
 
+    /// <summary>期末评分 0.0-1.0（OKR 复盘打分；null=未评分）</summary>
+    public double? Score { get; set; }
+
+    /// <summary>复盘备注（评分时填）</summary>
+    public string? ScoreNote { get; set; }
+
+    /// <summary>评分时间</summary>
+    public DateTime? ScoredAt { get; set; }
+
+    /// <summary>评分人名称（冗余）</summary>
+    public string? ScoredByName { get; set; }
+
     /// <summary>创建人 UserId</summary>
     public string CreatedBy { get; set; } = string.Empty;
 

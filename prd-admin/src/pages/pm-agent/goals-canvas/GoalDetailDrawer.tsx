@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Check, Sparkles, Plus, Trash2, ListTodo, FileText, Gavel, User, Target, TrendingUp, Send } from 'lucide-react';
+import { X, Check, Sparkles, Plus, Trash2, ListTodo, FileText, Gavel, User, Target, TrendingUp, Send, Compass, Award } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { toast } from '@/lib/toast';
-import { createPmGoal, updatePmGoal, deletePmGoal, getPmProject, listPmMilestones, listPmWeeklyReports, listPmDecisions, listPmGoalCheckIns, addPmGoalCheckIn } from '@/services';
+import { createPmGoal, updatePmGoal, deletePmGoal, getPmProject, listPmMilestones, listPmWeeklyReports, listPmDecisions, listPmGoalCheckIns, addPmGoalCheckIn, scorePmGoal } from '@/services';
 import type { PmGoal, PmGoalScope, PmGoalStatus, SavePmGoalInput, PmTask, PmWeeklyReport, PmDecision, PmKeyResult, PmKeyResultType, PmGoalConfidence, PmGoalCheckIn } from '@/services/contracts/pmAgent';
 import { GOAL_STATUS_REGISTRY, TASK_STATUS_REGISTRY, DECISION_TYPE_REGISTRY } from '../pmConstants';
 
@@ -33,6 +33,10 @@ interface Props {
   projectId: string;
   /** 编辑现有目标 */
   goal?: PmGoal | null;
+  /** 同项目全部目标（用于对齐路径面包屑） */
+  allGoals?: PmGoal[];
+  /** 项目业务目标（对齐顶层） */
+  businessGoal?: string;
   /** 新增模式上下文（与 goal 互斥） */
   createCtx?: DrawerCreateCtx | null;
   canWrite: boolean;
@@ -52,7 +56,7 @@ interface Props {
 const inputCls = 'w-full text-[12.5px] rounded-md px-2.5 py-2 outline-none border';
 const inputStyle = { background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' } as const;
 
-export function GoalDetailDrawer({ projectId, goal, createCtx, canWrite, onClose, onSaved, onDecompose, onAddChild, canHaveChildren, onNavigateTask, onNavigateWeekly }: Props) {
+export function GoalDetailDrawer({ projectId, goal, allGoals, businessGoal, createCtx, canWrite, onClose, onSaved, onDecompose, onAddChild, canHaveChildren, onNavigateTask, onNavigateWeekly }: Props) {
   const isCreate = !goal;
   const [draft, setDraft] = useState<SavePmGoalInput>({});
   const [leadId, setLeadId] = useState('');
@@ -68,12 +72,18 @@ export function GoalDetailDrawer({ projectId, goal, createCtx, canWrite, onClose
   const [ciConfidence, setCiConfidence] = useState<PmGoalConfidence | ''>('');
   const [ciProgress, setCiProgress] = useState('');
   const [ciSaving, setCiSaving] = useState(false);
+  // 期末评分 / 复盘
+  const [scoreVal, setScoreVal] = useState('');
+  const [scoreNote, setScoreNote] = useState('');
+  const [scoreSaving, setScoreSaving] = useState(false);
 
   useEffect(() => {
     if (goal) {
       setDraft({ title: goal.title, description: goal.description || '', metric: goal.metric || '', period: goal.period || '', progress: goal.progress, progressMode: goal.progressMode, status: goal.status });
       setLeadId(goal.leadId || '');
       setKrs((goal.keyResults ?? []).map((k) => ({ ...k })));
+      setScoreVal(goal.score != null ? String(goal.score) : '');
+      setScoreNote(goal.scoreNote || '');
     } else if (createCtx) {
       setDraft({ scope: createCtx.scope, parentId: createCtx.parentId, status: 'on_track', progress: 0, progressMode: 'auto' });
       setLeadId(''); setKrs([]);
@@ -108,6 +118,27 @@ export function GoalDetailDrawer({ projectId, goal, createCtx, canWrite, onClose
 
   const mode = draft.progressMode ?? 'auto';
   const krAvg = krs.length > 0 ? Math.round(krs.reduce((s, k) => s + krProgress(k), 0) / krs.length) : null;
+
+  // 对齐路径：从顶层目标到当前（不含当前），用于面包屑
+  const alignChain = (() => {
+    if (!goal || !allGoals) return [] as PmGoal[];
+    const byId = new Map(allGoals.map((x) => [x.id, x]));
+    const chain: PmGoal[] = [];
+    let cur = goal.parentId ? byId.get(goal.parentId) : undefined;
+    let guard = 0;
+    while (cur && guard++ < 10) { chain.unshift(cur); cur = cur.parentId ? byId.get(cur.parentId) : undefined; }
+    return chain;
+  })();
+
+  const submitScore = async (clear = false) => {
+    if (!goal) return;
+    if (!clear && scoreVal === '') { toast.error('请选择评分', '0.0 - 1.0'); return; }
+    setScoreSaving(true);
+    const res = await scorePmGoal(goal.id, clear ? { clear: true } : { score: Number(scoreVal), note: scoreNote.trim() || undefined });
+    setScoreSaving(false);
+    if (res.success) { toast.success(clear ? '已清除评分' : '已评分', ''); onSaved(); }
+    else toast.error('操作失败', res.error?.message || '');
+  };
 
   const addKr = () => setKrs((p) => [...p, { id: newKid(), title: '', type: 'percent', startValue: 0, targetValue: 100, currentValue: 0 }]);
   const patchKr = (id: string, patch: Partial<PmKeyResult>) => setKrs((p) => p.map((k) => (k.id === id ? { ...k, ...patch } : k)));
@@ -176,6 +207,14 @@ export function GoalDetailDrawer({ projectId, goal, createCtx, canWrite, onClose
         <div className="flex-1 px-5 py-4 flex flex-col gap-3" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
           {!canWrite && !isCreate && (
             <div className="text-[11px] rounded-md px-3 py-2" style={{ background: 'var(--bg-base)', color: 'var(--text-muted)' }}>只读：该目标仅项目经理 / 本人可编辑</div>
+          )}
+          {!isCreate && (businessGoal || alignChain.length > 0) && (
+            <div className="text-[10.5px] flex items-center gap-1 flex-wrap rounded-md px-2 py-1.5" style={{ background: 'var(--bg-base)', color: 'var(--text-muted)' }} title="对齐路径">
+              <Compass size={11} style={{ color: '#3B82F6' }} />
+              {businessGoal && <><span className="truncate" style={{ maxWidth: 140 }}>{businessGoal}</span><span>›</span></>}
+              {alignChain.map((a) => <span key={a.id} className="inline-flex items-center gap-1"><span className="truncate" style={{ maxWidth: 110 }}>{a.title}</span><span>›</span></span>)}
+              <span style={{ color: 'var(--text-secondary)' }}>本目标</span>
+            </div>
           )}
           <label className="text-[11px]" style={{ color: 'var(--text-muted)' }}>标题</label>
           <input autoFocus value={draft.title || ''} disabled={!canWrite} onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))} placeholder="目标标题" className={inputCls} style={inputStyle} />
@@ -310,6 +349,35 @@ export function GoalDetailDrawer({ projectId, goal, createCtx, canWrite, onClose
                     {c.note && <div className="text-[12px] whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary)' }}>{c.note}</div>}
                   </div>
                 ))}
+              </div>
+              {/* 期末评分 / 复盘（OKR 0.0-1.0） */}
+              <div className="flex flex-col gap-1.5">
+                <div className="text-[11px] flex items-center gap-1" style={{ color: '#F59E0B' }}>
+                  <Award size={12} />期末评分 / 复盘
+                  {goal?.score != null && <span className="ml-1 px-1.5 rounded" style={{ background: 'rgba(245,158,11,0.18)', color: '#F59E0B' }}>{goal.score.toFixed(1)}</span>}
+                  {goal?.scoredByName && goal?.scoredAt && <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>· {goal.scoredByName} {fmtCi(goal.scoredAt)}</span>}
+                </div>
+                {canWrite ? (
+                  <div className="rounded-lg border p-2 flex flex-col gap-1.5" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>评分</span>
+                      <select value={scoreVal} onChange={(e) => setScoreVal(e.target.value)} className="text-[12px] rounded-md px-2 py-1 outline-none border" style={inputStyle}>
+                        <option value="">未评分</option>
+                        {['0.0', '0.1', '0.2', '0.3', '0.4', '0.5', '0.6', '0.7', '0.8', '0.9', '1.0'].map((s) => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                      <span className="text-[10.5px]" style={{ color: 'var(--text-muted)' }}>0.7 左右为理想达成</span>
+                    </div>
+                    <textarea value={scoreNote} onChange={(e) => setScoreNote(e.target.value)} placeholder="复盘：达成情况 / 经验 / 不足…" rows={2} className="w-full text-[12px] rounded-md px-2 py-1.5 outline-none border resize-y" style={inputStyle} />
+                    <div className="flex items-center gap-1.5">
+                      {goal?.score != null && <Button variant="ghost" size="sm" onClick={() => submitScore(true)} disabled={scoreSaving}>清除</Button>}
+                      <Button variant="primary" size="sm" className="ml-auto" onClick={() => submitScore(false)} disabled={scoreSaving}>{scoreSaving ? <MapSpinner size={12} /> : <Award size={12} />}保存评分</Button>
+                    </div>
+                  </div>
+                ) : goal?.scoreNote ? (
+                  <div className="text-[12px] whitespace-pre-wrap break-words rounded-md px-2 py-1.5" style={{ background: 'var(--bg-base)', color: 'var(--text-secondary)' }}>{goal.scoreNote}</div>
+                ) : (
+                  <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>尚未评分。</div>
+                )}
               </div>
               {/* 关联任务（直接挂的 + 里程碑下的） */}
               <div className="flex flex-col gap-1.5">

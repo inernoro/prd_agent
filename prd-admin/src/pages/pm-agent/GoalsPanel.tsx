@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Plus, Trash2, Pencil, Check, X, Target, Lock, Users, Compass, Flag, Sparkles, ChevronRight, ChevronDown, GitBranch, Network, List, User } from 'lucide-react';
+import { Plus, Trash2, Pencil, Check, X, Target, Lock, Users, Compass, Flag, Sparkles, ChevronRight, ChevronDown, GitBranch, Network, List, User, BarChart3, Award } from 'lucide-react';
+import { GoalsDashboard } from './goals-canvas/GoalsDashboard';
 
 const CONFIDENCE_DOT: Record<string, { label: string; color: string }> = {
   high: { label: '信心高', color: '#10B981' }, medium: { label: '信心中', color: '#F59E0B' }, low: { label: '信心低', color: '#EF4444' },
@@ -46,7 +47,7 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onNavigateTask,
   const [editing, setEditing] = useState<string | null>(null); // null | `new:{scope}:{parentId|root}` | id
   const [draft, setDraft] = useState<SavePmGoalInput>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [view, setView] = useState<'canvas' | 'list'>('canvas');
+  const [view, setView] = useState<'canvas' | 'list' | 'dashboard'>('canvas');
   // AI 拆解目标：null=未打开；{scope} 项目级拆顶层；{parentGoalId,...} 针对某目标拆子目标
   const [aiTarget, setAiTarget] = useState<{ parentGoalId?: string; parentTitle?: string; scope: PmGoalScope } | null>(null);
 
@@ -214,6 +215,7 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onNavigateTask,
               : <span>手填进度</span>}
           {g.confidence && <span className="inline-flex items-center gap-1" style={{ color: CONFIDENCE_DOT[g.confidence].color }}><span className="w-1.5 h-1.5 rounded-full" style={{ background: CONFIDENCE_DOT[g.confidence].color }} />{CONFIDENCE_DOT[g.confidence].label}</span>}
           {g.leadName && <span className="inline-flex items-center gap-1"><User size={10} />{g.leadName}</span>}
+          {typeof g.score === 'number' && <span className="inline-flex items-center gap-1" style={{ color: '#F59E0B' }}><Award size={10} />评分 {g.score.toFixed(1)}</span>}
           {g.metric && <span className="truncate">指标：{g.metric}</span>}
           {g.period && <span className="shrink-0">周期：{g.period}</span>}
         </div>
@@ -281,7 +283,7 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onNavigateTask,
       {/* 视图切换：画布（思维导图）/ 列表（缩进树） */}
       <div className="flex items-center gap-2 pb-3 shrink-0">
         <div className="flex gap-0.5 rounded-lg p-0.5" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}>
-          {([['canvas', '画布', Network], ['list', '列表', List]] as const).map(([k, label, Ic]) => (
+          {([['canvas', '画布', Network], ['list', '列表', List], ['dashboard', '仪表盘', BarChart3]] as const).map(([k, label, Ic]) => (
             <button key={k} onClick={() => setView(k)} className="px-2.5 py-1 rounded text-[12px] flex items-center gap-1"
               style={{ background: view === k ? 'var(--bg-card)' : 'transparent', color: view === k ? 'var(--text-primary)' : 'var(--text-muted)' }}>
               <Ic size={13} />{label}
@@ -289,12 +291,14 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onNavigateTask,
           ))}
         </div>
         <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-          {view === 'canvas' ? '拖动平移 · ⌘/Ctrl+滚轮缩放 · 点节点编辑 · 节点上 AI 拆细' : '缩进树 · 逐卡 AI 拆细'}
+          {view === 'canvas' ? '拖动平移 · ⌘/Ctrl+滚轮缩放 · 点节点编辑 · 节点上 AI 拆细' : view === 'dashboard' ? 'OKR 进度 / 达成 / 信心 / 评分 总览' : '缩进树 · 逐卡 AI 拆细'}
         </span>
       </div>
 
       {view === 'canvas' ? (
         <GoalsCanvas projectId={projectId} businessGoal={businessGoal} canManage={canManage} goals={goals} onReload={load} onNavigateTask={onNavigateTask} onNavigateWeekly={onNavigateWeekly} />
+      ) : view === 'dashboard' ? (
+        <GoalsDashboard goals={goals} />
       ) : (
       <div className="flex-1 min-h-0 flex flex-col gap-5 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
       {/* 业务目标北极星 */}

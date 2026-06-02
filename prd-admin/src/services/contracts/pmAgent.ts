@@ -476,6 +476,11 @@ export type PmGoal = {
   leadName?: string | null;
   /** 信心指数（最近一次 check-in） */
   confidence?: PmGoalConfidence | null;
+  /** 期末评分 0.0-1.0（OKR 复盘） */
+  score?: number | null;
+  scoreNote?: string | null;
+  scoredAt?: string | null;
+  scoredByName?: string | null;
   period?: string | null;
   progress: number;
   progressMode: 'auto' | 'manual';
@@ -497,6 +502,7 @@ export type SavePmGoalInput = Partial<{
 export type PmGoalCheckIn = { id: string; goalId: string; projectId: string; authorId: string; authorName?: string | null; progress?: number | null; confidence?: PmGoalConfidence | null; note: string; createdAt: string };
 export type ListPmGoalCheckInsContract = (goalId: string) => Promise<ApiResponse<{ items: PmGoalCheckIn[] }>>;
 export type AddPmGoalCheckInContract = (goalId: string, input: { progress?: number; confidence?: PmGoalConfidence; note?: string }) => Promise<ApiResponse<PmGoalCheckIn>>;
+export type ScorePmGoalContract = (goalId: string, input: { score?: number; note?: string; clear?: boolean }) => Promise<ApiResponse<{ updated: boolean }>>;
 /** AI 拆解出的目标草稿（SSE 返回，未落库） */
 export type PmGoalDraft = { title: string; description?: string | null; metric?: string | null; period?: string | null };
 export type ListPmGoalsContract = (projectId: string) => Promise<ApiResponse<{ items: PmGoal[] }>>;

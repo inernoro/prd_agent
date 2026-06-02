@@ -158,6 +158,8 @@ function GoalsCanvasInner({ projectId, businessGoal, canManage, goals, onReload,
         <GoalDetailDrawer
           projectId={projectId}
           goal={selectedFresh}
+          allGoals={goals}
+          businessGoal={businessGoal}
           createCtx={createCtx}
           canWrite={selectedFresh ? (selectedFresh.scope === 'personal' ? true : canManage) : true}
           canHaveChildren={selectedDepth + 1 < GOAL_MAX_DEPTH}
