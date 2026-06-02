@@ -445,7 +445,7 @@ export function TipsDrawer() {
         justifyContent: 'center',
         gap: 6,
         cursor: 'pointer',
-        zIndex: 50,
+        zIndex: 300, // 高于页面常规内容(z-100/200),低于模态(z-9999+):确保右上角入口在每个页面都可见
         color: '#f3e8ff',
         opacity: bookOpacity,
         boxShadow:
@@ -522,7 +522,7 @@ export function TipsDrawer() {
           border: '1px solid rgba(196,181,253,0.20)',
           backdropFilter: 'blur(22px) saturate(140%)',
           WebkitBackdropFilter: 'blur(22px) saturate(140%)',
-          zIndex: 51,
+          zIndex: 301,
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',

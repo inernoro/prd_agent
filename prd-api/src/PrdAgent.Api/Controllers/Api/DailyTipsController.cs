@@ -467,7 +467,7 @@ public sealed class DailyTipsController : ControllerBase
                     Scroll = "center",
                     Steps = new List<DailyTipTourStep>
                     {
-                        new() { Selector = "[data-tour-id=webpages-root]", Title = "第 1 步：欢迎来到网页托管", Body = "这里集中托管并分享你的 HTML/ZIP/Markdown/PDF/视频。下面用 14 步带你走一遍整页。", NavigateTo = "/web-pages" },
+                        new() { Selector = "[data-tour-id=webpages-space-bar]", Title = "第 1 步：欢迎来到网页托管", Body = "这里集中托管并分享你的 HTML/ZIP/Markdown/PDF/视频。先认识顶部的空间切换：个人空间放自己的，团队空间与成员共享。下面 14 步走一遍整页。", NavigateTo = "/web-pages" },
                         new() { Selector = "[data-tour-id=webpages-space-bar]", Title = "第 2 步：先认识空间", Body = "「个人空间」放自己的，「团队空间」与成员共享；chip 后的数字是该空间站点数，单击切换。" },
                         new() { Selector = "[data-tour-id=webpages-space-add]", Title = "第 3 步：新建或加入团队", Body = "最右侧虚线「+」可新建团队空间，或用邀请码加入别人的；团队空间内成员互相可见。" },
                         new() { Selector = "[data-tour-id=webpages-header-actions]", Title = "第 4 步：顶部工具栏", Body = "右上角集中了「分享统计 / 分享管理 / 上传站点」三个入口。" },
@@ -807,7 +807,7 @@ public sealed class DailyTipsController : ControllerBase
                     Scroll = "center",
                     Steps = new List<DailyTipTourStep>
                     {
-                        new() { Selector = "[data-tour-id=library-toolbar]", Title = "第 1 步：欢迎来到知识库", Body = "把文档、订阅源整理成知识库，可私藏也可发布到智识殿堂。顶部这排是常用控制。", NavigateTo = "/document-store" },
+                        new() { Selector = "[data-tour-id=library-stats]", Title = "第 1 步：欢迎来到知识库", Body = "把文档、订阅源整理成知识库，可私藏也可发布到智识殿堂。这里实时显示你有多少个库、多少篇文章。", NavigateTo = "/document-store" },
                         new() { Selector = "[data-tour-id=library-stats]", Title = "第 2 步：库房总览", Body = "这里实时显示你有多少个知识库、多少篇文章。" },
                         new() { Selector = "[data-tour-id=library-search]", Title = "第 3 步：搜索", Body = "按名称或标签快速找到目标知识库。" },
                         new() { Selector = "[data-tour-id=library-tag-filter]", Title = "第 4 步：标签筛选", Body = "给知识库打标签后，可在这里按标签多选过滤。" },
@@ -831,7 +831,7 @@ public sealed class DailyTipsController : ControllerBase
                     Scroll = "center",
                     Steps = new List<DailyTipTourStep>
                     {
-                        new() { Selector = "[data-tour-id=literary-root]", Title = "第 1 步：欢迎来到文学创作", Body = "这里管理你的所有文章，下面用 8 步带你认识页面。", NavigateTo = "/literary-agent" },
+                        new() { Selector = "[data-tour-id=literary-view-toggle]", Title = "第 1 步：欢迎来到文学创作", Body = "这里管理你的所有文章。右上角可在「按时间 / 按文件夹」之间切换。下面 8 步带你认识页面。", NavigateTo = "/literary-agent" },
                         new() { Selector = "[data-tour-id=literary-view-toggle]", Title = "第 2 步：两种浏览方式", Body = "右上角可在「按时间 / 按文件夹」之间切换。" },
                         new() { Selector = "[data-tour-id=literary-time-view]", Title = "第 3 步：按时间", Body = "按更新时间排列，最近写的排在最前，适合快速回到草稿。" },
                         new() { Selector = "[data-tour-id=literary-folder-view]", Title = "第 4 步：按文件夹", Body = "用文件夹把文章按系列 / 主题归类，结构更清晰。" },
@@ -923,7 +923,7 @@ public sealed class DailyTipsController : ControllerBase
                     Scroll = "center",
                     Steps = new List<DailyTipTourStep>
                     {
-                        new() { Selector = "[data-tour-id=visual-editor-root]", Title = "第 1 步：你已进入视觉编辑器", Body = "这里是单个项目的创作空间——左侧是无限画布，底部是创作输入区。" },
+                        new() { Selector = "[data-tour-id=visual-editor-canvas]", Title = "第 1 步：你已进入视觉编辑器", Body = "中间这块是无限画布——单个项目的创作空间，底部是创作输入区。" },
                         new() { Selector = "[data-tour-id=visual-editor-canvas]", Title = "第 2 步：无限画布", Body = "两指拖动平移、双指捏合或 ⌘/Ctrl+滚轮缩放；把图片直接拖进来即可作为参考或编辑对象。" },
                         new() { Selector = "[data-tour-id=visual-editor-canvas]", Title = "第 3 步：开始创作", Body = "在底部输入框写指令、选模型与尺寸，点生成，结果会出现在画布上；左上角返回退出。看完点「完成」🎉" },
                     },
@@ -942,7 +942,7 @@ public sealed class DailyTipsController : ControllerBase
                     Scroll = "center",
                     Steps = new List<DailyTipTourStep>
                     {
-                        new() { Selector = "[data-tour-id=literary-editor-root]", Title = "第 1 步：你已进入文学编辑器", Body = "左侧是文章正文区，右侧是配图标记列表。" },
+                        new() { Selector = "[data-tour-id=literary-editor-content]", Title = "第 1 步：你已进入文学编辑器", Body = "左侧这块是文章正文区，右侧是配图标记列表。" },
                         new() { Selector = "[data-tour-id=literary-editor-content]", Title = "第 2 步：正文区", Body = "上传或粘贴文章后在这里预览；把 .md / .txt 文件拖进来也能上传。" },
                         new() { Selector = "[data-tour-id=literary-editor-content]", Title = "第 3 步：生成配图", Body = "AI 会按正文自动标出配图点并逐张生成，右侧可逐个查看或重生成。" },
                         new() { Selector = "[data-tour-id=literary-editor-back]", Title = "第 4 步：返回", Body = "左上角返回按钮回到文章列表。看完点「完成」🎉" },
