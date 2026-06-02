@@ -334,6 +334,7 @@ public class MongoDbContext
     public IMongoCollection<Customer> Customers => _database.GetCollection<Customer>("customers");
     public IMongoCollection<ProductFormTemplate> ProductFormTemplates => _database.GetCollection<ProductFormTemplate>("product_form_templates");
     public IMongoCollection<ProductWorkflowDefinition> ProductWorkflowDefinitions => _database.GetCollection<ProductWorkflowDefinition>("product_workflow_definitions");
+    public IMongoCollection<VersionUpgradeRequest> VersionUpgradeRequests => _database.GetCollection<VersionUpgradeRequest>("version_upgrade_requests");
 
     // Asset Registry 资产登记簿（跨存储迁移基础设施）
     public IMongoCollection<AssetRegistryEntry> AssetRegistry => _database.GetCollection<AssetRegistryEntry>("asset_registry");

@@ -735,6 +735,11 @@ public class ProductAgentController : ControllerBase
                 if (f == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "对象不存在"));
                 currentState = f.CurrentState; workflowDefId = f.WorkflowDefId; productId = f.ProductId;
                 break;
+            case ProductEntityType.UpgradeRequest:
+                var ur = await _db.VersionUpgradeRequests.Find(x => x.Id == request.EntityId && !x.IsDeleted).FirstOrDefaultAsync();
+                if (ur == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "对象不存在"));
+                currentState = ur.CurrentState; workflowDefId = ur.WorkflowDefId; productId = ur.ProductId;
+                break;
             default:
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不支持的对象类型"));
         }
@@ -778,10 +783,152 @@ public class ProductAgentController : ControllerBase
                 await _db.Features.UpdateOneAsync(x => x.Id == request.EntityId,
                     Builders<Feature>.Update.Set(x => x.CurrentState, transition.ToState).Set(x => x.UpdatedAt, now));
                 break;
+            case ProductEntityType.UpgradeRequest:
+                await _db.VersionUpgradeRequests.UpdateOneAsync(x => x.Id == request.EntityId,
+                    Builders<VersionUpgradeRequest>.Update.Set(x => x.CurrentState, transition.ToState).Set(x => x.UpdatedAt, now));
+                break;
         }
         _logger.LogInformation("[product-agent] Transition {Type}/{Id} {From}->{To} by {User}",
             request.EntityType, request.EntityId, currentState, transition.ToState, userId);
         return Ok(ApiResponse<object>.Ok(new { entityId = request.EntityId, newState = transition.ToState }));
+    }
+
+    // ════════════════════════ 知识图谱（P2）════════════════════════
+
+    /// <summary>
+    /// 产品关系知识图谱：返回 nodes + edges。
+    /// 节点=产品/版本/需求/功能/客户/追溯缺陷；边=包含/关联/落需求/连客户/追溯。
+    /// </summary>
+    [HttpGet("products/{productId}/graph")]
+    public async Task<IActionResult> GetGraph(string productId)
+    {
+        var product = await FindAccessibleProductAsync(productId, GetUserId());
+        if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+
+        var versions = await _db.ProductVersions.Find(v => v.ProductId == productId && !v.IsDeleted).ToListAsync();
+        var requirements = await _db.Requirements.Find(r => r.ProductId == productId && !r.IsDeleted).ToListAsync();
+        var features = await _db.Features.Find(f => f.ProductId == productId && !f.IsDeleted).ToListAsync();
+        var customers = await _db.Customers.Find(c => c.ProductId == productId && !c.IsDeleted).ToListAsync();
+        var featureVersions = await _db.FeatureVersions.Find(fv => fv.ProductId == productId && !fv.IsDeleted).ToListAsync();
+        var defects = await _db.DefectReports.Find(d => d.TracedProductId == productId && !d.IsDeleted).Limit(200).ToListAsync();
+
+        var nodes = new List<object>();
+        var edges = new List<object>();
+        void AddEdge(string s, string t, string type) => edges.Add(new { id = $"{s}->{t}:{type}", source = s, target = t, type });
+
+        nodes.Add(new { id = $"product:{product.Id}", type = "product", label = product.Name, sub = product.ProductNo, grade = product.Grade, state = product.CurrentState });
+        foreach (var v in versions)
+        {
+            nodes.Add(new { id = $"version:{v.Id}", type = "version", label = v.VersionName, sub = v.Lifecycle, grade = (string?)null, state = v.CurrentState });
+            AddEdge($"product:{product.Id}", $"version:{v.Id}", "contains");
+        }
+        foreach (var r in requirements)
+        {
+            nodes.Add(new { id = $"requirement:{r.Id}", type = "requirement", label = r.Title, sub = r.RequirementNo, grade = (string?)r.Grade, state = r.CurrentState });
+            foreach (var vid in r.VersionIds) AddEdge($"version:{vid}", $"requirement:{r.Id}", "includes");
+            foreach (var cid in r.CustomerIds) AddEdge($"requirement:{r.Id}", $"customer:{cid}", "from-customer");
+        }
+        foreach (var f in features)
+        {
+            nodes.Add(new { id = $"feature:{f.Id}", type = "feature", label = f.Title, sub = f.FeatureNo, grade = (string?)f.Grade, state = f.CurrentState });
+            foreach (var rid in f.RequirementIds) AddEdge($"feature:{f.Id}", $"requirement:{rid}", "implements");
+        }
+        foreach (var c in customers)
+            nodes.Add(new { id = $"customer:{c.Id}", type = "customer", label = c.Name, sub = c.Company, grade = (string?)null, state = (string?)null });
+        foreach (var fv in featureVersions)
+            AddEdge($"version:{fv.VersionId}", $"feature:{fv.FeatureId}", "feature-in-version");
+        foreach (var d in defects)
+        {
+            nodes.Add(new { id = $"defect:{d.Id}", type = "defect", label = d.Title ?? d.DefectNo, sub = d.DefectNo, grade = (string?)d.Severity, state = d.Status });
+            if (!string.IsNullOrEmpty(d.TracedRequirementId)) AddEdge($"defect:{d.Id}", $"requirement:{d.TracedRequirementId}", "traces");
+            else if (!string.IsNullOrEmpty(d.TracedVersionId)) AddEdge($"defect:{d.Id}", $"version:{d.TracedVersionId}", "traces");
+            else AddEdge($"defect:{d.Id}", $"product:{product.Id}", "traces");
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { nodes, edges }));
+    }
+
+    // ════════════════════════ 大版本升级申请（P2）════════════════════════
+
+    /// <summary>升级申请列表（按产品）</summary>
+    [HttpGet("products/{productId}/upgrade-requests")]
+    public async Task<IActionResult> ListUpgradeRequests(string productId)
+    {
+        if (await FindAccessibleProductAsync(productId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        var items = await _db.VersionUpgradeRequests.Find(u => u.ProductId == productId && !u.IsDeleted)
+            .SortByDescending(u => u.CreatedAt).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>创建升级申请</summary>
+    [HttpPost("products/{productId}/upgrade-requests")]
+    public async Task<IActionResult> CreateUpgradeRequest(string productId, [FromBody] UpsertUpgradeRequestRequest request)
+    {
+        var userId = GetUserId();
+        if (await FindAccessibleProductAsync(productId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        if (string.IsNullOrWhiteSpace(request.Title))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "申请标题不能为空"));
+
+        var req = new VersionUpgradeRequest
+        {
+            ProductId = productId,
+            UpgradeNo = await GenerateNoAsync("UPG", _db.VersionUpgradeRequests, "UpgradeNo"),
+            Title = request.Title.Trim(),
+            Reason = request.Reason?.Trim(),
+            FromVersionId = request.FromVersionId,
+            TargetVersionId = request.TargetVersionId,
+            TargetVersionName = request.TargetVersionName?.Trim(),
+            RequirementIds = request.RequirementIds ?? new(),
+            FeatureIds = request.FeatureIds ?? new(),
+            KnowledgeEntryIds = request.KnowledgeEntryIds ?? new(),
+            TemplateId = request.TemplateId,
+            WorkflowDefId = request.WorkflowDefId,
+            FormData = request.FormData ?? new(),
+            OwnerId = userId,
+        };
+        req.CurrentState = await ResolveInitialStateAsync(request.WorkflowDefId);
+        await _db.VersionUpgradeRequests.InsertOneAsync(req);
+        return Ok(ApiResponse<object>.Ok(req));
+    }
+
+    /// <summary>更新升级申请</summary>
+    [HttpPut("upgrade-requests/{upgradeId}")]
+    public async Task<IActionResult> UpdateUpgradeRequest(string upgradeId, [FromBody] UpsertUpgradeRequestRequest request)
+    {
+        var req = await _db.VersionUpgradeRequests.Find(u => u.Id == upgradeId && !u.IsDeleted).FirstOrDefaultAsync();
+        if (req == null || await FindAccessibleProductAsync(req.ProductId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "申请不存在或无权访问"));
+        if (!string.IsNullOrWhiteSpace(request.Status) && !UpgradeRequestStatus.All.Contains(request.Status))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的申请状态"));
+
+        var u = Builders<VersionUpgradeRequest>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow);
+        if (!string.IsNullOrWhiteSpace(request.Title)) u = u.Set(x => x.Title, request.Title.Trim());
+        u = u.Set(x => x.Reason, request.Reason?.Trim());
+        if (request.FromVersionId != null) u = u.Set(x => x.FromVersionId, request.FromVersionId);
+        if (request.TargetVersionId != null) u = u.Set(x => x.TargetVersionId, request.TargetVersionId);
+        if (request.TargetVersionName != null) u = u.Set(x => x.TargetVersionName, request.TargetVersionName?.Trim());
+        if (request.RequirementIds != null) u = u.Set(x => x.RequirementIds, request.RequirementIds);
+        if (request.FeatureIds != null) u = u.Set(x => x.FeatureIds, request.FeatureIds);
+        if (request.KnowledgeEntryIds != null) u = u.Set(x => x.KnowledgeEntryIds, request.KnowledgeEntryIds);
+        if (!string.IsNullOrWhiteSpace(request.Status)) u = u.Set(x => x.Status, request.Status);
+        if (request.FormData != null) u = u.Set(x => x.FormData, request.FormData);
+        await _db.VersionUpgradeRequests.UpdateOneAsync(x => x.Id == upgradeId, u);
+        var updated = await _db.VersionUpgradeRequests.Find(x => x.Id == upgradeId).FirstOrDefaultAsync();
+        return Ok(ApiResponse<object>.Ok(updated));
+    }
+
+    /// <summary>删除升级申请（软删除）</summary>
+    [HttpDelete("upgrade-requests/{upgradeId}")]
+    public async Task<IActionResult> DeleteUpgradeRequest(string upgradeId)
+    {
+        var req = await _db.VersionUpgradeRequests.Find(u => u.Id == upgradeId && !u.IsDeleted).FirstOrDefaultAsync();
+        if (req == null || await FindAccessibleProductAsync(req.ProductId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "申请不存在或无权访问"));
+        await _db.VersionUpgradeRequests.UpdateOneAsync(x => x.Id == upgradeId,
+            Builders<VersionUpgradeRequest>.Update.Set(x => x.IsDeleted, true).Set(x => x.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
     // ════════════════════════ 知识库挂载（复用 DocumentStore，P1）════════════════════════
@@ -1103,4 +1250,20 @@ public class TraceDefectRequest
 public class UntraceDefectRequest
 {
     public string DefectId { get; set; } = string.Empty;
+}
+
+public class UpsertUpgradeRequestRequest
+{
+    public string Title { get; set; } = string.Empty;
+    public string? Reason { get; set; }
+    public string? FromVersionId { get; set; }
+    public string? TargetVersionId { get; set; }
+    public string? TargetVersionName { get; set; }
+    public List<string>? RequirementIds { get; set; }
+    public List<string>? FeatureIds { get; set; }
+    public List<string>? KnowledgeEntryIds { get; set; }
+    public string? Status { get; set; }
+    public string? TemplateId { get; set; }
+    public string? WorkflowDefId { get; set; }
+    public Dictionary<string, string>? FormData { get; set; }
 }

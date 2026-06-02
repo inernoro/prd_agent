@@ -8,9 +8,11 @@
  * 空状态遵循 .claude/rules/guided-exploration.md：给说明 + 主操作 CTA。
  */
 import { useCallback, useEffect, useState } from 'react';
-import { Boxes, Plus, Trash2, GitBranch, ListChecks, Puzzle, Users, BookOpen } from 'lucide-react';
+import { Boxes, Plus, Trash2, GitBranch, ListChecks, Puzzle, Users, BookOpen, Share2, ArrowUpCircle, LayoutGrid, List } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { VersionRelationModal, RequirementRelationModal, ProductKnowledgePanel } from './ProductRelationModals';
+import { ProductGraphCanvas } from './ProductGraphCanvas';
+import { UpgradeRequestsTab } from './UpgradeRequestsTab';
 import {
   listProducts,
   createProduct,
@@ -39,7 +41,7 @@ import type {
 } from './types';
 import { PRODUCT_GRADE_LABEL, ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL } from './types';
 
-type DetailTab = 'overview' | 'versions' | 'requirements' | 'features' | 'customers' | 'knowledge';
+type DetailTab = 'overview' | 'versions' | 'requirements' | 'features' | 'customers' | 'upgrade' | 'knowledge' | 'graph';
 
 const PRODUCT_GRADES: ProductGrade[] = ['core', 'important', 'normal', 'experimental'];
 const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
@@ -243,7 +245,9 @@ const TABS: { key: DetailTab; label: string; icon: typeof GitBranch }[] = [
   { key: 'requirements', label: '需求', icon: ListChecks },
   { key: 'features', label: '功能', icon: Puzzle },
   { key: 'customers', label: '客户', icon: Users },
+  { key: 'upgrade', label: '升级申请', icon: ArrowUpCircle },
   { key: 'knowledge', label: '知识库', icon: BookOpen },
+  { key: 'graph', label: '图谱', icon: Share2 },
 ];
 
 function ProductDetail({
@@ -296,6 +300,10 @@ function ProductDetail({
         <div className="flex-1 min-h-0">
           <ProductKnowledgePanel productId={product.id} />
         </div>
+      ) : tab === 'graph' ? (
+        <div className="flex-1 min-h-0">
+          <ProductGraphCanvas productId={product.id} />
+        </div>
       ) : (
         <div className="flex-1 min-h-0 overflow-y-auto p-4" style={{ overscrollBehavior: 'contain' }}>
           {tab === 'overview' && <OverviewTab product={product} />}
@@ -303,6 +311,7 @@ function ProductDetail({
           {tab === 'requirements' && <RequirementsTab productId={product.id} />}
           {tab === 'features' && <FeaturesTab productId={product.id} />}
           {tab === 'customers' && <CustomersTab productId={product.id} />}
+          {tab === 'upgrade' && <UpgradeRequestsTab productId={product.id} />}
         </div>
       )}
     </div>
@@ -419,6 +428,7 @@ function RequirementsTab({ productId }: { productId: string }) {
   const [grade, setGrade] = useState<ItemGrade>('p2');
   const [saving, setSaving] = useState(false);
   const [relReq, setRelReq] = useState<Requirement | null>(null);
+  const [view, setView] = useState<'list' | 'board'>('list');
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -446,8 +456,30 @@ function RequirementsTab({ productId }: { productId: string }) {
   return (
     <div className="flex flex-col gap-3">
       <QuickAdd value={title} setValue={setTitle} onAdd={add} saving={saving} placeholder="需求标题" grade={grade} setGrade={setGrade} />
+      {items.length > 0 && (
+        <div className="flex items-center gap-1 self-end">
+          <button
+            onClick={() => setView('list')}
+            className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs ${view === 'list' ? 'bg-white/10 text-white' : 'text-white/40 hover:bg-white/5'}`}
+          >
+            <List size={13} /> 列表
+          </button>
+          <button
+            onClick={() => setView('board')}
+            className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs ${view === 'board' ? 'bg-white/10 text-white' : 'text-white/40 hover:bg-white/5'}`}
+          >
+            <LayoutGrid size={13} /> 看板
+          </button>
+        </div>
+      )}
       {items.length === 0 ? (
         <EmptyHint text="还没有需求。新建需求并分级，后续可关联客户、版本与功能，被缺陷追溯。" />
+      ) : view === 'board' ? (
+        <GradeBoard
+          items={items}
+          onCardClick={(r) => setRelReq(r)}
+          renderSub={(r) => `${r.requirementNo} · 客户 ${r.customerIds.length} · 版本 ${r.versionIds.length}`}
+        />
       ) : (
         <div className="flex flex-col gap-2">
           {items.map((r) => (
@@ -689,4 +721,43 @@ function Row({
 
 function EmptyHint({ text }: { text: string }) {
   return <div className="text-center text-white/40 text-xs py-10 px-6">{text}</div>;
+}
+
+/** 按分级（P0-P3）分列的看板 */
+function GradeBoard({
+  items,
+  onCardClick,
+  renderSub,
+}: {
+  items: Requirement[];
+  onCardClick: (r: Requirement) => void;
+  renderSub: (r: Requirement) => string;
+}) {
+  const cols: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
+  return (
+    <div className="grid grid-cols-4 gap-3">
+      {cols.map((g) => {
+        const list = items.filter((i) => i.grade === g);
+        return (
+          <div key={g} className="rounded-lg border border-white/10 bg-white/[0.02] p-2 flex flex-col gap-2" style={{ minHeight: 140 }}>
+            <div className="text-xs font-medium text-white/50 flex items-center justify-between px-0.5">
+              <span>{ITEM_GRADE_LABEL[g]}</span>
+              <span className="text-white/30">{list.length}</span>
+            </div>
+            {list.map((r) => (
+              <button
+                key={r.id}
+                onClick={() => onCardClick(r)}
+                className="text-left rounded-md border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] px-2 py-1.5 transition-colors"
+              >
+                <div className="text-xs text-white/85 truncate">{r.title}</div>
+                <div className="text-[10px] text-white/40 mt-0.5 truncate">{renderSub(r)}</div>
+              </button>
+            ))}
+            {list.length === 0 && <div className="text-[10px] text-white/25 text-center py-2">空</div>}
+          </div>
+        );
+      })}
+    </div>
+  );
 }

@@ -217,3 +217,55 @@ export function traceDefect(body: { defectId: string; productId: string; require
 export function untraceDefect(defectId: string) {
   return apiRequest<{ untraced: boolean }>('/api/product/untrace-defect', { method: 'POST', body: { defectId } });
 }
+
+// ── 知识图谱（P2）──
+export interface GraphNode {
+  id: string;
+  type: 'product' | 'version' | 'requirement' | 'feature' | 'customer' | 'defect';
+  label: string;
+  sub?: string | null;
+  grade?: string | null;
+  state?: string | null;
+}
+export interface GraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  type: string;
+}
+export function getProductGraph(productId: string) {
+  return apiRequest<{ nodes: GraphNode[]; edges: GraphEdge[] }>(`/api/product/products/${productId}/graph`);
+}
+
+// ── 大版本升级申请（P2）──
+export interface UpgradeRequest {
+  id: string;
+  productId: string;
+  upgradeNo: string;
+  title: string;
+  reason?: string | null;
+  fromVersionId?: string | null;
+  targetVersionId?: string | null;
+  targetVersionName?: string | null;
+  requirementIds: string[];
+  featureIds: string[];
+  knowledgeEntryIds: string[];
+  status: string;
+  currentState?: string | null;
+  formData: Record<string, string>;
+  ownerId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export function listUpgradeRequests(productId: string) {
+  return apiRequest<ListWrap<UpgradeRequest>>(`/api/product/products/${productId}/upgrade-requests`);
+}
+export function createUpgradeRequest(productId: string, body: Partial<UpgradeRequest>) {
+  return apiRequest<UpgradeRequest>(`/api/product/products/${productId}/upgrade-requests`, { method: 'POST', body });
+}
+export function updateUpgradeRequest(upgradeId: string, body: Partial<UpgradeRequest>) {
+  return apiRequest<UpgradeRequest>(`/api/product/upgrade-requests/${upgradeId}`, { method: 'PUT', body });
+}
+export function deleteUpgradeRequest(upgradeId: string) {
+  return apiRequest<{ deleted: boolean }>(`/api/product/upgrade-requests/${upgradeId}`, { method: 'DELETE' });
+}
