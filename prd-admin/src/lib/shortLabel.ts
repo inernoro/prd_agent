@@ -36,6 +36,7 @@ export const SHORT_LABEL_MAP: Record<string, string> = {
   'task-tree-agent': '任务树',
   'task-tree': '任务树',
   'pm-agent': '项目',
+  'product-agent': '产品',
   'skill-agent': '技能助手',
   'workflow-agent': '工作流',
 

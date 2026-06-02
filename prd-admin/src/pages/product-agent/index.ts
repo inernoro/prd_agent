@@ -1,0 +1,1 @@
+export { ProductAgentPage } from './ProductAgentPage';

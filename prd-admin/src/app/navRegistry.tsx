@@ -31,6 +31,7 @@ const LibraryLandingPage = lazy(() => import('@/pages/library/LibraryLandingPage
 const EmergenceExplorerPage = lazy(() => import('@/pages/emergence').then(m => ({ default: m.EmergenceExplorerPage })));
 const TaskTreePage = lazy(() => import('@/pages/task-tree').then(m => ({ default: m.TaskTreePage })));
 const PmAgentPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.PmAgentPage })));
+const ProductAgentPage = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.ProductAgentPage })));
 const ChangelogPage = lazy(() => import('@/pages/changelog/ChangelogPage'));
 const SkillAgentPage = lazy(() => import('@/pages/SkillAgentPage'));
 const ArenaPage = lazy(() => import('@/pages/arena/ArenaPage').then(m => ({ default: m.ArenaPage })));
@@ -335,6 +336,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       appKey: 'pm-agent',
       wip: true,
       tags: ['项目管理', 'PMO', '看板', '甘特图', '任务拆解'],
+    },
+  },
+  {
+    path: '/product-agent',
+    permission: 'product-agent.use',
+    element: shellGuarded('product-agent.use', <ProductAgentPage />),
+    nav: {
+      label: '产品管理智能体',
+      shortLabel: '产品',
+      description: '产品-版本-需求-功能-缺陷-客户全链路串联，版本化管理、分级追溯与知识图谱',
+      icon: 'Boxes',
+      section: 'toolbox',
+      appKey: 'product-agent',
+      wip: true,
+      tags: ['产品管理', '版本', '需求', '功能', '缺陷追溯', '知识图谱', 'RTM'],
     },
   },
   {

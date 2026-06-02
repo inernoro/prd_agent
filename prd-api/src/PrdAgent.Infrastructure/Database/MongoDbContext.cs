@@ -325,6 +325,16 @@ public class MongoDbContext
     public IMongoCollection<PmRisk> PmRisks => _database.GetCollection<PmRisk>("pm_risks");
     public IMongoCollection<PmAuditLog> PmAuditLogs => _database.GetCollection<PmAuditLog>("pm_audit_logs");
 
+    // Product Management 产品管理（产品-版本-需求-功能-客户 + 通用表单/状态机引擎）
+    public IMongoCollection<Product> Products => _database.GetCollection<Product>("products");
+    public IMongoCollection<ProductVersion> ProductVersions => _database.GetCollection<ProductVersion>("product_versions");
+    public IMongoCollection<Requirement> Requirements => _database.GetCollection<Requirement>("requirements");
+    public IMongoCollection<Feature> Features => _database.GetCollection<Feature>("features");
+    public IMongoCollection<FeatureVersion> FeatureVersions => _database.GetCollection<FeatureVersion>("feature_versions");
+    public IMongoCollection<Customer> Customers => _database.GetCollection<Customer>("customers");
+    public IMongoCollection<ProductFormTemplate> ProductFormTemplates => _database.GetCollection<ProductFormTemplate>("product_form_templates");
+    public IMongoCollection<ProductWorkflowDefinition> ProductWorkflowDefinitions => _database.GetCollection<ProductWorkflowDefinition>("product_workflow_definitions");
+
     // Asset Registry 资产登记簿（跨存储迁移基础设施）
     public IMongoCollection<AssetRegistryEntry> AssetRegistry => _database.GetCollection<AssetRegistryEntry>("asset_registry");
 
