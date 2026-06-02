@@ -914,6 +914,12 @@ export const api = {
     stream: (runId: string) => `/api/ai-toolbox/runs/${runId}/stream`,
   },
 
+  // ============ Agent Universe 智能体宇宙（统一能力契约 + 调用信封）============
+  agentUniverse: {
+    capabilities: () => '/api/agent-universe/capabilities',
+    invoke: () => '/api/agent-universe/invoke',
+  },
+
   // ============ Transcript Agent 音视频转录 ============
   transcriptAgent: {
     workspaces: () => '/api/transcript-agent/workspaces',

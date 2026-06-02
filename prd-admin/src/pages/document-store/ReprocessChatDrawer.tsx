@@ -4,6 +4,7 @@ import {
   Wand2, X, Send, Replace, FileDown, FilePlus2, RotateCw, AlertCircle,
   Bot, Plus, Trash2, Sparkles, ChevronDown, Check, FileText, Palette,
   PenTool, Bug, Video, FileBarChart, Brain, Lightbulb, Search, Layers,
+  ImagePlus,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -21,6 +22,8 @@ import {
 } from '@/services';
 import { streamDirectChat, listToolboxItems } from '@/services/real/aiToolbox';
 import type { ToolboxItem } from '@/services/real/aiToolbox';
+import { invokeAgent, listAgentCapabilities } from '@/services/real/agentUniverse';
+import type { AgentCapability, AgentArtifact } from '@/services/real/agentUniverse';
 import { BUILTIN_TOOLS } from '@/stores/toolboxStore';
 import type { ReprocessAgent } from '@/services/contracts/documentStore';
 import { toast } from '@/lib/toast';
@@ -102,6 +105,8 @@ type ChatMessage = {
   role: 'user' | 'assistant';
   invoker?: { kind: 'toolbox' | 'kbAgent'; label: string; ref: string; icon?: string };
   content: string;
+  /** 生成型智能体产出的成果物（目前主要是图片），随流式逐个追加 */
+  artifacts?: AgentArtifact[];
   streaming?: boolean;
   /** 流式阶段：thinking / streaming / done */
   phase?: 'thinking' | 'streaming' | 'done' | 'error';
@@ -122,13 +127,9 @@ const FOCUSED_TOOLBOX_IDS = [
   'builtin-task-tree',
 ];
 
-// 后端 /api/ai-toolbox/direct-chat 的 GetBuiltinAgentSystemPrompt 只为这些 agentKey 提供
-// 专属 system prompt；其余会 fall-through 到"百宝箱通用助手"，用户选了"周报智能体"得到
-// 通用 chat 会很奇怪（Codex P2 十一轮）。只放行 backend 真正支持的 key。
-const DIRECT_CHAT_SUPPORTED_AGENT_KEYS = new Set([
-  'code-reviewer', 'translator', 'summarizer', 'data-analyst',
-  'prd-agent', 'visual-agent', 'literary-agent', 'defect-agent',
-]);
+// 哪些 builtin 智能体可在此处选用，现在由「智能体宇宙」能力契约决定（后端 SSOT）：
+// 只有在 AgentCapabilityRegistry 注册了能力的 agentKey 才会出现，且各自按 invokeMode
+// 走对应交互（视觉创作=文生图、文学/周报=聊天流、缺陷=结构化），不再喂通用 chat。
 
 export function ReprocessChatDrawer({
   entryId,
@@ -153,9 +154,12 @@ export function ReprocessChatDrawer({
   const [showCreateAgent, setShowCreateAgent] = useState(false);
   const [active, setActive] = useState<ActiveAgent>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // 智能体能力契约（后端 SSOT 下发）：决定哪些 builtin 智能体可选 + 各自交互形态
+  const [capabilities, setCapabilities] = useState<AgentCapability[]>([]);
 
   const cancelStreamRef = useRef<(() => void) | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const pickerBtnRef = useRef<HTMLButtonElement>(null);
   // 同步发送锁：state 是异步的，React 还没提交 setStreamingId 之前
   // 第二次点击/双击可能溜过 isBusy 检查同时跑两条流（Bugbot #2 二轮 Medium）。
@@ -244,17 +248,21 @@ export function ReprocessChatDrawer({
     })();
 
     (async () => {
-      const [agentRes, toolboxRes, activeRunRes] = await Promise.all([
+      const [agentRes, toolboxRes, activeRunRes, capRes] = await Promise.all([
         listReprocessAgents(),
         listToolboxItems(),
         getActiveReprocessRun(entryId),
+        listAgentCapabilities(),
       ]);
       if (cancelled || entryIdRef.current !== entryId) return;
 
+      const caps = capRes.success ? capRes.data.capabilities : [];
+      setCapabilities(caps);
+      const capKeys = new Set(caps.map((c) => c.agentKey));
+
+      // 只展示在「智能体宇宙」注册了能力契约的 builtin 智能体；各自按 invokeMode 走对应交互
       const builtinAgents = BUILTIN_TOOLS.filter((t) =>
-        t.kind === 'agent' && !t.wip
-        // 只保留后端 direct-chat 真正有专属 prompt 的 builtin（Codex P2 十一轮）
-        && !!t.agentKey && DIRECT_CHAT_SUPPORTED_AGENT_KEYS.has(t.agentKey));
+        !t.wip && !!t.agentKey && capKeys.has(t.agentKey));
       const userOwnedToolbox = toolboxRes.success
         ? (toolboxRes.data.items as ToolboxItem[]).filter((t) => !!t.systemPrompt)
         : [];
@@ -414,6 +422,26 @@ export function ReprocessChatDrawer({
     return () => document.removeEventListener('mousedown', handler);
   }, [pickerOpen]);
 
+  // agentKey → 能力契约。只有 builtin 智能体（带 agentKey）才有契约；
+  // 自定义工具 / 我的快捷智能体没有契约，走传统 direct-chat 文本链路。
+  const capabilityMap = useMemo(() => {
+    const m = new Map<string, AgentCapability>();
+    for (const c of capabilities) m.set(c.agentKey, c);
+    return m;
+  }, [capabilities]);
+
+  const capabilityForAgent = useCallback((agent: ActiveAgent): AgentCapability | undefined => {
+    if (agent?.kind === 'toolbox' && agent.item.type === 'builtin' && agent.item.agentKey) {
+      return capabilityMap.get(agent.item.agentKey);
+    }
+    return undefined;
+  }, [capabilityMap]);
+
+  const activeCapability = useMemo(
+    () => capabilityForAgent(active),
+    [active, capabilityForAgent],
+  );
+
   // ── 发送消息 ──
   const sendMessage = useCallback(async (
     userText: string,
@@ -431,27 +459,16 @@ export function ReprocessChatDrawer({
       toast.warning('无法调用', docLoadError);
       return;
     }
-    if (!docContent || docContent.trim().length === 0) {
-      // 防御：文档为空时不让发送（Bugbot #1 二轮 Medium）
+    const cap = capabilityForAgent(agent);
+    const isGeneration = cap?.invokeMode === 'generation';
+
+    // chat / 结构化类把文档作为输入，必须有正文；生成类只需文本 prompt，可不依赖文档
+    if (!isGeneration && (!docContent || docContent.trim().length === 0)) {
+      // 防御：文档为空时不让 chat 类发送（Bugbot #1 二轮 Medium）
       toast.warning('文档无正文', '没有可读正文喂给智能体');
       return;
     }
     sendLockRef.current = true;
-
-    let agentKey: string | undefined;
-    let itemId: string | undefined;
-    let kbSystemPrompt: string | undefined;
-
-    if (agent?.kind === 'toolbox') {
-      if (agent.item.type === 'builtin' && agent.item.agentKey) {
-        agentKey = agent.item.agentKey;
-      } else {
-        itemId = agent.item.id;
-      }
-    } else if (agent?.kind === 'kbAgent') {
-      kbSystemPrompt = agent.agent.systemPrompt;
-    }
-
     setError(null);
 
     const userMsgId = 'u-' + Date.now();
@@ -463,20 +480,9 @@ export function ReprocessChatDrawer({
       id: asstMsgId, role: 'assistant', content: '', streaming: true, phase: 'thinking', invoker,
     };
 
-    // 组装本轮发给 LLM 的 message：[智能体角色设定]?[参考文档][用户指令]
-    let composed = '';
-    if (kbSystemPrompt) {
-      composed += `[智能体角色设定]\n${kbSystemPrompt}\n\n`;
-    }
-    composed += `[参考文档${docTruncated ? '（已截取前 4 万字）' : ''}]\n${docContent}\n\n[用户指令]\n${userText.trim()}`;
-
-    // 多轮 history 故意只塞 bubble text（用户原话 / AI 原回复），不重复嵌
-    // [参考文档]。doc 只放在本轮 message wrapper 里，模型靠当前消息看最新文档，
-    // 靠 history 看对话脉络。这是 chat-with-doc 模式的标准做法，避免每轮把 40k
-    // 字文档塞进 history × N 条吃光 token / 推高成本（Bugbot 八轮 Medium）。
-    //
-    // 注：早先一版用 sentForLlmRef 缓存"当时发出去的完整 wrapper"想让 history
-    // "和模型当时看到的一致"，那样会导致 doc 被复述 N 遍。这里改回更经济的模式。
+    // 多轮 history 只塞 bubble text（用户原话 / AI 原回复），不重复嵌文档。
+    // doc 只作为本轮输入，模型靠当前消息看最新文档、靠 history 看对话脉络
+    // （避免每轮把 40k 字文档塞进 history × N 条吃光 token；Bugbot 八轮 Medium）。
     const history = messages
       .map((m) => ({ role: m.role, content: m.content }))
       .filter((m) => m.content);
@@ -492,73 +498,102 @@ export function ReprocessChatDrawer({
     const streamOwnerEntryId = entryId;
     const isOwnedByCurrentEntry = () => entryIdRef.current === streamOwnerEntryId;
 
-    let hasFirstChunk = false;
+    // 统一流式回调（「智能体宇宙」信封与传统 direct-chat 共用同一套）
+    const onText = (chunk: string) => {
+      if (!isOwnedByCurrentEntry()) return;
+      setMessages((prev) => prev.map((m) =>
+        m.id === asstMsgId
+          ? { ...m, content: m.content + chunk, phase: 'streaming' }
+          : m));
+      scrollToBottom();
+    };
+    const onError = (msg: string) => {
+      if (!isOwnedByCurrentEntry()) return; // 来自上一篇文档的 stream，丢弃
+      // 把权限相关错误（403）特别标注，提示用户去申请 ai-toolbox.use（Codex P2 十轮）
+      const rawMsg = msg || '调用失败';
+      const isPermError = /\b403\b|权限|forbidden/i.test(rawMsg);
+      const friendlyMsg = isPermError
+        ? 'AI 写作链路需要「百宝箱使用」权限（ai-toolbox.use）。当前账号没有这个权限，请联系管理员开通后再试。'
+        : rawMsg;
+      setError(friendlyMsg);
+      setMessages((prev) => prev.map((m) =>
+        m.id === asstMsgId
+          ? { ...m, streaming: false, phase: 'error',
+              content: m.content || `（调用失败：${friendlyMsg}）` }
+          : m));
+      setStreamingId(null);
+      sendLockRef.current = false;
+    };
+    const onDone = (tokenInfo?: { totalTokens?: number }) => {
+      if (!isOwnedByCurrentEntry()) return;
+      // content 非空或有图片产出 → done；完全空且无 token → 截断 error（Bugbot/Codex 十二轮）
+      let emptyAndNoToken = false;
+      setMessages((prev) => prev.map((m) => {
+        if (m.id !== asstMsgId) return m;
+        const empty = (!m.content || m.content.trim().length === 0)
+          && (!m.artifacts || m.artifacts.length === 0);
+        if (empty && !tokenInfo) {
+          emptyAndNoToken = true;
+          return { ...m, streaming: false, phase: 'error',
+            content: '（连接中断或上游未返回任何内容）' };
+        }
+        return { ...m, streaming: false, phase: 'done' };
+      }));
+      if (emptyAndNoToken) setError('上游未返回任何内容，请重新发起。');
+      setStreamingId(null);
+      sendLockRef.current = false;
+    };
+
+    // ── 路由：有能力契约的 builtin 智能体走「智能体宇宙」统一信封 ──
+    // 生成型（视觉创作）→ 后端路由到适配器产出真实图片；chat / 结构化 → gateway 文本链路
+    if (cap) {
+      const stop = invokeAgent({
+        agentKey: cap.agentKey,
+        text: userText.trim(),
+        documentContent: isGeneration ? undefined : docContent,
+        history: isGeneration ? undefined : (history.length > 0 ? history : undefined),
+        onText,
+        onArtifact: (art) => {
+          if (!isOwnedByCurrentEntry()) return;
+          setMessages((prev) => prev.map((m) =>
+            m.id === asstMsgId
+              ? { ...m, artifacts: [...(m.artifacts ?? []), art], phase: 'streaming' }
+              : m));
+          scrollToBottom();
+        },
+        onError,
+        onDone,
+      });
+      cancelStreamRef.current = stop;
+      return;
+    }
+
+    // ── 兜底：自定义工具（itemId）/ 我的快捷智能体（inline systemPrompt）走传统 direct-chat ──
+    let agentKey: string | undefined;
+    let itemId: string | undefined;
+    let kbSystemPrompt: string | undefined;
+    if (agent?.kind === 'toolbox') {
+      if (agent.item.type === 'builtin' && agent.item.agentKey) agentKey = agent.item.agentKey;
+      else itemId = agent.item.id;
+    } else if (agent?.kind === 'kbAgent') {
+      kbSystemPrompt = agent.agent.systemPrompt;
+    }
+
+    let composed = '';
+    if (kbSystemPrompt) composed += `[智能体角色设定]\n${kbSystemPrompt}\n\n`;
+    composed += `[参考文档${docTruncated ? '（已截取前 4 万字）' : ''}]\n${docContent}\n\n[用户指令]\n${userText.trim()}`;
+
     const stop = streamDirectChat({
       message: composed,
       agentKey,
       itemId,
       history: history.length > 0 ? history : undefined,
-      onText: (chunk) => {
-        if (!isOwnedByCurrentEntry()) return;
-        if (!hasFirstChunk) {
-          hasFirstChunk = true;
-        }
-        setMessages((prev) => prev.map((m) =>
-          m.id === asstMsgId
-            ? { ...m, content: m.content + chunk, phase: 'streaming' }
-            : m));
-        scrollToBottom();
-      },
-      onError: (msg) => {
-        if (!isOwnedByCurrentEntry()) return; // 来自上一篇文档的 stream，丢弃
-        // 把权限相关错误（403 / HTTP 403）特别标注，提示用户去申请 ai-toolbox.use
-        // 否则角色被允许编辑文档但没百宝箱权限时只会看到一句"HTTP 403"很迷茫（Codex P2 十轮）
-        const rawMsg = msg || '调用失败';
-        const isPermError = /\b403\b|权限|forbidden/i.test(rawMsg);
-        const friendlyMsg = isPermError
-          ? 'AI 写作链路需要「百宝箱使用」权限（ai-toolbox.use）。当前账号没有这个权限，请联系管理员开通后再试。'
-          : rawMsg;
-        setError(friendlyMsg);
-        setMessages((prev) => prev.map((m) =>
-          m.id === asstMsgId
-            ? { ...m, streaming: false, phase: 'error',
-                content: m.content || `（调用失败：${friendlyMsg}）` }
-            : m));
-        setStreamingId(null);
-        sendLockRef.current = false;
-      },
-      onDone: (tokenInfo) => {
-        if (!isOwnedByCurrentEntry()) return;
-        // streamDirectChat.onDone 的两类来源都可能不带 tokenInfo：
-        //   (a) SSE done 事件 + 上游未返回 token 用量（合法完成，部分 provider 就这样）
-        //   (b) reader 关闭无 done 事件（疑似截断）
-        // 上一轮（十一轮）我直接拿 !tokenInfo 当截断标志，把 (a) 也错判 error
-        // → 用户合法回复看不到写回按钮（Bugbot/Codex 十二轮 High/P2）。
-        //
-        // 折中规则：tokenInfo 不再作为唯一判据。
-        //   - content 非空 → 一律 done（让用户能写回；真截断的话用户自己读得到）
-        //   - content 完全空 + 没 tokenInfo → 当真异常 error（顶部 banner + 气泡占位）
-        //   - content 完全空但有 tokenInfo → 极少见的"空白成功"，按 done 处理
-        let emptyAndNoToken = false;
-        setMessages((prev) => prev.map((m) => {
-          if (m.id !== asstMsgId) return m;
-          const empty = !m.content || m.content.trim().length === 0;
-          if (empty && !tokenInfo) {
-            emptyAndNoToken = true;
-            return { ...m, streaming: false, phase: 'error',
-              content: '（连接中断或上游未返回任何内容）' };
-          }
-          return { ...m, streaming: false, phase: 'done' };
-        }));
-        if (emptyAndNoToken) {
-          setError('上游未返回任何内容，请重新发起。');
-        }
-        setStreamingId(null);
-        sendLockRef.current = false;
-      },
+      onText,
+      onError,
+      onDone,
     });
     cancelStreamRef.current = stop;
-  }, [loadingDoc, docLoadError, messages, docContent, docTruncated, scrollToBottom]);
+  }, [loadingDoc, docLoadError, messages, docContent, docTruncated, scrollToBottom, capabilityForAgent, entryId]);
 
   const handleSendInput = useCallback(() => {
     if (!input.trim()) return;
@@ -574,26 +609,22 @@ export function ReprocessChatDrawer({
     void sendMessage(input, invoker, active);
   }, [input, active, sendMessage]);
 
+  // 选中智能体 = 只把它设为"当前智能体"并聚焦输入框，绝不自动发送。
+  // 历史 bug：选完立即用默认指令跑一轮，导致"我选了智能体还没说话就发出去了"。
+  // 现在用户必须先输入指令（生成型则输入画面描述）再点发送/回车才触发。
   const pickToolbox = useCallback((item: ToolboxItem) => {
     setActive({ kind: 'toolbox', item });
     setPickerOpen(false);
     setError(null);
-    // 选完立即跑一轮，文档全文+默认指令
-    const invoker: ChatMessage['invoker'] = {
-      kind: 'toolbox', label: item.name, ref: item.id, icon: item.icon,
-    };
-    void sendMessage(`请用「${item.name}」处理这篇文档。`, invoker, { kind: 'toolbox', item });
-  }, [sendMessage]);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, []);
 
   const pickKbAgent = useCallback((agent: ReprocessAgent) => {
     setActive({ kind: 'kbAgent', agent });
     setPickerOpen(false);
     setError(null);
-    const invoker: ChatMessage['invoker'] = {
-      kind: 'kbAgent', label: agent.label, ref: agent.key,
-    };
-    void sendMessage(`请用「${agent.label}」智能体处理这篇文档。`, invoker, { kind: 'kbAgent', agent });
-  }, [sendMessage]);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, []);
 
   const handleCreateAgent = useCallback(async (in_: {
     label: string; description: string; systemPrompt: string;
@@ -687,6 +718,51 @@ export function ReprocessChatDrawer({
   }, [messages, applying, entryId, onApplied]);
 
   const isBusy = streamingId !== null;
+  const isGenerationActive = activeCapability?.invokeMode === 'generation';
+
+  // 把图片成果物以 Markdown 形式写回文档（替换/追加/另存为新文档）
+  const handleApplyArtifact = useCallback(async (
+    art: AgentArtifact, mode: 'replace' | 'append' | 'new',
+  ) => {
+    if (!art.url) return;
+    if (applyLockRef.current || applying) return;
+    applyLockRef.current = true;
+    const requestedEntryId = entryId;
+    const key = `art:${art.url}:${mode}`;
+    setApplying(key);
+    const markdown = `![${art.name || '生成的图片'}](${art.url})`;
+    let res;
+    try {
+      res = await applyReprocessContent(requestedEntryId, { mode, content: markdown });
+    } catch (e) {
+      setApplying(null);
+      applyLockRef.current = false;
+      if (entryIdRef.current !== requestedEntryId) return;
+      toast.error('插入失败', e instanceof Error ? e.message : '网络异常');
+      return;
+    }
+    setApplying(null);
+    applyLockRef.current = false;
+    if (entryIdRef.current !== requestedEntryId) return;
+    if (!res.success) {
+      toast.error('插入失败', res.error?.message);
+      return;
+    }
+    const target = res.data.outputEntryId || res.data.updatedEntryId;
+    const label = mode === 'replace' ? '替换原文' : mode === 'append' ? '插入图片' : '另存为新文档';
+    toast.success(`${label}成功`, mode === 'new' ? '新文档已生成' : '图片已写入文档');
+    if (mode === 'replace' || mode === 'append') {
+      try {
+        const refreshed = await getDocumentContent(requestedEntryId);
+        if (entryIdRef.current === requestedEntryId && refreshed.success) {
+          const raw = refreshed.data.content ?? '';
+          setDocContent(raw.length > MAX_DOC_CHARS ? raw.slice(0, MAX_DOC_CHARS) : raw);
+          setDocTruncated(raw.length > MAX_DOC_CHARS);
+        }
+      } catch { /* 保留旧 docContent */ }
+    }
+    if (target && onApplied) onApplied(mode, target);
+  }, [applying, entryId, onApplied]);
 
   const activeLabel = useMemo(() => {
     if (!active) return null;
@@ -938,6 +1014,7 @@ export function ReprocessChatDrawer({
                 msg={m}
                 applying={applying}
                 onApply={handleApply}
+                onApplyArtifact={handleApplyArtifact}
               />
             ))
           )}
@@ -960,6 +1037,7 @@ export function ReprocessChatDrawer({
           <div className="flex gap-2 items-end">
             <textarea
               id="reprocess-chat-input"
+              ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
@@ -972,10 +1050,12 @@ export function ReprocessChatDrawer({
                 docLoadError
                   ? '文档未加载，无法对话'
                   : isBusy
-                    ? 'AI 正在回复，请稍候…'
-                    : active
-                      ? `继续追问「${active.kind === 'toolbox' ? active.item.name : active.agent.label}」，Enter 发送`
-                      : '先选个智能体，然后输入指令'
+                    ? (isGenerationActive ? '正在生成…' : 'AI 正在回复，请稍候…')
+                    : activeCapability
+                      ? activeCapability.inputHint
+                      : active
+                        ? `输入指令配合「${active.kind === 'toolbox' ? active.item.name : active.agent.label}」，Enter 发送`
+                        : '先选个智能体，然后输入指令'
               }
               disabled={isBusy || !!docLoadError}
               rows={2}
@@ -987,14 +1067,20 @@ export function ReprocessChatDrawer({
               disabled={isBusy || !input.trim() || !!docLoadError}
               onClick={handleSendInput}
             >
-              {isBusy ? <MapSpinner size={12} /> : <Send size={12} />}
-              发送
+              {isBusy
+                ? <MapSpinner size={12} />
+                : isGenerationActive ? <ImagePlus size={12} /> : <Send size={12} />}
+              {activeCapability?.actionLabel ?? '发送'}
             </Button>
           </div>
           <p className="mt-1.5 text-[10px] text-token-muted">
             {isBusy
-              ? '调用百宝箱通用 chat 链路；文档全文已作为输入发送'
-              : '点击上方下拉选智能体一键跑一轮；或直接输入指令配合当前智能体使用'}
+              ? (isGenerationActive ? '正在生成图片，请稍候…' : '正在调用智能体；文档已作为输入发送')
+              : isGenerationActive
+                ? '视觉创作：输入画面描述生成图片，生成后可一键插入文档'
+                : active
+                  ? '输入指令后回车 / 点按钮触发当前智能体（选中不会自动发送）'
+                  : '先在上方选择一个智能体，再输入指令'}
           </p>
         </div>
       </motion.div>
@@ -1143,7 +1229,7 @@ function EmptyState({ loadingDoc, entryTitle, hasAgent, docLoadError }: {
         <p className="text-[13px] font-semibold text-token-primary mb-1">和这篇文档对话</p>
         <p className="text-[11px] text-token-muted max-w-[340px] leading-relaxed">
           {hasAgent
-            ? '已选择智能体，在下方输入指令开始对话；或重新打开上方下拉换个智能体一键跑一轮。'
+            ? '已选择智能体。在下方输入指令（视觉创作则输入画面描述）后点发送开始；选中不会自动发送。'
             : '点击上方下拉选择一个智能体（百宝箱内置 / 我的快捷智能体 / 新建）后即可开始。'}
         </p>
       </div>
@@ -1153,11 +1239,12 @@ function EmptyState({ loadingDoc, entryTitle, hasAgent, docLoadError }: {
 
 // ── 消息气泡 ──
 function MessageBubble({
-  msg, applying, onApply,
+  msg, applying, onApply, onApplyArtifact,
 }: {
   msg: ChatMessage;
   applying: string | null;
   onApply: (msgId: string, mode: 'replace' | 'append' | 'new') => void;
+  onApplyArtifact: (art: AgentArtifact, mode: 'replace' | 'append' | 'new') => void;
 }) {
   if (msg.role === 'user') {
     return (
@@ -1189,6 +1276,7 @@ function MessageBubble({
   const busyMode = applying && applying.startsWith(`${msg.id}:`)
     ? applying.split(':')[1]
     : null;
+  const imageArtifacts = (msg.artifacts ?? []).filter((a) => a.kind === 'image' && a.url);
 
   return (
     <div className="flex">
@@ -1220,8 +1308,42 @@ function MessageBubble({
           <StreamingText text={msg.content} streaming mode="blur" />
         ) : msg.content ? (
           <ChatMarkdown content={msg.content} />
-        ) : (
+        ) : imageArtifacts.length === 0 ? (
           <ThinkingDots />
+        ) : null}
+
+        {imageArtifacts.length > 0 && (
+          <div className="mt-2.5 space-y-2.5">
+            {imageArtifacts.map((art, i) => {
+              const artBusy = (mode: string) => applying === `art:${art.url}:${mode}`;
+              return (
+                <div
+                  key={`${art.url}-${i}`}
+                  className="rounded-[10px] overflow-hidden"
+                  style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.20)' }}
+                >
+                  <img
+                    src={art.url ?? ''}
+                    alt={art.name ?? '生成的图片'}
+                    className="w-full block"
+                    style={{ maxHeight: 420, objectFit: 'contain' }}
+                    loading="lazy"
+                  />
+                  <div
+                    className="flex flex-wrap gap-1.5 p-2"
+                    style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}
+                  >
+                    <ApplyBtn icon={<ImagePlus size={10} />} label="插入文档"
+                      busy={artBusy('append')} applied={false}
+                      disabled={!!applying} onClick={() => onApplyArtifact(art, 'append')} />
+                    <ApplyBtn icon={<FilePlus2 size={10} />} label="另存为新文档"
+                      busy={artBusy('new')} applied={false}
+                      disabled={!!applying} onClick={() => onApplyArtifact(art, 'new')} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         )}
 
         {canApply && (
