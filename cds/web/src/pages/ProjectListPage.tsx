@@ -22,6 +22,7 @@ import {
   RefreshCw,
   Settings,
   Trash2,
+  Wand2,
   XCircle,
 } from 'lucide-react';
 import dotnetIconUrl from 'devicon/icons/dot-net/dot-net-original.svg';
@@ -2675,6 +2676,8 @@ function CreateProjectDialog({
   const [infraConfig, setInfraConfig] = useState<Record<string, { dbName?: string; initSql?: string }>>({});
   const [infraExtra, setInfraExtra] = useState<Record<string, Array<{ dbName?: string; initSql?: string }>>>({});
   const [envText, setEnvText] = useState('');
+  const [detecting, setDetecting] = useState(false);
+  const [detectMsg, setDetectMsg] = useState('');
   const { groups: infraGroups } = useInfraCatalog();
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -2755,6 +2758,37 @@ function CreateProjectDialog({
       if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) out[key] = val;
     }
     return out;
+  }
+
+  // 检测并回填:clone 仓库 → 识别栈 → 把应用服务一键填成真实检测到的配置(取代猜测默认)。
+  async function detectRuntime(): Promise<void> {
+    const url = gitRepoUrl.trim();
+    if (!url) { setDetectMsg('先填上面的 Git 仓库 URL，再检测。'); return; }
+    setDetecting(true);
+    setDetectMsg('正在克隆并分析你的仓库…(几秒到几十秒)');
+    try {
+      const res = await apiRequest<{ services: Array<{ id: string; name: string; role: AppServiceRole; runtime: RuntimeId; dockerImage: string; command: string; port: number; summary?: string; manualSetupRequired?: boolean }>; moduleCount: number }>(
+        '/api/projects/detect-runtime',
+        { method: 'POST', body: { gitRepoUrl: url, gitRef: gitDefaultBranch.trim() || undefined } },
+      );
+      const svcs = res.services || [];
+      if (svcs.length === 0) { setDetectMsg('没识别出已知技术栈，保留手填(或直接试运行验证)。'); return; }
+      setAppServices(svcs.map((s) => ({
+        id: s.id,
+        name: s.name,
+        role: s.role,
+        enabled: true,
+        runtimeId: s.runtime,
+        runtimeImage: s.dockerImage || '',
+        runtimeCommand: s.command || '',
+        runtimePort: s.port || 8080,
+      })));
+      setDetectMsg(`检测到 ${svcs.length} 个服务并已填好：${svcs.map((s) => s.summary || s.name).join('；')}。可直接「试运行验证」或手改。`);
+    } catch (e) {
+      setDetectMsg(e instanceof ApiError ? `检测失败：${e.message}` : `检测失败：${String(e)}`);
+    } finally {
+      setDetecting(false);
+    }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -2864,6 +2898,21 @@ function CreateProjectDialog({
                   </Button>
                 </div>
               </label>
+              <div className="mt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={detecting || !gitRepoUrl.trim()}
+                  onClick={() => void detectRuntime()}
+                >
+                  {detecting ? <Loader2 className="animate-spin" /> : <Wand2 />}
+                  检测仓库并自动填好配置
+                </Button>
+                <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+                  {detectMsg || '填了 Git 仓库就点这里：CDS 克隆并分析你的代码，按真实技术栈把镜像/命令/端口填好——不用猜，填完可直接试运行验证。'}
+                </p>
+              </div>
               <label className="mt-3 block space-y-1.5">
                 <span className="text-sm font-medium">备注</span>
                 <textarea

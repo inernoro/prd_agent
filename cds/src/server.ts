@@ -501,6 +501,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'PUT /env': '批量设置环境变量',
     'POST /env/categorize': '整理环境变量',
     'POST /validate-runtime': '试运行验证配置',
+    'POST /detect-runtime': '检测仓库技术栈',
     'GET /config': '获取全局配置',
     'GET /infra': '获取基础设施列表',
     'GET /infra/catalog': '获取基建目录',

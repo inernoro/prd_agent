@@ -1639,6 +1639,49 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     }
   });
 
+  // 检测并回填:仓库 URL → 浅克隆 → 复用 detectModules(monorepo 感知)识别栈 → 返回每个模块的建议
+  // 服务配置(镜像/命令/端口),前端据此把应用服务一键填好,取代"按运行时猜测的默认",减少第一次点红。
+  router.post('/detect-runtime', async (req, res) => {
+    const body = (req.body || {}) as { gitRepoUrl?: string; gitRef?: string };
+    const gitRepoUrl = (body.gitRepoUrl || '').trim();
+    const gitRef = (body.gitRef || '').trim();
+    if (!gitRepoUrl) { res.status(400).json({ error: '需要 Git 仓库 URL 才能检测。' }); return; }
+    if (gitRef && !isSafeGitRef(gitRef)) { res.status(400).json({ error: `分支名不合法: ${gitRef}` }); return; }
+    const q = (s: string) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+    const token = randomBytes(5).toString('hex');
+    const dir = nodePath.join(nodeOs.tmpdir(), `cds-detect-${token}`);
+    const stackToRuntime: Record<string, string> = { nodejs: 'node', python: 'python', go: 'go', rust: 'rust', java: 'java', php: 'php', dockerfile: 'dockerfile', ruby: 'custom', unknown: 'auto' };
+    try {
+      const clone = await shell.exec(`git clone --depth 1 ${gitRef ? `--branch ${q(gitRef)} ` : ''}${q(gitRepoUrl)} ${q(dir)}`, { timeout: 120000 });
+      if (clone.exitCode !== 0) { res.status(400).json({ error: '克隆失败——检查 URL / 分支 / 访问权限。', detail: combinedOutput(clone).slice(-400) }); return; }
+      const modules = detectModules(dir);
+      const services = modules.map((m, i) => {
+        const d = m.detection;
+        const sub = m.subPath && m.subPath !== '.' ? m.subPath : '';
+        const inner = [d.installCommand, d.suggestedBuildCommand || d.buildCommand, d.suggestedRunCommand || d.runCommand].filter(Boolean).join(' && ');
+        const command = sub ? `cd ${sub} && ${inner}` : inner;
+        const fw = d.framework || '';
+        const isFrontend = /vite|react|vue|svelte|astro/i.test(fw) || (d.stack === 'nodejs' && /\bserve\b|\bdist\b/.test(inner) && !/nest|express|fastify|next/i.test(fw));
+        return {
+          id: sub ? slugifyName(sub) : (i === 0 ? 'app' : `service-${i + 1}`),
+          name: sub || (i === 0 ? '应用服务' : `应用服务 ${i + 1}`),
+          role: isFrontend ? 'frontend' : 'backend',
+          runtime: stackToRuntime[d.stack] || 'auto',
+          dockerImage: d.dockerImage || '',
+          command,
+          port: d.containerPort || (isFrontend ? 4173 : 8080),
+          summary: d.summary,
+          manualSetupRequired: Boolean(d.manualSetupRequired),
+        };
+      });
+      res.json({ services, moduleCount: modules.length });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    } finally {
+      try { nodeFs.rmSync(dir, { recursive: true, force: true }); } catch { /* noop */ }
+    }
+  });
+
   // PR_C.4: 项目活动日志（供 UI 渲染时间线 / 浮窗）。
   // limit 默认 50，最大 200（与 ring buffer 上限一致，避免一次拉爆）。
   router.get('/projects/:id/activity-logs', (req, res) => {
