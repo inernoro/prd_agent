@@ -967,7 +967,7 @@ public sealed class DailyTipsController : ControllerBase
                     {
                         new() { Selector = "[data-tour-id=defect-view-mode-switcher]", Title = "第 1 步：欢迎来到缺陷管理", Body = "这里提交、跟踪、协作修复缺陷。右上四个图标切换 列表 / 卡片 / 看板 / 统计 视图。", NavigateTo = "/defect-agent" },
                         new() { Selector = "[data-tour-id=defect-project-filter]", Title = "第 2 步：按项目筛选", Body = "用「全部项目」下拉按项目 / 团队过滤缺陷列表。" },
-                        new() { Selector = "[data-tour-id=defect-list-container]", Title = "第 3 步：缺陷列表", Body = "这里展示你「收到的」和「我提交的」缺陷，含标题、状态、严重度、负责人。" },
+                        new() { Selector = "[data-tour-id=defect-list-container], [data-tour-id=defect-view-mode-switcher]", Title = "第 3 步：缺陷列表", Body = "这里展示你「收到的」和「我提交的」缺陷（列表 / 卡片视图含标题、状态、严重度、负责人；看板 / 统计视图换种方式呈现同一批数据）。" },
                         new() { Selector = "[data-tour-id=defect-template-btn]", Title = "第 4 步：我的模板", Body = "常用缺陷可存成模板，下次提交更快。" },
                         new() { Selector = "[data-tour-id=defect-create]", Title = "第 5 步：提交缺陷", Body = "点「+ 提交缺陷」展开提交表单。" },
                         new() { Selector = "[data-tour-id=defect-description]", Title = "第 6 步：写标题 + 描述", Body = "第一行作为标题（一句话），下方可粘贴截图、拖文件。" },
