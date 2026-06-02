@@ -508,7 +508,8 @@ function EntryIcon({ entry, isPrimary, isPinned, isOpen }: { entry: DocBrowserEn
   if (isPrimary) return <Star size={14} style={{ color: 'rgba(234,179,8,0.85)' }} />;
   if (isPinned) return <Pin size={14} style={{ color: 'rgba(59,130,246,0.7)' }} />;
   if (entry.sourceType === 'github_directory') return <Github size={14} style={{ color: 'rgba(130,80,223,0.7)' }} />;
-  if (entry.sourceType === 'subscription') return <Rss size={14} style={{ color: 'rgba(234,179,8,0.7)' }} />;
+  // 订阅源图标弱化为中性灰：整库都是订阅源时，金色 RSS 每条都亮太啰嗦；保留波浪形状区分类型即可
+  if (entry.sourceType === 'subscription') return <Rss size={14} style={{ color: 'var(--text-muted)' }} />;
 
   // 通过注册表按文件名/MIME 类型查找对应图标
   const cfg = getFileTypeConfig(entry.title, entry.contentType);
@@ -1027,7 +1028,11 @@ function TreeNode({
   const verdictForRow = !isFolder ? getVerdictConfig(entry.metadata?.verdict) : null;
   const isFreshForRow = !isFolder && (isEntryFresh ? isEntryFresh(entry) : isRecentlyChanged(entry.lastChangedAt));
   const isContentMatch = !isFolder && contentMatchIds.has(entry.id);
-  const isSubscriptionDot = !isFolder && entry.sourceType === 'subscription' && !!onOpenSubscription;
+  // 订阅状态点只在「非健康」（暂停/同步中/出错）时才占徽章行：健康（已同步）不画绿点，
+  // 否则每条都顶一个绿点、副行只剩这一个点显得空旷。健康订阅条目因此回落为单行紧凑布局。
+  const isSubscriptionAbnormal = !isFolder && entry.sourceType === 'subscription'
+    && (!!entry.isPaused || entry.syncStatus === 'syncing' || entry.syncStatus === 'error');
+  const isSubscriptionDot = isSubscriptionAbnormal && !!onOpenSubscription;
   const hasTags = !isFolder && (entry.tags?.length ?? 0) > 0;
   const hasBadgeRow =
     !isFolder && (
@@ -1268,8 +1273,8 @@ function TreeNode({
           </span>
         )}
 
-        {/* 订阅状态点 */}
-        {!isFolder && entry.sourceType === 'subscription' && onOpenSubscription && (
+        {/* 订阅状态点：仅非健康（暂停/同步中/出错）才显示；健康已同步不画点（去重复绿点） */}
+        {isSubscriptionAbnormal && onOpenSubscription && (
           <span
             onClick={(e) => { e.stopPropagation(); onOpenSubscription(entry.id); }}
             className="flex-shrink-0 cursor-pointer"
