@@ -649,6 +649,16 @@ export function ReprocessChatDrawer({
     void sendMessage(input, invoker, active);
   }, [input, active, sendMessage]);
 
+  // 开启全新对话：清空当前对话 + 清掉本文档的持久化（保留已选智能体，方便直接再问）
+  const handleNewConversation = useCallback(() => {
+    abortCurrentStream();
+    setMessages([]);
+    setError(null);
+    setInput('');
+    try { sessionStorage.removeItem(`${CHAT_HISTORY_STORAGE_KEY}:${entryId}`); } catch { /* 配额/隐私模式忽略 */ }
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, [abortCurrentStream, entryId]);
+
   // 选中智能体 = 只把它设为"当前智能体"并聚焦输入框，绝不自动发送。
   // 历史 bug：选完立即用默认指令跑一轮，导致"我选了智能体还没说话就发出去了"。
   // 现在用户必须先输入指令（生成型则输入画面描述）再点发送/回车才触发。
@@ -814,7 +824,7 @@ export function ReprocessChatDrawer({
 
   const modal = (
     <motion.div
-      className="surface-backdrop fixed inset-0 z-[100] flex justify-end"
+      className="surface-backdrop fixed inset-0 z-[1200] flex justify-end"
       initial={{ backgroundColor: 'rgba(0,0,0,0)' }}
       animate={{ backgroundColor: 'rgba(0,0,0,0.45)' }}
       exit={{ backgroundColor: 'rgba(0,0,0,0)' }}
@@ -847,12 +857,24 @@ export function ReprocessChatDrawer({
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="flex h-7 w-7 items-center justify-center rounded-[8px] text-token-muted hover:bg-white/8 transition-colors"
-          >
-            <X size={16} />
-          </button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {messages.length > 0 && (
+              <button
+                onClick={handleNewConversation}
+                disabled={isBusy}
+                title="清空当前对话，开启全新 AI 对话"
+                className="flex h-7 items-center gap-1 rounded-[8px] px-2 text-[11px] text-token-muted hover:bg-white/8 transition-colors disabled:opacity-50"
+              >
+                <Plus size={13} /> 新对话
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="flex h-7 w-7 items-center justify-center rounded-[8px] text-token-muted hover:bg-white/8 transition-colors"
+            >
+              <X size={16} />
+            </button>
+          </div>
         </div>
 
         {/* 智能体选择器（精简版 - 顶部下拉） */}
@@ -1074,6 +1096,13 @@ export function ReprocessChatDrawer({
 
         {/* 输入区 */}
         <div className="surface-panel-footer px-5 py-3 shrink-0 border-t border-token-subtle">
+          {/* 引用文档指示：让用户在输入时明确"这次会带上哪篇文章" */}
+          {!docLoadError && !isGenerationActive && (
+            <div className="flex items-center gap-1.5 mb-2 text-[10px] text-token-muted">
+              <FileText size={11} className="shrink-0" style={{ color: 'rgba(96,165,250,0.85)' }} />
+              <span className="truncate">引用：《{entryTitle}》{docTruncated ? ' · 已截取前 4 万字' : ''}</span>
+            </div>
+          )}
           {/* 可选参数（尺寸/模型）—— 仅生成型且后端有真实可选项时出现 */}
           {isGenerationActive && agentParams.length > 0 && (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mb-2">
@@ -1094,7 +1123,7 @@ export function ReprocessChatDrawer({
               ))}
             </div>
           )}
-          <div className="flex gap-2 items-end">
+          <div className="flex gap-2 items-stretch">
             <textarea
               id="reprocess-chat-input"
               ref={inputRef}
@@ -1124,6 +1153,7 @@ export function ReprocessChatDrawer({
             <Button
               variant="primary"
               size="sm"
+              className="!h-auto self-stretch px-4 shrink-0"
               disabled={isBusy || !input.trim() || !!docLoadError}
               onClick={handleSendInput}
             >
@@ -1286,12 +1316,18 @@ function EmptyState({ loadingDoc, entryTitle, hasAgent, docLoadError }: {
         <Wand2 size={20} />
       </div>
       <div>
-        <p className="text-[13px] font-semibold text-token-primary mb-1">和这篇文档对话</p>
-        <p className="text-[11px] text-token-muted max-w-[340px] leading-relaxed">
+        <p className="text-[13px] font-semibold text-token-primary mb-1">和《{entryTitle}》对话</p>
+        <p className="text-[11px] text-token-muted max-w-[360px] leading-relaxed">
           {hasAgent
             ? '已选择智能体。在下方输入指令（视觉创作则输入画面描述）后点发送开始；选中不会自动发送。'
             : '点击上方下拉选择一个智能体（百宝箱内置 / 我的快捷智能体 / 新建）后即可开始。'}
         </p>
+        {/* 预期说明：第一次用就知道会发生什么 */}
+        <ul className="mt-3 text-[10px] text-token-muted max-w-[360px] leading-relaxed text-left mx-auto space-y-1" style={{ listStyle: 'none', paddingLeft: 0 }}>
+          <li>· 每次发送都会自动带上本文档作为上下文，无需手动粘贴</li>
+          <li>· 对话会保留：关闭抽屉后再打开仍在；点右上「新对话」可清空重来</li>
+          <li>· 多轮追问会延续上下文；满意的回复可一键写回 / 另存为新文档</li>
+        </ul>
       </div>
     </div>
   );
@@ -1306,6 +1342,15 @@ function MessageBubble({
   onApply: (msgId: string, mode: 'replace' | 'append' | 'new') => void;
   onApplyArtifact: (art: AgentArtifact, mode: 'replace' | 'append' | 'new') => void;
 }) {
+  // 流式耗时计时：让用户分清"正在生成"还是"卡死"（hook 必须在任何 return 之前）
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!msg.streaming) { setElapsed(0); return; }
+    const t0 = Date.now();
+    const iv = setInterval(() => setElapsed(Math.floor((Date.now() - t0) / 1000)), 1000);
+    return () => clearInterval(iv);
+  }, [msg.streaming]);
+
   if (msg.role === 'user') {
     return (
       <div className="flex justify-end">
@@ -1355,12 +1400,16 @@ function MessageBubble({
           {msg.phase === 'thinking' && (
             <span className="inline-flex items-center gap-1 ml-1">
               <ThinkingDots />
-              <span style={{ color: 'rgba(96,165,250,0.85)' }}>正在思考…</span>
+              <span style={{ color: 'rgba(96,165,250,0.85)' }}>
+                {elapsed >= 15
+                  ? `模型较慢，仍在生成… ${elapsed}s（可点右上「新对话」中止重来）`
+                  : `正在思考… ${elapsed}s`}
+              </span>
             </span>
           )}
           {msg.phase === 'streaming' && (
             <span className="inline-flex items-center gap-1 ml-1" style={{ color: 'rgba(110,231,158,0.85)' }}>
-              <MapSpinner size={8} /> 流式回复中
+              <MapSpinner size={8} /> 流式回复中 {elapsed}s
             </span>
           )}
         </div>
@@ -1500,7 +1549,7 @@ function CreateAgentModal({
 
   return createPortal(
     <motion.div
-      className="surface-backdrop fixed inset-0 z-[110] flex items-center justify-center px-4"
+      className="surface-backdrop fixed inset-0 z-[1210] flex items-center justify-center px-4"
       initial={{ backgroundColor: 'rgba(0,0,0,0)' }}
       animate={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
       exit={{ backgroundColor: 'rgba(0,0,0,0)' }}
