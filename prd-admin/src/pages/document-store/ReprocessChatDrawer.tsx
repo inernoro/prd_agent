@@ -491,6 +491,9 @@ export function ReprocessChatDrawer({
     }
     const cap = capabilityForAgent(agent);
     const isGeneration = cap?.invokeMode === 'generation';
+    // 百宝箱自定义智能体（用户自建，type!=='builtin'）也走统一 invoke 信封（custom:{id}）。
+    // 它的 systemPrompt 由后端实时读库，新建任意自定义智能体即可立刻接入，无需改代码。
+    const isCustomToolbox = agent?.kind === 'toolbox' && agent.item.type !== 'builtin';
 
     // chat / 结构化类把文档作为输入，必须有正文；生成类只需文本 prompt，可不依赖文档
     if (!isGeneration && (!docContent || docContent.trim().length === 0)) {
@@ -574,11 +577,16 @@ export function ReprocessChatDrawer({
       sendLockRef.current = false;
     };
 
-    // ── 路由：有能力契约的 builtin 智能体走「智能体宇宙」统一信封 ──
-    // 生成型（视觉创作）→ 后端路由到适配器产出真实图片；chat / 结构化 → gateway 文本链路
-    if (cap) {
+    // ── 路由：统一「智能体宇宙」信封 ──
+    // builtin（有契约）→ 后端路由到真实适配器（生成型出图 / chat 文本）
+    // 自定义百宝箱智能体 → 后端 custom:{id} 实时读库 systemPrompt 跑真实网关
+    // 两者共用同一个 invoke，新建自定义智能体即可立刻接入。
+    if (cap || isCustomToolbox) {
+      const invokeKey = cap
+        ? cap.agentKey
+        : `custom:${agent?.kind === 'toolbox' ? agent.item.id : ''}`;
       const stop = invokeAgent({
-        agentKey: cap.agentKey,
+        agentKey: invokeKey,
         text: userText.trim(),
         documentContent: isGeneration ? undefined : docContent,
         // 面板选择的尺寸/模型透传给真实适配器（仅生成型、且确有选择时）

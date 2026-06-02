@@ -6,3 +6,5 @@
 | fix | prd-api | VisualAgentAdapter 改走真实生图客户端 OpenAIImageClient.GenerateUnifiedAsync（与主视觉创作同一引擎），修复手搓 raw body 硬塞 quality 被模型拒绝（"不支持quality"）导致生图失败；并支持透传 size/model 参数 |
 | feat | prd-api | 智能体宇宙新增 GET agents/{key}/parameters：按智能体自己原有的池下发真实可选参数（视觉=尺寸/模型，仅有多个可选项时才给选择器），invoke 已支持 parameters 透传到真实适配器 |
 | feat | prd-admin | 文档再加工面板：生成型智能体显示尺寸/模型选择器（选项来自后端真实池，无可选项则不显示），所选参数随 invoke 透传 |
+| feat | prd-api | 智能体宇宙 invoke 支持百宝箱自定义智能体（custom:{id}）：实时读库 systemPrompt + 知识库跑真实网关，新建任意自定义智能体零代码接入统一管道 |
+| feat | prd-admin | 文档再加工：自定义百宝箱智能体改走统一 invoke 信封（与内置智能体同一管道），不再走独立 direct-chat |

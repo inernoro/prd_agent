@@ -1,13 +1,18 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services.Toolbox;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Models.AgentUniverse;
+using PrdAgent.Core.Models.Toolbox;
 using PrdAgent.Core.Security;
+using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
+using PrdAgent.Infrastructure.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -34,6 +39,8 @@ public class AgentUniverseController : ControllerBase
     private readonly IEnumerable<IAgentAdapter> _adapters;
     private readonly IModelPoolQueryService _modelPoolQuery;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
+    private readonly MongoDbContext _db;
+    private readonly ILlmGateway _gateway;
     private readonly ILogger<AgentUniverseController> _logger;
 
     private static readonly JsonSerializerOptions JsonOptions =
@@ -43,11 +50,15 @@ public class AgentUniverseController : ControllerBase
         IEnumerable<IAgentAdapter> adapters,
         IModelPoolQueryService modelPoolQuery,
         ILLMRequestContextAccessor llmRequestContext,
+        MongoDbContext db,
+        ILlmGateway gateway,
         ILogger<AgentUniverseController> logger)
     {
         _adapters = adapters;
         _modelPoolQuery = modelPoolQuery;
         _llmRequestContext = llmRequestContext;
+        _db = db;
+        _gateway = gateway;
         _logger = logger;
     }
 
@@ -135,6 +146,17 @@ public class AgentUniverseController : ControllerBase
         Response.Headers.Connection = "keep-alive";
 
         var userId = this.GetRequiredUserId();
+
+        // 百宝箱自定义智能体（用户自建的通用智能体）：agentKey 形如 "custom:{itemId}"。
+        // 走同一套 invoke 信封，实时从库加载它的 systemPrompt（单一数据源，改了立即生效），
+        // 跑真实网关 chat —— 这不是仿冒：自定义 chat 智能体的"真实组件"就是它的 prompt+网关。
+        // 新建任意自定义智能体 → 自动可经此路径调用，零代码接入。
+        if ((request.AgentKey ?? string.Empty).StartsWith("custom:", StringComparison.Ordinal))
+        {
+            var itemId = request.AgentKey!["custom:".Length..];
+            await RunCustomAgentAsync(itemId, request, userId);
+            return;
+        }
 
         var cap = AgentCapabilityRegistry.Find(request.AgentKey);
         if (cap == null)
@@ -254,6 +276,107 @@ public class AgentUniverseController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Agent universe invoke failed: {AgentKey}", cap.AgentKey);
+            try { await WriteSseEventAsync("error", new { message = "智能体执行异常，请稍后重试" }); }
+            catch { /* ignore */ }
+        }
+    }
+
+    /// <summary>
+    /// 自定义百宝箱智能体的统一执行：实时读库取 systemPrompt（+知识库），跑真实网关 chat。
+    /// systemPrompt 每次实时从 ToolboxItem 读取 = 单一数据源，用户改了配置立即生效、零漂移。
+    /// </summary>
+    private async Task RunCustomAgentAsync(string itemId, AgentInvokeRequest request, string userId)
+    {
+        var text = (request.Text ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(text) && string.IsNullOrWhiteSpace(request.DocumentContent))
+        {
+            await WriteSseEventAsync("error", new { code = "EMPTY_INPUT", message = "请先输入内容" });
+            return;
+        }
+
+        // 可见性口径与 direct-chat 一致：自己创建的 + 他人公开的都可调用
+        var item = await _db.ToolboxItems
+            .Find(x => x.Id == itemId && (x.CreatedByUserId == userId || x.IsPublic))
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (item == null)
+        {
+            await WriteSseEventAsync("error", new { code = "NOT_FOUND", message = "智能体不存在或未公开" });
+            return;
+        }
+
+        var systemPrompt = item.SystemPrompt ?? string.Empty;
+
+        // 知识库注入：该智能体真实关联的资料（与 direct-chat 行为一致）
+        if (item.KnowledgeBaseIds is { Count: > 0 })
+        {
+            var kbFilter = Builders<Attachment>.Filter.In(a => a.AttachmentId, item.KnowledgeBaseIds);
+            var kbDocs = await _db.Attachments.Find(kbFilter).ToListAsync(CancellationToken.None);
+            var kbParts = kbDocs
+                .Where(d => !string.IsNullOrWhiteSpace(d.ExtractedText))
+                .Select(d => $"=== {d.FileName} ===\n{d.ExtractedText}")
+                .ToList();
+            if (kbParts.Count > 0)
+                systemPrompt += "\n\n## 知识库参考资料\n以下是该智能体的知识库内容，请基于这些内容回答：\n\n"
+                                + string.Join("\n\n", kbParts);
+        }
+
+        var userMessage = BuildDocUserMessage(text, request.DocumentContent);
+
+        // 使用次数 +1（与 direct-chat 一致）
+        await _db.ToolboxItems.UpdateOneAsync(
+            x => x.Id == itemId,
+            Builders<ToolboxItem>.Update.Inc(x => x.UsageCount, 1),
+            cancellationToken: CancellationToken.None);
+
+        using var _llmScope = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null,
+            SessionId: null,
+            UserId: userId,
+            ViewRole: null,
+            DocumentChars: request.DocumentContent?.Length,
+            DocumentHash: null,
+            SystemPromptRedacted: $"agent-universe:custom:{itemId}",
+            RequestType: "chat",
+            AppCallerCode: AppCallerRegistry.AiToolbox.Orchestration.Chat));
+
+        await WriteSseEventAsync("start", new
+        {
+            agentKey = "custom:" + itemId,
+            invokeMode = "chat",
+            action = "chat",
+            timestamp = DateTime.UtcNow,
+        });
+
+        var gwReq = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.AiToolbox.Orchestration.Chat,
+            ModelType = ModelTypes.Chat,
+            Stream = true,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                    new JsonObject { ["role"] = "user", ["content"] = userMessage },
+                },
+                ["temperature"] = item.Temperature,
+            },
+            Context = new GatewayRequestContext { UserId = userId },
+        };
+
+        try
+        {
+            await foreach (var chunk in _gateway.StreamAsync(gwReq, CancellationToken.None))
+            {
+                if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                    await WriteSseEventAsync("text", new { content = chunk.Content });
+            }
+            await WriteSseEventAsync("done", new { timestamp = DateTime.UtcNow });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Agent universe custom invoke failed: {ItemId}", itemId);
             try { await WriteSseEventAsync("error", new { message = "智能体执行异常，请稍后重试" }); }
             catch { /* ignore */ }
         }
