@@ -1671,6 +1671,9 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
           command,
           port: d.containerPort || (isFrontend ? 4173 : 8080),
           summary: d.summary,
+          stack: d.stack,
+          confidence: typeof d.confidence === 'number' ? d.confidence : 0,
+          signals: Array.isArray(d.signals) ? d.signals.slice(0, 6) : [],
           manualSetupRequired: Boolean(d.manualSetupRequired),
         };
       });

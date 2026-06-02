@@ -2767,7 +2767,7 @@ function CreateProjectDialog({
     setDetecting(true);
     setDetectMsg('正在克隆并分析你的仓库…(几秒到几十秒)');
     try {
-      const res = await apiRequest<{ services: Array<{ id: string; name: string; role: AppServiceRole; runtime: RuntimeId; dockerImage: string; command: string; port: number; summary?: string; manualSetupRequired?: boolean }>; moduleCount: number }>(
+      const res = await apiRequest<{ services: Array<{ id: string; name: string; role: AppServiceRole; runtime: RuntimeId; dockerImage: string; command: string; port: number; summary?: string; stack?: string; confidence?: number; signals?: string[]; manualSetupRequired?: boolean }>; moduleCount: number }>(
         '/api/detect-runtime',
         { method: 'POST', body: { gitRepoUrl: url, gitRef: gitDefaultBranch.trim() || undefined } },
       );
@@ -2783,7 +2783,10 @@ function CreateProjectDialog({
         runtimeCommand: s.command || '',
         runtimePort: s.port || 8080,
       })));
-      setDetectMsg(`检测到 ${svcs.length} 个服务并已填好：${svcs.map((s) => s.summary || s.name).join('；')}。可直接「试运行验证」或手改。`);
+      const conf = (c?: number): string => ((c ?? 0) >= 0.8 ? '高' : (c ?? 0) >= 0.5 ? '中' : '低');
+      const lines = svcs.map((s) => `${s.name}：${s.summary || s.runtime}(把握${conf(s.confidence)})`);
+      const uncertain = svcs.some((s) => (s.confidence ?? 0) < 0.6 || s.stack === 'unknown' || s.manualSetupRequired);
+      setDetectMsg(`检测到 ${svcs.length} 个服务并已填好：${lines.join('；')}。${uncertain ? '部分把握不高或未完全识别——强烈建议点「试运行验证」确认，或手改命令/镜像后再部署。' : '把握较高，点「试运行验证」确认一下就能部署。'}`);
     } catch (e) {
       setDetectMsg(e instanceof ApiError ? `检测失败：${e.message}` : `检测失败：${String(e)}`);
     } finally {
