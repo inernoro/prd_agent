@@ -1659,7 +1659,7 @@ export function DocumentStorePage() {
           - 我的空间 / 团队空间：统计 + 搜索 + 排序 + 新建知识库（团队空间多一个 TeamScopeBar）
           - 收藏 / 点赞：不显示 */}
       {isStoreTab && (
-        <div className="px-5 flex items-center gap-2 flex-wrap">
+        <div data-tour-id="library-toolbar" className="px-5 flex items-center gap-2 flex-wrap">
           {tab === 'team' && (
             <TeamScopeBar
               moduleKey="document-store"
@@ -1669,7 +1669,7 @@ export function DocumentStorePage() {
             />
           )}
           {/* 统计概览 */}
-          <span className="text-[12px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
+          <span data-tour-id="library-stats" className="text-[12px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
             共 <strong style={{ color: 'var(--text-primary)' }}>{totalStores}</strong> 个知识库
             <span className="opacity-50 mx-1.5">·</span>
             <strong style={{ color: 'var(--text-primary)' }}>{totalDocs}</strong> 篇文章
@@ -1679,6 +1679,7 @@ export function DocumentStorePage() {
           <div className="relative">
             <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--text-muted)' }} />
             <input
+              data-tour-id="library-search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="按名称或标签筛选…"
@@ -1702,6 +1703,7 @@ export function DocumentStorePage() {
           <div className="relative" ref={tagWrapRef}>
             <button
               type="button"
+              data-tour-id="library-tag-filter"
               onClick={() => setTagOpen(o => !o)}
               disabled={tagStats.length === 0}
               className="h-8 px-2.5 rounded-[8px] text-[12px] flex items-center gap-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
@@ -1804,6 +1806,7 @@ export function DocumentStorePage() {
           <div className="relative" ref={sortWrapRef}>
             <button
               type="button"
+              data-tour-id="library-sort"
               onClick={() => setSortOpen(o => !o)}
               className="h-8 px-2.5 rounded-[8px] text-[12px] flex items-center gap-1.5 transition-colors"
               style={{
