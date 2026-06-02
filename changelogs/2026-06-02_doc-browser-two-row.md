@@ -6,3 +6,5 @@
 | fix | prd-admin | 知识库行内标签随侧栏宽度自适应：拖宽侧栏后展示更多标签（最多 12）+ 标签名展示更全，不再一律压缩成 +N |
 | feat | prd-admin | 顶部标签筛选条标签 >6 个时收进「标签筛选」下拉（createPortal 长方形面板 + 搜索框 + 多选），避免一长串横向溢出 |
 | chore | prd-admin | 移除 DocBrowser 代码注释里残留的 emoji，符合无 emoji 规则 |
+| feat | prd-admin | 知识库空库时右栏展示完整首访引导（DocEmptyState：线框插画+说明+CTA+「3步开始」），替代原「选择左侧文件」占位 |
+| chore | prd-admin | 新增 DocHeadCard（文档头卡片）/ BulkActionBar（批量操作条）展示组件，下一波接线进阅读区与列表多选 |

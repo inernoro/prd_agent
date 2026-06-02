@@ -284,6 +284,7 @@ import { AcceptanceEvidenceGraph } from './AcceptanceEvidenceGraph';
 import { Workflow } from 'lucide-react';
 import { listInlineComments } from '@/services';
 import { DocToc } from './DocToc';
+import { DocEmptyState } from './DocEmptyState';
 
 // ── 类型 ──
 
@@ -2685,15 +2686,25 @@ export function DocBrowser({
           </>
         ) : (
           <div className="flex-1 flex items-center justify-center">
-            <div className="text-center">
-              <BookOpen size={34} className="mx-auto mb-3" style={{ color: 'rgba(255,255,255,0.10)' }} />
-              <p className="text-[13px] mb-1" style={{ color: 'var(--text-muted)' }}>
-                选择左侧文件查看内容
-              </p>
-              <p className="text-[11px]" style={{ color: 'rgba(255,255,255,0.25)' }}>
-                右键文件可置顶或设为主文档
-              </p>
-            </div>
+            {entries.length === 0 ? (
+              /* 空知识库：宽阔的右栏放完整首访引导（左侧 sidebar 太窄放不下） */
+              <DocEmptyState
+                title="这是你的知识库"
+                description="汇总文档，按结论与时间归档，支持全文搜索与标签筛选。"
+                onCreateDocument={onCreateDocument}
+                onUploadFile={onUploadFile}
+              />
+            ) : (
+              <div className="text-center">
+                <BookOpen size={34} className="mx-auto mb-3" style={{ color: 'rgba(255,255,255,0.10)' }} />
+                <p className="text-[13px] mb-1" style={{ color: 'var(--text-muted)' }}>
+                  选择左侧文件查看内容
+                </p>
+                <p className="text-[11px]" style={{ color: 'rgba(255,255,255,0.25)' }}>
+                  右键文件可置顶或设为主文档
+                </p>
+              </div>
+            )}
           </div>
         )}
       </div>
