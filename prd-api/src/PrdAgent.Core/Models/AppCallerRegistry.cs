@@ -1191,6 +1191,17 @@ public static class ProjectManagement
         )]
         public const string Chat = "pm-agent.health-diagnosis::chat";
     }
+
+    public static class MilestoneSuggest
+    {
+        [AppCallerMetadata(
+            "AI 里程碑建议",
+            "依据业务目标/团队目标/任务与计划周期，建议分阶段里程碑(名称/说明/验收标准/建议日期)",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Workflow"
+        )]
+        public const string Chat = "pm-agent.milestone-suggest::chat";
+    }
 }
 
 /// <summary>

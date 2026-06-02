@@ -386,6 +386,98 @@ public class PmAgentService
         return list;
     }
 
+    // ── AI 里程碑建议（业务目标/目标/任务 → 分阶段里程碑）──
+
+    /// <summary>依据项目目标/任务/计划周期建议分阶段里程碑草稿（不落库，前端审核后批量创建）。</summary>
+    public async IAsyncEnumerable<PmMilestoneDraft> SuggestMilestonesAsync(
+        PmProject project,
+        List<PmGoal> goals,
+        List<string> taskTitles,
+        string userId,
+        Action<string>? onError = null,
+        Func<string, Task>? onContent = null,
+        Func<string, Task>? onThinking = null,
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        var request = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.ProjectManagement.MilestoneSuggest.Chat,
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = BuildMilestoneSuggestSystemPrompt() },
+                    new JsonObject { ["role"] = "user", ["content"] = BuildMilestoneSuggestUserMessage(project, goals, taskTitles) }
+                },
+                ["temperature"] = 0.5,
+                ["include_reasoning"] = true,
+                ["reasoning"] = new JsonObject { ["exclude"] = false },
+            },
+            TimeoutSeconds = 120,
+            IncludeThinking = true,
+            Context = new GatewayRequestContext { UserId = userId }
+        };
+        var (full, err) = await StreamAndAccumulateAsync(request, onContent, onThinking);
+        if (err != null) { onError?.Invoke(err); yield break; }
+        if (string.IsNullOrWhiteSpace(full)) { onError?.Invoke("LLM 返回空内容（模型响应为空）"); yield break; }
+        foreach (var d in ParseMilestoneDrafts(full)) yield return d;
+    }
+
+    private static string BuildMilestoneSuggestSystemPrompt()
+        => "你是资深项目经理。请依据项目业务目标、团队目标、任务主题与计划周期，规划 4-8 个分阶段【里程碑】。"
+         + "里程碑是阶段性关键交付/验收节点（不是任务），彼此应有清晰先后顺序。"
+         + "每个里程碑给出：title(简洁，6-16 字)、description(该阶段交付什么/如何判定)、"
+         + "acceptanceCriteria(2-4 条可验收的完成标准)、dueDate(若提供了计划周期则在周期内给 yyyy-MM-dd 且按先后顺序递增，没有周期则留空)。"
+         + "严格只输出 JSON 数组，元素形如 {\"title\":\"\",\"description\":\"\",\"acceptanceCriteria\":[\"\",\"\"],\"dueDate\":\"2026-07-01\"}。"
+         + "不要输出数组以外的任何文字。";
+
+    private static string BuildMilestoneSuggestUserMessage(PmProject project, List<PmGoal> goals, List<string> taskTitles)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"项目名称：{project.Title}");
+        sb.AppendLine($"业务目标：{project.BusinessGoal}");
+        if (!string.IsNullOrWhiteSpace(project.Description)) sb.AppendLine($"项目描述：{project.Description}");
+        if (project.PlannedStartAt.HasValue || project.PlannedEndAt.HasValue)
+            sb.AppendLine($"计划周期：{project.PlannedStartAt:yyyy-MM-dd} ~ {project.PlannedEndAt:yyyy-MM-dd}");
+        var teamGoals = goals.Where(g => g.Scope == PmGoalScope.Team).Take(12).ToList();
+        if (teamGoals.Count > 0)
+        {
+            sb.AppendLine("团队目标：");
+            foreach (var g in teamGoals) sb.AppendLine($"- {g.Title}{(string.IsNullOrWhiteSpace(g.Metric) ? "" : $"（指标 {g.Metric}）")}");
+        }
+        if (taskTitles.Count > 0)
+        {
+            sb.AppendLine("任务主题（节选）：");
+            foreach (var t in taskTitles.Take(30)) sb.AppendLine($"- {t}");
+        }
+        sb.AppendLine("请据此规划 4-8 个分阶段里程碑，只输出 JSON 数组。");
+        return sb.ToString();
+    }
+
+    private static List<PmMilestoneDraft> ParseMilestoneDrafts(string content)
+    {
+        var list = new List<PmMilestoneDraft>();
+        try
+        {
+            var json = ExtractJsonArray(content);
+            if (json == null) return list;
+            foreach (var item in json)
+            {
+                if (item is not JsonObject obj) continue;
+                list.Add(new PmMilestoneDraft
+                {
+                    Title = obj["title"]?.GetValue<string>() ?? "未命名里程碑",
+                    Description = obj["description"]?.GetValue<string>(),
+                    AcceptanceCriteria = GetStringArray(obj, "acceptanceCriteria"),
+                    DueDate = obj["dueDate"]?.GetValue<string>(),
+                });
+            }
+        }
+        catch (Exception) { /* 解析失败返回空，不阻断 */ }
+        return list;
+    }
+
     private static string BuildGoalDecomposeSystemPrompt(bool isSubGoal)
     {
         var jsonShape = "{\"title\":\"目标标题\",\"description\":\"详细说明（落地思路/可行性）\",\"metric\":\"衡量指标/关键结果\",\"period\":\"周期(可选,如 2026 Q2)\"}";
@@ -461,4 +553,14 @@ public class PmGoalDraft
     public string? Description { get; set; }
     public string? Metric { get; set; }
     public string? Period { get; set; }
+}
+
+/// <summary>AI 建议的里程碑草稿（不落库，前端审核后批量创建）。</summary>
+public class PmMilestoneDraft
+{
+    public string Title { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public List<string> AcceptanceCriteria { get; set; } = new();
+    /// <summary>建议日期 yyyy-MM-dd（可空）</summary>
+    public string? DueDate { get; set; }
 }

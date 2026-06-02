@@ -170,6 +170,15 @@ export function MilestoneDetailDrawer({ projectId, milestone, allMilestones, goa
     else toast.error('操作失败', res.error?.message || '');
   };
 
+  const resetBaseline = async () => {
+    if (!milestone) return;
+    setSaving(true);
+    const res = await updatePmMilestone(milestone.id, { ...buildPayload(), resetBaseline: true });
+    setSaving(false);
+    if (res.success) { toast.success('已重设基线', '基线计划日已对齐当前计划日'); onSaved(); }
+    else toast.error('操作失败', res.error?.message || '');
+  };
+
   const remove = async () => {
     if (!milestone) return;
     if (!window.confirm(`删除里程碑「${milestone.title}」？其下任务将解除归属（任务本身保留）。`)) return;
@@ -208,11 +217,17 @@ export function MilestoneDetailDrawer({ projectId, milestone, allMilestones, goa
               <div className="flex items-center gap-3 text-[11px] flex-wrap" style={{ color: 'var(--text-muted)' }}>
                 <span>任务 {milestone.taskDone}/{milestone.taskTotal}</span>
                 {criteria.length > 0 && <span className="inline-flex items-center gap-1"><CircleCheck size={11} />验收 {doneCount}/{criteria.length}</span>}
+                {milestone.baselineDueAt && (
+                  <span title="基线计划日">基线 {fmtDate(milestone.baselineDueAt)}{typeof milestone.driftDays === 'number' && milestone.driftDays !== 0 ? `（${milestone.driftDays > 0 ? '+' : ''}${milestone.driftDays} 天）` : ''}</span>
+                )}
                 {milestone.reachedAt && <span style={{ color: '#10B981' }}>已达成 {fmtDate(milestone.reachedAt)}</span>}
                 {typeof milestone.slippageDays === 'number' && milestone.slippageDays !== 0 && (
                   <span style={{ color: milestone.slippageDays > 0 ? '#EF4444' : '#10B981' }}>
                     {milestone.slippageDays > 0 ? `延期 ${milestone.slippageDays} 天` : `提前 ${-milestone.slippageDays} 天`}
                   </span>
+                )}
+                {canManage && milestone.dueAt && (
+                  <button onClick={resetBaseline} disabled={saving} className="hover:underline" style={{ color: '#3B82F6' }} title="把基线计划日重设为当前计划日，清零滑移">重设基线</button>
                 )}
               </div>
             </div>

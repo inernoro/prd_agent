@@ -518,7 +518,7 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
 
       {tab === 'milestones' && (
         <MilestonesPanel projectId={projectId} milestones={milestones} goals={goals} tasks={tasks}
-          canManage={project.ownerId === myId || project.leaderId === myId} onChanged={loadMilestones} />
+          businessGoal={project.businessGoal} canManage={project.ownerId === myId || project.leaderId === myId} onChanged={loadMilestones} />
       )}
 
       {tab === 'library' && (

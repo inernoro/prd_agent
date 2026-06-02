@@ -1165,6 +1165,10 @@ public class PmAgentController : ControllerBase
             int? slippageDays = (m.ReachedAt.HasValue && m.DueAt.HasValue)
                 ? (int)Math.Round((m.ReachedAt.Value.Date - m.DueAt.Value.Date).TotalDays)
                 : null;
+            // 基线滑移：当前计划日 - 基线计划日（正=较初始计划推迟）
+            int? driftDays = (m.BaselineDueAt.HasValue && m.DueAt.HasValue)
+                ? (int)Math.Round((m.DueAt.Value.Date - m.BaselineDueAt.Value.Date).TotalDays)
+                : null;
             var deps = m.DependsOn ?? new List<string>();
             var blockedByTitles = deps.Where(id => !reachedIds.Contains(id))
                 .Select(id => titleById.GetValueOrDefault(id, "")).Where(t => t != "").ToList();
@@ -1176,6 +1180,8 @@ public class PmAgentController : ControllerBase
                 title = m.Title,
                 description = m.Description,
                 dueAt = m.DueAt,
+                baselineDueAt = m.BaselineDueAt,
+                driftDays,
                 reachedAt = m.ReachedAt,
                 goalId = m.GoalId,
                 ownerId = m.OwnerId,
@@ -1292,6 +1298,7 @@ public class PmAgentController : ControllerBase
             Title = request.Title!.Trim(),
             Description = request.Description?.Trim(),
             DueAt = request.DueAt,
+            BaselineDueAt = request.DueAt,   // 立项时的计划日 = 基线
             GoalId = string.IsNullOrWhiteSpace(request.GoalId) ? null : request.GoalId,
             OwnerId = string.IsNullOrWhiteSpace(request.OwnerId) ? null : request.OwnerId,
             OwnerName = ownerName,
@@ -1333,6 +1340,11 @@ public class PmAgentController : ControllerBase
         }
         if (request.Description != null) update = update.Set(x => x.Description, request.Description.Trim());
         if (request.DueAt.HasValue) update = update.Set(x => x.DueAt, request.DueAt);
+        // 基线：显式重设 → 取当前计划日；旧数据(无基线)首次改期 → 回填为改前的计划日，以便后续展示滑移
+        if (request.ResetBaseline == true)
+            update = update.Set(x => x.BaselineDueAt, request.DueAt ?? m.DueAt);
+        else if (request.DueAt.HasValue && m.BaselineDueAt == null)
+            update = update.Set(x => x.BaselineDueAt, m.DueAt ?? request.DueAt);
         if (request.GoalId != null) update = update.Set(x => x.GoalId, string.IsNullOrWhiteSpace(request.GoalId) ? null : request.GoalId);
         if (request.OwnerId != null)
         {
@@ -2491,6 +2503,40 @@ public class PmAgentController : ControllerBase
         await WriteSseEvent("done", new { totalNew = count, error = llmError });
     }
 
+    /// <summary>AI 里程碑建议（SSE 流式，仅 owner/leader）。依据目标/任务/计划周期建议分阶段里程碑草稿。</summary>
+    [HttpPost("projects/{projectId}/milestones/suggest")]
+    [Produces("text/event-stream")]
+    public async Task SuggestMilestones(string projectId)
+    {
+        var userId = GetUserId();
+        var project = await FindAccessibleProjectAsync(projectId, userId);
+        if (project == null) { Response.StatusCode = 404; return; }
+        if (project.OwnerId != userId && project.LeaderId != userId) { Response.StatusCode = 403; return; }
+
+        var goals = await _db.PmGoals.Find(g => g.ProjectId == projectId && g.Scope == PmGoalScope.Team).ToListAsync();
+        var taskTitles = await _db.PmTasks.Find(t => t.ProjectId == projectId && t.Status != PmTaskStatus.Cancelled)
+            .Project(t => t.Title).Limit(40).ToListAsync();
+
+        Response.ContentType = "text/event-stream; charset=utf-8";
+        Response.Headers.CacheControl = "no-cache";
+        await WriteSseEvent("stage", new { stage = "suggesting", message = "正在依据目标/任务规划分阶段里程碑…" });
+
+        string? llmError = null;
+        var count = 0;
+        await foreach (var draft in _pmService.SuggestMilestonesAsync(
+            project, goals, taskTitles, userId,
+            onError: err => llmError = err,
+            onContent: async text => await WriteSseEvent("typing", new { text }),
+            onThinking: async text => await WriteSseEvent("thinking", new { text })))
+        {
+            count++;
+            await WriteSseEvent("milestone", draft);
+            await WriteSseEvent("stage", new { stage = "drafting", message = $"已规划 {count} 个里程碑…" });
+        }
+        if (llmError != null) await WriteSseEvent("error", new { message = llmError });
+        await WriteSseEvent("done", new { totalNew = count, error = llmError });
+    }
+
     /// <summary>AI 生成结案报告（SSE 流式，仅 owner/leader）。汇总项目执行数据后让 LLM 起草 Markdown 报告。</summary>
     [HttpPost("projects/{projectId}/closure-report")]
     [Produces("text/event-stream")]
@@ -2967,6 +3013,8 @@ public class MilestoneRequest
     public List<string>? DependsOn { get; set; }
     /// <summary>交付物引用（null=不变）。</summary>
     public List<DeliverableInput>? Deliverables { get; set; }
+    /// <summary>true=把基线计划日重设为当前计划日（清零滑移）。</summary>
+    public bool? ResetBaseline { get; set; }
     public string? Status { get; set; }
     public long? OrderKey { get; set; }
 }

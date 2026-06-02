@@ -17,8 +17,11 @@ public class PmMilestone
     /// <summary>说明</summary>
     public string? Description { get; set; }
 
-    /// <summary>预计达成时间</summary>
+    /// <summary>预计达成时间（当前计划日，可随重排变化）</summary>
     public DateTime? DueAt { get; set; }
+
+    /// <summary>基线计划日（首次计划快照；用于对比当前计划的滑移/趋势）。重设基线时刷新。</summary>
+    public DateTime? BaselineDueAt { get; set; }
 
     /// <summary>实际达成时间（标记达成时落）</summary>
     public DateTime? ReachedAt { get; set; }

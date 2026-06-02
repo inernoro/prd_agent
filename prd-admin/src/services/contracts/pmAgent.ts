@@ -513,6 +513,10 @@ export type PmMilestone = {
   title: string;
   description?: string | null;
   dueAt?: string | null;
+  /** 基线计划日（首次/重设的计划快照） */
+  baselineDueAt?: string | null;
+  /** 当前计划日 - 基线（天）：正=较初始计划推迟 */
+  driftDays?: number | null;
   reachedAt?: string | null;
   goalId?: string | null;
   ownerId?: string | null;
@@ -542,8 +546,11 @@ export type SavePmMilestoneInput = Partial<{
   acceptanceCriteria: { id?: string; text: string; done: boolean }[];
   dependsOn: string[];
   deliverables: { type: PmDeliverableType; refId?: string; title: string; url?: string }[];
+  resetBaseline: boolean;
   status: PmMilestoneStatus; orderKey: number;
 }>;
+/** AI 建议的里程碑草稿 */
+export type PmMilestoneDraft = { title: string; description?: string; acceptanceCriteria?: string[]; dueDate?: string };
 export type ListPmMilestonesContract = (projectId: string) => Promise<ApiResponse<{ items: PmMilestone[] }>>;
 export type CreatePmMilestoneContract = (projectId: string, input: SavePmMilestoneInput) => Promise<ApiResponse<PmMilestone>>;
 export type UpdatePmMilestoneContract = (milestoneId: string, input: SavePmMilestoneInput) => Promise<ApiResponse<{ updated: boolean }>>;
