@@ -7,5 +7,6 @@
 | feat | prd-admin | 顶部标签筛选条标签 >6 个时收进「标签筛选」下拉（createPortal 长方形面板 + 搜索框 + 多选），避免一长串横向溢出 |
 | chore | prd-admin | 移除 DocBrowser 代码注释里残留的 emoji，符合无 emoji 规则 |
 | feat | prd-admin | 知识库空库时右栏展示完整首访引导（DocEmptyState：线框插画+说明+CTA+「3步开始」），替代原「选择左侧文件」占位 |
-| chore | prd-admin | 新增 DocHeadCard（文档头卡片）/ BulkActionBar（批量操作条）展示组件，下一波接线进阅读区与列表多选 |
+| chore | prd-admin | 新增 BulkActionBar（批量操作条）展示组件，下一波接线列表多选；DocHeadCard 因阅读区已有头部工具栏（标题/标签/时间/作者）而弃用，改为在阅读头补验收药丸 |
 | fix | prd-admin | 知识库条目徽章行恒为单行：行内 tag 去掉 flex-wrap 改 overflow 裁切（+N 永久可见）+ 窄栏更激进收进 +N，杜绝标签竖直堆叠 |
+| feat | prd-admin | 阅读区排版升级：代码块 hover 复制按钮（MarkdownViewer 全站生效）+ 顶部阅读进度条 + 阅读头补验收结论药丸（通过/有条件/未过 + 档位） |

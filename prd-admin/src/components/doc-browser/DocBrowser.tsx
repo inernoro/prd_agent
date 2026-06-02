@@ -154,6 +154,31 @@ function TagRowChips({ tags, onToggleTag, activeTags, max = 2 }: { tags: string[
   );
 }
 
+// 阅读进度条：贴阅读区顶部，随正文滚动推进（纯展示，不挡点击）。
+// key 绑 selectedEntryId，切换文档时重新挂载归零重算；内容尺寸变化用 ResizeObserver 兜底。
+function ReadingProgressBar({ scrollRef }: { scrollRef: React.RefObject<HTMLDivElement> }) {
+  const [pct, setPct] = useState(0);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const max = el.scrollHeight - el.clientHeight;
+      setPct(max > 4 ? Math.min(100, Math.max(0, (el.scrollTop / max) * 100)) : 0);
+    };
+    onScroll();
+    el.addEventListener('scroll', onScroll, { passive: true });
+    const ro = new ResizeObserver(onScroll);
+    ro.observe(el);
+    return () => { el.removeEventListener('scroll', onScroll); ro.disconnect(); };
+  }, [scrollRef]);
+  if (pct <= 0) return null;
+  return (
+    <div aria-hidden style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, zIndex: 5, pointerEvents: 'none' }}>
+      <div style={{ height: '100%', width: `${pct}%`, background: 'var(--accent-primary, #818cf8)', opacity: 0.9, transition: 'width .08s linear', borderRadius: '0 2px 2px 0' }} />
+    </div>
+  );
+}
+
 // 顶部标签筛选下拉：标签过多时收进一个"标签筛选"下拉按钮，点开弹出长方形面板多选筛选（createPortal 防裁剪）。
 function TagFilterDropdown({
   tags, selected, colors, onToggle, onClear,
@@ -2399,6 +2424,22 @@ export function DocBrowser({
             {/* 面包屑导航 header */}
             <div className="flex items-center gap-2 px-5 py-2.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
               <Breadcrumbs entryId={selectedEntryId} entries={entries} />
+              {/* 验收结论药丸：列表里有、阅读区原先缺失，这里补上让「通过 L1」在阅读视图也一眼可见 */}
+              {(() => {
+                const sel = entries.find(e => e.id === selectedEntryId);
+                const vc = sel && !sel.isFolder ? getVerdictConfig(sel.metadata?.verdict) : null;
+                if (!vc) return null;
+                const tier = sel!.metadata?.tier;
+                return (
+                  <span
+                    className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0 font-bold tabular-nums"
+                    style={{ background: vc.background, color: vc.color, border: vc.border }}
+                    title={`验收结论：${vc.label}${tier ? ` · 档位 ${tier}` : ''}`}
+                  >
+                    {vc.label}{tier ? ` ${tier}` : ''}
+                  </span>
+                );
+              })()}
               {selectedEntryId === primaryEntryId && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0"
                   style={{ background: 'rgba(234,179,8,0.08)', color: 'rgba(234,179,8,0.8)', border: '1px solid rgba(234,179,8,0.12)' }}>
@@ -2627,7 +2668,11 @@ export function DocBrowser({
               })()}
             </div>
             {/* 内容区 + 右侧本页章节导航（F1） */}
-            <div className="flex-1 flex min-w-0" style={{ minHeight: 0 }}>
+            <div className="flex-1 flex min-w-0 relative" style={{ minHeight: 0 }}>
+              {/* 阅读进度条（仅正文预览态）；切文档时按 key 重挂归零 */}
+              {!editMode && !contentLoading && (
+                <ReadingProgressBar key={selectedEntryId} scrollRef={contentAreaRef} />
+              )}
               <div
                 ref={contentAreaRef}
                 className="flex-1 min-w-0 px-6 py-4 relative"
