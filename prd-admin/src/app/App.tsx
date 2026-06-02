@@ -343,7 +343,7 @@ export default function App() {
       {isAuthenticated
         && location.pathname !== '/home'
         && location.pathname !== '/login'
-        && !['/s/', '/shared/', '/join/', '/_dev/', '/cds-agent'].some((p) => location.pathname.startsWith(p))
+        && !['/s/', '/shared/', '/join/', '/_dev/', '/cds-agent', '/u/'].some((p) => location.pathname.startsWith(p))
         && (
         <>
           <TipsDrawer />

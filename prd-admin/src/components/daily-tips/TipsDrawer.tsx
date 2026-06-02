@@ -190,11 +190,25 @@ export function TipsDrawer() {
     return 'collapsed';
   })();
 
+  // 当前页是否有「未走完的本页教程」(tips 已过滤掉已学会的)。渲染级单一真值:
+  // 既供「强制自动开讲」用,也供下面两个抽屉自动展开 effect 做抑制判断——
+  // 不依赖 effect 声明顺序(否则抽屉先展开、晚一步才标记节流,会和 Spotlight 叠加,Bugbot Medium)。
+  const pageGuideHere = useMemo(() => {
+    return tips.find((t) => {
+      if (typeof t.sourceId !== 'string' || !t.sourceId.endsWith('-page-guide') || !t.actionUrl) return false;
+      const isEditorGuide = t.sourceId.includes('editor');
+      if (location.pathname === t.actionUrl) return !isEditorGuide;
+      if (location.pathname.startsWith(t.actionUrl + '/') || location.pathname.startsWith(t.actionUrl + '-fullscreen/')) return isEditorGuide;
+      return false;
+    }) ?? null;
+  }, [tips, location.pathname]);
+
   // ── 推送自动展开:按 tip.id 记忆,每条定向 tip 本 session 只弹一次 ──
   // 轮询时如果管理员新推了一条,tips 里会多出一个 isTargeted 的新 id,它不在
   // 已弹过集合里 → 再自动弹一次。解决「session 第二条推送不弹」的坑。
   useEffect(() => {
     if (!loaded) return;
+    if (pageGuideHere) return; // 本页有未走完教程 → 由 Spotlight 自动开讲,不抢着展开抽屉(避免叠加)
     if (hasAutoOpenedToday()) return; // 每天只自动弹一次
     const opened = readAutoOpenedIds();
     const newTargeted = tips.find((t) => t.isTargeted && !opened.has(t.id));
@@ -221,6 +235,7 @@ export function TipsDrawer() {
   // (bugbot ref1: 旧 flag 会在 targeted-tip 路径先触发时永远不被写入,跨日 remount 会让新用户路径误触发)
   useEffect(() => {
     if (!loaded) return;
+    if (pageGuideHere) return; // 本页有未走完教程 → 走 Spotlight 自动开讲,不展开抽屉(避免叠加)
     if (tips.length === 0) return;
     if (hasAutoOpenedToday()) return; // 每天只自动弹一次
     markAutoOpenedToday();
@@ -235,16 +250,7 @@ export function TipsDrawer() {
   //   本 session 每条只自动弹一次(sessionStorage 记忆),避免同 session 内切来切去反复打断。
   useEffect(() => {
     if (!loaded) return;
-    const guide = tips.find((t) => {
-      if (typeof t.sourceId !== 'string' || !t.sourceId.endsWith('-page-guide') || !t.actionUrl) return false;
-      // *-editor-page-guide 走深层(编辑器)路由;普通 *-page-guide 走列表路由。
-      // 这样在 /visual-agent 弹列表教程,进入 /visual-agent/:id 编辑器弹编辑器教程,各管各的。
-      const isEditorGuide = t.sourceId.includes('editor');
-      if (location.pathname === t.actionUrl) return !isEditorGuide;
-      // 深层(编辑器)路由:含旧版全屏兼容路由 /{agent}-fullscreen/:id(如 /visual-agent-fullscreen/）
-      if (location.pathname.startsWith(t.actionUrl + '/') || location.pathname.startsWith(t.actionUrl + '-fullscreen/')) return isEditorGuide;
-      return false;
-    });
+    const guide = pageGuideHere;
     if (!guide || !guide.sourceId) return;
     let started: Set<string>;
     try { started = new Set(JSON.parse(sessionStorage.getItem(AUTO_STARTED_GUIDES_KEY) || '[]')); }
@@ -252,11 +258,10 @@ export function TipsDrawer() {
     if (started.has(guide.sourceId)) return;
     started.add(guide.sourceId);
     try { sessionStorage.setItem(AUTO_STARTED_GUIDES_KEY, JSON.stringify(Array.from(started))); } catch { /* noop */ }
-    // 抑制抽屉自动展开,避免和 Spotlight 引导叠加;然后用与「开始本页教程」CTA 相同的机制开讲
-    markAutoOpenedToday();
+    // 两个抽屉自动展开 effect 已用 pageGuideHere 抑制,这里直接用 CTA 同款机制开讲
     void trackTip(guide.id, 'clicked');
     writeSpotlightPayload(guide);
-  }, [loaded, tips, location.pathname]);
+  }, [loaded, pageGuideHere]);
 
   // tips 变化时把轮播索引收敛到有效范围
   useEffect(() => {

@@ -15,3 +15,4 @@
 | feat | prd-admin | 子智能体批量给 7 个自定义头部页内嵌本页教程入口(视频/产品评审/项目路由/转录/快捷指令/技能/项目管理);arena、automations 无干净页头暂跳过 |
 | fix | prd-admin | PR #712 评审修复：①视觉创作页教程入口误放进复用的 ToolbarButton(每个工具按钮上都叠一个)→ 移到 HeroSection 页面级单实例 ②教程气泡宽度 340→360 后 bubbleLeft 夹取仍用旧值(右溢出/偏移)→ 同步改 360/180 ③多步引导「下一步」自动点击改为仅在「下一步元素当前不存在」时才点,避免点到「分享统计」等按钮弹出 z-10000 抽屉挡住引导 |
 | fix | prd-admin | PR #712 Codex P2:视觉编辑器旧版全屏路由 /visual-agent-fullscreen/:id 既不自动开讲也无入口。matcher 增配 -fullscreen 兼容前缀;VisualAgentFullscreenPage 编辑器态右上角内嵌教程入口(覆盖正式 + 旧版两路由,列表态不重复) |
+| fix | prd-admin | PR #712 评审三连修：①公开主页 /u/:username 加入教程浮层排除名单(登录用户访问公开页不再冒出内部引导，Codex P2) ②文学编辑器头部右侧补本页教程入口(自动开讲关掉后可手动重开，Codex P2) ③修复抽屉自动展开与 Spotlight 叠加:改用渲染级 pageGuideHere 单一真值抑制(不再依赖 effect 声明顺序，Bugbot Medium) |

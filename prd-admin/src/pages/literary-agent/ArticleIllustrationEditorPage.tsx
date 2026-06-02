@@ -78,6 +78,7 @@ import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/cn';
+import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import type { Model } from '@/types/admin';
 import type { ImageGenPlanItem, CreateImageGenRunInput } from '@/services/contracts/imageGen';
 
@@ -2691,6 +2692,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   <span>{manualSubmitting ? '投稿中…' : '投稿当前'}</span>
                 </button>
               )}
+              {/* 本页教程入口(内嵌头部右侧):自动开讲关掉/已消费后,仍可手动重开编辑器教程 */}
+              <TipsEntryButton compact />
             </div>
           </div>
 
