@@ -712,6 +712,9 @@
 
 ### 七、周报
 
+- [智能体宇宙 · 完备度看板](report.agent-universe-completeness) `report.agent-universe-completeness`
+  > 各智能体完备度看板：终极目标、当前进度、TodoList、目前情况、风险点（当前加权进度约 55%）
+
 - [CDS Agent 商业级可用闭环目标审计报告](report.cds-agent-goal-completion-audit-2026-05-19) `report.cds-agent-goal-completion-audit-2026-05-19`
   > CDS Agent 商业级可用闭环目标的完成度审计报告（2026-05-19）
 
