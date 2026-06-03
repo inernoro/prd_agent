@@ -286,7 +286,7 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
               preload="metadata"
               onCanPlayThrough={() => setVideoReady(true)}
               className="absolute inset-0 w-full h-full object-cover transition-opacity duration-500"
-              style={{ opacity: hovering && videoReady ? 1 : 0 }}
+              style={{ opacity: hovering && videoReady ? 1 : 0, filter: 'saturate(0.86) brightness(0.92)' }}
             />
           )}
         </>
@@ -310,7 +310,7 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
               preload="metadata"
               onCanPlayThrough={() => setVideoReady(true)}
               className="absolute inset-0 w-full h-full object-cover transition-opacity duration-500"
-              style={{ opacity: hovering && videoReady ? 1 : 0 }}
+              style={{ opacity: hovering && videoReady ? 1 : 0, filter: 'saturate(0.86) brightness(0.92)' }}
             />
           )}
         </>
