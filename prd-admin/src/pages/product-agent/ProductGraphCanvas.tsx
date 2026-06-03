@@ -34,6 +34,7 @@ import { Search, GitFork, Maximize2, Minimize2, X } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import {
   getProductGraph,
+  getOverviewGraph,
   getProduct,
   listRequirements,
   listFeatures,
@@ -88,7 +89,7 @@ function idType(id: string): NodeType {
   return id.split(':', 1)[0] as NodeType;
 }
 
-function ProductGraphInner({ productId }: { productId: string }) {
+function ProductGraphInner({ productId, overview }: { productId?: string; overview?: boolean }) {
   const navigate = useNavigate();
   const [raw, setRaw] = useState<{ nodes: GraphNode[]; edges: GraphEdge[] } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -113,7 +114,7 @@ function ProductGraphInner({ productId }: { productId: string }) {
     let alive = true;
     void (async () => {
       setLoading(true);
-      const res = await getProductGraph(productId);
+      const res = overview ? await getOverviewGraph() : await getProductGraph(productId ?? '');
       if (!alive) return;
       if (res.success) setRaw(res.data);
       else setError(res.error?.message ?? '加载图谱失败');
@@ -122,7 +123,7 @@ function ProductGraphInner({ productId }: { productId: string }) {
     return () => {
       alive = false;
     };
-  }, [productId]);
+  }, [productId, overview]);
 
   // ── 派生：邻接表、生成树父子、后代计数 ──
   const derived = useMemo(() => {
@@ -184,7 +185,8 @@ function ProductGraphInner({ productId }: { productId: string }) {
     // 版本过滤：以版本为中心 2 跳可达 + 产品根
     let versionScope: Set<string> | null = null;
     if (versionFilter) {
-      versionScope = new Set<string>([versionFilter, `product:${productId}`]);
+      versionScope = new Set<string>([versionFilter]);
+      if (productId) versionScope.add(`product:${productId}`);
       let frontier = [versionFilter];
       for (let hop = 0; hop < 2; hop++) {
         const next: string[] = [];
@@ -518,7 +520,7 @@ function ProductGraphInner({ productId }: { productId: string }) {
         {selected && (
           <NodeDrawer
             node={selected}
-            productId={productId}
+            productId={selected.productId ?? productId ?? ''}
             hasChildren={(derived.descCount.get(selected.id) ?? 0) > 0}
             collapsed={collapsed.has(selected.id)}
             onClose={() => setSelected(null)}
@@ -528,7 +530,8 @@ function ProductGraphInner({ productId }: { productId: string }) {
             }}
             onOpenDetail={() => {
               const [t, rawId] = selected.id.split(':', 2);
-              if (t === 'requirement' || t === 'feature' || t === 'defect') navigate(`/product-agent/p/${productId}/${t}/${rawId}`);
+              const pid = selected.productId ?? productId;
+              if (pid && (t === 'requirement' || t === 'feature' || t === 'defect')) navigate(`/product-agent/p/${pid}/${t}/${rawId}`);
             }}
           />
         )}
@@ -699,10 +702,10 @@ function baseStyle(color: string): CSSProperties {
   };
 }
 
-export function ProductGraphCanvas({ productId }: { productId: string }) {
+export function ProductGraphCanvas({ productId, overview }: { productId?: string; overview?: boolean }) {
   return (
     <ReactFlowProvider>
-      <ProductGraphInner productId={productId} />
+      <ProductGraphInner productId={productId} overview={overview} />
     </ReactFlowProvider>
   );
 }

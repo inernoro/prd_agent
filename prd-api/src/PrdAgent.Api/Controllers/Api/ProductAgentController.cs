@@ -1239,7 +1239,7 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items = rows }));
     }
 
-    /// <summary>跨产品总览图：产品为中心，连到各自的版本（公司级发布地图）。</summary>
+    /// <summary>跨产品总览图：全部产品/版本/需求/功能/缺陷/客户 + 全部关系（最全的公司级关系图）。</summary>
     [HttpGet("overview/graph")]
     public async Task<IActionResult> OverviewGraph()
     {
@@ -1249,16 +1249,52 @@ public class ProductAgentController : ControllerBase
             : Builders<Product>.Filter.And(Builders<Product>.Filter.Eq(p => p.IsDeleted, false), Builders<Product>.Filter.In(p => p.Id, scope)))
             .Limit(2000).ToListAsync();
         var versions = await FindInScopeAsync<ProductVersion>(scope, v => v.ProductId, v => v.IsDeleted);
+        var requirements = await FindInScopeAsync<Requirement>(scope, r => r.ProductId, r => r.IsDeleted);
+        var features = await FindInScopeAsync<Feature>(scope, f => f.ProductId, f => f.IsDeleted);
+        var customers = await FindInScopeAsync<Customer>(scope, c => c.ProductId, c => c.IsDeleted);
+        var featureVersions = await FindInScopeAsync<FeatureVersion>(scope, fv => fv.ProductId, fv => fv.IsDeleted);
+        var defects = await _db.DefectReports.Find(Builders<DefectReport>.Filter.And(
+                Builders<DefectReport>.Filter.Eq(d => d.IsDeleted, false),
+                Builders<DefectReport>.Filter.Ne(d => d.TracedProductId, (string?)null),
+                scope == null ? Builders<DefectReport>.Filter.Empty : Builders<DefectReport>.Filter.In(d => d.TracedProductId, scope)))
+            .Limit(5000).ToListAsync();
 
         var nodes = new List<object>();
         var edges = new List<object>();
+        void AddEdge(string s, string t, string type) => edges.Add(new { id = $"{s}->{t}:{type}", source = s, target = t, type });
+
         foreach (var p in products)
-            nodes.Add(new { id = $"product:{p.Id}", type = "product", label = p.Name, sub = $"需求{p.RequirementCount}·功能{p.FeatureCount}·缺陷{p.DefectCount}", grade = p.Grade });
+            nodes.Add(new { id = $"product:{p.Id}", type = "product", label = p.Name, sub = p.ProductNo, grade = (string?)p.Grade, state = p.CurrentState, productId = p.Id });
         foreach (var v in versions)
         {
-            nodes.Add(new { id = $"version:{v.Id}", type = "version", label = v.VersionName, sub = v.Lifecycle, grade = (string?)null });
-            edges.Add(new { id = $"product:{v.ProductId}->version:{v.Id}", source = $"product:{v.ProductId}", target = $"version:{v.Id}", type = "contains" });
+            nodes.Add(new { id = $"version:{v.Id}", type = "version", label = v.VersionName, sub = v.Lifecycle, grade = (string?)null, state = v.CurrentState, productId = v.ProductId });
+            AddEdge($"product:{v.ProductId}", $"version:{v.Id}", "contains");
         }
+        foreach (var r in requirements)
+        {
+            nodes.Add(new { id = $"requirement:{r.Id}", type = "requirement", label = r.Title, sub = r.RequirementNo, grade = (string?)r.Grade, state = r.CurrentState, productId = r.ProductId });
+            foreach (var vid in r.VersionIds) AddEdge($"version:{vid}", $"requirement:{r.Id}", "includes");
+            foreach (var cid in r.CustomerIds) AddEdge($"requirement:{r.Id}", $"customer:{cid}", "from-customer");
+        }
+        foreach (var f in features)
+        {
+            nodes.Add(new { id = $"feature:{f.Id}", type = "feature", label = f.Title, sub = f.FeatureNo, grade = (string?)f.Grade, state = f.CurrentState, productId = f.ProductId });
+            foreach (var rid in f.RequirementIds) AddEdge($"feature:{f.Id}", $"requirement:{rid}", "implements");
+        }
+        foreach (var c in customers)
+            nodes.Add(new { id = $"customer:{c.Id}", type = "customer", label = c.Name, sub = c.Company, grade = (string?)null, state = (string?)null, productId = c.ProductId });
+        foreach (var fv in featureVersions)
+            AddEdge($"version:{fv.VersionId}", $"feature:{fv.FeatureId}", "feature-in-version");
+        foreach (var d in defects)
+        {
+            nodes.Add(new { id = $"defect:{d.Id}", type = "defect", label = d.Title ?? d.DefectNo, sub = d.DefectNo, grade = (string?)d.Severity, state = d.Status, productId = d.TracedProductId });
+            var any = false;
+            if (!string.IsNullOrEmpty(d.TracedRequirementId)) { AddEdge($"defect:{d.Id}", $"requirement:{d.TracedRequirementId}", "traces"); any = true; }
+            if (!string.IsNullOrEmpty(d.TracedFeatureId)) { AddEdge($"defect:{d.Id}", $"feature:{d.TracedFeatureId}", "traces"); any = true; }
+            if (!string.IsNullOrEmpty(d.TracedVersionId)) { AddEdge($"defect:{d.Id}", $"version:{d.TracedVersionId}", "traces"); any = true; }
+            if (!any && !string.IsNullOrEmpty(d.TracedProductId)) AddEdge($"defect:{d.Id}", $"product:{d.TracedProductId}", "traces");
+        }
+
         return Ok(ApiResponse<object>.Ok(new { nodes, edges }));
     }
 
@@ -1292,6 +1328,7 @@ public class ProductAgentController : ControllerBase
         if (typeof(T) == typeof(ProductVersion)) return (IMongoCollection<T>)(object)_db.ProductVersions;
         if (typeof(T) == typeof(Requirement)) return (IMongoCollection<T>)(object)_db.Requirements;
         if (typeof(T) == typeof(Feature)) return (IMongoCollection<T>)(object)_db.Features;
+        if (typeof(T) == typeof(FeatureVersion)) return (IMongoCollection<T>)(object)_db.FeatureVersions;
         if (typeof(T) == typeof(Customer)) return (IMongoCollection<T>)(object)_db.Customers;
         throw new InvalidOperationException($"未映射的集合类型: {typeof(T).Name}");
     }

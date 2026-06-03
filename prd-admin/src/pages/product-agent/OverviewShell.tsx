@@ -26,7 +26,7 @@ import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
 import { ProductsSection } from './ProductsSection';
 import { SettingsSection } from './SettingsSection';
-import { OverviewGraph } from './OverviewGraph';
+import { ProductGraphCanvas } from './ProductGraphCanvas';
 import {
   getOverviewStats,
   getOverviewRequirements,
@@ -122,9 +122,15 @@ export function OverviewShell() {
         </SectionShell>
       )}
       {active === 'graph' && (
-        <SectionShell title="图谱" desc="跨产品总览图（点产品进单产品详细图谱）">
-          <OverviewGraph />
-        </SectionShell>
+        <div className="h-full min-h-0 flex flex-col">
+          <div className="shrink-0 px-6 py-3 border-b border-white/10">
+            <h2 className="text-base font-semibold text-white">图谱</h2>
+            <p className="text-xs text-white/40 mt-0.5">跨全部产品的完整关系图（产品/版本/需求/功能/缺陷/客户 + 全部关系，点对象看详情、点产品可下钻）</p>
+          </div>
+          <div className="flex-1 min-h-0">
+            <ProductGraphCanvas overview />
+          </div>
+        </div>
       )}
       {active === 'settings' && (
         <SectionShell title="全局设置" desc="表单模板 + 流程模板，所有产品共用，可按产品覆盖（管理层）">
