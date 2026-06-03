@@ -770,11 +770,13 @@ export default function AgentLauncherPage() {
   return (
     <div className="h-full min-h-0 flex flex-col relative" style={{ background: 'var(--bg-base)' }}>
       {/* ── 页面背景大画幅层 (Page Hero Backing) ── */}
-      <div 
-        className="absolute inset-x-0 top-0 pointer-events-none" 
-        style={{ 
-          height: isMobile ? '70vh' : '90vh', 
+      <div
+        className="absolute inset-x-0 top-0 pointer-events-none"
+        style={{
+          height: isMobile ? '70vh' : '90vh',
           zIndex: 0,
+          // overflow:hidden 把缩放 1.04 的背景图裁回容器内，避免在 AppShell 滚动容器里撑出横向滚动条
+          overflow: 'hidden',
           maskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 50%, rgba(0,0,0,0) 100%)',
           WebkitMaskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 50%, rgba(0,0,0,0) 100%)',
         }}
