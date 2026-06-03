@@ -99,6 +99,20 @@ public class AiNewsService : IAiNewsService
         }
         catch (Exception ex)
         {
+            // 拉取期间可能有并发刷新（预热器 / 其他请求）已写入 stale，失败后再读一次，
+            // 能用旧值就别给空降级（保留旧实现的兜底，避免冷路径漏掉这次 stale）。
+            if (_cache.TryGetValue<AiNewsFeed>(StaleKey, out var stale) && stale != null)
+            {
+                _logger.LogWarning(ex, "[AiNews] 冷缓存同步拉取失败，回退到并发刷新写入的 stale 缓存");
+                return new AiNewsFeed
+                {
+                    Items = stale.Items,
+                    Total = stale.Total,
+                    GeneratedAt = stale.GeneratedAt,
+                    Degraded = false,
+                    Stale = true,
+                };
+            }
             _logger.LogWarning(ex, "[AiNews] 冷缓存同步拉取失败且无 stale 可回退");
             return new AiNewsFeed { Degraded = true };
         }
