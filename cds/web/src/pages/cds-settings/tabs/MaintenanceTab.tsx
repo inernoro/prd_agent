@@ -1625,12 +1625,21 @@ function SelfUpdateLiveProgress({ elapsedMs, currentStep, records }: { elapsedMs
 
   const beforeMs = stages.slice(0, curIdx).reduce((s, v) => s + v.ms, 0);
   const curMs = stages[curIdx]?.ms || 1;
+  const stageEndMs = beforeMs + curMs;
+  const cap = etaMs * 0.99;
+  // 单一进度时钟(Bugbot #716):step 给下限(已确认进入当前阶段 → 至少推进到该段
+  // 起点),其余跟随真实 elapsed,但在收到下一个 step 前不冲过当前阶段末尾;
+  // 超过总预期则顶到 ETA。percent / 段填充 / 「预计还需」全部由这一个 progressedMs
+  // 派生,三者永远一致(避免"早期阶段比中位数快 → 百分比冲顶但预计还需还很大")。
+  let progressedMs = Math.max(beforeMs, Math.min(elapsedMs, stageEndMs));
+  if (elapsedMs >= etaMs) progressedMs = etaMs;
+  progressedMs = Math.min(progressedMs, cap);
   const overEta = elapsedMs > etaMs;
-  const remainMs = Math.max(0, etaMs - elapsedMs);
-  // 总进度百分比:已完成段预期 + 当前段内填充比例,除以 ETA。与进度条填充一致;
-  // 超预期时封顶 99%(还没真正完成,别显示 100% 误导)。
-  const curFrac = Math.min(0.97, Math.max(0.06, (elapsedMs - beforeMs) / curMs));
-  const pct = Math.min(99, Math.round(((beforeMs + curFrac * curMs) / etaMs) * 100));
+  const remainMs = Math.max(0, etaMs - progressedMs);
+  const pct = Math.min(99, Math.round((progressedMs / etaMs) * 100));
+  // 每段起点(累加),用于按 progressedMs 统一计算填充比例。
+  let accStart = 0;
+  const segStarts = stages.map((s) => { const start = accStart; accStart += s.ms; return start; });
 
   return (
     <div className="space-y-2 border-t border-border px-4 py-3">
@@ -1650,11 +1659,9 @@ function SelfUpdateLiveProgress({ elapsedMs, currentStep, records }: { elapsedMs
       <div className="flex h-2.5 w-full overflow-hidden rounded-sm bg-[hsl(var(--surface-sunken))]">
         {stages.map((seg, i) => {
           const widthPct = (seg.ms / etaMs) * 100;
-          const done = i < curIdx;
           const isCur = i === curIdx;
-          let fillPct = 0;
-          if (done) fillPct = 100;
-          else if (isCur) fillPct = Math.min(0.97, Math.max(0.06, (elapsedMs - beforeMs) / curMs)) * 100;
+          // 填充比例统一由 progressedMs 派生:已过段→100%、当前段→部分、未到→0%。
+          const fillPct = Math.max(0, Math.min(1, (progressedMs - segStarts[i]) / (seg.ms || 1))) * 100;
           return (
             <div
               key={seg.key}

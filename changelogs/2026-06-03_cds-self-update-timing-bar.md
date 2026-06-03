@@ -7,3 +7,4 @@
 | fix | cds | 预计进度条时钟对齐(Bugbot #716):进度条 elapsed 改以后端 `activeSelfUpdate.startedAt` 为锚点,与同源的 step 配同一时钟,缺失再退回客户端 runStartedAt。修从本 tab 触发更新时百分比/段填充/「预计还需」与真实阶段对不上;同时面板副标题「执行中 · Xs」也改用同一 elapsed,避免标题与进度条「已用」打架 |
 | fix | cds | `validate` 步骤不再钉死 install 段(Codex #716):后端整段校验只发一个 `validate` step(install+tsc 合一),钉死 install 会让 tsc 期间进度条卡住;改为走 elapsed 兜底,随时间从 install 平滑推进到 tsc |
 | fix | cds | 自更新历史数据源上移(Bugbot #716):进度条与历史列表共用 `useSelfUpdateHistory` 一份数据,不再各自 fetch 同一 endpoint,消除进度条挂载初期空 fetch 期间误显「暂无历史 · 粗略估算」 |
+| fix | cds | 预计进度条 percent/填充/「预计还需」统一时钟(Bugbot #716):三者改由单一 `progressedMs`(step 给下限 + elapsed 推进 + 封顶)派生,修「早期阶段比中位数快时百分比冲顶但预计还需仍很大」的自相矛盾 |
