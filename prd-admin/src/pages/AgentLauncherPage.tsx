@@ -298,6 +298,7 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
             className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
             draggable={false}
             onError={() => setCoverFailed(true)}
+            style={{ filter: 'saturate(0.86) brightness(0.92)' }}
           />
           {videoUrl && (
             <video
@@ -324,6 +325,14 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
           }}
         />
       )}
+
+      {/* 统一暗角蒙版：给所有封面图套同一层「玻璃」，让画风各异的图读起来像一家人（A2 核心） */}
+      <div
+        className="absolute inset-0 pointer-events-none z-[1]"
+        style={{
+          background: `linear-gradient(165deg, ${accent.from}12 0%, transparent 32%), linear-gradient(180deg, rgba(8,8,12,0.30) 0%, rgba(8,8,12,0.05) 38%, rgba(8,8,12,0.35) 100%)`,
+        }}
+      />
 
       {/* Strong dark fade at the bottom for text readability */}
       <div
@@ -770,7 +779,7 @@ export default function AgentLauncherPage() {
           WebkitMaskImage: 'linear-gradient(to bottom, rgba(0,0,0,1) 50%, rgba(0,0,0,0) 100%)',
         }}
       >
-        {/* Background image */}
+        {/* Background image —— 降级为「氛围层」：压暗 + 降饱和 + 轻模糊，从主角照片变墙上光影 */}
         <div
           className="absolute inset-0"
           style={{
@@ -778,7 +787,9 @@ export default function AgentLauncherPage() {
             backgroundSize: 'cover',
             backgroundPosition: 'center top',
             backgroundRepeat: 'no-repeat',
-            opacity: 0.85,
+            opacity: 0.5,
+            filter: 'saturate(0.78) brightness(0.7) blur(1px)',
+            transform: 'scale(1.04)',
           }}
         />
         {/* Left fade overlay — text readability */}
@@ -788,6 +799,14 @@ export default function AgentLauncherPage() {
             background: isMobile
               ? 'linear-gradient(180deg, var(--bg-base) 0%, rgba(10,10,11,0.7) 40%, transparent 100%)'
               : 'linear-gradient(90deg, var(--bg-base) 0%, rgba(10,10,11,0.8) 25%, rgba(10,10,11,0.4) 50%, transparent 80%)',
+          }}
+        />
+        {/* Bottom scrim —— 让背景图无缝熔进深空底色，卡片区域是干净深色，不再有照片噪点透出（A2 驯服核心） */}
+        <div
+          className="absolute inset-x-0 bottom-0"
+          style={{
+            height: '60%',
+            background: 'linear-gradient(180deg, transparent 0%, rgba(10,10,11,0.5) 55%, var(--bg-base) 100%)',
           }}
         />
       </div>
@@ -970,6 +989,7 @@ export default function AgentLauncherPage() {
                             backgroundImage: `url(${link.backgroundUrl})`,
                             backgroundSize: 'cover',
                             backgroundPosition: 'center',
+                            filter: 'saturate(0.86) brightness(0.92)',
                           }}
                         />
                         {/* Downward shifted gradient to expose bright beautiful card tops */}
