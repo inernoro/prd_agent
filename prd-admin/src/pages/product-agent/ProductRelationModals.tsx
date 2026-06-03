@@ -189,7 +189,7 @@ export function VersionRelationModal({
           )}
           {template && template.fields.length > 0 && (
             <Section title={`自定义字段（${template.name}）`}>
-              <FormFieldsRenderer fields={template.fields} values={formData} onChange={(k, v) => setFormData((d) => ({ ...d, [k]: v }))} />
+              <FormFieldsRenderer fields={template.fields} values={formData} onChange={(k, v) => setFormData((d) => ({ ...d, [k]: v }))} productId={productId} />
             </Section>
           )}
           <div className="flex justify-end mb-2">

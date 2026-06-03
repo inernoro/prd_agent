@@ -1,13 +1,25 @@
 /**
- * 产品管理智能体 — 动态表单渲染 + 有效模板/流程解析（让全局设置真正驱动页面，debt 7 闭环）。
+ * 产品管理智能体 — 动态表单渲染 + 有效模板/流程解析（让全局设置真正驱动页面）。
  *
- * FormFieldsRenderer：按表单模板 fields 渲染可编辑控件，值存 Record<string,string>（对齐后端 FormData）。
- * useEffectiveTemplate/useEffectiveWorkflow：解析某对象类型在某产品下生效的默认模板/流程（产品覆盖 > 全局）。
+ * 字段控件真实实现（参考 TAPD）：
+ *  - file 附件：多文件上传(uploadAttachment) + 图片缩略图/下载/删除，支持拖拽
+ *  - richtext 富文本：contentEditable 排版工具栏(粗体/斜体/下划线/列表/标题) + 截图粘贴/拖拽上传
+ *  - relation 对象关联：按 relationEntityType 拉本产品对象多选
+ *  - user 用户选择：复用 UserSearchSelect
+ * 值统一存 Record<string,string>（FormData）：附件=JSON数组、富文本=HTML、关系/多选=逗号 id、用户=userId。
  */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Upload, X, FileText, Bold, Italic, Underline, List, ListOrdered, Heading } from 'lucide-react';
+import { UserSearchSelect } from '@/components/UserSearchSelect';
+import { MapSpinner } from '@/components/ui/VideoLoader';
+import { uploadAttachment } from '@/services/real/aiToolbox';
 import {
   listFormTemplates,
   listWorkflowDefinitions,
+  listRequirements,
+  listFeatures,
+  listVersions,
+  listCustomers,
 } from '@/services/real/productAgent';
 import type { FormField, FormTemplate, WorkflowDefinition, ProductEntityType } from './types';
 
@@ -65,15 +77,17 @@ export function useEffectiveWorkflow(entityType: ProductEntityType, productId: s
   return { workflow, loading };
 }
 
-/** 按模板字段渲染可编辑表单。 */
+/** 按模板字段渲染可编辑表单。productId 供关联对象字段拉取候选。 */
 export function FormFieldsRenderer({
   fields,
   values,
   onChange,
+  productId,
 }: {
   fields: FormField[];
   values: Record<string, string>;
   onChange: (key: string, value: string) => void;
+  productId?: string | null;
 }) {
   if (fields.length === 0) return null;
   const sorted = [...fields].sort((a, b) => a.sortOrder - b.sortOrder);
@@ -85,7 +99,7 @@ export function FormFieldsRenderer({
             {f.label || f.key}
             {f.required && <span className="text-red-300/70 ml-1">*</span>}
           </label>
-          <FieldControl field={f} value={values[f.key] ?? f.defaultValue ?? ''} onChange={(v) => onChange(f.key, v)} />
+          <FieldControl field={f} value={values[f.key] ?? f.defaultValue ?? ''} onChange={(v) => onChange(f.key, v)} productId={productId ?? null} />
           {f.helpText && <span className="text-[11px] text-white/30">{f.helpText}</span>}
         </div>
       ))}
@@ -93,12 +107,19 @@ export function FormFieldsRenderer({
   );
 }
 
-function FieldControl({ field, value, onChange }: { field: FormField; value: string; onChange: (v: string) => void }) {
+function FieldControl({ field, value, onChange, productId }: { field: FormField; value: string; onChange: (v: string) => void; productId: string | null }) {
   const base = 'px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40';
   switch (field.type) {
     case 'textarea':
-    case 'richtext':
       return <textarea value={value} onChange={(e) => onChange(e.target.value)} rows={3} placeholder={field.placeholder ?? ''} className={`${base} resize-none`} />;
+    case 'richtext':
+      return <RichTextField value={value} onChange={onChange} />;
+    case 'file':
+      return <FileField value={value} onChange={onChange} />;
+    case 'relation':
+      return <RelationField value={value} onChange={onChange} entityType={field.relationEntityType} productId={productId} />;
+    case 'user':
+      return <UserSearchSelect value={value} onChange={onChange} />;
     case 'number':
       return <input type="number" value={value} onChange={(e) => onChange(e.target.value)} placeholder={field.placeholder ?? ''} className={base} />;
     case 'date':
@@ -130,12 +151,7 @@ function FieldControl({ field, value, onChange }: { field: FormField; value: str
       return (
         <div className="flex flex-wrap gap-1.5">
           {(field.options ?? []).map((o) => (
-            <button
-              key={o.value}
-              type="button"
-              onClick={() => toggle(o.value)}
-              className={`px-2.5 py-1 rounded-md text-xs border ${selected.includes(o.value) ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40' : 'text-white/50 border-white/10 hover:bg-white/5'}`}
-            >
+            <button key={o.value} type="button" onClick={() => toggle(o.value)} className={`px-2.5 py-1 rounded-md text-xs border ${selected.includes(o.value) ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40' : 'text-white/50 border-white/10 hover:bg-white/5'}`}>
               {o.label}
             </button>
           ))}
@@ -143,7 +159,231 @@ function FieldControl({ field, value, onChange }: { field: FormField; value: str
       );
     }
     default:
-      // text / user / relation / file 暂以文本输入兜底
       return <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={field.placeholder ?? ''} className={base} />;
   }
+}
+
+// ════════════════════════ 附件字段 ════════════════════════
+interface AttachItem { id: string; url: string; name: string; mime: string; size: number }
+
+function parseAttachments(value: string): AttachItem[] {
+  if (!value) return [];
+  try {
+    const arr = JSON.parse(value);
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
+function FileField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const items = parseAttachments(value);
+  const [uploading, setUploading] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const addFiles = useCallback(async (files: FileList | File[]) => {
+    setUploading(true);
+    const next = [...parseAttachments(value)];
+    for (const file of Array.from(files)) {
+      const res = await uploadAttachment(file);
+      if (res.success && res.data) {
+        next.push({ id: res.data.attachmentId, url: res.data.url, name: res.data.fileName, mime: res.data.mimeType, size: res.data.size });
+      }
+    }
+    onChange(JSON.stringify(next));
+    setUploading(false);
+  }, [value, onChange]);
+
+  const remove = (id: string) => onChange(JSON.stringify(parseAttachments(value).filter((x) => x.id !== id)));
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          if (e.dataTransfer.files.length) void addFiles(e.dataTransfer.files);
+        }}
+        onClick={() => inputRef.current?.click()}
+        className="flex items-center justify-center gap-2 px-3 py-3 rounded-lg border border-dashed border-white/15 text-white/50 text-sm hover:border-cyan-500/40 hover:text-white/70 cursor-pointer"
+      >
+        {uploading ? <MapSpinner size={14} /> : <Upload size={15} />}
+        {uploading ? '上传中…' : '点击或拖拽上传附件（图片/文档等）'}
+        <input
+          ref={inputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            if (e.target.files?.length) void addFiles(e.target.files);
+            e.target.value = '';
+          }}
+        />
+      </div>
+      {items.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {items.map((it) => (
+            <div key={it.id} className="relative group rounded-lg border border-white/10 bg-white/[0.02] overflow-hidden" style={{ width: 96 }}>
+              <a href={it.url} target="_blank" rel="noreferrer" className="block">
+                {it.mime?.startsWith('image/') ? (
+                  <img src={it.url} alt={it.name} className="w-full h-20 object-cover" />
+                ) : (
+                  <div className="w-full h-20 flex items-center justify-center text-white/40"><FileText size={24} /></div>
+                )}
+                <div className="px-1.5 py-1 text-[10px] text-white/60 truncate">{it.name}</div>
+              </a>
+              <button onClick={() => remove(it.id)} className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 text-white/70 hover:text-red-300 flex items-center justify-center opacity-0 group-hover:opacity-100">
+                <X size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════ 富文本字段（排版 + 截图粘贴上传）════════════════════════
+function RichTextField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [uploading, setUploading] = useState(false);
+
+  // 未聚焦时同步外部值（初次加载 / 切换对象），聚焦输入时不打断
+  useEffect(() => {
+    const el = ref.current;
+    if (el && document.activeElement !== el && el.innerHTML !== value) el.innerHTML = value || '';
+  }, [value]);
+
+  const exec = (cmd: string, arg?: string) => {
+    ref.current?.focus();
+    document.execCommand(cmd, false, arg);
+    if (ref.current) onChange(ref.current.innerHTML);
+  };
+
+  const insertImageFile = useCallback(async (file: File) => {
+    setUploading(true);
+    const res = await uploadAttachment(file);
+    setUploading(false);
+    if (res.success && res.data) {
+      ref.current?.focus();
+      document.execCommand('insertHTML', false, `<img src="${res.data.url}" alt="${res.data.fileName}" style="max-width:100%;border-radius:8px;margin:4px 0;" />`);
+      if (ref.current) onChange(ref.current.innerHTML);
+    }
+  }, [onChange]);
+
+  const onPaste = (e: React.ClipboardEvent) => {
+    const img = Array.from(e.clipboardData.items).find((i) => i.type.startsWith('image/'));
+    if (img) {
+      const file = img.getAsFile();
+      if (file) {
+        e.preventDefault();
+        void insertImageFile(file);
+      }
+    }
+  };
+
+  const btn = 'w-7 h-7 flex items-center justify-center rounded text-white/55 hover:text-white hover:bg-white/10';
+  return (
+    <div className="rounded-lg border border-white/10 bg-white/5 overflow-hidden">
+      <div className="flex items-center gap-0.5 px-2 py-1 border-b border-white/10 bg-white/[0.02]">
+        <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => exec('bold')} className={btn} title="加粗"><Bold size={14} /></button>
+        <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => exec('italic')} className={btn} title="斜体"><Italic size={14} /></button>
+        <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => exec('underline')} className={btn} title="下划线"><Underline size={14} /></button>
+        <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => exec('formatBlock', 'H3')} className={btn} title="标题"><Heading size={14} /></button>
+        <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => exec('insertUnorderedList')} className={btn} title="无序列表"><List size={14} /></button>
+        <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => exec('insertOrderedList')} className={btn} title="有序列表"><ListOrdered size={14} /></button>
+        <span className="ml-1 text-[10px] text-white/30">{uploading ? '图片上传中…' : '可直接粘贴截图'}</span>
+      </div>
+      <div
+        ref={ref}
+        contentEditable
+        suppressContentEditableWarning
+        onInput={() => onChange(ref.current?.innerHTML ?? '')}
+        onPaste={onPaste}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          const f = Array.from(e.dataTransfer.files).find((x) => x.type.startsWith('image/'));
+          if (f) {
+            e.preventDefault();
+            void insertImageFile(f);
+          }
+        }}
+        className="min-h-[120px] px-3 py-2 text-sm text-white/90 outline-none prose-product"
+        style={{ lineHeight: 1.6 }}
+      />
+    </div>
+  );
+}
+
+// ════════════════════════ 对象关联字段 ════════════════════════
+function RelationField({ value, onChange, entityType, productId }: { value: string; onChange: (v: string) => void; entityType?: string | null; productId: string | null }) {
+  const [options, setOptions] = useState<{ id: string; label: string }[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState(false);
+  const selected = value ? value.split(',').filter(Boolean) : [];
+
+  useEffect(() => {
+    if (!productId || !entityType) return;
+    let alive = true;
+    setLoading(true);
+    void (async () => {
+      let opts: { id: string; label: string }[] = [];
+      if (entityType === 'requirement') {
+        const r = await listRequirements(productId);
+        if (r.success) opts = r.data.items.map((x) => ({ id: x.id, label: x.title }));
+      } else if (entityType === 'feature') {
+        const r = await listFeatures(productId);
+        if (r.success) opts = r.data.items.map((x) => ({ id: x.id, label: x.title }));
+      } else if (entityType === 'version') {
+        const r = await listVersions(productId);
+        if (r.success) opts = r.data.items.map((x) => ({ id: x.id, label: x.versionName }));
+      } else if (entityType === 'customer') {
+        const r = await listCustomers(productId);
+        if (r.success) opts = r.data.items.map((x) => ({ id: x.id, label: x.name }));
+      }
+      if (alive) {
+        setOptions(opts);
+        setLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [productId, entityType]);
+
+  if (!entityType) return <div className="text-[11px] text-white/30">未配置关联对象类型</div>;
+  const labelOf = (id: string) => options.find((o) => o.id === id)?.label ?? id;
+  const toggle = (id: string) => {
+    const next = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
+    onChange(next.join(','));
+  };
+
+  return (
+    <div className="rounded-lg border border-white/10 bg-white/5">
+      <button type="button" onClick={() => setOpen((o) => !o)} className="w-full flex items-center justify-between px-3 py-2 text-sm text-white/70">
+        <span className="flex flex-wrap gap-1">
+          {selected.length === 0 ? <span className="text-white/40">点击选择关联对象</span> : selected.map((id) => (
+            <span key={id} className="text-[11px] px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-200">{labelOf(id)}</span>
+          ))}
+        </span>
+        <span className="text-white/30 text-xs">{open ? '收起' : '展开'}</span>
+      </button>
+      {open && (
+        <div className="max-h-48 overflow-y-auto border-t border-white/10 p-1" style={{ overscrollBehavior: 'contain' }}>
+          {loading ? (
+            <div className="text-[11px] text-white/40 py-2 text-center">加载中…</div>
+          ) : options.length === 0 ? (
+            <div className="text-[11px] text-white/30 py-2 text-center">没有可选对象</div>
+          ) : (
+            options.map((o) => (
+              <label key={o.id} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-white/5 cursor-pointer">
+                <input type="checkbox" checked={selected.includes(o.id)} onChange={() => toggle(o.id)} className="accent-cyan-500" />
+                <span className="text-sm text-white/80 truncate">{o.label}</span>
+              </label>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
 }

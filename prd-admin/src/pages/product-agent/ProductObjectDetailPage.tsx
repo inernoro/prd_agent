@@ -228,7 +228,7 @@ function CreateObjectForm({
       {template && template.fields.length > 0 && (
         <div className="border-t border-white/10 pt-3 mt-1">
           <div className="text-xs font-medium text-white/50 mb-2">{template.name}</div>
-          <FormFieldsRenderer fields={template.fields} values={formData} onChange={(k, v) => setFormData((d) => ({ ...d, [k]: v }))} />
+          <FormFieldsRenderer fields={template.fields} values={formData} onChange={(k, v) => setFormData((d) => ({ ...d, [k]: v }))} productId={productId} />
         </div>
       )}
       <p className="text-[11px] text-white/35">创建后进入详情页，可继续关联客户 / 版本 / 缺陷追溯。</p>
@@ -393,7 +393,7 @@ function RequirementDetail({
       />
       {template && template.fields.length > 0 && (
         <Section title={`自定义字段（${template.name}）`}>
-          <FormFieldsRenderer fields={template.fields} values={formData} onChange={(k, v) => setFormData((d) => ({ ...d, [k]: v }))} />
+          <FormFieldsRenderer fields={template.fields} values={formData} onChange={(k, v) => setFormData((d) => ({ ...d, [k]: v }))} productId={productId} />
         </Section>
       )}
       <Section
@@ -494,6 +494,7 @@ function FeatureDetail({
   }, [reloadDefects]);
 
   if (!feature) return <NotFound />;
+  const productId = feature.productId;
 
   const save = async () => {
     setSaving(true);
@@ -532,7 +533,7 @@ function FeatureDetail({
       />
       {template && template.fields.length > 0 && (
         <Section title={`自定义字段（${template.name}）`}>
-          <FormFieldsRenderer fields={template.fields} values={formData} onChange={(k, v) => setFormData((d) => ({ ...d, [k]: v }))} />
+          <FormFieldsRenderer fields={template.fields} values={formData} onChange={(k, v) => setFormData((d) => ({ ...d, [k]: v }))} productId={productId} />
         </Section>
       )}
       <Section title="实现的需求（勾选后点上方保存）">

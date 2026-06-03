@@ -24,10 +24,10 @@ const ENTITY_TYPES: { value: ProductEntityType; label: string }[] = [
   { value: 'upgrade-request', label: '升级申请' },
 ];
 
-// 仅保留前端有真实控件的字段类型（富文本/对象关联/用户/文件 暂未实现，已移除）
 const FIELD_TYPES: { value: FormFieldType; label: string }[] = [
   { value: 'text', label: '单行文本' },
   { value: 'textarea', label: '多行文本' },
+  { value: 'richtext', label: '富文本（排版+截图）' },
   { value: 'number', label: '数字' },
   { value: 'select', label: '单选下拉' },
   { value: 'multiselect', label: '多选' },
@@ -35,8 +35,17 @@ const FIELD_TYPES: { value: FormFieldType; label: string }[] = [
   { value: 'checkbox', label: '勾选' },
   { value: 'date', label: '日期' },
   { value: 'datetime', label: '日期时间' },
+  { value: 'user', label: '用户选择' },
+  { value: 'relation', label: '关联对象' },
+  { value: 'file', label: '附件上传' },
 ];
 const HAS_OPTIONS = new Set(['select', 'multiselect', 'radio']);
+const RELATION_TARGETS: { value: string; label: string }[] = [
+  { value: 'requirement', label: '需求' },
+  { value: 'feature', label: '功能' },
+  { value: 'version', label: '版本' },
+  { value: 'customer', label: '客户' },
+];
 
 // 各对象类型的系统预置字段（由页面原生渲染，不可在表单里增删改；这里仅展示让配置者知晓）
 const PRESET_FIELDS: Record<ProductEntityType, { label: string; type: string }[]> = {
@@ -253,6 +262,21 @@ function FormTemplateEditor({ entityType, productId }: { entityType: ProductEnti
                 placeholder="每行一个选项"
                 className="px-2.5 py-1.5 rounded-md bg-white/5 border border-white/10 text-xs text-white/80 outline-none resize-none"
               />
+            )}
+            {f.type === 'relation' && (
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-white/40">关联对象类型</span>
+                <select
+                  value={f.relationEntityType ?? ''}
+                  onChange={(e) => updateField(i, { relationEntityType: e.target.value })}
+                  className="px-2 py-1 rounded-md bg-white/5 border border-white/10 text-xs text-white/70 outline-none"
+                >
+                  <option value="">请选择</option>
+                  {RELATION_TARGETS.map((t) => (
+                    <option key={t.value} value={t.value}>{t.label}</option>
+                  ))}
+                </select>
+              </div>
             )}
           </div>
         ))}
