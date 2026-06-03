@@ -390,12 +390,14 @@ export function DefectLinkerModal({
   productId,
   requirementId,
   versionId,
+  featureId,
   onClose,
   onLinked,
 }: {
   productId: string;
   requirementId?: string;
   versionId?: string;
+  featureId?: string;
   onClose: () => void;
   onLinked: () => void;
 }) {
@@ -443,7 +445,7 @@ export function DefectLinkerModal({
               </span>
               <button
                 onClick={async () => {
-                  await traceDefect({ defectId: d.id, productId, requirementId, versionId });
+                  await traceDefect({ defectId: d.id, productId, requirementId, versionId, featureId });
                   setItems((prev) => prev.filter((x) => x.id !== d.id));
                   onLinked();
                 }}

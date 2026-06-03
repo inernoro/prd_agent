@@ -845,9 +845,11 @@ public class ProductAgentController : ControllerBase
         foreach (var d in defects)
         {
             nodes.Add(new { id = $"defect:{d.Id}", type = "defect", label = d.Title ?? d.DefectNo, sub = d.DefectNo, grade = (string?)d.Severity, state = d.Status });
-            if (!string.IsNullOrEmpty(d.TracedRequirementId)) AddEdge($"defect:{d.Id}", $"requirement:{d.TracedRequirementId}", "traces");
-            else if (!string.IsNullOrEmpty(d.TracedVersionId)) AddEdge($"defect:{d.Id}", $"version:{d.TracedVersionId}", "traces");
-            else AddEdge($"defect:{d.Id}", $"product:{product.Id}", "traces");
+            var any = false;
+            if (!string.IsNullOrEmpty(d.TracedRequirementId)) { AddEdge($"defect:{d.Id}", $"requirement:{d.TracedRequirementId}", "traces"); any = true; }
+            if (!string.IsNullOrEmpty(d.TracedFeatureId)) { AddEdge($"defect:{d.Id}", $"feature:{d.TracedFeatureId}", "traces"); any = true; }
+            if (!string.IsNullOrEmpty(d.TracedVersionId)) { AddEdge($"defect:{d.Id}", $"version:{d.TracedVersionId}", "traces"); any = true; }
+            if (!any) AddEdge($"defect:{d.Id}", $"product:{product.Id}", "traces");
         }
 
         return Ok(ApiResponse<object>.Ok(new { nodes, edges }));

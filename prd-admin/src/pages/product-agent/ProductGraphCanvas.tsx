@@ -20,15 +20,29 @@ import {
   BackgroundVariant,
   MiniMap,
   Controls,
+  Handle,
+  Position,
+  MarkerType,
   useNodesState,
   useEdgesState,
   type Node,
   type Edge,
+  type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { Search, GitFork, Maximize2, Minimize2, X } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
-import { getProductGraph, type GraphNode, type GraphEdge } from '@/services/real/productAgent';
+import {
+  getProductGraph,
+  getProduct,
+  listRequirements,
+  listFeatures,
+  listVersions,
+  listCustomers,
+  listTracedDefects,
+  type GraphNode,
+  type GraphEdge,
+} from '@/services/real/productAgent';
 
 type NodeType = GraphNode['type'];
 
@@ -90,6 +104,7 @@ function ProductGraphInner({ productId }: { productId: string }) {
   const [keyword, setKeyword] = useState('');
   const [mode, setMode] = useState<'collapse' | 'trace'>('collapse');
   const [traceAnchor, setTraceAnchor] = useState<string | null>(null);
+  const [view, setView] = useState<'card' | 'dot'>('card');
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -230,6 +245,7 @@ function ProductGraphInner({ productId }: { productId: string }) {
   useEffect(() => {
     if (!raw) return;
     const colRow: Record<number, number> = {};
+    const dotRowGap = 96;
     const rfNodes: Node[] = raw.nodes
       .filter((n) => visibleIds.has(n.id))
       .map((n) => {
@@ -238,10 +254,22 @@ function ProductGraphInner({ productId }: { productId: string }) {
         colRow[meta.col] = row + 1;
         const desc = derived.descCount.get(n.id) ?? 0;
         const isCollapsed = collapsed.has(n.id) && desc > 0;
+        const label = `${n.label}${isCollapsed ? ` (+${desc})` : ''}${n.sub ? `\n${n.sub}` : ''}`;
+        if (view === 'dot') {
+          // 圆点视图：大小随后代数（重要度），颜色随类型，名称在圆点下方
+          const size = 16 + Math.min(desc, 10) * 4;
+          return {
+            id: n.id,
+            type: 'dot',
+            position: { x: meta.col * COL_GAP, y: row * dotRowGap },
+            data: { label, color: meta.color, size },
+            style: {},
+          };
+        }
         return {
           id: n.id,
           position: { x: meta.col * COL_GAP, y: row * ROW_GAP },
-          data: { label: `${n.label}${isCollapsed ? ` (+${desc})` : ''}${n.sub ? `\n${n.sub}` : ''}` },
+          data: { label },
           style: baseStyle(meta.color),
         };
       });
@@ -256,12 +284,13 @@ function ProductGraphInner({ productId }: { productId: string }) {
         labelBgStyle: { fill: '#0f1014', fillOpacity: 0.85 },
         labelBgPadding: [4, 2] as [number, number],
         labelBgBorderRadius: 4,
-        style: { stroke: 'rgba(255,255,255,0.16)' },
+        markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: 'rgba(255,255,255,0.45)' },
+        style: { stroke: 'rgba(255,255,255,0.18)' },
       }));
     setNodes(rfNodes);
     setEdges(rfEdges);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleKey]);
+  }, [visibleKey, view]);
 
   // ── 样式：搜索/追溯变化时只改样式，不重排版（拖拽位置得以保留）──
   useEffect(() => {
@@ -272,16 +301,15 @@ function ProductGraphInner({ productId }: { productId: string }) {
         const color = TYPE_META[type]?.color ?? '#888';
         let dim = false;
         let ring: string | null = null;
-        if (traceIds) {
-          if (node.id === traceAnchor) ring = '#FBBF24';
-          else if (traceIds.has(node.id)) ring = 'rgba(251,191,36,0.6)';
-          else dim = true;
-        }
+        // 追溯模式：只暗化非路径节点，不改外边框（保留类型色，便于辨认类型）
+        if (traceIds && !traceIds.has(node.id)) dim = true;
+        // 搜索：命中加青色描边定位
         if (kw) {
           if (matchIds.has(node.id)) ring = '#22D3EE';
-          else if (!ring) dim = true;
+          else if (!traceIds) dim = true;
         }
-        return { ...node, style: { ...baseStyle(color), opacity: dim ? 0.18 : 1, ...(ring ? { boxShadow: `0 0 0 2px ${ring}` } : {}) } };
+        const baseS = view === 'dot' ? {} : baseStyle(color);
+        return { ...node, style: { ...baseS, opacity: dim ? 0.16 : 1, ...(ring ? { boxShadow: `0 0 0 2px ${ring}` } : {}) } };
       }),
     );
     setEdges((es) =>
@@ -290,12 +318,12 @@ function ProductGraphInner({ productId }: { productId: string }) {
         return {
           ...e,
           animated: !!inTrace,
-          style: { stroke: inTrace ? 'rgba(251,191,36,0.7)' : 'rgba(255,255,255,0.16)', opacity: traceIds && !inTrace ? 0.12 : 1 },
+          style: { stroke: inTrace ? 'rgba(251,191,36,0.8)' : 'rgba(255,255,255,0.16)', opacity: traceIds && !inTrace ? 0.1 : 1 },
         };
       }),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [traceAnchor, traceIds, keyword, matchIds, visibleKey]);
+  }, [traceAnchor, traceIds, keyword, matchIds, visibleKey, view]);
 
   const onNodeClick = (_e: ReactMouseEvent, node: Node) => {
     if (mode === 'trace') {
@@ -408,6 +436,11 @@ function ProductGraphInner({ productId }: { productId: string }) {
         >
           <GitFork size={12} /> 追溯模式
         </button>
+        {/* 视图切换：卡片 / 圆点 */}
+        <div className="flex rounded-md border border-white/10 overflow-hidden">
+          <button onClick={() => setView('card')} className={`px-2 py-1 text-[11px] ${view === 'card' ? 'bg-white/10 text-white' : 'text-white/45 hover:bg-white/5'}`}>卡片</button>
+          <button onClick={() => setView('dot')} className={`px-2 py-1 text-[11px] ${view === 'dot' ? 'bg-white/10 text-white' : 'text-white/45 hover:bg-white/5'}`}>圆点</button>
+        </div>
         {/* 全部展开/收起 */}
         <button
           onClick={() => setCollapsed(new Set())}
@@ -447,6 +480,7 @@ function ProductGraphInner({ productId }: { productId: string }) {
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onNodeClick={onNodeClick}
+          nodeTypes={NODE_TYPES}
           fitView
           fitViewOptions={{ padding: 0.25 }}
           minZoom={0.12}
@@ -484,6 +518,7 @@ function ProductGraphInner({ productId }: { productId: string }) {
         {selected && (
           <NodeDrawer
             node={selected}
+            productId={productId}
             hasChildren={(derived.descCount.get(selected.id) ?? 0) > 0}
             collapsed={collapsed.has(selected.id)}
             onClose={() => setSelected(null)}
@@ -504,6 +539,7 @@ function ProductGraphInner({ productId }: { productId: string }) {
 
 function NodeDrawer({
   node,
+  productId,
   hasChildren,
   collapsed,
   onClose,
@@ -512,6 +548,7 @@ function NodeDrawer({
   onOpenDetail,
 }: {
   node: GraphNode;
+  productId: string;
   hasChildren: boolean;
   collapsed: boolean;
   onClose: () => void;
@@ -520,7 +557,51 @@ function NodeDrawer({
   onOpenDetail: () => void;
 }) {
   const meta = TYPE_META[idType(node.id)];
-  const canOpen = ['requirement', 'feature', 'defect'].includes(idType(node.id));
+  const type = idType(node.id);
+  const rawId = node.id.split(':', 2)[1] ?? '';
+  const canOpen = ['requirement', 'feature', 'defect'].includes(type);
+  const [rows, setRows] = useState<{ label: string; value: string }[]>([]);
+  const [desc, setDesc] = useState<string>('');
+  const [busy, setBusy] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    setBusy(true);
+    setRows([]);
+    setDesc('');
+    void (async () => {
+      const r: { label: string; value: string }[] = [];
+      let d = '';
+      if (type === 'requirement') {
+        const res = await listRequirements(productId);
+        const o = res.success ? res.data.items.find((x) => x.id === rawId) : undefined;
+        if (o) { r.push({ label: '编号', value: o.requirementNo }, { label: '分级', value: o.grade }, { label: '状态', value: o.currentState || '-' }, { label: '关联客户', value: String(o.customerIds.length) }, { label: '归属版本', value: String(o.versionIds.length) }); d = o.description ?? ''; }
+      } else if (type === 'feature') {
+        const res = await listFeatures(productId);
+        const o = res.success ? res.data.items.find((x) => x.id === rawId) : undefined;
+        if (o) { r.push({ label: '编号', value: o.featureNo }, { label: '分级', value: o.grade }, { label: '状态', value: o.currentState || '-' }, { label: '实现需求', value: String(o.requirementIds.length) }); d = o.description ?? ''; }
+      } else if (type === 'version') {
+        const res = await listVersions(productId);
+        const o = res.success ? res.data.items.find((x) => x.id === rawId) : undefined;
+        if (o) { r.push({ label: '生命周期', value: o.lifecycle }, { label: '大版本', value: o.isMajor ? '是' : '否' }, { label: '关联需求', value: String(o.requirementIds.length) }, { label: '纳入功能', value: String(o.featureVersionIds.length) }); d = o.description ?? ''; }
+      } else if (type === 'customer') {
+        const res = await listCustomers(productId);
+        const o = res.success ? res.data.items.find((x) => x.id === rawId) : undefined;
+        if (o) { r.push({ label: '公司', value: o.company || '-' }, { label: '联系方式', value: o.contact || '-' }); d = o.description ?? ''; }
+      } else if (type === 'defect') {
+        const res = await listTracedDefects(productId);
+        const o = res.success ? res.data.items.find((x) => x.id === rawId) : undefined;
+        if (o) { r.push({ label: '编号', value: o.defectNo }, { label: '状态', value: o.status }, { label: '严重度', value: o.severity || '-' }, { label: '追溯', value: o.tracedRequirementId ? '需求' : o.tracedVersionId ? '版本' : '产品' }); }
+      } else if (type === 'product') {
+        const res = await getProduct(productId);
+        const o = res.success ? res.data : undefined;
+        if (o) { r.push({ label: '编号', value: o.productNo }, { label: '分级', value: o.grade }, { label: '版本', value: String(o.versionCount) }, { label: '需求', value: String(o.requirementCount) }, { label: '功能', value: String(o.featureCount) }, { label: '缺陷', value: String(o.defectCount) }); d = o.description ?? ''; }
+      }
+      if (alive) { setRows(r); setDesc(d); setBusy(false); }
+    })();
+    return () => { alive = false; };
+  }, [node.id, productId, type, rawId]);
+
   return (
     <div className="absolute top-0 right-0 h-full w-80 max-w-[80%] bg-[#16181d] border-l border-white/10 flex flex-col shadow-2xl" style={{ zIndex: 20 }}>
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
@@ -531,16 +612,25 @@ function NodeDrawer({
         <button onClick={onClose} className="text-white/40 hover:text-white"><X size={16} /></button>
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto p-4 flex flex-col gap-3" style={{ overscrollBehavior: 'contain' }}>
-        <div>
-          <div className="text-base text-white font-medium">{node.label}</div>
-          {node.sub && <div className="text-xs text-white/45 mt-1">{node.sub}</div>}
-        </div>
-        <div className="flex flex-col gap-1.5 text-xs">
-          <DrawerRow label="类型" value={meta?.label ?? idType(node.id)} />
-          {node.grade && <DrawerRow label="分级/严重度" value={node.grade} />}
-          {node.state && <DrawerRow label="状态" value={node.state} />}
-        </div>
-        <div className="flex flex-col gap-2 mt-2">
+        <div className="text-base text-white font-medium">{node.label}</div>
+        {busy ? (
+          <MapSectionLoader text="正在加载…" />
+        ) : (
+          <>
+            <div className="flex flex-col gap-1.5 text-xs">
+              {rows.map((row, i) => (
+                <DrawerRow key={i} label={row.label} value={row.value} />
+              ))}
+            </div>
+            {desc && (
+              <div className="mt-1">
+                <div className="text-[11px] text-white/40 mb-1">描述</div>
+                <div className="text-sm text-white/75 whitespace-pre-wrap">{desc}</div>
+              </div>
+            )}
+          </>
+        )}
+        <div className="flex flex-col gap-2 mt-2 pt-2 border-t border-white/10">
           {canOpen && (
             <button onClick={onOpenDetail} className="w-full px-3 py-2 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm">
               打开完整详情页
@@ -568,6 +658,32 @@ function DrawerRow({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
+
+/** 圆点视图自定义节点：彩色圆点(大小随重要度) + 下方名称。 */
+function DotNode({ data }: NodeProps) {
+  const d = data as { label: string; color: string; size: number };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 130 }}>
+      <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
+      <div
+        style={{
+          width: d.size,
+          height: d.size,
+          borderRadius: '50%',
+          background: d.color,
+          boxShadow: `0 0 10px ${d.color}66`,
+          border: '2px solid rgba(255,255,255,0.25)',
+        }}
+      />
+      <div style={{ marginTop: 6, fontSize: 10, color: 'rgba(255,255,255,0.78)', textAlign: 'center', whiteSpace: 'pre-line', lineHeight: 1.25 }}>
+        {d.label}
+      </div>
+      <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
+    </div>
+  );
+}
+
+const NODE_TYPES = { dot: DotNode };
 
 function baseStyle(color: string): CSSProperties {
   return {

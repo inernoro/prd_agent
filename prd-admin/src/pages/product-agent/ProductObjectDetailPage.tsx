@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Save, Unlink, ExternalLink, ListChecks, Puzzle, Bug } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
-import { RequirementRelationModal } from './ProductRelationModals';
+import { RequirementRelationModal, DefectLinkerModal } from './ProductRelationModals';
 import { FormFieldsRenderer, useEffectiveTemplate, useEffectiveWorkflow } from './DynamicForm';
 import { WorkflowBar } from './WorkflowBar';
 import {
@@ -481,6 +481,18 @@ function FeatureDetail({
     }
   }, [feature]);
 
+  const navigate = useNavigate();
+  const [tracedDefects, setTracedDefects] = useState<TracedDefect[]>([]);
+  const [showDefectLinker, setShowDefectLinker] = useState(false);
+  const reloadDefects = useCallback(async () => {
+    if (!feature) return;
+    const res = await listTracedDefects(feature.productId, { featureId: feature.id });
+    if (res.success) setTracedDefects(res.data.items);
+  }, [feature]);
+  useEffect(() => {
+    void reloadDefects();
+  }, [reloadDefects]);
+
   if (!feature) return <NotFound />;
 
   const save = async () => {
@@ -540,6 +552,42 @@ function FeatureDetail({
       <Section title="纳入的版本（功能版本化）">
         <Chips items={featureVersions.map((fv) => versionName.get(fv.versionId) ?? fv.versionId)} empty="尚未纳入任何版本（在版本关系弹层里勾选纳入）" />
       </Section>
+      <Section
+        title={`追溯缺陷（${tracedDefects.length}）`}
+        action={
+          <button onClick={() => setShowDefectLinker(true)} className="text-[11px] text-cyan-300 hover:underline">
+            关联缺陷
+          </button>
+        }
+      >
+        {tracedDefects.length === 0 ? (
+          <div className="text-[11px] text-white/30">还没有缺陷追溯到本功能</div>
+        ) : (
+          <div className="flex flex-col gap-1">
+            {tracedDefects.map((d) => (
+              <button
+                key={d.id}
+                onClick={() => navigate(`/product-agent/p/${feature.productId}/defect/${d.id}`)}
+                className="text-left flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg border border-white/10 bg-white/[0.02] hover:bg-white/[0.05]"
+              >
+                <span className="text-sm text-white/80 truncate">
+                  <span className="text-[10px] text-white/40 mr-1">{d.defectNo}</span>
+                  {d.title || '(无标题)'}
+                </span>
+                <span className="text-[10px] text-white/40 shrink-0">{d.status}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </Section>
+      {showDefectLinker && (
+        <DefectLinkerModal
+          productId={feature.productId}
+          featureId={feature.id}
+          onClose={() => setShowDefectLinker(false)}
+          onLinked={reloadDefects}
+        />
+      )}
     </>
   );
 }
