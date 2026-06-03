@@ -9,9 +9,9 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Boxes, Plus, Trash2, GitBranch, ListChecks, Puzzle, Users, BookOpen, Share2, ArrowUpCircle, LayoutGrid, List, ArrowLeft } from 'lucide-react';
+import { Boxes, Plus, Trash2, GitBranch, ListChecks, Puzzle, Users, BookOpen, Share2, ArrowUpCircle, LayoutGrid, List, ArrowLeft, Bug } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
-import { VersionRelationModal, RequirementRelationModal, ProductKnowledgePanel } from './ProductRelationModals';
+import { VersionRelationModal, ProductKnowledgePanel, DefectLinkerModal } from './ProductRelationModals';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { UpgradeRequestsTab } from './UpgradeRequestsTab';
 import {
@@ -30,6 +30,9 @@ import {
   listCustomers,
   createCustomer,
   deleteCustomer,
+  listTracedDefects,
+  untraceDefect,
+  type TracedDefect,
 } from '@/services/real/productAgent';
 import type {
   Product,
@@ -42,7 +45,7 @@ import type {
 } from './types';
 import { PRODUCT_GRADE_LABEL, ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL } from './types';
 
-type DetailTab = 'overview' | 'versions' | 'requirements' | 'features' | 'customers' | 'upgrade' | 'knowledge' | 'graph';
+type DetailTab = 'overview' | 'versions' | 'requirements' | 'features' | 'customers' | 'defects' | 'upgrade' | 'knowledge' | 'graph';
 
 const PRODUCT_GRADES: ProductGrade[] = ['core', 'important', 'normal', 'experimental'];
 const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
@@ -256,6 +259,7 @@ const TABS: { key: DetailTab; label: string; icon: typeof GitBranch }[] = [
   { key: 'requirements', label: '需求', icon: ListChecks },
   { key: 'features', label: '功能', icon: Puzzle },
   { key: 'customers', label: '客户', icon: Users },
+  { key: 'defects', label: '缺陷', icon: Bug },
   { key: 'upgrade', label: '升级申请', icon: ArrowUpCircle },
   { key: 'knowledge', label: '知识库', icon: BookOpen },
   { key: 'graph', label: '图谱', icon: Share2 },
@@ -322,6 +326,7 @@ function ProductDetail({
           {tab === 'requirements' && <RequirementsTab productId={product.id} />}
           {tab === 'features' && <FeaturesTab productId={product.id} />}
           {tab === 'customers' && <CustomersTab productId={product.id} />}
+          {tab === 'defects' && <DefectsTab productId={product.id} />}
           {tab === 'upgrade' && <UpgradeRequestsTab productId={product.id} />}
         </div>
       )}
@@ -433,13 +438,14 @@ function VersionsTab({ productId }: { productId: string }) {
 
 // ── 需求 tab ──
 function RequirementsTab({ productId }: { productId: string }) {
+  const navigate = useNavigate();
   const [items, setItems] = useState<Requirement[]>([]);
   const [loading, setLoading] = useState(true);
   const [title, setTitle] = useState('');
   const [grade, setGrade] = useState<ItemGrade>('p2');
   const [saving, setSaving] = useState(false);
-  const [relReq, setRelReq] = useState<Requirement | null>(null);
   const [view, setView] = useState<'list' | 'board'>('list');
+  const openDetail = (id: string) => navigate(`/product-agent/${productId}/requirement/${id}`);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -488,7 +494,7 @@ function RequirementsTab({ productId }: { productId: string }) {
       ) : view === 'board' ? (
         <GradeBoard
           items={items}
-          onCardClick={(r) => setRelReq(r)}
+          onCardClick={(r) => openDetail(r.id)}
           renderSub={(r) => `${r.requirementNo} · 客户 ${r.customerIds.length} · 版本 ${r.versionIds.length}`}
         />
       ) : (
@@ -499,8 +505,8 @@ function RequirementsTab({ productId }: { productId: string }) {
               title={r.title}
               badge={ITEM_GRADE_LABEL[r.grade]}
               sub={`${r.requirementNo} · 客户 ${r.customerIds.length} · 版本 ${r.versionIds.length}`}
-              onClick={() => setRelReq(r)}
-              actionLabel="关联客户/版本 · 缺陷追溯"
+              onClick={() => openDetail(r.id)}
+              actionLabel="查看详情"
               onDelete={async () => {
                 await deleteRequirement(r.id);
                 await reload();
@@ -509,20 +515,13 @@ function RequirementsTab({ productId }: { productId: string }) {
           ))}
         </div>
       )}
-      {relReq && (
-        <RequirementRelationModal
-          productId={productId}
-          requirement={relReq}
-          onClose={() => setRelReq(null)}
-          onSaved={() => void reload()}
-        />
-      )}
     </div>
   );
 }
 
 // ── 功能 tab ──
 function FeaturesTab({ productId }: { productId: string }) {
+  const navigate = useNavigate();
   const [items, setItems] = useState<Feature[]>([]);
   const [loading, setLoading] = useState(true);
   const [title, setTitle] = useState('');
@@ -565,6 +564,8 @@ function FeaturesTab({ productId }: { productId: string }) {
               title={f.title}
               badge={ITEM_GRADE_LABEL[f.grade]}
               sub={`${f.featureNo} · 实现需求 ${f.requirementIds.length}`}
+              onClick={() => navigate(`/product-agent/${productId}/feature/${f.id}`)}
+              actionLabel="查看详情"
               onDelete={async () => {
                 await deleteFeature(f.id);
                 await reload();
@@ -626,6 +627,64 @@ function CustomersTab({ productId }: { productId: string }) {
             />
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ── 缺陷 tab（产品级追溯缺陷一览）──
+function DefectsTab({ productId }: { productId: string }) {
+  const navigate = useNavigate();
+  const [items, setItems] = useState<TracedDefect[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showLinker, setShowLinker] = useState(false);
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    const res = await listTracedDefects(productId);
+    if (res.success) setItems(res.data.items);
+    setLoading(false);
+  }, [productId]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  if (loading) return <MapSectionLoader text="正在加载缺陷…" />;
+  return (
+    <div className="flex flex-col gap-3">
+      <button
+        onClick={() => setShowLinker(true)}
+        className="self-start flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 text-sm"
+      >
+        <Plus size={15} /> 关联缺陷到本产品
+      </button>
+      {items.length === 0 ? (
+        <EmptyHint text="还没有缺陷追溯到本产品。点上方关联已有缺陷，或在需求详情页里把缺陷追溯到具体需求。缺陷本体在「缺陷管理智能体」里维护。" />
+      ) : (
+        <div className="flex flex-col gap-2">
+          {items.map((d) => (
+            <Row
+              key={d.id}
+              title={d.title || '(无标题)'}
+              badge={d.status}
+              sub={`${d.defectNo}${d.tracedRequirementId ? ' · 已追溯到需求' : d.tracedVersionId ? ' · 已追溯到版本' : ' · 仅追溯到产品'}`}
+              onClick={() => navigate(`/product-agent/${productId}/defect/${d.id}`)}
+              actionLabel="查看详情"
+              onDelete={async () => {
+                await untraceDefect(d.id);
+                await reload();
+              }}
+            />
+          ))}
+        </div>
+      )}
+      {showLinker && (
+        <DefectLinkerModal
+          productId={productId}
+          onClose={() => setShowLinker(false)}
+          onLinked={() => void reload()}
+        />
       )}
     </div>
   );

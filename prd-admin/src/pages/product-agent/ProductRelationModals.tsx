@@ -371,7 +371,7 @@ export function RequirementRelationModal({
 }
 
 // ── 缺陷关联选择器 ──
-function DefectLinkerModal({
+export function DefectLinkerModal({
   productId,
   requirementId,
   versionId,
@@ -379,7 +379,7 @@ function DefectLinkerModal({
   onLinked,
 }: {
   productId: string;
-  requirementId: string;
+  requirementId?: string;
   versionId?: string;
   onClose: () => void;
   onLinked: () => void;

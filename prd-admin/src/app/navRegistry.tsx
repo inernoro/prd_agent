@@ -32,6 +32,7 @@ const EmergenceExplorerPage = lazy(() => import('@/pages/emergence').then(m => (
 const TaskTreePage = lazy(() => import('@/pages/task-tree').then(m => ({ default: m.TaskTreePage })));
 const PmAgentPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.PmAgentPage })));
 const ProductAgentPage = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.ProductAgentPage })));
+const ProductObjectDetailPage = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.ProductObjectDetailPage })));
 const ChangelogPage = lazy(() => import('@/pages/changelog/ChangelogPage'));
 const SkillAgentPage = lazy(() => import('@/pages/SkillAgentPage'));
 const ArenaPage = lazy(() => import('@/pages/arena/ArenaPage').then(m => ({ default: m.ArenaPage })));
@@ -337,6 +338,13 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       wip: true,
       tags: ['项目管理', 'PMO', '看板', '甘特图', '任务拆解'],
     },
+  },
+  {
+    // 对象独立详情页（需求/功能/缺陷），参数化子路由，全屏，不进导航
+    path: '/product-agent/:productId/:kind/:id',
+    placement: 'fullscreen',
+    permission: 'product-agent.use',
+    element: fullscreenGuarded('product-agent.use', <ProductObjectDetailPage />),
   },
   {
     path: '/product-agent',
