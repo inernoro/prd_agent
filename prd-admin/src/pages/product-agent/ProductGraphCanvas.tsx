@@ -12,6 +12,7 @@
  * 数据来自 GET /products/{id}/graph 的全量 nodes/edges，过滤/折叠/追溯均在前端计算。
  */
 import { useEffect, useMemo, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -41,6 +42,16 @@ const TYPE_META: Record<NodeType, { color: string; col: number; label: string }>
 };
 const ALL_TYPES = Object.keys(TYPE_META) as NodeType[];
 
+/** 边类型 → 中文关系描述（画在连线中间） */
+const EDGE_LABEL: Record<string, string> = {
+  contains: '包含',
+  includes: '关联需求',
+  'feature-in-version': '纳入功能',
+  implements: '实现',
+  'from-customer': '来自客户',
+  traces: '追溯',
+};
+
 const COL_GAP = 250;
 const ROW_GAP = 78;
 
@@ -64,9 +75,11 @@ function idType(id: string): NodeType {
 }
 
 function ProductGraphInner({ productId }: { productId: string }) {
+  const navigate = useNavigate();
   const [raw, setRaw] = useState<{ nodes: GraphNode[]; edges: GraphEdge[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<GraphNode | null>(null);
 
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [typeOn, setTypeOn] = useState<Record<NodeType, boolean>>(
@@ -234,7 +247,17 @@ function ProductGraphInner({ productId }: { productId: string }) {
       });
     const rfEdges: Edge[] = raw.edges
       .filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target))
-      .map((e) => ({ id: e.id, source: e.source, target: e.target, style: { stroke: 'rgba(255,255,255,0.16)' } }));
+      .map((e) => ({
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        label: EDGE_LABEL[e.type] ?? e.type,
+        labelStyle: { fill: 'rgba(255,255,255,0.55)', fontSize: 10 },
+        labelBgStyle: { fill: '#0f1014', fillOpacity: 0.85 },
+        labelBgPadding: [4, 2] as [number, number],
+        labelBgBorderRadius: 4,
+        style: { stroke: 'rgba(255,255,255,0.16)' },
+      }));
     setNodes(rfNodes);
     setEdges(rfEdges);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -279,15 +302,17 @@ function ProductGraphInner({ productId }: { productId: string }) {
       setTraceAnchor((prev) => (prev === node.id ? null : node.id));
       return;
     }
-    // 折叠模式：有后代才可折叠/展开
-    if ((derived.descCount.get(node.id) ?? 0) > 0) {
-      setCollapsed((prev) => {
-        const next = new Set(prev);
-        if (next.has(node.id)) next.delete(node.id);
-        else next.add(node.id);
-        return next;
-      });
-    }
+    // 默认：点击任一节点弹出右侧详情抽屉
+    setSelected(raw?.nodes.find((n) => n.id === node.id) ?? null);
+  };
+
+  const toggleCollapse = (id: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
   // 距离过滤选项
@@ -309,9 +334,9 @@ function ProductGraphInner({ productId }: { productId: string }) {
   }
 
   return (
-    <div className="h-full min-h-0 flex flex-col">
+    <div className="h-full min-h-0 flex flex-col px-4 pt-3">
       {/* 控制栏 */}
-      <div className="shrink-0 flex flex-wrap items-center gap-2 px-1 pb-2">
+      <div className="shrink-0 flex flex-wrap items-center gap-2 px-1 pb-3">
         {/* 类型过滤 */}
         <div className="flex items-center gap-1">
           {ALL_TYPES.map((t) => (
@@ -423,6 +448,7 @@ function ProductGraphInner({ productId }: { productId: string }) {
           onEdgesChange={onEdgesChange}
           onNodeClick={onNodeClick}
           fitView
+          fitViewOptions={{ padding: 0.25 }}
           minZoom={0.12}
           maxZoom={2}
           proOptions={{ hideAttribution: true }}
@@ -451,9 +477,94 @@ function ProductGraphInner({ productId }: { productId: string }) {
           <Controls showInteractive={false} />
         </ReactFlow>
         <div className="absolute bottom-3 left-3 text-[10px] text-white/35 bg-black/40 border border-white/10 rounded-md px-2 py-1">
-          {mode === 'trace' ? '点击节点：高亮其关系路径' : '点击节点：展开 / 收起子节点'}
+          {mode === 'trace' ? '点击节点：高亮其关系路径' : '点击节点：查看详情'}
+        </div>
+
+        {/* 详情抽屉 */}
+        {selected && (
+          <NodeDrawer
+            node={selected}
+            hasChildren={(derived.descCount.get(selected.id) ?? 0) > 0}
+            collapsed={collapsed.has(selected.id)}
+            onClose={() => setSelected(null)}
+            onToggleCollapse={() => toggleCollapse(selected.id)}
+            onTrace={() => {
+              setTraceAnchor(selected.id);
+            }}
+            onOpenDetail={() => {
+              const [t, rawId] = selected.id.split(':', 2);
+              if (t === 'requirement' || t === 'feature' || t === 'defect') navigate(`/product-agent/p/${productId}/${t}/${rawId}`);
+            }}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function NodeDrawer({
+  node,
+  hasChildren,
+  collapsed,
+  onClose,
+  onToggleCollapse,
+  onTrace,
+  onOpenDetail,
+}: {
+  node: GraphNode;
+  hasChildren: boolean;
+  collapsed: boolean;
+  onClose: () => void;
+  onToggleCollapse: () => void;
+  onTrace: () => void;
+  onOpenDetail: () => void;
+}) {
+  const meta = TYPE_META[idType(node.id)];
+  const canOpen = ['requirement', 'feature', 'defect'].includes(idType(node.id));
+  return (
+    <div className="absolute top-0 right-0 h-full w-80 max-w-[80%] bg-[#16181d] border-l border-white/10 flex flex-col shadow-2xl" style={{ zIndex: 20 }}>
+      <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
+        <span className="flex items-center gap-2 text-sm font-semibold" style={{ color: meta?.color ?? '#fff' }}>
+          <span className="w-2.5 h-2.5 rounded-sm" style={{ background: meta?.color ?? '#888' }} />
+          {meta?.label ?? '节点'}详情
+        </span>
+        <button onClick={onClose} className="text-white/40 hover:text-white"><X size={16} /></button>
+      </div>
+      <div className="flex-1 min-h-0 overflow-y-auto p-4 flex flex-col gap-3" style={{ overscrollBehavior: 'contain' }}>
+        <div>
+          <div className="text-base text-white font-medium">{node.label}</div>
+          {node.sub && <div className="text-xs text-white/45 mt-1">{node.sub}</div>}
+        </div>
+        <div className="flex flex-col gap-1.5 text-xs">
+          <DrawerRow label="类型" value={meta?.label ?? idType(node.id)} />
+          {node.grade && <DrawerRow label="分级/严重度" value={node.grade} />}
+          {node.state && <DrawerRow label="状态" value={node.state} />}
+        </div>
+        <div className="flex flex-col gap-2 mt-2">
+          {canOpen && (
+            <button onClick={onOpenDetail} className="w-full px-3 py-2 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm">
+              打开完整详情页
+            </button>
+          )}
+          <button onClick={onTrace} className="w-full px-3 py-2 rounded-lg border border-amber-400/30 text-amber-300 hover:bg-amber-400/10 text-sm">
+            追溯关系路径
+          </button>
+          {hasChildren && (
+            <button onClick={onToggleCollapse} className="w-full px-3 py-2 rounded-lg border border-white/10 text-white/60 hover:bg-white/5 text-sm">
+              {collapsed ? '展开子节点' : '收起子节点'}
+            </button>
+          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function DrawerRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex gap-3">
+      <span className="text-white/40 w-20 shrink-0">{label}</span>
+      <span className="text-white/80">{value}</span>
     </div>
   );
 }
