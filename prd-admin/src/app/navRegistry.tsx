@@ -31,7 +31,7 @@ const LibraryLandingPage = lazy(() => import('@/pages/library/LibraryLandingPage
 const EmergenceExplorerPage = lazy(() => import('@/pages/emergence').then(m => ({ default: m.EmergenceExplorerPage })));
 const TaskTreePage = lazy(() => import('@/pages/task-tree').then(m => ({ default: m.TaskTreePage })));
 const PmAgentPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.PmAgentPage })));
-const ProductsListPage = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.ProductsListPage })));
+const OverviewShell = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.OverviewShell })));
 const SingleProductView = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.SingleProductView })));
 const ProductObjectDetailPage = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.ProductObjectDetailPage })));
 const ChangelogPage = lazy(() => import('@/pages/changelog/ChangelogPage'));
@@ -358,7 +358,7 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     path: '/product-agent',
     placement: 'fullscreen',
     permission: 'product-agent.use',
-    element: fullscreenGuarded('product-agent.use', <ProductsListPage />),
+    element: fullscreenGuarded('product-agent.use', <OverviewShell />),
     nav: {
       label: '产品管理智能体',
       shortLabel: '产品',

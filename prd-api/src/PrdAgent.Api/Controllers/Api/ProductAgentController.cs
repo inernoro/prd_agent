@@ -1068,6 +1068,167 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { untraced = true }));
     }
 
+    // ════════════════════════ 管理层总览（跨产品聚合，P1）════════════════════════
+
+    /// <summary>当前用户是否管理层（看全部产品 + 全局设置）。</summary>
+    private bool IsProductAdmin() => HasPermission(AdminPermissionCatalog.ProductAgentAdmin);
+
+    /// <summary>可访问的产品 Id 集合；返回 null 表示"全部"（管理层/管理权限）。</summary>
+    private async Task<HashSet<string>?> GetAccessibleProductIdsAsync(string userId)
+    {
+        if (IsProductAdmin() || HasPermission(AdminPermissionCatalog.ProductAgentManage)) return null;
+        var b = Builders<Product>.Filter;
+        var filter = b.And(b.Eq(p => p.IsDeleted, false),
+            b.Or(b.Eq(p => p.OwnerId, userId), b.AnyEq(p => p.MemberIds, userId)));
+        var ids = await _db.Products.Find(filter).Project(p => p.Id).ToListAsync();
+        return ids.ToHashSet();
+    }
+
+    /// <summary>跨产品聚合仪表盘：KPI 计数 + 分级/状态/生命周期分布 + 最近活动。</summary>
+    [HttpGet("overview/stats")]
+    public async Task<IActionResult> OverviewStats()
+    {
+        var userId = GetUserId();
+        var scope = await GetAccessibleProductIdsAsync(userId);
+
+        var products = await _db.Products.Find(scope == null
+            ? Builders<Product>.Filter.Eq(p => p.IsDeleted, false)
+            : Builders<Product>.Filter.And(Builders<Product>.Filter.Eq(p => p.IsDeleted, false), Builders<Product>.Filter.In(p => p.Id, scope)))
+            .Limit(5000).ToListAsync();
+        var nameById = products.ToDictionary(p => p.Id, p => p.Name);
+
+        var versions = await FindInScopeAsync<ProductVersion>(scope, v => v.ProductId, v => v.IsDeleted);
+        var requirements = await FindInScopeAsync<Requirement>(scope, r => r.ProductId, r => r.IsDeleted);
+        var features = await FindInScopeAsync<Feature>(scope, f => f.ProductId, f => f.IsDeleted);
+        var customers = await FindInScopeAsync<Customer>(scope, c => c.ProductId, c => c.IsDeleted);
+        var defects = await _db.DefectReports.Find(Builders<DefectReport>.Filter.And(
+                Builders<DefectReport>.Filter.Eq(d => d.IsDeleted, false),
+                Builders<DefectReport>.Filter.Ne(d => d.TracedProductId, (string?)null),
+                scope == null ? Builders<DefectReport>.Filter.Empty : Builders<DefectReport>.Filter.In(d => d.TracedProductId, scope)))
+            .Limit(5000).ToListAsync();
+
+        var recent = requirements.Select(r => new { type = "requirement", id = r.Id, productId = r.ProductId, productName = nameById.GetValueOrDefault(r.ProductId, ""), title = r.Title, no = r.RequirementNo, at = r.UpdatedAt })
+            .Concat(features.Select(f => new { type = "feature", id = f.Id, productId = f.ProductId, productName = nameById.GetValueOrDefault(f.ProductId, ""), title = f.Title, no = f.FeatureNo, at = f.UpdatedAt }))
+            .Concat(versions.Select(v => new { type = "version", id = v.Id, productId = v.ProductId, productName = nameById.GetValueOrDefault(v.ProductId, ""), title = v.VersionName, no = v.VersionName, at = v.UpdatedAt }))
+            .OrderByDescending(x => x.at).Take(15).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            isAdmin = IsProductAdmin(),
+            counts = new
+            {
+                products = products.Count,
+                versions = versions.Count,
+                requirements = requirements.Count,
+                features = features.Count,
+                defects = defects.Count,
+                customers = customers.Count,
+            },
+            requirementsByGrade = ProductItemGrade.All.ToDictionary(g => g, g => requirements.Count(r => r.Grade == g)),
+            featuresByGrade = ProductItemGrade.All.ToDictionary(g => g, g => features.Count(f => f.Grade == g)),
+            defectsByStatus = defects.GroupBy(d => d.Status).ToDictionary(g => g.Key, g => g.Count()),
+            versionsByLifecycle = ProductVersionLifecycle.All.ToDictionary(l => l, l => versions.Count(v => v.Lifecycle == l)),
+            recent,
+        }));
+    }
+
+    /// <summary>跨产品需求列表（含所属产品名）。</summary>
+    [HttpGet("overview/requirements")]
+    public async Task<IActionResult> OverviewRequirements([FromQuery] string? grade = null, [FromQuery] string? keyword = null)
+    {
+        var scope = await GetAccessibleProductIdsAsync(GetUserId());
+        var items = await FindInScopeAsync<Requirement>(scope, r => r.ProductId, r => r.IsDeleted);
+        var names = await ProductNamesAsync(items.Select(r => r.ProductId));
+        var rows = items
+            .Where(r => string.IsNullOrWhiteSpace(grade) || r.Grade == grade)
+            .Where(r => string.IsNullOrWhiteSpace(keyword) || (r.Title?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false) || r.RequirementNo.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(r => r.UpdatedAt)
+            .Select(r => new { r.Id, r.ProductId, productName = names.GetValueOrDefault(r.ProductId, ""), r.RequirementNo, r.Title, r.Grade, r.CurrentState, versionCount = r.VersionIds.Count, customerCount = r.CustomerIds.Count, r.AssigneeId, r.UpdatedAt })
+            .Take(1000).ToList();
+        return Ok(ApiResponse<object>.Ok(new { items = rows }));
+    }
+
+    /// <summary>跨产品功能列表（含所属产品名）。</summary>
+    [HttpGet("overview/features")]
+    public async Task<IActionResult> OverviewFeatures([FromQuery] string? grade = null, [FromQuery] string? keyword = null)
+    {
+        var scope = await GetAccessibleProductIdsAsync(GetUserId());
+        var items = await FindInScopeAsync<Feature>(scope, f => f.ProductId, f => f.IsDeleted);
+        var names = await ProductNamesAsync(items.Select(f => f.ProductId));
+        var rows = items
+            .Where(f => string.IsNullOrWhiteSpace(grade) || f.Grade == grade)
+            .Where(f => string.IsNullOrWhiteSpace(keyword) || (f.Title?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false) || f.FeatureNo.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(f => f.UpdatedAt)
+            .Select(f => new { f.Id, f.ProductId, productName = names.GetValueOrDefault(f.ProductId, ""), f.FeatureNo, f.Title, f.Grade, f.CurrentState, requirementCount = f.RequirementIds.Count, f.UpdatedAt })
+            .Take(1000).ToList();
+        return Ok(ApiResponse<object>.Ok(new { items = rows }));
+    }
+
+    /// <summary>跨产品缺陷列表（追溯到产品的缺陷，含所属产品名）。</summary>
+    [HttpGet("overview/defects")]
+    public async Task<IActionResult> OverviewDefects([FromQuery] string? status = null, [FromQuery] string? keyword = null)
+    {
+        var scope = await GetAccessibleProductIdsAsync(GetUserId());
+        var filter = Builders<DefectReport>.Filter.And(
+            Builders<DefectReport>.Filter.Eq(d => d.IsDeleted, false),
+            Builders<DefectReport>.Filter.Ne(d => d.TracedProductId, (string?)null),
+            scope == null ? Builders<DefectReport>.Filter.Empty : Builders<DefectReport>.Filter.In(d => d.TracedProductId, scope));
+        var items = await _db.DefectReports.Find(filter).Limit(5000).ToListAsync();
+        var names = await ProductNamesAsync(items.Select(d => d.TracedProductId!));
+        var rows = items
+            .Where(d => string.IsNullOrWhiteSpace(status) || d.Status == status)
+            .Where(d => string.IsNullOrWhiteSpace(keyword) || (d.Title?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false) || d.DefectNo.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(d => d.UpdatedAt)
+            .Select(d => new { d.Id, productId = d.TracedProductId, productName = names.GetValueOrDefault(d.TracedProductId ?? "", ""), d.DefectNo, d.Title, d.Status, d.Severity, d.Priority, d.TracedRequirementId, d.TracedVersionId, d.UpdatedAt })
+            .Take(1000).ToList();
+        return Ok(ApiResponse<object>.Ok(new { items = rows }));
+    }
+
+    /// <summary>跨产品知识库一览（所有产品/版本知识库）。</summary>
+    [HttpGet("overview/knowledge")]
+    public async Task<IActionResult> OverviewKnowledge()
+    {
+        var scope = await GetAccessibleProductIdsAsync(GetUserId());
+        var products = await _db.Products.Find(scope == null
+            ? Builders<Product>.Filter.Eq(p => p.IsDeleted, false)
+            : Builders<Product>.Filter.And(Builders<Product>.Filter.Eq(p => p.IsDeleted, false), Builders<Product>.Filter.In(p => p.Id, scope)))
+            .Limit(2000).ToListAsync();
+        var storeIds = products.Where(p => !string.IsNullOrEmpty(p.KnowledgeStoreId)).Select(p => p.KnowledgeStoreId!).ToList();
+        var stores = storeIds.Count == 0
+            ? new List<DocumentStore>()
+            : await _db.DocumentStores.Find(Builders<DocumentStore>.Filter.In(s => s.Id, storeIds)).ToListAsync();
+        var storeById = stores.ToDictionary(s => s.Id, s => s);
+        var rows = products.Where(p => !string.IsNullOrEmpty(p.KnowledgeStoreId) && storeById.ContainsKey(p.KnowledgeStoreId!))
+            .Select(p => new { productId = p.Id, productName = p.Name, storeId = p.KnowledgeStoreId, name = storeById[p.KnowledgeStoreId!].Name, documentCount = storeById[p.KnowledgeStoreId!].DocumentCount, storeById[p.KnowledgeStoreId!].UpdatedAt })
+            .ToList();
+        return Ok(ApiResponse<object>.Ok(new { items = rows }));
+    }
+
+    private async Task<List<T>> FindInScopeAsync<T>(HashSet<string>? scope, System.Linq.Expressions.Expression<Func<T, string>> productIdField, System.Linq.Expressions.Expression<Func<T, bool>> isDeletedField)
+    {
+        var b = Builders<T>.Filter;
+        var baseFilter = b.Eq(isDeletedField, false); // 未删除
+        var filter = scope == null ? baseFilter : b.And(baseFilter, b.In(productIdField, scope));
+        return await ResolveCollection<T>().Find(filter).Limit(5000).ToListAsync();
+    }
+
+    private IMongoCollection<T> ResolveCollection<T>()
+    {
+        if (typeof(T) == typeof(ProductVersion)) return (IMongoCollection<T>)(object)_db.ProductVersions;
+        if (typeof(T) == typeof(Requirement)) return (IMongoCollection<T>)(object)_db.Requirements;
+        if (typeof(T) == typeof(Feature)) return (IMongoCollection<T>)(object)_db.Features;
+        if (typeof(T) == typeof(Customer)) return (IMongoCollection<T>)(object)_db.Customers;
+        throw new InvalidOperationException($"未映射的集合类型: {typeof(T).Name}");
+    }
+
+    private async Task<Dictionary<string, string>> ProductNamesAsync(IEnumerable<string> productIds)
+    {
+        var ids = productIds.Where(x => !string.IsNullOrEmpty(x)).Distinct().ToList();
+        if (ids.Count == 0) return new();
+        var prods = await _db.Products.Find(Builders<Product>.Filter.In(p => p.Id, ids)).Project(p => new { p.Id, p.Name }).ToListAsync();
+        return prods.ToDictionary(p => p.Id, p => p.Name);
+    }
+
     // ════════════════════════ 私有工具 ════════════════════════
 
     /// <summary>按 {PREFIX}-{YEAR}-{NNNN} 生成业务编号。fieldName 为编号字段名（FieldDefinition 由 string 隐式转换）。</summary>

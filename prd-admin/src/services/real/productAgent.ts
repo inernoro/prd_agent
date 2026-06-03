@@ -269,3 +269,56 @@ export function updateUpgradeRequest(upgradeId: string, body: Partial<UpgradeReq
 export function deleteUpgradeRequest(upgradeId: string) {
   return apiRequest<{ deleted: boolean }>(`/api/product/upgrade-requests/${upgradeId}`, { method: 'DELETE' });
 }
+
+// ── 管理层总览（跨产品聚合，P1）──
+export interface OverviewStats {
+  isAdmin: boolean;
+  counts: { products: number; versions: number; requirements: number; features: number; defects: number; customers: number };
+  requirementsByGrade: Record<string, number>;
+  featuresByGrade: Record<string, number>;
+  defectsByStatus: Record<string, number>;
+  versionsByLifecycle: Record<string, number>;
+  recent: { type: string; id: string; productId: string; productName: string; title: string; no: string; at: string }[];
+}
+export function getOverviewStats() {
+  return apiRequest<OverviewStats>('/api/product/overview/stats');
+}
+export interface OverviewRequirementRow {
+  id: string; productId: string; productName: string; requirementNo: string; title: string;
+  grade: string; currentState?: string | null; versionCount: number; customerCount: number; assigneeId?: string | null; updatedAt: string;
+}
+export function getOverviewRequirements(params?: { grade?: string; keyword?: string }) {
+  const q = new URLSearchParams();
+  if (params?.grade) q.set('grade', params.grade);
+  if (params?.keyword) q.set('keyword', params.keyword);
+  const qs = q.toString();
+  return apiRequest<ListWrap<OverviewRequirementRow>>(`/api/product/overview/requirements${qs ? `?${qs}` : ''}`);
+}
+export interface OverviewFeatureRow {
+  id: string; productId: string; productName: string; featureNo: string; title: string;
+  grade: string; currentState?: string | null; requirementCount: number; updatedAt: string;
+}
+export function getOverviewFeatures(params?: { grade?: string; keyword?: string }) {
+  const q = new URLSearchParams();
+  if (params?.grade) q.set('grade', params.grade);
+  if (params?.keyword) q.set('keyword', params.keyword);
+  const qs = q.toString();
+  return apiRequest<ListWrap<OverviewFeatureRow>>(`/api/product/overview/features${qs ? `?${qs}` : ''}`);
+}
+export interface OverviewDefectRow {
+  id: string; productId: string; productName: string; defectNo: string; title?: string | null;
+  status: string; severity?: string | null; priority?: string | null; tracedRequirementId?: string | null; tracedVersionId?: string | null; updatedAt: string;
+}
+export function getOverviewDefects(params?: { status?: string; keyword?: string }) {
+  const q = new URLSearchParams();
+  if (params?.status) q.set('status', params.status);
+  if (params?.keyword) q.set('keyword', params.keyword);
+  const qs = q.toString();
+  return apiRequest<ListWrap<OverviewDefectRow>>(`/api/product/overview/defects${qs ? `?${qs}` : ''}`);
+}
+export interface OverviewKnowledgeRow {
+  productId: string; productName: string; storeId: string; name: string; documentCount: number; updatedAt: string;
+}
+export function getOverviewKnowledge() {
+  return apiRequest<ListWrap<OverviewKnowledgeRow>>('/api/product/overview/knowledge');
+}
