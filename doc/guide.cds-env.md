@@ -72,7 +72,7 @@ export CDS_PREVIEW_DOMAIN="miduo.org"
 
 | 变量 | 说明 | 示例 |
 |------|------|------|
-| `ASSETS_PROVIDER` | 存储提供商 | `tencentCos` |
+| `ASSETS_PROVIDER` | 存储提供商（推荐 `tencentCos`；`cloudflareR2`/`cloudflare-r2` 会在运行时兼容归一为 `tencentCos`） | `tencentCos` |
 | `TENCENT_COS_BUCKET` | COS Bucket | `ap-tokyo-1251304948` |
 | `TENCENT_COS_REGION` | COS 区域 | `ap-tokyo` |
 | `TENCENT_COS_SECRET_ID` | COS SecretId | `AKID****` |

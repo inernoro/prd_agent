@@ -282,6 +282,16 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
     }
 
     var provider = string.IsNullOrWhiteSpace(providerRaw) ? "tencentCos" : providerRaw;
+    if (provider.Equals("cloudflareR2", StringComparison.OrdinalIgnoreCase)
+        || provider.Equals("cloudflare-r2", StringComparison.OrdinalIgnoreCase))
+    {
+        // 兼容历史配置：部署环境可能沿用 cloudflareR2 值。
+        // 当前实现仅支持 Tencent COS，故将该别名归一为 tencentCos，避免启动阶段直接崩溃。
+        log.LogWarning(
+            "ASSETS_PROVIDER={ProviderRaw} 已被归一为 tencentCos（兼容模式）。建议将环境变量显式改为 tencentCos。",
+            providerRaw);
+        provider = "tencentCos";
+    }
 
     // 强约束：任何情况下不允许使用本地文件存储（避免容器可写层过小导致宕机/数据丢失）
     // - 若未配置 COS，则直接启动失败并给出清晰错误
