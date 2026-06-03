@@ -2464,7 +2464,7 @@ export function DocBrowser({
               activeTags={selectedTags}
               tagMax={rowTagMax}
               selectedIds={selectedIds}
-              onToggleSelect={toggleSelect}
+              onToggleSelect={onDeleteEntry ? toggleSelect : undefined}
               selectionActive={selectionActive}
             />
             </motion.div>
