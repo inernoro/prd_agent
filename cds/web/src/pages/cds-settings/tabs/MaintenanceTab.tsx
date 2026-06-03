@@ -418,6 +418,10 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   })();
   const liveElapsedMs = Math.max(0, (runEndedAt ?? Date.now()) - liveStartedAtMs);
 
+  // 自更新历史:统一数据源,进度条 + 历史列表共用一份(不各自 fetch)。
+  const { historyState: selfHistoryState, manualRefresh: refreshSelfHistory } = useSelfUpdateHistory();
+  const selfHistoryRecords = selfHistoryState.status === 'ok' ? selfHistoryState.records : [];
+
   // 2026-05-07 lastTickAt 判活(Phase 1 — 杜绝"timer 跳秒但其实早死"幻觉):
   // 后端每写一步、每条心跳都刷新 lastTickAt。前端用 tickClock 触发
   // 重渲染,实时检测距上次心跳超过 30s → 显示"失联 N 秒"红色态。
@@ -952,7 +956,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
               runState === 'idle'
                 ? '尚未执行更新。'
                 : runState === 'running'
-                  ? `执行中 · ${formatElapsed(elapsedRunMs)}`
+                  ? `执行中 · ${formatElapsed(liveElapsedMs)}`
                   : runState === 'success'
                     ? `已提交重启 · 用时 ${formatElapsed(elapsedRunMs)}`
                     : `执行失败 · 用时 ${formatElapsed(elapsedRunMs)}`
@@ -960,7 +964,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
             contentClassName="p-0"
           >
               {runState === 'running' ? (
-                <SelfUpdateLiveProgress elapsedMs={liveElapsedMs} currentStep={activeSelfUpdate?.step} />
+                <SelfUpdateLiveProgress elapsedMs={liveElapsedMs} currentStep={activeSelfUpdate?.step} records={selfHistoryRecords} />
               ) : null}
               <div className="flex justify-end px-4 py-3">
                 <Button type="button" variant="outline" size="sm" onClick={() => void copyRunLog()} disabled={runLog.length === 0}>
@@ -1005,7 +1009,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
       {/* 2026-05-28 改:历史列表常驻显示在面板下方,不再藏到 Dialog 后面。
           用户反馈"按钮不够明显 + 弹窗内看一眼被闪掉"。 */}
       <Section title="自更新历史" description="最近 20 条记录,倒序(最新在前)。每次触发 self-update / force-sync 都会写入。">
-        <SelfUpdateHistoryList />
+        <SelfUpdateHistoryList historyState={selfHistoryState} onManualRefresh={refreshSelfHistory} />
       </Section>
     </div>
   );
@@ -1184,60 +1188,14 @@ type HistoryFetchState =
   | { status: 'error'; message: string }
   | { status: 'ok'; records: SelfUpdateRecord[] };
 
-function SelfUpdateHistoryList(): JSX.Element {
+// 数据源上移到父组件 useSelfUpdateHistory(与进度条共用,不再自己 fetch)。
+function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
+  historyState: HistoryFetchState;
+  onManualRefresh: () => void;
+}): JSX.Element {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const toggle = (key: string): void => setExpanded((cur) => ({ ...cur, [key]: !cur[key] }));
-
-  const [historyState, setHistoryState] = useState<HistoryFetchState>({ status: 'loading' });
-  const [refreshNonce, setRefreshNonce] = useState(0);
-  const events = useCdsEvents();
-
-  // 2026-05-28 用户反馈"我还没看明白就被闪了一下":
-  // 不再用 snapshot.selfUpdateHistory(每次 self.status 都 re-render),
-  // 改用独立 endpoint /api/self-update-history,只在两个时刻 re-fetch:
-  //   1. 首次 mount(打开页面)
-  //   2. 自更新真正完成时(self.update.done / self.update.failed)
-  //   3. 用户点"刷新"按钮
-  // 中间的 status / heartbeat / step 事件全部忽略 — 列表内容不会变就不刷。
-  const updatingPrev = useRef<typeof events.updating>(null);
-  useEffect(() => {
-    const wasUpdating = !!updatingPrev.current;
-    const isUpdating = !!events.updating;
-    updatingPrev.current = events.updating;
-    // updating: true → false 表示一次更新结束,这时候才有新历史可拉
-    if (wasUpdating && !isUpdating) {
-      setRefreshNonce((n) => n + 1);
-    }
-  }, [events.updating]);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch(apiUrl('/api/self-update-history?limit=20'), { credentials: 'include' })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return (await res.json()) as { records: SelfUpdateRecord[] };
-      })
-      .then((data) => {
-        if (cancelled) return;
-        setHistoryState({ status: 'ok', records: data.records || [] });
-      })
-      .catch((err: Error) => {
-        if (cancelled) return;
-        // 不强制 error 态;静默 console 给运维看
-        // eslint-disable-next-line no-console
-        console.warn('[self-update-history] 拉取失败:', err.message);
-        // 保留当前状态不变,避免刷成空
-        if (historyState.status === 'loading') {
-          setHistoryState({ status: 'error', message: err.message });
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshNonce]);
-
-  const manualRefresh = (): void => setRefreshNonce((n) => n + 1);
+  const manualRefresh = onManualRefresh;
 
   if (historyState.status === 'loading') {
     return (
@@ -1533,6 +1491,41 @@ function SelfUpdateHistoryStats({ stats }: { stats: SelfUpdateHistoryStatsData }
   );
 }
 
+// 自更新历史的统一数据源(进度条 + 历史列表共用,Bugbot #716:避免两处各自
+// fetch 同一 endpoint)。只在三个时刻 re-fetch:首次 mount、一次更新真正结束
+// (events.updating true→false)、用户点刷新。中间的 status/heartbeat/step 不刷。
+function useSelfUpdateHistory(): { historyState: HistoryFetchState; manualRefresh: () => void } {
+  const [historyState, setHistoryState] = useState<HistoryFetchState>({ status: 'loading' });
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const events = useCdsEvents();
+  const updatingPrev = useRef<typeof events.updating>(null);
+  useEffect(() => {
+    const wasUpdating = !!updatingPrev.current;
+    const isUpdating = !!events.updating;
+    updatingPrev.current = events.updating;
+    if (wasUpdating && !isUpdating) setRefreshNonce((n) => n + 1);
+  }, [events.updating]);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(apiUrl('/api/self-update-history?limit=20'), { credentials: 'include' })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return (await res.json()) as { records: SelfUpdateRecord[] };
+      })
+      .then((data) => { if (!cancelled) setHistoryState({ status: 'ok', records: data.records || [] }); })
+      .catch((err: Error) => {
+        if (cancelled) return;
+        // eslint-disable-next-line no-console
+        console.warn('[self-update-history] 拉取失败:', err.message);
+        // 保留当前状态不变(避免刷成空);仅首次 loading 失败才落 error 态。
+        setHistoryState((cur) => (cur.status === 'loading' ? { status: 'error', message: err.message } : cur));
+      });
+    return () => { cancelled = true; };
+  }, [refreshNonce]);
+  const manualRefresh = (): void => setRefreshNonce((n) => n + 1);
+  return { historyState, manualRefresh };
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // 进行中的更新「预计进度条」(2026-06-03 用户:"当前更新也用这个进度条,
 // 让用户有大致预期")。原理:历史成功记录的各阶段耗时取中位数当"预期时间线",
@@ -1562,7 +1555,13 @@ const LIVE_STAGE_DEFS: LiveStageDef[] = [
 const STEP_TO_STAGE_KEY: Record<string, string> = {
   fetch: 'fetch', pull: 'fetch',
   checkout: 'checkout', reset: 'checkout',
-  validate: 'install', 'validate-install': 'install',
+  // 注意:后端整段校验只发一个 'validate' step(install + tsc 合一,见
+  // branches.ts send('validate',...)),没有独立的 validate-install / validate-tsc
+  // step 事件。若把 'validate' 钉死到 install 段,tsc 期间(校验里最久的一段)
+  // 进度条会卡在 install 不动(Codex #716)。所以 'validate' 故意不登记 → 走
+  // elapsed 兜底,随时间从 install 平滑推进到 tsc。下面两条留作未来后端拆分
+  // 子步骤时的精确映射(当前不会触发)。
+  'validate-install': 'install',
   'validate-tsc': 'tsc',
   'build-backend': 'backend',
   'web-build': 'web', 'web-only': 'web',
@@ -1579,18 +1578,9 @@ function median(nums: number[]): number {
   return sorted[Math.floor(sorted.length / 2)];
 }
 
-function SelfUpdateLiveProgress({ elapsedMs, currentStep }: { elapsedMs: number; currentStep?: string }): JSX.Element {
-  const [records, setRecords] = useState<SelfUpdateRecord[]>([]);
-  // 进行中只拉一次历史当基线(elapsedMs 每 250ms 跳一次,不能跟着重拉)。
-  useEffect(() => {
-    let cancelled = false;
-    fetch(apiUrl('/api/self-update-history?limit=20'), { credentials: 'include' })
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then((d: { records?: SelfUpdateRecord[] }) => { if (!cancelled) setRecords(d.records || []); })
-      .catch(() => { /* 没历史就走兜底基线 */ });
-    return () => { cancelled = true; };
-  }, []);
-
+// records 由父组件统一从 useSelfUpdateHistory 拿(与下方历史列表共用同一份,
+// 不再各自 fetch —— 避免本进度条挂载时空 fetch、医到一半还显示"暂无历史"。Bugbot #716)。
+function SelfUpdateLiveProgress({ elapsedMs, currentStep, records }: { elapsedMs: number; currentStep?: string; records: SelfUpdateRecord[] }): JSX.Element {
   const successSamples = records.filter((r) => r.status === 'success' && r.timings);
   const expected = useMemo(() => {
     return LIVE_STAGE_DEFS.map((def) => {
