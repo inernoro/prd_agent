@@ -1606,14 +1606,20 @@ function SelfUpdateLiveProgress({ elapsedMs, currentStep }: { elapsedMs: number;
   const curMs = stages[curIdx]?.ms || 1;
   const overEta = elapsedMs > etaMs;
   const remainMs = Math.max(0, etaMs - elapsedMs);
+  // 总进度百分比:已完成段预期 + 当前段内填充比例,除以 ETA。与进度条填充一致;
+  // 超预期时封顶 99%(还没真正完成,别显示 100% 误导)。
+  const curFrac = Math.min(0.97, Math.max(0.06, (elapsedMs - beforeMs) / curMs));
+  const pct = Math.min(99, Math.round(((beforeMs + curFrac * curMs) / etaMs) * 100));
 
   return (
     <div className="space-y-2 border-t border-border px-4 py-3">
       <div className="flex items-center justify-between text-xs">
         <span className="text-muted-foreground">
+          <span className="font-mono font-medium text-foreground/80">{pct}%</span>
+          {' · '}
           {successSamples.length > 0
-            ? `预计进度(基于近 ${successSamples.length} 次成功更新的中位数)`
-            : '预计进度(暂无历史 · 粗略估算)'}
+            ? `基于近 ${successSamples.length} 次成功更新的中位数`
+            : '暂无历史 · 粗略估算'}
         </span>
         <span className={overEta ? 'font-medium text-amber-600 dark:text-amber-400' : 'font-medium text-foreground/80'}>
           已用 {fmtMs(elapsedMs)} · {overEta ? '预计已到点,收尾中' : `预计还需 ~${fmtMs(remainMs)}`}
