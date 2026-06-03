@@ -55,6 +55,7 @@ import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import { ASPECT_OPTIONS, getSizeForTier } from '@/lib/imageAspectOptions';
 import {
+  cleanDisplayTitle,
   computeRequestedSizeByRefRatio,
   extractSizeToken,
   parseInlinePrompt,
@@ -565,6 +566,8 @@ type GenDoneMeta = {
   actualModel?: string;
   /** 后端实际调度命中的模型池名 */
   actualModelPool?: string;
+  /** 后端返回的实际出图尺寸（WxH），优先于请求尺寸展示，修复"请求 1:1 但实际 16:9" */
+  effectiveSize?: string;
   /** 后端判断此次调用使用的是自适应模型（前端应显示"自适应"而不是具体 WxH） */
   isAdaptive?: boolean;
   genType?: 'text2img' | 'img2img' | 'vision';
@@ -671,8 +674,9 @@ const zoomFactorFromDeltaY = (deltaY: number) => {
 
 
 function guessRefName(ref: CanvasImageItem | null): string {
-  const p = String(ref?.prompt ?? '').trim();
-  if (p) return p.length > 80 ? p.slice(0, 80) : p;
+  // 清洗后再做引用名，避免把上一代的拼接标题/引用块再次带进来（断递归）
+  const p = cleanDisplayTitle(String(ref?.prompt ?? ''), 80);
+  if (p) return p;
 
   const src = String(ref?.src ?? '').trim();
   if (src) {
@@ -1112,6 +1116,11 @@ type ImageGenRunStreamPayload = {
   isAdaptive?: unknown;
   adapterDisplayName?: unknown;
   resolutionType?: unknown;
+  // 后端 imageDone 携带的尺寸真值（请求尺寸 vs 实际返回尺寸）
+  requestedSize?: unknown;
+  effectiveSize?: unknown;
+  sizeAdjusted?: unknown;
+  ratioAdjusted?: unknown;
 };
 
 function buildTemplate(name: string) {
@@ -4110,6 +4119,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       assetId: (asset?.id || '').trim() || x.assetId,
                       sha256: (asset?.sha256 || '').trim() || x.sha256,
                       originalSha256: originalSha.trim() || x.originalSha256,
+                      requestedSize: String(o.requestedSize ?? '').trim() || x.requestedSize,
+                      effectiveSize: String(o.effectiveSize ?? '').trim() || x.effectiveSize,
+                      sizeAdjusted: o.sizeAdjusted === true,
+                      ratioAdjusted: o.ratioAdjusted === true,
                       syncStatus: 'synced',
                       syncError: null,
                     }
@@ -4117,10 +4130,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               )
             );
             const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
-            // 优先用后端 imageDone 事件携带的实际调度结果（actualModel + isAdaptive）
+            // 优先用后端 imageDone 事件携带的实际调度结果（actualModel + isAdaptive + 真实尺寸/平台）
             const actualModelFromSse = String(o.modelId ?? '').trim() || undefined;
             const actualPoolFromSse = String(o.modelGroupName ?? '').trim() || undefined;
             const isAdaptiveFromSse = o.isAdaptive === true;
+            const effectiveSizeFromSse = String(o.effectiveSize ?? '').trim() || undefined;
             pushMsg('Assistant', buildGenDoneContent({
               src: u,
               refSrc: refSrc || undefined,
@@ -4129,6 +4143,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               modelPool: modelPoolName,
               actualModel: actualModelFromSse,
               actualModelPool: actualPoolFromSse,
+              effectiveSize: effectiveSizeFromSse,
               isAdaptive: isAdaptiveFromSse,
               imageRefShas,
             }));
@@ -4386,7 +4401,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               setCanvas((prev) =>
                 prev.map((x) =>
                   x.key === key
-                    ? { ...x, kind: 'image', status: 'done', src: u, originalSrc: originalU, assetId: (asset?.id || '').trim() || x.assetId, sha256: (asset?.sha256 || '').trim() || x.sha256, originalSha256: originalSha.trim() || x.originalSha256, syncStatus: 'synced', syncError: null }
+                    ? { ...x, kind: 'image', status: 'done', src: u, originalSrc: originalU, assetId: (asset?.id || '').trim() || x.assetId, sha256: (asset?.sha256 || '').trim() || x.sha256, originalSha256: originalSha.trim() || x.originalSha256, requestedSize: String(o.requestedSize ?? '').trim() || x.requestedSize, effectiveSize: String(o.effectiveSize ?? '').trim() || x.effectiveSize, sizeAdjusted: o.sizeAdjusted === true, ratioAdjusted: o.ratioAdjusted === true, syncStatus: 'synced', syncError: null }
                     : x
                 )
               );
@@ -4398,6 +4413,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 modelPool: modelPoolName,
                 actualModel: String(o.modelId ?? '').trim() || undefined,
                 actualModelPool: String(o.modelGroupName ?? '').trim() || undefined,
+                effectiveSize: String(o.effectiveSize ?? '').trim() || undefined,
                 isAdaptive: o.isAdaptive === true,
               }));
             } else if (t === 'imageError' || t === 'error') {
@@ -6488,7 +6504,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         const y = it.y ?? 0;
                         const w = it.w ?? 320;
                         const h = it.h ?? 220;
-                        const nameRaw = String(it.prompt ?? '').trim();
+                        // 展示标题统一走 cleanDisplayTitle：剥掉引用块/标记、对重复片段去重，
+                        // 修复"手绘草图:… 变成…【引用图片（按顺序）】- 手绘草图:… : 手…"的自我拼接
+                        const nameRaw = cleanDisplayTitle(String(it.prompt ?? ''));
                         const name = nameRaw || '图片';
                         const pxW = typeof it.naturalW === 'number' ? it.naturalW : 0;
                         const pxH = typeof it.naturalH === 'number' ? it.naturalH : 0;
@@ -9233,7 +9251,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   if (!u) return;
                   setCanvas(prev => prev.map(x =>
                     x.key === genKey
-                      ? { ...x, kind: 'image' as const, status: 'done' as const, src: u, originalSrc: originalU, assetId: (asset?.id || '').trim() || x.assetId, sha256: (asset?.sha256 || '').trim() || x.sha256, originalSha256: originalSha.trim() || x.originalSha256, syncStatus: 'synced' as const, syncError: null }
+                      ? { ...x, kind: 'image' as const, status: 'done' as const, src: u, originalSrc: originalU, assetId: (asset?.id || '').trim() || x.assetId, sha256: (asset?.sha256 || '').trim() || x.sha256, originalSha256: originalSha.trim() || x.originalSha256, requestedSize: String(o.requestedSize ?? '').trim() || x.requestedSize, effectiveSize: String(o.effectiveSize ?? '').trim() || x.effectiveSize, sizeAdjusted: o.sizeAdjusted === true, ratioAdjusted: o.ratioAdjusted === true, syncStatus: 'synced' as const, syncError: null }
                       : x
                   ));
                   pushMsg('Assistant', buildGenDoneContent({
@@ -9244,6 +9262,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     modelPool: modelPoolName,
                     actualModel: String(o.modelId ?? '').trim() || undefined,
                     actualModelPool: String(o.modelGroupName ?? '').trim() || undefined,
+                    effectiveSize: String(o.effectiveSize ?? '').trim() || undefined,
                     isAdaptive: o.isAdaptive === true,
                   }));
                 } else if (t === 'imageError' || t === 'error') {

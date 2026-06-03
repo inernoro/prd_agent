@@ -622,13 +622,16 @@ public class ImageGenRunWorker : BackgroundService
                         var doneRefSrc = loadedImageRefs.FirstOrDefault()?.CosUrl;
                         var doneImageRefShas = loadedImageRefs.Count > 0 ? loadedImageRefs.Select(r => r.Sha256).Where(s => !string.IsNullOrEmpty(s)).ToList() : null;
                         var doneGenType = loadedImageRefs.Count > 1 ? "vision" : (loadedImageRefs.Count == 1 ? "img2img" : "text2img");
-                        var doneMsgContent = $"[GEN_DONE]{JsonSerializer.Serialize(new { src = url ?? string.Empty, refSrc = doneRefSrc, prompt = curDisplayPrompt ?? StripImageGenPrefix(curPrompt), runId = run.Id, modelPool = run.ModelGroupName, genType = doneGenType, imageRefShas = doneImageRefShas }, JsonOptions)}";
+                        var doneAdapter = ImageGenModelAdapterRegistry.TryMatch(run.ModelId);
+                        var doneIsAdaptive = doneAdapter?.SizeConstraintType == SizeConstraintTypes.Adaptive;
+                        // 持久化的 GEN_DONE 必须带上实际模型 / 真实出图尺寸 / 自适应标记，
+                        // 否则刷新后从 DB 重放时这些字段丢失，徽标会回退到"请求尺寸 + 池名"而显示错误。
+                        var doneMsgContent = $"[GEN_DONE]{JsonSerializer.Serialize(new { src = url ?? string.Empty, refSrc = doneRefSrc, prompt = curDisplayPrompt ?? StripImageGenPrefix(curPrompt), runId = run.Id, modelPool = run.ModelGroupName, actualModel = run.ModelId, actualModelPool = run.ModelGroupName, effectiveSize = effSize, isAdaptive = doneIsAdaptive, genType = doneGenType, imageRefShas = doneImageRefShas }, JsonOptions)}";
                         var doneMsgId = await SaveWorkspaceMessageAsync(run.WorkspaceId ?? string.Empty, run.OwnerAdminId, "Assistant", doneMsgContent, ct);
 
                         // ===== 日志图片填充：input 来自前端 COS URL，output 来自生成结果 =====
                         await PatchLogImagesAsync(run, curItemIndex, imageIndex, loadedImageRefs, res.Data.Images, ct);
 
-                        var doneAdapter = ImageGenModelAdapterRegistry.TryMatch(run.ModelId);
                         await AppendEventAsync(run, "image", new
                         {
                             type = "imageDone",
