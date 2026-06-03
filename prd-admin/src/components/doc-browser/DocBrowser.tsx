@@ -479,22 +479,22 @@ export function buildDisplayItems(
 ): DocBrowserDisplayItem[] {
   if (!opts.groupByTime) return roots.map(e => ({ kind: 'entry', entry: e }));
   const now = opts.now ?? Date.now();
-  const counts = new Map<string, number>();
-  for (const e of roots) {
-    if (e.isFolder) continue;
-    const key = timeBucket(e[opts.timeField], now).key;
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
   const items: DocBrowserDisplayItem[] = [];
   let lastKey: string | null = null;
+  let headerIdx = -1; // 当前连续段分组头在 items 中的下标，用于回填本段（非全库）条数
   for (const e of roots) {
-    if (e.isFolder) { items.push({ kind: 'entry', entry: e }); lastKey = null; continue; }
+    if (e.isFolder) { items.push({ kind: 'entry', entry: e }); lastKey = null; headerIdx = -1; continue; }
     const b = timeBucket(e[opts.timeField], now);
     if (b.key !== lastKey) {
-      items.push({ kind: 'header', bucketKey: b.key, label: b.label, count: counts.get(b.key) ?? 0 });
+      headerIdx = items.length;
+      items.push({ kind: 'header', bucketKey: b.key, label: b.label, count: 0 });
       lastKey = b.key;
     }
     items.push({ kind: 'entry', entry: e });
+    // 文件夹会重置桶边界（同一桶可能被拆成多段），count 只数本段、不数全库——
+    // 否则被文件夹拆开的同名桶头都显示全库总数（Bugbot Medium「Time header count not sectional」）
+    const h = items[headerIdx];
+    if (h && h.kind === 'header') h.count += 1;
   }
   return items;
 }
@@ -1636,6 +1636,10 @@ export function DocBrowser({
       return;
     }
     const myId = ++commentCountFetchIdRef.current;
+    // 切到新文档先清空上一篇的评论：避免新文档 listInlineComments 失败/无权（success:false）时
+    // 旧评论残留，甚至因正文文本碰巧匹配把旧高亮/气泡画到新文档上（Codex P2）
+    setCommentCount(0);
+    setInlineCommentItems([]);
     (async () => {
       try {
         const res = await listInlineComments(trackedEntryForComments.id, inlineCommentShareToken);
@@ -2054,6 +2058,18 @@ export function DocBrowser({
   }, []);
   const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
   const selectionActive = selectedIds.size > 0;
+  // 列表变化（刷新 / 别处删除 / 切换空间）时剔除已不在树里的选中 id：
+  // 避免批量条停留显示陈旧数量、批量删除命中已不存在的 id（Bugbot Medium）
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev;
+      const live = new Set(entries.map((e) => e.id));
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) { if (live.has(id)) next.add(id); else changed = true; }
+      return changed ? next : prev;
+    });
+  }, [entries]);
   const handleBulkDelete = useCallback(async () => {
     if (!onDeleteEntry || selectedIds.size === 0) return;
     const ids = Array.from(selectedIds);
@@ -2396,7 +2412,7 @@ export function DocBrowser({
           ) : displayItems.map((item, idx) => (
             item.kind === 'header' ? (
               <div
-                key={`grp-${item.bucketKey}`}
+                key={`grp-${item.bucketKey}-${idx}`}
                 className="flex items-center justify-between"
                 style={{
                   fontSize: '10px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase',

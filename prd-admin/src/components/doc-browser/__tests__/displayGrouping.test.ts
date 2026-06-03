@@ -58,5 +58,10 @@ describe('buildDisplayItems', () => {
     const items = buildDisplayItems(roots, { groupByTime: true, timeField: 'createdAt', now: NOW });
     expect(items.map(i => i.kind === 'header' ? `#${i.bucketKey}` : i.entry.id))
       .toEqual(['f1', '#today', 'a', 'f2', '#today', 'b']);
+    // 被文件夹拆成两段的"今天"头各自只数本段（各 1），不是全库总数（2）——防回归
+    const todayCounts = items
+      .filter(i => i.kind === 'header' && i.bucketKey === 'today')
+      .map(i => (i.kind === 'header' ? i.count : -1));
+    expect(todayCounts).toEqual([1, 1]);
   });
 });
