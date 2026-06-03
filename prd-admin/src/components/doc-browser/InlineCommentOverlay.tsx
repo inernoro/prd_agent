@@ -48,8 +48,19 @@ export function locateInSegments(
 }
 
 // DOM 适配层：收集容器内所有文本节点 → 交给纯核心匹配 → 把结果映射回 Range。
+// 只扫正文：跳过 UI 控件文本——代码块「复制」按钮、本浮层自身（aria-hidden）的气泡等，
+// 否则评论可能锚到按钮而非正文（Bugbot「Anchor scan includes copy buttons」）。
 function findTextRange(root: HTMLElement, query: string): Range | null {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      for (let el = node.parentElement; el && el !== root; el = el.parentElement) {
+        if (el.tagName === 'BUTTON' || el.getAttribute('aria-hidden') === 'true' || el.getAttribute('data-no-anchor') === 'true') {
+          return NodeFilter.FILTER_REJECT;
+        }
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
   const nodes: Text[] = [];
   let n: Node | null;
   while ((n = walker.nextNode())) nodes.push(n as Text);

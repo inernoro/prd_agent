@@ -2023,9 +2023,16 @@ export function DocBrowser({
     setEditContent('');
   }, [loadedContentKey]);
 
-  // 自动选中主文档 + 展开其父文件夹链
+  // 自动选中主文档 + 展开其父文件夹链。每个主文档只自动选一次：
+  // 用户显式「返回列表」清空选中后不再自动重选（否则返回按钮被这条 effect 立刻打回，Codex P2）；
+  // 切换空间（primaryEntryId 变化）时允许对新主文档再自动选一次。
+  const autoSelectedPrimaryRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!selectedEntryId && primaryEntryId && entries.some(e => e.id === primaryEntryId)) {
+    const key = primaryEntryId ?? null;
+    if (autoSelectedPrimaryRef.current === key) return;                    // 本主文档已处理过 → 不再抢
+    if (selectedEntryId) { autoSelectedPrimaryRef.current = key; return; } // 已有选中（含深链）→ 标记已初始化、不覆盖
+    if (primaryEntryId && entries.some(e => e.id === primaryEntryId)) {
+      autoSelectedPrimaryRef.current = primaryEntryId;
       onSelectEntry(primaryEntryId);
       const entryMap = new Map(entries.map(e => [e.id, e]));
       const toExpand = new Set<string>();
