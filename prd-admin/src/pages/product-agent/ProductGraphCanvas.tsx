@@ -297,10 +297,12 @@ function ProductGraphInner({ productId, overview }: { productId?: string; overvi
   // ── 样式：搜索/追溯变化时只改样式，不重排版（拖拽位置得以保留）──
   useEffect(() => {
     const kw = keyword.trim();
+    const selId = selected?.id ?? null;
     setNodes((ns) =>
       ns.map((node) => {
         const type = idType(node.id);
         const color = TYPE_META[type]?.color ?? '#888';
+        const isSel = node.id === selId;
         let dim = false;
         let ring: string | null = null;
         // 追溯模式：只暗化非路径节点，不改外边框（保留类型色，便于辨认类型）
@@ -310,8 +312,13 @@ function ProductGraphInner({ productId, overview }: { productId?: string; overvi
           if (matchIds.has(node.id)) ring = '#22D3EE';
           else if (!traceIds) dim = true;
         }
-        const baseS = view === 'dot' ? {} : baseStyle(color);
-        return { ...node, style: { ...baseS, opacity: dim ? 0.16 : 1, ...(ring ? { boxShadow: `0 0 0 2px ${ring}` } : {}) } };
+        // 选中：白色高亮（卡片描边；圆点交给 DotNode 画圆环）
+        if (isSel && view !== 'dot') ring = '#FFFFFF';
+        if (view === 'dot') {
+          return { ...node, data: { ...(node.data as object), selected: isSel }, style: { opacity: dim ? 0.16 : 1 } };
+        }
+        const baseS = baseStyle(color);
+        return { ...node, style: { ...baseS, opacity: dim ? 0.16 : 1, ...(ring ? { boxShadow: `0 0 0 ${isSel ? 3 : 2}px ${ring}` } : {}) } };
       }),
     );
     setEdges((es) =>
@@ -325,7 +332,7 @@ function ProductGraphInner({ productId, overview }: { productId?: string; overvi
       }),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [traceAnchor, traceIds, keyword, matchIds, visibleKey, view]);
+  }, [traceAnchor, traceIds, keyword, matchIds, visibleKey, view, selected]);
 
   const onNodeClick = (_e: ReactMouseEvent, node: Node) => {
     if (mode === 'trace') {
@@ -334,15 +341,6 @@ function ProductGraphInner({ productId, overview }: { productId?: string; overvi
     }
     // 默认：点击任一节点弹出右侧详情抽屉
     setSelected(raw?.nodes.find((n) => n.id === node.id) ?? null);
-  };
-
-  const toggleCollapse = (id: string) => {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
   };
 
   // 距离过滤选项
@@ -521,10 +519,7 @@ function ProductGraphInner({ productId, overview }: { productId?: string; overvi
           <NodeDrawer
             node={selected}
             productId={selected.productId ?? productId ?? ''}
-            hasChildren={(derived.descCount.get(selected.id) ?? 0) > 0}
-            collapsed={collapsed.has(selected.id)}
             onClose={() => setSelected(null)}
-            onToggleCollapse={() => toggleCollapse(selected.id)}
             onTrace={() => {
               setTraceAnchor(selected.id);
             }}
@@ -543,19 +538,13 @@ function ProductGraphInner({ productId, overview }: { productId?: string; overvi
 function NodeDrawer({
   node,
   productId,
-  hasChildren,
-  collapsed,
   onClose,
-  onToggleCollapse,
   onTrace,
   onOpenDetail,
 }: {
   node: GraphNode;
   productId: string;
-  hasChildren: boolean;
-  collapsed: boolean;
   onClose: () => void;
-  onToggleCollapse: () => void;
   onTrace: () => void;
   onOpenDetail: () => void;
 }) {
@@ -615,39 +604,38 @@ function NodeDrawer({
         <button onClick={onClose} className="text-white/40 hover:text-white"><X size={16} /></button>
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto p-4 flex flex-col gap-3" style={{ overscrollBehavior: 'contain' }}>
+        {/* 操作 */}
+        <div className="flex items-center gap-2">
+          {canOpen && (
+            <button onClick={onOpenDetail} className="flex-1 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm">
+              编辑 / 完整详情
+            </button>
+          )}
+          <button onClick={onTrace} className="flex-1 px-3 py-1.5 rounded-lg border border-amber-400/30 text-amber-300 hover:bg-amber-400/10 text-sm">
+            追溯关系路径
+          </button>
+        </div>
+        {/* 详情直接展示 */}
         <div className="text-base text-white font-medium">{node.label}</div>
         {busy ? (
           <MapSectionLoader text="正在加载…" />
         ) : (
           <>
-            <div className="flex flex-col gap-1.5 text-xs">
-              {rows.map((row, i) => (
-                <DrawerRow key={i} label={row.label} value={row.value} />
-              ))}
+            <div className="flex flex-col gap-2 text-xs rounded-lg border border-white/10 bg-white/[0.02] p-3">
+              {rows.length === 0 ? (
+                <div className="text-white/35 text-center py-2">无更多字段</div>
+              ) : (
+                rows.map((row, i) => <DrawerRow key={i} label={row.label} value={row.value} />)
+              )}
             </div>
-            {desc && (
-              <div className="mt-1">
-                <div className="text-[11px] text-white/40 mb-1">描述</div>
-                <div className="text-sm text-white/75 whitespace-pre-wrap">{desc}</div>
+            <div>
+              <div className="text-[11px] text-white/40 mb-1">描述</div>
+              <div className="text-sm text-white/75 whitespace-pre-wrap rounded-lg border border-white/10 bg-white/[0.02] p-3 min-h-[60px]">
+                {desc || <span className="text-white/30">（未填写）</span>}
               </div>
-            )}
+            </div>
           </>
         )}
-        <div className="flex flex-col gap-2 mt-2 pt-2 border-t border-white/10">
-          {canOpen && (
-            <button onClick={onOpenDetail} className="w-full px-3 py-2 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm">
-              打开完整详情页
-            </button>
-          )}
-          <button onClick={onTrace} className="w-full px-3 py-2 rounded-lg border border-amber-400/30 text-amber-300 hover:bg-amber-400/10 text-sm">
-            追溯关系路径
-          </button>
-          {hasChildren && (
-            <button onClick={onToggleCollapse} className="w-full px-3 py-2 rounded-lg border border-white/10 text-white/60 hover:bg-white/5 text-sm">
-              {collapsed ? '展开子节点' : '收起子节点'}
-            </button>
-          )}
-        </div>
       </div>
     </div>
   );
@@ -662,9 +650,9 @@ function DrawerRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** 圆点视图自定义节点：彩色圆点(大小随重要度) + 下方名称。 */
+/** 圆点视图自定义节点：彩色圆点(大小随重要度) + 下方名称；选中时圆点外圈白色光环。 */
 function DotNode({ data }: NodeProps) {
-  const d = data as { label: string; color: string; size: number };
+  const d = data as { label: string; color: string; size: number; selected?: boolean };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 130 }}>
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
@@ -674,11 +662,11 @@ function DotNode({ data }: NodeProps) {
           height: d.size,
           borderRadius: '50%',
           background: d.color,
-          boxShadow: `0 0 10px ${d.color}66`,
-          border: '2px solid rgba(255,255,255,0.25)',
+          boxShadow: d.selected ? `0 0 0 3px #fff, 0 0 14px ${d.color}` : `0 0 10px ${d.color}66`,
+          border: d.selected ? '2px solid #fff' : '2px solid rgba(255,255,255,0.25)',
         }}
       />
-      <div style={{ marginTop: 6, fontSize: 10, color: 'rgba(255,255,255,0.78)', textAlign: 'center', whiteSpace: 'pre-line', lineHeight: 1.25 }}>
+      <div style={{ marginTop: 6, fontSize: 10, color: d.selected ? '#fff' : 'rgba(255,255,255,0.78)', textAlign: 'center', whiteSpace: 'pre-line', lineHeight: 1.25 }}>
         {d.label}
       </div>
       <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
