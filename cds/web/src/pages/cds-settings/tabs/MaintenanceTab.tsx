@@ -1533,18 +1533,30 @@ interface LiveStageDef {
   label: string;
   color: string;
   fields: Array<keyof SelfUpdateTimings>;
-  steps: string[];                       // 后端 send(step,...) 的原始 step key
 }
 // 顺序必须与后端自更新流程一致(fetch → checkout → 依赖/类型校验 → 编译 → 重启)。
 const LIVE_STAGE_DEFS: LiveStageDef[] = [
-  { key: 'fetch',    label: '拉取',      color: 'bg-sky-500',     fields: ['fetchMs', 'pullMs'],       steps: ['fetch', 'pull'] },
-  { key: 'checkout', label: '切分支',    color: 'bg-cyan-500',    fields: ['checkoutMs', 'resetMs'],   steps: ['checkout', 'reset'] },
-  { key: 'install',  label: '依赖校验',  color: 'bg-indigo-500',  fields: ['validateInstallMs'],       steps: ['validate', 'validate-install'] },
-  { key: 'tsc',      label: '类型校验',  color: 'bg-amber-500',   fields: ['validateTscMs'],           steps: ['validate-tsc'] },
-  { key: 'backend',  label: '后端编译',  color: 'bg-emerald-500', fields: ['buildBackendMs'],          steps: ['build-backend'] },
-  { key: 'web',      label: 'web 重建',  color: 'bg-rose-500',    fields: ['webBuildMs', 'webOnlyMs'], steps: ['web-build', 'web-only'] },
-  { key: 'restart',  label: '排空+重启', color: 'bg-fuchsia-500', fields: ['drainMs', 'restartMs'],    steps: ['restart', 'nginx-render', 'cache', 'analyze'] },
+  { key: 'fetch',    label: '拉取',      color: 'bg-sky-500',     fields: ['fetchMs', 'pullMs'] },
+  { key: 'checkout', label: '切分支',    color: 'bg-cyan-500',    fields: ['checkoutMs', 'resetMs'] },
+  { key: 'install',  label: '依赖校验',  color: 'bg-indigo-500',  fields: ['validateInstallMs'] },
+  { key: 'tsc',      label: '类型校验',  color: 'bg-amber-500',   fields: ['validateTscMs'] },
+  { key: 'backend',  label: '后端编译',  color: 'bg-emerald-500', fields: ['buildBackendMs'] },
+  { key: 'web',      label: 'web 重建',  color: 'bg-rose-500',    fields: ['webBuildMs', 'webOnlyMs'] },
+  { key: 'restart',  label: '排空+重启', color: 'bg-fuchsia-500', fields: ['drainMs', 'restartMs'] },
 ];
+// 后端 send(step,...) 的原始 step key → 展示段 key 的精确映射(Bugbot #716)。
+// 只登记"能明确归到某个可见段"的步骤;过渡 / 收尾步骤(nginx-render / analyze /
+// cache / validate-done / validate-timings 等)故意不登记 → 走 elapsed 兜底,
+// 避免错误地跳到末尾(重启段)或回跳到类型校验。drain = 后端排空等待阶段。
+const STEP_TO_STAGE_KEY: Record<string, string> = {
+  fetch: 'fetch', pull: 'fetch',
+  checkout: 'checkout', reset: 'checkout',
+  validate: 'install', 'validate-install': 'install',
+  'validate-tsc': 'tsc',
+  'build-backend': 'backend',
+  'web-build': 'web', 'web-only': 'web',
+  drain: 'restart', restart: 'restart',
+};
 // 无历史可估算时的兜底基线(ms,秒级),保证条至少能画出来。
 const LIVE_FALLBACK_MS: Record<string, number> = {
   fetch: 1000, checkout: 200, install: 8000, tsc: 16000, backend: 1000, web: 14000, restart: 3000,
@@ -1590,16 +1602,21 @@ function SelfUpdateLiveProgress({ elapsedMs, currentStep }: { elapsedMs: number;
   const stages = hasHistory ? expected : expected.map((d) => ({ ...d, ms: LIVE_FALLBACK_MS[d.key] ?? 1000 }));
   const etaMs = Math.max(stages.reduce((s, v) => s + v.ms, 0), 1);
 
-  // 当前阶段索引:精确匹配 step;validate 收尾(validate-done/timings)归到类型校验段。
+  // 按已用时长落到对应段(用于过渡/收尾步骤的兜底,既不跳末尾也不回跳)。
+  const idxByElapsed = (): number => {
+    let acc = 0;
+    for (let i = 0; i < stages.length; i++) { acc += stages[i].ms; if (elapsedMs < acc) return i; }
+    return stages.length - 1;
+  };
+  // 当前阶段索引:先用精确映射;映射不到的过渡/收尾步骤(nginx-render / analyze /
+  // cache / validate-done / validate-timings 等)走 elapsed 兜底。
   const curIdx = (() => {
-    if (!currentStep) return 0;
-    const exact = stages.findIndex((s) => s.steps.includes(currentStep));
-    if (exact >= 0) return exact;
-    if (currentStep.startsWith('validate')) {
-      const tsc = stages.findIndex((s) => s.key === 'tsc');
-      return tsc >= 0 ? tsc : 0;
+    const mappedKey = currentStep ? STEP_TO_STAGE_KEY[currentStep] : undefined;
+    if (mappedKey) {
+      const i = stages.findIndex((s) => s.key === mappedKey);
+      if (i >= 0) return i;
     }
-    return 0;
+    return idxByElapsed();
   })();
 
   const beforeMs = stages.slice(0, curIdx).reduce((s, v) => s + v.ms, 0);
