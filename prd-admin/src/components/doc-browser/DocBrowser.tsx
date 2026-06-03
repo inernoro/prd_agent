@@ -108,34 +108,195 @@ function TagPickerChip({ tag, onRemove }: { tag: string; onRemove: () => void })
   );
 }
 
-// 条目行内 tag 小药丸（前 2 个完整渲染 + 多余折叠 +N），颜色读 Context 覆盖
-function TagRowChips({ tags }: { tags: string[] }) {
+// 条目行内 tag 小药丸（按名字排序后前 max 个完整渲染 + 多余折叠 +N），颜色读 Context 覆盖。
+// max 随侧栏宽度自适应（拖宽后展示更多，不再一律压缩成 +N）。点击药丸 = 按该标签筛选（onToggleTag），
+// 与顶部筛选条共用同一份 selectedTags 状态（SSOT）。
+function TagRowChips({ tags, onToggleTag, activeTags, max = 2 }: { tags: string[]; onToggleTag?: (tag: string) => void; activeTags?: Set<string>; max?: number }) {
   const { colors } = useContext(TagColorsContext);
+  // 标签按名字从左到右排序（中文走本地化 collation）；先排再 slice，保证可见的 N 个与 +N 都基于排序结果
+  const sorted = useMemo(() => [...tags].sort((a, b) => a.localeCompare(b, 'zh')), [tags]);
+  const visibleCount = Math.max(1, max);
   return (
-    <span className="inline-flex items-center gap-[3px] flex-shrink-0">
-      {tags.slice(0, 2).map(t => {
+    <span className="inline-flex items-center gap-[3px] min-w-0">
+      {/* 可见 tag 放进 overflow-hidden 内层：单行、超宽裁切；+N 作为外层兄弟恒可见 */}
+      <span className="inline-flex items-center gap-[3px] min-w-0 overflow-hidden">
+      {sorted.slice(0, visibleCount).map(t => {
         const c = getTagColor(t, colors);
+        const active = activeTags?.has(t) ?? false;
         return (
           <span
             key={t}
-            className="text-[9px] px-1.5 rounded-full font-medium tabular-nums"
-            style={{ height: 16, lineHeight: '16px', background: c.bg, color: c.text, border: `1px solid ${c.border}` }}
-            title={`#${t}`}
+            role={onToggleTag ? 'button' : undefined}
+            onClick={onToggleTag ? (e) => { e.stopPropagation(); onToggleTag(t); } : undefined}
+            className={`text-[9px] px-1.5 rounded-full tabular-nums flex-shrink-0 ${onToggleTag ? 'cursor-pointer' : ''}`}
+            style={{
+              height: 15, lineHeight: '15px', background: c.bg, color: c.text,
+              border: `1px solid ${active ? c.text : c.border}`,
+              boxShadow: active ? `0 0 0 1px ${c.border}` : 'none',
+            }}
+            title={onToggleTag ? `#${t} · 点击${active ? '取消筛选' : '按此标签筛选'}` : `#${t}`}
           >
-            {truncateTagDisplay(t)}
+            {truncateTagDisplay(t, visibleCount > 2 ? 6 : 2)}
           </span>
         );
       })}
-      {tags.length > 2 && (
+      </span>
+      {sorted.length > visibleCount && (
         <span
-          className="text-[9px] tabular-nums"
+          className="text-[9px] tabular-nums flex-shrink-0"
           style={{ color: 'var(--text-muted)', opacity: 0.7 }}
-          title={tags.slice(2).map(tag => `#${tag}`).join(' ')}
+          title={sorted.slice(visibleCount).map(tag => `#${tag}`).join(' ')}
         >
-          +{tags.length - 2}
+          +{sorted.length - visibleCount}
         </span>
       )}
     </span>
+  );
+}
+
+// 阅读进度条：贴阅读区顶部，随正文滚动推进（纯展示，不挡点击）。
+// key 绑 selectedEntryId，切换文档时重新挂载归零重算；内容尺寸变化用 ResizeObserver 兜底。
+function ReadingProgressBar({ scrollRef }: { scrollRef: React.RefObject<HTMLDivElement> }) {
+  const [pct, setPct] = useState(0);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const max = el.scrollHeight - el.clientHeight;
+      setPct(max > 4 ? Math.min(100, Math.max(0, (el.scrollTop / max) * 100)) : 0);
+    };
+    onScroll();
+    el.addEventListener('scroll', onScroll, { passive: true });
+    const ro = new ResizeObserver(onScroll);
+    ro.observe(el);
+    return () => { el.removeEventListener('scroll', onScroll); ro.disconnect(); };
+  }, [scrollRef]);
+  if (pct <= 0) return null;
+  return (
+    <div aria-hidden style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, zIndex: 5, pointerEvents: 'none' }}>
+      <div style={{ height: '100%', width: `${pct}%`, background: 'var(--accent-primary, #818cf8)', opacity: 0.9, transition: 'width .08s linear', borderRadius: '0 2px 2px 0' }} />
+    </div>
+  );
+}
+
+// 顶部标签筛选下拉：标签过多时收进一个"标签筛选"下拉按钮，点开弹出长方形面板多选筛选（createPortal 防裁剪）。
+function TagFilterDropdown({
+  tags, selected, colors, onToggle, onClear,
+}: {
+  tags: string[];
+  selected: Set<string>;
+  colors: Record<string, TagColorKey>;
+  onToggle: (tag: string) => void;
+  onClear: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [kw, setKw] = useState('');
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement;
+      if (t.closest('[data-tagfilter-pop]') || t.closest('[data-tagfilter-trigger]')) return;
+      setOpen(false);
+    };
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onEsc);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onEsc); };
+  }, [open]);
+
+  const toggleOpen = () => {
+    const r = triggerRef.current?.getBoundingClientRect();
+    if (r) setPos({ top: r.bottom + 4, left: r.left, width: Math.max(r.width, 240) });
+    setOpen(o => !o);
+  };
+
+  const shown = kw.trim() ? tags.filter(t => t.toLowerCase().includes(kw.trim().toLowerCase())) : tags;
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        data-tagfilter-trigger
+        onClick={toggleOpen}
+        className="flex-shrink-0 inline-flex items-center gap-1 text-[10px] px-2 rounded-full cursor-pointer transition-colors"
+        style={{
+          height: 22, lineHeight: '22px',
+          color: selected.size > 0 ? 'var(--text-primary)' : 'var(--text-muted)',
+          background: selected.size > 0 ? 'var(--accent-soft, rgba(129,140,248,0.12))' : 'var(--bg-input)',
+          border: '1px solid var(--border-faint)',
+        }}
+        title="按标签筛选（多选取并集；再次点击取消）"
+      >
+        <Tags size={12} />
+        标签筛选{selected.size > 0 ? ` · ${selected.size}` : ''}
+        <ChevronDown size={12} style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }} />
+      </button>
+      {selected.size > 0 && (
+        <button
+          onClick={onClear}
+          className="flex-shrink-0 inline-flex items-center gap-0.5 text-[9.5px] px-1.5 rounded-full cursor-pointer"
+          style={{ height: 20, lineHeight: '20px', color: 'var(--text-muted)', background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}
+          title="清空筛选"
+        >
+          <X size={9} /> 清空
+        </button>
+      )}
+      {open && pos && createPortal(
+        <div
+          data-tagfilter-pop
+          style={{
+            position: 'fixed', top: pos.top, left: pos.left, width: pos.width, maxWidth: 360,
+            maxHeight: 320, overflowY: 'auto', overscrollBehavior: 'contain',
+            zIndex: 10000, borderRadius: 10, padding: 10,
+            background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)',
+            boxShadow: '0 8px 28px rgba(0,0,0,0.28)',
+          }}
+        >
+          {tags.length > 12 && (
+            <div className="flex items-center gap-1.5 mb-2 px-2 rounded-md" style={{ height: 28, background: 'var(--bg-input)', border: '1px solid var(--border-faint)' }}>
+              <Search size={12} style={{ color: 'var(--text-muted)' }} />
+              <input
+                value={kw}
+                onChange={e => setKw(e.target.value)}
+                autoFocus
+                placeholder="搜索标签…"
+                className="flex-1 bg-transparent outline-none text-[11px]"
+                style={{ color: 'var(--text-primary)' }}
+              />
+            </div>
+          )}
+          <div className="flex flex-wrap gap-1.5">
+            {shown.map(tag => {
+              const c = getTagColor(tag, colors);
+              const active = selected.has(tag);
+              return (
+                <button
+                  key={tag}
+                  onClick={() => onToggle(tag)}
+                  className="text-[10px] px-2 rounded-full cursor-pointer font-medium transition-all"
+                  style={{
+                    height: 22, lineHeight: '22px',
+                    color: active ? '#fff' : c.text,
+                    background: active ? c.dot : c.bg,
+                    border: `1px solid ${active ? c.dot : c.border}`,
+                  }}
+                  title={`#${tag}`}
+                >
+                  {truncateTagDisplay(tag, 10)}
+                </button>
+              );
+            })}
+            {shown.length === 0 && (
+              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>无匹配标签</span>
+            )}
+          </div>
+        </div>,
+        document.body,
+      )}
+    </>
   );
 }
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -145,12 +306,16 @@ import ShinyText from '@/components/reactbits/ShinyText';
 import { systemDialog } from '@/lib/systemDialog';
 import { useViewTracking } from '@/lib/useViewTracking';
 import { useContentSelection, type ContentSelectionInfo } from '@/lib/useContentSelection';
-import { MessageSquareText, MessageSquarePlus } from 'lucide-react';
+import { MessageSquareText, MessageSquarePlus, Check, ChevronLeft } from 'lucide-react';
 import { InlineCommentDrawer, type PendingSelection } from '@/pages/document-store/InlineCommentDrawer';
+import type { DocumentInlineComment } from '@/services/contracts/documentStore';
 import { AcceptanceEvidenceGraph } from './AcceptanceEvidenceGraph';
 import { Workflow } from 'lucide-react';
 import { listInlineComments } from '@/services';
 import { DocToc } from './DocToc';
+import { DocEmptyState } from './DocEmptyState';
+import { InlineCommentOverlay } from './InlineCommentOverlay';
+import { BulkActionBar } from './BulkActionBar';
 
 // ── 类型 ──
 
@@ -201,6 +366,8 @@ export type DocBrowserProps = {
   onSetPrimary?: (entryId: string) => void;
   onTogglePin?: (entryId: string, pin: boolean) => void;
   onDeleteEntry?: (entryId: string) => void;
+  /** 阅读区「返回」：提供则在阅读头显示返回按钮（如返回当前空间的文档列表）。不传不显示。 */
+  onBackToList?: () => void;
   onUpdateEntryTags?: (entryId: string, tags: string[]) => Promise<void>;
   /** 重命名条目（修改 title）。提供时右键菜单会出现"重命名"项。 */
   onRenameEntry?: (entryId: string, newTitle: string) => Promise<void>;
@@ -284,6 +451,54 @@ function isRecentlyChanged(iso?: string): boolean {
   return Date.now() - t < 24 * 60 * 60 * 1000;
 }
 
+// ── 时间分组桶：created-desc / updated-desc 模式下按时间给条目分组（今天/昨天/本周/本月/更早） ──
+export function timeBucket(iso: string | undefined, now: number): { key: string; label: string } {
+  if (!iso) return { key: 'none', label: '未知时间' };
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return { key: 'none', label: '未知时间' };
+  const start = new Date(now); start.setHours(0, 0, 0, 0);
+  const startMs = start.getTime();
+  const day = 24 * 60 * 60 * 1000;
+  if (t >= startMs) return { key: 'today', label: '今天' };
+  if (t >= startMs - day) return { key: 'yesterday', label: '昨天' };
+  if (t >= startMs - 7 * day) return { key: 'week', label: '本周' };
+  if (t >= startMs - 30 * day) return { key: 'month', label: '本月' };
+  return { key: 'earlier', label: '更早' };
+}
+
+// 列表渲染项（条目 / 时间分组头）
+export type DocBrowserDisplayItem =
+  | { kind: 'entry'; entry: DocBrowserEntry }
+  | { kind: 'header'; bucketKey: string; label: string; count: number };
+
+// 把根级条目构造为渲染项序列：groupByTime 时按时间桶插入分组头（文件夹不参与分组，遇文件夹重置桶边界）。
+// 纯函数便于单测；传 now 固定"今天"基准。
+export function buildDisplayItems(
+  roots: DocBrowserEntry[],
+  opts: { groupByTime: boolean; timeField: 'createdAt' | 'updatedAt'; now?: number },
+): DocBrowserDisplayItem[] {
+  if (!opts.groupByTime) return roots.map(e => ({ kind: 'entry', entry: e }));
+  const now = opts.now ?? Date.now();
+  const items: DocBrowserDisplayItem[] = [];
+  let lastKey: string | null = null;
+  let headerIdx = -1; // 当前连续段分组头在 items 中的下标，用于回填本段（非全库）条数
+  for (const e of roots) {
+    if (e.isFolder) { items.push({ kind: 'entry', entry: e }); lastKey = null; headerIdx = -1; continue; }
+    const b = timeBucket(e[opts.timeField], now);
+    if (b.key !== lastKey) {
+      headerIdx = items.length;
+      items.push({ kind: 'header', bucketKey: b.key, label: b.label, count: 0 });
+      lastKey = b.key;
+    }
+    items.push({ kind: 'entry', entry: e });
+    // 文件夹会重置桶边界（同一桶可能被拆成多段），count 只数本段、不数全库——
+    // 否则被文件夹拆开的同名桶头都显示全库总数（Bugbot Medium「Time header count not sectional」）
+    const h = items[headerIdx];
+    if (h && h.kind === 'header') h.count += 1;
+  }
+  return items;
+}
+
 // ── 文件图标（所有类型映射通过 FILE_TYPE_REGISTRY 注册表） ──
 
 function EntryIcon({ entry, isPrimary, isPinned, isOpen }: { entry: DocBrowserEntry; isPrimary: boolean; isPinned: boolean; isOpen?: boolean }) {
@@ -295,7 +510,8 @@ function EntryIcon({ entry, isPrimary, isPinned, isOpen }: { entry: DocBrowserEn
   if (isPrimary) return <Star size={14} style={{ color: 'rgba(234,179,8,0.85)' }} />;
   if (isPinned) return <Pin size={14} style={{ color: 'rgba(59,130,246,0.7)' }} />;
   if (entry.sourceType === 'github_directory') return <Github size={14} style={{ color: 'rgba(130,80,223,0.7)' }} />;
-  if (entry.sourceType === 'subscription') return <Rss size={14} style={{ color: 'rgba(234,179,8,0.7)' }} />;
+  // 订阅源图标弱化为中性灰：整库都是订阅源时，金色 RSS 每条都亮太啰嗦；保留波浪形状区分类型即可
+  if (entry.sourceType === 'subscription') return <Rss size={14} style={{ color: 'var(--text-muted)' }} />;
 
   // 通过注册表按文件名/MIME 类型查找对应图标
   const cfg = getFileTypeConfig(entry.title, entry.contentType);
@@ -762,6 +978,12 @@ function TreeNode({
   onMoveEntry,
   onOpenSubscription,
   isEntryFresh,
+  onToggleTag,
+  activeTags,
+  tagMax,
+  selectedIds,
+  onToggleSelect,
+  selectionActive,
 }: {
   entry: DocBrowserEntry;
   childrenMap: Map<string, DocBrowserEntry[]>;
@@ -785,6 +1007,12 @@ function TreeNode({
   onShareEntry?: (entryId: string) => void;
   onMoveEntry?: (entryId: string, targetFolderId: string | null) => void;
   onOpenSubscription?: (entryId: string) => void;
+  onToggleTag?: (tag: string) => void;
+  activeTags?: Set<string>;
+  tagMax?: number;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (id: string) => void;
+  selectionActive?: boolean;
 }) {
   const isFolder = entry.isFolder;
   const isOpen = expandedFolders.has(entry.id);
@@ -794,6 +1022,7 @@ function TreeNode({
   const children = childrenMap.get(entry.id) ?? [];
   const displayTitle = getDisplayTitle(entry, useContentTitle, contentFirstLines);
   const reprocessing = !isFolder ? reprocessingMap?.[entry.id] : undefined;
+  const isChecked = !isFolder && (selectedIds?.has(entry.id) ?? false);
   const isShared = !isFolder && (sharedEntryIds?.has(entry.id) ?? false);
   const [dragOver, setDragOver] = useState(false);
 
@@ -801,12 +1030,16 @@ function TreeNode({
   const verdictForRow = !isFolder ? getVerdictConfig(entry.metadata?.verdict) : null;
   const isFreshForRow = !isFolder && (isEntryFresh ? isEntryFresh(entry) : isRecentlyChanged(entry.lastChangedAt));
   const isContentMatch = !isFolder && contentMatchIds.has(entry.id);
-  const isSubscriptionDot = !isFolder && entry.sourceType === 'subscription' && !!onOpenSubscription;
+  // 订阅状态点只在「非健康」（暂停/同步中/出错）时才占徽章行：健康（已同步）不画绿点，
+  // 否则每条都顶一个绿点、副行只剩这一个点显得空旷。健康订阅条目因此回落为单行紧凑布局。
+  const isSubscriptionAbnormal = !isFolder && entry.sourceType === 'subscription'
+    && (!!entry.isPaused || entry.syncStatus === 'syncing' || entry.syncStatus === 'error');
+  const isSubscriptionDot = isSubscriptionAbnormal && !!onOpenSubscription;
   const hasTags = !isFolder && (entry.tags?.length ?? 0) > 0;
   const hasBadgeRow =
     !isFolder && (
       isShared || reprocessing !== undefined || !!verdictForRow ||
-      hasTags || isContentMatch || isFreshForRow ||
+      hasTags || isContentMatch ||
       isSubscriptionDot || isPrimary || (isPinned && !isPrimary)
     );
 
@@ -845,7 +1078,7 @@ function TreeNode({
             onMoveEntry(draggedId, entry.id);
           }
         }}
-        className={`relative flex items-center gap-2 text-left cursor-pointer transition-all duration-150 group ${isFolder ? 'py-[7px]' : 'py-[8px] hover-bg-soft'}`}
+        className={`relative flex flex-col justify-center text-left cursor-pointer transition-all duration-150 group ${isFolder ? 'py-[7px]' : 'gap-1 py-[8px] hover-bg-soft'}`}
         style={{
           // 整块圆角高亮：左右留 6px 内缩，hover/选中不贴边。
           // 宽度扣掉左右 12px 外边距，避免 w-full(100%)+margin 超出容器、撑出横向滚动条。
@@ -878,8 +1111,16 @@ function TreeNode({
         }}
         title={isFolder ? '点击展开/折叠（可拖拽文件到此）' : isPrimary ? '主文档' : '右键打开菜单'}
       >
-        {/* 选中态：圆角块内侧细 accent 条（不贴边、不粗方） */}
-        {isSelected && !isFolder && (
+        {/* 左侧状态色条：验收结论 → 绿/琥珀/红竖条，整列向下一扫即知通过率分布（颜色 + 文字双编码，满足无障碍） */}
+        {verdictForRow && (
+          <span
+            aria-hidden
+            className="absolute left-0 top-1/2 -translate-y-1/2 rounded-r-full"
+            style={{ width: '3px', height: '64%', background: verdictForRow.color, opacity: isSelected ? 1 : 0.9 }}
+          />
+        )}
+        {/* 选中态：圆角块内侧细 accent 条（无验收色条时才显示，避免与状态色条重叠） */}
+        {isSelected && !isFolder && !verdictForRow && (
           <span
             aria-hidden
             className="absolute left-[3px] top-1/2 -translate-y-1/2 rounded-full"
@@ -891,39 +1132,78 @@ function TreeNode({
             }}
           />
         )}
-        {/* 单行布局：图标 + 标题（吃剩余宽度）+ 徽章序列 + 时间。徽章统一压扁到 ~16px 高度，避免行高跳变 */}
-        <EntryIcon entry={entry} isPrimary={isPrimary} isPinned={isPinned} isOpen={isOpen} />
-
-        <span className="flex-1 truncate min-w-0"
-          style={{
-            color: isFolder
-              ? 'var(--text-muted)'
-              : (isSelected ? 'var(--text-primary)' : 'var(--text-secondary)'),
-            fontWeight: isFolder ? 600 : (isSelected ? 600 : 500),
-            fontSize: isFolder ? '10.5px' : '12.5px',
-            letterSpacing: isFolder ? '0.06em' : '-0.005em',
-            textTransform: isFolder ? 'uppercase' : 'none',
-          }}>
-          {displayTitle}
-        </span>
-
-        {/* 文件夹的计数 + 折叠箭头 */}
-        {isFolder && (
-          <span className="flex items-center gap-1.5 flex-shrink-0">
-            <span className="text-[10px] tabular-nums" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
-              {children.length}
+        {/* 第一行：图标 + 标题独占整行（标题增强：更亮更粗略放大），徽章移到第二行，避免挤占标题宽度 */}
+        <div className="flex items-center gap-2 w-full min-w-0">
+          {/* 批量多选勾选框：仅文件，hover 或已进入多选态时显示；点击只切换选择不打开文档 */}
+          {!isFolder && onToggleSelect && (
+            <span
+              role="checkbox"
+              aria-checked={isChecked}
+              onClick={(e) => { e.stopPropagation(); onToggleSelect(entry.id); }}
+              className={`flex-shrink-0 inline-flex items-center justify-center cursor-pointer transition-opacity ${isChecked || selectionActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+              style={{
+                width: 15, height: 15, borderRadius: 4,
+                border: `1.5px solid ${isChecked ? 'var(--accent-primary, #818cf8)' : 'var(--border-strong, rgba(255,255,255,0.28))'}`,
+                background: isChecked ? 'var(--accent-primary, #818cf8)' : 'transparent',
+              }}
+              title={isChecked ? '取消选择' : '选择（批量操作）'}
+            >
+              {isChecked && <Check size={10} style={{ color: '#fff' }} />}
             </span>
-            {isOpen
-              ? <ChevronDown size={13} style={{ color: 'var(--text-muted)' }} />
-              : <ChevronRight size={13} style={{ color: 'var(--text-muted)' }} />}
-          </span>
-        )}
+          )}
+          <EntryIcon entry={entry} isPrimary={isPrimary} isPinned={isPinned} isOpen={isOpen} />
 
-        {/* 右侧两层堆叠：上层徽章 + 下层时间。无徽章时仅时间居中右对齐 */}
-        {!isFolder && (
-        <div className="flex flex-col items-end justify-center gap-1 flex-shrink-0 ml-auto">
+          {/* 非文件夹标题不再 flex-1 撑满：取自然宽度，让 NEW 紧贴标题末尾（时间靠 ml-auto 顶右） */}
+          <span className={`${isFolder ? 'flex-1 ' : ''}truncate min-w-0`}
+            style={{
+              color: isFolder ? 'var(--text-muted)' : 'var(--text-primary)',
+              fontWeight: isFolder ? 600 : (isSelected ? 700 : 600),
+              fontSize: isFolder ? '10.5px' : '13px',
+              letterSpacing: isFolder ? '0.06em' : '-0.01em',
+              textTransform: isFolder ? 'uppercase' : 'none',
+            }}>
+            {displayTitle}
+          </span>
+
+          {/* NEW 与标题同行、贴标题末尾：标题过长截断时与标题一起省略，并与右侧时间归为"近期"信号 */}
+          {isFreshForRow && (
+            <span
+              className="text-[9px] px-1.5 rounded-full flex-shrink-0 font-bold"
+              style={{ height: 15, lineHeight: '15px', background: 'rgba(34,197,94,0.12)', letterSpacing: '0.3px' }}
+              title={`最近更新: ${entry.lastChangedAt ? new Date(entry.lastChangedAt).toLocaleString('zh-CN') : ''}`}
+            >
+              <ShinyText text="NEW" speed={2.4} color="rgba(74,222,128,0.95)" shineColor="rgba(255,255,255,0.95)" spread={120} />
+            </span>
+          )}
+
+          {/* 文件夹的计数 + 折叠箭头（第一行右侧） */}
+          {isFolder && (
+            <span className="flex items-center gap-1.5 flex-shrink-0">
+              <span className="text-[10px] tabular-nums" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
+                {children.length}
+              </span>
+              {isOpen
+                ? <ChevronDown size={13} style={{ color: 'var(--text-muted)' }} />
+                : <ChevronRight size={13} style={{ color: 'var(--text-muted)' }} />}
+            </span>
+          )}
+
+          {/* 无徽章行时：时间紧贴标题右侧，避免出现空旷的第二行 */}
+          {!isFolder && !hasBadgeRow && showUpdatedTime && entry[timeField] && (
+            <span className="flex-shrink-0 ml-auto" style={{ paddingLeft: '6px', opacity: 0.6 }}>
+              <RelativeTime
+                value={entry[timeField]!}
+                refreshIntervalMs={0}
+                className="text-[9.5px] tabular-nums text-token-muted"
+                title={`${timeField === 'createdAt' ? '创建于' : '最后更新'}：${new Date(entry[timeField]!).toLocaleString('zh-CN')}${timeField === 'updatedAt' && entry.updatedByName ? ` · ${entry.updatedByName}` : ''}`}
+              />
+            </span>
+          )}
+        </div>
+
+        {/* 第二行：徽章（左对齐，tag 按名字排序）+ 时间（右对齐）。仅非文件夹且有徽章时渲染，缩进对齐标题下方 */}
         {hasBadgeRow && (
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 w-full" style={{ paddingLeft: '22px' }}>
         {/* 已分享：icon-only 节省宽度，hover/点击复用原行为 */}
         {isShared && (
           <span
@@ -941,8 +1221,8 @@ function TreeNode({
           <span
             className="inline-flex items-center gap-1 text-[9px] px-1.5 rounded-full flex-shrink-0 font-semibold tabular-nums"
             style={{
-              height: 16,
-              lineHeight: '16px',
+              height: 15,
+              lineHeight: '15px',
               background: 'rgba(59,130,246,0.12)',
               color: 'rgba(96,165,250,0.95)',
             }}
@@ -961,7 +1241,7 @@ function TreeNode({
           return (
             <span
               className="text-[9px] px-1.5 rounded-full flex-shrink-0 font-bold tabular-nums"
-              style={{ height: 16, lineHeight: '16px', background: vc.background, color: vc.color, border: vc.border }}
+              style={{ height: 15, lineHeight: '15px', background: vc.background, color: vc.color, border: vc.border }}
               title={`验收结论：${vc.label}${tier ? ` · 档位 ${tier}` : ''}`}
             >
               {vc.label}{tier ? ` ${tier}` : ''}
@@ -969,9 +1249,9 @@ function TreeNode({
           );
         })()}
 
-        {/* tag：每个 tag 一个小药丸，颜色走 tagPalette + 用户覆盖 */}
+        {/* tag：每个 tag 一个小药丸，颜色走 tagPalette + 用户覆盖；点击按该标签筛选 */}
         {!isFolder && (entry.tags?.length ?? 0) > 0 && (
-          <TagRowChips tags={entry.tags!} />
+          <TagRowChips tags={entry.tags!} onToggleTag={onToggleTag} activeTags={activeTags} max={tagMax} />
         )}
 
         {/* 内容命中标记 */}
@@ -979,8 +1259,8 @@ function TreeNode({
           <span
             className="text-[9px] px-1.5 rounded-full flex-shrink-0"
             style={{
-              height: 16,
-              lineHeight: '16px',
+              height: 15,
+              lineHeight: '15px',
               background: 'var(--bg-tertiary)',
               color: 'var(--text-muted)',
               letterSpacing: '0.2px',
@@ -991,24 +1271,8 @@ function TreeNode({
           </span>
         )}
 
-        {/* NEW 徽标 */}
-        {!isFolder && (isEntryFresh ? isEntryFresh(entry) : isRecentlyChanged(entry.lastChangedAt)) && (
-          <span
-            className="text-[9px] px-1.5 rounded-full flex-shrink-0 font-bold"
-            style={{
-              height: 16,
-              lineHeight: '16px',
-              background: 'rgba(34,197,94,0.12)',
-              letterSpacing: '0.3px',
-            }}
-            title={`最近更新: ${entry.lastChangedAt ? new Date(entry.lastChangedAt).toLocaleString('zh-CN') : ''}`}
-          >
-            <ShinyText text="NEW" speed={2.4} color="rgba(74,222,128,0.95)" shineColor="rgba(255,255,255,0.95)" spread={120} />
-          </span>
-        )}
-
-        {/* 订阅状态点 */}
-        {!isFolder && entry.sourceType === 'subscription' && onOpenSubscription && (
+        {/* 订阅状态点：仅非健康（暂停/同步中/出错）才显示；健康已同步不画点（去重复绿点） */}
+        {isSubscriptionAbnormal && onOpenSubscription && (
           <span
             onClick={(e) => { e.stopPropagation(); onOpenSubscription(entry.id); }}
             className="flex-shrink-0 cursor-pointer"
@@ -1042,12 +1306,9 @@ function TreeNode({
         {isPinned && !isPrimary && (
           <Pin size={10} className="flex-shrink-0" style={{ color: 'rgba(59,130,246,0.5)' }} />
         )}
-        </div>
-        )}
-
-        {/* 时间：右下角，所有条目可见，跟随排序键显示 createdAt 或 updatedAt */}
+        {/* 时间：第二行右对齐，跟随排序键显示 createdAt 或 updatedAt */}
         {showUpdatedTime && entry[timeField] && (
-          <span style={{ opacity: 0.65 }}>
+          <span className="ml-auto flex-shrink-0" style={{ opacity: 0.65 }}>
             <RelativeTime
               value={entry[timeField]!}
               refreshIntervalMs={0}
@@ -1086,6 +1347,12 @@ function TreeNode({
           onMoveEntry={onMoveEntry}
           onOpenSubscription={onOpenSubscription}
           isEntryFresh={isEntryFresh}
+          onToggleTag={onToggleTag}
+          activeTags={activeTags}
+          tagMax={tagMax}
+          selectedIds={selectedIds}
+          onToggleSelect={onToggleSelect}
+          selectionActive={selectionActive}
         />
       ))}
     </>
@@ -1145,6 +1412,7 @@ export function DocBrowser({
   onSetPrimary,
   onTogglePin,
   onDeleteEntry,
+  onBackToList,
   onUpdateEntryTags,
   onRenameEntry,
   onMoveEntry,
@@ -1328,9 +1596,11 @@ export function DocBrowser({
   const [pendingSelection, setPendingSelection] = useState<PendingSelection | null>(null);
   // 2026-05-28 用户反馈："看不到别人留在这里的评论气泡"。
   // 进入条目时主动预拉评论计数，让正文上方常驻一颗 chip：
-  //   "💬 N 条评论" 点击打开 InlineCommentDrawer。
+  //   "N 条评论" 点击打开 InlineCommentDrawer。
   // 仅 best-effort：失败/无权（私有库无分享访问）默认 0，不影响主流程。
   const [commentCount, setCommentCount] = useState(0);
+  // 评论全量列表（驱动行内高亮气泡 InlineCommentOverlay；commentCount 仍用于上方 chip）
+  const [inlineCommentItems, setInlineCommentItems] = useState<DocumentInlineComment[]>([]);
   // 评论计数 fetchIdRef 守卫（PR #685 Bugbot Low）：切换条目 / onClose 重拉时，
   // 旧 entry 的慢响应不覆盖新 entry 已设的计数。
   const commentCountFetchIdRef = useRef(0);
@@ -1342,48 +1612,55 @@ export function DocBrowser({
   const selectionRawContent = useMemo(() => {
     const text = preview?.text;
     if (!text) return text ?? undefined;
-    const e = entries.find(x => x.id === selectedEntryId);
+    const e = selectedEntryData; // 用带 searchResults 兜底的 SSOT：仅存在于搜索结果的命中也能正确解析选区（Bugbot）
     if (!e || e.isFolder) return text;
     const cfg = getFileTypeConfig(e.title, e.contentType);
     return cfg.preview === 'text' ? parseFrontmatter(text).body : text;
-  }, [preview, entries, selectedEntryId]);
+  }, [preview, selectedEntryData]);
   const { selection: liveSelection, clear: clearLiveSelection } = useContentSelection(
     contentAreaRef,
     selectionRawContent,
     Boolean(selectedEntryId && !contentLoading && !editMode),
   );
   const trackedEntryForComments = useMemo(() => {
-    if (!selectedEntryId) return null;
-    const e = entries.find(x => x.id === selectedEntryId);
+    // 用带 searchResults 兜底的 selectedEntryData：仅存在于后端搜索结果的命中也能拉评论（Bugbot Medium）
+    const e = selectedEntryData;
     return e && !e.isFolder ? e : null;
-  }, [selectedEntryId, entries]);
+  }, [selectedEntryData]);
 
   // 进入条目时预拉评论计数，让正文上方常驻入口（共享视图也能看到他人评论的存在）
   useEffect(() => {
     if (!trackedEntryForComments) {
       setCommentCount(0);
+      setInlineCommentItems([]);
       return;
     }
     const myId = ++commentCountFetchIdRef.current;
+    // 切到新文档先清空上一篇的评论：避免新文档 listInlineComments 失败/无权（success:false）时
+    // 旧评论残留，甚至因正文文本碰巧匹配把旧高亮/气泡画到新文档上（Codex P2）
+    setCommentCount(0);
+    setInlineCommentItems([]);
     (async () => {
       try {
         const res = await listInlineComments(trackedEntryForComments.id, inlineCommentShareToken);
-        if (myId === commentCountFetchIdRef.current && res.success) setCommentCount(res.data.items.length);
+        if (myId === commentCountFetchIdRef.current && res.success) {
+          setCommentCount(res.data.items.length);
+          setInlineCommentItems(res.data.items);
+        }
       } catch { /* 私有库 + 无分享 + 非 owner 会 404，正常 */ }
     })();
   }, [trackedEntryForComments, inlineCommentShareToken]);
 
   // F1：仅当当前预览是文本类（Markdown/提取文本）时，给右侧 TOC 提供正文
   const tocContent = useMemo(() => {
-    if (!selectedEntryId) return null;
-    const e = entries.find(x => x.id === selectedEntryId);
+    const e = selectedEntryData; // 同上：带 searchResults 兜底，搜索命中也正确生成 TOC（Bugbot）
     if (!e || e.isFolder) return null;
     const text = preview?.text;
     if (!text) return null;
     const cfg = getFileTypeConfig(e.title, e.contentType);
     // 与 MarkdownViewer 一致：剥掉 frontmatter，TOC 不把 ---/title: 当标题
     return cfg.preview === 'text' ? parseFrontmatter(text).body : null;
-  }, [selectedEntryId, entries, preview]);
+  }, [selectedEntryData, preview]);
 
   // 拖拽调整宽度
   useEffect(() => {
@@ -1573,6 +1850,17 @@ export function DocBrowser({
     return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([tag]) => tag);
   }, [entries]);
 
+  // 列表渲染项：chronological 排序（created/updated-desc）且非搜索态时按时间桶插入分组小标题；
+  // 否则纯条目列表（default 文件夹树 / 搜索结果保持原序）。逻辑提取为 buildDisplayItems 便于单测。
+  const displayItems = useMemo(
+    () => buildDisplayItems(filteredRoots, { groupByTime: sortMode !== 'default' && !search.trim(), timeField }),
+    [filteredRoots, sortMode, search, timeField],
+  );
+
+  // 行内标签可见数随侧栏宽度自适应：侧栏越宽展示越多标签（拖宽后不再压缩成 +N）
+  // 窄栏更激进地收进 +N，保证徽章行恒为单行（绝不竖直堆叠）；宽栏才逐步多展示
+  const rowTagMax = sidebarWidth >= 560 ? 12 : sidebarWidth >= 460 ? 6 : sidebarWidth >= 380 ? 4 : sidebarWidth >= 340 ? 3 : sidebarWidth >= 300 ? 2 : 1;
+
   // 自动剔除当前 entries 不存在的已选 tag：
   // sessionStorage 是全局共享（DocBrowser 三处调用），跨知识库切换时上一个库选的 tag 可能
   // 当前库根本没有 → filter 拒绝所有文件 + chip 条因 allTagsRanked 为空不渲染，用户卡死无法清空。
@@ -1734,9 +2022,15 @@ export function DocBrowser({
     setEditContent('');
   }, [loadedContentKey]);
 
-  // 自动选中主文档 + 展开其父文件夹链
+  // 自动选中主文档 + 展开其父文件夹链。每次进入空间只自动选一次：
+  // StoreDetailView 按 selectedStoreId 条件渲染 → 切空间会重挂 DocBrowser、本 ref 自然归零，对新空间仍会自动选；
+  // 显式「返回列表」清空选中后不再自动重选——即便此后该空间主文档 id 变化（新设 README）也不打回（Codex/Bugbot）。
+  const didAutoSelectRef = useRef(false);
   useEffect(() => {
-    if (!selectedEntryId && primaryEntryId && entries.some(e => e.id === primaryEntryId)) {
+    if (didAutoSelectRef.current) return;
+    if (selectedEntryId) { didAutoSelectRef.current = true; return; }      // 已有选中（含深链）→ 视为已初始化、不覆盖
+    if (primaryEntryId && entries.some(e => e.id === primaryEntryId)) {
+      didAutoSelectRef.current = true;
       onSelectEntry(primaryEntryId);
       const entryMap = new Map(entries.map(e => [e.id, e]));
       const toExpand = new Set<string>();
@@ -1757,6 +2051,46 @@ export function DocBrowser({
     setNewFolderName('');
     setCreatingFolder(false);
   }, [newFolderName, onCreateFolder]);
+
+  // 批量多选（仅非文件夹条目）：勾选若干条 → 底部浮出 BulkActionBar 批量删除
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+  const selectionActive = selectedIds.size > 0;
+  // 列表变化（刷新 / 别处删除 / 切换空间）时剔除已不在树里的选中 id：
+  // 避免批量条停留显示陈旧数量、批量删除命中已不存在的 id（Bugbot Medium）
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev;
+      const live = new Set(entries.map((e) => e.id));
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) { if (live.has(id)) next.add(id); else changed = true; }
+      return changed ? next : prev;
+    });
+  }, [entries]);
+  const handleBulkDelete = useCallback(async () => {
+    if (!onDeleteEntry || selectedIds.size === 0) return;
+    const ids = Array.from(selectedIds);
+    const confirmed = await systemDialog.confirm({
+      title: '批量删除文档',
+      message: `将永久删除选中的 ${ids.length} 个文件及其解析正文 / 附件。\n\n此操作不可恢复。`,
+      tone: 'danger',
+      confirmText: `永久删除 ${ids.length} 个`,
+      cancelText: '取消',
+    });
+    if (!confirmed) return;
+    for (const id of ids) {
+      try { await onDeleteEntry(id); } catch { /* 单个失败不阻断其余 */ }
+    }
+    setSelectedIds(new Set());
+  }, [onDeleteEntry, selectedIds]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent, entry: DocBrowserEntry) => {
     setContextMenu({ x: e.clientX, y: e.clientY, entry });
@@ -1794,6 +2128,17 @@ export function DocBrowser({
           width: `${sidebarWidth}px`,
           minHeight: 0,
         }}>
+
+        {/* 批量操作条：选中条目后浮在侧栏底部，支持批量删除（取消即清空选择） */}
+        {selectionActive && onDeleteEntry && (
+          <div style={{ position: 'absolute', left: 8, right: 8, bottom: 10, zIndex: 20 }}>
+            <BulkActionBar
+              count={selectedIds.size}
+              onDelete={handleBulkDelete}
+              onCancel={clearSelection}
+            />
+          </div>
+        )}
 
         {/* 外部自定义 sidebar 头部（如「周报列表 · 按最近提交 · N 篇」），可选 */}
         {sidebarHeader && (
@@ -1925,7 +2270,7 @@ export function DocBrowser({
               )}
             </div>
           </div>
-          {/* tag 筛选条：水平 chip 行，颜色按 tagPalette 自动分配；横向滚动避免被压缩 */}
+          {/* tag 筛选条：≤6 个内联 chip 行；>6 个收进"标签筛选"下拉（点开弹长方形面板多选），避免一长串横向溢出 */}
           {allTagsRanked.length > 0 && (
             <div
               className="flex items-center gap-1 overflow-x-auto"
@@ -1937,44 +2282,56 @@ export function DocBrowser({
               }}
               title="点击筛选；多选取并集；再次点击取消"
             >
-              {selectedTags.size > 0 && (
-                <button
-                  onClick={() => setSelectedTags(new Set())}
-                  className="flex-shrink-0 text-[9.5px] px-1.5 rounded-full cursor-pointer transition-colors"
-                  style={{
-                    height: 18,
-                    lineHeight: '18px',
-                    color: 'var(--text-muted)',
-                    background: 'var(--bg-input)',
-                    border: '1px solid var(--border-faint)',
-                  }}
-                  title="清空筛选"
-                >
-                  清空
-                </button>
+              {allTagsRanked.length > 6 ? (
+                <TagFilterDropdown
+                  tags={allTagsRanked}
+                  selected={selectedTags}
+                  colors={tagColorMap}
+                  onToggle={toggleTag}
+                  onClear={() => setSelectedTags(new Set())}
+                />
+              ) : (
+                <>
+                  {selectedTags.size > 0 && (
+                    <button
+                      onClick={() => setSelectedTags(new Set())}
+                      className="flex-shrink-0 text-[9.5px] px-1.5 rounded-full cursor-pointer transition-colors"
+                      style={{
+                        height: 18,
+                        lineHeight: '18px',
+                        color: 'var(--text-muted)',
+                        background: 'var(--bg-input)',
+                        border: '1px solid var(--border-faint)',
+                      }}
+                      title="清空筛选"
+                    >
+                      清空
+                    </button>
+                  )}
+                  {allTagsRanked.map(tag => {
+                    const c = getTagColor(tag, tagColorMap);
+                    const active = selectedTags.has(tag);
+                    return (
+                      <button
+                        key={tag}
+                        onClick={() => toggleTag(tag)}
+                        className="flex-shrink-0 text-[10px] px-2 rounded-full cursor-pointer font-medium transition-all"
+                        style={{
+                          height: 20,
+                          lineHeight: '20px',
+                          color: active ? '#fff' : c.text,
+                          background: active ? c.dot : c.bg,
+                          border: `1px solid ${active ? c.dot : c.border}`,
+                          letterSpacing: '0.01em',
+                        }}
+                        title={`#${tag}`}
+                      >
+                        {truncateTagDisplay(tag)}
+                      </button>
+                    );
+                  })}
+                </>
               )}
-              {allTagsRanked.map(tag => {
-                const c = getTagColor(tag, tagColorMap);
-                const active = selectedTags.has(tag);
-                return (
-                  <button
-                    key={tag}
-                    onClick={() => toggleTag(tag)}
-                    className="flex-shrink-0 text-[10px] px-2 rounded-full cursor-pointer font-medium transition-all"
-                    style={{
-                      height: 20,
-                      lineHeight: '20px',
-                      color: active ? '#fff' : c.text,
-                      background: active ? c.dot : c.bg,
-                      border: `1px solid ${active ? c.dot : c.border}`,
-                      letterSpacing: '0.01em',
-                    }}
-                    title={`#${tag}`}
-                  >
-                    {truncateTagDisplay(tag)}
-                  </button>
-                );
-              })}
             </div>
           )}
           {creatingFolder && (
@@ -2057,16 +2414,30 @@ export function DocBrowser({
                 </>
               )}
             </div>
-          ) : filteredRoots.map((entry, idx) => (
+          ) : displayItems.map((item, idx) => (
+            item.kind === 'header' ? (
+              <div
+                key={`grp-${item.bucketKey}-${idx}`}
+                className="flex items-center justify-between"
+                style={{
+                  fontSize: '10px', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase',
+                  color: 'var(--text-muted)', padding: '12px 12px 5px',
+                  borderTop: idx === 0 ? 'none' : '1px solid var(--border-faint)',
+                }}
+              >
+                <span>{item.label}</span>
+                <span style={{ fontWeight: 500, letterSpacing: 0, opacity: 0.8 }}>{item.count} 篇</span>
+              </div>
+            ) : (
             <motion.div
-              key={entry.id}
+              key={item.entry.id}
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.28, delay: Math.min(idx * 0.018, 0.5), ease: [0.25, 0.1, 0.25, 1] }}
             >
             <TreeNode
-              entry={entry}
-              childrenMap={search.trim() && searchResults !== null ? new Map() : (search.trim() ? filteredChildrenMap : childrenMap)}
+              entry={item.entry}
+              childrenMap={search.trim() && searchResults !== null ? new Map() : (search.trim() || selectedTags.size > 0 ? filteredChildrenMap : childrenMap)}
               depth={0}
               selectedEntryId={selectedEntryId}
               primaryEntryId={primaryEntryId}
@@ -2087,8 +2458,15 @@ export function DocBrowser({
               onMoveEntry={onMoveEntry}
               onOpenSubscription={onOpenSubscription}
               isEntryFresh={isEntryFresh}
+              onToggleTag={toggleTag}
+              activeTags={selectedTags}
+              tagMax={rowTagMax}
+              selectedIds={selectedIds}
+              onToggleSelect={onDeleteEntry ? toggleSelect : undefined}
+              selectionActive={selectionActive}
             />
             </motion.div>
+            )
           ))}
         </div>
         {/* 根级放置区域 - 允许拖到根级别 */}
@@ -2148,7 +2526,34 @@ export function DocBrowser({
           <>
             {/* 面包屑导航 header */}
             <div className="flex items-center gap-2 px-5 py-2.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+              {/* 阅读区返回按钮：返回当前空间的文档列表（上一层），仅调用方传 onBackToList 才显示 */}
+              {onBackToList && (
+                <button
+                  onClick={onBackToList}
+                  className="flex-shrink-0 inline-flex items-center gap-1 h-6 px-2 rounded-[8px] text-[11px] cursor-pointer transition-colors hover:opacity-80"
+                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)' }}
+                  title="返回文档列表"
+                >
+                  <ChevronLeft size={13} /> 返回列表
+                </button>
+              )}
               <Breadcrumbs entryId={selectedEntryId} entries={entries} />
+              {/* 验收结论药丸：列表里有、阅读区原先缺失，这里补上让「通过 L1」在阅读视图也一眼可见 */}
+              {(() => {
+                const sel = entries.find(e => e.id === selectedEntryId);
+                const vc = sel && !sel.isFolder ? getVerdictConfig(sel.metadata?.verdict) : null;
+                if (!vc) return null;
+                const tier = sel!.metadata?.tier;
+                return (
+                  <span
+                    className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0 font-bold tabular-nums"
+                    style={{ background: vc.background, color: vc.color, border: vc.border }}
+                    title={`验收结论：${vc.label}${tier ? ` · 档位 ${tier}` : ''}`}
+                  >
+                    {vc.label}{tier ? ` ${tier}` : ''}
+                  </span>
+                );
+              })()}
               {selectedEntryId === primaryEntryId && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0"
                   style={{ background: 'rgba(234,179,8,0.08)', color: 'rgba(234,179,8,0.8)', border: '1px solid rgba(234,179,8,0.12)' }}>
@@ -2377,7 +2782,13 @@ export function DocBrowser({
               })()}
             </div>
             {/* 内容区 + 右侧本页章节导航（F1） */}
-            <div className="flex-1 flex min-w-0" style={{ minHeight: 0 }}>
+            <div className="flex-1 flex min-w-0 relative" style={{ minHeight: 0 }}>
+              {/* 内容列包裹：让进度条 absolute 限定在本列宽度内，不跨到右侧 TOC 列（Bugbot Low） */}
+              <div className="flex-1 min-w-0 relative flex flex-col" style={{ minHeight: 0 }}>
+              {/* 阅读进度条（仅正文预览态）；切文档时按 key 重挂归零 */}
+              {!editMode && !contentLoading && (
+                <ReadingProgressBar key={selectedEntryId} scrollRef={contentAreaRef} />
+              )}
               <div
                 ref={contentAreaRef}
                 className="flex-1 min-w-0 px-6 py-4 relative"
@@ -2431,6 +2842,16 @@ export function DocBrowser({
                     }}
                   />
                 )}
+                {/* 行内评论高亮 + 气泡：把他人评论锚回正文，气泡点击打开评论抽屉 */}
+                {!editMode && !contentLoading && tocContent && inlineCommentItems.length > 0 && (
+                  <InlineCommentOverlay
+                    containerRef={contentAreaRef}
+                    comments={inlineCommentItems}
+                    reflowKey={`${selectedEntryId ?? ''}:${preview?.text?.length ?? 0}`}
+                    onOpenComment={() => setInlineCommentsOpen(true)}
+                  />
+                )}
+              </div>
               </div>
               {/* F1：本页章节导航——仅文本类预览且非编辑态显示，无标题时组件自身返回 null */}
               {!contentLoading && !editMode && tocContent && (
@@ -2440,15 +2861,25 @@ export function DocBrowser({
           </>
         ) : (
           <div className="flex-1 flex items-center justify-center">
-            <div className="text-center">
-              <BookOpen size={34} className="mx-auto mb-3" style={{ color: 'rgba(255,255,255,0.10)' }} />
-              <p className="text-[13px] mb-1" style={{ color: 'var(--text-muted)' }}>
-                选择左侧文件查看内容
-              </p>
-              <p className="text-[11px]" style={{ color: 'rgba(255,255,255,0.25)' }}>
-                右键文件可置顶或设为主文档
-              </p>
-            </div>
+            {entries.length === 0 ? (
+              /* 空知识库：宽阔的右栏放完整首访引导（左侧 sidebar 太窄放不下） */
+              <DocEmptyState
+                title="这是你的知识库"
+                description="汇总文档，按结论与时间归档，支持全文搜索与标签筛选。"
+                onCreateDocument={onCreateDocument}
+                onUploadFile={onUploadFile}
+              />
+            ) : (
+              <div className="text-center">
+                <BookOpen size={34} className="mx-auto mb-3" style={{ color: 'rgba(255,255,255,0.10)' }} />
+                <p className="text-[13px] mb-1" style={{ color: 'var(--text-muted)' }}>
+                  选择左侧文件查看内容
+                </p>
+                <p className="text-[11px]" style={{ color: 'rgba(255,255,255,0.25)' }}>
+                  右键文件可置顶或设为主文档
+                </p>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -2544,7 +2975,10 @@ export function DocBrowser({
               const entryId = trackedEntryForComments.id;
               const myId = ++commentCountFetchIdRef.current;
               listInlineComments(entryId, inlineCommentShareToken).then((res) => {
-                if (myId === commentCountFetchIdRef.current && res.success) setCommentCount(res.data.items.length);
+                if (myId === commentCountFetchIdRef.current && res.success) {
+                  setCommentCount(res.data.items.length);
+                  setInlineCommentItems(res.data.items);
+                }
               }).catch(() => {});
             }
           }}

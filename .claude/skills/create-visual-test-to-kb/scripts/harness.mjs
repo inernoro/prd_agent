@@ -34,6 +34,9 @@ export async function login(page, baseUrl, cfg) {
   const user = process.env[b.userEnv];
   const pass = process.env[b.passEnv];
   if (!user || !pass) throw new Error(`缺少登录凭据：请设置 env ${b.userEnv} 和 ${b.passEnv}`);
+  // 归一化 baseUrl：cdscli --human preview-url 带结尾 '/'，baseUrl + '/login' 会变成 '//login'
+  // 命中 SPA 兜底，登录框永不出现（实测坑：登录 20s 超时 + API 拿到 HTML）。统一去掉结尾斜杠。
+  baseUrl = String(baseUrl).replace(/\/+$/, '');
   await page.goto(baseUrl + b.loginPath, { waitUntil: 'domcontentloaded', timeout: 45000 });
   await page.waitForSelector(b.userSelector, { timeout: 20000 });
   await page.waitForTimeout(1000);
@@ -55,8 +58,20 @@ export async function gotoByClick(page, navText, { timeout = 8000 } = {}) {
     await loc.click({ timeout });
     await page.waitForTimeout(2000);
     return { found: true, navText };
-  } catch (e) {
-    return { found: false, navText, error: e.message };
+  } catch {
+    // 兜底：很多可点目标是 div/卡片（无 a/button/role 语义），上面的选择器点不到（实测坑：
+    // 知识库空间卡片就是可点 div）。改按可见文本点击——点中文本节点，click 冒泡到卡片 onClick。
+    // 先精确匹配，再退子串匹配。
+    for (const opt of [{ exact: true }, { exact: false }]) {
+      try {
+        const byText = page.getByText(navText, opt).first();
+        await byText.waitFor({ state: 'visible', timeout: Math.min(timeout, 4000) });
+        await byText.click({ timeout });
+        await page.waitForTimeout(2000);
+        return { found: true, navText, via: `getByText(${opt.exact ? 'exact' : 'loose'})` };
+      } catch { /* 试下一种匹配 */ }
+    }
+    return { found: false, navText };
   }
 }
 

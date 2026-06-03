@@ -3,7 +3,6 @@ import {
   Library,
   Plus,
   Upload,
-  FolderOpen,
   ArrowLeft,
   X,
   Rss,
@@ -76,6 +75,7 @@ import { UserAvatar } from '@/components/ui/UserAvatar';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
+import { DocEmptyState } from '@/components/doc-browser/DocEmptyState';
 import type {
   DocumentStore,
   DocumentStoreWithPreview,
@@ -1003,6 +1003,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
           pinnedEntryIds={store.pinnedEntryIds ?? []}
           selectedEntryId={selectedEntryId}
           onSelectEntry={setSelectedEntryId}
+          onBackToList={() => setSelectedEntryId(undefined)}
           onSetPrimary={handleSetPrimary}
           onTogglePin={handleTogglePin}
           onDeleteEntry={handleDeleteEntry}
@@ -1035,18 +1036,12 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
           sharedEntryIds={sharedEntryIds}
           loading={loading}
           emptyState={
-            <div className="flex-1 flex flex-col items-center justify-center py-16">
-              <FolderOpen size={44} className="mb-5 text-token-muted opacity-30" />
-              <p className="mb-1 text-[14px] font-semibold text-token-primary">还没有文档</p>
-              <p className="mb-6 text-[12px] text-token-muted">新建一篇空白文档直接写，或上传 / 拖拽文件到页面</p>
-              <div className="flex items-center gap-2.5">
-                <Button variant="primary" size="md" onClick={handleCreateDocument}>
-                  <FileText size={15} /> 新建文档
-                </Button>
-                <Button variant="secondary" size="md" onClick={() => fileInputRef.current?.click()}>
-                  <Upload size={15} /> 上传文档
-                </Button>
-              </div>
+            <div className="flex-1 flex items-center justify-center">
+              <DocEmptyState
+                onCreateDocument={handleCreateDocument}
+                onUploadFile={() => fileInputRef.current?.click()}
+                onAddSubscription={() => setShowSubscribe(true)}
+              />
             </div>
           }
         />
