@@ -133,7 +133,7 @@ public class HostedSiteService : IHostedSiteService
     {
         var siteId = Guid.NewGuid().ToString("N");
         var now = DateTime.UtcNow;
-        var rewritten = RewriteAbsolutePathsInHtml(htmlBytes, "index.html");
+        var rewritten = InjectSlideNavCompat(RewriteAbsolutePathsInHtml(htmlBytes, "index.html"));
         var cosKey = _storage.BuildSiteKey(siteId, "index.html");
         await _storage.UploadToKeyAsync(cosKey, rewritten, "text/html; charset=utf-8", CancellationToken.None, SiteCacheControl);
 
@@ -297,7 +297,7 @@ public class HostedSiteService : IHostedSiteService
         }
         else if (ext is ".html" or ".htm")
         {
-            var rewritten = RewriteAbsolutePathsInHtml(fileBytes, "index.html");
+            var rewritten = InjectSlideNavCompat(RewriteAbsolutePathsInHtml(fileBytes, "index.html"));
             var cosKey = _storage.BuildSiteKey(siteId, "index.html");
             await _storage.UploadToKeyAsync(cosKey, rewritten, "text/html; charset=utf-8", CancellationToken.None, SiteCacheControl);
             siteFiles = new List<HostedSiteFile>
@@ -1707,7 +1707,7 @@ public class HostedSiteService : IHostedSiteService
                 var entryBytes = entryMs.ToArray();
 
                 if (mimeType == "text/html")
-                    entryBytes = RewriteAbsolutePathsInHtml(entryBytes, relativePath);
+                    entryBytes = InjectSlideNavCompat(RewriteAbsolutePathsInHtml(entryBytes, relativePath));
 
                 var cosKey = _storage.BuildSiteKey(siteId, relativePath);
                 await _storage.UploadToKeyAsync(cosKey, entryBytes,
@@ -1785,6 +1785,158 @@ public class HostedSiteService : IHostedSiteService
             RegexOptions.IgnoreCase);
         return System.Text.Encoding.UTF8.GetBytes(html);
     }
+
+    // ─────────────────────────────────────────────
+    // 幻灯片翻页方向兼容垫片
+    // ─────────────────────────────────────────────
+
+    // 幂等标记：注入前检测，已存在则跳过（避免「下载已托管页再重传」造成二次注入）。
+    private const string SlideNavMarker = "<!--map-slide-nav-compat-->";
+
+    /// <summary>
+    /// 给「用户上传的幻灯片类 HTML」注入翻页方向兼容垫片，让只认左右方向键的 PPT 导出页
+    /// 也能用上下方向键 / 空格 / PageUp-Down / 滚轮 / 触摸滑动翻页（反之亦然）。
+    ///
+    /// 设计要点（对应 .claude/rules 与本次需求评审）：
+    /// - 跨域 iframe 无法从父页面拦截键盘，因此垫片必须随内容一起下发、在 iframe 内部运行。
+    /// - 保守接管：运行时判定「这是不是幻灯片」（检测 reveal/Swiper/impress/slidev 全局对象、
+    ///   .slide 类元素 ≥2、或 scroll-snap 容器），普通滚动网页一律不接管，避免劫持正常滚动。
+    /// - 框架感知优先：识别到框架就调它的 next/prev API（避免 reveal 子页层级跳错）；
+    ///   其次驱动 scroll-snap 容器；都不行才回退「把上下意图合成为左右方向键」补发。
+    /// - 仅用于上传路径（CreateFromHtml / Zip / Reupload），不动 API/工作流生成内容。
+    /// </summary>
+    private static byte[] InjectSlideNavCompat(byte[] htmlBytes)
+    {
+        var html = System.Text.Encoding.UTF8.GetString(htmlBytes);
+        if (html.Contains(SlideNavMarker, StringComparison.Ordinal))
+            return htmlBytes; // 已注入过，幂等返回
+
+        // 没有任何 HTML 结构信号（既无 </body> 也无 </html> 也无 <html）的内容不处理，
+        // 避免把脚本塞进纯文本/JSON 等被误判为 text/html 的文件。
+        var bodyIdx = html.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
+        var htmlIdx = html.LastIndexOf("</html>", StringComparison.OrdinalIgnoreCase);
+        if (bodyIdx < 0 && htmlIdx < 0 &&
+            html.IndexOf("<html", StringComparison.OrdinalIgnoreCase) < 0)
+            return htmlBytes;
+
+        string injected;
+        if (bodyIdx >= 0)
+            injected = html[..bodyIdx] + SlideNavCompatScript + html[bodyIdx..];
+        else if (htmlIdx >= 0)
+            injected = html[..htmlIdx] + SlideNavCompatScript + html[htmlIdx..];
+        else
+            injected = html + SlideNavCompatScript;
+
+        return System.Text.Encoding.UTF8.GetBytes(injected);
+    }
+
+    // 注入的运行时脚本：自包含 IIFE，全部用单引号避免 C# verbatim 字符串的双引号转义。
+    private const string SlideNavCompatScript = SlideNavMarker + @"<script>
+(function(){
+  if (window.__mapSlideNavCompat) return;
+  window.__mapSlideNavCompat = true;
+  var SNAP_AXIS = null; // 'x' | 'y' | null
+  var scroller = null;
+  function gcs(el, p){ try { return getComputedStyle(el)[p] || ''; } catch(e){ return ''; } }
+  function findSnapScroller(){
+    var cands = [document.scrollingElement, document.documentElement, document.body];
+    var main = document.querySelector('.slides, .reveal .slides, .swiper-wrapper, [class*=slides], main, #app');
+    if (main) cands.push(main);
+    for (var i=0;i<cands.length;i++){
+      var el = cands[i]; if (!el) continue;
+      var st = gcs(el, 'scrollSnapType') || gcs(el, 'scroll-snap-type');
+      if (st && /mandatory|proximity/.test(st)){
+        scroller = el;
+        SNAP_AXIS = /(^|\s)x(\s|$)|inline/.test(st) ? 'x' : ((/(^|\s)y(\s|$)|block/.test(st)) ? 'y' : null);
+        return true;
+      }
+    }
+    return false;
+  }
+  function slideEls(){
+    return document.querySelectorAll('.swiper-slide, .reveal .slides > section, section.slide, .slide, [data-slide], .step, .slidev-page');
+  }
+  function looksLikeDeck(){
+    if (window.Reveal || window.Swiper || window.impress) return true;
+    if (document.querySelector('.reveal .slides, .swiper, .swiper-container, #impress, .slidev-layout, .slidev-page')) return true;
+    if (findSnapScroller()) return true;
+    if (slideEls().length >= 2) return true;
+    return false;
+  }
+  function frameworkGo(dir){ // dir: 1=next, -1=prev
+    try {
+      if (window.Reveal && window.Reveal.next){ dir>0?window.Reveal.next():window.Reveal.prev(); return true; }
+      var sw = document.querySelector('.swiper, .swiper-container');
+      if (sw && sw.swiper){ dir>0?sw.swiper.slideNext():sw.swiper.slidePrev(); return true; }
+      if (window.impress){ var im=window.impress(); dir>0?im.next():im.prev(); return true; }
+    } catch(e){}
+    return false;
+  }
+  function snapGo(dir){
+    if (!scroller) return false;
+    if ((SNAP_AXIS||'y') === 'x') scroller.scrollBy({ left: dir*scroller.clientWidth, behavior:'smooth' });
+    else scroller.scrollBy({ top: dir*scroller.clientHeight, behavior:'smooth' });
+    return true;
+  }
+  var SYN = '__mapSyn';
+  function synthArrow(dir){
+    // 无可识别 API 且无 scroll-snap：按主流 PPT 约定把翻页意图转成左右方向键补发
+    var ev = new KeyboardEvent('keydown', { key: dir>0?'ArrowRight':'ArrowLeft', code: dir>0?'ArrowRight':'ArrowLeft', keyCode: dir>0?39:37, which: dir>0?39:37, bubbles:true, cancelable:true });
+    ev[SYN] = true;
+    (document.activeElement || document.body || document).dispatchEvent(ev);
+  }
+  function go(dir){
+    if (frameworkGo(dir)) return true;
+    if (snapGo(dir)) return true;
+    synthArrow(dir);
+    return true;
+  }
+  function onKey(e){
+    if (e[SYN] || e.defaultPrevented) return;
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    var t = e.target;
+    if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+    if (t && t.isContentEditable) return;
+    var k = e.key, dir = 0;
+    if (k === 'ArrowDown' || k === 'PageDown') dir = 1;
+    else if (k === 'ArrowUp' || k === 'PageUp') dir = -1;
+    else if (k === ' ' || k === 'Spacebar') dir = e.shiftKey ? -1 : 1;
+    else return; // 左右键交给页面原生处理（它本来就支持）
+    if (go(dir)) { e.preventDefault(); e.stopPropagation(); }
+  }
+  var wheelLock = 0;
+  function onWheel(e){
+    if (SNAP_AXIS === 'y') return; // 纵向 snap 浏览器原生即可处理，不接管
+    if (Date.now() < wheelLock) return;
+    var dy = e.deltaY||0, dx = e.deltaX||0;
+    if (Math.abs(dy) <= Math.abs(dx) || dy === 0) return;
+    if (go(dy > 0 ? 1 : -1)) { e.preventDefault(); wheelLock = Date.now() + 600; }
+  }
+  var tsx=0, tsy=0;
+  function onTouchStart(e){ var t=e.touches&&e.touches[0]; if (t){ tsx=t.clientX; tsy=t.clientY; } }
+  function onTouchEnd(e){
+    if (SNAP_AXIS === 'y') return;
+    var t = e.changedTouches && e.changedTouches[0]; if (!t) return;
+    var dx = t.clientX - tsx, dy = t.clientY - tsy;
+    if (Math.abs(dy) < 40 || Math.abs(dy) < Math.abs(dx)) return; // 仅响应明显纵向滑动
+    go(dy < 0 ? 1 : -1);
+  }
+  var bound = false;
+  function bind(){
+    if (bound || !looksLikeDeck()) return;
+    bound = true;
+    window.addEventListener('keydown', onKey, true);
+    window.addEventListener('wheel', onWheel, { passive:false, capture:true });
+    window.addEventListener('touchstart', onTouchStart, { passive:true });
+    window.addEventListener('touchend', onTouchEnd, { passive:true });
+  }
+  if (document.readyState !== 'loading') bind();
+  document.addEventListener('DOMContentLoaded', bind);
+  window.addEventListener('load', bind);
+  var tries = 0;
+  var timer = setInterval(function(){ bind(); if (bound || ++tries > 20) clearInterval(timer); }, 300);
+})();
+</script>";
 
     // ─────────────────────────────────────────────
     // 评论
