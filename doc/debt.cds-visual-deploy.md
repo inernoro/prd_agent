@@ -12,11 +12,12 @@
 |---|---|---|---|
 | B1 | 同类型多实例**仅对数据库**（supportsDbName）开放 | 只有数据库的连接串 host 能被安全改写到实例别名；缓存/队列多实例需各自的连接串改写规则 | 想挂两个 Redis 暂不支持，单个够用 |
 | B2 | initSql **不随容器就绪自动执行** | 现为"随项目保存 + 拓扑数据面板一键载入执行"；自动执行需 DB 就绪轮询 + 幂等标记 + 错误处理 | 用户需手动点一次 |
-| B3 | 检测覆盖有限 | 常见栈（Node/Python/Go/Rust/Java/PHP/.NET/静态 + Next/Nest/Express/Vite/Django/FastAPI）准；冷门栈/魔改构建落到"未识别" | 少数项目要手填 + 靠试运行兜底 |
+| B3 | 检测覆盖有限 | `DetectedStack` 只有 `nodejs/python/go/rust/java/ruby/php/dockerfile/unknown` 九值；**.NET / 静态站点没有独立 stack id**——.NET 带 Dockerfile 落 `dockerfile`（manualSetupRequired），静态站点落 `nodejs` + framework(Vite 等)走 suggestedBuildCommand。故 `detect-runtime` 的 `stackToRuntime` 对这九值已穷尽，**不要给它加 `dotnet`/`static` 键**（detectStack 永不产出，纯死代码——2026-06-03 Cursor 误报过一次）。冷门栈/魔改构建落"未识别" | 少数项目要手填 + 靠试运行兜底 |
 | B4 | 试运行只验**单服务**「镜像+命令+端口能否常驻 + 端口响应」 | 多服务联调依赖、基建连接串注入（DATABASE_URL 等）在正式部署才有，不在一次性容器里 | 试运行测"这条命令能起住"，非"全栈联调" |
 | B5 | 端口探活极简镜像降级 | 首选 `/proc/net/tcp`（任何容器都有）；无 `/proc` 的极特殊镜像降级为"容器常驻=需确认"而非误判失败 | 极少数镜像探活降级 |
 | B6 | AI 生成 compose **仅设计未实现** | 见 `design.cds-ai-compose.md`；按用户"备选"定位，借用 CDS Agent/OpenRouter，未写代码 | 当前靠确定性检测器，AI 路径待建 |
 | B7 | CDS 自身跑在本特性分支 | 经 `self-force-sync` 上线；合并 main 后应 `self update --branch main` 切回 | 运维提醒 |
+| B8 | 后台任务(worker)就绪探测走 **noHttp（TCP 探活）**，不支持"完全不监听端口"的纯 worker | worker 角色的 BuildProfile 现设 `readinessProbe.noHttp=true`：跳过 HTTP "/" 探测，只 TCP 探活端口（PR #711 review 修复"活着的 worker 被 HTTP 探测超时误判失败"）。但 deploy 的 noHttp 仍要求 TCP accept——绑健康/TCP 端口的 worker 即就绪；**完全不 listen 任何端口的纯 worker 仍会超时**，需 `startupSignal`(日志正则)模式，而创建弹窗暂未收集该输入 | 纯无端口 worker 暂不可一键部署，需手填 startupSignal（后续可在弹窗加"就绪日志关键字"输入） |
 
 ## 二、Backlog（低边际打磨，按价值排序）
 

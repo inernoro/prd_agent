@@ -830,6 +830,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       env: { PORT: String(resolved.port) },
       ...(service?.role === 'backend' ? { pathPrefixes: ['/api/'] } : {}),
       ...(service?.role === 'frontend' ? { pathPrefixes: ['/'] } : {}),
+      // 后台任务(worker,"无 HTTP 入口")就绪探测走 noHttp:跳过 HTTP "/" 探测,只 TCP 探活
+      // 端口。否则 deploy 的 waitForReadiness 会按 HTTP 探测一直 ECONNRESET 直到超时,把活着的
+      // worker 误判为部署失败(PR #711 review)。绑定健康/TCP 端口的 worker 即就绪;完全不监听
+      // 端口的纯 worker 仍需 startupSignal(见 debt.cds-visual-deploy.md)。
+      ...(service?.role === 'worker' ? { readinessProbe: { noHttp: true } } : {}),
       ...(defaultCacheMountsFor(resolved.image) ? { cacheMounts: defaultCacheMountsFor(resolved.image) } : {}),
     };
   }
@@ -1510,6 +1515,12 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     if (!command) { send('error', { message: '请填启动命令(或选具体运行时带出默认命令)。' }); res.end(); return; }
     if (gitRef && !isSafeGitRef(gitRef)) { send('error', { message: `分支名不合法: ${gitRef}` }); res.end(); return; }
 
+    // 私有仓库:复用正式 clone 路径的 Device Flow token 注入(_injectGithubTokenIfPossible),
+    // 否则从 GitHub 选择器选了私有库的用户在创建项目前根本跑不了试运行。maskTok 用于把日志里
+    // 可能出现的 token 脱敏(git 自身一般会脱敏,这里是纵深防御)。
+    const deviceToken = stateService.getGithubDeviceAuth()?.token;
+    const authedCloneUrl = _injectGithubTokenIfPossible(gitRepoUrl, deviceToken);
+    const maskTok = (s: string): string => (deviceToken ? s.split(deviceToken).join('***') : s);
     const token = randomBytes(5).toString('hex');
     const containerName = `cds-validate-${token}`;
     const baseDir = nodePath.join(nodeOs.tmpdir(), `cds-validate-${token}`);
@@ -1521,10 +1532,10 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
 
     try {
       send('step', { step: 'clone', status: 'running', title: '浅克隆仓库…' });
-      const cloneRes = await shell.exec(`git clone --depth 1 ${gitRef ? `--branch ${q(gitRef)} ` : ''}${q(gitRepoUrl)} ${q(cloneDir)}`, { timeout: 120000 });
+      const cloneRes = await shell.exec(`git clone --depth 1 ${gitRef ? `--branch ${q(gitRef)} ` : ''}${q(authedCloneUrl)} ${q(cloneDir)}`, { timeout: 120000 });
       if (cloneRes.exitCode !== 0) {
         send('step', { step: 'clone', status: 'error', title: '克隆失败' });
-        log(combinedOutput(cloneRes).slice(-1500));
+        log(maskTok(combinedOutput(cloneRes)).slice(-1500));
         send('result', { verdict: 'fail', summary: '仓库克隆失败——检查 URL / 分支 / 访问权限。' });
         await cleanup(); res.end(); return;
       }
@@ -1663,12 +1674,16 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     if (!gitRepoUrl) { res.status(400).json({ error: '需要 Git 仓库 URL 才能检测。' }); return; }
     if (gitRef && !isSafeGitRef(gitRef)) { res.status(400).json({ error: `分支名不合法: ${gitRef}` }); return; }
     const q = (s: string) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+    // 私有仓库:同试运行,复用正式 clone 的 Device Flow token 注入(_injectGithubTokenIfPossible)。
+    const deviceToken = stateService.getGithubDeviceAuth()?.token;
+    const authedCloneUrl = _injectGithubTokenIfPossible(gitRepoUrl, deviceToken);
+    const maskTok = (s: string): string => (deviceToken ? s.split(deviceToken).join('***') : s);
     const token = randomBytes(5).toString('hex');
     const dir = nodePath.join(nodeOs.tmpdir(), `cds-detect-${token}`);
     const stackToRuntime: Record<string, string> = { nodejs: 'node', python: 'python', go: 'go', rust: 'rust', java: 'java', php: 'php', dockerfile: 'dockerfile', ruby: 'custom', unknown: 'auto' };
     try {
-      const clone = await shell.exec(`git clone --depth 1 ${gitRef ? `--branch ${q(gitRef)} ` : ''}${q(gitRepoUrl)} ${q(dir)}`, { timeout: 120000 });
-      if (clone.exitCode !== 0) { res.status(400).json({ error: '克隆失败——检查 URL / 分支 / 访问权限。', detail: combinedOutput(clone).slice(-400) }); return; }
+      const clone = await shell.exec(`git clone --depth 1 ${gitRef ? `--branch ${q(gitRef)} ` : ''}${q(authedCloneUrl)} ${q(dir)}`, { timeout: 120000 });
+      if (clone.exitCode !== 0) { res.status(400).json({ error: '克隆失败——检查 URL / 分支 / 访问权限。', detail: maskTok(combinedOutput(clone)).slice(-400) }); return; }
       const modules = detectModules(dir);
       const services = modules.map((m, i) => {
         const d = m.detection;
@@ -2031,14 +2046,26 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
     // 少绕路:创建弹窗就地粘贴的项目环境变量,在建项目时一并写入(不必等克隆后再单独配)。
+    const userEnvEntries: Array<[string, string]> = [];
     if (body.customEnv && typeof body.customEnv === 'object') {
       for (const [key, value] of Object.entries(body.customEnv)) {
         if (typeof value !== 'string') continue;
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue; // 合法 env key
         stateService.setCustomEnvVar(key, value, newProject.id);
+        userEnvEntries.push([key, value]);
       }
     }
     const appliedInfraPresets = applyInfraPresets(newProject, infraPresets, parseInfraConfigs(body.infraConfigs), parseInfraExtra(body.infraExtra));
+    // applyInfraPresets 也会写 DATABASE_URL/REDIS_URL 等连接串,会覆盖用户同名粘贴值
+    // (基建预设的连接串指向刚创建的容器,优先生效)。但不能"静默"覆盖——收集被覆盖的 key
+    // 回传前端 + console.warn,让用户知道粘贴的外部连接串被基建生成值取代了(PR #711 review)。
+    const finalEnv = stateService.getCustomEnv(newProject.id);
+    const infraEnvOverrides = userEnvEntries
+      .filter(([key, value]) => finalEnv[key] !== undefined && finalEnv[key] !== value)
+      .map(([key]) => key);
+    if (infraEnvOverrides.length > 0) {
+      console.warn(`[projects] 基础设施预设的连接串覆盖了用户粘贴的项目环境变量: ${infraEnvOverrides.join(', ')} (项目 ${newProject.id});应用将使用基建生成的连接串。`);
+    }
 
     // F11 — 沙盒模式 bootstrap:在 reposBase/<projectId>/ 本地 init 一个
     // git 仓库,写 cds-compose.yml + projectFiles[],模拟"clone 完成"状态,
@@ -2079,6 +2106,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       // F11 — 告诉前端这是沙盒项目,UI 可显示"沙盒"标签 + 提示"想要持久化请关联 GitHub"
       sandbox: isSandbox || undefined,
       infraPresetsApplied: appliedInfraPresets,
+      // 被基建连接串覆盖的用户环境变量 key(非空时前端可提示"你粘贴的 X 被自动生成的连接串取代")。
+      infraEnvOverrides: infraEnvOverrides.length > 0 ? infraEnvOverrides : undefined,
     });
   });
 

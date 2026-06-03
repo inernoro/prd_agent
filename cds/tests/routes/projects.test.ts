@@ -1005,6 +1005,28 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       expect(stateService.getEnvMeta(pid).RABBITMQ_URL?.kind).toBe('infra-derived');
     });
 
+    it('surfaces (not silently swallows) user customEnv overwritten by infra connection strings', async () => {
+      const res = await request(server, 'POST', '/api/projects', {
+        name: 'Env Collision',
+        gitRepoUrl: 'https://github.com/example/env-collision.git',
+        infraPresets: ['postgres'],
+        customEnv: {
+          DATABASE_URL: 'postgresql://me@external-host:5432/mydb', // collides with postgres preset
+          MY_FLAG: 'keep-me',                                       // no collision
+        },
+      });
+      expect(res.status).toBe(201);
+      const pid = res.body.project.id;
+      // The collision is reported back, not silently dropped.
+      expect(res.body.infraEnvOverrides).toEqual(['DATABASE_URL']);
+
+      const env = stateService.getCustomEnv(pid);
+      // infra-derived connection string wins (points at the provisioned container)...
+      expect(env.DATABASE_URL).toMatch(/^postgresql:\/\/app:.*@postgres:5432\//);
+      // ...while the non-colliding user var is preserved untouched.
+      expect(env.MY_FLAG).toBe('keep-me');
+    });
+
     it('applies infra presets (real secrets + env) to an existing project via /infra-presets', async () => {
       const created = await request(server, 'POST', '/api/projects', { name: 'Topo Preset' });
       expect(created.status).toBe(201);
@@ -1310,6 +1332,37 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       expect(backend.name).toBe('后端服务');
       expect(backend.pathPrefixes).toEqual(['/api/']);
       expect(backend.dockerImage).toBe('golang:1.23-alpine');
+    });
+
+    it('worker role gets noHttp readiness (no port HTTP probe → not falsely failed)', async () => {
+      shell.addResponsePattern(/^mkdir -p /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      shell.addResponsePattern(/^test -d /, () => ({ stdout: '', stderr: '', exitCode: 1 }));
+
+      const create = await request(server, 'POST', '/api/projects', {
+        name: 'Worker Runtime',
+        gitRepoUrl: 'https://github.com/example/worker-runtime.git',
+        onboardingServices: [
+          { id: 'queue', name: '队列消费者', role: 'worker', runtime: 'node' },
+        ],
+      });
+      expect(create.status).toBe(201);
+      const pid = create.body.project.id;
+      const repoPath = path.join(tmpDir, 'repos', pid);
+      stateService.updateProject(pid, { repoPath });
+      shell.addResponsePattern(/git clone /, () => {
+        fs.mkdirSync(repoPath, { recursive: true });
+        fs.writeFileSync(path.join(repoPath, 'README.md'), '# worker\n', 'utf-8');
+        return { stdout: 'Cloning\n', stderr: '', exitCode: 0 };
+      });
+
+      const clone = await sseRequest(server, 'POST', `/api/projects/${pid}/clone`);
+      expect(clone.status).toBe(200);
+
+      const worker = stateService.getBuildProfilesForProject(pid).find((p) => p.id === 'queue')!;
+      expect(worker).toBeDefined();
+      expect(worker.readinessProbe?.noHttp).toBe(true);
+      // workers aren't routable — no path prefixes
+      expect(worker.pathPrefixes).toBeUndefined();
     });
 
     it('sets cloneStatus=error and streams error event when git clone fails', async () => {
