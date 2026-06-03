@@ -299,6 +299,8 @@ builder.Services.AddHttpClient("AiNews", c =>
 // Scoped：AiNewsService 依赖 Scoped 的 ILlmGateway（一句话解读），故不能是 Singleton；
 // 内存缓存走注入的单例 IMemoryCache，资讯流缓存不受 scoped 影响。
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAiNewsService, PrdAgent.Infrastructure.Services.AiNewsService>();
+// 后台每 4 分钟预热「AI 大事」缓存，让用户访问路径永不同步等外网（卡顿排查 2026-06-03）。
+builder.Services.AddHostedService<PrdAgent.Infrastructure.Services.AiNewsCacheWarmer>();
 
 // 知识库 Agent 后台执行器（字幕生成 + 文档再加工，复用 DoubaoStreamAsrService 和 ILlmGateway）
 builder.Services.AddHttpClient("DocStoreAgent");

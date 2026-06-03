@@ -152,6 +152,10 @@ public sealed class ChangelogReader : IChangelogReader
     private const string CacheKeyReleases = "changelog:releases";
     private const string CacheKeyGitHubLogs = "changelog:github-logs";
 
+    // 「待发布」碎片走 GitHub raw 逐文件拉取，碎片数可能达数百个。限并发避免上百个
+    // 并发连接打爆连接池 / 触发限速导致冷缓存首屏长时间转圈（卡顿排查 2026-06-03）。
+    private const int MaxGitHubFetchConcurrency = 8;
+
     // serve-stale-while-revalidate（业界通行做法，见 web.dev / RFC 5861 / .NET HybridCache 防击穿）：
     //  - 新鲜期（GetFreshWindow，默认 5 分钟）内：直接返回缓存，不刷新
     //  - 新鲜期过后、保留期（StaleKeepWindow，24 小时）内：先返回旧值、再后台静默刷新（用户不等待）
@@ -750,10 +754,19 @@ public sealed class ChangelogReader : IChangelogReader
         {
             using var req = CreateGitHubApiRequest(HttpMethod.Get, url);
             using var resp = await client.SendAsync(req).ConfigureAwait(false);
+            var rateRemaining = resp.Headers.TryGetValues("X-RateLimit-Remaining", out var rl)
+                ? rl.FirstOrDefault() : null;
             if (!resp.IsSuccessStatusCode)
             {
-                _logger.LogWarning("[Changelog] GitHub Contents API 失败 {Url} status={Status}", url, (int)resp.StatusCode);
+                // 403 + remaining=0 即匿名限速打爆（未配 Changelog:GitHubToken）。明确暴露，便于检测。
+                _logger.LogWarning(
+                    "[Changelog] GitHub Contents API 失败 {Url} status={Status} rateRemaining={RateRemaining}",
+                    url, (int)resp.StatusCode, rateRemaining ?? "n/a");
                 return new List<string>();
+            }
+            if (rateRemaining != null)
+            {
+                _logger.LogInformation("[Changelog] GitHub Contents API 配额剩余 rateRemaining={RateRemaining}", rateRemaining);
             }
 
             var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
@@ -816,19 +829,36 @@ public sealed class ChangelogReader : IChangelogReader
             filtered.Add((name, date.Value));
         }
 
-        // 并行下载本周内的碎片文件（数量很少，最多 7-10 个）
+        // 「待发布」展示所有未合并进 CHANGELOG.md 的碎片，数量可能达数百个（已发布 0 / 待发布 768
+        // 即没人跑 assemble-changelog 合并）。每个碎片走一次 raw 拉取，必须限并发（见 MaxGitHubFetchConcurrency），
+        // 否则上百个并发连接会打爆连接池 / 触发限速，冷缓存首屏长时间转圈。
+        var sw = Stopwatch.StartNew();
+        var gate = new SemaphoreSlim(MaxGitHubFetchConcurrency, MaxGitHubFetchConcurrency);
+        var failures = 0;
         var tasks = filtered.Select(async f =>
         {
-            var content = await FetchRawFileAsync(client, $"changelogs/{f.name}").ConfigureAwait(false);
-            if (string.IsNullOrEmpty(content)) return null;
-            var entries = ParseTableRows(content);
-            if (entries.Count == 0) return null;
-            return new ChangelogFragment
+            await gate.WaitAsync().ConfigureAwait(false);
+            try
             {
-                FileName = f.name,
-                Date = f.date,
-                Entries = entries,
-            };
+                var content = await FetchRawFileAsync(client, $"changelogs/{f.name}").ConfigureAwait(false);
+                if (string.IsNullOrEmpty(content))
+                {
+                    Interlocked.Increment(ref failures);
+                    return null;
+                }
+                var entries = ParseTableRows(content);
+                if (entries.Count == 0) return null;
+                return new ChangelogFragment
+                {
+                    FileName = f.name,
+                    Date = f.date,
+                    Entries = entries,
+                };
+            }
+            finally
+            {
+                gate.Release();
+            }
         }).ToList();
 
         var results = await Task.WhenAll(tasks).ConfigureAwait(false);
@@ -836,6 +866,11 @@ public sealed class ChangelogReader : IChangelogReader
         {
             if (fragment != null) AddCurrentWeekEntries(view, fragment.FileName, fragment.Date, fragment.Entries);
         }
+        sw.Stop();
+        // 成功路径计时日志：以前只在失败时记日志，「慢但成功」零痕迹无法检测。此行让卡顿可见。
+        _logger.LogInformation(
+            "[Changelog] GitHub 待发布拉取完成 files={Files} failures={Failures} concurrency={Concurrency} elapsed={Elapsed}ms",
+            filtered.Count, failures, MaxGitHubFetchConcurrency, sw.ElapsedMilliseconds);
 
         view.Fragments = SortFragments(view.Fragments);
         ApplyUnreleasedDateRange(view);
