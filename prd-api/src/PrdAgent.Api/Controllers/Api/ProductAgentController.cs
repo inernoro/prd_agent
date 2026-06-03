@@ -654,6 +654,67 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
+    // ════════════════════════ 详情描述模板 ProductDescTemplate ════════════════════════
+
+    /// <summary>描述模板列表（按对象类型过滤）。</summary>
+    [HttpGet("desc-templates")]
+    public async Task<IActionResult> ListDescTemplates([FromQuery] string? entityType = null)
+    {
+        var b = Builders<ProductDescTemplate>.Filter;
+        var conds = new List<FilterDefinition<ProductDescTemplate>> { b.Eq(t => t.IsDeleted, false) };
+        if (!string.IsNullOrWhiteSpace(entityType)) conds.Add(b.Eq(t => t.EntityType, entityType));
+        var items = await _db.ProductDescTemplates.Find(b.And(conds))
+            .SortBy(t => t.SortOrder).ThenBy(t => t.CreatedAt).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>创建 / 更新描述模板（需管理权限）。带 id 为更新。</summary>
+    [HttpPost("desc-templates")]
+    public async Task<IActionResult> UpsertDescTemplate([FromBody] UpsertDescTemplateRequest request)
+    {
+        if (!HasPermission(AdminPermissionCatalog.ProductAgentManage))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
+        if (string.IsNullOrWhiteSpace(request.Name))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "模板名称不能为空"));
+        if (!ProductEntityType.All.Contains(request.EntityType))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的对象类型"));
+
+        if (!string.IsNullOrWhiteSpace(request.Id))
+        {
+            var u = Builders<ProductDescTemplate>.Update
+                .Set(t => t.Name, request.Name.Trim())
+                .Set(t => t.Content, request.Content ?? string.Empty)
+                .Set(t => t.EntityType, request.EntityType)
+                .Set(t => t.SortOrder, request.SortOrder)
+                .Set(t => t.UpdatedAt, DateTime.UtcNow);
+            await _db.ProductDescTemplates.UpdateOneAsync(t => t.Id == request.Id, u);
+            var updated = await _db.ProductDescTemplates.Find(t => t.Id == request.Id).FirstOrDefaultAsync();
+            return Ok(ApiResponse<object>.Ok(updated));
+        }
+
+        var tpl = new ProductDescTemplate
+        {
+            EntityType = request.EntityType,
+            Name = request.Name.Trim(),
+            Content = request.Content ?? string.Empty,
+            SortOrder = request.SortOrder,
+            CreatedBy = GetUserId(),
+        };
+        await _db.ProductDescTemplates.InsertOneAsync(tpl);
+        return Ok(ApiResponse<object>.Ok(tpl));
+    }
+
+    /// <summary>删除描述模板（软删除，需管理权限）。</summary>
+    [HttpDelete("desc-templates/{templateId}")]
+    public async Task<IActionResult> DeleteDescTemplate(string templateId)
+    {
+        if (!HasPermission(AdminPermissionCatalog.ProductAgentManage))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
+        await _db.ProductDescTemplates.UpdateOneAsync(t => t.Id == templateId,
+            Builders<ProductDescTemplate>.Update.Set(t => t.IsDeleted, true).Set(t => t.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
     // ════════════════════════ 通用表单模板引擎 ════════════════════════
 
     /// <summary>表单模板列表（按对象类型 / 产品过滤；全局模板 ProductId 为空）</summary>
@@ -1499,6 +1560,15 @@ public class UpsertCategoryRequest
     public string? Id { get; set; }
     public string Name { get; set; } = string.Empty;
     public string? Color { get; set; }
+    public int SortOrder { get; set; }
+}
+
+public class UpsertDescTemplateRequest
+{
+    public string? Id { get; set; }
+    public string EntityType { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string? Content { get; set; }
     public int SortOrder { get; set; }
 }
 

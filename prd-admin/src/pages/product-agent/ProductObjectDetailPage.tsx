@@ -8,7 +8,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Save, Unlink, ExternalLink, ListChecks, Puzzle, Bug, Link2 } from 'lucide-react';
+import { ArrowLeft, Save, Unlink, ExternalLink, ListChecks, Puzzle, Bug, Link2, FileText } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { RequirementRelationModal, DefectLinkerModal } from './ProductRelationModals';
 import { FormFieldsRenderer, RichTextField, useEffectiveTemplate, useEffectiveWorkflow } from './DynamicForm';
@@ -25,9 +25,10 @@ import {
   listFeatureVersions,
   listTracedDefects,
   untraceDefect,
+  listDescTemplates,
   type TracedDefect,
 } from '@/services/real/productAgent';
-import type { Requirement, Feature, ProductVersion, Customer, FeatureVersion, ItemGrade, FormField } from './types';
+import type { Requirement, Feature, ProductVersion, Customer, FeatureVersion, ItemGrade, FormField, ProductEntityType, DescTemplate } from './types';
 import { ITEM_GRADE_LABEL } from './types';
 
 const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
@@ -306,7 +307,53 @@ function GradeField({ grade, setGrade }: { grade: ItemGrade; setGrade: (g: ItemG
 
 /** 描述字段：富文本（排版工具栏 + 截图粘贴/拖拽上传），对齐 Jira / TAPD / Linear。 */
 function DescriptionField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  return <RichTextField value={value} onChange={onChange} minHeight={420} placeholder="补充背景、目标、验收标准…（支持排版与截图粘贴）" />;
+  return <RichTextField value={value} onChange={onChange} minHeight={420} placeholder="补充背景、目标、验收标准…（支持排版与截图粘贴 / 点右上角套用模板）" />;
+}
+
+/** 内容非空时追加模板，空时直接套用。 */
+function mergeDesc(prev: string, tpl: string): string {
+  const stripped = (prev || '').replace(/<br\s*\/?>/gi, '').replace(/<div>\s*<\/div>/gi, '').replace(/&nbsp;/gi, '').trim();
+  return stripped ? `${prev}${tpl}` : tpl;
+}
+
+/** 描述模板选择器：列出该对象类型的描述模板，一键套用。无模板时不显示。 */
+function DescTemplatePicker({ entityType, onApply }: { entityType: ProductEntityType; onApply: (content: string) => void }) {
+  const [templates, setTemplates] = useState<DescTemplate[]>([]);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      const res = await listDescTemplates(entityType);
+      if (alive && res.success) setTemplates(res.data.items);
+    })();
+    return () => { alive = false; };
+  }, [entityType]);
+
+  if (templates.length === 0) return null;
+  return (
+    <div className="relative">
+      <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1 text-[11px] text-cyan-300 hover:text-cyan-200">
+        <FileText size={12} /> 套用模板
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-6 z-20 w-56 max-h-72 overflow-y-auto rounded-lg border border-white/10 bg-[#1b1d22] shadow-xl p-1" style={{ overscrollBehavior: 'contain' }}>
+            {templates.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => { onApply(t.content); setOpen(false); }}
+                className="w-full text-left px-2.5 py-1.5 rounded text-sm text-white/80 hover:bg-white/5 truncate"
+                title={t.name}
+              >
+                {t.name}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 function Chips({ items, empty }: { items: string[]; empty: string }) {
@@ -385,7 +432,7 @@ function CreateObjectForm({
       onSave={create}
       main={
         <>
-          <Card title="描述">
+          <Card title="描述" action={<DescTemplatePicker entityType={entityType} onApply={(c) => setDescription((p) => mergeDesc(p, c))} />}>
             <DescriptionField value={description} onChange={setDescription} />
           </Card>
           {split.files.length > 0 && (
@@ -489,7 +536,7 @@ function RequirementDetail({
       }
       main={
         <>
-          <Card title="描述">
+          <Card title="描述" action={<DescTemplatePicker entityType="requirement" onApply={(c) => setDescription((p) => mergeDesc(p, c))} />}>
             <DescriptionField value={description} onChange={setDescription} />
           </Card>
           {split.files.length > 0 && (
@@ -675,7 +722,7 @@ function FeatureDetail({
       }
       main={
         <>
-          <Card title="描述">
+          <Card title="描述" action={<DescTemplatePicker entityType="feature" onApply={(c) => setDescription((p) => mergeDesc(p, c))} />}>
             <DescriptionField value={description} onChange={setDescription} />
           </Card>
           {split.files.length > 0 && (

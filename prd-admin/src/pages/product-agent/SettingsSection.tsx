@@ -5,7 +5,8 @@
  * 作用对象类型：需求 / 功能 / 缺陷 / 版本 / 客户 / 升级申请。
  */
 import { useCallback, useEffect, useState } from 'react';
-import { Plus, Trash2, Save, GripVertical } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { Plus, Trash2, Save, GripVertical, X } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import {
   listProducts,
@@ -15,9 +16,13 @@ import {
   upsertWorkflowDefinition,
   upsertProductCategory,
   deleteProductCategory,
+  listDescTemplates,
+  upsertDescTemplate,
+  deleteDescTemplate,
 } from '@/services/real/productAgent';
-import type { Product, FormField, FormFieldType, WorkflowState, WorkflowTransition, ProductEntityType, ProductCategory } from './types';
+import type { Product, FormField, FormFieldType, WorkflowState, WorkflowTransition, ProductEntityType, ProductCategory, DescTemplate } from './types';
 import { useProductCategories } from './productCategories';
+import { RichTextField } from './DynamicForm';
 
 const ENTITY_TYPES: { value: ProductEntityType; label: string }[] = [
   { value: 'requirement', label: '需求' },
@@ -98,7 +103,7 @@ const PRESET_FIELDS: Record<ProductEntityType, { label: string; type: string }[]
 };
 
 export function SettingsSection() {
-  const [mode, setMode] = useState<'form' | 'workflow' | 'category'>('form');
+  const [mode, setMode] = useState<'form' | 'workflow' | 'desc' | 'category'>('form');
   const [entityType, setEntityType] = useState<ProductEntityType>('requirement');
   const [productScope, setProductScope] = useState(''); // '' = 全局
   const [products, setProducts] = useState<Product[]>([]);
@@ -117,6 +122,7 @@ export function SettingsSection() {
         <div className="flex rounded-lg border border-white/10 overflow-hidden">
           <button onClick={() => setMode('form')} className={`px-3 py-1.5 text-sm ${mode === 'form' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>表单模板</button>
           <button onClick={() => setMode('workflow')} className={`px-3 py-1.5 text-sm ${mode === 'workflow' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>流程模板</button>
+          <button onClick={() => setMode('desc')} className={`px-3 py-1.5 text-sm ${mode === 'desc' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>描述模板</button>
           <button onClick={() => setMode('category')} className={`px-3 py-1.5 text-sm ${mode === 'category' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>产品类型</button>
         </div>
         {mode !== 'category' && (
@@ -131,17 +137,21 @@ export function SettingsSection() {
                 {e.label}
               </button>
             ))}
-            <div className="w-px h-6 bg-white/10" />
-            <select
-              value={productScope}
-              onChange={(e) => setProductScope(e.target.value)}
-              className="px-2 py-1.5 rounded-md text-xs bg-white/5 border border-white/10 text-white/70 outline-none"
-            >
-              <option value="">全局默认（所有产品共用）</option>
-              {products.map((p) => (
-                <option key={p.id} value={p.id}>覆盖：{p.name}</option>
-              ))}
-            </select>
+            {mode !== 'desc' && (
+              <>
+                <div className="w-px h-6 bg-white/10" />
+                <select
+                  value={productScope}
+                  onChange={(e) => setProductScope(e.target.value)}
+                  className="px-2 py-1.5 rounded-md text-xs bg-white/5 border border-white/10 text-white/70 outline-none"
+                >
+                  <option value="">全局默认（所有产品共用）</option>
+                  {products.map((p) => (
+                    <option key={p.id} value={p.id}>覆盖：{p.name}</option>
+                  ))}
+                </select>
+              </>
+            )}
           </>
         )}
       </div>
@@ -150,10 +160,156 @@ export function SettingsSection() {
         <FormTemplateEditor key={`f-${entityType}-${productScope}`} entityType={entityType} productId={productScope || null} />
       ) : mode === 'workflow' ? (
         <WorkflowEditor key={`w-${entityType}-${productScope}`} entityType={entityType} productId={productScope || null} />
+      ) : mode === 'desc' ? (
+        <DescTemplateManager key={`d-${entityType}`} entityType={entityType} />
       ) : (
         <CategoryManager />
       )}
     </div>
+  );
+}
+
+// ════════════════════════ 描述模板管理 ════════════════════════
+
+function DescTemplateManager({ entityType }: { entityType: ProductEntityType }) {
+  const [items, setItems] = useState<DescTemplate[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState<DescTemplate | 'new' | null>(null);
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    const res = await listDescTemplates(entityType);
+    if (res.success) setItems(res.data.items);
+    setLoading(false);
+  }, [entityType]);
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  const remove = async (id: string) => {
+    const res = await deleteDescTemplate(id);
+    if (res.success) await reload();
+  };
+
+  return (
+    <div className="flex flex-col gap-3 max-w-3xl">
+      <div className="flex items-center justify-between">
+        <div className="text-xs text-white/50">
+          为「{ENTITY_TYPES.find((e) => e.value === entityType)?.label}」配置描述模板，用户在详情「描述」区可一键套用，方便按统一结构编写。
+        </div>
+        <button
+          onClick={() => setEditing('new')}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm shrink-0"
+        >
+          <Plus size={14} /> 新增模板
+        </button>
+      </div>
+
+      {loading ? (
+        <MapSectionLoader text="正在加载模板…" />
+      ) : items.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-white/15 px-4 py-10 text-center text-sm text-white/40">
+          还没有描述模板。点「新增模板」创建第一个（如「用户故事」「PRD 标准结构」）。
+        </div>
+      ) : (
+        <div className="rounded-xl border border-white/10 divide-y divide-white/5">
+          {items.map((t) => (
+            <div key={t.id} className="flex items-center gap-2 px-3.5 py-2.5">
+              <span className="text-sm text-white/85 truncate flex-1">{t.name}</span>
+              <button onClick={() => setEditing(t)} className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-white/60 hover:text-white hover:bg-white/10">
+                <Save size={12} /> 编辑
+              </button>
+              <button onClick={() => remove(t.id)} className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-red-300/60 hover:text-red-300 hover:bg-red-500/10">
+                <Trash2 size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {editing && (
+        <DescTemplateEditModal
+          entityType={entityType}
+          template={editing === 'new' ? null : editing}
+          onClose={() => setEditing(null)}
+          onSaved={async () => {
+            setEditing(null);
+            await reload();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function DescTemplateEditModal({
+  entityType,
+  template,
+  onClose,
+  onSaved,
+}: {
+  entityType: ProductEntityType;
+  template: DescTemplate | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(template?.name ?? '');
+  const [content, setContent] = useState(template?.content ?? '');
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const isNew = !template;
+
+  const save = async () => {
+    if (!name.trim()) return;
+    setSaving(true);
+    setMsg(null);
+    const res = await upsertDescTemplate({ id: template?.id, entityType, name: name.trim(), content, sortOrder: template?.sortOrder ?? 0 });
+    setSaving(false);
+    if (res.success) onSaved();
+    else setMsg(res.error?.message || '保存失败');
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div
+        className="w-full max-w-2xl rounded-xl border border-white/10 bg-[#16181d] flex flex-col"
+        style={{ maxHeight: '88vh' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="shrink-0 px-5 py-3.5 border-b border-white/10 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-white">{isNew ? '新增描述模板' : '编辑描述模板'}</h2>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={18} /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-3" style={{ minHeight: 0, overscrollBehavior: 'contain' }}>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-white/50">模板名称</label>
+            <input
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="如：用户故事 / PRD 标准结构"
+              className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-white/50">模板内容（富文本，套用时填入描述）</label>
+            <RichTextField value={content} onChange={setContent} minHeight={280} placeholder="编写模板骨架，如：## 背景 / ## 目标 / ## 验收标准…" />
+          </div>
+          {msg && <div className="text-xs text-red-300/80">{msg}</div>}
+        </div>
+        <div className="shrink-0 px-5 py-3 border-t border-white/10 flex justify-end gap-2">
+          <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-sm text-white/60 hover:bg-white/5">取消</button>
+          <button
+            onClick={save}
+            disabled={!name.trim() || saving}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm disabled:opacity-50"
+          >
+            {saving ? <MapSpinner size={14} /> : <Save size={14} />} {isNew ? '创建' : '保存'}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 

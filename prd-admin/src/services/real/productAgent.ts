@@ -18,6 +18,7 @@ import type {
   WorkflowDefinition,
   ProductEntityType,
   ProductCategory,
+  DescTemplate,
 } from '@/pages/product-agent/types';
 
 interface ListWrap<T> {
@@ -159,6 +160,18 @@ export function upsertProductCategory(body: Partial<ProductCategory> & { id?: st
 }
 export function deleteProductCategory(categoryId: string) {
   return apiRequest<{ deleted: boolean }>(`/api/product/categories/${categoryId}`, { method: 'DELETE' });
+}
+
+// ── 详情描述模板 ──
+export function listDescTemplates(entityType?: ProductEntityType) {
+  const qs = entityType ? `?entityType=${encodeURIComponent(entityType)}` : '';
+  return apiRequest<ListWrap<DescTemplate>>(`/api/product/desc-templates${qs}`);
+}
+export function upsertDescTemplate(body: Partial<DescTemplate> & { id?: string }) {
+  return apiRequest<DescTemplate>('/api/product/desc-templates', { method: 'POST', body });
+}
+export function deleteDescTemplate(templateId: string) {
+  return apiRequest<{ deleted: boolean }>(`/api/product/desc-templates/${templateId}`, { method: 'DELETE' });
 }
 
 // ── 通用状态机 / 流程引擎 ──

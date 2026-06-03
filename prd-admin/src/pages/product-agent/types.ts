@@ -28,6 +28,15 @@ export interface ProductCategory {
   isBuiltin: boolean;
 }
 
+/** 详情描述模板（按对象类型，富文本骨架，方便一键套用） */
+export interface DescTemplate {
+  id: string;
+  entityType: ProductEntityType;
+  name: string;
+  content: string;
+  sortOrder: number;
+}
+
 /** 版本生命周期 */
 export type VersionLifecycle = 'planning' | 'developing' | 'testing' | 'released' | 'deprecated';
 
