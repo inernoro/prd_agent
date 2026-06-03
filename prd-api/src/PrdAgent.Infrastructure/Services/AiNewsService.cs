@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -64,36 +65,77 @@ public class AiNewsService : IAiNewsService
         _llmRequestContext = llmRequestContext;
     }
 
+    // 后台刷新去重哨兵。AiNewsService 是 Scoped（每请求新实例），故用 static 跨实例去重，
+    // 保证同一时刻最多一个后台拉取，避免 stale 期间每个请求都甩一个 FetchAsync。
+    private static int _refreshing;
+
     public async Task<AiNewsFeed> GetLatestAsync(CancellationToken ct = default)
     {
+        // 真 serve-stale-while-revalidate（之前是「过期即同步阻塞拉外网」，每 5 分钟第一个用户必卡）：
+        // 1) 新鲜命中 → 立即返回
         if (_cache.TryGetValue<AiNewsFeed>(CacheKey, out var fresh) && fresh != null)
         {
             return fresh;
         }
 
+        // 2) 有 stale（6h 内拉成功过）→ 立即返回旧值 + 后台静默刷新，用户永不阻塞在外网拉取上
+        if (_cache.TryGetValue<AiNewsFeed>(StaleKey, out var stale) && stale != null)
+        {
+            TriggerBackgroundRefresh();
+            return new AiNewsFeed
+            {
+                Items = stale.Items,
+                Total = stale.Total,
+                GeneratedAt = stale.GeneratedAt,
+                Degraded = false,
+                Stale = true,
+            };
+        }
+
+        // 3) 彻底冷（首次启动 / 超 6h 没人访问且预热器也没拉到）→ 只能同步拉一次
         try
         {
-            var feed = await FetchAsync(ct);
-            _cache.Set(CacheKey, feed, FreshTtl);
-            _cache.Set(StaleKey, feed, StaleTtl);
-            return feed;
+            return await RefreshAndCacheAsync(ct);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[AiNews] 拉取上游资讯失败，尝试回退 stale 缓存");
-            if (_cache.TryGetValue<AiNewsFeed>(StaleKey, out var stale) && stale != null)
-            {
-                return new AiNewsFeed
-                {
-                    Items = stale.Items,
-                    Total = stale.Total,
-                    GeneratedAt = stale.GeneratedAt,
-                    Degraded = false,
-                    Stale = true,
-                };
-            }
+            _logger.LogWarning(ex, "[AiNews] 冷缓存同步拉取失败且无 stale 可回退");
             return new AiNewsFeed { Degraded = true };
         }
+    }
+
+    /// <summary>拉取上游并写入新鲜/陈旧两层缓存。供冷路径、后台刷新、预热器共用。</summary>
+    public async Task<AiNewsFeed> RefreshAndCacheAsync(CancellationToken ct = default)
+    {
+        var sw = Stopwatch.StartNew();
+        var feed = await FetchAsync(ct);
+        sw.Stop();
+        _cache.Set(CacheKey, feed, FreshTtl);
+        _cache.Set(StaleKey, feed, StaleTtl);
+        // 成功路径计时日志：以前成功零日志，「慢但成功」无法检测。此行让外网拉取耗时可见。
+        _logger.LogInformation("[AiNews] 上游资讯拉取完成 items={Items} elapsed={Elapsed}ms", feed.Total, sw.ElapsedMilliseconds);
+        return feed;
+    }
+
+    private void TriggerBackgroundRefresh()
+    {
+        if (Interlocked.CompareExchange(ref _refreshing, 1, 0) != 0) return; // 已有刷新在跑，跳过
+        // 后台刷新与请求生命周期解耦（server-authority：客户端断开不取消），仅用单例依赖。
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await RefreshAndCacheAsync(CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[AiNews] 后台刷新失败（继续沿用 stale 缓存）");
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _refreshing, 0);
+            }
+        });
     }
 
     public async Task<Dictionary<string, string>> EnrichCommentaryAsync(
