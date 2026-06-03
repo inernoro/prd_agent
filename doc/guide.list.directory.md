@@ -1,6 +1,6 @@
 # MAP 平台文档索引
 
-> 最后更新：2026-03-23
+> 最后更新：2026-06-03
 >
 > 本文件是 `doc/` 目录的结构化索引，供外部同步工具（语雀、Confluence 等）消费。
 > 元数据定义见 `doc/index.yml`，命名规范见 `doc/rule.doc-naming.md`。
@@ -36,6 +36,9 @@
 - [海鲜市场（Configuration Marketplace）](spec.marketplace) `spec.marketplace`
   > 配置市场的产品规格与 Fork 机制
 
+- [准星智能体产品规格](spec.zhunxing-agent) `spec.zhunxing-agent`
+  > 公司规范与流程问答中枢的产品定义与验收范围
+
 - [缺陷管理 Agent 产品方案](spec.defect-agent) `spec.defect-agent`
   > 缺陷管理 Agent 的产品需求与用户故事
 
@@ -61,6 +64,9 @@
 
 - [大模型池设计（三级调度/三级链路）](design.model-pool) `design.model-pool`
   > 模型池策略引擎的三级调度与链路设计
+
+- [准星智能体技术设计](design.zhunxing-agent) `design.zhunxing-agent`
+  > 准星首版的架构、知识模型与 App Registry 接入设计
 
 - [开放平台功能概要](design.open-platform) `design.open-platform`
   > 开放平台 API 接入的整体功能概要
@@ -216,6 +222,9 @@
 
 - [海鲜市场（配置市场）使用教程](guide.marketplace) `guide.marketplace`
   > 配置浏览、筛选、Fork 与发布的完整流程
+
+- [准星智能体首版落地指南](guide.zhunxing-agent-bootstrap) `guide.zhunxing-agent-bootstrap`
+  > 准星首版的注册、路由、知识卡与 FAQ 启动步骤
 
 - [工作流画布操作手册](guide.workflow-canvas) `guide.workflow-canvas`
   > 工作流画布的详细操作参考
@@ -373,6 +382,9 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-06-03 | 新增 | `spec.zhunxing-agent` | 准星智能体产品规格 |
+| 2026-06-03 | 新增 | `design.zhunxing-agent` | 准星智能体技术设计 |
+| 2026-06-03 | 新增 | `guide.zhunxing-agent-bootstrap` | 准星智能体首版落地指南 |
 | 2026-03-20 | 🟢 新增 | `guide.prd-agent` | PRD Agent 使用教程 |
 | 2026-03-20 | 🟢 新增 | `guide.visual-agent` | 视觉创作 Agent 使用教程 |
 | 2026-03-20 | 🟢 新增 | `guide.literary-agent` | 文学创作 Agent 使用教程 |

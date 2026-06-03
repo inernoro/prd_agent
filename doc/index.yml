@@ -28,6 +28,7 @@ docs:
   spec.srs: PRD 理解与交互智能体软件需求规格说明书
   spec.app-registry: 应用注册中心协议规范
   spec.marketplace: 海鲜市场（Configuration Marketplace）
+  spec.zhunxing-agent: 准星智能体产品规格
   spec.defect-agent: 缺陷管理 Agent 产品方案
   spec.report-agent: 周报 Agent 产品需求文档
   spec.report-agent.v2: 周报 Agent v2.0 产品需求文档
@@ -40,6 +41,7 @@ docs:
   design.unified-skill-system: 技能系统统一设计
   design.im-architecture: PRD Agent IM 架构重设计方案
   design.model-pool: 大模型池设计（三级调度/三级链路）
+  design.zhunxing-agent: 准星智能体技术设计
   design.open-platform: 开放平台功能概要
   design.workflow-engine: 工作流引擎设计方案
   design.workflow-control-flow-sse: 工作流引擎 v2 流程控制舱与 SSE 实时推送设计
@@ -92,6 +94,7 @@ docs:
   guide.workflow-agent: 工作流引擎使用教程
   guide.shortcuts-agent: 快捷指令使用教程
   guide.marketplace: 海鲜市场（配置市场）使用教程
+  guide.zhunxing-agent-bootstrap: 准星智能体首版落地指南
   guide.workflow-canvas: 工作流画布操作手册
   guide.weekly-report: 周报功能完整操作指南
   guide.ai-toolbox-ops: AI 百宝箱运维指南
