@@ -3,3 +3,4 @@
 | fix | cds | `fmtMs` 时长格式 ≥60s 改用「X.X min」,180s 排空等待等长耗时更易读 |
 | feat | cds | 预计进度条左侧显示总进度百分比 + 「预计还需 ~Zs」倒计时(超预期封顶 99%) |
 | fix | cds | 修复进行中进度条阶段映射(Bugbot #716):①`nginx-render`/`cache`/`analyze` 不再误归到末尾重启段而跳到 ~100%;②后端排空等待前先把 step 切到 `drain`,UI 实时高亮「排空+重启」段而非停在 web-build 干等 180s;③`validate-timings`/`validate-done` 等过渡步骤改走 elapsed 兜底,不再误高亮类型校验。step→段改用精确映射表,过渡步骤按已用时长定位 |
+| fix | cds | 预计进度条逐段兜底(Codex #716):某段在历史里没样本(旧历史缺 drainMs / hot 模式缺后端段)时用基线值补上而非留 0 宽,避免新加的排空+重启段零宽、ETA 漏算那段最长 180s 的等待 |

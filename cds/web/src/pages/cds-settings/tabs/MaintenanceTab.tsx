@@ -1598,8 +1598,11 @@ function SelfUpdateLiveProgress({ elapsedMs, currentStep }: { elapsedMs: number;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [records]);
 
-  const hasHistory = expected.reduce((s, v) => s + v.ms, 0) > 0;
-  const stages = hasHistory ? expected : expected.map((d) => ({ ...d, ms: LIVE_FALLBACK_MS[d.key] ?? 1000 }));
+  // 逐段兜底(Codex #716):某段在历史里没有样本(如旧历史缺 drainMs、或 hot /
+  // web-only 模式跑出来的记录缺后端/web 段)时,用基线值补上,而不是留 0 宽。
+  // 否则新加的排空+重启段会零宽、ETA 也排除掉那段最长可达 180s 的等待 —— 恰恰
+  // 是这条进度条最该解释的时间。只有当所有段都没样本时才整体走基线。
+  const stages = expected.map((d) => (d.ms > 0 ? d : { ...d, ms: LIVE_FALLBACK_MS[d.key] ?? 1000 }));
   const etaMs = Math.max(stages.reduce((s, v) => s + v.ms, 0), 1);
 
   // 按已用时长落到对应段(用于过渡/收尾步骤的兜底,既不跳末尾也不回跳)。
