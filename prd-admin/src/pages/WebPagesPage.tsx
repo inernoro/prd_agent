@@ -2227,6 +2227,54 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
     border: '1px solid var(--border-default)',
   };
 
+  // 「仅我自己」卡片放当前用户头像，其余可见性放语义图标
+  const currentUser = useAuthStore(s => s.user);
+  const myAvatar = currentUser
+    ? resolveAvatarUrl({
+        username: currentUser.username,
+        userType: currentUser.userType,
+        botKind: currentUser.botKind,
+        avatarFileName: currentUser.avatarFileName ?? null,
+        avatarUrl: currentUser.avatarUrl ?? null,
+      })
+    : '';
+
+  // 分段卡通用样式：默认蓝色高亮，danger 项（公开/短链）选中走橙色
+  const segCardStyle = (active: boolean, danger?: boolean): React.CSSProperties => ({
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 6,
+    padding: '10px 6px',
+    borderRadius: 10,
+    cursor: 'pointer',
+    textAlign: 'center',
+    transition: 'border-color 120ms, background 120ms',
+    border: active
+      ? `1.5px solid ${danger ? '#f97316' : '#3b82f6'}`
+      : '1px solid var(--border-default)',
+    background: active
+      ? danger
+        ? 'rgba(249,115,22,0.10)'
+        : 'rgba(59,130,246,0.10)'
+      : 'var(--bg-sunken)',
+  });
+
+  // 当前可见性选中项的一句话说明（仅展示选中项，非选中项零文字）
+  const VISIBILITY_DESC: Record<typeof visibility, string> = {
+    'owner-only': '链接被复制也无法被外人访问，最安全',
+    'logged-in': '需登录平台才能查看，未登录拒绝',
+    public: '任何拿到链接的人都可访问，建议同时设置密码',
+  };
+  const EXPIRY_OPTS = [
+    { v: 1, label: '1 天' },
+    { v: 7, label: '7 天' },
+    { v: 30, label: '30 天' },
+    { v: 90, label: '90 天' },
+    { v: 0, label: '永久' },
+  ];
+
   return (
     <Dialog
       open={true}
@@ -2289,105 +2337,101 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
               </p>
             )}
             <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-              点击下方按钮即可一键生成分享链接，标题会自动生成。
+              选择访问范围即可一键生成链接，标题自动生成。
             </p>
 
             {/* 分享选项 */}
-            <div className="flex flex-col gap-3">
-              <label className="flex items-center gap-2 cursor-pointer text-sm" title={isShort ? '短链场景密码不可关闭' : ''}>
-                <input
-                  type="checkbox"
-                  checked={usePassword}
-                  onChange={e => handleTogglePassword(e.target.checked)}
-                />
-                <Lock size={12} style={{ color: 'var(--text-muted)' }} />
-                <span style={{ color: 'var(--text-secondary)' }}>
-                  密码保护{isShort && <span style={{ color: '#f97316' }}>（短链必须）</span>}
-                </span>
-              </label>
-              {usePassword && (
-                <div className="flex flex-col gap-1.5">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={password}
-                      onChange={e => setPassword(e.target.value)}
-                      placeholder={isShort ? '≥12 位，含大小写+数字+符号' : '输入密码'}
-                      className="flex-1 px-3 py-1.5 rounded-lg text-sm outline-none"
-                      style={{
-                        ...inputStyle,
-                        border: pwdInvalid ? '1px solid #ef4444' : inputStyle.border,
-                      }}
-                    />
-                    <Button size="xs" variant="ghost" onClick={() => setPassword(isShort ? genStrongPassword() : genPassword())} title="随机生成密码">
-                      <RefreshCw size={12} />
-                    </Button>
-                  </div>
-                  <span className="text-xs" style={{ color: pwdInvalid ? '#ef4444' : 'var(--text-muted)' }}>
-                    {pwdInvalid
-                      ? '短链场景密码强度不足：需 ≥12 位，含大小写字母、数字、符号'
-                      : isShort
-                        ? '短链可被遍历枚举，密码是唯一防线，建议直接用随机生成的强密码'
-                        : '可修改密码或点击右侧按钮重新生成'}
-                  </span>
+            <div className="flex flex-col gap-4">
+              {/* 谁能访问 — 防盗核心控件（PR 2026-05-28）：头像/图标 + 短标题分段卡，
+                  说明仅展示选中项一行（公开项走橙色风险色） */}
+              <div className="flex flex-col gap-1.5">
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>谁能访问</span>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setVisibility('owner-only')} style={segCardStyle(visibility === 'owner-only')}>
+                    {myAvatar
+                      ? <UserAvatar src={myAvatar} alt="我" className="rounded-full" style={{ width: 26, height: 26 }} />
+                      : <User size={22} style={{ color: visibility === 'owner-only' ? '#3b82f6' : 'var(--text-secondary)' }} />}
+                    <span className="text-xs" style={{ color: visibility === 'owner-only' ? '#3b82f6' : 'var(--text-secondary)' }}>仅我 / 团队</span>
+                  </button>
+                  <button type="button" onClick={() => setVisibility('logged-in')} style={segCardStyle(visibility === 'logged-in')}>
+                    <Users size={22} style={{ color: visibility === 'logged-in' ? '#3b82f6' : 'var(--text-secondary)' }} />
+                    <span className="text-xs" style={{ color: visibility === 'logged-in' ? '#3b82f6' : 'var(--text-secondary)' }}>登录可见</span>
+                  </button>
+                  <button type="button" onClick={() => setVisibility('public')} style={segCardStyle(visibility === 'public', true)}>
+                    <Globe size={22} style={{ color: visibility === 'public' ? '#f97316' : 'var(--text-secondary)' }} />
+                    <span className="text-xs" style={{ color: visibility === 'public' ? '#f97316' : 'var(--text-secondary)' }}>公开</span>
+                  </button>
                 </div>
-              )}
-
-              <label className="flex flex-col gap-1">
-                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                  <Clock size={12} className="inline mr-1" />过期时间
+                <span className="text-xs" style={{ color: visibility === 'public' ? '#f97316' : 'var(--text-muted)' }}>
+                  {VISIBILITY_DESC[visibility]}
                 </span>
-                <select
-                  value={expiresInDays}
-                  onChange={e => setExpiresInDays(Number(e.target.value))}
-                  className="px-3 py-1.5 rounded-lg text-sm outline-none cursor-pointer"
-                  style={inputStyle}
-                >
-                  <option value={0}>永不过期</option>
-                  <option value={1}>1 天</option>
-                  <option value={7}>7 天</option>
-                  <option value={30}>30 天</option>
-                  <option value={90}>90 天</option>
-                </select>
-              </label>
+              </div>
 
-              {/* 访问可见性 — 防盗核心控件（PR 2026-05-28） */}
+              {/* 密码保护 */}
+              <div className="flex flex-col gap-1.5">
+                <label className="flex items-center gap-2 cursor-pointer text-sm" title={isShort ? '短链场景密码不可关闭' : ''}>
+                  <input type="checkbox" checked={usePassword} onChange={e => handleTogglePassword(e.target.checked)} />
+                  <Lock size={13} style={{ color: 'var(--text-muted)' }} />
+                  <span style={{ color: 'var(--text-secondary)' }}>
+                    密码保护{isShort && <span style={{ color: '#f97316' }}>（短链必须）</span>}
+                  </span>
+                </label>
+                {usePassword && (
+                  <>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={password}
+                        onChange={e => setPassword(e.target.value)}
+                        placeholder={isShort ? '≥12 位，含大小写+数字+符号' : '输入密码'}
+                        className="flex-1 px-3 py-1.5 rounded-lg text-sm outline-none"
+                        style={{ ...inputStyle, border: pwdInvalid ? '1px solid #ef4444' : inputStyle.border }}
+                      />
+                      <Button size="xs" variant="ghost" onClick={() => setPassword(isShort ? genStrongPassword() : genPassword())} title="随机生成密码">
+                        <RefreshCw size={12} />
+                      </Button>
+                    </div>
+                    {(pwdInvalid || isShort) && (
+                      <span className="text-xs" style={{ color: pwdInvalid ? '#ef4444' : 'var(--text-muted)' }}>
+                        {pwdInvalid
+                          ? '密码强度不足：需 ≥12 位，含大小写、数字、符号'
+                          : '短链可被遍历枚举，建议用随机生成的强密码'}
+                      </span>
+                    )}
+                  </>
+                )}
+              </div>
+
+              {/* 有效期 — 胶囊代替下拉 */}
               <div className="flex flex-col gap-1.5">
                 <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                  <Lock size={12} className="inline mr-1" />谁能访问
+                  <Clock size={12} className="inline mr-1" />有效期
                 </span>
-                <div className="flex flex-col gap-1.5">
-                  <label className="flex items-start gap-2 cursor-pointer text-sm">
-                    <input type="radio" checked={visibility === 'owner-only'} onChange={() => setVisibility('owner-only')} className="mt-1" />
-                    <div className="flex flex-col">
-                      <span style={{ color: 'var(--text-secondary)' }}>仅我自己 / 团队成员（默认 · 推荐）</span>
-                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>链接被复制也无法被外人访问，最安全</span>
-                    </div>
-                  </label>
-                  <label className="flex items-start gap-2 cursor-pointer text-sm">
-                    <input type="radio" checked={visibility === 'logged-in'} onChange={() => setVisibility('logged-in')} className="mt-1" />
-                    <div className="flex flex-col">
-                      <span style={{ color: 'var(--text-secondary)' }}>任何登录用户</span>
-                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>需登录平台才能查看，未登录拒绝</span>
-                    </div>
-                  </label>
-                  <label className="flex items-start gap-2 cursor-pointer text-sm">
-                    <input type="radio" checked={visibility === 'public'} onChange={() => setVisibility('public')} className="mt-1" />
-                    <div className="flex flex-col">
-                      <span style={{ color: visibility === 'public' ? '#f97316' : 'var(--text-secondary)' }}>
-                        任何人（公开链接）
-                      </span>
-                      <span className="text-xs" style={{ color: visibility === 'public' ? '#f97316' : 'var(--text-muted)' }}>
-                        {visibility === 'public'
-                          ? '任何拿到链接的人都可访问，建议同时设置密码'
-                          : '链接可被任何人访问'}
-                      </span>
-                    </div>
-                  </label>
+                <div className="flex gap-2 flex-wrap">
+                  {EXPIRY_OPTS.map(opt => {
+                    const active = expiresInDays === opt.v;
+                    return (
+                      <button
+                        key={opt.v}
+                        type="button"
+                        onClick={() => setExpiresInDays(opt.v)}
+                        className="px-3 py-1 rounded-lg text-xs"
+                        style={{
+                          cursor: 'pointer',
+                          transition: 'border-color 120ms, background 120ms',
+                          border: active ? '1.5px solid #3b82f6' : '1px solid var(--border-default)',
+                          background: active ? 'rgba(59,130,246,0.10)' : 'var(--bg-sunken)',
+                          color: active ? '#3b82f6' : 'var(--text-secondary)',
+                        }}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
-              {/* 高级选项 — 链接类型 */}
+              {/* 高级选项 — 链接形式（收起时只显示当前值） */}
               <button
                 type="button"
                 onClick={() => setShowAdvanced(v => !v)}
@@ -2395,25 +2439,26 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
                 style={{ color: 'var(--text-muted)' }}
               >
                 <span style={{ display: 'inline-block', transform: showAdvanced ? 'rotate(90deg)' : 'none', transition: 'transform 120ms' }}>›</span>
-                高级选项
+                高级选项{!showAdvanced && <span> · 链接形式：{linkType === 'long' ? '长链（推荐）' : '数字短链'}</span>}
               </button>
               {showAdvanced && (
-                <div className="flex flex-col gap-1.5 pl-4" style={{ borderLeft: '2px solid var(--border-default)' }}>
+                <div className="flex flex-col gap-1.5">
                   <span className="text-xs" style={{ color: 'var(--text-muted)' }}>链接形式</span>
-                  <label className="flex items-start gap-2 cursor-pointer text-sm">
-                    <input type="radio" checked={linkType === 'long'} onChange={() => setLinkType('long')} className="mt-1" />
-                    <div className="flex flex-col">
-                      <span style={{ color: 'var(--text-secondary)' }}>字母长链 /s/wp/xxxxxxxxxxx（推荐）</span>
-                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>72 bits 随机 token，不可枚举猜测；密码可选</span>
-                    </div>
-                  </label>
-                  <label className="flex items-start gap-2 cursor-pointer text-sm">
-                    <input type="radio" checked={linkType === 'short'} onChange={() => setLinkType('short')} className="mt-1" />
-                    <div className="flex flex-col">
-                      <span style={{ color: 'var(--text-secondary)' }}>超短数字链 /s/123（自用便捷）</span>
-                      <span className="text-xs" style={{ color: '#f97316' }}>可被遍历猜测，必须配强密码使用</span>
-                    </div>
-                  </label>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setLinkType('long')} style={segCardStyle(linkType === 'long')}>
+                      <Link2 size={20} style={{ color: linkType === 'long' ? '#3b82f6' : 'var(--text-secondary)' }} />
+                      <span className="text-xs" style={{ color: linkType === 'long' ? '#3b82f6' : 'var(--text-secondary)' }}>字母长链 · 推荐</span>
+                    </button>
+                    <button type="button" onClick={() => setLinkType('short')} style={segCardStyle(linkType === 'short', true)}>
+                      <Link2 size={20} style={{ color: linkType === 'short' ? '#f97316' : 'var(--text-secondary)' }} />
+                      <span className="text-xs" style={{ color: linkType === 'short' ? '#f97316' : 'var(--text-secondary)' }}>数字短链 · 自用</span>
+                    </button>
+                  </div>
+                  <span className="text-xs" style={{ color: linkType === 'short' ? '#f97316' : 'var(--text-muted)' }}>
+                    {linkType === 'long'
+                      ? '/s/wp/xxx · 72 bits 随机 token，不可枚举'
+                      : '/s/123 · 可被遍历猜测，必须配强密码'}
+                  </span>
                 </div>
               )}
             </div>
