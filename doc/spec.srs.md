@@ -1948,6 +1948,7 @@ sequenceDiagram
 | `literary-agent` | 文学创作 Agent | 文章配图、文学创作场景 |
 | `defect-agent` | 缺陷管理 Agent | 缺陷提交与跟踪 |
 | `report-agent` | 周报管理 Agent | 周报创建、提交、审阅管理 |
+| `zhunxing-agent` | 准星智能体 | 企业规范与流程问答中枢 |
 
 **架构原则**：
 - 权限控制：基于 Controller/appKey 做细粒度权限管理
@@ -2148,6 +2149,41 @@ sequenceDiagram
 - `report-agent.view.all` — 查看所有团队周报
 
 **设计文档**：`doc/spec.report-agent.v2.md`
+
+---
+
+### 4.24 准星智能体模块（Zhunxing Agent）
+
+> **v3.1 新增（可开发版）**：企业规范与流程问答中枢
+
+#### 4.24.1 ZHX-001 规范问答与依据引用
+
+| 属性 | 描述 |
+|------|------|
+| 需求编号 | ZHX-001 |
+| 需求名称 | 准星规范问答 |
+| 优先级 | **[应该]** |
+| 实现层 | 后端服务 + 管理后台配置入口 |
+
+**功能详述**：
+1. 员工通过自然语言提问公司制度、协作流程问题
+2. 系统基于知识条款检索返回结论
+3. 回答必须附带出处（文档名 + 章节条款）
+4. 无命中时返回标准兜底话术，不输出推测性结论
+
+**核心接口（新增）**：
+- 前台：`POST /zhunxing/ask` — 规范问答（JWT）
+- 前台：`GET /zhunxing/health` — 健康检查
+- 后台：`GET /api/zhunxing/documents` — 文档列表
+- 后台：`POST /api/zhunxing/documents` — 新建知识文档
+- 后台：`GET /api/zhunxing/clauses` — 条款列表
+- 后台：`POST /api/zhunxing/clauses` — 新建知识条款
+- 后台：`POST /api/zhunxing/bootstrap/attendance` — 初始化考勤样例条款
+- 后台：`POST /api/zhunxing/bootstrap/app-registry` — 一键注册 App Registry 与路由规则
+
+**权限定义**：
+- `zhunxing-agent.read` — 查看准星知识文档与条款
+- `zhunxing-agent.write` — 维护准星知识文档与条款、执行初始化
 
 ---
 

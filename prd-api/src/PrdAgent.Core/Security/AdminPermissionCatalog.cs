@@ -160,6 +160,16 @@ public static class AdminPermissionCatalog
     public const string TranscriptAgentUse = "transcript-agent.use";
 
     /// <summary>
+    /// 准星智能体读权限：查看知识文档与条款
+    /// </summary>
+    public const string ZhunxingAgentRead = "zhunxing-agent.read";
+
+    /// <summary>
+    /// 准星智能体写权限：维护知识文档与条款、执行引导初始化
+    /// </summary>
+    public const string ZhunxingAgentWrite = "zhunxing-agent.write";
+
+    /// <summary>
     /// 产品评审员权限：提交方案 + 查看自己的评审结果
     /// </summary>
     public const string ReviewAgentUse = "review-agent.use";
@@ -252,6 +262,9 @@ public static class AdminPermissionCatalog
         new(ReportAgentDataSourceManage, "周报-数据源管理", "配置 Git/SVN 仓库连接"),
 
         new(TranscriptAgentUse, "转录 Agent", "音视频转录与文案生成"),
+
+        new(ZhunxingAgentRead, "准星智能体-读", "查看准星知识文档与条款"),
+        new(ZhunxingAgentWrite, "准星智能体-写", "维护准星知识文档与条款、执行初始化"),
 
         new(WorkflowAgentManage, "工作流引擎-管理", "管理所有工作流与执行记录"),
 

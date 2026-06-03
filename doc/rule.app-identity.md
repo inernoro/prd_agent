@@ -38,6 +38,7 @@ App (appKey)
 | `defect-agent` | 缺陷管理 Agent | 缺陷提交与跟踪 |
 | `video-agent` | 视频 Agent | 文章转视频教程 |
 | `report-agent` | 周报管理 Agent | 周报创建、提交、审阅 |
+| `zhunxing-agent` | 准星智能体 | 企业规范与流程问答中枢 |
 
 **代码示例**：
 ```csharp

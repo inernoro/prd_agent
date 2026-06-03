@@ -86,4 +86,8 @@ public static class AppNames
     /// <summary>Transcript Agent - 音视频转录</summary>
     public const string TranscriptAgent = "transcript-agent";
     public const string TranscriptAgentDisplay = "音视频转录";
+
+    /// <summary>Zhunxing Agent - 企业规范与流程问答</summary>
+    public const string ZhunxingAgent = "zhunxing-agent";
+    public const string ZhunxingAgentDisplay = "准星";
 }

@@ -143,6 +143,9 @@ public class MongoDbContext
     // App Registry 应用注册中心
     public IMongoCollection<RegisteredApp> RegisteredApps => _database.GetCollection<RegisteredApp>("registered_apps");
     public IMongoCollection<RoutingRule> RoutingRules => _database.GetCollection<RoutingRule>("routing_rules");
+    // Zhunxing Agent 准星知识库
+    public IMongoCollection<ZhunxingKnowledgeDocument> ZhunxingKnowledgeDocuments => _database.GetCollection<ZhunxingKnowledgeDocument>("zhunxing_knowledge_documents");
+    public IMongoCollection<ZhunxingKnowledgeClause> ZhunxingKnowledgeClauses => _database.GetCollection<ZhunxingKnowledgeClause>("zhunxing_knowledge_clauses");
     // AI Toolbox 百宝箱
     public IMongoCollection<ToolboxRun> ToolboxRuns => _database.GetCollection<ToolboxRun>("toolbox_runs");
     public IMongoCollection<ToolboxItem> ToolboxItems => _database.GetCollection<ToolboxItem>("toolbox_items");
@@ -782,6 +785,29 @@ public class MongoDbContext
         // EndedAt 普通索引（仅用于查询，不自动删除数据）
         OpenPlatformRequestLogs.Indexes.CreateOne(new CreateIndexModel<OpenPlatformRequestLog>(
             Builders<OpenPlatformRequestLog>.IndexKeys.Ascending(x => x.EndedAt)));
+
+        // ZhunxingKnowledgeDocuments：按标题+版本唯一；按生效日期排序
+        try
+        {
+            ZhunxingKnowledgeDocuments.Indexes.CreateOne(new CreateIndexModel<ZhunxingKnowledgeDocument>(
+                Builders<ZhunxingKnowledgeDocument>.IndexKeys.Ascending(x => x.Title).Ascending(x => x.Version),
+                new CreateIndexOptions { Name = "uniq_zhunxing_doc_title_version", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        ZhunxingKnowledgeDocuments.Indexes.CreateOne(new CreateIndexModel<ZhunxingKnowledgeDocument>(
+            Builders<ZhunxingKnowledgeDocument>.IndexKeys.Descending(x => x.EffectiveDate),
+            new CreateIndexOptions { Name = "idx_zhunxing_docs_effective" }));
+
+        // ZhunxingKnowledgeClauses：按文档内排序查询；关键词多值索引
+        ZhunxingKnowledgeClauses.Indexes.CreateOne(new CreateIndexModel<ZhunxingKnowledgeClause>(
+            Builders<ZhunxingKnowledgeClause>.IndexKeys.Ascending(x => x.DocumentId).Ascending(x => x.SortOrder),
+            new CreateIndexOptions { Name = "idx_zhunxing_clauses_doc_sort" }));
+        ZhunxingKnowledgeClauses.Indexes.CreateOne(new CreateIndexModel<ZhunxingKnowledgeClause>(
+            Builders<ZhunxingKnowledgeClause>.IndexKeys.Ascending(x => x.Keywords),
+            new CreateIndexOptions { Name = "idx_zhunxing_clauses_keywords" }));
 
         // ModelGroups：按 modelType + isDefaultForType 查询默认分组
         ModelGroups.Indexes.CreateOne(new CreateIndexModel<ModelGroup>(
