@@ -44,6 +44,15 @@ export interface VisualCreationMiniPanelProps {
 
 type GenerateState = 'idle' | 'generating' | 'done' | 'error';
 
+// 生成等待期的分级状态文案（呼应 CLAUDE.md §6 禁止空白等待 + ai-model-visibility.md 展示模型名）
+// 导出供单测断言「随时间分级 + 携带模型名」的可见行为
+export function genPhaseText(sec: number, model: string): string {
+  const m = model ? ` · ${model}` : '';
+  if (sec < 15) return `正在绘制${m} · 已 ${sec}s`;
+  if (sec < 40) return `模型绘制中${m} · 已 ${sec}s（复杂画面通常 20-40s）`;
+  return `仍在绘制${m} · 已 ${sec}s，较慢可取消重试`;
+}
+
 // ============ 水印浮层组件 ============
 
 function WatermarkOverlay({ onClose }: { onClose: () => void }) {
@@ -144,6 +153,11 @@ export function VisualCreationMiniPanel({
   const [resultUrl, setResultUrl] = useState<string | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
 
+  // 生成等待计时（驱动进度条 + 分级文案，避免空白等待）
+  const [elapsedSec, setElapsedSec] = useState(0);
+  // 单调递增的生成令牌：用户「取消」后作废当前生成的迟到结果（不杀后端任务，遵循 server-authority.md）
+  const genRunIdRef = useRef(0);
+
   // 「用原文」状态
   const [gettingPrompt, setGettingPrompt] = useState(false);
   const abortPromptRef = useRef<(() => void) | null>(null);
@@ -228,6 +242,17 @@ export function VisualCreationMiniPanel({
     };
   }, []);
 
+  // 生成期：每秒推进计时——这是等待时屏幕"持续变化"的来源（CLAUDE.md §6）
+  useEffect(() => {
+    if (genState !== 'generating') return;
+    setElapsedSec(0);
+    const t0 = Date.now();
+    const id = window.setInterval(() => {
+      setElapsedSec(Math.floor((Date.now() - t0) / 1000));
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [genState]);
+
   // ============ 参考图选择 ============
 
   const handleRefImageSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -252,6 +277,7 @@ export function VisualCreationMiniPanel({
       return;
     }
 
+    const myRun = ++genRunIdRef.current;
     setGenState('generating');
     setResultUrl(null);
     setGenError(null);
@@ -262,6 +288,9 @@ export function VisualCreationMiniPanel({
       modelName: selectedModel || undefined,
       images: refImageUri ? [refImageUri] : undefined,
     });
+
+    // 用户中途「取消」会 bump genRunIdRef —— 丢弃这次迟到的结果，不覆盖已重置的 UI
+    if (genRunIdRef.current !== myRun) return;
 
     if (!res.success) {
       setGenState('error');
@@ -280,6 +309,16 @@ export function VisualCreationMiniPanel({
     setResultUrl(url);
     setGenState('done');
   }, [prompt, selectedModel, selectedSize, refImageUri]);
+
+  // ============ 取消等待 ============
+
+  // 作废当前生成令牌 + 回到 idle。后端任务自然跑完（遵循 server-authority.md：客户端取消不杀服务端）
+  const handleCancelGenerate = useCallback(() => {
+    genRunIdRef.current += 1;
+    setGenState('idle');
+    setGenError(null);
+    toast.info('已停止等待', '图片仍在后台生成，可在需要时重新发起');
+  }, []);
 
   // ============ 重新生成 ============
 
@@ -307,6 +346,11 @@ export function VisualCreationMiniPanel({
 
   const isGenerating = genState === 'generating';
   const isDone = genState === 'done';
+
+  // 等待期展示的模型名（单选项时选择器虽隐藏，selectedModel 仍有值）
+  const activeModelLabel = models.find((m) => m.value === selectedModel)?.label ?? selectedModel ?? '';
+  // 进度条随等待"爬升"到 92% 封顶 —— 不谎报 100%，done 时由结果区接管
+  const progressPct = Math.min(92, 8 + elapsedSec * 4);
 
   const panelBase: React.CSSProperties = {
     display: 'flex',
@@ -529,32 +573,67 @@ export function VisualCreationMiniPanel({
         </button>
       </div>
 
-      {/* 生成按钮 */}
-      {!isDone && (
+      {/* 生成按钮（idle / error 时可点，error 时等同重试） */}
+      {!isDone && !isGenerating && (
         <button
           type="button"
-          style={{
-            ...btnPrimary,
-            justifyContent: 'center',
-            padding: '9px 16px',
-            opacity: isGenerating ? 0.75 : 1,
-            cursor: isGenerating ? 'not-allowed' : 'pointer',
-          }}
+          style={{ ...btnPrimary, justifyContent: 'center', padding: '9px 16px' }}
           onClick={handleGenerate}
-          disabled={isGenerating}
         >
-          {isGenerating ? (
-            <>
-              <MapSpinner size={14} color="rgba(255,255,255,0.8)" />
-              正在生成…（生图模型可能较慢）
-            </>
-          ) : (
-            <>
-              <ImageIcon size={14} />
-              生成图片
-            </>
-          )}
+          <ImageIcon size={14} />
+          生成图片
         </button>
+      )}
+
+      {/* 生成中：爬升进度条 + 分级状态(含模型名) + 取消 —— 杜绝空白等待（CLAUDE.md §6） */}
+      {isGenerating && (
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 8,
+            padding: '10px 12px',
+            borderRadius: 8,
+            background: 'rgba(168,85,247,0.08)',
+            border: '1px solid rgba(168,85,247,0.25)',
+          }}
+        >
+          <div style={{ height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
+            <div
+              style={{
+                height: '100%',
+                width: `${progressPct}%`,
+                borderRadius: 2,
+                background: 'rgba(168,85,247,0.85)',
+                transition: 'width 0.9s ease',
+              }}
+            />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                fontSize: 12,
+                color: 'rgba(255,255,255,0.72)',
+                minWidth: 0,
+              }}
+            >
+              <MapSpinner size={13} color="rgba(255,255,255,0.8)" />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {genPhaseText(elapsedSec, activeModelLabel)}
+              </span>
+            </span>
+            <button
+              type="button"
+              style={{ ...btnGhost, padding: '5px 12px', flexShrink: 0 }}
+              onClick={handleCancelGenerate}
+            >
+              取消
+            </button>
+          </div>
+        </div>
       )}
 
       {/* 错误提示 */}
