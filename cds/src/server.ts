@@ -21,6 +21,7 @@ import { createCdsSystemConnectionsRouter } from './routes/cds-system-connection
 import { createCdsSystemTopologyRouter } from './routes/cds-system-topology.js';
 import { createTopologyAggregator } from './services/topology-aggregator.js';
 import { createInfraBackupRouter } from './routes/infra-backup.js';
+import { createInfraDataRouter } from './routes/infra-data.js';
 import { createLegacyCleanupRouter } from './routes/legacy-cleanup.js';
 import { createStorageModeRouter, type StorageModeContext } from './routes/storage-mode.js';
 import { createCommentTemplateRouter } from './routes/comment-template.js';
@@ -499,8 +500,11 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /env': '获取环境变量',
     'PUT /env': '批量设置环境变量',
     'POST /env/categorize': '整理环境变量',
+    'POST /validate-runtime': '试运行验证配置',
+    'POST /detect-runtime': '检测仓库技术栈',
     'GET /config': '获取全局配置',
     'GET /infra': '获取基础设施列表',
+    'GET /infra/catalog': '获取基建目录',
     'GET /infra/discover': '发现基础设施',
     'POST /infra': '添加基础设施',
     'POST /infra/quickstart': '快速初始化基础设施',
@@ -712,6 +716,9 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/infra\/(.+)\/backup$/, '下载数据库备份'],
     [/^POST \/infra\/(.+)\/restore$/, '恢复数据库'],
     [/^GET \/infra\/(.+)\/backup-history$/, '查看备份历史'],
+    [/^POST \/infra\/(.+)\/query$/, '查询数据库'],
+    [/^GET \/infra\/(.+)\/schema$/, '查看数据库结构'],
+    [/^POST \/infra\/(.+)\/init-sql$/, '执行初始化 SQL'],
     [/^DELETE \/ai\/sessions\/(.+)$/, '撤销 AI 会话'],
     [/^POST \/ai\/approve\/(.+)$/, '批准 AI 连接'],
     [/^POST \/ai\/reject\/(.+)$/, '拒绝 AI 连接'],
@@ -748,6 +755,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/projects\/(.+)\/infra\/resync\/sources$/, '列出同步配置来源'],
     [/^POST \/projects\/(.+)\/infra\/resync\/preview$/, '预览基础设施同步'],
     [/^POST \/projects\/(.+)\/infra\/resync\/execute$/, '执行基础设施同步'],
+    [/^POST \/projects\/(.+)\/infra-presets$/, '应用基建预设'],
     // 分支扩展
     [/^GET \/branches\/stream$/, '订阅分支状态流'],
     [/^POST \/branches\/(.+)\/checkout\/(.+)$/, '检出 Commit'],
@@ -2896,7 +2904,8 @@ export function createServer(deps: ServerDeps): express.Express {
   });
   app.use('/api', createCdsSystemTopologyRouter({ aggregator: topologyAggregator }));
   // 基础设施数据备份/恢复（mongodump/mongorestore/redis dump.rdb/tar）
-  app.use('/api', createInfraBackupRouter({ stateService: deps.stateService, shell: deps.shell }));
+  app.use('/api', createInfraBackupRouter({ stateService: deps.stateService, shell: deps.shell, assertProjectAccess: assertProjectAccess as any }));
+  app.use('/api', createInfraDataRouter({ stateService: deps.stateService, shell: deps.shell, assertProjectAccess: assertProjectAccess as any }));
   // 遗留 default 项目迁移（见 legacy-cleanup.ts 头部注释）
   app.use('/api', createLegacyCleanupRouter({
     stateService: deps.stateService,

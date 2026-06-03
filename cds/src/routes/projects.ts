@@ -32,22 +32,24 @@ import { discoverComposeFiles, parseCdsCompose } from '../services/compose-parse
 import { deriveEnvMetaForVars } from '../services/env-classifier.js';
 import { ProjectFilesService, ProjectFileError, type ProjectFilePayload } from '../services/project-files.js';
 import { repoNameFromGitRef } from '../services/preview-slug.js';
+import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
+import {
+  getInfraCatalogEntry,
+  infraCatalogIds,
+  instanceConnectionEnv,
+  recommendedVolumePathsFromCatalog,
+  sanitizeDbName,
+  type InfraPresetDefinition,
+} from '../services/infra-catalog.js';
 import * as nodeFs from 'node:fs';
 import * as nodePath from 'node:path';
+import * as nodeOs from 'node:os';
+import { spawn } from 'node:child_process';
 import type { IShellExecutor, Project, CdsConfig, AgentKey, BuildProfile, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
 
 type OnboardingRuntime = NonNullable<Project['onboardingRuntime']>;
 type OnboardingService = NonNullable<Project['onboardingServices']>[number];
-
-interface InfraPresetDefinition {
-  id: string;
-  name: string;
-  dockerImage: string;
-  containerPort: number;
-  env?: Record<string, string>;
-  envVars?: Record<string, string>;
-}
 
 const ONBOARDING_RUNTIMES = new Set<OnboardingRuntime>([
   'auto',
@@ -62,7 +64,8 @@ const ONBOARDING_RUNTIMES = new Set<OnboardingRuntime>([
   'dockerfile',
   'custom',
 ]);
-const INFRA_PRESETS = new Set(['mongodb', 'postgres', 'mysql', 'redis', 'rabbitmq']);
+// Valid preset IDs derive from the infra-catalog SSOT (services/infra-catalog.ts).
+const INFRA_PRESETS = new Set(infraCatalogIds());
 
 export interface ProjectsRouterDeps {
   stateService: StateService;
@@ -583,15 +586,9 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   }
 
   function recommendedVolumePathsForImage(image: string): string[] | null {
-    const lower = (image || '').toLowerCase();
-    const baseRaw = lower.split('/').pop() || lower;
-    const base = baseRaw.split(':')[0];
-    if (base.startsWith('mysql') || base.startsWith('mariadb')) return ['/var/lib/mysql'];
-    if (base.startsWith('postgres')) return ['/var/lib/postgresql/data'];
-    if (base.startsWith('redis')) return ['/data'];
-    if (base.startsWith('mongo')) return ['/data/db'];
-    if (base.startsWith('rabbitmq')) return ['/var/lib/rabbitmq'];
-    return null;
+    // Catalog-driven (SSOT: services/infra-catalog.ts) with a heuristic fallback
+    // for user-supplied custom images that are not in the catalog.
+    return recommendedVolumePathsFromCatalog(image);
   }
 
   function recommendedInfraVolumes(project: Project, infraId: string, image: string): InfraService['volumes'] {
@@ -609,124 +606,104 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     return randomBytes(bytes).toString('hex');
   }
 
-  function createInfraPreset(project: Project, presetId: string): InfraPresetDefinition | null {
-    if (presetId === 'mongodb') {
-      const user = 'app';
-      const password = makeSecret();
-      return {
-        id: 'mongodb',
-        name: 'MongoDB',
-        dockerImage: 'mongo:7',
-        containerPort: 27017,
-        env: {
-          MONGO_INITDB_ROOT_USERNAME: user,
-          MONGO_INITDB_ROOT_PASSWORD: password,
-        },
-        envVars: {
-          MONGODB_URL: `mongodb://${user}:${password}@mongodb:27017/app?authSource=admin`,
-        },
-      };
+  function createInfraPreset(_project: Project, presetId: string, opts?: { dbName?: string }): InfraPresetDefinition | null {
+    // SSOT: services/infra-catalog.ts. Generate this preset's secrets, then let the
+    // catalog entry build the concrete container env + app-visible connection strings.
+    // opts.dbName threads a user-chosen database name into env + connection strings.
+    const entry = getInfraCatalogEntry(presetId);
+    if (!entry) return null;
+    const secrets: Record<string, string> = {};
+    for (const key of entry.secretKeys || []) {
+      secrets[key] = makeSecret();
     }
-    if (presetId === 'postgres') {
-      const password = makeSecret();
-      return {
-        id: 'postgres',
-        name: 'PostgreSQL',
-        dockerImage: 'postgres:16-alpine',
-        containerPort: 5432,
-        env: {
-          POSTGRES_USER: 'app',
-          POSTGRES_PASSWORD: password,
-          POSTGRES_DB: 'app',
-        },
-        envVars: {
-          DATABASE_URL: `postgresql://app:${password}@postgres:5432/app`,
-          POSTGRES_URL: `postgresql://app:${password}@postgres:5432/app`,
-        },
-      };
-    }
-    if (presetId === 'mysql') {
-      const rootPassword = makeSecret();
-      const password = makeSecret();
-      return {
-        id: 'mysql',
-        name: 'MySQL',
-        dockerImage: 'mysql:8',
-        containerPort: 3306,
-        env: {
-          MYSQL_ROOT_PASSWORD: rootPassword,
-          MYSQL_DATABASE: 'app',
-          MYSQL_USER: 'app',
-          MYSQL_PASSWORD: password,
-        },
-        envVars: {
-          DATABASE_URL: `mysql://app:${password}@mysql:3306/app`,
-          MYSQL_URL: `mysql://app:${password}@mysql:3306/app`,
-        },
-      };
-    }
-    if (presetId === 'redis') {
-      return {
-        id: 'redis',
-        name: 'Redis',
-        dockerImage: 'redis:7-alpine',
-        containerPort: 6379,
-        envVars: {
-          REDIS_URL: 'redis://redis:6379',
-        },
-      };
-    }
-    if (presetId === 'rabbitmq') {
-      const password = makeSecret();
-      return {
-        id: 'rabbitmq',
-        name: 'RabbitMQ',
-        dockerImage: 'rabbitmq:3-management-alpine',
-        containerPort: 5672,
-        env: {
-          RABBITMQ_DEFAULT_USER: 'app',
-          RABBITMQ_DEFAULT_PASS: password,
-        },
-        envVars: {
-          RABBITMQ_URL: `amqp://app:${password}@rabbitmq:5672`,
-        },
-      };
-    }
-    return null;
+    const built = entry.build(secrets, opts);
+    return {
+      id: entry.id,
+      name: entry.name,
+      dockerImage: entry.dockerImage,
+      containerPort: entry.containerPort,
+      env: built.env,
+      envVars: built.envVars,
+      command: entry.command,
+      labels: entry.labels,
+    };
   }
 
-  function applyInfraPresets(project: Project, presetIds: string[]): string[] {
-    const unique = Array.from(new Set(presetIds.filter((id) => INFRA_PRESETS.has(id))));
-    if (unique.length === 0) return [];
-    const existingInfraIds = new Set(stateService.getInfraServicesForProject(project.id).map((service) => service.id));
+  function applyInfraPresets(
+    project: Project,
+    presetIds: string[],
+    configMap?: Record<string, { dbName?: string; initSql?: string }>,
+    extraInstances?: Array<{ presetId: string; dbName?: string; initSql?: string }>,
+  ): string[] {
+    // 实例请求清单:每个被选预设的第 1 个实例(presetIds) + 额外同类型实例(extraInstances,第 2+ 个)。
+    const requests: Array<{ presetId: string; dbName?: string; initSql?: string }> = [];
+    for (const presetId of Array.from(new Set(presetIds.filter((id) => INFRA_PRESETS.has(id))))) {
+      const cfg = configMap?.[presetId];
+      requests.push({ presetId, dbName: cfg?.dbName, initSql: cfg?.initSql });
+    }
+    for (const ex of extraInstances || []) {
+      const entry = getInfraCatalogEntry(ex.presetId);
+      // 额外同类型实例仅对"可命名库"的预设(数据库)开放——其连接串 host 才能被安全改写到实例别名。
+      if (entry && entry.supportsDbName && INFRA_PRESETS.has(ex.presetId)) {
+        requests.push({ presetId: ex.presetId, dbName: ex.dbName, initSql: ex.initSql });
+      }
+    }
+    if (requests.length === 0) return [];
+
+    const existing = stateService.getInfraServicesForProject(project.id);
+    const existingIds = new Set(existing.map((service) => service.id));
+    const countByPreset = new Map<string, number>();
+    for (const service of existing) {
+      const base = service.basePresetId || service.id;
+      countByPreset.set(base, (countByPreset.get(base) || 0) + 1);
+    }
+
     const applied: string[] = [];
     const envMeta = stateService.getEnvMeta(project.id);
-    for (const presetId of unique) {
-      const preset = createInfraPreset(project, presetId);
-      if (!preset || existingInfraIds.has(preset.id)) continue;
+    for (const req of requests) {
+      const idx = countByPreset.get(req.presetId) || 0; // 0-based:0=第一个实例(沿用原行为)
+      // 单例型基建(缓存/队列/搜索/对象存储等非数据库)不支持同类型多实例:它们的容器自我广播地址
+      // (如 Kafka 的 KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092、controller quorum=1@kafka:9093)
+      // 和连接串都写死为基础别名,第 2 个实例会与第 1 个串号。仅"可命名库"的数据库预设(supportsDbName)
+      // 的连接串带可改写的 `@host:` 段,才能安全多实例。这一守卫覆盖所有创建路径(含重复调用
+      // infra-presets 时由 existing 计数推出的 idx>0),不止 extraInstances 那一处入口。
+      if (idx > 0 && !getInfraCatalogEntry(req.presetId)?.supportsDbName) continue;
+      const instanceId = idx === 0 ? req.presetId : `${req.presetId}-${idx + 1}`;
+      countByPreset.set(req.presetId, idx + 1);
+      if (existingIds.has(instanceId)) continue;
+      const dbName = req.dbName ? sanitizeDbName(req.dbName) : undefined;
+      const initSql = req.initSql && req.initSql.trim() ? req.initSql.trim() : undefined;
+      const preset = createInfraPreset(project, req.presetId, { dbName });
+      if (!preset) continue;
       const containerName = project.legacyFlag
-        ? `cds-infra-${preset.id}`
-        : `cds-infra-${project.slug.slice(0, 12)}-${preset.id}`;
+        ? `cds-infra-${instanceId}`
+        : `cds-infra-${project.slug.slice(0, 12)}-${instanceId}`;
       const service: InfraService = {
-        id: preset.id,
+        id: instanceId,
+        basePresetId: req.presetId,
         projectId: project.id,
-        name: preset.name,
+        name: idx === 0 ? preset.name : `${preset.name} #${idx + 1}`,
         dockerImage: preset.dockerImage,
         containerPort: preset.containerPort,
         hostPort: stateService.allocatePort(config?.portStart || 10000),
         containerName,
         status: 'stopped',
-        volumes: recommendedInfraVolumes(project, preset.id, preset.dockerImage),
+        volumes: recommendedInfraVolumes(project, instanceId, preset.dockerImage),
         env: preset.env || {},
+        ...(dbName ? { dbName } : {}),
+        ...(initSql ? { initSql } : {}),
+        ...(preset.command ? { command: preset.command } : {}),
         createdAt: new Date().toISOString(),
       };
       stateService.addInfraService(service);
       applied.push(service.id);
-      for (const [key, value] of Object.entries(preset.envVars || {})) {
-        stateService.setCustomEnvVar(key, value, project.id);
-        envMeta[key] = {
+      // 连接串:第 1 个实例零改动;第 2+ 个加 _N 后缀 + host 改写到实例别名(纯函数,见单测)。
+      const connEnv = instanceConnectionEnv(preset.envVars || {}, req.presetId, instanceId, idx);
+      for (const [envKey, envValue] of Object.entries(connEnv)) {
+        stateService.setCustomEnvVar(envKey, envValue, project.id);
+        envMeta[envKey] = {
           kind: 'infra-derived',
-          hint: `${preset.name} 连接串，由 CDS 创建基础设施时生成`,
+          hint: `${service.name} 连接串，由 CDS 创建基础设施时生成`,
         };
       }
     }
@@ -737,6 +714,38 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       stateService.save();
     }
     return applied;
+  }
+
+  /** Parse the per-infra `infraConfigs` map (presetId -> { dbName, initSql }) from a request body. */
+  function parseInfraConfigs(raw: unknown): Record<string, { dbName?: string; initSql?: string }> | undefined {
+    if (!raw || typeof raw !== 'object') return undefined;
+    const out: Record<string, { dbName?: string; initSql?: string }> = {};
+    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+      if (!value || typeof value !== 'object') continue;
+      const cfg = value as { dbName?: unknown; initSql?: unknown };
+      const entry: { dbName?: string; initSql?: string } = {};
+      if (typeof cfg.dbName === 'string' && cfg.dbName.trim()) entry.dbName = cfg.dbName.trim();
+      if (typeof cfg.initSql === 'string' && cfg.initSql.trim()) entry.initSql = cfg.initSql.trim();
+      if (entry.dbName || entry.initSql) out[key] = entry;
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
+  }
+
+  /** Parse the `infraExtra` array (additional same-type DB instances → 2nd+ instance) from a request body. */
+  function parseInfraExtra(raw: unknown): Array<{ presetId: string; dbName?: string; initSql?: string }> | undefined {
+    if (!Array.isArray(raw)) return undefined;
+    const out: Array<{ presetId: string; dbName?: string; initSql?: string }> = [];
+    for (const item of raw) {
+      if (!item || typeof item !== 'object') continue;
+      const it = item as { presetId?: unknown; dbName?: unknown; initSql?: unknown };
+      if (typeof it.presetId !== 'string' || !it.presetId.trim()) continue;
+      out.push({
+        presetId: it.presetId.trim(),
+        dbName: typeof it.dbName === 'string' && it.dbName.trim() ? it.dbName.trim() : undefined,
+        initSql: typeof it.initSql === 'string' && it.initSql.trim() ? it.initSql.trim() : undefined,
+      });
+    }
+    return out.length > 0 ? out : undefined;
   }
 
   function runtimeProfilePreset(project: Project, service?: OnboardingService): BuildProfile | null {
@@ -821,6 +830,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       env: { PORT: String(resolved.port) },
       ...(service?.role === 'backend' ? { pathPrefixes: ['/api/'] } : {}),
       ...(service?.role === 'frontend' ? { pathPrefixes: ['/'] } : {}),
+      // 后台任务(worker,"无 HTTP 入口")就绪探测走 noHttp:跳过 HTTP "/" 探测,只 TCP 探活
+      // 端口。否则 deploy 的 waitForReadiness 会按 HTTP 探测一直 ECONNRESET 直到超时,把活着的
+      // worker 误判为部署失败(PR #711 review)。绑定健康/TCP 端口的 worker 即就绪;完全不监听
+      // 端口的纯 worker 仍需 startupSignal(见 debt.cds-visual-deploy.md)。
+      ...(service?.role === 'worker' ? { readinessProbe: { noHttp: true } } : {}),
       ...(defaultCacheMountsFor(resolved.image) ? { cacheMounts: defaultCacheMountsFor(resolved.image) } : {}),
     };
   }
@@ -1429,6 +1443,292 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     res.json({ ok: true, body: settings.body, updatedAt: settings.updatedAt });
   });
 
+  // 项目级：对已存在项目按基建目录(infra-catalog SSOT)应用预设，生成真随机密码 +
+  // 自动注入连接环境变量(与一键部署同一条 applyInfraPresets 路径)。拓扑页「新增基础设施」
+  // 选预设时走这里，而不是手填 change-me 占位。custom 镜像仍走 POST /api/infra。
+  router.post('/projects/:id/infra-presets', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: 'project_not_found' });
+      return;
+    }
+    // 创建基础设施会生成密码并写入项目环境变量,属于项目级写操作。项目级 key 不得跨项目应用预设。
+    const mismatch = assertProjectAccess(
+      req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } },
+      project.id,
+    );
+    if (mismatch) {
+      res.status(mismatch.status).json(mismatch.body);
+      return;
+    }
+    const body = (req.body || {}) as { presetIds?: unknown; infraConfigs?: unknown; infraExtra?: unknown };
+    const presetIds = (Array.isArray(body.presetIds) ? body.presetIds : [])
+      .filter((id): id is string => typeof id === 'string');
+    if (presetIds.length === 0) {
+      res.status(400).json({ error: 'presetIds 必须是非空字符串数组（基建目录 id，见 GET /api/infra/catalog）' });
+      return;
+    }
+    const unknown = presetIds.filter((id) => !INFRA_PRESETS.has(id));
+    if (unknown.length > 0) {
+      res.status(400).json({ error: `未知基建预设: ${unknown.join(', ')}（见 GET /api/infra/catalog）` });
+      return;
+    }
+    const applied = applyInfraPresets(project, presetIds, parseInfraConfigs(body.infraConfigs), parseInfraExtra(body.infraExtra));
+    const services = stateService.getInfraServicesForProject(project.id).filter((s) => applied.includes(s.id));
+    res.json({ applied, services });
+  });
+
+  // 试运行验证(配置闭环):用一次性容器在真实仓库上测「镜像 + 启动命令 + 端口」能否跑通。
+  // 验证 → 流式日志 → 不行就地改命令/镜像 → 再验证 → 绿灯才正式部署。容器跑完即销毁,临时目录清理。
+  router.post('/validate-runtime', async (req, res) => {
+    // 安全(PR #711 P1):本接口在"项目创建前"用服务器级 GitHub Device Flow 凭据克隆任意
+    // gitRepoUrl + 跑任意 command + 回流容器日志。项目级 agent key 没有可授权的目标项目/仓库,
+    // 放行等于让低权限 key 借服务器凭据克隆并 cat 出任意私有仓库内容。故仅管理员/控制台会话
+    // (无 cdsProjectKey)可调用,项目级 key 一律 403。
+    if ((req as { cdsProjectKey?: unknown }).cdsProjectKey) {
+      res.status(403).json({ error: 'project_key_forbidden', message: '试运行用服务器级 GitHub 凭据且未绑定项目,仅限管理员 / 控制台会话调用,项目级 key 不可用。' });
+      return;
+    }
+    const body = (req.body || {}) as { gitRepoUrl?: string; gitRef?: string; image?: string; command?: string; port?: number };
+    const gitRepoUrl = (body.gitRepoUrl || '').trim();
+    const gitRef = (body.gitRef || '').trim();
+    const image = (body.image || '').trim();
+    const command = (body.command || '').trim();
+    const port = Number(body.port) || 0;
+    const q = (s: string) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    const send = (event: string, data: unknown): void => { try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* client gone */ } };
+    const logTail: string[] = [];
+    const log = (line: string): void => { logTail.push(line); if (logTail.length > 80) logTail.shift(); send('log', { line }); };
+    // 失败时从日志里认出常见根因,把"退出码 X"升级成可操作的提示。
+    const diagnose = (): string => {
+      const t = logTail.join('\n');
+      if (/Could not read package\.json|ENOENT.*package\.json|no such file.*package\.json/i.test(t)) return ' 提示:/app 里没有 package.json——可能不是 Node 项目,或代码在子目录(把命令改成 cd 子目录 && ...)。';
+      if (/Could not open requirements|requirements\.txt.*No such file|No such file.*requirements/i.test(t)) return ' 提示:没找到 requirements.txt——可能不是 Python 项目,或代码在子目录。';
+      if (/no Go files in/i.test(t)) return ' 提示:/app 下没有 Go 主包——代码可能在子目录(cd 子目录 && go run .),或这不是 Go 项目。';
+      if (/MSB1003|NETSDK\d|Specify a project or solution|no project or solution/i.test(t)) return ' 提示:.NET 没找到工程文件或 SDK 版本不匹配——核对镜像 SDK 版本与代码目录。';
+      if (/EADDRINUSE|address already in use/i.test(t)) return ' 提示:端口被占用,换个端口试试。';
+      if (/not found|command not found/i.test(t)) return ' 提示:镜像里缺这个命令/工具链——换一个自带它的镜像。';
+      return '';
+    };
+
+    if (!gitRepoUrl) { send('error', { message: '试运行需要 Git 仓库 URL——要在真实代码上测命令。请先在上面填仓库地址。' }); res.end(); return; }
+    if (!image) { send('error', { message: '请填 Docker 镜像(或在运行环境选一个具体运行时带出镜像)。' }); res.end(); return; }
+    if (!command) { send('error', { message: '请填启动命令(或选具体运行时带出默认命令)。' }); res.end(); return; }
+    if (gitRef && !isSafeGitRef(gitRef)) { send('error', { message: `分支名不合法: ${gitRef}` }); res.end(); return; }
+
+    // 私有仓库:复用正式 clone 路径的 Device Flow token 注入(_injectGithubTokenIfPossible),
+    // 否则从 GitHub 选择器选了私有库的用户在创建项目前根本跑不了试运行。maskTok 用于把日志里
+    // 可能出现的 token 脱敏(git 自身一般会脱敏,这里是纵深防御)。
+    const deviceToken = stateService.getGithubDeviceAuth()?.token;
+    const authedCloneUrl = _injectGithubTokenIfPossible(gitRepoUrl, deviceToken);
+    const maskTok = (s: string): string => (deviceToken ? s.split(deviceToken).join('***') : s);
+    const token = randomBytes(5).toString('hex');
+    const containerName = `cds-validate-${token}`;
+    const baseDir = nodePath.join(nodeOs.tmpdir(), `cds-validate-${token}`);
+    const cloneDir = nodePath.join(baseDir, 'app');
+    const cleanup = async (): Promise<void> => {
+      try { await shell.exec(`docker rm -f ${containerName} 2>/dev/null`, { timeout: 20000 }); } catch { /* noop */ }
+      try { nodeFs.rmSync(baseDir, { recursive: true, force: true }); } catch { /* noop */ }
+    };
+
+    try {
+      send('step', { step: 'clone', status: 'running', title: '浅克隆仓库…' });
+      const cloneRes = await shell.exec(`git clone --depth 1 ${gitRef ? `--branch ${q(gitRef)} ` : ''}${q(authedCloneUrl)} ${q(cloneDir)}`, { timeout: 120000 });
+      if (cloneRes.exitCode !== 0) {
+        send('step', { step: 'clone', status: 'error', title: '克隆失败' });
+        log(maskTok(combinedOutput(cloneRes)).slice(-1500));
+        send('result', { verdict: 'fail', summary: '仓库克隆失败——检查 URL / 分支 / 访问权限。' });
+        await cleanup(); res.end(); return;
+      }
+      send('step', { step: 'clone', status: 'done', title: '克隆完成' });
+
+      send('step', { step: 'pull', status: 'running', title: `拉取镜像 ${image}…` });
+      const pullRes = await shell.exec(`docker pull ${q(image)}`, { timeout: 240000 });
+      if (pullRes.exitCode !== 0) {
+        send('step', { step: 'pull', status: 'error', title: '拉取镜像失败' });
+        log(combinedOutput(pullRes).slice(-1500));
+        send('result', { verdict: 'fail', summary: `镜像 ${image} 拉取失败——检查镜像名是否正确。` });
+        await cleanup(); res.end(); return;
+      }
+      send('step', { step: 'pull', status: 'done', title: '镜像就绪' });
+
+      send('step', { step: 'run', status: 'running', title: '创建容器 + 装载代码(docker cp)…' });
+      // 用 sh -c(不是 sh -lc):login shell 会重置 PATH,导致 golang/rust 等把工具放 ENV PATH 的镜像 "go: not found"。
+      const createRes = await shell.exec(
+        `docker create --name ${containerName} --label cds.validate=1 --memory=1536m --cpus=1.5 ${port ? `-e PORT=${port} ` : ''}${q(image)} sh -c ${q(`cd /app && ${command}`)}`,
+        { timeout: 30000 },
+      );
+      if (createRes.exitCode !== 0) {
+        send('step', { step: 'run', status: 'error', title: '容器创建失败' });
+        log(combinedOutput(createRes).slice(-1500));
+        send('result', { verdict: 'fail', summary: '容器无法创建——多半是镜像名或命令格式问题。' });
+        await cleanup(); res.end(); return;
+      }
+      // 关键:用 docker cp 把克隆好的代码拷进 /app,而不是 bind-mount。容器化 CDS 用宿主 docker socket 时,
+      // `-v 主机路径` 指向的是宿主机文件系统(空的),挂进去是空目录 → 所有真实仓库都 "找不到 package.json"。
+      // docker cp 由 docker CLI 直接从 CDS 容器内读文件流给目标容器,不依赖宿主路径一致性。
+      const cpRes = await shell.exec(`docker cp ${q(cloneDir)} ${containerName}:/`, { timeout: 90000 });
+      if (cpRes.exitCode !== 0) {
+        send('step', { step: 'run', status: 'error', title: '装载代码失败' });
+        log(combinedOutput(cpRes).slice(-1500));
+        send('result', { verdict: 'fail', summary: '代码装载进容器失败。' });
+        await cleanup(); res.end(); return;
+      }
+      const startRes = await shell.exec(`docker start ${containerName}`, { timeout: 30000 });
+      if (startRes.exitCode !== 0) {
+        send('step', { step: 'run', status: 'error', title: '容器启动失败' });
+        log(combinedOutput(startRes).slice(-1500));
+        send('result', { verdict: 'fail', summary: '容器无法启动。' });
+        await cleanup(); res.end(); return;
+      }
+      send('step', { step: 'run', status: 'done', title: '容器已启动,跟踪日志 + 端口探活(最多 150s,有结论就提前结束)…' });
+      const startedAt = Date.now();
+      const MAX_MS = 150000;
+
+      const inspectState = async (): Promise<{ running: boolean; exitCode: number }> => {
+        const r = await shell.exec(`docker inspect -f '{{.State.Running}} {{.State.ExitCode}}' ${containerName}`, { timeout: 8000 });
+        const [run, ec] = (r.stdout || '').trim().split(/\s+/);
+        return { running: run === 'true', exitCode: Number(ec || '0') };
+      };
+      const probePort = async (): Promise<boolean> => {
+        if (!port) return false;
+        const hex = port.toString(16).toUpperCase().padStart(4, '0');
+        // 首选 /proc/net/tcp:任何 Linux 容器都有,不依赖镜像里有没有 wget/curl(slim/distroless 常没有,
+        // 否则像 python:slim 跑 Flask 明明起来了却被误判"端口未响应")。st=0A 表示 LISTEN。
+        const proc = await shell.exec(`docker exec ${containerName} sh -c ${q('cat /proc/net/tcp /proc/net/tcp6 2>/dev/null')}`, { timeout: 8000 }).catch(() => null);
+        if (proc && proc.exitCode === 0) {
+          for (const line of (proc.stdout || '').split('\n')) {
+            const cols = line.trim().split(/\s+/);
+            if (cols.length >= 4 && (cols[1] || '').toUpperCase().endsWith(`:${hex}`) && cols[3] === '0A') return true;
+          }
+        }
+        // 兜底:镜像若带 wget/curl,再做一次真实 HTTP 请求
+        const http = await shell.exec(
+          `docker exec ${containerName} sh -c ${q(`(wget -qO- -T2 http://127.0.0.1:${port} >/dev/null 2>&1 || curl -sf -m2 http://127.0.0.1:${port} >/dev/null 2>&1) && echo CDSPORTOK || true`)}`,
+          { timeout: 8000 },
+        ).catch(() => null);
+        return Boolean(http && (http.stdout || '').includes('CDSPORTOK'));
+      };
+
+      let verdict: 'pass' | 'warn' | 'fail' | null = null;
+      let summary = '';
+      await new Promise<void>((resolve) => {
+        const proc = spawn('docker', ['logs', '-f', containerName], { stdio: ['ignore', 'pipe', 'pipe'] });
+        const onData = (b: Buffer): void => { for (const line of b.toString().split('\n')) { if (line.trim()) log(line); } };
+        proc.stdout.on('data', onData);
+        proc.stderr.on('data', onData);
+        let stopped = false;
+        const finish = (): void => { if (stopped) return; stopped = true; clearTimeout(timer); clearInterval(poll); try { proc.kill('SIGKILL'); } catch { /* noop */ } resolve(); };
+        const timer = setTimeout(finish, MAX_MS);
+        const poll = setInterval(() => { void (async (): Promise<void> => {
+          try {
+            const st = await inspectState();
+            if (!st.running) {
+              verdict = st.exitCode === 0 ? 'warn' : 'fail';
+              summary = st.exitCode === 0
+                ? '命令跑完就退出了——若这是常驻服务说明它没起住(可能少了 serve/start);若只是一次性构建则正常。'
+                : `命令以退出码 ${st.exitCode} 失败——照上面日志改命令或镜像后再试一次。`;
+              finish();
+              return;
+            }
+            if (port && (await probePort())) {
+              verdict = 'pass';
+              summary = `容器常驻且端口 ${port} 已响应——这套配置能跑通。`;
+              finish();
+            }
+          } catch { /* 容器可能正忙,继续等 */ }
+        })(); }, 5000);
+        proc.on('close', () => finish());
+        proc.on('error', () => finish());
+      });
+
+      send('step', { step: 'probe', status: 'running', title: '复核容器状态 + 端口…' });
+      if (verdict === null) {
+        const st = await inspectState();
+        if (st.running) {
+          const portOk = await probePort();
+          verdict = portOk ? 'pass' : 'warn';
+          summary = portOk
+            ? `容器常驻且端口 ${port} 已响应——这套配置能跑通。`
+            : (port ? `容器还活着没崩,但端口 ${port} 暂未响应(可能仍在安装/构建,或端口填错)。看上面日志确认,需要就改端口再试。` : '容器常驻未崩(没填端口,跳过端口探活)。');
+        } else {
+          verdict = st.exitCode === 0 ? 'warn' : 'fail';
+          summary = st.exitCode === 0 ? '命令跑完就退出了——常驻服务的话说明没起住。' : `命令以退出码 ${st.exitCode} 失败——照日志改命令/镜像后再试。`;
+        }
+      }
+      send('step', { step: 'probe', status: verdict === 'pass' ? 'done' : 'warning', title: '检查完成' });
+      send('result', { verdict, summary: verdict === 'pass' ? summary : summary + diagnose(), elapsedMs: Date.now() - startedAt });
+    } catch (err) {
+      send('error', { message: (err as Error).message });
+    } finally {
+      await cleanup();
+      try { res.end(); } catch { /* noop */ }
+    }
+  });
+
+  // 检测并回填:仓库 URL → 浅克隆 → 复用 detectModules(monorepo 感知)识别栈 → 返回每个模块的建议
+  // 服务配置(镜像/命令/端口),前端据此把应用服务一键填好,取代"按运行时猜测的默认",减少第一次点红。
+  router.post('/detect-runtime', async (req, res) => {
+    // 安全(PR #711 P1):同 validate-runtime——用服务器级 GitHub 凭据克隆任意仓库,项目级 key
+    // 没有可授权目标,放行等于借服务器凭据读任意私有仓库。仅管理员 / 控制台会话可调用。
+    if ((req as { cdsProjectKey?: unknown }).cdsProjectKey) {
+      res.status(403).json({ error: 'project_key_forbidden', message: '检测仓库用服务器级 GitHub 凭据且未绑定项目,仅限管理员 / 控制台会话调用,项目级 key 不可用。' });
+      return;
+    }
+    const body = (req.body || {}) as { gitRepoUrl?: string; gitRef?: string };
+    const gitRepoUrl = (body.gitRepoUrl || '').trim();
+    const gitRef = (body.gitRef || '').trim();
+    if (!gitRepoUrl) { res.status(400).json({ error: '需要 Git 仓库 URL 才能检测。' }); return; }
+    if (gitRef && !isSafeGitRef(gitRef)) { res.status(400).json({ error: `分支名不合法: ${gitRef}` }); return; }
+    const q = (s: string) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+    // 私有仓库:同试运行,复用正式 clone 的 Device Flow token 注入(_injectGithubTokenIfPossible)。
+    const deviceToken = stateService.getGithubDeviceAuth()?.token;
+    const authedCloneUrl = _injectGithubTokenIfPossible(gitRepoUrl, deviceToken);
+    const maskTok = (s: string): string => (deviceToken ? s.split(deviceToken).join('***') : s);
+    const token = randomBytes(5).toString('hex');
+    const dir = nodePath.join(nodeOs.tmpdir(), `cds-detect-${token}`);
+    const stackToRuntime: Record<string, string> = { nodejs: 'node', python: 'python', go: 'go', rust: 'rust', java: 'java', php: 'php', dockerfile: 'dockerfile', ruby: 'custom', unknown: 'auto' };
+    try {
+      const clone = await shell.exec(`git clone --depth 1 ${gitRef ? `--branch ${q(gitRef)} ` : ''}${q(authedCloneUrl)} ${q(dir)}`, { timeout: 120000 });
+      if (clone.exitCode !== 0) { res.status(400).json({ error: '克隆失败——检查 URL / 分支 / 访问权限。', detail: maskTok(combinedOutput(clone)).slice(-400) }); return; }
+      const modules = detectModules(dir);
+      const services = modules.map((m, i) => {
+        const d = m.detection;
+        const sub = m.subPath && m.subPath !== '.' ? m.subPath : '';
+        const inner = [d.installCommand, d.suggestedBuildCommand || d.buildCommand, d.suggestedRunCommand || d.runCommand].filter(Boolean).join(' && ');
+        const command = sub ? `cd ${sub} && ${inner}` : inner;
+        const fw = d.framework || '';
+        const isFrontend = /vite|react|vue|svelte|astro/i.test(fw) || (d.stack === 'nodejs' && /\bserve\b|\bdist\b/.test(inner) && !/nest|express|fastify|next/i.test(fw));
+        return {
+          id: sub ? slugifyName(sub) : (i === 0 ? 'app' : `service-${i + 1}`),
+          name: sub || (i === 0 ? '应用服务' : `应用服务 ${i + 1}`),
+          role: isFrontend ? 'frontend' : 'backend',
+          runtime: stackToRuntime[d.stack] || 'auto',
+          dockerImage: d.dockerImage || '',
+          command,
+          port: d.containerPort || (isFrontend ? 4173 : 8080),
+          summary: d.summary,
+          stack: d.stack,
+          confidence: typeof d.confidence === 'number' ? d.confidence : 0,
+          signals: Array.isArray(d.signals) ? d.signals.slice(0, 6) : [],
+          manualSetupRequired: Boolean(d.manualSetupRequired),
+        };
+      });
+      res.json({ services, moduleCount: modules.length });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    } finally {
+      try { nodeFs.rmSync(dir, { recursive: true, force: true }); } catch { /* noop */ }
+    }
+  });
+
   // PR_C.4: 项目活动日志（供 UI 渲染时间线 / 浮窗）。
   // limit 默认 50，最大 200（与 ring buffer 上限一致，避免一次拉爆）。
   router.get('/projects/:id/activity-logs', (req, res) => {
@@ -1477,6 +1777,9 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       projectFiles: ProjectFilePayload[];
       autoDetectOnClone: boolean;
       infraPresets: string[];
+      infraConfigs: Record<string, { dbName?: string; initSql?: string }>;
+      infraExtra: Array<{ presetId: string; dbName?: string; initSql?: string }>;
+      customEnv: Record<string, string>;
       onboardingRuntime: OnboardingRuntime;
       onboardingDockerImage: string;
       onboardingCommand: string;
@@ -1756,7 +2059,27 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
       return;
     }
-    const appliedInfraPresets = applyInfraPresets(newProject, infraPresets);
+    // 少绕路:创建弹窗就地粘贴的项目环境变量,在建项目时一并写入(不必等克隆后再单独配)。
+    const userEnvEntries: Array<[string, string]> = [];
+    if (body.customEnv && typeof body.customEnv === 'object') {
+      for (const [key, value] of Object.entries(body.customEnv)) {
+        if (typeof value !== 'string') continue;
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue; // 合法 env key
+        stateService.setCustomEnvVar(key, value, newProject.id);
+        userEnvEntries.push([key, value]);
+      }
+    }
+    const appliedInfraPresets = applyInfraPresets(newProject, infraPresets, parseInfraConfigs(body.infraConfigs), parseInfraExtra(body.infraExtra));
+    // applyInfraPresets 也会写 DATABASE_URL/REDIS_URL 等连接串,会覆盖用户同名粘贴值
+    // (基建预设的连接串指向刚创建的容器,优先生效)。但不能"静默"覆盖——收集被覆盖的 key
+    // 回传前端 + console.warn,让用户知道粘贴的外部连接串被基建生成值取代了(PR #711 review)。
+    const finalEnv = stateService.getCustomEnv(newProject.id);
+    const infraEnvOverrides = userEnvEntries
+      .filter(([key, value]) => finalEnv[key] !== undefined && finalEnv[key] !== value)
+      .map(([key]) => key);
+    if (infraEnvOverrides.length > 0) {
+      console.warn(`[projects] 基础设施预设的连接串覆盖了用户粘贴的项目环境变量: ${infraEnvOverrides.join(', ')} (项目 ${newProject.id});应用将使用基建生成的连接串。`);
+    }
 
     // F11 — 沙盒模式 bootstrap:在 reposBase/<projectId>/ 本地 init 一个
     // git 仓库,写 cds-compose.yml + projectFiles[],模拟"clone 完成"状态,
@@ -1797,6 +2120,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       // F11 — 告诉前端这是沙盒项目,UI 可显示"沙盒"标签 + 提示"想要持久化请关联 GitHub"
       sandbox: isSandbox || undefined,
       infraPresetsApplied: appliedInfraPresets,
+      // 被基建连接串覆盖的用户环境变量 key(非空时前端可提示"你粘贴的 X 被自动生成的连接串取代")。
+      infraEnvOverrides: infraEnvOverrides.length > 0 ? infraEnvOverrides : undefined,
     });
   });
 
