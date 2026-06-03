@@ -340,8 +340,9 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
   },
   {
     path: '/product-agent',
+    placement: 'fullscreen',
     permission: 'product-agent.use',
-    element: shellGuarded('product-agent.use', <ProductAgentPage />),
+    element: fullscreenGuarded('product-agent.use', <ProductAgentPage />),
     nav: {
       label: '产品管理智能体',
       shortLabel: '产品',

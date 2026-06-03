@@ -8,7 +8,8 @@
  * 空状态遵循 .claude/rules/guided-exploration.md：给说明 + 主操作 CTA。
  */
 import { useCallback, useEffect, useState } from 'react';
-import { Boxes, Plus, Trash2, GitBranch, ListChecks, Puzzle, Users, BookOpen, Share2, ArrowUpCircle, LayoutGrid, List } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Boxes, Plus, Trash2, GitBranch, ListChecks, Puzzle, Users, BookOpen, Share2, ArrowUpCircle, LayoutGrid, List, ArrowLeft } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { VersionRelationModal, RequirementRelationModal, ProductKnowledgePanel } from './ProductRelationModals';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
@@ -47,6 +48,7 @@ const PRODUCT_GRADES: ProductGrade[] = ['core', 'important', 'normal', 'experime
 const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
 
 export function ProductAgentPage() {
+  const navigate = useNavigate();
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -103,17 +105,26 @@ export function ProductAgentPage() {
   const selected = products.find((p) => p.id === selectedId) ?? null;
 
   return (
-    <div className="flex flex-col gap-4 h-full min-h-0">
+    <div className="flex flex-col gap-4 h-screen min-h-0 p-4 bg-[#0f1014]">
       {/* 头部 */}
       <div className="flex items-center justify-between shrink-0">
-        <div>
-          <h1 className="text-lg font-semibold text-white flex items-center gap-2">
-            <Boxes size={20} className="text-cyan-400" />
-            产品管理智能体
-          </h1>
-          <p className="text-xs text-white/40 mt-0.5">
-            产品 - 版本 - 需求 - 功能 - 缺陷 - 客户 全链路串联，版本化管理与分级追溯
-          </p>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => navigate('/')}
+            className="flex items-center justify-center w-9 h-9 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 transition-colors shrink-0"
+            title="返回首页"
+          >
+            <ArrowLeft size={18} />
+          </button>
+          <div>
+            <h1 className="text-lg font-semibold text-white flex items-center gap-2">
+              <Boxes size={20} className="text-cyan-400" />
+              产品管理智能体
+            </h1>
+            <p className="text-xs text-white/40 mt-0.5">
+              产品 - 版本 - 需求 - 功能 - 缺陷 - 客户 全链路串联，版本化管理与分级追溯
+            </p>
+          </div>
         </div>
         <button
           onClick={() => setCreatingProduct(true)}
