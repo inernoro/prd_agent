@@ -63,6 +63,7 @@ async function request(
   method: string,
   urlPath: string,
   body?: unknown,
+  headers?: Record<string, string>,
 ): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {
     const addr = server.address() as { port: number };
@@ -76,6 +77,7 @@ async function request(
         headers: {
           'Content-Type': 'application/json',
           ...(payload ? { 'Content-Length': Buffer.byteLength(payload) } : {}),
+          ...(headers || {}),
         },
       },
       (res) => {
@@ -938,6 +940,14 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
 
     const app = express();
     app.use(express.json());
+    // Optional test middleware: stamp req.cdsProjectKey from a header so we can
+    // exercise project-scoped-key guards (e.g. validate/detect-runtime P1) without
+    // minting real agent keys. Only fires when the header is present.
+    app.use((req, _res, next) => {
+      const h = req.headers['x-test-project-key'];
+      if (typeof h === 'string' && h) (req as any).cdsProjectKey = { projectId: h, keyId: 'k' };
+      next();
+    });
     app.use('/api', createProjectsRouter({ stateService, shell, config }));
 
     server = app.listen(0);
@@ -1100,6 +1110,36 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       expect(res.status).toBe(201);
       expect(res.body.project.repoPath).toBeUndefined();
       expect(res.body.project.cloneStatus).toBeUndefined();
+    });
+  });
+
+  describe('pre-create detect/validate-runtime reject project-scoped keys (PR #711 P1)', () => {
+    // These endpoints clone an arbitrary repo with the SERVER-WIDE GitHub token and
+    // run an arbitrary command, streaming logs. A project-scoped key has no authorized
+    // target project/repo, so allowing it = borrowing the server token to clone + exfil
+    // any private repo. Only admin / cookie auth (no cdsProjectKey) may call them.
+    it('validate-runtime → 403 project_key_forbidden for a project-scoped key', async () => {
+      const res = await request(server, 'POST', '/api/validate-runtime',
+        { gitRepoUrl: 'https://github.com/foo/bar.git', image: 'node:20', command: 'node x.js' },
+        { 'X-Test-Project-Key': 'proj-a' });
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('project_key_forbidden');
+    });
+
+    it('detect-runtime → 403 project_key_forbidden for a project-scoped key', async () => {
+      const res = await request(server, 'POST', '/api/detect-runtime',
+        { gitRepoUrl: 'https://github.com/foo/bar.git' },
+        { 'X-Test-Project-Key': 'proj-a' });
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('project_key_forbidden');
+    });
+
+    it('admin / cookie auth (no project key) passes the guard (not 403)', async () => {
+      // detect-runtime with no project key + bad url → reaches handler, returns 400
+      // (missing/clone error), NOT the 403 guard.
+      const res = await request(server, 'POST', '/api/detect-runtime', {});
+      expect(res.status).not.toBe(403);
+      expect(res.status).toBe(400); // missing gitRepoUrl
     });
   });
 

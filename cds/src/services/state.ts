@@ -2162,6 +2162,19 @@ export class StateService {
   }
 
   /**
+   * All PROJECT-scoped infra services (across every project) sharing this id.
+   * Two projects can each own a catalog-created `postgres`. Secret-revealing
+   * data/backup endpoints use this to detect an ambiguous bare id and refuse to
+   * guess (400) when the caller omits ?project=, instead of silently hitting the
+   * global first-match against the wrong tenant. See PR #711 review.
+   */
+  getProjectInfraServicesById(id: string): InfraService[] {
+    return (this.state.infraServices || []).filter(
+      (s) => s.id === id && classifyInfraScope(s) === 'project',
+    );
+  }
+
+  /**
    * Project-scoped infra lookup. Uses the composite key (projectId, id)
    * so the legacy project's `mongodb` and a fork project's `mongodb`
    * are distinct entries. A service with no projectId is treated as

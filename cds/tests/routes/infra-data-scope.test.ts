@@ -181,5 +181,16 @@ describe('infra data/backup project-scope isolation', () => {
       const res = await request(server, 'GET', '/api/infra/shared/backup?project=proj-b', undefined);
       expect(res.status).toBe(409);
     });
+
+    it('admin WITHOUT ?project= on an ambiguous id is refused (400), not silently routed to the first match', async () => {
+      // backup route
+      const backup = await request(server, 'GET', '/api/infra/shared/backup', undefined);
+      expect(backup.status).toBe(400);
+      expect(backup.body.error).toBe('project_required');
+      // data route (query / init-sql)
+      const query = await request(server, 'POST', '/api/infra/shared/query', undefined, { sql: 'SELECT 1' });
+      expect(query.status).toBe(400);
+      expect(query.body.error).toBe('project_required');
+    });
   });
 });

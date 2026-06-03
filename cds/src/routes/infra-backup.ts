@@ -64,6 +64,12 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
     // 时按项目精确定位(与 infra-data 的 handle 一致),否则回退全局首个匹配。少了这一步,owner 用
     // ?project=B 反而会被全局首个(属于 A 的)命中导致 403,admin 也可能误流/误恢复到别项目的库。
     const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
+    // 省略 ?project= 且该 id 跨多个项目存在时,拒绝"全局首个"猜测(避免 admin 误把别租户的库
+    // dump/restore 掉)。要求显式指定项目。
+    if (!projectFilter && stateService.getProjectInfraServicesById(req.params.id).length > 1) {
+      res.status(400).json({ error: 'project_required', message: `基础设施 "${req.params.id}" 在多个项目中存在,请用 ?project=<projectId> 指定目标项目后再操作。` });
+      return null;
+    }
     const svc = projectFilter
       ? (stateService.getInfraServicesForProject(projectFilter).find((s) => s.id === req.params.id) || null)
       : stateService.getInfraService(req.params.id);

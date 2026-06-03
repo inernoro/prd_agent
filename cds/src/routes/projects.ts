@@ -1481,6 +1481,14 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   // 试运行验证(配置闭环):用一次性容器在真实仓库上测「镜像 + 启动命令 + 端口」能否跑通。
   // 验证 → 流式日志 → 不行就地改命令/镜像 → 再验证 → 绿灯才正式部署。容器跑完即销毁,临时目录清理。
   router.post('/validate-runtime', async (req, res) => {
+    // 安全(PR #711 P1):本接口在"项目创建前"用服务器级 GitHub Device Flow 凭据克隆任意
+    // gitRepoUrl + 跑任意 command + 回流容器日志。项目级 agent key 没有可授权的目标项目/仓库,
+    // 放行等于让低权限 key 借服务器凭据克隆并 cat 出任意私有仓库内容。故仅管理员/控制台会话
+    // (无 cdsProjectKey)可调用,项目级 key 一律 403。
+    if ((req as { cdsProjectKey?: unknown }).cdsProjectKey) {
+      res.status(403).json({ error: 'project_key_forbidden', message: '试运行用服务器级 GitHub 凭据且未绑定项目,仅限管理员 / 控制台会话调用,项目级 key 不可用。' });
+      return;
+    }
     const body = (req.body || {}) as { gitRepoUrl?: string; gitRef?: string; image?: string; command?: string; port?: number };
     const gitRepoUrl = (body.gitRepoUrl || '').trim();
     const gitRef = (body.gitRef || '').trim();
@@ -1668,6 +1676,12 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   // 检测并回填:仓库 URL → 浅克隆 → 复用 detectModules(monorepo 感知)识别栈 → 返回每个模块的建议
   // 服务配置(镜像/命令/端口),前端据此把应用服务一键填好,取代"按运行时猜测的默认",减少第一次点红。
   router.post('/detect-runtime', async (req, res) => {
+    // 安全(PR #711 P1):同 validate-runtime——用服务器级 GitHub 凭据克隆任意仓库,项目级 key
+    // 没有可授权目标,放行等于借服务器凭据读任意私有仓库。仅管理员 / 控制台会话可调用。
+    if ((req as { cdsProjectKey?: unknown }).cdsProjectKey) {
+      res.status(403).json({ error: 'project_key_forbidden', message: '检测仓库用服务器级 GitHub 凭据且未绑定项目,仅限管理员 / 控制台会话调用,项目级 key 不可用。' });
+      return;
+    }
     const body = (req.body || {}) as { gitRepoUrl?: string; gitRef?: string };
     const gitRepoUrl = (body.gitRepoUrl || '').trim();
     const gitRef = (body.gitRef || '').trim();

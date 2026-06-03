@@ -164,6 +164,12 @@ export function createInfraDataRouter(deps: InfraDataRouterDeps): Router {
   async function handle(req: import('express').Request, res: import('express').Response, action: InfraDataAction): Promise<void> {
     // infra id 在多项目下并非全局唯一,带 ?project= 时按项目精确定位(也用于消歧)。
     const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
+    // 省略 ?project= 且该 id 在多个项目存在时,拒绝"全局首个"猜测(admin/cookie 鉴权对所有项目
+    // 放行,猜错就会在别的租户库上执行查询/init-sql)。要求显式指定项目。
+    if (!projectFilter && stateService.getProjectInfraServicesById(req.params.id).length > 1) {
+      res.status(400).json({ error: 'project_required', message: `基础设施 "${req.params.id}" 在多个项目中存在,请用 ?project=<projectId> 指定目标项目后再操作。` });
+      return;
+    }
     const svc = projectFilter
       ? (stateService.getInfraServicesForProject(projectFilter).find((s) => s.id === req.params.id) || null)
       : stateService.getInfraService(req.params.id);

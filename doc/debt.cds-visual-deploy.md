@@ -17,6 +17,7 @@
 | B5 | 端口探活极简镜像降级 | 首选 `/proc/net/tcp`（任何容器都有）；无 `/proc` 的极特殊镜像降级为"容器常驻=需确认"而非误判失败 | 极少数镜像探活降级 |
 | B6 | AI 生成 compose **仅设计未实现** | 见 `design.cds-ai-compose.md`；按用户"备选"定位，借用 CDS Agent/OpenRouter，未写代码 | 当前靠确定性检测器，AI 路径待建 |
 | B7 | CDS 自身跑在本特性分支 | 经 `self-force-sync` 上线；合并 main 后应 `self update --branch main` 切回 | 运维提醒 |
+| B9 | detect-runtime / validate-runtime **仅管理员/控制台会话可用**(项目级 agent key 403) | 这两个"项目创建前"接口用服务器级 GitHub Device Flow 凭据克隆任意仓库 + 跑任意命令 + 回流日志,绑不到具体项目;放行项目级 key 等于借服务器凭据 exfil 任意私有仓库(PR #711 P1 修复)。同理数据/备份端点省略 ?project= 且 id 跨项目歧义时 400 要求指定项目 | 用项目级 key 的自动化流程跑不了 pre-create 检测/试运行,需用管理员凭据;若未来要支持,得先把 clone 绑定到该 key 授权的仓库白名单 |
 | B8 | 后台任务(worker)就绪探测走 **noHttp（TCP 探活）**，不支持"完全不监听端口"的纯 worker | worker 角色的 BuildProfile 现设 `readinessProbe.noHttp=true`：跳过 HTTP "/" 探测，只 TCP 探活端口（PR #711 review 修复"活着的 worker 被 HTTP 探测超时误判失败"）。但 deploy 的 noHttp 仍要求 TCP accept——绑健康/TCP 端口的 worker 即就绪；**完全不 listen 任何端口的纯 worker 仍会超时**，需 `startupSignal`(日志正则)模式，而创建弹窗暂未收集该输入 | 纯无端口 worker 暂不可一键部署，需手填 startupSignal（后续可在弹窗加"就绪日志关键字"输入） |
 
 ## 二、Backlog（低边际打磨，按价值排序）
