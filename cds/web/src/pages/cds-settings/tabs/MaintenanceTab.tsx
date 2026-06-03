@@ -52,6 +52,7 @@ interface SelfUpdateTimings {
   docOnlyMs?: number;
   noOpMs?: number;
   restartMs?: number;
+  drainMs?: number;
   validate?: Record<string, number>;
   webBuildSkipped?: boolean;
   webBuildReason?: string;
@@ -1534,6 +1535,7 @@ function SelfUpdateStageBar({ timings, totalMs }: { timings: SelfUpdateTimings; 
   push('cache', '清缓存', timings.cacheMs, 'bg-stone-500/70');
   push('backend', '后端 esbuild', timings.buildBackendMs, 'bg-emerald-500/70');
   push('web', 'web 重建', timings.webBuildMs, 'bg-rose-500/70');
+  push('drain', '等待排空', timings.drainMs, 'bg-fuchsia-600/70');
   push('restart', '重启', timings.restartMs, 'bg-fuchsia-500/70');
 
   if (segments.length === 0) return null;
@@ -1542,10 +1544,21 @@ function SelfUpdateStageBar({ timings, totalMs }: { timings: SelfUpdateTimings; 
   const total = Math.max(totalSeg, timings.totalMs ?? 0, totalMs ?? 0);
   if (total === 0) return null;
 
+  // 2026-06-03 用户反馈:进度条大片黢黑 + 看不到"总计"。根因是各 step 之和
+  // (totalSeg)远小于 total(含排空等待 / 进程退出后才发生的重启)。把差额补成
+  // 一段中性灰"其他",让进度条铺满;再单列"总计"chip,让用户对得上账。
+  const otherMs = Math.max(0, total - totalSeg);
+  // 阈值 1.5s 以下视作测量噪音(step 之间的零碎间隙),不单列,避免一堆碎段。
+  const OTHER_THRESHOLD_MS = 1500;
+  const barSegments: StageSeg[] =
+    otherMs > OTHER_THRESHOLD_MS
+      ? [...segments, { key: 'other', label: '其他', ms: otherMs, color: 'bg-muted-foreground/30' }]
+      : segments;
+
   return (
     <div className="mt-1 space-y-1">
       <div className="flex h-2 w-full overflow-hidden rounded-sm bg-[hsl(var(--surface-sunken))]">
-        {segments.map((seg) => (
+        {barSegments.map((seg) => (
           <div
             key={seg.key}
             className={seg.color}
@@ -1555,12 +1568,15 @@ function SelfUpdateStageBar({ timings, totalMs }: { timings: SelfUpdateTimings; 
         ))}
       </div>
       <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
-        {segments.map((seg) => (
+        {barSegments.map((seg) => (
           <span key={seg.key}>
             <span className={`inline-block h-2 w-2 align-middle ${seg.color}`} />{' '}
             {seg.label} {fmtMs(seg.ms)}
           </span>
         ))}
+        <span className="font-medium text-foreground/80" title="各阶段实测总和(含排空等待 / 未计量的进程退出后重启)">
+          总计 {fmtMs(total)}
+        </span>
         {timings.webBuildSkipped ? (
           <span className="text-emerald-700 dark:text-emerald-300">
             (web 命中缓存 · {timings.webBuildReason})

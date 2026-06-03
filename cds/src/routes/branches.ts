@@ -12670,7 +12670,11 @@ cdscli project list --human
       // 由 webhook/UI auto-reconnect 兜底;重启后 reconcile 用 docker ps 核对。
       // 仍保留 server-event-log 审计("self-update.restart.deferred" 这条
       // event 在 restart-drain.ts 里仍会写),但不再阻塞 restart。
+      const drainStartedAt = Date.now();
       const restartDrain = await waitForRestartSafeBranchOperationsForRoute('api.self-update');
+      // 2026-06-03:把排空等待计入 timings(可达 180s)。此前不记导致进度条
+      // 各 step 之和远小于 totalMs,UI 大片留白且"总计"对不上。
+      timingRecorder.merge({ drainMs: Date.now() - drainStartedAt });
       if (!restartDrain.ok) {
         send(
           'restart',
@@ -13473,7 +13477,10 @@ cdscli project list --human
       timingRecorder.merge(await runInProcessWebBuild(newHead, send, res));
 
       // 同 self-update:5s 优雅窗口 + 不阻塞 restart。详见上一处注释。
+      const drainStartedAt = Date.now();
       const restartDrain = await waitForRestartSafeBranchOperationsForRoute('api.self-force-sync');
+      // 2026-06-03:同 self-update,把排空等待计入 timings(见上一处注释)。
+      timingRecorder.merge({ drainMs: Date.now() - drainStartedAt });
       if (!restartDrain.ok) {
         send(
           'restart',

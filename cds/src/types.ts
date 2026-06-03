@@ -1216,6 +1216,10 @@ export interface SelfUpdateTimingBreakdown {
   docOnlyMs?: number;
   noOpMs?: number;
   restartMs?: number;
+  /** 重启前等待 in-flight 分支操作排空的耗时(可达 180s,见 restart-drain.ts)。
+   *  历史上这段不计入任何 step,导致 totalMs 远大于各 step 之和 ——
+   *  进度条大片留白、看不出时间去哪了。2026-06-03 用户反馈后补记。 */
+  drainMs?: number;
   validate?: Record<string, number>;
   [key: string]: number | boolean | string | Record<string, number> | undefined;
 }
