@@ -10,6 +10,8 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Save, Unlink, ExternalLink, ListChecks, Puzzle, Bug } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { RequirementRelationModal } from './ProductRelationModals';
+import { FormFieldsRenderer, useEffectiveTemplate, useEffectiveWorkflow } from './DynamicForm';
+import { WorkflowBar } from './WorkflowBar';
 import {
   listRequirements,
   createRequirement,
@@ -162,7 +164,11 @@ function CreateObjectForm({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [grade, setGrade] = useState<ItemGrade>('p2');
+  const [formData, setFormData] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const entityType = kind === 'feature' ? 'feature' : 'requirement';
+  const { template } = useEffectiveTemplate(entityType, productId);
+  const { workflow } = useEffectiveWorkflow(entityType, productId);
 
   if (kind !== 'requirement' && kind !== 'feature') {
     return <div className="text-white/40 text-sm text-center py-10">该类型不支持在此新建</div>;
@@ -171,10 +177,15 @@ function CreateObjectForm({
   const create = async () => {
     if (!title.trim()) return;
     setSaving(true);
-    const res =
-      kind === 'requirement'
-        ? await createRequirement(productId, { title: title.trim(), description, grade })
-        : await createFeature(productId, { title: title.trim(), description, grade });
+    const payload = {
+      title: title.trim(),
+      description,
+      grade,
+      formData,
+      templateId: template?.id,
+      workflowDefId: workflow?.id,
+    };
+    const res = kind === 'requirement' ? await createRequirement(productId, payload) : await createFeature(productId, payload);
     setSaving(false);
     if (res.success && res.data) onCreated(res.data.id);
   };
@@ -214,6 +225,12 @@ function CreateObjectForm({
           {saving ? <MapSpinner size={14} /> : <Save size={14} />} 创建
         </button>
       </div>
+      {template && template.fields.length > 0 && (
+        <div className="border-t border-white/10 pt-3 mt-1">
+          <div className="text-xs font-medium text-white/50 mb-2">{template.name}</div>
+          <FormFieldsRenderer fields={template.fields} values={formData} onChange={(k, v) => setFormData((d) => ({ ...d, [k]: v }))} />
+        </div>
+      )}
       <p className="text-[11px] text-white/35">创建后进入详情页，可继续关联客户 / 版本 / 缺陷追溯。</p>
     </div>
   );
@@ -331,14 +348,18 @@ function RequirementDetail({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [grade, setGrade] = useState<ItemGrade>('p2');
+  const [formData, setFormData] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [showRel, setShowRel] = useState(false);
+  const { template } = useEffectiveTemplate('requirement', productId);
+  const { workflow } = useEffectiveWorkflow('requirement', productId);
 
   useEffect(() => {
     if (requirement) {
       setTitle(requirement.title);
       setDescription(requirement.description ?? '');
       setGrade(requirement.grade);
+      setFormData(requirement.formData ?? {});
     }
   }, [requirement]);
 
@@ -346,13 +367,18 @@ function RequirementDetail({
 
   const save = async () => {
     setSaving(true);
-    await updateRequirement(requirement.id, { title: title.trim(), description, grade });
+    await updateRequirement(requirement.id, { title: title.trim(), description, grade, formData });
     setSaving(false);
     onReload();
   };
 
   return (
     <>
+      {requirement.workflowDefId && (
+        <div className="mb-3">
+          <WorkflowBar workflow={workflow} entityType="requirement" entityId={requirement.id} currentState={requirement.currentState} onChanged={onReload} />
+        </div>
+      )}
       <BasicFields
         title={title}
         setTitle={setTitle}
@@ -365,6 +391,11 @@ function RequirementDetail({
         onSave={save}
         saving={saving}
       />
+      {template && template.fields.length > 0 && (
+        <Section title={`自定义字段（${template.name}）`}>
+          <FormFieldsRenderer fields={template.fields} values={formData} onChange={(k, v) => setFormData((d) => ({ ...d, [k]: v }))} />
+        </Section>
+      )}
       <Section
         title="关联关系（客户 / 版本 / 缺陷）"
         action={
@@ -435,7 +466,10 @@ function FeatureDetail({
   const [description, setDescription] = useState('');
   const [grade, setGrade] = useState<ItemGrade>('p2');
   const [selReqs, setSelReqs] = useState<Set<string>>(new Set());
+  const [formData, setFormData] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const { template } = useEffectiveTemplate('feature', feature?.productId ?? null);
+  const { workflow } = useEffectiveWorkflow('feature', feature?.productId ?? null);
 
   useEffect(() => {
     if (feature) {
@@ -443,6 +477,7 @@ function FeatureDetail({
       setDescription(feature.description ?? '');
       setGrade(feature.grade);
       setSelReqs(new Set(feature.requirementIds));
+      setFormData(feature.formData ?? {});
     }
   }, [feature]);
 
@@ -450,7 +485,7 @@ function FeatureDetail({
 
   const save = async () => {
     setSaving(true);
-    await updateFeature(feature.id, { title: title.trim(), description, grade, requirementIds: Array.from(selReqs) });
+    await updateFeature(feature.id, { title: title.trim(), description, grade, requirementIds: Array.from(selReqs), formData });
     setSaving(false);
     onReload();
   };
@@ -466,6 +501,11 @@ function FeatureDetail({
 
   return (
     <>
+      {feature.workflowDefId && (
+        <div className="mb-3">
+          <WorkflowBar workflow={workflow} entityType="feature" entityId={feature.id} currentState={feature.currentState} onChanged={onReload} />
+        </div>
+      )}
       <BasicFields
         title={title}
         setTitle={setTitle}
@@ -478,6 +518,11 @@ function FeatureDetail({
         onSave={save}
         saving={saving}
       />
+      {template && template.fields.length > 0 && (
+        <Section title={`自定义字段（${template.name}）`}>
+          <FormFieldsRenderer fields={template.fields} values={formData} onChange={(k, v) => setFormData((d) => ({ ...d, [k]: v }))} />
+        </Section>
+      )}
       <Section title="实现的需求（勾选后点上方保存）">
         {requirements.length === 0 ? (
           <div className="text-[11px] text-white/30">该产品还没有需求</div>
