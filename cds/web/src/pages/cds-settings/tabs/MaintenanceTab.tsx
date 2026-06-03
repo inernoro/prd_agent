@@ -948,6 +948,9 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
             }
             contentClassName="p-0"
           >
+              {runState === 'running' ? (
+                <SelfUpdateLiveProgress elapsedMs={elapsedRunMs} currentStep={activeSelfUpdate?.step} />
+              ) : null}
               <div className="flex justify-end px-4 py-3">
                 <Button type="button" variant="outline" size="sm" onClick={() => void copyRunLog()} disabled={runLog.length === 0}>
                   <Copy />
@@ -1458,7 +1461,8 @@ function summariseHistory(records: SelfUpdateRecord[]): SelfUpdateHistoryStatsDa
 function fmtMs(ms: number | null | undefined): string {
   if (ms == null) return '-';
   if (ms < 1000) return `${ms} ms`;
-  return `${(ms / 1000).toFixed(1)} s`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`;
+  return `${(ms / 60_000).toFixed(1)} min`;
 }
 
 function SelfUpdateHistoryStats({ stats }: { stats: SelfUpdateHistoryStatsData }): JSX.Element {
@@ -1518,10 +1522,142 @@ function SelfUpdateHistoryStats({ stats }: { stats: SelfUpdateHistoryStatsData }
   );
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// 进行中的更新「预计进度条」(2026-06-03 用户:"当前更新也用这个进度条,
+// 让用户有大致预期")。原理:历史成功记录的各阶段耗时取中位数当"预期时间线",
+// 进行中时按当前阶段(activeSelfUpdate.step)+ 已用时长把对应段填实,未到的段
+// 淡显。给用户一个"还要多久"的体感,而不是只盯着秒表空等。
+// ──────────────────────────────────────────────────────────────────────────
+interface LiveStageDef {
+  key: string;
+  label: string;
+  color: string;
+  fields: Array<keyof SelfUpdateTimings>;
+  steps: string[];                       // 后端 send(step,...) 的原始 step key
+}
+// 顺序必须与后端自更新流程一致(fetch → checkout → 依赖/类型校验 → 编译 → 重启)。
+const LIVE_STAGE_DEFS: LiveStageDef[] = [
+  { key: 'fetch',    label: '拉取',      color: 'bg-sky-500',     fields: ['fetchMs', 'pullMs'],       steps: ['fetch', 'pull'] },
+  { key: 'checkout', label: '切分支',    color: 'bg-cyan-500',    fields: ['checkoutMs', 'resetMs'],   steps: ['checkout', 'reset'] },
+  { key: 'install',  label: '依赖校验',  color: 'bg-indigo-500',  fields: ['validateInstallMs'],       steps: ['validate', 'validate-install'] },
+  { key: 'tsc',      label: '类型校验',  color: 'bg-amber-500',   fields: ['validateTscMs'],           steps: ['validate-tsc'] },
+  { key: 'backend',  label: '后端编译',  color: 'bg-emerald-500', fields: ['buildBackendMs'],          steps: ['build-backend'] },
+  { key: 'web',      label: 'web 重建',  color: 'bg-rose-500',    fields: ['webBuildMs', 'webOnlyMs'], steps: ['web-build', 'web-only'] },
+  { key: 'restart',  label: '排空+重启', color: 'bg-fuchsia-500', fields: ['drainMs', 'restartMs'],    steps: ['restart', 'nginx-render', 'cache', 'analyze'] },
+];
+// 无历史可估算时的兜底基线(ms,秒级),保证条至少能画出来。
+const LIVE_FALLBACK_MS: Record<string, number> = {
+  fetch: 1000, checkout: 200, install: 8000, tsc: 16000, backend: 1000, web: 14000, restart: 3000,
+};
+
+function median(nums: number[]): number {
+  if (nums.length === 0) return 0;
+  const sorted = [...nums].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
+function SelfUpdateLiveProgress({ elapsedMs, currentStep }: { elapsedMs: number; currentStep?: string }): JSX.Element {
+  const [records, setRecords] = useState<SelfUpdateRecord[]>([]);
+  // 进行中只拉一次历史当基线(elapsedMs 每 250ms 跳一次,不能跟着重拉)。
+  useEffect(() => {
+    let cancelled = false;
+    fetch(apiUrl('/api/self-update-history?limit=20'), { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((d: { records?: SelfUpdateRecord[] }) => { if (!cancelled) setRecords(d.records || []); })
+      .catch(() => { /* 没历史就走兜底基线 */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  const successSamples = records.filter((r) => r.status === 'success' && r.timings);
+  const expected = useMemo(() => {
+    return LIVE_STAGE_DEFS.map((def) => {
+      const samples: number[] = [];
+      for (const r of successSamples) {
+        const t = r.timings!;
+        let sum = 0; let has = false;
+        for (const f of def.fields) {
+          const v = t[f];
+          if (typeof v === 'number' && v > 0) { sum += v; has = true; }
+        }
+        if (has) samples.push(sum);
+      }
+      return { ...def, ms: median(samples) };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [records]);
+
+  const hasHistory = expected.reduce((s, v) => s + v.ms, 0) > 0;
+  const stages = hasHistory ? expected : expected.map((d) => ({ ...d, ms: LIVE_FALLBACK_MS[d.key] ?? 1000 }));
+  const etaMs = Math.max(stages.reduce((s, v) => s + v.ms, 0), 1);
+
+  // 当前阶段索引:精确匹配 step;validate 收尾(validate-done/timings)归到类型校验段。
+  const curIdx = (() => {
+    if (!currentStep) return 0;
+    const exact = stages.findIndex((s) => s.steps.includes(currentStep));
+    if (exact >= 0) return exact;
+    if (currentStep.startsWith('validate')) {
+      const tsc = stages.findIndex((s) => s.key === 'tsc');
+      return tsc >= 0 ? tsc : 0;
+    }
+    return 0;
+  })();
+
+  const beforeMs = stages.slice(0, curIdx).reduce((s, v) => s + v.ms, 0);
+  const curMs = stages[curIdx]?.ms || 1;
+  const overEta = elapsedMs > etaMs;
+
+  return (
+    <div className="space-y-2 border-t border-border px-4 py-3">
+      <div className="flex items-center justify-between text-xs">
+        <span className="text-muted-foreground">
+          {successSamples.length > 0
+            ? `预计进度(基于近 ${successSamples.length} 次成功更新的中位数)`
+            : '预计进度(暂无历史 · 粗略估算)'}
+        </span>
+        <span className={overEta ? 'font-medium text-amber-600 dark:text-amber-400' : 'font-medium text-foreground/80'}>
+          已用 {fmtMs(elapsedMs)} · 预计约 {fmtMs(etaMs)}{overEta ? ' · 已超预期' : ''}
+        </span>
+      </div>
+      <div className="flex h-2.5 w-full overflow-hidden rounded-sm bg-[hsl(var(--surface-sunken))]">
+        {stages.map((seg, i) => {
+          const widthPct = (seg.ms / etaMs) * 100;
+          const done = i < curIdx;
+          const isCur = i === curIdx;
+          let fillPct = 0;
+          if (done) fillPct = 100;
+          else if (isCur) fillPct = Math.min(0.97, Math.max(0.06, (elapsedMs - beforeMs) / curMs)) * 100;
+          return (
+            <div
+              key={seg.key}
+              className="relative h-full"
+              style={{ width: `${widthPct}%` }}
+              title={`${seg.label}: 预计 ${fmtMs(seg.ms)}`}
+            >
+              {/* 计划层(淡显)+ 实际填充层(实色,当前段脉冲) */}
+              <div className={`absolute inset-0 ${seg.color} opacity-20`} />
+              <div
+                className={`absolute inset-y-0 left-0 ${seg.color} ${isCur ? 'animate-pulse' : ''}`}
+                style={{ width: `${fillPct}%` }}
+              />
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
+        {stages.map((seg, i) => (
+          <span key={seg.key} className={i === curIdx ? 'font-medium text-foreground' : ''}>
+            <span className={`inline-block h-2 w-2 align-middle ${seg.color} ${i <= curIdx ? '' : 'opacity-30'}`} />{' '}
+            {seg.label} {fmtMs(seg.ms)}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // 阶段耗时条:把 timings 里的各阶段按比例横向铺出来,鼠标悬停看每段名字 + 数值。
 // 之前用户看的只是 "X.Xs 流程" 一个数字,完全看不出 25s 是 tsc 还是 web build 占的。
 interface StageSeg { key: string; label: string; ms: number; color: string }
-
 function SelfUpdateStageBar({ timings, totalMs }: { timings: SelfUpdateTimings; totalMs?: number }): JSX.Element | null {
   const segments: StageSeg[] = [];
   const push = (key: string, label: string, ms: number | undefined, color: string): void => {
