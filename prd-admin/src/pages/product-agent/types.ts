@@ -16,8 +16,17 @@ export type ProductEntityType =
 /** 通用分级（P0 最高） */
 export type ItemGrade = 'p0' | 'p1' | 'p2' | 'p3';
 
-/** 产品分级 */
-export type ProductGrade = 'core' | 'important' | 'normal' | 'experimental';
+/** 产品类型 Id（内置 core/important/normal/experimental，亦可为自定义类型 Guid） */
+export type ProductGrade = string;
+
+/** 产品类型（可增删改查管理，替代写死枚举；内置 4 项不可删除） */
+export interface ProductCategory {
+  id: string;
+  name: string;
+  color: string;
+  sortOrder: number;
+  isBuiltin: boolean;
+}
 
 /** 版本生命周期 */
 export type VersionLifecycle = 'planning' | 'developing' | 'testing' | 'released' | 'deprecated';

@@ -58,8 +58,8 @@ public class ProductAgentController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(request.Name))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "产品名称不能为空"));
-        if (!string.IsNullOrWhiteSpace(request.Grade) && !ProductGrade.All.Contains(request.Grade))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的产品分级"));
+        if (!await IsValidGradeAsync(request.Grade))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的产品类型"));
 
         var userId = GetUserId();
         var owner = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
@@ -97,7 +97,7 @@ public class ProductAgentController : ControllerBase
         var conds = new List<FilterDefinition<Product>> { b.Eq(p => p.IsDeleted, false) };
         if (!HasPermission(AdminPermissionCatalog.ProductAgentManage))
             conds.Add(b.Or(b.Eq(p => p.OwnerId, userId), b.AnyEq(p => p.MemberIds, userId)));
-        if (!string.IsNullOrWhiteSpace(grade) && ProductGrade.All.Contains(grade))
+        if (!string.IsNullOrWhiteSpace(grade))
             conds.Add(b.Eq(p => p.Grade, grade));
         if (!string.IsNullOrWhiteSpace(keyword))
             conds.Add(b.Or(
@@ -128,8 +128,8 @@ public class ProductAgentController : ControllerBase
         var userId = GetUserId();
         var product = await FindAccessibleProductAsync(productId, userId);
         if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
-        if (!string.IsNullOrWhiteSpace(request.Grade) && !ProductGrade.All.Contains(request.Grade))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的产品分级"));
+        if (!await IsValidGradeAsync(request.Grade))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的产品类型"));
 
         var update = Builders<Product>.Update.Set(p => p.UpdatedAt, DateTime.UtcNow);
         if (!string.IsNullOrWhiteSpace(request.Name)) update = update.Set(p => p.Name, request.Name.Trim());
@@ -563,6 +563,94 @@ public class ProductAgentController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "客户不存在或无权访问"));
         await _db.Customers.UpdateOneAsync(c => c.Id == customerId,
             Builders<Customer>.Update.Set(c => c.IsDeleted, true).Set(c => c.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    // ════════════════════════ 产品类型 ProductCategory ════════════════════════
+
+    /// <summary>确保内置 4 项产品类型已落库（find-or-create，仅补缺不覆盖）。</summary>
+    private async Task EnsureCategoriesSeededAsync()
+    {
+        var existingIds = (await _db.ProductCategories.Find(_ => true).Project(c => c.Id).ToListAsync())
+            .ToHashSet();
+        var missing = ProductCategory.BuiltinSeeds.Where(s => !existingIds.Contains(s.Id)).ToList();
+        if (missing.Count > 0)
+            await _db.ProductCategories.InsertManyAsync(missing);
+    }
+
+    /// <summary>校验 grade 是否为有效的产品类型 Id（空值视为合法，落库时取默认）。</summary>
+    private async Task<bool> IsValidGradeAsync(string? grade)
+    {
+        if (string.IsNullOrWhiteSpace(grade)) return true;
+        await EnsureCategoriesSeededAsync();
+        return await _db.ProductCategories.Find(c => c.Id == grade && !c.IsDeleted).AnyAsync();
+    }
+
+    /// <summary>产品类型列表（首次访问自动补齐内置 4 项）。</summary>
+    [HttpGet("categories")]
+    public async Task<IActionResult> ListCategories()
+    {
+        await EnsureCategoriesSeededAsync();
+        var items = await _db.ProductCategories.Find(c => !c.IsDeleted)
+            .SortBy(c => c.SortOrder).ThenBy(c => c.CreatedAt).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>创建 / 更新产品类型（需管理权限）。带 id 为更新。</summary>
+    [HttpPost("categories")]
+    public async Task<IActionResult> UpsertCategory([FromBody] UpsertCategoryRequest request)
+    {
+        if (!HasPermission(AdminPermissionCatalog.ProductAgentManage))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
+        if (string.IsNullOrWhiteSpace(request.Name))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "类型名称不能为空"));
+        await EnsureCategoriesSeededAsync();
+        var color = string.IsNullOrWhiteSpace(request.Color) ? "#9ca3af" : request.Color.Trim();
+
+        if (!string.IsNullOrWhiteSpace(request.Id))
+        {
+            var existing = await _db.ProductCategories.Find(c => c.Id == request.Id && !c.IsDeleted).FirstOrDefaultAsync();
+            if (existing == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品类型不存在"));
+            var u = Builders<ProductCategory>.Update
+                .Set(c => c.Name, request.Name.Trim())
+                .Set(c => c.Color, color)
+                .Set(c => c.SortOrder, request.SortOrder)
+                .Set(c => c.UpdatedAt, DateTime.UtcNow);
+            await _db.ProductCategories.UpdateOneAsync(c => c.Id == request.Id, u);
+            var updated = await _db.ProductCategories.Find(c => c.Id == request.Id).FirstOrDefaultAsync();
+            return Ok(ApiResponse<object>.Ok(updated));
+        }
+
+        var maxOrder = (await _db.ProductCategories.Find(c => !c.IsDeleted).SortByDescending(c => c.SortOrder)
+            .FirstOrDefaultAsync())?.SortOrder ?? -1;
+        var cat = new ProductCategory
+        {
+            Name = request.Name.Trim(),
+            Color = color,
+            SortOrder = request.SortOrder > 0 ? request.SortOrder : maxOrder + 1,
+            IsBuiltin = false,
+        };
+        await _db.ProductCategories.InsertOneAsync(cat);
+        return Ok(ApiResponse<object>.Ok(cat));
+    }
+
+    /// <summary>删除产品类型（软删除，需管理权限）。内置项 / 被产品占用时禁止删除。</summary>
+    [HttpDelete("categories/{categoryId}")]
+    public async Task<IActionResult> DeleteCategory(string categoryId)
+    {
+        if (!HasPermission(AdminPermissionCatalog.ProductAgentManage))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
+        var cat = await _db.ProductCategories.Find(c => c.Id == categoryId && !c.IsDeleted).FirstOrDefaultAsync();
+        if (cat == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品类型不存在"));
+        if (cat.IsBuiltin)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "内置类型不可删除，可改名或改色"));
+        var inUse = await _db.Products.CountDocumentsAsync(p => p.Grade == categoryId && !p.IsDeleted);
+        if (inUse > 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"该类型正被 {inUse} 个产品使用，无法删除"));
+        await _db.ProductCategories.UpdateOneAsync(c => c.Id == categoryId,
+            Builders<ProductCategory>.Update.Set(c => c.IsDeleted, true).Set(c => c.UpdatedAt, DateTime.UtcNow));
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
@@ -1405,6 +1493,14 @@ public class ProductAgentController : ControllerBase
 }
 
 // ════════════════════════ 请求 DTO ════════════════════════
+
+public class UpsertCategoryRequest
+{
+    public string? Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string? Color { get; set; }
+    public int SortOrder { get; set; }
+}
 
 public class UpsertProductRequest
 {

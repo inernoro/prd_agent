@@ -17,6 +17,7 @@ import type {
   FormTemplate,
   WorkflowDefinition,
   ProductEntityType,
+  ProductCategory,
 } from '@/pages/product-agent/types';
 
 interface ListWrap<T> {
@@ -147,6 +148,17 @@ export function upsertFormTemplate(body: Partial<FormTemplate> & { id?: string }
 }
 export function deleteFormTemplate(templateId: string) {
   return apiRequest<{ deleted: boolean }>(`/api/product/form-templates/${templateId}`, { method: 'DELETE' });
+}
+
+// ── 产品类型（可增删改查管理）──
+export function listProductCategories() {
+  return apiRequest<ListWrap<ProductCategory>>('/api/product/categories');
+}
+export function upsertProductCategory(body: Partial<ProductCategory> & { id?: string }) {
+  return apiRequest<ProductCategory>('/api/product/categories', { method: 'POST', body });
+}
+export function deleteProductCategory(categoryId: string) {
+  return apiRequest<{ deleted: boolean }>(`/api/product/categories/${categoryId}`, { method: 'DELETE' });
 }
 
 // ── 通用状态机 / 流程引擎 ──

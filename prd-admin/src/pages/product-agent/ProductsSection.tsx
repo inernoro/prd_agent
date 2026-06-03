@@ -7,19 +7,12 @@ import { useNavigate } from 'react-router-dom';
 import { Plus, Search, Pencil, Trash2 } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { listProducts, createProduct, updateProduct, deleteProduct } from '@/services/real/productAgent';
-import type { Product, ProductGrade } from './types';
-import { PRODUCT_GRADE_LABEL } from './types';
-
-const PRODUCT_GRADES: ProductGrade[] = ['core', 'important', 'normal', 'experimental'];
-export const GRADE_COLOR: Record<ProductGrade, string> = {
-  core: '#22D3EE',
-  important: '#FBBF24',
-  normal: '#94A3B8',
-  experimental: '#A78BFA',
-};
+import type { Product, ProductGrade, ProductCategory } from './types';
+import { useProductCategories, categoryLabel, categoryColor } from './productCategories';
 
 export function ProductsSection() {
   const navigate = useNavigate();
+  const { categories } = useProductCategories();
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState('');
@@ -56,18 +49,18 @@ export function ProductsSection() {
           >
             全部
           </button>
-          {PRODUCT_GRADES.map((g) => (
+          {categories.map((c) => (
             <button
-              key={g}
-              onClick={() => setGradeFilter(g)}
+              key={c.id}
+              onClick={() => setGradeFilter(c.id)}
               className="px-2.5 py-1 rounded-md text-xs border"
               style={{
-                borderColor: gradeFilter === g ? GRADE_COLOR[g] : 'rgba(255,255,255,0.1)',
-                color: gradeFilter === g ? GRADE_COLOR[g] : 'rgba(255,255,255,0.5)',
-                background: gradeFilter === g ? 'rgba(255,255,255,0.05)' : 'transparent',
+                borderColor: gradeFilter === c.id ? c.color : 'rgba(255,255,255,0.1)',
+                color: gradeFilter === c.id ? c.color : 'rgba(255,255,255,0.5)',
+                background: gradeFilter === c.id ? 'rgba(255,255,255,0.05)' : 'transparent',
               }}
             >
-              {PRODUCT_GRADE_LABEL[g]}
+              {c.name}
             </button>
           ))}
         </div>
@@ -98,8 +91,8 @@ export function ProductsSection() {
                   <div className="text-white font-medium truncate">{p.name}</div>
                   <div className="text-[11px] text-white/40 mt-0.5">{p.productNo}</div>
                 </div>
-                <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0" style={{ color: GRADE_COLOR[p.grade], background: 'rgba(255,255,255,0.06)' }}>
-                  {PRODUCT_GRADE_LABEL[p.grade]}
+                <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0" style={{ color: categoryColor(categories, p.grade), background: 'rgba(255,255,255,0.06)' }}>
+                  {categoryLabel(categories, p.grade)}
                 </span>
               </div>
               {p.description && <div className="text-xs text-white/50 line-clamp-2 min-h-[2rem]">{p.description}</div>}
@@ -141,6 +134,7 @@ export function ProductsSection() {
       {editing && (
         <ProductEditModal
           product={editing === 'new' ? null : editing}
+          categories={categories}
           onClose={() => setEditing(null)}
           onSaved={(id) => {
             setEditing(null);
@@ -164,16 +158,18 @@ function MiniStat({ label, value }: { label: string; value: number }) {
 
 function ProductEditModal({
   product,
+  categories,
   onClose,
   onSaved,
 }: {
   product: Product | null;
+  categories: ProductCategory[];
   onClose: () => void;
   onSaved: (id?: string) => void;
 }) {
   const [name, setName] = useState(product?.name ?? '');
   const [description, setDescription] = useState(product?.description ?? '');
-  const [grade, setGrade] = useState<ProductGrade>(product?.grade ?? 'normal');
+  const [grade, setGrade] = useState<ProductGrade>(product?.grade ?? categories[0]?.id ?? 'normal');
   const [saving, setSaving] = useState(false);
   const isNew = !product;
 
@@ -212,15 +208,20 @@ function ProductEditModal({
           />
         </div>
         <div className="flex flex-col gap-1">
-          <label className="text-xs text-white/50">产品分级</label>
-          <div className="flex gap-1.5">
-            {PRODUCT_GRADES.map((g) => (
+          <label className="text-xs text-white/50">产品类型</label>
+          <div className="flex gap-1.5 flex-wrap">
+            {categories.map((c) => (
               <button
-                key={g}
-                onClick={() => setGrade(g)}
-                className={`px-2.5 py-1 rounded-md text-xs border ${grade === g ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40' : 'text-white/50 border-white/10 hover:bg-white/5'}`}
+                key={c.id}
+                onClick={() => setGrade(c.id)}
+                className="px-2.5 py-1 rounded-md text-xs border"
+                style={{
+                  borderColor: grade === c.id ? c.color : 'rgba(255,255,255,0.1)',
+                  color: grade === c.id ? c.color : 'rgba(255,255,255,0.5)',
+                  background: grade === c.id ? 'rgba(255,255,255,0.05)' : 'transparent',
+                }}
               >
-                {PRODUCT_GRADE_LABEL[g]}
+                {c.name}
               </button>
             ))}
           </div>

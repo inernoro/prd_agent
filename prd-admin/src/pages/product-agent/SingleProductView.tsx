@@ -36,7 +36,8 @@ import {
   type TracedDefect,
 } from '@/services/real/productAgent';
 import type { Product, ProductVersion, Requirement, Feature, Customer, ItemGrade, WorkflowDefinition } from './types';
-import { PRODUCT_GRADE_LABEL, ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL } from './types';
+import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL } from './types';
+import { useProductCategories, categoryLabel } from './productCategories';
 import { useEffectiveWorkflow } from './DynamicForm';
 
 type Section = 'overview' | 'versions' | 'requirements' | 'features' | 'defects' | 'customers' | 'knowledge' | 'graph';
@@ -57,6 +58,7 @@ const NAV: NavItem<Section>[] = [
 export function SingleProductView() {
   const navigate = useNavigate();
   const { productId = '' } = useParams();
+  const { categories } = useProductCategories();
   const [product, setProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
   const [active, setActive] = useState<Section>('overview');
@@ -98,7 +100,7 @@ export function SingleProductView() {
   return (
     <ProductAgentLayout
       title={product.name}
-      subtitle={`${product.productNo} · ${PRODUCT_GRADE_LABEL[product.grade]}`}
+      subtitle={`${product.productNo} · ${categoryLabel(categories, product.grade)}`}
       topSlot={
         <div className="flex items-center justify-between mb-2">
           <button onClick={() => navigate('/product-agent')} className="flex items-center gap-1.5 text-[11px] text-white/40 hover:text-white">

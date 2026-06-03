@@ -13,8 +13,11 @@ import {
   upsertFormTemplate,
   listWorkflowDefinitions,
   upsertWorkflowDefinition,
+  upsertProductCategory,
+  deleteProductCategory,
 } from '@/services/real/productAgent';
-import type { Product, FormField, FormFieldType, WorkflowState, WorkflowTransition, ProductEntityType } from './types';
+import type { Product, FormField, FormFieldType, WorkflowState, WorkflowTransition, ProductEntityType, ProductCategory } from './types';
+import { useProductCategories } from './productCategories';
 
 const ENTITY_TYPES: { value: ProductEntityType; label: string }[] = [
   { value: 'requirement', label: '需求' },
@@ -90,12 +93,12 @@ const PRESET_FIELDS: Record<ProductEntityType, { label: string; type: string }[]
   product: [
     { label: '名称', type: '单行文本' },
     { label: '描述', type: '多行文本' },
-    { label: '分级', type: '核心/重要/普通/实验' },
+    { label: '类型', type: '产品类型（可管理）' },
   ],
 };
 
 export function SettingsSection() {
-  const [mode, setMode] = useState<'form' | 'workflow'>('form');
+  const [mode, setMode] = useState<'form' | 'workflow' | 'category'>('form');
   const [entityType, setEntityType] = useState<ProductEntityType>('requirement');
   const [productScope, setProductScope] = useState(''); // '' = 全局
   const [products, setProducts] = useState<Product[]>([]);
@@ -114,35 +117,178 @@ export function SettingsSection() {
         <div className="flex rounded-lg border border-white/10 overflow-hidden">
           <button onClick={() => setMode('form')} className={`px-3 py-1.5 text-sm ${mode === 'form' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>表单模板</button>
           <button onClick={() => setMode('workflow')} className={`px-3 py-1.5 text-sm ${mode === 'workflow' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>流程模板</button>
+          <button onClick={() => setMode('category')} className={`px-3 py-1.5 text-sm ${mode === 'category' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>产品类型</button>
         </div>
-        <div className="w-px h-6 bg-white/10" />
-        {ENTITY_TYPES.map((e) => (
-          <button
-            key={e.value}
-            onClick={() => setEntityType(e.value)}
-            className={`px-2.5 py-1 rounded-md text-xs border ${entityType === e.value ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/40' : 'text-white/50 border-white/10 hover:bg-white/5'}`}
-          >
-            {e.label}
-          </button>
-        ))}
-        <div className="w-px h-6 bg-white/10" />
-        <select
-          value={productScope}
-          onChange={(e) => setProductScope(e.target.value)}
-          className="px-2 py-1.5 rounded-md text-xs bg-white/5 border border-white/10 text-white/70 outline-none"
-        >
-          <option value="">全局默认（所有产品共用）</option>
-          {products.map((p) => (
-            <option key={p.id} value={p.id}>覆盖：{p.name}</option>
-          ))}
-        </select>
+        {mode !== 'category' && (
+          <>
+            <div className="w-px h-6 bg-white/10" />
+            {ENTITY_TYPES.map((e) => (
+              <button
+                key={e.value}
+                onClick={() => setEntityType(e.value)}
+                className={`px-2.5 py-1 rounded-md text-xs border ${entityType === e.value ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/40' : 'text-white/50 border-white/10 hover:bg-white/5'}`}
+              >
+                {e.label}
+              </button>
+            ))}
+            <div className="w-px h-6 bg-white/10" />
+            <select
+              value={productScope}
+              onChange={(e) => setProductScope(e.target.value)}
+              className="px-2 py-1.5 rounded-md text-xs bg-white/5 border border-white/10 text-white/70 outline-none"
+            >
+              <option value="">全局默认（所有产品共用）</option>
+              {products.map((p) => (
+                <option key={p.id} value={p.id}>覆盖：{p.name}</option>
+              ))}
+            </select>
+          </>
+        )}
       </div>
 
       {mode === 'form' ? (
         <FormTemplateEditor key={`f-${entityType}-${productScope}`} entityType={entityType} productId={productScope || null} />
-      ) : (
+      ) : mode === 'workflow' ? (
         <WorkflowEditor key={`w-${entityType}-${productScope}`} entityType={entityType} productId={productScope || null} />
+      ) : (
+        <CategoryManager />
       )}
+    </div>
+  );
+}
+
+// ════════════════════════ 产品类型管理 ════════════════════════
+
+function CategoryManager() {
+  const { categories, reload } = useProductCategories();
+  const [draftName, setDraftName] = useState('');
+  const [draftColor, setDraftColor] = useState('#38bdf8');
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  const add = async () => {
+    if (!draftName.trim()) return;
+    setSaving(true);
+    setMsg(null);
+    const res = await upsertProductCategory({ name: draftName.trim(), color: draftColor });
+    setSaving(false);
+    if (res.success) {
+      setDraftName('');
+      setDraftColor('#38bdf8');
+      await reload();
+    } else {
+      setMsg(res.error?.message || '新增失败');
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-3 max-w-2xl">
+      <div className="text-xs text-white/50">
+        产品类型用于产品分级筛选与标记。内置 4 项（核心 / 重要 / 普通 / 实验）可改名、改色，但不可删除；自定义类型在无产品占用时可删除。
+      </div>
+
+      <div className="rounded-xl border border-white/10 divide-y divide-white/5">
+        {categories.map((c) => (
+          <CategoryRow key={c.id} category={c} onChanged={reload} />
+        ))}
+        {categories.length === 0 && (
+          <div className="px-4 py-6 text-center text-sm text-white/40">正在加载产品类型…</div>
+        )}
+      </div>
+
+      {/* 新增 */}
+      <div className="flex items-center gap-2 rounded-xl border border-dashed border-white/15 px-3 py-2.5">
+        <input
+          type="color"
+          value={draftColor}
+          onChange={(e) => setDraftColor(e.target.value)}
+          className="w-7 h-7 rounded cursor-pointer bg-transparent border border-white/10"
+          title="选择颜色"
+        />
+        <input
+          value={draftName}
+          onChange={(e) => setDraftName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') void add(); }}
+          placeholder="新增产品类型名称，如「战略级」"
+          className="flex-1 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40"
+        />
+        <button
+          onClick={add}
+          disabled={!draftName.trim() || saving}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm disabled:opacity-50"
+        >
+          {saving ? <MapSpinner size={14} /> : <Plus size={14} />} 新增
+        </button>
+      </div>
+      {msg && <div className="text-xs text-red-300/80">{msg}</div>}
+    </div>
+  );
+}
+
+function CategoryRow({ category, onChanged }: { category: ProductCategory; onChanged: () => Promise<unknown> }) {
+  const [name, setName] = useState(category.name);
+  const [color, setColor] = useState(category.color);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const dirty = name.trim() !== category.name || color !== category.color;
+
+  const save = async () => {
+    if (!name.trim() || !dirty) return;
+    setBusy(true);
+    setErr(null);
+    const res = await upsertProductCategory({ id: category.id, name: name.trim(), color, sortOrder: category.sortOrder });
+    setBusy(false);
+    if (res.success) await onChanged();
+    else setErr(res.error?.message || '保存失败');
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    setErr(null);
+    const res = await deleteProductCategory(category.id);
+    setBusy(false);
+    if (res.success) await onChanged();
+    else setErr(res.error?.message || '删除失败');
+  };
+
+  return (
+    <div className="flex items-center gap-2 px-3 py-2.5">
+      <input
+        type="color"
+        value={color}
+        onChange={(e) => setColor(e.target.value)}
+        className="w-7 h-7 rounded cursor-pointer bg-transparent border border-white/10 shrink-0"
+        title="选择颜色"
+      />
+      <input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') void save(); }}
+        className="flex-1 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40"
+      />
+      {category.isBuiltin && (
+        <span className="text-[10px] px-1.5 py-0.5 rounded text-white/40 border border-white/10 shrink-0">内置</span>
+      )}
+      {err && <span className="text-[11px] text-red-300/80 shrink-0 max-w-[160px] truncate" title={err}>{err}</span>}
+      <button
+        onClick={save}
+        disabled={!dirty || !name.trim() || busy}
+        className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-cyan-200/80 hover:text-cyan-200 hover:bg-cyan-500/10 disabled:opacity-30 shrink-0"
+      >
+        {busy ? <MapSpinner size={12} /> : <Save size={12} />} 保存
+      </button>
+      <button
+        onClick={remove}
+        disabled={category.isBuiltin || busy}
+        title={category.isBuiltin ? '内置类型不可删除' : '删除'}
+        className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-red-300/60 hover:text-red-300 hover:bg-red-500/10 disabled:opacity-30 shrink-0"
+      >
+        <Trash2 size={12} />
+      </button>
     </div>
   );
 }

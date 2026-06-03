@@ -332,6 +332,7 @@ public class MongoDbContext
     public IMongoCollection<Feature> Features => _database.GetCollection<Feature>("features");
     public IMongoCollection<FeatureVersion> FeatureVersions => _database.GetCollection<FeatureVersion>("feature_versions");
     public IMongoCollection<Customer> Customers => _database.GetCollection<Customer>("customers");
+    public IMongoCollection<ProductCategory> ProductCategories => _database.GetCollection<ProductCategory>("product_categories");
     public IMongoCollection<ProductFormTemplate> ProductFormTemplates => _database.GetCollection<ProductFormTemplate>("product_form_templates");
     public IMongoCollection<ProductWorkflowDefinition> ProductWorkflowDefinitions => _database.GetCollection<ProductWorkflowDefinition>("product_workflow_definitions");
     public IMongoCollection<VersionUpgradeRequest> VersionUpgradeRequests => _database.GetCollection<VersionUpgradeRequest>("version_upgrade_requests");
