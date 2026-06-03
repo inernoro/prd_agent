@@ -24,6 +24,7 @@ const ENTITY_TYPES: { value: ProductEntityType; label: string }[] = [
   { value: 'upgrade-request', label: '升级申请' },
 ];
 
+// 仅保留前端有真实控件的字段类型（富文本/对象关联/用户/文件 暂未实现，已移除）
 const FIELD_TYPES: { value: FormFieldType; label: string }[] = [
   { value: 'text', label: '单行文本' },
   { value: 'textarea', label: '多行文本' },
@@ -34,12 +35,55 @@ const FIELD_TYPES: { value: FormFieldType; label: string }[] = [
   { value: 'checkbox', label: '勾选' },
   { value: 'date', label: '日期' },
   { value: 'datetime', label: '日期时间' },
-  { value: 'user', label: '用户选择' },
-  { value: 'relation', label: '关联对象' },
-  { value: 'richtext', label: '富文本' },
-  { value: 'file', label: '文件' },
 ];
 const HAS_OPTIONS = new Set(['select', 'multiselect', 'radio']);
+
+// 各对象类型的系统预置字段（由页面原生渲染，不可在表单里增删改；这里仅展示让配置者知晓）
+const PRESET_FIELDS: Record<ProductEntityType, { label: string; type: string }[]> = {
+  requirement: [
+    { label: '标题', type: '单行文本' },
+    { label: '描述', type: '多行文本' },
+    { label: '分级', type: 'P0-P3' },
+    { label: '状态', type: '流程驱动' },
+    { label: '所属客户', type: '关联客户' },
+    { label: '归属版本', type: '关联版本' },
+    { label: '追溯缺陷', type: '关联缺陷' },
+  ],
+  feature: [
+    { label: '名称', type: '单行文本' },
+    { label: '描述', type: '多行文本' },
+    { label: '分级', type: 'P0-P3' },
+    { label: '状态', type: '流程驱动' },
+    { label: '实现需求', type: '关联需求' },
+    { label: '纳入版本', type: '功能版本化' },
+    { label: '追溯缺陷', type: '关联缺陷' },
+  ],
+  version: [
+    { label: '版本名', type: '单行文本' },
+    { label: '描述', type: '多行文本' },
+    { label: '生命周期', type: '流程驱动' },
+    { label: '关联需求', type: '关联需求' },
+    { label: '纳入功能', type: '功能版本化' },
+  ],
+  customer: [
+    { label: '名称', type: '单行文本' },
+    { label: '公司', type: '单行文本' },
+    { label: '联系方式', type: '单行文本' },
+    { label: '描述', type: '多行文本' },
+  ],
+  'upgrade-request': [
+    { label: '标题', type: '单行文本' },
+    { label: '理由', type: '多行文本' },
+    { label: '关联需求', type: '关联需求' },
+    { label: '关联功能', type: '关联功能' },
+    { label: '状态', type: '流程驱动' },
+  ],
+  product: [
+    { label: '名称', type: '单行文本' },
+    { label: '描述', type: '多行文本' },
+    { label: '分级', type: '核心/重要/普通/实验' },
+  ],
+};
 
 export function SettingsSection() {
   const [mode, setMode] = useState<'form' | 'workflow'>('form');
@@ -167,8 +211,22 @@ function FormTemplateEditor({ entityType, productId }: { entityType: ProductEnti
         {msg && <span className="text-xs text-white/50">{msg}</span>}
       </div>
 
+      {/* 系统预置字段：页面原生渲染，锁定不可改 */}
+      <div className="rounded-lg border border-white/10 bg-white/[0.015] p-3">
+        <div className="text-xs font-medium text-white/50 mb-2">系统预置字段（页面原生渲染，不可修改）</div>
+        <div className="flex flex-wrap gap-1.5">
+          {(PRESET_FIELDS[entityType] ?? []).map((p, i) => (
+            <span key={i} className="text-[11px] px-2 py-1 rounded bg-white/5 border border-white/10 text-white/55">
+              {p.label}
+              <span className="text-white/30"> · {p.type}</span>
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <div className="text-xs font-medium text-white/50">额外自定义字段（存入 FormData，按需补充，勿与上方预置重复）</div>
       <div className="flex flex-col gap-2">
-        {fields.length === 0 && <div className="text-xs text-white/35 py-3 text-center">还没有字段，点下方「添加字段」。</div>}
+        {fields.length === 0 && <div className="text-xs text-white/35 py-3 text-center">还没有额外字段，点下方「添加字段」补充预置之外的信息。</div>}
         {fields.map((f, i) => (
           <div key={i} className="rounded-lg border border-white/10 bg-white/[0.02] p-3 flex flex-col gap-2">
             <div className="flex items-center gap-2">
