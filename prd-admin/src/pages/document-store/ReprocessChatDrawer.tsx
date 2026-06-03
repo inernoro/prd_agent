@@ -12,6 +12,7 @@ import { Button } from '@/components/design/Button';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { StreamingText } from '@/components/streaming';
 import { ChatMarkdown } from '@/pages/pa-agent/ChatMarkdown';
+import { VisualCreationMiniPanel } from '@/components/visual-creation/VisualCreationMiniPanel';
 import {
   listReprocessAgents,
   createReprocessAgent,
@@ -166,6 +167,8 @@ export function ReprocessChatDrawer({
   // 当前生成型智能体的可选参数（尺寸/模型，后端按真实池下发）+ 用户的选择
   const [agentParams, setAgentParams] = useState<AgentParameter[]>([]);
   const [selectedParams, setSelectedParams] = useState<Record<string, string>>({});
+  // 视觉创作 mini 面板的预填提示词（文学「为这段配图」时带入）
+  const [visualInitialPrompt, setVisualInitialPrompt] = useState('');
 
   const cancelStreamRef = useRef<(() => void) | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -776,73 +779,18 @@ export function ReprocessChatDrawer({
     if (target && onApplied) onApplied(mode, target);
   }, [messages, applying, entryId, onApplied]);
 
-  // 智能体接力（E9）：文学 generate_illustration（构思插画描述）→ 视觉 text2img（生图）→ 图片可插文档。
-  // 复用同一个 invoke 信封跑两次，前一步的文本喂给后一步，全程进度托管在一条消息里。
-  const handleChainIllustration = useCallback(async (sourceContent: string) => {
-    if (sendLockRef.current) return;
-    if (!sourceContent || !sourceContent.trim()) return;
-    sendLockRef.current = true;
-    setError(null);
-    const owner = entryId;
-    const guard = () => entryIdRef.current === owner;
-    const chainId = 'chain-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
-    setMessages((prev) => [...prev, {
-      id: chainId, role: 'assistant',
-      content: '① 文学构思插画描述…',
-      streaming: true, phase: 'thinking',
-      invoker: { kind: 'toolbox', label: '文学 → 视觉 · 配图', ref: 'chain' },
-    }]);
-    setStreamingId(chainId);
-    scrollToBottom();
-
-    // 把一次 invokeAgent 包成 Promise，收集文本 / 图片
-    const runStep = (opts: {
-      agentKey: string; action: string; text: string;
-      onText?: (full: string) => void; onArt?: (a: AgentArtifact) => void;
-    }) => new Promise<{ text: string; artifacts: AgentArtifact[]; error?: string }>((resolve) => {
-      let text = ''; const artifacts: AgentArtifact[] = []; let err: string | undefined;
-      const stop = invokeAgent({
-        agentKey: opts.agentKey,
-        action: opts.action,
-        text: opts.text,
-        onText: (c) => { text += c; opts.onText?.(text); },
-        onArtifact: (a) => { artifacts.push(a); opts.onArt?.(a); },
-        onError: (e) => { err = e; resolve({ text, artifacts, error: e }); },
-        onDone: () => resolve({ text, artifacts, error: err }),
-      });
-      cancelStreamRef.current = stop;
-    });
-
-    // 步骤 1：文学构思插画描述
-    const s1 = await runStep({
-      agentKey: 'literary-agent', action: 'generate_illustration', text: sourceContent,
-      onText: (full) => { if (guard()) setMessages((prev) => prev.map((m) => m.id === chainId ? { ...m, content: '① 构思插画描述：\n' + full, phase: 'streaming' } : m)); },
-    });
-    if (!guard()) { sendLockRef.current = false; return; }
-    if (s1.error || !s1.text.trim()) {
-      setMessages((prev) => prev.map((m) => m.id === chainId ? { ...m, streaming: false, phase: 'error', content: '配图失败（构思阶段）：' + (s1.error || '未生成插画描述') } : m));
-      setStreamingId(null); sendLockRef.current = false; return;
-    }
-
-    // 步骤 2：视觉据描述生图
-    setMessages((prev) => prev.map((m) => m.id === chainId ? { ...m, content: '① 插画描述：\n' + s1.text + '\n\n② 正在据描述生成配图…', phase: 'thinking' } : m));
-    scrollToBottom();
-    const s2 = await runStep({
-      agentKey: 'visual-agent', action: 'text2img', text: s1.text,
-      onArt: (a) => { if (guard()) setMessages((prev) => prev.map((m) => m.id === chainId ? { ...m, artifacts: [...(m.artifacts ?? []), a], phase: 'streaming' } : m)); },
-    });
-    if (!guard()) { sendLockRef.current = false; return; }
-    setMessages((prev) => prev.map((m) => m.id === chainId ? {
-      ...m, streaming: false, phase: s2.error ? 'error' : 'done',
-      content: '① 插画描述：\n' + s1.text + (s2.error ? ('\n\n② 配图失败：' + s2.error) : '\n\n② 配图完成（下方图片可插入文档）'),
-    } : m));
-    setStreamingId(null); sendLockRef.current = false; scrollToBottom();
-  }, [entryId, scrollToBottom]);
-
   // 智能体专属出站动作：把产出送回它自己的原生系统（巧思）
   const handleOutbound = useCallback(async (actionKey: string, content: string) => {
     if (!content || !content.trim()) return;
-    if (actionKey === 'illustrate') { void handleChainIllustration(content); return; }
+    if (actionKey === 'illustrate') {
+      // 文学「为这段配图」→ 打开真实视觉创作 mini 面板，预填该段作为配图起点
+      //（交互式：可改提示词 / 用原文 / 参考图 / 水印 / 尺寸模型 后再生成；不再默认值自动跑）
+      setVisualInitialPrompt(content.slice(0, 2000));
+      const visualItem = toolboxItems.find((t) => t.agentKey === 'visual-agent');
+      if (visualItem) { setActive({ kind: 'toolbox', item: visualItem }); setPickerOpen(false); }
+      else toast.warning('未找到视觉创作智能体', '请确认已在百宝箱启用');
+      return;
+    }
     if (actionKey === 'create-defect') {
       const res = await createDefectFromContent(content);
       if (!res.success) {
@@ -853,7 +801,42 @@ export function ReprocessChatDrawer({
       }
       toast.success('缺陷已创建', `「${res.data?.title || '新缺陷'}」已建入缺陷库，可去缺陷管理指派/处理`);
     }
-  }, [handleChainIllustration]);
+  }, [toolboxItems]);
+
+  // 视觉创作 mini 面板：把生成的配图写回文档（追加到文末）
+  const insertVisualToDoc = useCallback(async (markdown: string) => {
+    const requestedEntryId = entryId;
+    let res;
+    try {
+      res = await applyReprocessContent(requestedEntryId, { mode: 'append', content: markdown });
+    } catch (e) {
+      if (entryIdRef.current !== requestedEntryId) return;
+      toast.error('插入失败', e instanceof Error ? e.message : '网络异常');
+      return;
+    }
+    if (entryIdRef.current !== requestedEntryId) return;
+    if (!res.success) { toast.error('插入失败', res.error?.message); return; }
+    toast.success('已插入文档', '配图已追加到文末');
+    try {
+      const refreshed = await getDocumentContent(requestedEntryId);
+      if (entryIdRef.current === requestedEntryId && refreshed.success) {
+        const raw = refreshed.data.content ?? '';
+        setDocContent(raw.length > MAX_DOC_CHARS ? raw.slice(0, MAX_DOC_CHARS) : raw);
+        setDocTruncated(raw.length > MAX_DOC_CHARS);
+      }
+    } catch { /* 保留旧 docContent */ }
+    const target = res.data.outputEntryId || res.data.updatedEntryId;
+    if (target && onApplied) onApplied('append', target);
+  }, [entryId, onApplied]);
+
+  const handleInsertVisualImage = useCallback((url: string, name?: string) => {
+    void insertVisualToDoc(`![${name || '配图'}](${url})`);
+  }, [insertVisualToDoc]);
+
+  const handleInsertVisualImageWithText = useCallback((url: string, text: string) => {
+    const snippet = (text || '').trim().slice(0, 300);
+    void insertVisualToDoc(`${snippet}\n\n![配图](${url})`);
+  }, [insertVisualToDoc]);
 
   const isBusy = streamingId !== null;
   const isGenerationActive = activeCapability?.invokeMode === 'generation';
@@ -1174,7 +1157,15 @@ export function ReprocessChatDrawer({
           className="flex-1 overflow-y-auto px-5 py-4 space-y-3.5"
           style={{ minHeight: 0, overscrollBehavior: 'contain' }}
         >
-          {messages.length === 0 ? (
+          {isGenerationActive ? (
+            <VisualCreationMiniPanel
+              docTitle={entryTitle}
+              docContent={docContent}
+              initialPrompt={visualInitialPrompt}
+              onInsertImage={handleInsertVisualImage}
+              onInsertImageWithText={handleInsertVisualImageWithText}
+            />
+          ) : messages.length === 0 ? (
             <EmptyState
               loadingDoc={loadingDoc}
               entryTitle={entryTitle}
@@ -1207,7 +1198,8 @@ export function ReprocessChatDrawer({
           )}
         </div>
 
-        {/* 输入区 */}
+        {/* 输入区（生成型智能体走 mini 面板，隐藏聊天输入） */}
+        {!isGenerationActive && (
         <div className="surface-panel-footer px-5 py-3 shrink-0 border-t border-token-subtle">
           {/* 引用文档指示：让用户在输入时明确"这次会带上哪篇文章" */}
           {!docLoadError && !isGenerationActive && (
@@ -1286,6 +1278,7 @@ export function ReprocessChatDrawer({
                   : '先在上方选择一个智能体，再输入指令'}
           </p>
         </div>
+        )}
       </motion.div>
     </motion.div>
   );

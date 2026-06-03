@@ -13,3 +13,4 @@
 | feat | prd-admin | 文档再加工巧思:① 选中智能体显示「智能涌现」提示(这个智能体能做什么特别的)② 缺陷智能体产出旁「创建缺陷」一键建入缺陷库(复用 POST defects,标题自动归一)③ 文学/PRD 产出仍可替换/追加/另存(插入当前文档) |
 | feat | prd-api | 文学智能体声明 outboundActions「为这段配图」(illustrate),驱动文学→视觉接力 |
 | feat | prd-admin | 智能体接力(E9):文学产出旁「为这段配图」一键编排 literary generate_illustration(构思插画描述)→ visual text2img(生图)→ 图片可插文档,全程分阶段进度 |
+| feat | prd-admin | 视觉创作 mini 面板:再加工选视觉创作=真实视觉创作的缩小可交互版(提示词/用原文/参考图/真实水印 WatermarkSettingsPanel/尺寸模型/真实 generate 端点出图/插入文档/插入原文+配图);文学「为这段配图」改为打开 mini 面板并预填(交互式,不再默认值自动跑) |
