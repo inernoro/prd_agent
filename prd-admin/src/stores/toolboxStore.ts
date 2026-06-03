@@ -249,6 +249,19 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
     usageCount: 0,
     createdAt: new Date().toISOString(),
   },
+  {
+    id: 'builtin-zhunxing-agent',
+    name: '准星',
+    description: '企业制度与流程问答中枢，快速定位规范条款与执行口径',
+    icon: 'FileSearch',
+    category: 'builtin',
+    type: 'builtin',
+    agentKey: 'zhunxing-agent',
+    routePath: '/zhunxing-agent',
+    tags: ['制度', '流程', '知识库', '规范'],
+    usageCount: 0,
+    createdAt: new Date().toISOString(),
+  },
   // ========== 普通版 Agent（统一对话界面）==========
   {
     id: 'builtin-code-reviewer',

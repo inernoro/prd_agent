@@ -717,6 +717,12 @@ export const api = {
     stream: (runId: string) => `/api/ai-toolbox/runs/${runId}/stream`,
   },
 
+  // ============ 准星智能体 ============
+  zhunxing: {
+    health: () => '/zhunxing/health',
+    ask: () => '/zhunxing/ask',
+  },
+
   // ============ V1 API (用户端) ============
   v1: {
     documents: {

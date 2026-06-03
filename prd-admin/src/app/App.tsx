@@ -28,6 +28,7 @@ const VideoAgentPage = lazy(() => import('@/pages/video-agent').then(m => ({ def
 const ReportAgentPage = lazy(() => import('@/pages/report-agent').then(m => ({ default: m.ReportAgentPage })));
 const ReportDetailPage = lazy(() => import('@/pages/report-agent').then(m => ({ default: m.ReportDetailPage })));
 const TranscriptAgentPage = lazy(() => import('@/pages/transcript-agent').then(m => ({ default: m.TranscriptAgentPage })));
+const ZhunxingAgentPage = lazy(() => import('@/pages/zhunxing-agent/ZhunxingAgentPage'));
 const ShortcutsPage = lazy(() => import('@/pages/shortcuts-agent').then(m => ({ default: m.ShortcutsPage })));
 const ShortcutInstallPage = lazy(() => import('@/pages/shortcuts-agent').then(m => ({ default: m.ShortcutInstallPage })));
 const WorkflowListPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowListPage })));
@@ -319,6 +320,7 @@ export default function App() {
         <Route path="report-agent" element={<RequirePermission perm="report-agent.use"><ReportAgentPage /></RequirePermission>} />
         <Route path="report-agent/report/:reportId" element={<RequirePermission perm="report-agent.use"><ReportDetailPage /></RequirePermission>} />
         <Route path="transcript-agent" element={<RequirePermission perm="transcript-agent.use"><TranscriptAgentPage /></RequirePermission>} />
+        <Route path="zhunxing-agent" element={<RequirePermission perm="access"><ZhunxingAgentPage /></RequirePermission>} />
         <Route path="shortcuts-agent" element={<RequirePermission perm="access"><ShortcutsPage /></RequirePermission>} />
         <Route path="workflow-agent" element={<RequirePermission perm="workflow-agent.use"><WorkflowListPage /></RequirePermission>} />
         <Route path="workflow-agent/:workflowId" element={<RequirePermission perm="workflow-agent.use"><WorkflowEditorPage /></RequirePermission>} />
