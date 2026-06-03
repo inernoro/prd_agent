@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { TabBar } from '@/components/design/TabBar';
-import { Mail, Webhook, ListChecks, Plug, ScrollText, BookOpen, KeyRound } from 'lucide-react';
+import { Mail, Webhook, ListChecks, Plug, ScrollText, BookOpen, KeyRound, Waypoints } from 'lucide-react';
 
 // 子页面组件
 import EmailChannelPanel from './open-platform/EmailChannelPanel';
@@ -11,6 +11,7 @@ import TasksPanel from './open-platform/TasksPanel';
 import LogsPanel from './open-platform/LogsPanel';
 import TutorialEmailPanel from './open-platform/TutorialEmailPanel';
 import AuthorizationsPanel from './open-platform/AuthorizationsPanel';
+import OpenRouterPanel from './open-platform/OpenRouterPanel';
 
 /**
  * 开放平台 - Tab 容器页面
@@ -38,6 +39,7 @@ export default function OpenPlatformTabsPage() {
   const [logsActions, setLogsActions] = useState<React.ReactNode>(null);
   const [tutorialActions, setTutorialActions] = useState<React.ReactNode>(null);
   const [authActions, setAuthActions] = useState<React.ReactNode>(null);
+  const [openRouterActions, setOpenRouterActions] = useState<React.ReactNode>(null);
 
   // 同步 URL 参数到状态
   useEffect(() => {
@@ -58,6 +60,7 @@ export default function OpenPlatformTabsPage() {
       case 'webhook': return webhookActions;
       case 'tasks': return tasksActions;
       case 'apps': return appsActions;
+      case 'openrouter': return openRouterActions;
       case 'logs': return logsActions;
       case 'tutorial': return tutorialActions;
       case 'auth': return authActions;
@@ -74,6 +77,7 @@ export default function OpenPlatformTabsPage() {
           { key: 'webhook', label: 'Webhook', icon: <Webhook size={14} /> },
           { key: 'tasks', label: '任务监控', icon: <ListChecks size={14} /> },
           { key: 'apps', label: 'API 应用', icon: <Plug size={14} /> },
+          { key: 'openrouter', label: 'OpenRouter 网关', icon: <Waypoints size={14} /> },
           { key: 'logs', label: '调用日志', icon: <ScrollText size={14} /> },
           { key: 'tutorial', label: '教程邮件', icon: <BookOpen size={14} /> },
         ]}
@@ -88,6 +92,7 @@ export default function OpenPlatformTabsPage() {
         {activeTab === 'webhook' && <ChannelsPanel onActionsReady={setWebhookActions} />}
         {activeTab === 'tasks' && <TasksPanel onActionsReady={setTasksActions} />}
         {activeTab === 'apps' && <AppsPanel onActionsReady={setAppsActions} />}
+        {activeTab === 'openrouter' && <OpenRouterPanel onActionsReady={setOpenRouterActions} />}
         {activeTab === 'logs' && <LogsPanel onActionsReady={setLogsActions} />}
         {activeTab === 'tutorial' && <TutorialEmailPanel onActionsReady={setTutorialActions} />}
       </div>
