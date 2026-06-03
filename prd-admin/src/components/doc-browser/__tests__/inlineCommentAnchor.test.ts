@@ -40,4 +40,15 @@ describe('locateInSegments（行内评论锚定核心匹配）', () => {
   it('过短（少于 2 个非空白字符）不锚定', () => {
     expect(locateInSegments(['a b c'], ' x ')).toBeNull();
   });
+
+  it('多处出现 + contextBefore：锚到前文吻合的那一处（非首次）', () => {
+    // 'AAA中间BBB中间CCC'：'中间' 出现两次（去空白 hay 下标 3 与 8）
+    const hit = locateInSegments(['AAA中间BBB中间CCC'], '中间', 'xxxBBB');
+    expect(hit).toEqual({ startSeg: 0, startOff: 8, endSeg: 0, endOff: 9 });
+  });
+
+  it('多处出现但无 contextBefore：仍取首个（向后兼容）', () => {
+    const hit = locateInSegments(['AAA中间BBB中间CCC'], '中间');
+    expect(hit).toEqual({ startSeg: 0, startOff: 3, endSeg: 0, endOff: 4 });
+  });
 });

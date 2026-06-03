@@ -23,9 +23,12 @@ interface AnchorMark {
 // 在若干文本片段（= 各文本节点的 data）里做「去空白」匹配，markdown 渲染会改变空白/跨块，
 // 故按去空白后的字符序列查找。返回命中区间的起止 (片段下标, 片段内字符偏移)。
 // 短于 2 个非空白字符不锚定，避免误命中。
+// contextBefore（评论创建时记录的「选区前文」）：同一短语在文中多处出现时，用它挑「紧邻前文最吻合」
+// 的那一处，避免重复短语的评论都锚到首次出现（Bugbot/Codex）。无 context 或仅一处时取首个，行为不变。
 export function locateInSegments(
   segments: string[],
   query: string,
+  contextBefore?: string,
 ): { startSeg: number; startOff: number; endSeg: number; endOff: number } | null {
   const needle = query.replace(/\s+/g, '');
   if (needle.length < 2) return null;
@@ -39,10 +42,24 @@ export function locateInSegments(
       points.push({ seg: s, off: i });
     }
   }
-  const idx = hay.indexOf(needle);
-  if (idx < 0) return null;
-  const a = points[idx];
-  const b = points[idx + needle.length - 1];
+  const idxs: number[] = [];
+  for (let i = hay.indexOf(needle); i >= 0; i = hay.indexOf(needle, i + 1)) idxs.push(i);
+  if (idxs.length === 0) return null;
+  let chosen = idxs[0];
+  if (idxs.length > 1 && contextBefore) {
+    const ctx = contextBefore.replace(/\s+/g, '');
+    if (ctx) {
+      let best = -1;
+      for (const i of idxs) {
+        const before = hay.slice(Math.max(0, i - ctx.length), i);
+        let k = 0; // 紧邻前文与 contextBefore 的公共后缀长度
+        while (k < before.length && k < ctx.length && before[before.length - 1 - k] === ctx[ctx.length - 1 - k]) k++;
+        if (k > best) { best = k; chosen = i; }
+      }
+    }
+  }
+  const a = points[chosen];
+  const b = points[chosen + needle.length - 1];
   if (!a || !b) return null;
   return { startSeg: a.seg, startOff: a.off, endSeg: b.seg, endOff: b.off };
 }
@@ -50,7 +67,7 @@ export function locateInSegments(
 // DOM 适配层：收集容器内所有文本节点 → 交给纯核心匹配 → 把结果映射回 Range。
 // 只扫正文：跳过 UI 控件文本——代码块「复制」按钮、本浮层自身（aria-hidden）的气泡等，
 // 否则评论可能锚到按钮而非正文（Bugbot「Anchor scan includes copy buttons」）。
-function findTextRange(root: HTMLElement, query: string): Range | null {
+function findTextRange(root: HTMLElement, query: string, contextBefore?: string): Range | null {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       for (let el = node.parentElement; el && el !== root; el = el.parentElement) {
@@ -64,7 +81,7 @@ function findTextRange(root: HTMLElement, query: string): Range | null {
   const nodes: Text[] = [];
   let n: Node | null;
   while ((n = walker.nextNode())) nodes.push(n as Text);
-  const hit = locateInSegments(nodes.map((t) => t.data), query);
+  const hit = locateInSegments(nodes.map((t) => t.data), query, contextBefore);
   if (!hit) return null;
   try {
     const range = document.createRange();
@@ -99,12 +116,16 @@ export function InlineCommentOverlay({
       setMarks([]);
       return;
     }
-    // 同一句话的多条评论合并成一颗气泡（显示条数）；全文评论不参与行内锚定
+    // 分组：同一短语 + 同一前文上下文 的多条评论合并成一颗气泡（同一处的评论串）；
+    // 同一短语但出现位置不同（contextBefore 不同）则分到不同组、各自锚定，互不合并（Bugbot/Codex）。
+    // 全文评论不参与行内锚定。
     const groups = new Map<string, DocumentInlineComment[]>();
     for (const c of comments) {
       if (c.isWholeDocument || !c.selectedText) continue;
-      const k = c.selectedText.replace(/\s+/g, ' ').trim();
-      if (!k) continue;
+      const text = c.selectedText.replace(/\s+/g, ' ').trim();
+      if (!text) continue;
+      const ctxKey = (c.contextBefore ?? '').replace(/\s+/g, ' ').trim().slice(-40);
+      const k = JSON.stringify([text, ctxKey]);
       let g = groups.get(k);
       if (!g) { g = []; groups.set(k, g); }
       g.push(c);
@@ -115,8 +136,9 @@ export function InlineCommentOverlay({
     }
     const oRect = overlay.getBoundingClientRect();
     const next: AnchorMark[] = [];
-    groups.forEach((list, text) => {
-      const range = findTextRange(container, text);
+    groups.forEach((list) => {
+      const text = list[0].selectedText.replace(/\s+/g, ' ').trim();
+      const range = findTextRange(container, text, list[0].contextBefore ?? undefined);
       if (!range) return;
       const rectList = Array.from(range.getClientRects());
       if (rectList.length === 0) return;
