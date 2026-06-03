@@ -210,20 +210,22 @@ export function ModelPoolManagePage() {
     }
   };
 
-  // 解绑单个应用对当前分组的引用；解绑后刷新占用列表，全部解绑则自动关闭弹窗
+  // 解绑单个应用对当前分组的引用；解绑后刷新占用列表，全部解绑则自动关闭弹窗。
+  // 所有 setUsageDialog 走函数式更新并校验 pool.id：用户在 await 期间已关闭弹窗 / 切到别的池时不复位、不复显（避免重开弹窗 + 展示陈旧数据）。
   const handleUnbindOne = async (appId: string) => {
     if (!usageDialog) return;
+    const poolId = usageDialog.pool.id;
     setUsageBusy(true);
     try {
-      await unbindModelGroup(usageDialog.pool.id, [appId]);
-      const usage = await getModelGroupUsage(usageDialog.pool.id);
+      await unbindModelGroup(poolId, [appId]);
+      const usage = await getModelGroupUsage(poolId);
       const remaining = usage.data ?? [];
       if (remaining.length === 0) {
-        setUsageDialog(null);
+        setUsageDialog((prev) => (prev && prev.pool.id === poolId ? null : prev));
         toast.success('已全部解绑', '现在可以删除该分组了');
         await loadData();
       } else {
-        setUsageDialog({ pool: usageDialog.pool, apps: remaining });
+        setUsageDialog((prev) => (prev && prev.pool.id === poolId ? { pool: prev.pool, apps: remaining } : prev));
       }
     } catch (e) {
       toast.error('解绑失败', String(e));
@@ -232,18 +234,29 @@ export function ModelPoolManagePage() {
     }
   };
 
-  // 一键解绑全部应用并删除分组
+  // 一键解绑全部应用并删除分组。
+  // 拆成"解绑 → 删除"两段：解绑成功但删除失败时，以服务端为准刷新占用列表（应为空），
+  // 而不是停留在已解绑的陈旧数据；弹窗仍开着可重试删除。
   const handleUnbindAllAndDelete = async () => {
     if (!usageDialog) return;
+    const poolId = usageDialog.pool.id;
     setUsageBusy(true);
     try {
-      await unbindModelGroup(usageDialog.pool.id);
-      await deleteModelGroup(usageDialog.pool.id);
-      toast.success('已解绑全部并删除分组');
-      setUsageDialog(null);
+      await unbindModelGroup(poolId);
+      try {
+        await deleteModelGroup(poolId);
+        toast.success('已解绑全部并删除分组');
+        setUsageDialog((prev) => (prev && prev.pool.id === poolId ? null : prev));
+      } catch (delErr) {
+        // 解绑已生效但删除失败：刷新占用列表以匹配服务端真实状态，再提示
+        const usage = await getModelGroupUsage(poolId).catch(() => null);
+        const remaining = usage?.data ?? [];
+        setUsageDialog((prev) => (prev && prev.pool.id === poolId ? { pool: prev.pool, apps: remaining } : prev));
+        toast.error('已解绑但删除失败', String(delErr));
+      }
       await loadData();
     } catch (e) {
-      toast.error('操作失败', String(e));
+      toast.error('解绑失败', String(e));
     } finally {
       setUsageBusy(false);
     }
