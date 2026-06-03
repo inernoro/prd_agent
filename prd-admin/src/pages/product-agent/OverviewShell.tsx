@@ -78,7 +78,7 @@ export function OverviewShell() {
   return (
     <ProductAgentLayout
       title="产品管理"
-      subtitle={isAdmin ? '管理层总览（全部产品）' : '管理层总览（我的产品）'}
+      subtitle="全局总览"
       topSlot={
         <button
           onClick={() => navigate('/')}
@@ -92,7 +92,7 @@ export function OverviewShell() {
       onSelect={setActive}
     >
       {active === 'dashboard' && (
-        <SectionShell title="概览仪表盘" desc={isAdmin ? '公司层视角，跨全部产品' : '跨我参与的产品'}>
+        <SectionShell title="概览仪表盘" desc={isAdmin ? '全局视角，跨全部产品' : '全局视角，跨我参与的产品'}>
           <DashboardSection stats={stats} loading={statsLoading} onGoto={(s) => setActive(s)} />
         </SectionShell>
       )}
