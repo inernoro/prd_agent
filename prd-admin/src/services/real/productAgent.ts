@@ -322,3 +322,13 @@ export interface OverviewKnowledgeRow {
 export function getOverviewKnowledge() {
   return apiRequest<ListWrap<OverviewKnowledgeRow>>('/api/product/overview/knowledge');
 }
+export interface GraphData {
+  nodes: { id: string; type: string; label: string; sub?: string | null; grade?: string | null }[];
+  edges: { id: string; source: string; target: string; type: string }[];
+}
+export function getOverviewGraph() {
+  return apiRequest<GraphData>('/api/product/overview/graph');
+}
+export function createProductDefect(productId: string, body: { title: string; description?: string; severity?: string; requirementId?: string; versionId?: string }) {
+  return apiRequest<TracedDefect>(`/api/product/products/${productId}/defects`, { method: 'POST', body });
+}

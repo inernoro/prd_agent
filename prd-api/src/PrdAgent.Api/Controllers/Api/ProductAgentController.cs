@@ -186,6 +186,11 @@ public class ProductAgentController : ControllerBase
         if (!string.IsNullOrWhiteSpace(request.Lifecycle) && !ProductVersionLifecycle.All.Contains(request.Lifecycle))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的版本生命周期"));
 
+        // 自动绑定该产品下生效的默认版本表单/流程（产品覆盖 > 全局），让快速新建的版本也能走流转
+        var (defTpl, defWf) = await ResolveDefaultsAsync(ProductEntityType.Version, productId);
+        var templateId = string.IsNullOrEmpty(request.TemplateId) ? defTpl : request.TemplateId;
+        var workflowDefId = string.IsNullOrEmpty(request.WorkflowDefId) ? defWf : request.WorkflowDefId;
+
         var version = new ProductVersion
         {
             ProductId = productId,
@@ -197,12 +202,12 @@ public class ProductAgentController : ControllerBase
             PlannedReleaseAt = request.PlannedReleaseAt,
             RequirementIds = request.RequirementIds ?? new(),
             FeatureVersionIds = request.FeatureVersionIds ?? new(),
-            TemplateId = request.TemplateId,
-            WorkflowDefId = request.WorkflowDefId,
+            TemplateId = templateId,
+            WorkflowDefId = workflowDefId,
             FormData = request.FormData ?? new(),
             OwnerId = userId,
         };
-        version.CurrentState = await ResolveInitialStateAsync(request.WorkflowDefId);
+        version.CurrentState = await ResolveInitialStateAsync(workflowDefId);
 
         await _db.ProductVersions.InsertOneAsync(version);
         await RecalcProductCountsAsync(productId);
@@ -1047,9 +1052,37 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { traced = true }));
     }
 
+    /// <summary>在产品内新建缺陷（写入 defect_reports，自动追溯到本产品/需求/版本）。</summary>
+    [HttpPost("products/{productId}/defects")]
+    public async Task<IActionResult> CreateProductDefect(string productId, [FromBody] CreateProductDefectRequest request)
+    {
+        var userId = GetUserId();
+        if (await FindAccessibleProductAsync(productId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        if (string.IsNullOrWhiteSpace(request.Title))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺陷标题不能为空"));
+
+        var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+        var defect = new DefectReport
+        {
+            DefectNo = await GenerateNoAsync("DEF", _db.DefectReports, "DefectNo"),
+            Title = request.Title.Trim(),
+            RawContent = request.Description?.Trim() ?? string.Empty,
+            Severity = request.Severity,
+            Status = DefectStatus.Submitted,
+            ReporterId = userId,
+            ReporterName = user?.DisplayName,
+            TracedProductId = productId,
+            TracedRequirementId = request.RequirementId,
+            TracedVersionId = request.VersionId,
+        };
+        await _db.DefectReports.InsertOneAsync(defect);
+        await RecalcDefectCountAsync(productId);
+        return Ok(ApiResponse<object>.Ok(defect));
+    }
+
     /// <summary>解除缺陷的产品追溯。</summary>
-    [HttpPost("untrace-defect")]
-    public async Task<IActionResult> UntraceDefect([FromBody] UntraceDefectRequest request)
+    [HttpPost("untrace-defect")]    public async Task<IActionResult> UntraceDefect([FromBody] UntraceDefectRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.DefectId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺少缺陷 ID"));
@@ -1202,6 +1235,46 @@ public class ProductAgentController : ControllerBase
             .Select(p => new { productId = p.Id, productName = p.Name, storeId = p.KnowledgeStoreId, name = storeById[p.KnowledgeStoreId!].Name, documentCount = storeById[p.KnowledgeStoreId!].DocumentCount, storeById[p.KnowledgeStoreId!].UpdatedAt })
             .ToList();
         return Ok(ApiResponse<object>.Ok(new { items = rows }));
+    }
+
+    /// <summary>跨产品总览图：产品为中心，连到各自的版本（公司级发布地图）。</summary>
+    [HttpGet("overview/graph")]
+    public async Task<IActionResult> OverviewGraph()
+    {
+        var scope = await GetAccessibleProductIdsAsync(GetUserId());
+        var products = await _db.Products.Find(scope == null
+            ? Builders<Product>.Filter.Eq(p => p.IsDeleted, false)
+            : Builders<Product>.Filter.And(Builders<Product>.Filter.Eq(p => p.IsDeleted, false), Builders<Product>.Filter.In(p => p.Id, scope)))
+            .Limit(2000).ToListAsync();
+        var versions = await FindInScopeAsync<ProductVersion>(scope, v => v.ProductId, v => v.IsDeleted);
+
+        var nodes = new List<object>();
+        var edges = new List<object>();
+        foreach (var p in products)
+            nodes.Add(new { id = $"product:{p.Id}", type = "product", label = p.Name, sub = $"需求{p.RequirementCount}·功能{p.FeatureCount}·缺陷{p.DefectCount}", grade = p.Grade });
+        foreach (var v in versions)
+        {
+            nodes.Add(new { id = $"version:{v.Id}", type = "version", label = v.VersionName, sub = v.Lifecycle, grade = (string?)null });
+            edges.Add(new { id = $"product:{v.ProductId}->version:{v.Id}", source = $"product:{v.ProductId}", target = $"version:{v.Id}", type = "contains" });
+        }
+        return Ok(ApiResponse<object>.Ok(new { nodes, edges }));
+    }
+
+    /// <summary>解析某对象类型在某产品下生效的默认表单/流程 Id（产品覆盖 > 全局默认）。</summary>
+    private async Task<(string? templateId, string? workflowDefId)> ResolveDefaultsAsync(string entityType, string? productId)
+    {
+        var templates = await _db.ProductFormTemplates.Find(Builders<ProductFormTemplate>.Filter.And(
+            Builders<ProductFormTemplate>.Filter.Eq(t => t.EntityType, entityType),
+            Builders<ProductFormTemplate>.Filter.Eq(t => t.IsDeleted, false),
+            Builders<ProductFormTemplate>.Filter.Eq(t => t.IsDefault, true))).ToListAsync();
+        var tpl = templates.FirstOrDefault(t => t.ProductId == productId) ?? templates.FirstOrDefault(t => t.ProductId == null);
+
+        var workflows = await _db.ProductWorkflowDefinitions.Find(Builders<ProductWorkflowDefinition>.Filter.And(
+            Builders<ProductWorkflowDefinition>.Filter.Eq(w => w.EntityType, entityType),
+            Builders<ProductWorkflowDefinition>.Filter.Eq(w => w.IsDeleted, false),
+            Builders<ProductWorkflowDefinition>.Filter.Eq(w => w.IsDefault, true))).ToListAsync();
+        var wf = workflows.FirstOrDefault(w => w.ProductId == productId) ?? workflows.FirstOrDefault(w => w.ProductId == null);
+        return (tpl?.Id, wf?.Id);
     }
 
     private async Task<List<T>> FindInScopeAsync<T>(HashSet<string>? scope, System.Linq.Expressions.Expression<Func<T, string>> productIdField, System.Linq.Expressions.Expression<Func<T, bool>> isDeletedField)
@@ -1411,6 +1484,15 @@ public class TraceDefectRequest
 public class UntraceDefectRequest
 {
     public string DefectId { get; set; } = string.Empty;
+}
+
+public class CreateProductDefectRequest
+{
+    public string Title { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public string? Severity { get; set; }
+    public string? RequirementId { get; set; }
+    public string? VersionId { get; set; }
 }
 
 public class UpsertUpgradeRequestRequest

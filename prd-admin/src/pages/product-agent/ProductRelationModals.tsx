@@ -12,6 +12,8 @@ import { createPortal } from 'react-dom';
 import { X, Plus, Link2, Unlink, BookOpen, Search } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { DocumentStoreBrowser } from '@/components/doc-browser/DocumentStoreBrowser';
+import { FormFieldsRenderer, useEffectiveTemplate, useEffectiveWorkflow } from './DynamicForm';
+import { WorkflowBar } from './WorkflowBar';
 import {
   listRequirements,
   listFeatures,
@@ -116,9 +118,12 @@ export function VersionRelationModal({
   const [features, setFeatures] = useState<Feature[]>([]);
   const [featureVersions, setFeatureVersions] = useState<FeatureVersion[]>([]);
   const [selectedReqs, setSelectedReqs] = useState<Set<string>>(new Set(version.requirementIds));
+  const [formData, setFormData] = useState<Record<string, string>>(version.formData ?? {});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showKnowledge, setShowKnowledge] = useState(false);
+  const { template } = useEffectiveTemplate('version', productId);
+  const { workflow } = useEffectiveWorkflow('version', productId);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -161,7 +166,7 @@ export function VersionRelationModal({
 
   const save = async () => {
     setSaving(true);
-    await updateVersion(version.id, { requirementIds: Array.from(selectedReqs) });
+    await updateVersion(version.id, { requirementIds: Array.from(selectedReqs), formData });
     setSaving(false);
     onSaved();
     onClose();
@@ -177,6 +182,16 @@ export function VersionRelationModal({
         <MapSectionLoader text="正在加载…" />
       ) : (
         <>
+          {version.workflowDefId && (
+            <div className="mb-3">
+              <WorkflowBar workflow={workflow} entityType="version" entityId={version.id} currentState={version.currentState} onChanged={onSaved} />
+            </div>
+          )}
+          {template && template.fields.length > 0 && (
+            <Section title={`自定义字段（${template.name}）`}>
+              <FormFieldsRenderer fields={template.fields} values={formData} onChange={(k, v) => setFormData((d) => ({ ...d, [k]: v }))} />
+            </Section>
+          )}
           <div className="flex justify-end mb-2">
             <button
               onClick={() => setShowKnowledge(true)}

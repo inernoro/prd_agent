@@ -31,10 +31,13 @@ import {
   deleteCustomer,
   listTracedDefects,
   untraceDefect,
+  createProductDefect,
+  transition,
   type TracedDefect,
 } from '@/services/real/productAgent';
-import type { Product, ProductVersion, Requirement, Feature, Customer, ItemGrade } from './types';
+import type { Product, ProductVersion, Requirement, Feature, Customer, ItemGrade, WorkflowDefinition } from './types';
 import { PRODUCT_GRADE_LABEL, ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL } from './types';
+import { useEffectiveWorkflow } from './DynamicForm';
 
 type Section = 'overview' | 'versions' | 'requirements' | 'features' | 'defects' | 'customers' | 'knowledge' | 'graph';
 
@@ -316,6 +319,7 @@ function RequirementsTab({ productId }: { productId: string }) {
   const [items, setItems] = useState<Requirement[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'list' | 'board'>('list');
+  const { workflow } = useEffectiveWorkflow('requirement', productId);
   const openDetail = (id: string) => navigate(`/product-agent/p/${productId}/requirement/${id}`);
 
   const reload = useCallback(async () => {
@@ -342,6 +346,8 @@ function RequirementsTab({ productId }: { productId: string }) {
       </div>
       {items.length === 0 ? (
         <EmptyHint text="还没有需求。点「新建需求」打开独立页面填写，可分级并关联客户、版本、功能，被缺陷追溯。" />
+      ) : view === 'board' && workflow && workflow.states.length > 0 ? (
+        <StateBoard items={items} workflow={workflow} onCardClick={(r) => openDetail(r.id)} onChanged={reload} />
       ) : view === 'board' ? (
         <GradeBoard
           items={items}
@@ -421,6 +427,7 @@ function DefectsTab({ productId }: { productId: string }) {
   const [items, setItems] = useState<TracedDefect[]>([]);
   const [loading, setLoading] = useState(true);
   const [showLinker, setShowLinker] = useState(false);
+  const [creating, setCreating] = useState(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -436,12 +443,20 @@ function DefectsTab({ productId }: { productId: string }) {
   if (loading) return <MapSectionLoader text="正在加载缺陷…" />;
   return (
     <div className="flex flex-col gap-3">
-      <button
-        onClick={() => setShowLinker(true)}
-        className="self-start flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 text-sm"
-      >
-        <Plus size={15} /> 关联缺陷到本产品
-      </button>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => setCreating(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 text-sm"
+        >
+          <Plus size={15} /> 新建缺陷
+        </button>
+        <button
+          onClick={() => setShowLinker(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-sm"
+        >
+          关联已有缺陷
+        </button>
+      </div>
       {items.length === 0 ? (
         <EmptyHint text="还没有缺陷追溯到本产品。点上方关联已有缺陷，或在需求详情页里把缺陷追溯到具体需求。缺陷本体在「缺陷管理智能体」里维护。" />
       ) : (
@@ -465,6 +480,52 @@ function DefectsTab({ productId }: { productId: string }) {
       {showLinker && (
         <DefectLinkerModal productId={productId} onClose={() => setShowLinker(false)} onLinked={() => void reload()} />
       )}
+      {creating && (
+        <NewDefectModal
+          productId={productId}
+          onClose={() => setCreating(false)}
+          onCreated={() => {
+            setCreating(false);
+            void reload();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function NewDefectModal({ productId, onClose, onCreated }: { productId: string; onClose: () => void; onCreated: () => void }) {
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [severity, setSeverity] = useState('');
+  const [saving, setSaving] = useState(false);
+  const create = async () => {
+    if (!title.trim()) return;
+    setSaving(true);
+    const res = await createProductDefect(productId, { title: title.trim(), description: description.trim() || undefined, severity: severity || undefined });
+    setSaving(false);
+    if (res.success) onCreated();
+  };
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div className="w-[440px] rounded-xl border border-white/10 bg-[#16181d] p-5 flex flex-col gap-3" onClick={(e) => e.stopPropagation()}>
+        <h2 className="text-sm font-semibold text-white">新建缺陷</h2>
+        <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="缺陷标题" className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40" />
+        <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} placeholder="复现步骤 / 描述" className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40 resize-none" />
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-white/50">严重度</span>
+          {['blocker', 'critical', 'major', 'minor', 'trivial'].map((s) => (
+            <button key={s} onClick={() => setSeverity(severity === s ? '' : s)} className={`px-2 py-1 rounded-md text-xs border ${severity === s ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40' : 'text-white/40 border-white/10 hover:bg-white/5'}`}>{s}</button>
+          ))}
+        </div>
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-sm text-white/60 hover:bg-white/5">取消</button>
+          <button onClick={create} disabled={!title.trim() || saving} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm disabled:opacity-50">
+            {saving ? <MapSpinner size={14} /> : <Plus size={14} />} 创建
+          </button>
+        </div>
+        <p className="text-[11px] text-white/35">缺陷写入缺陷管理智能体，并自动追溯到本产品。</p>
+      </div>
     </div>
   );
 }
@@ -635,6 +696,78 @@ function Row({
 
 function EmptyHint({ text }: { text: string }) {
   return <div className="text-center text-white/40 text-xs py-10 px-6">{text}</div>;
+}
+
+/** 按工作流状态分列的看板，支持拖拽卡片改状态（走合法流转）。 */
+function StateBoard({
+  items,
+  workflow,
+  onCardClick,
+  onChanged,
+}: {
+  items: Requirement[];
+  workflow: WorkflowDefinition;
+  onCardClick: (r: Requirement) => void;
+  onChanged: () => void;
+}) {
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overState, setOverState] = useState<string | null>(null);
+  const states = [...workflow.states].sort((a, b) => a.sortOrder - b.sortOrder);
+  const initial = states.find((s) => s.isInitial)?.key ?? states[0]?.key;
+
+  const drop = async (toState: string) => {
+    const r = items.find((x) => x.id === dragId);
+    setDragId(null);
+    setOverState(null);
+    if (!r) return;
+    const from = r.currentState ?? initial;
+    if (from === toState) return;
+    const t = workflow.transitions.find((tr) => tr.toState === toState && (!tr.fromState || tr.fromState === from));
+    if (!t) return; // 没有合法流转
+    const res = await transition({ entityType: 'requirement', entityId: r.id, transitionKey: t.key, comment: t.requireComment ? '看板拖拽流转' : undefined });
+    if (res.success) onChanged();
+  };
+
+  return (
+    <div className="flex gap-3 overflow-x-auto pb-2" style={{ overscrollBehavior: 'contain' }}>
+      {states.map((s) => {
+        const list = items.filter((r) => (r.currentState ?? initial) === s.key);
+        return (
+          <div
+            key={s.key}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setOverState(s.key);
+            }}
+            onDrop={() => void drop(s.key)}
+            className={`w-56 shrink-0 rounded-lg border bg-white/[0.02] p-2 flex flex-col gap-2 ${overState === s.key ? 'border-cyan-500/50' : 'border-white/10'}`}
+            style={{ minHeight: 160 }}
+          >
+            <div className="text-xs font-medium flex items-center justify-between px-0.5" style={{ color: s.color ?? '#e8e8ec' }}>
+              <span>{s.label || s.key}</span>
+              <span className="text-white/30">{list.length}</span>
+            </div>
+            {list.map((r) => (
+              <div
+                key={r.id}
+                draggable
+                onDragStart={() => setDragId(r.id)}
+                onClick={() => onCardClick(r)}
+                className="cursor-grab active:cursor-grabbing rounded-md border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] px-2 py-1.5"
+              >
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] px-1 py-0.5 rounded bg-white/10 text-white/60">{ITEM_GRADE_LABEL[r.grade]}</span>
+                  <span className="text-xs text-white/85 truncate">{r.title}</span>
+                </div>
+                <div className="text-[10px] text-white/40 mt-0.5 truncate">{r.requirementNo}</div>
+              </div>
+            ))}
+            {list.length === 0 && <div className="text-[10px] text-white/25 text-center py-2">拖到此列</div>}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 /** 按分级（P0-P3）分列的看板 */

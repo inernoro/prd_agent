@@ -26,6 +26,7 @@ import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
 import { ProductsSection } from './ProductsSection';
 import { SettingsSection } from './SettingsSection';
+import { OverviewGraph } from './OverviewGraph';
 import {
   getOverviewStats,
   getOverviewRequirements,
@@ -121,8 +122,8 @@ export function OverviewShell() {
         </SectionShell>
       )}
       {active === 'graph' && (
-        <SectionShell title="图谱" desc="知识图谱以产品级为主">
-          <GraphEntry />
+        <SectionShell title="图谱" desc="跨产品总览图（点产品进单产品详细图谱）">
+          <OverviewGraph />
         </SectionShell>
       )}
       {active === 'settings' && (
@@ -522,15 +523,6 @@ function KnowledgeSection() {
           <div className="text-[11px] text-white/50 mt-1">{r.documentCount} 篇文档 · 更新 {relTime(r.updatedAt)}</div>
         </button>
       ))}
-    </div>
-  );
-}
-
-function GraphEntry() {
-  return (
-    <div className="text-white/50 text-sm leading-relaxed max-w-xl">
-      <p>知识图谱以单产品为主：进入任一产品的「图谱」tab，即可缩放 / 拖拽 / 展开收起 / 按类型·状态·版本过滤 / 关键词定位 / 沿关系路径追溯。</p>
-      <p className="mt-3 text-white/35">跨产品总览图（产品为中心）将在后续提供。</p>
     </div>
   );
 }
