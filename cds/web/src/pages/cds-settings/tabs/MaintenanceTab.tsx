@@ -407,6 +407,17 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   const activeSelfUpdate = selfStatus.status === 'ok' ? selfStatus.data.activeSelfUpdate : null;
   const lastSelfUpdate = selfStatus.status === 'ok' ? selfStatus.data.lastSelfUpdate : null;
 
+  // 进度条专用 elapsed:必须与 step 同源(都来自后端 activeSelfUpdate)。
+  // runStartedAt 是点按钮那一刻的客户端时间,从本 tab 触发时不会回填后端
+  // startedAt → 与服务端 step 配错时钟(Bugbot #716)。优先用后端 startedAt
+  // 作为锚点,缺失再退回 runStartedAt。
+  const liveStartedAtMs = (() => {
+    const serverMs = activeSelfUpdate?.startedAt ? Date.parse(activeSelfUpdate.startedAt) : NaN;
+    if (Number.isFinite(serverMs)) return serverMs;
+    return runStartedAt ?? Date.now();
+  })();
+  const liveElapsedMs = Math.max(0, (runEndedAt ?? Date.now()) - liveStartedAtMs);
+
   // 2026-05-07 lastTickAt 判活(Phase 1 — 杜绝"timer 跳秒但其实早死"幻觉):
   // 后端每写一步、每条心跳都刷新 lastTickAt。前端用 tickClock 触发
   // 重渲染,实时检测距上次心跳超过 30s → 显示"失联 N 秒"红色态。
@@ -949,7 +960,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
             contentClassName="p-0"
           >
               {runState === 'running' ? (
-                <SelfUpdateLiveProgress elapsedMs={elapsedRunMs} currentStep={activeSelfUpdate?.step} />
+                <SelfUpdateLiveProgress elapsedMs={liveElapsedMs} currentStep={activeSelfUpdate?.step} />
               ) : null}
               <div className="flex justify-end px-4 py-3">
                 <Button type="button" variant="outline" size="sm" onClick={() => void copyRunLog()} disabled={runLog.length === 0}>
