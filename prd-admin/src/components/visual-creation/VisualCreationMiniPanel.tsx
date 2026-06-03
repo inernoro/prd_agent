@@ -33,6 +33,10 @@ export interface VisualCreationMiniPanelProps {
   docContent: string;
   /** 预填提示词（文学配图场景） */
   initialPrompt?: string;
+  /** 重开抽屉时回填「已生成未插入」的图（后端持久化恢复） */
+  initialResult?: string | null;
+  /** 生成结果变化时上报父级（用于后端持久化暂存图，关窗也不丢）。null = 已清空 */
+  onResultChange?: (url: string | null) => void;
   /** 插入图片到文档 */
   onInsertImage: (url: string, name?: string) => void;
   /** 插入「原文片段+配图」 */
@@ -136,6 +140,8 @@ function ResultLightbox({ url, onClose }: { url: string; onClose: () => void }) 
 export function VisualCreationMiniPanel({
   docContent,
   initialPrompt = '',
+  initialResult = null,
+  onResultChange,
   onInsertImage,
   onInsertImageWithText,
 }: VisualCreationMiniPanelProps) {
@@ -152,9 +158,9 @@ export function VisualCreationMiniPanel({
   const [selectedModel, setSelectedModel] = useState<string>('');
   const [selectedSize, setSelectedSize] = useState<string>('');
 
-  // 生成状态
-  const [genState, setGenState] = useState<GenerateState>('idle');
-  const [resultUrl, setResultUrl] = useState<string | null>(null);
+  // 生成状态（initialResult 非空 = 重开抽屉时回填上次「已生成未插入」的图）
+  const [genState, setGenState] = useState<GenerateState>(initialResult ? 'done' : 'idle');
+  const [resultUrl, setResultUrl] = useState<string | null>(initialResult ?? null);
   const [genError, setGenError] = useState<string | null>(null);
 
   // 生成等待计时（驱动进度条 + 分级文案，避免空白等待）
@@ -312,7 +318,8 @@ export function VisualCreationMiniPanel({
 
     setResultUrl(url);
     setGenState('done');
-  }, [prompt, selectedModel, selectedSize, refImageUri]);
+    onResultChange?.(url);  // 上报父级持久化（关窗也不丢）
+  }, [prompt, selectedModel, selectedSize, refImageUri, onResultChange]);
 
   // ============ 取消等待 ============
 
@@ -330,7 +337,8 @@ export function VisualCreationMiniPanel({
     setResultUrl(null);
     setGenState('idle');
     setGenError(null);
-  }, []);
+    onResultChange?.(null);  // 清空暂存图
+  }, [onResultChange]);
 
   // ============ 插入 ============
 

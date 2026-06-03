@@ -20,13 +20,16 @@ import {
   applyReprocessContent,
   getDocumentContent,
   getActiveReprocessRun,
+  getReprocessConversation,
+  saveReprocessConversation,
+  clearReprocessConversation,
 } from '@/services';
 import { streamDirectChat, listToolboxItems } from '@/services/real/aiToolbox';
 import type { ToolboxItem } from '@/services/real/aiToolbox';
 import { invokeAgent, listAgentCapabilities, getAgentParameters, createDefectFromContent } from '@/services/real/agentUniverse';
 import type { AgentCapability, AgentArtifact, AgentParameter, AgentOutboundAction } from '@/services/real/agentUniverse';
 import { BUILTIN_TOOLS } from '@/stores/toolboxStore';
-import type { ReprocessAgent } from '@/services/contracts/documentStore';
+import type { ReprocessAgent, DocumentStoreConversation } from '@/services/contracts/documentStore';
 import { toast } from '@/lib/toast';
 
 export type ReprocessChatDrawerProps = {
@@ -121,6 +124,34 @@ type ChatMessage = {
   applied?: 'replace' | 'append' | 'new';
 };
 
+/**
+ * 把后端持久化的对话(DocumentStoreConversation)解析回前端快照 + mini 面板暂存图。
+ * 后端只存 JSON blob，前端在此解析。导出供单测断言「后端优先 + 暂存图解析」。
+ */
+export function parseBackendConversation(
+  convo: DocumentStoreConversation | null | undefined,
+): { snapshot: PersistedChatState | null; pendingVisualUrl: string | null } {
+  if (!convo) return { snapshot: null, pendingVisualUrl: null };
+  let messages: ChatMessage[] = [];
+  let activeRef: PersistedChatState['activeRef'];
+  try {
+    const parsed = JSON.parse(convo.messagesJson || '[]');
+    if (Array.isArray(parsed)) messages = parsed as ChatMessage[];
+  } catch { messages = []; }
+  try {
+    activeRef = convo.activeRefJson ? JSON.parse(convo.activeRefJson) : undefined;
+  } catch { activeRef = undefined; }
+  let pendingVisualUrl: string | null = null;
+  try {
+    const imgs = JSON.parse(convo.pendingImagesJson || '[]');
+    if (Array.isArray(imgs) && imgs.length > 0 && imgs[0] && typeof imgs[0].url === 'string') {
+      pendingVisualUrl = imgs[0].url;
+    }
+  } catch { pendingVisualUrl = null; }
+  const snapshot = (messages.length > 0 || activeRef) ? { messages, activeRef } : null;
+  return { snapshot, pendingVisualUrl };
+}
+
 type ActiveAgent =
   | { kind: 'toolbox'; item: ToolboxItem }
   | { kind: 'kbAgent'; agent: ReprocessAgent }
@@ -169,6 +200,8 @@ export function ReprocessChatDrawer({
   const [selectedParams, setSelectedParams] = useState<Record<string, string>>({});
   // 视觉创作 mini 面板的预填提示词（文学「为这段配图」时带入）
   const [visualInitialPrompt, setVisualInitialPrompt] = useState('');
+  // mini 面板「已生成未插入」的图（后端持久化，关浏览器标签页也不丢）
+  const [pendingVisualUrl, setPendingVisualUrl] = useState<string | null>(null);
 
   const cancelStreamRef = useRef<(() => void) | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -188,6 +221,8 @@ export function ReprocessChatDrawer({
   // 持久化 effect 只在 load 完成后才写 sessionStorage，避免在 entryId 切换瞬间把
   // 上一篇 messages 错写到新 entryId 的 key 下（Bugbot #2 十轮 High）
   const lastLoadedEntryRef = useRef<string | null>(null);
+  // 后端对话持久化去抖定时器（避免每条消息都打一次 PUT）
+  const backendSaveTimerRef = useRef<number | null>(null);
   // 历史注：曾经维护过 sentForLlmRef 想把每轮发给 LLM 的完整 wrapper（含 doc）
   // 塞进 history，让"模型 N 轮后看到的还是 N 轮前那份 doc"。但 doc 可能 40k 字，
   // 多轮放大成 N × 40k token，得不偿失。改为标准 chat-with-doc 模式：history 走
@@ -261,11 +296,12 @@ export function ReprocessChatDrawer({
     })();
 
     (async () => {
-      const [agentRes, toolboxRes, activeRunRes, capRes] = await Promise.all([
+      const [agentRes, toolboxRes, activeRunRes, capRes, convoRes] = await Promise.all([
         listReprocessAgents(),
         listToolboxItems(),
         getActiveReprocessRun(entryId),
         listAgentCapabilities(),
+        getReprocessConversation(entryId),
       ]);
       if (cancelled || entryIdRef.current !== entryId) return;
 
@@ -297,7 +333,11 @@ export function ReprocessChatDrawer({
       // 后端 active-run 是历史遗物，如果用户上次跑过旧 worker，那条会一直是
       // "最新 run"反复污染新会话（Bugbot 十四轮 Medium）。所以只在没有客户端缓存
       // 时才合并后端历史，作为"刚 clean session 后给个起点"的兜底。
-      const persistedSnapshot = loadPersistedChat(entryId);
+      // 后端持久化优先（关浏览器标签页/换设备都不丢）；无后端记录时回退 sessionStorage。
+      // 后端快照走与 sessionStorage 相同的 PersistedChatState 形状，下游 merge 逻辑零改动。
+      const backendConvo = parseBackendConversation(convoRes.success ? convoRes.data : null);
+      if (backendConvo.pendingVisualUrl) setPendingVisualUrl(backendConvo.pendingVisualUrl);
+      const persistedSnapshot = backendConvo.snapshot ?? loadPersistedChat(entryId);
       const hasFreshPersisted = !!persistedSnapshot
         && (persistedSnapshot.messages.length > 0 || !!persistedSnapshot.activeRef);
 
@@ -420,7 +460,16 @@ export function ReprocessChatDrawer({
         ? { kind: 'kbAgent', key: active.agent.key }
         : undefined;
     savePersistedChat(entryId, { messages: sanitized, activeRef });
-  }, [entryId, messages, active, loadingDoc, loadingAgents, streamingId]);
+    // 同步落后端（去抖 800ms）：这才是关浏览器标签页也不丢的持久化（sessionStorage 关页即焚）。
+    // pendingVisualUrl 一并带上，让 mini 面板「已生成未插入」的图也恢复。
+    if (backendSaveTimerRef.current) window.clearTimeout(backendSaveTimerRef.current);
+    const messagesJson = JSON.stringify(sanitized);
+    const pendingImagesJson = JSON.stringify(pendingVisualUrl ? [{ url: pendingVisualUrl }] : []);
+    const activeRefJson = activeRef ? JSON.stringify(activeRef) : null;
+    backendSaveTimerRef.current = window.setTimeout(() => {
+      void saveReprocessConversation(entryId, { messagesJson, pendingImagesJson, activeRefJson });
+    }, 800);
+  }, [entryId, messages, active, loadingDoc, loadingAgents, streamingId, pendingVisualUrl]);
 
   // 点击外面关闭 picker
   useEffect(() => {
@@ -667,7 +716,9 @@ export function ReprocessChatDrawer({
     setMessages([]);
     setError(null);
     setInput('');
+    setPendingVisualUrl(null);
     try { sessionStorage.removeItem(`${CHAT_HISTORY_STORAGE_KEY}:${entryId}`); } catch { /* 配额/隐私模式忽略 */ }
+    void clearReprocessConversation(entryId);  // 同步清后端，否则重开又把旧对话拉回来
     requestAnimationFrame(() => inputRef.current?.focus());
   }, [abortCurrentStream, entryId]);
 
@@ -1162,6 +1213,8 @@ export function ReprocessChatDrawer({
               docTitle={entryTitle}
               docContent={docContent}
               initialPrompt={visualInitialPrompt}
+              initialResult={pendingVisualUrl}
+              onResultChange={setPendingVisualUrl}
               onInsertImage={handleInsertVisualImage}
               onInsertImageWithText={handleInsertVisualImageWithText}
             />

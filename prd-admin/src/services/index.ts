@@ -1866,6 +1866,9 @@ export {
   startReprocess,
   getActiveReprocessRun,
   applyReprocessContent,
+  getReprocessConversation,
+  saveReprocessConversation,
+  clearReprocessConversation,
   getAgentRun,
   getLatestAgentRun,
   // 批次 C：浏览事件埋点
