@@ -1612,21 +1612,21 @@ export function DocBrowser({
   const selectionRawContent = useMemo(() => {
     const text = preview?.text;
     if (!text) return text ?? undefined;
-    const e = entries.find(x => x.id === selectedEntryId);
+    const e = selectedEntryData; // 用带 searchResults 兜底的 SSOT：仅存在于搜索结果的命中也能正确解析选区（Bugbot）
     if (!e || e.isFolder) return text;
     const cfg = getFileTypeConfig(e.title, e.contentType);
     return cfg.preview === 'text' ? parseFrontmatter(text).body : text;
-  }, [preview, entries, selectedEntryId]);
+  }, [preview, selectedEntryData]);
   const { selection: liveSelection, clear: clearLiveSelection } = useContentSelection(
     contentAreaRef,
     selectionRawContent,
     Boolean(selectedEntryId && !contentLoading && !editMode),
   );
   const trackedEntryForComments = useMemo(() => {
-    if (!selectedEntryId) return null;
-    const e = entries.find(x => x.id === selectedEntryId);
+    // 用带 searchResults 兜底的 selectedEntryData：仅存在于后端搜索结果的命中也能拉评论（Bugbot Medium）
+    const e = selectedEntryData;
     return e && !e.isFolder ? e : null;
-  }, [selectedEntryId, entries]);
+  }, [selectedEntryData]);
 
   // 进入条目时预拉评论计数，让正文上方常驻入口（共享视图也能看到他人评论的存在）
   useEffect(() => {
@@ -1653,15 +1653,14 @@ export function DocBrowser({
 
   // F1：仅当当前预览是文本类（Markdown/提取文本）时，给右侧 TOC 提供正文
   const tocContent = useMemo(() => {
-    if (!selectedEntryId) return null;
-    const e = entries.find(x => x.id === selectedEntryId);
+    const e = selectedEntryData; // 同上：带 searchResults 兜底，搜索命中也正确生成 TOC（Bugbot）
     if (!e || e.isFolder) return null;
     const text = preview?.text;
     if (!text) return null;
     const cfg = getFileTypeConfig(e.title, e.contentType);
     // 与 MarkdownViewer 一致：剥掉 frontmatter，TOC 不把 ---/title: 当标题
     return cfg.preview === 'text' ? parseFrontmatter(text).body : null;
-  }, [selectedEntryId, entries, preview]);
+  }, [selectedEntryData, preview]);
 
   // 拖拽调整宽度
   useEffect(() => {
