@@ -1605,6 +1605,7 @@ function SelfUpdateLiveProgress({ elapsedMs, currentStep }: { elapsedMs: number;
   const beforeMs = stages.slice(0, curIdx).reduce((s, v) => s + v.ms, 0);
   const curMs = stages[curIdx]?.ms || 1;
   const overEta = elapsedMs > etaMs;
+  const remainMs = Math.max(0, etaMs - elapsedMs);
 
   return (
     <div className="space-y-2 border-t border-border px-4 py-3">
@@ -1615,7 +1616,8 @@ function SelfUpdateLiveProgress({ elapsedMs, currentStep }: { elapsedMs: number;
             : '预计进度(暂无历史 · 粗略估算)'}
         </span>
         <span className={overEta ? 'font-medium text-amber-600 dark:text-amber-400' : 'font-medium text-foreground/80'}>
-          已用 {fmtMs(elapsedMs)} · 预计约 {fmtMs(etaMs)}{overEta ? ' · 已超预期' : ''}
+          已用 {fmtMs(elapsedMs)} · {overEta ? '预计已到点,收尾中' : `预计还需 ~${fmtMs(remainMs)}`}
+          <span className="ml-1 font-normal text-muted-foreground">/ 预计约 {fmtMs(etaMs)}</span>
         </span>
       </div>
       <div className="flex h-2.5 w-full overflow-hidden rounded-sm bg-[hsl(var(--surface-sunken))]">
