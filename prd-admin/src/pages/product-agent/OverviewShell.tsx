@@ -25,6 +25,7 @@ import { EChart } from '@/components/charts/EChart';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
 import { ProductsSection } from './ProductsSection';
+import { SettingsSection } from './SettingsSection';
 import {
   getOverviewStats,
   getOverviewRequirements,
@@ -125,8 +126,8 @@ export function OverviewShell() {
         </SectionShell>
       )}
       {active === 'settings' && (
-        <SectionShell title="全局设置" desc="表单模板 + 流程模板，所有产品共用（管理层）">
-          <SettingsPlaceholder />
+        <SectionShell title="全局设置" desc="表单模板 + 流程模板，所有产品共用，可按产品覆盖（管理层）">
+          <SettingsSection />
         </SectionShell>
       )}
     </ProductAgentLayout>
@@ -530,15 +531,6 @@ function GraphEntry() {
     <div className="text-white/50 text-sm leading-relaxed max-w-xl">
       <p>知识图谱以单产品为主：进入任一产品的「图谱」tab，即可缩放 / 拖拽 / 展开收起 / 按类型·状态·版本过滤 / 关键词定位 / 沿关系路径追溯。</p>
       <p className="mt-3 text-white/35">跨产品总览图（产品为中心）将在后续提供。</p>
-    </div>
-  );
-}
-
-function SettingsPlaceholder() {
-  return (
-    <div className="text-white/50 text-sm leading-relaxed max-w-xl">
-      <p>全局设置：表单模板编辑器 + 流程模板编辑器（所有产品共用，允许单产品覆盖）。</p>
-      <p className="mt-3 text-white/35">可视化编辑器即将上线（P2）。届时可在此定义需求 / 功能 / 缺陷 / 版本 / 升级申请的字段集合与状态流转。</p>
     </div>
   );
 }

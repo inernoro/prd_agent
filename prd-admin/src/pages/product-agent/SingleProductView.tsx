@@ -6,10 +6,13 @@
  * 需求/功能 的「新建」走独立页面（/product-agent/p/:productId/:kind/new）；查看走详情页。
  * 升级申请并入「版本」tab；缺陷排在客户之前。
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Boxes, Plus, Trash2, GitBranch, ListChecks, Puzzle, Users, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug } from 'lucide-react';
+import type { EChartsOption } from 'echarts';
+import { Plus, Trash2, GitBranch, ListChecks, Puzzle, Users, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard } from 'lucide-react';
+import { EChart } from '@/components/charts/EChart';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
 import { VersionRelationModal, ProductKnowledgePanel, DefectLinkerModal } from './ProductRelationModals';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { UpgradeRequestsTab } from './UpgradeRequestsTab';
@@ -33,10 +36,12 @@ import {
 import type { Product, ProductVersion, Requirement, Feature, Customer, ItemGrade } from './types';
 import { PRODUCT_GRADE_LABEL, ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL } from './types';
 
-type DetailTab = 'overview' | 'versions' | 'requirements' | 'features' | 'defects' | 'customers' | 'knowledge' | 'graph';
+type Section = 'overview' | 'versions' | 'requirements' | 'features' | 'defects' | 'customers' | 'knowledge' | 'graph';
 
-const TABS: { key: DetailTab; label: string; icon: typeof GitBranch }[] = [
-  { key: 'overview', label: '概览', icon: Boxes },
+const CHART_COLORS = ['#22D3EE', '#FBBF24', '#A78BFA', '#4ADE80', '#F87171', '#60A5FA'];
+
+const NAV: NavItem<Section>[] = [
+  { key: 'overview', label: '概览', icon: LayoutDashboard },
   { key: 'versions', label: '版本', icon: GitBranch },
   { key: 'requirements', label: '需求', icon: ListChecks },
   { key: 'features', label: '功能', icon: Puzzle },
@@ -51,7 +56,7 @@ export function SingleProductView() {
   const { productId = '' } = useParams();
   const [product, setProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<DetailTab>('overview');
+  const [active, setActive] = useState<Section>('overview');
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -69,119 +74,166 @@ export function SingleProductView() {
     if (res.success) navigate('/product-agent');
   };
 
-  return (
-    <div className="h-screen min-h-0 flex flex-col p-4 bg-[#0f1014]">
-      <div className="shrink-0 flex items-center justify-between mb-3">
-        <div className="flex items-center gap-3 min-w-0">
-          <button
-            onClick={() => navigate('/product-agent')}
-            className="flex items-center justify-center w-9 h-9 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 shrink-0"
-            title="返回产品列表"
-          >
-            <ArrowLeft size={18} />
-          </button>
-          {product && (
-            <div className="min-w-0">
-              <div className="text-white font-medium truncate flex items-center gap-2">
-                <Boxes size={18} className="text-cyan-400 shrink-0" />
-                {product.name}
-              </div>
-              <div className="text-[11px] text-white/40 mt-0.5 truncate">
-                {product.productNo} · {PRODUCT_GRADE_LABEL[product.grade]} · 版本 {product.versionCount} · 需求{' '}
-                {product.requirementCount} · 功能 {product.featureCount} · 缺陷 {product.defectCount}
-              </div>
-            </div>
-          )}
-        </div>
-        {product && (
-          <button
-            onClick={onDelete}
-            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-red-300/70 hover:text-red-300 hover:bg-red-500/10 shrink-0"
-          >
-            <Trash2 size={13} /> 删除产品
-          </button>
-        )}
-      </div>
-
-      {loading ? (
+  if (loading) {
+    return (
+      <div className="h-screen min-h-0 flex items-center justify-center bg-[#0f1014]">
         <MapSectionLoader text="正在加载产品…" />
-      ) : !product ? (
-        <div className="flex-1 flex items-center justify-center text-white/40 text-sm">产品不存在或无权访问</div>
+      </div>
+    );
+  }
+  if (!product) {
+    return (
+      <div className="h-screen min-h-0 flex items-center justify-center bg-[#0f1014] text-white/40 text-sm">产品不存在或无权访问</div>
+    );
+  }
+
+  const SECTION_TITLE: Record<Section, string> = {
+    overview: '概览', versions: '版本（含升级申请）', requirements: '需求', features: '功能',
+    defects: '缺陷', customers: '客户', knowledge: '知识库', graph: '图谱',
+  };
+
+  return (
+    <ProductAgentLayout
+      title={product.name}
+      subtitle={`${product.productNo} · ${PRODUCT_GRADE_LABEL[product.grade]}`}
+      topSlot={
+        <div className="flex items-center justify-between mb-2">
+          <button onClick={() => navigate('/product-agent')} className="flex items-center gap-1.5 text-[11px] text-white/40 hover:text-white">
+            <ArrowLeft size={13} /> 产品列表
+          </button>
+          <button onClick={onDelete} className="text-[11px] text-red-300/60 hover:text-red-300" title="删除产品">
+            <Trash2 size={13} />
+          </button>
+        </div>
+      }
+      items={NAV}
+      active={active}
+      onSelect={setActive}
+    >
+      {active === 'knowledge' ? (
+        <div className="flex-1 min-h-0">
+          <ProductKnowledgePanel productId={product.id} />
+        </div>
+      ) : active === 'graph' ? (
+        <div className="flex-1 min-h-0">
+          <ProductGraphCanvas productId={product.id} />
+        </div>
       ) : (
-        <div className="flex-1 min-h-0 flex flex-col rounded-xl border border-white/10 bg-white/[0.02]">
-          <div className="flex gap-1 px-3 pt-2 shrink-0 flex-wrap">
-            {TABS.map((t) => {
-              const Icon = t.icon;
-              return (
-                <button
-                  key={t.key}
-                  onClick={() => setTab(t.key)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-colors ${
-                    tab === t.key ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5'
-                  }`}
-                >
-                  <Icon size={14} /> {t.label}
-                </button>
-              );
-            })}
+        <SectionShell title={SECTION_TITLE[active]}>
+          {active === 'overview' && <ProductDashboard product={product} />}
+          {active === 'versions' && <VersionsTab productId={product.id} />}
+          {active === 'requirements' && <RequirementsTab productId={product.id} />}
+          {active === 'features' && <FeaturesTab productId={product.id} />}
+          {active === 'defects' && <DefectsTab productId={product.id} />}
+          {active === 'customers' && <CustomersTab productId={product.id} />}
+        </SectionShell>
+      )}
+    </ProductAgentLayout>
+  );
+}
+
+// ── 产品概览仪表盘 ──
+function ProductDashboard({ product }: { product: Product }) {
+  const [reqs, setReqs] = useState<Requirement[]>([]);
+  const [defects, setDefects] = useState<TracedDefect[]>([]);
+  const [versions, setVersions] = useState<ProductVersion[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      const [r, d, v] = await Promise.all([
+        listRequirements(product.id),
+        listTracedDefects(product.id),
+        listVersions(product.id),
+      ]);
+      if (!alive) return;
+      if (r.success) setReqs(r.data.items);
+      if (d.success) setDefects(d.data.items);
+      if (v.success) setVersions(v.data.items);
+      setLoading(false);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [product.id]);
+
+  const reqGradePie = useMemo<EChartsOption>(() => {
+    const grades: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
+    const data = grades.map((g) => ({ name: ITEM_GRADE_LABEL[g], value: reqs.filter((r) => r.grade === g).length })).filter((x) => x.value > 0);
+    return {
+      tooltip: { trigger: 'item' },
+      legend: { bottom: 0, textStyle: { color: 'rgba(255,255,255,0.5)', fontSize: 11 } },
+      series: [{ type: 'pie', radius: ['40%', '68%'], center: ['50%', '44%'], data, label: { color: 'rgba(255,255,255,0.7)', fontSize: 11 }, itemStyle: { borderColor: '#0f1014', borderWidth: 2 } }],
+      color: CHART_COLORS,
+    };
+  }, [reqs]);
+
+  const defectStatusBar = useMemo<EChartsOption>(() => {
+    const map = new Map<string, number>();
+    defects.forEach((d) => map.set(d.status, (map.get(d.status) ?? 0) + 1));
+    const entries = Array.from(map.entries());
+    return {
+      tooltip: { trigger: 'axis' },
+      grid: { left: 8, right: 16, top: 16, bottom: 8, containLabel: true },
+      xAxis: { type: 'category', data: entries.map(([k]) => k), axisLabel: { color: 'rgba(255,255,255,0.5)', fontSize: 10 } },
+      yAxis: { type: 'value', axisLabel: { color: 'rgba(255,255,255,0.4)' }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } } },
+      series: [{ type: 'bar', data: entries.map(([, v]) => v), itemStyle: { color: '#F87171', borderRadius: [4, 4, 0, 0] }, barMaxWidth: 32 }],
+    };
+  }, [defects]);
+
+  const versionLifecycle = useMemo<EChartsOption>(() => {
+    const data = ['planning', 'developing', 'testing', 'released', 'deprecated']
+      .map((l) => ({ name: VERSION_LIFECYCLE_LABEL[l as keyof typeof VERSION_LIFECYCLE_LABEL], value: versions.filter((v) => v.lifecycle === l).length }))
+      .filter((x) => x.value > 0);
+    return {
+      tooltip: { trigger: 'item' },
+      legend: { bottom: 0, textStyle: { color: 'rgba(255,255,255,0.5)', fontSize: 11 } },
+      series: [{ type: 'funnel', left: '10%', right: '10%', top: 10, bottom: 30, minSize: '14%', label: { color: 'rgba(255,255,255,0.7)', fontSize: 11 }, data }],
+      color: CHART_COLORS,
+    };
+  }, [versions]);
+
+  const kpis = [
+    { label: '版本', value: product.versionCount, color: '#60A5FA' },
+    { label: '需求', value: product.requirementCount, color: '#FBBF24' },
+    { label: '功能', value: product.featureCount, color: '#A78BFA' },
+    { label: '缺陷', value: product.defectCount, color: '#F87171' },
+  ];
+
+  return (
+    <div className="flex flex-col gap-5">
+      {product.description && <div className="text-sm text-white/60 max-w-3xl">{product.description}</div>}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {kpis.map((k) => (
+          <div key={k.label} className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+            <div className="text-2xl font-semibold" style={{ color: k.color }}>{k.value}</div>
+            <div className="text-xs text-white/50 mt-1">{k.label}</div>
           </div>
-          {tab === 'knowledge' ? (
-            <div className="flex-1 min-h-0">
-              <ProductKnowledgePanel productId={product.id} />
-            </div>
-          ) : tab === 'graph' ? (
-            <div className="flex-1 min-h-0">
-              <ProductGraphCanvas productId={product.id} />
-            </div>
-          ) : (
-            <div className="flex-1 min-h-0 overflow-y-auto p-4" style={{ overscrollBehavior: 'contain' }}>
-              {tab === 'overview' && <OverviewTab product={product} />}
-              {tab === 'versions' && <VersionsTab productId={product.id} />}
-              {tab === 'requirements' && <RequirementsTab productId={product.id} />}
-              {tab === 'features' && <FeaturesTab productId={product.id} />}
-              {tab === 'defects' && <DefectsTab productId={product.id} />}
-              {tab === 'customers' && <CustomersTab productId={product.id} />}
-            </div>
-          )}
+        ))}
+      </div>
+      {loading ? (
+        <MapSectionLoader text="正在统计…" />
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          <DashChart title="需求分级分布" empty={reqs.length === 0} option={reqGradePie} />
+          <DashChart title="缺陷状态分布" empty={defects.length === 0} option={defectStatusBar} />
+          <DashChart title="版本生命周期" empty={versions.length === 0} option={versionLifecycle} />
         </div>
       )}
     </div>
   );
 }
 
-function OverviewTab({ product }: { product: Product }) {
+function DashChart({ title, option, empty }: { title: string; option: EChartsOption; empty: boolean }) {
   return (
-    <div className="flex flex-col gap-3 text-sm">
-      <Stat label="产品编号" value={product.productNo} />
-      <Stat label="分级" value={PRODUCT_GRADE_LABEL[product.grade]} />
-      <Stat label="描述" value={product.description || '（未填写）'} />
-      <div className="grid grid-cols-4 gap-3 mt-2">
-        <CountCard label="版本" value={product.versionCount} />
-        <CountCard label="需求" value={product.requirementCount} />
-        <CountCard label="功能" value={product.featureCount} />
-        <CountCard label="缺陷" value={product.defectCount} />
-      </div>
+    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+      <div className="text-sm font-medium text-white/70 mb-2">{title}</div>
+      {empty ? <div className="h-[240px] flex items-center justify-center text-xs text-white/35">暂无数据</div> : <EChart option={option} height={240} />}
     </div>
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex gap-3">
-      <span className="text-white/40 w-16 shrink-0">{label}</span>
-      <span className="text-white/80">{value}</span>
-    </div>
-  );
-}
-
-function CountCard({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2 text-center">
-      <div className="text-lg font-semibold text-white">{value}</div>
-      <div className="text-[11px] text-white/40">{label}</div>
-    </div>
-  );
-}
 
 // ── 版本 tab（含大版本升级申请）──
 function VersionsTab({ productId }: { productId: string }) {
