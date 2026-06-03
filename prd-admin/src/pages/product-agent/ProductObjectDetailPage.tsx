@@ -11,7 +11,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Save, Unlink, ExternalLink, ListChecks, Puzzle, Bug, Link2 } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { RequirementRelationModal, DefectLinkerModal } from './ProductRelationModals';
-import { FormFieldsRenderer, useEffectiveTemplate, useEffectiveWorkflow } from './DynamicForm';
+import { FormFieldsRenderer, RichTextField, useEffectiveTemplate, useEffectiveWorkflow } from './DynamicForm';
 import { WorkflowBar } from './WorkflowBar';
 import {
   listRequirements,
@@ -305,17 +305,9 @@ function GradeField({ grade, setGrade }: { grade: ItemGrade; setGrade: (g: ItemG
   );
 }
 
-/** 描述字段：统一为多行文本，自动撑高。 */
+/** 描述字段：富文本（排版工具栏 + 截图粘贴/拖拽上传），对齐 Jira / TAPD / Linear。 */
 function DescriptionField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  return (
-    <textarea
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      rows={5}
-      placeholder="补充背景、目标、验收标准…"
-      className="w-full px-3 py-2.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white/90 outline-none focus:border-cyan-500/40 resize-y leading-relaxed"
-    />
-  );
+  return <RichTextField value={value} onChange={onChange} minHeight={180} placeholder="补充背景、目标、验收标准…（支持排版与截图粘贴）" />;
 }
 
 function Chips({ items, empty }: { items: string[]; empty: string }) {

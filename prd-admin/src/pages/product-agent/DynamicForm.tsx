@@ -244,7 +244,7 @@ function FileField({ value, onChange }: { value: string; onChange: (v: string) =
 }
 
 // ════════════════════════ 富文本字段（排版 + 截图粘贴上传）════════════════════════
-function RichTextField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+export function RichTextField({ value, onChange, minHeight = 120, placeholder }: { value: string; onChange: (v: string) => void; minHeight?: number; placeholder?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const [uploading, setUploading] = useState(false);
 
@@ -294,23 +294,28 @@ function RichTextField({ value, onChange }: { value: string; onChange: (v: strin
         <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => exec('insertOrderedList')} className={btn} title="有序列表"><ListOrdered size={14} /></button>
         <span className="ml-1 text-[10px] text-white/30">{uploading ? '图片上传中…' : '可直接粘贴截图'}</span>
       </div>
-      <div
-        ref={ref}
-        contentEditable
-        suppressContentEditableWarning
-        onInput={() => onChange(ref.current?.innerHTML ?? '')}
-        onPaste={onPaste}
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => {
-          const f = Array.from(e.dataTransfer.files).find((x) => x.type.startsWith('image/'));
-          if (f) {
-            e.preventDefault();
-            void insertImageFile(f);
-          }
-        }}
-        className="min-h-[120px] px-3 py-2 text-sm text-white/90 outline-none prose-product"
-        style={{ lineHeight: 1.6 }}
-      />
+      <div className="relative">
+        {placeholder && !value && (
+          <div className="absolute top-2 left-3 text-sm text-white/25 pointer-events-none">{placeholder}</div>
+        )}
+        <div
+          ref={ref}
+          contentEditable
+          suppressContentEditableWarning
+          onInput={() => onChange(ref.current?.innerHTML ?? '')}
+          onPaste={onPaste}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            const f = Array.from(e.dataTransfer.files).find((x) => x.type.startsWith('image/'));
+            if (f) {
+              e.preventDefault();
+              void insertImageFile(f);
+            }
+          }}
+          className="px-3 py-2 text-sm text-white/90 outline-none prose-product"
+          style={{ lineHeight: 1.6, minHeight }}
+        />
+      </div>
     </div>
   );
 }
