@@ -67,4 +67,24 @@ public class AgentApiKey
     /// 默认 7 天 —— 在此期间请求正常响应，但响应头 `X-AgentApiKey-Expiring` 会提示续期。
     /// </summary>
     public int GracePeriodDays { get; set; } = 7;
+
+    // ── OpenRouter 对外网关绑定（按 Key 固定模型，避免总池调度影响客户） ──
+    //
+    // 取值约定（两者择一即可，都走 ModelResolver 的 expectedModel 通道）：
+    //   - 模型池 Code（如 "claude-pool"）→ 绑定一个「小模型池」，池内含 1 个模型即固定模型，
+    //     含多个则可故障转移；
+    //   - 模型 id（如 "claude-sonnet-4-6"）→ 绑定一个固定模型。
+    // null / 空 → 未绑定，回落到 default:chat / default:image 默认池。
+
+    /// <summary>OpenRouter chat 端点绑定的模型池 Code 或模型 id；null=默认 chat 池。</summary>
+    public string? OpenRouterChatBinding { get; set; }
+
+    /// <summary>OpenRouter 生图端点绑定的模型池 Code 或模型 id；null=默认 image 池。</summary>
+    public string? OpenRouterImageBinding { get; set; }
+
+    /// <summary>每日 token 配额（OpenRouter 网关用）；null=不限。Phase 2 配额预警消费此字段。</summary>
+    public long? OpenRouterDailyTokenQuota { get; set; }
+
+    /// <summary>每日请求数配额（OpenRouter 网关用）；null=不限。Phase 2 消费。</summary>
+    public long? OpenRouterDailyRequestQuota { get; set; }
 }

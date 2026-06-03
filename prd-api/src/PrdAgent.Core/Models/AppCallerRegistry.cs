@@ -435,6 +435,44 @@ public static class OpenPlatform
 }
 
 /// <summary>
+/// OpenRouter 式对外开放网关。
+///
+/// 与 <see cref="OpenPlatform"/> 的区别：OpenPlatform 是历史 PRD 对话代理；
+/// 这里是真正贴近 OpenRouter 的对外 LLM 网关，外部调用方用标准 OpenAI/OpenRouter
+/// 请求方式（顶层 /api/v1/chat/completions 等）接入。
+///
+/// 设计要点（见 .claude/rules + doc/debt.open-router.md）：
+/// - 所有 OpenRouter 流量走这里的固定伞形 code（不为每个 Key 派生动态 code，
+///   否则会被 LlmGateway.TryValidateAppCaller 的静态注册表门禁拦下）。
+/// - 每个 Key 的「固定模型 / 小模型池」绑定通过 expectedModel 通道下发：
+///   绑模型 id 或绑模型池 Code 都由 ModelResolver 的 FindPreferredModel 命中。
+/// - 未绑定的 Key 传 expectedModel=null，回落到 default:chat / default:image。
+/// </summary>
+public static class OpenRouter
+{
+    public const string AppName = "OpenRouter 开放网关";
+
+    public static class Proxy
+    {
+        [AppCallerMetadata(
+            "OpenRouter 聊天网关",
+            "对外 OpenRouter 式 chat/completions 网关，按 Key 绑定固定模型，未绑定走默认 chat 池",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Proxy"
+        )]
+        public const string Chat = "open-router.proxy::chat";
+
+        [AppCallerMetadata(
+            "OpenRouter 生图网关",
+            "对外 OpenRouter 式 images/generations 网关，按 Key 绑定固定模型，未绑定走默认 image 池",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Proxy"
+        )]
+        public const string Generation = "open-router.proxy::generation";
+    }
+}
+
+/// <summary>
 /// AI Toolbox 百宝箱
 /// </summary>
 public static class AiToolbox
