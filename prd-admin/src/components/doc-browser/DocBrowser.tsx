@@ -435,7 +435,7 @@ function ContextMenu({
           className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-accent transition-colors hover:bg-white/6"
           onClick={() => { onReprocess!(entry.id); onClose(); }}>
           <Wand2 size={12} />
-          再加工
+          智能体
         </button>
       )}
       {showShare && (
@@ -946,7 +946,7 @@ function TreeNode({
               background: 'rgba(59,130,246,0.12)',
               color: 'rgba(96,165,250,0.95)',
             }}
-            title="正在再加工"
+            title="智能体处理中"
           >
             <MapSpinner size={9} />
             {Math.round(reprocessing)}%
@@ -2283,9 +2283,9 @@ export function DocBrowser({
                           border: '1px solid rgba(59,130,246,0.18)',
                           color: 'rgba(96,165,250,0.95)',
                         }}
-                        title="按模板再加工文档"
+                        title="用智能体加工文档"
                       >
-                        <Wand2 size={11} /> 再加工
+                        <Wand2 size={11} /> 智能体
                       </button>
                     )}
                   </>

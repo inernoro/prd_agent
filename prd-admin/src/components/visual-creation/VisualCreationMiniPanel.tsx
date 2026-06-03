@@ -13,9 +13,8 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Image as ImageIcon, RefreshCw, ImagePlus, FileDown, Settings2 } from 'lucide-react';
+import { X, Image as ImageIcon, RefreshCw, ImagePlus, FileDown, Maximize2, ExternalLink } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { WatermarkSettingsPanel } from '@/components/watermark/WatermarkSettingsPanel';
 import { invokeAgent } from '@/services/real/agentUniverse';
 import {
   generateVisualImage,
@@ -53,75 +52,80 @@ export function genPhaseText(sec: number, model: string): string {
   return `仍在绘制${m} · 已 ${sec}s，较慢可取消重试`;
 }
 
-// ============ 水印浮层组件 ============
+// ============ 结果放大浮层（点击结果图全屏看清 + 原图/下载） ============
+// createPortal 到 body，避免被 640px 抽屉的 overflow 裁剪（frontend-modal.md）
 
-function WatermarkOverlay({ onClose }: { onClose: () => void }) {
+function ResultLightbox({ url, onClose }: { url: string; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   return createPortal(
     <div
-      className="fixed inset-0 flex items-end justify-center"
-      style={{ zIndex: 1300 }}
+      className="fixed inset-0 flex items-center justify-center"
+      style={{ zIndex: 1300, background: 'rgba(0,0,0,0.82)', padding: 24 }}
       onClick={onClose}
     >
-      <div
-        className="rounded-[10px] overflow-hidden"
+      <img
+        src={url}
+        alt="生成结果（放大）"
         style={{
-          width: '100%',
-          maxWidth: 640,
-          height: '70vh',
-          maxHeight: '70vh',
-          background: 'rgba(18,18,24,0.98)',
-          border: '1px solid rgba(168,85,247,0.25)',
-          boxShadow: '0 -8px 48px rgba(0,0,0,0.6)',
-          marginBottom: 0,
-          display: 'flex',
-          flexDirection: 'column',
+          maxWidth: '92vw',
+          maxHeight: '88vh',
+          objectFit: 'contain',
+          borderRadius: 8,
+          boxShadow: '0 12px 64px rgba(0,0,0,0.6)',
         }}
         onClick={(e) => e.stopPropagation()}
+      />
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="关闭"
+        style={{
+          position: 'fixed',
+          top: 20,
+          right: 20,
+          width: 36,
+          height: 36,
+          borderRadius: 10,
+          background: 'rgba(255,255,255,0.12)',
+          border: '1px solid rgba(255,255,255,0.2)',
+          color: 'rgba(255,255,255,0.85)',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          cursor: 'pointer',
+        }}
       >
-        {/* 标题栏 */}
-        <div
-          className="flex items-center justify-between shrink-0 px-4"
-          style={{
-            height: 44,
-            borderBottom: '1px solid rgba(255,255,255,0.08)',
-          }}
-        >
-          <span style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.85)' }}>
-            水印设置
-          </span>
-          <button
-            type="button"
-            onClick={onClose}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 28,
-              height: 28,
-              borderRadius: 8,
-              background: 'rgba(255,255,255,0.06)',
-              border: 'none',
-              cursor: 'pointer',
-              color: 'rgba(255,255,255,0.5)',
-            }}
-          >
-            <X size={14} />
-          </button>
-        </div>
-
-        {/* 内容区 — 滚动 */}
-        <div
-          style={{
-            flex: 1,
-            minHeight: 0,
-            overflowY: 'auto',
-            overscrollBehavior: 'contain',
-            padding: '12px 16px',
-          }}
-        >
-          <WatermarkSettingsPanel appKey="visual-agent" columns={1} />
-        </div>
-      </div>
+        <X size={18} />
+      </button>
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          position: 'fixed',
+          bottom: 20,
+          right: 20,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: '7px 14px',
+          borderRadius: 10,
+          fontSize: 12,
+          background: 'rgba(255,255,255,0.12)',
+          border: '1px solid rgba(255,255,255,0.2)',
+          color: 'rgba(255,255,255,0.85)',
+          textDecoration: 'none',
+        }}
+      >
+        <ExternalLink size={13} />
+        原图 / 下载
+      </a>
     </div>,
     document.body,
   );
@@ -162,8 +166,8 @@ export function VisualCreationMiniPanel({
   const [gettingPrompt, setGettingPrompt] = useState(false);
   const abortPromptRef = useRef<(() => void) | null>(null);
 
-  // 水印浮层
-  const [watermarkOpen, setWatermarkOpen] = useState(false);
+  // 结果放大浮层
+  const [lightboxOpen, setLightboxOpen] = useState(false);
 
   // 尺寸重新加载标记（model 变化时触发）
   const sizeLoadKeyRef = useRef(0);
@@ -524,54 +528,45 @@ export function VisualCreationMiniPanel({
         </div>
       </div>
 
-      {/* 模型 / 尺寸 / 水印 — 一行 */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        {/* 模型下拉 — 仅当 >= 2 个选项时显示 */}
-        {models.length >= 2 && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1, minWidth: 120 }}>
-            <span style={{ ...labelStyle, marginBottom: 0, whiteSpace: 'nowrap' }}>模型</span>
-            <select
-              value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
-              style={selectStyle}
-              disabled={isGenerating}
-            >
-              {models.map((m) => (
-                <option key={m.value} value={m.value}>{m.label}</option>
-              ))}
-            </select>
-          </div>
-        )}
+      {/* 模型 / 尺寸 — 仅当有可选项时整行才出现（奥卡姆：单选项/无选项不占位）。
+          水印由视觉创作统一管理、服务端自动叠加，不在此 mini 面板内嵌千行编辑器。 */}
+      {(models.length >= 2 || sizes.length >= 2) && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {/* 模型下拉 — 仅当 >= 2 个选项时显示 */}
+          {models.length >= 2 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1, minWidth: 120 }}>
+              <span style={{ ...labelStyle, marginBottom: 0, whiteSpace: 'nowrap' }}>模型</span>
+              <select
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                style={selectStyle}
+                disabled={isGenerating}
+              >
+                {models.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
-        {/* 尺寸下拉 — 仅当 >= 2 个选项时显示，isAdaptive 模型返回空列表则不显示 */}
-        {sizes.length >= 2 && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1, minWidth: 120 }}>
-            <span style={{ ...labelStyle, marginBottom: 0, whiteSpace: 'nowrap' }}>尺寸</span>
-            <select
-              value={selectedSize}
-              onChange={(e) => setSelectedSize(e.target.value)}
-              style={selectStyle}
-              disabled={isGenerating}
-            >
-              {sizes.map((s) => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
-          </div>
-        )}
-
-        {/* 水印设置按钮 */}
-        <button
-          type="button"
-          style={btnGhost}
-          onClick={() => setWatermarkOpen(true)}
-          disabled={isGenerating}
-          title="水印设置（由视觉创作统一管理，服务端自动叠加）"
-        >
-          <Settings2 size={13} />
-          水印设置
-        </button>
-      </div>
+          {/* 尺寸下拉 — 仅当 >= 2 个选项时显示，isAdaptive 模型返回空列表则不显示 */}
+          {sizes.length >= 2 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1, minWidth: 120 }}>
+              <span style={{ ...labelStyle, marginBottom: 0, whiteSpace: 'nowrap' }}>尺寸</span>
+              <select
+                value={selectedSize}
+                onChange={(e) => setSelectedSize(e.target.value)}
+                style={selectStyle}
+                disabled={isGenerating}
+              >
+                {sizes.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 生成按钮（idle / error 时可点，error 时等同重试） */}
       {!isDone && !isGenerating && (
@@ -655,14 +650,21 @@ export function VisualCreationMiniPanel({
       {/* 生成结果 */}
       {isDone && resultUrl && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {/* 结果图片 */}
-          <div
+          {/* 结果图片 — 点击放大看清（640px 抽屉里缩略，全屏才看得清） */}
+          <button
+            type="button"
+            onClick={() => setLightboxOpen(true)}
+            title="点击放大查看"
             style={{
+              position: 'relative',
+              display: 'block',
+              width: '100%',
+              padding: 0,
               borderRadius: 10,
               overflow: 'hidden',
               border: '1px solid rgba(168,85,247,0.3)',
               background: 'rgba(0,0,0,0.3)',
-              textAlign: 'center',
+              cursor: 'zoom-in',
             }}
           >
             <img
@@ -676,7 +678,26 @@ export function VisualCreationMiniPanel({
                 margin: '0 auto',
               }}
             />
-          </div>
+            <span
+              style={{
+                position: 'absolute',
+                right: 8,
+                bottom: 8,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                padding: '3px 8px',
+                borderRadius: 6,
+                fontSize: 11,
+                background: 'rgba(0,0,0,0.55)',
+                color: 'rgba(255,255,255,0.85)',
+                pointerEvents: 'none',
+              }}
+            >
+              <Maximize2 size={11} />
+              点击放大
+            </span>
+          </button>
 
           {/* 操作按钮 */}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -708,9 +729,9 @@ export function VisualCreationMiniPanel({
         </div>
       )}
 
-      {/* 水印浮层（createPortal，z-index 1300） */}
-      {watermarkOpen && (
-        <WatermarkOverlay onClose={() => setWatermarkOpen(false)} />
+      {/* 结果放大浮层（createPortal，z-index 1300） */}
+      {lightboxOpen && resultUrl && (
+        <ResultLightbox url={resultUrl} onClose={() => setLightboxOpen(false)} />
       )}
     </div>
   );

@@ -1,1 +1,4 @@
-| fix | prd-admin | 再加工·视觉创作 mini 面板：生图等待从静态 spinner 升级为爬升进度条 + 分级状态文案(含模型名与已用时) + 取消按钮，消除 30s+ 空白等待；新增 genPhaseText 单测 |
+| fix | prd-admin | 智能体·视觉创作 mini 面板：生图等待从静态 spinner 升级为爬升进度条 + 分级状态文案(含模型名/已用时) + 取消按钮，消除 30s+ 空白等待；新增 genPhaseText 单测 |
+| feat | prd-admin | 视觉创作 mini 面板生成结果支持点击全屏放大(lightbox + ESC/点击关闭 + 原图/下载)，解决 640px 抽屉里图太小看不清 |
+| refactor | prd-admin | 视觉创作 mini 面板移除内嵌的千行水印编辑器(水印由视觉创作统一管理/服务端自动叠加)；模型/尺寸行在无可选项时整行隐藏(奥卡姆剃刀) |
+| refactor | prd-admin | 知识库文档「再加工」入口按钮(下拉菜单 + 工具栏)更名为「智能体」 |
