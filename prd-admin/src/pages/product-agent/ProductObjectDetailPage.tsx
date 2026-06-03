@@ -33,7 +33,6 @@ import { ITEM_GRADE_LABEL } from './types';
 const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
 
 // ── 自定义字段去重 / 分栏 ──
-const CONTENT_TYPES = new Set(['textarea', 'richtext', 'file']);
 const NATIVE_DUP_KEYS = new Set(['title', 'name', 'description', 'desc']);
 const NATIVE_DUP_LABELS = ['标题', '名称', '描述', '需求名称', '需求描述', '功能名称', '功能描述', '缺陷标题'];
 
@@ -44,12 +43,12 @@ function isNativeDuplicate(f: FormField): boolean {
   return NATIVE_DUP_KEYS.has(key) || NATIVE_DUP_LABELS.includes(label);
 }
 
-/** 内容型字段进左主栏，属性型字段进右属性栏（参考 Jira 双栏）。 */
+/** 左主栏只保留「描述 + 附件(file)」，其余字段全进右属性栏。 */
 function splitFields(fields: FormField[] | undefined) {
   const usable = (fields ?? []).filter((f) => !isNativeDuplicate(f));
   return {
-    content: usable.filter((f) => CONTENT_TYPES.has(f.type)),
-    props: usable.filter((f) => !CONTENT_TYPES.has(f.type)),
+    files: usable.filter((f) => f.type === 'file'),
+    others: usable.filter((f) => f.type !== 'file'),
   };
 }
 
@@ -128,7 +127,7 @@ export function ProductObjectDetailPage() {
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-        <div className="max-w-5xl mx-auto px-5 py-5">
+        <div className="mx-auto py-5" style={{ width: '80%' }}>
           {isNew ? (
             <CreateObjectForm
               productId={productId}
@@ -256,10 +255,10 @@ function DetailScaffold({
         {workflow && <div className="px-4 py-2.5 border-t border-white/5">{workflow}</div>}
       </div>
 
-      {/* 主体双栏 */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-4 items-start">
+      {/* 主体双栏：左 70% / 右 30% */}
+      <div className="grid grid-cols-1 lg:grid-cols-[7fr_3fr] gap-4 items-start">
         <div className="flex flex-col gap-4 min-w-0">{main}</div>
-        <div className="flex flex-col gap-4">{sidebar}</div>
+        <div className="flex flex-col gap-4 min-w-0">{sidebar}</div>
       </div>
       {children}
     </div>
@@ -307,7 +306,7 @@ function GradeField({ grade, setGrade }: { grade: ItemGrade; setGrade: (g: ItemG
 
 /** 描述字段：富文本（排版工具栏 + 截图粘贴/拖拽上传），对齐 Jira / TAPD / Linear。 */
 function DescriptionField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  return <RichTextField value={value} onChange={onChange} minHeight={180} placeholder="补充背景、目标、验收标准…（支持排版与截图粘贴）" />;
+  return <RichTextField value={value} onChange={onChange} minHeight={420} placeholder="补充背景、目标、验收标准…（支持排版与截图粘贴）" />;
 }
 
 function Chips({ items, empty }: { items: string[]; empty: string }) {
@@ -389,9 +388,9 @@ function CreateObjectForm({
           <Card title="描述">
             <DescriptionField value={description} onChange={setDescription} />
           </Card>
-          {split.content.length > 0 && (
-            <Card title={template?.name || '内容'}>
-              <FormFieldsRenderer fields={split.content} values={formData} onChange={setField} productId={productId} />
+          {split.files.length > 0 && (
+            <Card title={template?.name || '附件'}>
+              <FormFieldsRenderer fields={split.files} values={formData} onChange={setField} productId={productId} />
             </Card>
           )}
           <p className="text-[11px] text-white/35 px-1">创建后进入详情页，可继续关联客户 / 版本 / 缺陷追溯。</p>
@@ -404,9 +403,9 @@ function CreateObjectForm({
               <FieldLabel required>分级</FieldLabel>
               <GradeField grade={grade} setGrade={setGrade} />
             </div>
-            {split.props.length > 0 && (
+            {split.others.length > 0 && (
               <div className="pt-1 border-t border-white/5">
-                <FormFieldsRenderer fields={split.props} values={formData} onChange={setField} productId={productId} />
+                <FormFieldsRenderer fields={split.others} values={formData} onChange={setField} productId={productId} />
               </div>
             )}
           </div>
@@ -493,33 +492,11 @@ function RequirementDetail({
           <Card title="描述">
             <DescriptionField value={description} onChange={setDescription} />
           </Card>
-          {split.content.length > 0 && (
-            <Card title={template?.name || '内容'}>
-              <FormFieldsRenderer fields={split.content} values={formData} onChange={setField} productId={productId} />
+          {split.files.length > 0 && (
+            <Card title={template?.name || '附件'}>
+              <FormFieldsRenderer fields={split.files} values={formData} onChange={setField} productId={productId} />
             </Card>
           )}
-          <Card
-            title="关联关系"
-            action={
-              <button onClick={() => setShowRel(true)} className="flex items-center gap-1 text-[11px] text-cyan-300 hover:text-cyan-200">
-                <Link2 size={12} /> 编辑关联
-              </button>
-            }
-          >
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <div className="text-[11px] text-white/40 mb-1.5">客户</div>
-                <Chips items={requirement.customerIds.map((c) => customerName.get(c) ?? c)} empty="未关联客户" />
-              </div>
-              <div>
-                <div className="text-[11px] text-white/40 mb-1.5">归属版本</div>
-                <Chips items={requirement.versionIds.map((v) => versionName.get(v) ?? v)} empty="未归属版本" />
-              </div>
-            </div>
-          </Card>
-          <Card title={`追溯缺陷 · ${tracedDefects.length}`}>
-            <DefectList defects={tracedDefects} onClick={gotoDefect} empty="还没有缺陷追溯到本需求" />
-          </Card>
         </>
       }
       sidebar={
@@ -536,12 +513,34 @@ function RequirementDetail({
                   <span className="self-start text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10">{requirement.currentState}</span>
                 </div>
               )}
-              {split.props.length > 0 && (
+              {split.others.length > 0 && (
                 <div className="pt-1 border-t border-white/5">
-                  <FormFieldsRenderer fields={split.props} values={formData} onChange={setField} productId={productId} />
+                  <FormFieldsRenderer fields={split.others} values={formData} onChange={setField} productId={productId} />
                 </div>
               )}
             </div>
+          </Card>
+          <Card
+            title="关联关系"
+            action={
+              <button onClick={() => setShowRel(true)} className="flex items-center gap-1 text-[11px] text-cyan-300 hover:text-cyan-200">
+                <Link2 size={12} /> 编辑关联
+              </button>
+            }
+          >
+            <div className="flex flex-col gap-3">
+              <div>
+                <div className="text-[11px] text-white/40 mb-1.5">客户</div>
+                <Chips items={requirement.customerIds.map((c) => customerName.get(c) ?? c)} empty="未关联客户" />
+              </div>
+              <div>
+                <div className="text-[11px] text-white/40 mb-1.5">归属版本</div>
+                <Chips items={requirement.versionIds.map((v) => versionName.get(v) ?? v)} empty="未归属版本" />
+              </div>
+            </div>
+          </Card>
+          <Card title={`追溯缺陷 · ${tracedDefects.length}`}>
+            <DefectList defects={tracedDefects} onClick={gotoDefect} empty="还没有缺陷追溯到本需求" />
           </Card>
           <Card title="信息">
             <div className="flex flex-col gap-2">
@@ -679,35 +678,11 @@ function FeatureDetail({
           <Card title="描述">
             <DescriptionField value={description} onChange={setDescription} />
           </Card>
-          {split.content.length > 0 && (
-            <Card title={template?.name || '内容'}>
-              <FormFieldsRenderer fields={split.content} values={formData} onChange={setField} productId={productId} />
+          {split.files.length > 0 && (
+            <Card title={template?.name || '附件'}>
+              <FormFieldsRenderer fields={split.files} values={formData} onChange={setField} productId={productId} />
             </Card>
           )}
-          <Card title="实现的需求">
-            {requirements.length === 0 ? (
-              <div className="text-[11px] text-white/30">该产品还没有需求</div>
-            ) : (
-              <div className="flex flex-col gap-0.5 max-h-64 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-                {requirements.map((r) => (
-                  <label key={r.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5 cursor-pointer">
-                    <input type="checkbox" checked={selReqs.has(r.id)} onChange={() => toggle(r.id)} className="accent-cyan-500" />
-                    <span className="text-sm text-white/80 truncate">{r.title}</span>
-                  </label>
-                ))}
-              </div>
-            )}
-          </Card>
-          <Card
-            title={`追溯缺陷 · ${tracedDefects.length}`}
-            action={
-              <button onClick={() => setShowDefectLinker(true)} className="flex items-center gap-1 text-[11px] text-cyan-300 hover:text-cyan-200">
-                <Link2 size={12} /> 关联缺陷
-              </button>
-            }
-          >
-            <DefectList defects={tracedDefects} onClick={(did) => navigate(`/product-agent/p/${feature.productId}/defect/${did}`)} empty="还没有缺陷追溯到本功能" />
-          </Card>
         </>
       }
       sidebar={
@@ -724,15 +699,39 @@ function FeatureDetail({
                   <span className="self-start text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10">{feature.currentState}</span>
                 </div>
               )}
-              {split.props.length > 0 && (
+              {split.others.length > 0 && (
                 <div className="pt-1 border-t border-white/5">
-                  <FormFieldsRenderer fields={split.props} values={formData} onChange={setField} productId={productId} />
+                  <FormFieldsRenderer fields={split.others} values={formData} onChange={setField} productId={productId} />
                 </div>
               )}
             </div>
           </Card>
+          <Card title="实现的需求">
+            {requirements.length === 0 ? (
+              <div className="text-[11px] text-white/30">该产品还没有需求</div>
+            ) : (
+              <div className="flex flex-col gap-0.5 max-h-64 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+                {requirements.map((r) => (
+                  <label key={r.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5 cursor-pointer">
+                    <input type="checkbox" checked={selReqs.has(r.id)} onChange={() => toggle(r.id)} className="accent-cyan-500" />
+                    <span className="text-sm text-white/80 truncate">{r.title}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </Card>
           <Card title="纳入的版本">
             <Chips items={featureVersions.map((fv) => versionName.get(fv.versionId) ?? fv.versionId)} empty="尚未纳入任何版本" />
+          </Card>
+          <Card
+            title={`追溯缺陷 · ${tracedDefects.length}`}
+            action={
+              <button onClick={() => setShowDefectLinker(true)} className="flex items-center gap-1 text-[11px] text-cyan-300 hover:text-cyan-200">
+                <Link2 size={12} /> 关联缺陷
+              </button>
+            }
+          >
+            <DefectList defects={tracedDefects} onClick={(did) => navigate(`/product-agent/p/${feature.productId}/defect/${did}`)} empty="还没有缺陷追溯到本功能" />
           </Card>
           <Card title="信息">
             <div className="flex flex-col gap-2">

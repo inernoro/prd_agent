@@ -335,6 +335,7 @@ function RelationField({ value, onChange, entityType, productId }: { value: stri
   const [options, setOptions] = useState<{ id: string; label: string }[]>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const selected = value ? value.split(',').filter(Boolean) : [];
 
   useEffect(() => {
@@ -372,31 +373,47 @@ function RelationField({ value, onChange, entityType, productId }: { value: stri
     const next = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
     onChange(next.join(','));
   };
+  const q = query.trim().toLowerCase();
+  const filtered = q ? options.filter((o) => o.label.toLowerCase().includes(q)) : options;
 
   return (
     <div className="rounded-lg border border-white/10 bg-white/5">
-      <button type="button" onClick={() => setOpen((o) => !o)} className="w-full flex items-center justify-between px-3 py-2 text-sm text-white/70">
-        <span className="flex flex-wrap gap-1">
+      <button type="button" onClick={() => setOpen((o) => !o)} className="w-full flex items-center justify-between gap-2 px-3 py-2 text-sm text-white/70">
+        <span className="flex flex-wrap gap-1 min-w-0">
           {selected.length === 0 ? <span className="text-white/40">点击选择关联对象</span> : selected.map((id) => (
-            <span key={id} className="text-[11px] px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-200">{labelOf(id)}</span>
+            <span key={id} className="text-[11px] px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-200 inline-flex items-center gap-1 max-w-[160px]">
+              <span className="truncate">{labelOf(id)}</span>
+              <X size={11} className="shrink-0 hover:text-white" onClick={(e) => { e.stopPropagation(); toggle(id); }} />
+            </span>
           ))}
         </span>
-        <span className="text-white/30 text-xs">{open ? '收起' : '展开'}</span>
+        <span className="text-white/30 text-xs shrink-0">{open ? '收起' : selected.length > 0 ? `已选 ${selected.length}` : '展开'}</span>
       </button>
       {open && (
-        <div className="max-h-48 overflow-y-auto border-t border-white/10 p-1" style={{ overscrollBehavior: 'contain' }}>
-          {loading ? (
-            <div className="text-[11px] text-white/40 py-2 text-center">加载中…</div>
-          ) : options.length === 0 ? (
-            <div className="text-[11px] text-white/30 py-2 text-center">没有可选对象</div>
-          ) : (
-            options.map((o) => (
-              <label key={o.id} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-white/5 cursor-pointer">
-                <input type="checkbox" checked={selected.includes(o.id)} onChange={() => toggle(o.id)} className="accent-cyan-500" />
-                <span className="text-sm text-white/80 truncate">{o.label}</span>
-              </label>
-            ))
-          )}
+        <div className="border-t border-white/10">
+          <div className="p-1.5">
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={`搜索${options.length > 0 ? `（共 ${options.length} 项）` : ''}…`}
+              className="w-full px-2.5 py-1.5 rounded-md bg-white/5 border border-white/10 text-xs text-white outline-none focus:border-cyan-500/40"
+            />
+          </div>
+          <div className="max-h-60 overflow-y-auto px-1 pb-1" style={{ overscrollBehavior: 'contain' }}>
+            {loading ? (
+              <div className="text-[11px] text-white/40 py-3 text-center">加载中…</div>
+            ) : filtered.length === 0 ? (
+              <div className="text-[11px] text-white/30 py-3 text-center">{options.length === 0 ? '没有可选对象' : '无匹配结果'}</div>
+            ) : (
+              filtered.map((o) => (
+                <label key={o.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5 cursor-pointer">
+                  <input type="checkbox" checked={selected.includes(o.id)} onChange={() => toggle(o.id)} className="accent-cyan-500 shrink-0" />
+                  <span className="text-sm text-white/80 truncate">{o.label}</span>
+                </label>
+              ))
+            )}
+          </div>
         </div>
       )}
     </div>
