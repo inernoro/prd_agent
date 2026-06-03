@@ -12,8 +12,10 @@ import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { RequirementRelationModal } from './ProductRelationModals';
 import {
   listRequirements,
+  createRequirement,
   updateRequirement,
   listFeatures,
+  createFeature,
   updateFeature,
   listVersions,
   listCustomers,
@@ -30,6 +32,7 @@ const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
 export function ProductObjectDetailPage() {
   const navigate = useNavigate();
   const { productId = '', kind = '', id = '' } = useParams();
+  const isNew = id === 'new';
 
   const [loading, setLoading] = useState(true);
   const [requirements, setRequirements] = useState<Requirement[]>([]);
@@ -83,12 +86,18 @@ export function ProductObjectDetailPage() {
         >
           <ArrowLeft size={18} />
         </button>
-        <KindBadge kind={kind} />
+        <KindBadge kind={kind} isNew={isNew} />
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
         <div className="max-w-3xl mx-auto">
-          {loading ? (
+          {isNew ? (
+            <CreateObjectForm
+              productId={productId}
+              kind={kind}
+              onCreated={(newId) => navigate(`/product-agent/p/${productId}/${kind}/${newId}`, { replace: true })}
+            />
+          ) : loading ? (
             <MapSectionLoader text="正在加载详情…" />
           ) : kind === 'requirement' ? (
             <RequirementDetail
@@ -98,7 +107,7 @@ export function ProductObjectDetailPage() {
               customerName={customerName}
               tracedDefects={tracedDefects.filter((d) => d.tracedRequirementId === id)}
               onReload={reload}
-              gotoDefect={(did) => navigate(`/product-agent/${productId}/defect/${did}`)}
+              gotoDefect={(did) => navigate(`/product-agent/p/${productId}/defect/${did}`)}
             />
           ) : kind === 'feature' ? (
             <FeatureDetail
@@ -114,7 +123,7 @@ export function ProductObjectDetailPage() {
               versionName={versionName}
               requirementName={requirementName}
               onReload={reload}
-              gotoRequirement={(rid) => navigate(`/product-agent/${productId}/requirement/${rid}`)}
+              gotoRequirement={(rid) => navigate(`/product-agent/p/${productId}/requirement/${rid}`)}
             />
           ) : (
             <div className="text-white/40 text-sm text-center py-10">不支持的对象类型</div>
@@ -125,18 +134,88 @@ export function ProductObjectDetailPage() {
   );
 }
 
-function KindBadge({ kind }: { kind: string }) {
+function KindBadge({ kind, isNew }: { kind: string; isNew?: boolean }) {
   const meta: Record<string, { label: string; icon: typeof ListChecks; color: string }> = {
-    requirement: { label: '需求详情', icon: ListChecks, color: '#FBBF24' },
-    feature: { label: '功能详情', icon: Puzzle, color: '#A78BFA' },
-    defect: { label: '缺陷详情', icon: Bug, color: '#F87171' },
+    requirement: { label: '需求', icon: ListChecks, color: '#FBBF24' },
+    feature: { label: '功能', icon: Puzzle, color: '#A78BFA' },
+    defect: { label: '缺陷', icon: Bug, color: '#F87171' },
   };
-  const m = meta[kind] ?? { label: '详情', icon: ListChecks, color: '#888' };
+  const m = meta[kind] ?? { label: '对象', icon: ListChecks, color: '#888' };
   const Icon = m.icon;
   return (
     <span className="flex items-center gap-2 text-base font-semibold" style={{ color: m.color }}>
-      <Icon size={18} /> {m.label}
+      <Icon size={18} /> {isNew ? `新建${m.label}` : `${m.label}详情`}
     </span>
+  );
+}
+
+// ── 新建对象表单（需求 / 功能，独立页）──
+function CreateObjectForm({
+  productId,
+  kind,
+  onCreated,
+}: {
+  productId: string;
+  kind: string;
+  onCreated: (newId: string) => void;
+}) {
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [grade, setGrade] = useState<ItemGrade>('p2');
+  const [saving, setSaving] = useState(false);
+
+  if (kind !== 'requirement' && kind !== 'feature') {
+    return <div className="text-white/40 text-sm text-center py-10">该类型不支持在此新建</div>;
+  }
+
+  const create = async () => {
+    if (!title.trim()) return;
+    setSaving(true);
+    const res =
+      kind === 'requirement'
+        ? await createRequirement(productId, { title: title.trim(), description, grade })
+        : await createFeature(productId, { title: title.trim(), description, grade });
+    setSaving(false);
+    if (res.success && res.data) onCreated(res.data.id);
+  };
+
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 flex flex-col gap-3">
+      <input
+        autoFocus
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        placeholder={kind === 'requirement' ? '需求标题' : '功能名称'}
+        className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-base text-white outline-none focus:border-cyan-500/40"
+      />
+      <textarea
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+        rows={4}
+        placeholder="描述"
+        className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40 resize-none"
+      />
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-white/50">分级</span>
+        {ITEM_GRADES.map((g) => (
+          <button
+            key={g}
+            onClick={() => setGrade(g)}
+            className={`px-2 py-1 rounded-md text-xs border ${grade === g ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40' : 'text-white/40 border-white/10 hover:bg-white/5'}`}
+          >
+            {ITEM_GRADE_LABEL[g]}
+          </button>
+        ))}
+        <button
+          onClick={create}
+          disabled={!title.trim() || saving}
+          className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm disabled:opacity-50"
+        >
+          {saving ? <MapSpinner size={14} /> : <Save size={14} />} 创建
+        </button>
+      </div>
+      <p className="text-[11px] text-white/35">创建后进入详情页，可继续关联客户 / 版本 / 缺陷追溯。</p>
+    </div>
   );
 }
 

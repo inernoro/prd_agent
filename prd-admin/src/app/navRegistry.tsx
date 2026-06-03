@@ -31,7 +31,8 @@ const LibraryLandingPage = lazy(() => import('@/pages/library/LibraryLandingPage
 const EmergenceExplorerPage = lazy(() => import('@/pages/emergence').then(m => ({ default: m.EmergenceExplorerPage })));
 const TaskTreePage = lazy(() => import('@/pages/task-tree').then(m => ({ default: m.TaskTreePage })));
 const PmAgentPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.PmAgentPage })));
-const ProductAgentPage = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.ProductAgentPage })));
+const ProductsListPage = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.ProductsListPage })));
+const SingleProductView = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.SingleProductView })));
 const ProductObjectDetailPage = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.ProductObjectDetailPage })));
 const ChangelogPage = lazy(() => import('@/pages/changelog/ChangelogPage'));
 const SkillAgentPage = lazy(() => import('@/pages/SkillAgentPage'));
@@ -340,8 +341,15 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
   {
-    // 对象独立详情页（需求/功能/缺陷），参数化子路由，全屏，不进导航
-    path: '/product-agent/:productId/:kind/:id',
+    // 单产品视图（进入某个具体产品看其全部信息），参数化子路由，全屏，不进导航
+    path: '/product-agent/p/:productId',
+    placement: 'fullscreen',
+    permission: 'product-agent.use',
+    element: fullscreenGuarded('product-agent.use', <SingleProductView />),
+  },
+  {
+    // 对象独立详情/新建页（需求/功能/缺陷，:id 为 new 时是新建），参数化子路由，全屏，不进导航
+    path: '/product-agent/p/:productId/:kind/:id',
     placement: 'fullscreen',
     permission: 'product-agent.use',
     element: fullscreenGuarded('product-agent.use', <ProductObjectDetailPage />),
@@ -350,7 +358,7 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     path: '/product-agent',
     placement: 'fullscreen',
     permission: 'product-agent.use',
-    element: fullscreenGuarded('product-agent.use', <ProductAgentPage />),
+    element: fullscreenGuarded('product-agent.use', <ProductsListPage />),
     nav: {
       label: '产品管理智能体',
       shortLabel: '产品',
