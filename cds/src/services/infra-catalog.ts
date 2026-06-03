@@ -203,6 +203,37 @@ export const INFRA_CATALOG: InfraCatalogEntry[] = [
     },
   },
   {
+    id: 'mariadb',
+    name: 'MariaDB',
+    category: 'database',
+    description: 'MySQL 协议兼容的关系型数据库，自动注入 DATABASE_URL / MYSQL_URL。',
+    dockerImage: 'mariadb:11',
+    containerPort: 3306,
+    volumePaths: ['/var/lib/mysql'],
+    schemaful: true,
+    supportsDbName: true,
+    supportsInitSql: true,
+    secretKeys: ['rootPassword', 'password'],
+    // mariadb 官方镜像同时识别 MYSQL_* 与 MARIADB_* 变量;沿用 MYSQL_* 让数据面板/备份
+    // (按 mysql 协议识别)与 mysql 预设走同一套读取逻辑,零下游改动。连接串走 mysql:// 协议。
+    build: (s, o) => {
+      const db = sanitizeDbName(o?.dbName);
+      const url = `mysql://app:${s.password}@mariadb:3306/${db}`;
+      return {
+        env: {
+          MYSQL_ROOT_PASSWORD: s.rootPassword,
+          MYSQL_DATABASE: db,
+          MYSQL_USER: 'app',
+          MYSQL_PASSWORD: s.password,
+        },
+        envVars: {
+          DATABASE_URL: url,
+          MYSQL_URL: url,
+        },
+      };
+    },
+  },
+  {
     id: 'sqlserver',
     name: 'SQL Server',
     category: 'database',

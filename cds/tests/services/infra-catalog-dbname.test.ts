@@ -5,7 +5,7 @@
  * 默认回落 app(向后兼容),非法字符被 sanitize。这就是"自动推导连接串"的确定性证明。
  */
 import { describe, it, expect } from 'vitest';
-import { getInfraCatalogEntry, sanitizeDbName, instanceConnectionEnv } from '../../src/services/infra-catalog.js';
+import { getInfraCatalogEntry, sanitizeDbName, instanceConnectionEnv, getInfraCatalogPublic } from '../../src/services/infra-catalog.js';
 
 describe('infra-catalog 自定义数据库名', () => {
   it('postgres: dbName 同时进 env 与连接串', () => {
@@ -43,6 +43,24 @@ describe('infra-catalog 自定义数据库名', () => {
     expect(getInfraCatalogEntry('postgres')!.supportsInitSql).toBe(true);
     expect(getInfraCatalogEntry('redis')!.supportsDbName).toBeUndefined();
     expect(getInfraCatalogEntry('kafka')!.supportsDbName).toBeUndefined();
+  });
+
+  it('mariadb: 作为一等预设进 catalog SSOT(消除 CLI↔catalog 漂移),honor dbName + mysql 协议串', () => {
+    const entry = getInfraCatalogEntry('mariadb')!;
+    expect(entry).toBeDefined();
+    expect(entry.dockerImage).toBe('mariadb:11');
+    expect(entry.supportsDbName).toBe(true);
+    expect(entry.supportsInitSql).toBe(true);
+    const built = entry.build({ rootPassword: 'r', password: 'p' }, { dbName: 'orders' });
+    // mariadb 镜像识别 MYSQL_* 变量 → 数据面板/备份按 mysql 协议零改动复用
+    expect(built.env?.MYSQL_DATABASE).toBe('orders');
+    expect(built.env?.MYSQL_USER).toBe('app');
+    expect(built.envVars?.DATABASE_URL).toBe('mysql://app:p@mariadb:3306/orders');
+    expect(built.envVars?.MYSQL_URL).toBe('mysql://app:p@mariadb:3306/orders');
+    // 出现在脱敏后的公开 catalog(GET /api/infra/catalog 据此渲染选择器)
+    const pub = getInfraCatalogPublic().find((e) => e.id === 'mariadb');
+    expect(pub?.category).toBe('database');
+    expect(pub?.connectionEnvKeys).toEqual(expect.arrayContaining(['DATABASE_URL', 'MYSQL_URL']));
   });
 });
 

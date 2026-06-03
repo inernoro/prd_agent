@@ -1031,11 +1031,14 @@ function CreateInfraDialog({
         });
       } else {
         // 目录预设：走 applyInfraPresets（真随机密码 + 自动连接变量），不手填 change-me 占位。
-        serviceId = presetId;
-        await apiRequest(`/api/projects/${encodeURIComponent(projectId)}/infra-presets`, {
+        // 同类型已存在时后端会创建 postgres-2 等新实例并在 applied 里返回真实 id——必须用它,
+        // 否则"立即启动"会去启动已有的 postgres，新实例反而停着且不被选中。applied 为空(单例
+        // 预设重复添加被守卫跳过)时回退 presetId(选中已有的那个)。
+        const res = await apiRequest<{ applied?: string[] }>(`/api/projects/${encodeURIComponent(projectId)}/infra-presets`, {
           method: 'POST',
           body: { presetIds: [presetId] },
         });
+        serviceId = res.applied?.[0] || presetId;
       }
       if (startAfterCreate) {
         await apiRequest(`/api/infra/${encodeURIComponent(serviceId)}/start?project=${encodeURIComponent(projectId)}`, {
