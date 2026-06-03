@@ -116,18 +116,17 @@ export function InlineCommentOverlay({
       setMarks([]);
       return;
     }
-    // 分组：同一短语 + 同一前文上下文 的多条评论合并成一颗气泡（同一处的评论串）；
-    // 同一短语但出现位置不同（contextBefore 不同）则分到不同组、各自锚定，互不合并（Bugbot/Codex）。
-    // 全文评论不参与行内锚定。
+    // 同一短语的多条评论合并成一颗气泡（显示条数）；全文评论不参与行内锚定。
+    // 低风险版（用户定）：分组仍按 selectedText、不按出现位置拆分（key=text 唯一，无重复 React key）；
+    // 但锚定时用首条评论的 contextBefore 选「哪一次出现」，多处出现不再一律锚到首次（Bugbot/Codex）。
+    // 已知边界：同一短语在不同位置的多条评论仍合并到一颗气泡（留待完整版按出现位置拆分）。
     const groups = new Map<string, DocumentInlineComment[]>();
     for (const c of comments) {
       if (c.isWholeDocument || !c.selectedText) continue;
       const text = c.selectedText.replace(/\s+/g, ' ').trim();
       if (!text) continue;
-      const ctxKey = (c.contextBefore ?? '').replace(/\s+/g, ' ').trim().slice(-40);
-      const k = JSON.stringify([text, ctxKey]);
-      let g = groups.get(k);
-      if (!g) { g = []; groups.set(k, g); }
+      let g = groups.get(text);
+      if (!g) { g = []; groups.set(text, g); }
       g.push(c);
     }
     if (groups.size === 0) {
@@ -136,8 +135,7 @@ export function InlineCommentOverlay({
     }
     const oRect = overlay.getBoundingClientRect();
     const next: AnchorMark[] = [];
-    groups.forEach((list) => {
-      const text = list[0].selectedText.replace(/\s+/g, ' ').trim();
+    groups.forEach((list, text) => {
       const range = findTextRange(container, text, list[0].contextBefore ?? undefined);
       if (!range) return;
       const rectList = Array.from(range.getClientRects());
