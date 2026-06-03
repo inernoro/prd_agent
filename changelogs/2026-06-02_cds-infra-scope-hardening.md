@@ -7,4 +7,5 @@
 | fix | cds | 试运行/检测仓库(validate-runtime/detect-runtime)克隆复用 Device Flow token(_injectGithubTokenIfPossible),私有 GitHub 仓库在创建项目前也能跑检测/试运行;日志脱敏 token |
 | fix | cds | 后台任务(worker)BuildProfile 设 readinessProbe.noHttp,部署就绪探测跳过 HTTP 只 TCP 探活,避免活着的 worker 被 HTTP 探测超时误判失败 |
 | fix | cds | 创建项目时基建连接串覆盖用户粘贴的同名环境变量不再静默:收集被覆盖 key 回传前端(infraEnvOverrides)+ console.warn |
-| test | cds | 新增 infra-data-scope 测试(8 例,跨项目 403/owner 409/admin no-op)+ buildInfraDataExec mongo 库名/redis 密码 + 单例守卫/数据库多实例 + worker noHttp + customEnv 覆盖提示回归(共 +16 例) |
+| fix | cds | 数据备份端点解析也按 ?project= 精确定位(与 infra-data 一致):两项目同名 infra(如都叫 postgres)时,owner 用 ?project= 命中自己的库不再 403,admin 也不会误流/误恢复到别项目的库 |
+| test | cds | 新增 infra-data-scope 测试(11 例,跨项目 403/owner 409/admin no-op + 同名 infra ?project= 消歧)+ buildInfraDataExec mongo 库名/redis 密码 + 单例守卫/数据库多实例 + worker noHttp + customEnv 覆盖提示回归(共 +19 例) |

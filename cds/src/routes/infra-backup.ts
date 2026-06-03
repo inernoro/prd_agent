@@ -60,7 +60,13 @@ export function createInfraBackupRouter(deps: InfraBackupRouterDeps): Router {
     req: import('express').Request,
     res: import('express').Response,
   ): InfraService | null {
-    const svc = stateService.getInfraService(req.params.id);
+    // infra id 在多项目下并非全局唯一(两个项目都可能有 catalog 创建的 `postgres`)。带 ?project=
+    // 时按项目精确定位(与 infra-data 的 handle 一致),否则回退全局首个匹配。少了这一步,owner 用
+    // ?project=B 反而会被全局首个(属于 A 的)命中导致 403,admin 也可能误流/误恢复到别项目的库。
+    const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
+    const svc = projectFilter
+      ? (stateService.getInfraServicesForProject(projectFilter).find((s) => s.id === req.params.id) || null)
+      : stateService.getInfraService(req.params.id);
     if (!svc) {
       res.status(404).json({ error: `基础设施服务不存在: ${req.params.id}` });
       return null;

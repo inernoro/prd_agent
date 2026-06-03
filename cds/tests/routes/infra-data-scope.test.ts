@@ -153,4 +153,33 @@ describe('infra data/backup project-scope isolation', () => {
       expect(res.body.error).toBe('project_mismatch');
     });
   });
+
+  describe('same infra id across projects honors ?project= (backup route)', () => {
+    // Both projects own a service called "shared" (e.g. catalog-created `postgres`).
+    // proj-a's is seeded FIRST, so the global first-match lookup would return A's.
+    beforeEach(() => {
+      seedInfra('shared', 'proj-a');
+      seedInfra('shared', 'proj-b');
+    });
+
+    it('owner key + ?project=own resolves its OWN service (409 stopped), not the global first-match (would 403)', async () => {
+      const res = await request(server, 'GET', '/api/infra/shared/backup?project=proj-b', { 'X-Test-Key': KEY_B });
+      // With ?project= scoping: B's own "shared" → guard passes → 409 (stopped).
+      // Without it (global first-match → A's): assertProjectAccess(Bkey, proj-a) → 403.
+      expect(res.status).toBe(409);
+    });
+
+    it('still refuses a cross-project ?project= (B key cannot target proj-a)', async () => {
+      const res = await request(server, 'GET', '/api/infra/shared/backup?project=proj-a', { 'X-Test-Key': KEY_B });
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('project_mismatch');
+    });
+
+    it('admin + ?project= streams the requested project, not the global first-match', async () => {
+      // admin (no key) asking for proj-b's "shared" must resolve B's (409 stopped), proving
+      // the ?project= filter is honored rather than silently returning A's first-match.
+      const res = await request(server, 'GET', '/api/infra/shared/backup?project=proj-b', undefined);
+      expect(res.status).toBe(409);
+    });
+  });
 });
