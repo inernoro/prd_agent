@@ -117,7 +117,7 @@ function FieldControl({ field, value, onChange, productId }: { field: FormField;
     case 'file':
       return <FileField value={value} onChange={onChange} />;
     case 'relation':
-      return <RelationField value={value} onChange={onChange} entityType={field.relationEntityType} productId={productId} />;
+      return <RelationField value={value} onChange={onChange} entityType={field.relationEntityType || inferRelationTarget(field.label)} productId={productId} />;
     case 'user':
       return <UserSearchSelect value={value} onChange={onChange} />;
     case 'number':
@@ -316,6 +316,16 @@ function RichTextField({ value, onChange }: { value: string; onChange: (v: strin
 }
 
 // ════════════════════════ 对象关联字段 ════════════════════════
+/** 模板未显式配置关联目标时，从字段标签兜底推断（兼容旧模板）。 */
+function inferRelationTarget(label?: string): string | undefined {
+  if (!label) return undefined;
+  if (label.includes('客户')) return 'customer';
+  if (label.includes('功能')) return 'feature';
+  if (label.includes('需求')) return 'requirement';
+  if (label.includes('版本')) return 'version';
+  return undefined;
+}
+
 function RelationField({ value, onChange, entityType, productId }: { value: string; onChange: (v: string) => void; entityType?: string | null; productId: string | null }) {
   const [options, setOptions] = useState<{ id: string; label: string }[]>([]);
   const [loading, setLoading] = useState(false);
