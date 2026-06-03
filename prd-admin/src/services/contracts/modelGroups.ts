@@ -5,6 +5,7 @@ import type {
   CreateModelGroupRequest,
   UpdateModelGroupRequest,
   ModelGroupMonitoringData,
+  ModelGroupUsageApp,
   PoolPrediction,
 } from '../../types/modelGroup';
 
@@ -43,6 +44,16 @@ export interface IModelGroupsService {
    * 删除模型分组
    */
   deleteModelGroup(id: string): Promise<ApiResponse<{ id: string }>>;
+
+  /**
+   * 获取正在使用该分组的应用列表（删除受阻时展示）
+   */
+  getModelGroupUsage(id: string): Promise<ApiResponse<ModelGroupUsageApp[]>>;
+
+  /**
+   * 解绑应用对该分组的引用（不传 appIds 则解绑全部）
+   */
+  unbindModelGroup(id: string, appIds?: string[]): Promise<ApiResponse<{ groupId: string; unboundCount: number }>>;
 
   /**
    * 获取分组监控数据

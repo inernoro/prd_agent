@@ -5,6 +5,7 @@ import type {
   CreateModelGroupRequest,
   UpdateModelGroupRequest,
   ModelGroupMonitoringData,
+  ModelGroupUsageApp,
   PoolPrediction,
 } from '../../types/modelGroup';
 import type { IModelGroupsService } from '../contracts/modelGroups';
@@ -168,7 +169,42 @@ export class ModelGroupsService implements IModelGroupsService {
 
     const json = await readApiJson<{ id: string }>(res);
     if (!res.ok || !json.success) {
-      throw new Error(json.error?.message || `删除模型分组失败: ${res.status}`);
+      // 保留错误码（如 GROUP_IN_USE），让调用方能区分"被占用"与其他失败
+      const err = new Error(json.error?.message || `删除模型分组失败: ${res.status}`);
+      (err as Error & { code?: string }).code = json.error?.code;
+      throw err;
+    }
+    return json;
+  }
+
+  async getModelGroupUsage(id: string): Promise<ApiResponse<ModelGroupUsageApp[]>> {
+    const res = await fetch(api.mds.modelGroups.usage(id), {
+      headers: getAuthHeaders(),
+    });
+
+    const json = await readApiJson<ModelGroupUsageApp[]>(res);
+    if (!res.ok || !json.success) {
+      throw new Error(json.error?.message || `获取分组占用情况失败: ${res.status}`);
+    }
+    return { ...json, data: json.data ?? [] };
+  }
+
+  async unbindModelGroup(
+    id: string,
+    appIds?: string[]
+  ): Promise<ApiResponse<{ groupId: string; unboundCount: number }>> {
+    const res = await fetch(api.mds.modelGroups.unbind(id), {
+      method: 'POST',
+      headers: {
+        ...getAuthHeaders(),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ appIds: appIds ?? [] }),
+    });
+
+    const json = await readApiJson<{ groupId: string; unboundCount: number }>(res);
+    if (!res.ok || !json.success) {
+      throw new Error(json.error?.message || `解绑失败: ${res.status}`);
     }
     return json;
   }

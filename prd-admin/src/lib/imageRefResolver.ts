@@ -15,6 +15,7 @@ import type {
   ImageRefResolveResult,
   ResolvedImageRef,
 } from './imageRefContract';
+import { cleanDisplayTitle } from './visualAgentPromptUtils';
 
 /**
  * 旧格式内联图片的正则（兼容首页带入）
@@ -174,7 +175,9 @@ export function buildRequestText(
   }
 
   const lines = refs.map((ref) => {
-    return `- @img${ref.refId}: ${ref.label || '（无描述）'}`;
+    // 清洗 label：避免把上一代派生图的"拼接标题 / 引用块"再次注入本次 prompt，逐代累积
+    const cleanLabel = cleanDisplayTitle(ref.label || '', 80);
+    return `- @img${ref.refId}: ${cleanLabel || '（无描述）'}`;
   });
 
   const requestText = `${cleanText}\n\n【引用图片（按顺序）】\n${lines.join('\n')}`;

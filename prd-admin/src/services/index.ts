@@ -1275,6 +1275,8 @@ export const getModelGroups = async () => {
 export const createModelGroup = (data: Parameters<IModelGroupsService['createModelGroup']>[0]) => modelGroupsService.createModelGroup(data);
 export const updateModelGroup = (id: string, data: Parameters<IModelGroupsService['updateModelGroup']>[1]) => modelGroupsService.updateModelGroup(id, data);
 export const deleteModelGroup = (id: string) => modelGroupsService.deleteModelGroup(id);
+export const getModelGroupUsage = (id: string) => modelGroupsService.getModelGroupUsage(id);
+export const unbindModelGroup = (id: string, appIds?: string[]) => modelGroupsService.unbindModelGroup(id, appIds);
 export const getGroupMonitoring = async (groupId: string) => {
   const response = await modelGroupsService.getGroupMonitoring(groupId);
   if (response.success && response.data) {
