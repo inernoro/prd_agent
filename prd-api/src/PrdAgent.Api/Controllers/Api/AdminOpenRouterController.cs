@@ -43,12 +43,12 @@ public class AdminOpenRouterController : ControllerBase
             .ToListAsync(ct);
 
         var userIds = keys.Select(k => k.OwnerUserId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
-        var users = await _db.Users.Find(u => userIds.Contains(u.Id!)).ToListAsync(ct);
+        var users = await _db.Users.Find(u => userIds.Contains(u.UserId)).ToListAsync(ct);
         var userNameById = users
-            .Where(u => !string.IsNullOrWhiteSpace(u.Id))
+            .Where(u => !string.IsNullOrWhiteSpace(u.UserId))
             .ToDictionary(
-                u => u.Id!,
-                u => !string.IsNullOrWhiteSpace(u.Username) ? u.Username : (u.Email ?? u.Id!));
+                u => u.UserId,
+                u => !string.IsNullOrWhiteSpace(u.Username) ? u.Username : (u.Email ?? u.UserId));
 
         var result = new List<object>();
         foreach (var k in keys)
