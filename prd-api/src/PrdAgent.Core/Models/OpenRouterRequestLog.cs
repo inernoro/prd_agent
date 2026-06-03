@@ -71,5 +71,3 @@ public class OpenRouterRequestLog
     /// <summary>创建时间</summary>
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
-</content>
-</invoke>

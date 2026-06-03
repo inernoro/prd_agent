@@ -38,4 +38,3 @@ public class OpenRouterRegistrationTests
         Assert.Contains(ModelTypes.ImageGen, def!.ModelTypes);
     }
 }
-</content>
