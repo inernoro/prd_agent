@@ -156,6 +156,22 @@ export type ReprocessChatMessage = {
   createdAt: string;
 };
 
+/**
+ * 智能体抽屉 direct-chat 对话的后端持久化（关浏览器标签页/换设备都不丢）。
+ * messagesJson / pendingImagesJson / activeRefJson 为前端拥有形状的 JSON 字符串，后端不解析。
+ */
+export type DocumentStoreConversation = {
+  id: string;
+  userId: string;
+  sourceEntryId: string;
+  storeId: string;
+  messagesJson: string;
+  pendingImagesJson: string;
+  activeRefJson?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 /** 再加工模板定义 */
 export type ReprocessTemplate = {
   key: string;

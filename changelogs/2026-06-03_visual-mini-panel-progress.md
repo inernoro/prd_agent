@@ -2,3 +2,4 @@
 | feat | prd-admin | 视觉创作 mini 面板生成结果支持点击全屏放大(lightbox + ESC/点击关闭 + 原图/下载)，解决 640px 抽屉里图太小看不清 |
 | refactor | prd-admin | 视觉创作 mini 面板移除内嵌的千行水印编辑器(水印由视觉创作统一管理/服务端自动叠加)；模型/尺寸行在无可选项时整行隐藏(奥卡姆剃刀) |
 | refactor | prd-admin | 知识库文档「再加工」入口按钮(下拉菜单 + 工具栏)更名为「智能体」 |
+| feat | prd-api | 知识库智能体抽屉对话后端持久化:新增 document_store_conversations 集合 + GET/PUT/DELETE conversation 端点(按 userId+entryId upsert,不走 Run 规避旧"污染新会话"bug),修复关浏览器标签页对话全清空 |
