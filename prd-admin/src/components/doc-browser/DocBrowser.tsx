@@ -2023,16 +2023,15 @@ export function DocBrowser({
     setEditContent('');
   }, [loadedContentKey]);
 
-  // 自动选中主文档 + 展开其父文件夹链。每个主文档只自动选一次：
-  // 用户显式「返回列表」清空选中后不再自动重选（否则返回按钮被这条 effect 立刻打回，Codex P2）；
-  // 切换空间（primaryEntryId 变化）时允许对新主文档再自动选一次。
-  const autoSelectedPrimaryRef = useRef<string | null>(null);
+  // 自动选中主文档 + 展开其父文件夹链。每次进入空间只自动选一次：
+  // StoreDetailView 按 selectedStoreId 条件渲染 → 切空间会重挂 DocBrowser、本 ref 自然归零，对新空间仍会自动选；
+  // 显式「返回列表」清空选中后不再自动重选——即便此后该空间主文档 id 变化（新设 README）也不打回（Codex/Bugbot）。
+  const didAutoSelectRef = useRef(false);
   useEffect(() => {
-    const key = primaryEntryId ?? null;
-    if (autoSelectedPrimaryRef.current === key) return;                    // 本主文档已处理过 → 不再抢
-    if (selectedEntryId) { autoSelectedPrimaryRef.current = key; return; } // 已有选中（含深链）→ 标记已初始化、不覆盖
+    if (didAutoSelectRef.current) return;
+    if (selectedEntryId) { didAutoSelectRef.current = true; return; }      // 已有选中（含深链）→ 视为已初始化、不覆盖
     if (primaryEntryId && entries.some(e => e.id === primaryEntryId)) {
-      autoSelectedPrimaryRef.current = primaryEntryId;
+      didAutoSelectRef.current = true;
       onSelectEntry(primaryEntryId);
       const entryMap = new Map(entries.map(e => [e.id, e]));
       const toExpand = new Set<string>();
@@ -2785,6 +2784,8 @@ export function DocBrowser({
             </div>
             {/* 内容区 + 右侧本页章节导航（F1） */}
             <div className="flex-1 flex min-w-0 relative" style={{ minHeight: 0 }}>
+              {/* 内容列包裹：让进度条 absolute 限定在本列宽度内，不跨到右侧 TOC 列（Bugbot Low） */}
+              <div className="flex-1 min-w-0 relative flex flex-col" style={{ minHeight: 0 }}>
               {/* 阅读进度条（仅正文预览态）；切文档时按 key 重挂归零 */}
               {!editMode && !contentLoading && (
                 <ReadingProgressBar key={selectedEntryId} scrollRef={contentAreaRef} />
@@ -2851,6 +2852,7 @@ export function DocBrowser({
                     onOpenComment={() => setInlineCommentsOpen(true)}
                   />
                 )}
+              </div>
               </div>
               {/* F1：本页章节导航——仅文本类预览且非编辑态显示，无标题时组件自身返回 null */}
               {!contentLoading && !editMode && tocContent && (
