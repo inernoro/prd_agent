@@ -2437,7 +2437,7 @@ export function DocBrowser({
             >
             <TreeNode
               entry={item.entry}
-              childrenMap={search.trim() && searchResults !== null ? new Map() : (search.trim() ? filteredChildrenMap : childrenMap)}
+              childrenMap={search.trim() && searchResults !== null ? new Map() : (search.trim() || selectedTags.size > 0 ? filteredChildrenMap : childrenMap)}
               depth={0}
               selectedEntryId={selectedEntryId}
               primaryEntryId={primaryEntryId}
