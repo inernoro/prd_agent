@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Sparkles, X, BookOpen, Pin, PinOff, MapPin, EyeOff, ChevronLeft, ChevronRight, GraduationCap } from 'lucide-react';
+import { Sparkles, X, Pin, PinOff, MapPin, ChevronLeft, ChevronRight, GraduationCap } from 'lucide-react';
+import { OPEN_TIPS_DRAWER_EVENT } from './TipsEntryButton';
+import { matchPageGuide, isEditorPageGuide } from './pageGuideMatch';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { writeSpotlightPayload } from './TipsRotator';
 import { trackTip, dismissTipForever } from '@/services/real/dailyTips';
@@ -32,6 +34,11 @@ const AUTO_OPENED_IDS_KEY = 'tipsBookAutoOpenedIds';
  *  受 no-localStorage 规则约束走 sessionStorage,同 tab 内严格只弹一次;
  *  新 tab 同日仍会弹一次,这是 sessionStorage 的固有边界。 */
 const AUTO_OPEN_DATE_KEY = 'tipsBookAutoOpenedDate';
+/** 强制新手引导:本 session 已「自动开讲」过的本页教程(*-page-guide)sourceId 集合。
+ *  tips 已由后端过滤掉「已学会」的——还在 tips 里 = 用户没走完整套，进该页就自动开讲一次，
+ *  逼着人人都过一遍；本 session 内每条只自动开一次（避免切页反复弹），跨 session 未完成会再弹，
+ *  直到用户点「完成」走完最后一步（SpotlightOverlay 末步才 markLearned）。 */
+const AUTO_STARTED_GUIDES_KEY = 'tipsAutoStartedGuides';
 
 function todayStr(): string {
   const d = new Date();
@@ -58,10 +65,9 @@ function markAutoOpenedToday() {
 export const FLOATING_DOCK_COLLAPSED_KEY = 'floatingDockCollapsed';
 /** 折叠状态变更事件名(同 tab 内 storage 事件不触发,必须用 CustomEvent) */
 export const FLOATING_DOCK_EVENT = 'floating-dock-collapsed-changed';
-/** dock 总高度变更事件:TipsDrawer 在 mode 切换时广播,AppShell 通知卡据此动态定位避免重叠 */
+/** dock 总高度变更事件:TipsDrawer 在抽屉展开/收起时广播,AppShell 通知卡据此动态定位避免重叠 */
 export const FLOATING_DOCK_HEIGHT_EVENT = 'floating-dock-height-changed';
 const AUTO_COLLAPSE_MS = 5000;
-const EDGE_PEEK_ZONE = 140; // 右下角触发区域大小(px)
 
 function readAutoOpenedIds(): Set<string> {
   try {
@@ -82,8 +88,6 @@ function writeAutoOpenedIds(ids: Set<string>) {
   }
 }
 
-type Mode = 'collapsed' | 'expanded' | 'hidden' | 'edge-peek';
-
 export function TipsDrawer() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -99,7 +103,21 @@ export function TipsDrawer() {
     if (!loaded) load();
   }, [loaded, load]);
 
-  const tips = cardTips();
+  // 各页头部内嵌的 <TipsEntryButton/> 点击时派发 OPEN_TIPS_DRAWER_EVENT → 展开抽屉
+  useEffect(() => {
+    const onOpen = () => { void load({ force: true }); setExpanded(true); };
+    window.addEventListener(OPEN_TIPS_DRAWER_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_TIPS_DRAWER_EVENT, onOpen);
+  }, [load]);
+
+  // 编辑器教程(*-editor-page-guide)的锚点只在编辑器深层路由(/{agent}/:id、旧版 -fullscreen/)内存在。
+  // 不在对应编辑器路由时,把它从抽屉轮播里过滤掉 —— 否则用户手动翻页到它、点 CTA 会跳到列表页起一个
+  // 找不到 visual-editor-* 锚点的 tour,卡 10 秒超时(Codex P2)。在编辑器内则保留,供用户手动重开。
+  const tips = cardTips().filter((t) => {
+    if (!isEditorPageGuide(t.sourceId)) return true;
+    const url = t.actionUrl || '';
+    return location.pathname.startsWith(url + '/') || location.pathname.startsWith(url + '-fullscreen/');
+  });
   // 触发(重新)挂钩:items / dismissed 变化时列表应刷新
   void items;
   void dismissed;
@@ -160,36 +178,32 @@ export function TipsDrawer() {
     return () => window.removeEventListener(FLOATING_DOCK_EVENT, onDockChange);
   }, []);
 
-  // ── expanded / edge-peek / hover 临时状态 ────────────────────────
+  // ── expanded / 轮播 临时状态 ────────────────────────
   const [expanded, setExpanded] = useState<boolean>(false);
-  const [edgeHover, setEdgeHover] = useState<boolean>(false);
-  const [bookHover, setBookHover] = useState<boolean>(false);
   // 轮播索引(抽屉当前展示第几条 tip)
   const [carouselIndex, setCarouselIndex] = useState<number>(0);
 
-  // ── 悬浮组整体折叠(书 + 铃铛一起贴边) ───────────────────────
-  // 这个状态通过 sessionStorage 广播,AppShell 的 toast 按钮订阅同样的 key
-  // 实现「两个一起收」的效果。hiddenByUser 是其别名(键名兼容)。
-  //
-  // ★ 实际 sessionStorage 写入 + 事件 dispatch 由上面的 hiddenByUser useEffect
-  //   统一处理,这里只负责 setState;避免双重写入导致 AppShell 收到两次事件。
-  const setDockCollapsed = useCallback((collapsed: boolean) => {
-    setHiddenByUser(collapsed);
-  }, []);
+  // 注:右下角「教程小书」入口已删除(改为各页头部内嵌 TipsEntryButton),
+  // 本组件只剩「展开后的教程抽屉气泡」一种可见形态——展开 = 渲染抽屉,未展开 = 不渲染。
+  // 原先的 collapsed/hidden/edge-peek 状态机随小书一并移除;hiddenByUser 仅保留
+  // 用于与 AppShell 通知铃铛的「整组贴边」联动(铃铛自带 edge-peek + 召回,见 AppShell)。
 
-  // ── 当前最终模式 ─────────────────────────────────────
-  const mode: Mode = (() => {
-    if (expanded) return 'expanded';
-    if (pinned) return 'collapsed'; // pinned 时永远显示书
-    if (hiddenByUser) return edgeHover ? 'edge-peek' : 'hidden';
-    return 'collapsed';
-  })();
+  // 当前页是否有「未走完的本页教程」(tips 已过滤掉已学会的)。渲染级单一真值:
+  // 既供「强制自动开讲」用,也供下面两个抽屉自动展开 effect 做抑制判断——
+  // 不依赖 effect 声明顺序(否则抽屉先展开、晚一步才标记节流,会和 Spotlight 叠加,Bugbot Medium)。
+  // 用 store 稳定引用 items + dismissed(而非 cardTips() 每次新建的 tips 数组),memo 才真正能缓存(Bugbot)。
+  // 与 TipsEntryButton 共用 matchPageGuide,避免两份 inline 拷贝随规则漂移。
+  const pageGuideHere = useMemo(
+    () => matchPageGuide(items, dismissed, location.pathname),
+    [items, dismissed, location.pathname],
+  );
 
   // ── 推送自动展开:按 tip.id 记忆,每条定向 tip 本 session 只弹一次 ──
   // 轮询时如果管理员新推了一条,tips 里会多出一个 isTargeted 的新 id,它不在
   // 已弹过集合里 → 再自动弹一次。解决「session 第二条推送不弹」的坑。
   useEffect(() => {
     if (!loaded) return;
+    if (pageGuideHere) return; // 本页有未走完教程 → 由 Spotlight 自动开讲,不抢着展开抽屉(避免叠加)
     if (hasAutoOpenedToday()) return; // 每天只自动弹一次
     const opened = readAutoOpenedIds();
     const newTargeted = tips.find((t) => t.isTargeted && !opened.has(t.id));
@@ -204,8 +218,10 @@ export function TipsDrawer() {
       setHiddenByUser(false);
     }
     setExpanded(true);
+    // pageGuideHere 必须进 deps:否则首屏若落在「有教程页」early-return 后,
+    // 切到「无教程页」时本 effect 不再 fire,自动弹窗整 session 失效(Bugbot)。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, tips]);
+  }, [loaded, tips, pageGuideHere]);
 
   // ── 新用户兜底:本 session 第一次访问、有任意 tip 时自动弹一次 ──
   // 让用户第一次看到书时就知道它是做什么的(管理员没推送也能看到 seed 内容)
@@ -216,12 +232,35 @@ export function TipsDrawer() {
   // (bugbot ref1: 旧 flag 会在 targeted-tip 路径先触发时永远不被写入,跨日 remount 会让新用户路径误触发)
   useEffect(() => {
     if (!loaded) return;
+    if (pageGuideHere) return; // 本页有未走完教程 → 走 Spotlight 自动开讲,不展开抽屉(避免叠加)
     if (tips.length === 0) return;
     if (hasAutoOpenedToday()) return; // 每天只自动弹一次
     markAutoOpenedToday();
     setExpanded(true);
+    // pageGuideHere 必须进 deps:deps 仅在 tips 首次加载时翻一次,若那一刻当前页有教程被
+    // early-return,切到无教程页后本 effect 永不再 fire → 抽屉整 session 不再自动弹(Bugbot)。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, tips.length > 0]);
+  }, [loaded, tips.length > 0, pageGuideHere]);
+
+  // ── 强制新手引导:进入任意页面,若该页有「未走完」的本页教程(*-page-guide),自动开讲一次 ──
+  // 目标(用户 2026-06-02 强调):人人都过一次,避免「不知道怎么操作」;每个应用走自己的完整教程。
+  // 机制:tips 已被后端过滤掉「已学会」的——所以本页教程还在 tips 里 = 没走完 → 自动开讲。
+  //   只标 markLearned(末步「完成」)才算过,中途关闭不算,下次进该页(跨 session)会再弹。
+  //   本 session 每条只自动弹一次(sessionStorage 记忆),避免同 session 内切来切去反复打断。
+  useEffect(() => {
+    if (!loaded) return;
+    const guide = pageGuideHere;
+    if (!guide || !guide.sourceId) return;
+    let started: Set<string>;
+    try { started = new Set(JSON.parse(sessionStorage.getItem(AUTO_STARTED_GUIDES_KEY) || '[]')); }
+    catch { started = new Set(); }
+    if (started.has(guide.sourceId)) return;
+    started.add(guide.sourceId);
+    try { sessionStorage.setItem(AUTO_STARTED_GUIDES_KEY, JSON.stringify(Array.from(started))); } catch { /* noop */ }
+    // 两个抽屉自动展开 effect 已用 pageGuideHere 抑制,这里直接用 CTA 同款机制开讲
+    void trackTip(guide.id, 'clicked');
+    writeSpotlightPayload(guide);
+  }, [loaded, pageGuideHere]);
 
   // tips 变化时把轮播索引收敛到有效范围
   useEffect(() => {
@@ -232,18 +271,25 @@ export function TipsDrawer() {
     }
   }, [tips.length, carouselIndex]);
 
-  // 抽屉每次「打开」时随机选一条 tip,避免用户每次都看到同一条;
-  // 优先级:当前页面有匹配 actionUrl 的 tip → 选它(让用户在正确位置看到「这页有教程」);
-  // 否则随机。本次打开持续到下次重开。
+  // 抽屉每次「打开」时选一条 tip,避免用户每次都看到同一条;
+  // 优先级:当前页面有匹配的「本页教程」→ 选它(让用户在正确位置看到「这页有教程」);否则随机。
   const pageMatchedIndex = useMemo(() => {
     if (tips.length === 0) return -1;
+    // 先按 matchPageGuide 的编辑器感知规则定位本页教程:在 /visual-agent/:id 这类编辑器子路由
+    // 上,它只命中 *-editor-page-guide,不会误选同 actionUrl 前缀的列表教程(后者 CTA 会把用户
+    // 导离编辑器,Codex P2)。
+    const guide = matchPageGuide(tips, dismissed, location.pathname);
+    if (guide) {
+      const gi = tips.findIndex((t) => t.id === guide.id);
+      if (gi >= 0) return gi;
+    }
+    // 非教程类 tip 兜底:完整匹配 / 列表路由前缀匹配(/defect-agent 匹配 /defect-agent/123)
     return tips.findIndex((t) => {
       if (!t.actionUrl) return false;
-      // 完整匹配 / 路径前缀匹配(/defect-agent 匹配 /defect-agent/123)
       return location.pathname === t.actionUrl
         || location.pathname.startsWith(t.actionUrl + '/');
     });
-  }, [tips, location.pathname]);
+  }, [tips, dismissed, location.pathname]);
 
   const lastExpandedRef = useRef(false);
   useEffect(() => {
@@ -258,28 +304,12 @@ export function TipsDrawer() {
     lastExpandedRef.current = expanded;
   }, [expanded, pageMatchedIndex, tips.length]);
 
-  // ── dock 总高度广播:AppShell 通知卡据此动态定位,避免与书/drawer 重叠 ──
-  const drawerRef = useRef<HTMLDivElement>(null);
+  // ── dock 总高度广播:小书移除后底部不再有悬浮组,抽屉也改到右上角,dockBottom 恒为 20 ──
+  // 不再随 expanded 变化、也不需要 ResizeObserver(它过去测书的高度,现在恒定 20,纯属空转,Bugbot)。
+  // 只需在挂载时广播一次,把 AppShell 通知卡从书时代的默认底距(136)纠正到 20。
   useEffect(() => {
-    if (mode === 'expanded') return; // expanded 时由 ResizeObserver 处理
-    const dockBottom = mode === 'hidden' ? 20 : BOOK_BOTTOM + 48 + 8; // 20 或 136
-    window.dispatchEvent(new CustomEvent(FLOATING_DOCK_HEIGHT_EVENT, { detail: { dockBottom } }));
-  }, [mode]);
-  useEffect(() => {
-    if (mode !== 'expanded') return;
-    const el = drawerRef.current;
-    if (!el) return;
-    const dispatch = () => {
-      const h = el.getBoundingClientRect().height;
-      window.dispatchEvent(new CustomEvent(FLOATING_DOCK_HEIGHT_EVENT, {
-        detail: { dockBottom: BOOK_BOTTOM + 56 + h + 8 },
-      }));
-    };
-    dispatch();
-    const ro = new ResizeObserver(dispatch);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [mode]);
+    window.dispatchEvent(new CustomEvent(FLOATING_DOCK_HEIGHT_EVENT, { detail: { dockBottom: 20 } }));
+  }, []);
 
   // ── 自动收起:expanded 5s 内无 hover / 点击就 collapsed ──────
   const drawerHoveredRef = useRef(false);
@@ -292,25 +322,7 @@ export function TipsDrawer() {
     return () => window.clearTimeout(timer);
   }, [expanded]);
 
-  // ── 鼠标贴右下角触发 edge-peek ──────────────────────────
-  // 触发区域覆盖书的位置(右下 200px),hidden 时鼠标靠近就把书拉回来
-  useEffect(() => {
-    if (!hiddenByUser) {
-      setEdgeHover(false);
-      return;
-    }
-    const onMove = (e: MouseEvent) => {
-      const inZone =
-        window.innerWidth - e.clientX < EDGE_PEEK_ZONE &&
-        window.innerHeight - e.clientY < EDGE_PEEK_ZONE + 60;
-      setEdgeHover(inZone);
-    };
-    window.addEventListener('mousemove', onMove);
-    return () => window.removeEventListener('mousemove', onMove);
-  }, [hiddenByUser]);
-
   // ── 徽章计数 ────────────────────────────────────────
-  const badgeCount = tips.filter((t) => t.isTargeted).length || tips.length;
 
   // ── 上报 seen(轮播模式下只上报当前展示的那一条,减少一次性打 4-5 条 API 的负载)──
   const seenReportedRef = useRef<Set<string>>(new Set());
@@ -328,10 +340,25 @@ export function TipsDrawer() {
       writeSpotlightPayload(tip);
       // 抽屉故意保留打开,让用户边跟着 Spotlight 引导,边对照教程步骤 /
       // 决定点「不再提示」;不再像以前那样 setExpanded(false) 把引导面板秒关。
-      // 跳转后如果 5s 没 hover 抽屉,自动 collapse 的定时器会把它收起。
-      navigate(tip.actionUrl || '/');
+      const url = tip.actionUrl || '/';
+      // 编辑器教程(*-editor-page-guide)的锚点在编辑器深层路由内 → 已经在该 url 或其子路由
+      // (/{agent}/:id、旧版全屏 /{agent}-fullscreen/:id)时不 navigate,否则把用户从编辑器弹回列表页。
+      // 普通(列表页)教程的锚点只在列表页存在 → 即便当前停在编辑器子路由(轮播可能先选中同
+      // actionUrl 前缀的列表教程),也必须回到 actionUrl,否则 tour 在编辑器里找不到锚点,
+      // 卡在「目标未找到」(Codex P2)。
+      const isEditorGuide = isEditorPageGuide(tip.sourceId);
+      // 编辑器教程的锚点只在深层路由(/{agent}/:id、旧版 -fullscreen/)存在 —— 停在列表页(pathname === url)
+      // 不算「已在目标」,否则手动轮播到编辑器教程并在列表页点 CTA 会跳过导航、起一个找不到锚点的 tour(Bugbot)。
+      // 故编辑器教程只认深层前缀;普通列表教程才用精确匹配。
+      const alreadyAtTarget = isEditorGuide
+        ? (location.pathname.startsWith(url + '/')
+          || location.pathname.startsWith(url + '-fullscreen/'))
+        : location.pathname === url;
+      if (!alreadyAtTarget) {
+        navigate(url);
+      }
     },
-    [navigate],
+    [navigate, location.pathname],
   );
 
   const handleDismissTip = (tipId: string) => {
@@ -358,112 +385,10 @@ export function TipsDrawer() {
   // 小书「永远存在」:即使 tips 为空、也没 pinned,依然在右下角悬浮,
   // 保证用户随时能点进来看有什么教程。没有 tip 时点开会显示空状态。
 
-  // ── 视觉:书图标本体 ──────────────────────────────────
-  // AppShell 的通知铃铛在 bottom:20 right:20(48x48),所以书放在它正上方,
-  // 间距 12px,bottom = 20 + 48 + 12 = 80。hidden 时挪到右边缘只露书脊。
-  const BOOK_BOTTOM = 80;
-  const bookRight = mode === 'hidden' ? -20 : mode === 'edge-peek' ? 12 : 20;
-  const bookOpacity = mode === 'hidden' ? 0.6 : 1;
-
-  const bookBtn = (
-    <button
-      type="button"
-      onClick={() => {
-        // 任何打开动作都强制刷新一次,避免管理员刚推送但用户还在等 60s 轮询
-        void load({ force: true });
-        if (hiddenByUser) {
-          // 从 hidden 点击 → 取消 hidden(用户主动召回)
-          setDockCollapsed(false);
-          setExpanded(true);
-          return;
-        }
-        setExpanded((v) => !v);
-      }}
-      onMouseEnter={(e) => {
-        setBookHover(true);
-        e.currentTarget.style.transform = 'translateY(-2px)';
-        e.currentTarget.style.boxShadow =
-          '0 14px 36px -8px rgba(139,92,246,0.65), 0 0 0 1px rgba(255,255,255,0.08) inset';
-      }}
-      onMouseLeave={(e) => {
-        setBookHover(false);
-        e.currentTarget.style.transform = 'translateY(0)';
-        e.currentTarget.style.boxShadow =
-          '0 10px 30px -8px rgba(139,92,246,0.45), 0 0 0 1px rgba(255,255,255,0.06) inset, 0 1px 0 rgba(255,255,255,0.14) inset';
-      }}
-      title={tips.length === 0 ? '教程(暂无)' : `教程 (${badgeCount})`}
-      style={{
-        position: 'fixed',
-        bottom: BOOK_BOTTOM,
-        right: bookRight,
-        width: 48,
-        height: 48,
-        borderRadius: 999,
-        background:
-          'linear-gradient(135deg, rgba(168,85,247,0.30), rgba(99,102,241,0.22))',
-        border: '1px solid rgba(196,181,253,0.40)',
-        backdropFilter: 'blur(14px)',
-        WebkitBackdropFilter: 'blur(14px)',
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        cursor: 'pointer',
-        zIndex: 50,
-        color: '#f3e8ff',
-        opacity: bookOpacity,
-        boxShadow:
-          '0 10px 30px -8px rgba(139,92,246,0.45), 0 0 0 1px rgba(255,255,255,0.06) inset, 0 1px 0 rgba(255,255,255,0.14) inset',
-        transition:
-          'right 240ms cubic-bezier(.2,.8,.2,1), opacity 240ms ease-out, transform 180ms ease-out, box-shadow 180ms ease-out',
-      }}
-    >
-      <BookOpen
-        size={20}
-        strokeWidth={2.1}
-        style={{
-          filter: pageMatchedIndex >= 0
-            ? 'drop-shadow(0 0 10px rgba(244,63,94,0.85))'
-            : 'drop-shadow(0 0 6px rgba(196,181,253,0.6))',
-          animation: pageMatchedIndex >= 0 && !expanded ? 'tipsBookPulse 2s ease-in-out infinite' : undefined,
-        }}
-      />
-      <style>{`
-        @keyframes tipsBookPulse {
-          0%, 100% { transform: scale(1); }
-          50% { transform: scale(1.1); }
-        }
-      `}</style>
-      {badgeCount > 0 && (
-        <span
-          style={{
-            position: 'absolute',
-            top: -2,
-            right: -2,
-            minWidth: 18,
-            height: 18,
-            padding: '0 5px',
-            borderRadius: 999,
-            background: 'linear-gradient(135deg, #f43f5e, #a855f7)',
-            color: '#fff',
-            fontSize: 10,
-            fontWeight: 700,
-            lineHeight: '18px',
-            textAlign: 'center',
-            boxShadow:
-              '0 0 10px rgba(244,63,94,0.6), 0 0 0 2px rgba(15,16,20,0.95)',
-          }}
-        >
-          {badgeCount}
-        </span>
-      )}
-    </button>
-  );
-
   // ── 抽屉本体 ────────────────────────────────────────
   const drawer =
-    mode === 'expanded' ? (
+    expanded ? (
       <div
-        ref={drawerRef}
         onMouseEnter={() => {
           drawerHoveredRef.current = true;
         }}
@@ -472,17 +397,17 @@ export function TipsDrawer() {
         }}
         style={{
           position: 'fixed',
-          bottom: BOOK_BOTTOM + 56, // 小书上方 (80 + 48 + 8)
-          right: 20,
+          top: 56, // 头部教程入口下方(右上角)作为下拉气泡展开
+          right: 16,
           width: 360,
-          maxHeight: 'min(360px, calc(100vh - 180px))',
+          maxHeight: 'min(360px, calc(100vh - 120px))',
           borderRadius: 18,
           background:
             'linear-gradient(180deg, rgba(24,22,34,0.96), rgba(16,16,22,0.97))',
           border: '1px solid rgba(196,181,253,0.20)',
           backdropFilter: 'blur(22px) saturate(140%)',
           WebkitBackdropFilter: 'blur(22px) saturate(140%)',
-          zIndex: 51,
+          zIndex: 301,
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
@@ -732,54 +657,6 @@ export function TipsDrawer() {
       </div>
     ) : null;
 
-  // ── 悬浮组整体折叠把手 ──
-  // 书 hover 时左侧露出一个小按钮,点一下把整组(书 + 铃铛)收到边缘
-  const collapseHandle =
-    bookHover && !hiddenByUser && !pinned ? (
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          setExpanded(false);
-          setDockCollapsed(true);
-        }}
-        title="收起悬浮组(书 + 通知一起贴边)"
-        onMouseEnter={() => setBookHover(true)}
-        style={{
-          position: 'fixed',
-          bottom: BOOK_BOTTOM + 14,
-          right: 74,
-          width: 22,
-          height: 22,
-          borderRadius: 999,
-          background: 'rgba(15,16,20,0.92)',
-          border: '1px solid rgba(255,255,255,0.15)',
-          color: 'rgba(255,255,255,0.7)',
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          cursor: 'pointer',
-          zIndex: 52,
-          boxShadow: '0 4px 14px -4px rgba(0,0,0,0.5)',
-          animation: 'tipsHandleFade 160ms ease-out',
-        }}
-      >
-        <EyeOff size={11} />
-        <style>{`
-          @keyframes tipsHandleFade {
-            from { opacity: 0; transform: translateX(4px); }
-            to { opacity: 1; transform: translateX(0); }
-          }
-        `}</style>
-      </button>
-    ) : null;
-
-  return createPortal(
-    <>
-      {bookBtn}
-      {collapseHandle}
-      {drawer}
-    </>,
-    document.body,
-  );
+  // 入口已改为内嵌进各页头部的 <TipsEntryButton/>(不再悬浮);本组件只负责展开后的教程抽屉气泡。
+  return createPortal(drawer, document.body);
 }

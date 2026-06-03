@@ -73,8 +73,7 @@ import { GlobalDefectSubmitDialog, DefectSubmitButton } from '@/components/ui/Gl
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import { ChangelogBell } from '@/components/changelog/ChangelogBell';
 import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
-import { SpotlightOverlay } from '@/components/daily-tips/SpotlightOverlay';
-import { TipsDrawer, FLOATING_DOCK_COLLAPSED_KEY, FLOATING_DOCK_EVENT, FLOATING_DOCK_HEIGHT_EVENT } from '@/components/daily-tips/TipsDrawer';
+import { FLOATING_DOCK_COLLAPSED_KEY, FLOATING_DOCK_EVENT, FLOATING_DOCK_HEIGHT_EVENT } from '@/components/daily-tips/TipsDrawer';
 import { CommandPalette } from '@/components/command-palette/CommandPalette';
 import { getSidebarMenuItems } from '@/lib/adminMenuCatalog';
 
@@ -612,7 +611,7 @@ export default function AppShell() {
     >
       <SystemDialogHost />
       <GlobalDefectSubmitDialog />
-      {!suppressFloatingDock && <TipsDrawer />}
+      {/* TipsDrawer 已上移到 App 根挂载(全局唯一,跨路由不卸载),此处不再渲染 */}
       <CommandPalette />
       {/* 移动端顶栏已有 Bell 按钮，隐藏右下浮球避免和 MobileTabBar "+" 重叠 */}
       {!suppressFloatingDock && !isMobile && toastNotification && (
@@ -1648,12 +1647,7 @@ export default function AppShell() {
                   <Outlet />
                 </Suspense>
               </MobileSafeBoundary>
-              {/* 每日小贴士跳转后的 DOM 脉冲光圈 —— 单例,不用 key 绑 pathname。
-                  路由切换时 SpotlightOverlay 自己在 readAndStart() 里重置 state;
-                  保持单实例才能让 Play 按钮(写 sessionStorage → navigate)的
-                  payload 在 mount 周期里稳定地被消费(历史 key={pathname}
-                  导致路由切换时 overlay unmount 丢 state,Play 按钮失效)。 */}
-              <SpotlightOverlay />
+              {/* SpotlightOverlay 已上移到 App 根挂载(全局唯一,跨任意路由不卸载),此处不再渲染 */}
             </div>
           </div>
         </main>

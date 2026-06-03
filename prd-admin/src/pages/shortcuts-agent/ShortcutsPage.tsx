@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Dialog } from '@/components/ui/Dialog';
+import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import {
   listShortcuts,
   createShortcut,
@@ -88,17 +89,20 @@ export default function ShortcutsPage() {
             创建快捷指令，自动收藏 + 绑定工作流/智能体，扫码安装到 iPhone
           </p>
         </div>
-        <button
-          onClick={() => setShowCreate(true)}
-          style={{
-            display: 'flex', alignItems: 'center', gap: 6,
-            padding: '8px 16px', borderRadius: 10,
-            background: 'var(--accent)', color: '#fff',
-            border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600,
-          }}
-        >
-          <Plus size={16} /> 创建
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <TipsEntryButton compact />
+          <button
+            onClick={() => setShowCreate(true)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '8px 16px', borderRadius: 10,
+              background: 'var(--accent)', color: '#fff',
+              border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600,
+            }}
+          >
+            <Plus size={16} /> 创建
+          </button>
+        </div>
       </div>
 
       {/* iCloud 模板配置 */}

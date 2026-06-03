@@ -765,6 +765,7 @@ export default function WebPagesPage() {
           <div data-tour-id="webpages-header-actions" className="flex items-center gap-1.5">
             <button
               type="button"
+              data-tour-id="webpages-stats-btn"
               onClick={() => setShowAnalytics(true)}
               title="分享统计（PV/IP/时间线）"
               aria-label="分享统计"
@@ -775,6 +776,7 @@ export default function WebPagesPage() {
             </button>
             <button
               type="button"
+              data-tour-id="webpages-share-mgmt-btn"
               onClick={() => { setShareTargetId(null); setShowSharesPanel(true); }}
               title="分享管理"
               aria-label="分享管理"
@@ -785,7 +787,7 @@ export default function WebPagesPage() {
             </button>
             <span className="mx-1 h-5 w-px" style={{ background: 'var(--border-default)' }} />
             {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
-              <Button size="sm" variant="primary" onClick={openCreateUploadDialog}>
+              <Button data-tour-id="webpages-upload-primary" size="sm" variant="primary" onClick={openCreateUploadDialog}>
                 <Upload size={14} className="mr-1" /> 上传站点
               </Button>
             )}

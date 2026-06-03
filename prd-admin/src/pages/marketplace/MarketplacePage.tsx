@@ -31,6 +31,7 @@ import { SkillUploadDialog } from './SkillUploadDialog';
 import { SkillOpenApiDialog } from './SkillOpenApiDialog';
 import { useAuthStore } from '@/stores/authStore';
 import type { MarketplaceSkillDto } from '@/services/contracts/marketplaceSkills';
+import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 
 type SortMode = 'hot' | 'new';
 
@@ -177,7 +178,7 @@ export const MarketplacePage: React.FC = () => {
               </button>
               <div className="marketplace-title-mark">
                 <Store size={18} className="text-token-primary" />
-                <h1 className="marketplace-page-title">海鲜市场</h1>
+                <h1 data-tour-id="marketplace-page-title" className="marketplace-page-title">海鲜市场</h1>
               </div>
               {sourceApp && (
                 <span className="marketplace-source-badge">来自 {sourceApp}</span>
@@ -185,7 +186,8 @@ export const MarketplacePage: React.FC = () => {
             </div>
 
             <div className="marketplace-toolbar-actions">
-              <div className="marketplace-search">
+              <TipsEntryButton compact />
+              <div data-tour-id="marketplace-search" className="marketplace-search">
                 <div className="relative">
                   <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
                   <input
@@ -198,7 +200,7 @@ export const MarketplacePage: React.FC = () => {
                 </div>
               </div>
 
-              <div className="marketplace-sort-group">
+              <div data-tour-id="marketplace-sort" className="marketplace-sort-group">
                 <button
                   type="button"
                   onClick={() => setSortBy('hot')}
@@ -320,7 +322,7 @@ export const MarketplacePage: React.FC = () => {
       )}
 
       {/* ── 卡片内容区 ── */}
-      <div className="relative pt-4 pb-6 px-4">
+      <div data-tour-id="marketplace-list" className="relative pt-4 pb-6 px-4">
         {loading ? (
           <MapSectionLoader />
         ) : filtered.length === 0 ? (

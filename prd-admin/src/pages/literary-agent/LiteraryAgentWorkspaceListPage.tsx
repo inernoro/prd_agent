@@ -664,6 +664,7 @@ export default function LiteraryAgentWorkspaceListPage() {
 
   const viewModeToggle = (
     <div
+      data-tour-id="literary-view-toggle"
       className="flex items-center rounded-lg overflow-hidden"
       style={{
         background: 'rgba(255,255,255,0.04)',
@@ -672,6 +673,7 @@ export default function LiteraryAgentWorkspaceListPage() {
     >
       <button
         type="button"
+        data-tour-id="literary-time-view"
         className={cn(
           'flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium transition-all duration-200',
         )}
@@ -686,6 +688,7 @@ export default function LiteraryAgentWorkspaceListPage() {
       </button>
       <button
         type="button"
+        data-tour-id="literary-folder-view"
         className={cn(
           'flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium transition-all duration-200',
         )}
@@ -703,6 +706,7 @@ export default function LiteraryAgentWorkspaceListPage() {
 
   return (
     <div
+      data-tour-id="literary-root"
       className="h-full min-h-0 flex flex-col gap-5"
       onContextMenu={handleContainerContextMenu}
     >
@@ -714,10 +718,10 @@ export default function LiteraryAgentWorkspaceListPage() {
         actions={
           <>
             {viewModeToggle}
-            <Button variant="secondary" size="sm" onClick={() => void onCreateFolder()} disabled={loading}>
+            <Button data-tour-id="literary-create-folder" variant="secondary" size="sm" onClick={() => void onCreateFolder()} disabled={loading}>
               <FolderPlus size={14} />
             </Button>
-            <Button variant="primary" size="sm" onClick={() => void onCreate()} disabled={loading}>
+            <Button data-tour-id="literary-create" variant="primary" size="sm" onClick={() => void onCreate()} disabled={loading}>
               <Plus size={14} />
               新建
             </Button>
@@ -731,7 +735,7 @@ export default function LiteraryAgentWorkspaceListPage() {
         </GlassCard>
       )}
 
-      <div className="flex-1 min-h-0 overflow-auto" ref={gridRef}>
+      <div data-tour-id="literary-content" className="flex-1 min-h-0 overflow-auto" ref={gridRef}>
         {loading ? (
           <div
             className="grid gap-4"
@@ -754,7 +758,7 @@ export default function LiteraryAgentWorkspaceListPage() {
           </div>
         ) : items.length === 0 ? (
           <GlassCard animated glow className="py-6 px-3">
-            <div className="text-center">
+            <div data-tour-id="literary-empty" className="text-center">
               <FileText size={36} className="mx-auto mb-2" style={{ color: 'var(--text-muted)', opacity: 0.5 }} />
               <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
                 暂无文章，右键可创建文件夹或文章。

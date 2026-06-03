@@ -8,6 +8,7 @@ import { listPmProjects, deletePmProject } from '@/services';
 import type { PmProject, PmProjectScope } from '@/services/contracts/pmAgent';
 import { CreateProjectDialog } from './CreateProjectDialog';
 import { ProjectDetailView } from './ProjectDetailView';
+import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import { DashboardView } from './DashboardView';
 import { AuditLogView } from './AuditLogView';
 import { PROJECT_TYPE_REGISTRY, LIFECYCLE_REGISTRY, GRADE_REGISTRY } from './pmConstants';
@@ -86,6 +87,7 @@ export function PmAgentPage() {
           <h1 className="text-[18px] font-semibold" style={{ color: 'var(--text-primary)' }}>项目管理</h1>
           <p className="text-[12px]" style={{ color: 'var(--text-muted)' }}>立项 → 目标 → 里程碑 / 任务 → 推进 → 结案</p>
         </div>
+        <TipsEntryButton compact />
         <button onClick={toggleGuide} className="flex items-center gap-1 text-[12px] px-2 py-1 rounded hover:opacity-70" style={{ color: 'var(--text-muted)' }} title="使用说明">
           <Lightbulb size={14} />说明{guideOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
         </button>

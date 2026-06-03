@@ -703,6 +703,7 @@ export function WorkflowListPage() {
         actions={
           <div className="flex items-center gap-2">
             <Button
+              data-tour-id="workflow-from-template-btn"
               variant="ghost"
               size="xs"
               onClick={() => setTemplateOpen(true)}
@@ -721,6 +722,7 @@ export function WorkflowListPage() {
               {creatingTest ? '创建中' : '创建全套测试'}
             </Button>
             <Button
+              data-tour-id="workflow-create-btn"
               variant="primary"
               size="xs"
               onClick={handleCreate}
@@ -732,7 +734,7 @@ export function WorkflowListPage() {
         }
       />
 
-      <div className="pb-6 w-full">
+      <div data-tour-id="workflow-list" className="pb-6 w-full">
 
         {/* 加载态 */}
         {loading && <MapSectionLoader text="加载中..." />}
