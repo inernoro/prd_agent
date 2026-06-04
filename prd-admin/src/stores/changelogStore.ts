@@ -75,6 +75,12 @@ export function selectRecentEntries(
   return flat;
 }
 
+// 冷加载在途时被守卫挡掉的重读请求（如 SSE update 在初次冷加载期间到达）记一个 pending，
+// 待在途请求结束后补跑一次 force=false 的后台重读，避免页面停在「冷加载启动时拿到的旧快照」
+// （Codex P2：store-backed tab 也要 queue SSE reload，与 GitHub 日志的 trailing-edge 对称）。
+let pendingCurrentWeekReload = false;
+let pendingReleasesReload = false;
+
 export const useChangelogStore = create<ChangelogState>()(
   persist(
     (set, get) => ({
@@ -89,7 +95,11 @@ export const useChangelogStore = create<ChangelogState>()(
       //（不翻 loadingCurrent，避免每次打开都闪 loading）；无缓存时才显示 loading。
       loadCurrentWeek: async (force?: boolean) => {
         const { loadingCurrent, currentWeek } = get();
-        if (loadingCurrent) return; // 冷加载去重（多个组件并发触发时）
+        if (loadingCurrent) {
+          // 冷加载在途：不丢弃，记 pending，待结束补跑（拿到 SSE push 后的最新存量）
+          pendingCurrentWeekReload = true;
+          return;
+        }
         const hasCache = currentWeek != null;
         if (!hasCache) set({ loadingCurrent: true, error: null });
         // force 透传到后端：force=true 会绕过后端 IMemoryCache，从 local/GitHub 重新拉取
@@ -101,11 +111,19 @@ export const useChangelogStore = create<ChangelogState>()(
         } else {
           set({ loadingCurrent: false }); // 后台刷新失败：保留旧数据，不打扰
         }
+        // trailing-edge：在途期间被合并掉的重读补跑一次（force=false 读存量，此时已是最新快照）
+        if (pendingCurrentWeekReload) {
+          pendingCurrentWeekReload = false;
+          void get().loadCurrentWeek(false);
+        }
       },
 
       loadReleases: async (limit = 20, force?: boolean) => {
         const { loadingReleases, releases } = get();
-        if (loadingReleases) return;
+        if (loadingReleases) {
+          pendingReleasesReload = true;
+          return;
+        }
         const hasCache = releases != null;
         if (!hasCache) set({ loadingReleases: true, error: null });
         const res = await getChangelogReleases(limit, force === true);
@@ -115,6 +133,10 @@ export const useChangelogStore = create<ChangelogState>()(
           set({ loadingReleases: false, error: res.error?.message || '加载历史发布失败' });
         } else {
           set({ loadingReleases: false }); // 后台刷新失败：保留旧数据
+        }
+        if (pendingReleasesReload) {
+          pendingReleasesReload = false;
+          void get().loadReleases(limit, false);
         }
       },
 
