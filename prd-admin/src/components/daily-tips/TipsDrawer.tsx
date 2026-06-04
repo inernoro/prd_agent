@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Sparkles, X, Pin, PinOff, MapPin, ChevronLeft, ChevronRight, GraduationCap } from 'lucide-react';
 import { OPEN_TIPS_DRAWER_EVENT } from './TipsEntryButton';
-import { matchPageGuide, isEditorPageGuide, routeMatchesActionUrl } from './pageGuideMatch';
+import { matchPageGuide, isEditorPageGuide, routeMatchesActionUrl, actionUrlPath } from './pageGuideMatch';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { writeSpotlightPayload } from './TipsRotator';
 import { trackTip, dismissTipForever } from '@/services/real/dailyTips';
@@ -354,21 +354,27 @@ export function TipsDrawer() {
       // 抽屉故意保留打开,让用户边跟着 Spotlight 引导,边对照教程步骤 /
       // 决定点「不再提示」;不再像以前那样 setExpanded(false) 把引导面板秒关。
       const url = tip.actionUrl || '/';
-      // 编辑器教程(*-editor-page-guide)的锚点在编辑器深层路由内 → 已经在该 url 或其子路由
-      // (/{agent}/:id、旧版全屏 /{agent}-fullscreen/:id)时不 navigate,否则把用户从编辑器弹回列表页。
-      // 普通(列表页)教程的锚点只在列表页存在 → 即便当前停在编辑器子路由(轮播可能先选中同
-      // actionUrl 前缀的列表教程),也必须回到 actionUrl,否则 tour 在编辑器里找不到锚点,
-      // 卡在「目标未找到」(Codex P2)。
-      // 「是否已在目标页」走 routeMatchesActionUrl(strip query/hash + 编辑器深层前缀感知),与
-      // matchPageGuide / tips 过滤 / pageMatchedIndex 同口径——否则带 query 的编辑器教程会因全串
-      // startsWith 不命中而误判「不在目标」,把用户从编辑器会话导走(Bugbot High「CTA navigation ignores query strip」)。
-      // navigate 仍用完整 url(含 query),保证目标页拿到自己的 query 参数。
-      const alreadyAtTarget = routeMatchesActionUrl(location.pathname, url, isEditorPageGuide(tip.sourceId));
+      const isEditorGuide = isEditorPageGuide(tip.sourceId);
+      const targetPath = actionUrlPath(url);
+      // url 带 query/hash = 目标 query 是「目标状态」的一部分(如 /settings?tab=nav-order 必须切到该 tab,
+      // 锚点才挂载)。注意:这与「页面匹配」相反——页面匹配 strip query(判断 tip 属于哪个页面),
+      // 但 CTA 导航必须保留 query(否则停在 /settings?tab=user-space 会被当作已到目标、不切 tab,tour 超时,Codex P2)。
+      const targetHasState = url.length > targetPath.length;
+      // 是否「已在目标」:
+      // - 编辑器教程:在深层路由(/{agent}/:id、旧版 -fullscreen/)即视为已到,query 无关(锚点只看深层路由)。
+      // - 普通页 + tip 指定了 query/hash:必须 pathname+search+hash 完全一致,否则要 navigate 切到目标 query。
+      // - 普通页 + tip 未指定 query:pathname 命中即可,不强行抹掉用户当前 query(不打扰)。
+      const currentFull = location.pathname + location.search + location.hash;
+      const alreadyAtTarget = isEditorGuide
+        ? routeMatchesActionUrl(location.pathname, url, true)
+        : targetHasState
+          ? currentFull === url
+          : location.pathname === targetPath;
       if (!alreadyAtTarget) {
-        navigate(url);
+        navigate(url); // navigate 用完整 url(含 query/hash),把用户带到目标状态
       }
     },
-    [navigate, location.pathname],
+    [navigate, location.pathname, location.search, location.hash],
   );
 
   const handleDismissTip = (tipId: string) => {

@@ -10,3 +10,4 @@
 | fix | prd-admin | 教程抽屉 editor 分支也 strip query/hash:与 matchPageGuide/非 editor 分支统一口径,防带 query 的编辑器教程出现「Spotlight 触发但抽屉看不到」漂移(Bugbot) |
 | fix | prd-admin | 抽取 routeMatchesActionUrl 统一路由比对(strip query/hash):matchPageGuide/tips 过滤/pageMatchedIndex/handleOpenTip 全走同一实现,根治带 query 的 actionUrl 在轮播选中/CTA 导航/抽屉显示间的连环漂移(Bugbot),并加单测锁定 |
 | fix | prd-admin | 教程抽屉页面过滤不再用 isTargeted 豁免:后端 isTargeted 会被 Track 的 Delivery 污染(看过即变 true),改以 isPageBound 为唯一判据,防止看过的全局本页教程泄漏到其他页起空锚点 tour(Codex P2) |
+| fix | prd-admin | 教程 CTA 导航保留 query 作为目标状态:页面匹配 strip query,但 handleOpenTip 对带 query 的 actionUrl(如 /settings?tab=nav-order)要求 pathname+query 完全一致才算已到,否则 navigate 切到目标 tab,修复同 pathname 不同 tab 时 tour 超时(Codex P2) |
