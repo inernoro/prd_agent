@@ -56,6 +56,17 @@
 - **成本/额度账本**：只有 token 计数，无 credits / `usage.cost` / 计费对账。商用前补。
 - **单次生成回查 `/v1/generation?id=`**：日志已存大部分字段，缺独立查询端点。
 - **embeddings 端点**：`/v1/embeddings` 返 404（无 embedding 模型池验证）。
+- **鉴权/scope 错误体非 OpenAI 形状（Bugbot PR#732 Med）**：`[Authorize(ApiKey)]` 的 401 与
+  `[RequireScope]` 的 403 走内部 `ApiResponse` 信封，其余错误走 OpenAI `{error:{message,type,code}}`。
+  OpenAI SDK 客户端遇到鉴权/scope 失败会拿到非预期错误体。**完整修法**需改共享鉴权基础设施
+  （自定义 ApiKey challenge + 给 open-api 路由套错误体重写中间件/过滤器，或不用共享 `[RequireScope]` 改 inline），
+  `[RequireScope]` 被 marketplace 等其他控制器复用且依赖内部信封，单独排期。当前错误仍被正确拒绝，仅信封形状不同。
+- **/v1/images/generations 仅支持 OpenAI 兼容图片池（Codex PR#732 P2）**：原始 body 经
+  `SendRawWithResolutionAsync` 直发，只注入 model，不走 `IImageGenPlatformAdapter.BuildGenerationRequest`
+  的 schema 转换（OpenAIImageClient 才走）。若 Key 绑定到原生供应商图片池（Google/Volces 等非 OpenAI schema），
+  prompt/size 请求会以错误 schema 打原生端点而失败。**修法**：图片端点改走 image-gen 适配器/客户端路径，
+  或显式限制只接受 OpenAI 兼容图片池。当前默认 image 池（gpt-image-2-all）OpenAI 兼容、工作正常；
+  原生池为已知边界，属 image-gen 适配器架构改动，单独排期。
 - **图片端点真实出图未端到端验**：只验路由/鉴权；图片无 token/成本计。
 - **日志无 TTL**：`open_api_request_logs` 含 IP/UA，无自动过期（按 no-auto-index 规则由 DBA 建 TTL 索引）。
 - **MaxInputChars 全局常量**：未做按 Key 可配。统计已含 messages 文本/多模态图片/prompt/tools+functions schema，
