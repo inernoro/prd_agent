@@ -97,6 +97,24 @@ public class DocumentStoreSyncController : ControllerBase
         return p.OwnerId == userId || p.LeaderId == userId || p.MemberIds.Contains(userId);
     }
 
+    /// <summary>本地配对是否为"库对级共享配对"——任何能写两侧库的人都可管理。</summary>
+    private async Task<bool> CanManageLocalLinkAsync(DocumentStoreSyncLink link, string userId)
+        => link.LinkType == DocumentSyncLinkType.Local
+            && (await LoadWritableStoreAsync(link.LocalStoreId, userId)).error == null
+            && (await LoadWritableStoreAsync(link.RemoteStoreId, userId)).error == null;
+
+    /// <summary>
+    /// 加载一条当前用户【可管理】的配对：owner 永远可；本地同环境配对额外放行"能写两侧库"的任何人
+    /// （库对级共享配对，用户拍板）。跨环境配对仍按 owner 隔离。无权返回 null。
+    /// </summary>
+    private async Task<DocumentStoreSyncLink?> LoadManageableLinkAsync(string linkId, string userId)
+    {
+        var link = await _db.DocumentStoreSyncLinks.Find(l => l.Id == linkId).FirstOrDefaultAsync();
+        if (link == null) return null;
+        if (link.OwnerId == userId) return link;
+        return await CanManageLocalLinkAsync(link, userId) ? link : null;
+    }
+
     // ─────────────────────────────────────────────────────────────
     // 同步引擎（buildBundle / applyBundle / signature）
     // ─────────────────────────────────────────────────────────────
@@ -456,10 +474,12 @@ public class DocumentStoreSyncController : ControllerBase
 
         // 既匹配「本库作为发起方(LocalStoreId)」的配对，也匹配「本库作为本地配对的对端(RemoteStoreId)」的配对，
         // 这样本地两库配对的【目标库】详情右上角也能显示同步徽章（用户要求：任何同步中的库都标）。
+        // 本地配对是库对级共享：本库的本地配对对任何能写本库的人可见（上面已校验可写）；
+        // 跨环境配对仍按 owner 隔离。
         var links = await _db.DocumentStoreSyncLinks
-            .Find(l => l.OwnerId == userId
-                && (l.LocalStoreId == storeId
-                    || (l.LinkType == DocumentSyncLinkType.Local && l.RemoteStoreId == storeId)))
+            .Find(l => (l.LocalStoreId == storeId
+                    || (l.LinkType == DocumentSyncLinkType.Local && l.RemoteStoreId == storeId))
+                && (l.LinkType == DocumentSyncLinkType.Local || l.OwnerId == userId))
             .SortByDescending(l => l.UpdatedAt)
             .ToListAsync();
 
@@ -492,10 +512,18 @@ public class DocumentStoreSyncController : ControllerBase
     public async Task<IActionResult> ListAllLinks()
     {
         var userId = GetUserId();
-        var links = await _db.DocumentStoreSyncLinks
+        // 自己拥有的全部配对 + 库对级共享的本地配对（能写两侧库的就该看到并能管理）。
+        var owned = await _db.DocumentStoreSyncLinks
             .Find(l => l.OwnerId == userId)
             .SortByDescending(l => l.UpdatedAt)
             .ToListAsync();
+        var sharedLocal = await _db.DocumentStoreSyncLinks
+            .Find(l => l.LinkType == DocumentSyncLinkType.Local && l.OwnerId != userId)
+            .SortByDescending(l => l.UpdatedAt)
+            .ToListAsync();
+        var links = new List<DocumentStoreSyncLink>(owned);
+        foreach (var l in sharedLocal)
+            if (await CanManageLocalLinkAsync(l, userId)) links.Add(l);
 
         var localIds = links.Select(l => l.LocalStoreId).Distinct().ToList();
         var localStores = await _db.DocumentStores.Find(s => localIds.Contains(s.Id)).ToListAsync();
@@ -534,15 +562,16 @@ public class DocumentStoreSyncController : ControllerBase
         var (remote, e2) = await LoadWritableStoreAsync(request.TargetStoreId, userId);
         if (e2 != null) return e2;
 
-        // 去重：同一对本地库不论 A→B 还是 B→A 都视为已配对（避免两条反向重复行各跑全量同步）。
+        // 去重：库对级共享配对（用户拍板）——同一对本地库全局只允许一条配对，不分谁建、不分方向。
+        // 不再按 OwnerId 过滤，避免两个能写这两个库的同事各建一条造成并行配对、重复全量、各看各的状态。
         var tgt = request.TargetStoreId;
         var existing = await _db.DocumentStoreSyncLinks
-            .Find(l => l.OwnerId == userId && l.LinkType == DocumentSyncLinkType.Local
+            .Find(l => l.LinkType == DocumentSyncLinkType.Local
                 && ((l.LocalStoreId == storeId && l.RemoteStoreId == tgt)
                     || (l.LocalStoreId == tgt && l.RemoteStoreId == storeId)))
             .FirstOrDefaultAsync();
         if (existing != null)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.DUPLICATE, "这两个库已配对（含反向）"));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.DUPLICATE, "这两个库已配对（含反向，库对级共享）"));
 
         var link = new DocumentStoreSyncLink
         {
@@ -620,8 +649,11 @@ public class DocumentStoreSyncController : ControllerBase
         if (payload == null || string.IsNullOrWhiteSpace(payload.BaseUrl)
             || string.IsNullOrWhiteSpace(payload.StoreId) || string.IsNullOrWhiteSpace(payload.Token))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "连接链接缺少必要信息"));
-        // 自连禁止：粘贴本库自己的连接链接 = 把库同步给自己（还会 HTTP 回环），直接拦下给明确错误。
-        if (payload.StoreId == storeId)
+        // 自连禁止：仅拦"真·自连"——同一环境(host 相同) + 同一库 Id。
+        // 跨环境克隆/导入常保留同一 store Id（test↔prod 同一个库），那是合法主场景，不能只凭 Id 相同就拦。
+        var sameEnv = Uri.TryCreate(payload.BaseUrl.TrimEnd('/'), UriKind.Absolute, out var pbUri)
+            && string.Equals(pbUri.Host, Request.Host.Host, StringComparison.OrdinalIgnoreCase);
+        if (payload.StoreId == storeId && sameEnv)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不能连接知识库自己，请粘贴另一个库的连接链接"));
 
         var direction = DocumentSyncDirection.IsValid(request.Direction) ? request.Direction! : DocumentSyncDirection.Both;
@@ -665,7 +697,7 @@ public class DocumentStoreSyncController : ControllerBase
     public async Task<IActionResult> RunSync(string linkId)
     {
         var userId = GetUserId();
-        var link = await _db.DocumentStoreSyncLinks.Find(l => l.Id == linkId && l.OwnerId == userId).FirstOrDefaultAsync();
+        var link = await LoadManageableLinkAsync(linkId, userId);
         if (link == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "同步配对不存在"));
         var (local, error) = await LoadWritableStoreAsync(link.LocalStoreId, userId);
@@ -804,7 +836,7 @@ public class DocumentStoreSyncController : ControllerBase
     public async Task<IActionResult> UpdateLink(string linkId, [FromBody] UpdateLinkRequest request)
     {
         var userId = GetUserId();
-        var link = await _db.DocumentStoreSyncLinks.Find(l => l.Id == linkId && l.OwnerId == userId).FirstOrDefaultAsync();
+        var link = await LoadManageableLinkAsync(linkId, userId);
         if (link == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "同步配对不存在"));
         if (!DocumentSyncDirection.IsValid(request?.Direction))
@@ -834,7 +866,7 @@ public class DocumentStoreSyncController : ControllerBase
     public async Task<IActionResult> DeleteLink(string linkId)
     {
         var userId = GetUserId();
-        var link = await _db.DocumentStoreSyncLinks.Find(l => l.Id == linkId && l.OwnerId == userId).FirstOrDefaultAsync();
+        var link = await LoadManageableLinkAsync(linkId, userId);
         if (link == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "同步配对不存在"));
 
@@ -975,10 +1007,11 @@ public class DocumentStoreSyncController : ControllerBase
             DocumentSyncDirection.Pull => remoteChanged,
             _ => localChanged || remoteChanged,
         };
-        // error 不再无脑置顶屏蔽漂移：一旦任一相关侧有新改动，改判 pending 提示"重试可同步新内容"
-        // （Bugbot: error status hides pending changes）；无新改动才维持 error。
+        // 已落库的 error 保持 error（直到一次成功同步把它清成 synced）：失败后即便有新漂移也应显示「同步出错」
+        // 而非「待同步」，否则用户以为只是有待同步内容、看不出上次失败（Bugbot: error status shown as pending）。
+        // 重试入口始终在（「立即同步」按钮不依赖状态），不会因此卡住。
         if (link.Status == DocumentSyncLinkStatus.Error)
-            return relevant ? DocumentSyncLinkStatus.Pending : DocumentSyncLinkStatus.Error;
+            return DocumentSyncLinkStatus.Error;
         return relevant ? DocumentSyncLinkStatus.Pending : DocumentSyncLinkStatus.Synced;
     }
 
