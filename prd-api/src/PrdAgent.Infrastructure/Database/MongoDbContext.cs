@@ -146,6 +146,7 @@ public class MongoDbContext
     // Zhunxing Agent 准星知识库
     public IMongoCollection<ZhunxingKnowledgeDocument> ZhunxingKnowledgeDocuments => _database.GetCollection<ZhunxingKnowledgeDocument>("zhunxing_knowledge_documents");
     public IMongoCollection<ZhunxingKnowledgeClause> ZhunxingKnowledgeClauses => _database.GetCollection<ZhunxingKnowledgeClause>("zhunxing_knowledge_clauses");
+    public IMongoCollection<ZhunxingAskFeedback> ZhunxingAskFeedbacks => _database.GetCollection<ZhunxingAskFeedback>("zhunxing_ask_feedbacks");
     // AI Toolbox 百宝箱
     public IMongoCollection<ToolboxRun> ToolboxRuns => _database.GetCollection<ToolboxRun>("toolbox_runs");
     public IMongoCollection<ToolboxItem> ToolboxItems => _database.GetCollection<ToolboxItem>("toolbox_items");
@@ -808,6 +809,15 @@ public class MongoDbContext
         ZhunxingKnowledgeClauses.Indexes.CreateOne(new CreateIndexModel<ZhunxingKnowledgeClause>(
             Builders<ZhunxingKnowledgeClause>.IndexKeys.Ascending(x => x.Keywords),
             new CreateIndexOptions { Name = "idx_zhunxing_clauses_keywords" }));
+        ZhunxingAskFeedbacks.Indexes.CreateOne(new CreateIndexModel<ZhunxingAskFeedback>(
+            Builders<ZhunxingAskFeedback>.IndexKeys.Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_zhunxing_feedbacks_created_at" }));
+        ZhunxingAskFeedbacks.Indexes.CreateOne(new CreateIndexModel<ZhunxingAskFeedback>(
+            Builders<ZhunxingAskFeedback>.IndexKeys.Ascending(x => x.FeedbackType).Ascending(x => x.Matched).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_zhunxing_feedbacks_type_matched" }));
+        ZhunxingAskFeedbacks.Indexes.CreateOne(new CreateIndexModel<ZhunxingAskFeedback>(
+            Builders<ZhunxingAskFeedback>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_zhunxing_feedbacks_user_created" }));
 
         // ModelGroups：按 modelType + isDefaultForType 查询默认分组
         ModelGroups.Indexes.CreateOne(new CreateIndexModel<ModelGroup>(

@@ -5,3 +5,4 @@
 | fix | prd-api | 兼容 ASSETS_PROVIDER=cloudflareR2/cloudflare-r2 并归一为 tencentCos，避免 API 启动崩溃 |
 | feat | prd-admin | 在智能体首页新增“准星”卡片与问答页，接入 /zhunxing/ask 最小可用闭环 |
 | fix | prd-admin/prd-api | 修复准星问答路径为 /api/zhunxing/ask，并补管理端 ask 接口以适配 CDS 网关转发 |
+| feat | prd-api/prd-admin | 准星问答新增置信度与风险等级、条款全文展开、未命中一键反馈（含 feedback 持久化） |

@@ -70,6 +70,7 @@
 | `routing_rules` | `RoutingRule` | App Registry 路由规则（关键词/用户/默认分发） | `priority`（排序查询） |
 | `zhunxing_knowledge_documents` | `ZhunxingKnowledgeDocument` | 准星知识文档元信息（标题、版本、生效日期、适用范围） | `(title, version)` 唯一；`effectiveDate desc` |
 | `zhunxing_knowledge_clauses` | `ZhunxingKnowledgeClause` | 准星知识条款（章节、条款正文、关键词、风险等级） | `(documentId, sortOrder)`；`keywords`（多值索引） |
+| `zhunxing_ask_feedbacks` | `ZhunxingAskFeedback` | 准星问答反馈（未命中/答案不准确/缺少上下文） | `createdAt desc`；`(feedbackType, matched, createdAt desc)`；`(userId, createdAt desc)` |
 | `model_groups` | `ModelGroup` | 模型分组（用于业务隔离）。关键字段：`StrategyType`（int, 默认 0=FailFast, 可选 1=Race/2=Sequential/3=RoundRobin/4=WeightedRandom/5=LeastLatency）控制池内调度策略 | `name` 唯一 |
 | `llm_app_callers` | `LLMAppCaller` | LLM 应用调用者配置 | `appCode` 唯一；`lastCalledAt` |
 | `model_scheduler_config` | `ModelSchedulerConfig` | 模型调度策略配置 | - |

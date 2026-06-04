@@ -119,6 +119,8 @@ public class ZhunxingAskResponse
 {
     public bool Matched { get; set; }
     public string Answer { get; set; } = string.Empty;
+    public double Confidence { get; set; }
+    public string RiskLevel { get; set; } = ZhunxingRiskLevels.Public;
     public List<ZhunxingCitation> Citations { get; set; } = new();
     public string? FollowUpSuggestion { get; set; }
 }
@@ -131,6 +133,9 @@ public class ZhunxingCitation
     public string Chapter { get; set; } = string.Empty;
     public string ClauseTitle { get; set; } = string.Empty;
     public string Snippet { get; set; } = string.Empty;
+    public string FullText { get; set; } = string.Empty;
+    public string RiskLevel { get; set; } = ZhunxingRiskLevels.Public;
+    public int MatchScore { get; set; }
 }
 
 public class ZhunxingBootstrapResult
@@ -138,4 +143,41 @@ public class ZhunxingBootstrapResult
     public string DocumentId { get; set; } = string.Empty;
     public string DocumentTitle { get; set; } = string.Empty;
     public int UpsertedClauseCount { get; set; }
+}
+
+public class CreateZhunxingAskFeedbackRequest
+{
+    public string Question { get; set; } = string.Empty;
+    public bool Matched { get; set; }
+    public double? Confidence { get; set; }
+    public string FeedbackType { get; set; } = ZhunxingFeedbackTypes.NoMatch;
+    public string? Comment { get; set; }
+    public List<string>? CitationClauseIds { get; set; }
+}
+
+public class ZhunxingAskFeedbackResult
+{
+    public string FeedbackId { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+}
+
+[AppOwnership(AppNames.ZhunxingAgent, AppNames.ZhunxingAgentDisplay, IsPrimary = true)]
+public class ZhunxingAskFeedback
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string UserId { get; set; } = string.Empty;
+    public string Question { get; set; } = string.Empty;
+    public bool Matched { get; set; }
+    public double Confidence { get; set; }
+    public string FeedbackType { get; set; } = ZhunxingFeedbackTypes.NoMatch;
+    public string? Comment { get; set; }
+    public List<string> CitationClauseIds { get; set; } = new();
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public static class ZhunxingFeedbackTypes
+{
+    public const string NoMatch = "no_match";
+    public const string AnswerInaccurate = "answer_inaccurate";
+    public const string MissingContext = "missing_context";
 }

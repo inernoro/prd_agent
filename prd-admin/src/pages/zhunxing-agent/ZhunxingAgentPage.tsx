@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { askZhunxing, type ZhunxingAskResponse } from '@/services/real/zhunxing';
-import { AlertCircle, Search, ShieldCheck } from 'lucide-react';
+import { askZhunxing, submitZhunxingFeedback, type ZhunxingAskResponse } from '@/services/real/zhunxing';
+import { AlertCircle, ChevronDown, ChevronUp, Search, ShieldAlert, ShieldCheck } from 'lucide-react';
 
 const STARTERS = [
   '员工迟到怎么认定？',
@@ -16,6 +16,25 @@ export default function ZhunxingAgentPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ZhunxingAskResponse | null>(null);
+  const [expandedClauseIds, setExpandedClauseIds] = useState<Set<string>>(new Set());
+  const [submittingFeedback, setSubmittingFeedback] = useState(false);
+  const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
+
+  const confidencePercent = useMemo(() => Math.round((result?.confidence ?? 0) * 100), [result?.confidence]);
+
+  const confidenceTone = useMemo(() => {
+    if (confidencePercent >= 80) return '#34D399';
+    if (confidencePercent >= 60) return '#FBBF24';
+    return '#FB923C';
+  }, [confidencePercent]);
+
+  const riskMeta = useMemo(() => {
+    const riskLevel = result?.riskLevel ?? 'public';
+    if (riskLevel === 'sensitive') return { label: '高风险', color: '#FB7185' };
+    if (riskLevel === 'internal') return { label: '内部', color: '#FBBF24' };
+    return { label: '公开', color: '#60A5FA' };
+  }, [result?.riskLevel]);
 
   const runAsk = async (q?: string) => {
     const text = (q ?? question).trim();
@@ -23,6 +42,9 @@ export default function ZhunxingAgentPage() {
 
     setLoading(true);
     setError(null);
+    setFeedbackStatus(null);
+    setFeedbackError(null);
+    setExpandedClauseIds(new Set());
     try {
       const res = await askZhunxing(text, 3);
       if (!res.success || !res.data) {
@@ -37,6 +59,45 @@ export default function ZhunxingAgentPage() {
       setError(e instanceof Error ? e.message : '网络异常，请稍后重试');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const toggleClauseExpand = (clauseId: string) => {
+    setExpandedClauseIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(clauseId)) {
+        next.delete(clauseId);
+      } else {
+        next.add(clauseId);
+      }
+      return next;
+    });
+  };
+
+  const submitNoMatchFeedback = async () => {
+    if (!question.trim() || submittingFeedback) return;
+
+    setSubmittingFeedback(true);
+    setFeedbackError(null);
+    setFeedbackStatus(null);
+    try {
+      const res = await submitZhunxingFeedback({
+        question: question.trim(),
+        matched: false,
+        confidence: result?.confidence ?? 0,
+        feedbackType: 'no_match',
+        citationClauseIds: [],
+      });
+      if (!res.success || !res.data) {
+        setFeedbackError(res.error?.message || '反馈提交失败，请稍后重试');
+        return;
+      }
+
+      setFeedbackStatus('未命中反馈已提交，管理员会补充规则后自动提升命中率。');
+    } catch (e) {
+      setFeedbackError(e instanceof Error ? e.message : '反馈提交失败，请稍后重试');
+    } finally {
+      setSubmittingFeedback(false);
     }
   };
 
@@ -129,6 +190,39 @@ export default function ZhunxingAgentPage() {
 
         {result && (
           <GlassCard variant="subtle" animated className="p-4">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <span
+                className="px-2 py-0.5 rounded-md text-xs"
+                style={{
+                  background: result.matched ? 'rgba(52, 211, 153, 0.15)' : 'rgba(251, 146, 60, 0.15)',
+                  border: result.matched ? '1px solid rgba(52, 211, 153, 0.4)' : '1px solid rgba(251, 146, 60, 0.4)',
+                  color: result.matched ? '#34D399' : '#FB923C',
+                }}
+              >
+                {result.matched ? '已命中条款' : '未命中'}
+              </span>
+              <span
+                className="px-2 py-0.5 rounded-md text-xs"
+                style={{
+                  background: 'rgba(255,255,255,0.04)',
+                  border: `1px solid ${confidenceTone}66`,
+                  color: confidenceTone,
+                }}
+              >
+                置信度 {confidencePercent}%
+              </span>
+              <span
+                className="px-2 py-0.5 rounded-md text-xs"
+                style={{
+                  background: 'rgba(255,255,255,0.04)',
+                  border: `1px solid ${riskMeta.color}66`,
+                  color: riskMeta.color,
+                }}
+              >
+                风险等级：{riskMeta.label}
+              </span>
+            </div>
+
             <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
               回答
             </div>
@@ -142,6 +236,42 @@ export default function ZhunxingAgentPage() {
               </div>
             )}
 
+            {!result.matched && (
+              <div className="mt-3 flex flex-col gap-2">
+                <div
+                  className="rounded-lg p-2.5 text-xs"
+                  style={{
+                    background: 'rgba(251, 146, 60, 0.08)',
+                    border: '1px solid rgba(251, 146, 60, 0.25)',
+                    color: 'rgba(255,255,255,0.8)',
+                  }}
+                >
+                  当前问题未命中有效条款，可一键反馈给管理员补充知识库。
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void submitNoMatchFeedback()}
+                    disabled={submittingFeedback}
+                  >
+                    {submittingFeedback ? <MapSpinner size={14} color="var(--text-primary)" /> : <ShieldAlert size={14} />}
+                    提交未命中反馈
+                  </Button>
+                  {feedbackStatus && (
+                    <span className="text-xs" style={{ color: '#34D399' }}>
+                      {feedbackStatus}
+                    </span>
+                  )}
+                  {feedbackError && (
+                    <span className="text-xs" style={{ color: '#FB923C' }}>
+                      {feedbackError}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div className="mt-4">
               <div className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>
                 依据条款
@@ -149,7 +279,7 @@ export default function ZhunxingAgentPage() {
               <div className="flex flex-col gap-2">
                 {result.citations.map((c, idx) => (
                   <div
-                    key={`${c.documentId}-${c.chapter}-${idx}`}
+                    key={c.clauseId || `${c.documentId}-${c.chapter}-${idx}`}
                     className="rounded-lg p-2.5"
                     style={{
                       background: 'rgba(255,255,255,0.03)',
@@ -157,13 +287,49 @@ export default function ZhunxingAgentPage() {
                     }}
                   >
                     <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                      {c.documentTitle} / {c.chapter} / {c.title}
+                      {c.documentTitle} / {c.chapter} / {c.clauseTitle}
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <span
+                        className="px-2 py-0.5 rounded-md text-[11px]"
+                        style={{
+                          background: 'rgba(255,255,255,0.04)',
+                          border: '1px solid rgba(255,255,255,0.08)',
+                          color: 'var(--text-muted)',
+                        }}
+                      >
+                        匹配分：{c.matchScore}
+                      </span>
+                      <span
+                        className="px-2 py-0.5 rounded-md text-[11px]"
+                        style={{
+                          background: 'rgba(255,255,255,0.04)',
+                          border: '1px solid rgba(255,255,255,0.08)',
+                          color: c.riskLevel === 'sensitive' ? '#FB7185' : c.riskLevel === 'internal' ? '#FBBF24' : '#60A5FA',
+                        }}
+                      >
+                        {c.riskLevel === 'sensitive' ? '高风险' : c.riskLevel === 'internal' ? '内部' : '公开'}
+                      </span>
                     </div>
                     <div className="text-sm mt-1" style={{ color: 'var(--text-primary)' }}>
-                      {c.snippet}
+                      {expandedClauseIds.has(c.clauseId) ? c.fullText : c.snippet}
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => toggleClauseExpand(c.clauseId)}
+                      className="mt-2 inline-flex items-center gap-1 text-xs transition-opacity hover:opacity-90"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      {expandedClauseIds.has(c.clauseId) ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                      {expandedClauseIds.has(c.clauseId) ? '收起全文' : '展开全文'}
+                    </button>
                   </div>
                 ))}
+                {result.citations.length === 0 && (
+                  <div className="rounded-lg p-2.5 text-xs" style={{ background: 'rgba(255,255,255,0.03)', color: 'var(--text-muted)' }}>
+                    当前没有可展示的依据条款。
+                  </div>
+                )}
               </div>
             </div>
           </GlassCard>

@@ -2174,6 +2174,8 @@ sequenceDiagram
 **核心接口（新增）**：
 - 前台：`POST /zhunxing/ask` — 规范问答（JWT）
 - 前台：`GET /zhunxing/health` — 健康检查
+- 后台：`POST /api/zhunxing/ask` — 管理端准星问答（网关兼容）
+- 后台：`POST /api/zhunxing/feedback` — 提交未命中/不准确反馈
 - 后台：`GET /api/zhunxing/documents` — 文档列表
 - 后台：`POST /api/zhunxing/documents` — 新建知识文档
 - 后台：`GET /api/zhunxing/clauses` — 条款列表

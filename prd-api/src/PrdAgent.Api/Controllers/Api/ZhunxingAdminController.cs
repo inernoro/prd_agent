@@ -56,6 +56,21 @@ public class ZhunxingAdminController : ControllerBase
         }
     }
 
+    [HttpPost("feedback")]
+    public async Task<IActionResult> SubmitFeedback([FromBody] CreateZhunxingAskFeedbackRequest request, CancellationToken ct = default)
+    {
+        try
+        {
+            var userId = this.GetRequiredUserId();
+            var result = await _knowledgeService.SubmitAskFeedbackAsync(userId, request, ct);
+            return Ok(ApiResponse<ZhunxingAskFeedbackResult>.Ok(result));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+    }
+
     [HttpGet("documents")]
     public async Task<IActionResult> ListDocuments([FromQuery] bool includeInactive = false, CancellationToken ct = default)
     {

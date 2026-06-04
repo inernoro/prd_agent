@@ -181,6 +181,8 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
             {
                 Matched = false,
                 Answer = "当前知识库尚未初始化，暂时无法给出制度依据。请先完成知识条款录入。",
+                Confidence = 0,
+                RiskLevel = ZhunxingRiskLevels.Public,
                 FollowUpSuggestion = "请联系管理员先初始化准星知识库，或补充对应制度条款后再提问。",
             };
         }
@@ -203,6 +205,8 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
             {
                 Matched = false,
                 Answer = "未找到与你问题完全匹配的有效条款。为避免误导，当前先不给出结论。",
+                Confidence = 0,
+                RiskLevel = ZhunxingRiskLevels.Public,
                 FollowUpSuggestion = "请补充场景（部门、流程节点、时长或审批条件），或联系 HR/制度管理员人工确认。",
             };
         }
@@ -225,8 +229,14 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
                 Chapter = x.Clause.Chapter,
                 ClauseTitle = x.Clause.Title,
                 Snippet = BuildSnippet(x.Clause.RuleText),
+                FullText = x.Clause.RuleText,
+                RiskLevel = x.Clause.RiskLevel,
+                MatchScore = x.Score,
             };
         }).ToList();
+
+        var confidence = ComputeConfidence(scored.Select(x => x.Score).ToList());
+        var riskLevel = MaxRiskLevel(citations.Select(x => x.RiskLevel));
 
         _logger.LogInformation(
             "[Zhunxing] Ask answered. userId={UserId} question={Question} hits={Hits}",
@@ -238,8 +248,49 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
         {
             Matched = true,
             Answer = primary.RuleText,
+            Confidence = confidence,
+            RiskLevel = riskLevel,
             Citations = citations,
             FollowUpSuggestion = "如涉及特殊情形（例外审批、法定节假日调整、处罚认定），请联系责任部门进行最终确认。",
+        };
+    }
+
+    public async Task<ZhunxingAskFeedbackResult> SubmitAskFeedbackAsync(
+        string userId,
+        CreateZhunxingAskFeedbackRequest request,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.Question))
+            throw new ArgumentException("question 不能为空", nameof(request));
+
+        var feedbackType = NormalizeFeedbackType(request.FeedbackType);
+        var feedback = new ZhunxingAskFeedback
+        {
+            UserId = userId,
+            Question = request.Question.Trim(),
+            Matched = request.Matched,
+            Confidence = Math.Clamp(request.Confidence ?? 0, 0, 1),
+            FeedbackType = feedbackType,
+            Comment = string.IsNullOrWhiteSpace(request.Comment) ? null : request.Comment.Trim(),
+            CitationClauseIds = (request.CitationClauseIds ?? new List<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.Ordinal)
+                .ToList(),
+            CreatedAt = DateTime.UtcNow,
+        };
+
+        await _db.ZhunxingAskFeedbacks.InsertOneAsync(feedback, cancellationToken: ct);
+        _logger.LogInformation(
+            "[Zhunxing] Ask feedback accepted. userId={UserId} feedbackType={FeedbackType} matched={Matched}",
+            userId,
+            feedback.FeedbackType,
+            feedback.Matched);
+
+        return new ZhunxingAskFeedbackResult
+        {
+            FeedbackId = feedback.Id,
+            Message = "反馈已记录，管理员会根据反馈补充规则与检索策略。",
         };
     }
 
@@ -368,6 +419,62 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
         if (normalized is ZhunxingRiskLevels.Public or ZhunxingRiskLevels.Internal or ZhunxingRiskLevels.Sensitive)
             return normalized;
         return ZhunxingRiskLevels.Internal;
+    }
+
+    private static double ComputeConfidence(IReadOnlyList<int> scores)
+    {
+        if (scores.Count == 0)
+            return 0;
+
+        var top = scores[0];
+        var second = scores.Count > 1 ? scores[1] : 0;
+        var normalizedTop = Math.Min(top, 30) / 30.0;
+        var gap = Math.Max(0, top - second);
+        var normalizedGap = Math.Min(gap, 10) / 10.0;
+        var confidence = 0.45 + normalizedTop * 0.35 + normalizedGap * 0.2;
+        return Math.Round(Math.Clamp(confidence, 0.05, 0.99), 2);
+    }
+
+    private static string MaxRiskLevel(IEnumerable<string> riskLevels)
+    {
+        var maxRank = -1;
+        var maxRisk = ZhunxingRiskLevels.Public;
+        foreach (var riskLevel in riskLevels)
+        {
+            var normalized = NormalizeRiskLevel(riskLevel);
+            var rank = GetRiskRank(normalized);
+            if (rank > maxRank)
+            {
+                maxRank = rank;
+                maxRisk = normalized;
+            }
+        }
+
+        return maxRisk;
+    }
+
+    private static int GetRiskRank(string riskLevel)
+    {
+        return riskLevel switch
+        {
+            ZhunxingRiskLevels.Sensitive => 3,
+            ZhunxingRiskLevels.Internal => 2,
+            _ => 1,
+        };
+    }
+
+    private static string NormalizeFeedbackType(string? feedbackType)
+    {
+        if (string.IsNullOrWhiteSpace(feedbackType))
+            return ZhunxingFeedbackTypes.NoMatch;
+
+        var normalized = feedbackType.Trim().ToLowerInvariant();
+        if (normalized is ZhunxingFeedbackTypes.NoMatch
+            or ZhunxingFeedbackTypes.AnswerInaccurate
+            or ZhunxingFeedbackTypes.MissingContext)
+            return normalized;
+
+        return ZhunxingFeedbackTypes.NoMatch;
     }
 
     private static List<ZhunxingKnowledgeClause> BuildAttendanceSeedClauses(string documentId, string operatorUserId)

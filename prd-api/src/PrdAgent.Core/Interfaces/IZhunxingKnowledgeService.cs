@@ -31,6 +31,11 @@ public interface IZhunxingKnowledgeService
         ZhunxingAskRequest request,
         CancellationToken ct = default);
 
+    Task<ZhunxingAskFeedbackResult> SubmitAskFeedbackAsync(
+        string userId,
+        CreateZhunxingAskFeedbackRequest request,
+        CancellationToken ct = default);
+
     Task<ZhunxingBootstrapResult> BootstrapAttendanceSampleAsync(
         string operatorUserId,
         CancellationToken ct = default);
