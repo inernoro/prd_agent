@@ -1278,26 +1278,38 @@ public class HostedSiteService : IHostedSiteService
             try
             {
                 // saved-share 是引用副本：Files/SiteUrl/EntryFile 全部照搬原站（CosKey 指向 {originalId}），
-                // 自身 Id 是新 GUID。绝不在此处下载/重写——否则会 (a) 按 savedId 重建出不存在的 key 致 SiteUrl 404，
-                // (b) 把注入字节写回原站共享对象（跨租户意外写）。原站自身会被回填（共享同一 COS 对象，副本自动获益），
-                // 这里仅升级版本号防止每次启动重复扫描。
+                // 自身 Id 是新 GUID。绝不下载后回写 COS（避免跨租户写 + 按 savedId 重建 404）——共享对象由原站回填升级。
+                // 这里只在「读取共享对象、确认它确实已含当前版 shim」之后，才给副本刷 ?v= + 标版本：检验地面真值
+                // （直接比对对象字节），而非靠版本号 / 处理顺序推断。这样对任意回填顺序、原站 deferred / 下载失败都正确，
+                // 杜绝「副本被提前标当前版后再不刷新」的整类竞态；确认不了就 defer（不标版本），下次启动重试。
                 if (string.Equals(site.SourceType, "saved-share", StringComparison.OrdinalIgnoreCase))
                 {
-                    // 不重写 COS（原站回填覆盖共享对象），但刷新自己的 ?v= 让 library 访客击穿旧缓存、
-                    // 加载到带新垫片的对象。URL 取入口 HTML 的真实 CosKey（指向原站对象），绝不按 savedId 推断。
-                    // 不动 UpdatedAt，避免被动回填把用户收藏列表重新排序。
-                    var savedUpdate = Builders<HostedSite>.Update.Set(x => x.SlideNavCompatVersion, SlideNavVersion);
                     var savedEntryKey = (site.Files ?? new List<HostedSiteFile>())
                         .FirstOrDefault(f => !string.IsNullOrEmpty(f.CosKey) &&
                             string.Equals(f.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase))?.CosKey;
-                    if (!string.IsNullOrEmpty(savedEntryKey))
+                    if (string.IsNullOrEmpty(savedEntryKey))
                     {
-                        var savedNow = DateTime.UtcNow;
-                        savedUpdate = savedUpdate
-                            .Set(x => x.SiteUrl, AppendVersion(_storage.BuildUrlForKey(savedEntryKey), savedNow))
-                            .Set(x => x.ContentVersion, savedNow);
+                        // 无 HTML 入口（纯 PDF/图片副本），无 shim 可享 → 直接标版本防重复扫描
+                        await _db.HostedSites.UpdateOneAsync(x => x.Id == site.Id,
+                            Builders<HostedSite>.Update.Set(x => x.SlideNavCompatVersion, SlideNavVersion),
+                            cancellationToken: ct);
+                        continue;
                     }
-                    await _db.HostedSites.UpdateOneAsync(x => x.Id == site.Id, savedUpdate, cancellationToken: ct);
+                    var sharedBytes = await _storage.TryDownloadBytesAsync(savedEntryKey, ct);
+                    if (sharedBytes == null || sharedBytes.Length == 0)
+                        continue; // 读不到共享对象（瞬时失败 / 原站未就绪）→ defer，保旧版本下次重试
+                    var reinjected = InjectSlideNavCompat(sharedBytes);
+                    if (reinjected.Length != sharedBytes.Length || !reinjected.SequenceEqual(sharedBytes))
+                        continue; // 共享对象尚未被原站升级到当前版 → defer，等原站先升级，下次再刷副本
+                    // 已确认共享对象含当前版 shim → 安全刷 ?v= 击穿缓存 + 标版本。URL 取入口真实 CosKey（指向原站对象），
+                    // 不动 UpdatedAt 以免被动回填重排用户收藏列表。
+                    var savedNow = DateTime.UtcNow;
+                    await _db.HostedSites.UpdateOneAsync(x => x.Id == site.Id,
+                        Builders<HostedSite>.Update
+                            .Set(x => x.SlideNavCompatVersion, SlideNavVersion)
+                            .Set(x => x.SiteUrl, AppendVersion(_storage.BuildUrlForKey(savedEntryKey), savedNow))
+                            .Set(x => x.ContentVersion, savedNow),
+                        cancellationToken: ct);
                     continue;
                 }
 
