@@ -1,3 +1,5 @@
+using MongoDB.Bson.Serialization.Attributes;
+
 namespace PrdAgent.Core.Models;
 
 /// <summary>
@@ -12,6 +14,7 @@ namespace PrdAgent.Core.Models;
 /// - OpenPlatformApp 专用于 PRD 对话代理（含 Webhook、Token 配额、系统提示词覆盖等 chat 专属字段）
 /// - AgentApiKey 专用于通用开放接口 M2M，纯鉴权载体，不带 chat 相关配置
 /// </summary>
+[BsonIgnoreExtraElements]
 public class AgentApiKey
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
