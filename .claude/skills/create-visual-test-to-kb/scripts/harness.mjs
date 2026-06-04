@@ -22,6 +22,7 @@ export async function launch(cfg, opts = {}) {
   // 造成误拒收或机读输出失真（Bugbot #4，2026-06-04）。launch 是文档化入口，在此重置最稳妥。
   shots.length = 0;
   autoFindings.length = 0;
+  const session = _bumpCaptureSession(); // 令旧会话残留监听器失效（Bugbot #6）
   const sc = cfg.screenshot || {};
   const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
   const ctxOpts = {
@@ -40,7 +41,7 @@ export async function launch(cfg, opts = {}) {
   const page = await ctx.newPage();
   // v1.0（issue #605 二.2 / 楼上一致共识）：默认挂上 console/network/pageerror 自动捕获——
   // 这是"人眼扫静态图永远漏的维度"，最该让机器补。driver 无需手动开，launch 即装。
-  attachAutoCapture(page, opts.autoCapture || {});
+  attachAutoCapture(page, { ...(opts.autoCapture || {}), _session: session });
   return { browser, ctx, page };
 }
 
@@ -135,9 +136,20 @@ const shots = [];
 //   P1/P2 仍记进 result.json 供报告引用，但不硬阻断（避免一条第三方 console 噪声卡死整轮）。
 const autoFindings = [];
 let _autoCaptureCfg = { blockSeverity: 'P0', ignore: [], appHostHint: null };
+// 会话令牌（Bugbot #6）：launch() 每次自增。旧 page 的监听器闭包记下它注册时的 session，
+// 一旦发生新 launch（session 变了），旧监听器 push 全部失效——无需 detach/关旧浏览器即可
+// 杜绝"上一轮还开着的页面把事件灌进本轮 autoFindings"的串扰。
+let _captureSession = 0;
+export function _bumpCaptureSession() { return ++_captureSession; }
 
 const SEV_RANK = { P0: 0, P1: 1, P2: 2, P3: 3 };
 function _sevGte(a, b) { return SEV_RANK[a] <= SEV_RANK[b]; } // P0 ≥ P1 ⇒ rank 更小
+
+// 解析"本源 host"：appHostHint 优先，否则取当前 page host。解析不出返回 null（调用方据此保守跳过）。
+function _resolveAppHost(page) {
+  if (_autoCaptureCfg.appHostHint) return _autoCaptureCfg.appHostHint;
+  try { const h = new URL(page.url()).host; return h || null; } catch { return null; }
+}
 
 export function attachAutoCapture(page, opts = {}) {
   _autoCaptureCfg = {
@@ -145,9 +157,11 @@ export function attachAutoCapture(page, opts = {}) {
     ignore: (opts.ignore || []).map((p) => (p instanceof RegExp ? p : new RegExp(p))),
     appHostHint: opts.appHostHint || null,
   };
+  const mySession = opts._session != null ? opts._session : _captureSession;
   const ignored = (s) => _autoCaptureCfg.ignore.some((re) => re.test(s || ''));
 
   const push = (f) => {
+    if (mySession !== _captureSession) return; // 旧会话的残留监听器失效（Bugbot #6）
     if (ignored(f.message) || ignored(f.url || '')) return;
     autoFindings.push({ ...f, ts: Date.now(), shotIndexAtCapture: shots.length });
   };
@@ -171,12 +185,13 @@ export function attachAutoCapture(page, opts = {}) {
     const status = resp.status();
     if (status < 400) return;
     const url = resp.url();
-    // 同源判定：优先用调用方提示的 appHost，否则用当前 page host
     let host = '';
     try { host = new URL(url).host; } catch { return; }
-    let appHost = _autoCaptureCfg.appHostHint;
-    if (!appHost) { try { appHost = new URL(page.url()).host; } catch { appHost = ''; } }
-    if (appHost && host !== appHost) return; // 跨域第三方资源不计
+    const appHost = _resolveAppHost(page);
+    // 无法确定本源（about:blank / 无效 URL / 还没导航）→ 保守不记网络类 finding，
+    // 否则会把第三方/CDN 的 4xx-5xx 当成本源错误，制造假 P0/P1 blocker（Bugbot #5）。
+    if (!appHost) return;
+    if (host !== appHost) return; // 跨域第三方资源不计
     // 401/403/404 常是探测/鉴权预检，降噪：4xx 里只有这三类不直接判级（除非 5xx）
     let severity;
     if (status >= 500) severity = 'P0';
@@ -190,9 +205,9 @@ export function attachAutoCapture(page, opts = {}) {
     const url = req.url();
     let host = '';
     try { host = new URL(url).host; } catch { return; }
-    let appHost = _autoCaptureCfg.appHostHint;
-    if (!appHost) { try { appHost = new URL(page.url()).host; } catch { appHost = ''; } }
-    if (appHost && host !== appHost) return;
+    const appHost = _resolveAppHost(page);
+    if (!appHost) return;        // 无法确定本源 → 保守不记（Bugbot #5）
+    if (host !== appHost) return;
     // 忽略主动 abort（SPA 取消的 fetch 很常见）
     const failure = req.failure();
     if (failure && /aborted|ERR_ABORTED/i.test(failure.errorText || '')) return;
