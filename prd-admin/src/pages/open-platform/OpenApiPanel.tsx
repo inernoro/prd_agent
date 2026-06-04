@@ -238,7 +238,7 @@ function KeyDetailDrawer({ row, chatOptions, imageOptions, onClose, onSaved }: {
       const res = await apiRequest<LogRow[]>(`/api/open-api/logs?keyId=${encodeURIComponent(row.keyId)}&limit=100`, { auth: true });
       if (id !== logFetchRef.current) return; // 更晚的请求已开始，丢弃过期日志
       if (res.success && res.data) setLogs(res.data);
-      else if (!res.success) toast.error(res.error?.message ?? '加载日志失败');
+      else if (!res.success) { setLogs([]); toast.error(res.error?.message ?? '加载日志失败'); } // 失败清空：避免运维复制到过期 requestId 用于排障
     } finally { if (id === logFetchRef.current) setLogsLoading(false); }
   }, [row.keyId]);
 

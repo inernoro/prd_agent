@@ -78,6 +78,8 @@ public class OpenApiController : ControllerBase
         var sw = Stopwatch.StartNew();
         var requestId = Guid.NewGuid().ToString("N");
         var key = await LoadKeyAsync(httpAborted);
+        // [Authorize] 已过但 AgentApiKey 行查不到（鉴权后被删/撤销）→ 401，禁止无 Key 走限流/配额旁路（Bugbot High）。
+        if (key == null) { await WriteJsonErrorAsync(401, "invalid_request_error", "无效或已过期的 API Key", "invalid_api_key"); return; }
 
         var body = await ReadBodyAsync(httpAborted);
         if (body == null) { await WriteJsonErrorAsync(400, "invalid_request_error", "请求体必须是合法 JSON"); return; }
@@ -215,9 +217,20 @@ public class OpenApiController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "[OpenApi] chat 流式失败 keyId={KeyId}", key?.Id);
-            // 已开始流式则补终止符让客户端收尾（HTTP 已 200）；未开始则置 500，日志与客户端实际状态一致
+            // 已开始流式则补终止符让客户端收尾（HTTP 已 200）；未开始则回 500 + OpenAI 形状 JSON 错误体
+            // （此前只设状态码、Content-Type 仍是 event-stream，客户端拿到空响应——与 pre-stream 502 路径不一致，Bugbot）。
             if (Response.HasStarted) { try { await SendDoneAsync(); } catch { /* 连接已断，忽略 */ } }
-            else Response.StatusCode = 500;
+            else
+            {
+                Response.StatusCode = 500;
+                Response.ContentType = "application/json";
+                try
+                {
+                    await Response.WriteAsync(JsonSerializer.Serialize(new { error = new { message = "内部错误", type = "api_error", code = "internal_error" } }));
+                    await Response.Body.FlushAsync();
+                }
+                catch { /* 连接已断，忽略 */ }
+            }
             await LogAsync(key, requestId, "chat", requestedModel, chosen, resolution, true, Response.StatusCode, "INTERNAL_ERROR", promptTokens, completionTokens, sw);
         }
     }
@@ -273,6 +286,8 @@ public class OpenApiController : ControllerBase
         var sw = Stopwatch.StartNew();
         var requestId = Guid.NewGuid().ToString("N");
         var key = await LoadKeyAsync(httpAborted);
+        // [Authorize] 已过但 AgentApiKey 行查不到（鉴权后被删/撤销）→ 401，禁止无 Key 走限流/配额旁路（Bugbot High）。
+        if (key == null) { await WriteJsonErrorAsync(401, "invalid_request_error", "无效或已过期的 API Key", "invalid_api_key"); return; }
 
         var body = await ReadBodyAsync(httpAborted);
         if (body == null) { await WriteJsonErrorAsync(400, "invalid_request_error", "请求体必须是合法 JSON"); return; }

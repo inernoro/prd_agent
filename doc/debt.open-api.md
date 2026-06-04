@@ -68,7 +68,9 @@
   或显式限制只接受 OpenAI 兼容图片池。当前默认 image 池（gpt-image-2-all）OpenAI 兼容、工作正常；
   原生池为已知边界，属 image-gen 适配器架构改动，单独排期。
 - **图片端点真实出图未端到端验**：只验路由/鉴权；图片无 token/成本计。
-- **日志无 TTL**：`open_api_request_logs` 含 IP/UA，无自动过期（按 no-auto-index 规则由 DBA 建 TTL 索引）。
+- **日志索引/TTL 待 DBA 建**：`open_api_request_logs` 含 IP/UA，按 no-auto-index 规则禁止应用自建索引。
+  所需索引（`KeyId+CreatedAt` 抽屉查询、`CreatedAt` 全局序、`RequestId` 定位、可选 CreatedAt TTL）已写入
+  `doc/guide.mongodb-indexes.md`，由 DBA 手动建（Codex PR#732 P2）。
 - **MaxInputChars 全局常量**：未做按 Key 可配。统计已含 messages 文本/多模态图片/prompt/tools+functions schema，
   但仍是字符近似（非精确 token），且未做"原始 body 字节硬上限"。
 - **绑定失效检测靠控制器启发式**（PR#732 P2 已缓解）：绑定的模型/池被删改时，`ModelResolver` 静默走默认调度
