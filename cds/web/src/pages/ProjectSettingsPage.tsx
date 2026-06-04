@@ -15,7 +15,6 @@ import {
   GitBranch,
   Github,
   HardDrive,
-  KeyRound,
   Link2,
   Loader2,
   Plug,
@@ -249,7 +248,6 @@ type ProjectState =
 type TabValue =
   | 'general'
   | 'github'
-  | 'access'
   | 'comment-template'
   | 'env'
   | 'runtime-defaults'
@@ -278,7 +276,6 @@ const tabGroups: TabGroup[] = [
     items: [
       { value: 'general', label: '基础信息', icon: Settings },
       { value: 'github', label: 'GitHub', icon: Github },
-      { value: 'access', label: '授权密钥', icon: KeyRound },
       { value: 'comment-template', label: '评论模板', icon: FileText },
     ],
   },
@@ -506,9 +503,6 @@ export function ProjectSettingsPage(): JSX.Element {
                 <TabsContent value="github">
                   <GithubProjectTab project={project} onSaved={setProject} onToast={setToast} />
                 </TabsContent>
-                <TabsContent value="access">
-                  <AccessGrantTab projectId={project.id} onToast={setToast} />
-                </TabsContent>
                 <TabsContent value="env">
                   <ProjectEnvTab project={project} onToast={setToast} />
                 </TabsContent>
@@ -554,147 +548,6 @@ export function ProjectSettingsPage(): JSX.Element {
         ) : null}
       </Workspace>
     </AppShell>
-  );
-}
-
-/**
- * AccessGrantTab — 被动授权:签发「请求密钥」(cdsr_) 给 Agent。
- *
- * 两把钥匙模型:
- *   - 请求密钥(本页签发,永久、单项目、低权限):交给 Agent 长期持有。唯一能力是
- *     「发起授权请求」—— 即便泄漏也无法读写,只能申请。
- *   - 授权密钥(全权 cdsp_):Agent 发起申请后,你在右下角「授权申请」一键批准即
- *     当场签发并交给 Agent,Agent 凭它做接下来的所有事(含直接读项目环境变量)。
- */
-function AccessGrantTab({
-  projectId,
-  onToast,
-}: {
-  projectId: string;
-  onToast: (message: string) => void;
-}): JSX.Element {
-  interface KeyRow {
-    id: string;
-    label: string;
-    createdAt: string;
-    lastUsedAt?: string;
-    revokedAt?: string;
-    status: 'active' | 'revoked';
-  }
-  const [keys, setKeys] = useState<KeyRow[]>([]);
-  const [fresh, setFresh] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const refresh = useCallback(async () => {
-    try {
-      const data = await apiRequest<{ keys?: KeyRow[] }>(`/api/projects/${encodeURIComponent(projectId)}/request-keys`);
-      setKeys(data.keys || []);
-    } catch {
-      // 静默
-    }
-  }, [projectId]);
-
-  useEffect(() => { void refresh(); }, [refresh]);
-
-  const mint = useCallback(async () => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      const res = await apiRequest<{ plaintext: string }>(
-        `/api/projects/${encodeURIComponent(projectId)}/request-keys`,
-        { method: 'POST', body: {} },
-      );
-      setFresh(res.plaintext);
-      onToast('已签发请求密钥,请立刻复制(明文只显示一次)');
-      void refresh();
-    } catch (err) {
-      onToast(`签发失败: ${(err as Error).message}`);
-    } finally {
-      setBusy(false);
-    }
-  }, [busy, projectId, onToast, refresh]);
-
-  const revoke = useCallback(async (keyId: string) => {
-    try {
-      await apiRequest(`/api/projects/${encodeURIComponent(projectId)}/request-keys/${encodeURIComponent(keyId)}`, {
-        method: 'DELETE',
-      });
-      void refresh();
-    } catch (err) {
-      onToast(`吊销失败: ${(err as Error).message}`);
-    }
-  }, [projectId, onToast, refresh]);
-
-  const active = keys.filter((k) => k.status === 'active');
-  const revoked = keys.filter((k) => k.status === 'revoked');
-
-  return (
-    <div className="space-y-4">
-      <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-4 text-sm">
-        <div className="font-semibold text-foreground">请求密钥(cdsr_)— Agent 的默认凭据</div>
-        <div className="mt-1 text-xs text-muted-foreground leading-relaxed">
-          把这把密钥长期交给 Agent。它<strong className="text-foreground">权限极低</strong>,唯一能力是
-          「发起授权请求」—— 泄漏也无法读写,只能申请。Agent 需要全权时用它发起申请,你在右下角
-          「授权申请」一键批准,即当场签发一把全权<strong className="text-foreground">授权密钥</strong>
-          交给 Agent。从此 Agent 直接从 CDS 读取项目环境变量/参数,你不必再手动逐个提供。
-        </div>
-      </div>
-
-      {fresh ? (
-        <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-3">
-          <div className="mb-1 text-xs font-semibold text-foreground">新请求密钥(只显示一次)</div>
-          <div className="flex items-center gap-2">
-            <code className="min-w-0 flex-1 truncate rounded bg-[hsl(var(--surface-sunken))] px-2 py-1 font-mono text-xs">
-              {fresh}
-            </code>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => { void navigator.clipboard?.writeText(fresh); onToast('已复制'); }}
-            >
-              复制
-            </Button>
-            <Button type="button" size="sm" variant="ghost" onClick={() => setFresh(null)}>关闭</Button>
-          </div>
-          <div className="mt-1 text-[11px] text-muted-foreground">关闭后无法再次显示。</div>
-        </div>
-      ) : null}
-
-      <div>
-        <Button type="button" onClick={() => void mint()} disabled={busy}>
-          {busy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <KeyRound className="mr-1 h-4 w-4" />}
-          签发请求密钥
-        </Button>
-      </div>
-
-      <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-3">
-        <div className="mb-2 text-sm font-semibold text-foreground">
-          已签发({active.length} 有效{revoked.length > 0 ? ` + ${revoked.length} 已吊销` : ''})
-        </div>
-        {keys.length === 0 ? (
-          <div className="py-4 text-center text-xs text-muted-foreground">还没签发请求密钥,点上方按钮新建。</div>
-        ) : (
-          <ul className="space-y-1.5">
-            {keys.map((k) => (
-              <li key={k.id} className="flex items-center justify-between gap-2 rounded bg-[hsl(var(--surface-sunken))] px-2.5 py-1.5 text-xs">
-                <div className="min-w-0">
-                  <div className="truncate text-foreground">{k.label}</div>
-                  <div className="text-muted-foreground">
-                    签发 {new Date(k.createdAt).toLocaleString('zh-CN')}
-                    {k.lastUsedAt ? ` · 最近使用 ${new Date(k.lastUsedAt).toLocaleString('zh-CN')}` : ''}
-                    {k.status === 'revoked' ? ' · 已吊销' : ''}
-                  </div>
-                </div>
-                {k.status === 'active' ? (
-                  <Button type="button" size="sm" variant="ghost" onClick={() => void revoke(k.id)}>吊销</Button>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </div>
   );
 }
 

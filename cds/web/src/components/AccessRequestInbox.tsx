@@ -1,7 +1,7 @@
 /*
  * AccessRequestInbox — 被动授权审批盒(右下角)
  *
- * 背景:agent 持永久「请求密钥」发起授权申请,用户在右下角一键「批准」即派发一把
+ * 背景:agent 免密直接发起授权申请,用户在右下角一键「批准」即派发一把
  * 全权「授权密钥」,agent 凭它做接下来的所有事(含直接拉项目环境变量/参数),用户
  * 再不用反复手动喂参数。设计完全对齐 PendingImportInbox(同一个右下角被动审批底座):
  *   - 右下角悬浮 button(只在 pendingCount > 0 时显示),点击展开 Dialog
@@ -9,7 +9,7 @@
  *   - 订阅 useCdsEvents.lastAccessRequestEvent → 自动刷新
  *   - 挂在 AppShell,任何页面可见
  *
- * 安全:操作员永远看不到授权密钥明文(批准后由持请求密钥的 agent 轮询取走一次)。
+ * 安全:操作员永远看不到授权密钥明文(批准后由发起方凭 pollToken 轮询取走一次)。
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -109,8 +109,8 @@ export function AccessRequestInbox(): JSX.Element | null {
               授权申请待批准
             </DialogTitle>
             <DialogDescription>
-              外部 Agent 用「请求密钥」发起的授权申请。批准会当场签发一把该项目的全权
-              「授权密钥」交给 Agent —— Agent 凭它做接下来的所有操作(含直接读取项目环境
+              外部 Agent 直接发起的授权申请(无需任何预置密钥)。批准会当场签发一把该项目的
+              全权「授权密钥」交给 Agent —— Agent 凭它做接下来的所有操作(含直接读取项目环境
               变量),你无需再手动提供参数。授权密钥明文只交付给 Agent 一次,此处不显示。
             </DialogDescription>
           </DialogHeader>

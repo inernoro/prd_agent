@@ -37,7 +37,7 @@ export type CdsEventType =
   | 'pending-import.created'
   | 'pending-import.decided'
   | 'pending-import.count'
-  // 2026-06-04:被动授权 — agent 用请求密钥发起的授权申请事件(右下角审批盒订阅)
+  // 2026-06-04:被动授权 — agent 免密发起的授权申请事件(右下角审批盒订阅)
   | 'access-request.created'
   | 'access-request.decided'
   | 'access-request.count'

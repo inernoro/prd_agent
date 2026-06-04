@@ -749,9 +749,6 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/pending-imports\/(.+)$/, '查询待导入项目'],
     [/^POST \/pending-imports\/(.+)\/approve$/, '批准导入'],
     [/^POST \/pending-imports\/(.+)\/reject$/, '拒绝导入'],
-    [/^POST \/projects\/[^/]+\/request-keys$/, '签发请求密钥'],
-    [/^GET \/projects\/[^/]+\/request-keys$/, '列出请求密钥'],
-    [/^DELETE \/projects\/[^/]+\/request-keys\/[^/]+$/, '吊销请求密钥'],
     [/^POST \/projects\/[^/]+\/access-requests$/, '发起授权申请'],
     [/^GET \/projects\/[^/]+\/access-requests\/[^/]+$/, '轮询授权结果'],
     [/^POST \/access-requests\/[^/]+\/approve$/, '批准授权申请'],
@@ -1936,23 +1933,16 @@ export function createServer(deps: ServerDeps): express.Express {
         return next();
       }
 
-      // 被动授权 — 请求密钥(cdsr_*)default-deny 白名单。
+      // 被动授权 — 发起/轮询授权申请的两个端点是 public(免密)。
       //
-      // 请求密钥是低权限默认凭据,唯一能力是「发起授权请求 + 轮询结果」。它
-      // 故意**不**进 resolveAiSession(那会让它变成全权凭据),只在下面这两个
-      // access-requests 端点放行,路由内部用 findRequestKeyForAuth 自校验归属。
-      // 其余任何 /api/* 都认不出 cdsr_ → 走到下方 401,泄漏也无法越权。
-      // 模式照搬上面的 Bearer ct_ 白名单(端点级放行 + 路由自校验)。
-      {
-        const ak = req.headers['x-ai-access-key'] || req.headers['ai-access-key'];
-        const authz = String(req.headers['authorization'] || '');
-        const rk = typeof ak === 'string' ? ak
-          : (/^Bearer\s+cdsr_/i.test(authz) ? authz.replace(/^Bearer\s+/i, '').trim() : '');
-        if (typeof rk === 'string' && rk.startsWith('cdsr_')) {
-          if (reqMethod === 'POST' && /^\/api\/projects\/[^/]+\/access-requests$/.test(reqPath)) return next();
-          if (reqMethod === 'GET' && /^\/api\/projects\/[^/]+\/access-requests\/[^/]+$/.test(reqPath)) return next();
-        }
-      }
+      // 这是「最短路径」的代价:agent 没有任何预置凭据也要能发起申请,否则又
+      // 退回到「先给 agent 发钥匙」的前置步骤。免密的爆炸半径被严格限制:
+      //   - 发起只能创建一条 pending 申请(路由内按项目限量防刷),不读不写不签发;
+      //   - 轮询要 pollToken(发起时一次性返回给发起方),拿不到票据就取不走密钥;
+      //   - 真正的密钥签发 100% 由用户在右下角亲手点批准。
+      // 故这两个路径无条件放行;真正危险的 approve/reject/list 仍走下方鉴权。
+      if (reqMethod === 'POST' && /^\/api\/projects\/[^/]+\/access-requests$/.test(reqPath)) return next();
+      if (reqMethod === 'GET' && /^\/api\/projects\/[^/]+\/access-requests\/[^/]+$/.test(reqPath)) return next();
 
       // Check human cookie auth
       const cookieToken = parseCookie(req.headers.cookie || '', 'cds_token');
@@ -2800,8 +2790,8 @@ export function createServer(deps: ServerDeps): express.Express {
   // alongside the rest of the projects router.
   app.use('/api', createPendingImportRouter({ stateService: deps.stateService }));
 
-  // 被动授权 — 请求密钥/授权密钥两级凭据 + 授权申请审批。
-  // 注意 cdsr_ 请求密钥的 default-deny 白名单在上面的全局认证中间件里(搜 cdsr_)。
+  // 被动授权 — agent 免密发起授权申请 + 用户右下角一键批准签发授权密钥。
+  // 注意 发起/轮询两个端点的 public 放行在上面的全局认证中间件里(搜 access-requests)。
   app.use('/api', createAccessRequestsRouter({ stateService: deps.stateService }));
   // 2026-05-29 项目基础设施重新同步(用户反馈:断头应用,缺 yaml resync)
   app.use('/api', createProjectInfraResyncRouter({

@@ -832,13 +832,13 @@ export interface CdsState {
    */
   pendingImports?: PendingImport[];
   /**
-   * 被动授权 — agent 用「请求密钥」发起的授权申请队列。
+   * 被动授权 — agent 免密发起的授权申请队列。
    *
-   * agent 持永久请求密钥 POST /api/projects/:id/access-requests 发起一条申请,
-   * 右下角审批盒(AccessRequestInbox,复用 pending-import 的被动审批底座)弹出。
-   * 用户批准 → CDS 当场签发一把项目 AgentKey(授权密钥),明文挂在该申请记录上
-   * 供 agent 轮询一次取走(取走即清空明文,一次性交付)。拒绝 → 标记 rejected。
-   * 与 pendingImports 平级放顶层,审批盒一次列出所有项目的待批申请。
+   * agent 直接 POST /api/projects/:id/access-requests 发起一条申请(无需预置密钥,
+   * 按项目限量防刷),右下角审批盒(AccessRequestInbox,复用 pending-import 的被动审批
+   * 底座)弹出。用户批准 → CDS 当场签发一把项目 AgentKey(授权密钥),明文挂在该申请
+   * 记录上供发起方凭 pollToken 轮询一次取走(取走即清空明文,一次性交付)。拒绝 →
+   * 标记 rejected。与 pendingImports 平级放顶层,审批盒一次列出所有项目的待批申请。
    */
   accessRequests?: AccessRequest[];
   /**
@@ -1668,19 +1668,6 @@ export interface Project {
    */
   agentKeys?: AgentKey[];
   /**
-   * 被动授权 — 单项目「请求密钥」(cdsr_<slugHead12>_<suffix>)。
-   *
-   * 与 agentKeys 的区别是权限级别:请求密钥是**永久、低权限**的默认凭据,
-   * 唯一能力是「发起授权请求 + 轮询授权结果」(POST/GET
-   * /api/projects/:id/access-requests[/:reqId])。它走 server.ts 的默认拒绝
-   * 白名单 —— 除这两个端点外,任何 /api/* 都不认 cdsr_ 密钥,所以即便泄漏也
-   * 无法越权。agent 默认永久持有请求密钥;在用户「派发」(右下角批准)时才
-   * 签发一把全权的项目 AgentKey(授权密钥),agent 凭它做接下来的所有事。
-   *
-   * 存储与 agentKeys 一致:只持久化 sha256,明文签发时展示一次。
-   */
-  requestKeys?: RequestKey[];
-  /**
    * GitHub Checks integration — when set, pushes to the linked
    * repository auto-create/update CDS branches and post back to
    * GitHub as a "CDS Deploy" check run (shown in the PR "Checks"
@@ -1907,44 +1894,22 @@ export interface AgentKey {
 }
 
 /**
- * 请求密钥(Request Key)— 单项目、永久、低权限的默认凭据。
+ * 授权申请(Access Request)— agent 直接发起、等用户右下角一键批准的记录。
  *
- * 明文格式 `cdsr_<slugHead12>_<suffix>`(前缀 cdsr 区别于 cdsp 全权项目 key)。
- * 唯一能力:发起授权请求 + 轮询授权结果。default-deny:server.ts 的认证中间件
- * 只在这两个端点放行 cdsr_ 密钥,其余 /api/* 一律不认,所以即便泄漏也无法越权。
- * 存储与 AgentKey 一致:只存 sha256,明文签发时展示一次。
- */
-export interface RequestKey {
-  /** Random 8-hex id, used for revocation by keyId. */
-  id: string;
-  /** Human-readable label, e.g. 申请方/用途。 */
-  label: string;
-  /** sha256 hex of the plaintext `cdsr_<slugHead12>_<suffix>`. */
-  hash: string;
-  /** ISO timestamp of sign time. */
-  createdAt: string;
-  /** GitHub login of the signer if github auth mode, else undefined. */
-  createdBy?: string;
-  /** ISO timestamp best-effort updated each time the key authenticates. */
-  lastUsedAt?: string;
-  /** ISO timestamp set by DELETE — revoked keys stay in state for audit. */
-  revokedAt?: string;
-}
-
-/**
- * 授权申请(Access Request)— agent 用请求密钥发起、等用户在右下角批准的记录。
- *
- * 生命周期:pending --(approve)--> approved(签发授权密钥) / --(reject)--> rejected。
- * 批准时把全权项目 AgentKey 的**明文**临时挂在 issuedKeyPlaintext 上,供持有请求
- * 密钥的 agent 轮询取走一次;取走后 issuedKeyPlaintext 清空、deliveredAt 落时间戳,
- * 之后再轮询只回状态不回明文(一次性交付)。issuedKeyId 留作审计/吊销。
+ * 零前置:agent 无需任何预置密钥就能 POST 发起(免密 + 按项目限量,防刷)。发起时
+ * CDS 当场生成一个一次性「轮询票据」(pollToken),只返回给发起方,用于之后取结果。
+ * 生命周期:pending --(用户批准)--> approved(签发授权密钥) / --(拒绝)--> rejected。
+ * 批准时把全权项目 AgentKey 的**明文**临时挂在 issuedKeyPlaintext 上,发起方凭
+ * pollToken 轮询取走一次;取走后明文清空、deliveredAt 落时间戳(一次性交付)。
  */
 export interface AccessRequest {
   /** Random 12-hex id. */
   id: string;
   /** 目标项目 id(单项目)。 */
   projectId: string;
-  /** 申请方名称(请求密钥 label 或 body 传入),用户审批时可见。 */
+  /** sha256 of the one-time pollToken issued at submit. Only the submitter holds the plaintext. */
+  pollTokenHash: string;
+  /** 申请方名称(body 传入),用户审批时可见。 */
   agentName: string;
   /** 申请理由,用户审批时可见。 */
   purpose: string;
