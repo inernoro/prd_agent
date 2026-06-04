@@ -283,19 +283,9 @@ export function TipsDrawer() {
     }
   }, [viewTips.length, carouselIndex]);
 
-  // 切换「本页 / 全部」时重置到第一条,避免索引错位停在不相关的 tip 上
-  useEffect(() => {
-    setCarouselIndex(0);
-  }, [showAllPages]);
-
-  // 关闭抽屉后复位回「本页」,保证下次打开还是本页教程语义
-  useEffect(() => {
-    if (!expanded) setShowAllPages(false);
-  }, [expanded]);
-
-  // 抽屉每次「打开」时选要展示的那一条:
-  // 优先级:本页教程(matchPageGuide 编辑器感知)→ actionUrl 命中当前页的第一条 → 列表第一条。
-  // 关键:绝不再用 Math.random() 兜底——那正是「打开却是别人的教程」的根因(用户 2026-06-04)。
+  // 抽屉应默认展示的那一条:本页教程(matchPageGuide 编辑器感知)→ actionUrl 命中当前页的第一条 → 列表第一条。
+  // 「打开 / 切作用域 / 切路由」三处复用同一口径,绝不再用 Math.random() 兜底
+  //(那正是「打开却是别人的教程」的根因,用户 2026-06-04)。
   const defaultIndex = (() => {
     if (viewTips.length === 0) return -1;
     const guide = matchPageGuide(viewTips, dismissed, location.pathname);
@@ -308,6 +298,20 @@ export function TipsDrawer() {
       && (location.pathname === t.actionUrl || location.pathname.startsWith(t.actionUrl + '/')));
     return ai >= 0 ? ai : 0;
   })();
+
+  // 切换「本页 / 全部」作用域,或在抽屉打开期间切换路由 → 按 defaultIndex 重新选定展示项。
+  // 修复 Bugbot:① 从「全部」切回「本页」固定回 0 会错过后面更匹配的本页教程(Medium);
+  //   ② 抽屉开着时 in-app 导航,carouselIndex 只被 clamp 不重选,会停在别页同序号的 tip 上(Low)。
+  // 只在这两个「上下文切换」时重选;不把 defaultIndex 放进 deps,避免后台轮询刷新 tips 时打断用户浏览。
+  useEffect(() => {
+    setCarouselIndex(defaultIndex >= 0 ? defaultIndex : 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showAllPages, location.pathname]);
+
+  // 关闭抽屉后复位回「本页」,保证下次打开还是本页教程语义
+  useEffect(() => {
+    if (!expanded) setShowAllPages(false);
+  }, [expanded]);
 
   const lastExpandedRef = useRef(false);
   useEffect(() => {
