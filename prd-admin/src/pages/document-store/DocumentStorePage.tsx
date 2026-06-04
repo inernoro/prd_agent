@@ -1540,12 +1540,12 @@ export function DocumentStorePage() {
     sessionStorage.setItem('doc-store-tab', tab);
   }, [tab]);
 
-  const tabs: { key: StoreTab; label: string; icon: typeof Library }[] = [
+  const tabs: { key: StoreTab; label: string; icon: typeof Library; dataTourId?: string }[] = [
     { key: 'mine', label: '我的空间', icon: Library },
     { key: 'team', label: '团队空间', icon: Users },
     { key: 'favorites', label: '我的收藏', icon: Bookmark },
     { key: 'likes', label: '我的点赞', icon: Heart },
-    { key: 'sync', label: '跨环境同步', icon: FolderSync },
+    { key: 'sync', label: '跨环境同步', icon: FolderSync, dataTourId: 'library-sync-tab' },
   ];
 
   const isStoreTab = tab === 'mine' || tab === 'team';
@@ -1645,6 +1645,7 @@ export function DocumentStorePage() {
             key: t.key,
             label: t.label,
             icon: <t.icon size={12} />,
+            dataTourId: t.dataTourId,
           }))}
           activeKey={tab}
           onChange={(k) => {

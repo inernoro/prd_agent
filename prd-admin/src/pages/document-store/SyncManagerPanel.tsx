@@ -122,11 +122,11 @@ export function SyncManagerPanel() {
   return (
     <div className="flex flex-col">
       {/* 工具栏 */}
-      <div className="flex items-center gap-2 mb-4 flex-wrap">
-        <Button variant="primary" size="sm" onClick={() => setShowStart(true)}>
+      <div data-tour-id="sync-toolbar" className="flex items-center gap-2 mb-4 flex-wrap">
+        <Button data-tour-id="sync-start-link" variant="primary" size="sm" onClick={() => setShowStart(true)}>
           <LinkIcon size={14} />启动链接
         </Button>
-        <Button variant="secondary" size="sm" onClick={() => setShowGenerate(true)}>
+        <Button data-tour-id="sync-generate-link" variant="secondary" size="sm" onClick={() => setShowGenerate(true)}>
           <Copy size={14} />生成连接链接
         </Button>
         <Button variant="ghost" size="sm" onClick={load} disabled={loading}>
@@ -137,7 +137,7 @@ export function SyncManagerPanel() {
         </span>
       </div>
 
-      <div>
+      <div data-tour-id="sync-list">
         {loading ? (
           <MapSectionLoader text="正在加载同步配对…" />
         ) : links.length === 0 ? (
