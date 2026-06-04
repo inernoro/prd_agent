@@ -1,16 +1,18 @@
 import { useEffect, useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
-import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { apiRequest } from '@/services/real/apiClient';
 import { toast } from '@/lib/toast';
-import { RefreshCw, ShieldAlert, Plug, X } from 'lucide-react';
+import { RefreshCw, ShieldAlert, Plug, X, Settings2, Activity, Copy } from 'lucide-react';
 
 /**
- * 开放平台 - 开放接口（OpenAI 兼容）对外网关：按 Key 模型白名单管理。
+ * 开放平台 - 开放接口（OpenAI 兼容）对外网关。
  *
- * 把「哪个客户(Key) 能用哪些模型」列出来（白名单），客户可在白名单内自选 model；
- * 白名单第一个为默认；空白名单=回落默认池。避免改总池误伤已绑定客户（用户明确诉求）。
+ * 设计哲学（趋近 OpenRouter）：主列表极简（一眼看清每个客户用什么/用多少），
+ * 配置与调试收进「管理」抽屉（渐进式披露）。抽屉含两段：① 配置（模型白名单 + 限额）；
+ * ② 调用日志/调试（按 Key 拉最近请求，含 requestId 可回溯，给"某时刻给某客户排障"用）。
  */
 
 interface BindingRow {
@@ -29,88 +31,36 @@ interface BindingRow {
   todayRequests: number;
   todayTokens: number;
 }
-
 interface Pool { id: string; name: string; code: string; modelType: string; isDefault: boolean; models: string[]; }
 
-interface EditState { chat: string[]; image: string[]; rate: string; dayReq: string; dayTok: string; }
-
-interface OpenApiPanelProps { onActionsReady?: (actions: React.ReactNode) => void; }
-
-export default function OpenApiPanel({ onActionsReady }: OpenApiPanelProps) {
+export default function OpenApiPanel({ onActionsReady }: { onActionsReady?: (a: React.ReactNode) => void }) {
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<BindingRow[]>([]);
   const [pools, setPools] = useState<Pool[]>([]);
-  const [savingId, setSavingId] = useState<string | null>(null);
-  const [edits, setEdits] = useState<Record<string, EditState>>({});
+  const [detail, setDetail] = useState<BindingRow | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [bindRes, poolRes] = await Promise.all([
+      const [b, p] = await Promise.all([
         apiRequest<BindingRow[]>('/api/open-api/bindings', { auth: true }),
         apiRequest<Pool[]>('/api/open-api/pools', { auth: true }),
       ]);
-      if (bindRes.success && bindRes.data) {
-        setRows(bindRes.data);
-        const init: Record<string, EditState> = {};
-        bindRes.data.forEach((r) => {
-          init[r.keyId] = {
-            chat: [...(r.chatModels ?? [])],
-            image: [...(r.imageModels ?? [])],
-            rate: r.rateLimitPerMin != null ? String(r.rateLimitPerMin) : '',
-            dayReq: r.dailyRequestQuota != null ? String(r.dailyRequestQuota) : '',
-            dayTok: r.dailyTokenQuota != null ? String(r.dailyTokenQuota) : '',
-          };
-        });
-        setEdits(init);
-      } else if (!bindRes.success) {
-        toast.error(bindRes.error?.message ?? '加载绑定列表失败');
-      }
-      if (poolRes.success && poolRes.data) setPools(poolRes.data);
-    } finally {
-      setLoading(false);
-    }
+      if (b.success && b.data) setRows(b.data);
+      else if (!b.success) toast.error(b.error?.message ?? '加载失败');
+      if (p.success && p.data) setPools(p.data);
+    } finally { setLoading(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    onActionsReady?.(
-      <Button variant="ghost" onClick={load} disabled={loading}><RefreshCw size={14} /> 刷新</Button>
-    );
+    onActionsReady?.(<Button variant="ghost" onClick={load} disabled={loading}><RefreshCw size={14} /> 刷新</Button>);
   }, [onActionsReady, load, loading]);
 
-  const chatModelOptions = Array.from(new Set(pools.filter((p) => p.modelType === 'chat').flatMap((p) => p.models)));
-  const imageModelOptions = Array.from(new Set(pools.filter((p) => p.modelType === 'generation').flatMap((p) => p.models)));
+  const chatOptions = Array.from(new Set(pools.filter((p) => p.modelType === 'chat').flatMap((p) => p.models)));
+  const imageOptions = Array.from(new Set(pools.filter((p) => p.modelType === 'generation').flatMap((p) => p.models)));
 
-  const toNum = (s: string): number | null => {
-    const t = s.trim(); if (!t) return null;
-    const n = Number(t); return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
-  };
-
-  const save = async (keyId: string) => {
-    const e = edits[keyId]; if (!e) return;
-    setSavingId(keyId);
-    try {
-      const res = await apiRequest(`/api/open-api/bindings/${keyId}`, {
-        method: 'PUT', auth: true,
-        body: { chatModels: e.chat, imageModels: e.image, rateLimitPerMin: toNum(e.rate), dailyRequestQuota: toNum(e.dayReq), dailyTokenQuota: toNum(e.dayTok) },
-      });
-      if (res.success) { toast.success('已保存'); await load(); }
-      else toast.error(res.error?.message ?? '保存失败');
-    } finally { setSavingId(null); }
-  };
-
-  const dirty = (r: BindingRow) => {
-    const e = edits[r.keyId]; if (!e) return false;
-    const eqNum = (a: string, b: number | null) => (a.trim() ? Number(a) === b : b == null);
-    return (
-      e.chat.join('') !== (r.chatModels ?? []).join('') ||
-      e.image.join('') !== (r.imageModels ?? []).join('') ||
-      !eqNum(e.rate, r.rateLimitPerMin) || !eqNum(e.dayReq, r.dailyRequestQuota) || !eqNum(e.dayTok, r.dailyTokenQuota)
-    );
-  };
-
-  if (loading) return <MapSectionLoader text="正在加载开放接口绑定…" />;
+  if (loading) return <MapSectionLoader text="正在加载开放接口…" />;
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-4" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
@@ -118,13 +68,9 @@ export default function OpenApiPanel({ onActionsReady }: OpenApiPanelProps) {
         <div className="flex items-start gap-3">
           <Plug size={18} className="text-white/50 mt-0.5 shrink-0" />
           <div className="text-[13px] text-white/70 leading-relaxed">
-            <div className="font-medium text-white/85 mb-1">开放接口 · 对外网关模型白名单</div>
-            外部调用方用标准 OpenAI 兼容方式接入：
-            <code className="mx-1 px-1.5 py-0.5 rounded bg-white/[0.06] text-white/80">POST /api/v1/chat/completions</code>
-            <code className="mx-1 px-1.5 py-0.5 rounded bg-white/[0.06] text-white/80">/api/v1/images/generations</code>。
-            每个 <code className="px-1 rounded bg-white/[0.06]">sk-ak-*</code> Key（授予 <code className="px-1 rounded bg-white/[0.06]">open-api:call</code> scope）
-            在此配置<span className="text-white/85">模型白名单</span>——客户可在白名单内用 <code className="px-1 rounded bg-white/[0.06]">model</code> 字段自选，<span className="text-white/85">第一个为默认</span>，填白名单外的报 400；
-            白名单为空=回落默认池。改总池不会误伤已配置白名单的客户。
+            <div className="font-medium text-white/85 mb-1">开放接口 · OpenAI 兼容对外网关</div>
+            外部客户用标准 OpenAI 方式接入，Base URL <code className="px-1 rounded bg-white/[0.06]">/api/v1</code>，密钥 <code className="px-1 rounded bg-white/[0.06]">sk-ak-*</code>（scope <code className="px-1 rounded bg-white/[0.06]">open-api:call</code>）。
+            点「管理」配模型白名单 / 限额，并查该客户调用日志排障。
           </div>
         </div>
       </GlassCard>
@@ -133,107 +79,249 @@ export default function OpenApiPanel({ onActionsReady }: OpenApiPanelProps) {
         <GlassCard className="p-10 flex flex-col items-center justify-center text-center gap-3">
           <ShieldAlert size={32} className="text-white/30" />
           <div className="text-white/70 text-sm">还没有授予 <code className="px-1 rounded bg-white/[0.06]">open-api:call</code> 的 Key</div>
-          <div className="text-white/45 text-xs max-w-md">
-            在「接入 AI」弹窗创建 <code className="px-1 rounded bg-white/[0.06]">sk-ak-*</code> Key 并勾选 <code className="px-1 rounded bg-white/[0.06]">open-api:call</code> scope 后，
-            即可在此为其配置模型白名单；未配置的 Key 默认走 default:chat / default:image。
-          </div>
+          <div className="text-white/45 text-xs max-w-md">在「接入 AI」弹窗创建 sk-ak-* Key 并勾选 open-api:call scope 后即可在此管理。</div>
         </GlassCard>
       ) : (
-        <GlassCard className="p-0">
-          <div style={{ overflowX: 'auto' }}>
-            <table className="w-full text-[13px]" style={{ minWidth: 1100 }}>
-              <thead>
-                <tr className="text-white/45 text-left border-b border-white/[0.08]">
-                  <th className="px-3 py-3 font-medium">Key / 客户</th>
-                  <th className="px-3 py-3 font-medium">Chat 白名单（第一个=默认）</th>
-                  <th className="px-3 py-3 font-medium">生图白名单</th>
-                  <th className="px-3 py-3 font-medium">默认解析</th>
-                  <th className="px-3 py-3 font-medium" title="每分钟速率 / 每日请求 / 每日token，留空=不限">限额 <span className="text-white/30 font-normal">分·日req·日tok</span></th>
-                  <th className="px-3 py-3 font-medium">今日用量</th>
-                  <th className="px-3 py-3 font-medium text-right">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => {
-                  const e = edits[r.keyId] ?? { chat: [], image: [], rate: '', dayReq: '', dayTok: '' };
-                  const patch = (p: Partial<EditState>) => setEdits((s) => ({ ...s, [r.keyId]: { ...e, ...p } }));
-                  return (
-                    <tr key={r.keyId} className="border-b border-white/[0.05] hover:bg-white/[0.02] align-top">
-                      <td className="px-3 py-3">
-                        <div className="text-white/85">{r.name}</div>
-                        <div className="text-white/40 text-xs">{r.ownerName}{r.isActive ? '' : ' · 已禁用'}</div>
-                      </td>
-                      <td className="px-3 py-3"><WhitelistPicker options={chatModelOptions} value={e.chat} onChange={(v) => patch({ chat: v })} /></td>
-                      <td className="px-3 py-3"><WhitelistPicker options={imageModelOptions} value={e.image} onChange={(v) => patch({ image: v })} /></td>
-                      <td className="px-3 py-3">
-                        <div className="text-white/70 text-xs flex items-center gap-1">
-                          {r.chatResolvedModel ?? '—'}
-                          {r.chatIsFallback && <span className="text-amber-400" title="专属模型不可用，已降级">降级</span>}
-                        </div>
-                        <div className="text-white/40 text-xs">{r.imageResolvedModel ?? '—'}</div>
-                      </td>
-                      <td className="px-3 py-3">
-                        <div className="flex items-center gap-1">
-                          <LimitInput value={e.rate} onChange={(v) => patch({ rate: v })} />
-                          <span className="text-white/30">/</span>
-                          <LimitInput value={e.dayReq} onChange={(v) => patch({ dayReq: v })} />
-                          <span className="text-white/30">/</span>
-                          <LimitInput value={e.dayTok} onChange={(v) => patch({ dayTok: v })} wide />
-                        </div>
-                      </td>
-                      <td className="px-3 py-3 text-xs text-white/60">
-                        <div>{r.todayRequests} 次</div>
-                        <div className="text-white/40">{r.todayTokens.toLocaleString()} tok</div>
-                      </td>
-                      <td className="px-3 py-3 text-right">
-                        <Button variant="ghost" disabled={!dirty(r) || savingId === r.keyId} onClick={() => save(r.keyId)}>
-                          {savingId === r.keyId ? '保存中…' : '保存'}
-                        </Button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </GlassCard>
+        <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))' }}>
+          {rows.map((r) => (
+            <GlassCard key={r.keyId} className="p-3.5 flex flex-col gap-2">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-white/90 text-sm truncate">{r.name}</div>
+                  <div className="text-white/40 text-xs truncate">{r.ownerName}{r.isActive ? '' : ' · 已禁用'}</div>
+                </div>
+                <Button variant="ghost" onClick={() => setDetail(r)}><Settings2 size={13} /> 管理</Button>
+              </div>
+              <div className="text-xs text-white/55 flex flex-col gap-0.5">
+                <div className="flex items-center gap-1">
+                  <span className="text-white/35 w-12 shrink-0">默认</span>
+                  <span className="truncate">{r.chatModels.length ? r.chatModels[0] : (r.chatResolvedModel ?? '默认池')}</span>
+                  {r.chatIsFallback && <span className="text-amber-400">降级</span>}
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-white/35 w-12 shrink-0">白名单</span>
+                  <span className="truncate text-white/45">{r.chatModels.length ? `${r.chatModels.length} 个模型` : '未配置（默认池）'}</span>
+                </div>
+                <div className="flex items-center gap-3 mt-0.5">
+                  <span className="text-white/35">今日 <span className="text-white/70">{r.todayRequests}</span> 次 / <span className="text-white/70">{r.todayTokens.toLocaleString()}</span> tok</span>
+                  <span className="text-white/35">限速 {r.rateLimitPerMin ?? '默认'}/min</span>
+                </div>
+              </div>
+            </GlassCard>
+          ))}
+        </div>
+      )}
+
+      {detail && (
+        <KeyDetailDrawer
+          row={detail}
+          chatOptions={chatOptions}
+          imageOptions={imageOptions}
+          onClose={() => setDetail(null)}
+          onSaved={() => { setDetail(null); load(); }}
+        />
       )}
     </div>
+  );
+}
+
+interface LogRow {
+  requestId: string; endpoint: string; requestedModel: string | null; resolvedModel: string | null;
+  resolvedPool: string | null; isFallback: boolean; promptTokens: number | null; completionTokens: number | null;
+  statusCode: number; errorCode: string | null; durationMs: number; createdAt: string;
+}
+
+function KeyDetailDrawer({ row, chatOptions, imageOptions, onClose, onSaved }: {
+  row: BindingRow; chatOptions: string[]; imageOptions: string[]; onClose: () => void; onSaved: () => void;
+}) {
+  const [tab, setTab] = useState<'config' | 'logs'>('config');
+  const [chat, setChat] = useState<string[]>([...row.chatModels]);
+  const [image, setImage] = useState<string[]>([...row.imageModels]);
+  const [rate, setRate] = useState(row.rateLimitPerMin != null ? String(row.rateLimitPerMin) : '');
+  const [dayReq, setDayReq] = useState(row.dailyRequestQuota != null ? String(row.dailyRequestQuota) : '');
+  const [dayTok, setDayTok] = useState(row.dailyTokenQuota != null ? String(row.dailyTokenQuota) : '');
+  const [saving, setSaving] = useState(false);
+  const [logs, setLogs] = useState<LogRow[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+
+  useEffect(() => {
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
+  }, [onClose]);
+
+  const loadLogs = useCallback(async () => {
+    setLogsLoading(true);
+    try {
+      const res = await apiRequest<LogRow[]>(`/api/open-api/logs?keyId=${encodeURIComponent(row.keyId)}&limit=100`, { auth: true });
+      if (res.success && res.data) setLogs(res.data);
+      else if (!res.success) toast.error(res.error?.message ?? '加载日志失败');
+    } finally { setLogsLoading(false); }
+  }, [row.keyId]);
+
+  useEffect(() => { if (tab === 'logs') loadLogs(); }, [tab, loadLogs]);
+
+  const toNum = (s: string) => { const t = s.trim(); if (!t) return null; const n = Number(t); return Number.isFinite(n) && n > 0 ? Math.floor(n) : null; };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const res = await apiRequest(`/api/open-api/bindings/${row.keyId}`, {
+        method: 'PUT', auth: true,
+        body: { chatModels: chat, imageModels: image, rateLimitPerMin: toNum(rate), dailyRequestQuota: toNum(dayReq), dailyTokenQuota: toNum(dayTok) },
+      });
+      if (res.success) { toast.success('已保存'); onSaved(); }
+      else toast.error(res.error?.message ?? '保存失败');
+    } finally { setSaving(false); }
+  };
+
+  const modal = (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.5)' }} onClick={onClose}>
+      <div
+        className="rounded-xl border border-white/10 bg-[#131314] flex flex-col w-[min(880px,94vw)]"
+        style={{ height: '85vh', maxHeight: '85vh' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/[0.08] shrink-0">
+          <div className="min-w-0">
+            <div className="text-white/90 text-sm">{row.name}</div>
+            <div className="text-white/40 text-xs">{row.ownerName}</div>
+          </div>
+          <button className="text-white/40 hover:text-white/80" onClick={onClose}><X size={18} /></button>
+        </div>
+
+        <div className="flex gap-1 px-5 pt-3 shrink-0">
+          {([['config', '配置', Settings2], ['logs', '调用日志 / 调试', Activity]] as const).map(([k, label, Icon]) => (
+            <button
+              key={k}
+              onClick={() => setTab(k)}
+              className={`px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5 ${tab === k ? 'bg-white/[0.08] text-white/90' : 'text-white/50 hover:text-white/75'}`}
+            >
+              <Icon size={13} /> {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1 px-5 py-4" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+          {tab === 'config' ? (
+            <div className="flex flex-col gap-5 text-[13px]">
+              <Field label="Chat 模型白名单" hint="客户用 model 字段在此集合内自选；第一个为默认；留空=默认池">
+                <WhitelistPicker options={chatOptions} value={chat} onChange={setChat} />
+              </Field>
+              <Field label="生图模型白名单" hint="同上，用于 /v1/images/generations">
+                <WhitelistPicker options={imageOptions} value={image} onChange={setImage} />
+              </Field>
+              <Field label="限额（留空=不限）">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <LabeledNum label="每分钟" value={rate} onChange={setRate} />
+                  <LabeledNum label="每日请求" value={dayReq} onChange={setDayReq} />
+                  <LabeledNum label="每日 token" value={dayTok} onChange={setDayTok} wide />
+                </div>
+              </Field>
+              <div className="flex justify-end">
+                <Button variant="primary" onClick={save} disabled={saving}>{saving ? <MapSpinner size={14} /> : null} 保存配置</Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <div className="text-white/45 text-xs">该 Key 最近调用（按 requestId 可回溯；客户报错给 id 直接定位）</div>
+                <Button variant="ghost" onClick={loadLogs} disabled={logsLoading}><RefreshCw size={13} /> 刷新</Button>
+              </div>
+              {logsLoading ? <MapSectionLoader text="加载日志…" /> : logs.length === 0 ? (
+                <div className="text-white/40 text-xs py-10 text-center">暂无调用记录</div>
+              ) : (
+                <div style={{ overflowX: 'auto' }}>
+                  <table className="w-full text-[12px]" style={{ minWidth: 720 }}>
+                    <thead>
+                      <tr className="text-white/40 text-left border-b border-white/[0.08]">
+                        <th className="px-2 py-2 font-medium">时间</th>
+                        <th className="px-2 py-2 font-medium">端点</th>
+                        <th className="px-2 py-2 font-medium">请求→解析模型</th>
+                        <th className="px-2 py-2 font-medium">状态</th>
+                        <th className="px-2 py-2 font-medium">tokens</th>
+                        <th className="px-2 py-2 font-medium">耗时</th>
+                        <th className="px-2 py-2 font-medium">requestId</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {logs.map((l) => (
+                        <tr key={l.requestId} className="border-b border-white/[0.05]">
+                          <td className="px-2 py-1.5 text-white/55 whitespace-nowrap">{new Date(l.createdAt).toLocaleString('zh-CN', { hour12: false }).slice(5)}</td>
+                          <td className="px-2 py-1.5 text-white/60">{l.endpoint}</td>
+                          <td className="px-2 py-1.5 text-white/70">
+                            <span className="text-white/40">{l.requestedModel ?? '—'}</span>
+                            <span className="text-white/30"> → </span>
+                            {l.resolvedModel ?? '—'}
+                            {l.isFallback && <span className="text-amber-400 ml-1">降级</span>}
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <span className={l.statusCode >= 400 ? 'text-rose-400' : 'text-emerald-400'}>{l.statusCode}</span>
+                            {l.errorCode && <span className="text-rose-300/70 ml-1">{l.errorCode}</span>}
+                          </td>
+                          <td className="px-2 py-1.5 text-white/55">{(l.promptTokens ?? 0) + (l.completionTokens ?? 0) || '—'}</td>
+                          <td className="px-2 py-1.5 text-white/45">{l.durationMs}ms</td>
+                          <td className="px-2 py-1.5 text-white/40">
+                            <button className="inline-flex items-center gap-1 hover:text-white/70" title="复制 requestId"
+                              onClick={() => { navigator.clipboard?.writeText(l.requestId); toast.success('已复制 requestId'); }}>
+                              {l.requestId.slice(0, 8)}… <Copy size={11} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  return createPortal(modal, document.body);
+}
+
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="text-white/75">{label}</div>
+      {hint && <div className="text-white/35 text-xs">{hint}</div>}
+      {children}
+    </div>
+  );
+}
+
+function LabeledNum({ label, value, onChange, wide }: { label: string; value: string; onChange: (v: string) => void; wide?: boolean }) {
+  return (
+    <label className="flex items-center gap-1.5 text-white/55">
+      {label}
+      <input type="number" min={1} value={value} placeholder="∞" onChange={(e) => onChange(e.target.value)}
+        className={`bg-white/[0.04] border border-white/[0.12] rounded-md px-2 py-1 text-white/85 text-xs focus:outline-none focus:border-white/30 ${wide ? 'w-24' : 'w-16'}`} />
+    </label>
   );
 }
 
 function WhitelistPicker({ options, value, onChange }: { options: string[]; value: string[]; onChange: (v: string[]) => void }) {
   const remaining = options.filter((o) => !value.includes(o));
   return (
-    <div className="min-w-[220px]">
-      <div className="flex flex-wrap gap-1 mb-1">
-        {value.length === 0 && <span className="text-white/35 text-xs">默认池（未配置）</span>}
+    <div>
+      <div className="flex flex-wrap gap-1.5 mb-1.5">
+        {value.length === 0 && <span className="text-white/35 text-xs">未配置（走默认池）</span>}
         {value.map((m, i) => (
-          <span key={m} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/[0.07] text-white/80 text-xs">
+          <span key={m} className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white/[0.07] text-white/80 text-xs">
             {i === 0 && <span className="text-emerald-400 text-[10px]" title="客户默认模型">默认</span>}
             {m}
             <button type="button" className="text-white/40 hover:text-white/80" onClick={() => onChange(value.filter((x) => x !== m))}><X size={11} /></button>
           </span>
         ))}
       </div>
-      <select
-        value=""
-        onChange={(ev) => { if (ev.target.value) onChange([...value, ev.target.value]); }}
-        className="bg-white/[0.04] border border-white/[0.12] rounded-md px-2 py-1 text-white/70 text-xs w-[200px] focus:outline-none focus:border-white/30"
-      >
+      <select value="" onChange={(e) => { if (e.target.value) onChange([...value, e.target.value]); }}
+        className="bg-white/[0.04] border border-white/[0.12] rounded-md px-2 py-1 text-white/70 text-xs w-[240px] focus:outline-none focus:border-white/30">
         <option value="" className="bg-[#1E1F20]">+ 添加模型…</option>
         {remaining.map((o) => <option key={o} value={o} className="bg-[#1E1F20]">{o}</option>)}
       </select>
     </div>
-  );
-}
-
-function LimitInput({ value, onChange, wide }: { value: string; onChange: (v: string) => void; wide?: boolean }) {
-  return (
-    <input
-      type="number" min={1} value={value} placeholder="∞"
-      onChange={(ev) => onChange(ev.target.value)}
-      className={`bg-white/[0.04] border border-white/[0.12] rounded-md px-1.5 py-1 text-white/85 text-xs focus:outline-none focus:border-white/30 ${wide ? 'w-20' : 'w-14'}`}
-    />
   );
 }
