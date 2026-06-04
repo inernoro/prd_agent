@@ -254,6 +254,13 @@ export function ReprocessChatDrawer({
     applyLockRef.current = false;
     lastLoadedEntryRef.current = null; // 新 entryId 还没初始化完，持久化先停
     abortCurrentStream();
+    // 切换文档时取消上一篇挂起的去抖后端保存：否则它带着旧闭包在切换后才落库
+    // （Bugbot Medium：debounced save survives entry switch）。只在 effect 体里清，
+    // 不放进 cleanup —— 关抽屉(卸载)时仍让最后一次 save 落库，不丢"关页前的最新态"。
+    if (backendSaveTimerRef.current) {
+      window.clearTimeout(backendSaveTimerRef.current);
+      backendSaveTimerRef.current = null;
+    }
     setMessages([]);
     setActive(null);
     setError(null);
@@ -713,6 +720,12 @@ export function ReprocessChatDrawer({
   // 开启全新对话：清空当前对话 + 清掉本文档的持久化（保留已选智能体，方便直接再问）
   const handleNewConversation = useCallback(() => {
     abortCurrentStream();
+    // 先取消挂起的去抖后端保存：否则它会在下面 DELETE 之后才落库，把刚清掉的对话"复活"
+    // （Codex P2：新对话被 pending save 复活）
+    if (backendSaveTimerRef.current) {
+      window.clearTimeout(backendSaveTimerRef.current);
+      backendSaveTimerRef.current = null;
+    }
     setMessages([]);
     setError(null);
     setInput('');

@@ -252,6 +252,24 @@ export function VisualCreationMiniPanel({
     };
   }, []);
 
+  // 同步父级 prop 的后续变化：首次挂载只读一次会漏掉「异步回填 / 重新预填」（Bugbot Medium）。
+  // - initialResult：后端恢复晚于面板挂载时，把"已生成未插入"的图补回来（否则被隐藏）
+  // - initialPrompt：「为这段配图」在面板已打开时重新预填，更新提示词
+  // 仅在 prop 真正变化、且非生成中时同步，避免覆盖用户正在进行的生成/输入。
+  useEffect(() => {
+    if (initialResult && initialResult !== resultUrl && genState !== 'generating') {
+      setResultUrl(initialResult);
+      setGenState('done');
+      setGenError(null);
+    }
+    // 只对 initialResult 的变化作出反应；resultUrl 自身变化不应触发本同步
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialResult]);
+
+  useEffect(() => {
+    if (initialPrompt) setPrompt(initialPrompt);
+  }, [initialPrompt]);
+
   // 生成期：每秒推进计时——这是等待时屏幕"持续变化"的来源（CLAUDE.md §6）
   useEffect(() => {
     if (genState !== 'generating') return;
