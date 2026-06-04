@@ -6,10 +6,10 @@
  * 需求/功能 的「新建」走独立页面（/product-agent/p/:productId/:kind/new）；查看走详情页。
  * 升级申请并入「版本」tab；缺陷排在客户之前。
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { EChartsOption } from 'echarts';
-import { Plus, Trash2, GitBranch, ListChecks, Puzzle, Users, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard, Table2, BarChart3 } from 'lucide-react';
+import { Plus, Trash2, GitBranch, ListChecks, Puzzle, Users, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard, Table2, BarChart3, Download, Upload } from 'lucide-react';
 import { EChart } from '@/components/charts/EChart';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
@@ -28,6 +28,7 @@ import {
   deleteVersion,
   listRequirements,
   deleteRequirement,
+  importRequirements,
   listFeatures,
   deleteFeature,
   listCustomers,
@@ -41,6 +42,7 @@ import {
 } from '@/services/real/productAgent';
 import type { Product, ProductVersion, Requirement, Feature, Customer, ItemGrade, WorkflowDefinition } from './types';
 import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL } from './types';
+import { toCSV, downloadCSV, parseCSV } from '@/lib/csv';
 import { useProductCategories, categoryLabel } from './productCategories';
 import { useEffectiveWorkflow } from './DynamicForm';
 
@@ -377,9 +379,41 @@ function RequirementsTab({ productId }: { productId: string }) {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'list' | 'board'>('list');
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [importing, setImporting] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
   const { workflow } = useEffectiveWorkflow('requirement', productId);
   const openDetail = (id: string) => navigate(`/product-agent/p/${productId}/requirement/${id}`);
   const toggleSel = (id: string) => setSelected((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+
+  const exportCsv = () => {
+    const rows = items.map((r) => [r.requirementNo, r.title, ITEM_GRADE_LABEL[r.grade] ?? r.grade, r.currentState ?? '', r.description ?? '']);
+    downloadCSV(`需求-${productId}.csv`, toCSV(['编号', '标题', '分级', '状态', '描述'], rows));
+  };
+
+  const importCsv = async (file: File) => {
+    setImporting(true);
+    const text = await file.text();
+    const parsed = parseCSV(text);
+    if (parsed.length > 1) {
+      const header = parsed[0].map((h) => h.trim());
+      const col = (names: string[]) => header.findIndex((h) => names.some((n) => h.includes(n)));
+      let ti = col(['标题', 'title']);
+      let gi = col(['分级', 'grade']);
+      let di = col(['描述', 'desc']);
+      let body = parsed.slice(1);
+      // 无可识别表头则按位置 标题,分级,描述
+      if (ti < 0) { ti = 0; gi = gi < 0 ? 1 : gi; di = di < 0 ? 2 : di; body = parsed; }
+      const parseGrade = (s?: string) => { const l = (s ?? '').toLowerCase(); return ['p0', 'p1', 'p2', 'p3'].find((g) => l.includes(g)); };
+      const rows = body
+        .map((r) => ({ title: (r[ti] ?? '').trim(), grade: gi >= 0 ? parseGrade(r[gi]) : undefined, description: di >= 0 ? (r[di] ?? '').trim() : undefined }))
+        .filter((r) => r.title);
+      if (rows.length > 0) {
+        const res = await importRequirements(productId, rows);
+        if (res.success) await reload();
+      }
+    }
+    setImporting(false);
+  };
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -395,13 +429,18 @@ function RequirementsTab({ productId }: { productId: string }) {
   if (loading) return <MapSectionLoader text="正在加载需求…" />;
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
         <NewButton label="新建需求" onClick={() => navigate(`/product-agent/p/${productId}/requirement/new`)} />
-        {items.length > 0 && (
-          <div className="flex items-center gap-1">
-            <ViewToggle view={view} setView={setView} />
-          </div>
-        )}
+        <div className="flex items-center gap-1.5">
+          <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void importCsv(f); e.target.value = ''; }} />
+          <button onClick={() => fileRef.current?.click()} disabled={importing} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-xs disabled:opacity-50">
+            {importing ? <MapSpinner size={13} /> : <Upload size={13} />} 导入CSV
+          </button>
+          <button onClick={exportCsv} disabled={items.length === 0} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-xs disabled:opacity-40">
+            <Download size={13} /> 导出CSV
+          </button>
+          {items.length > 0 && <ViewToggle view={view} setView={setView} />}
+        </div>
       </div>
       {items.length === 0 ? (
         <EmptyHint text="还没有需求。点「新建需求」打开独立页面填写，可分级并关联客户、版本、功能，被缺陷追溯。" />

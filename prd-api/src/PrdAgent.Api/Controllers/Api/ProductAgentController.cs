@@ -1470,6 +1470,46 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(act));
     }
 
+    // ════════════════════════ 批量导入 ════════════════════════
+
+    /// <summary>批量导入需求（来自 CSV 解析后的行）：每行 title 必填，自动绑定默认流程 + 初始状态。</summary>
+    [HttpPost("products/{productId}/requirements/import")]
+    public async Task<IActionResult> ImportRequirements(string productId, [FromBody] ImportRequirementsRequest request)
+    {
+        var userId = GetUserId();
+        if (await FindAccessibleProductAsync(productId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        var rows = (request.Rows ?? new()).Where(r => !string.IsNullOrWhiteSpace(r.Title)).ToList();
+        if (rows.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "没有可导入的有效行（标题不能为空）"));
+        if (rows.Count > 500)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "单次最多导入 500 条"));
+
+        var (_, wfId) = await ResolveDefaultsAsync(ProductEntityType.Requirement, productId);
+        var initialState = await ResolveInitialStateAsync(wfId);
+        var now = DateTime.UtcNow;
+        var created = 0;
+        foreach (var row in rows)
+        {
+            var req = new Requirement
+            {
+                ProductId = productId,
+                RequirementNo = await GenerateNoAsync("REQ", _db.Requirements, "RequirementNo"),
+                Title = row.Title!.Trim(),
+                Description = row.Description?.Trim(),
+                Grade = ProductItemGrade.All.Contains(row.Grade ?? "") ? row.Grade! : ProductItemGrade.P2,
+                WorkflowDefId = wfId,
+                CurrentState = initialState,
+                StateEnteredAt = now,
+                OwnerId = userId,
+            };
+            await _db.Requirements.InsertOneAsync(req);
+            created++;
+        }
+        await RecalcProductCountsAsync(productId);
+        return Ok(ApiResponse<object>.Ok(new { created }));
+    }
+
     // ════════════════════════ 报表 / 统计分析 ════════════════════════
 
     /// <summary>产品报表：版本进度（按需求状态分类）+ 迭代速度（每周完成吞吐）+ 总体进度。</summary>
@@ -2159,6 +2199,18 @@ public class AddCommentRequest
 {
     public string Content { get; set; } = string.Empty;
     public List<string>? Mentions { get; set; }
+}
+
+public class ImportRequirementsRequest
+{
+    public List<ImportRequirementRow> Rows { get; set; } = new();
+}
+
+public class ImportRequirementRow
+{
+    public string? Title { get; set; }
+    public string? Grade { get; set; }
+    public string? Description { get; set; }
 }
 
 public class BatchRequest

@@ -174,6 +174,11 @@ export function deleteDescTemplate(templateId: string) {
   return apiRequest<{ deleted: boolean }>(`/api/product/desc-templates/${templateId}`, { method: 'DELETE' });
 }
 
+// ── 批量导入 ──
+export function importRequirements(productId: string, rows: { title: string; grade?: string; description?: string }[]) {
+  return apiRequest<{ created: number }>(`/api/product/products/${productId}/requirements/import`, { method: 'POST', body: { rows } });
+}
+
 // ── 报表 / 统计分析 ──
 export interface ProductAnalytics {
   releaseProgress: { versionId: string; versionName: string; total: number; done: number; doing: number; todo: number }[];
