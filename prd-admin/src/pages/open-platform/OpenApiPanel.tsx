@@ -77,6 +77,14 @@ export default function OpenApiPanel({ onActionsReady }: { onActionsReady?: (a: 
     onActionsReady?.(<Button variant="ghost" onClick={load} disabled={loading}><RefreshCw size={14} /> 刷新</Button>);
   }, [onActionsReady, load, loading]);
 
+  // 列表刷新后，把已打开抽屉的 detail 同步到最新行（头部今日用量/限额默认与卡片一致）。
+  // 仅在找到对应行时更新；找不到不关闭抽屉——刷新失败会把 rows 清空，避免误关。keyId 不变所以抽屉不 remount，编辑中的表单不被冲掉。
+  useEffect(() => {
+    if (!detail) return;
+    const fresh = rows.find((r) => r.keyId === detail.keyId);
+    if (fresh && fresh !== detail) setDetail(fresh);
+  }, [rows, detail]);
+
   const chatOptions = buildWhitelistOptions(pools, 'chat');
   const imageOptions = buildWhitelistOptions(pools, 'generation');
 
