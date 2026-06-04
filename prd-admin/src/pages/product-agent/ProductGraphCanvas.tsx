@@ -649,7 +649,7 @@ function NodeDrawer({
         <div className="flex items-center gap-2">
           {canOpen && (
             <button onClick={onOpenDetail} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm">
-              <ExternalLink size={13} /> 新窗口打开详情
+              <ExternalLink size={13} /> 查看详情
             </button>
           )}
           <button onClick={onTrace} className="flex-1 px-3 py-1.5 rounded-lg border border-amber-400/30 text-amber-300 hover:bg-amber-400/10 text-sm">
