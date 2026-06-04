@@ -13,6 +13,16 @@ export function isEditorPageGuide(sourceId: string | null | undefined): boolean 
 }
 
 /**
+ * 取 actionUrl 的路由路径部分(去掉 ?query 和 #hash),用于和 location.pathname 比较。
+ * 有的 tip 的 actionUrl 带 deep-link query(如 nav-order-customize 的 `/settings?tab=nav-order`),
+ * 路径匹配必须只比 pathname,否则永远匹配不上 → 入口按钮被隐藏、作用域抽屉看不到该教程(Codex P2)。
+ * 导航仍用完整 actionUrl(handleOpenTip),query 只在匹配阶段剥离。
+ */
+export function routePathOf(actionUrl: string): string {
+  return actionUrl.split('?')[0].split('#')[0];
+}
+
+/**
  * 当前路由是否有「未走完的本页教程」——TipsDrawer(自动开讲 + 抑制抽屉自动展开)与
  * TipsEntryButton(入口闪烁/强调态)共用的单一匹配逻辑,避免两份 inline 拷贝随规则漂移(Bugbot)。
  *
@@ -36,8 +46,9 @@ export function matchPageGuide(
     if (t.kind !== 'card' && t.kind !== 'spotlight') return false;
     if (typeof t.sourceId !== 'string' || !t.sourceId.endsWith('-page-guide') || !t.actionUrl) return false;
     const isEditor = isEditorPageGuide(t.sourceId);
-    if (pathname === t.actionUrl) return !isEditor;
-    if (pathname.startsWith(t.actionUrl + '/') || pathname.startsWith(t.actionUrl + '-fullscreen/')) return isEditor;
+    const url = routePathOf(t.actionUrl);
+    if (pathname === url) return !isEditor;
+    if (pathname.startsWith(url + '/') || pathname.startsWith(url + '-fullscreen/')) return isEditor;
     return false;
   }) ?? null;
 }
@@ -65,7 +76,7 @@ export function filterPageTips(
     if (t.kind !== 'card' && t.kind !== 'spotlight') return false;
     if (t.isTargeted) return true;
     if (!t.actionUrl) return false;
-    const url = t.actionUrl;
+    const url = routePathOf(t.actionUrl);
     const isPageGuide = typeof t.sourceId === 'string' && t.sourceId.endsWith('-page-guide');
     if (isPageGuide) {
       const isEditor = isEditorPageGuide(t.sourceId);

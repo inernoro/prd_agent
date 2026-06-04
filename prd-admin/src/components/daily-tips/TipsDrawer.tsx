@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Sparkles, X, Pin, PinOff, MapPin, ChevronLeft, ChevronRight, GraduationCap } from 'lucide-react';
 import { OPEN_TIPS_DRAWER_EVENT } from './TipsEntryButton';
-import { matchPageGuide, isEditorPageGuide, filterPageTips } from './pageGuideMatch';
+import { matchPageGuide, isEditorPageGuide, filterPageTips, routePathOf } from './pageGuideMatch';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { writeSpotlightPayload, SPOTLIGHT_PAYLOAD_UPDATED_EVENT } from './TipsRotator';
 import { trackTip, dismissTipForever } from '@/services/real/dailyTips';
@@ -293,9 +293,11 @@ export function TipsDrawer() {
       const gi = viewTips.findIndex((t) => t.id === guide.id);
       if (gi >= 0) return gi;
     }
-    const ai = viewTips.findIndex((t) =>
-      t.actionUrl
-      && (location.pathname === t.actionUrl || location.pathname.startsWith(t.actionUrl + '/')));
+    const ai = viewTips.findIndex((t) => {
+      if (!t.actionUrl) return false;
+      const url = routePathOf(t.actionUrl); // 剥离 deep-link query 再比路径(Codex P2)
+      return location.pathname === url || location.pathname.startsWith(url + '/');
+    });
     return ai >= 0 ? ai : 0;
   })();
 

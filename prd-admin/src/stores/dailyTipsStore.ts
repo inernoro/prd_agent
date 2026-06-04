@@ -22,23 +22,31 @@ function writeDismissed(ids: Set<string>) {
 }
 
 /**
- * 本会话内「已学会」的 *-page-guide sourceId 乐观覆盖集。
+ * 本会话内「已学会」的 *-page-guide:sourceId → 学会时的内容版本号。
  * markLearned 是乐观更新(先本地标 learned=true,再异步 POST mark-learned),而 load 会用 /visible
  * 整包替换 items。若一次并发/陈旧刷新(抽屉打开时 load(force) / 60s 轮询 / 标签可见)在服务端回显
  * learned 之前落地,就会把乐观标记冲掉,matchPageGuide 又把该教程当成「没走完」→ 重新脉冲/自动开讲。
- * 解决:把学会的 sourceId 记进本集合,每次 load 落库后再叠加一次 learned=true,刷新不会再清掉它。
- * 仅内存(刷新页面后服务端 LearnedTips 已是权威源,/visible 自带 learned=true)。
+ * 解决:记下学会时的版本号,每次 load 落库后用 applyLocalLearned 叠加 learned=true。
+ *
+ * 关键:按版本号 gate(镜像后端 FilterLearned 的 `learnedVer >= t.Version` 语义)——只有「学会时的
+ * 版本 >= 服务端当前版本」才覆盖。这样:
+ *  - 陈旧刷新(同版本、服务端还没回显 learned)→ 覆盖,标记不丢;
+ *  - 管理员 bump 版本(服务端 learned=false 且 version 更高)→ 不覆盖,教程正常重新出现,
+ *    不会被本会话乐观标记一直压制到整页刷新(Bugbot)。
+ * 仅内存(刷新页面后服务端 LearnedTips 已是权威源,/visible 自带 learned)。
  */
-const locallyLearnedSourceIds = new Set<string>();
+const locallyLearnedVersions = new Map<string, number>();
 
-/** 用本会话乐观学会集叠加 learned=true,保证刷新不丢标记 */
+/** 用本会话乐观学会版本叠加 learned=true,保证陈旧刷新不丢标记;版本被 bump 时不压制(见上注释) */
 function applyLocalLearned(items: DailyTip[]): DailyTip[] {
-  if (locallyLearnedSourceIds.size === 0) return items;
-  return items.map((t) =>
-    t.sourceId && locallyLearnedSourceIds.has(t.sourceId) && !t.learned
+  if (locallyLearnedVersions.size === 0) return items;
+  return items.map((t) => {
+    if (t.learned || !t.sourceId) return t;
+    const learnedVer = locallyLearnedVersions.get(t.sourceId);
+    return learnedVer != null && learnedVer >= (t.version ?? 1)
       ? { ...t, learned: true }
-      : t,
-  );
+      : t;
+  });
 }
 
 interface DailyTipsState {
@@ -96,8 +104,8 @@ export const useDailyTipsStore = create<DailyTipsState>((set, get) => ({
     const tip = get().items.find((t) => t.id === id);
     const isPageGuide = typeof tip?.sourceId === 'string' && tip.sourceId.endsWith('-page-guide');
     if (isPageGuide) {
-      // 记进本会话乐观学会集,后续任何 load 整包替换 items 时都会再叠加 learned=true(Bugbot)
-      if (tip?.sourceId) locallyLearnedSourceIds.add(tip.sourceId);
+      // 记进本会话乐观学会版本(sourceId → 学会时版本号),后续 load 整包替换 items 时按版本 gate 叠加 learned(Bugbot)
+      if (tip?.sourceId) locallyLearnedVersions.set(tip.sourceId, tip.version ?? 1);
       set({ items: get().items.map((t) => (t.id === id ? { ...t, learned: true } : t)) });
     } else {
       set({ items: get().items.filter((t) => t.id !== id) });
