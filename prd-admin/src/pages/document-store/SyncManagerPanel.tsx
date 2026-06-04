@@ -13,6 +13,7 @@ import {
 } from '@/services/real/documentStoreSync';
 import { listDocumentStoresWithPreview } from '@/services/real/documentStore';
 import type { DocumentStoreWithPreview } from '@/services/contracts/documentStore';
+import { useTeamStore } from '@/stores/teamStore';
 
 const DIRECTIONS: { key: SyncDirection; label: string; icon: typeof ArrowRight }[] = [
   { key: 'both', label: '双向同步', icon: ArrowLeftRight },
@@ -86,13 +87,24 @@ export function SyncManagerPanel() {
   const load = useCallback(async () => {
     const mySeq = ++loadSeq.current;
     setLoading(true);
-    const [linkRes, storeRes] = await Promise.all([
+    // 选择器要列出"我能写的所有库"：自己拥有的(mine) + 各团队共享给我的(team)。
+    // 后端 LoadWritableStoreAsync 接受团队写者，UI 不补这些库的话团队共享库就配不了对（Codex P2）。
+    await useTeamStore.getState().loadTeams().catch(() => {});
+    const teams = useTeamStore.getState().teams;
+    const [linkRes, mineRes] = await Promise.all([
       listAllSyncLinks(),
       listDocumentStoresWithPreview(1, 500, { scope: 'mine' }),
     ]);
+    const teamResults = await Promise.all(
+      teams.map(t => listDocumentStoresWithPreview(1, 500, { scope: 'team', teamId: t.team.id })),
+    );
     if (mySeq !== loadSeq.current) return; // 已有更新的请求发出，丢弃本次回填
     if (linkRes.success) setLinks(linkRes.data.items ?? []);
-    if (storeRes.success) setMyStores(storeRes.data.items ?? []);
+    // 合并去重（按 store id）：mine 优先，团队共享库补充
+    const merged = new Map<string, DocumentStoreWithPreview>();
+    if (mineRes.success) for (const s of mineRes.data.items ?? []) merged.set(s.id, s);
+    for (const tr of teamResults) if (tr.success) for (const s of tr.data.items ?? []) if (!merged.has(s.id)) merged.set(s.id, s);
+    setMyStores([...merged.values()]);
     setLoading(false);
   }, []);
 
@@ -118,7 +130,12 @@ export function SyncManagerPanel() {
 
   const handleDirection = async (link: DocumentSyncLink, direction: SyncDirection) => {
     const res = await updateSyncLinkDirection(link.id, direction);
-    if (res.success) setLinks(prev => prev.map(l => l.id === link.id ? { ...l, direction } : l));
+    // 状态依赖方向，后端会按新方向重算 status 并回带库名；直接用返回值（名字缺失时回退旧值兜底）。
+    if (res.success) setLinks(prev => prev.map(l => l.id === link.id ? {
+      ...l, ...res.data,
+      localStoreName: res.data.localStoreName ?? l.localStoreName,
+      remoteStoreName: res.data.remoteStoreName ?? l.remoteStoreName,
+    } : l));
     else toast.error('修改方向失败', res.error?.message);
   };
 

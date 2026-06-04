@@ -419,6 +419,9 @@ public class DocumentStoreController : ControllerBase
         var viewEventsResult = await _db.DocumentStoreViewEvents.DeleteManyAsync(v => v.StoreId == storeId);
         var inlineCommentsResult = await _db.DocumentInlineComments.DeleteManyAsync(c => c.StoreId == storeId);
         var agentRunsResult = await _db.DocumentStoreAgentRuns.DeleteManyAsync(r => r.StoreId == storeId);
+        // 跨环境/本地同步配对：本库作为本地侧或本地配对对端侧的记录一并清，避免删库后留下死配对
+        // （sync/links 仍列出、反向徽章误报 pending、运行只报 store-not-found）。
+        await _db.DocumentStoreSyncLinks.DeleteManyAsync(l => l.LocalStoreId == storeId || l.RemoteStoreId == storeId);
 
         // 正文：只有通过此 Store 关联的 ParsedPrd 才删（其他模块可能也引用 documents 集合，所以按 ID 列表删）
         long documentsDeleted = 0;

@@ -758,7 +758,13 @@ public class DocumentStoreSyncController : ControllerBase
                 .Set(l => l.Direction, request!.Direction)
                 .Set(l => l.UpdatedAt, DateTime.UtcNow));
         link.Direction = request!.Direction!;
-        return Ok(ApiResponse<object>.Ok(ToDto(link, link.Status, null, null)));
+        // 状态依赖方向（push 只看本地、pull 只看对端、both 看两侧），改方向后必须按新方向重算，
+        // 否则列表保留旧状态（如 both→push 后仍显示因对端漂移而来的「待同步」）。同时回带库名供前端直接替换。
+        var localName = (await _db.DocumentStores.Find(s => s.Id == link.LocalStoreId).FirstOrDefaultAsync())?.Name;
+        var localSig = await ComputeSignatureAsync(link.LocalStoreId);
+        var remoteSig = await GetRemoteSignatureAsync(link);
+        var status = ResolveStatus(link, localSig, remoteSig);
+        return Ok(ApiResponse<object>.Ok(ToDto(link, status, localSig, remoteSig, localName)));
     }
 
     /// <summary>
@@ -899,10 +905,13 @@ public class DocumentStoreSyncController : ControllerBase
         // 签名与上次同步快照不一致 = 该侧有改动。按方向只关心"会被本次同步搬动"的那侧：
         // push 只看本地、pull 只看对端、both 看任一侧。
         var localChanged = localSig != null && link.LastLocalSignature != null && localSig != link.LastLocalSignature;
-        // 对端：签名漂移 = 改动；另外，需要对端的方向若 LastRemoteSignature 为空（上次没抓到快照），
-        // 视为"对端状态未知 → 待同步"，避免假"已同步"（Bugbot: null remote snapshot breaks pending）。
-        var remoteChanged = (remoteSig != null && link.LastRemoteSignature != null && remoteSig != link.LastRemoteSignature)
-            || link.LastRemoteSignature == null;
+        // 对端视为"有改动 / 待同步"的三种情况（与 RunSync 的 null 处理一致）：
+        //   a) 当前对端签名取不到（null）——对端不可达/令牌失效，无法确认已同步，不能假装 synced；
+        //   b) 上次没抓到对端快照（LastRemoteSignature 为 null）——状态未知；
+        //   c) 两侧都有快照但漂移了。
+        var remoteChanged = remoteSig == null
+            || link.LastRemoteSignature == null
+            || remoteSig != link.LastRemoteSignature;
         var relevant = link.Direction switch
         {
             DocumentSyncDirection.Push => localChanged,
