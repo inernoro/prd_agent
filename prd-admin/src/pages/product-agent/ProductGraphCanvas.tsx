@@ -11,7 +11,7 @@
  *
  * 数据来自 GET /products/{id}/graph 的全量 nodes/edges，过滤/折叠/追溯均在前端计算。
  */
-import { useEffect, useMemo, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -565,17 +565,26 @@ function NodeDrawer({
   const [summary, setSummary] = useState<string | null>(null);
   const [summaryBusy, setSummaryBusy] = useState(false);
   const [summaryMsg, setSummaryMsg] = useState<string | null>(null);
+  const autoTried = useRef(false);
 
-  useEffect(() => { setSummary(null); setSummaryMsg(null); }, [node.id]);
-
-  const runSummary = async () => {
+  const runSummary = useCallback(async () => {
     setSummaryBusy(true);
     setSummaryMsg(null);
     const res = await summarizeItem(type, rawId);
     setSummaryBusy(false);
     if (res.success && res.data.summary) setSummary(res.data.summary);
     else setSummaryMsg(res.success ? (res.data.message ?? '暂无可摘要内容') : (res.error?.message ?? '摘要失败'));
-  };
+  }, [type, rawId]);
+
+  useEffect(() => { autoTried.current = false; setSummary(null); setSummaryMsg(null); }, [node.id]);
+
+  // 首次展开自动摘要（系统只自动一次；之后用户点「重新摘要」）
+  useEffect(() => {
+    if (!busy && canOpen && desc && !autoTried.current) {
+      autoTried.current = true;
+      void runSummary();
+    }
+  }, [busy, desc, canOpen, runSummary]);
 
   useEffect(() => {
     let alive = true;
@@ -586,9 +595,20 @@ function NodeDrawer({
       const r: { label: string; value: string }[] = [];
       let d = '';
       if (type === 'requirement') {
-        const res = await listRequirements(productId);
+        const [res, cRes, vRes] = await Promise.all([listRequirements(productId), listCustomers(productId), listVersions(productId)]);
         const o = res.success ? res.data.items.find((x) => x.id === rawId) : undefined;
-        if (o) { r.push({ label: '编号', value: o.requirementNo }, { label: '分级', value: o.grade }, { label: '状态', value: o.currentState || '-' }, { label: '关联客户', value: String(o.customerIds.length) }, { label: '归属版本', value: String(o.versionIds.length) }); d = o.description ?? ''; }
+        if (o) {
+          const cName = new Map((cRes.success ? cRes.data.items : []).map((c) => [c.id, c.name] as [string, string]));
+          const vName = new Map((vRes.success ? vRes.data.items : []).map((v) => [v.id, v.versionName] as [string, string]));
+          r.push(
+            { label: '编号', value: o.requirementNo },
+            { label: '分级', value: o.grade },
+            { label: '状态', value: o.currentState || '-' },
+            { label: '关联客户', value: o.customerIds.map((id) => cName.get(id) ?? id).join('、') || '—' },
+            { label: '归属版本', value: o.versionIds.map((id) => vName.get(id) ?? id).join('、') || '—' },
+          );
+          d = o.description ?? '';
+        }
       } else if (type === 'feature') {
         const res = await listFeatures(productId);
         const o = res.success ? res.data.items.find((x) => x.id === rawId) : undefined;
@@ -649,34 +669,40 @@ function NodeDrawer({
                 rows.map((row, i) => <DrawerRow key={i} label={row.label} value={row.value} />)
               )}
             </div>
-            {/* 摘要：默认干净纯文本节选；canOpen 类型可点 AI 摘要生成 2-3 句概括 */}
+            {/* 摘要：需求/功能/缺陷首次展开自动 AI 摘要；其它类型显示干净纯文本节选 */}
             <div>
               <div className="flex items-center justify-between mb-1">
-                <span className="text-[11px] text-white/40">{summary ? 'AI 摘要' : '描述节选'}</span>
+                <span className="text-[11px] text-white/40 flex items-center gap-1">
+                  {canOpen ? <><Sparkles size={11} className="text-cyan-300/80" /> AI 摘要</> : '描述节选'}
+                </span>
                 {canOpen && desc && (
                   <button
                     onClick={runSummary}
                     disabled={summaryBusy}
                     className="flex items-center gap-1 text-[11px] text-cyan-300 hover:text-cyan-200 disabled:opacity-50"
                   >
-                    {summaryBusy ? <MapSpinner size={11} /> : <Sparkles size={11} />} {summary ? '重新摘要' : 'AI 摘要'}
+                    {summaryBusy ? <MapSpinner size={11} /> : <Sparkles size={11} />} 重新摘要
                   </button>
                 )}
               </div>
               <div className="text-sm text-white/80 whitespace-pre-wrap rounded-lg border border-white/10 bg-white/[0.02] p-3 min-h-[60px]">
-                {summary ? (
-                  summary
+                {canOpen ? (
+                  summaryBusy ? (
+                    <span className="text-white/40 flex items-center gap-1.5"><MapSpinner size={12} /> AI 摘要中…</span>
+                  ) : summary ? (
+                    summary
+                  ) : summaryMsg ? (
+                    <span className="text-amber-300/80">{summaryMsg}</span>
+                  ) : !desc ? (
+                    <span className="text-white/30">（未填写描述）</span>
+                  ) : (
+                    <span className="text-white/40">准备摘要…</span>
+                  )
                 ) : desc ? (
-                  <>
-                    <span className="text-white/70">{htmlToText(desc).slice(0, 220)}{htmlToText(desc).length > 220 ? '…' : ''}</span>
-                    {htmlToText(desc).length > 220 && canOpen && (
-                      <button onClick={onOpenDetail} className="block mt-1.5 text-[11px] text-cyan-300 hover:underline">查看完整详情 ↗</button>
-                    )}
-                  </>
+                  <span className="text-white/70">{htmlToText(desc).slice(0, 240)}{htmlToText(desc).length > 240 ? '…' : ''}</span>
                 ) : (
                   <span className="text-white/30">（未填写）</span>
                 )}
-                {summaryMsg && <div className="text-[11px] text-amber-300/80 mt-1.5">{summaryMsg}</div>}
               </div>
             </div>
           </>
