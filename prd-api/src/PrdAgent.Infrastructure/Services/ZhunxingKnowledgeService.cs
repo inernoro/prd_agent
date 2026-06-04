@@ -167,6 +167,7 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
 
         var topK = Math.Clamp(request.TopK <= 0 ? 3 : request.TopK, 1, 5);
         var question = request.Question.Trim();
+        var answerRole = NormalizeAnswerRole(request.AnswerRole);
         var tokens = ExtractTokens(question);
 
         var clauses = await _db.ZhunxingKnowledgeClauses
@@ -182,8 +183,10 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
             {
                 Matched = false,
                 Answer = "当前知识库尚未初始化，暂时无法给出制度依据。请先完成知识条款录入。",
+                AnswerRole = answerRole,
                 Confidence = 0,
                 RiskLevel = ZhunxingRiskLevels.Public,
+                DecisionTree = BuildNoMatchDecisionTree(),
                 FollowUpSuggestion = "请联系管理员先初始化准星知识库，或补充对应制度条款后再提问。",
             };
         }
@@ -206,8 +209,10 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
             {
                 Matched = false,
                 Answer = "未找到与你问题完全匹配的有效条款。为避免误导，当前先不给出结论。",
+                AnswerRole = answerRole,
                 Confidence = 0,
                 RiskLevel = ZhunxingRiskLevels.Public,
+                DecisionTree = BuildNoMatchDecisionTree(),
                 FollowUpSuggestion = "请补充场景（部门、流程节点、时长或审批条件），或联系 HR/制度管理员人工确认。",
             };
         }
@@ -238,6 +243,10 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
 
         var confidence = ComputeConfidence(scored.Select(x => x.Score).ToList());
         var riskLevel = MaxRiskLevel(citations.Select(x => x.RiskLevel));
+        var conflictClauses = DetectConflicts(question, citations);
+        var conflictDetected = conflictClauses.Count > 0;
+        var decisionTree = BuildDecisionTree(question, citations, conflictDetected);
+        var roleAnswer = BuildRoleAnswer(answerRole, primary, citations, conflictDetected);
 
         _logger.LogInformation(
             "[Zhunxing] Ask answered. userId={UserId} question={Question} hits={Hits}",
@@ -248,11 +257,20 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
         return new ZhunxingAskResponse
         {
             Matched = true,
-            Answer = primary.RuleText,
+            Answer = roleAnswer,
+            AnswerRole = answerRole,
             Confidence = confidence,
             RiskLevel = riskLevel,
+            DecisionTree = decisionTree,
+            ConflictDetected = conflictDetected,
+            ConflictMessage = conflictDetected
+                ? "命中条款存在口径差异，请先按高风险路径执行并联系 HR/制度管理员确认。"
+                : null,
+            ConflictClauses = conflictClauses,
             Citations = citations,
-            FollowUpSuggestion = "如涉及特殊情形（例外审批、法定节假日调整、处罚认定），请联系责任部门进行最终确认。",
+            FollowUpSuggestion = conflictDetected
+                ? "当前命中条款存在潜在冲突，建议先人工确认最终口径后再执行。"
+                : "如涉及特殊情形（例外审批、法定节假日调整、处罚认定），请联系责任部门进行最终确认。",
         };
     }
 
@@ -749,6 +767,350 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
         if (normalized is ZhunxingRiskLevels.Public or ZhunxingRiskLevels.Internal or ZhunxingRiskLevels.Sensitive)
             return normalized;
         return ZhunxingRiskLevels.Internal;
+    }
+
+    private static string NormalizeAnswerRole(string? answerRole)
+    {
+        if (string.IsNullOrWhiteSpace(answerRole))
+            return ZhunxingAnswerRoles.Employee;
+
+        var normalized = answerRole.Trim().ToLowerInvariant();
+        if (normalized is ZhunxingAnswerRoles.Employee
+            or ZhunxingAnswerRoles.Supervisor
+            or ZhunxingAnswerRoles.Hr)
+        {
+            return normalized;
+        }
+
+        return ZhunxingAnswerRoles.Employee;
+    }
+
+    private static List<ZhunxingDecisionStep> BuildNoMatchDecisionTree()
+    {
+        return new List<ZhunxingDecisionStep>
+        {
+            new()
+            {
+                StepNo = 1,
+                Condition = "如果当前问题未命中",
+                Action = "补充部门、流程节点、时长/阈值等关键上下文后重试。",
+            },
+            new()
+            {
+                StepNo = 2,
+                Condition = "如果仍未命中",
+                Action = "提交未命中反馈，由管理员补充条款后回放验证。",
+            },
+        };
+    }
+
+    private static List<ZhunxingDecisionStep> BuildDecisionTree(
+        string question,
+        IReadOnlyList<ZhunxingCitation> citations,
+        bool conflictDetected)
+    {
+        var steps = new List<ZhunxingDecisionStep>
+        {
+            new()
+            {
+                StepNo = 1,
+                Condition = "如果问题同时涉及多个流程（如请假+考勤）",
+                Action = "先拆分流程逐项判断，避免混用条款导致误判。",
+            },
+        };
+
+        var orderedCitations = citations
+            .OrderByDescending(x => x.MatchScore)
+            .ThenBy(x => x.Chapter, StringComparer.Ordinal)
+            .Take(3)
+            .ToList();
+
+        var stepNo = 2;
+        foreach (var citation in orderedCitations)
+        {
+            steps.Add(new ZhunxingDecisionStep
+            {
+                StepNo = stepNo++,
+                Condition = BuildDecisionCondition(question, citation),
+                Action = $"按 {citation.Chapter}《{citation.ClauseTitle}》执行：{BuildSnippet(citation.FullText)}",
+                ClauseId = citation.ClauseId,
+                Chapter = citation.Chapter,
+                RiskLevel = citation.RiskLevel,
+            });
+        }
+
+        if (conflictDetected)
+        {
+            steps.Add(new ZhunxingDecisionStep
+            {
+                StepNo = stepNo,
+                Condition = "如果命中条款出现口径冲突",
+                Action = "暂停自动执行，升级责任部门人工确认后再落地。",
+            });
+        }
+
+        return steps;
+    }
+
+    private static string BuildDecisionCondition(string question, ZhunxingCitation citation)
+    {
+        var constraint = TryExtractConstraint(citation);
+        if (constraint != null)
+        {
+            return $"如果满足「{citation.ClauseTitle}」且阈值为 {constraint.Operator}{constraint.Value}{constraint.Unit}";
+        }
+
+        var questionPrefix = question.Length > 16 ? $"{question[..16]}..." : question;
+        return $"如果你的场景与「{questionPrefix}」匹配到 {citation.Chapter} 章节";
+    }
+
+    private static string BuildRoleAnswer(
+        string answerRole,
+        ZhunxingKnowledgeClause primaryClause,
+        IReadOnlyList<ZhunxingCitation> citations,
+        bool conflictDetected)
+    {
+        var primarySnippet = BuildSnippet(primaryClause.RuleText);
+        var citationBrief = citations
+            .Take(3)
+            .Select(x => $"{x.DocumentTitle} {x.Chapter}")
+            .ToList();
+
+        return answerRole switch
+        {
+            ZhunxingAnswerRoles.Supervisor => string.Join(Environment.NewLine, new[]
+            {
+                $"审批口径：{primarySnippet}",
+                $"管理动作：按 {primaryClause.Chapter}《{primaryClause.Title}》作为团队执行口径，超范围事项走升级审批。",
+                $"风险提醒：当前风险等级为 {NormalizeRiskLabel(MaxRiskLevel(citations.Select(x => x.RiskLevel)))}。",
+                conflictDetected
+                    ? "冲突提示：当前命中条款存在口径差异，请先人工确认后再批复。"
+                    : "复核建议：对特殊个案先核验例外条件，再做最终审批。",
+            }),
+            ZhunxingAnswerRoles.Hr => string.Join(Environment.NewLine, new[]
+            {
+                $"条款原文：{primaryClause.RuleText}",
+                $"引用依据：{string.Join("；", citationBrief)}",
+                "HR校验：请同步核验适用范围、例外条件、最新生效版本。",
+                conflictDetected
+                    ? "冲突提示：命中条款存在阈值或口径差异，需在制度层统一解释后发布。"
+                    : "一致性提示：如有跨制度关联，建议附带相关补充说明。",
+            }),
+            _ => string.Join(Environment.NewLine, new[]
+            {
+                $"结论：{primarySnippet}",
+                $"执行步骤：先按 {primaryClause.Chapter}《{primaryClause.Title}》执行，再补齐审批或留痕动作。",
+                conflictDetected
+                    ? "注意：当前条款存在冲突风险，请先找 HR/制度管理员确认。"
+                    : "提示：遇到例外场景时请先提交审批后执行。",
+            }),
+        };
+    }
+
+    private static string NormalizeRiskLabel(string riskLevel)
+    {
+        return NormalizeRiskLevel(riskLevel) switch
+        {
+            ZhunxingRiskLevels.Sensitive => "高风险",
+            ZhunxingRiskLevels.Internal => "内部",
+            _ => "公开",
+        };
+    }
+
+    private static List<ZhunxingConflictClause> DetectConflicts(string question, IReadOnlyList<ZhunxingCitation> citations)
+    {
+        if (citations.Count < 2)
+            return new List<ZhunxingConflictClause>();
+
+        var structured = citations
+            .Select(c => new
+            {
+                Citation = c,
+                Constraint = TryExtractConstraint(c),
+            })
+            .Where(x => x.Constraint != null)
+            .Select(x => new
+            {
+                x.Citation,
+                Constraint = x.Constraint!,
+            })
+            .ToList();
+
+        if (structured.Count < 2)
+            return new List<ZhunxingConflictClause>();
+
+        var questionLower = question.ToLowerInvariant();
+        var conflictMap = new Dictionary<string, ZhunxingConflictClause>(StringComparer.Ordinal);
+        for (var i = 0; i < structured.Count; i++)
+        {
+            var left = structured[i];
+            for (var j = i + 1; j < structured.Count; j++)
+            {
+                var right = structured[j];
+                if (!string.Equals(left.Constraint.Topic, right.Constraint.Topic, StringComparison.Ordinal))
+                    continue;
+                if (!string.Equals(left.Constraint.Unit, right.Constraint.Unit, StringComparison.Ordinal))
+                    continue;
+                if (Math.Abs(left.Citation.MatchScore - right.Citation.MatchScore) > 2)
+                    continue;
+                if (!IsConflictPair(left.Constraint, right.Constraint))
+                    continue;
+                if (!TopicLikelyRelevantToQuestion(left.Constraint.Topic, questionLower))
+                    continue;
+
+                var reason =
+                    $"同主题出现不同阈值：{left.Constraint.Operator}{left.Constraint.Value}{left.Constraint.Unit} 与 {right.Constraint.Operator}{right.Constraint.Value}{right.Constraint.Unit}";
+                MergeConflictClause(conflictMap, left.Citation, reason);
+                MergeConflictClause(conflictMap, right.Citation, reason);
+            }
+        }
+
+        return conflictMap.Values
+            .OrderByDescending(x => GetRiskRank(x.RiskLevel))
+            .ThenBy(x => x.Chapter, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private static bool TopicLikelyRelevantToQuestion(string topic, string questionLower)
+    {
+        return topic switch
+        {
+            "leave_approval" => questionLower.Contains("请假", StringComparison.Ordinal),
+            "leave_limit" => questionLower.Contains("请假", StringComparison.Ordinal) || questionLower.Contains("事假", StringComparison.Ordinal),
+            "attendance" => questionLower.Contains("考勤", StringComparison.Ordinal) || questionLower.Contains("打卡", StringComparison.Ordinal),
+            "discipline" => questionLower.Contains("旷工", StringComparison.Ordinal) || questionLower.Contains("迟到", StringComparison.Ordinal),
+            _ => true,
+        };
+    }
+
+    private static bool IsConflictPair(ClauseConstraint left, ClauseConstraint right)
+    {
+        if (left.Value == right.Value && left.Operator == right.Operator)
+            return false;
+
+        var complementaryBoundary =
+            (left.Operator == "<=" && right.Operator == ">" && left.Value == right.Value)
+            || (left.Operator == ">" && right.Operator == "<=" && left.Value == right.Value);
+        if (complementaryBoundary)
+            return false;
+
+        if (left.Operator == "==" && right.Operator == "==" && left.Value != right.Value)
+            return true;
+
+        if ((left.Operator == "<=" && right.Operator == "<=")
+            || (left.Operator == ">=" && right.Operator == ">=")
+            || (left.Operator == ">" && right.Operator == ">")
+            || (left.Operator == "<" && right.Operator == "<"))
+        {
+            return left.Value != right.Value;
+        }
+
+        return (left.Operator == "<=" && right.Operator == ">=" && left.Value != right.Value)
+            || (left.Operator == ">=" && right.Operator == "<=" && left.Value != right.Value)
+            || (left.Operator == "<=" && right.Operator == ">")
+            || (left.Operator == ">" && right.Operator == "<=");
+    }
+
+    private static void MergeConflictClause(
+        Dictionary<string, ZhunxingConflictClause> conflictMap,
+        ZhunxingCitation citation,
+        string reason)
+    {
+        if (conflictMap.ContainsKey(citation.ClauseId))
+            return;
+
+        conflictMap[citation.ClauseId] = new ZhunxingConflictClause
+        {
+            ClauseId = citation.ClauseId,
+            DocumentTitle = citation.DocumentTitle,
+            Chapter = citation.Chapter,
+            ClauseTitle = citation.ClauseTitle,
+            RuleSummary = BuildSnippet(citation.FullText),
+            ConflictReason = reason,
+            RiskLevel = citation.RiskLevel,
+        };
+    }
+
+    private static ClauseConstraint? TryExtractConstraint(ZhunxingCitation citation)
+    {
+        var topic = InferConstraintTopic(citation);
+        if (string.IsNullOrWhiteSpace(topic))
+            return null;
+
+        var text = $"{citation.ClauseTitle} {citation.FullText}";
+
+        var lessEqual = Regex.Match(text, @"(?:不超过|不高于|上限(?:为)?|最多|累计不超过)\s*(\d+)\s*(小时|天|分钟|次)");
+        if (lessEqual.Success)
+        {
+            return new ClauseConstraint
+            {
+                Topic = topic,
+                Operator = "<=",
+                Value = int.Parse(lessEqual.Groups[1].Value),
+                Unit = lessEqual.Groups[2].Value,
+            };
+        }
+
+        var greater = Regex.Match(text, @"(?:超过|大于)\s*(\d+)\s*(小时|天|分钟|次)");
+        if (greater.Success)
+        {
+            return new ClauseConstraint
+            {
+                Topic = topic,
+                Operator = ">",
+                Value = int.Parse(greater.Groups[1].Value),
+                Unit = greater.Groups[2].Value,
+            };
+        }
+
+        var greaterEqual = Regex.Match(text, @"(?:不少于|不低于|至少)\s*(\d+)\s*(小时|天|分钟|次)");
+        if (greaterEqual.Success)
+        {
+            return new ClauseConstraint
+            {
+                Topic = topic,
+                Operator = ">=",
+                Value = int.Parse(greaterEqual.Groups[1].Value),
+                Unit = greaterEqual.Groups[2].Value,
+            };
+        }
+
+        var equal = Regex.Match(text, @"(?:为|可享受|享受)\s*(\d+)\s*(小时|天|分钟|次)");
+        if (equal.Success)
+        {
+            return new ClauseConstraint
+            {
+                Topic = topic,
+                Operator = "==",
+                Value = int.Parse(equal.Groups[1].Value),
+                Unit = equal.Groups[2].Value,
+            };
+        }
+
+        return null;
+    }
+
+    private static string InferConstraintTopic(ZhunxingCitation citation)
+    {
+        var text = $"{citation.ClauseTitle} {citation.FullText}".ToLowerInvariant();
+        if (text.Contains("请假", StringComparison.Ordinal) && text.Contains("审批", StringComparison.Ordinal))
+            return "leave_approval";
+        if (text.Contains("请假", StringComparison.Ordinal) && text.Contains("上限", StringComparison.Ordinal))
+            return "leave_limit";
+        if (text.Contains("打卡", StringComparison.Ordinal) || text.Contains("考勤", StringComparison.Ordinal))
+            return "attendance";
+        if (text.Contains("迟到", StringComparison.Ordinal) || text.Contains("旷工", StringComparison.Ordinal))
+            return "discipline";
+
+        return string.Empty;
+    }
+
+    private sealed class ClauseConstraint
+    {
+        public string Topic { get; init; } = string.Empty;
+        public string Operator { get; init; } = string.Empty;
+        public int Value { get; init; }
+        public string Unit { get; init; } = string.Empty;
     }
 
     private static double ComputeConfidence(IReadOnlyList<int> scores)

@@ -17,10 +17,34 @@ export interface ZhunxingCitation {
 export interface ZhunxingAskResponse {
   matched: boolean;
   answer: string;
+  answerRole: 'employee' | 'supervisor' | 'hr';
   confidence: number;
   riskLevel: string;
+  decisionTree: ZhunxingDecisionStep[];
+  conflictDetected: boolean;
+  conflictMessage?: string;
+  conflictClauses: ZhunxingConflictClause[];
   citations: ZhunxingCitation[];
   followUpSuggestion?: string;
+}
+
+export interface ZhunxingDecisionStep {
+  stepNo: number;
+  condition: string;
+  action: string;
+  clauseId?: string;
+  chapter?: string;
+  riskLevel?: string;
+}
+
+export interface ZhunxingConflictClause {
+  clauseId: string;
+  documentTitle: string;
+  chapter: string;
+  clauseTitle: string;
+  ruleSummary: string;
+  conflictReason: string;
+  riskLevel: string;
 }
 
 export interface CreateZhunxingFeedbackRequest {
@@ -129,12 +153,17 @@ export interface ZhunxingFeedbackFollowUpResult {
   status: string;
 }
 
-export async function askZhunxing(question: string, topK = 3): Promise<ApiResponse<ZhunxingAskResponse>> {
+export async function askZhunxing(
+  question: string,
+  topK = 3,
+  answerRole: 'employee' | 'supervisor' | 'hr' = 'employee',
+): Promise<ApiResponse<ZhunxingAskResponse>> {
   return await apiRequest(api.zhunxing.ask(), {
     method: 'POST',
     body: {
       question,
       topK,
+      answerRole,
     },
   });
 }

@@ -32,6 +32,12 @@ const FEEDBACK_STATUS_LABELS: Record<string, string> = {
   closed: '已关闭',
 };
 
+const ANSWER_ROLE_LABELS: Record<'employee' | 'supervisor' | 'hr', string> = {
+  employee: '员工版',
+  supervisor: '主管版',
+  hr: 'HR版',
+};
+
 export default function ZhunxingAgentPage() {
   const permissions = useAuthStore((s) => s.permissions);
   const hasWritePermission = useMemo(
@@ -43,6 +49,7 @@ export default function ZhunxingAgentPage() {
 
   // Q&A state
   const [question, setQuestion] = useState('');
+  const [answerRole, setAnswerRole] = useState<'employee' | 'supervisor' | 'hr'>('employee');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ZhunxingAskResponse | null>(null);
@@ -90,7 +97,7 @@ export default function ZhunxingAgentPage() {
     setFeedbackError(null);
     setExpandedClauseIds(new Set());
     try {
-      const res = await askZhunxing(text, 3);
+      const res = await askZhunxing(text, 3, answerRole);
       if (!res.success || !res.data) {
         setResult(null);
         setError(res.error?.message || '准星暂时不可用，请稍后重试');
@@ -318,7 +325,26 @@ export default function ZhunxingAgentPage() {
             ))}
           </div>
 
-          <div className="flex justify-end">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                输出模式
+              </span>
+              <select
+                value={answerRole}
+                onChange={(e) => setAnswerRole(e.target.value as 'employee' | 'supervisor' | 'hr')}
+                className="rounded-md px-2 py-1.5 text-xs outline-none"
+                style={{
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  color: 'var(--text-primary)',
+                }}
+              >
+                <option value="employee">员工版（结论+步骤）</option>
+                <option value="supervisor">主管版（审批+风险）</option>
+                <option value="hr">HR版（条款+例外）</option>
+              </select>
+            </div>
             <Button variant="primary" size="sm" onClick={() => void runAsk()} disabled={!question.trim() || loading}>
               {loading ? <MapSpinner size={14} color="var(--text-primary)" /> : null}
               提交问题
@@ -369,6 +395,16 @@ export default function ZhunxingAgentPage() {
             >
               风险等级：{riskMeta.label}
             </span>
+            <span
+              className="px-2 py-0.5 rounded-md text-xs"
+              style={{
+                background: 'rgba(96,165,250,0.1)',
+                border: '1px solid rgba(96,165,250,0.4)',
+                color: '#60A5FA',
+              }}
+            >
+              {ANSWER_ROLE_LABELS[(result.answerRole || 'employee') as 'employee' | 'supervisor' | 'hr']}
+            </span>
           </div>
 
           <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
@@ -383,6 +419,73 @@ export default function ZhunxingAgentPage() {
               建议下一步：{result.followUpSuggestion}
             </div>
           )}
+
+          {result.conflictDetected && (
+            <div
+              className="mt-3 rounded-lg p-3"
+              style={{
+                background: 'rgba(251, 113, 133, 0.1)',
+                border: '1px solid rgba(251, 113, 133, 0.35)',
+              }}
+            >
+              <div className="text-xs font-semibold" style={{ color: '#FB7185' }}>
+                口径冲突提示
+              </div>
+              <div className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.85)' }}>
+                {result.conflictMessage || '命中条款存在潜在冲突，请先人工确认后再执行。'}
+              </div>
+              {result.conflictClauses?.length ? (
+                <div className="mt-2 flex flex-col gap-2">
+                  {result.conflictClauses.map((conflict) => (
+                    <div
+                      key={conflict.clauseId}
+                      className="rounded-md px-2 py-1.5 text-xs"
+                      style={{
+                        background: 'rgba(255,255,255,0.04)',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                        color: 'var(--text-primary)',
+                      }}
+                    >
+                      <div>
+                        {conflict.documentTitle} / {conflict.chapter} / {conflict.clauseTitle}
+                      </div>
+                      <div style={{ color: 'var(--text-muted)' }}>{conflict.conflictReason}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          )}
+
+          {result.decisionTree?.length ? (
+            <div className="mt-4">
+              <div className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>
+                流程化回答（决策树）
+              </div>
+              <div className="flex flex-col gap-2">
+                {result.decisionTree.map((step) => (
+                  <div
+                    key={`${step.stepNo}-${step.clauseId || step.condition}`}
+                    className="rounded-lg p-2.5"
+                    style={{
+                      background: 'rgba(255,255,255,0.03)',
+                      border: '1px solid rgba(255,255,255,0.06)',
+                    }}
+                  >
+                    <div className="text-xs mb-1" style={{ color: '#60A5FA' }}>
+                      Step {step.stepNo}
+                    </div>
+                    <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                      IF：{step.condition}
+                    </div>
+                    <div className="text-sm mt-1" style={{ color: 'var(--text-primary)' }}>
+                      THEN：{step.action}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           {!result.matched && (
             <div className="mt-3 flex flex-col gap-2">

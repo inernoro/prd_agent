@@ -2174,6 +2174,9 @@ sequenceDiagram
 6. 管理端提供反馈工单状态流（新建→受理→处理中→已解决→已关闭）
 7. 管理端支持历史问题回放验证（回放是否命中、置信度、回放时间）
 8. 对已解决工单支持回访标记，形成闭环运营记录
+9. 支持角色化答案模式：`employee`（结论+执行步骤）、`supervisor`（审批口径+风险）、`hr`（条款原文+校验提示）
+10. 回答内置流程化决策树（IF/THEN 步骤），用于请假、考勤、交接等执行型问题
+11. 命中条款存在阈值或口径差异时，返回冲突提示与冲突条款清单，要求人工确认
 
 **核心接口（新增）**：
 - 前台：`POST /zhunxing/ask` — 规范问答（JWT）
@@ -2191,6 +2194,13 @@ sequenceDiagram
 - 后台：`POST /api/zhunxing/clauses` — 新建知识条款
 - 后台：`POST /api/zhunxing/bootstrap/attendance` — 初始化考勤样例条款
 - 后台：`POST /api/zhunxing/bootstrap/app-registry` — 一键注册 App Registry 与路由规则
+
+**问答请求/响应补充约束**：
+- `POST /zhunxing/ask` 与 `POST /api/zhunxing/ask` 请求体新增 `answerRole`（可选，`employee|supervisor|hr`，默认 `employee`）
+- 响应新增：
+  - `answerRole`：本次回答采用的角色视角
+  - `decisionTree[]`：流程化回答步骤（`stepNo/condition/action`）
+  - `conflictDetected`、`conflictMessage`、`conflictClauses[]`：条款冲突检测结果与依据
 
 **权限定义**：
 - `zhunxing-agent.read` — 访问准星页面、问答、提交反馈、查看反馈看板

@@ -89,6 +89,13 @@ public static class ZhunxingRiskLevels
     public const string Sensitive = "sensitive";
 }
 
+public static class ZhunxingAnswerRoles
+{
+    public const string Employee = "employee";
+    public const string Supervisor = "supervisor";
+    public const string Hr = "hr";
+}
+
 public class CreateZhunxingDocumentRequest
 {
     public string Title { get; set; } = string.Empty;
@@ -113,16 +120,43 @@ public class ZhunxingAskRequest
 {
     public string Question { get; set; } = string.Empty;
     public int TopK { get; set; } = 3;
+    public string? AnswerRole { get; set; } = ZhunxingAnswerRoles.Employee;
 }
 
 public class ZhunxingAskResponse
 {
     public bool Matched { get; set; }
     public string Answer { get; set; } = string.Empty;
+    public string AnswerRole { get; set; } = ZhunxingAnswerRoles.Employee;
     public double Confidence { get; set; }
     public string RiskLevel { get; set; } = ZhunxingRiskLevels.Public;
+    public List<ZhunxingDecisionStep> DecisionTree { get; set; } = new();
+    public bool ConflictDetected { get; set; }
+    public string? ConflictMessage { get; set; }
+    public List<ZhunxingConflictClause> ConflictClauses { get; set; } = new();
     public List<ZhunxingCitation> Citations { get; set; } = new();
     public string? FollowUpSuggestion { get; set; }
+}
+
+public class ZhunxingDecisionStep
+{
+    public int StepNo { get; set; }
+    public string Condition { get; set; } = string.Empty;
+    public string Action { get; set; } = string.Empty;
+    public string? ClauseId { get; set; }
+    public string? Chapter { get; set; }
+    public string? RiskLevel { get; set; }
+}
+
+public class ZhunxingConflictClause
+{
+    public string ClauseId { get; set; } = string.Empty;
+    public string DocumentTitle { get; set; } = string.Empty;
+    public string Chapter { get; set; } = string.Empty;
+    public string ClauseTitle { get; set; } = string.Empty;
+    public string RuleSummary { get; set; } = string.Empty;
+    public string ConflictReason { get; set; } = string.Empty;
+    public string RiskLevel { get; set; } = ZhunxingRiskLevels.Public;
 }
 
 public class ZhunxingCitation
