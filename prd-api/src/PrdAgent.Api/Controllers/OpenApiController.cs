@@ -233,6 +233,8 @@ public class OpenApiController : ControllerBase
                 }
                 catch { /* 连接已断，忽略 */ }
             }
+            // 进到本方法说明准入已占额；异常且零输出（流未开始）→ 退回每日请求额度。有部分输出则不退（已产生工作）。
+            if (key != null && !Response.HasStarted) await _usage.RefundDailyRequestAsync(key, CancellationToken.None);
             await LogAsync(key, requestId, "chat", requestedModel, chosen, resolution, true, Response.StatusCode, "INTERNAL_ERROR", promptTokens, completionTokens, sw);
             // 即使中途失败，已产生的 token 也要计入配额、并跑绑定/降级预警（与成功路径一致，否则用量/预警会漏，Bugbot）。
             await RecordUsageAsync(key, bound, resolution, promptTokens, completionTokens);
@@ -277,6 +279,8 @@ public class OpenApiController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "[OpenApi] chat 非流式失败 keyId={KeyId}", key?.Id);
+            // 进到本方法说明准入已占额；异常零输出 → 退回每日请求额度，不空烧配额（Bugbot）。
+            if (key != null) await _usage.RefundDailyRequestAsync(key, CancellationToken.None);
             await LogAsync(key, requestId, "chat", requestedModel, chosen, null, false, 500, "INTERNAL_ERROR", null, null, sw);
             await WriteJsonErrorAsync(500, "api_error", "内部错误");
         }
@@ -318,6 +322,7 @@ public class OpenApiController : ControllerBase
             RequestType: "generation", AppCallerCode: AppCallerRegistry.OpenApi.Proxy.Generation));
 
         var bound = (key?.OpenApiImageModels?.Count ?? 0) > 0;
+        var reserved = false; // 标记本请求是否已通过 PassUsageGateAsync 占用每日额度（解析阶段异常时尚未占，不可误退）。
         try
         {
             // 先解析模型（廉价、不占额）。解析失败时不消耗配额/限速槽——避免错配绑定（模型/池被删）空烧客户每日额度（Bugbot）。
@@ -334,6 +339,7 @@ public class OpenApiController : ControllerBase
 
             // 解析成功才占用限流/每日配额（429 时 PassUsageGateAsync 已写响应，直接返回）。
             if (!await PassUsageGateAsync(key, requestId, "image", requestedModel, chosen, sw)) return;
+            reserved = true;
 
             var raw = new GatewayRawRequest
             {
@@ -347,6 +353,9 @@ public class OpenApiController : ControllerBase
 
             var resp = await _gateway.SendRawWithResolutionAsync(raw, resolution, CancellationToken.None);
 
+            // 上游失败、未出图 → 退回已占用的每日请求额度（与 chat 一致，不空烧配额，Bugbot）。
+            if (!resp.Success && key != null) await _usage.RefundDailyRequestAsync(key, CancellationToken.None);
+
             Response.ContentType = "application/json";
             Response.StatusCode = resp.Success ? 200 : (resp.StatusCode > 0 ? resp.StatusCode : 502);
             await Response.WriteAsync(resp.Content ?? JsonSerializer.Serialize(new { error = new { message = resp.ErrorMessage ?? "上游生图失败", type = "api_error", code = resp.ErrorCode } }));
@@ -357,6 +366,8 @@ public class OpenApiController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "[OpenApi] image 生成失败 keyId={KeyId}", key?.Id);
+            // 已占额才退（解析阶段异常 reserved=false，未占额不退，避免误减并发请求的计数）。
+            if (reserved && key != null) await _usage.RefundDailyRequestAsync(key, CancellationToken.None);
             await LogAsync(key, requestId, "image", requestedModel, chosen, null, false, 500, "INTERNAL_ERROR", null, null, sw);
             await WriteJsonErrorAsync(500, "api_error", "内部错误");
         }
@@ -537,10 +548,12 @@ public class OpenApiController : ControllerBase
         if (!string.IsNullOrWhiteSpace(exp))
         {
             var act = resolution.ActualModel ?? string.Empty;
+            // 严格镜像 ModelResolver 的匹配档：精确 id / 池模型是 expected 前缀（tier-2 版本容差）/ 池 code。
+            // 不含反向 act.StartsWith(exp)——那不是 ModelResolver 的匹配档，会把"绑定被删、回落到恰好更长的默认模型"
+            // 误判为已遵守而吞掉降级预警（Codex PR#732 P2）。
             var honored =
                 string.Equals(exp, act, StringComparison.OrdinalIgnoreCase)                       // 精确模型 id
-                || exp.StartsWith(act, StringComparison.OrdinalIgnoreCase)                         // 前缀容差（池模型是 expected 前缀）
-                || act.StartsWith(exp, StringComparison.OrdinalIgnoreCase)                         // 前缀容差（反向）
+                || exp.StartsWith(act, StringComparison.OrdinalIgnoreCase)                         // 前缀容差（池模型是 expected 前缀，= ModelResolver tier-2）
                 || string.Equals(exp, resolution.ModelGroupCode, StringComparison.OrdinalIgnoreCase); // 池 code 绑定
             if (!honored)
                 _ = _usage.NotifyFallbackAsync(key, act, exp, $"绑定的模型/池 '{exp}' 未匹配，已回落默认调度", CancellationToken.None);
