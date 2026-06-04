@@ -148,7 +148,7 @@ export function ViewersDrawer({ storeId, storeName, onClose }: ViewersDrawerProp
                   </p>
                 </div>
               ) : (
-                <ol className="space-y-3">
+                <ol className="space-y-1">
                   {events.map(ev => <ViewEventRow key={ev.id} ev={ev} />)}
                 </ol>
               )}
@@ -175,27 +175,29 @@ function StatTile({ icon, label, value }: { icon: React.ReactNode; label: string
 }
 
 function ViewEventRow({ ev }: { ev: DocumentStoreViewEvent }) {
+  const revisits = ev.revisitCount ?? 0;
   return (
-    <li className="surface-row flex items-start gap-3 rounded-[10px] p-3">
+    <li className="surface-row flex items-center gap-2.5 rounded-[8px] px-2.5 py-2">
       {ev.viewerUserId ? (
         // 登录访客：渲染真实头像（resolveAvatarUrl 自动兜底 nohead.png）
         <UserAvatar
           src={resolveAvatarUrl({ avatarFileName: ev.viewerAvatar })}
           alt={ev.viewerName}
-          className="w-8 h-8 flex-shrink-0 rounded-full object-cover"
+          className="w-7 h-7 flex-shrink-0 rounded-full object-cover"
         />
       ) : (
         // 匿名访客：无头像，沿用占位图标
-        <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+        <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0"
           style={{
             background: 'rgba(148,163,184,0.1)',
             border: '1px solid rgba(148,163,184,0.2)',
           }}>
-          <UserCircle2 size={16} style={{ color: 'rgba(148,163,184,0.9)' }} />
+          <UserCircle2 size={15} style={{ color: 'rgba(148,163,184,0.9)' }} />
         </div>
       )}
+      {/* 中段取自然高度（姓名 + 文档名两行），紧凑不留白 */}
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-0.5">
+        <div className="flex items-center gap-1.5">
           <span className="truncate text-[12px] font-semibold text-token-primary">
             {ev.viewerName}
           </span>
@@ -207,21 +209,18 @@ function ViewEventRow({ ev }: { ev: DocumentStoreViewEvent }) {
           )}
         </div>
         {ev.entryTitle && (
-          <p className="mb-0.5 truncate text-[11px] text-token-secondary">
+          <p className="truncate text-[11px] text-token-secondary">
             {ev.entryTitle}
           </p>
         )}
-        <div className="flex items-center gap-3 text-[10px] text-token-muted">
-          <span>{formatRelative(ev.enteredAt)}</span>
-          <span>·</span>
-          <span>停留 {formatDwell(ev.durationMs)}</span>
-          {(ev.revisitCount ?? 0) > 0 && (
-            <>
-              <span>·</span>
-              <span>访问 {(ev.revisitCount ?? 0) + 1} 次</span>
-            </>
-          )}
-        </div>
+      </div>
+      {/* 时间 + 停留靠右，填满原本空荡的右侧 */}
+      <div className="flex flex-shrink-0 flex-col items-end gap-0.5 text-[10px] text-token-muted">
+        <span>{formatRelative(ev.enteredAt)}</span>
+        <span>
+          停留 {formatDwell(ev.durationMs)}
+          {revisits > 0 && ` · ${revisits + 1} 次`}
+        </span>
       </div>
     </li>
   );
