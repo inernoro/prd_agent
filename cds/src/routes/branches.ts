@@ -1120,6 +1120,75 @@ function isPortConflictError(err: unknown): boolean {
   return /port is already allocated|bind: address already in use|address already in use|EADDRINUSE/i.test(text);
 }
 
+/**
+ * 从容器日志里抽取"真正的根因"——构建/编译失败、依赖缺失、进程崩溃等。
+ *
+ * 背景:就绪探测超时(容器起了但端口不响应)往往只是**症状**,容器日志里早已写明
+ * 真实**根因**(如 C# 编译错误 `error CS0101`)。历史实现把顶层 errorMessage 钉死成
+ * "就绪探测超时:容器已启动但端口未在超时时间内响应",既没点出代码编译失败,也让前端
+ * 归类器把它落到"未分类错误/未识别",用户误以为是 CDS 自身的问题。本函数把根因从日志
+ * 里捞出来,供 errorMessage 丰富 + failure-diagnosis 归类共用(单一数据源)。
+ */
+export type ContainerFatalSide = 'code' | 'config' | 'cds';
+export interface ContainerFatalCause {
+  /** 给用户看的一句话根因(已去掉 docker --timestamps 注入的时间戳前缀) */
+  summary: string;
+  side: ContainerFatalSide;
+  /** 与 failure-diagnosis 的 Category 对齐 */
+  category: string;
+}
+
+export function detectContainerFatalCause(logText: string): ContainerFatalCause | null {
+  if (!logText || !logText.trim()) return null;
+  const lines = logText
+    .split('\n')
+    .map((l) => l.trim())
+    // 去掉 `docker logs --timestamps` 注入的 ISO 时间戳前缀,只留正文
+    .map((l) => l.replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s+/, ''))
+    .filter(Boolean);
+  if (lines.length === 0) return null;
+  const PATTERNS: Array<{ re: RegExp; side: ContainerFatalSide; category: string; label: string }> = [
+    { re: /\berror\s+CS\d{3,5}\b/i, side: 'code', category: 'build-failed', label: '构建失败 · C# 编译错误' },
+    { re: /\berror\s+TS\d{3,5}\b/i, side: 'code', category: 'build-failed', label: '构建失败 · TypeScript 编译错误' },
+    { re: /:\s*error\s+MSB\d{3,5}\b|Build FAILED|构建失败/i, side: 'code', category: 'build-failed', label: '构建失败 · MSBuild/编译' },
+    { re: /Cannot find module|MODULE_NOT_FOUND|Cannot find package/i, side: 'code', category: 'missing-deps', label: '依赖缺失 · 模块未找到' },
+    { re: /ModuleNotFoundError|ImportError\b/i, side: 'code', category: 'missing-deps', label: '依赖缺失 · Python 模块未找到' },
+    { re: /\bpanic:/i, side: 'code', category: 'crashed', label: '进程崩溃 · panic' },
+    { re: /Unhandled exception|未经处理的异常|Traceback \(most recent call last\)/i, side: 'code', category: 'crashed', label: '进程崩溃 · 未处理异常' },
+    { re: /address already in use|EADDRINUSE|port is already allocated/i, side: 'config', category: 'port-conflict', label: '端口被占用' },
+  ];
+  for (const p of PATTERNS) {
+    const hit = lines.find((l) => p.re.test(l));
+    if (hit) {
+      const trimmed = hit.length > 220 ? `${hit.slice(0, 220)}…` : hit;
+      return { summary: `${p.label}：${trimmed}`, side: p.side, category: p.category };
+    }
+  }
+  return null;
+}
+
+/**
+ * 就绪探测超时时,优先去容器日志里找真实根因。找到就把根因点名到 errorMessage,
+ * 找不到才降级到通用文案。最多拉 80 行,拉取失败静默降级。
+ */
+async function buildReadinessTimeoutMessage(
+  containerService: ContainerService,
+  containerName: string,
+): Promise<string> {
+  const fallback = '就绪探测超时：容器已启动但端口未在超时时间内响应';
+  try {
+    const logs = await containerService.getLogs(containerName, 80);
+    const cause = detectContainerFatalCause(logs);
+    if (cause) {
+      const sideLabel = cause.side === 'code' ? '代码侧' : cause.side === 'config' ? '配置侧' : 'CDS 侧';
+      return `容器进程未监听端口（${sideLabel}根因）：${cause.summary}。修复后需重新部署。`;
+    }
+  } catch {
+    // 容器名不存在 / docker 拉不到日志 — 静默降级到通用文案
+  }
+  return fallback;
+}
+
 function parseListenPorts(output: string): Set<number> {
   const ports = new Set<number>();
   for (const line of output.split('\n')) {
@@ -4094,14 +4163,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     // 错误模式归类:reg pattern → category + 中文 hint + 责任归属
-    type Category = 'port-conflict' | 'oom' | 'missing-deps' | 'crashed' | 'health-timeout' | 'image-pull' | 'unknown';
+    type Category = 'port-conflict' | 'oom' | 'missing-deps' | 'build-failed' | 'crashed' | 'health-timeout' | 'image-pull' | 'unknown';
     type Side = 'code' | 'config' | 'cds' | 'unknown';
     const PATTERNS: Array<{ re: RegExp; category: Category; hint: string; side: Side }> = [
+      // 构建/编译失败优先级最高:这是最常见也最容易被误判成"未分类/CDS 侧"的根因。
+      // 容器内 dotnet build / tsc 失败 → 进程没起来 → 就绪探测超时(症状),根因其实在编译错误。
+      { re: /\berror\s+CS\d{3,5}\b/i, category: 'build-failed', hint: 'C# 编译失败 — 容器内 dotnet build 报错,进程无法启动。修复编译错误后重新部署', side: 'code' },
+      { re: /\berror\s+TS\d{3,5}\b/i, category: 'build-failed', hint: 'TypeScript 编译失败 — 修复类型错误后重新部署', side: 'code' },
+      { re: /:\s*error\s+MSB\d{3,5}\b|Build FAILED/i, category: 'build-failed', hint: '构建失败(MSBuild/编译) — 检查日志里的首个 error 行后重新部署', side: 'code' },
       { re: /EADDRINUSE|address already in use|port.+(in use|occupied)/i, category: 'port-conflict', hint: '端口被占用 — 可能其他分支占了同一端口,可在容量面板停掉旧分支再重试', side: 'config' },
       { re: /OOMKilled|out of memory|cannot allocate memory/i, category: 'oom', hint: '内存超限 — 调大 service 资源配额或减少并发', side: 'config' },
       { re: /Cannot find module|Module not found|MODULE_NOT_FOUND/i, category: 'missing-deps', hint: '依赖缺失 — 检查 build 阶段 pnpm/npm install 是否成功', side: 'code' },
       { re: /image.+(not found|pull access denied)|manifest unknown|repository does not exist/i, category: 'image-pull', hint: 'Docker 镜像拉取失败 — 检查镜像名 / registry 访问', side: 'cds' },
-      { re: /health.*check.*timeout|readiness probe failed|healthz.+(timeout|unreachable)/i, category: 'health-timeout', hint: '健康检查超时 — 应用启动慢或健康端点未就绪', side: 'code' },
+      { re: /health.*check.*timeout|readiness probe failed|healthz.+(timeout|unreachable)|就绪探测超时|容器进程未监听端口/i, category: 'health-timeout', hint: '就绪探测超时 — 容器起了但端口没响应,多半是应用启动崩溃或编译失败,翻日志看首个 error 行', side: 'code' },
       { re: /exit(\s+code|ed with code)?\s*[:=]?\s*(1[35][7-9]|139)/i, category: 'crashed', hint: '进程被强制终止(可能段错误 / 资源限制)', side: 'code' },
     ];
     const classify = (text: string): { category: Category; hint: string; side: Side } => {
@@ -5157,7 +5231,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               });
             } else {
               svc.status = 'error';
-              svc.errorMessage = '就绪探测超时：容器已启动但端口未在超时时间内响应';
+              svc.errorMessage = await buildReadinessTimeoutMessage(containerService, svc.containerName);
               logDeploy(id, `${profile.name} 就绪探测超时`);
               logEvent({
                 step: `build-${profile.id}`,
@@ -5658,7 +5732,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           logDeploy(id, `${profile.name} 启动成功 ✓`);
         } else {
           svc.status = 'error';
-          svc.errorMessage = '就绪探测超时：容器已启动但端口未在超时时间内响应';
+          svc.errorMessage = await buildReadinessTimeoutMessage(containerService, svc.containerName);
           logDeploy(id, `${profile.name} 就绪探测超时`);
         }
         stateService.save();
