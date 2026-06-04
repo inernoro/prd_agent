@@ -77,7 +77,7 @@ export default function OpenPlatformTabsPage() {
           { key: 'webhook', label: 'Webhook', icon: <Webhook size={14} /> },
           { key: 'tasks', label: '任务监控', icon: <ListChecks size={14} /> },
           { key: 'apps', label: 'API 应用', icon: <Plug size={14} /> },
-          { key: 'open-api', label: '开放接口', icon: <Waypoints size={14} /> },
+          { key: 'open-api', label: '开放接口', icon: <Waypoints size={14} />, dataTourId: 'open-api-tab' },
           { key: 'logs', label: '调用日志', icon: <ScrollText size={14} /> },
           { key: 'tutorial', label: '教程邮件', icon: <BookOpen size={14} /> },
         ]}
