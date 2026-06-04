@@ -1169,6 +1169,39 @@ public static class ProjectManagement
         )]
         public const string Chat = "pm-agent.goal-decompose::chat";
     }
+
+    public static class ClosureReport
+    {
+        [AppCallerMetadata(
+            "AI 结案报告",
+            "基于项目执行数据(目标/里程碑/任务/NPSS 评价/决策)自动生成结案总结报告",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Workflow"
+        )]
+        public const string Chat = "pm-agent.closure-report::chat";
+    }
+
+    public static class HealthDiagnosis
+    {
+        [AppCallerMetadata(
+            "AI 项目健康诊断",
+            "基于在管项目实时数据(进度/逾期/里程碑健康/风险分布/未决决策/预算)给出健康评级、风险信号与改进建议",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Analysis"
+        )]
+        public const string Chat = "pm-agent.health-diagnosis::chat";
+    }
+
+    public static class MilestoneSuggest
+    {
+        [AppCallerMetadata(
+            "AI 里程碑建议",
+            "依据业务目标/团队目标/任务与计划周期，建议分阶段里程碑(名称/说明/验收标准/建议日期)",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Workflow"
+        )]
+        public const string Chat = "pm-agent.milestone-suggest::chat";
+    }
 }
 
 /// <summary>

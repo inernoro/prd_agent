@@ -170,6 +170,83 @@ public class PmAgentService
         return PmTaskPriority.All.Contains(p) ? p! : PmTaskPriority.Medium;
     }
 
+    // ── AI 结案报告 ──
+
+    /// <summary>基于项目执行数据摘要流式生成 Markdown 结案报告（不落库，前端审核后存知识库）。</summary>
+    public async Task<string?> GenerateClosureReportAsync(
+        PmProject project, string statsSummary, string userId,
+        Func<string, Task>? onContent, Func<string, Task>? onThinking, Action<string>? onError)
+    {
+        var request = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.ProjectManagement.ClosureReport.Chat,
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = BuildClosureReportSystemPrompt() },
+                    new JsonObject { ["role"] = "user", ["content"] = statsSummary }
+                },
+                ["temperature"] = 0.5,
+                ["include_reasoning"] = true,
+                ["reasoning"] = new JsonObject { ["exclude"] = false },
+            },
+            TimeoutSeconds = 180,
+            IncludeThinking = true,
+            Context = new GatewayRequestContext { UserId = userId }
+        };
+        var (full, err) = await StreamAndAccumulateAsync(request, onContent, onThinking);
+        if (err != null) { onError?.Invoke(err); return null; }
+        return full;
+    }
+
+    private static string BuildClosureReportSystemPrompt()
+        => "你是资深项目管理专家，正在为一个已结案的项目撰写【结案报告】。基于用户提供的项目执行数据"
+         + "（业务目标、目标达成、里程碑、任务完成、成本、NPSS 评价、风险、关键决策等），输出一份结构化 Markdown 结案报告。"
+         + "结构：## 一、项目概述 / ## 二、目标达成情况 / ## 三、关键里程碑与交付 / ## 四、数据回顾（任务·进度·成本）/ "
+         + "## 五、干系人评价(NPSS) / ## 六、经验与不足 / ## 七、后续建议。客观、具体、可追溯，避免空话套话。只输出 Markdown 正文。";
+
+    // ── AI 项目健康诊断 ──
+
+    /// <summary>基于在管项目实时数据摘要流式生成 Markdown 健康诊断（不落库，前端审核后可存知识库）。</summary>
+    public async Task<string?> DiagnoseHealthAsync(
+        PmProject project, string statsSummary, string userId,
+        Func<string, Task>? onContent, Func<string, Task>? onThinking, Action<string>? onError)
+    {
+        var request = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.ProjectManagement.HealthDiagnosis.Chat,
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = BuildHealthDiagnosisSystemPrompt() },
+                    new JsonObject { ["role"] = "user", ["content"] = statsSummary }
+                },
+                ["temperature"] = 0.4,
+                ["include_reasoning"] = true,
+                ["reasoning"] = new JsonObject { ["exclude"] = false },
+            },
+            TimeoutSeconds = 180,
+            IncludeThinking = true,
+            Context = new GatewayRequestContext { UserId = userId }
+        };
+        var (full, err) = await StreamAndAccumulateAsync(request, onContent, onThinking);
+        if (err != null) { onError?.Invoke(err); return null; }
+        return full;
+    }
+
+    private static string BuildHealthDiagnosisSystemPrompt()
+        => "你是资深项目管理顾问（PMO），正在为一个【进行中】的项目做健康诊断（注意：不是结案总结，而是发现当前问题、给出可立即执行的纠偏建议）。"
+         + "基于用户提供的项目实时数据（进度、逾期任务、里程碑健康、风险概率×影响分布、未决决策、预算使用、计划周期、最近周报趋势），输出结构化 Markdown 诊断。"
+         + "结构：## 一、健康总评（先给一句结论 + 评级：健康 / 需关注 / 高危，并说明判定依据）/ "
+         + "## 二、关键风险信号（按严重度排序，逐条说明现象→影响→根因推测）/ "
+         + "## 三、进度与里程碑诊断 / ## 四、风险与决策诊断（含长期未决的待决策事项）/ "
+         + "## 五、立即行动建议（3-6 条，每条给出建议负责角色与优先级，可落地、可验收）。"
+         + "诊断要尖锐、具体、对事不对人，引用真实数据佐证，避免空话套话与无依据的乐观。只输出 Markdown 正文。";
+
     // ── 工具方法 ──
 
     private async Task<(string content, string? error)> StreamAndAccumulateAsync(
@@ -247,9 +324,14 @@ public class PmAgentService
 
     // ── AI 目标拆解（业务目标 → 目标/关键结果）──
 
-    /// <summary>依据项目业务目标拆解为目标/关键结果草稿（不落库，供前端确认后创建）。</summary>
+    /// <summary>
+    /// 拆解目标草稿（不落库，供前端确认后创建）。parentGoal 为 null 时依据项目业务目标拆顶层目标；
+    /// 非 null 时把该父目标拆为更具体的子目标，ancestorChain 提供从顶到父的祖先上下文使「越深越具体」。
+    /// </summary>
     public async IAsyncEnumerable<PmGoalDraft> DecomposeGoalsAsync(
         PmProject project,
+        PmGoal? parentGoal,
+        List<PmGoal> ancestorChain,
         string userId,
         Action<string>? onError = null,
         Func<string, Task>? onContent = null,
@@ -264,8 +346,8 @@ public class PmAgentService
             {
                 ["messages"] = new JsonArray
                 {
-                    new JsonObject { ["role"] = "system", ["content"] = BuildGoalDecomposeSystemPrompt() },
-                    new JsonObject { ["role"] = "user", ["content"] = BuildGoalDecomposeUserMessage(project) }
+                    new JsonObject { ["role"] = "system", ["content"] = BuildGoalDecomposeSystemPrompt(parentGoal != null) },
+                    new JsonObject { ["role"] = "user", ["content"] = BuildGoalDecomposeUserMessage(project, parentGoal, ancestorChain) }
                 },
                 ["temperature"] = 0.6,
                 ["include_reasoning"] = true,
@@ -304,20 +386,147 @@ public class PmAgentService
         return list;
     }
 
-    private static string BuildGoalDecomposeSystemPrompt()
-        => "你是资深项目管理专家。请把项目的业务目标拆解为 3-6 个可量化的【目标/关键结果(OKR)】。"
-         + "每个目标聚焦结果而非动作，尽量可衡量。严格只输出 JSON 数组，元素形如："
-         + "{\"title\":\"目标标题\",\"description\":\"简要说明\",\"metric\":\"衡量指标/关键结果\",\"period\":\"周期(可选,如 2026 Q2)\"}。"
+    // ── AI 里程碑建议（业务目标/目标/任务 → 分阶段里程碑）──
+
+    /// <summary>依据项目目标/任务/计划周期建议分阶段里程碑草稿（不落库，前端审核后批量创建）。</summary>
+    public async IAsyncEnumerable<PmMilestoneDraft> SuggestMilestonesAsync(
+        PmProject project,
+        List<PmGoal> goals,
+        List<string> taskTitles,
+        string userId,
+        Action<string>? onError = null,
+        Func<string, Task>? onContent = null,
+        Func<string, Task>? onThinking = null,
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        var request = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.ProjectManagement.MilestoneSuggest.Chat,
+            ModelType = "chat",
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = BuildMilestoneSuggestSystemPrompt() },
+                    new JsonObject { ["role"] = "user", ["content"] = BuildMilestoneSuggestUserMessage(project, goals, taskTitles) }
+                },
+                ["temperature"] = 0.5,
+                ["include_reasoning"] = true,
+                ["reasoning"] = new JsonObject { ["exclude"] = false },
+            },
+            TimeoutSeconds = 120,
+            IncludeThinking = true,
+            Context = new GatewayRequestContext { UserId = userId }
+        };
+        var (full, err) = await StreamAndAccumulateAsync(request, onContent, onThinking);
+        if (err != null) { onError?.Invoke(err); yield break; }
+        if (string.IsNullOrWhiteSpace(full)) { onError?.Invoke("LLM 返回空内容（模型响应为空）"); yield break; }
+        foreach (var d in ParseMilestoneDrafts(full)) yield return d;
+    }
+
+    private static string BuildMilestoneSuggestSystemPrompt()
+        => "你是资深项目经理。请依据项目业务目标、团队目标、任务主题与计划周期，规划 4-8 个分阶段【里程碑】。"
+         + "里程碑是阶段性关键交付/验收节点（不是任务），彼此应有清晰先后顺序。"
+         + "每个里程碑给出：title(简洁，6-16 字)、description(该阶段交付什么/如何判定)、"
+         + "acceptanceCriteria(2-4 条可验收的完成标准)、dueDate(若提供了计划周期则在周期内给 yyyy-MM-dd 且按先后顺序递增，没有周期则留空)。"
+         + "严格只输出 JSON 数组，元素形如 {\"title\":\"\",\"description\":\"\",\"acceptanceCriteria\":[\"\",\"\"],\"dueDate\":\"2026-07-01\"}。"
          + "不要输出数组以外的任何文字。";
 
-    private static string BuildGoalDecomposeUserMessage(PmProject project)
+    private static string BuildMilestoneSuggestUserMessage(PmProject project, List<PmGoal> goals, List<string> taskTitles)
     {
         var sb = new StringBuilder();
         sb.AppendLine($"项目名称：{project.Title}");
         sb.AppendLine($"业务目标：{project.BusinessGoal}");
         if (!string.IsNullOrWhiteSpace(project.Description)) sb.AppendLine($"项目描述：{project.Description}");
+        if (project.PlannedStartAt.HasValue || project.PlannedEndAt.HasValue)
+            sb.AppendLine($"计划周期：{project.PlannedStartAt:yyyy-MM-dd} ~ {project.PlannedEndAt:yyyy-MM-dd}");
+        var teamGoals = goals.Where(g => g.Scope == PmGoalScope.Team).Take(12).ToList();
+        if (teamGoals.Count > 0)
+        {
+            sb.AppendLine("团队目标：");
+            foreach (var g in teamGoals) sb.AppendLine($"- {g.Title}{(string.IsNullOrWhiteSpace(g.Metric) ? "" : $"（指标 {g.Metric}）")}");
+        }
+        if (taskTitles.Count > 0)
+        {
+            sb.AppendLine("任务主题（节选）：");
+            foreach (var t in taskTitles.Take(30)) sb.AppendLine($"- {t}");
+        }
+        sb.AppendLine("请据此规划 4-8 个分阶段里程碑，只输出 JSON 数组。");
+        return sb.ToString();
+    }
+
+    private static List<PmMilestoneDraft> ParseMilestoneDrafts(string content)
+    {
+        var list = new List<PmMilestoneDraft>();
+        try
+        {
+            var json = ExtractJsonArray(content);
+            if (json == null) return list;
+            foreach (var item in json)
+            {
+                if (item is not JsonObject obj) continue;
+                list.Add(new PmMilestoneDraft
+                {
+                    Title = obj["title"]?.GetValue<string>() ?? "未命名里程碑",
+                    Description = obj["description"]?.GetValue<string>(),
+                    AcceptanceCriteria = GetStringArray(obj, "acceptanceCriteria"),
+                    DueDate = obj["dueDate"]?.GetValue<string>(),
+                });
+            }
+        }
+        catch (Exception) { /* 解析失败返回空，不阻断 */ }
+        return list;
+    }
+
+    private static string BuildGoalDecomposeSystemPrompt(bool isSubGoal)
+    {
+        var jsonShape = "{\"title\":\"目标标题\",\"description\":\"详细说明（落地思路/可行性）\",\"metric\":\"衡量指标/关键结果\",\"period\":\"周期(可选,如 2026 Q2)\"}";
+        if (!isSubGoal)
+            return "你是资深项目管理专家。请把项目的业务目标拆解为 3-6 个可量化的【目标/关键结果(OKR)】。"
+                 + "每个目标聚焦结果而非动作，尽量可衡量。严格只输出 JSON 数组，元素形如：" + jsonShape + "。"
+                 + "不要输出数组以外的任何文字。";
+        return "你是资深项目管理专家。现在要把一个【上级目标】拆解为更具体、更可落地的 2-5 个【子目标/关键结果】。"
+             + "要求：① 每深一层应更聚焦执行与可验证的结果，比上级更具体；② 探索不同的可行性路径，子目标之间尽量正交、可独立推进；"
+             + "③ 不要重复上级目标的措辞，要往下细化一层；④ description 写清这个子目标的落地思路或可行性考量。"
+             + "严格只输出 JSON 数组，元素形如：" + jsonShape + "。不要输出数组以外的任何文字。";
+    }
+
+    private static string BuildGoalDecomposeUserMessage(PmProject project, PmGoal? parentGoal, List<PmGoal> ancestorChain)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"项目名称：{project.Title}");
+        sb.AppendLine($"业务目标（北极星）：{project.BusinessGoal}");
+        if (!string.IsNullOrWhiteSpace(project.Description)) sb.AppendLine($"项目描述：{project.Description}");
         if (!string.IsNullOrWhiteSpace(project.StrategyAlignment)) sb.AppendLine($"战略对齐：{project.StrategyAlignment}");
-        sb.AppendLine("请据此拆解目标/关键结果，只输出 JSON 数组。");
+
+        if (parentGoal == null)
+        {
+            sb.AppendLine("请据此拆解 3-6 个目标/关键结果，只输出 JSON 数组。");
+            return sb.ToString();
+        }
+
+        // 子目标拆解：给出从顶到父的祖先链，让模型理解当前拆的是这条链最末端的目标
+        if (ancestorChain.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("目标层级路径（从上到下）：");
+            var level = 1;
+            foreach (var a in ancestorChain)
+            {
+                var extra = string.IsNullOrWhiteSpace(a.Metric) ? "" : $"（指标：{a.Metric}）";
+                sb.AppendLine($"  L{level}. {a.Title}{extra}");
+                level++;
+            }
+            sb.AppendLine($"  L{level}.（待拆解的上级目标，见下）");
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("待拆解的上级目标：");
+        sb.AppendLine($"  标题：{parentGoal.Title}");
+        if (!string.IsNullOrWhiteSpace(parentGoal.Description)) sb.AppendLine($"  说明：{parentGoal.Description}");
+        if (!string.IsNullOrWhiteSpace(parentGoal.Metric)) sb.AppendLine($"  指标：{parentGoal.Metric}");
+        if (!string.IsNullOrWhiteSpace(parentGoal.Period)) sb.AppendLine($"  周期：{parentGoal.Period}");
+        sb.AppendLine("请把上面这个上级目标拆解为更具体的 2-5 个子目标/关键结果，只输出 JSON 数组。");
         return sb.ToString();
     }
 }
@@ -344,4 +553,14 @@ public class PmGoalDraft
     public string? Description { get; set; }
     public string? Metric { get; set; }
     public string? Period { get; set; }
+}
+
+/// <summary>AI 建议的里程碑草稿（不落库，前端审核后批量创建）。</summary>
+public class PmMilestoneDraft
+{
+    public string Title { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public List<string> AcceptanceCriteria { get; set; } = new();
+    /// <summary>建议日期 yyyy-MM-dd（可空）</summary>
+    public string? DueDate { get; set; }
 }

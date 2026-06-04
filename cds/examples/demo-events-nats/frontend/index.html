@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>发布订阅 Demo - NATS</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="head">
+        <div class="title-row">
+          <h1>发布订阅演示</h1>
+          <span class="pill" id="broker-pill">连接检测中</span>
+        </div>
+        <p class="subtitle">前端发布消息 → NATS 主题 demo.events → 后端订阅者接收 → 实时回显</p>
+      </header>
+
+      <section class="card send-card">
+        <form class="send-form" id="send-form">
+          <input
+            class="input"
+            id="msg-input"
+            type="text"
+            placeholder="输入要发布的消息内容"
+            autocomplete="off"
+          />
+          <button class="btn-primary" type="submit">发布消息</button>
+        </form>
+        <p class="hint" id="send-hint">消息会发布到 NATS 主题 demo.events，由后端订阅者实时接收。</p>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>已接收消息</h2>
+          <span class="count" id="count">0 条</span>
+        </div>
+        <ul class="msg-list" id="msg-list">
+          <li class="empty">还没有消息，先发布一条试试</li>
+        </ul>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

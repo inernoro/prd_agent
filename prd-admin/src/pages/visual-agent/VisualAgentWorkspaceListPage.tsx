@@ -42,6 +42,7 @@ import { useNavigate } from 'react-router-dom';
 import { buildInlineImageToken, computeRequestedSizeByRefRatio, readImageSizeFromFile } from '@/lib/visualAgentPromptUtils';
 import { normalizeFileToSquareDataUrl } from '@/lib/imageSquare';
 import { ParticleVortex } from '@/components/effects/ParticleVortex';
+import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 
 // ============ 夜景背景 Canvas 组件 ============
 function NightSkyBackground() {
@@ -494,6 +495,8 @@ const SCENARIO_TAGS = [
 function HeroSection() {
   return (
     <div className="relative w-full" style={{ height: 260 }}>
+      {/* 本页教程入口(内嵌进页面右上角,页面级单实例,非悬浮浮层) */}
+      <div className="absolute top-3 right-3 z-20"><TipsEntryButton compact /></div>
       {/* 粒子漩涡背景 — trailColor 精确匹配 #0a0a0c，无 CSS opacity 避免矩形覆盖 */}
       <div
         className="absolute inset-0"
@@ -507,6 +510,7 @@ function HeroSection() {
       {/* 文字层 */}
       <div className="relative z-10 flex flex-col items-center justify-center h-full text-center">
         <h1
+          data-tour-id="visual-page-title"
           className="text-[42px] font-bold tracking-tight mb-3"
           style={{
             background: 'linear-gradient(90deg, #c4b5fd, #818cf8, #6ee7b7, #818cf8, #c4b5fd)',
@@ -521,6 +525,7 @@ function HeroSection() {
           视觉创作 Agent
         </h1>
         <p
+          data-tour-id="visual-subtitle"
           className="text-[15px]"
           style={{
             color: 'rgba(199,210,254,0.58)',
@@ -811,6 +816,7 @@ function QuickInputBox(props: {
             />
             <button
               type="button"
+              data-tour-id="visual-image-btn"
               onClick={handleImageButtonClick}
               disabled={loading}
               className="h-8 px-3 rounded-lg flex items-center gap-1.5 text-[13px] font-medium transition-all duration-200 hover:bg-white/8 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -827,13 +833,16 @@ function QuickInputBox(props: {
 
             {/* 尺寸选择器（复用编辑器的面板组件） */}
             {onSizeChange && (
-              <SizePickerButton size={size} onSizeChange={onSizeChange} />
+              <span data-tour-id="visual-size-btn" className="inline-flex">
+                <SizePickerButton size={size} onSizeChange={onSizeChange} />
+              </span>
             )}
           </div>
           {/* 右侧：Bug 按钮 + 发送按钮 */}
           <div className="flex items-center gap-2">
             <button
               type="button"
+              data-tour-id="visual-defect-btn"
               onClick={openDefectDialog}
               className="h-9 w-9 rounded-xl flex items-center justify-center transition-all duration-200 hover:bg-white/10"
               style={{
@@ -881,7 +890,7 @@ function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: st
   const { onSelect, activeKey } = props;
 
   return (
-    <div className="flex items-center justify-start sm:justify-center gap-2.5 flex-nowrap overflow-x-auto sm:flex-wrap px-3 sm:px-6 mt-6 no-scrollbar">
+    <div data-tour-id="visual-scenarios" className="flex items-center justify-start sm:justify-center gap-2.5 flex-nowrap overflow-x-auto sm:flex-wrap px-3 sm:px-6 mt-6 no-scrollbar">
       {SCENARIO_TAGS.map((tag) => {
         const Icon = tag.icon;
         const isActive = activeKey === tag.key;
@@ -893,6 +902,7 @@ function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: st
             <button
               key={tag.key}
               type="button"
+              data-tour-id="visual-pro"
               className="flex items-center gap-2 px-4 py-2 rounded-xl text-[13px] font-semibold transition-all duration-200 hover:scale-[1.02] shrink-0"
               style={{
                 background: 'linear-gradient(135deg, rgba(99,102,241,0.12) 0%, rgba(79,82,221,0.06) 100%)',
@@ -1022,6 +1032,7 @@ function ProjectCard(props: {
 function NewProjectCard(props: { onClick: () => void }) {
   return (
     <div
+      data-tour-id="visual-new-project"
       className="cursor-pointer group"
       onClick={props.onClick}
       role="button"
@@ -1102,6 +1113,7 @@ function ProjectCarousel(props: {
           style={{ borderTop: '1px solid var(--nested-block-border)' }}
         >
           <h2
+            data-tour-id="visual-projects"
             className="text-[14px] font-medium tracking-wide"
             style={{ color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.05em' }}
           >

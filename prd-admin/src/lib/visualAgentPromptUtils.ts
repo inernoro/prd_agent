@@ -5,6 +5,48 @@ const INLINE_IMAGE_LEGACY_RX = /^\[IMAGE=([^\]|]+)(?:\|([^\]]+))?\]\s*/;
 const SIZE_TOKEN_RE_SRC = String.raw`\(\s*@size\s*:\s*(\d{2,5}\s*[xX×＊*]\s*\d{2,5})\s*\)\s*`;
 const SIZE_TOKEN_RE = new RegExp(SIZE_TOKEN_RE_SRC, 'g');
 
+/**
+ * 把"用于生成的完整 prompt / 引用文本"清洗成"用于展示的简短标题"。
+ *
+ * 视觉创作里，派生图的 prompt 会把引用块（【引用图片（按顺序）】+ 每个引用的 label）
+ * 与原始指令拼在一起；当这张派生图又成为下一次生成的引用时，其标题会被再次拼进去，
+ * 逐代累积导致标题自我重复 / 引用图标泄漏。本函数在"展示层"与"引用 label 注入层"
+ * 统一把这些标记剥掉并对重复片段去重，断掉递归增长。
+ *
+ * 注意：只用于展示 / 引用 label，不改变真正发给模型的指令本身。
+ */
+export function cleanDisplayTitle(raw: string, maxLen = 60): string {
+  let s = String(raw ?? '').trim();
+  if (!s) return '';
+  // [IMG:url|label] → 保留 label；无 label 的整段去掉
+  s = s.replace(/\[IMG:[^|\]]*\|([^\]]*)\]/gi, '$1');
+  s = s.replace(/\[IMG:[^\]]*\]/gi, ' ');
+  // [IMAGE...] 内联图标记
+  s = s.replace(/\[IMAGE[^\]]*\]/gi, ' ');
+  // @imgN 引用
+  s = s.replace(/@img\d+/gi, ' ');
+  // (@size:..) (@model:..) token
+  s = s.replace(/\(\s*@(?:size|model)\s*:[^)]*\)/gi, ' ');
+  // 【引用图片（按顺序）】... 引用说明块（含其后的 "- @imgN: xxx" 列表行）
+  s = s.replace(/【[^】]*引用[^】]*】[\s\S]*$/g, ' ');
+  s = s.replace(/【[^】]*】/g, ' ');
+  // 行内 "- @imgN: xxx" 残留
+  s = s.replace(/^\s*-\s*@?img\d*\s*:.*$/gim, ' ');
+  // 折叠空白
+  s = s.replace(/\s{2,}/g, ' ').trim();
+  // 按 " - " / "：" 切分后对相邻重复片段去重（修复"A - A : A"自我拼接）
+  const parts = s.split(/\s*[-]\s*/).map((p) => p.trim()).filter(Boolean);
+  const seen = new Set<string>();
+  const dedup = parts.filter((p) => {
+    const k = p.toLowerCase();
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  s = dedup.join(' - ').replace(/\s*[-:：]\s*$/g, '').trim();
+  return s.length > maxLen ? `${s.slice(0, maxLen)}…` : s;
+}
+
 function safeDecodeURIComponent(s: string): string {
   try {
     return decodeURIComponent(s);

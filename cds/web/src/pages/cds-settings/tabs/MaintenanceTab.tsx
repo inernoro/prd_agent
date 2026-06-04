@@ -52,6 +52,7 @@ interface SelfUpdateTimings {
   docOnlyMs?: number;
   noOpMs?: number;
   restartMs?: number;
+  drainMs?: number;
   validate?: Record<string, number>;
   webBuildSkipped?: boolean;
   webBuildReason?: string;
@@ -405,6 +406,21 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   // 因为 activeSelfUpdate 真存在时不会回退到 idle。
   const activeSelfUpdate = selfStatus.status === 'ok' ? selfStatus.data.activeSelfUpdate : null;
   const lastSelfUpdate = selfStatus.status === 'ok' ? selfStatus.data.lastSelfUpdate : null;
+
+  // 进度条专用 elapsed:必须与 step 同源(都来自后端 activeSelfUpdate)。
+  // runStartedAt 是点按钮那一刻的客户端时间,从本 tab 触发时不会回填后端
+  // startedAt → 与服务端 step 配错时钟(Bugbot #716)。优先用后端 startedAt
+  // 作为锚点,缺失再退回 runStartedAt。
+  const liveStartedAtMs = (() => {
+    const serverMs = activeSelfUpdate?.startedAt ? Date.parse(activeSelfUpdate.startedAt) : NaN;
+    if (Number.isFinite(serverMs)) return serverMs;
+    return runStartedAt ?? Date.now();
+  })();
+  const liveElapsedMs = Math.max(0, (runEndedAt ?? Date.now()) - liveStartedAtMs);
+
+  // 自更新历史:统一数据源,进度条 + 历史列表共用一份(不各自 fetch)。
+  const { historyState: selfHistoryState, manualRefresh: refreshSelfHistory } = useSelfUpdateHistory();
+  const selfHistoryRecords = selfHistoryState.status === 'ok' ? selfHistoryState.records : [];
 
   // 2026-05-07 lastTickAt 判活(Phase 1 — 杜绝"timer 跳秒但其实早死"幻觉):
   // 后端每写一步、每条心跳都刷新 lastTickAt。前端用 tickClock 触发
@@ -940,13 +956,16 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
               runState === 'idle'
                 ? '尚未执行更新。'
                 : runState === 'running'
-                  ? `执行中 · ${formatElapsed(elapsedRunMs)}`
+                  ? `执行中 · ${formatElapsed(liveElapsedMs)}`
                   : runState === 'success'
                     ? `已提交重启 · 用时 ${formatElapsed(elapsedRunMs)}`
                     : `执行失败 · 用时 ${formatElapsed(elapsedRunMs)}`
             }
             contentClassName="p-0"
           >
+              {runState === 'running' ? (
+                <SelfUpdateLiveProgress elapsedMs={liveElapsedMs} currentStep={activeSelfUpdate?.step} records={selfHistoryRecords} />
+              ) : null}
               <div className="flex justify-end px-4 py-3">
                 <Button type="button" variant="outline" size="sm" onClick={() => void copyRunLog()} disabled={runLog.length === 0}>
                   <Copy />
@@ -990,7 +1009,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
       {/* 2026-05-28 改:历史列表常驻显示在面板下方,不再藏到 Dialog 后面。
           用户反馈"按钮不够明显 + 弹窗内看一眼被闪掉"。 */}
       <Section title="自更新历史" description="最近 20 条记录,倒序(最新在前)。每次触发 self-update / force-sync 都会写入。">
-        <SelfUpdateHistoryList />
+        <SelfUpdateHistoryList historyState={selfHistoryState} onManualRefresh={refreshSelfHistory} />
       </Section>
     </div>
   );
@@ -1169,60 +1188,14 @@ type HistoryFetchState =
   | { status: 'error'; message: string }
   | { status: 'ok'; records: SelfUpdateRecord[] };
 
-function SelfUpdateHistoryList(): JSX.Element {
+// 数据源上移到父组件 useSelfUpdateHistory(与进度条共用,不再自己 fetch)。
+function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
+  historyState: HistoryFetchState;
+  onManualRefresh: () => void;
+}): JSX.Element {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const toggle = (key: string): void => setExpanded((cur) => ({ ...cur, [key]: !cur[key] }));
-
-  const [historyState, setHistoryState] = useState<HistoryFetchState>({ status: 'loading' });
-  const [refreshNonce, setRefreshNonce] = useState(0);
-  const events = useCdsEvents();
-
-  // 2026-05-28 用户反馈"我还没看明白就被闪了一下":
-  // 不再用 snapshot.selfUpdateHistory(每次 self.status 都 re-render),
-  // 改用独立 endpoint /api/self-update-history,只在两个时刻 re-fetch:
-  //   1. 首次 mount(打开页面)
-  //   2. 自更新真正完成时(self.update.done / self.update.failed)
-  //   3. 用户点"刷新"按钮
-  // 中间的 status / heartbeat / step 事件全部忽略 — 列表内容不会变就不刷。
-  const updatingPrev = useRef<typeof events.updating>(null);
-  useEffect(() => {
-    const wasUpdating = !!updatingPrev.current;
-    const isUpdating = !!events.updating;
-    updatingPrev.current = events.updating;
-    // updating: true → false 表示一次更新结束,这时候才有新历史可拉
-    if (wasUpdating && !isUpdating) {
-      setRefreshNonce((n) => n + 1);
-    }
-  }, [events.updating]);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch(apiUrl('/api/self-update-history?limit=20'), { credentials: 'include' })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return (await res.json()) as { records: SelfUpdateRecord[] };
-      })
-      .then((data) => {
-        if (cancelled) return;
-        setHistoryState({ status: 'ok', records: data.records || [] });
-      })
-      .catch((err: Error) => {
-        if (cancelled) return;
-        // 不强制 error 态;静默 console 给运维看
-        // eslint-disable-next-line no-console
-        console.warn('[self-update-history] 拉取失败:', err.message);
-        // 保留当前状态不变,避免刷成空
-        if (historyState.status === 'loading') {
-          setHistoryState({ status: 'error', message: err.message });
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshNonce]);
-
-  const manualRefresh = (): void => setRefreshNonce((n) => n + 1);
+  const manualRefresh = onManualRefresh;
 
   if (historyState.status === 'loading') {
     return (
@@ -1457,7 +1430,8 @@ function summariseHistory(records: SelfUpdateRecord[]): SelfUpdateHistoryStatsDa
 function fmtMs(ms: number | null | undefined): string {
   if (ms == null) return '-';
   if (ms < 1000) return `${ms} ms`;
-  return `${(ms / 1000).toFixed(1)} s`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`;
+  return `${(ms / 60_000).toFixed(1)} min`;
 }
 
 function SelfUpdateHistoryStats({ stats }: { stats: SelfUpdateHistoryStatsData }): JSX.Element {
@@ -1517,10 +1491,209 @@ function SelfUpdateHistoryStats({ stats }: { stats: SelfUpdateHistoryStatsData }
   );
 }
 
+// 自更新历史的统一数据源(进度条 + 历史列表共用,Bugbot #716:避免两处各自
+// fetch 同一 endpoint)。只在三个时刻 re-fetch:首次 mount、一次更新真正结束
+// (events.updating true→false)、用户点刷新。中间的 status/heartbeat/step 不刷。
+function useSelfUpdateHistory(): { historyState: HistoryFetchState; manualRefresh: () => void } {
+  const [historyState, setHistoryState] = useState<HistoryFetchState>({ status: 'loading' });
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const events = useCdsEvents();
+  const updatingPrev = useRef<typeof events.updating>(null);
+  useEffect(() => {
+    const wasUpdating = !!updatingPrev.current;
+    const isUpdating = !!events.updating;
+    updatingPrev.current = events.updating;
+    if (wasUpdating && !isUpdating) setRefreshNonce((n) => n + 1);
+  }, [events.updating]);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(apiUrl('/api/self-update-history?limit=20'), { credentials: 'include' })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return (await res.json()) as { records: SelfUpdateRecord[] };
+      })
+      .then((data) => { if (!cancelled) setHistoryState({ status: 'ok', records: data.records || [] }); })
+      .catch((err: Error) => {
+        if (cancelled) return;
+        // eslint-disable-next-line no-console
+        console.warn('[self-update-history] 拉取失败:', err.message);
+        // 保留当前状态不变(避免刷成空);仅首次 loading 失败才落 error 态。
+        setHistoryState((cur) => (cur.status === 'loading' ? { status: 'error', message: err.message } : cur));
+      });
+    return () => { cancelled = true; };
+  }, [refreshNonce]);
+  const manualRefresh = (): void => setRefreshNonce((n) => n + 1);
+  return { historyState, manualRefresh };
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// 进行中的更新「预计进度条」(2026-06-03 用户:"当前更新也用这个进度条,
+// 让用户有大致预期")。原理:历史成功记录的各阶段耗时取中位数当"预期时间线",
+// 进行中时按当前阶段(activeSelfUpdate.step)+ 已用时长把对应段填实,未到的段
+// 淡显。给用户一个"还要多久"的体感,而不是只盯着秒表空等。
+// ──────────────────────────────────────────────────────────────────────────
+interface LiveStageDef {
+  key: string;
+  label: string;
+  color: string;
+  fields: Array<keyof SelfUpdateTimings>;
+}
+// 顺序必须与后端自更新流程一致(fetch → checkout → 依赖/类型校验 → 编译 → 重启)。
+const LIVE_STAGE_DEFS: LiveStageDef[] = [
+  { key: 'fetch',    label: '拉取',      color: 'bg-sky-500',     fields: ['fetchMs', 'pullMs'] },
+  { key: 'checkout', label: '切分支',    color: 'bg-cyan-500',    fields: ['checkoutMs', 'resetMs'] },
+  { key: 'install',  label: '依赖校验',  color: 'bg-indigo-500',  fields: ['validateInstallMs'] },
+  { key: 'tsc',      label: '类型校验',  color: 'bg-amber-500',   fields: ['validateTscMs'] },
+  { key: 'backend',  label: '后端编译',  color: 'bg-emerald-500', fields: ['buildBackendMs'] },
+  { key: 'web',      label: 'web 重建',  color: 'bg-rose-500',    fields: ['webBuildMs', 'webOnlyMs'] },
+  { key: 'restart',  label: '排空+重启', color: 'bg-fuchsia-500', fields: ['drainMs', 'restartMs'] },
+];
+// 后端 send(step,...) 的原始 step key → 展示段 key 的精确映射(Bugbot #716)。
+// 只登记"能明确归到某个可见段"的步骤;过渡 / 收尾步骤(nginx-render / analyze /
+// cache / validate-done / validate-timings 等)故意不登记 → 走 elapsed 兜底,
+// 避免错误地跳到末尾(重启段)或回跳到类型校验。drain = 后端排空等待阶段。
+const STEP_TO_STAGE_KEY: Record<string, string> = {
+  fetch: 'fetch', pull: 'fetch',
+  checkout: 'checkout', reset: 'checkout',
+  // 注意:后端整段校验只发一个 'validate' step(install + tsc 合一,见
+  // branches.ts send('validate',...)),没有独立的 validate-install / validate-tsc
+  // step 事件。若把 'validate' 钉死到 install 段,tsc 期间(校验里最久的一段)
+  // 进度条会卡在 install 不动(Codex #716)。所以 'validate' 故意不登记 → 走
+  // elapsed 兜底,随时间从 install 平滑推进到 tsc。下面两条留作未来后端拆分
+  // 子步骤时的精确映射(当前不会触发)。
+  'validate-install': 'install',
+  'validate-tsc': 'tsc',
+  'build-backend': 'backend',
+  'web-build': 'web', 'web-only': 'web',
+  drain: 'restart', restart: 'restart',
+};
+// 无历史可估算时的兜底基线(ms,秒级),保证条至少能画出来。
+const LIVE_FALLBACK_MS: Record<string, number> = {
+  fetch: 1000, checkout: 200, install: 8000, tsc: 16000, backend: 1000, web: 14000, restart: 3000,
+};
+
+function median(nums: number[]): number {
+  if (nums.length === 0) return 0;
+  const sorted = [...nums].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
+// records 由父组件统一从 useSelfUpdateHistory 拿(与下方历史列表共用同一份,
+// 不再各自 fetch —— 避免本进度条挂载时空 fetch、医到一半还显示"暂无历史"。Bugbot #716)。
+function SelfUpdateLiveProgress({ elapsedMs, currentStep, records }: { elapsedMs: number; currentStep?: string; records: SelfUpdateRecord[] }): JSX.Element {
+  const successSamples = records.filter((r) => r.status === 'success' && r.timings);
+  const expected = useMemo(() => {
+    return LIVE_STAGE_DEFS.map((def) => {
+      const samples: number[] = [];
+      for (const r of successSamples) {
+        const t = r.timings!;
+        let sum = 0; let has = false;
+        for (const f of def.fields) {
+          const v = t[f];
+          if (typeof v === 'number' && v > 0) { sum += v; has = true; }
+        }
+        if (has) samples.push(sum);
+      }
+      return { ...def, ms: median(samples) };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [records]);
+
+  // 逐段兜底(Codex #716):某段在历史里没有样本(如旧历史缺 drainMs、或 hot /
+  // web-only 模式跑出来的记录缺后端/web 段)时,用基线值补上,而不是留 0 宽。
+  // 否则新加的排空+重启段会零宽、ETA 也排除掉那段最长可达 180s 的等待 —— 恰恰
+  // 是这条进度条最该解释的时间。只有当所有段都没样本时才整体走基线。
+  const stages = expected.map((d) => (d.ms > 0 ? d : { ...d, ms: LIVE_FALLBACK_MS[d.key] ?? 1000 }));
+  const etaMs = Math.max(stages.reduce((s, v) => s + v.ms, 0), 1);
+
+  // 按已用时长落到对应段(用于过渡/收尾步骤的兜底,既不跳末尾也不回跳)。
+  const idxByElapsed = (): number => {
+    let acc = 0;
+    for (let i = 0; i < stages.length; i++) { acc += stages[i].ms; if (elapsedMs < acc) return i; }
+    return stages.length - 1;
+  };
+  // 当前阶段索引:先用精确映射;映射不到的过渡/收尾步骤(nginx-render / analyze /
+  // cache / validate-done / validate-timings 等)走 elapsed 兜底。
+  const curIdx = (() => {
+    const mappedKey = currentStep ? STEP_TO_STAGE_KEY[currentStep] : undefined;
+    if (mappedKey) {
+      const i = stages.findIndex((s) => s.key === mappedKey);
+      if (i >= 0) return i;
+    }
+    return idxByElapsed();
+  })();
+
+  const beforeMs = stages.slice(0, curIdx).reduce((s, v) => s + v.ms, 0);
+  const curMs = stages[curIdx]?.ms || 1;
+  const stageEndMs = beforeMs + curMs;
+  const cap = etaMs * 0.99;
+  // 单一进度时钟(Bugbot #716):step 给下限(已确认进入当前阶段 → 至少推进到该段
+  // 起点),其余跟随真实 elapsed,但在收到下一个 step 前不冲过当前阶段末尾;
+  // 超过总预期则顶到 ETA。percent / 段填充 / 「预计还需」全部由这一个 progressedMs
+  // 派生,三者永远一致(避免"早期阶段比中位数快 → 百分比冲顶但预计还需还很大")。
+  let progressedMs = Math.max(beforeMs, Math.min(elapsedMs, stageEndMs));
+  if (elapsedMs >= etaMs) progressedMs = etaMs;
+  progressedMs = Math.min(progressedMs, cap);
+  const overEta = elapsedMs > etaMs;
+  const remainMs = Math.max(0, etaMs - progressedMs);
+  const pct = Math.min(99, Math.round((progressedMs / etaMs) * 100));
+  // 每段起点(累加),用于按 progressedMs 统一计算填充比例。
+  let accStart = 0;
+  const segStarts = stages.map((s) => { const start = accStart; accStart += s.ms; return start; });
+
+  return (
+    <div className="space-y-2 border-t border-border px-4 py-3">
+      <div className="flex items-center justify-between text-xs">
+        <span className="text-muted-foreground">
+          <span className="font-mono font-medium text-foreground/80">{pct}%</span>
+          {' · '}
+          {successSamples.length > 0
+            ? `基于近 ${successSamples.length} 次成功更新的中位数`
+            : '暂无历史 · 粗略估算'}
+        </span>
+        <span className={overEta ? 'font-medium text-amber-600 dark:text-amber-400' : 'font-medium text-foreground/80'}>
+          已用 {fmtMs(elapsedMs)} · {overEta ? '预计已到点,收尾中' : `预计还需 ~${fmtMs(remainMs)}`}
+          <span className="ml-1 font-normal text-muted-foreground">/ 预计约 {fmtMs(etaMs)}</span>
+        </span>
+      </div>
+      <div className="flex h-2.5 w-full overflow-hidden rounded-sm bg-[hsl(var(--surface-sunken))]">
+        {stages.map((seg, i) => {
+          const widthPct = (seg.ms / etaMs) * 100;
+          const isCur = i === curIdx;
+          // 填充比例统一由 progressedMs 派生:已过段→100%、当前段→部分、未到→0%。
+          const fillPct = Math.max(0, Math.min(1, (progressedMs - segStarts[i]) / (seg.ms || 1))) * 100;
+          return (
+            <div
+              key={seg.key}
+              className="relative h-full"
+              style={{ width: `${widthPct}%` }}
+              title={`${seg.label}: 预计 ${fmtMs(seg.ms)}`}
+            >
+              {/* 计划层(淡显)+ 实际填充层(实色,当前段脉冲) */}
+              <div className={`absolute inset-0 ${seg.color} opacity-20`} />
+              <div
+                className={`absolute inset-y-0 left-0 ${seg.color} ${isCur ? 'animate-pulse' : ''}`}
+                style={{ width: `${fillPct}%` }}
+              />
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
+        {stages.map((seg, i) => (
+          <span key={seg.key} className={i === curIdx ? 'font-medium text-foreground' : ''}>
+            <span className={`inline-block h-2 w-2 align-middle ${seg.color} ${i <= curIdx ? '' : 'opacity-30'}`} />{' '}
+            {seg.label} {fmtMs(seg.ms)}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // 阶段耗时条:把 timings 里的各阶段按比例横向铺出来,鼠标悬停看每段名字 + 数值。
 // 之前用户看的只是 "X.Xs 流程" 一个数字,完全看不出 25s 是 tsc 还是 web build 占的。
 interface StageSeg { key: string; label: string; ms: number; color: string }
-
 function SelfUpdateStageBar({ timings, totalMs }: { timings: SelfUpdateTimings; totalMs?: number }): JSX.Element | null {
   const segments: StageSeg[] = [];
   const push = (key: string, label: string, ms: number | undefined, color: string): void => {
@@ -1534,6 +1707,7 @@ function SelfUpdateStageBar({ timings, totalMs }: { timings: SelfUpdateTimings; 
   push('cache', '清缓存', timings.cacheMs, 'bg-stone-500/70');
   push('backend', '后端 esbuild', timings.buildBackendMs, 'bg-emerald-500/70');
   push('web', 'web 重建', timings.webBuildMs, 'bg-rose-500/70');
+  push('drain', '等待排空', timings.drainMs, 'bg-fuchsia-600/70');
   push('restart', '重启', timings.restartMs, 'bg-fuchsia-500/70');
 
   if (segments.length === 0) return null;
@@ -1542,10 +1716,21 @@ function SelfUpdateStageBar({ timings, totalMs }: { timings: SelfUpdateTimings; 
   const total = Math.max(totalSeg, timings.totalMs ?? 0, totalMs ?? 0);
   if (total === 0) return null;
 
+  // 2026-06-03 用户反馈:进度条大片黢黑 + 看不到"总计"。根因是各 step 之和
+  // (totalSeg)远小于 total(含排空等待 / 进程退出后才发生的重启)。把差额补成
+  // 一段中性灰"其他",让进度条铺满;再单列"总计"chip,让用户对得上账。
+  const otherMs = Math.max(0, total - totalSeg);
+  // 阈值 1.5s 以下视作测量噪音(step 之间的零碎间隙),不单列,避免一堆碎段。
+  const OTHER_THRESHOLD_MS = 1500;
+  const barSegments: StageSeg[] =
+    otherMs > OTHER_THRESHOLD_MS
+      ? [...segments, { key: 'other', label: '其他', ms: otherMs, color: 'bg-muted-foreground/30' }]
+      : segments;
+
   return (
     <div className="mt-1 space-y-1">
       <div className="flex h-2 w-full overflow-hidden rounded-sm bg-[hsl(var(--surface-sunken))]">
-        {segments.map((seg) => (
+        {barSegments.map((seg) => (
           <div
             key={seg.key}
             className={seg.color}
@@ -1555,12 +1740,15 @@ function SelfUpdateStageBar({ timings, totalMs }: { timings: SelfUpdateTimings; 
         ))}
       </div>
       <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
-        {segments.map((seg) => (
+        {barSegments.map((seg) => (
           <span key={seg.key}>
             <span className={`inline-block h-2 w-2 align-middle ${seg.color}`} />{' '}
             {seg.label} {fmtMs(seg.ms)}
           </span>
         ))}
+        <span className="font-medium text-foreground/80" title="各阶段实测总和(含排空等待 / 未计量的进程退出后重启)">
+          总计 {fmtMs(total)}
+        </span>
         {timings.webBuildSkipped ? (
           <span className="text-emerald-700 dark:text-emerald-300">
             (web 命中缓存 · {timings.webBuildReason})

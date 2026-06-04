@@ -34,6 +34,9 @@ export async function login(page, baseUrl, cfg) {
   const user = process.env[b.userEnv];
   const pass = process.env[b.passEnv];
   if (!user || !pass) throw new Error(`缺少登录凭据：请设置 env ${b.userEnv} 和 ${b.passEnv}`);
+  // 归一化 baseUrl：cdscli --human preview-url 带结尾 '/'，baseUrl + '/login' 会变成 '//login'
+  // 命中 SPA 兜底，登录框永不出现（实测坑：登录 20s 超时 + API 拿到 HTML）。统一去掉结尾斜杠。
+  baseUrl = String(baseUrl).replace(/\/+$/, '');
   await page.goto(baseUrl + b.loginPath, { waitUntil: 'domcontentloaded', timeout: 45000 });
   await page.waitForSelector(b.userSelector, { timeout: 20000 });
   await page.waitForTimeout(1000);
@@ -55,8 +58,20 @@ export async function gotoByClick(page, navText, { timeout = 8000 } = {}) {
     await loc.click({ timeout });
     await page.waitForTimeout(2000);
     return { found: true, navText };
-  } catch (e) {
-    return { found: false, navText, error: e.message };
+  } catch {
+    // 兜底：很多可点目标是 div/卡片（无 a/button/role 语义），上面的选择器点不到（实测坑：
+    // 知识库空间卡片就是可点 div）。改按可见文本点击——点中文本节点，click 冒泡到卡片 onClick。
+    // 先精确匹配，再退子串匹配。
+    for (const opt of [{ exact: true }, { exact: false }]) {
+      try {
+        const byText = page.getByText(navText, opt).first();
+        await byText.waitFor({ state: 'visible', timeout: Math.min(timeout, 4000) });
+        await byText.click({ timeout });
+        await page.waitForTimeout(2000);
+        return { found: true, navText, via: `getByText(${opt.exact ? 'exact' : 'loose'})` };
+      } catch { /* 试下一种匹配 */ }
+    }
+    return { found: false, navText };
   }
 }
 
@@ -190,6 +205,38 @@ async function validateShot(page, path, expectText) {
     const ok = expectText instanceof RegExp ? expectText.test(bodyText) : bodyText.includes(expectText);
     if (!ok) warnings.push(`expectText 未命中: ${expectText}`);
   }
+
+  // 版式健康自动护栏（2026-06-02 反哺）：检测开启的 modal/弹窗是否「撑破」视口。
+  // 根因：一次 CDS「一键部署项目」弹窗内容飞出视口顶部、主操作按钮够不到，验收却被判 PASS——
+  // 因为旧 validateShot 只查"功能在不在"，不查"版式正不正"。frontend-modal.md / issues-system §5.2
+  // 明确 Modal 撑破 = P0。这里把它变成每张图都跑的自动检查，杜绝靠人眼漏判。
+  try {
+    const layout = await page.evaluate(() => {
+      const vh = window.innerHeight;
+      const sels = ['[role="dialog"]', '[aria-modal="true"]', '.modal', '.cds-modal', '.ReactModal__Content'];
+      const seen = new Set();
+      for (const s of sels) {
+        for (const el of Array.from(document.querySelectorAll(s))) {
+          if (seen.has(el)) continue; seen.add(el);
+          const r = el.getBoundingClientRect();
+          if (r.width < 60 || r.height < 60) continue;     // 跳过隐藏/极小
+          // 该容器或其子层是否提供了内部滚动？(cap 高度 + overflow 滚动 = 正确做法)
+          const st = getComputedStyle(el);
+          const selfScroll = /(auto|scroll)/.test(st.overflowY) && el.scrollHeight > el.clientHeight + 4;
+          const innerScroll = !!el.querySelector(
+            '[style*="overflow"], .overflow-auto, .overflow-y-auto, [class*="overflow-y-auto"]'
+          );
+          const cutTop = r.top < -8;                         // 顶部被切（"天上去了"）
+          const cutBottom = r.bottom > vh + 8;               // 底部超出视口（主操作够不到）
+          if ((cutTop || cutBottom) && !selfScroll && !innerScroll) {
+            return `modal 高 ${Math.round(r.height)}px 超出视口 ${vh}px（top=${Math.round(r.top)} bottom=${Math.round(r.bottom)}），且无内部滚动 → 疑似撑破/内容飞出，主操作可能够不到`;
+          }
+        }
+      }
+      return null;
+    });
+    if (layout) warnings.push(`版式撑破(P0,frontend-modal.md): ${layout}`);
+  } catch { /* 评估失败不阻塞 */ }
 
   return warnings;
 }

@@ -1,0 +1,65 @@
+services:
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -lc "npx --yes serve -s . -l $$PORT"
+    ports:
+      - "4173:4173"
+    volumes:
+      - ./frontend:/app
+    environment:
+      PORT: "4173"
+    labels:
+      cds.path-prefix: /
+      cds.readiness-path: /
+
+  backend:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -lc "npm install --no-audit --no-fund && node server.js"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - rabbitmq
+    environment:
+      PORT: "3000"
+      RABBITMQ_URL: ${RABBITMQ_URL}
+    labels:
+      cds.path-prefix: /api/
+      cds.readiness-path: /api/health
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+
+volumes:
+  rabbitmq-data:
+
+x-cds-project:
+  name: 消息队列 Demo (RabbitMQ / AMQP)
+  description: 前端投递消息到 RabbitMQ 队列，后端消费者异步处理并回显。纯 image + command + bind-mount 一键部署。
+
+x-cds-env:
+  RABBITMQ_USER: appuser
+  RABBITMQ_PASSWORD: rabbitpass2026
+  RABBITMQ_URL: amqp://appuser:rabbitpass2026@rabbitmq:5672/
+
+x-cds-env-meta:
+  RABBITMQ_USER:
+    kind: infra-derived
+    hint: RabbitMQ 用户名。
+  RABBITMQ_PASSWORD:
+    kind: secret
+    hint: RabbitMQ 密码（演示值，生产请改为 CDS 项目环境变量注入）。
+  RABBITMQ_URL:
+    kind: infra-derived
+    hint: 后端读取的 AMQP 连接串（含用户名密码）。

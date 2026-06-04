@@ -55,6 +55,7 @@ import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import { ASPECT_OPTIONS, getSizeForTier } from '@/lib/imageAspectOptions';
 import {
+  cleanDisplayTitle,
   computeRequestedSizeByRefRatio,
   extractSizeToken,
   parseInlinePrompt,
@@ -565,6 +566,8 @@ type GenDoneMeta = {
   actualModel?: string;
   /** 后端实际调度命中的模型池名 */
   actualModelPool?: string;
+  /** 后端返回的实际出图尺寸（WxH），优先于请求尺寸展示，修复"请求 1:1 但实际 16:9" */
+  effectiveSize?: string;
   /** 后端判断此次调用使用的是自适应模型（前端应显示"自适应"而不是具体 WxH） */
   isAdaptive?: boolean;
   genType?: 'text2img' | 'img2img' | 'vision';
@@ -582,6 +585,83 @@ type CanvasPlacing =
   | { kind: 'shape'; shapeType: NonNullable<CanvasImageItem['shapeType']> }
   | { kind: 'text' };
 
+/**
+ * 生图模型展示元信息（副标题 / 描述 / 推荐标记）。
+ *
+ * 这是一份「临时」的前端兜底文案表：当前后端模型池还没有下发副标题/描述/推荐字段，
+ * 先由前端按模型名/code 匹配出文案。一旦后端在模型池或模型对象上下发
+ * `subtitle` / `description` / `recommended` 字段，`getImageModelMeta` 会优先采用后端值，
+ * 这张表即可逐步退役，无需改动 UI。
+ *
+ * 当前推荐：gpt-image-2-all（即 image-2）。
+ */
+interface ImageModelMeta {
+  subtitle?: string;
+  description?: string;
+  recommended?: boolean;
+}
+
+// key 为小写关键字，匹配模型 name / modelName(code) / actualModelId 的子串
+const IMAGE_MODEL_META_REGISTRY: Array<{ match: string[]; meta: ImageModelMeta }> = [
+  {
+    match: ['gpt-image-2', 'image-2'],
+    meta: {
+      subtitle: '综合推荐 · 指令理解最强',
+      description: '自适应尺寸，复杂指令、文字排版与多图参考表现最稳，日常首选。',
+      recommended: true,
+    },
+  },
+  {
+    match: ['gpt-image-1.5', 'image-1.5'],
+    meta: {
+      subtitle: '速度优先 · 轻量出图',
+      description: '出图更快、成本更低，适合草图、批量试稿等对精度要求不高的场景。',
+    },
+  },
+  {
+    match: ['nano-banana-pro', 'nano-banana'],
+    meta: {
+      subtitle: '细节质感 · 写实风格',
+      description: '写实质感和光影细节出色，适合人像、产品与场景类高质量出图。',
+    },
+  },
+  {
+    match: ['gemini-3-pro-image', 'gemini-3', 'gemini'],
+    meta: {
+      subtitle: 'Google · 创意发散',
+      description: '创意联想强，适合概念探索与多样化风格尝试。',
+    },
+  },
+  {
+    match: ['doubao', 'seedream', '豆包'],
+    meta: {
+      subtitle: '豆包 · 中文友好',
+      description: '对中文提示词理解好，国风/中文海报类题材表现稳定。',
+    },
+  },
+];
+
+/** 当前默认推荐模型（用于头部提示文案；后端下发 recommended 后可弃用）。 */
+const RECOMMENDED_IMAGE_MODEL_LABEL = 'gpt-image-2-all';
+
+function getImageModelMeta(m: { name?: string; modelName?: string; actualModelId?: string; subtitle?: string; description?: string; recommended?: boolean }): ImageModelMeta {
+  // 1) 优先采用后端下发字段（一旦后端开始发送，这里自动生效）
+  const fromBackend: ImageModelMeta = {};
+  if (m.subtitle) fromBackend.subtitle = m.subtitle;
+  if (m.description) fromBackend.description = m.description;
+  if (typeof m.recommended === 'boolean') fromBackend.recommended = m.recommended;
+
+  // 2) 前端兜底：按关键字匹配
+  const hay = `${m.name ?? ''} ${m.modelName ?? ''} ${m.actualModelId ?? ''}`.toLowerCase();
+  const hit = IMAGE_MODEL_META_REGISTRY.find((e) => e.match.some((k) => hay.includes(k)));
+
+  return {
+    subtitle: fromBackend.subtitle ?? hit?.meta.subtitle,
+    description: fromBackend.description ?? hit?.meta.description,
+    recommended: fromBackend.recommended ?? hit?.meta.recommended ?? false,
+  };
+}
+
 const clampZoom = (z: number) => Math.max(0.05, Math.min(3, z));
 const clampZoomFactor = (f: number) => Math.max(0.93, Math.min(1.07, f));
 
@@ -594,8 +674,9 @@ const zoomFactorFromDeltaY = (deltaY: number) => {
 
 
 function guessRefName(ref: CanvasImageItem | null): string {
-  const p = String(ref?.prompt ?? '').trim();
-  if (p) return p.length > 80 ? p.slice(0, 80) : p;
+  // 清洗后再做引用名，避免把上一代的拼接标题/引用块再次带进来（断递归）
+  const p = cleanDisplayTitle(String(ref?.prompt ?? ''), 80);
+  if (p) return p;
 
   const src = String(ref?.src ?? '').trim();
   if (src) {
@@ -1035,6 +1116,11 @@ type ImageGenRunStreamPayload = {
   isAdaptive?: unknown;
   adapterDisplayName?: unknown;
   resolutionType?: unknown;
+  // 后端 imageDone 携带的尺寸真值（请求尺寸 vs 实际返回尺寸）
+  requestedSize?: unknown;
+  effectiveSize?: unknown;
+  sizeAdjusted?: unknown;
+  ratioAdjusted?: unknown;
 };
 
 function buildTemplate(name: string) {
@@ -1075,6 +1161,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     isLegacy?: boolean;
     /** 模型池中第一个模型的实际 modelId（用于查询适配器信息） */
     actualModelId?: string;
+    /** 副标题（一句话定位）。后端模型池下发后优先采用，否则走前端兜底文案表 */
+    subtitle?: string;
+    /** 详细描述（适用场景）。后端下发后优先采用 */
+    description?: string;
+    /** 是否为推荐模型。后端下发后优先采用 */
+    recommended?: boolean;
   };
   // 直接使用统一的模型池列表
   const filteredPools = useMemo(() => {
@@ -1105,6 +1197,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           isDedicated: g.isDedicated,
           isDefault: g.isDefault,
           isLegacy: g.isLegacy,
+          // 后端模型池描述（若有）会作为副标题/描述兜底来源之一
+          description: g.description,
         } as ModelWithSource;
       });
   }, [filteredPools]);
@@ -4025,6 +4119,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       assetId: (asset?.id || '').trim() || x.assetId,
                       sha256: (asset?.sha256 || '').trim() || x.sha256,
                       originalSha256: originalSha.trim() || x.originalSha256,
+                      requestedSize: String(o.requestedSize ?? '').trim() || x.requestedSize,
+                      effectiveSize: String(o.effectiveSize ?? '').trim() || x.effectiveSize,
+                      sizeAdjusted: o.sizeAdjusted === true,
+                      ratioAdjusted: o.ratioAdjusted === true,
                       syncStatus: 'synced',
                       syncError: null,
                     }
@@ -4032,10 +4130,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               )
             );
             const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
-            // 优先用后端 imageDone 事件携带的实际调度结果（actualModel + isAdaptive）
+            // 优先用后端 imageDone 事件携带的实际调度结果（actualModel + isAdaptive + 真实尺寸/平台）
             const actualModelFromSse = String(o.modelId ?? '').trim() || undefined;
             const actualPoolFromSse = String(o.modelGroupName ?? '').trim() || undefined;
             const isAdaptiveFromSse = o.isAdaptive === true;
+            const effectiveSizeFromSse = String(o.effectiveSize ?? '').trim() || undefined;
             pushMsg('Assistant', buildGenDoneContent({
               src: u,
               refSrc: refSrc || undefined,
@@ -4044,6 +4143,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               modelPool: modelPoolName,
               actualModel: actualModelFromSse,
               actualModelPool: actualPoolFromSse,
+              effectiveSize: effectiveSizeFromSse,
               isAdaptive: isAdaptiveFromSse,
               imageRefShas,
             }));
@@ -4301,7 +4401,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               setCanvas((prev) =>
                 prev.map((x) =>
                   x.key === key
-                    ? { ...x, kind: 'image', status: 'done', src: u, originalSrc: originalU, assetId: (asset?.id || '').trim() || x.assetId, sha256: (asset?.sha256 || '').trim() || x.sha256, originalSha256: originalSha.trim() || x.originalSha256, syncStatus: 'synced', syncError: null }
+                    ? { ...x, kind: 'image', status: 'done', src: u, originalSrc: originalU, assetId: (asset?.id || '').trim() || x.assetId, sha256: (asset?.sha256 || '').trim() || x.sha256, originalSha256: originalSha.trim() || x.originalSha256, requestedSize: String(o.requestedSize ?? '').trim() || x.requestedSize, effectiveSize: String(o.effectiveSize ?? '').trim() || x.effectiveSize, sizeAdjusted: o.sizeAdjusted === true, ratioAdjusted: o.ratioAdjusted === true, syncStatus: 'synced', syncError: null }
                     : x
                 )
               );
@@ -4313,6 +4413,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 modelPool: modelPoolName,
                 actualModel: String(o.modelId ?? '').trim() || undefined,
                 actualModelPool: String(o.modelGroupName ?? '').trim() || undefined,
+                effectiveSize: String(o.effectiveSize ?? '').trim() || undefined,
                 isAdaptive: o.isAdaptive === true,
               }));
             } else if (t === 'imageError' || t === 'error') {
@@ -5363,7 +5464,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }, [selectedGenerator]);
 
   return (
-    <div ref={containerRef} className="h-full min-h-0 bg-token-nested">
+    <div ref={containerRef} data-tour-id="visual-editor-root" className="h-full min-h-0 bg-token-nested">
       {uploadToast ? (
         <div
           className="fixed left-1/2 z-9999"
@@ -5390,6 +5491,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           {/* 主画布（无限视口） */}
           <div
             ref={stageRef}
+            data-tour-id="visual-editor-canvas"
             className="absolute inset-0 overflow-hidden outline-none focus:outline-none focus-visible:outline-none! focus-visible:shadow-none!"
             style={{
               backgroundColor: '#1e1e1e',
@@ -6403,7 +6505,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         const y = it.y ?? 0;
                         const w = it.w ?? 320;
                         const h = it.h ?? 220;
-                        const nameRaw = String(it.prompt ?? '').trim();
+                        // 展示标题统一走 cleanDisplayTitle：剥掉引用块/标记、对重复片段去重，
+                        // 修复"手绘草图:… 变成…【引用图片（按顺序）】- 手绘草图:… : 手…"的自我拼接
+                        const nameRaw = cleanDisplayTitle(String(it.prompt ?? ''));
                         const name = nameRaw || '图片';
                         const pxW = typeof it.naturalW === 'number' ? it.naturalW : 0;
                         const pxH = typeof it.naturalH === 'number' ? it.naturalH : 0;
@@ -8155,23 +8259,43 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           </div>
                         </div>
 
-                        <div className="mt-3 max-h-[360px] overflow-auto pr-1">
+                        {/* 分割线 + 选择模型小标题 + 推荐提示 */}
+                        <div className="mt-3 mb-2 flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-semibold uppercase tracking-wide text-token-muted">
+                            选择模型
+                          </span>
+                          <span
+                            className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
+                            style={{
+                              background: 'rgba(250,204,21,0.12)',
+                              border: '1px solid rgba(250,204,21,0.28)',
+                              color: 'rgba(250,204,21,0.95)',
+                            }}
+                          >
+                            <Sparkles size={10} />
+                            推荐 {RECOMMENDED_IMAGE_MODEL_LABEL}
+                          </span>
+                        </div>
+
+                        <div className="max-h-[400px] overflow-auto pr-1" style={{ overscrollBehavior: 'contain' }}>
                           {enabledImageModels.length === 0 ? (
-                            <div className="text-[13px] text-token-muted">
-                              暂无启用的 isImageGen 模型（可在“模型管理”开启）
+                            <div className="rounded-[14px] px-3 py-4 text-center text-[12px] text-token-muted" style={{ border: '1px dashed rgba(255,255,255,0.12)' }}>
+                              暂无启用的生图模型（可在“模型管理”中开启）
                             </div>
                           ) : (
-                            <div className="space-y-2">
+                            <div className="space-y-1.5">
                               {enabledImageModels.map((m) => {
                                   const picked = (!modelPrefAuto && modelPrefModelId === m.id) || (modelPrefAuto && serverDefaultModel?.id === m.id);
+                                  const meta = getImageModelMeta(m);
                                   return (
                                     <button
                                       key={m.id}
                                       type="button"
-                                      className="w-full text-left rounded-[16px] px-3 py-2 hover:bg-white/5 transition-colors"
+                                      className="group w-full text-left rounded-[14px] px-3 py-2.5 transition-all"
                                       style={{
-                                        border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.10)',
-                                        background: 'rgba(255,255,255,0.02)',
+                                        border: picked ? '1px solid rgba(250,204,21,0.45)' : '1px solid rgba(255,255,255,0.08)',
+                                        background: picked ? 'rgba(250,204,21,0.07)' : 'rgba(255,255,255,0.02)',
+                                        boxShadow: picked ? '0 0 0 3px rgba(250,204,21,0.08)' : 'none',
                                       }}
                                       onClick={() => {
                                         setModelPrefAuto(false);
@@ -8179,24 +8303,52 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                         setModelPrefOpen(false);
                                       }}
                                     >
-                                      <div className="flex items-start justify-between gap-3">
-                                        <div className="min-w-0">
-                                          <div className="truncate text-[14px] font-semibold text-token-primary">
-                                            {m.name || m.modelName}
+                                      <div className="flex items-center gap-3">
+                                        {/* 选中指示：圆点/勾 */}
+                                        <span
+                                          className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-full transition-colors"
+                                          style={{
+                                            background: picked ? 'rgba(250,204,21,0.95)' : 'transparent',
+                                            border: picked ? '1px solid rgba(250,204,21,0.95)' : '1.5px solid rgba(255,255,255,0.22)',
+                                            color: picked ? '#1a1a1a' : 'transparent',
+                                          }}
+                                          aria-label={picked ? '已选择' : '未选择'}
+                                        >
+                                          <Check size={13} strokeWidth={3} />
+                                        </span>
+
+                                        <div className="min-w-0 flex-1">
+                                          {/* 标题行：名称 + 推荐徽标 */}
+                                          <div className="flex items-center gap-1.5">
+                                            <span className="truncate text-[14px] font-semibold text-token-primary">
+                                              {m.name || m.modelName}
+                                            </span>
+                                            {meta.recommended && (
+                                              <span
+                                                className="shrink-0 inline-flex items-center gap-0.5 rounded-full px-1.5 py-px text-[9px] font-semibold"
+                                                style={{
+                                                  background: 'rgba(250,204,21,0.16)',
+                                                  border: '1px solid rgba(250,204,21,0.3)',
+                                                  color: 'rgba(250,204,21,0.95)',
+                                                }}
+                                              >
+                                                <Sparkles size={9} />
+                                                推荐
+                                              </span>
+                                            )}
                                           </div>
-                                        </div>
-                                        <div className="shrink-0">
-                                          <span
-                                            className="inline-flex items-center justify-center h-8 w-8 rounded-full"
-                                            style={{
-                                              background: picked ? 'rgba(250,204,21,0.18)' : 'rgba(255,255,255,0.04)',
-                                              border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.10)',
-                                              color: picked ? 'rgba(250,204,21,0.95)' : 'rgba(255,255,255,0.28)',
-                                            }}
-                                            aria-label={picked ? '已选择' : '未选择'}
-                                          >
-                                            <Check size={18} />
-                                          </span>
+                                          {/* 副标题 */}
+                                          {meta.subtitle && (
+                                            <div className="mt-0.5 truncate text-[11px] font-medium" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                                              {meta.subtitle}
+                                            </div>
+                                          )}
+                                          {/* 描述 */}
+                                          {meta.description && (
+                                            <div className="mt-1 text-[11px] leading-relaxed text-token-muted">
+                                              {meta.description}
+                                            </div>
+                                          )}
                                         </div>
                                       </div>
                                     </button>
@@ -8204,6 +8356,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 })}
                             </div>
                           )}
+                          <div className="mt-2.5 px-1 text-[10px] leading-relaxed text-token-muted-faint">
+                            说明文案为临时内置参考，后续将由模型配置统一下发。
+                          </div>
                         </div>
 
                                               </DropdownMenu.Content>
@@ -9097,7 +9252,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   if (!u) return;
                   setCanvas(prev => prev.map(x =>
                     x.key === genKey
-                      ? { ...x, kind: 'image' as const, status: 'done' as const, src: u, originalSrc: originalU, assetId: (asset?.id || '').trim() || x.assetId, sha256: (asset?.sha256 || '').trim() || x.sha256, originalSha256: originalSha.trim() || x.originalSha256, syncStatus: 'synced' as const, syncError: null }
+                      ? { ...x, kind: 'image' as const, status: 'done' as const, src: u, originalSrc: originalU, assetId: (asset?.id || '').trim() || x.assetId, sha256: (asset?.sha256 || '').trim() || x.sha256, originalSha256: originalSha.trim() || x.originalSha256, requestedSize: String(o.requestedSize ?? '').trim() || x.requestedSize, effectiveSize: String(o.effectiveSize ?? '').trim() || x.effectiveSize, sizeAdjusted: o.sizeAdjusted === true, ratioAdjusted: o.ratioAdjusted === true, syncStatus: 'synced' as const, syncError: null }
                       : x
                   ));
                   pushMsg('Assistant', buildGenDoneContent({
@@ -9108,6 +9263,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     modelPool: modelPoolName,
                     actualModel: String(o.modelId ?? '').trim() || undefined,
                     actualModelPool: String(o.modelGroupName ?? '').trim() || undefined,
+                    effectiveSize: String(o.effectiveSize ?? '').trim() || undefined,
                     isAdaptive: o.isAdaptive === true,
                   }));
                 } else if (t === 'imageError' || t === 'error') {

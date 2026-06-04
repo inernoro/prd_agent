@@ -468,6 +468,87 @@ public class ModelGroupsController : ControllerBase
     }
 
     /// <summary>
+    /// 获取正在使用该模型分组的应用列表（用于删除受阻时展示并支持一键解绑）
+    /// </summary>
+    [HttpGet("{id}/usage")]
+    public async Task<IActionResult> GetModelGroupUsage(string id)
+    {
+        var group = await _db.ModelGroups.Find(g => g.Id == id).FirstOrDefaultAsync();
+        if (group == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("MODEL_GROUP_NOT_FOUND", "模型分组不存在"));
+        }
+
+        var apps = await _db.LLMAppCallers
+            .Find(a => a.ModelRequirements.Any(r => r.ModelGroupIds.Contains(id)))
+            .ToListAsync();
+
+        var usages = apps.Select(a => new ModelGroupUsageItem
+        {
+            AppId = a.Id,
+            AppCode = a.AppCode,
+            DisplayName = string.IsNullOrWhiteSpace(a.DisplayName) ? a.AppCode : a.DisplayName,
+            ModelTypes = a.ModelRequirements
+                .Where(r => r.ModelGroupIds.Contains(id))
+                .Select(r => r.ModelType)
+                .Distinct()
+                .ToList()
+        }).ToList();
+
+        return Ok(ApiResponse<List<ModelGroupUsageItem>>.Ok(usages));
+    }
+
+    /// <summary>
+    /// 解绑应用对该模型分组的引用。
+    /// 不传 appIds（或为空）则解绑所有使用该分组的应用。解绑后该应用对应类型将回落到默认分组。
+    /// </summary>
+    [HttpPost("{id}/unbind")]
+    public async Task<IActionResult> UnbindModelGroup(string id, [FromBody] UnbindModelGroupRequest? request)
+    {
+        var group = await _db.ModelGroups.Find(g => g.Id == id).FirstOrDefaultAsync();
+        if (group == null)
+        {
+            return NotFound(ApiResponse<object>.Fail("MODEL_GROUP_NOT_FOUND", "模型分组不存在"));
+        }
+
+        var targetAppIds = request?.AppIds;
+        var hasTargets = targetAppIds != null && targetAppIds.Count > 0;
+
+        var apps = await _db.LLMAppCallers
+            .Find(a => a.ModelRequirements.Any(r => r.ModelGroupIds.Contains(id)))
+            .ToListAsync();
+
+        var unboundCount = 0;
+        foreach (var app in apps)
+        {
+            if (hasTargets && !targetAppIds!.Contains(app.Id))
+            {
+                continue;
+            }
+
+            var changed = false;
+            foreach (var req in app.ModelRequirements)
+            {
+                if (req.ModelGroupIds.Remove(id))
+                {
+                    changed = true;
+                }
+            }
+
+            if (changed)
+            {
+                app.UpdatedAt = DateTime.UtcNow;
+                await _db.LLMAppCallers.ReplaceOneAsync(a => a.Id == app.Id, app);
+                unboundCount++;
+            }
+        }
+
+        _logger.LogInformation("解绑模型分组 {GroupId} 的应用引用，共 {Count} 个", id, unboundCount);
+
+        return Ok(ApiResponse<object>.Ok(new { groupId = id, unboundCount }));
+    }
+
+    /// <summary>
     /// 重置模型池中指定模型的健康状态
     /// </summary>
     /// <param name="id">模型池 ID</param>
@@ -1023,6 +1104,30 @@ public class CreateModelGroupRequest
     public List<ModelGroupItem>? Models { get; set; }
     /// <summary>调度策略类型 (0=FailFast, 1=Race, 2=Sequential, 3=RoundRobin, 4=WeightedRandom, 5=LeastLatency)</summary>
     public int? StrategyType { get; set; }
+}
+
+/// <summary>
+/// 解绑模型分组的请求
+/// </summary>
+public class UnbindModelGroupRequest
+{
+    /// <summary>要解绑的应用 ID 列表；为空或不传则解绑全部使用该分组的应用</summary>
+    public List<string>? AppIds { get; set; }
+}
+
+/// <summary>
+/// 模型分组占用情况（哪个应用在用）
+/// </summary>
+public class ModelGroupUsageItem
+{
+    /// <summary>应用 ID</summary>
+    public string AppId { get; set; } = string.Empty;
+    /// <summary>应用标识码</summary>
+    public string AppCode { get; set; } = string.Empty;
+    /// <summary>应用显示名称</summary>
+    public string DisplayName { get; set; } = string.Empty;
+    /// <summary>该应用在哪些模型类型上引用了此分组</summary>
+    public List<string> ModelTypes { get; set; } = new();
 }
 
 public class UpdateModelGroupRequest

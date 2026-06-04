@@ -33,6 +33,8 @@ type GenDoneMeta = {
   actualModel?: string;
   /** 后端实际命中的模型池名 */
   actualModelPool?: string;
+  /** 后端返回的真实出图尺寸（WxH），优先于请求尺寸展示 */
+  effectiveSize?: string;
   /** 后端判断此次调用使用的是自适应模型：前端应显示"自适应"而不是具体 WxH */
   isAdaptive?: boolean;
   genType?: 'text2img' | 'img2img' | 'vision';
@@ -99,13 +101,23 @@ function detectAspectFromSize(raw: string): string {
 function MessageMetadataInline({
   size,
   model,
+  realModel,
   sizeToAspectMap,
 }: {
   size?: string;
+  /** 展示用模型名（优先模型池名，与"用户期望"、底部选择器保持一致） */
   model?: string;
+  /** 后端实际调度命中的真实 modelId；与展示名不同则以淡色后缀露出（自暴露"选 A 给 B"） */
+  realModel?: string;
   sizeToAspectMap?: Map<string, string>;
 }) {
   if (!size && !model) return null;
+  // 展示名与真实 modelId 不一致时才单独提示，避免常态下冗余
+  const diverged = !!realModel && !!model && realModel.trim().toLowerCase() !== model.trim().toLowerCase();
+  // tooltip 摊开"展示池名 + 实际模型"，便于核对真实路由
+  const modelTooltip = diverged
+    ? `模型池 ${model} · 实际模型 ${realModel}`
+    : `模型 ${model ?? ''}`;
   // 自适应模型：不走 tier/aspect 解析，直接显示"自适应"
   const isAdaptiveSize = size === '自适应' || size === 'adaptive' || size === 'auto';
   const tier = isAdaptiveSize ? '' : detectTierFromSize(size || '');
@@ -139,15 +151,19 @@ function MessageMetadataInline({
           className="inline-flex items-center gap-1 px-1.5 rounded-full shrink-0 ml-auto"
           style={{
             height: 22,
+            maxWidth: '70%',
             border: '1px solid rgba(139,92,246,0.20)',
             background: 'rgba(139,92,246,0.08)',
             color: 'rgba(139,92,246,0.85)',
             fontSize: 10,
             fontWeight: 600,
           }}
-          title={`模型池：${model}`}
+          title={modelTooltip}
         >
-          <span style={{ lineHeight: 1, whiteSpace: 'nowrap' }}>{model}</span>
+          <span className="truncate" style={{ lineHeight: 1 }}>{model}</span>
+          {diverged ? (
+            <span style={{ lineHeight: 1, whiteSpace: 'nowrap', opacity: 0.6 }}>· {realModel}</span>
+          ) : null}
         </span>
       ) : null}
     </div>
@@ -300,20 +316,27 @@ export const ChatMessageItem = memo(function ChatMessageItem({
     }
 
     // ── 服务端权威覆盖 ──
-    // actualModel / isAdaptive 由后端 SSE 写入 GEN_DONE meta，优先级高于
-    // 用户消息里的 @model:xxx token（那个只是前端 picker 的选择，可能与后台调度不一致）
+    // 展示名优先用"实际命中的模型池名"，与"用户期望 / 底部选择器"口径一致（修复三处不一致）；
+    // 真实 modelId 单独留作核对（不同时以淡色后缀露出，自暴露"选 A 给 B"）。
     const meta = parseGenDone(m.content);
-    if (meta?.actualModel) {
-      msgModel = String(meta.actualModel).trim();
-    } else if (meta?.actualModelPool) {
+    const realModel = String(meta?.actualModel ?? '').trim();
+    if (meta?.actualModelPool) {
       msgModel = String(meta.actualModelPool).trim();
+    } else if (realModel) {
+      msgModel = realModel;
     }
 
-    // 自适应模型：尺寸由 prompt 决定，不应显示具体 WxH
+    // 尺寸：自适应 > 后端真实出图尺寸 > 用户请求尺寸 > 默认
+    // 修复"请求 1:1 但模型实际返回 16:9"导致徽标显示错误：以 effectiveSize 为准
     if (meta?.isAdaptive) {
       msgSize = '自适应';
-    } else if (originalUserMsg && !msgSize) {
-      msgSize = '1024x1024';
+    } else {
+      const eff = String(meta?.effectiveSize ?? '').trim();
+      if (eff) {
+        msgSize = eff;
+      } else if (originalUserMsg && !msgSize) {
+        msgSize = '1024x1024';
+      }
     }
 
     if (!msgModel && meta?.modelPool) {
@@ -368,7 +391,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
           {/* Metadata */}
           {(msgSize || msgModel) ? (
             <div className="px-2.5 pt-2 pb-1.5 flex" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-              <MessageMetadataInline size={msgSize} model={msgModel} sizeToAspectMap={sizeToAspectMap} />
+              <MessageMetadataInline size={msgSize} model={msgModel} realModel={realModel} sizeToAspectMap={sizeToAspectMap} />
             </div>
           ) : null}
         </div>

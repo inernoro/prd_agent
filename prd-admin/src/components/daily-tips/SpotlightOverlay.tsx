@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { X, ChevronRight, Sparkles } from 'lucide-react';
+import { X, ChevronRight, Sparkles, Check, Circle, CircleDot } from 'lucide-react';
 import {
   SPOTLIGHT_ACTION_KEY,
   SPOTLIGHT_TARGET_KEY,
@@ -35,6 +35,11 @@ export function SpotlightOverlay() {
   const autoClickTimerRef = useRef<number | null>(null);
   /** 每个 payload 只允许 autoClick 触发一次,避免多步 Tour 里每切一步都自动点击 */
   const autoClickFiredForPayloadRef = useRef<SpotlightActionPayload | null>(null);
+  /** 任务清单里「当前步骤」的行,切步时滚动到可见,长清单也不丢当前任务 */
+  const curStepRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    curStepRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [stepIndex]);
 
   // ---- 启动 + 同路由事件:读 sessionStorage 解析 payload ----
   // 初次 mount 读一次;TipsRotator 写完 payload 会广播 SPOTLIGHT_PAYLOAD_UPDATED_EVENT,
@@ -366,7 +371,7 @@ export function SpotlightOverlay() {
   const bubbleTop = useAbove ? Math.max(16, ringBox.top - 180) : bubbleBelow;
   const bubbleLeft = Math.max(
     16,
-    Math.min(window.innerWidth - 340 - 16, ringBox.left + ringBox.width / 2 - 170),
+    Math.min(window.innerWidth - 360 - 16, ringBox.left + ringBox.width / 2 - 180),
   );
 
   const ringStyle: React.CSSProperties = {
@@ -404,7 +409,7 @@ export function SpotlightOverlay() {
             position: 'fixed',
             left: bubbleLeft,
             top: bubbleTop,
-            width: 340,
+            width: 360,
             padding: '12px 14px 14px',
             borderRadius: 14,
             background: 'linear-gradient(180deg, rgba(26,26,34,0.98), rgba(15,16,20,0.98))',
@@ -448,6 +453,34 @@ export function SpotlightOverlay() {
             <Sparkles size={12} />
             {bubbleTitle}
           </div>
+          {/* 任务式进度 + 步骤清单(多步教程):像做任务一样,有进度、有步骤,一个个打勾完成 */}
+          {steps && steps.length > 1 && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'rgba(255,255,255,0.5)', marginBottom: 4 }}>
+                <span>任务进度</span>
+                <span style={{ fontVariantNumeric: 'tabular-nums' }}>{stepIndex + 1} / {steps.length}</span>
+              </div>
+              <div style={{ height: 5, borderRadius: 999, background: 'rgba(255,255,255,0.08)', overflow: 'hidden', marginBottom: 8 }}>
+                <div style={{ height: '100%', width: `${((stepIndex + 1) / steps.length) * 100}%`, background: 'linear-gradient(90deg,#818cf8,#a78bfa)', transition: 'width 260ms cubic-bezier(.2,.8,.2,1)' }} />
+              </div>
+              <div style={{ maxHeight: 128, overflowY: 'auto', overscrollBehavior: 'contain', margin: '0 -2px', padding: '0 2px' }}>
+                {steps.map((s, i) => {
+                  const done = i < stepIndex;
+                  const cur = i === stepIndex;
+                  return (
+                    <div key={i} ref={cur ? curStepRef : undefined} style={{ display: 'flex', alignItems: 'flex-start', gap: 7, padding: '3px 0', opacity: cur ? 1 : done ? 0.75 : 0.45 }}>
+                      <span style={{ marginTop: 1, flexShrink: 0, display: 'inline-flex', color: done ? '#34d399' : cur ? '#c4b5fd' : 'rgba(255,255,255,0.3)' }}>
+                        {done ? <Check size={13} strokeWidth={2.6} /> : cur ? <CircleDot size={13} /> : <Circle size={13} />}
+                      </span>
+                      <span style={{ fontSize: 11.5, lineHeight: 1.4, color: cur ? '#e9d5ff' : 'rgba(255,255,255,0.72)', fontWeight: cur ? 600 : 400, textDecoration: done ? 'line-through' : 'none' }}>
+                        {s.title}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           {bubbleBody && (
             <div
               style={{
@@ -469,28 +502,30 @@ export function SpotlightOverlay() {
               gap: 10,
             }}
           >
-            {steps && (
-              <div
-                style={{
-                  fontSize: 11,
-                  color: 'rgba(255,255,255,0.45)',
-                  fontVariantNumeric: 'tabular-nums',
-                }}
-              >
-                步骤 {stepIndex + 1} / {steps.length}
-              </div>
-            )}
+            {/* 多步教程的进度在上方任务进度条展示;单步/零步无需「步骤 N/M」计数(1/1、1/0 都无意义,Bugbot)。 */}
             <div style={{ flex: 1 }} />
             {steps && !isLastStep && (
               <button
                 type="button"
                 onClick={() => {
+                  // 下一步如果配置了 navigateTo,先切路由,新页面元素会在 poll 里被找到
+                  const nextStep = payload.autoAction?.steps?.[stepIndex + 1];
                   // 先把当前 step 的元素「点」一下,再前进:解决「下一步后面板消失」的 bug
                   // —— 很多步骤的下一个 selector 依赖当前这步被点击后才出现
                   // (如 defect-full-flow:点「+ 提交缺陷」后 description 才存在)。
-                  // 可交互元素(按钮/input)直接 click;不是则跳过,让用户自己操作。
+                  // 但只在「下一步元素当前还不存在」时才自动点(说明确实需要这次点击来揭示它);
+                  // 若下一步元素已在 DOM(如网页托管下一步是同排的另一个按钮),就别点——
+                  // 否则点了像「分享统计」这种按钮会弹出 z-10000 抽屉挡住整个引导(Codex P2)。
+                  //
+                  // 关于逗号兜底选择器(如 "[data-tour-id=a], [data-tour-id=b]"):querySelector 取「任一」命中,
+                  // 这正是想要的语义 —— 只有「一个候选都不在 DOM」时才算需要揭示去点当前元素;只要常驻兜底在场
+                  // (权限/tab/视图门控下 primary 不在、但兜底在),就说明下一步「可展示」,不该强点当前元素
+                  // (那些 primary 由 app 状态门控,点当前按钮也揭示不出来,反而可能误开抽屉)。
+                  // 约束:别给「靠点击当前步才揭示」的揭示步配逗号兜底的 next selector,否则兜底在场会跳过该点击。
+                  const nextNeedsReveal = !nextStep?.navigateTo
+                    && (!nextStep?.selector || !document.querySelector(nextStep.selector));
                   try {
-                    if (currentSelector) {
+                    if (currentSelector && nextNeedsReveal) {
                       const el = document.querySelector(currentSelector);
                       if (
                         el instanceof HTMLButtonElement ||
@@ -503,8 +538,6 @@ export function SpotlightOverlay() {
                   } catch {
                     /* noop */
                   }
-                  // 下一步如果配置了 navigateTo,先切路由,新页面元素会在 poll 里被找到
-                  const nextStep = payload.autoAction?.steps?.[stepIndex + 1];
                   if (nextStep?.navigateTo) navigate(nextStep.navigateTo);
                   // 不清 rect,保留旧光圈直到下一步元素找到再更新位置,
                   // 避免「点下一步面板消失、等 3s 再出现」的闪烁

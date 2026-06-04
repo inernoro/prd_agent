@@ -63,6 +63,7 @@ async function request(
   method: string,
   urlPath: string,
   body?: unknown,
+  headers?: Record<string, string>,
 ): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {
     const addr = server.address() as { port: number };
@@ -76,6 +77,7 @@ async function request(
         headers: {
           'Content-Type': 'application/json',
           ...(payload ? { 'Content-Length': Buffer.byteLength(payload) } : {}),
+          ...(headers || {}),
         },
       },
       (res) => {
@@ -938,6 +940,14 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
 
     const app = express();
     app.use(express.json());
+    // Optional test middleware: stamp req.cdsProjectKey from a header so we can
+    // exercise project-scoped-key guards (e.g. validate/detect-runtime P1) without
+    // minting real agent keys. Only fires when the header is present.
+    app.use((req, _res, next) => {
+      const h = req.headers['x-test-project-key'];
+      if (typeof h === 'string' && h) (req as any).cdsProjectKey = { projectId: h, keyId: 'k' };
+      next();
+    });
     app.use('/api', createProjectsRouter({ stateService, shell, config }));
 
     server = app.listen(0);
@@ -1005,6 +1015,93 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       expect(stateService.getEnvMeta(pid).RABBITMQ_URL?.kind).toBe('infra-derived');
     });
 
+    it('surfaces (not silently swallows) user customEnv overwritten by infra connection strings', async () => {
+      const res = await request(server, 'POST', '/api/projects', {
+        name: 'Env Collision',
+        gitRepoUrl: 'https://github.com/example/env-collision.git',
+        infraPresets: ['postgres'],
+        customEnv: {
+          DATABASE_URL: 'postgresql://me@external-host:5432/mydb', // collides with postgres preset
+          MY_FLAG: 'keep-me',                                       // no collision
+        },
+      });
+      expect(res.status).toBe(201);
+      const pid = res.body.project.id;
+      // The collision is reported back, not silently dropped.
+      expect(res.body.infraEnvOverrides).toEqual(['DATABASE_URL']);
+
+      const env = stateService.getCustomEnv(pid);
+      // infra-derived connection string wins (points at the provisioned container)...
+      expect(env.DATABASE_URL).toMatch(/^postgresql:\/\/app:.*@postgres:5432\//);
+      // ...while the non-colliding user var is preserved untouched.
+      expect(env.MY_FLAG).toBe('keep-me');
+    });
+
+    it('applies infra presets (real secrets + env) to an existing project via /infra-presets', async () => {
+      const created = await request(server, 'POST', '/api/projects', { name: 'Topo Preset' });
+      expect(created.status).toBe(201);
+      const pid = created.body.project.id;
+
+      const res = await request(server, 'POST', `/api/projects/${pid}/infra-presets`, {
+        presetIds: ['postgres', 'kafka'],
+      });
+      expect(res.status).toBe(200);
+      expect([...res.body.applied].sort()).toEqual(['kafka', 'postgres']);
+      expect(Array.isArray(res.body.services)).toBe(true);
+
+      const infra = stateService.getInfraServicesForProject(pid);
+      expect(infra.map((s) => s.id).sort()).toEqual(['kafka', 'postgres']);
+
+      const env = stateService.getCustomEnv(pid);
+      expect(env.DATABASE_URL).toMatch(/^postgresql:\/\/app:/);
+      expect(env.KAFKA_BROKERS).toBe('kafka:9092');
+    });
+
+    it('rejects unknown infra presets on /infra-presets', async () => {
+      const created = await request(server, 'POST', '/api/projects', { name: 'Topo Bad' });
+      const pid = created.body.project.id;
+      const res = await request(server, 'POST', `/api/projects/${pid}/infra-presets`, {
+        presetIds: ['not-a-real-db'],
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it('singleton guard: a 2nd same-type non-DB preset (kafka) is never created across repeated calls', async () => {
+      // Kafka self-advertises as kafka:9092 in its container env; a 2nd instance would
+      // collide with the 1st. Only DBs (supportsDbName) may multi-instance. The guard
+      // must hold even when the 2nd request comes from a separate infra-presets call
+      // whose idx is seeded from the existing service count.
+      const created = await request(server, 'POST', '/api/projects', { name: 'Singleton Kafka' });
+      const pid = created.body.project.id;
+
+      const first = await request(server, 'POST', `/api/projects/${pid}/infra-presets`, { presetIds: ['kafka'] });
+      expect(first.status).toBe(200);
+      expect(first.body.applied).toEqual(['kafka']);
+
+      const second = await request(server, 'POST', `/api/projects/${pid}/infra-presets`, { presetIds: ['kafka'] });
+      expect(second.status).toBe(200);
+      expect(second.body.applied).toEqual([]); // guard skipped the would-be kafka-2
+
+      const ids = stateService.getInfraServicesForProject(pid).map((s) => s.id).sort();
+      expect(ids).toEqual(['kafka']); // exactly one kafka, no kafka-2
+    });
+
+    it('DB presets still multi-instance: a 2nd postgres call yields postgres-2 with its own connection string', async () => {
+      const created = await request(server, 'POST', '/api/projects', { name: 'Multi PG' });
+      const pid = created.body.project.id;
+
+      await request(server, 'POST', `/api/projects/${pid}/infra-presets`, { presetIds: ['postgres'] });
+      const second = await request(server, 'POST', `/api/projects/${pid}/infra-presets`, { presetIds: ['postgres'] });
+      expect(second.body.applied).toEqual(['postgres-2']);
+
+      const ids = stateService.getInfraServicesForProject(pid).map((s) => s.id).sort();
+      expect(ids).toEqual(['postgres', 'postgres-2']);
+
+      const env = stateService.getCustomEnv(pid);
+      expect(env.DATABASE_URL).toMatch(/@postgres:5432\//);   // 1st instance host unchanged
+      expect(env.DATABASE_URL_2).toMatch(/@postgres-2:5432\//); // 2nd instance host rewritten
+    });
+
     it('does NOT set repoPath when gitRepoUrl is missing (no-op project)', async () => {
       const res = await request(server, 'POST', '/api/projects', {
         name: 'No Git',
@@ -1013,6 +1110,36 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       expect(res.status).toBe(201);
       expect(res.body.project.repoPath).toBeUndefined();
       expect(res.body.project.cloneStatus).toBeUndefined();
+    });
+  });
+
+  describe('pre-create detect/validate-runtime reject project-scoped keys (PR #711 P1)', () => {
+    // These endpoints clone an arbitrary repo with the SERVER-WIDE GitHub token and
+    // run an arbitrary command, streaming logs. A project-scoped key has no authorized
+    // target project/repo, so allowing it = borrowing the server token to clone + exfil
+    // any private repo. Only admin / cookie auth (no cdsProjectKey) may call them.
+    it('validate-runtime → 403 project_key_forbidden for a project-scoped key', async () => {
+      const res = await request(server, 'POST', '/api/validate-runtime',
+        { gitRepoUrl: 'https://github.com/foo/bar.git', image: 'node:20', command: 'node x.js' },
+        { 'X-Test-Project-Key': 'proj-a' });
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('project_key_forbidden');
+    });
+
+    it('detect-runtime → 403 project_key_forbidden for a project-scoped key', async () => {
+      const res = await request(server, 'POST', '/api/detect-runtime',
+        { gitRepoUrl: 'https://github.com/foo/bar.git' },
+        { 'X-Test-Project-Key': 'proj-a' });
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('project_key_forbidden');
+    });
+
+    it('admin / cookie auth (no project key) passes the guard (not 403)', async () => {
+      // detect-runtime with no project key + bad url → reaches handler, returns 400
+      // (missing/clone error), NOT the 403 guard.
+      const res = await request(server, 'POST', '/api/detect-runtime', {});
+      expect(res.status).not.toBe(403);
+      expect(res.status).toBe(400); // missing gitRepoUrl
     });
   });
 
@@ -1245,6 +1372,37 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       expect(backend.name).toBe('后端服务');
       expect(backend.pathPrefixes).toEqual(['/api/']);
       expect(backend.dockerImage).toBe('golang:1.23-alpine');
+    });
+
+    it('worker role gets noHttp readiness (no port HTTP probe → not falsely failed)', async () => {
+      shell.addResponsePattern(/^mkdir -p /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      shell.addResponsePattern(/^test -d /, () => ({ stdout: '', stderr: '', exitCode: 1 }));
+
+      const create = await request(server, 'POST', '/api/projects', {
+        name: 'Worker Runtime',
+        gitRepoUrl: 'https://github.com/example/worker-runtime.git',
+        onboardingServices: [
+          { id: 'queue', name: '队列消费者', role: 'worker', runtime: 'node' },
+        ],
+      });
+      expect(create.status).toBe(201);
+      const pid = create.body.project.id;
+      const repoPath = path.join(tmpDir, 'repos', pid);
+      stateService.updateProject(pid, { repoPath });
+      shell.addResponsePattern(/git clone /, () => {
+        fs.mkdirSync(repoPath, { recursive: true });
+        fs.writeFileSync(path.join(repoPath, 'README.md'), '# worker\n', 'utf-8');
+        return { stdout: 'Cloning\n', stderr: '', exitCode: 0 };
+      });
+
+      const clone = await sseRequest(server, 'POST', `/api/projects/${pid}/clone`);
+      expect(clone.status).toBe(200);
+
+      const worker = stateService.getBuildProfilesForProject(pid).find((p) => p.id === 'queue')!;
+      expect(worker).toBeDefined();
+      expect(worker.readinessProbe?.noHttp).toBe(true);
+      // workers aren't routable — no path prefixes
+      expect(worker.pathPrefixes).toBeUndefined();
     });
 
     it('sets cloneStatus=error and streams error event when git clone fails', async () => {

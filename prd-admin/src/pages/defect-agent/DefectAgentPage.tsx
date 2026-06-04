@@ -134,6 +134,7 @@ export default function DefectAgentPage() {
           <>
             {/* 项目/团队筛选 */}
             <select
+              data-tour-id="defect-project-filter"
               value={projectFilter}
               onChange={(e) => setProjectFilter(e.target.value)}
               className={cn('prd-field h-7 px-2 rounded-lg text-[12px]', !projectFilter && 'text-token-muted')}
@@ -157,7 +158,7 @@ export default function DefectAgentPage() {
             )}
 
             {/* 视图切换：卡片 / 列表 / 看板 / 统计 */}
-            <div className="surface-inset flex items-center rounded-lg overflow-hidden">
+            <div data-tour-id="defect-view-mode-switcher" className="surface-inset flex items-center rounded-lg overflow-hidden">
               {viewButtons.map(({ key, icon: Icon, title }) => (
                 <button
                   key={key}
@@ -190,6 +191,7 @@ export default function DefectAgentPage() {
               项目管理
             </Button>
             <Button
+              data-tour-id="defect-template-btn"
               variant="secondary"
               size="sm"
               onClick={() => setShowTemplateDialog(true)}
@@ -263,7 +265,7 @@ export default function DefectAgentPage() {
         </div>
       ) : (
         /* 卡片/列表视图 */
-        <Surface variant="raised" className="flex-1 min-h-0 rounded-xl">
+        <Surface data-tour-id="defect-list-container" variant="raised" className="flex-1 min-h-0 rounded-xl">
           <div className="h-full min-h-0 overflow-auto">
             <DefectList />
           </div>

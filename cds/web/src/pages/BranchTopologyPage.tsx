@@ -38,6 +38,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { apiRequest, ApiError } from '@/lib/api';
+import { useInfraCatalog } from '@/lib/infraCatalog';
+import { InfraDataPanel } from '@/components/deployment/InfraDataPanel';
 import {
   reduceBranchListState,
   type BranchListAction,
@@ -108,6 +110,8 @@ interface InfraService {
   status: 'running' | 'stopped' | 'error';
   errorMessage?: string;
   env?: Record<string, string>;
+  dbName?: string;
+  initSql?: string;
 }
 
 interface InfraResponse {
@@ -334,15 +338,6 @@ function runningServiceCount(branch: BranchSummary | null): number {
   if (!branch) return 0;
   return Object.values(branch.services || {}).filter((service) => service.status === 'running').length;
 }
-
-const INFRA_TEMPLATE_PRESETS = [
-  { id: 'mongodb', label: 'MongoDB', image: 'mongo:7', port: 27017, envText: 'MONGO_INITDB_ROOT_USERNAME=app\nMONGO_INITDB_ROOT_PASSWORD=change-me' },
-  { id: 'postgres', label: 'PostgreSQL', image: 'postgres:16-alpine', port: 5432, envText: 'POSTGRES_USER=app\nPOSTGRES_PASSWORD=change-me\nPOSTGRES_DB=app' },
-  { id: 'mysql', label: 'MySQL', image: 'mysql:8', port: 3306, envText: 'MYSQL_ROOT_PASSWORD=change-me\nMYSQL_DATABASE=app\nMYSQL_USER=app\nMYSQL_PASSWORD=change-me' },
-  { id: 'redis', label: 'Redis', image: 'redis:7-alpine', port: 6379, envText: '' },
-  { id: 'rabbitmq', label: 'RabbitMQ', image: 'rabbitmq:3-management-alpine', port: 5672, envText: 'RABBITMQ_DEFAULT_USER=app\nRABBITMQ_DEFAULT_PASS=change-me' },
-  { id: 'custom', label: '自定义', image: '', port: 8080, envText: '' },
-];
 
 function parseEnvText(text: string): Record<string, string> {
   const env: Record<string, string> = {};
@@ -977,15 +972,28 @@ function CreateInfraDialog({
   const [startAfterCreate, setStartAfterCreate] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const { items: catalogItems } = useInfraCatalog();
+  const isCustom = presetId === 'custom';
+  const selectedCatalog = catalogItems.find((item) => item.id === presetId) || null;
 
   function applyPreset(next: string): void {
-    const preset = INFRA_TEMPLATE_PRESETS.find((item) => item.id === next) || INFRA_TEMPLATE_PRESETS[0];
     setPresetId(next);
-    setId(preset.id === 'custom' ? '' : preset.id);
-    setName(preset.label);
-    setImage(preset.image);
-    setPort(preset.port);
-    setEnvText(preset.envText);
+    if (next === 'custom') {
+      setId('');
+      setName('');
+      setImage('');
+      setPort(8080);
+      setEnvText('');
+      return;
+    }
+    const preset = catalogItems.find((item) => item.id === next);
+    if (preset) {
+      setId(preset.id);
+      setName(preset.name);
+      setImage(preset.dockerImage);
+      setPort(preset.containerPort);
+      setEnvText('');
+    }
   }
 
   useEffect(() => {
@@ -1000,24 +1008,38 @@ function CreateInfraDialog({
   async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     setError('');
-    const serviceId = id.trim();
-    const dockerImage = image.trim();
-    if (!serviceId || !dockerImage || !port) {
-      setError('服务 ID、Docker 镜像和容器端口为必填项');
-      return;
-    }
     setSubmitting(true);
     try {
-      await apiRequest(`/api/infra?project=${encodeURIComponent(projectId)}`, {
-        method: 'POST',
-        body: {
-          id: serviceId,
-          name: name.trim() || serviceId,
-          dockerImage,
-          containerPort: port,
-          env: parseEnvText(envText),
-        },
-      });
+      let serviceId: string;
+      if (isCustom) {
+        serviceId = id.trim();
+        const dockerImage = image.trim();
+        if (!serviceId || !dockerImage || !port) {
+          setError('服务 ID、Docker 镜像和容器端口为必填项');
+          setSubmitting(false);
+          return;
+        }
+        await apiRequest(`/api/infra?project=${encodeURIComponent(projectId)}`, {
+          method: 'POST',
+          body: {
+            id: serviceId,
+            name: name.trim() || serviceId,
+            dockerImage,
+            containerPort: port,
+            env: parseEnvText(envText),
+          },
+        });
+      } else {
+        // 目录预设：走 applyInfraPresets（真随机密码 + 自动连接变量），不手填 change-me 占位。
+        // 同类型已存在时后端会创建 postgres-2 等新实例并在 applied 里返回真实 id——必须用它,
+        // 否则"立即启动"会去启动已有的 postgres，新实例反而停着且不被选中。applied 为空(单例
+        // 预设重复添加被守卫跳过)时回退 presetId(选中已有的那个)。
+        const res = await apiRequest<{ applied?: string[] }>(`/api/projects/${encodeURIComponent(projectId)}/infra-presets`, {
+          method: 'POST',
+          body: { presetIds: [presetId] },
+        });
+        serviceId = res.applied?.[0] || presetId;
+      }
       if (startAfterCreate) {
         await apiRequest(`/api/infra/${encodeURIComponent(serviceId)}/start?project=${encodeURIComponent(projectId)}`, {
           method: 'POST',
@@ -1045,7 +1067,7 @@ function CreateInfraDialog({
         </DialogHeader>
         <form className="space-y-4" onSubmit={(event) => void submit(event)}>
           <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-5">
-            {INFRA_TEMPLATE_PRESETS.map((preset) => (
+            {[...catalogItems.map((c) => ({ id: c.id, label: c.name })), { id: 'custom', label: '自定义' }].map((preset) => (
               <button
                 key={preset.id}
                 type="button"
@@ -1059,55 +1081,72 @@ function CreateInfraDialog({
               </button>
             ))}
           </div>
-          <div className="grid gap-3 md:grid-cols-2">
-            <label className="block space-y-1.5">
-              <span className="text-sm font-medium">服务 ID</span>
-              <input
-                className="h-10 w-full rounded-md border border-input bg-background px-3 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-                value={id}
-                onChange={(event) => setId(event.target.value)}
-                placeholder="mongodb"
-              />
-            </label>
-            <label className="block space-y-1.5">
-              <span className="text-sm font-medium">显示名称</span>
-              <input
-                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="MongoDB"
-              />
-            </label>
-            <label className="block space-y-1.5">
-              <span className="text-sm font-medium">Docker 镜像</span>
-              <input
-                className="h-10 w-full rounded-md border border-input bg-background px-3 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-                value={image}
-                onChange={(event) => setImage(event.target.value)}
-                placeholder="postgres:16-alpine"
-              />
-            </label>
-            <label className="block space-y-1.5">
-              <span className="text-sm font-medium">容器端口</span>
-              <input
-                type="number"
-                min={1}
-                max={65535}
-                className="h-10 w-full rounded-md border border-input bg-background px-3 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-                value={port}
-                onChange={(event) => setPort(Number(event.target.value) || 0)}
-              />
-            </label>
-          </div>
-          <label className="block space-y-1.5">
-            <span className="text-sm font-medium">环境变量</span>
-            <textarea
-              className="min-h-28 w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-              value={envText}
-              onChange={(event) => setEnvText(event.target.value)}
-              placeholder="KEY=value，每行一个"
-            />
-          </label>
+          {isCustom ? (
+            <>
+              <div className="grid gap-3 md:grid-cols-2">
+                <label className="block space-y-1.5">
+                  <span className="text-sm font-medium">服务 ID</span>
+                  <input
+                    className="h-10 w-full rounded-md border border-input bg-background px-3 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                    value={id}
+                    onChange={(event) => setId(event.target.value)}
+                    placeholder="mongodb"
+                  />
+                </label>
+                <label className="block space-y-1.5">
+                  <span className="text-sm font-medium">显示名称</span>
+                  <input
+                    className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                    placeholder="MongoDB"
+                  />
+                </label>
+                <label className="block space-y-1.5">
+                  <span className="text-sm font-medium">Docker 镜像</span>
+                  <input
+                    className="h-10 w-full rounded-md border border-input bg-background px-3 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                    value={image}
+                    onChange={(event) => setImage(event.target.value)}
+                    placeholder="postgres:16-alpine"
+                  />
+                </label>
+                <label className="block space-y-1.5">
+                  <span className="text-sm font-medium">容器端口</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={65535}
+                    className="h-10 w-full rounded-md border border-input bg-background px-3 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                    value={port}
+                    onChange={(event) => setPort(Number(event.target.value) || 0)}
+                  />
+                </label>
+              </div>
+              <label className="block space-y-1.5">
+                <span className="text-sm font-medium">环境变量</span>
+                <textarea
+                  className="min-h-28 w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                  value={envText}
+                  onChange={(event) => setEnvText(event.target.value)}
+                  placeholder="KEY=value，每行一个"
+                />
+              </label>
+            </>
+          ) : (
+            <div className="space-y-1.5 rounded-md border border-border bg-muted/30 px-3 py-3 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-medium">{selectedCatalog?.name || presetId}</span>
+                <span className="font-mono text-xs text-muted-foreground">{image || '—'} · :{port}</span>
+              </div>
+              <div className="text-xs leading-5 text-muted-foreground">
+                CDS 会自动生成随机密码与持久化卷，并注入连接环境变量
+                {selectedCatalog && selectedCatalog.connectionEnvKeys.length > 0
+                  ? `：${selectedCatalog.connectionEnvKeys.join(' / ')}`
+                  : '。'}
+              </div>
+            </div>
+          )}
           <label className="flex items-start gap-3 rounded-md border border-border bg-muted/30 px-3 py-3 text-sm">
             <input
               type="checkbox"
@@ -1741,9 +1780,6 @@ function InfraDetails({
     { status: 'idle' } | { status: 'loading' } | { status: 'ok'; logs: string } | { status: 'error'; message: string }
   >({ status: 'idle' });
   const [action, setAction] = useState<'start' | 'stop' | 'restart' | null>(null);
-  const image = (selectedInfra.dockerImage || '').toLowerCase();
-  const isDatabase = /mysql|postgres|mariadb|mongo/.test(image);
-  const isMongo = /mongo/.test(image);
 
   async function loadLogs(): Promise<void> {
     setLogsState({ status: 'loading' });
@@ -1803,33 +1839,13 @@ function InfraDetails({
           查看日志
         </Button>
       </div>
-      {isDatabase ? (
-        <div className="flex flex-wrap items-start gap-3 rounded-md border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs text-sky-700 dark:text-sky-300">
-          <Database className="mt-0.5 h-4 w-4 shrink-0" />
-          <div className="min-w-0 flex-1 leading-5">
-            <div className="font-medium">数据库初始化与查询</div>
-            <div className="text-sky-700/80 dark:text-sky-300/80">
-              初始化脚本放到仓库根目录后会挂载到入口目录；运行日志和迁移工具可直接从这里进入。
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button asChild size="sm" variant="outline">
-              <a href={`/settings/${encodeURIComponent(projectId)}#env`}>
-                <Database />
-                初始化
-              </a>
-            </Button>
-            {isMongo ? (
-              <Button asChild size="sm" variant="outline">
-                <a href={`/branches/${encodeURIComponent(projectId)}#data-migration`}>
-                  <Search />
-                  查询
-                </a>
-              </Button>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
+      <InfraDataPanel
+        infraId={selectedInfra.id}
+        projectId={projectId}
+        image={selectedInfra.dockerImage}
+        running={selectedInfra.status === 'running'}
+        initSql={selectedInfra.initSql}
+      />
       <DisclosurePanel icon={<FileText className="h-4 w-4" />} title="容器日志" subtitle="最近 docker logs 输出">
         {logsState.status === 'idle' ? (
           <RuntimeEmpty

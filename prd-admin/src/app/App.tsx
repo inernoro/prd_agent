@@ -3,6 +3,9 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-
 import { useAuthStore } from '@/stores/authStore';
 import { initializeTheme } from '@/stores/themeStore';
 import AppShell from '@/layouts/AppShell';
+import { TipsDrawer } from '@/components/daily-tips/TipsDrawer';
+import { SpotlightOverlay } from '@/components/daily-tips/SpotlightOverlay';
+import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { getAdminAuthzMe, getAdminMenuCatalog } from '@/services';
 import { ToastContainer } from '@/components/ui/Toast';
 import { AgentSwitcherProvider } from '@/components/agent-switcher';
@@ -130,6 +133,16 @@ export default function App() {
     initializeTheme();
   }, []);
 
+  // 教程数据预加载:与 TipsDrawer 的条件挂载解耦。TipsDrawer 在 /home/login 等页不挂载,
+  // 若只靠它 load(),用户停在登录后默认落地页 /home 时 tips 不会预拉,等导航到第一个有教程的
+  // 页面才 mount→异步 fetch→才能强制开讲,造成「人已经在操作了教程才弹」的延迟(Bugbot)。
+  // 这里在登录后无条件预拉一次(load 内部按 loaded 幂等),保证进任意教程页时数据已就绪。
+  const loadTips = useDailyTipsStore((s) => s.load);
+  const tipsLoaded = useDailyTipsStore((s) => s.loaded);
+  useEffect(() => {
+    if (isAuthenticated && !tipsLoaded) void loadTips();
+  }, [isAuthenticated, tipsLoaded, loadTips]);
+
   // 刷新/回到主页时补齐权限（避免"持久化 token 但 permissions 为空"导致误判）
   // cdnBaseUrl 每次都刷新（后端切换存储 Provider 后域名会变）
   useEffect(() => {
@@ -202,6 +215,7 @@ export default function App() {
         <Route path="/_dev/streaming-text-lab" element={<StreamingTextLab />} />
 
         {/* ── NAV_REGISTRY 中 placement='fullscreen' 的条目（独立全屏，不进 AppShell） */}
+        {/* 教程入口/引导由 App 根挂载的 TipsDrawer + SpotlightOverlay 统一承载（跨全屏路由不丢失）。 */}
         {NAV_REGISTRY.filter((e) => e.placement === 'fullscreen').map((e) => (
           <Route key={e.path} path={e.path} element={e.element} />
         ))}
@@ -332,6 +346,23 @@ export default function App() {
         <Route path="*" element={<Navigate to="/home" replace />} />
       </Routes>
       </Suspense>
+      {/* 教程入口 + 引导:挂在 App 根(Router 内、Routes 外),全局唯一实例。
+          这样跨任意路由(含 shell→全屏编辑器)导航时都不卸载,本页教程能从列表「贯通」进编辑器;
+          入口也始终在右上角常驻。
+          仅在「登录后的真实应用页」渲染:登录页/落地页/各种分享只读页(/s/、/shared/、/join)、
+          开发页(/_dev/)、CDS 终端(/cds-agent)、公开主页(/u/)、智识殿堂公开详情(/library/:storeId)
+          一律不挂——这些公开只读页不该冒出内部新手教程(用户 2026-06-02 指出;Codex P2)。
+          注意 '/library/' 带尾斜杠:只排除详情子路由,'/library' 落地页(带 library-landing 教程)保留。 */}
+      {isAuthenticated
+        && location.pathname !== '/home'
+        && location.pathname !== '/login'
+        && !['/s/', '/shared/', '/join/', '/_dev/', '/cds-agent', '/u/', '/library/'].some((p) => location.pathname.startsWith(p))
+        && (
+        <>
+          <TipsDrawer />
+          <SpotlightOverlay />
+        </>
+      )}
     </AgentSwitcherProvider>
   );
 }

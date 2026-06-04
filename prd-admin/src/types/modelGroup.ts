@@ -107,6 +107,16 @@ export interface UpdateModelGroupRequest {
 }
 
 /**
+ * 模型分组的占用应用（删除受阻时展示，可一键解绑）
+ */
+export interface ModelGroupUsageApp {
+  appId: string;
+  appCode: string;
+  displayName: string;
+  modelTypes: string[];
+}
+
+/**
  * 模型监控数据（用于分组监控）
  */
 export interface ModelGroupMonitoringData {

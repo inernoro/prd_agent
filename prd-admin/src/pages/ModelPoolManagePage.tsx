@@ -12,9 +12,12 @@ import {
   createModelGroup,
   updateModelGroup,
   deleteModelGroup,
+  getModelGroupUsage,
+  unbindModelGroup,
   resetModelHealth,
 } from '@/services';
 import type { ModelGroup, ModelGroupItem, Platform } from '@/types';
+import type { ModelGroupUsageApp } from '@/types/modelGroup';
 import { ModelHealthStatus, PoolStrategyType } from '@/types/modelGroup';
 import {
   Copy,
@@ -30,6 +33,8 @@ import {
   CircleDot,
   Check,
   ChevronRight,
+  Unlink,
+  AlertTriangle,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
@@ -95,6 +100,10 @@ export function ModelPoolManagePage() {
     description: '',
     models: [] as ModelGroupItem[],
   });
+
+  // 删除受阻：被应用占用时展示的解绑弹窗
+  const [usageDialog, setUsageDialog] = useState<{ pool: ModelGroup; apps: ModelGroupUsageApp[] } | null>(null);
+  const [usageBusy, setUsageBusy] = useState(false);
 
   // 模型选择弹窗（使用公共组件）
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
@@ -186,7 +195,97 @@ export function ModelPoolManagePage() {
       toast.success('删除成功');
       await loadData();
     } catch (error) {
+      // 被应用占用：拉取占用列表，弹窗展示并支持一键解绑（而非只丢一句错误）
+      const code = (error as { code?: string })?.code;
+      if (code === 'GROUP_IN_USE') {
+        try {
+          const usage = await getModelGroupUsage(pool.id);
+          setUsageDialog({ pool, apps: usage.data ?? [] });
+        } catch (e) {
+          toast.error('删除失败', String(e));
+        }
+        return;
+      }
       toast.error('删除失败', String(error));
+    }
+  };
+
+  // 解绑单个应用对当前分组的引用；解绑后刷新占用列表，全部解绑则自动关闭弹窗。
+  // 所有 setUsageDialog 走函数式更新并校验 pool.id：用户在 await 期间已关闭弹窗 / 切到别的池时不复位、不复显（避免重开弹窗 + 展示陈旧数据）。
+  const handleUnbindOne = async (appId: string) => {
+    if (!usageDialog) return;
+    const poolId = usageDialog.pool.id;
+    setUsageBusy(true);
+    try {
+      await unbindModelGroup(poolId, [appId]);
+      const usage = await getModelGroupUsage(poolId);
+      const remaining = usage.data ?? [];
+      if (remaining.length === 0) {
+        setUsageDialog((prev) => (prev && prev.pool.id === poolId ? null : prev));
+        toast.success('已全部解绑', '现在可以删除该分组了');
+        await loadData();
+      } else {
+        setUsageDialog((prev) => (prev && prev.pool.id === poolId ? { pool: prev.pool, apps: remaining } : prev));
+      }
+    } catch (e) {
+      toast.error('解绑失败', String(e));
+    } finally {
+      setUsageBusy(false);
+    }
+  };
+
+  // 一键解绑全部应用并删除分组。
+  // 拆成"解绑 → 删除"两段：解绑成功但删除失败时，以服务端为准刷新占用列表（应为空），
+  // 而不是停留在已解绑的陈旧数据；弹窗仍开着可重试删除。
+  const handleUnbindAllAndDelete = async () => {
+    if (!usageDialog) return;
+    const poolId = usageDialog.pool.id;
+    setUsageBusy(true);
+    try {
+      await unbindModelGroup(poolId);
+      try {
+        await deleteModelGroup(poolId);
+        toast.success('已解绑全部并删除分组');
+        setUsageDialog((prev) => (prev && prev.pool.id === poolId ? null : prev));
+      } catch (delErr) {
+        // 解绑已生效但删除失败：刷新占用列表以匹配服务端真实状态，再提示
+        const usage = await getModelGroupUsage(poolId).catch(() => null);
+        const remaining = usage?.data ?? [];
+        setUsageDialog((prev) => (prev && prev.pool.id === poolId ? { pool: prev.pool, apps: remaining } : prev));
+        toast.error('已解绑但删除失败', String(delErr));
+      }
+      await loadData();
+    } catch (e) {
+      toast.error('解绑失败', String(e));
+    } finally {
+      setUsageBusy(false);
+    }
+  };
+
+  // 从模型池详情面板直接移除单个模型（详情页此前没有移除入口，导致"无法删除单个模型"）
+  const handleRemoveModelFromPool = async (pool: ModelGroup, model: ModelGroupItem) => {
+    const confirmed = await systemDialog.confirm({
+      title: '移除模型',
+      message: `确定从「${pool.name}」移除模型 ${model.modelId}？`,
+    });
+    if (!confirmed) return;
+
+    const remaining = (pool.models || []).filter((m) => keyOfModel(m) !== keyOfModel(model));
+    try {
+      await updateModelGroup(pool.id, {
+        name: pool.name,
+        code: pool.code,
+        priority: pool.priority,
+        modelType: pool.modelType,
+        strategyType: pool.strategyType,
+        isDefaultForType: pool.isDefaultForType,
+        description: pool.description,
+        models: remaining,
+      });
+      toast.success('已移除模型');
+      await loadData();
+    } catch (e) {
+      toast.error('移除失败', String(e));
     }
   };
 
@@ -648,32 +747,46 @@ export function ModelPoolManagePage() {
                             total={selectedPool.models!.length}
                             size="sm"
                             suffix={
-                              model.healthStatus !== 'Healthy' ? (
-                                <button
-                                  className="text-[10px] px-1.5 py-0.5 rounded cursor-pointer hover:opacity-80 transition-opacity"
-                                  style={{ background: status.bg, color: status.color }}
-                                  title="点击重置为健康状态"
-                                  onClick={async (e) => {
-                                    e.stopPropagation();
-                                    try {
-                                      await resetModelHealth(selectedPool.id, model.modelId);
-                                      toast.success('已重置为健康状态');
-                                      loadData();
-                                    } catch (err: any) {
-                                      toast.error(err.message || '重置失败');
-                                    }
-                                  }}
-                                >
-                                  {status.label} ↻
-                                </button>
-                              ) : (
-                                <span
-                                  className="text-[10px] px-1.5 py-0.5 rounded"
-                                  style={{ background: status.bg, color: status.color }}
-                                >
-                                  {status.label}
-                                </span>
-                              )
+                              <div className="flex items-center gap-1.5">
+                                {model.healthStatus !== 'Healthy' ? (
+                                  <button
+                                    className="text-[10px] px-1.5 py-0.5 rounded cursor-pointer hover:opacity-80 transition-opacity"
+                                    style={{ background: status.bg, color: status.color }}
+                                    title="点击重置为健康状态"
+                                    onClick={async (e) => {
+                                      e.stopPropagation();
+                                      try {
+                                        await resetModelHealth(selectedPool.id, model.modelId);
+                                        toast.success('已重置为健康状态');
+                                        loadData();
+                                      } catch (err: any) {
+                                        toast.error(err.message || '重置失败');
+                                      }
+                                    }}
+                                  >
+                                    {status.label} ↻
+                                  </button>
+                                ) : (
+                                  <span
+                                    className="text-[10px] px-1.5 py-0.5 rounded"
+                                    style={{ background: status.bg, color: status.color }}
+                                  >
+                                    {status.label}
+                                  </span>
+                                )}
+                                <Tooltip content="从池中移除">
+                                  <button
+                                    className="p-1 rounded-md hover:bg-red-500/10 transition-colors"
+                                    title="从池中移除"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleRemoveModelFromPool(selectedPool, model);
+                                    }}
+                                  >
+                                    <Trash2 size={12} style={{ color: 'var(--text-muted)' }} />
+                                  </button>
+                                </Tooltip>
+                              </div>
                             }
                           />
                         );
@@ -861,6 +974,82 @@ export function ModelPoolManagePage() {
                 </Button>
                 <Button variant="primary" size="sm" onClick={handleSavePool}>
                   保存
+                </Button>
+              </div>
+            </div>
+          }
+        />
+      )}
+
+      {/* 删除受阻：被应用占用时的解绑弹窗 */}
+      {usageDialog && (
+        <Dialog
+          open={!!usageDialog}
+          onOpenChange={(open) => { if (!open) setUsageDialog(null); }}
+          title="该分组正在被使用"
+          maxWidth={isMobile ? undefined : 480}
+          content={
+            <div className="space-y-4">
+              <div
+                className="flex items-start gap-2.5 rounded-lg px-3 py-2.5 text-[12px]"
+                style={{ background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.28)', color: 'var(--text-secondary)' }}
+              >
+                <AlertTriangle size={15} className="shrink-0 mt-px" style={{ color: 'rgba(251,191,36,0.95)' }} />
+                <span>
+                  模型池「{usageDialog.pool.name}」正被下列 {usageDialog.apps.length} 个应用引用，需先解绑才能删除。解绑后这些应用将回落到该类型的默认分组。
+                </span>
+              </div>
+
+              <div className="space-y-1.5 max-h-[280px] overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+                {usageDialog.apps.map((app) => (
+                  <div
+                    key={app.appId}
+                    className="flex items-center gap-2.5 rounded-lg px-3 py-2"
+                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                        {app.displayName}
+                      </div>
+                      <div className="text-[10px] font-mono truncate mt-px" style={{ color: 'var(--text-muted)' }}>
+                        {app.appCode}
+                      </div>
+                    </div>
+                    {app.modelTypes.length > 0 && (
+                      <div className="flex items-center gap-1 shrink-0">
+                        {app.modelTypes.map((t) => (
+                          <span
+                            key={t}
+                            className="text-[9px] px-1.5 py-0.5 rounded"
+                            style={{ background: 'var(--bg-input-hover)', color: 'var(--text-muted)' }}
+                          >
+                            {getModelTypeDisplayName(t)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <Tooltip content="解绑此应用">
+                      <button
+                        className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] hover:bg-white/10 transition-colors disabled:opacity-40"
+                        style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
+                        disabled={usageBusy}
+                        onClick={() => handleUnbindOne(app.appId)}
+                      >
+                        <Unlink size={11} />
+                        解绑
+                      </button>
+                    </Tooltip>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex justify-end gap-2 pt-1">
+                <Button variant="secondary" size="sm" disabled={usageBusy} onClick={() => setUsageDialog(null)}>
+                  取消
+                </Button>
+                <Button variant="primary" size="sm" disabled={usageBusy} onClick={handleUnbindAllAndDelete}>
+                  <Unlink size={14} />
+                  解绑全部并删除
                 </Button>
               </div>
             </div>

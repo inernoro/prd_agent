@@ -101,6 +101,14 @@ public sealed class DailyTipsController : ControllerBase
         // tip.Version 升级后 learnedMap 里的旧 Version 不再匹配,用户会重新看到。
         items = FilterLearned(items, learnedMap);
 
+        // 过滤「已退役 seed」:老环境跑过 /seed 落库的旧短教程(webpages-basics 等)被新版
+        // *-page-guide 取代,新旧 SourceId 不冲突 → 不主动滤掉就会新旧并存。这里直接从结果里剔除,
+        // 用户无需等管理员重置即不再看到(Codex P2);DB 行的彻底清理在 Admin /seed 时做。
+        if (RetiredSeedSourceIds.Length > 0)
+        {
+            items = items.Where(t => t.SourceId == null || !RetiredSeedSourceIds.Contains(t.SourceId)).ToList();
+        }
+
         // 合并代码内置 seed 集合：即使 DB 已有其他 tip，也要让新加的 BuildDefaultTips seed
         // （如本周发的 feature-release 公告）自动出现，不需要管理员手动跑 /seed。
         // 去重规则：DB 中存在该 SourceId 的记录就跳过 — 包括 IsActive=false 或在发布窗口外的，
@@ -390,6 +398,17 @@ public sealed class DailyTipsController : ControllerBase
     private static readonly DateTime FeatureTip2026W21ExpireAt =
         new(2026, 6, 2, 0, 0, 0, DateTimeKind.Utc);
 
+    /// <summary>
+    /// 已退役的 seed SourceId：被新版各页 *-page-guide 完整教程取代的旧版精简短教程。
+    /// 老环境若曾跑过 /seed 把它们落了库，新旧 SourceId 不冲突会导致新旧并存（Codex P2）。
+    /// SSOT：Visible() 主动过滤掉这些 DB 行（用户无需等管理员手动重置即不再看到），
+    /// AdminDailyTipsController.Seed() 重新植入时也按此清单删除残留。
+    /// </summary>
+    internal static readonly string[] RetiredSeedSourceIds =
+    {
+        "webpages-basics", "visual-first-image", "library-publish",
+    };
+
     internal static List<DailyTip> BuildDefaultTips(DateTime now)
     {
         DailyTip T(
@@ -452,45 +471,35 @@ public sealed class DailyTipsController : ControllerBase
                 sourceType: "feature-release",
                 tier: "advanced"),
 
-            // ===== 网页托管：basic 基础教程（空间模型 + 拖拽上传）=====
-            // 用户完成一次永不再弹（即使 Tier 升级也不再骚扰），适合"操作类常识"。
-            T("webpages-basics", "card",
-                "网页托管：空间、拖拽、分享 3 分钟上手",
-                "了解个人/团队空间的协作边界、拖文件直接上传、用投放面板一键公开或分享。",
+            // ===== 网页托管：本页完整教程（14 步走遍整页）=====
+            // 锚点全部为页面常驻元素（含空状态占位卡），新老用户均可跑通。
+            // 页面 UI 大改时同步更新此处步骤与 data-tour-id（见 .claude/rules/onboarding-tips.md）。
+            T("webpages-page-guide", "card",
+                "网页托管：本页 14 步上手教程",
+                "从空间模型、上传站点、排序分组到投放面板，一次走遍整页所有功能。",
                 "/web-pages",
-                "开始上手",
-                "[data-tour-id=webpages-space-bar]",
-                4,
+                "开始本页教程",
+                "[data-tour-id=webpages-root]",
+                0,
                 new DailyTipAutoAction
                 {
                     Scroll = "center",
                     Steps = new List<DailyTipTourStep>
                     {
-                        new()
-                        {
-                            Selector = "[data-tour-id=webpages-space-bar]",
-                            Title = "第 1 步：三种空间并列",
-                            Body = "「个人空间 / 团队空间-A / 团队空间-B」chip 平铺，单击切换。每个 chip 后的数字是该空间下站点数。",
-                            NavigateTo = "/web-pages",
-                        },
-                        new()
-                        {
-                            Selector = "[data-tour-id=webpages-space-add]",
-                            Title = "第 2 步：新建或加入团队空间",
-                            Body = "最右侧虚线「+」可新建团队空间或用邀请码加入别人的。团队空间是协作边界，站点在该空间内的成员都能看到。",
-                        },
-                        new()
-                        {
-                            Selector = "[data-tour-id=share-dock-panel]",
-                            Title = "第 3 步：直接把文件拖到投放面板",
-                            Body = "不用点按钮，HTML/ZIP/Markdown/PDF/视频 都能拖到右侧投放面板的虚线 dropzone 上传（面板若已折叠，先点一下展开）。",
-                        },
-                        new()
-                        {
-                            Selector = "[data-tour-id=share-dock-panel]",
-                            Title = "第 4 步：投放面板三个槽位",
-                            Body = "展开后会看到「公开 / 分享 / 回收」三个槽位，拖任意站点卡片过去即可完成操作，无需弹窗确认。",
-                        },
+                        new() { Selector = "[data-tour-id=webpages-space-bar]", Title = "第 1 步：欢迎来到网页托管", Body = "这里集中托管并分享你的 HTML/ZIP/Markdown/PDF/视频。先认识顶部的空间切换：个人空间放自己的，团队空间与成员共享。下面 14 步走一遍整页。", NavigateTo = "/web-pages" },
+                        new() { Selector = "[data-tour-id=webpages-space-bar]", Title = "第 2 步：先认识空间", Body = "「个人空间」放自己的，「团队空间」与成员共享；chip 后的数字是该空间站点数，单击切换。" },
+                        new() { Selector = "[data-tour-id=webpages-space-add]", Title = "第 3 步：新建或加入团队", Body = "最右侧虚线「+」可新建团队空间，或用邀请码加入别人的；团队空间内成员互相可见。" },
+                        new() { Selector = "[data-tour-id=webpages-header-actions]", Title = "第 4 步：顶部工具栏", Body = "右上角集中了「分享统计 / 分享管理 / 上传站点」三个入口。" },
+                        new() { Selector = "[data-tour-id=webpages-stats-btn]", Title = "第 5 步：分享数据统计", Body = "点图表图标查看每个站点的 PV、独立访客、访问时间线。" },
+                        new() { Selector = "[data-tour-id=webpages-share-mgmt-btn]", Title = "第 6 步：分享链接管理", Body = "点链接图标统一管理所有分享链接的密码、有效期和开关。" },
+                        new() { Selector = "[data-tour-id=webpages-upload-primary], [data-tour-id=webpages-header-actions]", Title = "第 7 步：上传第一个站点", Body = "有编辑权限时这里会出现「上传站点」按钮，选文件 + 填标题即可发布，整个 ZIP 站点也能直接上传；团队空间的只读成员看不到该按钮。" },
+                        new() { Selector = "[data-tour-id=webpages-sort-pills]", Title = "第 8 步：排序", Body = "最新 / 最早 / 标题 / 浏览 / 体积 五种排序平铺成 pill，单击直接切。" },
+                        new() { Selector = "[data-tour-id=webpages-group-pills]", Title = "第 9 步：分组", Body = "「日期 / 文件夹」二选一，把站点按时间或自建文件夹归类。" },
+                        new() { Selector = "[data-tour-id=webpages-view-toggle]", Title = "第 10 步：网格 / 列表视图", Body = "右侧 ⊞ / ☰ 切换；网格有缩略图，列表更紧凑。" },
+                        new() { Selector = "[data-tour-id=webpages-folders]", Title = "第 11 步：文件夹", Body = "用文件夹把同类站点收纳到一起，点文件夹名快速过滤。" },
+                        new() { Selector = "[data-tour-id=webpages-card]", Title = "第 12 步：站点卡片", Body = "每个站点一张卡，显示标题、缩略图、访问量和快捷操作。" },
+                        new() { Selector = "[data-tour-id=webpages-viewcount]", Title = "第 13 步：访问量", Body = "卡片底部的眼睛图标 + 数字，是该站点累计被打开的次数。" },
+                        new() { Selector = "[data-tour-id=share-dock-panel]", Title = "第 14 步：投放面板", Body = "右侧悬浮面板可把文件直接拖进来上传，并提供「公开 / 分享 / 回收」快捷槽位（折叠时先点一下展开）。看完点「完成」就上手啦" },
                     },
                 },
                 tier: "basic"),
@@ -683,7 +692,7 @@ public sealed class DailyTipsController : ControllerBase
                         {
                             Selector = "[data-tour-id=emergence-explore-btn]",
                             Title = "第 2 步:点节点上的「探索」",
-                            Body = "AI 会基于已有能力 + 全局基础设施,长出几条新维度。看到新分支就算完成 🎉",
+                            Body = "AI 会基于已有能力 + 全局基础设施,长出几条新维度。看到新分支就算完成",
                         },
                     },
                 }),
@@ -775,62 +784,277 @@ public sealed class DailyTipsController : ControllerBase
                     },
                 }),
 
-            // 7. 视觉创作 —— 生成第一张图
-            T("visual-first-image", "card",
-                "用 AI 生成第一张图",
-                "输入描述 → 选场景 → 一键出图。无需配 API key,平台已接好多个生图模型。",
+            // 7. 视觉创作 —— 本页 11 步完整教程
+            T("visual-page-guide", "card",
+                "视觉创作：本页 11 步上手教程",
+                "从写提示词、传参考图、选尺寸场景到开始创作，一次走遍整页。无需配 API key。",
                 "/visual-agent",
-                "去创作",
-                "[data-tour-id=visual-prompt-input]",
-                80,
+                "开始本页教程",
+                "[data-tour-id=visual-page-title]",
+                0,
                 new DailyTipAutoAction
                 {
                     Scroll = "center",
                     Steps = new List<DailyTipTourStep>
                     {
-                        new()
-                        {
-                            Selector = "[data-tour-id=visual-prompt-input]",
-                            Title = "第 1 步:写下你想要的图",
-                            Body = "中英文都行 — 越具体越好(场景 + 风格 + 主体)。下方有场景标签可一键套用。",
-                            NavigateTo = "/visual-agent",
-                        },
-                        new()
-                        {
-                            Selector = "[data-tour-id=visual-submit-btn]",
-                            Title = "第 2 步:点「开始创作」",
-                            Body = "AI 流式生成,过程实时反馈;出图后还能回来继续微调或加水印。",
-                        },
+                        new() { Selector = "[data-tour-id=visual-page-title]", Title = "第 1 步：欢迎来到视觉创作", Body = "不用自己配 API key，平台已接好多个生图模型，描述一句话就能出图。", NavigateTo = "/visual-agent" },
+                        new() { Selector = "[data-tour-id=visual-subtitle]", Title = "第 2 步：它能做什么", Body = "海报、插画、品牌视觉、参考图改造……用一句话描述需求即可。" },
+                        new() { Selector = "[data-tour-id=visual-prompt-input]", Title = "第 3 步：写下你想要的画面", Body = "中英文都行，越具体越好（主体 + 场景 + 风格）。" },
+                        new() { Selector = "[data-tour-id=visual-image-btn]", Title = "第 4 步：上传参考图", Body = "有参考图就点「图片」上传，AI 会参考它的构图或风格。" },
+                        new() { Selector = "[data-tour-id=visual-size-btn]", Title = "第 5 步：选画布尺寸", Body = "点尺寸按钮选常见规格（方图 / 竖图 / 横图 / 海报等）。" },
+                        new() { Selector = "[data-tour-id=visual-scenarios]", Title = "第 6 步：场景快捷标签", Body = "不知道怎么写？点下面的预设场景一键套用提示词。" },
+                        new() { Selector = "[data-tour-id=visual-pro]", Title = "第 7 步：Pro 高级能力", Body = "高亮的 Pro 标签提供更强的设计与编排能力，点开了解。" },
+                        new() { Selector = "[data-tour-id=visual-defect-btn]", Title = "第 8 步：随手反馈", Body = "遇到问题点 Bug 图标（或 Cmd/Ctrl+B）直接提交缺陷。" },
+                        new() { Selector = "[data-tour-id=visual-submit-btn]", Title = "第 9 步：开始创作", Body = "填好后点「开始创作」，AI 流式生成、过程实时可见，出图后还能继续微调或加水印。" },
+                        new() { Selector = "[data-tour-id=visual-projects]", Title = "第 10 步：最近项目", Body = "你创建过的项目都收在这里，点开继续编辑。" },
+                        new() { Selector = "[data-tour-id=visual-new-project]", Title = "第 11 步：从空白开始", Body = "想直接进编辑器？点「新建项目」创建空白画布。看到新卡片就算上手" },
                     },
                 }),
 
-            // 8. 知识库发布 —— 2 步 Tour(都在列表页,不依赖空间详情页的动态 URL)
-            // 空间详情 URL 带 space id,演示无法直接导航过去,所以只能指导用户自己
-            // 从列表进详情;详情页内的上传 / 发布按钮用户看得见的时候就自然能用。
-            T("library-publish", "card",
-                "把你的知识发布到智识殿堂",
-                "列表 → 新建空间 → 上传文档 → 发布到社区。3 分钟搞定。",
+            // 8. 知识库 —— 本页 8 步教程（列表页常驻控件 + 进库后操作用文案指引）
+            // 空间详情 URL 带 space id，演示无法直接导航过去；详情页内的上传/发布按钮
+            // 用列表页的「新建知识库」锚点承载，靠文案告诉用户进库后会看到它们。
+            T("document-store-page-guide", "card",
+                "知识库：本页 8 步上手教程",
+                "从总览、搜索筛选排序到新建、上传、发布到智识殿堂，一次走遍。",
                 "/document-store",
-                "开始发布",
-                "[data-tour-id=document-store-create]",
-                50,
+                "开始本页教程",
+                "[data-tour-id=library-toolbar], [data-tour-id=library-tabs]",
+                0,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    // 工具栏(stats/search/sort/create)只在「我的空间/团队空间」tab 渲染;若返回用户上次停在
+                    // 收藏/点赞 tab,这些锚点不存在。逗号兜底到常驻的 library-tabs(顶部 tab 栏 sticky 容器),
+                    // 让教程在任一 tab 都能推进而不卡「目标未找到」(Codex P2)。新用户默认 mine tab,锚点齐全。
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new() { Selector = "[data-tour-id=library-stats], [data-tour-id=library-tabs]", Title = "第 1 步：欢迎来到知识库", Body = "把文档、订阅源整理成知识库，可私藏也可发布到智识殿堂。顶部可切换「我的空间 / 团队空间 / 收藏 / 点赞」。", NavigateTo = "/document-store" },
+                        new() { Selector = "[data-tour-id=library-stats], [data-tour-id=library-tabs]", Title = "第 2 步：库房总览", Body = "在「我的空间 / 团队空间」tab 下，这里实时显示你有多少个知识库、多少篇文章。" },
+                        new() { Selector = "[data-tour-id=library-search], [data-tour-id=library-tabs]", Title = "第 3 步：搜索", Body = "按名称或标签快速找到目标知识库。" },
+                        new() { Selector = "[data-tour-id=library-tag-filter], [data-tour-id=library-tabs]", Title = "第 4 步：标签筛选", Body = "给知识库打标签后，可在这里按标签多选过滤。" },
+                        new() { Selector = "[data-tour-id=library-sort], [data-tour-id=library-tabs]", Title = "第 5 步：排序", Body = "按最近更新 / 创建时间 / 名称 / 文章数切换列表顺序。" },
+                        new() { Selector = "[data-tour-id=document-store-create], [data-tour-id=library-tabs]", Title = "第 6 步：新建知识库", Body = "点「新建知识库」取个名字，这就是你的第一个库。" },
+                        new() { Selector = "[data-tour-id=document-store-create], [data-tour-id=library-tabs]", Title = "第 7 步：进库后上传文档", Body = "点卡片「打开」进入空间，右上角会出现「上传文档」按钮，支持拖入 PDF/Markdown/Word，或粘贴 URL 自动抓取。" },
+                        new() { Selector = "[data-tour-id=document-store-create], [data-tour-id=library-tabs]", Title = "第 8 步：发布到智识殿堂", Body = "空间里点「发布」，勾选公开后就能被全平台搜到、收藏、点赞。看完点「完成」" },
+                    },
+                }),
+
+            // 9. 文学创作 —— 本页 8 步教程（锚点全为页面常驻元素）
+            T("literary-page-guide", "card",
+                "文学创作：本页 8 步上手教程",
+                "认识视图切换、文件夹、新建文章，从这里开始你的第一篇创作。",
+                "/literary-agent",
+                "开始本页教程",
+                "[data-tour-id=literary-root]",
+                0,
                 new DailyTipAutoAction
                 {
                     Scroll = "center",
                     Steps = new List<DailyTipTourStep>
                     {
-                        new()
-                        {
-                            Selector = "[data-tour-id=document-store-create]",
-                            Title = "第 1 步:新建一个空间",
-                            Body = "点右上角「+ 新建空间」,取个名字,这是你的第一个知识库。",
-                        },
-                        new()
-                        {
-                            Selector = "[data-tour-id=document-store-create]",
-                            Title = "第 2 步:打开空间后的操作",
-                            Body = "在列表点「打开」进入空间;右上角会出现「上传文档」和「发布到智识殿堂」两个按钮,拖文件进去 + 勾发布,就能被全平台搜到。",
-                        },
+                        new() { Selector = "[data-tour-id=literary-view-toggle]", Title = "第 1 步：欢迎来到文学创作", Body = "这里管理你的所有文章。右上角可在「按时间 / 按文件夹」之间切换。下面 8 步带你认识页面。", NavigateTo = "/literary-agent" },
+                        new() { Selector = "[data-tour-id=literary-view-toggle]", Title = "第 2 步：两种浏览方式", Body = "右上角可在「按时间 / 按文件夹」之间切换。" },
+                        new() { Selector = "[data-tour-id=literary-time-view]", Title = "第 3 步：按时间", Body = "按更新时间排列，最近写的排在最前，适合快速回到草稿。" },
+                        new() { Selector = "[data-tour-id=literary-folder-view]", Title = "第 4 步：按文件夹", Body = "用文件夹把文章按系列 / 主题归类，结构更清晰。" },
+                        new() { Selector = "[data-tour-id=literary-create-folder]", Title = "第 5 步：新建文件夹", Body = "点文件夹图标先建一个分类。" },
+                        new() { Selector = "[data-tour-id=literary-create]", Title = "第 6 步：新建文章", Body = "点「新建」开始写第一篇，进入后即可用 AI 辅助创作。" },
+                        new() { Selector = "[data-tour-id=literary-content]", Title = "第 7 步：作品区", Body = "你的文章会以卡片排在这里，点卡片进入编辑，右键可快速操作。" },
+                        new() { Selector = "[data-tour-id=literary-content]", Title = "第 8 步：右键快捷菜单", Body = "在空白处右键也能快速新建文件夹或文章；还没有文章时这里会给出引导。看完点「完成」" },
+                    },
+                }),
+
+            // 10. 海鲜市场 —— 本页教程
+            T("marketplace-page-guide", "card",
+                "海鲜市场：本页 6 步上手教程",
+                "搜索、筛选、上传技能，一键 fork 到自己的 Agent。",
+                "/marketplace",
+                "开始本页教程",
+                "[data-tour-id=marketplace-page-title]",
+                0,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new() { Selector = "[data-tour-id=marketplace-page-title]", Title = "第 1 步：欢迎来到海鲜市场", Body = "这里能搜索、下载、上传技能 / 提示词 / 配置，一键 fork 到自己的 Agent。", NavigateTo = "/marketplace" },
+                        new() { Selector = "[data-tour-id=marketplace-category-tabs]", Title = "第 2 步：先选类型", Body = "技能 / 提示词 / 配置，点 tab 过滤你想找的那一类。" },
+                        new() { Selector = "[data-tour-id=marketplace-search]", Title = "第 3 步：搜索", Body = "按名称快速找到目标配置。" },
+                        new() { Selector = "[data-tour-id=marketplace-sort]", Title = "第 4 步：热门 / 最新", Body = "想看大家在用什么点「热门」，想看新货点「最新」。" },
+                        new() { Selector = "[data-tour-id=marketplace-list]", Title = "第 5 步：浏览卡片", Body = "每张卡是一个可 fork 的配置，点进去看详情和 fork 数。" },
+                        new() { Selector = "[data-tour-id=marketplace-upload-skill-btn]", Title = "第 6 步：上传你的技能", Body = "在「技能」分类下点「上传技能」，传 zip + 填标题描述即可发布；同分类下的「接入 AI」还能一键生成 API Key 让 Claude Code / Cursor 直连市场。看完点「完成」" },
+                    },
+                }),
+
+            // 11. 智识殿堂 —— 本页教程
+            T("library-landing-page-guide", "card",
+                "智识殿堂：本页 7 步上手教程",
+                "浏览、搜索全平台公开知识库，向各领域专家学习。",
+                "/library",
+                "开始本页教程",
+                "[data-tour-id=library-hero-title]",
+                0,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new() { Selector = "[data-tour-id=library-hero-title]", Title = "第 1 步：欢迎来到智识殿堂", Body = "这里汇聚全平台公开的知识库，可浏览、搜索、点赞、收藏。", NavigateTo = "/library" },
+                        new() { Selector = "[data-tour-id=library-hero-desc]", Title = "第 2 步：它是什么", Body = "各领域开发者分享的知识库集合，向专家学习真实世界的经验与洞见。" },
+                        new() { Selector = "[data-tour-id=library-explore]", Title = "第 3 步：开始探索", Body = "点「开始探索」滚动到下方的公开知识库列表。" },
+                        new() { Selector = "[data-tour-id=library-create]", Title = "第 4 步：发布我的知识", Body = "想分享自己的？点「发布我的知识」去新建知识库（跳到知识库页）。" },
+                        new() { Selector = "[data-tour-id=library-catalog-title]", Title = "第 5 步：热门知识库区", Body = "下面是按热度排序的公开知识库，点卡片进入阅读。" },
+                        new() { Selector = "[data-tour-id=library-search]", Title = "第 6 步：搜索", Body = "按名称 / 作者 / 标签找你感兴趣的库。" },
+                        new() { Selector = "[data-tour-id=library-sort]", Title = "第 7 步：排序", Body = "热门 / 高赞 / 高阅 / 最新 切换不同维度。看完点「完成」" },
+                    },
+                }),
+
+            // 12. 作品广场 —— 本页教程
+            T("showcase-page-guide", "card",
+                "作品广场：本页 6 步上手教程",
+                "浏览全平台 AI 生成的优秀作品（视觉 + 文学），发现灵感。",
+                "/showcase",
+                "开始本页教程",
+                "[data-tour-id=showcase-hero-title]",
+                0,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new() { Selector = "[data-tour-id=showcase-hero-title]", Title = "第 1 步：欢迎来到作品广场", Body = "这里展示全平台由 AI 生成的优秀作品（视觉创作 + 文学创作），逛一逛找灵感。", NavigateTo = "/showcase" },
+                        new() { Selector = "[data-tour-id=showcase-tabs]", Title = "第 2 步：按类型筛选", Body = "全部 / 视觉创作 / 文学创作 三个 tab 切换。" },
+                        new() { Selector = "[data-tour-id=showcase-sort]", Title = "第 3 步：排序", Body = "默认按「最受欢迎」展示，热门作品靠前。" },
+                        new() { Selector = "[data-tour-id=showcase-search]", Title = "第 4 步：搜索作品", Body = "顶部搜索框按关键词找作品。" },
+                        new() { Selector = "[data-tour-id=showcase-gallery]", Title = "第 5 步：浏览作品墙", Body = "瀑布流展示作品，点开看大图和作者主页。" },
+                        new() { Selector = "[data-tour-id=showcase-back]", Title = "第 6 步：返回首页", Body = "左上角返回按钮回到首页。看完点「完成」" },
+                    },
+                }),
+
+            // 13. 视觉创作 编辑器 —— 进入项目后(/visual-agent/:id)自动开讲,贯通到创作流程
+            // sourceId 含 "editor" → 前端 TipsDrawer 自动开讲匹配器只在「深层路由」触发它(列表页走 visual-page-guide)。
+            T("visual-editor-page-guide", "card",
+                "视觉编辑器：进入项目后这样创作",
+                "进入项目后,认识画布、输入区、生成流程,真正上手出图。",
+                "/visual-agent",
+                "看编辑器教程",
+                "[data-tour-id=visual-editor-root]",
+                0,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new() { Selector = "[data-tour-id=visual-editor-canvas]", Title = "第 1 步：你已进入视觉编辑器", Body = "中间这块是无限画布——单个项目的创作空间，底部是创作输入区。" },
+                        new() { Selector = "[data-tour-id=visual-editor-canvas]", Title = "第 2 步：无限画布", Body = "两指拖动平移、双指捏合或 ⌘/Ctrl+滚轮缩放；把图片直接拖进来即可作为参考或编辑对象。" },
+                        new() { Selector = "[data-tour-id=visual-editor-canvas]", Title = "第 3 步：开始创作", Body = "在底部输入框写指令、选模型与尺寸，点生成，结果会出现在画布上；左上角返回退出。看完点「完成」" },
+                    },
+                }),
+
+            // 14. 文学创作 编辑器 —— 进入文章后(/literary-agent/:id)自动开讲
+            T("literary-editor-page-guide", "card",
+                "文学编辑器：进入文章后这样配图",
+                "进入文章后,认识正文区、配图标记、生成流程。",
+                "/literary-agent",
+                "看编辑器教程",
+                "[data-tour-id=literary-editor-root]",
+                0,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new() { Selector = "[data-tour-id=literary-editor-content]", Title = "第 1 步：你已进入文学编辑器", Body = "左侧这块是文章正文区，右侧是配图标记列表。" },
+                        new() { Selector = "[data-tour-id=literary-editor-content]", Title = "第 2 步：正文区", Body = "上传或粘贴文章后在这里预览；把 .md / .txt 文件拖进来也能上传。" },
+                        new() { Selector = "[data-tour-id=literary-editor-content]", Title = "第 3 步：生成配图", Body = "AI 会按正文自动标出配图点并逐张生成，右侧可逐个查看或重生成。" },
+                        new() { Selector = "[data-tour-id=literary-editor-back]", Title = "第 4 步：返回", Body = "左上角返回按钮回到文章列表。看完点「完成」" },
+                    },
+                }),
+
+            // 15. 缺陷管理 —— 本页 8 步教程(贯通:浏览 → 打开提交面板 → 填写 → 提交)
+            T("defect-page-guide", "card",
+                "缺陷管理：本页 8 步上手教程",
+                "从切换视图、筛选，到提交一条缺陷的完整流程。",
+                "/defect-agent",
+                "开始本页教程",
+                "[data-tour-id=defect-view-mode-switcher]",
+                0,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new() { Selector = "[data-tour-id=defect-view-mode-switcher]", Title = "第 1 步：欢迎来到缺陷管理", Body = "这里提交、跟踪、协作修复缺陷。右上四个图标切换 列表 / 卡片 / 看板 / 统计 视图。", NavigateTo = "/defect-agent" },
+                        new() { Selector = "[data-tour-id=defect-project-filter]", Title = "第 2 步：按项目筛选", Body = "用「全部项目」下拉按项目 / 团队过滤缺陷列表。" },
+                        new() { Selector = "[data-tour-id=defect-list-container], [data-tour-id=defect-view-mode-switcher]", Title = "第 3 步：缺陷列表", Body = "这里展示你「收到的」和「我提交的」缺陷（列表 / 卡片视图含标题、状态、严重度、负责人；看板 / 统计视图换种方式呈现同一批数据）。" },
+                        new() { Selector = "[data-tour-id=defect-template-btn]", Title = "第 4 步：我的模板", Body = "常用缺陷可存成模板，下次提交更快。" },
+                        new() { Selector = "[data-tour-id=defect-create]", Title = "第 5 步：提交缺陷", Body = "点「+ 提交缺陷」展开提交表单。" },
+                        new() { Selector = "[data-tour-id=defect-description]", Title = "第 6 步：写标题 + 描述", Body = "第一行作为标题（一句话），下方可粘贴截图、拖文件。" },
+                        new() { Selector = "[data-tour-id=defect-assignee-picker]", Title = "第 7 步：选负责人", Body = "搜用户名或选默认负责人，对方会立刻收到通知。" },
+                        new() { Selector = "[data-tour-id=defect-submit]", Title = "第 8 步：提交", Body = "提交后收到「已创建」，开发修好后再收「已修复」。看完点「完成」" },
+                    },
+                }),
+
+            // 16. PR 审查工作台 —— 本页 4 步教程
+            T("pr-review-page-guide", "card",
+                "PR 审查：本页 4 步上手教程",
+                "连接 GitHub，添加 PR，看 AI 审查与对齐度评分。",
+                "/pr-review",
+                "开始本页教程",
+                "[data-tour-id=pr-review-page-title]",
+                0,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new() { Selector = "[data-tour-id=pr-review-page-title]", Title = "第 1 步：欢迎来到 PR 审查工作台", Body = "用你自己的 GitHub 账号，对任意有权限的 PR 跑 AI 审查。", NavigateTo = "/pr-review" },
+                        new() { Selector = "[data-tour-id=pr-review-sidebar]", Title = "第 2 步：左侧操作区", Body = "先「连接 GitHub」（Device Flow 授权）；连上后粘贴 PR 链接点「添加并同步」。" },
+                        new() { Selector = "[data-tour-id=pr-review-list-container]", Title = "第 3 步：右侧 PR 列表", Body = "添加的 PR 按更新时间排序展示。" },
+                        new() { Selector = "[data-tour-id=pr-review-list-container]", Title = "第 4 步：查看 AI 审查", Body = "点开任一 PR 卡片：看一句话总结、与项目目标的对齐度评分、写你的审查笔记。看完点「完成」" },
+                    },
+                }),
+
+            // 17. 涌现探索器 —— 本页 4 步教程
+            T("emergence-page-guide", "card",
+                "涌现探索器：本页 4 步上手教程",
+                "从一颗种子开始，让 AI 帮你发现下一步做什么。",
+                "/emergence",
+                "开始本页教程",
+                // 锚点用逗号兜底:新用户落在 EmergenceIntroPage(hero-title/steps/seed-input/dimensions),
+                // 有树的老用户落在 EmergenceCanvas 树列表(about/create-tree/tree-list)。两套都给,
+                // querySelector 取首个命中,任一视图都不会留空步骤卡 10 秒超时(Codex P2)。
+                "[data-tour-id=emergence-hero-title], [data-tour-id=emergence-about]",
+                0,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new() { Selector = "[data-tour-id=emergence-hero-title], [data-tour-id=emergence-about]", Title = "第 1 步：欢迎来到涌现探索器", Body = "从一颗种子开始，AI 帮你长出整棵可能性之树、发现下一步做什么。", NavigateTo = "/emergence" },
+                        new() { Selector = "[data-tour-id=emergence-steps], [data-tour-id=emergence-tree-list]", Title = "第 2 步：三步玩法", Body = "种下种子 → 探索生长 → 涌现组合，完整流程就这三步。" },
+                        new() { Selector = "[data-tour-id=emergence-seed-input], [data-tour-id=emergence-create-tree]", Title = "第 3 步：种下第一颗种子", Body = "点这里上传一段文档 / 方案作为锚点，创建你的第一棵涌现树。" },
+                        new() { Selector = "[data-tour-id=emergence-dimensions], [data-tour-id=emergence-tree-list]", Title = "第 4 步：三个维度", Body = "AI 沿「系统内 → 跨系统 → 幻想未来」生长；进入树后点节点「探索」、多节点还能「涌现」交叉组合。看完点「完成」。" },
+                    },
+                }),
+
+            // 18. 工作流 —— 本页 4 步教程
+            T("workflow-page-guide", "card",
+                "工作流：本页 4 步上手教程",
+                "把多个能力舱编排成自动化流程并执行。",
+                "/workflow-agent",
+                "开始本页教程",
+                "[data-tour-id=workflow-create-btn]",
+                0,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new() { Selector = "[data-tour-id=workflow-create-btn]", Title = "第 1 步：欢迎来到工作流", Body = "把多个能力舱编排成自动化流程。点「新建工作流」进入画布。", NavigateTo = "/workflow-agent" },
+                        new() { Selector = "[data-tour-id=workflow-from-template-btn]", Title = "第 2 步：从模板创建", Body = "不想从零搭？用预定义模板一键生成工作流。" },
+                        new() { Selector = "[data-tour-id=workflow-list]", Title = "第 3 步：工作流列表", Body = "建好的工作流都在这；首次使用有空状态引导教你建第一个。" },
+                        new() { Selector = "[data-tour-id=workflow-list]", Title = "第 4 步：卡片操作与执行", Body = "每张卡可「编辑 / 画布 / 执行 / 删除」；进画布后拖舱、连线、点执行即可跑。看完点「完成」" },
                     },
                 }),
         };

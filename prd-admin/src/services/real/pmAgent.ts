@@ -28,6 +28,7 @@ import type {
   UpdatePmKnowledgeFileContract,
   DeletePmKnowledgeFileContract,
   GetPmMemberSitesContract,
+  GetPmKnowledgeStoreContract,
   PmKnowledgeFile,
   ListPmDecisionsContract,
   CreatePmDecisionContract,
@@ -36,6 +37,8 @@ import type {
   ListPmWeeklyReportsContract,
   CreatePmWeeklyReportContract,
   UpdatePmWeeklyReportContract,
+  ListImportableWeeklyReportsContract,
+  ImportWeeklyReportContract,
   DeletePmWeeklyReportContract,
   ListPmMeetingsContract,
   CreatePmMeetingContract,
@@ -45,11 +48,23 @@ import type {
   CreatePmGoalContract,
   UpdatePmGoalContract,
   DeletePmGoalContract,
+  ListPmGoalCheckInsContract,
+  AddPmGoalCheckInContract,
+  ScorePmGoalContract,
+  ListPmGoalCyclesContract,
+  CreatePmGoalCycleContract,
+  UpdatePmGoalCycleContract,
+  DeletePmGoalCycleContract,
   ListPmAuditLogsContract,
   ListPmMilestonesContract,
   CreatePmMilestoneContract,
   UpdatePmMilestoneContract,
   DeletePmMilestoneContract,
+  ListPmRisksContract,
+  CreatePmRiskContract,
+  UpdatePmRiskContract,
+  DeletePmRiskContract,
+  GetPmBurndownContract,
 } from '@/services/contracts/pmAgent';
 import type { ApiResponse } from '@/types/api';
 import { useAuthStore } from '@/stores/authStore';
@@ -111,6 +126,10 @@ export const getPmMemberSitesReal: GetPmMemberSitesContract = async (projectId) 
   return await apiRequest(api.pm.projects.memberSites(encodeURIComponent(projectId)), { method: 'GET' });
 };
 
+export const getPmKnowledgeStoreReal: GetPmKnowledgeStoreContract = async (projectId) => {
+  return await apiRequest(api.pm.projects.knowledgeStore(encodeURIComponent(projectId)), { method: 'GET' });
+};
+
 // ── 决策事项 ──
 export const listPmDecisionsReal: ListPmDecisionsContract = async (projectId) => {
   return await apiRequest(api.pm.projects.decisions(encodeURIComponent(projectId)), { method: 'GET' });
@@ -143,6 +162,14 @@ export const updatePmWeeklyReportReal: UpdatePmWeeklyReportContract = async (rep
 
 export const deletePmWeeklyReportReal: DeletePmWeeklyReportContract = async (reportId) => {
   return await apiRequest(api.pm.weeklyReports.item(encodeURIComponent(reportId)), { method: 'DELETE' });
+};
+
+export const listImportableWeeklyReportsReal: ListImportableWeeklyReportsContract = async (params) => {
+  return await apiRequest(api.pm.weeklyReportsImportable(params), { method: 'GET' });
+};
+
+export const importWeeklyReportReal: ImportWeeklyReportContract = async (projectId, input) => {
+  return await apiRequest(api.pm.projects.weeklyReportImport(encodeURIComponent(projectId)), { method: 'POST', body: input });
 };
 
 /** 周报内嵌图片上传：FormData 必须走原生 fetch（apiRequest 会 JSON 序列化，见规则 #7） */
@@ -193,6 +220,28 @@ export const deletePmGoalReal: DeletePmGoalContract = async (goalId) => {
   return await apiRequest(api.pm.goals.item(encodeURIComponent(goalId)), { method: 'DELETE' });
 };
 
+export const listPmGoalCheckInsReal: ListPmGoalCheckInsContract = async (goalId) => {
+  return await apiRequest(api.pm.goals.checkins(encodeURIComponent(goalId)), { method: 'GET' });
+};
+export const addPmGoalCheckInReal: AddPmGoalCheckInContract = async (goalId, input) => {
+  return await apiRequest(api.pm.goals.checkins(encodeURIComponent(goalId)), { method: 'POST', body: input });
+};
+export const scorePmGoalReal: ScorePmGoalContract = async (goalId, input) => {
+  return await apiRequest(api.pm.goals.score(encodeURIComponent(goalId)), { method: 'POST', body: input });
+};
+export const listPmGoalCyclesReal: ListPmGoalCyclesContract = async (projectId) => {
+  return await apiRequest(api.pm.projects.goalCycles(encodeURIComponent(projectId)), { method: 'GET' });
+};
+export const createPmGoalCycleReal: CreatePmGoalCycleContract = async (projectId, input) => {
+  return await apiRequest(api.pm.projects.goalCycles(encodeURIComponent(projectId)), { method: 'POST', body: input });
+};
+export const updatePmGoalCycleReal: UpdatePmGoalCycleContract = async (cycleId, input) => {
+  return await apiRequest(api.pm.goalCycles.item(encodeURIComponent(cycleId)), { method: 'PUT', body: input });
+};
+export const deletePmGoalCycleReal: DeletePmGoalCycleContract = async (cycleId) => {
+  return await apiRequest(api.pm.goalCycles.item(encodeURIComponent(cycleId)), { method: 'DELETE' });
+};
+
 // ── 审计日志 ──
 export const listPmAuditLogsReal: ListPmAuditLogsContract = async (opts) => {
   const { projectId, page = 1, pageSize = 50 } = opts ?? {};
@@ -216,6 +265,24 @@ export const updatePmMilestoneReal: UpdatePmMilestoneContract = async (milestone
 
 export const deletePmMilestoneReal: DeletePmMilestoneContract = async (milestoneId) => {
   return await apiRequest(api.pm.milestones.item(encodeURIComponent(milestoneId)), { method: 'DELETE' });
+};
+
+// ── 风险登记册 ──
+export const listPmRisksReal: ListPmRisksContract = async (projectId) => {
+  return await apiRequest(api.pm.projects.risks(encodeURIComponent(projectId)), { method: 'GET' });
+};
+export const createPmRiskReal: CreatePmRiskContract = async (projectId, input) => {
+  return await apiRequest(api.pm.projects.risks(encodeURIComponent(projectId)), { method: 'POST', body: input });
+};
+export const updatePmRiskReal: UpdatePmRiskContract = async (riskId, input) => {
+  return await apiRequest(api.pm.risks.item(encodeURIComponent(riskId)), { method: 'PUT', body: input });
+};
+export const deletePmRiskReal: DeletePmRiskContract = async (riskId) => {
+  return await apiRequest(api.pm.risks.item(encodeURIComponent(riskId)), { method: 'DELETE' });
+};
+
+export const getPmBurndownReal: GetPmBurndownContract = async (projectId) => {
+  return await apiRequest(api.pm.projects.burndown(encodeURIComponent(projectId)), { method: 'GET' });
 };
 
 export const getPmProjectReal: GetPmProjectContract = async (projectId) => {

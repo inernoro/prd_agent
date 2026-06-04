@@ -93,6 +93,7 @@ docs:
   design.cds-agent-commercial-architecture-and-roadmap: CDS Agent 商业级架构与路线图
   design.cds-agent-managed-runtime-fact-source: CDS Agent R0 · CDS-managed runtime fact source 设计
   design.cds-onboarding: CDS 极简上手设计：一键配置 + 项目扫描技能
+  design.cds-ai-compose: CDS AI 生成 compose 草稿设计（可选路径，借用 CDS Agent/OpenRouter，确定性检测器为兜底）
   design.ai-report-systems: AI 周报系统市场调研报告
   design.exec-bt-deployment: CDS 部署架构与冲突分析
   design.model-pool-failover: 模型池故障转移与自动探活设计
@@ -120,6 +121,7 @@ docs:
   design.cds-cluster-bootstrap: CDS 集群引导协议设计
   design.cds-resilience: CDS 容量预算与故障隔离设计
   design.cds-railway-onboarding-flow: CDS Railway 式部署向导设计
+  design.cds-visual-deploy: CDS 绝对可视化一键部署设计（检测回填+把握度+试运行沙箱+多DB实例+env粘贴+应用已上线，含架构图）
 
   # ── 三、指南 ──
   # 先看全貌索引，再看部署/开发，然后是 Agent 使用教程，最后是专题指南
@@ -158,6 +160,8 @@ docs:
   guide.cds-cli-swarm: CDS CLI 蜂群优化操作手册（多 agent 并行反馈+修复+复测）
   guide.cds-deploy-three-paths: CDS 三种部署方式指南
   guide.cds-tutorial: 从零开始的 CDS 教程指南（4 横向场景 × 2 纵向路径）
+  guide.cds-deploy-acceptance: CDS 可视化部署与验收指南（一键部署前后端+基建步骤 + 基础设施目录 + 验收清单）
+  guide.cds-one-click-deploy: CDS 一键可视化部署使用教程（贴仓库→检测填好→试运行验证→部署→应用已上线）
   guide.cds-fullstack-infra-smoke: CDS 全栈基础设施冒烟样例指南
   guide.skill-workflow: AI 技能工作流指南
   guide.skill-removal-checklist: 删技能前置检查清单指南
@@ -237,6 +241,7 @@ docs:
   plan.cds-roadmap: CDS 产品路线图（Phase 0-3 长期）
   plan.cds-deployment: CDS 部署规划
   plan.cds-railway-ux-followup: CDS Railway 式体验补齐计划
+  plan.cds-visual-deploy: CDS 绝对可视化部署计划（基建注册表 SSOT + 部署时间线 + 数据层操作 + AI compose 备选）
   plan.report-agent-v3: Report Agent v3.0 升级方案 — 采集优先架构
   plan.visual-agent-video-gen-daily-limit: 视觉创作视频生成每日限额实施方案
   plan.design-doc-optimization: Design 文档优化项目进度
@@ -260,6 +265,7 @@ docs:
   debt.cds-state-json: CDS state.json 影子存储债务台账
   debt.cds-compose-secrets: CDS compose 模板 TODO secrets / 全量 import 被拒债务台账
   debt.cds-tutorial: CDS 教程（示例工程 + 隔离知识库 + 评分/自愈）债务台账
+  debt.cds-visual-deploy: CDS 绝对可视化一键部署 · 债务台账（已知边界 + 低边际 backlog + 独立 fixture demo 阻塞）
   debt.knowledge-base: 知识库（AI Toolbox attachment + 文档空间）债务台账
   debt.share-link-security: 分享链接安全债务台账
   debt.web-hosting-client-ip: 网页托管真实客户端 IP（XFF 解析）债务台账
@@ -272,6 +278,7 @@ docs:
 
   # ── 七、周报（降序：最新在前）──
   report.agent-universe-completeness: 智能体宇宙 · 各智能体完备度看板（终极目标 vs 当前进度）
+  report.cds-visual-deploy: CDS 绝对可视化一键部署 · 完整报告（交付总览 + dogfood 修的真 bug + 各轮验收分享链）
   report.cds-agent-goal-completion-audit-2026-05-19: CDS Agent 商业级可用闭环目标审计报告
   report.cds-agent-p4-1-remote-preflight-2026-05-19: CDS Agent P4-1 远端发布前验收与试用入口报告
   report.cds-agent-p4-2-provider-closure-2026-05-19: CDS Agent P4-2 远端 Provider 闭环验收报告

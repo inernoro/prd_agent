@@ -26,6 +26,18 @@ public class PmWeeklyReport
     /// <summary>作者名称（冗余，便于展示）</summary>
     public string? AuthorName { get; set; }
 
+    /// <summary>关联的目标 ID 列表（本周报覆盖了哪些目标，周报侧持有引用）</summary>
+    public List<string> RelatedGoalIds { get; set; } = new();
+
+    /// <summary>关联的任务 ID 列表（本周报推进了哪些任务）</summary>
+    public List<string> RelatedTaskIds { get; set; } = new();
+
+    /// <summary>来源类型：null/manual=手动新建；report-agent=从个人周报导入</summary>
+    public string? SourceType { get; set; }
+
+    /// <summary>来源个人周报 ID（SourceType=report-agent 时回溯到 WeeklyReport.Id）</summary>
+    public string? SourceReportId { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

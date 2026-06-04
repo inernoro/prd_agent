@@ -3,7 +3,6 @@ import {
   Library,
   Plus,
   Upload,
-  FolderOpen,
   ArrowLeft,
   X,
   Rss,
@@ -76,6 +75,7 @@ import { UserAvatar } from '@/components/ui/UserAvatar';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
+import { DocEmptyState } from '@/components/doc-browser/DocEmptyState';
 import type {
   DocumentStore,
   DocumentStoreWithPreview,
@@ -1003,6 +1003,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
           pinnedEntryIds={store.pinnedEntryIds ?? []}
           selectedEntryId={selectedEntryId}
           onSelectEntry={setSelectedEntryId}
+          onBackToList={() => setSelectedEntryId(undefined)}
           onSetPrimary={handleSetPrimary}
           onTogglePin={handleTogglePin}
           onDeleteEntry={handleDeleteEntry}
@@ -1035,18 +1036,12 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
           sharedEntryIds={sharedEntryIds}
           loading={loading}
           emptyState={
-            <div className="flex-1 flex flex-col items-center justify-center py-16">
-              <FolderOpen size={44} className="mb-5 text-token-muted opacity-30" />
-              <p className="mb-1 text-[14px] font-semibold text-token-primary">还没有文档</p>
-              <p className="mb-6 text-[12px] text-token-muted">新建一篇空白文档直接写，或上传 / 拖拽文件到页面</p>
-              <div className="flex items-center gap-2.5">
-                <Button variant="primary" size="md" onClick={handleCreateDocument}>
-                  <FileText size={15} /> 新建文档
-                </Button>
-                <Button variant="secondary" size="md" onClick={() => fileInputRef.current?.click()}>
-                  <Upload size={15} /> 上传文档
-                </Button>
-              </div>
+            <div className="flex-1 flex items-center justify-center">
+              <DocEmptyState
+                onCreateDocument={handleCreateDocument}
+                onUploadFile={() => fileInputRef.current?.click()}
+                onAddSubscription={() => setShowSubscribe(true)}
+              />
             </div>
           }
         />
@@ -1625,6 +1620,7 @@ export function DocumentStorePage() {
       {/* 顶部 tab + 工具栏：滚动时整体悬浮（sticky）— 知识库多时菜单不消失
           -mb-5 + pb-5 用于"吃掉"父级 gap-5 间距，避免卡片从间隙缝隙里穿过 */}
       <div
+        data-tour-id="library-tabs"
         className="sticky top-0 z-20 flex flex-col gap-3 pb-5 -mb-5"
         style={{
           background: 'var(--bg-base)',
@@ -1659,7 +1655,7 @@ export function DocumentStorePage() {
           - 我的空间 / 团队空间：统计 + 搜索 + 排序 + 新建知识库（团队空间多一个 TeamScopeBar）
           - 收藏 / 点赞：不显示 */}
       {isStoreTab && (
-        <div className="px-5 flex items-center gap-2 flex-wrap">
+        <div data-tour-id="library-toolbar" className="px-5 flex items-center gap-2 flex-wrap">
           {tab === 'team' && (
             <TeamScopeBar
               moduleKey="document-store"
@@ -1669,7 +1665,7 @@ export function DocumentStorePage() {
             />
           )}
           {/* 统计概览 */}
-          <span className="text-[12px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
+          <span data-tour-id="library-stats" className="text-[12px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
             共 <strong style={{ color: 'var(--text-primary)' }}>{totalStores}</strong> 个知识库
             <span className="opacity-50 mx-1.5">·</span>
             <strong style={{ color: 'var(--text-primary)' }}>{totalDocs}</strong> 篇文章
@@ -1679,6 +1675,7 @@ export function DocumentStorePage() {
           <div className="relative">
             <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--text-muted)' }} />
             <input
+              data-tour-id="library-search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="按名称或标签筛选…"
@@ -1702,6 +1699,7 @@ export function DocumentStorePage() {
           <div className="relative" ref={tagWrapRef}>
             <button
               type="button"
+              data-tour-id="library-tag-filter"
               onClick={() => setTagOpen(o => !o)}
               disabled={tagStats.length === 0}
               className="h-8 px-2.5 rounded-[8px] text-[12px] flex items-center gap-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
@@ -1804,6 +1802,7 @@ export function DocumentStorePage() {
           <div className="relative" ref={sortWrapRef}>
             <button
               type="button"
+              data-tour-id="library-sort"
               onClick={() => setSortOpen(o => !o)}
               className="h-8 px-2.5 rounded-[8px] text-[12px] flex items-center gap-1.5 transition-colors"
               style={{

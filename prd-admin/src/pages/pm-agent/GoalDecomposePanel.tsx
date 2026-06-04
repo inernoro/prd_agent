@@ -8,20 +8,28 @@ import { connectSse } from '@/lib/useSseStream';
 import { api } from '@/services/api';
 import { createPmGoal } from '@/services';
 import { toast } from '@/lib/toast';
-import type { PmGoalDraft } from '@/services/contracts/pmAgent';
+import type { PmGoalDraft, PmGoalScope } from '@/services/contracts/pmAgent';
 
 interface Props {
   projectId: string;
   businessGoal: string;
+  /** 子目标拆解模式：父目标 id（不传=项目级拆顶层目标） */
+  parentGoalId?: string;
+  /** 父目标标题（子目标模式展示用） */
+  parentTitle?: string;
+  /** 创建草稿时的 scope，子目标继承父 scope（默认 team） */
+  scope?: PmGoalScope;
   onClose: () => void;
   onCreated: () => void;
 }
 
 /**
- * AI 目标拆解面板 —— 依据业务目标流式拆解出目标/关键结果(OKR)草稿。
- * SSE：thinking + typing 实时展示；goal 事件累积草稿。草稿不落库，用户审核/编辑后确认创建为团队目标。
+ * AI 目标拆解面板 —— 依据业务目标（或某个父目标）流式拆解出目标/关键结果草稿。
+ * SSE：thinking + typing 实时展示；goal 事件累积草稿。草稿不落库，用户审核/编辑（名称+描述）后确认创建。
  */
-export function GoalDecomposePanel({ projectId, businessGoal, onClose, onCreated }: Props) {
+export function GoalDecomposePanel({ projectId, businessGoal, parentGoalId, parentTitle, scope, onClose, onCreated }: Props) {
+  const isSubGoal = !!parentGoalId;
+  const targetScope: PmGoalScope = scope ?? 'team';
   const [phase, setPhase] = useState<'idle' | 'streaming' | 'review'>('idle');
   const [stageMsg, setStageMsg] = useState('');
   const [thinking, setThinking] = useState('');
@@ -37,7 +45,7 @@ export function GoalDecomposePanel({ projectId, businessGoal, onClose, onCreated
     const collected: PmGoalDraft[] = [];
     try {
       await connectSse({
-        url: api.pm.projects.goalsDecompose(encodeURIComponent(projectId)),
+        url: api.pm.projects.goalsDecompose(encodeURIComponent(projectId), parentGoalId),
         method: 'POST',
         signal: controller.signal,
         onEvent: (evt) => {
@@ -73,13 +81,13 @@ export function GoalDecomposePanel({ projectId, businessGoal, onClose, onCreated
     let ok = 0;
     for (const d of drafts) {
       const res = await createPmGoal(projectId, {
-        scope: 'team', title: d.title, description: d.description || undefined,
+        scope: targetScope, parentId: parentGoalId, title: d.title, description: d.description || undefined,
         metric: d.metric || undefined, period: d.period || undefined, progressMode: 'auto', status: 'on_track',
       });
       if (res.success) ok++;
     }
     setSaving(false);
-    if (ok > 0) { toast.success('已创建', `新增 ${ok} 个团队目标`); onCreated(); }
+    if (ok > 0) { toast.success('已创建', isSubGoal ? `新增 ${ok} 个子目标` : `新增 ${ok} 个团队目标`); onCreated(); }
     else toast.error('创建失败', '请重试');
   };
 
@@ -88,15 +96,21 @@ export function GoalDecomposePanel({ projectId, businessGoal, onClose, onCreated
       <div className="rounded-xl border flex flex-col w-full" style={{ maxWidth: 720, height: '86vh', maxHeight: '86vh', background: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)' }} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-5 py-4 shrink-0 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
           <Sparkles size={17} style={{ color: '#F59E0B' }} />
-          <div className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>AI 拆解目标</div>
-          <button onClick={onClose} className="ml-auto p-1 rounded hover:opacity-70" style={{ color: 'var(--text-muted)' }}><X size={18} /></button>
+          <div className="text-[15px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{isSubGoal ? `AI 拆细：${parentTitle ?? '目标'}` : 'AI 拆解目标'}</div>
+          <button onClick={onClose} className="ml-auto p-1 rounded hover:opacity-70 shrink-0" style={{ color: 'var(--text-muted)' }}><X size={18} /></button>
         </div>
 
         <div className="flex-1 px-5 py-4 flex flex-col gap-3" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
-          <div className="text-[12px] rounded-lg px-3 py-2" style={{ background: 'var(--bg-base)', color: 'var(--text-secondary)' }}>业务目标：{businessGoal || '（立项未填写）'}</div>
+          <div className="text-[12px] rounded-lg px-3 py-2" style={{ background: 'var(--bg-base)', color: 'var(--text-secondary)' }}>
+            {isSubGoal ? `上级目标：${parentTitle || '（未命名）'}` : `业务目标：${businessGoal || '（立项未填写）'}`}
+          </div>
 
           {phase === 'idle' && (
-            <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>将依据上面的业务目标，拆解为 3-6 个可量化的目标 / 关键结果（OKR），生成草稿供你审核后创建为团队目标。</div>
+            <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+              {isSubGoal
+                ? '将把上面的上级目标拆解为 2-5 个更具体、更可落地的子目标，生成草稿供你审核（名称 + 描述可改）后创建。'
+                : '将依据上面的业务目标，拆解为 3-6 个可量化的目标 / 关键结果（OKR），生成草稿供你审核（名称 + 描述可改）后创建为团队目标。'}
+            </div>
           )}
 
           {phase === 'streaming' && (
@@ -114,8 +128,13 @@ export function GoalDecomposePanel({ projectId, businessGoal, onClose, onCreated
                 <div key={i} className="group rounded-lg border p-2.5" style={{ background: 'var(--bg-base)', borderColor: 'var(--border-subtle)' }}>
                   <div className="flex items-start gap-2">
                     <div className="flex-1 min-w-0">
-                      <input className="w-full bg-transparent text-[13px] font-medium outline-none" style={{ color: 'var(--text-primary)' }} value={d.title} onChange={(e) => updateDraft(i, { title: e.target.value })} />
-                      {d.description && <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>{d.description}</div>}
+                      <input className="w-full bg-transparent text-[13px] font-medium outline-none" style={{ color: 'var(--text-primary)' }} value={d.title} onChange={(e) => updateDraft(i, { title: e.target.value })} placeholder="目标标题" />
+                      <textarea
+                        className="w-full mt-1 text-[11px] rounded-md px-2 py-1.5 outline-none border resize-y"
+                        style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }}
+                        rows={2} placeholder="目标描述（可编辑）"
+                        value={d.description || ''} onChange={(e) => updateDraft(i, { description: e.target.value })}
+                      />
                       <div className="flex items-center gap-3 mt-1.5 flex-wrap text-[10.5px]" style={{ color: 'var(--text-muted)' }}>
                         {d.metric && <span className="truncate" style={{ maxWidth: 320 }}>指标：{d.metric}</span>}
                         {d.period && <span>周期：{d.period}</span>}

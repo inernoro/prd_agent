@@ -17,6 +17,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
+import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import { Plus, Wand2, Sparkles, X, Upload, FileText, ChevronRight, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { listVideoGenRunsReal, createVideoGenRunReal } from '@/services/real/videoAgent';
 import type { VideoGenRunListItem } from '@/services/contracts/videoAgent';
@@ -113,6 +114,7 @@ export const VideoAgentPage: React.FC = () => {
           </span>
         </div>
         <div className="flex items-center gap-2">
+          <TipsEntryButton compact />
           {selectedRunId && (
             <Button size="sm" variant="secondary" onClick={handleBackToList}>
               ← 返回列表

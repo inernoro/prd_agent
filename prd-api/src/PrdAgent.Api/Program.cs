@@ -252,6 +252,9 @@ builder.Services.AddScoped<PrdAgent.Api.Services.WorkflowAiFillService>();
 // 工作流调度轮询：每 30 秒扫一次到期的 once / cron 调度，自动入队
 builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowScheduleWorker>();
 
+// PM 逾期/临近截止提醒：每天给相关用户发一条站内汇总通知
+builder.Services.AddHostedService<PrdAgent.Api.Services.PmOverdueReminderWorker>();
+
 // 一次性回填存量 PDF 包装站的 WrappedAssetType marker（PR #612）
 builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteBackfillService>();
 
@@ -296,6 +299,8 @@ builder.Services.AddHttpClient("AiNews", c =>
 // Scoped：AiNewsService 依赖 Scoped 的 ILlmGateway（一句话解读），故不能是 Singleton；
 // 内存缓存走注入的单例 IMemoryCache，资讯流缓存不受 scoped 影响。
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAiNewsService, PrdAgent.Infrastructure.Services.AiNewsService>();
+// 后台每 4 分钟预热「AI 大事」缓存，让用户访问路径永不同步等外网（卡顿排查 2026-06-03）。
+builder.Services.AddHostedService<PrdAgent.Infrastructure.Services.AiNewsCacheWarmer>();
 
 // 知识库 Agent 后台执行器（字幕生成 + 文档再加工，复用 DoubaoStreamAsrService 和 ILlmGateway）
 builder.Services.AddHttpClient("DocStoreAgent");
