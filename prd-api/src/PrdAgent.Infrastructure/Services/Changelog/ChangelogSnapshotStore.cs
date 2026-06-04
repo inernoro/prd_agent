@@ -88,23 +88,44 @@ public sealed class ChangelogSnapshotStore : IChangelogSnapshotStore
                 .ConfigureAwait(false);
 
             var changed = existing == null || existing.ContentHash != contentHash;
+            var updatedAt = DateTime.UtcNow;
 
             // 即便内容未变，也刷新 FetchedAt/UpdatedAt（让「更新时间」反映最近一次成功拉取），
             // 但 changed=false 时不触发推送（由调用方根据返回值决定）。
-            var update = Builders<ChangelogSnapshot>.Update
-                .Set(x => x.Key, key)
-                .Set(x => x.PayloadJson, payloadJson)
-                .Set(x => x.ContentHash, contentHash)
-                .Set(x => x.Source, source)
-                .Set(x => x.FetchedAt, fetchedAt)
-                .Set(x => x.UpdatedAt, DateTime.UtcNow)
-                .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"));
+            if (existing != null)
+            {
+                // 定向更新「最新那条」（按 Id），即使缺索引存在重复行也不会写到任意旧行，
+                // 保证 变化检测 / 写入 / hydrate 三者命中同一记录。
+                var update = Builders<ChangelogSnapshot>.Update
+                    .Set(x => x.PayloadJson, payloadJson)
+                    .Set(x => x.ContentHash, contentHash)
+                    .Set(x => x.Source, source)
+                    .Set(x => x.FetchedAt, fetchedAt)
+                    .Set(x => x.UpdatedAt, updatedAt);
 
-            await _db.ChangelogSnapshots.UpdateOneAsync(
-                x => x.Key == key,
-                update,
-                new UpdateOptions { IsUpsert = true },
-                ct).ConfigureAwait(false);
+                await _db.ChangelogSnapshots.UpdateOneAsync(
+                    x => x.Id == existing.Id,
+                    update,
+                    cancellationToken: ct).ConfigureAwait(false);
+            }
+            else
+            {
+                // 首次写入：按 Key upsert（并发首插竞态由 uniq_changelog_snapshots_key 唯一索引兜底）
+                var insert = Builders<ChangelogSnapshot>.Update
+                    .Set(x => x.Key, key)
+                    .Set(x => x.PayloadJson, payloadJson)
+                    .Set(x => x.ContentHash, contentHash)
+                    .Set(x => x.Source, source)
+                    .Set(x => x.FetchedAt, fetchedAt)
+                    .Set(x => x.UpdatedAt, updatedAt)
+                    .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"));
+
+                await _db.ChangelogSnapshots.UpdateOneAsync(
+                    x => x.Key == key,
+                    insert,
+                    new UpdateOptions { IsUpsert = true },
+                    ct).ConfigureAwait(false);
+            }
 
             return changed;
         }
