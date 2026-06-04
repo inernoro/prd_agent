@@ -5,7 +5,7 @@ import { Sparkles, X, Pin, PinOff, MapPin, ChevronLeft, ChevronRight, Graduation
 import { OPEN_TIPS_DRAWER_EVENT } from './TipsEntryButton';
 import { matchPageGuide, isEditorPageGuide, filterPageTips } from './pageGuideMatch';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
-import { writeSpotlightPayload } from './TipsRotator';
+import { writeSpotlightPayload, SPOTLIGHT_PAYLOAD_UPDATED_EVENT } from './TipsRotator';
 import { trackTip, dismissTipForever } from '@/services/real/dailyTips';
 import { TipCard } from './TipCard';
 
@@ -109,6 +109,15 @@ export function TipsDrawer() {
     window.addEventListener(OPEN_TIPS_DRAWER_EVENT, onOpen);
     return () => window.removeEventListener(OPEN_TIPS_DRAWER_EVENT, onOpen);
   }, [load]);
+
+  // Spotlight 教程一旦「开讲」(任何 writeSpotlightPayload 调用都会广播此事件)就立刻收起教程抽屉。
+  // 否则抽屉浮层(右上角,z-301)会盖住页面里被高亮的目标元素 —— 光圈打在抽屉自己的卡片上,
+  // 用户看到的是「教程被小技巧(抽屉)拦住了」。抽屉本身已无存在必要:Spotlight 卡片自带步骤清单 + 进度。
+  useEffect(() => {
+    const onTourStart = () => setExpanded(false);
+    window.addEventListener(SPOTLIGHT_PAYLOAD_UPDATED_EVENT, onTourStart);
+    return () => window.removeEventListener(SPOTLIGHT_PAYLOAD_UPDATED_EVENT, onTourStart);
+  }, []);
 
   // 编辑器教程(*-editor-page-guide)的锚点只在编辑器深层路由(/{agent}/:id、旧版 -fullscreen/)内存在。
   // 不在对应编辑器路由时,把它从抽屉轮播里过滤掉 —— 否则用户手动翻页到它、点 CTA 会跳到列表页起一个
@@ -342,9 +351,9 @@ export function TipsDrawer() {
   const handleOpenTip = useCallback(
     (tip: (typeof tips)[number]) => {
       void trackTip(tip.id, 'clicked');
+      // writeSpotlightPayload 会广播 SPOTLIGHT_PAYLOAD_UPDATED_EVENT,上面的 effect 据此收起抽屉,
+      // 让 Spotlight 高亮的是页面真实元素而非被抽屉浮层挡住(用户:「教程被小技巧拦住了」)。
       writeSpotlightPayload(tip);
-      // 抽屉故意保留打开,让用户边跟着 Spotlight 引导,边对照教程步骤 /
-      // 决定点「不再提示」;不再像以前那样 setExpanded(false) 把引导面板秒关。
       const url = tip.actionUrl || '/';
       // 编辑器教程(*-editor-page-guide)的锚点在编辑器深层路由内 → 已经在该 url 或其子路由
       // (/{agent}/:id、旧版全屏 /{agent}-fullscreen/:id)时不 navigate,否则把用户从编辑器弹回列表页。

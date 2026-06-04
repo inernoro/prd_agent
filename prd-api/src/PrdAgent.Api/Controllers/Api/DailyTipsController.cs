@@ -419,6 +419,9 @@ public sealed class DailyTipsController : ControllerBase
     internal static readonly string[] RetiredSeedSourceIds =
     {
         "webpages-basics", "visual-first-image", "library-publish",
+        // 网页托管「本周改动」碎片教程已退役:其内容(排序/分组 pill、视图切换、整页提亮)
+        // 已并入 webpages-page-guide 的 14 步系统教程,避免一页出现两个割裂教程(用户反馈)。
+        "webpages-feature-2026w22-pill-controls",
     };
 
     internal static List<DailyTip> BuildDefaultTips(DateTime now)
@@ -516,55 +519,8 @@ public sealed class DailyTipsController : ControllerBase
                 },
                 tier: "basic"),
 
-            // ===== 网页托管：advanced 本周改动（带版本号，下次再大改可升 Version 重弹）=====
-            T("webpages-feature-2026w22-pill-controls", "card",
-                "网页托管这周改了啥",
-                "排序+分组从下拉框改成 segment pill，单击即切；列表视图去掉重背景和分隔线；头部分级降噪；整页背景提亮。",
-                "/web-pages",
-                "看本周改动",
-                "[data-tour-id=webpages-header-actions]",
-                1,
-                new DailyTipAutoAction
-                {
-                    Scroll = "center",
-                    Steps = new List<DailyTipTourStep>
-                    {
-                        new()
-                        {
-                            Selector = "[data-tour-id=webpages-header-actions]",
-                            Title = "第 1 步：头部按钮分级",
-                            Body = "「上传站点」是唯一 primary；「分享统计 / 分享管理」收成 icon 按钮 + tooltip，视觉权重一目了然。",
-                            NavigateTo = "/web-pages",
-                        },
-                        new()
-                        {
-                            Selector = "[data-tour-id=webpages-sort-pills]",
-                            Title = "第 2 步：排序 segment pill",
-                            Body = "五种排序（最新/最早/标题/浏览/体积）平铺成 pill，**单击任意一个直接切到**，0 次下拉。",
-                        },
-                        new()
-                        {
-                            Selector = "[data-tour-id=webpages-group-pills]",
-                            Title = "第 3 步：分组 segment pill",
-                            Body = "「日期 / 文件夹」二选一，单击切换。被 5-27 误删的分组能力已恢复。",
-                        },
-                        new()
-                        {
-                            Selector = "[data-tour-id=webpages-view-toggle]",
-                            Title = "第 4 步：视图切换 + 列表清爽",
-                            Body = "右侧 ⊞/☰ 切网格/列表。列表视图去掉了行底分隔线 + 日期组延伸线，靠空白和日期标签做分组。",
-                        },
-                        new()
-                        {
-                            Selector = "[data-tour-id=webpages-root]",
-                            Title = "第 5 步：整页提亮",
-                            Body = "页面背景加了 indigo 顶部光晕 + 三段渐变，告别死黑。下次还有改动会用「升级」徽章再推给你。",
-                        },
-                    },
-                },
-                endAt: new DateTime(2026, 6, 15, 0, 0, 0, DateTimeKind.Utc),
-                sourceType: "feature-release",
-                tier: "advanced"),
+            // 网页托管「本周改动」碎片教程已退役(并入上面的 14 步系统教程,见 RetiredSeedSourceIds)。
+            // 一页只保留一个体系化教程,不再让排序/分组/视图等内容在第二个教程里重复出现。
 
             // 1. 自定义导航顺序 —— 排第一,新用户上手第一件事就是配自己的菜单
             T("nav-order-customize", "card",
