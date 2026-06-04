@@ -1030,6 +1030,18 @@ public sealed class ChangelogReader : IChangelogReader
             "[Changelog] GitHub 待发布拉取完成 files={Files} failures={Failures} concurrency={Concurrency} elapsed={Elapsed}ms",
             filtered.Count, failures, MaxGitHubFetchConcurrency, sw.ElapsedMilliseconds);
 
+        // 目录列出成功但「有碎片却一个都没拉到」（raw 拉取全/部分失败导致最终为空）：
+        // 这是拉取失败，不是「确实清空」。标记不可用、保留旧存量，避免用假空覆盖好快照 + 误推清空
+        // （Bugbot Medium）。注意：failures==0 的空（碎片确已合并 / 文件无有效条目）才是真清空，照常落库。
+        if (failures > 0 && view.Fragments.Count == 0)
+        {
+            _logger.LogWarning(
+                "[Changelog] GitHub 待发布全部碎片拉取失败 files={Files} failures={Failures}，保留旧存量不误清空",
+                filtered.Count, failures);
+            view.DataSourceAvailable = false;
+            return view;
+        }
+
         view.Fragments = SortFragments(view.Fragments);
         ApplyUnreleasedDateRange(view);
         return view;
