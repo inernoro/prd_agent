@@ -1290,6 +1290,56 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { untraced = true }));
     }
 
+    /// <summary>缺陷转需求：把缺陷转成本产品的一条需求，记录来源缺陷并建立追溯（缺陷 → 新需求）。幂等。</summary>
+    [HttpPost("defects/{defectId}/convert-to-requirement")]
+    public async Task<IActionResult> ConvertDefectToRequirement(string defectId)
+    {
+        var userId = GetUserId();
+        var defect = await _db.DefectReports.Find(d => d.Id == defectId && !d.IsDeleted).FirstOrDefaultAsync();
+        if (defect == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "缺陷不存在"));
+        if (string.IsNullOrWhiteSpace(defect.TracedProductId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺陷未追溯到产品，无法转需求"));
+        var productId = defect.TracedProductId!;
+        if (await FindAccessibleProductAsync(productId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+
+        // 幂等：已转过则直接返回既有需求
+        var existing = await _db.Requirements.Find(r => r.SourceDefectId == defectId && !r.IsDeleted).FirstOrDefaultAsync();
+        if (existing != null) return Ok(ApiResponse<object>.Ok(existing));
+
+        var (_, workflowDefId) = await ResolveDefaultsAsync(ProductEntityType.Requirement, productId);
+        var req = new Requirement
+        {
+            ProductId = productId,
+            RequirementNo = await GenerateNoAsync("REQ", _db.Requirements, "RequirementNo"),
+            Title = string.IsNullOrWhiteSpace(defect.Title) ? $"由缺陷 {defect.DefectNo} 转化" : defect.Title!.Trim(),
+            Description = defect.RawContent,
+            Grade = SeverityToGrade(defect.Severity),
+            WorkflowDefId = workflowDefId,
+            OwnerId = userId,
+            SourceDefectId = defectId,
+        };
+        req.CurrentState = await ResolveInitialStateAsync(workflowDefId);
+        await _db.Requirements.InsertOneAsync(req);
+
+        // 建立追溯：缺陷指向新需求（新需求的「追溯缺陷」即可看到来源缺陷）
+        await _db.DefectReports.UpdateOneAsync(d => d.Id == defectId,
+            Builders<DefectReport>.Update.Set(d => d.TracedRequirementId, req.Id));
+        await RecalcProductCountsAsync(productId);
+        _logger.LogInformation("[product-agent] Defect {DefectNo} converted to requirement {ReqNo} by {User}", defect.DefectNo, req.RequirementNo, userId);
+        return Ok(ApiResponse<object>.Ok(req));
+    }
+
+    /// <summary>缺陷严重度 → 需求分级映射。</summary>
+    private static string SeverityToGrade(string? severity) => severity switch
+    {
+        DefectSeverity.Blocker or DefectSeverity.Critical => ProductItemGrade.P0,
+        DefectSeverity.Major => ProductItemGrade.P1,
+        DefectSeverity.Minor => ProductItemGrade.P2,
+        DefectSeverity.Trivial or DefectSeverity.Suggestion => ProductItemGrade.P3,
+        _ => ProductItemGrade.P2,
+    };
+
     // ════════════════════════ 管理层总览（跨产品聚合，P1）════════════════════════
 
     /// <summary>当前用户是否管理层（看全部产品 + 全局设置）。</summary>

@@ -53,6 +53,9 @@ public class Requirement
     /// <summary>指派处理人 UserId（可空）</summary>
     public string? AssigneeId { get; set; }
 
+    /// <summary>来源缺陷 Id（由缺陷转需求时记录，用于溯源追溯）</summary>
+    public string? SourceDefectId { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 

@@ -104,6 +104,7 @@ export interface Requirement {
   formData: Record<string, string>;
   ownerId: string;
   assigneeId?: string | null;
+  sourceDefectId?: string | null;
   createdAt: string;
   updatedAt: string;
 }

@@ -8,7 +8,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Save, Unlink, ExternalLink, ListChecks, Puzzle, Bug, Link2, FileText } from 'lucide-react';
+import { ArrowLeft, Save, Unlink, ExternalLink, ListChecks, Puzzle, Bug, Link2, FileText, GitBranch } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { RequirementRelationModal, DefectLinkerModal } from './ProductRelationModals';
@@ -26,6 +26,7 @@ import {
   listFeatureVersions,
   listTracedDefects,
   untraceDefect,
+  convertDefectToRequirement,
   listDescTemplates,
   type TracedDefect,
 } from '@/services/real/productAgent';
@@ -559,6 +560,17 @@ function RequirementDetail({
         <>
           <Card title="属性">
             <div className="flex flex-col gap-3.5">
+              {requirement.sourceDefectId && (
+                <div className="flex flex-col gap-1.5">
+                  <FieldLabel>来源缺陷</FieldLabel>
+                  <button
+                    onClick={() => gotoDefect(requirement.sourceDefectId!)}
+                    className="self-start flex items-center gap-1.5 text-xs px-2 py-1 rounded-md bg-red-500/10 text-red-200/90 border border-red-500/30 hover:bg-red-500/20"
+                  >
+                    <Bug size={12} /> {tracedDefects.find((d) => d.id === requirement.sourceDefectId)?.defectNo ?? '由缺陷转化'}
+                  </button>
+                </div>
+              )}
               <div className="flex flex-col gap-1.5">
                 <FieldLabel required>分级</FieldLabel>
                 <GradeField grade={grade} setGrade={setGrade} />
@@ -831,7 +843,18 @@ function DefectDetail({
   gotoRequirement: (id: string) => void;
 }) {
   const navigate = useNavigate();
+  const [converting, setConverting] = useState(false);
+  const [convertErr, setConvertErr] = useState<string | null>(null);
   if (!defect) return <NotFound />;
+
+  const convert = async () => {
+    setConverting(true);
+    setConvertErr(null);
+    const res = await convertDefectToRequirement(defect.id);
+    setConverting(false);
+    if (res.success && res.data) navigate(`/product-agent/p/${res.data.productId}/requirement/${res.data.id}`);
+    else setConvertErr(res.error?.message ?? '转换失败');
+  };
 
   return (
     <DetailScaffold
@@ -853,7 +876,14 @@ function DefectDetail({
               {!defect.tracedRequirementId && !defect.tracedVersionId && <div className="text-white/50">仅追溯到产品</div>}
             </div>
           </Card>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={convert}
+              disabled={converting}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-cyan-200 bg-cyan-500/15 border border-cyan-500/40 hover:bg-cyan-500/25 disabled:opacity-50"
+            >
+              {converting ? <MapSpinner size={14} /> : <GitBranch size={14} />} 转为需求
+            </button>
             <button
               onClick={async () => {
                 await untraceDefect(defect.id);
@@ -869,7 +899,9 @@ function DefectDetail({
             >
               <ExternalLink size={14} /> 在缺陷管理打开完整缺陷
             </button>
+            {convertErr && <span className="text-xs text-red-300/80">{convertErr}</span>}
           </div>
+          <p className="text-[11px] text-white/35 px-1">「转为需求」会在本产品下生成一条需求，并把本缺陷追溯到该需求（已转过则直接跳转）。</p>
         </>
       }
       sidebar={

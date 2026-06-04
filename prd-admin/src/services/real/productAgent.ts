@@ -242,6 +242,10 @@ export function traceDefect(body: { defectId: string; productId: string; require
 export function untraceDefect(defectId: string) {
   return apiRequest<{ untraced: boolean }>('/api/product/untrace-defect', { method: 'POST', body: { defectId } });
 }
+/** 缺陷转需求：在缺陷所追溯的产品下生成一条需求并建立溯源追溯，返回新需求。 */
+export function convertDefectToRequirement(defectId: string) {
+  return apiRequest<Requirement>(`/api/product/defects/${defectId}/convert-to-requirement`, { method: 'POST' });
+}
 
 // ── 知识图谱（P2）──
 export interface GraphNode {
