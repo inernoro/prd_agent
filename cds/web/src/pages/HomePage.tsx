@@ -1,106 +1,213 @@
-import { ArrowRight, Atom, Blocks, GitBranch, ShieldCheck, Terminal } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import ShapeGrid from '@/components/effects/ShapeGrid';
-import { Button } from '@/components/ui/button';
+import './HomePage.css';
 
-const capabilities = [
-  { icon: GitBranch, label: 'Branch Runtime', value: 'isolated preview environments' },
-  { icon: Blocks, label: 'Container Control', value: 'build, start, observe, recover' },
-  { icon: Terminal, label: 'Operational Trace', value: 'logs, metrics, webhooks, audit' },
+const FEED_LINES = [
+  'pull origin feature/auth-flow · 3 commits',
+  'detect stack · .NET 8 + React + mongo + redis',
+  'build api :5000 · admin :5500 ......  ok',
+  'container.observed · health checks passing',
+  'preview live · auth-flow-prd-agent.miduo.org',
 ];
 
+const BranchIcon = (props: { className?: string }) => (
+  <svg className={props.className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+    <circle cx="6" cy="6" r="2.4" /><circle cx="6" cy="18" r="2.4" /><circle cx="18" cy="9" r="2.4" />
+    <path d="M6 8.4v7.2M8.2 7.2 16 8.6M18 11.2c0 4-4 4.4-8.4 4.6" />
+  </svg>
+);
+
 export function HomePage(): JSX.Element {
+  const [feedIndex, setFeedIndex] = useState(0);
+  const [feedOff, setFeedOff] = useState(false);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setFeedOff(true);
+      window.setTimeout(() => {
+        setFeedIndex((i) => (i + 1) % FEED_LINES.length);
+        setFeedOff(false);
+      }, 360);
+    }, 2600);
+    return () => clearInterval(timer);
+  }, []);
+
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#15121d] text-[#f7f5ff]">
-      <ShapeGrid
-        className="absolute inset-0 h-full w-full"
-        direction="diagonal"
-        speed={0.32}
-        squareSize={34}
-        shape="hexagon"
-        borderColor="rgba(255,255,255,0.14)"
-        hoverFillColor="rgba(255,255,255,0.05)"
-        hoverTrailAmount={0}
-      />
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(1100px_720px_at_50%_42%,rgba(255,255,255,0.11),transparent_46%),linear-gradient(180deg,rgba(21,18,29,0.42),rgba(15,12,21,0.72))]" />
+    <main className="cdsh-root">
+      <div className="cdsh-bg">
+        <div className="cdsh-aurora" />
+        <div className="cdsh-hex" />
+        <div className="cdsh-stars" />
+        <div className="cdsh-glow" />
+        <div className="cdsh-glow-2" />
+        <div className="cdsh-vignette" />
+      </div>
 
-      <section className="relative z-10 flex min-h-screen flex-col px-6 py-6 sm:px-10 lg:px-14">
-        <header className="flex items-center justify-between rounded-full border border-white/12 bg-white/[0.035] px-4 py-3 shadow-[0_24px_80px_rgba(0,0,0,0.4)] backdrop-blur-xl">
-          <Link to="/" className="flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-full border border-white/15 bg-white/5 shadow-[0_0_32px_rgba(255,255,255,0.1)]">
-              <Atom className="h-6 w-6" />
+      <div className="cdsh-wrap">
+        {/* NAV */}
+        <nav className="cdsh-nav cdsh-rise" style={{ animationDelay: '0s' }}>
+          <Link className="cdsh-brand" to="/">
+            <span className="cdsh-logo">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                <circle cx="12" cy="12" r="2.4" /><path d="M12 2a10 10 0 0 0 0 20M2 12a10 10 0 0 0 20 0" />
+              </svg>
             </span>
-            <span className="text-sm font-semibold tracking-normal text-white/90">Cloud Dev Suite</span>
+            <b>Cloud Dev Suite</b>
           </Link>
-          <nav className="hidden items-center gap-2 text-sm text-white/60 md:flex">
-            <Link className="rounded-full px-3 py-2 hover:bg-white/10 hover:text-white" to="/project-list">Console</Link>
-            <Link className="rounded-full px-3 py-2 hover:bg-white/10 hover:text-white" to="/cds-settings">Settings</Link>
-            <Link className="rounded-full px-3 py-2 hover:bg-white/10 hover:text-white" to="/login">Access</Link>
-          </nav>
-        </header>
+          <div className="cdsh-navlinks">
+            <Link to="/project-list">Console</Link>
+            <Link to="/project-list">Branches</Link>
+            <Link to="/cds-settings">Settings</Link>
+            <Link to="/login">Access</Link>
+          </div>
+          <div className="cdsh-navcta">
+            <Link className="cdsh-btn cdsh-btn-ghost" to="/login">Log in</Link>
+            <Link className="cdsh-btn cdsh-btn-primary" to="/login?redirect=%2Fproject-list">
+              Enter Console
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+            </Link>
+          </div>
+        </nav>
 
-        <div className="grid flex-1 items-center gap-10 py-14 lg:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.64fr)]">
-          <div className="max-w-4xl [text-shadow:0_2px_30px_rgba(0,0,0,0.72)]">
-            <div className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/[0.035] px-3 py-1.5 text-xs font-medium uppercase tracking-normal text-white/70 backdrop-blur-xl">
-              <span className="h-1.5 w-1.5 rounded-full bg-[#dbe4ee] shadow-[0_0_14px_#dbe4ee]" />
-              Controlled cloud runtime
-            </div>
-            <h1 className="mt-8 max-w-5xl text-balance text-[clamp(4.5rem,10.5vw,9.8rem)] font-[880] leading-[0.88] tracking-normal text-white">
-              Ship inside
-              <span className="block bg-[linear-gradient(120deg,rgba(247,245,255,0.78)_0%,rgba(247,245,255,0.78)_38%,#fff_48%,rgba(255,255,255,0.96)_52%,rgba(247,245,255,0.78)_62%,rgba(247,245,255,0.78)_100%)] bg-[length:220%_100%] bg-clip-text text-transparent animate-[shiny-text_3.2s_linear_infinite]">
-                the field.
-              </span>
+        {/* HERO */}
+        <section className="cdsh-hero">
+          <div>
+            <span className="cdsh-eyebrow cdsh-rise" style={{ animationDelay: '.05s' }}>
+              <span className="cdsh-dot" />Controlled cloud runtime
+            </span>
+            <h1 className="cdsh-h1">
+              <span className="cdsh-line"><span>Every branch,</span></span>
+              <span className="cdsh-line"><span className="cdsh-sheen">a live stack.</span></span>
             </h1>
-            <p className="mt-8 max-w-2xl text-lg leading-8 text-white/72">
-              CDS turns branches into observable runtime space: every build, container, log, webhook and recovery path remains visible without breaking the control plane.
+            <p className="cdsh-sub cdsh-rise" style={{ animationDelay: '.35s' }}>
+              CDS turns a Git branch into an isolated, observable runtime — build, containers, logs,
+              webhooks and a preview URL — without ever breaking the control plane.
             </p>
-            <div className="mt-10 flex flex-wrap items-center gap-3">
-              <Button asChild size="lg" className="rounded-full bg-white px-6 text-black hover:bg-white/90">
-                <Link to="/login?redirect=%2Fproject-list">
-                  Enter Console
-                  <ArrowRight className="ml-2 h-4 w-4" />
-                </Link>
-              </Button>
-              <Button asChild size="lg" variant="outline" className="rounded-full border-white/15 bg-white/[0.035] px-6 text-white hover:bg-white/10 hover:text-white">
-                <Link to="/login">System Access</Link>
-              </Button>
+            <div className="cdsh-cta cdsh-rise" style={{ animationDelay: '.45s' }}>
+              <Link className="cdsh-btn cdsh-btn-primary cdsh-btn-lg" to="/login?redirect=%2Fproject-list">
+                Enter Console
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+              </Link>
+              <Link className="cdsh-btn cdsh-btn-ghost cdsh-btn-lg" to="/login">System Access</Link>
+            </div>
+            <div className="cdsh-meta-row cdsh-rise" style={{ animationDelay: '.55s' }}>
+              <span className="cdsh-meta">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 2 4 6v6c0 5 3.5 8 8 10 4.5-2 8-5 8-10V6z" /></svg>
+                Same-origin sessions
+              </span>
+              <span className="cdsh-meta">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 12h4l3 8 4-16 3 8h2" /></svg>
+                Push to deploy, recover on demand
+              </span>
             </div>
           </div>
 
-          <aside className="rounded-[1.5rem] border border-white/12 bg-white/[0.035] p-5 shadow-[0_30px_120px_rgba(0,0,0,0.4)] backdrop-blur-xl">
-            <div className="rounded-[1.15rem] border border-white/12 bg-white/[0.025] p-5">
-              <div className="flex items-center justify-between border-b border-white/10 pb-5">
-                <div>
-                  <div className="font-mono text-xs uppercase tracking-normal text-white/50">Runtime field</div>
-                  <div className="mt-1 text-2xl font-semibold">Control Plane</div>
+          {/* BOARD */}
+          <div className="cdsh-board cdsh-rise" style={{ animationDelay: '.3s' }}>
+            <div className="cdsh-board-head">
+              <div className="cdsh-left">
+                <BranchIcon />
+                <span className="cdsh-branch cdsh-mono">feature/auth-flow</span>
+                <span className="cdsh-tag cdsh-mono">prd-agent</span>
+              </div>
+              <span className="cdsh-live"><span className="cdsh-pulse" />live</span>
+            </div>
+
+            <div className="cdsh-canvas">
+              <svg className="cdsh-wires" viewBox="0 0 1000 640" preserveAspectRatio="none">
+                <path id="cdsh-p1" className="cdsh-wire" style={{ animationDelay: '.7s' }} d="M300 110 C 352 110, 352 150, 392 150" />
+                <path className="cdsh-wire-dash" style={{ animationDelay: '.7s' }} d="M300 110 C 352 110, 352 150, 392 150" />
+                <path id="cdsh-p2" className="cdsh-wire" style={{ animationDelay: '1.1s' }} d="M648 150 C 702 150, 690 122, 720 122" />
+                <path className="cdsh-wire-dash" style={{ animationDelay: '1.1s' }} d="M648 150 C 702 150, 690 122, 720 122" />
+                <path id="cdsh-p3" className="cdsh-wire" style={{ animationDelay: '1.1s' }} d="M510 196 C 510 250, 510 250, 510 300" />
+                <path className="cdsh-wire-dash" style={{ animationDelay: '1.1s' }} d="M510 196 C 510 250, 510 250, 510 300" />
+                <path id="cdsh-p4" className="cdsh-wire" style={{ animationDelay: '1.5s' }} d="M838 168 C 838 240, 838 240, 838 300" />
+                <path className="cdsh-wire-dash" style={{ animationDelay: '1.5s' }} d="M838 168 C 838 240, 838 240, 838 300" />
+                <path id="cdsh-p5" className="cdsh-wire" style={{ animationDelay: '1.9s' }} d="M510 392 C 510 470, 430 470, 430 512" />
+                <path className="cdsh-wire-dash" style={{ animationDelay: '1.9s' }} d="M510 392 C 510 470, 430 470, 430 512" />
+                <path id="cdsh-p6" className="cdsh-wire" style={{ animationDelay: '1.9s' }} d="M838 392 C 838 470, 600 470, 600 512" />
+                <path className="cdsh-wire-dash" style={{ animationDelay: '1.9s' }} d="M838 392 C 838 470, 600 470, 600 512" />
+
+                <circle className="cdsh-packet" r="2.6"><animateMotion dur="1.6s" begin="0.9s" repeatCount="indefinite"><mpath href="#cdsh-p1" /></animateMotion></circle>
+                <circle className="cdsh-packet" r="2.6"><animateMotion dur="1.6s" begin="1.4s" repeatCount="indefinite"><mpath href="#cdsh-p2" /></animateMotion></circle>
+                <circle className="cdsh-packet" r="2.6"><animateMotion dur="1.6s" begin="1.5s" repeatCount="indefinite"><mpath href="#cdsh-p3" /></animateMotion></circle>
+                <circle className="cdsh-packet" r="2.6"><animateMotion dur="1.6s" begin="1.9s" repeatCount="indefinite"><mpath href="#cdsh-p4" /></animateMotion></circle>
+                <circle className="cdsh-packet" r="2.6"><animateMotion dur="1.7s" begin="2.2s" repeatCount="indefinite"><mpath href="#cdsh-p5" /></animateMotion></circle>
+                <circle className="cdsh-packet" r="2.6"><animateMotion dur="1.7s" begin="2.3s" repeatCount="indefinite"><mpath href="#cdsh-p6" /></animateMotion></circle>
+              </svg>
+
+              <div className="cdsh-node cdsh-node-glow" style={{ left: '2.6%', top: '8%', width: '29%', animationDelay: '.5s' }}>
+                <div className="cdsh-row">
+                  <span className="cdsh-ico"><BranchIcon /></span>
+                  <div><div className="cdsh-title">Branch</div><div className="cdsh-desc cdsh-mono">3 commits · pushed</div></div>
                 </div>
-                <ShieldCheck className="h-7 w-7 text-[#dbe4ee]" />
+                <div className="cdsh-status"><span className="cdsh-sdot" />Build · profile detected</div>
               </div>
-              <div className="mt-5 space-y-3">
-                {capabilities.map((item) => {
-                  const Icon = item.icon;
-                  return (
-                    <div key={item.label} className="rounded-xl border border-white/12 bg-white/[0.025] p-4">
-                      <div className="flex items-start gap-3">
-                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-white/12 bg-white/[0.04]">
-                          <Icon className="h-5 w-5 text-white/80" />
-                        </span>
-                        <div>
-                          <div className="text-sm font-semibold text-white/90">{item.label}</div>
-                          <div className="mt-1 text-sm leading-6 text-white/50">{item.value}</div>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+
+              <div className="cdsh-node" style={{ left: '39.2%', top: '17%', width: '25.6%', animationDelay: '.9s' }}>
+                <div className="cdsh-row">
+                  <span className="cdsh-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h16M4 12h16M4 17h10" /></svg></span>
+                  <div><div className="cdsh-title">api</div><div className="cdsh-desc">.NET 8 service</div></div>
+                  <span className="cdsh-port cdsh-mono">:5000</span>
+                </div>
+                <div className="cdsh-status"><span className="cdsh-sdot" />Running · healthy</div>
               </div>
-              <div className="mt-5 rounded-xl border border-white/12 bg-white/[0.04] p-4 font-mono text-xs leading-6 text-white/80">
-                cds.live.sync / branch.ready / container.observed / operator.safe
+
+              <div className="cdsh-node" style={{ left: '72%', top: '11%', width: '25.6%', animationDelay: '1.1s' }}>
+                <div className="cdsh-row">
+                  <span className="cdsh-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="14" rx="2" /><path d="M3 9h18" /></svg></span>
+                  <div><div className="cdsh-title">admin</div><div className="cdsh-desc">React · Vite</div></div>
+                  <span className="cdsh-port cdsh-mono">:5500</span>
+                </div>
+                <div className="cdsh-status"><span className="cdsh-sdot" />Running · healthy</div>
+              </div>
+
+              <div className="cdsh-node" style={{ left: '39.2%', top: '47%', width: '25.6%', animationDelay: '1.3s' }}>
+                <div className="cdsh-row">
+                  <span className="cdsh-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><ellipse cx="12" cy="6" rx="8" ry="3" /><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" /></svg></span>
+                  <div><div className="cdsh-title">mongo</div><div className="cdsh-desc cdsh-mono">replica · 1</div></div>
+                </div>
+                <div className="cdsh-status"><span className="cdsh-sdot" />Healthy</div>
+              </div>
+
+              <div className="cdsh-node" style={{ left: '72%', top: '47%', width: '25.6%', animationDelay: '1.5s' }}>
+                <div className="cdsh-row">
+                  <span className="cdsh-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6c0 1.7 4 3 9 3s9-1.3 9-3-4-3-9-3-9 1.3-9 3z" /><path d="M3 6v6c0 1.7 4 3 9 3s9-1.3 9-3V6M3 12v6c0 1.7 4 3 9 3s9-1.3 9-3v-6" /></svg></span>
+                  <div><div className="cdsh-title">redis</div><div className="cdsh-desc cdsh-mono">cache</div></div>
+                </div>
+                <div className="cdsh-status"><span className="cdsh-sdot" />Healthy</div>
+              </div>
+
+              <div className="cdsh-preview" style={{ animationDelay: '2.1s' }}>
+                <span className="cdsh-pv-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.5 2.6 2.5 15.4 0 18M12 3c-2.5 2.6-2.5 15.4 0 18" /></svg></span>
+                <div>
+                  <div className="cdsh-lbl">Preview · auto-assigned</div>
+                  <div className="cdsh-url cdsh-mono">auth-flow-prd-agent.miduo.org</div>
+                </div>
+                <span className="cdsh-live" style={{ marginLeft: 'auto' }}><span className="cdsh-pulse" /></span>
               </div>
             </div>
-          </aside>
-        </div>
-      </section>
+
+            <p className="cdsh-ticker cdsh-mono">
+              <span className="cdsh-k">cds</span>&nbsp;&gt;&nbsp;
+              <span className={`cdsh-feed${feedOff ? ' cdsh-off' : ''}`}>{FEED_LINES[feedIndex]}</span>
+            </p>
+          </div>
+        </section>
+
+        {/* STRIP */}
+        <section className="cdsh-strip cdsh-rise" style={{ animationDelay: '.7s' }}>
+          <p>One control plane for the whole stack</p>
+          <div className="cdsh-chips">
+            <span className="cdsh-chip"><b>Isolated</b> branch runtime</span>
+            <span className="cdsh-chip"><b>Push</b> to deploy</span>
+            <span className="cdsh-chip"><b>Live</b> logs &amp; metrics</span>
+            <span className="cdsh-chip"><b>GitHub</b> webhooks</span>
+            <span className="cdsh-chip"><b>One-click</b> recover</span>
+            <span className="cdsh-chip"><b>Per-branch</b> preview URL</span>
+          </div>
+        </section>
+      </div>
     </main>
   );
 }
