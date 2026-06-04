@@ -340,6 +340,7 @@ public class ProductAgentController : ControllerBase
         // 需求关联版本：维护版本侧反向引用
         if (request.VersionIds != null)
             await SyncRequirementToVersionsAsync(req.ProductId, requirementId, request.VersionIds);
+        await RecordAssignChangeAsync(ProductEntityType.Requirement, requirementId, req.ProductId, req.AssigneeId, request.AssigneeId, req.RequirementNo, req.Title);
         var updated = await _db.Requirements.Find(r => r.Id == requirementId).FirstOrDefaultAsync();
         return Ok(ApiResponse<object>.Ok(updated));
     }
@@ -429,6 +430,7 @@ public class ProductAgentController : ControllerBase
         if (request.AssigneeId != null) u = u.Set(f => f.AssigneeId, request.AssigneeId);
         if (request.FormData != null) u = u.Set(f => f.FormData, request.FormData);
         await _db.Features.UpdateOneAsync(f => f.Id == featureId, u);
+        await RecordAssignChangeAsync(ProductEntityType.Feature, featureId, feature.ProductId, feature.AssigneeId, request.AssigneeId, feature.FeatureNo, feature.Title);
         var updated = await _db.Features.Find(f => f.Id == featureId).FirstOrDefaultAsync();
         return Ok(ApiResponse<object>.Ok(updated));
     }
@@ -982,6 +984,29 @@ public class ProductAgentController : ControllerBase
         }
         _logger.LogInformation("[product-agent] Transition {Type}/{Id} {From}->{To} by {User}",
             request.EntityType, request.EntityId, currentState, transition.ToState, userId);
+
+        // 记录时间线 + 通知（仅需求 / 功能）
+        if (request.EntityType is ProductEntityType.Requirement or ProductEntityType.Feature)
+        {
+            var actorName = (await _db.Users.Find(uu => uu.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+            string LabelOf(string? key) => def.States.FirstOrDefault(s => s.Key == key)?.Label ?? key ?? "未设置";
+            var fromLabel = LabelOf(currentState);
+            var toLabel = LabelOf(transition.ToState);
+            await RecordActivityAsync(request.EntityType, request.EntityId, productId, ProductActivityType.Transition, userId, actorName,
+                content: string.IsNullOrWhiteSpace(request.Comment) ? null : request.Comment, fromValue: fromLabel, toValue: toLabel);
+
+            var ctx = await ResolveItemContextAsync(request.EntityType, request.EntityId);
+            var effectiveAssignee = request.AssigneeId ?? ctx?.assigneeId;
+            var no = ctx?.no ?? request.EntityId;
+            var title = ctx?.title ?? "";
+            await NotifyItemAsync(new[] { effectiveAssignee }, userId, $"状态变更 · {no}",
+                $"{actorName ?? "有人"} 把「{title}」从 {fromLabel} 流转到 {toLabel}", ItemUrl(productId, request.EntityType, request.EntityId));
+            if (request.AssigneeId != null)
+            {
+                var assigneeName = (await _db.Users.Find(uu => uu.UserId == request.AssigneeId).FirstOrDefaultAsync())?.DisplayName;
+                await RecordActivityAsync(request.EntityType, request.EntityId, productId, ProductActivityType.Assign, userId, actorName, toValue: assigneeName ?? request.AssigneeId);
+            }
+        }
         return Ok(ApiResponse<object>.Ok(new { entityId = request.EntityId, newState = transition.ToState }));
     }
 
@@ -1325,6 +1350,8 @@ public class ProductAgentController : ControllerBase
         // 建立追溯：缺陷指向新需求（新需求的「追溯缺陷」即可看到来源缺陷）
         await _db.DefectReports.UpdateOneAsync(d => d.Id == defectId,
             Builders<DefectReport>.Update.Set(d => d.TracedRequirementId, req.Id));
+        var convActor = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+        await RecordActivityAsync(ProductEntityType.Requirement, req.Id, productId, ProductActivityType.Convert, userId, convActor, content: $"由缺陷 {defect.DefectNo} 转化生成");
         await RecalcProductCountsAsync(productId);
         _logger.LogInformation("[product-agent] Defect {DefectNo} converted to requirement {ReqNo} by {User}", defect.DefectNo, req.RequirementNo, userId);
         return Ok(ApiResponse<object>.Ok(req));
@@ -1339,6 +1366,104 @@ public class ProductAgentController : ControllerBase
         DefectSeverity.Trivial or DefectSeverity.Suggestion => ProductItemGrade.P3,
         _ => ProductItemGrade.P2,
     };
+
+    // ════════════════════════ 动态/讨论时间线 + 通知（P2）════════════════════════
+
+    /// <summary>解析对象上下文（产品/处理人/负责人/标题/编号），仅支持需求 / 功能。</summary>
+    private async Task<(string productId, string? assigneeId, string ownerId, string title, string no)?> ResolveItemContextAsync(string entityType, string entityId)
+    {
+        switch (entityType)
+        {
+            case ProductEntityType.Requirement:
+                var r = await _db.Requirements.Find(x => x.Id == entityId && !x.IsDeleted).FirstOrDefaultAsync();
+                return r == null ? null : (r.ProductId, r.AssigneeId, r.OwnerId, r.Title, r.RequirementNo);
+            case ProductEntityType.Feature:
+                var f = await _db.Features.Find(x => x.Id == entityId && !x.IsDeleted).FirstOrDefaultAsync();
+                return f == null ? null : (f.ProductId, f.AssigneeId, f.OwnerId, f.Title, f.FeatureNo);
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>写一条时间线记录（评论或系统活动）。</summary>
+    private async Task<ProductItemActivity> RecordActivityAsync(string entityType, string entityId, string productId, string type, string actorId, string? actorName,
+        string? content = null, string? fromValue = null, string? toValue = null, List<string>? mentions = null)
+    {
+        var act = new ProductItemActivity
+        {
+            EntityType = entityType, EntityId = entityId, ProductId = productId, Type = type,
+            ActorId = actorId, ActorName = actorName, Content = content, FromValue = fromValue, ToValue = toValue,
+            Mentions = mentions ?? new(),
+        };
+        await _db.ProductItemActivities.InsertOneAsync(act);
+        return act;
+    }
+
+    /// <summary>给一组 MAP 用户发通知（去重、排除操作人本人、跳过空值）。</summary>
+    private async Task NotifyItemAsync(IEnumerable<string?> targetUserIds, string actorId, string title, string message, string actionUrl)
+    {
+        var targets = targetUserIds.Where(x => !string.IsNullOrWhiteSpace(x) && x != actorId).Select(x => x!).Distinct().ToList();
+        if (targets.Count == 0) return;
+        var notifications = targets.Select(uid => new AdminNotification
+        {
+            TargetUserId = uid,
+            Title = title,
+            Message = message,
+            Level = "info",
+            ActionLabel = "查看详情",
+            ActionUrl = actionUrl,
+            Source = "product-agent",
+            ExpiresAt = DateTime.UtcNow.AddDays(7),
+        }).ToList();
+        await _db.AdminNotifications.InsertManyAsync(notifications);
+    }
+
+    private static string ItemUrl(string productId, string entityType, string entityId) => $"/product-agent/p/{productId}/{entityType}/{entityId}";
+
+    /// <summary>处理人变更时记录时间线 + 通知新处理人（无变化则跳过）。</summary>
+    private async Task RecordAssignChangeAsync(string entityType, string entityId, string productId, string? oldAssignee, string? newAssignee, string no, string title)
+    {
+        if (newAssignee == null || newAssignee == oldAssignee) return;
+        var userId = GetUserId();
+        var actorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+        var newName = string.IsNullOrWhiteSpace(newAssignee) ? "未指派" : ((await _db.Users.Find(u => u.UserId == newAssignee).FirstOrDefaultAsync())?.DisplayName ?? newAssignee);
+        await RecordActivityAsync(entityType, entityId, productId, ProductActivityType.Assign, userId, actorName, toValue: newName);
+        await NotifyItemAsync(new[] { (string?)newAssignee }, userId, $"指派给你 · {no}", $"{actorName ?? "有人"} 把「{title}」指派给你处理", ItemUrl(productId, entityType, entityId));
+    }
+
+    /// <summary>时间线列表（评论 + 系统活动，时间正序）。</summary>
+    [HttpGet("items/{entityType}/{entityId}/activities")]
+    public async Task<IActionResult> ListActivities(string entityType, string entityId)
+    {
+        var ctx = await ResolveItemContextAsync(entityType, entityId);
+        if (ctx == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "对象不存在或不支持时间线"));
+        if (await FindAccessibleProductAsync(ctx.Value.productId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "无权访问该对象"));
+        var items = await _db.ProductItemActivities.Find(a => a.EntityType == entityType && a.EntityId == entityId)
+            .SortBy(a => a.CreatedAt).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>发表评论（富文本 + @提醒），写入时间线并通知提醒人 / 处理人 / 负责人。</summary>
+    [HttpPost("items/{entityType}/{entityId}/comments")]
+    public async Task<IActionResult> AddComment(string entityType, string entityId, [FromBody] AddCommentRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Content))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "评论内容不能为空"));
+        var ctx = await ResolveItemContextAsync(entityType, entityId);
+        if (ctx == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "对象不存在或不支持评论"));
+        var userId = GetUserId();
+        if (await FindAccessibleProductAsync(ctx.Value.productId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "无权访问该对象"));
+        var actorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+        var mentions = (request.Mentions ?? new()).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
+        var act = await RecordActivityAsync(entityType, entityId, ctx.Value.productId, ProductActivityType.Comment, userId, actorName, content: request.Content, mentions: mentions);
+
+        var targets = new List<string?> { ctx.Value.assigneeId, ctx.Value.ownerId };
+        targets.AddRange(mentions.Select(m => (string?)m));
+        await NotifyItemAsync(targets, userId, $"新评论 · {ctx.Value.no}", $"{actorName ?? "有人"} 评论了「{ctx.Value.title}」", ItemUrl(ctx.Value.productId, entityType, entityId));
+        return Ok(ApiResponse<object>.Ok(act));
+    }
 
     // ════════════════════════ 管理层总览（跨产品聚合，P1）════════════════════════
 
@@ -1810,6 +1935,12 @@ public class TransitionRequest
     public string? Comment { get; set; }
     /// <summary>可选：流转时同时转交处理人（仅需求 / 功能）</summary>
     public string? AssigneeId { get; set; }
+}
+
+public class AddCommentRequest
+{
+    public string Content { get; set; } = string.Empty;
+    public List<string>? Mentions { get; set; }
 }
 
 public class TraceDefectRequest

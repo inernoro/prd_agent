@@ -247,6 +247,28 @@ export function convertDefectToRequirement(defectId: string) {
   return apiRequest<Requirement>(`/api/product/defects/${defectId}/convert-to-requirement`, { method: 'POST' });
 }
 
+// ── 动态/讨论时间线（P2）──
+export interface ProductActivity {
+  id: string;
+  entityType: string;
+  entityId: string;
+  productId: string;
+  type: 'comment' | 'transition' | 'assign' | 'created' | 'convert';
+  actorId: string;
+  actorName?: string | null;
+  content?: string | null;
+  fromValue?: string | null;
+  toValue?: string | null;
+  mentions: string[];
+  createdAt: string;
+}
+export function listActivities(entityType: string, entityId: string) {
+  return apiRequest<ListWrap<ProductActivity>>(`/api/product/items/${entityType}/${entityId}/activities`);
+}
+export function addComment(entityType: string, entityId: string, body: { content: string; mentions?: string[] }) {
+  return apiRequest<ProductActivity>(`/api/product/items/${entityType}/${entityId}/comments`, { method: 'POST', body });
+}
+
 // ── 知识图谱（P2）──
 export interface GraphNode {
   id: string;

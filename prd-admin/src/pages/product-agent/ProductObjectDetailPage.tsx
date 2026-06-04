@@ -14,6 +14,7 @@ import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { RequirementRelationModal, DefectLinkerModal } from './ProductRelationModals';
 import { FormFieldsRenderer, RichTextField, useEffectiveTemplate, useEffectiveWorkflow } from './DynamicForm';
 import { WorkflowBar } from './WorkflowBar';
+import { ActivityTimeline } from './ActivityTimeline';
 import {
   listRequirements,
   createRequirement,
@@ -554,6 +555,9 @@ function RequirementDetail({
               <FormFieldsRenderer fields={split.files} values={formData} onChange={setField} productId={productId} />
             </Card>
           )}
+          <Card title="动态">
+            <ActivityTimeline entityType="requirement" entityId={requirement.id} />
+          </Card>
         </>
       }
       sidebar={
@@ -758,6 +762,9 @@ function FeatureDetail({
               <FormFieldsRenderer fields={split.files} values={formData} onChange={setField} productId={productId} />
             </Card>
           )}
+          <Card title="动态">
+            <ActivityTimeline entityType="feature" entityId={feature.id} />
+          </Card>
         </>
       }
       sidebar={
