@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
 import { ArrowRight, Github, Loader2, LockKeyhole, Shield } from 'lucide-react';
-import ShapeGrid from '@/components/effects/ShapeGrid';
 import { CdsMetallicLogo } from '@/components/brand/CdsMetallicLogo';
 import { Button } from '@/components/ui/button';
 import { apiUrl } from '@/lib/api';
+import './HomePage.css';
 
 function redirectTarget(): string {
   if (typeof window === 'undefined') return '/project-list';
@@ -46,18 +46,15 @@ export function LoginPage(): JSX.Element {
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#15121d] text-[#f7f5ff]">
-      <ShapeGrid
-        className="absolute inset-0 h-full w-full"
-        direction="diagonal"
-        speed={0.32}
-        squareSize={34}
-        shape="hexagon"
-        borderColor="rgba(255,255,255,0.14)"
-        hoverFillColor="rgba(255,255,255,0.05)"
-        hoverTrailAmount={0}
-      />
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(1000px_700px_at_50%_42%,rgba(255,255,255,0.11),transparent_46%),linear-gradient(180deg,rgba(21,18,29,0.42),rgba(15,12,21,0.72))]" />
+    <main className="relative min-h-screen overflow-hidden bg-[#08080a] text-[#f6f6f8]">
+      <div className="cdsh-bg">
+        <div className="cdsh-aurora" />
+        <div className="cdsh-hex" />
+        <div className="cdsh-stars" />
+        <div className="cdsh-glow" />
+        <div className="cdsh-glow-2" />
+        <div className="cdsh-vignette" />
+      </div>
 
       <section className="relative z-10 flex min-h-screen items-center justify-center px-5 py-10">
         <div className="grid w-full max-w-5xl items-center gap-10 lg:grid-cols-[minmax(0,1fr)_420px]">
