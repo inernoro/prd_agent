@@ -185,7 +185,7 @@ export default function OpenRouterPanel({ onActionsReady }: OpenRouterPanelProps
       ) : (
         <GlassCard className="p-0">
           <div style={{ overflowX: 'auto' }}>
-          <table className="w-full text-[13px]" style={{ minWidth: 980 }}>
+          <table className="w-full text-[13px]" style={{ minWidth: 860 }}>
             <thead>
               <tr className="text-white/45 text-left border-b border-white/[0.08]">
                 <th className="px-3 py-3 font-medium">Key / 客户</th>
@@ -282,7 +282,7 @@ function BindingSelect({
     <select
       value={value}
       onChange={(ev) => onChange(ev.target.value)}
-      className="bg-white/[0.04] border border-white/[0.12] rounded-md px-2 py-1.5 text-white/85 text-xs min-w-[180px] focus:outline-none focus:border-white/30"
+      className="bg-white/[0.04] border border-white/[0.12] rounded-md px-2 py-1.5 text-white/85 text-xs w-[150px] focus:outline-none focus:border-white/30"
     >
       <option value="" className="bg-[#1E1F20]">默认池（不绑定）</option>
       {pools.map((p) => (
