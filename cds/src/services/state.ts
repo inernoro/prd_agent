@@ -1,6 +1,6 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
-import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection } from '../types.js';
+import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, RequestKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
@@ -1620,6 +1620,126 @@ export class StateService {
     entry.lastUsedAt = new Date().toISOString();
     // Save is best-effort — a failed save here shouldn't block the request.
     try { this.save(); } catch { /* ignore */ }
+  }
+
+  // ── 请求密钥(Request Key)— 被动授权的低权限默认凭据 ──
+  //
+  // 与 AgentKey 平行存储(project.requestKeys),明文前缀 cdsr_ 区别于 cdsp_。
+  // 鉴权只在 access-requests 两个端点放行(见 server.ts default-deny 白名单)。
+
+  /** Append a RequestKey to a project. Creates the array on demand. */
+  addRequestKey(projectId: string, entry: RequestKey): void {
+    if (!this.state.projects) return;
+    const project = this.state.projects.find((p) => p.id === projectId);
+    if (!project) throw new Error(`Project '${projectId}' not found`);
+    if (!project.requestKeys) project.requestKeys = [];
+    project.requestKeys.push(entry);
+    project.updatedAt = new Date().toISOString();
+    this.save();
+  }
+
+  /** List all RequestKey entries for a project (revoked included for audit). */
+  getRequestKeys(projectId: string): RequestKey[] {
+    const project = (this.state.projects || []).find((p) => p.id === projectId);
+    return project?.requestKeys || [];
+  }
+
+  /** Mark a request key revoked. Keeps the entry for audit. */
+  revokeRequestKey(projectId: string, keyId: string): boolean {
+    if (!this.state.projects) return false;
+    const project = this.state.projects.find((p) => p.id === projectId);
+    if (!project?.requestKeys) return false;
+    const entry = project.requestKeys.find((k) => k.id === keyId);
+    if (!entry) return false;
+    if (!entry.revokedAt) {
+      entry.revokedAt = new Date().toISOString();
+      project.updatedAt = new Date().toISOString();
+      this.save();
+    }
+    return true;
+  }
+
+  /**
+   * Parse an incoming plaintext `cdsr_<slugHead12>_<suffix>` and find the
+   * matching non-revoked RequestKey across all projects. Mirrors
+   * findAgentKeyForAuth (timing-safe compare); returns null on any failure.
+   */
+  findRequestKeyForAuth(plaintextKey: string): { projectId: string; keyId: string } | null {
+    if (!plaintextKey || !plaintextKey.startsWith('cdsr_')) return null;
+    const parts = plaintextKey.split('_');
+    if (parts.length < 3) return null;
+    const slugHead = parts[1].toLowerCase();
+    if (!slugHead) return null;
+    const hash = crypto.createHash('sha256').update(plaintextKey).digest('hex');
+    const hashBuf = Buffer.from(hash, 'hex');
+    for (const project of this.state.projects || []) {
+      const projectSlugHead = project.slug.slice(0, 12).toLowerCase();
+      if (projectSlugHead !== slugHead) continue;
+      for (const entry of project.requestKeys || []) {
+        if (entry.revokedAt) continue;
+        try {
+          const entryBuf = Buffer.from(entry.hash, 'hex');
+          if (entryBuf.length !== hashBuf.length) continue;
+          if (crypto.timingSafeEqual(entryBuf, hashBuf)) {
+            return { projectId: project.id, keyId: entry.id };
+          }
+        } catch {
+          /* malformed hash in state, skip */
+        }
+      }
+    }
+    return null;
+  }
+
+  /** Best-effort lastUsedAt stamp for a request key. Silent on unknown ids. */
+  touchRequestKeyLastUsed(projectId: string, keyId: string): void {
+    const project = (this.state.projects || []).find((p) => p.id === projectId);
+    const entry = project?.requestKeys?.find((k) => k.id === keyId);
+    if (!entry) return;
+    entry.lastUsedAt = new Date().toISOString();
+    try { this.save(); } catch { /* ignore */ }
+  }
+
+  // ── 授权申请(Access Request)— 顶层队列,平行于 pendingImports ──
+
+  addAccessRequest(item: AccessRequest): void {
+    if (!this.state.accessRequests) this.state.accessRequests = [];
+    this.state.accessRequests.push(item);
+    this.save();
+  }
+
+  listAccessRequests(): AccessRequest[] {
+    return this.state.accessRequests || [];
+  }
+
+  getAccessRequest(id: string): AccessRequest | undefined {
+    return (this.state.accessRequests || []).find((r) => r.id === id);
+  }
+
+  updateAccessRequest(id: string, updates: Partial<AccessRequest>): void {
+    const list = this.state.accessRequests || [];
+    const idx = list.findIndex((r) => r.id === id);
+    if (idx === -1) throw new Error(`Access request '${id}' not found`);
+    list[idx] = { ...list[idx], ...updates };
+    this.save();
+  }
+
+  /** Drop decided access requests older than olderThanMs. Returns dropped count. */
+  pruneAccessRequests(olderThanMs: number): number {
+    const list = this.state.accessRequests;
+    if (!list || list.length === 0) return 0;
+    const now = Date.now();
+    const kept = list.filter((r) => {
+      if (r.status === 'pending') return true;
+      if (!r.decidedAt) return true;
+      return now - new Date(r.decidedAt).getTime() < olderThanMs;
+    });
+    const dropped = list.length - kept.length;
+    if (dropped > 0) {
+      this.state.accessRequests = kept;
+      this.save();
+    }
+    return dropped;
   }
 
   // ── Global (bootstrap-equivalent) Agent Keys ──

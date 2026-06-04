@@ -7,6 +7,7 @@ import { CommitInbox } from '@/components/CommitInbox';
 import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
 import { OperatorApprovalModal } from '@/components/OperatorApprovalModal';
 import { PendingImportInbox } from '@/components/PendingImportInbox';
+import { AccessRequestInbox } from '@/components/AccessRequestInbox';
 import { SiteNoticeInbox } from '@/components/SiteNoticeInbox';
 import { CdsMetallicLogo } from '@/components/brand/CdsMetallicLogo';
 import { Button } from '@/components/ui/button';
@@ -143,6 +144,8 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
           pendingCount > 0 时主动出现;flap 熔断事件也走这条 toast。
           用户反馈:不再需要 AI 给地址才能开审批 */}
       <PendingImportInbox />
+      {/* 被动授权 — agent 用请求密钥发起的授权申请,右下角一键批准即派发授权密钥 */}
+      <AccessRequestInbox />
       <CommitInbox />
       {/* 2026-05-04 主题切换右上角浮动(用户反馈左下角与 GlobalUpdateBadge
           重叠 + 行业 Vercel/Linear/Notion 都在右上)。fixed 不挤占 TopBar

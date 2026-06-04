@@ -11,6 +11,7 @@ import { createOperatorConsoleRouter } from './routes/operator-console.js';
 import { createBridgeRouter } from './routes/bridge.js';
 import { createProjectsRouter, assertProjectAccess } from './routes/projects.js';
 import { createPendingImportRouter } from './routes/pending-import.js';
+import { createAccessRequestsRouter } from './routes/access-requests.js';
 import { createProjectInfraResyncRouter } from './routes/project-infra-resync.js';
 import { createProjectComposeRouter } from './routes/project-compose.js';
 import { createProjectStorageRouter } from './routes/project-storage.js';
@@ -594,6 +595,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /cleanup-cross-project-services': '清理跨项目服务',
     'GET /pending-imports': '列出待导入项目',
     'POST /projects/:id/pending-import': '提交待导入配置',
+    'GET /access-requests': '列出授权申请',
     'GET /projects/:id/activity-logs': '获取项目活动日志',
     'GET /projects/:id/recent-auto-deploys': '查看自动部署历史',
     'GET /projects/:id/preview-mode': '获取项目预览模式',
@@ -747,6 +749,13 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/pending-imports\/(.+)$/, '查询待导入项目'],
     [/^POST \/pending-imports\/(.+)\/approve$/, '批准导入'],
     [/^POST \/pending-imports\/(.+)\/reject$/, '拒绝导入'],
+    [/^POST \/projects\/[^/]+\/request-keys$/, '签发请求密钥'],
+    [/^GET \/projects\/[^/]+\/request-keys$/, '列出请求密钥'],
+    [/^DELETE \/projects\/[^/]+\/request-keys\/[^/]+$/, '吊销请求密钥'],
+    [/^POST \/projects\/[^/]+\/access-requests$/, '发起授权申请'],
+    [/^GET \/projects\/[^/]+\/access-requests\/[^/]+$/, '轮询授权结果'],
+    [/^POST \/access-requests\/[^/]+\/approve$/, '批准授权申请'],
+    [/^POST \/access-requests\/[^/]+\/reject$/, '拒绝授权申请'],
     // 项目虚拟 cds-compose.yml
     [/^GET \/projects\/(.+)\/compose\.yml$/, '下载项目配置'],
     [/^GET \/projects\/(.+)\/compose$/, '获取项目配置'],
@@ -1927,6 +1936,24 @@ export function createServer(deps: ServerDeps): express.Express {
         return next();
       }
 
+      // 被动授权 — 请求密钥(cdsr_*)default-deny 白名单。
+      //
+      // 请求密钥是低权限默认凭据,唯一能力是「发起授权请求 + 轮询结果」。它
+      // 故意**不**进 resolveAiSession(那会让它变成全权凭据),只在下面这两个
+      // access-requests 端点放行,路由内部用 findRequestKeyForAuth 自校验归属。
+      // 其余任何 /api/* 都认不出 cdsr_ → 走到下方 401,泄漏也无法越权。
+      // 模式照搬上面的 Bearer ct_ 白名单(端点级放行 + 路由自校验)。
+      {
+        const ak = req.headers['x-ai-access-key'] || req.headers['ai-access-key'];
+        const authz = String(req.headers['authorization'] || '');
+        const rk = typeof ak === 'string' ? ak
+          : (/^Bearer\s+cdsr_/i.test(authz) ? authz.replace(/^Bearer\s+/i, '').trim() : '');
+        if (typeof rk === 'string' && rk.startsWith('cdsr_')) {
+          if (reqMethod === 'POST' && /^\/api\/projects\/[^/]+\/access-requests$/.test(reqPath)) return next();
+          if (reqMethod === 'GET' && /^\/api\/projects\/[^/]+\/access-requests\/[^/]+$/.test(reqPath)) return next();
+        }
+      }
+
       // Check human cookie auth
       const cookieToken = parseCookie(req.headers.cookie || '', 'cds_token');
       const headerToken = req.headers['x-cds-token'] as string | undefined;
@@ -2772,6 +2799,10 @@ export function createServer(deps: ServerDeps): express.Express {
   // Mounted at /api so the nested /projects/:id/pending-import path works
   // alongside the rest of the projects router.
   app.use('/api', createPendingImportRouter({ stateService: deps.stateService }));
+
+  // 被动授权 — 请求密钥/授权密钥两级凭据 + 授权申请审批。
+  // 注意 cdsr_ 请求密钥的 default-deny 白名单在上面的全局认证中间件里(搜 cdsr_)。
+  app.use('/api', createAccessRequestsRouter({ stateService: deps.stateService }));
   // 2026-05-29 项目基础设施重新同步(用户反馈:断头应用,缺 yaml resync)
   app.use('/api', createProjectInfraResyncRouter({
     stateService: deps.stateService,
