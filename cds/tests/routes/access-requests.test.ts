@@ -166,4 +166,19 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     const res = await request(server, 'POST', '/api/projects/nope/access-requests', { purpose: 'x' });
     expect(res.status).toBe(404);
   });
+
+  // 回归(真实环境抓到):发起存的是 project.id,调用方用 slug 轮询时不能误判 404。
+  it('slug 与 id 混用:用 slug 发起 + 用 slug/id 任一轮询都能命中', async () => {
+    // proj-a 的 slug 是 proj-alpha
+    const init = await request(server, 'POST', '/api/projects/proj-alpha/access-requests', { purpose: 'slug' });
+    expect(init.status).toBe(201);
+    const reqId = init.body.requestId as string;
+    const token = init.body.pollToken as string;
+    // 用 slug 轮询
+    expect((await request(server, 'GET', `/api/projects/proj-alpha/access-requests/${reqId}?token=${token}`)).body)
+      .toEqual({ status: 'pending' });
+    // 用 id 轮询(同一项目)
+    expect((await request(server, 'GET', `/api/projects/proj-a/access-requests/${reqId}?token=${token}`)).body)
+      .toEqual({ status: 'pending' });
+  });
 });

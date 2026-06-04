@@ -107,8 +107,11 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
 
   // 轮询授权结果(凭 pollToken)。批准后一次性交付授权密钥明文。
   router.get('/projects/:id/access-requests/:reqId', (req, res) => {
+    // 用 getProject 把 slug/id 都解析成 project.id 再比对 —— 发起时存的是
+    // project.id,调用方可能用 slug 轮询,直接字面比对会误判 404。
+    const project = stateService.getProject(req.params.id);
     const item = stateService.getAccessRequest(req.params.reqId);
-    if (!item || item.projectId !== req.params.id) {
+    if (!project || !item || item.projectId !== project.id) {
       res.status(404).json({ error: 'request_not_found', message: `Access request '${req.params.reqId}' not found.` });
       return;
     }
