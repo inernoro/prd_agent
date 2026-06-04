@@ -174,6 +174,16 @@ export function deleteDescTemplate(templateId: string) {
   return apiRequest<{ deleted: boolean }>(`/api/product/desc-templates/${templateId}`, { method: 'DELETE' });
 }
 
+// ── 报表 / 统计分析 ──
+export interface ProductAnalytics {
+  releaseProgress: { versionId: string; versionName: string; total: number; done: number; doing: number; todo: number }[];
+  overall: { total: number; done: number; doing: number; todo: number };
+  velocity: { week: string; requirements: number; features: number }[];
+}
+export function getProductAnalytics(productId: string) {
+  return apiRequest<ProductAnalytics>(`/api/product/products/${productId}/analytics`);
+}
+
 // ── 批量操作 ──
 export function batchUpdateItems(body: { entityType: 'requirement' | 'feature'; ids: string[]; op: 'delete' | 'assign' | 'grade'; assigneeId?: string | null; grade?: string }) {
   return apiRequest<{ affected: number }>('/api/product/items/batch', { method: 'POST', body });

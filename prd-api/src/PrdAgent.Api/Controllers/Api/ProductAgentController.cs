@@ -1470,6 +1470,72 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(act));
     }
 
+    // ════════════════════════ 报表 / 统计分析 ════════════════════════
+
+    /// <summary>产品报表：版本进度（按需求状态分类）+ 迭代速度（每周完成吞吐）+ 总体进度。</summary>
+    [HttpGet("products/{productId}/analytics")]
+    public async Task<IActionResult> GetAnalytics(string productId)
+    {
+        if (await FindAccessibleProductAsync(productId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+
+        var reqs = await _db.Requirements.Find(r => r.ProductId == productId && !r.IsDeleted).ToListAsync();
+        var versions = await _db.ProductVersions.Find(v => v.ProductId == productId && !v.IsDeleted).SortBy(v => v.CreatedAt).ToListAsync();
+
+        // 需求 / 功能流程定义（拿状态分类 + 终态标签）
+        var (_, reqWfId) = await ResolveDefaultsAsync(ProductEntityType.Requirement, productId);
+        var (_, featWfId) = await ResolveDefaultsAsync(ProductEntityType.Feature, productId);
+        var defIds = new[] { reqWfId, featWfId }.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!).Distinct().ToList();
+        var defs = defIds.Count == 0 ? new List<ProductWorkflowDefinition>()
+            : await _db.ProductWorkflowDefinitions.Find(w => defIds.Contains(w.Id) && !w.IsDeleted).ToListAsync();
+        var reqDef = defs.FirstOrDefault(d => d.Id == reqWfId);
+        var reqStates = reqDef?.States.ToDictionary(s => s.Key, s => s) ?? new();
+        string CatOf(string? key) => key != null && reqStates.TryGetValue(key, out var s) ? (s.Category ?? (s.IsFinal ? "done" : "todo")) : "todo";
+
+        // 版本进度（按需求状态分类）
+        var releaseProgress = versions.Select(v =>
+        {
+            var inV = reqs.Where(r => r.VersionIds.Contains(v.Id)).ToList();
+            return new
+            {
+                versionId = v.Id, versionName = v.VersionName, total = inV.Count,
+                done = inV.Count(r => CatOf(r.CurrentState) == "done"),
+                doing = inV.Count(r => CatOf(r.CurrentState) == "doing"),
+                todo = inV.Count(r => CatOf(r.CurrentState) is not ("done" or "doing")),
+            };
+        }).ToList();
+
+        // 总体进度（全部需求）
+        var overall = new
+        {
+            total = reqs.Count,
+            done = reqs.Count(r => CatOf(r.CurrentState) == "done"),
+            doing = reqs.Count(r => CatOf(r.CurrentState) == "doing"),
+            todo = reqs.Count(r => CatOf(r.CurrentState) is not ("done" or "doing")),
+        };
+
+        // 迭代速度：近 8 周「进入终态」的吞吐（从时间线流转记录统计，按对象类型拆分）
+        var finalLabels = defs.SelectMany(d => d.States.Where(s => s.IsFinal).Select(s => s.Label)).ToHashSet();
+        DateTime WeekStart(DateTime d) { var dt = d.Date; var diff = ((int)dt.DayOfWeek + 6) % 7; return dt.AddDays(-diff); }
+        var weeks = Enumerable.Range(0, 8).Select(i => WeekStart(DateTime.UtcNow).AddDays(-7 * (7 - i))).ToList();
+        var since = weeks.First();
+        var acts = await _db.ProductItemActivities.Find(a => a.ProductId == productId && a.Type == ProductActivityType.Transition && a.CreatedAt >= since).ToListAsync();
+        var closures = acts.Where(a => a.ToValue != null && finalLabels.Contains(a.ToValue)).ToList();
+        var velocity = weeks.Select(w =>
+        {
+            var wEnd = w.AddDays(7);
+            var inWeek = closures.Where(a => a.CreatedAt >= w && a.CreatedAt < wEnd).ToList();
+            return new
+            {
+                week = $"{w:MM-dd}",
+                requirements = inWeek.Count(a => a.EntityType == ProductEntityType.Requirement),
+                features = inWeek.Count(a => a.EntityType == ProductEntityType.Feature),
+            };
+        }).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new { releaseProgress, overall, velocity }));
+    }
+
     // ════════════════════════ 批量操作 ════════════════════════
 
     /// <summary>批量操作需求 / 功能：删除 / 指派处理人 / 改分级（仅作用于有权访问的产品下的对象）。</summary>
