@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Sparkles, X, Pin, PinOff, MapPin, ChevronLeft, ChevronRight, GraduationCap } from 'lucide-react';
 import { OPEN_TIPS_DRAWER_EVENT } from './TipsEntryButton';
-import { matchPageGuide, isEditorPageGuide, routeMatchesActionUrl, actionUrlPath } from './pageGuideMatch';
+import { matchPageGuide, isEditorPageGuide, routeMatchesActionUrl, tipNavTarget } from './pageGuideMatch';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { writeSpotlightPayload } from './TipsRotator';
 import { trackTip, dismissTipForever } from '@/services/real/dailyTips';
@@ -272,9 +272,14 @@ export function TipsDrawer() {
     if (started.has(guide.sourceId)) return;
     started.add(guide.sourceId);
     try { sessionStorage.setItem(AUTO_STARTED_GUIDES_KEY, JSON.stringify(Array.from(started))); } catch { /* noop */ }
-    // 两个抽屉自动展开 effect 已用 pageGuideHere 抑制,这里直接用 CTA 同款机制开讲
+    // 两个抽屉自动展开 effect 已用 pageGuideHere 抑制,这里直接用 CTA 同款机制开讲。
+    // 与 handleOpenTip 同口径:若 guide 的 actionUrl 含 query(如 /settings?tab=nav-order)且当前 tab 不对,
+    // 先 navigate 切过去,否则 tour 在错误 tab 上找不到锚点、还把 guide 标记成本 session 已开讲(Bugbot Medium「Auto spotlight skips query tab」)。
+    const navTarget = tipNavTarget(guide, location);
+    if (navTarget) navigate(navTarget);
     void trackTip(guide.id, 'clicked');
     writeSpotlightPayload(guide);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, pageGuideHere]);
 
   // tips 变化时把轮播索引收敛到有效范围
@@ -353,28 +358,13 @@ export function TipsDrawer() {
       writeSpotlightPayload(tip);
       // 抽屉故意保留打开,让用户边跟着 Spotlight 引导,边对照教程步骤 /
       // 决定点「不再提示」;不再像以前那样 setExpanded(false) 把引导面板秒关。
-      const url = tip.actionUrl || '/';
-      const isEditorGuide = isEditorPageGuide(tip.sourceId);
-      const targetPath = actionUrlPath(url);
-      // url 带 query/hash = 目标 query 是「目标状态」的一部分(如 /settings?tab=nav-order 必须切到该 tab,
-      // 锚点才挂载)。注意:这与「页面匹配」相反——页面匹配 strip query(判断 tip 属于哪个页面),
-      // 但 CTA 导航必须保留 query(否则停在 /settings?tab=user-space 会被当作已到目标、不切 tab,tour 超时,Codex P2)。
-      const targetHasState = url.length > targetPath.length;
-      // 是否「已在目标」:
-      // - 编辑器教程:在深层路由(/{agent}/:id、旧版 -fullscreen/)即视为已到,query 无关(锚点只看深层路由)。
-      // - 普通页 + tip 指定了 query/hash:必须 pathname+search+hash 完全一致,否则要 navigate 切到目标 query。
-      // - 普通页 + tip 未指定 query:pathname 命中即可,不强行抹掉用户当前 query(不打扰)。
-      const currentFull = location.pathname + location.search + location.hash;
-      const alreadyAtTarget = isEditorGuide
-        ? routeMatchesActionUrl(location.pathname, url, true)
-        : targetHasState
-          ? currentFull === url
-          : location.pathname === targetPath;
-      if (!alreadyAtTarget) {
-        navigate(url); // navigate 用完整 url(含 query/hash),把用户带到目标状态
+      // 是否/导航到哪走 tipNavTarget(保留 query 作为目标状态),与强制自动开讲 effect 同口径。
+      const navTarget = tipNavTarget(tip, location);
+      if (navTarget) {
+        navigate(navTarget); // 完整 url(含 query/hash),把用户带到目标状态(如切到 ?tab=nav-order)
       }
     },
-    [navigate, location.pathname, location.search, location.hash],
+    [navigate, location],
   );
 
   const handleDismissTip = (tipId: string) => {
