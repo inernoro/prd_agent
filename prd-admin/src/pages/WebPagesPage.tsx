@@ -158,8 +158,8 @@ async function resolveVisitUrl(site: HostedSite): Promise<string> {
 type GroupMode = 'time' | 'folder';
 
 // ─── 列表偏好持久化（排序/视图/分组）───
-// 用 sessionStorage（项目规则禁止 localStorage：避免发版后旧缓存串数据）。
-// sessionStorage 在刷新后仍保留，只在关闭标签页时清空，满足"刷新不丢设置"的诉求。
+// 用 localStorage：纯 UI 偏好（非敏感、设备本地、发版后用旧值无害），
+// 关浏览器重开也要记住用户的排序/视图选择。符合 .claude/rules/no-localstorage.md 的例外清单。
 const PREF_KEYS = {
   sort: 'webpages.pref.sort',
   viewMode: 'webpages.pref.viewMode',
@@ -168,7 +168,7 @@ const PREF_KEYS = {
 
 function readPref(key: string, fallback: string): string {
   try {
-    return sessionStorage.getItem(key) ?? fallback;
+    return localStorage.getItem(key) ?? fallback;
   } catch {
     return fallback;
   }
@@ -176,7 +176,7 @@ function readPref(key: string, fallback: string): string {
 
 function writePref(key: string, value: string): void {
   try {
-    sessionStorage.setItem(key, value);
+    localStorage.setItem(key, value);
   } catch {
     /* 隐私模式 / 存储已满时静默降级 */
   }
@@ -339,7 +339,7 @@ export default function WebPagesPage() {
     () => readPref(PREF_KEYS.groupMode, 'time') as GroupMode,
   );
 
-  // 排序/视图/分组偏好变化即写回 sessionStorage，刷新后自动恢复
+  // 排序/视图/分组偏好变化即写回 localStorage，刷新/重开浏览器后自动恢复
   useEffect(() => { writePref(PREF_KEYS.sort, sort); }, [sort]);
   useEffect(() => { writePref(PREF_KEYS.viewMode, viewMode); }, [viewMode]);
   useEffect(() => { writePref(PREF_KEYS.groupMode, groupMode); }, [groupMode]);
