@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Sparkles, X, Pin, PinOff, MapPin, ChevronLeft, ChevronRight, GraduationCap } from 'lucide-react';
 import { OPEN_TIPS_DRAWER_EVENT } from './TipsEntryButton';
-import { matchPageGuide, isEditorPageGuide } from './pageGuideMatch';
+import { matchPageGuide, isEditorPageGuide, routeMatchesActionUrl } from './pageGuideMatch';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { writeSpotlightPayload } from './TipsRotator';
 import { trackTip, dismissTipForever } from '@/services/real/dailyTips';
@@ -123,15 +123,9 @@ export function TipsDrawer() {
     const isPageBound = isPageGuide || (hasTour && !!url);
     if (!isPageBound) return true; // 页面无关的公告/提示,任意页展示
     if (!url) return false;
-    // actionUrl 可能带 query/hash(如 /marketplace?type=skill),统一只比对 pathname 部分。
-    // 编辑器与非编辑器分支都用 urlPath,与 matchPageGuide 同口径——否则带 query 的编辑器教程
-    // 会出现「Spotlight/newbie 触发但抽屉里看不到」的漂移(Bugbot Medium「Editor filter ignores URL stripping」)。
-    const urlPath = url.split('?')[0].split('#')[0];
-    if (!urlPath) return false;
-    if (isEditorPageGuide(sid)) {
-      return location.pathname.startsWith(urlPath + '/') || location.pathname.startsWith(urlPath + '-fullscreen/');
-    }
-    return location.pathname === urlPath;
+    // 路由比对统一走 routeMatchesActionUrl(内部 strip query/hash),与 matchPageGuide / pageMatchedIndex /
+    // handleOpenTip 同一口径,杜绝「某处 strip 某处没 strip」的连环漂移(Bugbot)。
+    return routeMatchesActionUrl(location.pathname, url, isEditorPageGuide(sid));
   });
   // 触发(重新)挂钩:items / dismissed 变化时列表应刷新
   void items;
@@ -302,12 +296,14 @@ export function TipsDrawer() {
       const gi = tips.findIndex((t) => t.id === guide.id);
       if (gi >= 0) return gi;
     }
-    // 非教程类 tip 兜底:完整匹配 / 列表路由前缀匹配(/defect-agent 匹配 /defect-agent/123)
-    return tips.findIndex((t) => {
-      if (!t.actionUrl) return false;
-      return location.pathname === t.actionUrl
-        || location.pathname.startsWith(t.actionUrl + '/');
-    });
+    // 非教程类 tip 兜底:精确匹配 / 列表路由前缀匹配(/defect-agent 匹配 /defect-agent/123)。
+    // 走 routeMatchesActionUrl(strip query/hash)与其余比对同口径,避免带 query 的 tip 进了轮播
+    // 却在这里兜底匹配失败、打开抽屉随机选一条而非本页 tour(Bugbot Medium「Carousel match ignores query strip」)。
+    return tips.findIndex((t) =>
+      t.actionUrl
+        ? routeMatchesActionUrl(location.pathname, t.actionUrl, false, { allowListPrefix: true })
+        : false,
+    );
   }, [tips, dismissed, location.pathname]);
 
   const lastExpandedRef = useRef(false);
@@ -361,14 +357,11 @@ export function TipsDrawer() {
       // 普通(列表页)教程的锚点只在列表页存在 → 即便当前停在编辑器子路由(轮播可能先选中同
       // actionUrl 前缀的列表教程),也必须回到 actionUrl,否则 tour 在编辑器里找不到锚点,
       // 卡在「目标未找到」(Codex P2)。
-      const isEditorGuide = isEditorPageGuide(tip.sourceId);
-      // 编辑器教程的锚点只在深层路由(/{agent}/:id、旧版 -fullscreen/)存在 —— 停在列表页(pathname === url)
-      // 不算「已在目标」,否则手动轮播到编辑器教程并在列表页点 CTA 会跳过导航、起一个找不到锚点的 tour(Bugbot)。
-      // 故编辑器教程只认深层前缀;普通列表教程才用精确匹配。
-      const alreadyAtTarget = isEditorGuide
-        ? (location.pathname.startsWith(url + '/')
-          || location.pathname.startsWith(url + '-fullscreen/'))
-        : location.pathname === url;
+      // 「是否已在目标页」走 routeMatchesActionUrl(strip query/hash + 编辑器深层前缀感知),与
+      // matchPageGuide / tips 过滤 / pageMatchedIndex 同口径——否则带 query 的编辑器教程会因全串
+      // startsWith 不命中而误判「不在目标」,把用户从编辑器会话导走(Bugbot High「CTA navigation ignores query strip」)。
+      // navigate 仍用完整 url(含 query),保证目标页拿到自己的 query 参数。
+      const alreadyAtTarget = routeMatchesActionUrl(location.pathname, url, isEditorPageGuide(tip.sourceId));
       if (!alreadyAtTarget) {
         navigate(url);
       }
