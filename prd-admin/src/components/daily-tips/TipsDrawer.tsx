@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Sparkles, X, Pin, PinOff, MapPin, ChevronLeft, ChevronRight, GraduationCap } from 'lucide-react';
 import { OPEN_TIPS_DRAWER_EVENT } from './TipsEntryButton';
-import { matchPageGuide, isEditorPageGuide } from './pageGuideMatch';
+import { matchPageGuide, isEditorPageGuide, filterPageTips } from './pageGuideMatch';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { writeSpotlightPayload } from './TipsRotator';
 import { trackTip, dismissTipForever } from '@/services/real/dailyTips';
@@ -203,25 +203,12 @@ export function TipsDrawer() {
   );
 
   // ── 本页相关教程子集 ──────────────────────────────────
-  // 规则:
-  // - 管理员定向推送(isTargeted):不限页面,始终纳入(否则会漏掉用户被推送的内容)。
-  // - *-page-guide:按编辑器感知规则匹配(非编辑器走精确路由、编辑器走深层路由前缀),
-  //   与 matchPageGuide 保持一致,避免列表页教程在编辑器子路由里被误纳入。
-  // - 其余(功能公告 / 旧版短教程):按 actionUrl 精确或前缀匹配当前页。
-  // 这样「本页教程」入口只展示属于本页的内容,彻底消除「开 A 页弹 B 页教程」。
-  const pageTips = tips.filter((t) => {
-    if (t.isTargeted) return true;
-    if (!t.actionUrl) return false;
-    const url = t.actionUrl;
-    const isPageGuide = typeof t.sourceId === 'string' && t.sourceId.endsWith('-page-guide');
-    if (isPageGuide) {
-      const isEditor = isEditorPageGuide(t.sourceId);
-      if (location.pathname === url) return !isEditor;
-      if (location.pathname.startsWith(url + '/') || location.pathname.startsWith(url + '-fullscreen/')) return isEditor;
-      return false;
-    }
-    return location.pathname === url || location.pathname.startsWith(url + '/');
-  });
+  // 与 TipsEntryButton 共用 filterPageTips(SSOT):只展示属于本页的教程,
+  // 彻底消除「开 A 页弹 B 页教程」。规则细节见 pageGuideMatch.ts。
+  const pageTips = useMemo(
+    () => filterPageTips(items, dismissed, location.pathname),
+    [items, dismissed, location.pathname],
+  );
   // 抽屉实际展示的列表:默认「本页」,用户可切「全部」浏览所有页面的教程。
   const viewTips = showAllPages ? tips : pageTips;
 
