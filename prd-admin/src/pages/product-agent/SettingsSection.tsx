@@ -684,6 +684,15 @@ function WorkflowEditor({ entityType, productId }: { entityType: ProductEntityTy
               title="停留超过此小时数视为超时（空=不限）"
               className="w-20 px-2 py-1.5 rounded-md bg-white/5 border border-white/10 text-xs text-white/70 outline-none"
             />
+            <input
+              type="number"
+              min={0}
+              value={s.wipLimit ?? ''}
+              onChange={(e) => updateState(i, { wipLimit: e.target.value ? Number(e.target.value) : null })}
+              placeholder="WIP"
+              title="看板该列在制上限（空=不限）"
+              className="w-16 px-2 py-1.5 rounded-md bg-white/5 border border-white/10 text-xs text-white/70 outline-none"
+            />
             <button onClick={() => removeState(i)} className="text-white/30 hover:text-red-300"><Trash2 size={14} /></button>
           </div>
         ))}

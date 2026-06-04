@@ -72,6 +72,9 @@ public class ProductWorkflowState
 
     /// <summary>SLA 时效（小时）：对象停留在该状态超过此值即视为超时；为空表示不限。</summary>
     public int? SlaHours { get; set; }
+
+    /// <summary>看板 WIP 上限：该状态列在制数量超过此值即告警；为空表示不限。</summary>
+    public int? WipLimit { get; set; }
 }
 
 /// <summary>状态流转边（一条可执行的流转动作）</summary>

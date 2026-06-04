@@ -219,6 +219,8 @@ export interface WorkflowState {
   sortOrder: number;
   /** SLA 时效（小时）：停留超过即超时；空表示不限 */
   slaHours?: number | null;
+  /** 看板 WIP 上限：在制超过即告警；空表示不限 */
+  wipLimit?: number | null;
 }
 
 export interface WorkflowTransition {

@@ -24,8 +24,8 @@ public static class ProductWorkflowDefaults
         {
             new() { Key = "pending",    Label = "待评审", Color = "#9ca3af", IsInitial = true, Category = "todo",  SortOrder = 0, SlaHours = 48 },
             new() { Key = "reviewed",   Label = "已评审", Color = "#38bdf8", Category = "todo",  SortOrder = 1 },
-            new() { Key = "developing", Label = "开发中", Color = "#f59e0b", Category = "doing", SortOrder = 2, SlaHours = 72 },
-            new() { Key = "testing",    Label = "测试中", Color = "#a78bfa", Category = "doing", SortOrder = 3, SlaHours = 48 },
+            new() { Key = "developing", Label = "开发中", Color = "#f59e0b", Category = "doing", SortOrder = 2, SlaHours = 72, WipLimit = 5 },
+            new() { Key = "testing",    Label = "测试中", Color = "#a78bfa", Category = "doing", SortOrder = 3, SlaHours = 48, WipLimit = 5 },
             new() { Key = "done",       Label = "已完成", Color = "#22c55e", IsFinal = true, Category = "done", SortOrder = 4 },
             new() { Key = "rejected",   Label = "已拒绝", Color = "#ef4444", IsFinal = true, Category = "done", SortOrder = 5 },
         },
@@ -51,7 +51,7 @@ public static class ProductWorkflowDefaults
         States = new()
         {
             new() { Key = "planned",    Label = "规划中", Color = "#9ca3af", IsInitial = true, Category = "todo",  SortOrder = 0 },
-            new() { Key = "developing", Label = "开发中", Color = "#f59e0b", Category = "doing", SortOrder = 1, SlaHours = 120 },
+            new() { Key = "developing", Label = "开发中", Color = "#f59e0b", Category = "doing", SortOrder = 1, SlaHours = 120, WipLimit = 3 },
             new() { Key = "testing",    Label = "测试中", Color = "#a78bfa", Category = "doing", SortOrder = 2, SlaHours = 48 },
             new() { Key = "released",   Label = "已发布", Color = "#22c55e", IsFinal = true, Category = "done", SortOrder = 3 },
             new() { Key = "cancelled",  Label = "已取消", Color = "#ef4444", IsFinal = true, Category = "done", SortOrder = 4 },
