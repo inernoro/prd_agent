@@ -1866,7 +1866,8 @@ public class HostedSiteService : IHostedSiteService
     // v1：框架感知 + 合成左右键兜底（对忽略 isTrusted 的自定义 deck 无效）
     // v2：改「可靠驱动优先」，新增任意带 next()/prev() 的自定义元素（如 deck-stage）直驱
     // v3：分档 + 透明可控 —— 高可信自动开（角落提示条可关）、低可信(.slide≥2)仅邀请不劫持
-    private const int SlideNavVersion = 3;
+    // v4：一律邀请式 —— 任何情况都不自动劫持键盘，必须用户点角落「开启」才生效（会话内记住）
+    private const int SlideNavVersion = 4;
 
     // 注入块起始标记。注入块形如 {marker}<script>...</script>，剥离时从 marker 找到其后
     // 第一个 </script> 一并删除，因此升级垫片版本时旧块会被整体替换而非被「幂等跳过」。
@@ -2047,18 +2048,15 @@ public class HostedSiteService : IHostedSiteService
   }
   function enable(remember){ if (!driver) driver = resolveDriver(); bindNav(); if (remember) setPref('on'); renderPill(true); }
   function disable(remember){ unbindNav(); if (remember) setPref('off'); renderPill(false); }
-  // 决策：高可信→自动开+可关；低可信→邀请（不自动劫持）；非幻灯片→什么都不做
+  // 决策：一律邀请式 —— 无论高/低可信都不自动劫持键盘，只弹角落邀请条，用户主动点「开启」才绑定。
+  // 仅当用户本会话已对同一 deck 点过「开启」（sessionStorage='on'）才自动开。非幻灯片：什么都不做。
   function decide(){
     if (decided) return;
     driver = resolveDriver();
-    var high = !!driver;
-    if (!high && !looseSlides()) return; // 还不像幻灯片：暂不决策，等异步 upgrade 后重试
+    if (!driver && !looseSlides()) return; // 还不像幻灯片：暂不决策，等异步 upgrade 后重试
     decided = true;
-    var p = getPref();
-    if (p === 'on'){ enable(false); return; }   // 用户曾主动开
-    if (p === 'off'){ renderPill(false); return; } // 用户曾关闭：留邀请条可重新开
-    if (high) enable(false);                      // 高可信：自动开 + 可关提示
-    else renderPill(false);                       // 低可信：仅邀请，绝不自动劫持
+    if (getPref() === 'on') enable(false); // 本会话已主动开过 → 直接开
+    else renderPill(false);                // 默认仅邀请，绝不自动劫持键盘
   }
   if (document.readyState !== 'loading') decide();
   document.addEventListener('DOMContentLoaded', decide);
