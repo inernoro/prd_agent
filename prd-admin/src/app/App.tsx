@@ -80,7 +80,6 @@ const WeeklyPosterEditorPage = lazy(() => import('@/pages/weekly-poster/WeeklyPo
 
 // 后端 menuCatalog 注册的路由（admin 类，不进 launcher，保留 JSX）
 const AiToolboxPage = lazy(() => import('@/pages/ai-toolbox').then(m => ({ default: m.AiToolboxPage })));
-const OpenPlatformTabsPage = lazy(() => import('@/pages/OpenPlatformTabsPage'));
 const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
 const DataTransferPage = lazy(() => import('@/pages/DataTransferPage'));
 const SkillsPage = lazy(() => import('@/pages/SkillsPage'));
@@ -329,7 +328,7 @@ export default function App() {
         <Route path="ai-toolbox" element={<RequirePermission perm="ai-toolbox.use"><AiToolboxPage /></RequirePermission>} />
         <Route path="labs/share-link-tester" element={<ShareLinkTesterPage />} />
         <Route path="my/shares" element={<MySharesPage />} />
-        <Route path="open-platform" element={<RequirePermission perm="open-platform.manage"><OpenPlatformTabsPage /></RequirePermission>} />
+        {/* open-platform 已移入 NAV_REGISTRY（SSOT），路由由其自动生成 */}
         <Route path="assets" element={<RequirePermission perm="assets.read"><AssetsManagePage /></RequirePermission>} />
         <Route path="skills" element={<RequirePermission perm="skills.read"><SkillsPage /></RequirePermission>} />
         <Route path="weekly-poster" element={<RequirePermission perm="report-agent.template.manage"><PosterDesignerPage /></RequirePermission>} />

@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 
 export interface TabBarItem {
+  /** 可选：新手引导锚点 id，渲染为 data-tour-id 到该 tab 按钮（见 onboarding-tips 规则） */
+  dataTourId?: string;
   key: string;
   label: string;
   icon?: React.ReactNode;

@@ -226,6 +226,7 @@
   > CONFIG_TYPE_REGISTRY + IForkable 白名单复制的市场架构
 
 - [海鲜市场技能开放接口](design.skill-marketplace-open-api) `design.skill-marketplace-open-api`
+- [开放接口（OpenAI 兼容对外网关）技术设计](design.open-api) `design.open-api`
   > AgentApiKey 长效 M2M 鉴权 + scope 白名单 + findmapskills 官方技能同步到海鲜市场 + P3 Agent 开放接口铺路
 
 - [RBAC 权限系统设计](design.rbac-permission) `design.rbac-permission`
@@ -430,6 +431,7 @@
   > 多图组合生成功能的测试用例与验证记录
 
 - [豆包 ASR 模型中继接入指南](guide.doubao-asr-relay) `guide.doubao-asr-relay`
+- [开放接口（OpenAI 兼容对外网关）接入指南](guide.open-api) `guide.open-api`
   > 豆包流式 ASR WebSocket 中继的接入与配置指南
 
 - [CDS 集群扩容指南](guide.cds-cluster-setup) `guide.cds-cluster-setup`
@@ -730,6 +732,8 @@
   > LibraryDocReader 720 行刻意做了米黄+圆体字+暖色调差异化品牌，融合需先做 DocBrowser 皮肤系统；记录重启评估的 4 个触发条件，避免下次重复调研
 - [周报详情页（异构数据）保留独立实现的债务台账](debt.report-detail) `debt.report-detail`
   > ReportDetailPage 900 行业务实体（成员×周次矩阵 + 多 tabs + 计划对比 + 右栏面板），不是文档库语义；融合需先给 DocBrowser 加 leftSidebar/rightPanel/entryBadges 三 slot 系统
+- [开放接口对外网关债务台账](debt.open-api) `debt.open-api`
+  > Phase 1 落地网关 + 按 Key 绑定 + 默认回落 + 导航修复；伞形 appCallerCode 静态注册不变量（守卫测试）；限流按 Key 桶 / 降级预警 / 配额 / embeddings 分到 Phase 2
 
 ### 七、周报
 

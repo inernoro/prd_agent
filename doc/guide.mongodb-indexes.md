@@ -148,6 +148,22 @@ db.apirequestlogs.createIndex({ "ClientType": 1, "ClientId": 1 })
 db.apirequestlogs.createIndex({ "EndedAt": 1 })
 ```
 
+### open_api_request_logs
+
+开放接口（OpenAI 兼容）对外网关请求日志。管理端「开放接口」调用日志抽屉按 `KeyId` 过滤 + `CreatedAt` 倒序；
+每次 OpenApi 调用写一行，量大，无索引会退化为集合扫描 + 内存排序（Codex PR#732 P2）。
+
+```js
+// 按 Key 拉调试日志（抽屉主查询）
+db.open_api_request_logs.createIndex({ "KeyId": 1, "CreatedAt": -1 })
+// 无过滤的全局时间序视图
+db.open_api_request_logs.createIndex({ "CreatedAt": -1 })
+// 按 requestId（响应里的 chatcmpl-<requestId>）定位单条
+db.open_api_request_logs.createIndex({ "RequestId": 1 })
+// 可选 TTL：日志含 IP/UA，按合规保留期自动过期（expireAfterSeconds 由 DBA 按策略定，示例 90 天）
+// db.open_api_request_logs.createIndex({ "CreatedAt": 1 }, { expireAfterSeconds: 7776000 })
+```
+
 ### model_lab_experiments
 
 ```js

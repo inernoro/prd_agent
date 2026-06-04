@@ -28,6 +28,7 @@
   | PR 审查 | `/pr-review` | `pr-review-page-guide` | 4 |
   | 涌现探索器 | `/emergence` | `emergence-page-guide` | 4 |
   | 工作流 | `/workflow-agent` | `workflow-page-guide` | 4 |
+  | 开放接口 | `/open-platform`（tab=open-api） | `open-api-page-guide` | 6（最简生命周期:签发→配置→调用→排障；锚点 open-api-root/stats/list 常驻；首步 NavigateTo 带 `?tab=open-api` 切到该 tab） |
   | 视觉创作·编辑器 | `/visual-agent/:id` | `visual-editor-page-guide` | 3 |
   | 文学创作·编辑器 | `/literary-agent/:id` | `literary-editor-page-guide` | 4 |
 

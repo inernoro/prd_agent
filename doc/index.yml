@@ -101,6 +101,7 @@ docs:
   design.generation-snapshot: 生成快照设计
   design.marketplace: 配置市场（海鲜市场）技术设计
   design.skill-marketplace-open-api: 海鲜市场技能开放接口（AgentApiKey + findmapskills + P3 路线）
+  design.open-api: 开放接口（OpenAI 兼容对外网关）技术设计（架构+问题汇总+边界场景+压测+可观测性）
   design.rbac-permission: RBAC 权限系统设计
   design.report-agent: 周报管理 Agent 架构设计
   design.review-agent: 产品评审员技术设计文档
@@ -170,6 +171,7 @@ docs:
   guide.mongodb-indexes: MongoDB 索引手册
   guide.multi-image-compose-test: 多图组合功能测试备忘录
   guide.doubao-asr-relay: 豆包 ASR 模型中继接入指南
+  guide.open-api: 开放接口（OpenAI 兼容对外网关）接入指南
   guide.review-agent: 产品评审员使用手册
   guide.cds-cluster-setup: CDS 集群扩容指南
   guide.cds-forwarder-deploy: CDS Forwarder 部署 / 迁移 / 卸载 Runbook
@@ -280,6 +282,7 @@ docs:
   debt.daily-tips: 小技巧与首页提醒过时机制债务台账
   debt.library-doc-reader: 殿堂阅读器（克莱风暖色）保留未融合 DocBrowser 的债务台账
   debt.report-detail: 周报详情页（异构数据 + 多 tabs + 右栏面板）保留独立实现的债务台账
+  debt.open-api: 开放接口对外网关债务台账（伞形 code 不变量 + 限流/降级/预警/配额 Phase 2 留尾）
   debt.document-store-sync: 知识库跨环境/本地库↔库同步 · 债务台账（删除传播/附件/冲突合并/教程未补）
 
   # ── 七、周报（降序：最新在前）──

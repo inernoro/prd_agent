@@ -51,6 +51,7 @@ const WebPagesPage = lazy(() => import('@/pages/WebPagesPage'));
 const MyAssetsPage = lazy(() => import('@/pages/MyAssetsPage'));
 const CdsAgentPage = lazy(() => import('@/pages/cds-agent').then(m => ({ default: m.CdsAgentPage })));
 const InfraServicesPage = lazy(() => import('@/pages/infra-services').then(m => ({ default: m.InfraServicesPage })));
+const OpenPlatformTabsPage = lazy(() => import('@/pages/OpenPlatformTabsPage'));
 
 // ── 类型定义 ──────────────────────────────────────────────
 //
@@ -638,6 +639,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       icon: 'Server',
       section: 'infra',
       tags: ['sidecar', '基础设施', 'cds', '远程主机', 'shared-service'],
+    },
+  },
+  {
+    // 开放平台：对外开放接口 API 网关（OpenAI 兼容）+ 外部授权 / API 应用 / 调用日志的统一管理入口。
+    // 从 App.tsx 手写 Route 移入 SSOT，自动出现在首页、Cmd+K 搜索、设置「我的导航」可添加池。
+    path: '/open-platform',
+    permission: 'open-platform.manage',
+    element: shellGuarded('open-platform.manage', <OpenPlatformTabsPage />),
+    nav: {
+      label: '开放平台',
+      shortLabel: '开放',
+      description: '对外开放接口（OpenAI 兼容）API 网关、外部授权、API 应用与调用日志管理',
+      icon: 'Plug',
+      section: 'infra',
+      tags: ['开放平台', 'open-platform', 'open-api', 'API', '网关', '授权', '调用日志'],
     },
   },
 ];
