@@ -574,18 +574,19 @@ function NodeDrawer({
   const [summary, setSummary] = useState<string | null>(null);
   const [summaryBusy, setSummaryBusy] = useState(false);
   const [summaryMsg, setSummaryMsg] = useState<string | null>(null);
+  const [summaryBy, setSummaryBy] = useState<string | null>(null);
   const autoTried = useRef(false);
 
-  const runSummary = useCallback(async () => {
+  const runSummary = useCallback(async (force = false) => {
     setSummaryBusy(true);
     setSummaryMsg(null);
-    const res = await summarizeItem(type, rawId);
+    const res = await summarizeItem(type, rawId, force);
     setSummaryBusy(false);
-    if (res.success && res.data.summary) setSummary(res.data.summary);
+    if (res.success && res.data.summary) { setSummary(res.data.summary); setSummaryBy(res.data.generatedByName ?? null); }
     else setSummaryMsg(res.success ? (res.data.message ?? '暂无可摘要内容') : (res.error?.message ?? '摘要失败'));
   }, [type, rawId]);
 
-  useEffect(() => { autoTried.current = false; setSummary(null); setSummaryMsg(null); }, [node.id]);
+  useEffect(() => { autoTried.current = false; setSummary(null); setSummaryMsg(null); setSummaryBy(null); }, [node.id]);
 
   // 首次展开自动摘要（系统只自动一次；之后用户点「重新摘要」）
   useEffect(() => {
@@ -686,7 +687,7 @@ function NodeDrawer({
                 </span>
                 {canOpen && desc && (
                   <button
-                    onClick={runSummary}
+                    onClick={() => runSummary(true)}
                     disabled={summaryBusy}
                     className="flex items-center gap-1 text-[11px] text-cyan-300 hover:text-cyan-200 disabled:opacity-50"
                   >
@@ -699,7 +700,10 @@ function NodeDrawer({
                   summaryBusy ? (
                     <span className="text-white/40 flex items-center gap-1.5"><MapSpinner size={12} /> AI 摘要中…</span>
                   ) : summary ? (
-                    summary
+                    <>
+                      {summary}
+                      {summaryBy && <div className="mt-2 text-[10px] text-white/30">由 {summaryBy} 生成 · 重新摘要可更新</div>}
+                    </>
                   ) : summaryMsg ? (
                     <span className="text-amber-300/80">{summaryMsg}</span>
                   ) : !desc ? (

@@ -1479,7 +1479,7 @@ public class ProductAgentController : ControllerBase
 
     /// <summary>AI 摘要：对需求/功能/缺陷的标题+描述生成 2-3 句中文概括（图谱抽屉用）。走 ILlmGateway。</summary>
     [HttpGet("items/{entityType}/{entityId}/summary")]
-    public async Task<IActionResult> SummarizeItem(string entityType, string entityId, CancellationToken ct)
+    public async Task<IActionResult> SummarizeItem(string entityType, string entityId, [FromQuery] bool force, CancellationToken ct)
     {
         string productId, title, raw, kindLabel;
         switch (entityType)
@@ -1510,6 +1510,11 @@ public class ProductAgentController : ControllerBase
         }
         if (string.IsNullOrEmpty(productId) || await FindAccessibleProductAsync(productId, GetUserId()) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "无权访问该对象"));
+
+        // 缓存优先：同一对象只在首个打开者触发生成，其他人读缓存；force=true(重新摘要)才重算覆盖
+        var cached = await _db.ProductItemSummaries.Find(s => s.EntityType == entityType && s.EntityId == entityId).FirstOrDefaultAsync();
+        if (!force && cached != null && !string.IsNullOrWhiteSpace(cached.Summary))
+            return Ok(ApiResponse<object>.Ok(new { summary = cached.Summary, generatedByName = cached.GeneratedByName, generatedAt = cached.GeneratedAt, cached = true }));
 
         var text = System.Text.RegularExpressions.Regex.Replace(raw ?? "", "<[^>]+>", " ")
             .Replace("&nbsp;", " ").Replace("&amp;", "&").Replace("&lt;", "<").Replace("&gt;", ">").Trim();
@@ -1543,7 +1548,18 @@ public class ProductAgentController : ControllerBase
         }, ct);
         if (!resp.Success || string.IsNullOrWhiteSpace(resp.Content))
             return Ok(ApiResponse<object>.Ok(new { summary = (string?)null, message = "摘要生成失败，请稍后重试" }));
-        return Ok(ApiResponse<object>.Ok(new { summary = resp.Content!.Trim() }));
+
+        var summaryText = resp.Content!.Trim();
+        var actorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+        var now = DateTime.UtcNow;
+        // 落库缓存（覆盖式：有则更新，无则插入；不用 upsert 以避免 string Id 与自动 ObjectId 冲突）
+        if (cached != null)
+            await _db.ProductItemSummaries.UpdateOneAsync(s => s.Id == cached.Id,
+                Builders<ProductItemSummary>.Update.Set(s => s.Summary, summaryText).Set(s => s.GeneratedById, userId).Set(s => s.GeneratedByName, actorName).Set(s => s.GeneratedAt, now).Set(s => s.UpdatedAt, now));
+        else
+            await _db.ProductItemSummaries.InsertOneAsync(new ProductItemSummary { EntityType = entityType, EntityId = entityId, Summary = summaryText, GeneratedById = userId, GeneratedByName = actorName, GeneratedAt = now });
+
+        return Ok(ApiResponse<object>.Ok(new { summary = summaryText, generatedByName = actorName, generatedAt = now, cached = false }));
     }
 
     // ════════════════════════ 批量导入 ════════════════════════

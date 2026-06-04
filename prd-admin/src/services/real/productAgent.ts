@@ -206,9 +206,12 @@ export function globalSearch(keyword: string) {
   return apiRequest<GlobalSearchResult>(`/api/product/search?keyword=${encodeURIComponent(keyword)}`);
 }
 
-// ── AI 摘要（图谱抽屉）──
-export function summarizeItem(entityType: string, entityId: string) {
-  return apiRequest<{ summary: string | null; message?: string }>(`/api/product/items/${entityType}/${entityId}/summary`);
+// ── AI 摘要（图谱抽屉，服务端缓存：首个打开者生成，其他人读缓存，重新摘要 force=true 覆盖）──
+export function summarizeItem(entityType: string, entityId: string, force = false) {
+  const qs = force ? '?force=true' : '';
+  return apiRequest<{ summary: string | null; message?: string; generatedByName?: string | null; generatedAt?: string; cached?: boolean }>(
+    `/api/product/items/${entityType}/${entityId}/summary${qs}`,
+  );
 }
 
 // ── RTM 需求可追溯矩阵 ──
