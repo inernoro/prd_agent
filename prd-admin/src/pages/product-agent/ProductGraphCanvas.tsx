@@ -328,13 +328,21 @@ function ProductGraphInner({ productId, overview }: { productId?: string; overvi
         return { ...node, style: { ...baseS, opacity: dim ? 0.16 : 1, ...(ring ? { boxShadow: `0 0 0 ${isSel ? 3 : 2}px ${ring}` } : {}) } };
       }),
     );
+    const traceColor = traceAnchor ? (TYPE_META[idType(traceAnchor)]?.color ?? '#fbbf24') : '#fbbf24';
     setEdges((es) =>
       es.map((e) => {
         const inTrace = traceIds && traceIds.has(e.source) && traceIds.has(e.target);
         return {
           ...e,
           animated: !!inTrace,
-          style: { stroke: inTrace ? 'rgba(251,191,36,0.8)' : 'rgba(255,255,255,0.16)', opacity: traceIds && !inTrace ? 0.1 : 1 },
+          markerEnd: inTrace
+            ? { type: MarkerType.ArrowClosed, width: 16, height: 16, color: traceColor }
+            : e.markerEnd,
+          style: {
+            stroke: inTrace ? traceColor : 'rgba(255,255,255,0.16)',
+            strokeWidth: inTrace ? 2 : 1,
+            opacity: traceIds && !inTrace ? 0.1 : 1,
+          },
         };
       }),
     );
