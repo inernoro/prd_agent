@@ -98,4 +98,23 @@ describe('buildCheckRunFailurePostmortem', () => {
     expect(md).toContain('未识别');
     expect(md).toContain('容器已丢失');
   });
+
+  // 回归(Codex):传入 activeProfileIds 时,只诊断本次 startup-plan 的活跃服务,
+  // 不能把已删/改名残留的 zombie error 服务当成本次失败根因。
+  it('activeProfileIds 过滤掉 zombie error 服务', async () => {
+    const entry = {
+      services: {
+        'api-live': { status: 'error', containerName: 'c-live', errorMessage: '活跃服务失败' },
+        'old-zombie': { status: 'error', containerName: 'c-zombie', errorMessage: '残留旧服务' },
+      },
+    } as any;
+    const active = new Set(['api-live']);
+    const md = await buildCheckRunFailurePostmortem(entry, fakeContainerService({}), active);
+    expect(md).toContain('api-live');
+    expect(md).not.toContain('old-zombie');
+    expect(md).not.toContain('残留旧服务');
+    // 不传 activeProfileIds 时维持旧行为(全列)
+    const mdAll = await buildCheckRunFailurePostmortem(entry, fakeContainerService({}));
+    expect(mdAll).toContain('old-zombie');
+  });
 });

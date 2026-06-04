@@ -1202,8 +1202,14 @@ async function buildReadinessTimeoutMessage(
 export async function buildCheckRunFailurePostmortem(
   entry: Pick<BranchEntry, 'services'>,
   containerService: Pick<ContainerService, 'getLogs'>,
+  // 只对「本次 startup-plan 里的活跃服务」做诊断。传入 activeProfileIds 时,过滤掉
+  // 已被删/改名残留的 zombie 服务(deploy 主路径用 activeServices 算 hasError,这里
+  // 必须同口径),否则 check-run 会把旧 profile 的日志当成本次失败的根因误导 agent。
+  activeProfileIds?: ReadonlySet<string>,
 ): Promise<string> {
-  const errorServices = Object.entries(entry.services || {}).filter(([, svc]) => svc.status === 'error');
+  const errorServices = Object.entries(entry.services || {}).filter(
+    ([sid, svc]) => svc.status === 'error' && (!activeProfileIds || activeProfileIds.has(sid)),
+  );
   if (errorServices.length === 0) return '';
   const sections: string[] = [];
   for (const [profileId, svc] of errorServices) {
@@ -5490,7 +5496,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 2026-04-27: 同上，把 finalize 的 throw 落到 opLog.events 里。
       try {
         const failureDetail = finalConclusion === 'failure'
-          ? await buildCheckRunFailurePostmortem(entry, containerService)
+          ? await buildCheckRunFailurePostmortem(entry, containerService, activeProfileIds)
           : undefined;
         await checkRunRunner.finalize(entry, {
           conclusion: finalConclusion,
