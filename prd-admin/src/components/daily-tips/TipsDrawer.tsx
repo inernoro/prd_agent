@@ -110,13 +110,27 @@ export function TipsDrawer() {
     return () => window.removeEventListener(OPEN_TIPS_DRAWER_EVENT, onOpen);
   }, [load]);
 
-  // 编辑器教程(*-editor-page-guide)的锚点只在编辑器深层路由(/{agent}/:id、旧版 -fullscreen/)内存在。
-  // 不在对应编辑器路由时,把它从抽屉轮播里过滤掉 —— 否则用户手动翻页到它、点 CTA 会跳到列表页起一个
-  // 找不到 visual-editor-* 锚点的 tour,卡 10 秒超时(Codex P2)。在编辑器内则保留,供用户手动重开。
+  // 关键约束(用户严令禁止):当前页面绝不展示其他页面的教程。
+  // 判定一条 tip 是否「绑定到某个页面」:它是 *-page-guide,或带有导览步骤(autoAction.steps)且有 actionUrl。
+  // 这类页面教程只在「匹配当前路由」时保留,否则整条过滤掉(于是 /marketplace 上不再出现 /emergence 的教程)。
+  // 例外:
+  // - 定向/投递给本人的消息(isTargeted,如「为你修复缺陷」):是发给用户的私信,不绑定页面,任意页都展示。
+  // - 纯公告/无导览的提示(无 actionUrl 或无 steps):页面无关,任意页都展示。
   const tips = cardTips().filter((t) => {
-    if (!isEditorPageGuide(t.sourceId)) return true;
+    if (t.isTargeted) return true; // 定向私信,任意页展示
+    const sid = t.sourceId;
+    const isPageGuide = typeof sid === 'string' && sid.endsWith('-page-guide');
     const url = t.actionUrl || '';
-    return location.pathname.startsWith(url + '/') || location.pathname.startsWith(url + '-fullscreen/');
+    const hasTour = !!(t.autoAction && t.autoAction.steps && t.autoAction.steps.length > 0);
+    const isPageBound = isPageGuide || (hasTour && !!url);
+    if (!isPageBound) return true; // 页面无关的公告/提示,任意页展示
+    if (!url) return false;
+    if (isEditorPageGuide(sid)) {
+      return location.pathname.startsWith(url + '/') || location.pathname.startsWith(url + '-fullscreen/');
+    }
+    // actionUrl 可能带 query(如 /marketplace?type=skill),只比对 pathname 部分
+    const urlPath = url.split('?')[0].split('#')[0];
+    return location.pathname === urlPath;
   });
   // 触发(重新)挂钩:items / dismissed 变化时列表应刷新
   void items;
