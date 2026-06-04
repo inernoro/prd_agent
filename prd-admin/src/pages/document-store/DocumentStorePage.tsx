@@ -29,6 +29,7 @@ import {
   ArrowUpDown,
   Check,
   Tag,
+  BarChart3,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -69,6 +70,7 @@ import {
   listMyFavoriteDocumentStores,
   listMyLikedDocumentStores,
   setStoreTeams,
+  getStoresAnalyticsSummary,
 } from '@/services';
 import { ShareToTeamDialog } from '@/components/team/ShareToTeamDialog';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -82,6 +84,7 @@ import type {
   DocumentEntry,
   DocumentStoreShareLink,
   InteractionStoreCard,
+  DocumentStoreAccountSummary,
 } from '@/services/contracts/documentStore';
 import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/DocBrowser';
 import { ACCEPTANCE_TEMPLATE_KEY } from '@/lib/acceptanceVerdictRegistry';
@@ -94,6 +97,61 @@ import { ViewersDrawer } from './ViewersDrawer';
 import { useReprocessRunStore, selectStreamingByEntry } from '@/stores/reprocessRunStore';
 
 const ACCEPT_TYPES = '.md,.txt,.pdf,.doc,.docx,.json,.yaml,.yml,.csv';
+
+// 账号级总计的紧凑格式化：大数走「万」，停留走「时/分」。
+function formatCountCompact(n: number): string {
+  // count-up 动画喂进来的是插值浮点，先取整，避免 <1万 时闪现小数
+  const r = Math.round(n);
+  if (r < 10_000) return String(r);
+  return `${(r / 10_000).toFixed(r % 10_000 === 0 ? 0 : 1)} 万`;
+}
+function formatDwellCompact(ms: number): string {
+  if (!ms || ms < 1000) return '0 秒';
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec} 秒`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} 分`;
+  const hr = Math.floor(min / 60);
+  return `${hr} 小时${min % 60 ? ` ${min % 60} 分` : ''}`;
+}
+
+// 账号级总计的「缓过来」动效：数字从上一个值缓动到目标值（easeOutCubic）。
+function useCountUp(target: number, durationMs = 700): number {
+  const [val, setVal] = useState(target);
+  const fromRef = useRef(target);
+  useEffect(() => {
+    const from = fromRef.current;
+    const to = target;
+    if (from === to) return;
+    let raf = 0;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / durationMs);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setVal(from + (to - from) * eased);
+      if (t < 1) raf = requestAnimationFrame(tick);
+      else { fromRef.current = to; setVal(to); }
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, durationMs]);
+  return val;
+}
+
+function AnimatedStat({ value, format }: { value: number; format: (n: number) => string }) {
+  const v = useCountUp(value);
+  return <strong style={{ color: 'var(--text-primary)' }}>{format(v)}</strong>;
+}
+
+// 挂载后淡入，避免账号总计「突然蹦出来」撑宽整行。
+function FadeIn({ children }: { children: React.ReactNode }) {
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    const r = requestAnimationFrame(() => setShown(true));
+    return () => cancelAnimationFrame(r);
+  }, []);
+  return <span style={{ opacity: shown ? 1 : 0, transition: 'opacity 0.45s ease' }}>{children}</span>;
+}
 
 // ── 创建空间对话框 ──
 function CreateStoreDialog({ onClose, onCreated }: {
@@ -529,10 +587,12 @@ function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle, onClos
 }
 
 // ── 空间详情视图（文档列表 + 上传）──
-function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
+function StoreDetailView({ storeId, onBack, onOpenLibrary, initialEntryId }: {
   storeId: string;
   onBack: () => void;
   onOpenLibrary: (storeId: string) => void;
+  /** 进入时直接打开的文档（从账号统计点击文档跳转而来）；组件按 storeId key 重挂载，挂载时消费一次 */
+  initialEntryId?: string;
 }) {
   const [store, setStore] = useState<DocumentStore | null>(null);
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
@@ -540,6 +600,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
   const [sharedEntryIds, setSharedEntryIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(undefined);
+  // 从账号统计点击文档跳转而来：挂载时打开指定文档（组件按 storeId key 重挂载，仅消费一次）
+  useEffect(() => {
+    if (initialEntryId) setSelectedEntryId(initialEntryId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [showSubscribe, setShowSubscribe] = useState(false);
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [showViewers, setShowViewers] = useState(false);
@@ -931,8 +996,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
                 发布到智识殿堂
               </button>
             )}
-            <Button variant="secondary" size="xs" onClick={() => setShowViewers(true)}>
-              <Users size={13} /> 访客
+            <Button variant="secondary" size="xs" onClick={() => setShowViewers(true)} title="查看本知识库的访客统计报表">
+              <BarChart3 size={13} /> 统计
             </Button>
             <Button variant="secondary" size="xs" onClick={() => setShowShareDialog(true)}>
               <Share2 size={13} /> 分享
@@ -1174,6 +1239,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
           storeId={storeId}
           storeName={store.name}
           onClose={() => setShowViewers(false)}
+          // 单库内点击文档排行/流水 → 直接在本库打开该文档
+          onOpenDocument={(_sid, entryId) => { setShowViewers(false); setSelectedEntryId(entryId); }}
         />
       )}
     </div>
@@ -1531,6 +1598,33 @@ export function DocumentStorePage() {
     sessionStorage.setItem('doc-store-tab', tab);
   }, [tab]);
 
+  // 账号级访客总计（仅「我的空间」：访客/停留是「谁看了我的库」，只有 owner 才有意义）
+  const [accountSummary, setAccountSummary] = useState<DocumentStoreAccountSummary | null>(null);
+  useEffect(() => {
+    if (tab !== 'mine') return;
+    let cancelled = false;
+    (async () => {
+      const res = await getStoresAnalyticsSummary();
+      if (!cancelled && res.success) setAccountSummary(res.data);
+    })();
+    return () => { cancelled = true; };
+  }, [tab]);
+
+  // 列表页「统计」入口：打开账号级访客报表抽屉（聚合全部知识库）
+  const [showAccountViewers, setShowAccountViewers] = useState(false);
+  // 从账号统计点击文档跳转时，待打开的 entryId（store 切换后由 StoreDetailView 消费）
+  const [pendingEntryId, setPendingEntryId] = useState<string | null>(null);
+  const openDocument = useCallback((sid: string, entryId: string) => {
+    setShowAccountViewers(false);
+    setPendingEntryId(entryId);
+    setSelectedStoreId(sid);
+  }, []);
+  const openStore = useCallback((sid: string) => {
+    setShowAccountViewers(false);
+    setPendingEntryId(null);
+    setSelectedStoreId(sid);
+  }, []);
+
   const tabs: { key: StoreTab; label: string; icon: typeof Library }[] = [
     { key: 'mine', label: '我的空间', icon: Library },
     { key: 'team', label: '团队空间', icon: Users },
@@ -1587,8 +1681,9 @@ export function DocumentStorePage() {
 
   // 空间详情视图（仅 mine 标签下可进入编辑视图）—— 早返回必须放在所有 hook 之后
   if (selectedStoreId) {
-    return <StoreDetailView storeId={selectedStoreId} onBack={() => {
+    return <StoreDetailView storeId={selectedStoreId} key={selectedStoreId} initialEntryId={pendingEntryId ?? undefined} onBack={() => {
       setSelectedStoreId(null);
+      setPendingEntryId(null);
       // 按当前 tab 重新拉对应列表,避免从收藏/点赞返回时仍刷 stores
       if (tab === 'mine') loadStores('mine', null);
       else if (tab === 'team') {
@@ -1665,6 +1760,7 @@ export function DocumentStorePage() {
             />
           )}
           {/* 统计概览 */}
+          {/* 功能区：库数 / 文章数（左侧） */}
           <span data-tour-id="library-stats" className="text-[12px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
             共 <strong style={{ color: 'var(--text-primary)' }}>{totalStores}</strong> 个知识库
             <span className="opacity-50 mx-1.5">·</span>
@@ -1844,6 +1940,29 @@ export function DocumentStorePage() {
           </div>
 
           <span className="flex-1" />
+          {/* 统计区：账号级访客总计（右侧）。数字 count-up 缓动 + 整段淡入，避免突然蹦出。 */}
+          {tab === 'mine' && accountSummary && (
+            <FadeIn>
+              <span className="text-[12px] tabular-nums whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
+                <AnimatedStat value={accountSummary.totalViews} format={formatCountCompact} /> 次访问
+                <span className="opacity-50 mx-1.5">·</span>
+                <AnimatedStat value={accountSummary.uniqueVisitors} format={formatCountCompact} /> 访客
+                <span className="opacity-50 mx-1.5">·</span>
+                停留 <AnimatedStat value={accountSummary.totalDurationMs} format={formatDwellCompact} />
+              </span>
+            </FadeIn>
+          )}
+          {/* 统计按钮：再往右，打开全部知识库的访客统计报表（区别于知识库内的单库统计） */}
+          {tab === 'mine' && (
+            <Button
+              variant="secondary"
+              size="xs"
+              onClick={() => setShowAccountViewers(true)}
+              title="查看全部知识库的访客统计报表（趋势 / 时段 / 排行 / 停留）"
+            >
+              <BarChart3 size={13} /> 统计
+            </Button>
+          )}
           <Button
             variant="primary"
             size="xs"
@@ -2149,6 +2268,16 @@ export function DocumentStorePage() {
           </div>
         )}
       </div>
+
+      {/* 账号级访客统计抽屉（列表页「统计」入口，聚合全部知识库） */}
+      {showAccountViewers && (
+        <ViewersDrawer
+          scope="account"
+          onClose={() => setShowAccountViewers(false)}
+          onOpenDocument={openDocument}
+          onOpenStore={openStore}
+        />
+      )}
 
       {showCreate && (
         <CreateStoreDialog
