@@ -102,7 +102,11 @@ export function SyncManagerPanel() {
     setRunningId(link.id);
     const res = await runSyncLink(link.id);
     if (res.success) {
-      toast.success('同步完成', res.data.lastResult ?? undefined);
+      // 后端可能返回 pending（如对端状态未取到），此时不能报"同步完成"
+      if (res.data.status === 'pending')
+        toast.warning('同步已执行，对端状态待确认', res.data.lastResult ?? undefined);
+      else
+        toast.success('同步完成', res.data.lastResult ?? undefined);
       setLinks(prev => prev.map(l => l.id === link.id ? res.data : l));
     } else {
       toast.error('同步失败', res.error?.message);

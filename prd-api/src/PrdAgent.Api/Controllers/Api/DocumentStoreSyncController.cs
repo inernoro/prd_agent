@@ -167,7 +167,8 @@ public class DocumentStoreSyncController : ControllerBase
                 // 血缘已存在：标题/父/标签/元信息有变化则更新（真正的 upsert，不只是 skip），
                 // 否则重命名/移动文件夹在后续同步不传播。
                 var newTags = f.Tags ?? new List<string>();
-                if (exFolder.Title != f.Title || exFolder.ParentId != parentId)
+                if (exFolder.Title != f.Title || exFolder.ParentId != parentId
+                    || !TagsEqual(exFolder.Tags, f.Tags) || !MetaEqual(exFolder.Metadata, f.Metadata))
                 {
                     await _db.DocumentEntries.UpdateOneAsync(e => e.Id == exFolder.Id,
                         Builders<DocumentEntry>.Update
@@ -247,8 +248,12 @@ public class DocumentStoreSyncController : ControllerBase
                     var existingContent = !string.IsNullOrEmpty(exEntry.DocumentId)
                         ? (await _documentService.GetByIdAsync(exEntry.DocumentId))?.RawContent ?? string.Empty
                         : string.Empty;
+                    // 全字段比对再决定跳过：正文 hash + 标题 + 父 + 标签 + 摘要 + 元信息。
+                    // 只比正文会漏掉"仅改标签/摘要/元信息"的同步（两侧永久不一致却显示已同步）。
                     if (Sha256Hex(existingContent) == Sha256Hex(fe.Content)
-                        && exEntry.Title == fe.Title && exEntry.ParentId == parentId)
+                        && exEntry.Title == fe.Title && exEntry.ParentId == parentId
+                        && TagsEqual(exEntry.Tags, fe.Tags) && exEntry.Summary == fe.Summary
+                        && MetaEqual(exEntry.Metadata, fe.Metadata))
                     {
                         skipped++;
                         continue;
@@ -325,6 +330,21 @@ public class DocumentStoreSyncController : ControllerBase
         return m;
     }
 
+    // 标签集合相等（顺序无关）。
+    private static bool TagsEqual(List<string>? a, List<string>? b)
+        => (a ?? new()).OrderBy(x => x, StringComparer.Ordinal)
+            .SequenceEqual((b ?? new()).OrderBy(x => x, StringComparer.Ordinal));
+
+    // 元信息相等（忽略内部血缘键 syncLineageId，其余 key=value 顺序无关比对）。
+    private static bool MetaEqual(Dictionary<string, string>? a, Dictionary<string, string>? b)
+    {
+        static string Norm(Dictionary<string, string>? m) => string.Join("\n", (m ?? new())
+            .Where(kv => kv.Key != SyncLineageKey)
+            .OrderBy(kv => kv.Key, StringComparer.Ordinal)
+            .Select(kv => kv.Key + "=" + kv.Value));
+        return Norm(a) == Norm(b);
+    }
+
     /// <summary>计算一个本地库的内容签名（不加载正文，仅 lineage|UpdatedAt|title，廉价）。</summary>
     private async Task<string> ComputeSignatureAsync(string storeId)
     {
@@ -363,7 +383,9 @@ public class DocumentStoreSyncController : ControllerBase
     private async Task<HttpResponseMessage> CallRemoteAsync(DocumentStoreSyncLink link, HttpMethod method, string subPath, object? body)
     {
         var baseUri = await _urlValidator.EnsureSafeHttpUrlAsync(link.RemoteBaseUrl, "document-store-sync");
-        var url = $"{baseUri.GetLeftPart(UriPartial.Authority)}/api/document-store/stores/{link.RemoteStoreId}/{subPath}";
+        // 保留对端 base URL 里的 path 前缀（API 部署在子路径下时不能只取 authority，否则全失败）。
+        var baseLeft = baseUri.GetLeftPart(UriPartial.Path).TrimEnd('/');
+        var url = $"{baseLeft}/api/document-store/stores/{link.RemoteStoreId}/{subPath}";
         var req = new HttpRequestMessage(method, url);
         req.Headers.TryAddWithoutValidation(SyncTokenHeader, link.RemoteToken ?? string.Empty);
         if (body != null)
@@ -466,11 +488,15 @@ public class DocumentStoreSyncController : ControllerBase
         var (remote, e2) = await LoadWritableStoreAsync(request.TargetStoreId, userId);
         if (e2 != null) return e2;
 
+        // 去重：同一对本地库不论 A→B 还是 B→A 都视为已配对（避免两条反向重复行各跑全量同步）。
+        var tgt = request.TargetStoreId;
         var existing = await _db.DocumentStoreSyncLinks
-            .Find(l => l.LocalStoreId == storeId && l.RemoteStoreId == request.TargetStoreId && l.OwnerId == userId)
+            .Find(l => l.OwnerId == userId && l.LinkType == DocumentSyncLinkType.Local
+                && ((l.LocalStoreId == storeId && l.RemoteStoreId == tgt)
+                    || (l.LocalStoreId == tgt && l.RemoteStoreId == storeId)))
             .FirstOrDefaultAsync();
         if (existing != null)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.DUPLICATE, "该配对已存在"));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.DUPLICATE, "这两个库已配对（含反向）"));
 
         var link = new DocumentStoreSyncLink
         {
@@ -595,6 +621,14 @@ public class DocumentStoreSyncController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "同步配对不存在"));
         var (local, error) = await LoadWritableStoreAsync(link.LocalStoreId, userId);
         if (error != null) return error;
+        // 本地配对：每次运行都重新校验对端本地库的当前可写权限。
+        // 否则团队分享被撤销后，旧配对仍能读写对端库（Codex P1 越权）。跨环境配对靠对端令牌鉴权，无此问题。
+        if (link.LinkType == DocumentSyncLinkType.Local)
+        {
+            var (_, remoteErr) = await LoadWritableStoreAsync(link.RemoteStoreId, userId);
+            if (remoteErr != null)
+                return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "对端知识库已无访问权限（可能团队分享已撤销），无法同步"));
+        }
 
         var (actorUserId, actorName, actorAvatar) = await GetActorAsync(userId);
         var summary = new List<string>();

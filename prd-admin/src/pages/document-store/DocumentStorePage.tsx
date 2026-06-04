@@ -31,7 +31,7 @@ import {
   Tag,
   FolderSync,
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
@@ -1392,6 +1392,19 @@ export function DocumentStorePage() {
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(() => {
     return sessionStorage.getItem('doc-store-selected-id');
   });
+
+  // 深链 ?tab=xxx（如「同步知识库教程」用 ?tab=sync 直达同步页签）：清空详情视图 + 切到该 tab，
+  // 这样从任意位置（含某个知识库详情内）打开教程都能落到目标页签，再把 query 抹掉避免重复触发。
+  const location = useLocation();
+  useEffect(() => {
+    const t = new URLSearchParams(location.search).get('tab');
+    const valid: StoreTab[] = ['mine', 'team', 'favorites', 'likes', 'sync'];
+    if (t && (valid as string[]).includes(t)) {
+      setSelectedStoreId(null);
+      setTab(t as StoreTab);
+      navigate(location.pathname, { replace: true });
+    }
+  }, [location.search, location.pathname, navigate]);
 
   // 第二排：搜索 + 排序（sessionStorage 持久化；CLAUDE.md no-localStorage 规则）
   const [search, setSearch] = useState<string>(() => sessionStorage.getItem('doc-store-search') ?? '');

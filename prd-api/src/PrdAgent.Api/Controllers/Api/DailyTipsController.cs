@@ -847,17 +847,19 @@ public sealed class DailyTipsController : ControllerBase
             T("document-store-sync-guide", "card",
                 "同步知识库：跨环境 / 本地库双向同步教程",
                 "学会把一个知识库和另一处的库（不同环境，或本环境另一个库）建立永久配对、单向或双向同步。",
-                "/document-store",
+                "/document-store?tab=sync",
                 "开始同步教程",
-                "[data-tour-id=library-tabs]",
+                "[data-tour-id=sync-toolbar]",
                 1,
                 new DailyTipAutoAction
                 {
                     Scroll = "center",
+                    // 首步用 ?tab=sync 直达同步页签（DocumentStorePage 会据此清空详情视图 + 切到同步 tab），
+                    // 这样即使用户当前正在某个知识库详情里开讲，也能落到同步页签而不卡在找不到锚点（Bugbot: detail fallback）。
                     Steps = new List<DailyTipTourStep>
                     {
-                        new() { Selector = "[data-tour-id=library-tabs]", Title = "第 1 步：什么是同步知识库", Body = "同步让一个知识库的内容在两处保持一致——可以是测试/正式两个环境，也可以是本环境的两个库。同步是单库粒度，只搬这一个库的文档，不碰你的账号或别的库。", NavigateTo = "/document-store" },
-                        new() { Selector = "[data-tour-id=library-sync-tab]", Title = "第 2 步：进入「跨环境同步」页签", Body = "顶部最右的「跨环境同步」页签就是同步管理中心。点「下一步」自动带你进去。" },
+                        new() { Selector = "[data-tour-id=sync-toolbar], [data-tour-id=library-sync-tab]", Title = "第 1 步：进入「跨环境同步」页签", Body = "同步让一个知识库的内容在两处保持一致——可以是测试/正式两个环境，也可以是本环境的两个库。这里就是同步管理中心（单库粒度，只搬这一个库的文档，不碰账号或别的库）。", NavigateTo = "/document-store?tab=sync" },
+                        new() { Selector = "[data-tour-id=library-sync-tab], [data-tour-id=sync-toolbar]", Title = "第 2 步：「跨环境同步」页签", Body = "顶部最右的「跨环境同步」页签就是入口，以后从这里进来管理所有同步配对。" },
                         new() { Selector = "[data-tour-id=sync-toolbar]", Title = "第 3 步：同步工具栏", Body = "这里有「启动链接」「生成连接链接」「刷新」，下面列出你所有的同步配对。" },
                         new() { Selector = "[data-tour-id=sync-start-link]", Title = "第 4 步：启动链接（建立配对）", Body = "两种方式二选一：跨环境就粘贴对方给的 skblink 链接；本环境两个库就直接选 A、B。还能选方向：双向 / 只推 / 只拉。" },
                         new() { Selector = "[data-tour-id=sync-generate-link]", Title = "第 5 步：生成连接链接（给对端）", Body = "想让别的环境连过来，就在这里选库生成一条 skblink 永久链接发过去。令牌永久有效、不会过期，不想要了可在库里撤销。" },
