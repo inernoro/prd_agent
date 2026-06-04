@@ -158,10 +158,61 @@ public class DocumentStoreSyncController : ControllerBase
             return null;
         }
 
-        // 文件夹先建（parent-first，多趟扫描）
+        // 文件夹先建（parent-first，多趟扫描）。本地函数封装"建一个文件夹"，供主循环与兜底复用。
+        async Task UpsertFolderAsync(SyncEntryDto f, string? parentId)
+        {
+            if (byLineage.TryGetValue(f.LineageId, out var exFolder))
+            {
+                lineageToTargetId[f.LineageId] = exFolder.Id;
+                // 血缘已存在：标题/父/标签/元信息有变化则更新（真正的 upsert，不只是 skip），
+                // 否则重命名/移动文件夹在后续同步不传播。
+                var newTags = f.Tags ?? new List<string>();
+                if (exFolder.Title != f.Title || exFolder.ParentId != parentId)
+                {
+                    await _db.DocumentEntries.UpdateOneAsync(e => e.Id == exFolder.Id,
+                        Builders<DocumentEntry>.Update
+                            .Set(e => e.Title, f.Title)
+                            .Set(e => e.ParentId, parentId)
+                            .Set(e => e.Tags, newTags)
+                            .Set(e => e.Metadata, WithLineage(f.Metadata, f.LineageId))
+                            .Set(e => e.UpdatedBy, actorUserId)
+                            .Set(e => e.UpdatedByName, actorName)
+                            .Set(e => e.UpdatedAt, DateTime.UtcNow));
+                    exFolder.Title = f.Title;
+                    exFolder.ParentId = parentId;
+                    updated++;
+                }
+                else
+                {
+                    skipped++;
+                }
+                return;
+            }
+            var folder = new DocumentEntry
+            {
+                StoreId = target.Id,
+                ParentId = parentId,
+                IsFolder = true,
+                Title = f.Title,
+                SourceType = DocumentSourceType.Import,
+                ContentType = "application/x-folder",
+                Tags = f.Tags ?? new List<string>(),
+                Metadata = WithLineage(f.Metadata, f.LineageId),
+                CreatedBy = actorUserId,
+                CreatedByName = actorName,
+                CreatedByAvatarFileName = actorAvatar,
+                UpdatedBy = actorUserId,
+                UpdatedByName = actorName,
+            };
+            await _db.DocumentEntries.InsertOneAsync(folder);
+            byLineage[f.LineageId] = folder;
+            lineageToTargetId[f.LineageId] = folder.Id;
+            created++;
+        }
+
         var pendingFolders = entries.Where(e => e.IsFolder).ToList();
         var guard = 0;
-        while (pendingFolders.Count > 0 && guard++ < 2000)
+        while (pendingFolders.Count > 0 && guard++ < 5000)
         {
             var progressed = false;
             foreach (var f in pendingFolders.ToList())
@@ -171,40 +222,16 @@ public class DocumentStoreSyncController : ControllerBase
                     && !byLineage.ContainsKey(f.ParentLineageId))
                     continue; // 父还没建，下趟
 
-                var parentId = ResolveParent(f.ParentLineageId);
-                if (byLineage.TryGetValue(f.LineageId, out var exFolder))
-                {
-                    lineageToTargetId[f.LineageId] = exFolder.Id;
-                    skipped++;
-                }
-                else
-                {
-                    var folder = new DocumentEntry
-                    {
-                        StoreId = target.Id,
-                        ParentId = parentId,
-                        IsFolder = true,
-                        Title = f.Title,
-                        SourceType = DocumentSourceType.Import,
-                        ContentType = "application/x-folder",
-                        Tags = f.Tags ?? new List<string>(),
-                        Metadata = WithLineage(f.Metadata, f.LineageId),
-                        CreatedBy = actorUserId,
-                        CreatedByName = actorName,
-                        CreatedByAvatarFileName = actorAvatar,
-                        UpdatedBy = actorUserId,
-                        UpdatedByName = actorName,
-                    };
-                    await _db.DocumentEntries.InsertOneAsync(folder);
-                    byLineage[f.LineageId] = folder;
-                    lineageToTargetId[f.LineageId] = folder.Id;
-                    created++;
-                }
+                await UpsertFolderAsync(f, ResolveParent(f.ParentLineageId));
                 pendingFolders.Remove(f);
                 progressed = true;
             }
             if (!progressed) break;
         }
+        // 兜底：仍有未解析父引用的文件夹（孤儿/环引用），直接建在能解析到的父（解析不到则根），
+        // 保证它们存在 —— 否则其子文件会因找不到父文件夹而全部落到库根（比落在残缺树下更糟）。
+        foreach (var f in pendingFolders)
+            await UpsertFolderAsync(f, ResolveParent(f.ParentLineageId));
 
         // 文件类条目
         foreach (var fe in entries.Where(e => !e.IsFolder))
@@ -537,6 +564,15 @@ public class DocumentStoreSyncController : ControllerBase
             Status = DocumentSyncLinkStatus.Never,
         };
 
+        // 去重：同一本地库 + 同一对端库 + 同一对端地址不允许重复配对（与 CreateLocalLink 对齐，
+        // 否则同一条 skblink 粘两次会产生并行配对各自跑全量同步、列表混乱）。
+        var dupRemote = await _db.DocumentStoreSyncLinks.Find(l =>
+                l.OwnerId == userId && l.LocalStoreId == storeId
+                && l.RemoteStoreId == link.RemoteStoreId && l.RemoteBaseUrl == link.RemoteBaseUrl)
+            .FirstOrDefaultAsync();
+        if (dupRemote != null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.DUPLICATE, "该跨环境配对已存在"));
+
         // 探测对端可达 + 令牌有效
         var remoteSig = await GetRemoteSignatureAsync(link);
         if (remoteSig == null)
@@ -623,21 +659,25 @@ public class DocumentStoreSyncController : ControllerBase
             var localSig = await ComputeSignatureAsync(link.LocalStoreId);
             var remoteSig = await GetRemoteSignatureAsync(link);
             var resultText = string.Join("；", summary);
+            // 对端签名抓取失败（null）时不能判 synced：否则 LastRemoteSignature 为 null，
+            // ResolveStatus 永远侦测不到对端改动，pull/both 链接会假装"已同步"。此时标 pending 提示用户重试。
+            var postStatus = remoteSig == null ? DocumentSyncLinkStatus.Pending : DocumentSyncLinkStatus.Synced;
+            if (remoteSig == null) resultText = string.IsNullOrEmpty(resultText) ? "同步已执行，但对端状态获取失败，请稍后重试确认" : resultText + "；对端状态获取失败，请稍后重试确认";
             await _db.DocumentStoreSyncLinks.UpdateOneAsync(l => l.Id == link.Id,
                 Builders<DocumentStoreSyncLink>.Update
                     .Set(l => l.LastSyncedAt, DateTime.UtcNow)
                     .Set(l => l.LastLocalSignature, localSig)
                     .Set(l => l.LastRemoteSignature, remoteSig)
-                    .Set(l => l.Status, DocumentSyncLinkStatus.Synced)
+                    .Set(l => l.Status, postStatus)
                     .Set(l => l.LastResult, resultText)
                     .Set(l => l.UpdatedAt, DateTime.UtcNow));
 
             link.LastSyncedAt = DateTime.UtcNow;
             link.LastLocalSignature = localSig;
             link.LastRemoteSignature = remoteSig;
-            link.Status = DocumentSyncLinkStatus.Synced;
+            link.Status = postStatus;
             link.LastResult = resultText;
-            return Ok(ApiResponse<object>.Ok(ToDto(link, DocumentSyncLinkStatus.Synced, localSig, remoteSig, local!.Name)));
+            return Ok(ApiResponse<object>.Ok(ToDto(link, postStatus, localSig, remoteSig, local!.Name)));
         }
         catch (Exception ex)
         {
@@ -671,7 +711,11 @@ public class DocumentStoreSyncController : ControllerBase
         return Ok(ApiResponse<object>.Ok(ToDto(link, link.Status, null, null)));
     }
 
-    /// <summary>撤销配对。若本库不再有任何 remote 配对引用 SyncToken，则清空令牌彻底失效。</summary>
+    /// <summary>
+    /// 撤销配对（删除本端的配对记录，停止本端发起的同步）。
+    /// 注意：这只断开"本库 → 对端"的出站连接，用的是对端令牌，不影响本库自己的 SyncToken。
+    /// 要让"别人凭本库 skblink 连进来"彻底失效，须调 revoke-token（清空本库 SyncToken）—— 二者是不同方向的动作。
+    /// </summary>
     [Authorize]
     [HttpDelete("sync/{linkId}")]
     public async Task<IActionResult> DeleteLink(string linkId)
@@ -801,18 +845,24 @@ public class DocumentStoreSyncController : ControllerBase
 
     private static string ResolveStatus(DocumentStoreSyncLink link, string? localSig, string? remoteSig)
     {
-        if (link.Status == DocumentSyncLinkStatus.Error) return DocumentSyncLinkStatus.Error;
         if (link.LastSyncedAt == null) return DocumentSyncLinkStatus.Never;
         // 签名与上次同步快照不一致 = 该侧有改动。按方向只关心"会被本次同步搬动"的那侧：
         // push 只看本地、pull 只看对端、both 看任一侧。
         var localChanged = localSig != null && link.LastLocalSignature != null && localSig != link.LastLocalSignature;
-        var remoteChanged = remoteSig != null && link.LastRemoteSignature != null && remoteSig != link.LastRemoteSignature;
+        // 对端：签名漂移 = 改动；另外，需要对端的方向若 LastRemoteSignature 为空（上次没抓到快照），
+        // 视为"对端状态未知 → 待同步"，避免假"已同步"（Bugbot: null remote snapshot breaks pending）。
+        var remoteChanged = (remoteSig != null && link.LastRemoteSignature != null && remoteSig != link.LastRemoteSignature)
+            || link.LastRemoteSignature == null;
         var relevant = link.Direction switch
         {
             DocumentSyncDirection.Push => localChanged,
             DocumentSyncDirection.Pull => remoteChanged,
             _ => localChanged || remoteChanged,
         };
+        // error 不再无脑置顶屏蔽漂移：一旦任一相关侧有新改动，改判 pending 提示"重试可同步新内容"
+        // （Bugbot: error status hides pending changes）；无新改动才维持 error。
+        if (link.Status == DocumentSyncLinkStatus.Error)
+            return relevant ? DocumentSyncLinkStatus.Pending : DocumentSyncLinkStatus.Error;
         return relevant ? DocumentSyncLinkStatus.Pending : DocumentSyncLinkStatus.Synced;
     }
 

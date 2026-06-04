@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Link as LinkIcon, Copy, CheckCircle2, AlertCircle, RefreshCw,
   Trash2, X, ArrowLeftRight, ArrowRight, ArrowLeft, Globe, FolderSync, Clock,
@@ -8,7 +8,7 @@ import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import {
   listAllSyncLinks, listStoreSyncLinks, createLocalSyncLink, generateSyncLink, connectSyncLink,
-  runSyncLink, updateSyncLinkDirection, deleteSyncLink,
+  runSyncLink, updateSyncLinkDirection, deleteSyncLink, revokeSyncToken,
   type DocumentSyncLink, type SyncDirection, type SyncLinkStatus,
 } from '@/services/real/documentStoreSync';
 import { listDocumentStoresWithPreview } from '@/services/real/documentStore';
@@ -79,12 +79,18 @@ export function SyncManagerPanel() {
   const [showStart, setShowStart] = useState(false);
   const [showGenerate, setShowGenerate] = useState(false);
 
+  // 防 stale 响应：快速点刷新 / 切走再回来时，旧请求回填会覆盖新数据。
+  // 单调递增序号锁住"只有最新一次请求才能 setState"（与 DocumentStorePage 的 listFetchSeq 同款，
+  // 满足 prd-admin learned rule: tab/filter 触发的 async fetch 必须有 fetchId stale-guard）。
+  const loadSeq = useRef(0);
   const load = useCallback(async () => {
+    const mySeq = ++loadSeq.current;
     setLoading(true);
     const [linkRes, storeRes] = await Promise.all([
       listAllSyncLinks(),
       listDocumentStoresWithPreview(1, 500, { scope: 'mine' }),
     ]);
+    if (mySeq !== loadSeq.current) return; // 已有更新的请求发出，丢弃本次回填
     if (linkRes.success) setLinks(linkRes.data.items ?? []);
     if (storeRes.success) setMyStores(storeRes.data.items ?? []);
     setLoading(false);
@@ -400,6 +406,17 @@ function GenerateLinkDialog({ stores, onClose }: {
     catch { toast.error('复制失败，请手动选择复制'); }
   };
 
+  const revoke = async () => {
+    if (busy || !storeId) return;
+    if (!window.confirm('撤销后，所有用本库连接链接连入的对端将立即失效（已建立的配对无法再同步）。确定撤销？')) return;
+    setBusy(true);
+    setError('');
+    const res = await revokeSyncToken(storeId);
+    if (res.success) { setLink(''); toast.success('已撤销本库连接令牌，旧链接立即失效'); }
+    else setError(res.error?.message ?? '撤销失败');
+    setBusy(false);
+  };
+
   return (
     <div className="surface-backdrop fixed inset-0 z-50 flex items-center justify-center"
       onClick={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}>
@@ -418,7 +435,7 @@ function GenerateLinkDialog({ stores, onClose }: {
         </div>
 
         <p className="mb-4 text-[12px] text-token-muted leading-relaxed">
-          把生成的链接发给对端环境，对端在「启动链接」里粘贴即可双向同步。令牌永久有效，撤销请在该知识库详情里操作。
+          把生成的链接发给对端环境，对端在「启动链接」里粘贴即可双向同步。令牌永久有效；不想再被连入时，点下方「撤销连接令牌」即刻失效所有旧链接。
         </p>
 
         <div className="mb-4">
@@ -451,11 +468,16 @@ function GenerateLinkDialog({ stores, onClose }: {
 
         {error && <p className="mb-3 text-[12px] text-token-error">{error}</p>}
 
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" size="xs" onClick={onClose}>关闭</Button>
-          <Button variant="primary" size="xs" onClick={generate} disabled={busy}>
-            {busy ? '生成中…' : link ? '重新生成' : '生成链接'}
+        <div className="flex items-center justify-between gap-2">
+          <Button variant="danger" size="xs" onClick={revoke} disabled={busy || !storeId}>
+            <Trash2 size={13} />撤销连接令牌
           </Button>
+          <div className="flex gap-2">
+            <Button variant="ghost" size="xs" onClick={onClose}>关闭</Button>
+            <Button variant="primary" size="xs" onClick={generate} disabled={busy}>
+              {busy ? '生成中…' : link ? '重新生成' : '生成链接'}
+            </Button>
+          </div>
         </div>
       </div>
     </div>
