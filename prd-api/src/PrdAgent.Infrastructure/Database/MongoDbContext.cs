@@ -49,6 +49,7 @@ public class MongoDbContext
     public IMongoCollection<AppSettings> AppSettings => _database.GetCollection<AppSettings>("appsettings");
     public IMongoCollection<AdminNotification> AdminNotifications => _database.GetCollection<AdminNotification>("admin_notifications");
     public IMongoCollection<DailyTip> DailyTips => _database.GetCollection<DailyTip>("daily_tips");
+    public IMongoCollection<ChangelogSnapshot> ChangelogSnapshots => _database.GetCollection<ChangelogSnapshot>("changelog_snapshots");
     public IMongoCollection<AutomationRule> AutomationRules => _database.GetCollection<AutomationRule>("automation_rules");
     /// <summary>
     /// PRD 问答系统提示词（非 JSON 输出任务）：按角色（PM/DEV/QA）可被管理后台覆盖
@@ -1632,6 +1633,19 @@ public class MongoDbContext
             SubmissionLikes.Indexes.CreateOne(new CreateIndexModel<SubmissionLike>(
                 Builders<SubmissionLike>.IndexKeys.Ascending(x => x.SubmissionId).Ascending(x => x.UserId),
                 new CreateIndexOptions { Name = "uniq_submission_likes_sid_uid", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+
+        // ChangelogSnapshots：按 Key 唯一（防多实例/多 Worker upsert 竞态插入重复行，
+        // 导致 GetAsync 命中任意旧行）。DBA 手建，定义见 doc/guide.mongodb-indexes.md。
+        try
+        {
+            ChangelogSnapshots.Indexes.CreateOne(new CreateIndexModel<ChangelogSnapshot>(
+                Builders<ChangelogSnapshot>.IndexKeys.Ascending(x => x.Key),
+                new CreateIndexOptions { Name = "uniq_changelog_snapshots_key", Unique = true }));
         }
         catch (MongoCommandException ex) when (IsIndexConflict(ex))
         {

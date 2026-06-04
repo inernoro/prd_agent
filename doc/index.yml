@@ -264,6 +264,7 @@ docs:
   debt.cds-agent: CDS Agent 工作台 · 债务台账（R1 商业级 / Lite 边界 / 文档熵减）
   debt.cds-state-json: CDS state.json 影子存储债务台账
   debt.cds-compose-secrets: CDS compose 模板 TODO secrets / 全量 import 被拒债务台账
+  debt.changelog-center: 更新中心（终身存储 + SSE 推送）债务台账
   debt.cds-tutorial: CDS 教程（示例工程 + 隔离知识库 + 评分/自愈）债务台账
   debt.cds-visual-deploy: CDS 绝对可视化一键部署 · 债务台账（已知边界 + 低边际 backlog + 独立 fixture demo 阻塞）
   debt.knowledge-base: 知识库（AI Toolbox attachment + 文档空间）债务台账
