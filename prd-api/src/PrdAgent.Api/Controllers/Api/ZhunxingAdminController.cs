@@ -71,6 +71,32 @@ public class ZhunxingAdminController : ControllerBase
         }
     }
 
+    [HttpGet("feedbacks/summary")]
+    public async Task<IActionResult> GetFeedbackSummary([FromQuery] int top = 10, CancellationToken ct = default)
+    {
+        var summary = await _knowledgeService.GetFeedbackSummaryAsync(top, ct);
+        return Ok(ApiResponse<ZhunxingFeedbackSummary>.Ok(summary));
+    }
+
+    [HttpGet("feedbacks")]
+    public async Task<IActionResult> ListFeedbacks(
+        [FromQuery] string? feedbackType = null,
+        [FromQuery] bool? matched = null,
+        [FromQuery] string? keyword = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        CancellationToken ct = default)
+    {
+        var result = await _knowledgeService.ListFeedbacksAsync(
+            feedbackType,
+            matched,
+            keyword,
+            page,
+            pageSize,
+            ct);
+        return Ok(ApiResponse<ZhunxingFeedbackListResult>.Ok(result));
+    }
+
     [HttpGet("documents")]
     public async Task<IActionResult> ListDocuments([FromQuery] bool includeInactive = false, CancellationToken ct = default)
     {

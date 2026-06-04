@@ -722,6 +722,8 @@ export const api = {
     health: () => '/api/zhunxing/health',
     ask: () => '/api/zhunxing/ask',
     feedback: () => '/api/zhunxing/feedback',
+    feedbacks: () => '/api/zhunxing/feedbacks',
+    feedbackSummary: () => '/api/zhunxing/feedbacks/summary',
   },
 
   // ============ V1 API (用户端) ============

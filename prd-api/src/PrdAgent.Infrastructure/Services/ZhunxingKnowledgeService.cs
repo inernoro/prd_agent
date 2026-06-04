@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -294,6 +295,117 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
         };
     }
 
+    public async Task<ZhunxingFeedbackSummary> GetFeedbackSummaryAsync(
+        int top = 10,
+        CancellationToken ct = default)
+    {
+        var topN = Math.Clamp(top, 1, 20);
+        var noMatchFilter = Builders<ZhunxingAskFeedback>.Filter.Eq(x => x.FeedbackType, ZhunxingFeedbackTypes.NoMatch);
+
+        var totalCount = await _db.ZhunxingAskFeedbacks.CountDocumentsAsync(Builders<ZhunxingAskFeedback>.Filter.Empty, cancellationToken: ct);
+        var noMatchCount = await _db.ZhunxingAskFeedbacks.CountDocumentsAsync(noMatchFilter, cancellationToken: ct);
+        var answerInaccurateCount = await _db.ZhunxingAskFeedbacks.CountDocumentsAsync(
+            Builders<ZhunxingAskFeedback>.Filter.Eq(x => x.FeedbackType, ZhunxingFeedbackTypes.AnswerInaccurate),
+            cancellationToken: ct);
+        var missingContextCount = await _db.ZhunxingAskFeedbacks.CountDocumentsAsync(
+            Builders<ZhunxingAskFeedback>.Filter.Eq(x => x.FeedbackType, ZhunxingFeedbackTypes.MissingContext),
+            cancellationToken: ct);
+
+        var noMatchSamples = await _db.ZhunxingAskFeedbacks
+            .Find(noMatchFilter)
+            .SortByDescending(x => x.CreatedAt)
+            .Limit(1000)
+            .ToListAsync(ct);
+
+        var topQuestions = noMatchSamples
+            .GroupBy(x => NormalizeQuestionClusterKey(x.Question), StringComparer.Ordinal)
+            .Select(g =>
+            {
+                var latest = g.OrderByDescending(x => x.CreatedAt).First();
+                return new ZhunxingFeedbackCluster
+                {
+                    ClusterKey = g.Key,
+                    SampleQuestion = latest.Question,
+                    Count = g.Count(),
+                    LastOccurredAt = latest.CreatedAt,
+                };
+            })
+            .OrderByDescending(x => x.Count)
+            .ThenByDescending(x => x.LastOccurredAt)
+            .Take(topN)
+            .ToList();
+
+        return new ZhunxingFeedbackSummary
+        {
+            TotalCount = totalCount,
+            NoMatchCount = noMatchCount,
+            AnswerInaccurateCount = answerInaccurateCount,
+            MissingContextCount = missingContextCount,
+            TopNoMatchQuestions = topQuestions,
+        };
+    }
+
+    public async Task<ZhunxingFeedbackListResult> ListFeedbacksAsync(
+        string? feedbackType = null,
+        bool? matched = null,
+        string? keyword = null,
+        int page = 1,
+        int pageSize = 20,
+        CancellationToken ct = default)
+    {
+        var safePage = Math.Max(1, page);
+        var safePageSize = Math.Clamp(pageSize, 1, 100);
+        var builder = Builders<ZhunxingAskFeedback>.Filter;
+        var filters = new List<FilterDefinition<ZhunxingAskFeedback>>();
+
+        if (!string.IsNullOrWhiteSpace(feedbackType)
+            && !string.Equals(feedbackType, "all", StringComparison.OrdinalIgnoreCase))
+        {
+            var normalizedType = NormalizeFeedbackType(feedbackType);
+            filters.Add(builder.Eq(x => x.FeedbackType, normalizedType));
+        }
+
+        if (matched.HasValue)
+            filters.Add(builder.Eq(x => x.Matched, matched.Value));
+
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            var escaped = Regex.Escape(keyword.Trim());
+            var regex = new BsonRegularExpression(escaped, "i");
+            filters.Add(builder.Or(
+                builder.Regex(x => x.Question, regex),
+                builder.Regex(x => x.Comment, regex)));
+        }
+
+        var filter = filters.Count == 0 ? builder.Empty : builder.And(filters);
+        var total = await _db.ZhunxingAskFeedbacks.CountDocumentsAsync(filter, cancellationToken: ct);
+        var items = await _db.ZhunxingAskFeedbacks
+            .Find(filter)
+            .SortByDescending(x => x.CreatedAt)
+            .Skip((safePage - 1) * safePageSize)
+            .Limit(safePageSize)
+            .ToListAsync(ct);
+
+        return new ZhunxingFeedbackListResult
+        {
+            Total = total,
+            Page = safePage,
+            PageSize = safePageSize,
+            Items = items.Select(x => new ZhunxingFeedbackListItem
+            {
+                Id = x.Id,
+                UserId = x.UserId,
+                Question = x.Question,
+                Matched = x.Matched,
+                Confidence = x.Confidence,
+                FeedbackType = x.FeedbackType,
+                Comment = x.Comment,
+                CitationClauseIds = x.CitationClauseIds,
+                CreatedAt = x.CreatedAt,
+            }).ToList(),
+        };
+    }
+
     public async Task<ZhunxingBootstrapResult> BootstrapAttendanceSampleAsync(
         string operatorUserId,
         CancellationToken ct = default)
@@ -475,6 +587,19 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
             return normalized;
 
         return ZhunxingFeedbackTypes.NoMatch;
+    }
+
+    private static string NormalizeQuestionClusterKey(string question)
+    {
+        if (string.IsNullOrWhiteSpace(question))
+            return "empty";
+
+        var normalized = question.Trim().ToLowerInvariant();
+        normalized = Regex.Replace(normalized, @"[\s，。！？、,.!?;:：；""'（）()\[\]【】\-_/\\]+", string.Empty);
+        if (normalized.Length > 24)
+            normalized = normalized[..24];
+
+        return string.IsNullOrWhiteSpace(normalized) ? "empty" : normalized;
     }
 
     private static List<ZhunxingKnowledgeClause> BuildAttendanceSeedClauses(string documentId, string operatorUserId)

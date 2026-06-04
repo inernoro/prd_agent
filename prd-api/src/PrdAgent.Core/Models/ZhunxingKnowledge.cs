@@ -161,6 +161,44 @@ public class ZhunxingAskFeedbackResult
     public string Message { get; set; } = string.Empty;
 }
 
+public class ZhunxingFeedbackSummary
+{
+    public long TotalCount { get; set; }
+    public long NoMatchCount { get; set; }
+    public long AnswerInaccurateCount { get; set; }
+    public long MissingContextCount { get; set; }
+    public List<ZhunxingFeedbackCluster> TopNoMatchQuestions { get; set; } = new();
+}
+
+public class ZhunxingFeedbackCluster
+{
+    public string ClusterKey { get; set; } = string.Empty;
+    public string SampleQuestion { get; set; } = string.Empty;
+    public int Count { get; set; }
+    public DateTime LastOccurredAt { get; set; }
+}
+
+public class ZhunxingFeedbackListResult
+{
+    public long Total { get; set; }
+    public int Page { get; set; }
+    public int PageSize { get; set; }
+    public List<ZhunxingFeedbackListItem> Items { get; set; } = new();
+}
+
+public class ZhunxingFeedbackListItem
+{
+    public string Id { get; set; } = string.Empty;
+    public string UserId { get; set; } = string.Empty;
+    public string Question { get; set; } = string.Empty;
+    public bool Matched { get; set; }
+    public double Confidence { get; set; }
+    public string FeedbackType { get; set; } = string.Empty;
+    public string? Comment { get; set; }
+    public List<string> CitationClauseIds { get; set; } = new();
+    public DateTime CreatedAt { get; set; }
+}
+
 [AppOwnership(AppNames.ZhunxingAgent, AppNames.ZhunxingAgentDisplay, IsPrimary = true)]
 public class ZhunxingAskFeedback
 {

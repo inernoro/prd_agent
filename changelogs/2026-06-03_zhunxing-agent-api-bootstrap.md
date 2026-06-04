@@ -6,3 +6,4 @@
 | feat | prd-admin | 在智能体首页新增“准星”卡片与问答页，接入 /zhunxing/ask 最小可用闭环 |
 | fix | prd-admin/prd-api | 修复准星问答路径为 /api/zhunxing/ask，并补管理端 ask 接口以适配 CDS 网关转发 |
 | feat | prd-api/prd-admin | 准星问答新增置信度与风险等级、条款全文展开、未命中一键反馈（含 feedback 持久化） |
+| feat | prd-api/prd-admin | 新增准星管理员反馈看板（高频未命中问题聚类、反馈筛选分页列表） |
