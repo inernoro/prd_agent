@@ -49,3 +49,30 @@ updated: 2026-06-02
 - `customers`：`{ ProductId:1, IsDeleted:1 }`
 - `product_form_templates`：`{ EntityType:1, ProductId:1, IsDeleted:1 }`
 - `product_workflow_definitions`：`{ EntityType:1, ProductId:1, IsDeleted:1 }`
+
+## P0-P3 + P1 增量进度（2026-06-03）
+
+P0/P1/P2/P3 四阶段研发全生命周期能力已交付（流转/处理人/缺陷转需求/评论时间线/通知/看板/SLA），另补齐 P0 三项（RTM 矩阵、富文本 XSS 净化、需求/功能父子层级）与 P1 两项（全局搜索、批量操作）。
+
+| # | 能力 | 状态 |
+|---|------|------|
+| 14 | 默认流程开箱即用 + 处理人一等公民 + 我负责的 | P0 已交付 |
+| 15 | 缺陷转需求 + SourceDefectId 溯源 | P1 已交付 |
+| 16 | 评论 + 活动时间线(product_item_activities) + admin_notifications 通知 | P2 已交付 |
+| 17 | 看板拖拽流转 + SLA(StateEnteredAt/SlaHours) + 流转自动认领(AutoAssignToActor) | P3 已交付 |
+| 18 | RTM 需求可追溯矩阵(products/{id}/rtm) | 已交付 |
+| 19 | 富文本渲染 XSS 净化(sanitizeHtml) | 已交付 |
+| 20 | 需求/功能父子层级 UI(ParentId 编辑 + 列表树形缩进) | 已交付 |
+| 21 | 全局搜索(search?keyword=，跨产品/需求/功能/客户/缺陷) | 已交付 |
+| 22 | 批量操作(items/batch，批量删除/指派/改分级) | 已交付 |
+
+## 仍未实现（按优先级，后续可补）
+
+| 能力 | 优先级 | 说明 / 未做原因 |
+|------|--------|----------------|
+| 知识库 MRD/SRS/PRD 分型 | P1(暂缓) | 版本/产品知识库复用共享组件 `DocumentStoreBrowser`，文档空间无简洁「建文本条目」API（条目走文件上传 + updateDocumentContent 编辑），深改共享组件风险高且本环境无法 CDS 验证。当前用户已可在版本库自建并命名 MRD/SRS/PRD 文档，分型仅为约定便利。**未来最干净路径**：在 DocumentStore 实体加可选 `docType`(mrd/srs/prd) + DocumentStoreBrowser 增「按类型分组/快速新建标准文档」开关（避免污染非 product-agent 用法），或在 product-agent 侧加一个 find-or-create 三类条目的封装端点（依赖文档空间补 create-text-entry API）。 |
+| 报表深度(燃尽图/迭代速度/版本进度) | P2 | 总览现为计数+饼图/柱图/漏斗；需基于状态流转历史(已有 product_item_activities 时间线可作数据源)算 burndown/velocity。 |
+| 看板 WIP 限制 + 泳道 | P2 | 每列在制上限告警 + 按处理人/分级分泳道。 |
+| 导入导出(Excel/CSV) | P2 | 需求批量导入 + 导出归档。 |
+| @ 内联弹层 | P3 | 现为「选人 chips」，可升级为编辑器内 @ 触发浮窗。 |
+| 图谱 dagre 自动布局 | P3 | 现为简单列布局(债务 8b)，节点多时堆叠，可接 dagre/ELK。 |
