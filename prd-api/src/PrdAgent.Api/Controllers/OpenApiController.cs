@@ -87,10 +87,18 @@ public class OpenApiController : ControllerBase
 
         // 模型白名单选择（client 可在白名单内自选；越界 400）
         var (chosen, modelErr) = ResolveModelChoice(key?.OpenApiChatModels, requestedModel);
-        if (modelErr != null) { await WriteJsonErrorAsync(400, "invalid_request_error", modelErr, "model_not_allowed"); return; }
+        if (modelErr != null)
+        {
+            await LogAsync(key, requestId, "chat", requestedModel, null, null, false, 400, "model_not_allowed", null, null, sw);
+            await WriteJsonErrorAsync(400, "invalid_request_error", modelErr, "model_not_allowed"); return;
+        }
 
         // 输入大小上限（先于占额，坏请求不消耗配额）
-        if (CountInputChars(body) > MaxInputChars) { await WriteJsonErrorAsync(400, "invalid_request_error", $"输入过大（上限 {MaxInputChars} 字符）", "input_too_large"); return; }
+        if (CountInputChars(body) > MaxInputChars)
+        {
+            await LogAsync(key, requestId, "chat", requestedModel, null, null, false, 400, "input_too_large", null, null, sw);
+            await WriteJsonErrorAsync(400, "invalid_request_error", $"输入过大（上限 {MaxInputChars} 字符）", "input_too_large"); return;
+        }
 
         body.Remove("model"); // 由 Gateway 注入解析模型
 
@@ -240,8 +248,16 @@ public class OpenApiController : ControllerBase
 
         var requestedModel = ReadString(body, "model");
         var (chosen, modelErr) = ResolveModelChoice(key?.OpenApiImageModels, requestedModel);
-        if (modelErr != null) { await WriteJsonErrorAsync(400, "invalid_request_error", modelErr, "model_not_allowed"); return; }
-        if (CountInputChars(body) > MaxInputChars) { await WriteJsonErrorAsync(400, "invalid_request_error", $"输入过大（上限 {MaxInputChars} 字符）", "input_too_large"); return; }
+        if (modelErr != null)
+        {
+            await LogAsync(key, requestId, "image", requestedModel, null, null, false, 400, "model_not_allowed", null, null, sw);
+            await WriteJsonErrorAsync(400, "invalid_request_error", modelErr, "model_not_allowed"); return;
+        }
+        if (CountInputChars(body) > MaxInputChars)
+        {
+            await LogAsync(key, requestId, "image", requestedModel, null, null, false, 400, "input_too_large", null, null, sw);
+            await WriteJsonErrorAsync(400, "invalid_request_error", $"输入过大（上限 {MaxInputChars} 字符）", "input_too_large"); return;
+        }
         body.Remove("model");
 
         if (!await PassUsageGateAsync(key, requestId, "image", requestedModel, chosen, sw)) return;
