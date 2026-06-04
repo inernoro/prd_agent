@@ -14,3 +14,6 @@
 | fix | prd-api | 开放接口输入字符上限纳入 tools/functions schema，大工具定义不再绕过 MaxInputChars |
 | fix | prd-api | 开放接口绑定失效检测：绑定的模型/池被删改导致回落默认调度时补发降级预警，不再静默跑共享默认池 |
 | fix | prd-admin | 开放接口客户列表加载失败时清空行数据，避免汇总/列表展示过期 Key 数据误导运维 |
+| fix | prd-admin | 开放接口模型池加载失败时清空 pools，避免白名单选择器展示已下线/过期池选项被误存进 Key |
+| fix | prd-api | 开放接口流式 chat 收到 Done 后不再立即 break，继续读完上游迭代器让 LlmGateway 完成 FinishStreamLogAsync，避免成功请求日志卡 running 被误判超时 |
+| fix | prd-api | 开放接口本页教程第 2-6 步移除 tab 逗号兜底（querySelector 文档顺序会让 tab 永远命中），聚光灯正确落在内容区 |

@@ -159,7 +159,7 @@ public class OpenApiController : ControllerBase
                     resolution = chunk.Resolution;
                     if (!string.IsNullOrWhiteSpace(resolution.ActualModel)) resolvedModel = resolution.ActualModel;
                 }
-                else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content) && !doneSent)
                 {
                     if (isFirst) { await WriteSseAsync(BuildChunk(chatId, created, resolvedModel, new { role = "assistant" }, null)); isFirst = false; }
                     await WriteSseAsync(BuildChunk(chatId, created, resolvedModel, new { content = chunk.Content }, null));
@@ -184,7 +184,7 @@ public class OpenApiController : ControllerBase
                     await SendDoneAsync();
                     break;
                 }
-                else if (chunk.Type == GatewayChunkType.Done)
+                else if (chunk.Type == GatewayChunkType.Done && !doneSent)
                 {
                     promptTokens = chunk.TokenUsage?.InputTokens;
                     completionTokens = chunk.TokenUsage?.OutputTokens;
@@ -199,7 +199,9 @@ public class OpenApiController : ControllerBase
                     };
                     await WriteSseAsync(done);
                     await SendDoneAsync();
-                    break;
+                    // 不 break：继续把上游迭代器读完，让 LlmGateway 在 `yield Done` 之后的 FinishStreamLogAsync 执行完。
+                    // 否则成功的流式请求会把 LLM 请求日志留在 running，直到 watchdog 误判超时——破坏本端点的 requestId 可回溯性（Codex PR#732 P2）。
+                    // doneSent 已置位：后续若再来 chunk（正常不会）不会重复写 [DONE]/usage 或客户端内容。
                 }
             }
 
