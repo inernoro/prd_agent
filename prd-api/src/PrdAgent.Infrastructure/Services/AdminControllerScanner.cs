@@ -49,6 +49,14 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
         @"^/api/web-pages/[^/]+/comments(-enabled)?/?$",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    // 知识库跨环境同步的「令牌端点」：被对端环境用 X-Sync-Token（非登录 JWT）调用，
+    // storeId 在路径中段，前缀匹配命中不了。这三条在 DocumentStoreSyncController 内做令牌鉴权
+    // （ResolveTokenStoreAsync 校验 store.SyncToken），故须从管理权限闸门豁免，否则会被
+    // AdminPermissionMiddleware 提前拦成 401/403，跨环境探测/拉取/推送全部失败（Codex P1）。
+    private static readonly Regex SyncTokenRoute = new(
+        @"^/api/document-store/stores/[^/]+/sync/(signature|bundle|apply)/?$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     public AdminControllerScanner(ILogger<AdminControllerScanner> logger, Assembly? controllerAssembly = null)
     {
         _logger = logger;
@@ -183,6 +191,11 @@ public sealed class AdminControllerScanner : IAdminControllerScanner
         }
         // 站点维度评论列表/发表（siteId 在路径中段，前缀匹配命中不了）
         if (SiteCommentRoute.IsMatch(path))
+        {
+            return true;
+        }
+        // 知识库跨环境同步令牌端点（storeId 在路径中段，令牌鉴权在控制器内）
+        if (SyncTokenRoute.IsMatch(path))
         {
             return true;
         }

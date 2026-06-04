@@ -808,6 +808,34 @@ public sealed class DailyTipsController : ControllerBase
                     },
                 }),
 
+            // 8.1 同步知识库教程（手动开讲，非 *-page-guide：知识库页已有自动开讲的本页教程，
+            //     这条作为「同步」专题让用户从教程抽屉里主动点开，不与本页教程抢自动弹窗）。
+            //     步骤靠 SpotlightOverlay「下一步元素不在 DOM 时自动点当前按钮」机制切到同步页签。
+            //     页面 UI 改动时同步更新此处步骤与 data-tour-id（见 .claude/rules/onboarding-tips.md）。
+            T("document-store-sync-guide", "card",
+                "同步知识库：跨环境 / 本地库双向同步教程",
+                "学会把一个知识库和另一处的库（不同环境，或本环境另一个库）建立永久配对、单向或双向同步。",
+                "/document-store?tab=sync",
+                "开始同步教程",
+                "[data-tour-id=sync-toolbar]",
+                1,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    // 首步用 ?tab=sync 直达同步页签（DocumentStorePage 会据此清空详情视图 + 切到同步 tab），
+                    // 这样即使用户当前正在某个知识库详情里开讲，也能落到同步页签而不卡在找不到锚点（Bugbot: detail fallback）。
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new() { Selector = "[data-tour-id=sync-toolbar], [data-tour-id=library-sync-tab]", Title = "第 1 步：进入「跨环境同步」页签", Body = "同步让一个知识库的内容在两处保持一致——可以是测试/正式两个环境，也可以是本环境的两个库。这里就是同步管理中心（单库粒度，只搬这一个库的文档，不碰账号或别的库）。", NavigateTo = "/document-store?tab=sync" },
+                        new() { Selector = "[data-tour-id=library-sync-tab], [data-tour-id=sync-toolbar]", Title = "第 2 步：「跨环境同步」页签", Body = "顶部最右的「跨环境同步」页签就是入口，以后从这里进来管理所有同步配对。" },
+                        new() { Selector = "[data-tour-id=sync-toolbar]", Title = "第 3 步：同步工具栏", Body = "这里有「启动链接」「生成连接链接」「刷新」，下面列出你所有的同步配对。" },
+                        new() { Selector = "[data-tour-id=sync-start-link]", Title = "第 4 步：启动链接（建立配对）", Body = "两种方式二选一：跨环境就粘贴对方给的 skblink 链接；本环境两个库就直接选 A、B。还能选方向：双向 / 只推 / 只拉。" },
+                        new() { Selector = "[data-tour-id=sync-generate-link]", Title = "第 5 步：生成连接链接（给对端）", Body = "想让别的环境连过来，就在这里选库生成一条 skblink 永久链接发过去。令牌永久有效、不会过期，不想要了可在库里撤销。" },
+                        new() { Selector = "[data-tour-id=sync-list]", Title = "第 6 步：配对列表与立即同步", Body = "每条配对可随时切方向、点「立即同步」、或「撤销」。改动后显示「待同步」，同步完显示绿色「已同步」对勾。" },
+                        new() { Selector = "[data-tour-id=sync-list]", Title = "第 7 步：库详情看同步徽章", Body = "进入任何一个同步中的知识库，右上角都会显示同步状态徽章（已同步 / 待同步 / 出错），点它能回到这里管理。看完点「完成」" },
+                    },
+                }),
+
             // 9. 文学创作 —— 本页 8 步教程（锚点全为页面常驻元素）
             T("literary-page-guide", "card",
                 "文学创作：本页 8 步上手教程",
