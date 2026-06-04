@@ -1248,7 +1248,8 @@ public class HostedSiteService : IHostedSiteService
     /// 的 HTML 文件从 COS 拉回、重新注入当前版垫片、原地覆盖回 COS，并升级版本号。
     /// 让用户上传该功能之前的旧 PPT、以及垫片代码升级后的存量站点都自动获得最新垫片，
     /// 无需用户重新上传。注入保持在隔离的对象存储域名上（不改变 iframe 跨域隔离的安全模型）。
-    /// 幂等：内容无变化不重写 COS；处理后无条件升级版本号，下次启动不再重复扫描。
+    /// 幂等：内容无变化不重写 COS；处理成功才升级版本号（下载瞬时失败则保持旧版下次重试）。
+    /// saved-share 引用副本只升级版本号、不重写其指向原站的 COS key / SiteUrl（由原站回填覆盖）。
     /// </summary>
     public async Task<int> BackfillSlideNavCompatAsync(CancellationToken ct = default)
     {
@@ -1266,16 +1267,32 @@ public class HostedSiteService : IHostedSiteService
             if (ct.IsCancellationRequested) break;
             try
             {
+                // saved-share 是引用副本：Files/SiteUrl/EntryFile 全部照搬原站（CosKey 指向 {originalId}），
+                // 自身 Id 是新 GUID。绝不在此处下载/重写——否则会 (a) 按 savedId 重建出不存在的 key 致 SiteUrl 404，
+                // (b) 把注入字节写回原站共享对象（跨租户意外写）。原站自身会被回填（共享同一 COS 对象，副本自动获益），
+                // 这里仅升级版本号防止每次启动重复扫描。
+                if (string.Equals(site.SourceType, "saved-share", StringComparison.OrdinalIgnoreCase))
+                {
+                    await _db.HostedSites.UpdateOneAsync(x => x.Id == site.Id,
+                        Builders<HostedSite>.Update.Set(x => x.SlideNavCompatVersion, SlideNavVersion),
+                        cancellationToken: ct);
+                    continue;
+                }
+
                 var htmlFiles = (site.Files ?? new List<HostedSiteFile>())
                     .Where(f => !string.IsNullOrEmpty(f.CosKey) &&
                                 string.Equals(f.MimeType, "text/html", StringComparison.OrdinalIgnoreCase))
                     .ToList();
 
                 var anyChanged = false;
+                var deferred = false;          // 有 HTML 下载失败/为空（可能瞬时）→ 本轮不升级版本，下次启动重试
+                HostedSiteFile? entryHtml = null;
                 foreach (var f in htmlFiles)
                 {
                     var bytes = await _storage.TryDownloadBytesAsync(f.CosKey, ct);
-                    if (bytes == null || bytes.Length == 0) continue;
+                    if (bytes == null || bytes.Length == 0) { deferred = true; continue; }
+                    if (string.Equals(f.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase))
+                        entryHtml = f;
                     var injected = InjectSlideNavCompat(bytes);
                     if (injected.Length == bytes.Length && injected.SequenceEqual(bytes))
                         continue; // 已是当前版垫片，无需重写
@@ -1284,15 +1301,24 @@ public class HostedSiteService : IHostedSiteService
                     anyChanged = true;
                 }
 
+                // 下载存在失败：保持旧版本号，下次启动重试，避免把「未真正处理」的站点永久排除在回填之外
+                if (deferred) continue;
+
                 // 升级版本号；内容有变则同时 bump ContentVersion + SiteUrl（?v 击穿 CDN/浏览器缓存）
                 var now = DateTime.UtcNow;
                 var update = Builders<HostedSite>.Update.Set(x => x.SlideNavCompatVersion, SlideNavVersion);
-                if (anyChanged && !string.IsNullOrEmpty(site.EntryFile))
+                if (anyChanged)
                 {
-                    var newUrl = AppendVersion(_storage.BuildUrlForKey(_storage.BuildSiteKey(site.Id, site.EntryFile)), now);
-                    update = update.Set(x => x.SiteUrl, newUrl)
-                                   .Set(x => x.ContentVersion, now)
-                                   .Set(x => x.UpdatedAt, now);
+                    // URL 一律取入口 HTML 的真实 CosKey 构造，绝不依据 site.Id 推断 key（saved-share 上面已 return）
+                    var entryKey = entryHtml?.CosKey
+                        ?? (string.IsNullOrEmpty(site.EntryFile) ? null : _storage.BuildSiteKey(site.Id, site.EntryFile));
+                    if (!string.IsNullOrEmpty(entryKey))
+                    {
+                        var newUrl = AppendVersion(_storage.BuildUrlForKey(entryKey), now);
+                        update = update.Set(x => x.SiteUrl, newUrl)
+                                       .Set(x => x.ContentVersion, now)
+                                       .Set(x => x.UpdatedAt, now);
+                    }
                     injectedSites++;
                 }
                 await _db.HostedSites.UpdateOneAsync(x => x.Id == site.Id, update, cancellationToken: ct);

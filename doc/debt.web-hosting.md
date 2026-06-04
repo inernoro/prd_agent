@@ -64,6 +64,7 @@
 | 5（v4 已缓解） | 误判普通网页为幻灯片（主要靠 `.slide≥2` 松散启发） | v4 起一律邀请式，不点「开启」就完全不绑定键盘，误判最多多显示一个可忽略的角落邀请条，**不再劫持任何键** | 可进一步给邀请条加「不是幻灯片?隐藏」 |
 | 3 | 仅覆盖用户上传路径（CreateFromHtml / Zip / Reupload），未覆盖 API/工作流生成内容（CreateFromContentAsync） | 工作流生成的周报类幻灯片不享受兼容 | 按需扩展到 CreateFromContentAsync 或改 CapsuleExecutor 模板 |
 | 4（已解决） | ~~垫片随上传注入一次，历史站点不含垫片需重传~~ | 已由 startup 存量回填解决（见上「零重传直接生效」），老 PPT 无需重传自动生效 | 遗留：回填首启 IO 偏重，无批量限流 |
+| 6（已修复，PR #721 review） | ~~回填对 `saved-share` 引用副本按 `savedId` 重建 SiteUrl→404 + 写回原站共享对象；下载瞬时失败仍升级版本号致永久跳过~~ | saved-share 现只升级版本号不重写其 URL/COS（原站回填覆盖）；下载失败 `deferred` 保旧版本下次重试；URL 取入口文件真实 CosKey 不再按 site.Id 推断 | Codex P1 + Bugbot Medium 反馈，commit 见下 |
 
 ### 测试状态
 
