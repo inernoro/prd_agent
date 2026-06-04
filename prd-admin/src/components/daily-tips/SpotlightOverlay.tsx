@@ -442,6 +442,10 @@ export function SpotlightOverlay() {
             top: bubbleTop,
             width: 360,
             maxHeight: maxBubbleH,
+            // border-box:让 maxHeight 夹的是「含 padding/border 的整框」,与下面用 estBubbleH(实测
+            // offsetHeight,本就是 border-box)做的视口夹取定位口径一致;否则 content-box 下 padding
+            // 会额外撑高 ~28px,触顶时底部按钮仍可能被挤出屏幕(Codex P2)。
+            boxSizing: 'border-box',
             display: 'flex',
             flexDirection: 'column',
             padding: '12px 14px 14px',
