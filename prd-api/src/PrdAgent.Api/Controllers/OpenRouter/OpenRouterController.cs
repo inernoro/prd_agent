@@ -45,18 +45,43 @@ public class OpenRouterController : ControllerBase
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly MongoDbContext _db;
+    private readonly IOpenRouterUsageService _usage;
     private readonly ILogger<OpenRouterController> _logger;
 
     public OpenRouterController(
         ILlmGateway gateway,
         ILLMRequestContextAccessor llmRequestContext,
         MongoDbContext db,
+        IOpenRouterUsageService usage,
         ILogger<OpenRouterController> logger)
     {
         _gateway = gateway;
         _llmRequestContext = llmRequestContext;
         _db = db;
+        _usage = usage;
         _logger = logger;
+    }
+
+    /// <summary>请求完成后：累加 token 用量（触发配额预警）；已绑定 Key 降级时发预警。</summary>
+    private async Task RecordUsageAsync(AgentApiKey? key, string? binding, GatewayModelResolution? resolution, int? promptTokens, int? completionTokens)
+    {
+        if (key == null) return;
+        var total = (promptTokens ?? 0) + (completionTokens ?? 0);
+        if (total > 0) await _usage.RecordTokensAsync(key, total, CancellationToken.None);
+        if (resolution?.IsFallback == true && !string.IsNullOrWhiteSpace(binding))
+            _ = _usage.NotifyFallbackAsync(key, resolution.ActualModel, resolution.OriginalPoolName, resolution.FallbackReason, CancellationToken.None);
+    }
+
+    /// <summary>限流/配额准入：拒绝时写 429 + Retry-After + 日志，返回 false。</summary>
+    private async Task<bool> PassUsageGateAsync(AgentApiKey? key, string requestId, string endpoint, string? requestedModel, string? binding, Stopwatch sw)
+    {
+        if (key == null) return true;
+        var decision = await _usage.CheckAndReserveAsync(key, CancellationToken.None);
+        if (decision.Allowed) return true;
+        if (decision.RetryAfterSeconds is int ra) Response.Headers["Retry-After"] = ra.ToString();
+        await LogAsync(key, requestId, endpoint, requestedModel, binding, null, false, 429, decision.Code, null, null, sw);
+        await WriteJsonErrorAsync(429, "rate_limit_error", decision.Message ?? "请求过于频繁或已超配额", decision.Code);
+        return false;
     }
 
     // ─────────────────────────── Chat ───────────────────────────
@@ -83,6 +108,9 @@ public class OpenRouterController : ControllerBase
 
         // 客户端 model 不参与调度：移除后由 Gateway 注入解析模型，调度只看 Key 绑定。
         body.Remove("model");
+
+        // Phase 2：按 Key 限流桶 + 每日配额准入（拒绝即 429）
+        if (!await PassUsageGateAsync(key, requestId, "chat", requestedModel, binding, sw)) return;
 
         var request = new GatewayRequest
         {
@@ -182,6 +210,7 @@ public class OpenRouterController : ControllerBase
 
             await LogAsync(key, requestId, "chat", requestedModel, binding, resolution, true,
                 errorCode == null ? 200 : 500, errorCode, promptTokens, completionTokens, sw);
+            await RecordUsageAsync(key, binding, resolution, promptTokens, completionTokens);
         }
         catch (Exception ex)
         {
@@ -236,6 +265,7 @@ public class OpenRouterController : ControllerBase
             Response.ContentType = "application/json";
             await Response.WriteAsync(JsonSerializer.Serialize(completion, SnakeCase));
             await LogAsync(key, requestId, "chat", requestedModel, binding, resp.Resolution, false, 200, null, promptTokens, completionTokens, sw);
+            await RecordUsageAsync(key, binding, resp.Resolution, promptTokens, completionTokens);
         }
         catch (Exception ex)
         {
@@ -266,6 +296,9 @@ public class OpenRouterController : ControllerBase
         var requestedModel = ReadString(body, "model");
         var binding = key?.OpenRouterImageBinding;
         body.Remove("model");
+
+        // Phase 2：按 Key 限流桶 + 每日配额准入（拒绝即 429）
+        if (!await PassUsageGateAsync(key, requestId, "image", requestedModel, binding, sw)) return;
 
         using var _scope = _llmRequestContext.BeginScope(new LlmRequestContext(
             RequestId: requestId,
@@ -316,6 +349,7 @@ public class OpenRouterController : ControllerBase
 
             await LogAsync(key, requestId, "image", requestedModel, binding, resolution, false,
                 Response.StatusCode, resp.Success ? null : (resp.ErrorCode ?? "LLM_ERROR"), null, null, sw);
+            await RecordUsageAsync(key, binding, resolution, null, null);
         }
         catch (Exception ex)
         {

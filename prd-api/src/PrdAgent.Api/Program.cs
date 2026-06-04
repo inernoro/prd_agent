@@ -506,6 +506,15 @@ builder.Services.AddSingleton<IRateLimitService>(sp =>
     return new PrdAgent.Infrastructure.Services.RedisRateLimitService(redis, logger);
 });
 
+// OpenRouter 对外网关韧性服务（Phase 2：按 Key 限流桶 + 配额拦截 + 降级/配额预警 + 用量统计）
+builder.Services.AddSingleton<IOpenRouterUsageService>(sp =>
+{
+    var redis = sp.GetRequiredService<StackExchange.Redis.ConnectionMultiplexer>();
+    var db = sp.GetRequiredService<MongoDbContext>();
+    var logger = sp.GetRequiredService<ILogger<PrdAgent.Infrastructure.Services.OpenRouterUsageService>>();
+    return new PrdAgent.Infrastructure.Services.OpenRouterUsageService(redis, db, logger);
+});
+
 // 配置JWT认证
 var jwtSecret = builder.Configuration["Jwt:Secret"];
 if (string.IsNullOrWhiteSpace(jwtSecret))

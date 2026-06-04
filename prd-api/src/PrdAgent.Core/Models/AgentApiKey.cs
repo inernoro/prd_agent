@@ -87,4 +87,7 @@ public class AgentApiKey
 
     /// <summary>每日请求数配额（OpenRouter 网关用）；null=不限。Phase 2 消费。</summary>
     public long? OpenRouterDailyRequestQuota { get; set; }
+
+    /// <summary>每分钟请求速率上限（OpenRouter 网关用）；null=用系统默认。Phase 2 按 Key 限流桶消费。</summary>
+    public int? OpenRouterRateLimitPerMin { get; set; }
 }

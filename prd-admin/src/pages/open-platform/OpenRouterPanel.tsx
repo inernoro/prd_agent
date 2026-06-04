@@ -26,8 +26,21 @@ interface BindingRow {
   chatIsFallback: boolean;
   imageResolvedModel: string | null;
   imageResolutionType: string | null;
+  dailyTokenQuota: number | null;
+  dailyRequestQuota: number | null;
+  rateLimitPerMin: number | null;
+  todayRequests: number;
+  todayTokens: number;
   totalRequests: number;
   lastUsedAt: string | null;
+}
+
+interface EditState {
+  chat: string;
+  image: string;
+  rate: string;
+  dayReq: string;
+  dayTok: string;
 }
 
 interface Pool {
@@ -48,8 +61,8 @@ export default function OpenRouterPanel({ onActionsReady }: OpenRouterPanelProps
   const [rows, setRows] = useState<BindingRow[]>([]);
   const [pools, setPools] = useState<Pool[]>([]);
   const [savingId, setSavingId] = useState<string | null>(null);
-  // 本地编辑态：keyId -> { chat, image }
-  const [edits, setEdits] = useState<Record<string, { chat: string; image: string }>>({});
+  // 本地编辑态：keyId -> EditState
+  const [edits, setEdits] = useState<Record<string, EditState>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -60,9 +73,15 @@ export default function OpenRouterPanel({ onActionsReady }: OpenRouterPanelProps
       ]);
       if (bindRes.success && bindRes.data) {
         setRows(bindRes.data);
-        const init: Record<string, { chat: string; image: string }> = {};
+        const init: Record<string, EditState> = {};
         bindRes.data.forEach((r) => {
-          init[r.keyId] = { chat: r.chatBinding ?? '', image: r.imageBinding ?? '' };
+          init[r.keyId] = {
+            chat: r.chatBinding ?? '',
+            image: r.imageBinding ?? '',
+            rate: r.rateLimitPerMin != null ? String(r.rateLimitPerMin) : '',
+            dayReq: r.dailyRequestQuota != null ? String(r.dailyRequestQuota) : '',
+            dayTok: r.dailyTokenQuota != null ? String(r.dailyTokenQuota) : '',
+          };
         });
         setEdits(init);
       } else if (!bindRes.success) {
@@ -89,6 +108,13 @@ export default function OpenRouterPanel({ onActionsReady }: OpenRouterPanelProps
   const chatPools = pools.filter((p) => p.modelType === 'chat');
   const imagePools = pools.filter((p) => p.modelType === 'generation');
 
+  const toNum = (s: string): number | null => {
+    const t = s.trim();
+    if (!t) return null;
+    const n = Number(t);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+  };
+
   const save = async (keyId: string) => {
     const edit = edits[keyId];
     if (!edit) return;
@@ -100,6 +126,9 @@ export default function OpenRouterPanel({ onActionsReady }: OpenRouterPanelProps
         body: {
           chatBinding: edit.chat || null,
           imageBinding: edit.image || null,
+          rateLimitPerMin: toNum(edit.rate),
+          dailyRequestQuota: toNum(edit.dayReq),
+          dailyTokenQuota: toNum(edit.dayTok),
         },
       });
       if (res.success) {
@@ -115,7 +144,15 @@ export default function OpenRouterPanel({ onActionsReady }: OpenRouterPanelProps
 
   const dirty = (r: BindingRow) => {
     const e = edits[r.keyId];
-    return e && (e.chat !== (r.chatBinding ?? '') || e.image !== (r.imageBinding ?? ''));
+    if (!e) return false;
+    const eq = (a: string, b: number | null) => (a.trim() ? Number(a) === b : b == null);
+    return (
+      e.chat !== (r.chatBinding ?? '') ||
+      e.image !== (r.imageBinding ?? '') ||
+      !eq(e.rate, r.rateLimitPerMin) ||
+      !eq(e.dayReq, r.dailyRequestQuota) ||
+      !eq(e.dayTok, r.dailyTokenQuota)
+    );
   };
 
   if (loading) return <MapSectionLoader text="正在加载 OpenRouter 绑定…" />;
@@ -154,31 +191,26 @@ export default function OpenRouterPanel({ onActionsReady }: OpenRouterPanelProps
                 <th className="px-4 py-3 font-medium">Chat 绑定</th>
                 <th className="px-4 py-3 font-medium">生图绑定</th>
                 <th className="px-4 py-3 font-medium">实际解析</th>
+                <th className="px-4 py-3 font-medium">限额（每分钟 / 每日请求 / 每日token，留空不限）</th>
+                <th className="px-4 py-3 font-medium">今日用量</th>
                 <th className="px-4 py-3 font-medium text-right">操作</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r) => {
-                const e = edits[r.keyId] ?? { chat: '', image: '' };
+                const e = edits[r.keyId] ?? { chat: '', image: '', rate: '', dayReq: '', dayTok: '' };
+                const patch = (p: Partial<EditState>) => setEdits((s) => ({ ...s, [r.keyId]: { ...e, ...p } }));
                 return (
-                  <tr key={r.keyId} className="border-b border-white/[0.05] hover:bg-white/[0.02]">
+                  <tr key={r.keyId} className="border-b border-white/[0.05] hover:bg-white/[0.02] align-top">
                     <td className="px-4 py-3">
                       <div className="text-white/85">{r.name}</div>
                       <div className="text-white/40 text-xs">{r.ownerName}{r.isActive ? '' : ' · 已禁用'}</div>
                     </td>
                     <td className="px-4 py-3">
-                      <BindingSelect
-                        pools={chatPools}
-                        value={e.chat}
-                        onChange={(v) => setEdits((s) => ({ ...s, [r.keyId]: { ...e, chat: v } }))}
-                      />
+                      <BindingSelect pools={chatPools} value={e.chat} onChange={(v) => patch({ chat: v })} />
                     </td>
                     <td className="px-4 py-3">
-                      <BindingSelect
-                        pools={imagePools}
-                        value={e.image}
-                        onChange={(v) => setEdits((s) => ({ ...s, [r.keyId]: { ...e, image: v } }))}
-                      />
+                      <BindingSelect pools={imagePools} value={e.image} onChange={(v) => patch({ image: v })} />
                     </td>
                     <td className="px-4 py-3">
                       <div className="text-white/70 text-xs flex items-center gap-1">
@@ -188,6 +220,19 @@ export default function OpenRouterPanel({ onActionsReady }: OpenRouterPanelProps
                         )}
                       </div>
                       <div className="text-white/40 text-xs">{r.imageResolvedModel ?? '—'}</div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1">
+                        <LimitInput value={e.rate} onChange={(v) => patch({ rate: v })} ph="∞" />
+                        <span className="text-white/30">/</span>
+                        <LimitInput value={e.dayReq} onChange={(v) => patch({ dayReq: v })} ph="∞" />
+                        <span className="text-white/30">/</span>
+                        <LimitInput value={e.dayTok} onChange={(v) => patch({ dayTok: v })} ph="∞" wide />
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-white/60">
+                      <div>{r.todayRequests} 次</div>
+                      <div className="text-white/40">{r.todayTokens.toLocaleString()} tok</div>
                     </td>
                     <td className="px-4 py-3 text-right">
                       <Button
@@ -206,6 +251,19 @@ export default function OpenRouterPanel({ onActionsReady }: OpenRouterPanelProps
         </GlassCard>
       )}
     </div>
+  );
+}
+
+function LimitInput({ value, onChange, ph, wide }: { value: string; onChange: (v: string) => void; ph: string; wide?: boolean }) {
+  return (
+    <input
+      type="number"
+      min={1}
+      value={value}
+      placeholder={ph}
+      onChange={(ev) => onChange(ev.target.value)}
+      className={`bg-white/[0.04] border border-white/[0.12] rounded-md px-1.5 py-1 text-white/85 text-xs focus:outline-none focus:border-white/30 ${wide ? 'w-20' : 'w-14'}`}
+    />
   );
 }
 

@@ -22,14 +22,23 @@
 - **客户端 body 的 model 不参与调度**：网关移除后由 Gateway 注入解析模型，避免外部任意挑模型。
 - **LLM 调用用 `CancellationToken.None`**：客户端断开不取消上游（server-authority）。
 
-## 已知边界（Phase 1 留尾，Phase 2 偿还）
+## Phase 2 已偿还（2026-06-04）
 
-1. **限流仅粗粒度**：依赖现有 `RateLimitMiddleware` 的 `user:{id}`/IP 桶；同一 OwnerUserId 下多 Key
-   共享桶。Phase 2 增加按 Key 桶 `agentkey:{agentApiKeyId}`（`RedisRateLimitService`）。
-2. **降级仅记录未预警**：`OpenRouterRequestLog.IsFallback` 已落库，但「专属模型降级到默认」
-   尚未触发 `WebhookNotificationService` 预警。Phase 2 接入预警（失败/降级/配额超限）。
-3. **配额字段未启用**：`AgentApiKey.OpenRouterDailyTokenQuota/RequestQuota` 已建字段，
-   Phase 1 不强制；Phase 2 接 `TokenUsageService` 做每日配额拦截 + 预警。
+1. **按 Key 限流桶**：`OpenRouterUsageService`（Redis）实现 `or:rate:{keyId}` 每分钟滑动窗口，
+   按 `AgentApiKey.OpenRouterRateLimitPerMin`（null=默认 120/min）限流；在 `OpenRouterController`
+   chat/image 入口 `CheckAndReserveAsync` 准入，超限返回 429 + Retry-After。不再依赖粗粒度 user 桶。
+2. **每日配额拦截**：`or:reqs:{keyId}:{day}` / `or:tok:{keyId}:{day}` 计数，按
+   `OpenRouterDailyRequestQuota` / `OpenRouterDailyTokenQuota`（null=不限）拦截，超额 429。
+3. **预警**：配额跨 80% / 100% 阈值、专属绑定 Key 降级（IsFallback）→ 写 `AdminNotification`
+   （Source=open-router，按天 Redis SETNX 去重）。Redis 抖动一律 fail-open，不打断网关。
+4. **监控**：管理 tab 展示每 Key 今日请求数 / token；可在线编辑限额。
+   Redis 异常时用量读取 fail-open 返回 0。
+
+## 已知边界（Phase 2 留尾）
+
+1. **监控仅当日 + 列表级**：用量看当天 Redis 计数 + 最近日志，未做跨天趋势图/聚合报表。
+2. **预警仅站内**：走 AdminNotification，未接外部 Webhook（如需推到客户侧再扩 WebhookNotificationService）。
+3. **配额按 UTC 日切**：`yyyyMMdd` UTC，未按客户时区。
 4. **伞形 chat 需求被 sync 自动绑定到默认 chat 池**：`AppCallerRegistrySyncService` 会把所有
    chat 类 AppCaller 的空 `ModelGroupIds` 自动回填默认 chat 池。结果：未绑定 Key 的 chat 命中
    该默认池（`DedicatedPool` 解析类型而非 `DefaultPool`），但模型即默认 chat 模型，行为正确。

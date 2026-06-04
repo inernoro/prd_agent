@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
@@ -25,12 +26,14 @@ public class AdminOpenRouterController : ControllerBase
 {
     private readonly MongoDbContext _db;
     private readonly ILlmGateway _gateway;
+    private readonly IOpenRouterUsageService _usage;
     private readonly ILogger<AdminOpenRouterController> _logger;
 
-    public AdminOpenRouterController(MongoDbContext db, ILlmGateway gateway, ILogger<AdminOpenRouterController> logger)
+    public AdminOpenRouterController(MongoDbContext db, ILlmGateway gateway, IOpenRouterUsageService usage, ILogger<AdminOpenRouterController> logger)
     {
         _db = db;
         _gateway = gateway;
+        _usage = usage;
         _logger = logger;
     }
 
@@ -55,6 +58,7 @@ public class AdminOpenRouterController : ControllerBase
         {
             var chatResolved = await SafeResolveAsync(AppCallerRegistry.OpenRouter.Proxy.Chat, ModelTypes.Chat, k.OpenRouterChatBinding, ct);
             var imageResolved = await SafeResolveAsync(AppCallerRegistry.OpenRouter.Proxy.Generation, ModelTypes.ImageGen, k.OpenRouterImageBinding, ct);
+            var usage = await _usage.GetUsageAsync(k.Id, ct);
             result.Add(new
             {
                 keyId = k.Id,
@@ -71,6 +75,9 @@ public class AdminOpenRouterController : ControllerBase
                 imageResolutionType = imageResolved.type,
                 dailyTokenQuota = k.OpenRouterDailyTokenQuota,
                 dailyRequestQuota = k.OpenRouterDailyRequestQuota,
+                rateLimitPerMin = k.OpenRouterRateLimitPerMin,
+                todayRequests = usage.TodayRequests,
+                todayTokens = usage.TodayTokens,
                 totalRequests = k.TotalRequests,
                 lastUsedAt = k.LastUsedAt
             });
@@ -91,7 +98,8 @@ public class AdminOpenRouterController : ControllerBase
             .Set(k => k.OpenRouterChatBinding, Normalize(req.ChatBinding))
             .Set(k => k.OpenRouterImageBinding, Normalize(req.ImageBinding))
             .Set(k => k.OpenRouterDailyTokenQuota, req.DailyTokenQuota)
-            .Set(k => k.OpenRouterDailyRequestQuota, req.DailyRequestQuota);
+            .Set(k => k.OpenRouterDailyRequestQuota, req.DailyRequestQuota)
+            .Set(k => k.OpenRouterRateLimitPerMin, req.RateLimitPerMin);
 
         await _db.AgentApiKeys.UpdateOneAsync(k => k.Id == keyId, update, cancellationToken: ct);
         return Ok(ApiResponse<object>.Ok(new { keyId, ok = true }));
@@ -160,5 +168,6 @@ public class AdminOpenRouterController : ControllerBase
         public string? ImageBinding { get; set; }
         public long? DailyTokenQuota { get; set; }
         public long? DailyRequestQuota { get; set; }
+        public int? RateLimitPerMin { get; set; }
     }
 }
