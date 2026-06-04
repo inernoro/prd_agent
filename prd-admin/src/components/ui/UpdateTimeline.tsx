@@ -98,20 +98,24 @@ function TimelineBody({ data }: { data: ParsedTimeline }) {
     <div className="px-1 py-1">
       {data.title && (
         <div
-          className="text-[15px] font-semibold mb-4 text-center"
+          className="text-[15px] font-semibold mb-5 text-center"
           style={{ color: 'var(--text-primary)' }}
         >
           {data.title}
         </div>
       )}
 
-      <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-5">
         {data.sections.map((section, si) => (
-          <div key={`${section.label}-${si}`} className="flex flex-col gap-2">
+          <div
+            key={`${section.label}-${si}`}
+            className="flex flex-col sm:flex-row gap-2 sm:gap-4"
+          >
+            {/* 左侧：日期标签列（窄屏时退化为顶部一行） */}
             {section.label && (
-              <div className="flex items-center gap-2">
+              <div className="shrink-0 sm:w-[92px] pt-0.5">
                 <span
-                  className="inline-flex items-center text-[12px] font-semibold px-2.5 py-1 rounded-md"
+                  className="inline-flex items-center text-[12px] font-semibold px-2.5 py-1 rounded-md whitespace-nowrap"
                   style={{
                     background: 'rgba(168,85,247,0.14)',
                     color: '#d8b4fe',
@@ -121,34 +125,29 @@ function TimelineBody({ data }: { data: ParsedTimeline }) {
                 >
                   {section.label}
                 </span>
-                <span className="flex-1 h-px" style={{ background: 'var(--border-faint)' }} />
               </div>
             )}
 
-            {/* 事件列表：左侧竖向连接线 + 每个事件一个圆点 */}
+            {/* 右侧：事件卡片墙，宽屏自动多列铺满，窄屏单列 */}
             <div
-              className="flex flex-col"
-              style={{ paddingLeft: 6, borderLeft: `1px solid var(--border-faint)`, marginLeft: 4 }}
+              className="flex-1 grid gap-2.5"
+              style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', alignItems: 'start' }}
             >
               {section.events.map((ev, ei) => (
-                <div key={`${ev.title}-${ei}`} className="relative pl-4 py-1.5">
-                  <span
-                    aria-hidden
-                    className="absolute rounded-full"
-                    style={{
-                      left: -4,
-                      top: 12,
-                      width: 7,
-                      height: 7,
-                      background: ACCENT,
-                      boxShadow: '0 0 0 3px rgba(168,85,247,0.16)',
-                    }}
-                  />
-                  <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                <div
+                  key={`${ev.title}-${ei}`}
+                  className="rounded-lg px-3 py-2.5"
+                  style={{
+                    background: 'rgba(168,85,247,0.05)',
+                    border: '1px solid var(--border-faint)',
+                    borderLeft: `2px solid ${ACCENT}`,
+                  }}
+                >
+                  <div className="text-[13px] font-semibold leading-snug" style={{ color: 'var(--text-primary)' }}>
                     {ev.title}
                   </div>
                   {ev.details.length > 0 && (
-                    <div className="mt-0.5 flex flex-col gap-0.5">
+                    <div className="mt-1 flex flex-col gap-0.5">
                       {ev.details.map((d, di) => (
                         <div key={di} className="text-[12px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
                           {d}
