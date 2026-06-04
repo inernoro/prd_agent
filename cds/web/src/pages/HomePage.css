@@ -200,10 +200,19 @@
   .cdsh-navlinks { display: none; }
   .cdsh-board { max-width: 560px; }
 }
+/* On phones the brand + two nav CTAs overflow the clipped nav; drop the
+   secondary "Log in" button (the hero still exposes both entry points). */
+@media (max-width: 560px) {
+  .cdsh-navcta .cdsh-btn-ghost { display: none; }
+  .cdsh-wrap { padding: 0 18px; }
+}
 @media (prefers-reduced-motion: reduce) {
   /* Also target .cdsh-bg children: LoginPage reuses these background layers on
      a <main> without .cdsh-root, so the scope must cover both mount points. */
   .cdsh-root *,
   .cdsh-bg,
   .cdsh-bg * { animation-duration: .001ms !important; animation-iteration-count: 1 !important; }
+  /* SVG <animateMotion> is SMIL, not CSS — animation-duration can't stop it,
+     so hide the traveling packets entirely under reduced motion. */
+  .cdsh-packet { display: none !important; }
 }
