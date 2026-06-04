@@ -1,15 +1,32 @@
-# 禁止使用 localStorage
+# 客户端存储选型（默认 sessionStorage，localStorage 限定场景）
 
-前端项目（`prd-admin`、`prd-desktop`）禁止使用 `localStorage`，统一使用 `sessionStorage`。
+前端项目（`prd-admin`、`prd-desktop`）**默认**使用 `sessionStorage`。`localStorage` 不是无条件禁止，而是**仅限**下面「允许」清单里的场景，且默认情况下不要用。
 
-## 规则
+## 默认规则
 
-1. 所有客户端存储必须使用 `sessionStorage`，禁止 `localStorage`
-2. Zustand persist store 必须配置 `storage: createJSONStorage(() => sessionStorage)`
-3. 直接读写存储时使用 `sessionStorage.getItem()` / `sessionStorage.setItem()`
+1. 拿不准就用 `sessionStorage`
+2. Zustand persist store 默认 `storage: createJSONStorage(() => sessionStorage)`
+3. 直接读写默认 `sessionStorage.getItem()` / `sessionStorage.setItem()`
 
-## 原因
+## 禁止用 localStorage（核心红线）
 
-- `localStorage` 在浏览器关闭后仍然保留，部署新版本后用户不刷新会使用旧缓存（菜单、权限、token）
-- `sessionStorage` 随浏览器标签页关闭自动清空，每次重新打开都获取最新数据
-- 杜绝用户串数据、菜单缓存不更新等部署后遗症
+以下数据**绝对禁止**进 `localStorage`，必须走 `sessionStorage`（或干脆不缓存、每次从后端拉）：
+
+- **认证态**：token、登录凭证、刷新令牌
+- **服务器权威数据**：菜单、权限/角色、功能开关、用户画像等由后端下发、发版可能变更的数据
+- **任何「发版后用旧值会出错」的数据**
+
+红线的原因：`localStorage` 关浏览器仍保留，部署新版本后用户不刷新会用到旧缓存，导致串数据、菜单/权限不更新等部署后遗症。
+
+## 允许用 localStorage（例外清单）
+
+同时满足「非敏感 + 设备本地 + 发版后用旧值无害」即可用 `localStorage`，典型如：
+
+- 纯 UI 偏好：列表排序方式、视图模式（网格/列表）、分组方式、面板折叠态、主题、侧栏宽度
+- 用户**明确要求**「关浏览器也要记住」的本地设置
+
+判断口诀：**这份数据如果发版后还是旧值，会出错吗？** 不会 → 可 localStorage；会 → 必须 sessionStorage。
+
+## 历史背景
+
+最初本规则写成「无条件禁止 localStorage」，根因是早期把 token/菜单缓存进 localStorage 导致发版后串数据。但「无条件」误伤了排序/视图这类纯 UI 偏好——它们既不敏感，旧值也无害，用 sessionStorage 反而导致「关标签页就忘」的体验缺陷。2026-06-04 用户指出边界问题后改为「默认 session + 红线禁止 + 例外允许」三段式。
