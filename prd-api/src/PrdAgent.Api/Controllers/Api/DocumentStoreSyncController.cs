@@ -82,10 +82,29 @@ public class DocumentStoreSyncController : ControllerBase
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
         var canWrite = store.OwnerId == userId
             || (store.SharedTeamIds != null && store.SharedTeamIds.Any(myTeamIds.Contains))
-            || await IsPmProjectWriterAsync(store, userId);
+            || await IsPmProjectWriterAsync(store, userId)
+            || await IsProductKnowledgeWriterAsync(store, userId);
         if (!canWrite)
             return (null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库不存在")));
         return (store, null);
+    }
+
+    /// <summary>产品知识库写权限：产品 owner/成员（与 DocumentStoreController.IsProductKnowledgeMemberAsync 同口径）。</summary>
+    private async Task<bool> IsProductKnowledgeWriterAsync(DocumentStore s, string userId)
+    {
+        if (string.IsNullOrEmpty(s.ProductKnowledgeRef)) return false;
+        var parts = s.ProductKnowledgeRef.Split(':', 2);
+        if (parts.Length != 2) return false;
+        string? productId = parts[0] switch
+        {
+            "product" => parts[1],
+            "version" => (await _db.ProductVersions.Find(x => x.Id == parts[1] && !x.IsDeleted).FirstOrDefaultAsync())?.ProductId,
+            _ => null,
+        };
+        if (string.IsNullOrEmpty(productId)) return false;
+        var p = await _db.Products.Find(x => x.Id == productId && !x.IsDeleted).FirstOrDefaultAsync();
+        if (p == null) return false;
+        return p.OwnerId == userId || p.MemberIds.Contains(userId);
     }
 
     /// <summary>项目知识库写权限：owner/leader/成员（与 DocumentStoreController.IsPmProjectMemberAsync(write:true) 同口径）。</summary>
@@ -649,10 +668,13 @@ public class DocumentStoreSyncController : ControllerBase
         if (payload == null || string.IsNullOrWhiteSpace(payload.BaseUrl)
             || string.IsNullOrWhiteSpace(payload.StoreId) || string.IsNullOrWhiteSpace(payload.Token))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "连接链接缺少必要信息"));
-        // 自连禁止：仅拦"真·自连"——同一环境(host 相同) + 同一库 Id。
-        // 跨环境克隆/导入常保留同一 store Id（test↔prod 同一个库），那是合法主场景，不能只凭 Id 相同就拦。
+        // 自连禁止：仅拦"真·自连"——指向本环境(scheme+host+port+path 全等) + 同一库 Id。
+        // 跨环境克隆常保留同一 store Id（test↔prod 同库），且可能同 host 不同端口/子路径，
+        // 必须按完整 base 比较而非仅 host，否则会误拦合法跨环境链接（CallRemoteAsync 也保留 path 前缀）。
         var sameEnv = Uri.TryCreate(payload.BaseUrl.TrimEnd('/'), UriKind.Absolute, out var pbUri)
-            && string.Equals(pbUri.Host, Request.Host.Host, StringComparison.OrdinalIgnoreCase);
+            && Uri.TryCreate($"{Request.Scheme}://{Request.Host}{Request.PathBase}".TrimEnd('/'), UriKind.Absolute, out var curUri)
+            && Uri.Compare(pbUri, curUri, UriComponents.SchemeAndServer | UriComponents.Path,
+                UriFormat.SafeUnescaped, StringComparison.OrdinalIgnoreCase) == 0;
         if (payload.StoreId == storeId && sameEnv)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不能连接知识库自己，请粘贴另一个库的连接链接"));
 

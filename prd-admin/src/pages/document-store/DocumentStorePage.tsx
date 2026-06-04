@@ -1672,6 +1672,8 @@ export function DocumentStorePage() {
             else if (next === 'favorites') setFavorites([]);
             else setLikes([]);
             setLoading(true);
+            // 切 tab 时退出详情视图：否则详情视图早返回会挡在前面，点「跨环境同步」永远进不去（Bugbot）。
+            setSelectedStoreId(null);
             setTab(next);
           }}
         />
