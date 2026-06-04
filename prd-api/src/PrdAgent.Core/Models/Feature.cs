@@ -46,6 +46,9 @@ public class Feature
 
     public string OwnerId { get; set; } = string.Empty;
 
+    /// <summary>处理人（负责推进该功能的 MAP 用户）</summary>
+    public string? AssigneeId { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 

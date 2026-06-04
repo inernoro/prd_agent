@@ -1,0 +1,70 @@
+namespace PrdAgent.Core.Models;
+
+/// <summary>
+/// 产品管理智能体 — 内置默认工作流（让"流程流转"开箱即用）。
+///
+/// 首次访问时 find-or-create 到 product_workflow_definitions（固定 Id，幂等）。
+/// 管理员可在「设置 → 流程模板」改造，或为某产品建覆盖流程。
+/// 缺陷流转留在 defect-agent（其原生归属），此处只覆盖需求 / 功能。
+/// </summary>
+public static class ProductWorkflowDefaults
+{
+    public const string RequirementDefId = "wf-default-requirement";
+    public const string FeatureDefId = "wf-default-feature";
+
+    public static ProductWorkflowDefinition Requirement() => new()
+    {
+        Id = RequirementDefId,
+        Name = "标准需求流程",
+        Description = "待评审 → 已评审 → 开发中 → 测试中 → 已完成 / 已拒绝",
+        EntityType = ProductEntityType.Requirement,
+        IsDefault = true,
+        ProductId = null,
+        States = new()
+        {
+            new() { Key = "pending",    Label = "待评审", Color = "#9ca3af", IsInitial = true, Category = "todo",  SortOrder = 0 },
+            new() { Key = "reviewed",   Label = "已评审", Color = "#38bdf8", Category = "todo",  SortOrder = 1 },
+            new() { Key = "developing", Label = "开发中", Color = "#f59e0b", Category = "doing", SortOrder = 2 },
+            new() { Key = "testing",    Label = "测试中", Color = "#a78bfa", Category = "doing", SortOrder = 3 },
+            new() { Key = "done",       Label = "已完成", Color = "#22c55e", IsFinal = true, Category = "done", SortOrder = 4 },
+            new() { Key = "rejected",   Label = "已拒绝", Color = "#ef4444", IsFinal = true, Category = "done", SortOrder = 5 },
+        },
+        Transitions = new()
+        {
+            new() { Key = "approve",   Label = "通过评审", FromState = "pending",    ToState = "reviewed" },
+            new() { Key = "reject",    Label = "驳回",     FromState = "pending",    ToState = "rejected", RequireComment = true },
+            new() { Key = "start-dev", Label = "开始开发", FromState = "reviewed",   ToState = "developing" },
+            new() { Key = "to-test",   Label = "提交测试", FromState = "developing", ToState = "testing" },
+            new() { Key = "complete",  Label = "完成",     FromState = "testing",    ToState = "done" },
+            new() { Key = "reopen",    Label = "重新打开", FromState = null,         ToState = "pending" },
+        },
+    };
+
+    public static ProductWorkflowDefinition Feature() => new()
+    {
+        Id = FeatureDefId,
+        Name = "标准功能流程",
+        Description = "规划中 → 开发中 → 测试中 → 已发布 / 已取消",
+        EntityType = ProductEntityType.Feature,
+        IsDefault = true,
+        ProductId = null,
+        States = new()
+        {
+            new() { Key = "planned",    Label = "规划中", Color = "#9ca3af", IsInitial = true, Category = "todo",  SortOrder = 0 },
+            new() { Key = "developing", Label = "开发中", Color = "#f59e0b", Category = "doing", SortOrder = 1 },
+            new() { Key = "testing",    Label = "测试中", Color = "#a78bfa", Category = "doing", SortOrder = 2 },
+            new() { Key = "released",   Label = "已发布", Color = "#22c55e", IsFinal = true, Category = "done", SortOrder = 3 },
+            new() { Key = "cancelled",  Label = "已取消", Color = "#ef4444", IsFinal = true, Category = "done", SortOrder = 4 },
+        },
+        Transitions = new()
+        {
+            new() { Key = "start-dev", Label = "开始开发", FromState = "planned",    ToState = "developing" },
+            new() { Key = "to-test",   Label = "提交测试", FromState = "developing", ToState = "testing" },
+            new() { Key = "release",   Label = "发布",     FromState = "testing",    ToState = "released" },
+            new() { Key = "cancel",    Label = "取消",     FromState = null,         ToState = "cancelled", RequireComment = true },
+            new() { Key = "reopen",    Label = "重新打开", FromState = null,         ToState = "planned" },
+        },
+    };
+
+    public static ProductWorkflowDefinition[] All() => new[] { Requirement(), Feature() };
+}
