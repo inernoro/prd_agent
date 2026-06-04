@@ -79,8 +79,11 @@ public sealed class ChangelogSnapshotStore : IChangelogSnapshotStore
     {
         try
         {
+            // 与 GetAsync 一致：按 UpdatedAt 倒序取最新行做指纹比对，保证「变化检测」与「hydrate 读取」
+            // 命中同一条（最新）记录。缺唯一索引、存在重复行时也不会比错行导致漏推/留旧 payload。
             var existing = await _db.ChangelogSnapshots
                 .Find(x => x.Key == key)
+                .SortByDescending(x => x.UpdatedAt)
                 .FirstOrDefaultAsync(ct)
                 .ConfigureAwait(false);
 
