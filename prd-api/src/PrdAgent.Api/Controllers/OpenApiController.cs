@@ -179,6 +179,8 @@ public class OpenApiController : ControllerBase
                         await Response.WriteAsync(JsonSerializer.Serialize(new { error = new { message = chunk.Error ?? "上游错误", type = "api_error", code = "upstream_error" } }));
                         await Response.Body.FlushAsync();
                         doneSent = true; // 已发 JSON 错误体，禁止后续再写 SSE / [DONE]
+                        // 流开始前就失败、零输出 → 退回准入占用的每日请求额度（与非流式一致，不空烧配额）。
+                        if (key != null) await _usage.RefundDailyRequestAsync(key, CancellationToken.None);
                         break;
                     }
                     // 流已开始：只能在 SSE 流内发错误事件 + 终止符
@@ -248,6 +250,8 @@ public class OpenApiController : ControllerBase
 
             if (!resp.Success)
             {
+                // 未产生可计费完成（解析失败/上游错误）→ 退回准入时占用的每日请求额度，不空烧客户配额（Bugbot）。
+                if (key != null) await _usage.RefundDailyRequestAsync(key, CancellationToken.None);
                 await LogAsync(key, requestId, "chat", requestedModel, chosen, resp.Resolution, false, resp.StatusCode > 0 ? resp.StatusCode : 502, resp.ErrorCode ?? "LLM_ERROR", null, null, sw);
                 await WriteJsonErrorAsync(resp.StatusCode > 0 ? resp.StatusCode : 502, "api_error", resp.ErrorMessage ?? "上游模型调用失败", resp.ErrorCode);
                 return;
@@ -591,12 +595,27 @@ public class OpenApiController : ControllerBase
     private static bool ReadBool(JsonObject body, string key)
         => body.TryGetPropertyValue(key, out var n) && n is JsonValue v && v.TryGetValue<bool>(out var b) && b;
 
+    /// <summary>原始请求体硬上限（字节/字符近似）。防超大 body 在 ReadToEnd/Parse 阶段爆内存/CPU；
+    /// 逻辑输入上限仍由 MaxInputChars 管（含多模态 base64）。给足余量让正常请求 + 合理图片通过。</summary>
+    private const int MaxBodyChars = 8 * 1024 * 1024;
+
     private async Task<JsonObject?> ReadBodyAsync(CancellationToken ct)
     {
         try
         {
+            // 早拒：Content-Length 已超上限，连读都不读（Bugbot）
+            if (Request.ContentLength is long cl && cl > MaxBodyChars) return null;
             using var reader = new StreamReader(Request.Body, Encoding.UTF8);
-            var raw = await reader.ReadToEndAsync(ct);
+            var buffer = new char[16384];
+            var sb = new StringBuilder();
+            int n;
+            while ((n = await reader.ReadAsync(buffer, ct)) > 0)
+            {
+                sb.Append(buffer, 0, n);
+                if (sb.Length > MaxBodyChars) return null; // 无 Content-Length（分块）也有界，超界即拒，不无限读
+            }
+            if (sb.Length == 0) return new JsonObject();
+            var raw = sb.ToString();
             if (string.IsNullOrWhiteSpace(raw)) return new JsonObject();
             return JsonNode.Parse(raw) as JsonObject;
         }

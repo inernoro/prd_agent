@@ -25,3 +25,5 @@
 | fix | prd-admin | 开放接口列表刷新后同步已打开抽屉的 detail 到最新行，头部今日用量/限额默认不再停留在打开时快照 |
 | fix | prd-api | 开放接口流式 chat 中途失败时也调 RecordUsageAsync，已产生 token 计入配额并跑降级预警，不再漏记 |
 | fix | prd-api | 开放接口生图先解析模型再占配额：MODEL_NOT_FOUND 时不再空烧客户每日额度/限速槽 |
+| fix | prd-api | 开放接口 chat 解析失败/流前上游错误（零输出）时退回每日请求额度（新增 RefundDailyRequestAsync），不空烧客户配额 |
+| fix | prd-api | 开放接口 ReadBodyAsync 改有界读取 + Content-Length 早拒（8MB 原始上限），超大 body 不再无限读爆内存/CPU |

@@ -15,6 +15,12 @@ public interface IOpenApiUsageService
     /// </summary>
     Task<OpenApiUsageDecision> CheckAndReserveAsync(AgentApiKey key, CancellationToken ct = default);
 
+    /// <summary>
+    /// 退回一次已占用的每日请求额度（请求未产生可计费完成时调用，如模型解析失败 / 流开始前上游错误）。
+    /// 仅退每日请求计数（不退每分钟速率槽：速率槽 60s 自愈，且"发起了请求"本就应计速率）。
+    /// </summary>
+    Task RefundDailyRequestAsync(AgentApiKey key, CancellationToken ct = default);
+
     /// <summary>请求完成后累加 token 用量；跨越配额阈值（80%/100%）时发管理预警（按天去重）。</summary>
     Task RecordTokensAsync(AgentApiKey key, int tokens, CancellationToken ct = default);
 

@@ -104,6 +104,25 @@ public class OpenApiUsageService : IOpenApiUsageService
         }
     }
 
+    // 仅在计数 >0 时 DECR，避免每日请求计数变负（并发退回/重置边界）。
+    private const string RefundScript = @"
+        if tonumber(redis.call('GET', KEYS[1]) or '0') > 0 then return redis.call('DECR', KEYS[1]) end
+        return 0";
+
+    public async Task RefundDailyRequestAsync(AgentApiKey key, CancellationToken ct = default)
+    {
+        try
+        {
+            var db = _redis.GetDatabase();
+            await db.ScriptEvaluateAsync(RefundScript, new RedisKey[] { ReqKey(key.Id, Day()) });
+        }
+        catch (Exception ex)
+        {
+            // 退回失败仅多算一次额度，不影响主流程，fail-soft。
+            _logger.LogWarning(ex, "[OpenApiUsage] 退回每日请求额度失败 keyId={KeyId}", key.Id);
+        }
+    }
+
     public async Task RecordTokensAsync(AgentApiKey key, int tokens, CancellationToken ct = default)
     {
         if (tokens <= 0) return;
