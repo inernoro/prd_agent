@@ -38,6 +38,24 @@ public class ZhunxingAdminController : ControllerBase
         }));
     }
 
+    /// <summary>
+    /// 管理端问答入口（走 /api 前缀，便于 Web 管理后台通过网关转发访问）。
+    /// </summary>
+    [HttpPost("ask")]
+    public async Task<IActionResult> Ask([FromBody] ZhunxingAskRequest request, CancellationToken ct = default)
+    {
+        try
+        {
+            var userId = this.GetRequiredUserId();
+            var result = await _knowledgeService.AskAsync(userId, request, ct);
+            return Ok(ApiResponse<ZhunxingAskResponse>.Ok(result));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+    }
+
     [HttpGet("documents")]
     public async Task<IActionResult> ListDocuments([FromQuery] bool includeInactive = false, CancellationToken ct = default)
     {

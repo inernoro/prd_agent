@@ -719,8 +719,8 @@ export const api = {
 
   // ============ 准星智能体 ============
   zhunxing: {
-    health: () => '/zhunxing/health',
-    ask: () => '/zhunxing/ask',
+    health: () => '/api/zhunxing/health',
+    ask: () => '/api/zhunxing/ask',
   },
 
   // ============ V1 API (用户端) ============

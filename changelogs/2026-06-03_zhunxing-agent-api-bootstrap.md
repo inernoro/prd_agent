@@ -4,3 +4,4 @@
 | fix | prd-admin | 修复 public/thirdparty/ref 跨目录软链在 CDS 容器中失效导致的 Vite 构建 ENOENT |
 | fix | prd-api | 兼容 ASSETS_PROVIDER=cloudflareR2/cloudflare-r2 并归一为 tencentCos，避免 API 启动崩溃 |
 | feat | prd-admin | 在智能体首页新增“准星”卡片与问答页，接入 /zhunxing/ask 最小可用闭环 |
+| fix | prd-admin/prd-api | 修复准星问答路径为 /api/zhunxing/ask，并补管理端 ask 接口以适配 CDS 网关转发 |
