@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Eye, Users, Clock, X, UserCircle2 } from 'lucide-react';
 import { listStoreViewEvents } from '@/services';
 import type { DocumentStoreViewEvent, DocumentStoreViewStats } from '@/services/contracts/documentStore';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { UserAvatar } from '@/components/ui/UserAvatar';
+import { resolveAvatarUrl } from '@/lib/avatar';
 import { toast } from '@/lib/toast';
 
 // ── 时间 / 时长格式化 ──
@@ -18,6 +21,7 @@ function formatRelative(iso?: string | null): string {
   return new Date(iso).toLocaleDateString('zh-CN');
 }
 
+// 聚合统计「总停留」用：始终给出一个数值文案（0 也显示 < 1 秒）。
 function formatDurationMs(ms?: number): string {
   if (!ms || ms < 1000) return '< 1 秒';
   const sec = Math.floor(ms / 1000);
@@ -26,6 +30,14 @@ function formatDurationMs(ms?: number): string {
   if (min < 60) return `${min} 分钟`;
   const hr = Math.floor(min / 60);
   return `${hr} 小时 ${min % 60} 分`;
+}
+
+// 单条访问「停留」用：埋点只累计「前台可见」时长，离开/切 tab/关页时经 sendBeacon 补写。
+// durationMs 为 0/缺失 = leave 信标未送达（硬关浏览器等），与「真的看了不到 1 秒」语义不同，
+// 显示为「—」避免误导，而不是谎报「< 1 秒」。
+function formatDwell(ms?: number): string {
+  if (!ms || ms <= 0) return '—';
+  return formatDurationMs(ms);
 }
 
 // ── Drawer ──
@@ -57,10 +69,21 @@ export function ViewersDrawer({ storeId, storeName, onClose }: ViewersDrawerProp
     load();
   }, [load]);
 
-  return (
-    <div className="surface-backdrop fixed inset-0 z-50 flex justify-end"
+  // ESC 关闭（遵循 frontend-modal 规则）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const drawer = (
+    <div className="surface-backdrop fixed inset-0 z-[10000] flex justify-end"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="surface-popover flex h-full w-[520px] max-w-[94vw] flex-col border-l border-token-subtle">
+      {/* 面板底色用不透明 token var(--bg-elevated)：surface-popover 的 --panel-solid
+          在暗色仅 92% 不透明，叠加 backdrop blur 会透出底层页面头部（分享/上传按钮），
+          与 SiteViewersDrawer 保持一致的不透明处理。 */}
+      <div className="surface-popover flex h-full w-[520px] max-w-[94vw] flex-col border-l border-token-subtle"
+        style={{ background: 'var(--bg-elevated)' }}>
 
         {/* 头部 */}
         <div className="surface-panel-header flex items-center justify-between px-5 py-4">
@@ -135,6 +158,8 @@ export function ViewersDrawer({ storeId, storeName, onClose }: ViewersDrawerProp
       </div>
     </div>
   );
+
+  return createPortal(drawer, document.body);
 }
 
 function StatTile({ icon, label, value }: { icon: React.ReactNode; label: string; value: number | string }) {
@@ -152,15 +177,23 @@ function StatTile({ icon, label, value }: { icon: React.ReactNode; label: string
 function ViewEventRow({ ev }: { ev: DocumentStoreViewEvent }) {
   return (
     <li className="surface-row flex items-start gap-3 rounded-[10px] p-3">
-      <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
-        style={{
-          background: ev.viewerUserId ? 'rgba(59,130,246,0.1)' : 'rgba(148,163,184,0.1)',
-          border: ev.viewerUserId ? '1px solid rgba(59,130,246,0.2)' : '1px solid rgba(148,163,184,0.2)',
-        }}>
-        <UserCircle2 size={16} style={{
-          color: ev.viewerUserId ? 'rgba(96,165,250,0.95)' : 'rgba(148,163,184,0.9)',
-        }} />
-      </div>
+      {ev.viewerUserId ? (
+        // 登录访客：渲染真实头像（resolveAvatarUrl 自动兜底 nohead.png）
+        <UserAvatar
+          src={resolveAvatarUrl({ avatarFileName: ev.viewerAvatar })}
+          alt={ev.viewerName}
+          className="w-8 h-8 flex-shrink-0 rounded-full object-cover"
+        />
+      ) : (
+        // 匿名访客：无头像，沿用占位图标
+        <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
+          style={{
+            background: 'rgba(148,163,184,0.1)',
+            border: '1px solid rgba(148,163,184,0.2)',
+          }}>
+          <UserCircle2 size={16} style={{ color: 'rgba(148,163,184,0.9)' }} />
+        </div>
+      )}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-0.5">
           <span className="truncate text-[12px] font-semibold text-token-primary">
@@ -181,7 +214,7 @@ function ViewEventRow({ ev }: { ev: DocumentStoreViewEvent }) {
         <div className="flex items-center gap-3 text-[10px] text-token-muted">
           <span>{formatRelative(ev.enteredAt)}</span>
           <span>·</span>
-          <span>停留 {formatDurationMs(ev.durationMs)}</span>
+          <span>停留 {formatDwell(ev.durationMs)}</span>
           {(ev.revisitCount ?? 0) > 0 && (
             <>
               <span>·</span>
