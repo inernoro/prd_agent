@@ -109,19 +109,21 @@ export function TipsDrawer() {
   }, [load]);
 
   // 关键约束(用户严令禁止):当前页面绝不展示其他页面的教程。
-  // 判定一条 tip 是否「绑定到某个页面」:它是 *-page-guide,或带有导览步骤(autoAction.steps)且有 actionUrl。
-  // 这类页面教程只在「匹配当前路由」时保留,否则整条过滤掉(于是 /marketplace 上不再出现 /emergence 的教程)。
-  // 例外:
-  // - 定向/投递给本人的消息(isTargeted,如「为你修复缺陷」):是发给用户的私信,不绑定页面,任意页都展示。
-  // - 纯公告/无导览的提示(无 actionUrl 或无 steps):页面无关,任意页都展示。
+  // 唯一判据是「是否绑定到某个页面」(isPageBound):是 *-page-guide,或带导览步骤(autoAction.steps)且有 actionUrl。
+  // 页面绑定的教程只在「匹配当前路由」时保留,否则整条过滤掉(于是 /marketplace 上不出现 /emergence 的教程)。
+  // 非页面绑定(纯公告/无导览的提示,含定向「为你修复缺陷」类——它们没有 on-page tour)页面无关,任意页都展示。
+  //
+  // ⚠ 不能用 isTargeted 做「任意页展示」的豁免(Codex P2):后端 isTargeted = TargetUserId==me || mine!=null,
+  // 而 Track(seen/clicked)会给当前用户写一条 Delivery(mine),于是用户「看过一次」某全局本页教程后,
+  // 它下次轮询就带 isTargeted=true 回来——若据此豁免路由匹配,/defect-agent 的教程会泄漏到 /marketplace
+  // 并起一个找不到锚点的 tour。所以一律以 isPageBound 为准,isTargeted 只用于排序置顶,不参与页面过滤。
   const tips = cardTips().filter((t) => {
-    if (t.isTargeted) return true; // 定向私信,任意页展示
     const sid = t.sourceId;
     const isPageGuide = typeof sid === 'string' && sid.endsWith('-page-guide');
     const url = t.actionUrl || '';
     const hasTour = !!(t.autoAction && t.autoAction.steps && t.autoAction.steps.length > 0);
     const isPageBound = isPageGuide || (hasTour && !!url);
-    if (!isPageBound) return true; // 页面无关的公告/提示,任意页展示
+    if (!isPageBound) return true; // 页面无关的公告/提示/定向私信(无 on-page tour),任意页展示
     if (!url) return false;
     // 路由比对统一走 routeMatchesActionUrl(内部 strip query/hash),与 matchPageGuide / pageMatchedIndex /
     // handleOpenTip 同一口径,杜绝「某处 strip 某处没 strip」的连环漂移(Bugbot)。
