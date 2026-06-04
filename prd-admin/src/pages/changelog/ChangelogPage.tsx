@@ -14,6 +14,8 @@ import { SseTypingBlock } from '@/components/sse/SseTypingBlock';
 import { glassPanel } from '@/lib/glassStyles';
 import { getChangelogGitHubLogs, postChangelogAiSummary } from '@/services';
 import type { ChangelogEntry, GitHubLogEntry, GitHubLogsView } from '@/services';
+import { api } from '@/services/api';
+import { useSseStream } from '@/lib/useSseStream';
 import { TabBar } from '@/components/design/TabBar';
 import {
   WeeklyReportsTab,
@@ -387,6 +389,66 @@ export default function ChangelogPage() {
     void refreshGitHubLogs({ force: true, foreground: historySubtab === 'github_logs', showError: historySubtab === 'github_logs' });
   };
 
+  // ── 实时推送（SSE）：服务器后台刷新有更新时主动推到本页，无需用户手动刷新 ──
+  // 设计：加载只读存量（绝不空白），服务器固定周期刷新，有更新 push 过来后只做后台静默重读。
+  const [refreshIntervalHours, setRefreshIntervalHours] = useState<number>(4);
+  const [liveConnected, setLiveConnected] = useState(false);
+  const [justUpdatedAt, setJustUpdatedAt] = useState<number | null>(null);
+  // 最近一次收到服务器信号（meta/ping/update）的时间戳，watchdog 据此判断连接是否静默掉线
+  const lastBeatRef = useRef<number>(Date.now());
+
+  const handleServerUpdate = useCallback((data: unknown) => {
+    lastBeatRef.current = Date.now();
+    const viewType = (data as { viewType?: string })?.viewType;
+    // 服务器已把新数据落库，这里只做 force=false 的后台静默重读（读存量，不打 GitHub、不闪 loading）
+    if (viewType === 'current-week') void loadCurrentWeek(false);
+    else if (viewType === 'releases') void loadReleases(20, false);
+    else if (viewType === 'github-logs') void refreshGitHubLogs({ force: false });
+    setJustUpdatedAt(Date.now());
+  }, [loadCurrentWeek, loadReleases, refreshGitHubLogs]);
+
+  const { start: startChangelogStream, abort: abortChangelogStream } = useSseStream({
+    url: api.changelog.stream(),
+    onEvent: {
+      meta: (d) => {
+        lastBeatRef.current = Date.now();
+        const h = (d as { refreshIntervalHours?: number })?.refreshIntervalHours;
+        if (typeof h === 'number' && h > 0) setRefreshIntervalHours(h);
+        setLiveConnected(true);
+      },
+      update: handleServerUpdate,
+      ping: () => { lastBeatRef.current = Date.now(); },
+    },
+    onError: () => setLiveConnected(false),
+  });
+
+  // 进页面即建立实时连接，离开时断开（仅断本订阅，不影响服务器后台刷新任务）。
+  // watchdog：心跳 15s/次，若 45s 内无任何信号则判定掉线并自动重连（start 内部会 abort 旧连接）。
+  useEffect(() => {
+    void startChangelogStream();
+    lastBeatRef.current = Date.now();
+    const watchdog = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() - lastBeatRef.current > 45000) {
+        setLiveConnected(false);
+        lastBeatRef.current = Date.now();
+        void startChangelogStream();
+      }
+    }, 20000);
+    return () => {
+      window.clearInterval(watchdog);
+      abortChangelogStream();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 「已更新」短暂高亮 3 秒后回落为「实时同步」
+  useEffect(() => {
+    if (justUpdatedAt == null) return;
+    const t = window.setTimeout(() => setJustUpdatedAt(null), 3000);
+    return () => window.clearTimeout(t);
+  }, [justUpdatedAt]);
+
   const summarizeCurrentTab = async () => {
     const tab = historySubtab;
     summaryRunByTab.current[tab] += 1;
@@ -623,25 +685,55 @@ export default function ChangelogPage() {
               <p className="text-[12px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
                 代码级周报 · 数据来自仓库 changelogs/ 与 CHANGELOG.md，每个 PR 都会更新
               </p>
-              {(sourceLabel || fetchedAtRelative) && (
-                <div className="flex items-center gap-2 mt-1.5 text-[10px]">
-                  {sourceLabel && (
+              <div className="flex flex-wrap items-center gap-2 mt-1.5 text-[10px]">
+                {sourceLabel && (
+                  <span
+                    className="px-1.5 py-0.5 rounded font-mono"
+                    style={{
+                      background: `${sourceLabel.color}14`,
+                      color: sourceLabel.color,
+                      border: `1px solid ${sourceLabel.color}33`,
+                    }}
+                  >
+                    {sourceLabel.text}
+                  </span>
+                )}
+                {fetchedAtRelative && (
+                  <span style={{ color: 'var(--text-muted)' }} title={fetchedAt ? new Date(fetchedAt).toLocaleString() : undefined}>
+                    更新于 {fetchedAtRelative}
+                  </span>
+                )}
+                {/* 更新规则：终身缓存 + 固定周期自动刷新（红框区诉求） */}
+                <span
+                  className="px-1.5 py-0.5 rounded inline-flex items-center gap-1"
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    color: 'var(--text-muted)',
+                    border: '1px solid rgba(255, 255, 255, 0.10)',
+                  }}
+                  title="数据终身缓存在服务器，打开即读存量、绝不空白；服务器每隔固定周期自动刷新，有更新自动推送到本页，无需手动刷新。"
+                >
+                  <RefreshCw size={9} />
+                  每 {refreshIntervalHours} 小时自动刷新 · 终身缓存
+                </span>
+                {/* 实时连接状态：连上后有更新会自动 push 过来 */}
+                {liveConnected && (
+                  <span
+                    className="px-1.5 py-0.5 rounded inline-flex items-center gap-1"
+                    style={{
+                      background: justUpdatedAt != null ? 'rgba(34, 197, 94, 0.16)' : 'rgba(34, 197, 94, 0.10)',
+                      color: '#86efac',
+                      border: '1px solid rgba(34, 197, 94, 0.30)',
+                    }}
+                    title="已与服务器建立实时连接，有更新会自动推送到本页"
+                  >
                     <span
-                      className="px-1.5 py-0.5 rounded font-mono"
-                      style={{
-                        background: `${sourceLabel.color}14`,
-                        color: sourceLabel.color,
-                        border: `1px solid ${sourceLabel.color}33`,
-                      }}
-                    >
-                      {sourceLabel.text}
-                    </span>
-                  )}
-                  {fetchedAtRelative && (
-                    <span style={{ color: 'var(--text-muted)' }}>{fetchedAtRelative}</span>
-                  )}
-                </div>
-              )}
+                      style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', display: 'inline-block' }}
+                    />
+                    {justUpdatedAt != null ? '已更新' : '实时同步'}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
           <button

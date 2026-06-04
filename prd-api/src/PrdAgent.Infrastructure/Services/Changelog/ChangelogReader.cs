@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Net.Http;
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
@@ -60,9 +61,20 @@ public sealed class ChangelogRelease
 }
 
 /// <summary>
+/// 更新中心视图公共契约：数据源可用性 + 来源 + 拉取时间。
+/// 终身存储 / 推送逻辑据此统一处理三种视图。
+/// </summary>
+public interface IChangelogView
+{
+    bool DataSourceAvailable { get; }
+    string Source { get; }
+    DateTime FetchedAt { get; }
+}
+
+/// <summary>
 /// "待发布" 视图（基于 changelogs 碎片）
 /// </summary>
-public sealed class CurrentWeekView
+public sealed class CurrentWeekView : IChangelogView
 {
     public DateOnly WeekStart { get; set; }
     public DateOnly WeekEnd { get; set; }
@@ -78,7 +90,7 @@ public sealed class CurrentWeekView
 /// <summary>
 /// "历史发布" 视图（基于 CHANGELOG.md）
 /// </summary>
-public sealed class ReleasesView
+public sealed class ReleasesView : IChangelogView
 {
     public List<ChangelogRelease> Releases { get; set; } = new();
     public bool DataSourceAvailable { get; set; }
@@ -103,7 +115,7 @@ public sealed class GitHubLogEntry
 /// <summary>
 /// GitHub 日志视图
 /// </summary>
-public sealed class GitHubLogsView
+public sealed class GitHubLogsView : IChangelogView
 {
     public List<GitHubLogEntry> Logs { get; set; } = new();
     public bool DataSourceAvailable { get; set; }
@@ -138,6 +150,15 @@ public interface IChangelogReader
     Task<CurrentWeekView> GetCurrentWeekAsync(bool force = false);
     Task<ReleasesView> GetReleasesAsync(int limit, bool force = false);
     Task<GitHubLogsView> GetGitHubLogsAsync(int limit, bool force = false);
+
+    /// <summary>
+    /// 后台 Worker 专用：强制刷新全部三个视图（待发布 / 历史发布 / GitHub 日志），
+    /// 内部走 force 路径 → 重新拉取 → 落库（内容变化才推送）。供固定周期刷新调用。
+    /// </summary>
+    Task RefreshAllAsync(int releasesLimit, int githubLogsLimit, CancellationToken ct = default);
+
+    /// <summary>当前配置的后台刷新周期（小时），供前端「更新规则」展示。</summary>
+    int GetRefreshIntervalHours();
 }
 
 public sealed class ChangelogReader : IChangelogReader
@@ -147,10 +168,23 @@ public sealed class ChangelogReader : IChangelogReader
     private readonly IHostEnvironment _env;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<ChangelogReader> _logger;
+    // 终身存储 + 推送（生产注入；单元测试可为 null，退化为纯内存 SWR）
+    private readonly IChangelogSnapshotStore? _snapshotStore;
+    private readonly IChangelogPushHub? _pushHub;
 
     private const string CacheKeyCurrentWeek = "changelog:current-week";
     private const string CacheKeyReleases = "changelog:releases";
     private const string CacheKeyGitHubLogs = "changelog:github-logs";
+
+    /// <summary>默认后台刷新周期（小时）。可由 Changelog:RefreshIntervalHours 覆盖。</summary>
+    private const int DefaultRefreshIntervalHours = 4;
+
+    // 快照序列化：camelCase + 大小写不敏感，保证「序列化 → 存库 → 反序列化」无损往返。
+    private static readonly JsonSerializerOptions SnapshotJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+    };
 
     // 「待发布」碎片走 GitHub raw 逐文件拉取，碎片数可能达数百个。限并发避免上百个
     // 并发连接打爆连接池 / 触发限速导致冷缓存首屏长时间转圈（卡顿排查 2026-06-03）。
@@ -193,34 +227,59 @@ public sealed class ChangelogReader : IChangelogReader
         IConfiguration config,
         IHostEnvironment env,
         IHttpClientFactory httpClientFactory,
-        ILogger<ChangelogReader> logger)
+        ILogger<ChangelogReader> logger,
+        IChangelogSnapshotStore? snapshotStore = null,
+        IChangelogPushHub? pushHub = null)
     {
         _cache = cache;
         _config = config;
         _env = env;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _snapshotStore = snapshotStore;
+        _pushHub = pushHub;
     }
 
-    // ── 公共 API（均走 serve-stale-while-revalidate） ─────────────────
+    // ── 视图类型标识（用于 SSE 推送 viewType 字段） ───────────────────
+    private const string ViewTypeCurrentWeek = "current-week";
+    private const string ViewTypeReleases = "releases";
+    private const string ViewTypeGitHubLogs = "github-logs";
+
+    // ── 公共 API（终身存储优先：加载只读存量，刷新交给后台 Worker） ─────
 
     public Task<CurrentWeekView> GetCurrentWeekAsync(bool force = false) =>
-        GetWithSwrAsync(CacheKeyCurrentWeek, force, FetchCurrentWeekAsync, v => v.DataSourceAvailable);
+        GetStoredAsync(ViewTypeCurrentWeek, CacheKeyCurrentWeek, force, FetchCurrentWeekAsync);
 
     public Task<ReleasesView> GetReleasesAsync(int limit, bool force = false)
     {
         var cacheKey = $"{CacheKeyReleases}:{limit}";
-        return GetWithSwrAsync(cacheKey, force, () => FetchReleasesAsync(limit), v => v.DataSourceAvailable);
+        return GetStoredAsync(ViewTypeReleases, cacheKey, force, () => FetchReleasesAsync(limit));
     }
 
     public Task<GitHubLogsView> GetGitHubLogsAsync(int limit, bool force = false)
     {
         if (limit <= 0 || limit > 1000) limit = 1000;
         var cacheKey = $"{CacheKeyGitHubLogs}:{limit}";
-        return GetWithSwrAsync(cacheKey, force, () => FetchGitHubLogsAsync(limit), v => v.DataSourceAvailable);
+        return GetStoredAsync(ViewTypeGitHubLogs, cacheKey, force, () => FetchGitHubLogsAsync(limit));
     }
 
-    // ── serve-stale-while-revalidate 核心 ─────────────────────────────
+    public async Task RefreshAllAsync(int releasesLimit, int githubLogsLimit, CancellationToken ct = default)
+    {
+        // force=true → 走真实拉取 → 落库（内容变化才推送）。三个视图各自独立，互不阻塞失败。
+        await GetCurrentWeekAsync(force: true).ConfigureAwait(false);
+        if (ct.IsCancellationRequested) return;
+        await GetReleasesAsync(releasesLimit, force: true).ConfigureAwait(false);
+        if (ct.IsCancellationRequested) return;
+        await GetGitHubLogsAsync(githubLogsLimit, force: true).ConfigureAwait(false);
+    }
+
+    public int GetRefreshIntervalHours()
+    {
+        var h = _config.GetValue<int?>("Changelog:RefreshIntervalHours");
+        return h is > 0 ? h.Value : DefaultRefreshIntervalHours;
+    }
+
+    // ── 终身存储 + SWR 核心 ───────────────────────────────────────────
 
     private sealed class CacheEntry<T>
     {
@@ -229,13 +288,17 @@ public sealed class ChangelogReader : IChangelogReader
     }
 
     /// <summary>
-    /// 通用 SWR 读取：新鲜直接返回；陈旧先返回旧值再后台刷新；无缓存则同步拉取（按 key 去重）。
+    /// 加载只读存量 + 后台刷新：
+    ///  1) 内存缓存新鲜 → 直接返回；陈旧 → 先返回旧值再后台刷新
+    ///  2) 内存缓存空 → 从数据库 hydrate（毫秒级，绝不在加载里同步打 GitHub）
+    ///  3) 库也空（真冷启动）或 force → 同步拉取（按 key 去重）
+    /// 任意一次成功拉取都会落库；内容有变化时通过 push hub 推送给打开的页面。
     /// </summary>
-    private async Task<T> GetWithSwrAsync<T>(
+    private async Task<T> GetStoredAsync<T>(
+        string viewType,
         string cacheKey,
         bool force,
-        Func<Task<T>> fetch,
-        Func<T, bool> usable) where T : class
+        Func<Task<T>> fetch) where T : class, IChangelogView
     {
         if (!force && _cache.TryGetValue(cacheKey, out CacheEntry<T>? entry) && entry != null)
         {
@@ -243,19 +306,46 @@ public sealed class ChangelogReader : IChangelogReader
             {
                 return entry.Value; // 新鲜：直接返回
             }
-            TriggerBackgroundRefresh(cacheKey, fetch, usable); // 陈旧：先返回旧值 + 后台刷新
+            TriggerBackgroundRefresh(viewType, cacheKey, fetch); // 陈旧：先返回旧值 + 后台刷新
             return entry.Value;
         }
 
-        // 无缓存或强制刷新：必须同步拉取，按 key 串行去重避免惊群
-        return await FetchCoalescedAsync(cacheKey, force, fetch, usable).ConfigureAwait(false);
+        // 内存缓存空且非 force：先吃数据库存量，避免空白 + 避免在加载里同步打 GitHub
+        if (!force)
+        {
+            var hydrated = await TryHydrateFromStoreAsync<T>(cacheKey).ConfigureAwait(false);
+            if (hydrated != null)
+            {
+                _cache.Set(cacheKey, new CacheEntry<T> { Value = hydrated, FetchedAt = hydrated.FetchedAt }, StaleKeepWindow);
+                return hydrated;
+            }
+        }
+
+        // 真冷启动（库也空）或 force：同步拉取，按 key 串行去重避免惊群
+        return await FetchCoalescedAsync(viewType, cacheKey, force, fetch).ConfigureAwait(false);
+    }
+
+    private async Task<T?> TryHydrateFromStoreAsync<T>(string cacheKey) where T : class
+    {
+        if (_snapshotStore == null) return null;
+        var snap = await _snapshotStore.GetAsync(cacheKey).ConfigureAwait(false);
+        if (snap == null || string.IsNullOrEmpty(snap.PayloadJson)) return null;
+        try
+        {
+            return JsonSerializer.Deserialize<T>(snap.PayloadJson, SnapshotJsonOptions);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[Changelog] 快照反序列化失败 key={Key}（退回拉取）", cacheKey);
+            return null;
+        }
     }
 
     private async Task<T> FetchCoalescedAsync<T>(
+        string viewType,
         string cacheKey,
         bool force,
-        Func<Task<T>> fetch,
-        Func<T, bool> usable) where T : class
+        Func<Task<T>> fetch) where T : class, IChangelogView
     {
         var gate = _fetchLocks.GetOrAdd(cacheKey, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync().ConfigureAwait(false);
@@ -269,16 +359,22 @@ public sealed class ChangelogReader : IChangelogReader
             }
 
             var fresh = await fetch().ConfigureAwait(false);
-            if (usable(fresh))
+            if (fresh.DataSourceAvailable)
             {
                 _cache.Set(cacheKey, new CacheEntry<T> { Value = fresh, FetchedAt = DateTime.UtcNow }, StaleKeepWindow);
+                await PersistAndMaybePublishAsync(viewType, cacheKey, fresh).ConfigureAwait(false);
                 return fresh;
             }
 
-            // 拉取失败：保留期内若仍有旧值则继续用旧值，否则返回不可用结果（DataSourceAvailable=false）
+            // 拉取失败：内存有旧值 → 用内存；否则尝试数据库存量；都没有才返回不可用结果
             if (_cache.TryGetValue(cacheKey, out CacheEntry<T>? stale) && stale != null)
             {
                 return stale.Value;
+            }
+            if (!force)
+            {
+                var hydrated = await TryHydrateFromStoreAsync<T>(cacheKey).ConfigureAwait(false);
+                if (hydrated != null) return hydrated;
             }
             return fresh;
         }
@@ -289,9 +385,9 @@ public sealed class ChangelogReader : IChangelogReader
     }
 
     private void TriggerBackgroundRefresh<T>(
+        string viewType,
         string cacheKey,
-        Func<Task<T>> fetch,
-        Func<T, bool> usable) where T : class
+        Func<Task<T>> fetch) where T : class, IChangelogView
     {
         if (!_refreshing.TryAdd(cacheKey, 1)) return; // 已有同 key 后台刷新在跑
         _ = Task.Run(async () =>
@@ -299,9 +395,10 @@ public sealed class ChangelogReader : IChangelogReader
             try
             {
                 var fresh = await fetch().ConfigureAwait(false);
-                if (usable(fresh))
+                if (fresh.DataSourceAvailable)
                 {
                     _cache.Set(cacheKey, new CacheEntry<T> { Value = fresh, FetchedAt = DateTime.UtcNow }, StaleKeepWindow);
+                    await PersistAndMaybePublishAsync(viewType, cacheKey, fresh).ConfigureAwait(false);
                 }
             }
             catch (Exception ex)
@@ -313,6 +410,49 @@ public sealed class ChangelogReader : IChangelogReader
                 _refreshing.TryRemove(cacheKey, out _);
             }
         });
+    }
+
+    /// <summary>
+    /// 落库（终身存储）+ 内容变化时推送。fetchedAt 不参与指纹比对，避免每次刷新都误报变化。
+    /// </summary>
+    private async Task PersistAndMaybePublishAsync<T>(string viewType, string cacheKey, T view)
+        where T : class, IChangelogView
+    {
+        if (_snapshotStore == null || !view.DataSourceAvailable) return;
+        try
+        {
+            var payloadJson = JsonSerializer.Serialize(view, SnapshotJsonOptions);
+            var contentHash = ComputeContentHash(payloadJson);
+            var changed = await _snapshotStore
+                .UpsertIfChangedAsync(cacheKey, payloadJson, contentHash, view.Source, view.FetchedAt)
+                .ConfigureAwait(false);
+            if (changed)
+            {
+                _pushHub?.Publish(new ChangelogPushEvent(viewType, view.FetchedAt, view.Source));
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[Changelog] 持久化/推送失败 key={Key}（不影响本次返回）", cacheKey);
+        }
+    }
+
+    /// <summary>对 payload 求内容指纹：剔除顶层 fetchedAt（时间戳每次都变），只反映真实内容。</summary>
+    private static string ComputeContentHash(string payloadJson)
+    {
+        try
+        {
+            var node = JsonNode.Parse(payloadJson);
+            if (node is JsonObject obj)
+            {
+                obj.Remove("fetchedAt");
+            }
+            return IChangelogSnapshotStore.ComputeHash(node?.ToJsonString() ?? payloadJson);
+        }
+        catch
+        {
+            return IChangelogSnapshotStore.ComputeHash(payloadJson);
+        }
     }
 
     // ── 真实拉取（本地优先 → GitHub 兜底），供 SWR 包装调用 ─────────────
@@ -585,7 +725,9 @@ public sealed class ChangelogReader : IChangelogReader
             return TimeSpan.FromHours(hours.Value);
         }
 
-        return TimeSpan.FromMinutes(5);
+        // 默认新鲜期 = 后台刷新周期：Worker 每 N 小时刷新一次，新鲜期内的读取只走存量、
+        // 不再触发访问驱动的拉取（贴合「加载只读存量，刷新交给服务器」的设计）。
+        return TimeSpan.FromHours(GetRefreshIntervalHours());
     }
 
     private string BuildCommitHtmlUrl(string sha)

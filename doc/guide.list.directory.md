@@ -666,6 +666,8 @@
 
 - [智能体宇宙 · 债务台账](debt.agent-universe) `debt.agent-universe`
   > MVP 边界：仅视觉创作走真实生图、文学图文一体待补、信封仅再加工接入、img2img 占位
+- [更新中心（终身存储 + SSE 推送）债务台账](debt.changelog-center) `debt.changelog-center`
+  > 3 条 open：推送中枢进程内单例（多实例需 Redis/change stream）/ 刷新周期不分视图冷热 / GitHub 日志前端 35s 轮询与 SSE 并存
 - [项目管理智能体 · 债务台账](debt.pm-agent) `debt.pm-agent`
   > Phase 1 MVP 仅交付执行层；治理层（干系人/NPSS/奖金/盘点）待 Phase 2-3；Leader 职级强校验待 User 加字段
 - [视频生成 Agent · 债务台账](debt.video-agent) `debt.video-agent`

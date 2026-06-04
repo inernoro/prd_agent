@@ -81,7 +81,7 @@ public sealed class ChangelogReaderSwrTests : IDisposable
         var reader = CreateReader();
 
         var first = await reader.GetReleasesAsync(20);
-        // 新鲜期内（默认 5 分钟）即便文件被改写，非 force 仍返回同一缓存实例
+        // 新鲜期内（默认 = 后台刷新周期，4 小时）即便文件被改写，非 force 仍返回同一缓存实例
         WriteChangelog(TwoReleases);
         var second = await reader.GetReleasesAsync(20);
 

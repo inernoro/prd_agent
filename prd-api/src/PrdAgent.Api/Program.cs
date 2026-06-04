@@ -152,9 +152,12 @@ builder.Services.AddHostedService<PrdAgent.Api.Middleware.TranscriptRunWatchdog>
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAppSettingsService, PrdAgent.Infrastructure.Services.AppSettingsService>();
 // 更新中心：从仓库 changelogs/ 与 CHANGELOG.md 解析代码级周报
+// 终身存储（changelog_snapshots）+ SSE 推送中枢：加载只读存量、后台固定周期刷新、有更新主动推送
+builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.Changelog.IChangelogSnapshotStore, PrdAgent.Infrastructure.Services.Changelog.ChangelogSnapshotStore>();
+builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.Changelog.IChangelogPushHub, PrdAgent.Infrastructure.Services.Changelog.ChangelogPushHub>();
 builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.Changelog.IChangelogReader, PrdAgent.Infrastructure.Services.Changelog.ChangelogReader>();
-// 启动预热更新中心缓存，配合 serve-stale-while-revalidate 让用户不必等冷启动拉取
-builder.Services.AddHostedService<PrdAgent.Infrastructure.Services.Changelog.ChangelogCacheWarmer>();
+// 后台刷新 Worker：启动只读存量预热 + 固定周期（默认 4h）force 刷新，内容变化落库 + 推送
+builder.Services.AddHostedService<PrdAgent.Infrastructure.Services.Changelog.ChangelogRefreshWorker>();
 // 周报海报 AI 向导:读取数据源 + 调 LLM 生成结构化页面
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.Poster.IPosterAutopilotService, PrdAgent.Infrastructure.Services.Poster.PosterAutopilotService>();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.ISystemPromptService, PrdAgent.Infrastructure.Services.SystemPromptService>();
