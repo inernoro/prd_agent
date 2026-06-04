@@ -85,6 +85,13 @@ let pendingCurrentWeekForce = false;
 let pendingReleasesReload = false;
 let pendingReleasesForce = false;
 
+// 单调递增请求号：暖缓存路径允许并发 force=false 拉取（SSE 重读 + mount 刷新等），
+// 响应可能乱序到达。只让「最新一次请求」的响应落地，丢弃迟到的旧响应，
+// 防止旧 in-flight 覆盖服务器刚 push 的新数据（Bugbot：SSE reloads race store updates；
+// 对应项目既有约定 fetchId stale-response guard）。
+let currentWeekFetchSeq = 0;
+let releasesFetchSeq = 0;
+
 export const useChangelogStore = create<ChangelogState>()(
   persist(
     (set, get) => ({
@@ -108,8 +115,11 @@ export const useChangelogStore = create<ChangelogState>()(
         }
         const hasCache = currentWeek != null;
         if (!hasCache) set({ loadingCurrent: true, error: null });
+        const mySeq = ++currentWeekFetchSeq;
         // force 透传到后端：force=true 会绕过后端 IMemoryCache，从 local/GitHub 重新拉取
         const res = await getCurrentWeekChangelog(force === true);
+        // 乱序保护：若本次响应已被更晚的请求取代，丢弃（不覆盖更新的数据、也不抢着收尾 loading）
+        if (mySeq !== currentWeekFetchSeq) return;
         if (res.success) {
           set({ currentWeek: res.data, loadingCurrent: false });
         } else if (!hasCache) {
@@ -135,7 +145,10 @@ export const useChangelogStore = create<ChangelogState>()(
         }
         const hasCache = releases != null;
         if (!hasCache) set({ loadingReleases: true, error: null });
+        const mySeq = ++releasesFetchSeq;
         const res = await getChangelogReleases(limit, force === true);
+        // 乱序保护：迟到的旧响应丢弃，不覆盖更新的数据
+        if (mySeq !== releasesFetchSeq) return;
         if (res.success) {
           set({ releases: res.data, loadingReleases: false });
         } else if (!hasCache) {
