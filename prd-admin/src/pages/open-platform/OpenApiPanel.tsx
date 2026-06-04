@@ -69,7 +69,7 @@ export default function OpenApiPanel({ onActionsReady }: { onActionsReady?: (a: 
   if (loading) return <MapSectionLoader text="正在加载开放接口…" />;
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-4" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
+    <div data-tour-id="open-api-root" className="h-full min-h-0 flex flex-col gap-4" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
       {/* 概览：说明 + 指标 */}
       <div className="flex flex-col lg:flex-row gap-3">
         <GlassCard className="p-4 flex items-start gap-3 flex-1">
@@ -79,13 +79,14 @@ export default function OpenApiPanel({ onActionsReady }: { onActionsReady?: (a: 
             外部客户用标准 OpenAI 方式接入，Base URL <code className="px-1 rounded bg-white/[0.06]">/api/v1</code>，密钥 <code className="px-1 rounded bg-white/[0.06]">sk-ak-*</code>。点「管理」配模型白名单 / 限额，并查该客户调用日志排障。
           </div>
         </GlassCard>
-        <div className="grid grid-cols-3 gap-2.5 lg:w-[420px] shrink-0">
+        <div data-tour-id="open-api-stats" className="grid grid-cols-3 gap-2.5 lg:w-[420px] shrink-0">
           <StatTile label="授权 Key" value={String(rows.length)} sub={`${configured} 个已配白名单`} />
           <StatTile label="今日请求" value={totalReq.toLocaleString()} sub="全部客户合计" />
           <StatTile label="今日 token" value={fmtK(totalTok)} sub="全部客户合计" />
         </div>
       </div>
 
+      <div data-tour-id="open-api-list" className="flex flex-col gap-4">
       {rows.length === 0 ? (
         <GlassCard className="p-10 flex flex-col items-center justify-center text-center gap-3">
           <ShieldAlert size={32} className="text-white/30" />
@@ -108,6 +109,7 @@ export default function OpenApiPanel({ onActionsReady }: { onActionsReady?: (a: 
           </div>
         </>
       )}
+      </div>
 
       {detail && (
         <KeyDetailDrawer row={detail} chatOptions={chatOptions} imageOptions={imageOptions}

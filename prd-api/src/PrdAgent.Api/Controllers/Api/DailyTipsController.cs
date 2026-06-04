@@ -784,6 +784,30 @@ public sealed class DailyTipsController : ControllerBase
                     },
                 }),
 
+            // 开放接口（OpenAI 兼容对外网关）—— 本页 6 步上手教程（最简生命周期：签发→配置→调用→排障）
+            // 锚点均为开放接口面板常驻元素（root/stats/list，含空状态），新老用户均可跑通。
+            // 页面 UI 大改时同步更新此处步骤与 data-tour-id（见 .claude/rules/onboarding-tips.md）。
+            T("open-api-page-guide", "card",
+                "开放接口：本页 6 步上手教程",
+                "外部客户用标准 OpenAI 方式调你的模型。一次走遍最简生命周期：签发密钥 → 配模型白名单/限额 → 客户调用 → 看用量/日志排障。",
+                "/open-platform",
+                "开始本页教程",
+                "[data-tour-id=open-api-root]",
+                0,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new() { Selector = "[data-tour-id=open-api-root]", Title = "第 1 步：什么是开放接口", Body = "这是 OpenAI 兼容的对外网关：外部客户把 SDK 的 base_url 指到 /api/v1、填入你签发的 sk-ak-* 密钥，就能调用本平台模型（chat / 生图）。下面 6 步走一遍最简生命周期。", NavigateTo = "/open-platform?tab=open-api" },
+                        new() { Selector = "[data-tour-id=open-api-stats]", Title = "第 2 步：生命周期总览", Body = "生命周期 = ① 在「接入 AI」弹窗签发带 open-api:call scope 的密钥 → ② 在此为该客户配模型白名单 + 限额 → ③ 客户用密钥调用 → ④ 回这里看用量与日志排障。顶部是全部客户今日请求/Token 汇总。" },
+                        new() { Selector = "[data-tour-id=open-api-list]", Title = "第 3 步：客户密钥列表", Body = "每张卡片 = 一个授权了 open-api:call 的客户密钥，显示它的默认模型、白名单数量、今日用量与限速。用上方搜索框可按客户名快速定位。" },
+                        new() { Selector = "[data-tour-id=open-api-list]", Title = "第 4 步：配置（点卡片「管理」）", Body = "点任意卡片右下角「管理」→ 右侧抽屉「配置」：配模型白名单（客户只能用白名单内的模型，第一个为默认；留空=走默认池）+ 每分钟/每日请求/每日 Token 限额。这样改总模型池也不会误伤已配置的客户。" },
+                        new() { Selector = "[data-tour-id=open-api-list]", Title = "第 5 步：调用日志 / 排障", Body = "同一「管理」抽屉切到「调用日志 / 调试」：按该客户拉最近请求，看请求→解析模型、状态、tokens、耗时、requestId。客户报错时把响应里的 id（chatcmpl-xxx）给你，即可直接定位那条请求。" },
+                        new() { Selector = "[data-tour-id=open-api-root]", Title = "第 6 步：去签发一个密钥", Body = "新密钥在右上角「接入 AI」/ AgentApiKey 弹窗创建，记得勾选 open-api:call scope。客户接入细节见 doc/guide.open-api。本页教程结束。" },
+                    },
+                }),
+
             // 7. 视觉创作 —— 本页 11 步完整教程
             T("visual-page-guide", "card",
                 "视觉创作：本页 11 步上手教程",
