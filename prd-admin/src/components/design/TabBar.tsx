@@ -7,6 +7,8 @@ export interface TabBarItem {
   key: string;
   label: string;
   icon?: React.ReactNode;
+  /** 可选：转发到 tab 按钮的 data-tour-id，供新手引导锚点（TabBar 默认不转发 data-*） */
+  dataTourId?: string;
 }
 
 interface TabBarProps {

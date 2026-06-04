@@ -173,6 +173,13 @@ export class CheckRunRunner {
      * "Show more" affordance, which is perfect for failure postmortem.
      */
     logTail?: string;
+    /**
+     * Optional markdown rendered ABOVE the deploy-log fence — used for the
+     * auto-diagnosed failure root cause + container log tail. This is the
+     * channel a sandboxed agent (no CDS network/credential) reads via GitHub
+     * to learn why the deploy failed, instead of begging the user for logs.
+     */
+    failureDetail?: string;
   }): Promise<void> {
     if (!this.enabled) return;
     const id = entry.githubCheckRunId;
@@ -195,11 +202,23 @@ export class CheckRunRunner {
 
     // GitHub's output.text caps at 65535 chars; we trim to 30k to stay
     // comfortably under the limit with room for markdown chrome.
-    let text: string | undefined;
-    if (opts.logTail && opts.logTail.trim()) {
-      const tail = opts.logTail.slice(-30_000);
-      text = '### Deploy log (尾部)\n\n```\n' + tail + '\n```';
+    // 失败根因(failureDetail)放在最上面,部署日志尾部(logTail)放下面。
+    // 关键:截断只能砍 logTail 的尾部,绝不能把顶部的 failureDetail(根因)截掉
+    // —— 否则 sandbox agent 在大日志失败时反而读不到根因(整个特性失去意义)。
+    const CAP = 30_000;
+    const detailBlock = (opts.failureDetail || '').trim();
+    const logBlock = (opts.logTail || '').trim();
+    const parts: string[] = [];
+    if (detailBlock) parts.push(detailBlock.length > CAP ? detailBlock.slice(0, CAP) : detailBlock);
+    if (logBlock) {
+      const used = parts.reduce((n, p) => n + p.length + 2, 0); // +2 ≈ '\n\n' 分隔
+      const budget = CAP - used - 40; // 给 fence 标记留点余量
+      if (budget > 200) {
+        const tail = logBlock.length > budget ? logBlock.slice(-budget) : logBlock;
+        parts.push('### Deploy log (尾部)\n\n```\n' + tail + '\n```');
+      }
     }
+    const text: string | undefined = parts.length > 0 ? parts.join('\n\n') : undefined;
 
     let patched = false;
     try {

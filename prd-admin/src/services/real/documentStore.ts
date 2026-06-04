@@ -483,6 +483,36 @@ export async function getActiveReprocessRun(entryId: string) {
   );
 }
 
+// ── 智能体抽屉对话的后端持久化（关浏览器标签页/换设备都不丢；详见 DocumentStoreConversation.cs） ──
+
+/** 读取某文档的智能体对话（含 messages / 暂存图 / 选中智能体），用于重开抽屉恢复 */
+export async function getReprocessConversation(entryId: string) {
+  return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreConversation | null>(
+    api.documentStore.entries.reprocessConversation(entryId),
+    { method: 'GET' },
+  );
+}
+
+/** 覆盖式保存某文档的智能体对话（去抖调用）。三个字段都是前端拥有形状的 JSON 字符串 */
+export async function saveReprocessConversation(entryId: string, input: {
+  messagesJson: string;
+  pendingImagesJson: string;
+  activeRefJson?: string | null;
+}) {
+  return await apiRequest<{ ok: boolean }>(
+    api.documentStore.entries.reprocessConversation(entryId),
+    { method: 'PUT', body: input },
+  );
+}
+
+/** 清空某文档的智能体对话（"开启全新对话"） */
+export async function clearReprocessConversation(entryId: string) {
+  return await apiRequest<{ ok: boolean }>(
+    api.documentStore.entries.reprocessConversation(entryId),
+    { method: 'DELETE' },
+  );
+}
+
 /** 写回任意内容到文档（不依赖 Run；用于通过 /ai-toolbox/direct-chat 直调拿回的内容） */
 export async function applyReprocessContent(entryId: string, input: {
   mode: 'replace' | 'append' | 'new';
@@ -536,6 +566,45 @@ export async function listStoreViewEvents(storeId: string, limit = 50) {
     events: import('@/services/contracts/documentStore').DocumentStoreViewEvent[];
   }>(
     `${api.documentStore.entries.storeViewEvents(storeId)}?limit=${limit}`,
+    { method: 'GET' },
+  );
+}
+
+/** 获取知识库访客聚合报表（仅 owner）。days 取值范围 1-365，tz 形如 "+08:00" */
+export async function getStoreAnalytics(storeId: string, days = 30, tz?: string) {
+  const qs = new URLSearchParams({ days: String(days) });
+  if (tz) qs.set('tz', tz);
+  return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreAnalytics>(
+    `${api.documentStore.entries.storeAnalytics(storeId)}?${qs.toString()}`,
+    { method: 'GET' },
+  );
+}
+
+/** 账号级访客总计（我名下所有知识库聚合，仅 owner 自己） */
+export async function getStoresAnalyticsSummary() {
+  return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreAccountSummary>(
+    api.documentStore.entries.storesAnalyticsSummary(),
+    { method: 'GET' },
+  );
+}
+
+/** 账号级访客聚合报表（我名下所有知识库，与单库报表同结构） */
+export async function getAllStoresAnalytics(days = 30, tz?: string) {
+  const qs = new URLSearchParams({ days: String(days) });
+  if (tz) qs.set('tz', tz);
+  return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreAnalytics>(
+    `${api.documentStore.entries.storesAnalyticsAll()}?${qs.toString()}`,
+    { method: 'GET' },
+  );
+}
+
+/** 账号级访客明细（我名下所有知识库最近访问，与单库 view-events 同结构） */
+export async function listAllStoresViewEvents(limit = 50) {
+  return await apiRequest<{
+    stats: import('@/services/contracts/documentStore').DocumentStoreViewStats;
+    events: import('@/services/contracts/documentStore').DocumentStoreViewEvent[];
+  }>(
+    `${api.documentStore.entries.storesViewEventsAll()}?limit=${limit}`,
     { method: 'GET' },
   );
 }

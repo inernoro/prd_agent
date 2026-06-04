@@ -223,7 +223,7 @@ export function WeeklyReportsTab() {
   const browserEntries = filtered as unknown as DocBrowserEntry[];
 
   return (
-    <div className="flex flex-col flex-1 min-h-0" style={{ minHeight: '560px' }}>
+    <div className="flex flex-col flex-1 min-h-0">
       <DocBrowser
         entries={browserEntries}
         selectedEntryId={selectedId ?? undefined}

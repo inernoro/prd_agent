@@ -1,0 +1,445 @@
+/**
+ * 产品管理智能体 — 前端 API 服务层。
+ * 后端：prd-api/src/PrdAgent.Api/Controllers/Api/ProductAgentController.cs（路由前缀 /api/product）
+ *
+ * 注意（CLAUDE.md 规则 #7）：apiRequest 内部会自动 JSON.stringify(body)，调用方传原始对象，
+ * 禁止再 JSON.stringify；返回 ApiResponse<T>，用 res.success 判断。
+ */
+import { apiRequest } from './apiClient';
+import type { ApiResponse } from '@/types/api';
+import type {
+  Product,
+  ProductVersion,
+  Requirement,
+  Feature,
+  FeatureVersion,
+  Customer,
+  FormTemplate,
+  WorkflowDefinition,
+  ProductEntityType,
+  ProductCategory,
+  DescTemplate,
+} from '@/pages/product-agent/types';
+
+interface ListWrap<T> {
+  items: T[];
+}
+interface PagedWrap<T> {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+// ── 产品 ──
+export function listProducts(params?: { page?: number; pageSize?: number; grade?: string; keyword?: string }) {
+  const q = new URLSearchParams();
+  if (params?.page) q.set('page', String(params.page));
+  if (params?.pageSize) q.set('pageSize', String(params.pageSize));
+  if (params?.grade) q.set('grade', params.grade);
+  if (params?.keyword) q.set('keyword', params.keyword);
+  const qs = q.toString();
+  return apiRequest<PagedWrap<Product>>(`/api/product/products${qs ? `?${qs}` : ''}`);
+}
+export function getProduct(id: string): Promise<ApiResponse<Product>> {
+  return apiRequest<Product>(`/api/product/products/${id}`);
+}
+export function createProduct(body: Partial<Product>): Promise<ApiResponse<Product>> {
+  return apiRequest<Product>('/api/product/products', { method: 'POST', body });
+}
+export function updateProduct(id: string, body: Partial<Product>): Promise<ApiResponse<Product>> {
+  return apiRequest<Product>(`/api/product/products/${id}`, { method: 'PUT', body });
+}
+export function deleteProduct(id: string) {
+  return apiRequest<{ deleted: boolean }>(`/api/product/products/${id}`, { method: 'DELETE' });
+}
+
+// ── 版本 ──
+export function listVersions(productId: string) {
+  return apiRequest<ListWrap<ProductVersion>>(`/api/product/products/${productId}/versions`);
+}
+export function createVersion(productId: string, body: Partial<ProductVersion>) {
+  return apiRequest<ProductVersion>(`/api/product/products/${productId}/versions`, { method: 'POST', body });
+}
+export function updateVersion(versionId: string, body: Partial<ProductVersion>) {
+  return apiRequest<ProductVersion>(`/api/product/versions/${versionId}`, { method: 'PUT', body });
+}
+export function deleteVersion(versionId: string) {
+  return apiRequest<{ deleted: boolean }>(`/api/product/versions/${versionId}`, { method: 'DELETE' });
+}
+
+// ── 需求 ──
+export function listRequirements(productId: string, params?: { versionId?: string; customerId?: string; grade?: string }) {
+  const q = new URLSearchParams();
+  if (params?.versionId) q.set('versionId', params.versionId);
+  if (params?.customerId) q.set('customerId', params.customerId);
+  if (params?.grade) q.set('grade', params.grade);
+  const qs = q.toString();
+  return apiRequest<ListWrap<Requirement>>(`/api/product/products/${productId}/requirements${qs ? `?${qs}` : ''}`);
+}
+export function createRequirement(productId: string, body: Partial<Requirement>) {
+  return apiRequest<Requirement>(`/api/product/products/${productId}/requirements`, { method: 'POST', body });
+}
+export function updateRequirement(requirementId: string, body: Partial<Requirement>) {
+  return apiRequest<Requirement>(`/api/product/requirements/${requirementId}`, { method: 'PUT', body });
+}
+export function deleteRequirement(requirementId: string) {
+  return apiRequest<{ deleted: boolean }>(`/api/product/requirements/${requirementId}`, { method: 'DELETE' });
+}
+
+// ── 功能 ──
+export function listFeatures(productId: string, params?: { grade?: string }) {
+  const q = new URLSearchParams();
+  if (params?.grade) q.set('grade', params.grade);
+  const qs = q.toString();
+  return apiRequest<ListWrap<Feature>>(`/api/product/products/${productId}/features${qs ? `?${qs}` : ''}`);
+}
+export function createFeature(productId: string, body: Partial<Feature>) {
+  return apiRequest<Feature>(`/api/product/products/${productId}/features`, { method: 'POST', body });
+}
+export function updateFeature(featureId: string, body: Partial<Feature>) {
+  return apiRequest<Feature>(`/api/product/features/${featureId}`, { method: 'PUT', body });
+}
+export function deleteFeature(featureId: string) {
+  return apiRequest<{ deleted: boolean }>(`/api/product/features/${featureId}`, { method: 'DELETE' });
+}
+
+// ── 功能版本化 ──
+export function listFeatureVersions(productId: string, params?: { featureId?: string; versionId?: string }) {
+  const q = new URLSearchParams();
+  if (params?.featureId) q.set('featureId', params.featureId);
+  if (params?.versionId) q.set('versionId', params.versionId);
+  const qs = q.toString();
+  return apiRequest<ListWrap<FeatureVersion>>(`/api/product/products/${productId}/feature-versions${qs ? `?${qs}` : ''}`);
+}
+export function createFeatureVersion(productId: string, body: Partial<FeatureVersion>) {
+  return apiRequest<FeatureVersion>(`/api/product/products/${productId}/feature-versions`, { method: 'POST', body });
+}
+export function deleteFeatureVersion(featureVersionId: string) {
+  return apiRequest<{ deleted: boolean }>(`/api/product/feature-versions/${featureVersionId}`, { method: 'DELETE' });
+}
+
+// ── 客户 ──
+export function listCustomers(productId: string, params?: { keyword?: string }) {
+  const q = new URLSearchParams();
+  if (params?.keyword) q.set('keyword', params.keyword);
+  const qs = q.toString();
+  return apiRequest<ListWrap<Customer>>(`/api/product/products/${productId}/customers${qs ? `?${qs}` : ''}`);
+}
+export function createCustomer(productId: string, body: Partial<Customer>) {
+  return apiRequest<Customer>(`/api/product/products/${productId}/customers`, { method: 'POST', body });
+}
+export function updateCustomer(customerId: string, body: Partial<Customer>) {
+  return apiRequest<Customer>(`/api/product/customers/${customerId}`, { method: 'PUT', body });
+}
+export function deleteCustomer(customerId: string) {
+  return apiRequest<{ deleted: boolean }>(`/api/product/customers/${customerId}`, { method: 'DELETE' });
+}
+
+// ── 通用表单模板引擎 ──
+export function listFormTemplates(params?: { entityType?: ProductEntityType; productId?: string }) {
+  const q = new URLSearchParams();
+  if (params?.entityType) q.set('entityType', params.entityType);
+  if (params?.productId) q.set('productId', params.productId);
+  const qs = q.toString();
+  return apiRequest<ListWrap<FormTemplate>>(`/api/product/form-templates${qs ? `?${qs}` : ''}`);
+}
+export function upsertFormTemplate(body: Partial<FormTemplate> & { id?: string }) {
+  return apiRequest<FormTemplate>('/api/product/form-templates', { method: 'POST', body });
+}
+export function deleteFormTemplate(templateId: string) {
+  return apiRequest<{ deleted: boolean }>(`/api/product/form-templates/${templateId}`, { method: 'DELETE' });
+}
+
+// ── 产品类型（可增删改查管理）──
+export function listProductCategories() {
+  return apiRequest<ListWrap<ProductCategory>>('/api/product/categories');
+}
+export function upsertProductCategory(body: Partial<ProductCategory> & { id?: string }) {
+  return apiRequest<ProductCategory>('/api/product/categories', { method: 'POST', body });
+}
+export function deleteProductCategory(categoryId: string) {
+  return apiRequest<{ deleted: boolean }>(`/api/product/categories/${categoryId}`, { method: 'DELETE' });
+}
+
+// ── 详情描述模板 ──
+export function listDescTemplates(entityType?: ProductEntityType) {
+  const qs = entityType ? `?entityType=${encodeURIComponent(entityType)}` : '';
+  return apiRequest<ListWrap<DescTemplate>>(`/api/product/desc-templates${qs}`);
+}
+export function upsertDescTemplate(body: Partial<DescTemplate> & { id?: string }) {
+  return apiRequest<DescTemplate>('/api/product/desc-templates', { method: 'POST', body });
+}
+export function deleteDescTemplate(templateId: string) {
+  return apiRequest<{ deleted: boolean }>(`/api/product/desc-templates/${templateId}`, { method: 'DELETE' });
+}
+
+// ── 批量导入 ──
+export function importRequirements(productId: string, rows: { title: string; grade?: string; description?: string }[]) {
+  return apiRequest<{ created: number }>(`/api/product/products/${productId}/requirements/import`, { method: 'POST', body: { rows } });
+}
+
+// ── 报表 / 统计分析 ──
+export interface ProductAnalytics {
+  releaseProgress: { versionId: string; versionName: string; total: number; done: number; doing: number; todo: number }[];
+  overall: { total: number; done: number; doing: number; todo: number };
+  velocity: { week: string; requirements: number; features: number }[];
+}
+export function getProductAnalytics(productId: string) {
+  return apiRequest<ProductAnalytics>(`/api/product/products/${productId}/analytics`);
+}
+
+// ── 批量操作 ──
+export function batchUpdateItems(body: { entityType: 'requirement' | 'feature'; ids: string[]; op: 'delete' | 'assign' | 'grade'; assigneeId?: string | null; grade?: string }) {
+  return apiRequest<{ affected: number }>('/api/product/items/batch', { method: 'POST', body });
+}
+
+// ── 全局搜索 ──
+export interface GlobalSearchResult {
+  products: { id: string; no: string; name: string }[];
+  requirements: { id: string; productId: string; no: string; title: string }[];
+  features: { id: string; productId: string; no: string; title: string }[];
+  customers: { id: string; productId: string; name: string }[];
+  defects: { id: string; productId: string; no: string; title?: string | null }[];
+}
+export function globalSearch(keyword: string) {
+  return apiRequest<GlobalSearchResult>(`/api/product/search?keyword=${encodeURIComponent(keyword)}`);
+}
+
+// ── AI 摘要（图谱抽屉，服务端缓存：首个打开者生成，其他人读缓存，重新摘要 force=true 覆盖）──
+export function summarizeItem(entityType: string, entityId: string, force = false) {
+  const qs = force ? '?force=true' : '';
+  return apiRequest<{ summary: string | null; message?: string; generatedByName?: string | null; generatedAt?: string; cached?: boolean }>(
+    `/api/product/items/${entityType}/${entityId}/summary${qs}`,
+  );
+}
+
+// ── RTM 需求可追溯矩阵 ──
+export interface RtmRow {
+  id: string;
+  requirementNo: string;
+  title: string;
+  grade: string;
+  currentState?: string | null;
+  versions: { id: string; name: string }[];
+  customers: { id: string; name: string }[];
+  features: { id: string; featureNo: string; title: string }[];
+  defects: { id: string; defectNo: string; title?: string | null; status: string }[];
+}
+export interface RtmData {
+  rows: RtmRow[];
+  orphanFeatures: { id: string; featureNo: string; title: string }[];
+  stats: { total: number; withoutFeature: number; withoutVersion: number; orphanFeatures: number };
+}
+export function getRtm(productId: string) {
+  return apiRequest<RtmData>(`/api/product/products/${productId}/rtm`);
+}
+
+// ── 通用状态机 / 流程引擎 ──
+export function listWorkflowDefinitions(params?: { entityType?: ProductEntityType; productId?: string }) {
+  const q = new URLSearchParams();
+  if (params?.entityType) q.set('entityType', params.entityType);
+  if (params?.productId) q.set('productId', params.productId);
+  const qs = q.toString();
+  return apiRequest<ListWrap<WorkflowDefinition>>(`/api/product/workflow-definitions${qs ? `?${qs}` : ''}`);
+}
+export function upsertWorkflowDefinition(body: Partial<WorkflowDefinition> & { id?: string }) {
+  return apiRequest<WorkflowDefinition>('/api/product/workflow-definitions', { method: 'POST', body });
+}
+export function deleteWorkflowDefinition(definitionId: string) {
+  return apiRequest<{ deleted: boolean }>(`/api/product/workflow-definitions/${definitionId}`, { method: 'DELETE' });
+}
+
+// ── 通用状态流转 ──
+export function transition(body: { entityType: ProductEntityType; entityId: string; transitionKey: string; comment?: string; assigneeId?: string | null }) {
+  return apiRequest<{ entityId: string; newState: string }>('/api/product/transition', { method: 'POST', body });
+}
+
+// ── 知识库挂载（复用 DocumentStore，P1）──
+/** 知识库精简类型（DocumentStore 的子集，足够 product-agent 展示与嵌入 DocumentStoreBrowser） */
+export interface KnowledgeStore {
+  id: string;
+  name: string;
+  documentCount: number;
+  productKnowledgeRef?: string | null;
+}
+export function getProductKnowledgeStore(productId: string) {
+  return apiRequest<KnowledgeStore>(`/api/product/products/${productId}/knowledge/store`);
+}
+export function getVersionKnowledgeStore(versionId: string) {
+  return apiRequest<KnowledgeStore>(`/api/product/versions/${versionId}/knowledge/store`);
+}
+
+// ── 缺陷追溯（复用 defect-agent，P1）──
+/** 追溯缺陷精简类型（DefectReport 子集） */
+export interface TracedDefect {
+  id: string;
+  defectNo: string;
+  title?: string | null;
+  status: string;
+  severity?: string | null;
+  priority?: string | null;
+  tracedRequirementId?: string | null;
+  tracedVersionId?: string | null;
+  tracedFeatureId?: string | null;
+}
+export function listTracedDefects(productId: string, params?: { requirementId?: string; versionId?: string; featureId?: string }) {
+  const q = new URLSearchParams();
+  if (params?.requirementId) q.set('requirementId', params.requirementId);
+  if (params?.versionId) q.set('versionId', params.versionId);
+  if (params?.featureId) q.set('featureId', params.featureId);
+  const qs = q.toString();
+  return apiRequest<ListWrap<TracedDefect>>(`/api/product/products/${productId}/defects${qs ? `?${qs}` : ''}`);
+}
+export function listLinkableDefects(productId: string, params?: { keyword?: string }) {
+  const q = new URLSearchParams();
+  if (params?.keyword) q.set('keyword', params.keyword);
+  const qs = q.toString();
+  return apiRequest<ListWrap<TracedDefect>>(`/api/product/products/${productId}/defects/linkable${qs ? `?${qs}` : ''}`);
+}
+export function traceDefect(body: { defectId: string; productId: string; requirementId?: string; versionId?: string; featureId?: string }) {
+  return apiRequest<{ traced: boolean }>('/api/product/trace-defect', { method: 'POST', body });
+}
+export function untraceDefect(defectId: string) {
+  return apiRequest<{ untraced: boolean }>('/api/product/untrace-defect', { method: 'POST', body: { defectId } });
+}
+/** 缺陷转需求：在缺陷所追溯的产品下生成一条需求并建立溯源追溯，返回新需求。 */
+export function convertDefectToRequirement(defectId: string) {
+  return apiRequest<Requirement>(`/api/product/defects/${defectId}/convert-to-requirement`, { method: 'POST' });
+}
+
+// ── 动态/讨论时间线（P2）──
+export interface ProductActivity {
+  id: string;
+  entityType: string;
+  entityId: string;
+  productId: string;
+  type: 'comment' | 'transition' | 'assign' | 'created' | 'convert';
+  actorId: string;
+  actorName?: string | null;
+  content?: string | null;
+  fromValue?: string | null;
+  toValue?: string | null;
+  mentions: string[];
+  createdAt: string;
+}
+export function listActivities(entityType: string, entityId: string) {
+  return apiRequest<ListWrap<ProductActivity>>(`/api/product/items/${entityType}/${entityId}/activities`);
+}
+export function addComment(entityType: string, entityId: string, body: { content: string; mentions?: string[] }) {
+  return apiRequest<ProductActivity>(`/api/product/items/${entityType}/${entityId}/comments`, { method: 'POST', body });
+}
+
+// ── 知识图谱（P2）──
+export interface GraphNode {
+  id: string;
+  type: 'product' | 'version' | 'requirement' | 'feature' | 'customer' | 'defect';
+  label: string;
+  sub?: string | null;
+  grade?: string | null;
+  state?: string | null;
+  productId?: string | null;
+}
+export interface GraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  type: string;
+}
+export function getProductGraph(productId: string) {
+  return apiRequest<{ nodes: GraphNode[]; edges: GraphEdge[] }>(`/api/product/products/${productId}/graph`);
+}
+
+// ── 大版本升级申请（P2）──
+export interface UpgradeRequest {
+  id: string;
+  productId: string;
+  upgradeNo: string;
+  title: string;
+  reason?: string | null;
+  fromVersionId?: string | null;
+  targetVersionId?: string | null;
+  targetVersionName?: string | null;
+  requirementIds: string[];
+  featureIds: string[];
+  knowledgeEntryIds: string[];
+  status: string;
+  currentState?: string | null;
+  formData: Record<string, string>;
+  ownerId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export function listUpgradeRequests(productId: string) {
+  return apiRequest<ListWrap<UpgradeRequest>>(`/api/product/products/${productId}/upgrade-requests`);
+}
+export function createUpgradeRequest(productId: string, body: Partial<UpgradeRequest>) {
+  return apiRequest<UpgradeRequest>(`/api/product/products/${productId}/upgrade-requests`, { method: 'POST', body });
+}
+export function updateUpgradeRequest(upgradeId: string, body: Partial<UpgradeRequest>) {
+  return apiRequest<UpgradeRequest>(`/api/product/upgrade-requests/${upgradeId}`, { method: 'PUT', body });
+}
+export function deleteUpgradeRequest(upgradeId: string) {
+  return apiRequest<{ deleted: boolean }>(`/api/product/upgrade-requests/${upgradeId}`, { method: 'DELETE' });
+}
+
+// ── 管理层总览（跨产品聚合，P1）──
+export interface OverviewStats {
+  isAdmin: boolean;
+  counts: { products: number; versions: number; requirements: number; features: number; defects: number; customers: number };
+  requirementsByGrade: Record<string, number>;
+  featuresByGrade: Record<string, number>;
+  defectsByStatus: Record<string, number>;
+  versionsByLifecycle: Record<string, number>;
+  recent: { type: string; id: string; productId: string; productName: string; title: string; no: string; at: string }[];
+}
+export function getOverviewStats() {
+  return apiRequest<OverviewStats>('/api/product/overview/stats');
+}
+export interface OverviewRequirementRow {
+  id: string; productId: string; productName: string; requirementNo: string; title: string;
+  grade: string; currentState?: string | null; versionCount: number; customerCount: number; assigneeId?: string | null; assigneeName?: string | null; updatedAt: string;
+}
+export function getOverviewRequirements(params?: { grade?: string; keyword?: string; mine?: boolean }) {
+  const q = new URLSearchParams();
+  if (params?.grade) q.set('grade', params.grade);
+  if (params?.keyword) q.set('keyword', params.keyword);
+  if (params?.mine) q.set('mine', 'true');
+  const qs = q.toString();
+  return apiRequest<ListWrap<OverviewRequirementRow>>(`/api/product/overview/requirements${qs ? `?${qs}` : ''}`);
+}
+export interface OverviewFeatureRow {
+  id: string; productId: string; productName: string; featureNo: string; title: string;
+  grade: string; currentState?: string | null; requirementCount: number; assigneeId?: string | null; assigneeName?: string | null; updatedAt: string;
+}
+export function getOverviewFeatures(params?: { grade?: string; keyword?: string; mine?: boolean }) {
+  const q = new URLSearchParams();
+  if (params?.grade) q.set('grade', params.grade);
+  if (params?.keyword) q.set('keyword', params.keyword);
+  if (params?.mine) q.set('mine', 'true');
+  const qs = q.toString();
+  return apiRequest<ListWrap<OverviewFeatureRow>>(`/api/product/overview/features${qs ? `?${qs}` : ''}`);
+}
+export interface OverviewDefectRow {
+  id: string; productId: string; productName: string; defectNo: string; title?: string | null;
+  status: string; severity?: string | null; priority?: string | null; tracedRequirementId?: string | null; tracedVersionId?: string | null; updatedAt: string;
+}
+export function getOverviewDefects(params?: { status?: string; keyword?: string }) {
+  const q = new URLSearchParams();
+  if (params?.status) q.set('status', params.status);
+  if (params?.keyword) q.set('keyword', params.keyword);
+  const qs = q.toString();
+  return apiRequest<ListWrap<OverviewDefectRow>>(`/api/product/overview/defects${qs ? `?${qs}` : ''}`);
+}
+export interface OverviewKnowledgeRow {
+  productId: string; productName: string; storeId: string; name: string; documentCount: number; updatedAt: string;
+}
+export function getOverviewKnowledge() {
+  return apiRequest<ListWrap<OverviewKnowledgeRow>>('/api/product/overview/knowledge');
+}
+export function getOverviewGraph() {
+  return apiRequest<{ nodes: GraphNode[]; edges: GraphEdge[] }>('/api/product/overview/graph');
+}
+export function createProductDefect(productId: string, body: { title: string; description?: string; severity?: string; requirementId?: string; versionId?: string }) {
+  return apiRequest<TracedDefect>(`/api/product/products/${productId}/defects`, { method: 'POST', body });
+}

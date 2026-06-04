@@ -43,6 +43,9 @@ public interface IHostedSiteService
     /// <summary>回填存量 PDF 包装站的 WrappedAssetType marker（一次性维护任务，由 HostedSiteBackfillService 启动调用）</summary>
     Task<int> BackfillPdfWrapperMarkersAsync(CancellationToken ct = default);
 
+    /// <summary>存量站点回填幻灯片翻页方向兼容垫片（版本 &lt; 当前的站点重新注入升级，无需用户重传）。</summary>
+    Task<int> BackfillSlideNavCompatAsync(CancellationToken ct = default);
+
     // ── 查询 ──
 
     Task<HostedSite?> GetByIdAsync(string siteId, string userId, CancellationToken ct = default);

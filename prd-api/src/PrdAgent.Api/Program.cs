@@ -152,9 +152,12 @@ builder.Services.AddHostedService<PrdAgent.Api.Middleware.TranscriptRunWatchdog>
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAppSettingsService, PrdAgent.Infrastructure.Services.AppSettingsService>();
 // 更新中心：从仓库 changelogs/ 与 CHANGELOG.md 解析代码级周报
+// 终身存储（changelog_snapshots）+ SSE 推送中枢：加载只读存量、后台固定周期刷新、有更新主动推送
+builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.Changelog.IChangelogSnapshotStore, PrdAgent.Infrastructure.Services.Changelog.ChangelogSnapshotStore>();
+builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.Changelog.IChangelogPushHub, PrdAgent.Infrastructure.Services.Changelog.ChangelogPushHub>();
 builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.Changelog.IChangelogReader, PrdAgent.Infrastructure.Services.Changelog.ChangelogReader>();
-// 启动预热更新中心缓存，配合 serve-stale-while-revalidate 让用户不必等冷启动拉取
-builder.Services.AddHostedService<PrdAgent.Infrastructure.Services.Changelog.ChangelogCacheWarmer>();
+// 后台刷新 Worker：启动只读存量预热 + 固定周期（默认 4h）force 刷新，内容变化落库 + 推送
+builder.Services.AddHostedService<PrdAgent.Infrastructure.Services.Changelog.ChangelogRefreshWorker>();
 // 周报海报 AI 向导:读取数据源 + 调 LLM 生成结构化页面
 builder.Services.AddScoped<PrdAgent.Infrastructure.Services.Poster.IPosterAutopilotService, PrdAgent.Infrastructure.Services.Poster.PosterAutopilotService>();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.ISystemPromptService, PrdAgent.Infrastructure.Services.SystemPromptService>();
@@ -299,6 +302,8 @@ builder.Services.AddHttpClient("AiNews", c =>
 // Scoped：AiNewsService 依赖 Scoped 的 ILlmGateway（一句话解读），故不能是 Singleton；
 // 内存缓存走注入的单例 IMemoryCache，资讯流缓存不受 scoped 影响。
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAiNewsService, PrdAgent.Infrastructure.Services.AiNewsService>();
+// 后台每 4 分钟预热「AI 大事」缓存，让用户访问路径永不同步等外网（卡顿排查 2026-06-03）。
+builder.Services.AddHostedService<PrdAgent.Infrastructure.Services.AiNewsCacheWarmer>();
 
 // 知识库 Agent 后台执行器（字幕生成 + 文档再加工，复用 DoubaoStreamAsrService 和 ILlmGateway）
 builder.Services.AddHttpClient("DocStoreAgent");

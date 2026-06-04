@@ -1,0 +1,13 @@
+| fix | cds | 容器编译/构建失败导致就绪探测超时时，从容器日志抽取真实根因（如 error CS0101）点名到 errorMessage，不再只显示笼统的"就绪探测超时" |
+| fix | cds | 分支卡片错误归类把"就绪探测超时/编译失败"正确归为「应用代码错误」，不再误落到「未分类错误」让用户误以为是 CDS 自身问题 |
+| fix | cds | failure-diagnosis 新增 build-failed 归类（C#/TS/MSBuild 编译失败 → 代码侧）+ 兜底识别中文「就绪探测超时」 |
+| refactor | cds | 漂移徽标「收敛」措辞改为「重新部署」，去掉用户看不懂的「异常收敛」内部术语 |
+| feat | cds | 部署失败时把自动诊断的根因（如 error CS0101）+ 容器日志尾部写进 GitHub PR Check 的 output，sandbox agent 无需 CDS 凭据/网络即可经 GitHub 读到失败原因 |
+| feat | cds | 被动授权:新增「请求密钥(cdsr_)+ 授权密钥」两级凭据 — Agent 持永久低权限请求密钥发起授权申请,右下角一键批准即派发全权授权密钥,Agent 凭它直接读项目环境变量/参数,无需用户反复手动喂参数 |
+| feat | cds | 项目设置新增「授权密钥」tab 签发/吊销请求密钥;AppShell 右下角新增「授权申请」审批盒(复用 pending-import 被动审批底座 + SSE 实时刷新) |
+| refactor | cds | 被动授权改为最短路径:删除「请求密钥」概念与项目设置「授权密钥」tab,改为 Agent 免密直接发起授权申请(按项目限量防刷)+ 一次性 pollToken 取结果,用户只需右下角一键批准,前置步骤归零 |
+| fix | cds | 修复授权申请轮询用项目 slug 时误报 404:轮询端点改用 getProject 把 slug/id 统一解析为 project.id 再比对(发起存的是 project.id,真实环境用 slug 轮询会漏判) |
+| fix | cds | 被动授权审批加固:approve/reject 仅限登录用户(cookie/GitHub),拒绝机器密钥——杜绝项目 A 的 cdsp_ key 批准项目 B 申请的跨项目越权;批准签发授权密钥失败时回滚已签发 key 防游离;失败诊断 check-run 文本截断只砍日志尾部、保住顶部根因 |
+| fix | cds | 被动授权二轮加固:github 鉴权模式同样放行免密发起/轮询(抽 isPublicAccessRequestRoute 共享,防两网关漂移);授权申请列表改登录用户专属(机器密钥不得跨项目枚举申请方/用途);一次性 authorizationKey 明文加入 HTTP 日志 redactor(authoriz),不再落 cds_http_logs |
+| fix | cds | 被动授权三轮加固:disabled 鉴权模式放行审批(本地 dev 操作员即用户,否则 403 用不了);轮询票据改 X-Poll-Token header only,去掉 ?token= query(URL 会进 HTTP 日志/activity 广播不脱敏,泄露可取密钥的票据);审批人身份读 cdsUser.githubLogin(github 模式审计不再全记 operator) |
+| fix | cds | 失败根因 check-run 只诊断本次 startup-plan 的活跃服务:传入 activeProfileIds 过滤 zombie(已删/改名残留)error 服务,与 deploy 主路径 hasError 同口径,避免把旧 profile 日志当本次根因 |

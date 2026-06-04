@@ -75,6 +75,23 @@ export function selectRecentEntries(
   return flat;
 }
 
+// 冷加载在途时被守卫挡掉的重读请求（如 SSE update 在初次冷加载期间到达）记一个 pending，
+// 待在途请求结束后补跑一次，避免页面停在「冷加载启动时拿到的旧快照」
+// （Codex P2：store-backed tab 也要 queue SSE reload，与 GitHub 日志的 trailing-edge 对称）。
+// force 取「或」：在途期间若有任一次 force=true（如用户点了头部刷新），补跑须保留 force，
+// 不能把硬刷新静默降级为只读重读（Bugbot Medium）。
+let pendingCurrentWeekReload = false;
+let pendingCurrentWeekForce = false;
+let pendingReleasesReload = false;
+let pendingReleasesForce = false;
+
+// 单调递增请求号：暖缓存路径允许并发 force=false 拉取（SSE 重读 + mount 刷新等），
+// 响应可能乱序到达。只让「最新一次请求」的响应落地，丢弃迟到的旧响应，
+// 防止旧 in-flight 覆盖服务器刚 push 的新数据（Bugbot：SSE reloads race store updates；
+// 对应项目既有约定 fetchId stale-response guard）。
+let currentWeekFetchSeq = 0;
+let releasesFetchSeq = 0;
+
 export const useChangelogStore = create<ChangelogState>()(
   persist(
     (set, get) => ({
@@ -89,11 +106,20 @@ export const useChangelogStore = create<ChangelogState>()(
       //（不翻 loadingCurrent，避免每次打开都闪 loading）；无缓存时才显示 loading。
       loadCurrentWeek: async (force?: boolean) => {
         const { loadingCurrent, currentWeek } = get();
-        if (loadingCurrent) return; // 冷加载去重（多个组件并发触发时）
+        if (loadingCurrent) {
+          // 冷加载在途：不丢弃，记 pending，待结束补跑（拿到 SSE push 后的最新存量）。
+          // force 取或：保留在途期间任一次硬刷新意图。
+          pendingCurrentWeekReload = true;
+          pendingCurrentWeekForce = pendingCurrentWeekForce || force === true;
+          return;
+        }
         const hasCache = currentWeek != null;
         if (!hasCache) set({ loadingCurrent: true, error: null });
+        const mySeq = ++currentWeekFetchSeq;
         // force 透传到后端：force=true 会绕过后端 IMemoryCache，从 local/GitHub 重新拉取
         const res = await getCurrentWeekChangelog(force === true);
+        // 乱序保护：若本次响应已被更晚的请求取代，丢弃（不覆盖更新的数据、也不抢着收尾 loading）
+        if (mySeq !== currentWeekFetchSeq) return;
         if (res.success) {
           set({ currentWeek: res.data, loadingCurrent: false });
         } else if (!hasCache) {
@@ -101,20 +127,40 @@ export const useChangelogStore = create<ChangelogState>()(
         } else {
           set({ loadingCurrent: false }); // 后台刷新失败：保留旧数据，不打扰
         }
+        // trailing-edge：在途期间被合并掉的重读补跑一次，保留 force 意图（避免硬刷新被降级）
+        if (pendingCurrentWeekReload) {
+          pendingCurrentWeekReload = false;
+          const f = pendingCurrentWeekForce;
+          pendingCurrentWeekForce = false;
+          void get().loadCurrentWeek(f);
+        }
       },
 
       loadReleases: async (limit = 20, force?: boolean) => {
         const { loadingReleases, releases } = get();
-        if (loadingReleases) return;
+        if (loadingReleases) {
+          pendingReleasesReload = true;
+          pendingReleasesForce = pendingReleasesForce || force === true;
+          return;
+        }
         const hasCache = releases != null;
         if (!hasCache) set({ loadingReleases: true, error: null });
+        const mySeq = ++releasesFetchSeq;
         const res = await getChangelogReleases(limit, force === true);
+        // 乱序保护：迟到的旧响应丢弃，不覆盖更新的数据
+        if (mySeq !== releasesFetchSeq) return;
         if (res.success) {
           set({ releases: res.data, loadingReleases: false });
         } else if (!hasCache) {
           set({ loadingReleases: false, error: res.error?.message || '加载历史发布失败' });
         } else {
           set({ loadingReleases: false }); // 后台刷新失败：保留旧数据
+        }
+        if (pendingReleasesReload) {
+          pendingReleasesReload = false;
+          const f = pendingReleasesForce;
+          pendingReleasesForce = false;
+          void get().loadReleases(limit, f);
         }
       },
 

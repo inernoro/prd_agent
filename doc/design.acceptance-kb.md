@@ -93,6 +93,8 @@
 
 ### 5.C 跨环境同步
 
+> 本节是验收报告库最初的"运维一次性搬运"（export/import + CLI）。已被泛化为**用户自助的持续配对同步**（界面入口 + per-store 永久令牌 + 单/双向 + 血缘 ID 幂等，适用于任意知识库），详见 `design.document-store-sync.md`。下表端点仍是同步引擎复用的底层数据形态。
+
 | 端点 | 方法 | 说明 |
 |------|------|------|
 | `stores/{id}/export` | GET | 返回 bundle JSON：store 元信息（含 templateKey）+ 文件夹树 + entries（tags/metadata）+ 每条正文 markdown；二进制附件标 skipped |

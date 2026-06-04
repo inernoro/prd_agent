@@ -916,6 +916,13 @@ export const api = {
     stream: (runId: string) => `/api/ai-toolbox/runs/${runId}/stream`,
   },
 
+  // ============ Agent Universe 智能体宇宙（统一能力契约 + 调用信封）============
+  agentUniverse: {
+    capabilities: () => '/api/agent-universe/capabilities',
+    invoke: () => '/api/agent-universe/invoke',
+    parameters: (agentKey: string) => `/api/agent-universe/agents/${agentKey}/parameters`,
+  },
+
   // ============ Transcript Agent 音视频转录 ============
   transcriptAgent: {
     workspaces: () => '/api/transcript-agent/workspaces',
@@ -1197,16 +1204,33 @@ export const api = {
       reprocessActiveRun: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess/active-run`,
       reprocessApply: (runId: string) => `/api/document-store/agent-runs/${runId}/apply`,
       reprocessApplyContent: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess/apply-content`,
+      reprocessConversation: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess/conversation`,
       latestAgentRun: (entryId: string) => `/api/document-store/entries/${entryId}/agent-runs/latest`,
       // 批次 C：浏览事件埋点
       logView: (entryId: string) => `/api/document-store/entries/${entryId}/view`,
       leaveView: (viewEventId: string) => `/api/document-store/view-events/${viewEventId}/leave`,
       storeViewEvents: (storeId: string) => `/api/document-store/stores/${storeId}/view-events`,
+      storeAnalytics: (storeId: string) => `/api/document-store/stores/${storeId}/analytics`,
+      storesAnalyticsSummary: () => '/api/document-store/stores/analytics-summary',
+      storesAnalyticsAll: () => '/api/document-store/stores/analytics-all',
+      storesViewEventsAll: () => '/api/document-store/stores/view-events-all',
       // 批次 D：划词评论
       inlineComments: (entryId: string) => `/api/document-store/entries/${entryId}/inline-comments`,
       inlineCommentDetail: (commentId: string) => `/api/document-store/inline-comments/${commentId}`,
       update: (entryId: string) => `/api/document-store/entries/${entryId}`,
       delete: (entryId: string) => `/api/document-store/entries/${entryId}`,
+    },
+    // 跨环境 / 本地库↔库 同步
+    sync: {
+      listAll: () => '/api/document-store/sync/links',
+      listForStore: (storeId: string) => `/api/document-store/stores/${storeId}/sync`,
+      createLocal: (storeId: string) => `/api/document-store/stores/${storeId}/sync/local`,
+      generateLink: (storeId: string) => `/api/document-store/stores/${storeId}/sync/generate-link`,
+      connect: (storeId: string) => `/api/document-store/stores/${storeId}/sync/connect`,
+      revokeToken: (storeId: string) => `/api/document-store/stores/${storeId}/sync/revoke-token`,
+      run: (linkId: string) => `/api/document-store/sync/${linkId}/run`,
+      update: (linkId: string) => `/api/document-store/sync/${linkId}`,
+      delete: (linkId: string) => `/api/document-store/sync/${linkId}`,
     },
   },
   // ============ 波2 高级权限：全部网页审计视图 ============
@@ -1255,6 +1279,8 @@ export const api = {
     },
     /** AI 总结（走 ILlmGateway + prd-admin.changelog.aiSummary::chat） */
     aiSummary: () => '/api/changelog/ai-summary',
+    /** SSE 实时推送：后台刷新有更新时服务器主动推 update 事件 */
+    stream: () => '/api/changelog/stream',
     sources: {
       list: () => '/api/changelog/sources',
       create: () => '/api/changelog/sources',

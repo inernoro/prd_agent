@@ -1262,3 +1262,32 @@ db.pa_user_profiles.createIndex(
 )
 ```
 
+
+### document_store_conversations
+
+知识库智能体抽屉的 direct-chat 对话持久化 — 一个用户对一个文档条目最多一条记录。
+后端写入已改为原子 upsert（`UpdateOne` + `IsUpsert`），但彻底杜绝多标签页并发各插一行，
+仍需 `(UserId, SourceEntryId)` 唯一索引兜底（Codex P2）。
+
+```js
+// (UserId, SourceEntryId) 唯一 — 同一用户同一文档最多一条对话，并发重复插入被 unique 索引拦截
+db.document_store_conversations.createIndex(
+  { "UserId": 1, "SourceEntryId": 1 },
+  { name: "uniq_doc_store_conversations_user_entry", unique: true }
+)
+```
+
+
+### changelog_snapshots
+
+更新中心终身存储 —— 每个视图（current-week / releases:N / github-logs:N）一条快照，
+后端按 `Key` 原子 upsert（`UpdateOne` + `IsUpsert`）。彻底杜绝多实例 / 多 Worker 并发
+首次插入各插一行（导致 `GetAsync` 命中任意旧行、静默供陈旧数据），需 `Key` 唯一索引兜底（Codex P2）。
+
+```js
+// Key 唯一 — 单视图单条快照，并发 upsert 竞态被 unique 索引拦截
+db.changelog_snapshots.createIndex(
+  { "Key": 1 },
+  { name: "uniq_changelog_snapshots_key", unique: true }
+)
+```

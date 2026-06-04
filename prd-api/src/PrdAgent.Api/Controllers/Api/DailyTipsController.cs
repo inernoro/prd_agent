@@ -170,6 +170,9 @@ public sealed class DailyTipsController : ControllerBase
                     Tier = (x.SourceId != null && codeSeedTier.TryGetValue(x.SourceId, out var codeTier))
                         ? codeTier
                         : x.Tier,
+                    // learned:该 (SourceId, Version) 是否已在用户 LearnedTips 里。*-page-guide 学会后
+                    // 仍返回(供重看),前端按此字段停止自动开讲 / 入口脉冲;非 page-guide 学会即被上面过滤掉。
+                    learned = IsLearned(x, learnedMap),
                     x.CreatedAt,
                     // 若用户有投递记录,附带 delivery 状态便于前端轻量展示
                     deliveryStatus = mine?.Status,
@@ -371,6 +374,17 @@ public sealed class DailyTipsController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { learned = new { sourceId, version = learnedVersion, tier } }));
     }
 
+    private static bool IsLearned(DailyTip t, Dictionary<string, int> learnedMap)
+    {
+        var key = t.SourceId ?? t.Id;
+        return learnedMap.TryGetValue(key, out var learnedVer) && learnedVer >= t.Version;
+    }
+
+    /// <summary>是否为「本页完整教程」seed(*-page-guide)。这类教程学会后仍保留(供用户重看),
+    /// 仅靠前端 learned 标记抑制自动开讲 / 入口脉冲;其余 tip 学会即隐藏。</summary>
+    private static bool IsPageGuide(DailyTip t)
+        => t.SourceId != null && t.SourceId.EndsWith("-page-guide", StringComparison.Ordinal);
+
     private static List<DailyTip> FilterLearned(List<DailyTip> items, Dictionary<string, int> learnedMap)
     {
         if (learnedMap.Count == 0) return items;
@@ -380,11 +394,9 @@ public sealed class DailyTipsController : ControllerBase
         // - advanced: MarkLearned 写入真实 Version → 管理员 bump 后 learnedVer < t.Version → 重弹。
         // - 兼容性：本 PR 之前已学的 tip 仍按 Version 对比，行为完全不变；这些用户在 tip
         //   下次升 Version 时会再看到一次，重新「完成」后按当前 Tier 写入 sentinel 或新 Version。
-        return items.Where(t =>
-        {
-            var key = t.SourceId ?? t.Id;
-            return !(learnedMap.TryGetValue(key, out var learnedVer) && learnedVer >= t.Version);
-        }).ToList();
+        // 例外(用户 2026-06-04 要求「学会后按钮保留可重看」):*-page-guide 学会后不隐藏,
+        //   仍随响应返回(DTO 带 learned=true),前端据此停止自动开讲 + 脉冲,但保留入口供重看。
+        return items.Where(t => !IsLearned(t, learnedMap) || IsPageGuide(t)).ToList();
     }
 
     /// <summary>
@@ -407,6 +419,9 @@ public sealed class DailyTipsController : ControllerBase
     internal static readonly string[] RetiredSeedSourceIds =
     {
         "webpages-basics", "visual-first-image", "library-publish",
+        // 网页托管「本周改动」碎片教程已退役:其内容(排序/分组 pill、视图切换、整页提亮)
+        // 已并入 webpages-page-guide 的 14 步系统教程,避免一页出现两个割裂教程(用户反馈)。
+        "webpages-feature-2026w22-pill-controls",
     };
 
     internal static List<DailyTip> BuildDefaultTips(DateTime now)
@@ -504,55 +519,8 @@ public sealed class DailyTipsController : ControllerBase
                 },
                 tier: "basic"),
 
-            // ===== 网页托管：advanced 本周改动（带版本号，下次再大改可升 Version 重弹）=====
-            T("webpages-feature-2026w22-pill-controls", "card",
-                "网页托管这周改了啥",
-                "排序+分组从下拉框改成 segment pill，单击即切；列表视图去掉重背景和分隔线；头部分级降噪；整页背景提亮。",
-                "/web-pages",
-                "看本周改动",
-                "[data-tour-id=webpages-header-actions]",
-                1,
-                new DailyTipAutoAction
-                {
-                    Scroll = "center",
-                    Steps = new List<DailyTipTourStep>
-                    {
-                        new()
-                        {
-                            Selector = "[data-tour-id=webpages-header-actions]",
-                            Title = "第 1 步：头部按钮分级",
-                            Body = "「上传站点」是唯一 primary；「分享统计 / 分享管理」收成 icon 按钮 + tooltip，视觉权重一目了然。",
-                            NavigateTo = "/web-pages",
-                        },
-                        new()
-                        {
-                            Selector = "[data-tour-id=webpages-sort-pills]",
-                            Title = "第 2 步：排序 segment pill",
-                            Body = "五种排序（最新/最早/标题/浏览/体积）平铺成 pill，**单击任意一个直接切到**，0 次下拉。",
-                        },
-                        new()
-                        {
-                            Selector = "[data-tour-id=webpages-group-pills]",
-                            Title = "第 3 步：分组 segment pill",
-                            Body = "「日期 / 文件夹」二选一，单击切换。被 5-27 误删的分组能力已恢复。",
-                        },
-                        new()
-                        {
-                            Selector = "[data-tour-id=webpages-view-toggle]",
-                            Title = "第 4 步：视图切换 + 列表清爽",
-                            Body = "右侧 ⊞/☰ 切网格/列表。列表视图去掉了行底分隔线 + 日期组延伸线，靠空白和日期标签做分组。",
-                        },
-                        new()
-                        {
-                            Selector = "[data-tour-id=webpages-root]",
-                            Title = "第 5 步：整页提亮",
-                            Body = "页面背景加了 indigo 顶部光晕 + 三段渐变，告别死黑。下次还有改动会用「升级」徽章再推给你。",
-                        },
-                    },
-                },
-                endAt: new DateTime(2026, 6, 15, 0, 0, 0, DateTimeKind.Utc),
-                sourceType: "feature-release",
-                tier: "advanced"),
+            // 网页托管「本周改动」碎片教程已退役(并入上面的 14 步系统教程,见 RetiredSeedSourceIds)。
+            // 一页只保留一个体系化教程,不再让排序/分组/视图等内容在第二个教程里重复出现。
 
             // 1. 自定义导航顺序 —— 排第一,新用户上手第一件事就是配自己的菜单
             T("nav-order-customize", "card",
@@ -865,6 +833,34 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=document-store-create], [data-tour-id=library-tabs]", Title = "第 6 步：新建知识库", Body = "点「新建知识库」取个名字，这就是你的第一个库。" },
                         new() { Selector = "[data-tour-id=document-store-create], [data-tour-id=library-tabs]", Title = "第 7 步：进库后上传文档", Body = "点卡片「打开」进入空间，右上角会出现「上传文档」按钮，支持拖入 PDF/Markdown/Word，或粘贴 URL 自动抓取。" },
                         new() { Selector = "[data-tour-id=document-store-create], [data-tour-id=library-tabs]", Title = "第 8 步：发布到智识殿堂", Body = "空间里点「发布」，勾选公开后就能被全平台搜到、收藏、点赞。看完点「完成」" },
+                    },
+                }),
+
+            // 8.1 同步知识库教程（手动开讲，非 *-page-guide：知识库页已有自动开讲的本页教程，
+            //     这条作为「同步」专题让用户从教程抽屉里主动点开，不与本页教程抢自动弹窗）。
+            //     步骤靠 SpotlightOverlay「下一步元素不在 DOM 时自动点当前按钮」机制切到同步页签。
+            //     页面 UI 改动时同步更新此处步骤与 data-tour-id（见 .claude/rules/onboarding-tips.md）。
+            T("document-store-sync-guide", "card",
+                "同步知识库：跨环境 / 本地库双向同步教程",
+                "学会把一个知识库和另一处的库（不同环境，或本环境另一个库）建立永久配对、单向或双向同步。",
+                "/document-store?tab=sync",
+                "开始同步教程",
+                "[data-tour-id=sync-toolbar]",
+                1,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    // 首步用 ?tab=sync 直达同步页签（DocumentStorePage 会据此清空详情视图 + 切到同步 tab），
+                    // 这样即使用户当前正在某个知识库详情里开讲，也能落到同步页签而不卡在找不到锚点（Bugbot: detail fallback）。
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new() { Selector = "[data-tour-id=sync-toolbar], [data-tour-id=library-sync-tab]", Title = "第 1 步：进入「跨环境同步」页签", Body = "同步让一个知识库的内容在两处保持一致——可以是测试/正式两个环境，也可以是本环境的两个库。这里就是同步管理中心（单库粒度，只搬这一个库的文档，不碰账号或别的库）。", NavigateTo = "/document-store?tab=sync" },
+                        new() { Selector = "[data-tour-id=library-sync-tab], [data-tour-id=sync-toolbar]", Title = "第 2 步：「跨环境同步」页签", Body = "顶部最右的「跨环境同步」页签就是入口，以后从这里进来管理所有同步配对。" },
+                        new() { Selector = "[data-tour-id=sync-toolbar]", Title = "第 3 步：同步工具栏", Body = "这里有「启动链接」「生成连接链接」「刷新」，下面列出你所有的同步配对。" },
+                        new() { Selector = "[data-tour-id=sync-start-link]", Title = "第 4 步：启动链接（建立配对）", Body = "两种方式二选一：跨环境就粘贴对方给的 skblink 链接；本环境两个库就直接选 A、B。还能选方向：双向 / 只推 / 只拉。" },
+                        new() { Selector = "[data-tour-id=sync-generate-link]", Title = "第 5 步：生成连接链接（给对端）", Body = "想让别的环境连过来，就在这里选库生成一条 skblink 永久链接发过去。令牌永久有效、不会过期，不想要了可在库里撤销。" },
+                        new() { Selector = "[data-tour-id=sync-list]", Title = "第 6 步：配对列表与立即同步", Body = "每条配对可随时切方向、点「立即同步」、或「撤销」。改动后显示「待同步」，同步完显示绿色「已同步」对勾。" },
+                        new() { Selector = "[data-tour-id=sync-list]", Title = "第 7 步：库详情看同步徽章", Body = "进入任何一个同步中的知识库，右上角都会显示同步状态徽章（已同步 / 待同步 / 出错），点它能回到这里管理。看完点「完成」" },
                     },
                 }),
 

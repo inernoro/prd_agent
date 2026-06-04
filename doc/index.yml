@@ -50,6 +50,7 @@ docs:
   design.daily-tips: 每日小贴士 / 路径式教程系统设计
   design.acceptance-system: 功能验收体系设计（业界对标的标准化验收 + 取证 + 归档）
   design.acceptance-kb: 验收报告知识库设计（最新在前 + 结论可视 + 模板约束 + 跨环境同步）
+  design.agent-universe: 智能体宇宙设计（能力契约 SSOT + 统一调用信封 + 漫威宇宙式互通）
   design.server-authority: 服务器权威性设计
   design.unified-skill-system: 技能系统统一设计
   design.llm-gateway: LLM Gateway 统一调用架构设计
@@ -65,6 +66,7 @@ docs:
   design.channel-adapter: 多通道适配器设计
   design.apple-shortcuts: 苹果快捷指令集成设计方案
   design.executive-dashboard: 总裁面板与周报 Agent 设计文档
+  design.product-agent: 产品管理 Agent（产品-版本-需求-功能-缺陷-客户）设计
   design.defect-agent: 缺陷管理 Agent 功能设计
   design.defect-labels: 缺陷管理标签体系设计
   design.defect-image-analysis: 缺陷截图 VLM 预解析设计文档
@@ -106,6 +108,7 @@ docs:
   design.system-emergence: 系统涌现：从基础组件到协同智能
   design.visual-agent: Visual Agent (视觉创作) 架构设计
   design.document-store: 文档空间设计
+  design.document-store-sync: 知识库跨环境/本地库双向同步设计（令牌配对+血缘幂等+签名改动检测，含架构图）
   design.emergence-explorer: 涌现探索器设计
   design.pr-review-v2: PR Review V2 设计（OAuth 最小可审查工作台）
   design.page-agent-bridge: Page Agent Bridge 设计（编码 Agent 浏览器之眼）
@@ -256,7 +259,9 @@ docs:
 
   # ── 六、技术债务台账（按模块）──
   # 已知边界 / 后续可补 / 留尾风险，命名规范见 rule.doc-naming.md「debt.* 专项约定」
+  debt.agent-universe: 智能体宇宙 · 债务台账
   debt.pm-agent: 项目管理智能体 · 债务台账
+  debt.product-agent: 产品管理智能体 · 债务台账
   debt.video-agent: 视频生成 Agent · 债务台账
   debt.workflow-agent: 工作流 Agent · 债务台账
   debt.asset-storage: 资源存储（IAssetStorage 实现）债务台账
@@ -264,9 +269,11 @@ docs:
   debt.cds-agent: CDS Agent 工作台 · 债务台账（R1 商业级 / Lite 边界 / 文档熵减）
   debt.cds-state-json: CDS state.json 影子存储债务台账
   debt.cds-compose-secrets: CDS compose 模板 TODO secrets / 全量 import 被拒债务台账
+  debt.changelog-center: 更新中心（终身存储 + SSE 推送）债务台账
   debt.cds-tutorial: CDS 教程（示例工程 + 隔离知识库 + 评分/自愈）债务台账
   debt.cds-visual-deploy: CDS 绝对可视化一键部署 · 债务台账（已知边界 + 低边际 backlog + 独立 fixture demo 阻塞）
   debt.knowledge-base: 知识库（AI Toolbox attachment + 文档空间）债务台账
+  debt.web-hosting: 网页托管 · 债务台账（幻灯片翻页方向兼容垫片边界）
   debt.share-link-security: 分享链接安全债务台账
   debt.web-hosting-client-ip: 网页托管真实客户端 IP（XFF 解析）债务台账
   debt.team-feature: 团队（网页托管 + 知识库）债务台账
@@ -276,8 +283,10 @@ docs:
   debt.library-doc-reader: 殿堂阅读器（克莱风暖色）保留未融合 DocBrowser 的债务台账
   debt.report-detail: 周报详情页（异构数据 + 多 tabs + 右栏面板）保留独立实现的债务台账
   debt.open-api: 开放接口对外网关债务台账（伞形 code 不变量 + 限流/降级/预警/配额 Phase 2 留尾）
+  debt.document-store-sync: 知识库跨环境/本地库↔库同步 · 债务台账（删除传播/附件/冲突合并/教程未补）
 
   # ── 七、周报（降序：最新在前）──
+  report.agent-universe-completeness: 智能体宇宙 · 各智能体完备度看板（终极目标 vs 当前进度）
   report.cds-visual-deploy: CDS 绝对可视化一键部署 · 完整报告（交付总览 + dogfood 修的真 bug + 各轮验收分享链）
   report.cds-agent-goal-completion-audit-2026-05-19: CDS Agent 商业级可用闭环目标审计报告
   report.cds-agent-p4-1-remote-preflight-2026-05-19: CDS Agent P4-1 远端发布前验收与试用入口报告
