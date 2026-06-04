@@ -3794,6 +3794,7 @@ public class DocumentStoreController : ControllerBase
             {
                 e.Id,
                 e.EntryId,
+                e.StoreId,
                 entryTitle = e.EntryId != null && entryTitles.ContainsKey(e.EntryId) ? entryTitles[e.EntryId] : null,
                 e.ViewerUserId,
                 e.ViewerName,
@@ -3867,6 +3868,7 @@ public class DocumentStoreController : ControllerBase
                 { "D", new BsonDocument("$ifNull", new BsonArray { "$DurationMs", 0 }) },
                 { "EnteredAt", 1 },
                 { "EntryId", 1 },
+                { "StoreId", 1 },
             }),
             new BsonDocument("$facet", new BsonDocument
             {
@@ -3906,13 +3908,43 @@ public class DocumentStoreController : ControllerBase
                     {
                         new BsonDocument("$group", new BsonDocument { { "_id", HourExpr() }, { "v", new BsonDocument("$sum", 1) } }),
                     } },
-                // 文档排行 Top 8
+                // 文档排行 Top 8（带 storeId 供前端点击跳转）
                 { "topEntries", new BsonArray
                     {
                         new BsonDocument("$group", new BsonDocument
-                            { { "_id", "$EntryId" }, { "v", new BsonDocument("$sum", 1) }, { "d", new BsonDocument("$sum", "$D") } }),
+                        {
+                            { "_id", "$EntryId" },
+                            { "v", new BsonDocument("$sum", 1) },
+                            { "d", new BsonDocument("$sum", "$D") },
+                            { "storeId", new BsonDocument("$first", "$StoreId") },
+                        }),
                         new BsonDocument("$sort", new BsonDocument("v", -1)),
                         new BsonDocument("$limit", 8),
+                    } },
+                // 知识库排行 Top 8（账号级聚合下才有多个库；单库场景前端隐藏）
+                { "topStores", new BsonArray
+                    {
+                        new BsonDocument("$group", new BsonDocument
+                            { { "_id", "$StoreId" }, { "v", new BsonDocument("$sum", 1) }, { "d", new BsonDocument("$sum", "$D") } }),
+                        new BsonDocument("$sort", new BsonDocument("v", -1)),
+                        new BsonDocument("$limit", 8),
+                    } },
+                // 标签统计 Top 12：按文档聚合访问量 → lookup 文档标签 → 展开 → 按标签汇总
+                { "tagStats", new BsonArray
+                    {
+                        new BsonDocument("$group", new BsonDocument { { "_id", "$EntryId" }, { "v", new BsonDocument("$sum", 1) } }),
+                        new BsonDocument("$lookup", new BsonDocument
+                        {
+                            { "from", "document_entries" },
+                            { "localField", "_id" },
+                            { "foreignField", "_id" },
+                            { "as", "e" },
+                        }),
+                        new BsonDocument("$unwind", "$e"),
+                        new BsonDocument("$unwind", "$e.Tags"),
+                        new BsonDocument("$group", new BsonDocument { { "_id", "$e.Tags" }, { "v", new BsonDocument("$sum", "$v") } }),
+                        new BsonDocument("$sort", new BsonDocument("v", -1)),
+                        new BsonDocument("$limit", 12),
                     } },
             }),
         };
@@ -3923,7 +3955,9 @@ public class DocumentStoreController : ControllerBase
         int unique = 0, returning = 0;
         var trendMap = new Dictionary<string, long>();
         var hourlyMap = new Dictionary<int, long>();
-        var topRaw = new List<(string? entryId, long v, long d)>();
+        var topRaw = new List<(string? entryId, long v, long d, string? storeId)>();
+        var topStoresRaw = new List<(string? storeId, long v, long d)>();
+        var tagStats = new List<object>();
 
         if (facet != null)
         {
@@ -3955,7 +3989,15 @@ public class DocumentStoreController : ControllerBase
                     if (!d["_id"].IsBsonNull) hourlyMap[d["_id"].ToInt32()] = d.GetValue("v", 0).ToInt64();
             if (facet.TryGetValue("topEntries", out var ev) && ev is BsonArray ea)
                 foreach (var d in ea.OfType<BsonDocument>())
-                    topRaw.Add((d["_id"].IsBsonNull ? null : d["_id"].AsString, d.GetValue("v", 0).ToInt64(), d.GetValue("d", 0).ToInt64()));
+                    topRaw.Add((d["_id"].IsBsonNull ? null : d["_id"].AsString, d.GetValue("v", 0).ToInt64(), d.GetValue("d", 0).ToInt64(),
+                        d.TryGetValue("storeId", out var sid) && !sid.IsBsonNull ? sid.AsString : null));
+            if (facet.TryGetValue("topStores", out var sv) && sv is BsonArray sa)
+                foreach (var d in sa.OfType<BsonDocument>())
+                    topStoresRaw.Add((d["_id"].IsBsonNull ? null : d["_id"].AsString, d.GetValue("v", 0).ToInt64(), d.GetValue("d", 0).ToInt64()));
+            if (facet.TryGetValue("tagStats", out var gv) && gv is BsonArray ga)
+                foreach (var d in ga.OfType<BsonDocument>())
+                    if (!d["_id"].IsBsonNull)
+                        tagStats.Add(new { tag = d["_id"].AsString, views = d.GetValue("v", 0).ToInt64() });
         }
 
         // 趋势补零：按本地时区生成连续日期序列（缺失天 = 0），避免折线断裂
@@ -3979,14 +4021,27 @@ public class DocumentStoreController : ControllerBase
         for (var h = 0; h < 24; h++)
             hourly.Add(new { hour = h, views = hourlyMap.TryGetValue(h, out var c) ? c : 0 });
 
-        // 文档标题补充
+        // 文档标题补充（带 storeId 供点击跳转）
         var entryIds = topRaw.Where(x => x.entryId != null).Select(x => x.entryId!).Distinct().ToList();
         var entryDocs = await _db.DocumentEntries.Find(e => entryIds.Contains(e.Id)).ToListAsync();
         var titles = entryDocs.ToDictionary(e => e.Id, e => e.Title);
         var topEntries = topRaw.Select(x => new
         {
             entryId = x.entryId,
+            storeId = x.storeId,
             title = x.entryId != null && titles.TryGetValue(x.entryId, out var ti) ? ti : null,
+            views = x.v,
+            totalDurationMs = x.d,
+        }).ToList();
+
+        // 知识库名称补充（topStores 点击跳转用）
+        var topStoreIds = topStoresRaw.Where(x => x.storeId != null).Select(x => x.storeId!).Distinct().ToList();
+        var storeDocs = await _db.DocumentStores.Find(s => topStoreIds.Contains(s.Id)).ToListAsync();
+        var storeNames = storeDocs.ToDictionary(s => s.Id, s => s.Name);
+        var topStores = topStoresRaw.Select(x => new
+        {
+            storeId = x.storeId,
+            storeName = x.storeId != null && storeNames.TryGetValue(x.storeId, out var sn) ? sn : null,
             views = x.v,
             totalDurationMs = x.d,
         }).ToList();
@@ -4010,6 +4065,8 @@ public class DocumentStoreController : ControllerBase
             trend,
             hourly,
             topEntries,
+            topStores,
+            tagStats,
             dwellBuckets = new { lt5s = bLt5, s5_30 = b5_30, s30_2m = b30_2m, gt2m = bGt2m, measured },
         };
     }

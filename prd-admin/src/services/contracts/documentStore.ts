@@ -336,6 +336,7 @@ export type DeleteDocumentEntryContract = (
 export type DocumentStoreViewEvent = {
   id: string;
   entryId?: string;
+  storeId?: string;
   entryTitle?: string | null;
   viewerUserId?: string;
   viewerName: string;
@@ -375,7 +376,11 @@ export type DocumentStoreAnalytics = {
   trend: { date: string; views: number }[];
   /** 0-23 时段访问量（已补零） */
   hourly: { hour: number; views: number }[];
-  topEntries: { entryId?: string | null; title?: string | null; views: number; totalDurationMs: number }[];
+  topEntries: { entryId?: string | null; storeId?: string | null; title?: string | null; views: number; totalDurationMs: number }[];
+  /** 知识库访问排行（账号级聚合下多个库；单库场景前端隐藏） */
+  topStores: { storeId?: string | null; storeName?: string | null; views: number; totalDurationMs: number }[];
+  /** 标签访问统计 Top 12 */
+  tagStats: { tag: string; views: number }[];
   /** 停留时长分桶（仅统计已测得停留的事件，measured 为分母） */
   dwellBuckets: { lt5s: number; s5_30: number; s30_2m: number; gt2m: number; measured: number };
 };

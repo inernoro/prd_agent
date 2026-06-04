@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Eye, Users, Clock, X, UserCircle2, Download, FileText } from 'lucide-react';
+import { Eye, Users, Clock, X, UserCircle2, Download, FileText, ChevronRight, Library, Tag } from 'lucide-react';
 import type { EChartsOption } from 'echarts';
 import { listStoreViewEvents, getStoreAnalytics, listAllStoresViewEvents, getAllStoresAnalytics } from '@/services';
 import type {
@@ -104,13 +104,19 @@ const RANGE_OPTIONS: { label: string; days: number }[] = [
 // ── Drawer ──
 
 // scope='store'：单个知识库；scope='account'：我名下所有知识库聚合（列表页「统计」入口）。
-export type ViewersDrawerProps = { onClose: () => void } & (
+export type ViewersDrawerProps = {
+  onClose: () => void;
+  /** 点击文档排行/流水中的文档 → 跳到对应知识库并打开该文档 */
+  onOpenDocument?: (storeId: string, entryId: string) => void;
+  /** 点击知识库排行 → 打开对应知识库 */
+  onOpenStore?: (storeId: string) => void;
+} & (
   | { scope?: 'store'; storeId: string; storeName: string }
   | { scope: 'account'; storeId?: undefined; storeName?: undefined }
 );
 
 export function ViewersDrawer(props: ViewersDrawerProps) {
-  const { onClose } = props;
+  const { onClose, onOpenDocument, onOpenStore } = props;
   const isAccount = props.scope === 'account';
   const storeId = isAccount ? null : props.storeId;
   const headerSub = isAccount ? '全部知识库 · 我的空间' : (props.storeName ?? '');
@@ -306,9 +312,21 @@ export function ViewersDrawer(props: ViewersDrawerProps) {
                 <DwellBars buckets={analytics?.dwellBuckets} />
               </ChartCard>
 
-              {/* 文档排行 */}
-              <ChartCard title="文档访问排行">
-                <TopEntries items={analytics?.topEntries ?? []} />
+              {/* 知识库排行：账号级聚合下展示（点击跳到对应知识库） */}
+              {isAccount && (analytics?.topStores?.length ?? 0) > 0 && (
+                <ChartCard title="知识库访问排行">
+                  <TopStores items={analytics?.topStores ?? []} onOpen={onOpenStore} />
+                </ChartCard>
+              )}
+
+              {/* 文档排行（点击跳到对应文档） */}
+              <ChartCard title="最受欢迎的文档">
+                <TopEntries items={analytics?.topEntries ?? []} onOpen={onOpenDocument} />
+              </ChartCard>
+
+              {/* 标签统计 */}
+              <ChartCard title="标签访问统计">
+                <TagStats items={analytics?.tagStats ?? []} />
               </ChartCard>
             </>
           )}
@@ -330,7 +348,7 @@ export function ViewersDrawer(props: ViewersDrawerProps) {
               </div>
             ) : (
               <ol className="space-y-1">
-                {events.map(ev => <ViewEventRow key={ev.id} ev={ev} />)}
+                {events.map(ev => <ViewEventRow key={ev.id} ev={ev} onOpen={onOpenDocument} />)}
               </ol>
             )}
           </div>
@@ -396,36 +414,119 @@ function DwellBars({ buckets }: { buckets?: DocumentStoreAnalytics['dwellBuckets
   );
 }
 
-function TopEntries({ items }: { items: DocumentStoreAnalytics['topEntries'] }) {
+function TopEntries({ items, onOpen }: {
+  items: DocumentStoreAnalytics['topEntries'];
+  onOpen?: (storeId: string, entryId: string) => void;
+}) {
   if (items.length === 0) {
     return <p className="py-3 text-center text-[11px] text-token-muted">暂无文档访问数据</p>;
   }
   const max = Math.max(...items.map(i => i.views), 1);
   return (
     <ol className="space-y-1 py-0.5">
-      {items.map((it, idx) => (
-        <li key={it.entryId ?? idx} className="flex items-center gap-2 rounded-[6px] px-1.5 py-1">
-          <span className="w-4 flex-shrink-0 text-center text-[10px] font-bold tabular-nums text-token-muted">{idx + 1}</span>
-          <FileText size={12} className="flex-shrink-0 text-token-muted" />
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-[11px] text-token-primary">{it.title ?? '（已删除文档）'}</p>
-            <div className="mt-0.5 h-1 overflow-hidden rounded-full" style={{ background: 'var(--bg-input)' }}>
-              <div className="h-full rounded-full" style={{ width: `${Math.round((it.views / max) * 100)}%`, background: SERIES_INDIGO }} />
+      {items.map((it, idx) => {
+        const clickable = !!(onOpen && it.storeId && it.entryId);
+        return (
+          <li
+            key={it.entryId ?? idx}
+            onClick={clickable ? () => onOpen!(it.storeId!, it.entryId!) : undefined}
+            className={`flex items-center gap-2 rounded-[6px] px-1.5 py-1 ${clickable ? 'cursor-pointer hover:bg-white/6 transition-colors' : ''}`}
+            title={clickable ? '打开该文档' : undefined}
+          >
+            <span className="w-4 flex-shrink-0 text-center text-[10px] font-bold tabular-nums text-token-muted">{idx + 1}</span>
+            <FileText size={12} className="flex-shrink-0 text-token-muted" />
+            <div className="min-w-0 flex-1">
+              <p className={`truncate text-[11px] ${clickable ? 'text-token-primary group-hover:underline' : 'text-token-primary'}`}>{it.title ?? '（已删除文档）'}</p>
+              <div className="mt-0.5 h-1 overflow-hidden rounded-full" style={{ background: 'var(--bg-input)' }}>
+                <div className="h-full rounded-full" style={{ width: `${Math.round((it.views / max) * 100)}%`, background: SERIES_INDIGO }} />
+              </div>
             </div>
-          </div>
-          <span className="flex-shrink-0 text-right text-[10px] tabular-nums text-token-secondary">
-            {it.views} 次 · {formatDwell(it.totalDurationMs)}
-          </span>
-        </li>
-      ))}
+            <span className="flex-shrink-0 text-right text-[10px] tabular-nums text-token-secondary">
+              {it.views} 次 · {formatDwell(it.totalDurationMs)}
+            </span>
+            {clickable && <ChevronRight size={12} className="flex-shrink-0 text-token-muted" />}
+          </li>
+        );
+      })}
     </ol>
   );
 }
 
-function ViewEventRow({ ev }: { ev: DocumentStoreViewEvent }) {
-  const revisits = ev.revisitCount ?? 0;
+function TopStores({ items, onOpen }: {
+  items: DocumentStoreAnalytics['topStores'];
+  onOpen?: (storeId: string) => void;
+}) {
+  if (items.length === 0) {
+    return <p className="py-3 text-center text-[11px] text-token-muted">暂无知识库访问数据</p>;
+  }
+  const max = Math.max(...items.map(i => i.views), 1);
   return (
-    <li className="surface-row flex items-center gap-2.5 rounded-[8px] px-2.5 py-2">
+    <ol className="space-y-1 py-0.5">
+      {items.map((it, idx) => {
+        const clickable = !!(onOpen && it.storeId);
+        return (
+          <li
+            key={it.storeId ?? idx}
+            onClick={clickable ? () => onOpen!(it.storeId!) : undefined}
+            className={`flex items-center gap-2 rounded-[6px] px-1.5 py-1 ${clickable ? 'cursor-pointer hover:bg-white/6 transition-colors' : ''}`}
+            title={clickable ? '打开该知识库' : undefined}
+          >
+            <span className="w-4 flex-shrink-0 text-center text-[10px] font-bold tabular-nums text-token-muted">{idx + 1}</span>
+            <Library size={12} className="flex-shrink-0 text-token-muted" />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[11px] text-token-primary">{it.storeName ?? '（已删除知识库）'}</p>
+              <div className="mt-0.5 h-1 overflow-hidden rounded-full" style={{ background: 'var(--bg-input)' }}>
+                <div className="h-full rounded-full" style={{ width: `${Math.round((it.views / max) * 100)}%`, background: 'rgba(168,85,247,0.85)' }} />
+              </div>
+            </div>
+            <span className="flex-shrink-0 text-right text-[10px] tabular-nums text-token-secondary">
+              {it.views} 次 · {formatDwell(it.totalDurationMs)}
+            </span>
+            {clickable && <ChevronRight size={12} className="flex-shrink-0 text-token-muted" />}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+function TagStats({ items }: { items: DocumentStoreAnalytics['tagStats'] }) {
+  if (items.length === 0) {
+    return <p className="py-3 text-center text-[11px] text-token-muted">暂无标签数据</p>;
+  }
+  const max = Math.max(...items.map(i => i.views), 1);
+  return (
+    <div className="space-y-1.5 py-0.5">
+      {items.map(it => {
+        const pct = Math.round((it.views / max) * 100);
+        return (
+          <div key={it.tag} className="flex items-center gap-2">
+            <span className="inline-flex max-w-[120px] flex-shrink-0 items-center gap-1 truncate text-[10px]" style={{ color: 'var(--text-secondary)' }}>
+              <Tag size={10} className="flex-shrink-0 text-token-muted" />
+              <span className="truncate">{it.tag}</span>
+            </span>
+            <div className="h-2 flex-1 overflow-hidden rounded-full" style={{ background: 'var(--bg-input)' }}>
+              <div className="h-full rounded-full" style={{ width: `${pct}%`, background: 'rgba(74,222,128,0.7)' }} />
+            </div>
+            <span className="w-[44px] flex-shrink-0 text-right text-[10px] tabular-nums text-token-secondary">{it.views} 次</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ViewEventRow({ ev, onOpen }: {
+  ev: DocumentStoreViewEvent;
+  onOpen?: (storeId: string, entryId: string) => void;
+}) {
+  const revisits = ev.revisitCount ?? 0;
+  const clickable = !!(onOpen && ev.storeId && ev.entryId);
+  return (
+    <li
+      onClick={clickable ? () => onOpen!(ev.storeId!, ev.entryId!) : undefined}
+      title={clickable ? '打开该文档' : undefined}
+      className={`surface-row flex items-center gap-2.5 rounded-[8px] px-2.5 py-2 ${clickable ? 'cursor-pointer' : ''}`}>
       {ev.viewerUserId ? (
         // 登录访客：渲染真实头像（resolveAvatarUrl 自动兜底 nohead.png）
         <UserAvatar

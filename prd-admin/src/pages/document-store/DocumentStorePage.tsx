@@ -585,10 +585,12 @@ function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle, onClos
 }
 
 // ── 空间详情视图（文档列表 + 上传）──
-function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
+function StoreDetailView({ storeId, onBack, onOpenLibrary, initialEntryId }: {
   storeId: string;
   onBack: () => void;
   onOpenLibrary: (storeId: string) => void;
+  /** 进入时直接打开的文档（从账号统计点击文档跳转而来）；组件按 storeId key 重挂载，挂载时消费一次 */
+  initialEntryId?: string;
 }) {
   const [store, setStore] = useState<DocumentStore | null>(null);
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
@@ -596,6 +598,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
   const [sharedEntryIds, setSharedEntryIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(undefined);
+  // 从账号统计点击文档跳转而来：挂载时打开指定文档（组件按 storeId key 重挂载，仅消费一次）
+  useEffect(() => {
+    if (initialEntryId) setSelectedEntryId(initialEntryId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [showSubscribe, setShowSubscribe] = useState(false);
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [showViewers, setShowViewers] = useState(false);
@@ -1230,6 +1237,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
           storeId={storeId}
           storeName={store.name}
           onClose={() => setShowViewers(false)}
+          // 单库内点击文档排行/流水 → 直接在本库打开该文档
+          onOpenDocument={(_sid, entryId) => { setShowViewers(false); setSelectedEntryId(entryId); }}
         />
       )}
     </div>
@@ -1601,6 +1610,18 @@ export function DocumentStorePage() {
 
   // 列表页「统计」入口：打开账号级访客报表抽屉（聚合全部知识库）
   const [showAccountViewers, setShowAccountViewers] = useState(false);
+  // 从账号统计点击文档跳转时，待打开的 entryId（store 切换后由 StoreDetailView 消费）
+  const [pendingEntryId, setPendingEntryId] = useState<string | null>(null);
+  const openDocument = useCallback((sid: string, entryId: string) => {
+    setShowAccountViewers(false);
+    setPendingEntryId(entryId);
+    setSelectedStoreId(sid);
+  }, []);
+  const openStore = useCallback((sid: string) => {
+    setShowAccountViewers(false);
+    setPendingEntryId(null);
+    setSelectedStoreId(sid);
+  }, []);
 
   const tabs: { key: StoreTab; label: string; icon: typeof Library }[] = [
     { key: 'mine', label: '我的空间', icon: Library },
@@ -1658,8 +1679,9 @@ export function DocumentStorePage() {
 
   // 空间详情视图（仅 mine 标签下可进入编辑视图）—— 早返回必须放在所有 hook 之后
   if (selectedStoreId) {
-    return <StoreDetailView storeId={selectedStoreId} onBack={() => {
+    return <StoreDetailView storeId={selectedStoreId} key={selectedStoreId} initialEntryId={pendingEntryId ?? undefined} onBack={() => {
       setSelectedStoreId(null);
+      setPendingEntryId(null);
       // 按当前 tab 重新拉对应列表,避免从收藏/点赞返回时仍刷 stores
       if (tab === 'mine') loadStores('mine', null);
       else if (tab === 'team') {
@@ -2247,7 +2269,12 @@ export function DocumentStorePage() {
 
       {/* 账号级访客统计抽屉（列表页「统计」入口，聚合全部知识库） */}
       {showAccountViewers && (
-        <ViewersDrawer scope="account" onClose={() => setShowAccountViewers(false)} />
+        <ViewersDrawer
+          scope="account"
+          onClose={() => setShowAccountViewers(false)}
+          onOpenDocument={openDocument}
+          onOpenStore={openStore}
+        />
       )}
 
       {showCreate && (
