@@ -272,14 +272,13 @@ export function TipsDrawer() {
     if (started.has(guide.sourceId)) return;
     started.add(guide.sourceId);
     try { sessionStorage.setItem(AUTO_STARTED_GUIDES_KEY, JSON.stringify(Array.from(started))); } catch { /* noop */ }
-    // 两个抽屉自动展开 effect 已用 pageGuideHere 抑制,这里直接用 CTA 同款机制开讲。
-    // 与 handleOpenTip 同口径:若 guide 的 actionUrl 含 query(如 /settings?tab=nav-order)且当前 tab 不对,
-    // 先 navigate 切过去,否则 tour 在错误 tab 上找不到锚点、还把 guide 标记成本 session 已开讲(Bugbot Medium「Auto spotlight skips query tab」)。
-    const navTarget = tipNavTarget(guide, location);
-    if (navTarget) navigate(navTarget);
+    // 仅写 payload 开讲(原有长期行为)。这里**不**在同一 tick 里 navigate:
+    // SpotlightOverlay 读 payload 后会同步消费它并立即按当前路由 poll 锚点,而 navigate 要到下一次渲染才应用,
+    // 二者同 tick 会在「旧 tab」找锚点形成竞态(Bugbot「Auto tour clears payload early」)。
+    // 页面内的跳转(含切 tab)由 tour 各步的 navigateTo 在 overlay 内统一驱动(SpotlightOverlay 已处理),
+    // 不需要、也不应在本 effect 抢着 navigate。当前所有 *-page-guide 的 actionUrl 均无 query,本路径无回归。
     void trackTip(guide.id, 'clicked');
     writeSpotlightPayload(guide);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, pageGuideHere]);
 
   // tips 变化时把轮播索引收敛到有效范围
