@@ -19,7 +19,10 @@
 6. **跨环境需网络互通**：remote 配对要求两个环境能互相 HTTP 访问（受 `ISafeOutboundUrlValidator` SSRF 约束，私网地址会被拒）。本地库↔库配对无此要求，走 DB 直读写。
 7. **同步为同步阻塞调用**：`run` 端点同步执行 build/apply（含跨环境 HTTP），大库可能较慢。未来可改 Run/Worker 异步 + 进度 SSE（呼应 CLAUDE.md §6）。
 8. **页面教程未补步**：文档空间新增「跨环境同步」页签，`document-store-page-guide` 暂未加对应 Tour 步骤（`.claude/rules/onboarding-tips.md`）。后续可补一步指向 `library-tabs` 锚点讲解同步入口。
-9. **配对选择器不含 PM 项目库 / 产品知识库**（Codex PR #730 评审）：后端 `LoadWritableStoreAsync` 已允许 PM 项目成员、产品成员 write-sync 这类库（与 `DocumentStoreController.CanWriteStoreAsync` 对齐），但前端「启动链接 / 生成连接链接」选择器只拉 `mine` + 团队共享列表，而那些列表端点**有意排除** `PmProjectId` / `ProductKnowledgeRef` 非空的库（它们只在各自 Agent 的「知识库」tab 内展示）。结果：有权限的用户能通过 API 同步这些库，但 UI 选择器里选不到。补法需聚合「我可写的全部库（含隐藏的项目库/产品库）」——要么新增一个 `scope=writable-all` 的后端列表端点，要么前端额外拉项目/产品 KB 列表合并。属跨 Agent 聚合，留作后续。
+9. **PM 项目库 / 产品知识库在同步 UI 与发现里缺席**（Codex PR #730 评审，多次）：后端 `LoadWritableStoreAsync` 已允许 PM 项目成员、产品成员 write-sync 这类库（与 `DocumentStoreController.CanWriteStoreAsync` 对齐），运行/改方向/删除（`LoadManageableLinkAsync` 凭 id）也都放行。但有两处只按「owner + 团队共享」口径，**有意排除** `PmProjectId` / `ProductKnowledgeRef` 非空的库：
+   - 前端「启动链接 / 生成连接链接」选择器（拉 `mine` + 团队共享列表，列表端点本就排除隐藏库）；
+   - 后端 `ListAllLinks` 的共享本地配对发现（候选集 = owner + 团队共享 store id，见 round-12 收窄）。
+   结果：有权限的用户能凭 id 管理这些库的本地配对，但在「跨环境同步」页签既选不到、也看不到。完整补法需聚合「我可写的全部库（含隐藏的项目库/产品库）」——新增一个 `scope=writable-all` 后端端点（同时供选择器和 ListAllLinks 候选集复用），或前端额外拉项目/产品 KB 列表合并。属跨 Agent 聚合，留作后续；当前以 owner+团队共享为准（覆盖常规知识库主场景）。
 
 ## 后续可做（按价值排序）
 

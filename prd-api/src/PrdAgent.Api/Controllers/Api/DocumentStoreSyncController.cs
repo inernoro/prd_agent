@@ -1033,6 +1033,9 @@ public class DocumentStoreSyncController : ControllerBase
 
     private static string ResolveStatus(DocumentStoreSyncLink link, string? localSig, string? remoteSig)
     {
+        // 已落库的 error 优先于一切（含首次运行就失败、LastSyncedAt 仍为 null 的情况）：
+        // 否则首跑因对端不可达而失败的链接刷新后会被当成"从未同步"，掩盖错误（Codex P2）。
+        if (link.Status == DocumentSyncLinkStatus.Error) return DocumentSyncLinkStatus.Error;
         if (link.LastSyncedAt == null) return DocumentSyncLinkStatus.Never;
         // 签名与上次同步快照不一致 = 该侧有改动。按方向只关心"会被本次同步搬动"的那侧：
         // push 只看本地、pull 只看对端、both 看任一侧。
@@ -1050,11 +1053,7 @@ public class DocumentStoreSyncController : ControllerBase
             DocumentSyncDirection.Pull => remoteChanged,
             _ => localChanged || remoteChanged,
         };
-        // 已落库的 error 保持 error（直到一次成功同步把它清成 synced）：失败后即便有新漂移也应显示「同步出错」
-        // 而非「待同步」，否则用户以为只是有待同步内容、看不出上次失败（Bugbot: error status shown as pending）。
-        // 重试入口始终在（「立即同步」按钮不依赖状态），不会因此卡住。
-        if (link.Status == DocumentSyncLinkStatus.Error)
-            return DocumentSyncLinkStatus.Error;
+        // error 已在方法开头优先返回（落库 error 一直显示「同步出错」，直到一次成功同步清成 synced）。
         return relevant ? DocumentSyncLinkStatus.Pending : DocumentSyncLinkStatus.Synced;
     }
 
