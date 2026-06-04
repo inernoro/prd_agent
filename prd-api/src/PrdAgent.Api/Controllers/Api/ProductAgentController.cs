@@ -1565,7 +1565,7 @@ public class ProductAgentController : ControllerBase
     }
 
     /// <summary>把流程定义 + 初始状态惰性绑定到实例（存量数据补绑）。</summary>
-    private async Task BindWorkflowAsync(string entityType, string entityId, string workflowDefId, string? currentState)
+    private async Task BindWorkflowAsync(string entityType, string entityId, string? workflowDefId, string? currentState)
     {
         switch (entityType)
         {
