@@ -252,7 +252,9 @@ public class DocumentStoreSyncController : ControllerBase
         {
             try
             {
-                if (string.IsNullOrEmpty(fe.Content)) { skipped++; continue; } // 本期只搬文本正文
+                // 只跳过"无正文"（null：二进制/无关联文档）；空字符串是合法的空文本文档，要照常同步，
+                // 否则"清空文档正文/新建空文档"的变更不会传到对端，快照却前进 → 两侧永久不一致（Codex P2）。
+                if (fe.Content == null) { skipped++; continue; }
                 var parentId = ResolveParent(fe.ParentLineageId);
 
                 if (byLineage.TryGetValue(fe.LineageId, out var exEntry) && !exEntry.IsFolder)
@@ -645,6 +647,7 @@ public class DocumentStoreSyncController : ControllerBase
 
         var (actorUserId, actorName, actorAvatar) = await GetActorAsync(userId);
         var summary = new List<string>();
+        var totalFailed = 0;
         try
         {
             async Task DoPullAsync()
@@ -652,12 +655,14 @@ public class DocumentStoreSyncController : ControllerBase
                 var bundle = await FetchRemoteBundleAsync(link);
                 if (bundle == null) throw new InvalidOperationException("拉取对端内容失败");
                 var r = await ApplyBundleAsync(local!, bundle, actorUserId, actorName, actorAvatar);
+                totalFailed += r.Failed;
                 summary.Add($"拉取 新增{r.Created}/更新{r.Updated}/跳过{r.Skipped}" + (r.Failed > 0 ? $"/失败{r.Failed}" : ""));
             }
             async Task DoPushAsync()
             {
                 var localBundle = await BuildBundleAsync(local!);
                 var r = await PushBundleAsync(link, localBundle, actorUserId, actorName, actorAvatar);
+                totalFailed += r.Failed;
                 summary.Add($"推送 新增{r.Created}/更新{r.Updated}/跳过{r.Skipped}" + (r.Failed > 0 ? $"/失败{r.Failed}" : ""));
             }
 
@@ -708,6 +713,24 @@ public class DocumentStoreSyncController : ControllerBase
             var localSig = await ComputeSignatureAsync(link.LocalStoreId);
             var remoteSig = await GetRemoteSignatureAsync(link);
             var resultText = string.Join("；", summary);
+
+            // 有条目应用失败：不能判 synced，也【不推进签名快照】——否则把失败后的状态记成"已同步基线"，
+            // 之后 drift 检测看不到差异，失败条目永不重试（Bugbot/Codex）。保留旧快照让其持续显示待同步。
+            if (totalFailed > 0)
+            {
+                var failText = (string.IsNullOrEmpty(resultText) ? "" : resultText + "；") + $"有 {totalFailed} 条同步失败，请重试";
+                await _db.DocumentStoreSyncLinks.UpdateOneAsync(l => l.Id == link.Id,
+                    Builders<DocumentStoreSyncLink>.Update
+                        .Set(l => l.LastSyncedAt, DateTime.UtcNow)
+                        .Set(l => l.Status, DocumentSyncLinkStatus.Error)
+                        .Set(l => l.LastResult, failText)
+                        .Set(l => l.UpdatedAt, DateTime.UtcNow));
+                link.LastSyncedAt = DateTime.UtcNow;
+                link.Status = DocumentSyncLinkStatus.Error;
+                link.LastResult = failText;
+                return Ok(ApiResponse<object>.Ok(ToDto(link, DocumentSyncLinkStatus.Error, localSig, remoteSig, local!.Name)));
+            }
+
             // 对端签名抓取失败（null）时，仅当该方向"在意对端"才标 pending（pull/both）：
             // 否则 LastRemoteSignature 为 null 会让 pull/both 假装"已同步"。push-only 不关心对端漂移，照常 synced。
             var remoteMatters = link.Direction != DocumentSyncDirection.Push;
