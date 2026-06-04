@@ -409,7 +409,10 @@ function GenerateLinkDialog({ stores, onClose }: {
   onClose: () => void;
 }) {
   const [storeId, setStoreId] = useState(stores[0]?.id ?? '');
-  const [baseUrl, setBaseUrl] = useState(() => window.location.origin);
+  // 默认带上部署路径前缀（如 /prod）：后端 CallRemoteAsync 会保留 base 的 path，
+  // 只给 origin 会丢前缀导致对端探测打到错误路径（Codex P2）。仍可编辑覆盖。
+  const [baseUrl, setBaseUrl] = useState(() =>
+    (window.location.origin + (import.meta.env.BASE_URL || '/')).replace(/\/+$/, ''));
   const [link, setLink] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
