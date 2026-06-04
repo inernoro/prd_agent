@@ -203,6 +203,7 @@ export function TipsDrawer() {
   // 已弹过集合里 → 再自动弹一次。解决「session 第二条推送不弹」的坑。
   useEffect(() => {
     if (!loaded) return;
+    if (location.pathname === '/') return; // 首页(登录落地页)只展示通知,不自动弹教程抽屉;首页若有专属教程走下方 Spotlight 自动开讲
     if (pageGuideHere) return; // 本页有未走完教程 → 由 Spotlight 自动开讲,不抢着展开抽屉(避免叠加)
     if (hasAutoOpenedToday()) return; // 每天只自动弹一次
     const opened = readAutoOpenedIds();
@@ -232,6 +233,7 @@ export function TipsDrawer() {
   // (bugbot ref1: 旧 flag 会在 targeted-tip 路径先触发时永远不被写入,跨日 remount 会让新用户路径误触发)
   useEffect(() => {
     if (!loaded) return;
+    if (location.pathname === '/') return; // 首页(登录落地页)只展示通知,不自动弹教程抽屉;首页若有专属教程走下方 Spotlight 自动开讲
     if (pageGuideHere) return; // 本页有未走完教程 → 走 Spotlight 自动开讲,不展开抽屉(避免叠加)
     if (tips.length === 0) return;
     if (hasAutoOpenedToday()) return; // 每天只自动弹一次

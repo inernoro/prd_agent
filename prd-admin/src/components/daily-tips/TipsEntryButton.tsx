@@ -62,7 +62,11 @@ export function TipsEntryButton({ className, compact = false }: { className?: st
         color: newbie ? 'var(--accent-primary, #a78bfa)' : 'var(--text-muted)',
         opacity: newbie ? 1 : 0.8,
         transition: 'background 160ms ease-out, border-color 160ms ease-out, opacity 160ms ease-out',
-        animation: newbie ? 'tipsEntryPulse 2.4s ease-in-out infinite' : undefined,
+        // 呼吸灯常驻:每个页面的教程入口都持续呼吸,让用户随时知道「这里有教程」。
+        // 新人(本页有未走完教程)用强调色强脉冲;老人/已学会用柔和中性呼吸,安静但仍可见。
+        animation: newbie
+          ? 'tipsEntryPulse 2.4s ease-in-out infinite'
+          : 'tipsEntryBreathe 3.2s ease-in-out infinite',
       }}
       onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }}
       onMouseLeave={(e) => { e.currentTarget.style.opacity = newbie ? '1' : '0.8'; }}
@@ -71,7 +75,11 @@ export function TipsEntryButton({ className, compact = false }: { className?: st
       {compact ? '教程' : '本页教程'}
       <style>{`@keyframes tipsEntryPulse {
         0%, 100% { box-shadow: 0 0 0 0 rgba(168,85,247,0); }
-        50% { box-shadow: 0 0 0 3px rgba(168,85,247,0.14); }
+        50% { box-shadow: 0 0 0 4px rgba(168,85,247,0.18); }
+      }
+      @keyframes tipsEntryBreathe {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(168,85,247,0); border-color: var(--border-subtle, rgba(127,127,127,0.18)); }
+        50% { box-shadow: 0 0 0 3px rgba(168,85,247,0.10); border-color: rgba(196,181,253,0.32); }
       }`}</style>
     </button>
   );
