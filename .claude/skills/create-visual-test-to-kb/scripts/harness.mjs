@@ -17,6 +17,11 @@ export function loadConfig(path) {
 }
 
 export async function launch(cfg, opts = {}) {
+  // 每次新会话清空模块级累积：同一 Node 进程内多次 launch（批量验收 / 自测）若不清空，会把上一轮的
+  // shots / autoFindings 串进本轮 → result.json 混入历史 P0/P1、stale blocker 误折叠进新 manifest，
+  // 造成误拒收或机读输出失真（Bugbot #4，2026-06-04）。launch 是文档化入口，在此重置最稳妥。
+  shots.length = 0;
+  autoFindings.length = 0;
   const sc = cfg.screenshot || {};
   const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
   const ctxOpts = {
@@ -229,10 +234,15 @@ export async function detectThemeSupport(page, cfg) {
   const delta = Math.abs(lightLum - darkLum);
   // 亮度差 < 24 视为"切了主题但没变"——该页不真支持双主题
   const supportsLight = delta >= 24;
-  // 恢复探测前主题；探测前无显式主题则回到 dark（应用默认，prd-admin 全局暗色）
-  await page.evaluate(([a, m]) => document.documentElement.setAttribute(a, m), [attr, original || 'dark']);
+  // 忠实恢复探测前状态：原本就没有该属性的页面（如 report-agent 把"无属性"当 dark，prd-admin 同理）
+  // 必须 removeAttribute 还原，而非写死 'dark'——写 'dark' 会给"无属性=dark"的页面凭空加上属性，
+  // 让后续截图主题与真实默认态偏离（Bugbot #3，2026-06-04）。
+  await page.evaluate(([a, m]) => {
+    if (m === null) document.documentElement.removeAttribute(a);
+    else document.documentElement.setAttribute(a, m);
+  }, [attr, original]);
   await page.waitForTimeout(200);
-  return { supportsLight, darkLum: Math.round(darkLum), lightLum: Math.round(lightLum), delta: Math.round(delta), restoredTheme: original || 'dark' };
+  return { supportsLight, darkLum: Math.round(darkLum), lightLum: Math.round(lightLum), delta: Math.round(delta), restoredTheme: original === null ? '(removed)' : original };
 }
 
 // ── v1.0：导航 timing（issue #605 二.5，呼应 CLAUDE §6 禁止空白等待）──
