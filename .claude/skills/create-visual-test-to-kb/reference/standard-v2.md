@@ -1,7 +1,11 @@
-# MAP 验收标准 v2（Acceptance Standard v2）
+# MAP 验收标准 v2（Acceptance Standard v2 · 实现视觉测试协议 v1.0）
 
 > 本文件是"下限基线"。任何功能/PR 验收**至少**满足本标准,才能声称"已验收"。
 > 主纲在 `SKILL.md`,本文件是按需加载的完整规则。项目无关,配置见 `acceptance.config.json`。
+>
+> **本标准实现"视觉测试协议 v1.0"**(固化自元 issue #605,见 `doc/rule.visual-testing-protocol.md`)。
+> v1.0 相对 v0.1 的核心增量(均已落地 harness + 自测 10/10 通过):运行时错误自动捕获(§5.3)、
+> dark-only 双主题伪命令消除(§5.4)、可选过程视频(§5.5)、机读 `result.json`(§5.3)。
 
 ---
 
@@ -125,6 +129,43 @@ doc-store 归档是两步:`POST /entries`(建标题条目)→ `PUT /entries/{id}
 | 双主题切换后对比度异常/文字浮不出 | 主题 token 未翻转 | P1 |
 
 **自动护栏(已落地)**:`scripts/harness.mjs` 的 `validateShot()` 现在每张图都跑 modal 撑破检测——发现 `[role=dialog]`/`.modal` 等容器高度超视口且无内部滚动,写 `版式撑破(P0,...)` 到该图 warnings。**截图带此 warning 却仍判 pass = 违反本标准**。护栏是兜底,读图人仍须按上表主动核对(护栏只抓"撑破",抓不了"CTA 语义可达性""留白""对比度")。
+
+---
+
+## 5.3 运行时错误自动捕获（v1.0 新增 硬规矩，issue #605 二.2）
+
+> 历史教训:验收只盯静态截图,**console 报错 / 接口 5xx / 未捕获异常**这些"页面看着没事、底下已经炸了"的运行时问题人眼永远漏。issue #605 三位执行 Agent 一致认定:这是"机器最该补、人最容易漏"的维度。harness v1.0 把它做成默认开 + 硬门禁。
+
+**机制(harness `attachAutoCapture`,`launch()` 默认装上,driver 零配置)**:
+
+| 信号 | 自动判级 | 说明 |
+|------|---------|------|
+| 未捕获 JS 异常(`pageerror`) | **P0** | 页面真崩了 |
+| 同源接口 5xx 响应 | **P0** | 后端炸了 |
+| `console.error` | P1 | 前端报错(只收 error 不收 warning,降噪) |
+| 同源接口 4xx(排除 401/403/404) | P1 | 接口异常 |
+| 请求彻底失败(DNS/reset,排除主动 abort) | P1 | 网络断 |
+
+**判级规则(保守,避免误杀)**:只计**同源**(app 自己的 host)请求,跨域第三方/CDN 不计;401/403/404 高噪声跳过;主动 abort 的 fetch 跳过;支持 `ignore` 正则白名单。
+
+**硬门禁**:`blockSeverity`(默认 `P0`)——任何 ≥ 此级别的 finding 会**自动折叠进"截图那一刻"的 warnings**,从而被 `archive_report.py` 准入校验(§3.5 第 4 项)**直接拒收**。即:取证过程中页面抛了未捕获异常或后端 5xx,**这轮验收无法归档为 pass**,必须先修。P1 仍记进 `result.json` 供报告引用,但不硬阻断(避免一条第三方 console 噪声卡死整轮)。
+
+**机读产物 `result.json`(v1.0,issue #605 二.3)**:`writeManifest(outDir, extra)` 除写 `manifest.json`(截图数组,契约不变)外,同写一份 `result.json` = `{verdict, target, themeSupport, timing, shots, autoFindings, autoFindingsSummary}`,供下游 Agent(`issues-visual-run` / autofix)**直接消费,不必解析 markdown**。
+
+## 5.4 双主题:页面支持 light 才强制双跑（v1.0 修正，issue #605 二.2）
+
+> prd-admin **全局暗色 only**(仅 report-agent 局部 light)。对这类页面"双主题强制"是**伪命令**——会逼执行者交两张一模一样的暗图。v1.0 用机器探测消除伪命令。
+
+**机制**:`detectThemeSupport(page, cfg)` 切 dark/light 各采样一次 body 背景亮度,亮度差 `< 24` 判定该页**不真支持双主题**。
+
+**规则**:
+- 探测到 `supportsLight=true` → 核心页双主题各一张(L1 推荐/L2 强制不变)。
+- 探测到 `supportsLight=false`(dark-only) → **单图 + 报告注明"本页 dark-only,light 无效(亮度差 N)"**,**不计 fail**,不要求两张暗图。
+- 结果写进 `result.json.themeSupport`,验收用例表"双主题"列据此填"双跑/dark-only 单图"。
+
+## 5.5 过程视频(可选,本地附件,不进知识库正文)
+
+issue #605 二.1 建议过程视频(`launch(cfg, {recordVideoDir})` + `finalizeVideo()`)。**默认关闭**;开启后产出 `walkthrough.webm` 作**本地可选证据**。沿用用户 2026-05-27 决定:视频**体积大、阅读器不渲染、不进知识库正文**(见 `debt.visual-acceptance-skill.md`)——仅本地留存/聊天直发,**不上传 KB**。需要长期托管走外部对象存储仅存链接。
 
 ---
 
