@@ -1736,22 +1736,11 @@ export function DocumentStorePage() {
             />
           )}
           {/* 统计概览 */}
+          {/* 功能区：库数 / 文章数（左侧） */}
           <span data-tour-id="library-stats" className="text-[12px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
             共 <strong style={{ color: 'var(--text-primary)' }}>{totalStores}</strong> 个知识库
             <span className="opacity-50 mx-1.5">·</span>
             <strong style={{ color: 'var(--text-primary)' }}>{totalDocs}</strong> 篇文章
-            {/* 账号级访客总计：仅「我的空间」展示（团队/收藏/点赞不是我的访客数据）。
-                数字 count-up 缓动 + 整段淡入，避免突然蹦出。 */}
-            {tab === 'mine' && accountSummary && (
-              <FadeIn>
-                <span className="opacity-50 mx-1.5">·</span>
-                <AnimatedStat value={accountSummary.totalViews} format={formatCountCompact} /> 次访问
-                <span className="opacity-50 mx-1.5">·</span>
-                <AnimatedStat value={accountSummary.uniqueVisitors} format={formatCountCompact} /> 访客
-                <span className="opacity-50 mx-1.5">·</span>
-                停留 <AnimatedStat value={accountSummary.totalDurationMs} format={formatDwellCompact} />
-              </FadeIn>
-            )}
           </span>
 
           {/* 搜索 */}
@@ -1927,7 +1916,19 @@ export function DocumentStorePage() {
           </div>
 
           <span className="flex-1" />
-          {/* 列表页「统计」入口：分析全部知识库（区别于知识库内的单库统计） */}
+          {/* 统计区：账号级访客总计（右侧）。数字 count-up 缓动 + 整段淡入，避免突然蹦出。 */}
+          {tab === 'mine' && accountSummary && (
+            <FadeIn>
+              <span className="text-[12px] tabular-nums whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
+                <AnimatedStat value={accountSummary.totalViews} format={formatCountCompact} /> 次访问
+                <span className="opacity-50 mx-1.5">·</span>
+                <AnimatedStat value={accountSummary.uniqueVisitors} format={formatCountCompact} /> 访客
+                <span className="opacity-50 mx-1.5">·</span>
+                停留 <AnimatedStat value={accountSummary.totalDurationMs} format={formatDwellCompact} />
+              </span>
+            </FadeIn>
+          )}
+          {/* 统计按钮：再往右，打开全部知识库的访客统计报表（区别于知识库内的单库统计） */}
           {tab === 'mine' && (
             <Button
               variant="secondary"

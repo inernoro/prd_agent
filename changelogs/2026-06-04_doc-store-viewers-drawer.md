@@ -9,3 +9,4 @@
 | feat | prd-api | 访客报表/明细端点重构为「按 storeIds 聚合」可复用，新增账号级 GET /stores/analytics-all 与 /stores/view-events-all（聚合我名下所有知识库） |
 | feat | prd-admin | 知识库列表页新增「统计」按钮（分析全部知识库），知识库内「访客」按钮改为「统计」（分析本库）；ViewersDrawer 支持 account 范围复用同一报表 |
 | feat | prd-admin | 账号级访客总计数字 count-up 缓动 + 整段淡入，避免异步加载后突然蹦出撑宽统计行 |
+| fix | prd-admin | 知识库列表页统计行左右重排：功能区（库数/文章数）居左，统计区（访问/访客/停留）移到右侧，统计按钮再往右 |
