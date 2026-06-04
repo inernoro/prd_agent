@@ -291,6 +291,7 @@ public class MongoDbContext
     public IMongoCollection<DocumentStoreViewEvent> DocumentStoreViewEvents => _database.GetCollection<DocumentStoreViewEvent>("document_store_view_events");
     public IMongoCollection<DocumentInlineComment> DocumentInlineComments => _database.GetCollection<DocumentInlineComment>("document_inline_comments");
     public IMongoCollection<KnowledgeBaseDraft> KnowledgeBaseDrafts => _database.GetCollection<KnowledgeBaseDraft>("knowledge_base_drafts");
+    public IMongoCollection<DocumentStoreSyncLink> DocumentStoreSyncLinks => _database.GetCollection<DocumentStoreSyncLink>("document_store_sync_links");
 
     // Team 团队（跨应用协作单位：网页托管 + 知识库共用）
     public IMongoCollection<Team> Teams => _database.GetCollection<Team>("teams");

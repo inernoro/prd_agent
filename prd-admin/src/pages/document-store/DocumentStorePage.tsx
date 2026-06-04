@@ -29,6 +29,7 @@ import {
   ArrowUpDown,
   Check,
   Tag,
+  FolderSync,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -36,6 +37,7 @@ import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { TeamScopeBar, type TeamScope } from '@/components/team/TeamScopeBar';
+import { SyncManagerPanel, StoreSyncBadge } from './SyncManagerPanel';
 import { useTeamStore } from '@/stores/teamStore';
 import { useAuthStore } from '@/stores/authStore';
 import { AnimatePresence } from 'motion/react';
@@ -529,10 +531,11 @@ function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle, onClos
 }
 
 // ── 空间详情视图（文档列表 + 上传）──
-function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
+function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync }: {
   storeId: string;
   onBack: () => void;
   onOpenLibrary: (storeId: string) => void;
+  onManageSync?: () => void;
 }) {
   const [store, setStore] = useState<DocumentStore | null>(null);
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
@@ -898,6 +901,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
         }
         actions={
           <div className="flex items-center gap-2">
+            {/* 同步状态徽章：仅当本库已加入同步配对时显示（右上角） */}
+            <StoreSyncBadge storeId={store.id} onManage={onManageSync} />
             {/* 发布到智识殿堂开关 */}
             {store.isPublic ? (
               <div className="flex items-center gap-1">
@@ -1356,7 +1361,7 @@ function SubscribeDialog({ storeId, onClose, onCreated }: {
   );
 }
 
-type StoreTab = 'mine' | 'team' | 'favorites' | 'likes';
+type StoreTab = 'mine' | 'team' | 'favorites' | 'likes' | 'sync';
 
 type StoreSort = 'updated-desc' | 'created-desc' | 'name-asc' | 'docs-desc';
 const SORT_OPTIONS: { key: StoreSort; label: string }[] = [
@@ -1513,8 +1518,12 @@ export function DocumentStorePage() {
       }
     } else if (tab === 'favorites') {
       loadFavorites();
-    } else {
+    } else if (tab === 'likes') {
       loadLikes();
+    } else {
+      // sync 页签自管加载，页面级 loading 直接关闭
+      ++listFetchSeq.current;
+      setLoading(false);
     }
   }, [tab, teamScope.teamId, loadStores, loadFavorites, loadLikes]);
 
@@ -1536,6 +1545,7 @@ export function DocumentStorePage() {
     { key: 'team', label: '团队空间', icon: Users },
     { key: 'favorites', label: '我的收藏', icon: Bookmark },
     { key: 'likes', label: '我的点赞', icon: Heart },
+    { key: 'sync', label: '跨环境同步', icon: FolderSync },
   ];
 
   const isStoreTab = tab === 'mine' || tab === 'team';
@@ -1596,8 +1606,9 @@ export function DocumentStorePage() {
         else { ++listFetchSeq.current; setStores([]); setLoading(false); }
       }
       else if (tab === 'favorites') loadFavorites();
-      else loadLikes();
-    }} onOpenLibrary={(id) => navigate(`/library/${id}`)} />;
+      else if (tab === 'likes') loadLikes();
+    }} onOpenLibrary={(id) => navigate(`/library/${id}`)}
+      onManageSync={() => { setSelectedStoreId(null); setTab('sync'); }} />;
   }
 
   // 统计概览（基于未筛选的原始列表，反映"我拥有/我看到的"全量）
@@ -1861,7 +1872,9 @@ export function DocumentStorePage() {
       </div>
 
       <div className="px-5 pb-6 w-full">
-        {loading ? (
+        {tab === 'sync' ? (
+          <SyncManagerPanel />
+        ) : loading ? (
           <MapSectionLoader text="加载中..." />
         ) : isFilteredOut ? (
           /* 筛选无结果 */

@@ -1216,6 +1216,18 @@ export const api = {
       update: (entryId: string) => `/api/document-store/entries/${entryId}`,
       delete: (entryId: string) => `/api/document-store/entries/${entryId}`,
     },
+    // 跨环境 / 本地库↔库 同步
+    sync: {
+      listAll: () => '/api/document-store/sync/links',
+      listForStore: (storeId: string) => `/api/document-store/stores/${storeId}/sync`,
+      createLocal: (storeId: string) => `/api/document-store/stores/${storeId}/sync/local`,
+      generateLink: (storeId: string) => `/api/document-store/stores/${storeId}/sync/generate-link`,
+      connect: (storeId: string) => `/api/document-store/stores/${storeId}/sync/connect`,
+      revokeToken: (storeId: string) => `/api/document-store/stores/${storeId}/sync/revoke-token`,
+      run: (linkId: string) => `/api/document-store/sync/${linkId}/run`,
+      update: (linkId: string) => `/api/document-store/sync/${linkId}`,
+      delete: (linkId: string) => `/api/document-store/sync/${linkId}`,
+    },
   },
   // ============ 波2 高级权限：全部网页审计视图 ============
   adminWebPages: {

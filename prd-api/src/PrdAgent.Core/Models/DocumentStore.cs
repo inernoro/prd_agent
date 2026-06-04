@@ -71,6 +71,13 @@ public class DocumentStore
     /// </summary>
     public string? PmProjectId { get; set; }
 
+    /// <summary>
+    /// 跨环境同步令牌（永久有效，null = 尚未开启远端同步）。
+    /// 远端环境凭此令牌调用本环境的 sync 端点读写本库；仅放行本库，撤销链接时清空。
+    /// 详见 DocumentStoreSyncController。
+    /// </summary>
+    public string? SyncToken { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
