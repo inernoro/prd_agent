@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { X, ChevronRight, Sparkles, Check, Circle, CircleDot } from 'lucide-react';
@@ -40,6 +40,11 @@ export function SpotlightOverlay() {
   useEffect(() => {
     curStepRef.current?.scrollIntoView({ block: 'nearest' });
   }, [stepIndex]);
+  /** 引导气泡 DOM ref + 实测高度:用真实高度做「贴着光圈上/下方又不超出视口」的定位,
+   *  避免老版本用硬编码 180px 估高导致气泡溢出屏幕底、把「下一步 / 完成」按钮顶到视口外
+   *  （高光目标是右侧很高的投放面板时尤其明显 —— 用户点不到「完成」就永远走不完、存不上）。 */
+  const bubbleRef = useRef<HTMLDivElement | null>(null);
+  const [bubbleHeight, setBubbleHeight] = useState<number | null>(null);
 
   // ---- 启动 + 同路由事件:读 sessionStorage 解析 payload ----
   // 初次 mount 读一次;TipsRotator 写完 payload 会广播 SPOTLIGHT_PAYLOAD_UPDATED_EVENT,
@@ -248,6 +253,16 @@ export function SpotlightOverlay() {
     };
   }, [rect, currentSelector, payload, dismissed]);
 
+  // 渲染后实测气泡高度,供下面的定位逻辑把整张卡片（含底部按钮行）夹在视口内。
+  // 只在高度真正变化(>1px)时 setState,守住「setState → 重渲染 → 再测」不成死循环;
+  // deps 覆盖所有会改变卡片高度的输入(切步 / 换 payload / 重定位 / 失败卡 / 关闭)。
+  useLayoutEffect(() => {
+    const h = bubbleRef.current?.offsetHeight ?? null;
+    if (h != null && (bubbleHeight == null || Math.abs(h - bubbleHeight) > 1)) {
+      setBubbleHeight(h);
+    }
+  }, [rect, stepIndex, payload, seekTimedOut, dismissed, bubbleHeight]);
+
   if (dismissed || !payload) return null;
 
   // 「等待中」阶段:payload 有但 rect 还没到 & 未超时 → 显示蓝色「正在定位…」小卡片
@@ -358,7 +373,15 @@ export function SpotlightOverlay() {
   const bubbleTitle = currentStep?.title ?? payload.title ?? null;
   const bubbleBody = currentStep?.body ?? payload.body ?? null;
 
-  // 气泡挂在光圈下方;若下方空间不够就放上方
+  // 气泡挂在光圈下方;若下方空间不够就放上方。
+  // 用实测高度（首帧未测出前给个保守估值）而非硬编码 180,并把气泡整体夹进视口,
+  // 保证底部「下一步 / 完成」按钮永远可见、可点(否则走不完 → markLearned 不触发 → 每次进页都重弹)。
+  const VIEWPORT_MARGIN = 16;
+  const GAP = 12;
+  const vh = window.innerHeight;
+  // 气泡自身最高占满视口(留上下边距);超出部分由内部滚动区消化。
+  const maxBubbleH = Math.max(200, vh - VIEWPORT_MARGIN * 2);
+  const estBubbleH = Math.min(bubbleHeight ?? 240, maxBubbleH);
   const PAD = 8;
   const ringBox = {
     left: rect.left - PAD,
@@ -366,9 +389,16 @@ export function SpotlightOverlay() {
     width: rect.width + PAD * 2,
     height: rect.height + PAD * 2,
   };
-  const bubbleBelow = ringBox.top + ringBox.height + 12;
-  const useAbove = bubbleBelow + 180 > window.innerHeight;
-  const bubbleTop = useAbove ? Math.max(16, ringBox.top - 180) : bubbleBelow;
+  const belowTop = ringBox.top + ringBox.height + GAP;
+  const fitsBelow = belowTop + estBubbleH <= vh - VIEWPORT_MARGIN;
+  // 下方放得下就放下方;否则放到光圈上方;无论哪种都再夹一次,确保整卡片(尤其底部按钮)在屏内。
+  const bubbleTop = Math.max(
+    VIEWPORT_MARGIN,
+    Math.min(
+      fitsBelow ? belowTop : ringBox.top - GAP - estBubbleH,
+      vh - estBubbleH - VIEWPORT_MARGIN,
+    ),
+  );
   const bubbleLeft = Math.max(
     16,
     Math.min(window.innerWidth - 360 - 16, ringBox.left + ringBox.width / 2 - 180),
@@ -404,12 +434,20 @@ export function SpotlightOverlay() {
       <div style={ringStyle} />
       {bubbleTitle && (
         <div
+          ref={bubbleRef}
           onClick={(e) => e.stopPropagation()}
           style={{
             position: 'fixed',
             left: bubbleLeft,
             top: bubbleTop,
             width: 360,
+            maxHeight: maxBubbleH,
+            // border-box:让 maxHeight 夹的是「含 padding/border 的整框」,与下面用 estBubbleH(实测
+            // offsetHeight,本就是 border-box)做的视口夹取定位口径一致;否则 content-box 下 padding
+            // 会额外撑高 ~28px,触顶时底部按钮仍可能被挤出屏幕(Codex P2)。
+            boxSizing: 'border-box',
+            display: 'flex',
+            flexDirection: 'column',
             padding: '12px 14px 14px',
             borderRadius: 14,
             background: 'linear-gradient(180deg, rgba(26,26,34,0.98), rgba(15,16,20,0.98))',
@@ -418,6 +456,7 @@ export function SpotlightOverlay() {
             zIndex: 9999,
             animation: 'spotlightBubbleIn 240ms cubic-bezier(.2,.8,.2,1)',
             color: 'rgba(255,255,255,0.92)',
+            overflow: 'hidden',
           }}
         >
           <button
@@ -440,6 +479,7 @@ export function SpotlightOverlay() {
           </button>
           <div
             style={{
+              flexShrink: 0,
               display: 'inline-flex',
               alignItems: 'center',
               gap: 6,
@@ -453,6 +493,9 @@ export function SpotlightOverlay() {
             <Sparkles size={12} />
             {bubbleTitle}
           </div>
+          {/* 中段可滚区:进度+步骤清单+正文。flex-1 + min-h-0 + 内部滚动,把底部按钮行(shrink-0)
+              永远挤在卡片内、卡片又被夹在视口内 → 「下一步 / 完成」任何情况下都点得到。 */}
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', margin: '0 -2px', padding: '0 2px' }}>
           {/* 任务式进度 + 步骤清单(多步教程):像做任务一样,有进度、有步骤,一个个打勾完成 */}
           {steps && steps.length > 1 && (
             <div style={{ marginBottom: 10 }}>
@@ -494,8 +537,11 @@ export function SpotlightOverlay() {
               {bubbleBody}
             </div>
           )}
+          </div>
           <div
             style={{
+              flexShrink: 0,
+              marginTop: 10,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
