@@ -58,7 +58,13 @@
 - **embeddings 端点**：`/v1/embeddings` 返 404（无 embedding 模型池验证）。
 - **图片端点真实出图未端到端验**：只验路由/鉴权；图片无 token/成本计。
 - **日志无 TTL**：`open_api_request_logs` 含 IP/UA，无自动过期（按 no-auto-index 规则由 DBA 建 TTL 索引）。
-- **MaxInputChars 全局常量**：未做按 Key 可配。
+- **MaxInputChars 全局常量**：未做按 Key 可配。统计已含 messages 文本/多模态图片/prompt/tools+functions schema，
+  但仍是字符近似（非精确 token），且未做"原始 body 字节硬上限"。
+- **绑定失效检测靠控制器启发式**（PR#732 P2 已缓解）：绑定的模型/池被删改时，`ModelResolver` 静默走默认调度
+  且不置 `IsFallback`。控制器侧按 `ExpectedModel` vs `ActualModel`（精确/前缀）+ `ModelGroupCode`（池 code）
+  判定是否"未honored"，未honored 则补发降级预警。**权威修法**应由 `ModelResolver` 在 expectedModel 未命中分支
+  显式置一个 `ExpectedModelHonored=false` 信号（属共享核心改动，单独排期）；当前控制器启发式对极端别名/大小写
+  边界可能漏判，但不会误拒请求。
 - **chat 工具调用 tool_calls / 多选(n) / finish_reason=length 丢失（Codex PR#732 P2，流式+非流式）**：
   非流式把上游压成单条 `finish_reason=stop` + `message.content=Content`；流式只发 role/content delta，
   不发 `delta.tool_calls`。两者同一根因：`ILlmGateway` 只暴露归一化的 `Content`/reasoning/finish 文本，

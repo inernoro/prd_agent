@@ -206,18 +206,17 @@ public class OpenApiController : ControllerBase
             // 上游正常结束但没吐 Done chunk（极少数适配器）也补一个终止符
             await SendDoneAsync();
 
-            await LogAsync(key, requestId, "chat", requestedModel, chosen, resolution, true, errorCode == null ? 200 : 500, errorCode, promptTokens, completionTokens, sw);
+            // 日志状态码取客户端实际收到的：成功/流内错误=200，pre-stream 错误=已设的 502，保持与客户端一致便于按 requestId 排障
+            await LogAsync(key, requestId, "chat", requestedModel, chosen, resolution, true, Response.StatusCode, errorCode, promptTokens, completionTokens, sw);
             await RecordUsageAsync(key, bound, resolution, promptTokens, completionTokens);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[OpenApi] chat 流式失败 keyId={KeyId}", key?.Id);
-            // 已开始流式则补终止符，让 OpenAI SDK 客户端正常收尾
-            if (Response.HasStarted)
-            {
-                try { await SendDoneAsync(); } catch { /* 连接已断，忽略 */ }
-            }
-            await LogAsync(key, requestId, "chat", requestedModel, chosen, resolution, true, 500, "INTERNAL_ERROR", promptTokens, completionTokens, sw);
+            // 已开始流式则补终止符让客户端收尾（HTTP 已 200）；未开始则置 500，日志与客户端实际状态一致
+            if (Response.HasStarted) { try { await SendDoneAsync(); } catch { /* 连接已断，忽略 */ } }
+            else Response.StatusCode = 500;
+            await LogAsync(key, requestId, "chat", requestedModel, chosen, resolution, true, Response.StatusCode, "INTERNAL_ERROR", promptTokens, completionTokens, sw);
         }
     }
 
@@ -355,6 +354,15 @@ public class OpenApiController : ControllerBase
                 Content = JsonSerializer.Serialize(new { error = new { message = "无效或已过期的 API Key", type = "invalid_request_error", code = "invalid_api_key" } })
             };
 
+        // 有效 Key 但没有 open-api:call scope（如只授了 marketplace 的 Key）→ 403，
+        // 与 chat/image 端点的 [RequireScope] 一致，避免越权用 Key 发现开放接口模型绑定。
+        if (key != null && !key.Scopes.Contains(ScopeCall))
+            return new ContentResult
+            {
+                StatusCode = 403, ContentType = "application/json",
+                Content = JsonSerializer.Serialize(new { error = new { message = $"该 Key 缺少 {ScopeCall} scope", type = "invalid_request_error", code = "insufficient_scope" } })
+            };
+
         var models = new List<object>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -454,6 +462,10 @@ public class OpenApiController : ControllerBase
             }
         }
         if (body.TryGetPropertyValue("prompt", out var p) && p is JsonValue pv && pv.TryGetValue<string>(out var ps)) n += ps.Length;
+        // 工具/函数定义也计入上限：大 schema 同样消耗上游 context/成本，否则绕过 MaxInputChars（Codex PR#732 P2）。
+        foreach (var field in new[] { "tools", "functions" })
+            if (body.TryGetPropertyValue(field, out var tn) && tn is JsonArray ta && ta.Count > 0)
+                n += ta.ToJsonString().Length;
         return n;
     }
 
@@ -481,8 +493,31 @@ public class OpenApiController : ControllerBase
         if (key == null) return;
         var total = (promptTokens ?? 0) + (completionTokens ?? 0);
         if (total > 0) await _usage.RecordTokensAsync(key, total, CancellationToken.None);
-        if (bound && resolution?.IsFallback == true)
+
+        if (!bound || resolution == null) return;
+
+        // 显式降级（池→legacy 回落）直接发预警。
+        if (resolution.IsFallback)
+        {
             _ = _usage.NotifyFallbackAsync(key, resolution.ActualModel, resolution.OriginalPoolName, resolution.FallbackReason, CancellationToken.None);
+            return;
+        }
+
+        // 绑定失效检测（Codex PR#732 P2）：绑定的 Key，若 expectedModel 既没匹配到模型 id（精确/前缀容差），
+        // 也没匹配到池 code，说明绑定的模型/池被删/改名，ModelResolver 静默走了默认调度（不算 IsFallback）。
+        // 此时该客户其实跑在共享默认池上却毫无察觉 → 补发降级预警，让管理员看见。
+        var exp = resolution.ExpectedModel;
+        if (!string.IsNullOrWhiteSpace(exp))
+        {
+            var act = resolution.ActualModel ?? string.Empty;
+            var honored =
+                string.Equals(exp, act, StringComparison.OrdinalIgnoreCase)                       // 精确模型 id
+                || exp.StartsWith(act, StringComparison.OrdinalIgnoreCase)                         // 前缀容差（池模型是 expected 前缀）
+                || act.StartsWith(exp, StringComparison.OrdinalIgnoreCase)                         // 前缀容差（反向）
+                || string.Equals(exp, resolution.ModelGroupCode, StringComparison.OrdinalIgnoreCase); // 池 code 绑定
+            if (!honored)
+                _ = _usage.NotifyFallbackAsync(key, act, exp, $"绑定的模型/池 '{exp}' 未匹配，已回落默认调度", CancellationToken.None);
+        }
     }
 
     private async Task<AgentApiKey?> LoadKeyAsync(CancellationToken ct)
