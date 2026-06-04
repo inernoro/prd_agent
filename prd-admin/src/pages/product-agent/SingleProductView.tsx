@@ -15,6 +15,7 @@ import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
 import { VersionRelationModal, ProductKnowledgePanel, DefectLinkerModal } from './ProductRelationModals';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
+import { KanbanBoard } from './KanbanBoard';
 import { UpgradeRequestsTab } from './UpgradeRequestsTab';
 import {
   getProduct,
@@ -40,7 +41,7 @@ import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL } from './types';
 import { useProductCategories, categoryLabel } from './productCategories';
 import { useEffectiveWorkflow } from './DynamicForm';
 
-type Section = 'overview' | 'versions' | 'requirements' | 'features' | 'defects' | 'customers' | 'knowledge' | 'graph';
+type Section = 'overview' | 'versions' | 'requirements' | 'features' | 'board' | 'defects' | 'customers' | 'knowledge' | 'graph';
 
 const CHART_COLORS = ['#22D3EE', '#FBBF24', '#A78BFA', '#4ADE80', '#F87171', '#60A5FA'];
 
@@ -49,6 +50,7 @@ const NAV: NavItem<Section>[] = [
   { key: 'versions', label: '版本', icon: GitBranch },
   { key: 'requirements', label: '需求', icon: ListChecks },
   { key: 'features', label: '功能', icon: Puzzle },
+  { key: 'board', label: '看板', icon: LayoutGrid },
   { key: 'defects', label: '缺陷', icon: Bug },
   { key: 'customers', label: '客户', icon: Users },
   { key: 'knowledge', label: '知识库', icon: BookOpen },
@@ -93,7 +95,7 @@ export function SingleProductView() {
   }
 
   const SECTION_TITLE: Record<Section, string> = {
-    overview: '概览', versions: '版本（含升级申请）', requirements: '需求', features: '功能',
+    overview: '概览', versions: '版本（含升级申请）', requirements: '需求', features: '功能', board: '看板',
     defects: '缺陷', customers: '客户', knowledge: '知识库', graph: '图谱',
   };
 
@@ -123,6 +125,10 @@ export function SingleProductView() {
         <div className="flex-1 min-h-0">
           <ProductGraphCanvas productId={product.id} />
         </div>
+      ) : active === 'board' ? (
+        <div className="flex-1 min-h-0 p-4">
+          <BoardTab productId={product.id} />
+        </div>
       ) : (
         <SectionShell title={SECTION_TITLE[active]}>
           {active === 'overview' && <ProductDashboard product={product} />}
@@ -134,6 +140,26 @@ export function SingleProductView() {
         </SectionShell>
       )}
     </ProductAgentLayout>
+  );
+}
+
+// ── 看板（按状态分列拖拽流转）──
+function BoardTab({ productId }: { productId: string }) {
+  const [kind, setKind] = useState<'requirement' | 'feature'>('requirement');
+  return (
+    <div className="h-full min-h-0 flex flex-col gap-3">
+      <div className="shrink-0 flex items-center gap-2">
+        <h2 className="text-sm font-semibold text-white/80">看板</h2>
+        <span className="text-[11px] text-white/35">拖拽卡片到目标列即可流转状态</span>
+        <div className="flex rounded-lg border border-white/10 overflow-hidden ml-auto">
+          <button onClick={() => setKind('requirement')} className={`px-3 py-1 text-xs ${kind === 'requirement' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>需求</button>
+          <button onClick={() => setKind('feature')} className={`px-3 py-1 text-xs ${kind === 'feature' ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>功能</button>
+        </div>
+      </div>
+      <div className="flex-1 min-h-0">
+        <KanbanBoard key={kind} productId={productId} entityType={kind} />
+      </div>
+    </div>
   );
 }
 

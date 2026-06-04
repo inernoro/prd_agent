@@ -69,6 +69,9 @@ public class ProductWorkflowState
 
     /// <summary>排序权重（看板列 / 状态选择器排序）</summary>
     public int SortOrder { get; set; }
+
+    /// <summary>SLA 时效（小时）：对象停留在该状态超过此值即视为超时；为空表示不限。</summary>
+    public int? SlaHours { get; set; }
 }
 
 /// <summary>状态流转边（一条可执行的流转动作）</summary>
@@ -94,4 +97,7 @@ public class ProductWorkflowTransition
 
     /// <summary>是否需要填写流转备注（如驳回原因）</summary>
     public bool RequireComment { get; set; }
+
+    /// <summary>自动化：触发该流转时把处理人自动指派给操作人本人（claim）。</summary>
+    public bool AutoAssignToActor { get; set; }
 }

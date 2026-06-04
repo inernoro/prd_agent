@@ -304,6 +304,7 @@ public class ProductAgentController : ControllerBase
             FormData = request.FormData ?? new(),
             OwnerId = userId,
             AssigneeId = request.AssigneeId,
+            StateEnteredAt = DateTime.UtcNow,
         };
         req.CurrentState = await ResolveInitialStateAsync(reqWorkflowDefId);
 
@@ -403,6 +404,7 @@ public class ProductAgentController : ControllerBase
             FormData = request.FormData ?? new(),
             OwnerId = userId,
             AssigneeId = request.AssigneeId,
+            StateEnteredAt = DateTime.UtcNow,
         };
         feature.CurrentState = await ResolveInitialStateAsync(featWorkflowDefId);
 
@@ -951,8 +953,9 @@ public class ProductAgentController : ControllerBase
         if (transition.RequireComment && string.IsNullOrWhiteSpace(request.Comment))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该流转需要填写备注"));
 
-        // 落库新状态
+        // 落库新状态。自动化：流转可显式转交，或 AutoAssignToActor 自动 claim 给操作人
         var now = DateTime.UtcNow;
+        var effectiveAssignee = request.AssigneeId ?? (transition.AutoAssignToActor ? userId : null);
         switch (request.EntityType)
         {
             case ProductEntityType.Product:
@@ -965,15 +968,15 @@ public class ProductAgentController : ControllerBase
                 break;
             case ProductEntityType.Requirement:
             {
-                var ru = Builders<Requirement>.Update.Set(x => x.CurrentState, transition.ToState).Set(x => x.UpdatedAt, now);
-                if (request.AssigneeId != null) ru = ru.Set(x => x.AssigneeId, request.AssigneeId);
+                var ru = Builders<Requirement>.Update.Set(x => x.CurrentState, transition.ToState).Set(x => x.StateEnteredAt, now).Set(x => x.UpdatedAt, now);
+                if (effectiveAssignee != null) ru = ru.Set(x => x.AssigneeId, effectiveAssignee);
                 await _db.Requirements.UpdateOneAsync(x => x.Id == request.EntityId, ru);
                 break;
             }
             case ProductEntityType.Feature:
             {
-                var fu = Builders<Feature>.Update.Set(x => x.CurrentState, transition.ToState).Set(x => x.UpdatedAt, now);
-                if (request.AssigneeId != null) fu = fu.Set(x => x.AssigneeId, request.AssigneeId);
+                var fu = Builders<Feature>.Update.Set(x => x.CurrentState, transition.ToState).Set(x => x.StateEnteredAt, now).Set(x => x.UpdatedAt, now);
+                if (effectiveAssignee != null) fu = fu.Set(x => x.AssigneeId, effectiveAssignee);
                 await _db.Features.UpdateOneAsync(x => x.Id == request.EntityId, fu);
                 break;
             }
@@ -996,15 +999,17 @@ public class ProductAgentController : ControllerBase
                 content: string.IsNullOrWhiteSpace(request.Comment) ? null : request.Comment, fromValue: fromLabel, toValue: toLabel);
 
             var ctx = await ResolveItemContextAsync(request.EntityType, request.EntityId);
-            var effectiveAssignee = request.AssigneeId ?? ctx?.assigneeId;
+            var notifyAssignee = effectiveAssignee ?? ctx?.assigneeId;
             var no = ctx?.no ?? request.EntityId;
             var title = ctx?.title ?? "";
-            await NotifyItemAsync(new[] { effectiveAssignee }, userId, $"状态变更 · {no}",
+            await NotifyItemAsync(new[] { notifyAssignee }, userId, $"状态变更 · {no}",
                 $"{actorName ?? "有人"} 把「{title}」从 {fromLabel} 流转到 {toLabel}", ItemUrl(productId, request.EntityType, request.EntityId));
-            if (request.AssigneeId != null)
+            if (effectiveAssignee != null)
             {
-                var assigneeName = (await _db.Users.Find(uu => uu.UserId == request.AssigneeId).FirstOrDefaultAsync())?.DisplayName;
-                await RecordActivityAsync(request.EntityType, request.EntityId, productId, ProductActivityType.Assign, userId, actorName, toValue: assigneeName ?? request.AssigneeId);
+                var assigneeName = (await _db.Users.Find(uu => uu.UserId == effectiveAssignee).FirstOrDefaultAsync())?.DisplayName;
+                await RecordActivityAsync(request.EntityType, request.EntityId, productId, ProductActivityType.Assign, userId, actorName, toValue: assigneeName ?? effectiveAssignee);
+                if (effectiveAssignee != userId)
+                    await NotifyItemAsync(new[] { (string?)effectiveAssignee }, userId, $"指派给你 · {no}", $"{actorName ?? "有人"} 把「{title}」指派给你处理", ItemUrl(productId, request.EntityType, request.EntityId));
             }
         }
         return Ok(ApiResponse<object>.Ok(new { entityId = request.EntityId, newState = transition.ToState }));
@@ -1746,11 +1751,11 @@ public class ProductAgentController : ControllerBase
         {
             case ProductEntityType.Requirement:
                 await _db.Requirements.UpdateOneAsync(x => x.Id == entityId,
-                    Builders<Requirement>.Update.Set(x => x.WorkflowDefId, workflowDefId).Set(x => x.CurrentState, currentState));
+                    Builders<Requirement>.Update.Set(x => x.WorkflowDefId, workflowDefId).Set(x => x.CurrentState, currentState).Set(x => x.StateEnteredAt, DateTime.UtcNow));
                 break;
             case ProductEntityType.Feature:
                 await _db.Features.UpdateOneAsync(x => x.Id == entityId,
-                    Builders<Feature>.Update.Set(x => x.WorkflowDefId, workflowDefId).Set(x => x.CurrentState, currentState));
+                    Builders<Feature>.Update.Set(x => x.WorkflowDefId, workflowDefId).Set(x => x.CurrentState, currentState).Set(x => x.StateEnteredAt, DateTime.UtcNow));
                 break;
             case ProductEntityType.Version:
                 await _db.ProductVersions.UpdateOneAsync(x => x.Id == entityId,

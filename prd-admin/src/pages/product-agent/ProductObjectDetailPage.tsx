@@ -15,6 +15,7 @@ import { RequirementRelationModal, DefectLinkerModal } from './ProductRelationMo
 import { FormFieldsRenderer, RichTextField, useEffectiveTemplate, useEffectiveWorkflow } from './DynamicForm';
 import { WorkflowBar } from './WorkflowBar';
 import { ActivityTimeline } from './ActivityTimeline';
+import { slaInfo } from './sla';
 import {
   listRequirements,
   createRequirement,
@@ -372,6 +373,16 @@ function Chips({ items, empty }: { items: string[]; empty: string }) {
   );
 }
 
+function SlaBadge({ stateEnteredAt, slaHours }: { stateEnteredAt?: string | null; slaHours?: number | null }) {
+  const sla = slaInfo(stateEnteredAt, slaHours);
+  if (!sla) return null;
+  return (
+    <span className={`text-[11px] inline-flex items-center gap-1 ${sla.overdue ? 'text-red-300' : 'text-white/40'}`}>
+      停留 {sla.label}{sla.overdue ? ' · 超时' : ''}
+    </span>
+  );
+}
+
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between gap-2 text-[11px]">
@@ -586,7 +597,12 @@ function RequirementDetail({
               {requirement.currentState && (
                 <div className="flex flex-col gap-1.5">
                   <FieldLabel>状态</FieldLabel>
-                  <span className="self-start text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10">{requirement.currentState}</span>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10">
+                      {workflow?.states.find((s) => s.key === requirement.currentState)?.label ?? requirement.currentState}
+                    </span>
+                    <SlaBadge stateEnteredAt={requirement.stateEnteredAt} slaHours={workflow?.states.find((s) => s.key === requirement.currentState)?.slaHours} />
+                  </div>
                 </div>
               )}
               {split.others.length > 0 && (
@@ -782,7 +798,12 @@ function FeatureDetail({
               {feature.currentState && (
                 <div className="flex flex-col gap-1.5">
                   <FieldLabel>状态</FieldLabel>
-                  <span className="self-start text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10">{feature.currentState}</span>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10">
+                      {workflow?.states.find((s) => s.key === feature.currentState)?.label ?? feature.currentState}
+                    </span>
+                    <SlaBadge stateEnteredAt={feature.stateEnteredAt} slaHours={workflow?.states.find((s) => s.key === feature.currentState)?.slaHours} />
+                  </div>
                 </div>
               )}
               {split.others.length > 0 && (

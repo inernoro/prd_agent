@@ -675,6 +675,15 @@ function WorkflowEditor({ entityType, productId }: { entityType: ProductEntityTy
             <input value={s.key} onChange={(e) => updateState(i, { key: e.target.value })} placeholder="key" className="w-28 px-2.5 py-1.5 rounded-md bg-white/5 border border-white/10 text-xs text-white/70 outline-none" />
             <label className="flex items-center gap-1 text-xs text-white/50"><input type="checkbox" checked={s.isInitial} onChange={(e) => updateState(i, { isInitial: e.target.checked })} className="accent-cyan-500" /> 初始</label>
             <label className="flex items-center gap-1 text-xs text-white/50"><input type="checkbox" checked={s.isFinal} onChange={(e) => updateState(i, { isFinal: e.target.checked })} className="accent-cyan-500" /> 终态</label>
+            <input
+              type="number"
+              min={0}
+              value={s.slaHours ?? ''}
+              onChange={(e) => updateState(i, { slaHours: e.target.value ? Number(e.target.value) : null })}
+              placeholder="SLA小时"
+              title="停留超过此小时数视为超时（空=不限）"
+              className="w-20 px-2 py-1.5 rounded-md bg-white/5 border border-white/10 text-xs text-white/70 outline-none"
+            />
             <button onClick={() => removeState(i)} className="text-white/30 hover:text-red-300"><Trash2 size={14} /></button>
           </div>
         ))}
@@ -700,6 +709,7 @@ function WorkflowEditor({ entityType, productId }: { entityType: ProductEntityTy
               {states.map((s) => <option key={s.key} value={s.key}>{s.label || s.key}</option>)}
             </select>
             <label className="flex items-center gap-1 text-xs text-white/50"><input type="checkbox" checked={t.requireComment} onChange={(e) => updateTransition(i, { requireComment: e.target.checked })} className="accent-cyan-500" /> 需备注</label>
+            <label className="flex items-center gap-1 text-xs text-white/50" title="触发该流转时自动把处理人指派给操作人本人"><input type="checkbox" checked={t.autoAssignToActor ?? false} onChange={(e) => updateTransition(i, { autoAssignToActor: e.target.checked })} className="accent-cyan-500" /> 自动认领</label>
             <button onClick={() => removeTransition(i)} className="text-white/30 hover:text-red-300"><Trash2 size={14} /></button>
           </div>
         ))}

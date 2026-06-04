@@ -105,6 +105,7 @@ export interface Requirement {
   ownerId: string;
   assigneeId?: string | null;
   sourceDefectId?: string | null;
+  stateEnteredAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -124,6 +125,7 @@ export interface Feature {
   formData: Record<string, string>;
   ownerId: string;
   assigneeId?: string | null;
+  stateEnteredAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -215,6 +217,8 @@ export interface WorkflowState {
   isFinal: boolean;
   category?: string | null;
   sortOrder: number;
+  /** SLA 时效（小时）：停留超过即超时；空表示不限 */
+  slaHours?: number | null;
 }
 
 export interface WorkflowTransition {
@@ -224,6 +228,8 @@ export interface WorkflowTransition {
   toState: string;
   allowedRoles?: string[] | null;
   requireComment: boolean;
+  /** 自动化：触发时把处理人自动指派给操作人本人 */
+  autoAssignToActor?: boolean;
 }
 
 export interface WorkflowDefinition {

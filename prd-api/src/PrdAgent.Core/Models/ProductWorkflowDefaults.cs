@@ -22,10 +22,10 @@ public static class ProductWorkflowDefaults
         ProductId = null,
         States = new()
         {
-            new() { Key = "pending",    Label = "待评审", Color = "#9ca3af", IsInitial = true, Category = "todo",  SortOrder = 0 },
+            new() { Key = "pending",    Label = "待评审", Color = "#9ca3af", IsInitial = true, Category = "todo",  SortOrder = 0, SlaHours = 48 },
             new() { Key = "reviewed",   Label = "已评审", Color = "#38bdf8", Category = "todo",  SortOrder = 1 },
-            new() { Key = "developing", Label = "开发中", Color = "#f59e0b", Category = "doing", SortOrder = 2 },
-            new() { Key = "testing",    Label = "测试中", Color = "#a78bfa", Category = "doing", SortOrder = 3 },
+            new() { Key = "developing", Label = "开发中", Color = "#f59e0b", Category = "doing", SortOrder = 2, SlaHours = 72 },
+            new() { Key = "testing",    Label = "测试中", Color = "#a78bfa", Category = "doing", SortOrder = 3, SlaHours = 48 },
             new() { Key = "done",       Label = "已完成", Color = "#22c55e", IsFinal = true, Category = "done", SortOrder = 4 },
             new() { Key = "rejected",   Label = "已拒绝", Color = "#ef4444", IsFinal = true, Category = "done", SortOrder = 5 },
         },
@@ -33,7 +33,7 @@ public static class ProductWorkflowDefaults
         {
             new() { Key = "approve",   Label = "通过评审", FromState = "pending",    ToState = "reviewed" },
             new() { Key = "reject",    Label = "驳回",     FromState = "pending",    ToState = "rejected", RequireComment = true },
-            new() { Key = "start-dev", Label = "开始开发", FromState = "reviewed",   ToState = "developing" },
+            new() { Key = "start-dev", Label = "开始开发", FromState = "reviewed",   ToState = "developing", AutoAssignToActor = true },
             new() { Key = "to-test",   Label = "提交测试", FromState = "developing", ToState = "testing" },
             new() { Key = "complete",  Label = "完成",     FromState = "testing",    ToState = "done" },
             new() { Key = "reopen",    Label = "重新打开", FromState = null,         ToState = "pending" },
@@ -51,14 +51,14 @@ public static class ProductWorkflowDefaults
         States = new()
         {
             new() { Key = "planned",    Label = "规划中", Color = "#9ca3af", IsInitial = true, Category = "todo",  SortOrder = 0 },
-            new() { Key = "developing", Label = "开发中", Color = "#f59e0b", Category = "doing", SortOrder = 1 },
-            new() { Key = "testing",    Label = "测试中", Color = "#a78bfa", Category = "doing", SortOrder = 2 },
+            new() { Key = "developing", Label = "开发中", Color = "#f59e0b", Category = "doing", SortOrder = 1, SlaHours = 120 },
+            new() { Key = "testing",    Label = "测试中", Color = "#a78bfa", Category = "doing", SortOrder = 2, SlaHours = 48 },
             new() { Key = "released",   Label = "已发布", Color = "#22c55e", IsFinal = true, Category = "done", SortOrder = 3 },
             new() { Key = "cancelled",  Label = "已取消", Color = "#ef4444", IsFinal = true, Category = "done", SortOrder = 4 },
         },
         Transitions = new()
         {
-            new() { Key = "start-dev", Label = "开始开发", FromState = "planned",    ToState = "developing" },
+            new() { Key = "start-dev", Label = "开始开发", FromState = "planned",    ToState = "developing", AutoAssignToActor = true },
             new() { Key = "to-test",   Label = "提交测试", FromState = "developing", ToState = "testing" },
             new() { Key = "release",   Label = "发布",     FromState = "testing",    ToState = "released" },
             new() { Key = "cancel",    Label = "取消",     FromState = null,         ToState = "cancelled", RequireComment = true },

@@ -56,6 +56,9 @@ public class Requirement
     /// <summary>来源缺陷 Id（由缺陷转需求时记录，用于溯源追溯）</summary>
     public string? SourceDefectId { get; set; }
 
+    /// <summary>进入当前状态的时间（SLA 时效计算用）</summary>
+    public DateTime? StateEnteredAt { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 

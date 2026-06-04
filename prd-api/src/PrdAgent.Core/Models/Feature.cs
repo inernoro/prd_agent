@@ -49,6 +49,9 @@ public class Feature
     /// <summary>处理人（负责推进该功能的 MAP 用户）</summary>
     public string? AssigneeId { get; set; }
 
+    /// <summary>进入当前状态的时间（SLA 时效计算用）</summary>
+    public DateTime? StateEnteredAt { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
