@@ -1292,6 +1292,7 @@ export const api = {
   // ============ Daily Tips 每日小贴士 ============
   dailyTips: {
     visible: () => '/api/daily-tips/visible',
+    progress: () => '/api/daily-tips/progress',
     track: (id: string) => `/api/daily-tips/${id}/track`,
     dismissForever: (id: string) => `/api/daily-tips/${id}/dismiss-forever`,
     markLearned: (id: string) => `/api/daily-tips/${id}/mark-learned`,

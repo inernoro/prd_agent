@@ -55,6 +55,30 @@ export interface DailyTip {
 
 export type TrackAction = 'seen' | 'clicked' | 'dismissed';
 
+/** 官方教程分类:onboarding(本页教程,计入掌握度) / update(本周更新) / task(快捷任务) */
+export type TutorialCategory = 'onboarding' | 'update' | 'task';
+
+/** 单条官方教程的进度条目(来自 GET /api/daily-tips/progress) */
+export interface TutorialProgressItem {
+  sourceId: string;
+  title: string;
+  body?: string | null;
+  actionUrl: string;
+  steps: number;
+  category: TutorialCategory;
+  version: number;
+  learned: boolean;
+}
+
+export interface TutorialProgress {
+  /** 计入掌握度的本页教程(onboarding)总数 */
+  total: number;
+  /** 已学会的本页教程数 */
+  learned: number;
+  /** 全部官方教程(含 task / update) */
+  items: TutorialProgressItem[];
+}
+
 export interface DailyTipDelivery {
   userId: string;
   userDisplayName?: string | null;
@@ -110,6 +134,11 @@ export interface DailyTipUpsert {
 
 export async function listVisibleTips(): Promise<ApiResponse<{ items: DailyTip[] }>> {
   return await apiRequest<{ items: DailyTip[] }>(api.dailyTips.visible(), { method: 'GET' });
+}
+
+/** 当前用户对全部官方教程的学习进度(头像进度环 + 学习中心页消费)。 */
+export async function getTutorialProgress(): Promise<ApiResponse<TutorialProgress>> {
+  return await apiRequest<TutorialProgress>(api.dailyTips.progress(), { method: 'GET' });
 }
 
 // ============ 管理后台 ============

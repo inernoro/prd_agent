@@ -54,6 +54,7 @@ export function TipsEntryButton({ className, compact = false }: { className?: st
     <button
       type="button"
       className={className}
+      data-tour-entry="1"
       title={newbie ? '本页教程 · 跟着走一遍' : '本页教程 / 新手指引'}
       onClick={() => {
         // 只派发事件;拉取 tips 的职责统一在 TipsDrawer 的监听里(它会 load({force:true})),避免两处重复请求。

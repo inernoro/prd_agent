@@ -374,10 +374,61 @@ public sealed class DailyTipsController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { learned = new { sourceId, version = learnedVersion, tier } }));
     }
 
+    /// <summary>
+    /// 学习进度:返回当前用户对全部「官方教程」(code seed 里带多步 Steps 的引导)的完成情况,
+    /// 供头像进度环 + 学习中心页消费。onboarding(*-page-guide)计入掌握度分母;
+    /// task(其它带步骤的快捷教程)与 update(*-update-*)一并返回但不计入掌握度。
+    /// </summary>
+    [HttpGet("progress")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> Progress(CancellationToken ct = default)
+    {
+        var userId = this.GetRequiredUserId();
+        var now = DateTime.UtcNow;
+        var me = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
+        var learnedMap = me?.LearnedTips?.ToDictionary(l => l.SourceId, l => l.Version)
+                         ?? new Dictionary<string, int>();
+
+        // SSOT:官方教程目录 = BuildDefaultTips 里带多步 Steps 的 seed(单步/纯公告不计)。
+        var catalog = BuildDefaultTips(now)
+            .Where(s => !string.IsNullOrEmpty(s.SourceId)
+                        && s.AutoAction?.Steps is { Count: > 0 })
+            .ToList();
+
+        var items = catalog.Select(s => new
+        {
+            sourceId = s.SourceId,
+            title = s.Title,
+            body = s.Body,
+            actionUrl = s.ActionUrl,
+            steps = s.AutoAction!.Steps!.Count,
+            category = CategoryOf(s),
+            version = s.Version,
+            learned = IsLearned(s, learnedMap),
+        }).ToList();
+
+        // 掌握度只看 onboarding(*-page-guide):用户完整走完的本页教程占官方本页教程总数的比例。
+        var onboarding = items.Where(i => i.category == "onboarding").ToList();
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            total = onboarding.Count,
+            learned = onboarding.Count(i => i.learned),
+            items,
+        }));
+    }
+
     private static bool IsLearned(DailyTip t, Dictionary<string, int> learnedMap)
     {
         var key = t.SourceId ?? t.Id;
         return learnedMap.TryGetValue(key, out var learnedVer) && learnedVer >= t.Version;
+    }
+
+    /// <summary>官方教程分类:onboarding(*-page-guide,计入掌握度) / update(*-update-*,本周更新提醒) / task(其它带步骤的快捷教程)。</summary>
+    private static string CategoryOf(DailyTip t)
+    {
+        if (IsPageGuide(t)) return "onboarding";
+        if (t.SourceId != null && t.SourceId.Contains("-update-", StringComparison.Ordinal)) return "update";
+        return "task";
     }
 
     /// <summary>是否为「本页完整教程」seed(*-page-guide)。这类教程学会后仍保留(供用户重看),
