@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseBackendConversation } from '../ReprocessChatDrawer';
+import { parseBackendConversation, mergeChatSnapshots } from '../ReprocessChatDrawer';
 import type { DocumentStoreConversation } from '@/services/contracts/documentStore';
 
 // parseBackendConversation 是「关浏览器标签页对话不丢」修复的恢复核心：
@@ -66,5 +66,41 @@ describe('parseBackendConversation — 智能体对话后端恢复', () => {
     const r = parseBackendConversation(convo);
     expect(r.snapshot).toBeNull();
     expect(r.pendingVisualUrl).toBeNull();
+  });
+});
+
+// mergeChatSnapshots：合并后端 + sessionStorage 两源，避免切档取消去抖后端保存后、
+// 重开只取到较旧后端快照而丢掉本地更新的消息（Cursor Medium F4）。
+describe('mergeChatSnapshots — 后端 + sessionStorage 两源合并', () => {
+  const msg = (id: string, content: string, role: 'user' | 'assistant' = 'user') =>
+    ({ id, role, content }) as never;
+
+  it('一方为空 → 返回另一方', () => {
+    const s = { messages: [msg('m1', 'hi')], activeRef: undefined };
+    expect(mergeChatSnapshots(null, s)).toBe(s);
+    expect(mergeChatSnapshots(s, null)).toBe(s);
+    expect(mergeChatSnapshots(null, null)).toBeNull();
+  });
+
+  it('sessionStorage 比后端新 → 并集补回本地更新的消息（不丢）', () => {
+    const backend = { messages: [msg('m1', 'a'), msg('m2', 'b')], activeRef: undefined };
+    const session = { messages: [msg('m1', 'a'), msg('m2', 'b'), msg('m3', 'c')], activeRef: undefined };
+    const merged = mergeChatSnapshots(backend, session)!;
+    expect(merged.messages.map((m) => m.id)).toEqual(['m1', 'm2', 'm3']);
+  });
+
+  it('按 id + 内容去重，顺序后端在前、本地新增在后', () => {
+    const backend = { messages: [msg('a1', 'x')], activeRef: undefined };
+    const session = { messages: [msg('b1', 'x'), msg('b2', 'y')], activeRef: undefined }; // b1 与 a1 内容相同 → 去重
+    const merged = mergeChatSnapshots(backend, session)!;
+    expect(merged.messages.map((m) => m.content)).toEqual(['x', 'y']);
+  });
+
+  it('activeRef 后端优先、回退本地', () => {
+    const backend = { messages: [], activeRef: { kind: 'kbAgent', key: 'be' } as never };
+    const session = { messages: [], activeRef: { kind: 'kbAgent', key: 'se' } as never };
+    expect(mergeChatSnapshots(backend, session)!.activeRef).toEqual({ kind: 'kbAgent', key: 'be' });
+    expect(mergeChatSnapshots({ messages: [], activeRef: undefined }, session)!.activeRef)
+      .toEqual({ kind: 'kbAgent', key: 'se' });
   });
 });

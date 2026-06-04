@@ -152,6 +152,33 @@ export function parseBackendConversation(
   return { snapshot, pendingVisualUrl };
 }
 
+/**
+ * 合并两份对话快照（后端持久化 + sessionStorage）：按 id + 内容去重 union messages。
+ * 切档时后端去抖保存会被取消，但 sessionStorage 已同步写入——只取后端会丢掉本地更新的消息
+ * （Cursor Medium：stale backend overwrites newer session）。取并集避免任一方更新被丢；
+ * 顺序以后端为基、本地新增追加在后（两源都是 append 日志，时序天然对齐）；activeRef 后端优先。
+ * 导出供单测。
+ */
+export function mergeChatSnapshots(
+  backend: PersistedChatState | null,
+  session: PersistedChatState | null,
+): PersistedChatState | null {
+  if (!backend) return session;
+  if (!session) return backend;
+  const seenId = new Set<string>();
+  const seenKey = new Set<string>();
+  const merged: ChatMessage[] = [];
+  for (const m of [...backend.messages, ...session.messages]) {
+    const key = `${m.role}::${(m.content || '').slice(0, 200)}`;
+    if (m.id && seenId.has(m.id)) continue;
+    if (seenKey.has(key)) continue;
+    if (m.id) seenId.add(m.id);
+    seenKey.add(key);
+    merged.push(m);
+  }
+  return { messages: merged, activeRef: backend.activeRef ?? session.activeRef };
+}
+
 type ActiveAgent =
   | { kind: 'toolbox'; item: ToolboxItem }
   | { kind: 'kbAgent'; agent: ReprocessAgent }
@@ -347,7 +374,9 @@ export function ReprocessChatDrawer({
       // 后端快照走与 sessionStorage 相同的 PersistedChatState 形状，下游 merge 逻辑零改动。
       const backendConvo = parseBackendConversation(convoRes.success ? convoRes.data : null);
       if (backendConvo.pendingVisualUrl) setPendingVisualUrl(backendConvo.pendingVisualUrl);
-      const persistedSnapshot = backendConvo.snapshot ?? loadPersistedChat(entryId);
+      // 合并后端 + sessionStorage 两源，避免切档取消后端去抖保存后、重开只取到较旧后端快照
+      // 而丢掉本地更新的消息（Cursor Medium F4）。
+      const persistedSnapshot = mergeChatSnapshots(backendConvo.snapshot, loadPersistedChat(entryId));
       const hasFreshPersisted = !!persistedSnapshot
         && (persistedSnapshot.messages.length > 0 || !!persistedSnapshot.activeRef);
 
