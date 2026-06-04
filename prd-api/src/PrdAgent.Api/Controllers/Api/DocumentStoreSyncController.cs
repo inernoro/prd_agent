@@ -538,13 +538,30 @@ public class DocumentStoreSyncController : ControllerBase
             .Find(l => l.OwnerId == userId)
             .SortByDescending(l => l.UpdatedAt)
             .ToListAsync();
-        var sharedLocal = await _db.DocumentStoreSyncLinks
-            .Find(l => l.LinkType == DocumentSyncLinkType.Local && l.OwnerId != userId)
-            .SortByDescending(l => l.UpdatedAt)
-            .ToListAsync();
+
+        // 共享本地配对：先按"我可写的库"(owner + 团队共享)收窄候选，再逐条核 CanManage，
+        // 避免扫全库所有本地配对（成本随全站配对数增长会拖慢/超时——Bugbot）。
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
+        var ownedStoreIds = await _db.DocumentStores.Find(s => s.OwnerId == userId)
+            .Project(s => s.Id).ToListAsync();
+        var teamStoreIds = myTeamIds.Count == 0 ? new List<string>()
+            : await _db.DocumentStores.Find(Builders<DocumentStore>.Filter.AnyIn(s => s.SharedTeamIds, myTeamIds))
+                .Project(s => s.Id).ToListAsync();
+        var writableIds = new HashSet<string>(ownedStoreIds);
+        writableIds.UnionWith(teamStoreIds);
+        var writableList = writableIds.ToList();
+
         var links = new List<DocumentStoreSyncLink>(owned);
-        foreach (var l in sharedLocal)
-            if (await CanManageLocalLinkAsync(l, userId)) links.Add(l);
+        if (writableList.Count > 0)
+        {
+            var candidateLocal = await _db.DocumentStoreSyncLinks
+                .Find(l => l.LinkType == DocumentSyncLinkType.Local && l.OwnerId != userId
+                    && (writableList.Contains(l.LocalStoreId) || writableList.Contains(l.RemoteStoreId)))
+                .SortByDescending(l => l.UpdatedAt)
+                .ToListAsync();
+            foreach (var l in candidateLocal)
+                if (await CanManageLocalLinkAsync(l, userId)) links.Add(l);
+        }
 
         var localIds = links.Select(l => l.LocalStoreId).Distinct().ToList();
         var localStores = await _db.DocumentStores.Find(s => localIds.Contains(s.Id)).ToListAsync();
