@@ -32,6 +32,7 @@ export function matchPageGuide(
 ): DailyTip | null {
   return items.find((t) => {
     if (dismissed.has(t.id)) return false;
+    if (t.learned) return false; // 已学会的不再算「未走完」→ 不自动开讲、入口不脉冲(仍可手动重看)
     if (t.kind !== 'card' && t.kind !== 'spotlight') return false;
     if (typeof t.sourceId !== 'string' || !t.sourceId.endsWith('-page-guide') || !t.actionUrl) return false;
     const isEditor = isEditorPageGuide(t.sourceId);

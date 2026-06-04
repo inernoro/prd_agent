@@ -70,8 +70,15 @@ export const useDailyTipsStore = create<DailyTipsState>((set, get) => ({
   },
 
   async markLearned(id: string) {
-    // 先本地立即移除(避免视觉延迟),再调服务端;调用失败也不回滚 — 用户下次刷新最多再看一次
-    set({ items: get().items.filter((t) => t.id !== id) });
+    // *-page-guide:学会后仍保留(供用户重看),仅本地标 learned=true 停止自动开讲 / 入口脉冲。
+    // 其余 tip:本地立即移除(避免视觉延迟)。调用失败不回滚 — 用户下次刷新最多再看一次。
+    const tip = get().items.find((t) => t.id === id);
+    const isPageGuide = typeof tip?.sourceId === 'string' && tip.sourceId.endsWith('-page-guide');
+    if (isPageGuide) {
+      set({ items: get().items.map((t) => (t.id === id ? { ...t, learned: true } : t)) });
+    } else {
+      set({ items: get().items.filter((t) => t.id !== id) });
+    }
     try {
       await markTipAsLearned(id);
     } catch {

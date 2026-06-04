@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { X, ChevronRight, Sparkles, Check, Circle, CircleDot } from 'lucide-react';
@@ -32,6 +32,10 @@ export function SpotlightOverlay() {
   const [dismissed, setDismissed] = useState(false);
   /** 6 秒还没找到 selector 就置 true,显示「找不到元素」友好卡片 */
   const [seekTimedOut, setSeekTimedOut] = useState(false);
+  /** 引导气泡 DOM + 实测高度:用于把气泡(含「下一步 / 完成」按钮)钳进视口,
+   *  避免高亮元素很高 / 靠底部时按钮被推到屏幕外点不到(用户 2026-06-04 反馈)。 */
+  const bubbleRef = useRef<HTMLDivElement | null>(null);
+  const [bubbleH, setBubbleH] = useState(0);
   const autoClickTimerRef = useRef<number | null>(null);
   /** 每个 payload 只允许 autoClick 触发一次,避免多步 Tour 里每切一步都自动点击 */
   const autoClickFiredForPayloadRef = useRef<SpotlightActionPayload | null>(null);
@@ -258,6 +262,13 @@ export function SpotlightOverlay() {
     };
   }, [rect, currentSelector, payload, dismissed]);
 
+  // 实测气泡高度 → 驱动 bubbleTop 钳制(保证「下一步 / 完成」按钮始终在视口内可点)。
+  // 每次渲染后量一次,值变了才 setState,自然收敛不死循环。
+  useLayoutEffect(() => {
+    const h = bubbleRef.current?.offsetHeight ?? 0;
+    if (h && h !== bubbleH) setBubbleH(h);
+  }, [rect, stepIndex, payload, seekTimedOut, bubbleH]);
+
   if (dismissed || !payload) return null;
 
   // 「等待中」阶段:payload 有但 rect 还没到 & 未超时 → 显示蓝色「正在定位…」小卡片
@@ -376,9 +387,16 @@ export function SpotlightOverlay() {
     width: rect.width + PAD * 2,
     height: rect.height + PAD * 2,
   };
-  const bubbleBelow = ringBox.top + ringBox.height + 12;
-  const useAbove = bubbleBelow + 180 > window.innerHeight;
-  const bubbleTop = useAbove ? Math.max(16, ringBox.top - 180) : bubbleBelow;
+  // 气泡高度:优先用实测值(含步骤清单 + 按钮),首帧没量到时给个保守估计。
+  const MARGIN = 12;
+  const estH = bubbleH || 220;
+  const bubbleBelow = ringBox.top + ringBox.height + MARGIN;
+  // 下方放不下整张气泡就放上方;上方也要保证顶部不被截。
+  const useAbove = bubbleBelow + estH + MARGIN > window.innerHeight;
+  let bubbleTop = useAbove ? ringBox.top - estH - MARGIN : bubbleBelow;
+  // 关键:无论上下,都把气泡整体钳进视口 [MARGIN, innerHeight - estH - MARGIN],
+  // 保证底部的「下一步 / 完成」按钮一定可见可点(高亮元素很高 / 贴底时尤甚)。
+  bubbleTop = Math.max(MARGIN, Math.min(bubbleTop, window.innerHeight - estH - MARGIN));
   const bubbleLeft = Math.max(
     16,
     Math.min(window.innerWidth - 360 - 16, ringBox.left + ringBox.width / 2 - 180),
@@ -414,12 +432,17 @@ export function SpotlightOverlay() {
       <div style={ringStyle} />
       {bubbleTitle && (
         <div
+          ref={bubbleRef}
           onClick={(e) => e.stopPropagation()}
           style={{
             position: 'fixed',
             left: bubbleLeft,
             top: bubbleTop,
             width: 360,
+            // 气泡整体不超过视口高度(配合 bubbleTop 钳制),内容过长时自身滚动而非把按钮顶出屏幕
+            maxHeight: `calc(100vh - 24px)`,
+            overflowY: 'auto',
+            overscrollBehavior: 'contain',
             padding: '12px 14px 14px',
             borderRadius: 14,
             background: 'linear-gradient(180deg, rgba(26,26,34,0.98), rgba(15,16,20,0.98))',

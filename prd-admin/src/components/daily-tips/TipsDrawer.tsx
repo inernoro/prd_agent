@@ -381,10 +381,9 @@ export function TipsDrawer() {
   // 与 dismiss-forever 不同 — 管理员升级 tip.Version 后会重新出现。
   const handleMarkLearned = (tipId: string) => {
     void markLearned(tipId);
-    // 列表清空时自动收起,避免用户看到空抽屉
-    if (viewTips.length <= 1) {
-      setExpanded(false);
-    }
+    // 点「我已学会」即视为确认 → 收起抽屉。page-guide 学会后仍保留在 items 里(可重看),
+    // 但此刻关掉抽屉给用户「已确认」的反馈;入口按钮仍在,随时可再点开重看。
+    setExpanded(false);
   };
 
   // 小书「永远存在」:即使 tips 为空、也没 pinned,依然在右下角悬浮,
@@ -465,6 +464,22 @@ export function TipsDrawer() {
             )}
             {viewTips.length > 0 && (() => {
               const cur = viewTips[Math.min(carouselIndex, viewTips.length - 1)];
+              // 已学会的教程不再显示「我已学会」按钮,改为低调「已学会」标签(仍可重看,故卡片保留)。
+              if (cur.learned) {
+                return (
+                  <span
+                    title="本页教程已学会,可随时重看"
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 3,
+                      padding: '3px 7px', borderRadius: 999, fontSize: 11, fontWeight: 600,
+                      background: 'rgba(255,255,255,0.06)', color: 'rgba(52,211,153,0.85)', marginLeft: 2,
+                    }}
+                  >
+                    <GraduationCap size={11} strokeWidth={2.4} />
+                    已学会
+                  </span>
+                );
+              }
               return (
                 <button
                   type="button"
