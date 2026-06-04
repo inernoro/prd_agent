@@ -57,7 +57,7 @@
 | 1 | reveal.js 带纵向子页（vertical stacks）的 deck，垫片调 `Reveal.next()/prev()`（按阅读顺序前进），而非 reveal 原生的「进入纵向子页」 | 极少数依赖纵向栈结构的 reveal deck，上下键语义被改为「统一前进」。为保证「上下键一定能翻页」的刻意取舍 | 若有反馈，对 reveal 改用 `Reveal.down()/up()` 优先、`next()/prev()` 兜底 |
 | 2 | 既无任何可识别驱动（reveal/swiper/impress/带 next-prev 的自定义元素/scroll-snap 全不命中）、又忽略 `isTrusted=false` 合成事件的纯 JS deck，上下键兜底可能不生效 | 长尾 deck（已大幅收窄：自定义元素只要暴露 next/prev 就走可靠驱动）。此时不破坏原生键，只是上下键无增益 | 评估直接 DOM 滚动或探测 deck 内部 index 字段 |
 | 3 | 仅覆盖用户上传路径（CreateFromHtml / Zip / Reupload），未覆盖 API/工作流生成内容（CreateFromContentAsync） | 工作流生成的周报类幻灯片不享受兼容 | 按需扩展到 CreateFromContentAsync 或改 CapsuleExecutor 模板 |
-| 4 | 垫片随上传**注入一次**，已存在的历史托管站点（上传早于本功能）不含垫片 | 老 PPT 需重新上传一次才生效 | 评估 serve 期注入或一次性回填 |
+| 4（已解决） | ~~垫片随上传注入一次，历史站点不含垫片需重传~~ | 已由 startup 存量回填解决（见上「零重传直接生效」），老 PPT 无需重传自动生效 | 遗留：回填首启 IO 偏重，无批量限流 |
 
 ### 测试状态
 
