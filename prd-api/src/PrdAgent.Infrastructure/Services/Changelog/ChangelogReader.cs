@@ -317,6 +317,13 @@ public sealed class ChangelogReader : IChangelogReader
             if (hydrated != null)
             {
                 _cache.Set(cacheKey, new CacheEntry<T> { Value = hydrated, FetchedAt = hydrated.FetchedAt }, StaleKeepWindow);
+                // 与「热缓存陈旧」分支对称：冷实例/重启后 hydrate 到的快照若已超新鲜期，
+                // 同样后台静默 revalidate（不阻塞本次返回，仍是只读存量；刷新里会落库 + 推送）。
+                // 否则重启后首个请求会一直停在旧快照、要等 Worker 周期才更新（Bugbot #722 指出的不对称）。
+                if (DateTime.UtcNow - hydrated.FetchedAt > GetFreshWindow())
+                {
+                    TriggerBackgroundRefresh(viewType, cacheKey, fetch);
+                }
                 return hydrated;
             }
         }
