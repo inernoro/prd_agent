@@ -321,6 +321,8 @@ public class DocumentStoreSyncController : ControllerBase
                             .Set(e => e.ParentId, parentId)
                             .Set(e => e.Tags, fe.Tags ?? new List<string>())
                             .Set(e => e.ContentIndex, fe.Content.Length > 2000 ? fe.Content[..2000] : fe.Content)
+                            .Set(e => e.FileSize, fe.FileSize)
+                            .Set(e => e.ContentType, string.IsNullOrEmpty(fe.ContentType) ? "text/markdown" : fe.ContentType)
                             .Set(e => e.Metadata, WithLineage(fe.Metadata, fe.LineageId))
                             .Set(e => e.UpdatedBy, actorUserId)
                             .Set(e => e.UpdatedByName, actorName)

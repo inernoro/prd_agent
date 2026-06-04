@@ -48,13 +48,15 @@ function StatusBadge({ status }: { status: SyncLinkStatus }) {
  */
 export function StoreSyncBadge({ storeId, onManage }: { storeId: string; onManage?: () => void }) {
   const [links, setLinks] = useState<DocumentSyncLink[] | null>(null);
+  const fetchSeq = useRef(0);
 
   useEffect(() => {
-    let alive = true;
+    // 单调序号守卫：快速切库时，旧 storeId 的慢响应不得覆盖新 storeId 的结果（prd-admin learned rule）。
+    // 每次运行自增，旧 storeId 在途请求的 mySeq 立即失效；无需 cleanup 读 ref（避免 exhaustive-deps 告警）。
+    const mySeq = ++fetchSeq.current;
     listStoreSyncLinks(storeId).then(res => {
-      if (alive && res.success) setLinks(res.data.items ?? []);
+      if (mySeq === fetchSeq.current && res.success) setLinks(res.data.items ?? []);
     });
-    return () => { alive = false; };
   }, [storeId]);
 
   if (!links || links.length === 0) return null;
@@ -133,6 +135,8 @@ export function SyncManagerPanel() {
         toast.warning('同步已执行，对端状态待确认', res.data.lastResult ?? undefined);
       else
         toast.success('同步完成', res.data.lastResult ?? undefined);
+      // 让运行结果赢过任何在途 load()：bump 序号使其回填被丢弃（Bugbot: refresh races sync run）
+      loadSeq.current++;
       setLinks(prev => prev.map(l => l.id === link.id ? res.data : l));
     } else {
       toast.error('同步失败', res.error?.message);
@@ -145,18 +149,20 @@ export function SyncManagerPanel() {
   const handleDirection = async (link: DocumentSyncLink, direction: SyncDirection) => {
     const res = await updateSyncLinkDirection(link.id, direction);
     // 状态依赖方向，后端会按新方向重算 status 并回带库名；直接用返回值（名字缺失时回退旧值兜底）。
-    if (res.success) setLinks(prev => prev.map(l => l.id === link.id ? {
-      ...l, ...res.data,
-      localStoreName: res.data.localStoreName ?? l.localStoreName,
-      remoteStoreName: res.data.remoteStoreName ?? l.remoteStoreName,
-    } : l));
-    else toast.error('修改方向失败', res.error?.message);
+    if (res.success) {
+      loadSeq.current++; // 同上：让本次回填赢过在途 load()
+      setLinks(prev => prev.map(l => l.id === link.id ? {
+        ...l, ...res.data,
+        localStoreName: res.data.localStoreName ?? l.localStoreName,
+        remoteStoreName: res.data.remoteStoreName ?? l.remoteStoreName,
+      } : l));
+    } else toast.error('修改方向失败', res.error?.message);
   };
 
   const handleDelete = async (link: DocumentSyncLink) => {
     if (!window.confirm(`确定撤销「${link.localStoreName ?? '本库'}」与「${link.remoteStoreName ?? '对端'}」的同步配对？`)) return;
     const res = await deleteSyncLink(link.id);
-    if (res.success) setLinks(prev => prev.filter(l => l.id !== link.id));
+    if (res.success) { loadSeq.current++; setLinks(prev => prev.filter(l => l.id !== link.id)); }
     else toast.error('撤销失败', res.error?.message);
   };
 
