@@ -28,3 +28,28 @@ export function sanitizeHtml(dirty: string | null | undefined): string {
   });
   return doc.body.innerHTML;
 }
+
+/**
+ * 粘贴清洗：在净化基础上额外剥离 背景/颜色/字体/对齐 等表现型属性与 class/style，
+ * 只保留结构化标签(加粗/斜体/标题/列表/链接/图片/段落/换行)，让粘贴内容自动融入当前主题，
+ * 不再把来源页的白底色块带进暗色编辑器。
+ */
+const STRIP_ATTRS = new Set(['style', 'class', 'bgcolor', 'color', 'face', 'align', 'width', 'height', 'id', 'lang', 'dir']);
+
+export function cleanPastedHtml(dirty: string | null | undefined): string {
+  if (!dirty) return '';
+  if (typeof window === 'undefined' || typeof window.DOMParser === 'undefined') return '';
+  const doc = new DOMParser().parseFromString(dirty, 'text/html');
+  doc.querySelectorAll(DANGEROUS_TAGS.join(',')).forEach((el) => el.remove());
+  doc.querySelectorAll('*').forEach((el) => {
+    for (const attr of Array.from(el.attributes)) {
+      const name = attr.name.toLowerCase();
+      if (name.startsWith('on') || STRIP_ATTRS.has(name)) {
+        el.removeAttribute(attr.name);
+      } else if ((name === 'href' || name === 'src' || name === 'xlink:href') && /^(\s*javascript:|\s*data:text\/html)/i.test(attr.value)) {
+        el.removeAttribute(attr.name);
+      }
+    }
+  });
+  return doc.body.innerHTML;
+}

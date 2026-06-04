@@ -9,10 +9,10 @@
  * 值统一存 Record<string,string>（FormData）：附件=JSON数组、富文本=HTML、关系/多选=逗号 id、用户=userId。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Upload, X, FileText, Bold, Italic, Underline, List, ListOrdered, Heading } from 'lucide-react';
+import { Upload, X, FileText, Bold, Italic, Underline, List, ListOrdered, Heading, RemoveFormatting } from 'lucide-react';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { sanitizeHtml } from '@/lib/sanitizeHtml';
+import { sanitizeHtml, cleanPastedHtml } from '@/lib/sanitizeHtml';
 import { uploadAttachment } from '@/services/real/aiToolbox';
 import {
   listFormTemplates,
@@ -273,14 +273,31 @@ export function RichTextField({ value, onChange, minHeight = 120, placeholder }:
   }, [onChange]);
 
   const onPaste = (e: React.ClipboardEvent) => {
+    // 1) 截图 → 上传
     const img = Array.from(e.clipboardData.items).find((i) => i.type.startsWith('image/'));
     if (img) {
       const file = img.getAsFile();
       if (file) {
         e.preventDefault();
         void insertImageFile(file);
+        return;
       }
     }
+    // 2) 富文本 → 清洗后再插入（剥离来源页的背景/颜色/字体，只留结构，融入当前主题）
+    const html = e.clipboardData.getData('text/html');
+    if (html) {
+      e.preventDefault();
+      document.execCommand('insertHTML', false, cleanPastedHtml(html));
+      if (ref.current) onChange(ref.current.innerHTML);
+    }
+    // 3) 纯文本 → 走浏览器默认（已是无样式）
+  };
+
+  /** 一键清除整段格式：剥离已粘贴内容里的背景/颜色/字体等表现型样式，只留结构。 */
+  const clearFormatting = () => {
+    if (!ref.current) return;
+    ref.current.innerHTML = cleanPastedHtml(ref.current.innerHTML);
+    onChange(ref.current.innerHTML);
   };
 
   const btn = 'w-7 h-7 flex items-center justify-center rounded text-white/55 hover:text-white hover:bg-white/10';
@@ -293,7 +310,9 @@ export function RichTextField({ value, onChange, minHeight = 120, placeholder }:
         <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => exec('formatBlock', 'H3')} className={btn} title="标题"><Heading size={14} /></button>
         <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => exec('insertUnorderedList')} className={btn} title="无序列表"><List size={14} /></button>
         <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => exec('insertOrderedList')} className={btn} title="有序列表"><ListOrdered size={14} /></button>
-        <span className="ml-1 text-[10px] text-white/30">{uploading ? '图片上传中…' : '可直接粘贴截图'}</span>
+        <span className="w-px h-4 bg-white/10 mx-0.5" />
+        <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={clearFormatting} className={btn} title="清除格式（去底色/颜色/字体，只留结构）"><RemoveFormatting size={14} /></button>
+        <span className="ml-1 text-[10px] text-white/30">{uploading ? '图片上传中…' : '粘贴自动去底色 · 可直接粘贴截图'}</span>
       </div>
       <div className="relative">
         {placeholder && !value && (
