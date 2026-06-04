@@ -45,7 +45,7 @@ public class ProductAgentController : ControllerBase
     {
         var product = await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).FirstOrDefaultAsync();
         if (product == null) return null;
-        if (HasPermission(AdminPermissionCatalog.ProductAgentManage)) return product;
+        if (CanManage()) return product;
         if (product.OwnerId == userId || product.MemberIds.Contains(userId)) return product;
         return null;
     }
@@ -95,7 +95,7 @@ public class ProductAgentController : ControllerBase
 
         var b = Builders<Product>.Filter;
         var conds = new List<FilterDefinition<Product>> { b.Eq(p => p.IsDeleted, false) };
-        if (!HasPermission(AdminPermissionCatalog.ProductAgentManage))
+        if (!CanManage())
             conds.Add(b.Or(b.Eq(p => p.OwnerId, userId), b.AnyEq(p => p.MemberIds, userId)));
         if (!string.IsNullOrWhiteSpace(grade))
             conds.Add(b.Eq(p => p.Grade, grade));
@@ -153,7 +153,7 @@ public class ProductAgentController : ControllerBase
         var userId = GetUserId();
         var product = await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).FirstOrDefaultAsync();
         if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在"));
-        if (product.OwnerId != userId && !HasPermission(AdminPermissionCatalog.ProductAgentManage))
+        if (product.OwnerId != userId && !CanManage())
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅产品负责人或管理员可删除"));
 
         await _db.Products.UpdateOneAsync(p => p.Id == productId,
@@ -615,7 +615,7 @@ public class ProductAgentController : ControllerBase
     [HttpPost("categories")]
     public async Task<IActionResult> UpsertCategory([FromBody] UpsertCategoryRequest request)
     {
-        if (!HasPermission(AdminPermissionCatalog.ProductAgentManage))
+        if (!CanManage())
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
         if (string.IsNullOrWhiteSpace(request.Name))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "类型名称不能为空"));
@@ -654,7 +654,7 @@ public class ProductAgentController : ControllerBase
     [HttpDelete("categories/{categoryId}")]
     public async Task<IActionResult> DeleteCategory(string categoryId)
     {
-        if (!HasPermission(AdminPermissionCatalog.ProductAgentManage))
+        if (!CanManage())
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
         var cat = await _db.ProductCategories.Find(c => c.Id == categoryId && !c.IsDeleted).FirstOrDefaultAsync();
         if (cat == null)
@@ -687,7 +687,7 @@ public class ProductAgentController : ControllerBase
     [HttpPost("desc-templates")]
     public async Task<IActionResult> UpsertDescTemplate([FromBody] UpsertDescTemplateRequest request)
     {
-        if (!HasPermission(AdminPermissionCatalog.ProductAgentManage))
+        if (!CanManage())
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
         if (string.IsNullOrWhiteSpace(request.Name))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "模板名称不能为空"));
@@ -723,7 +723,7 @@ public class ProductAgentController : ControllerBase
     [HttpDelete("desc-templates/{templateId}")]
     public async Task<IActionResult> DeleteDescTemplate(string templateId)
     {
-        if (!HasPermission(AdminPermissionCatalog.ProductAgentManage))
+        if (!CanManage())
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
         await _db.ProductDescTemplates.UpdateOneAsync(t => t.Id == templateId,
             Builders<ProductDescTemplate>.Update.Set(t => t.IsDeleted, true).Set(t => t.UpdatedAt, DateTime.UtcNow));
@@ -749,7 +749,7 @@ public class ProductAgentController : ControllerBase
     [HttpPost("form-templates")]
     public async Task<IActionResult> UpsertFormTemplate([FromBody] UpsertFormTemplateRequest request)
     {
-        if (!HasPermission(AdminPermissionCatalog.ProductAgentManage))
+        if (!CanManage())
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
         if (string.IsNullOrWhiteSpace(request.Name))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "模板名称不能为空"));
@@ -792,7 +792,7 @@ public class ProductAgentController : ControllerBase
     [HttpDelete("form-templates/{templateId}")]
     public async Task<IActionResult> DeleteFormTemplate(string templateId)
     {
-        if (!HasPermission(AdminPermissionCatalog.ProductAgentManage))
+        if (!CanManage())
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
         await _db.ProductFormTemplates.UpdateOneAsync(t => t.Id == templateId,
             Builders<ProductFormTemplate>.Update.Set(t => t.IsDeleted, true).Set(t => t.UpdatedAt, DateTime.UtcNow));
@@ -830,7 +830,7 @@ public class ProductAgentController : ControllerBase
     [HttpPost("workflow-definitions")]
     public async Task<IActionResult> UpsertWorkflowDefinition([FromBody] UpsertWorkflowDefinitionRequest request)
     {
-        if (!HasPermission(AdminPermissionCatalog.ProductAgentManage))
+        if (!CanManage())
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
         if (string.IsNullOrWhiteSpace(request.Name))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "流程名称不能为空"));
@@ -874,7 +874,7 @@ public class ProductAgentController : ControllerBase
     [HttpDelete("workflow-definitions/{definitionId}")]
     public async Task<IActionResult> DeleteWorkflowDefinition(string definitionId)
     {
-        if (!HasPermission(AdminPermissionCatalog.ProductAgentManage))
+        if (!CanManage())
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要产品管理-管理权限"));
         await _db.ProductWorkflowDefinitions.UpdateOneAsync(w => w.Id == definitionId,
             Builders<ProductWorkflowDefinition>.Update.Set(w => w.IsDeleted, true).Set(w => w.UpdatedAt, DateTime.UtcNow));
@@ -1240,7 +1240,7 @@ public class ProductAgentController : ControllerBase
             b.Eq(d => d.IsDeleted, false),
             b.Eq(d => d.TracedProductId, (string?)null),
         };
-        if (!HasPermission(AdminPermissionCatalog.ProductAgentManage))
+        if (!CanManage())
             conds.Add(b.Or(b.Eq(d => d.ReporterId, userId), b.Eq(d => d.AssigneeId, userId)));
         if (!string.IsNullOrWhiteSpace(keyword))
             conds.Add(b.Or(
@@ -1728,10 +1728,13 @@ public class ProductAgentController : ControllerBase
     /// <summary>当前用户是否管理层（看全部产品 + 全局设置）。</summary>
     private bool IsProductAdmin() => HasPermission(AdminPermissionCatalog.ProductAgentAdmin);
 
+    /// <summary>能否管理/查看全部产品：管理员(ProductAgentAdmin)是管理(ProductAgentManage)的超集；Super 已含在 HasPermission 内。</summary>
+    private bool CanManage() => IsProductAdmin() || HasPermission(AdminPermissionCatalog.ProductAgentManage);
+
     /// <summary>可访问的产品 Id 集合；返回 null 表示"全部"（管理层/管理权限）。</summary>
     private async Task<HashSet<string>?> GetAccessibleProductIdsAsync(string userId)
     {
-        if (IsProductAdmin() || HasPermission(AdminPermissionCatalog.ProductAgentManage)) return null;
+        if (CanManage()) return null;
         var b = Builders<Product>.Filter;
         var filter = b.And(b.Eq(p => p.IsDeleted, false),
             b.Or(b.Eq(p => p.OwnerId, userId), b.AnyEq(p => p.MemberIds, userId)));
@@ -1965,7 +1968,9 @@ public class ProductAgentController : ControllerBase
         var ids = productIds.Where(x => !string.IsNullOrEmpty(x)).Distinct().ToList();
         if (ids.Count == 0) return new();
         var prods = await _db.Products.Find(Builders<Product>.Filter.In(p => p.Id, ids)).Project(p => new { p.Id, p.Name }).ToListAsync();
-        return prods.ToDictionary(p => p.Id, p => p.Name);
+        var map = new Dictionary<string, string>();
+        foreach (var p in prods) map[p.Id] = p.Name;
+        return map;
     }
 
     /// <summary>批量解析用户显示名（UserId → DisplayName）。</summary>
@@ -1974,7 +1979,10 @@ public class ProductAgentController : ControllerBase
         var ids = userIds.Where(x => !string.IsNullOrEmpty(x)).Select(x => x!).Distinct().ToList();
         if (ids.Count == 0) return new();
         var users = await _db.Users.Find(Builders<User>.Filter.In(u => u.UserId, ids)).Project(u => new { u.UserId, u.DisplayName }).ToListAsync();
-        return users.ToDictionary(u => u.UserId, u => u.DisplayName ?? "");
+        // 去重安全：UserId 理论唯一，但历史数据可能有重复，用覆盖而非 ToDictionary(避免重复键抛异常导致整个端点 500)
+        var map = new Dictionary<string, string>();
+        foreach (var u in users) if (!string.IsNullOrEmpty(u.UserId)) map[u.UserId] = u.DisplayName ?? "";
+        return map;
     }
 
     // ════════════════════════ 私有工具 ════════════════════════
