@@ -5569,7 +5569,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       logDeploy(id, `部署失败: ${errMsg}`);
       sendSSE(res, 'error', { message: errMsg });
       try {
-        const failureDetail = await buildCheckRunFailurePostmortem(entry, containerService);
+        // catch 路径同样按本次 startup-plan 过滤 zombie 服务(profiles 在外层 4724
+        // 声明,异常路径仍可见),与成功/失败 finalize 同口径,不让旧 profile 背锅。
+        const failureDetail = await buildCheckRunFailurePostmortem(
+          entry, containerService, new Set(profiles.map((p) => p.id)),
+        );
         await checkRunRunner.finalize(entry, {
           conclusion: 'failure',
           summary: errMsg || '部署失败',
