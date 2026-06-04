@@ -15,6 +15,7 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
 {
     private readonly MongoDbContext _db;
     private readonly ILogger<ZhunxingKnowledgeService> _logger;
+    private static readonly Dictionary<string, TopicDefinition> TopicCatalog = BuildTopicCatalog();
 
     public ZhunxingKnowledgeService(
         MongoDbContext db,
@@ -642,6 +643,232 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
         };
     }
 
+    public async Task<ZhunxingTopicSubscriptionResult> GetTopicSubscriptionAsync(
+        string userId,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(userId))
+            throw new ArgumentException("userId 不能为空", nameof(userId));
+
+        var existing = await _db.ZhunxingTopicSubscriptions
+            .Find(x => x.UserId == userId)
+            .FirstOrDefaultAsync(ct);
+
+        return new ZhunxingTopicSubscriptionResult
+        {
+            UserId = userId,
+            Topics = existing == null
+                ? GetDefaultTopics()
+                : NormalizeTopics(existing.Topics),
+            UpdatedAt = existing?.UpdatedAt ?? DateTime.UtcNow,
+        };
+    }
+
+    public async Task<ZhunxingTopicSubscriptionResult> UpdateTopicSubscriptionAsync(
+        string userId,
+        UpdateZhunxingTopicSubscriptionRequest request,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(userId))
+            throw new ArgumentException("userId 不能为空", nameof(userId));
+        if (request == null)
+            throw new ArgumentException("request 不能为空", nameof(request));
+
+        var normalizedTopics = NormalizeTopics(request.Topics);
+        if (normalizedTopics.Count == 0)
+            normalizedTopics = GetDefaultTopics();
+
+        var now = DateTime.UtcNow;
+        var existing = await _db.ZhunxingTopicSubscriptions
+            .Find(x => x.UserId == userId)
+            .FirstOrDefaultAsync(ct);
+
+        if (existing == null)
+        {
+            var subscription = new ZhunxingTopicSubscription
+            {
+                UserId = userId,
+                Topics = normalizedTopics,
+                CreatedAt = now,
+                UpdatedAt = now,
+            };
+            await _db.ZhunxingTopicSubscriptions.InsertOneAsync(subscription, cancellationToken: ct);
+        }
+        else
+        {
+            var update = Builders<ZhunxingTopicSubscription>.Update
+                .Set(x => x.Topics, normalizedTopics)
+                .Set(x => x.UpdatedAt, now);
+            await _db.ZhunxingTopicSubscriptions.UpdateOneAsync(
+                Builders<ZhunxingTopicSubscription>.Filter.Eq(x => x.UserId, userId),
+                update,
+                cancellationToken: ct);
+        }
+
+        return new ZhunxingTopicSubscriptionResult
+        {
+            UserId = userId,
+            Topics = normalizedTopics,
+            UpdatedAt = now,
+        };
+    }
+
+    public async Task<ZhunxingTopicUpdateFeed> GetTopicUpdatesAsync(
+        string userId,
+        int days = 30,
+        int top = 20,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(userId))
+            throw new ArgumentException("userId 不能为空", nameof(userId));
+
+        var safeDays = Math.Clamp(days, 1, 180);
+        var safeTop = Math.Clamp(top, 1, 100);
+        var since = DateTime.UtcNow.AddDays(-safeDays);
+
+        var subscription = await _db.ZhunxingTopicSubscriptions
+            .Find(x => x.UserId == userId)
+            .FirstOrDefaultAsync(ct);
+        var subscribedTopics = subscription == null
+            ? GetDefaultTopics()
+            : NormalizeTopics(subscription.Topics);
+
+        var documents = await _db.ZhunxingKnowledgeDocuments
+            .Find(x => x.IsActive)
+            .ToListAsync(ct);
+        var documentMap = documents.ToDictionary(x => x.Id, x => x.Title, StringComparer.Ordinal);
+
+        var recentClauses = await _db.ZhunxingKnowledgeClauses
+            .Find(x => x.IsActive && x.UpdatedAt >= since)
+            .SortByDescending(x => x.UpdatedAt)
+            .Limit(1000)
+            .ToListAsync(ct);
+
+        var updates = new List<ZhunxingTopicUpdateItem>();
+        foreach (var clause in recentClauses)
+        {
+            var matchedTopics = MatchTopics(clause.Title, clause.RuleText, clause.Keywords)
+                .Where(subscribedTopics.Contains)
+                .ToList();
+            if (matchedTopics.Count == 0)
+                continue;
+
+            foreach (var topic in matchedTopics)
+            {
+                updates.Add(new ZhunxingTopicUpdateItem
+                {
+                    Topic = topic,
+                    TopicLabel = TopicCatalog[topic].Label,
+                    DocumentId = clause.DocumentId,
+                    DocumentTitle = documentMap.TryGetValue(clause.DocumentId, out var title) ? title : "未知文档",
+                    ClauseId = clause.Id,
+                    Chapter = clause.Chapter,
+                    ClauseTitle = clause.Title,
+                    Summary = BuildSnippet(clause.RuleText),
+                    RiskLevel = clause.RiskLevel,
+                    UpdatedAt = clause.UpdatedAt,
+                });
+            }
+        }
+
+        var ordered = updates
+            .OrderByDescending(x => x.UpdatedAt)
+            .ThenByDescending(x => GetRiskRank(NormalizeRiskLevel(x.RiskLevel)))
+            .Take(safeTop)
+            .ToList();
+
+        return new ZhunxingTopicUpdateFeed
+        {
+            Days = safeDays,
+            TotalUpdates = updates.Count,
+            ReturnedUpdates = ordered.Count,
+            Items = ordered,
+            GeneratedAt = DateTime.UtcNow,
+        };
+    }
+
+    public async Task<ZhunxingKnowledgeHeatmap> GetKnowledgeHeatmapAsync(
+        int days = 30,
+        int top = 8,
+        CancellationToken ct = default)
+    {
+        var safeDays = Math.Clamp(days, 1, 180);
+        var safeTop = Math.Clamp(top, 1, 20);
+        var since = DateTime.UtcNow.AddDays(-safeDays);
+
+        var feedbacks = await _db.ZhunxingAskFeedbacks
+            .Find(x => x.CreatedAt >= since)
+            .SortByDescending(x => x.CreatedAt)
+            .Limit(5000)
+            .ToListAsync(ct);
+
+        var bucketMap = TopicCatalog.Values
+            .ToDictionary(
+                x => x.Key,
+                x => new HeatmapAccumulator(x.Key, x.Label),
+                StringComparer.Ordinal);
+
+        foreach (var feedback in feedbacks)
+        {
+            var text = $"{feedback.Question} {feedback.Comment}";
+            var topics = MatchTopics(feedback.Question, text, feedback.CitationClauseIds);
+            if (topics.Count == 0)
+                continue;
+
+            foreach (var topic in topics)
+            {
+                if (!bucketMap.TryGetValue(topic, out var bucket))
+                    continue;
+
+                bucket.QuestionCount++;
+                bucket.ConfidenceSum += Math.Clamp(feedback.Confidence, 0, 1);
+                if (feedback.FeedbackType == ZhunxingFeedbackTypes.NoMatch)
+                    bucket.NoMatchCount++;
+                if (NormalizeFeedbackStatus(feedback.Status) is ZhunxingFeedbackStatuses.New
+                    or ZhunxingFeedbackStatuses.Triaged
+                    or ZhunxingFeedbackStatuses.InProgress)
+                {
+                    bucket.PendingCount++;
+                }
+            }
+        }
+
+        var buckets = bucketMap.Values
+            .Where(x => x.QuestionCount > 0)
+            .Select(x =>
+            {
+                var avgConfidence = x.QuestionCount == 0 ? 0 : Math.Round(x.ConfidenceSum / x.QuestionCount, 2);
+                var heatScore = Math.Round(
+                    x.QuestionCount * 1.0
+                    + x.NoMatchCount * 1.6
+                    + x.PendingCount * 1.3
+                    + (1 - avgConfidence) * 2.0,
+                    2);
+                return new ZhunxingHeatmapBucket
+                {
+                    Topic = x.Topic,
+                    TopicLabel = x.TopicLabel,
+                    QuestionCount = x.QuestionCount,
+                    NoMatchCount = x.NoMatchCount,
+                    PendingCount = x.PendingCount,
+                    AvgConfidence = avgConfidence,
+                    HeatScore = heatScore,
+                };
+            })
+            .OrderByDescending(x => x.HeatScore)
+            .ThenByDescending(x => x.QuestionCount)
+            .Take(safeTop)
+            .ToList();
+
+        return new ZhunxingKnowledgeHeatmap
+        {
+            Days = safeDays,
+            TotalFeedbackCount = feedbacks.Count,
+            GeneratedAt = DateTime.UtcNow,
+            Buckets = buckets,
+        };
+    }
+
     public async Task<ZhunxingBootstrapResult> BootstrapAttendanceSampleAsync(
         string operatorUserId,
         CancellationToken ct = default)
@@ -707,6 +934,60 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
             DocumentTitle = doc.Title,
             UpsertedClauseCount = upserted,
         };
+    }
+
+    private static Dictionary<string, TopicDefinition> BuildTopicCatalog()
+    {
+        return new Dictionary<string, TopicDefinition>(StringComparer.Ordinal)
+        {
+            ["attendance"] = new("attendance", "考勤管理", "考勤", "打卡", "迟到", "早退", "工时", "旷工"),
+            ["leave"] = new("leave", "请假休假", "请假", "事假", "病假", "产假", "陪产假", "休假"),
+            ["handover"] = new("handover", "交接流程", "交接", "移交", "对接", "交付"),
+            ["approval"] = new("approval", "审批规则", "审批", "负责人", "流程节点", "签批"),
+            ["discipline"] = new("discipline", "违规与处罚", "违纪", "处罚", "旷工", "警告", "通报"),
+            ["rnd"] = new("rnd", "产研协作", "产研", "研发", "需求", "测试", "发布"),
+            ["sales"] = new("sales", "市场销售协同", "市场", "销售", "客户", "商机", "报价"),
+        };
+    }
+
+    private static List<string> GetDefaultTopics()
+    {
+        return new List<string> { "attendance", "leave", "handover", "approval" };
+    }
+
+    private static List<string> NormalizeTopics(IEnumerable<string>? topics)
+    {
+        if (topics == null)
+            return new List<string>();
+
+        return topics
+            .Select(x => x.Trim().ToLowerInvariant())
+            .Where(x => TopicCatalog.ContainsKey(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private static List<string> MatchTopics(string title, string body, IEnumerable<string>? keywords)
+    {
+        var keywordSet = new HashSet<string>(
+            (keywords ?? Array.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim().ToLowerInvariant()),
+            StringComparer.Ordinal);
+        var corpus = $"{title} {body}".ToLowerInvariant();
+
+        var matched = new List<string>();
+        foreach (var topic in TopicCatalog.Values)
+        {
+            if (topic.Keywords.Any(keyword =>
+                corpus.Contains(keyword, StringComparison.Ordinal)
+                || keywordSet.Any(k => k.Contains(keyword, StringComparison.Ordinal) || keyword.Contains(k, StringComparison.Ordinal))))
+            {
+                matched.Add(topic.Key);
+            }
+        }
+
+        return matched;
     }
 
     private static List<string> ExtractTokens(string question)
@@ -1111,6 +1392,36 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
         public string Operator { get; init; } = string.Empty;
         public int Value { get; init; }
         public string Unit { get; init; } = string.Empty;
+    }
+
+    private sealed class TopicDefinition
+    {
+        public TopicDefinition(string key, string label, params string[] keywords)
+        {
+            Key = key;
+            Label = label;
+            Keywords = keywords;
+        }
+
+        public string Key { get; }
+        public string Label { get; }
+        public IReadOnlyList<string> Keywords { get; }
+    }
+
+    private sealed class HeatmapAccumulator
+    {
+        public HeatmapAccumulator(string topic, string topicLabel)
+        {
+            Topic = topic;
+            TopicLabel = topicLabel;
+        }
+
+        public string Topic { get; }
+        public string TopicLabel { get; }
+        public int QuestionCount { get; set; }
+        public int NoMatchCount { get; set; }
+        public int PendingCount { get; set; }
+        public double ConfidenceSum { get; set; }
     }
 
     private static double ComputeConfidence(IReadOnlyList<int> scores)

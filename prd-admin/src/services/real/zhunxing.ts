@@ -153,6 +153,50 @@ export interface ZhunxingFeedbackFollowUpResult {
   status: string;
 }
 
+export interface ZhunxingTopicSubscriptionResult {
+  userId: string;
+  topics: string[];
+  updatedAt: string;
+}
+
+export interface ZhunxingTopicUpdateItem {
+  topic: string;
+  topicLabel: string;
+  documentId: string;
+  documentTitle: string;
+  clauseId: string;
+  chapter: string;
+  clauseTitle: string;
+  summary: string;
+  riskLevel: string;
+  updatedAt: string;
+}
+
+export interface ZhunxingTopicUpdateFeed {
+  days: number;
+  totalUpdates: number;
+  returnedUpdates: number;
+  items: ZhunxingTopicUpdateItem[];
+  generatedAt: string;
+}
+
+export interface ZhunxingHeatmapBucket {
+  topic: string;
+  topicLabel: string;
+  questionCount: number;
+  noMatchCount: number;
+  pendingCount: number;
+  avgConfidence: number;
+  heatScore: number;
+}
+
+export interface ZhunxingKnowledgeHeatmap {
+  days: number;
+  totalFeedbackCount: number;
+  generatedAt: string;
+  buckets: ZhunxingHeatmapBucket[];
+}
+
 export async function askZhunxing(
   question: string,
   topK = 3,
@@ -233,5 +277,48 @@ export async function markZhunxingFeedbackFollowUp(
   return await apiRequest(api.zhunxing.feedbackFollowUp(feedbackId), {
     method: 'POST',
     body: request,
+  });
+}
+
+export async function getMyZhunxingTopicSubscription(): Promise<ApiResponse<ZhunxingTopicSubscriptionResult>> {
+  return await apiRequest(api.zhunxing.subscriptionMe(), {
+    method: 'GET',
+  });
+}
+
+export async function updateMyZhunxingTopicSubscription(
+  topics: string[],
+): Promise<ApiResponse<ZhunxingTopicSubscriptionResult>> {
+  return await apiRequest(api.zhunxing.subscriptionMe(), {
+    method: 'PUT',
+    body: {
+      topics,
+    },
+  });
+}
+
+export async function getMyZhunxingTopicUpdates(
+  days = 30,
+  top = 20,
+): Promise<ApiResponse<ZhunxingTopicUpdateFeed>> {
+  const search = new URLSearchParams({
+    days: String(days),
+    top: String(top),
+  });
+  return await apiRequest(`${api.zhunxing.subscriptionUpdates()}?${search.toString()}`, {
+    method: 'GET',
+  });
+}
+
+export async function getZhunxingKnowledgeHeatmap(
+  days = 30,
+  top = 8,
+): Promise<ApiResponse<ZhunxingKnowledgeHeatmap>> {
+  const search = new URLSearchParams({
+    days: String(days),
+    top: String(top),
+  });
+  return await apiRequest(`${api.zhunxing.heatmap()}?${search.toString()}`, {
+    method: 'GET',
   });
 }

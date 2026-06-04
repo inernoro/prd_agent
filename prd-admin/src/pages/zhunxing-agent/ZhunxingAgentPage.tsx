@@ -4,18 +4,25 @@ import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import {
   askZhunxing,
+  getMyZhunxingTopicSubscription,
+  getMyZhunxingTopicUpdates,
+  getZhunxingKnowledgeHeatmap,
   getZhunxingFeedbackSummary,
   listZhunxingFeedbacks,
   markZhunxingFeedbackFollowUp,
   replayZhunxingFeedback,
   submitZhunxingFeedback,
+  updateMyZhunxingTopicSubscription,
   updateZhunxingFeedbackWorkflow,
   type ZhunxingAskResponse,
   type ZhunxingFeedbackListItem,
   type ZhunxingFeedbackListResult,
   type ZhunxingFeedbackSummary,
+  type ZhunxingKnowledgeHeatmap,
+  type ZhunxingTopicSubscriptionResult,
+  type ZhunxingTopicUpdateFeed,
 } from '@/services/real/zhunxing';
-import { AlertCircle, BarChart3, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, RefreshCw, Search, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { AlertCircle, BarChart3, BellRing, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Flame, RefreshCw, Search, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 
 const STARTERS = [
@@ -37,6 +44,18 @@ const ANSWER_ROLE_LABELS: Record<'employee' | 'supervisor' | 'hr', string> = {
   supervisor: '主管版',
   hr: 'HR版',
 };
+
+const TOPIC_LABELS: Record<string, string> = {
+  attendance: '考勤管理',
+  leave: '请假休假',
+  handover: '交接流程',
+  approval: '审批规则',
+  discipline: '违规与处罚',
+  rnd: '产研协作',
+  sales: '市场销售协同',
+};
+
+const TOPIC_OPTIONS = Object.entries(TOPIC_LABELS).map(([value, label]) => ({ value, label }));
 
 export default function ZhunxingAgentPage() {
   const permissions = useAuthStore((s) => s.permissions);
@@ -71,6 +90,11 @@ export default function ZhunxingAgentPage() {
   const [page, setPage] = useState(1);
   const [actingFeedbackId, setActingFeedbackId] = useState<string | null>(null);
   const [dashboardNotice, setDashboardNotice] = useState<string | null>(null);
+  const [topicSubscription, setTopicSubscription] = useState<ZhunxingTopicSubscriptionResult | null>(null);
+  const [selectedTopics, setSelectedTopics] = useState<string[]>([]);
+  const [savingTopics, setSavingTopics] = useState(false);
+  const [topicUpdates, setTopicUpdates] = useState<ZhunxingTopicUpdateFeed | null>(null);
+  const [heatmap, setHeatmap] = useState<ZhunxingKnowledgeHeatmap | null>(null);
 
   const confidencePercent = useMemo(() => Math.round((result?.confidence ?? 0) * 100), [result?.confidence]);
 
@@ -157,7 +181,7 @@ export default function ZhunxingAgentPage() {
     setDashboardError(null);
     try {
       const matched = matchedFilter === 'all' ? undefined : matchedFilter === 'true';
-      const [summaryRes, listRes] = await Promise.all([
+      const [summaryRes, listRes, subscriptionRes, updatesRes, heatmapRes] = await Promise.all([
         getZhunxingFeedbackSummary(8),
         listZhunxingFeedbacks({
           feedbackType: feedbackTypeFilter,
@@ -167,6 +191,9 @@ export default function ZhunxingAgentPage() {
           page,
           pageSize: 10,
         }),
+        getMyZhunxingTopicSubscription(),
+        getMyZhunxingTopicUpdates(30, 20),
+        getZhunxingKnowledgeHeatmap(30, 8),
       ]);
 
       if (!summaryRes.success || !summaryRes.data) {
@@ -177,12 +204,31 @@ export default function ZhunxingAgentPage() {
         throw new Error(listRes.error?.message || '反馈列表加载失败');
       }
 
+      if (!subscriptionRes.success || !subscriptionRes.data) {
+        throw new Error(subscriptionRes.error?.message || '订阅配置加载失败');
+      }
+
+      if (!updatesRes.success || !updatesRes.data) {
+        throw new Error(updatesRes.error?.message || '订阅更新加载失败');
+      }
+
+      if (!heatmapRes.success || !heatmapRes.data) {
+        throw new Error(heatmapRes.error?.message || '知识热力图加载失败');
+      }
+
       setFeedbackSummary(summaryRes.data);
       setFeedbackList(listRes.data);
+      setTopicSubscription(subscriptionRes.data);
+      setSelectedTopics(subscriptionRes.data.topics || []);
+      setTopicUpdates(updatesRes.data);
+      setHeatmap(heatmapRes.data);
     } catch (e) {
       setDashboardError(e instanceof Error ? e.message : '反馈看板加载失败');
       setFeedbackSummary(null);
       setFeedbackList(null);
+      setTopicSubscription(null);
+      setTopicUpdates(null);
+      setHeatmap(null);
     } finally {
       setDashboardLoading(false);
     }
@@ -256,6 +302,37 @@ export default function ZhunxingAgentPage() {
       setActingFeedbackId(null);
     }
   }, [actingFeedbackId, hasWritePermission, loadDashboard]);
+
+  const toggleTopic = (topic: string) => {
+    setSelectedTopics((prev) => {
+      if (prev.includes(topic)) {
+        return prev.filter((item) => item !== topic);
+      }
+      return [...prev, topic];
+    });
+  };
+
+  const saveTopicSubscription = useCallback(async () => {
+    if (savingTopics) return;
+    setSavingTopics(true);
+    setDashboardError(null);
+    setDashboardNotice(null);
+    try {
+      const res = await updateMyZhunxingTopicSubscription(selectedTopics);
+      if (!res.success || !res.data) {
+        setDashboardError(res.error?.message || '主题订阅保存失败');
+        return;
+      }
+      setTopicSubscription(res.data);
+      setSelectedTopics(res.data.topics || []);
+      setDashboardNotice('主题订阅已保存，后续将按订阅主题推送条款更新。');
+      await loadDashboard();
+    } catch (e) {
+      setDashboardError(e instanceof Error ? e.message : '主题订阅保存失败');
+    } finally {
+      setSavingTopics(false);
+    }
+  }, [savingTopics, selectedTopics, loadDashboard]);
 
   const askPanel = (
     <>
@@ -664,6 +741,111 @@ export default function ZhunxingAgentPage() {
         ) : (
           <div className="text-xs" style={{ color: 'var(--text-muted)' }}>暂无未命中聚类数据</div>
         )}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-3">
+        <div className="rounded-lg p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <div className="text-xs font-semibold flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
+              <BellRing size={13} />
+              主题订阅与更新提醒
+            </div>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void saveTopicSubscription()}
+              disabled={savingTopics}
+              className="whitespace-nowrap"
+            >
+              {savingTopics ? <MapSpinner size={12} color="var(--text-primary)" /> : null}
+              保存订阅
+            </Button>
+          </div>
+          <div className="flex flex-wrap gap-2 mb-2">
+            {TOPIC_OPTIONS.map((topic) => (
+              <button
+                key={topic.value}
+                type="button"
+                onClick={() => toggleTopic(topic.value)}
+                className="px-2 py-1 rounded-md text-xs transition-opacity hover:opacity-90"
+                style={{
+                  background: selectedTopics.includes(topic.value) ? 'rgba(96,165,250,0.2)' : 'rgba(255,255,255,0.04)',
+                  border: selectedTopics.includes(topic.value) ? '1px solid rgba(96,165,250,0.5)' : '1px solid rgba(255,255,255,0.08)',
+                  color: selectedTopics.includes(topic.value) ? '#60A5FA' : 'var(--text-muted)',
+                }}
+              >
+                {topic.label}
+              </button>
+            ))}
+          </div>
+          <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>
+            最近 30 天命中更新 {topicUpdates?.totalUpdates ?? 0} 条，当前展示 {topicUpdates?.returnedUpdates ?? 0} 条
+            {topicSubscription?.updatedAt ? `（订阅更新于 ${new Date(topicSubscription.updatedAt).toLocaleString('zh-CN', { hour12: false })}）` : ''}
+          </div>
+          {topicUpdates?.items?.length ? (
+            <div className="flex flex-col gap-2 max-h-48 overflow-auto pr-1">
+              {topicUpdates.items.map((item) => (
+                <div
+                  key={`${item.topic}-${item.clauseId}-${item.updatedAt}`}
+                  className="rounded-md p-2 text-xs"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span style={{ color: '#60A5FA' }}>{item.topicLabel}</span>
+                    <span style={{ color: 'var(--text-muted)' }}>
+                      {new Date(item.updatedAt).toLocaleDateString('zh-CN')}
+                    </span>
+                  </div>
+                  <div className="mt-1" style={{ color: 'var(--text-primary)' }}>
+                    {item.documentTitle} / {item.chapter} / {item.clauseTitle}
+                  </div>
+                  <div className="mt-1" style={{ color: 'var(--text-muted)' }}>
+                    {item.summary}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              当前订阅主题暂无条款更新。
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-lg p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="text-xs font-semibold mb-2 flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
+            <Flame size={13} />
+            知识热力图（近 {heatmap?.days ?? 30} 天）
+          </div>
+          {heatmap?.buckets?.length ? (
+            <div className="flex flex-col gap-2">
+              {heatmap.buckets.map((bucket, index) => {
+                const maxScore = heatmap.buckets[0]?.heatScore || 1;
+                const width = Math.max(8, Math.round((bucket.heatScore / maxScore) * 100));
+                return (
+                  <div key={bucket.topic} className="rounded-md p-2" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                    <div className="flex items-center justify-between text-xs">
+                      <span style={{ color: 'var(--text-primary)' }}>
+                        {index + 1}. {bucket.topicLabel}
+                      </span>
+                      <span style={{ color: '#FB923C' }}>热度 {bucket.heatScore}</span>
+                    </div>
+                    <div className="mt-1 h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.08)' }}>
+                      <div className="h-1.5 rounded-full" style={{ width: `${width}%`, background: 'linear-gradient(90deg, #FBBF24, #FB7185)' }} />
+                    </div>
+                    <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      提问 {bucket.questionCount} · 未命中 {bucket.noMatchCount} · 待处理 {bucket.pendingCount} · 平均置信度 {Math.round((bucket.avgConfidence ?? 0) * 100)}%
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              近 30 天暂无可聚合的反馈数据。
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="rounded-lg p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>

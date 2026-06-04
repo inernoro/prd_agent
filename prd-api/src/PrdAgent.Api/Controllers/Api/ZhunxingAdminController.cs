@@ -94,6 +94,51 @@ public class ZhunxingAdminController : ControllerBase
         return Ok(ApiResponse<ZhunxingFeedbackSummary>.Ok(summary));
     }
 
+    [HttpGet("subscriptions/me")]
+    public async Task<IActionResult> GetMyTopicSubscription(CancellationToken ct = default)
+    {
+        var userId = this.GetRequiredUserId();
+        var result = await _knowledgeService.GetTopicSubscriptionAsync(userId, ct);
+        return Ok(ApiResponse<ZhunxingTopicSubscriptionResult>.Ok(result));
+    }
+
+    [HttpPut("subscriptions/me")]
+    public async Task<IActionResult> UpdateMyTopicSubscription([FromBody] UpdateZhunxingTopicSubscriptionRequest request, CancellationToken ct = default)
+    {
+        try
+        {
+            var userId = this.GetRequiredUserId();
+            var result = await _knowledgeService.UpdateTopicSubscriptionAsync(userId, request, ct);
+            return Ok(ApiResponse<ZhunxingTopicSubscriptionResult>.Ok(result));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+    }
+
+    [HttpGet("subscriptions/me/updates")]
+    public async Task<IActionResult> GetMyTopicUpdates([FromQuery] int days = 30, [FromQuery] int top = 20, CancellationToken ct = default)
+    {
+        try
+        {
+            var userId = this.GetRequiredUserId();
+            var result = await _knowledgeService.GetTopicUpdatesAsync(userId, days, top, ct);
+            return Ok(ApiResponse<ZhunxingTopicUpdateFeed>.Ok(result));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+    }
+
+    [HttpGet("heatmap")]
+    public async Task<IActionResult> GetKnowledgeHeatmap([FromQuery] int days = 30, [FromQuery] int top = 8, CancellationToken ct = default)
+    {
+        var result = await _knowledgeService.GetKnowledgeHeatmapAsync(days, top, ct);
+        return Ok(ApiResponse<ZhunxingKnowledgeHeatmap>.Ok(result));
+    }
+
     [HttpGet("feedbacks")]
     public async Task<IActionResult> ListFeedbacks(
         [FromQuery] string? feedbackType = null,

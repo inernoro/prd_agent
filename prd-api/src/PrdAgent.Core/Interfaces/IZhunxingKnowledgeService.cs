@@ -67,6 +67,26 @@ public interface IZhunxingKnowledgeService
         MarkZhunxingFeedbackFollowUpRequest request,
         CancellationToken ct = default);
 
+    Task<ZhunxingTopicSubscriptionResult> GetTopicSubscriptionAsync(
+        string userId,
+        CancellationToken ct = default);
+
+    Task<ZhunxingTopicSubscriptionResult> UpdateTopicSubscriptionAsync(
+        string userId,
+        UpdateZhunxingTopicSubscriptionRequest request,
+        CancellationToken ct = default);
+
+    Task<ZhunxingTopicUpdateFeed> GetTopicUpdatesAsync(
+        string userId,
+        int days = 30,
+        int top = 20,
+        CancellationToken ct = default);
+
+    Task<ZhunxingKnowledgeHeatmap> GetKnowledgeHeatmapAsync(
+        int days = 30,
+        int top = 8,
+        CancellationToken ct = default);
+
     Task<ZhunxingBootstrapResult> BootstrapAttendanceSampleAsync(
         string operatorUserId,
         CancellationToken ct = default);

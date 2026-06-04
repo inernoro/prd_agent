@@ -2177,6 +2177,8 @@ sequenceDiagram
 9. 支持角色化答案模式：`employee`（结论+执行步骤）、`supervisor`（审批口径+风险）、`hr`（条款原文+校验提示）
 10. 回答内置流程化决策树（IF/THEN 步骤），用于请假、考勤、交接等执行型问题
 11. 命中条款存在阈值或口径差异时，返回冲突提示与冲突条款清单，要求人工确认
+12. 支持用户主题订阅（如考勤、请假、交接），按订阅主题聚合最近条款更新并返回提醒列表
+13. 新增知识热力图，基于反馈问题聚合主题热度（提问量、未命中量、待处理量、热度分）
 
 **核心接口（新增）**：
 - 前台：`POST /zhunxing/ask` — 规范问答（JWT）
@@ -2188,6 +2190,10 @@ sequenceDiagram
 - 后台：`PATCH /api/zhunxing/feedbacks/{id}/workflow` — 更新工单状态/责任人/处置信息
 - 后台：`POST /api/zhunxing/feedbacks/{id}/replay` — 历史问题回放验证
 - 后台：`POST /api/zhunxing/feedbacks/{id}/follow-up` — 标记已回访
+- 后台：`GET /api/zhunxing/subscriptions/me` — 获取当前用户主题订阅
+- 后台：`PUT /api/zhunxing/subscriptions/me` — 更新当前用户主题订阅
+- 后台：`GET /api/zhunxing/subscriptions/me/updates` — 获取订阅主题条款更新提醒
+- 后台：`GET /api/zhunxing/heatmap` — 获取知识热力图
 - 后台：`GET /api/zhunxing/documents` — 文档列表
 - 后台：`POST /api/zhunxing/documents` — 新建知识文档
 - 后台：`GET /api/zhunxing/clauses` — 条款列表
@@ -2201,6 +2207,9 @@ sequenceDiagram
   - `answerRole`：本次回答采用的角色视角
   - `decisionTree[]`：流程化回答步骤（`stepNo/condition/action`）
   - `conflictDetected`、`conflictMessage`、`conflictClauses[]`：条款冲突检测结果与依据
+- `PUT /api/zhunxing/subscriptions/me` 请求体：`topics: string[]`（支持 `attendance|leave|handover|approval|discipline|rnd|sales`）
+- `GET /api/zhunxing/subscriptions/me/updates` 响应新增 `items[]`（含 topic/document/clause/summary/riskLevel/updatedAt）
+- `GET /api/zhunxing/heatmap` 响应返回 `buckets[]`（`topicLabel/questionCount/noMatchCount/pendingCount/avgConfidence/heatScore`）
 
 **权限定义**：
 - `zhunxing-agent.read` — 访问准星页面、问答、提交反馈、查看反馈看板

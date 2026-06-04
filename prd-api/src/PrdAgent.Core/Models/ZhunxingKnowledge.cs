@@ -179,6 +179,60 @@ public class ZhunxingBootstrapResult
     public int UpsertedClauseCount { get; set; }
 }
 
+public class UpdateZhunxingTopicSubscriptionRequest
+{
+    public List<string>? Topics { get; set; }
+}
+
+public class ZhunxingTopicSubscriptionResult
+{
+    public string UserId { get; set; } = string.Empty;
+    public List<string> Topics { get; set; } = new();
+    public DateTime UpdatedAt { get; set; }
+}
+
+public class ZhunxingTopicUpdateFeed
+{
+    public int Days { get; set; }
+    public int TotalUpdates { get; set; }
+    public int ReturnedUpdates { get; set; }
+    public List<ZhunxingTopicUpdateItem> Items { get; set; } = new();
+    public DateTime GeneratedAt { get; set; } = DateTime.UtcNow;
+}
+
+public class ZhunxingTopicUpdateItem
+{
+    public string Topic { get; set; } = string.Empty;
+    public string TopicLabel { get; set; } = string.Empty;
+    public string DocumentId { get; set; } = string.Empty;
+    public string DocumentTitle { get; set; } = string.Empty;
+    public string ClauseId { get; set; } = string.Empty;
+    public string Chapter { get; set; } = string.Empty;
+    public string ClauseTitle { get; set; } = string.Empty;
+    public string Summary { get; set; } = string.Empty;
+    public string RiskLevel { get; set; } = ZhunxingRiskLevels.Public;
+    public DateTime UpdatedAt { get; set; }
+}
+
+public class ZhunxingKnowledgeHeatmap
+{
+    public int Days { get; set; }
+    public long TotalFeedbackCount { get; set; }
+    public DateTime GeneratedAt { get; set; } = DateTime.UtcNow;
+    public List<ZhunxingHeatmapBucket> Buckets { get; set; } = new();
+}
+
+public class ZhunxingHeatmapBucket
+{
+    public string Topic { get; set; } = string.Empty;
+    public string TopicLabel { get; set; } = string.Empty;
+    public int QuestionCount { get; set; }
+    public int NoMatchCount { get; set; }
+    public int PendingCount { get; set; }
+    public double AvgConfidence { get; set; }
+    public double HeatScore { get; set; }
+}
+
 public class CreateZhunxingAskFeedbackRequest
 {
     public string Question { get; set; } = string.Empty;
@@ -193,6 +247,16 @@ public class ZhunxingAskFeedbackResult
 {
     public string FeedbackId { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
+}
+
+[AppOwnership(AppNames.ZhunxingAgent, AppNames.ZhunxingAgentDisplay, IsPrimary = true)]
+public class ZhunxingTopicSubscription
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string UserId { get; set; } = string.Empty;
+    public List<string> Topics { get; set; } = new();
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
 public class ZhunxingFeedbackSummary

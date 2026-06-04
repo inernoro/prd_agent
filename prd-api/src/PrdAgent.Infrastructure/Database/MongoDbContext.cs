@@ -147,6 +147,7 @@ public class MongoDbContext
     public IMongoCollection<ZhunxingKnowledgeDocument> ZhunxingKnowledgeDocuments => _database.GetCollection<ZhunxingKnowledgeDocument>("zhunxing_knowledge_documents");
     public IMongoCollection<ZhunxingKnowledgeClause> ZhunxingKnowledgeClauses => _database.GetCollection<ZhunxingKnowledgeClause>("zhunxing_knowledge_clauses");
     public IMongoCollection<ZhunxingAskFeedback> ZhunxingAskFeedbacks => _database.GetCollection<ZhunxingAskFeedback>("zhunxing_ask_feedbacks");
+    public IMongoCollection<ZhunxingTopicSubscription> ZhunxingTopicSubscriptions => _database.GetCollection<ZhunxingTopicSubscription>("zhunxing_topic_subscriptions");
     // AI Toolbox 百宝箱
     public IMongoCollection<ToolboxRun> ToolboxRuns => _database.GetCollection<ToolboxRun>("toolbox_runs");
     public IMongoCollection<ToolboxItem> ToolboxItems => _database.GetCollection<ToolboxItem>("toolbox_items");
@@ -824,6 +825,19 @@ public class MongoDbContext
         ZhunxingAskFeedbacks.Indexes.CreateOne(new CreateIndexModel<ZhunxingAskFeedback>(
             Builders<ZhunxingAskFeedback>.IndexKeys.Ascending(x => x.AssigneeUserId).Ascending(x => x.Status).Descending(x => x.UpdatedAt),
             new CreateIndexOptions { Name = "idx_zhunxing_feedbacks_assignee_status_updated" }));
+        try
+        {
+            ZhunxingTopicSubscriptions.Indexes.CreateOne(new CreateIndexModel<ZhunxingTopicSubscription>(
+                Builders<ZhunxingTopicSubscription>.IndexKeys.Ascending(x => x.UserId),
+                new CreateIndexOptions { Name = "uniq_zhunxing_topic_subscriptions_user", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        ZhunxingTopicSubscriptions.Indexes.CreateOne(new CreateIndexModel<ZhunxingTopicSubscription>(
+            Builders<ZhunxingTopicSubscription>.IndexKeys.Descending(x => x.UpdatedAt),
+            new CreateIndexOptions { Name = "idx_zhunxing_topic_subscriptions_updated" }));
 
         // ModelGroups：按 modelType + isDefaultForType 查询默认分组
         ModelGroups.Indexes.CreateOne(new CreateIndexModel<ModelGroup>(
