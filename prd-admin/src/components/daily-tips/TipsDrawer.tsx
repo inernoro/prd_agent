@@ -237,24 +237,13 @@ export function TipsDrawer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, tips, pageGuideHere]);
 
-  // ── 新用户兜底:本 session 第一次访问、有任意 tip 时自动弹一次 ──
-  // 让用户第一次看到书时就知道它是做什么的(管理员没推送也能看到 seed 内容)
-  // 新用户兜底:本日第一次访问、有任意 tip 时自动弹一次
-  // 让用户第一次看到书时就知道它是做什么的(管理员没推送也能看到 seed 内容)
-  // 日级节流 AUTO_OPEN_DATE_KEY 是单一 source of truth;
-  // 历史的 FIRST_VISIT_SHOWN_KEY 已删除以避免与日级节流双 flag 不一致
-  // (bugbot ref1: 旧 flag 会在 targeted-tip 路径先触发时永远不被写入,跨日 remount 会让新用户路径误触发)
-  useEffect(() => {
-    if (!loaded) return;
-    if (pageGuideHere) return; // 本页有未走完教程 → 走 Spotlight 自动开讲,不展开抽屉(避免叠加)
-    if (pageTips.length === 0) return; // 本页没有相关教程就别自动弹空抽屉(避免展示别页内容)
-    if (hasAutoOpenedToday()) return; // 每天只自动弹一次
-    markAutoOpenedToday();
-    setExpanded(true);
-    // pageGuideHere 必须进 deps:deps 仅在 tips 首次加载时翻一次,若那一刻当前页有教程被
-    // early-return,切到无教程页后本 effect 永不再 fire → 抽屉整 session 不再自动弹(Bugbot)。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, pageTips.length > 0, pageGuideHere]);
+  // ── 新用户兜底自动弹抽屉:已移除 ──────────────────────────
+  // 历史上「本日第一次访问且本页有任意 tip 就自动展开抽屉」会在用户没点任何按钮时
+  // 自己弹出教程(例如本页 *-page-guide 已学会、却把残留的「本周改动」公告弹出来),
+  // 用户 2026-06-04 反馈「没点按钮却弹窗出来教程」。教程入口已是页头常驻按钮(TipsEntryButton),
+  // 不需要再自动展开抽屉来「证明书的存在」。保留的自动行为只剩两类(均为明确意图):
+  //   1) 管理员定向推送(isTargeted)→ 上面的 effect 自动弹;
+  //   2) 本页未走完的 *-page-guide → 下面的 effect 走 Spotlight 强制开讲(onboarding 规则)。
 
   // ── 强制新手引导:进入任意页面,若该页有「未走完」的本页教程(*-page-guide),自动开讲一次 ──
   // 目标(用户 2026-06-02 强调):人人都过一次,避免「不知道怎么操作」;每个应用走自己的完整教程。
