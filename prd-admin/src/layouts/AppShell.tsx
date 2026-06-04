@@ -76,7 +76,7 @@ import { GlobalDefectSubmitDialog, DefectSubmitButton } from '@/components/ui/Gl
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import { ChangelogBell } from '@/components/changelog/ChangelogBell';
 import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
-import { FLOATING_DOCK_COLLAPSED_KEY, FLOATING_DOCK_EVENT, FLOATING_DOCK_HEIGHT_EVENT } from '@/components/daily-tips/TipsDrawer';
+import { FLOATING_DOCK_COLLAPSED_KEY, FLOATING_DOCK_EVENT } from '@/components/daily-tips/TipsDrawer';
 import { CommandPalette } from '@/components/command-palette/CommandPalette';
 import { getSidebarMenuItems } from '@/lib/adminMenuCatalog';
 
@@ -299,17 +299,9 @@ export default function AppShell() {
     return () => window.removeEventListener('mousemove', onMove);
   }, [dockCollapsed]);
 
-  // ── 通知卡动态 bottom 定位:TipsDrawer 广播 dock 总高度,通知卡随之上移避免重叠 ──
-  // 默认 136 = 书图标 bottom(80) + 书高(48) + 间距(8),确保初始渲染书图标可见
-  const [notifCardBottom, setNotifCardBottom] = useState(136);
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ dockBottom: number }>).detail;
-      if (detail?.dockBottom != null) setNotifCardBottom(detail.dockBottom);
-    };
-    window.addEventListener(FLOATING_DOCK_HEIGHT_EVENT, handler);
-    return () => window.removeEventListener(FLOATING_DOCK_HEIGHT_EVENT, handler);
-  }, []);
+  // 注:旧版右下角有「教程小书」悬浮组,通知卡曾按其高度上移避让(notifCardBottom + FLOATING_DOCK_HEIGHT_EVENT)。
+  // 小书早已移除(改为各页头部 TipsEntryButton),那套避让逻辑成了"为不存在的元素预留空位"——
+  // 导致通知卡停在 bottom:136 的半空中而非真正的右下角。已彻底删除,通知卡固定贴底(bottom:20),与收缩铃铛同一角落。
 
   // 导航滚动状态：用于显示渐变阴影指示器
   const navRef = useRef<HTMLElement>(null);
@@ -698,10 +690,9 @@ export default function AppShell() {
             className="fixed right-5 z-[120] w-[372px] overflow-hidden"
             style={{
               ...glassFloatingButton,
-              bottom: notifCardBottom,
+              bottom: 20,
               minHeight: 112,
               borderRadius: 16,
-              transition: 'bottom 260ms cubic-bezier(.2,.8,.2,1)',
               background: 'var(--panel-solid, rgba(18, 18, 22, 0.94))',
               border: `1px solid ${tone.border}`,
               boxShadow: '0 18px 48px -12px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.02) inset',
