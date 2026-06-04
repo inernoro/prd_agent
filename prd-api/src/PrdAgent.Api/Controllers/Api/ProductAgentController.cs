@@ -1451,7 +1451,7 @@ public class ProductAgentController : ControllerBase
 
     /// <summary>发表评论（富文本 + @提醒），写入时间线并通知提醒人 / 处理人 / 负责人。</summary>
     [HttpPost("items/{entityType}/{entityId}/comments")]
-    public async Task<IActionResult> AddComment(string entityType, string entityId, [FromBody] AddCommentRequest request)
+    public async Task<IActionResult> AddComment(string entityType, string entityId, [FromBody] ProductCommentRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Content))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "评论内容不能为空"));
@@ -2203,7 +2203,7 @@ public class TransitionRequest
     public string? AssigneeId { get; set; }
 }
 
-public class AddCommentRequest
+public class ProductCommentRequest
 {
     public string Content { get; set; } = string.Empty;
     public List<string>? Mentions { get; set; }
