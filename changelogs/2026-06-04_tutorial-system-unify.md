@@ -3,3 +3,4 @@
 | feat | prd-admin | 教程走完后新增「飞回教程入口」毕业帽动画, 提醒以后从右上角 pill 重看 |
 | feat | prd-admin | dailyTipsStore 接入学习进度(loadProgress + markLearned 乐观更新) |
 | fix | prd-admin | 修复 TabBar TabBarItem.dataTourId 重复声明导致 tsc 报错 |
+| feat | prd-admin | 教程抽屉由轮播改为「选择面板」: 本页多套教程列卡片(步数/约时/状态/跟我做), 单套点 pill 直接开讲 |

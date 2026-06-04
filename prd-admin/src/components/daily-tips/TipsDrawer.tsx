@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Sparkles, X, Pin, PinOff, MapPin, ChevronLeft, ChevronRight, GraduationCap } from 'lucide-react';
-import { OPEN_TIPS_DRAWER_EVENT } from './TipsEntryButton';
-import { matchPageGuide, isEditorPageGuide, filterPageTips, routePathOf, actionQuerySatisfied } from './pageGuideMatch';
+import { Sparkles, X, Pin, PinOff, MapPin, GraduationCap } from 'lucide-react';
+import { OPEN_TIPS_DRAWER_EVENT, START_TUTORIAL_EVENT } from './TipsEntryButton';
+import { matchPageGuide, isEditorPageGuide, filterPageTips } from './pageGuideMatch';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { writeSpotlightPayload, SPOTLIGHT_PAYLOAD_UPDATED_EVENT } from './TipsRotator';
 import { trackTip, dismissTipForever } from '@/services/real/dailyTips';
-import { TipCard } from './TipCard';
 
 /**
  * 右下角「教程小书」悬浮球。
@@ -187,10 +186,8 @@ export function TipsDrawer() {
     return () => window.removeEventListener(FLOATING_DOCK_EVENT, onDockChange);
   }, []);
 
-  // ── expanded / 轮播 临时状态 ────────────────────────
+  // ── expanded 临时状态 ────────────────────────
   const [expanded, setExpanded] = useState<boolean>(false);
-  // 轮播索引(抽屉当前展示第几条 tip)
-  const [carouselIndex, setCarouselIndex] = useState<number>(0);
   // 「本页教程」语义:抽屉默认只展示与当前页相关的教程,避免在 A 页打开却弹出 B 页的教程
   //(用户 2026-06-04 反馈:每页顶部「本页教程」打开的却是别人的教程)。
   // 用户可显式切到「全部教程」浏览所有页面的教程;关闭抽屉后自动复位回「本页」。
@@ -274,56 +271,10 @@ export function TipsDrawer() {
     writeSpotlightPayload(guide);
   }, [loaded, pageGuideHere]);
 
-  // viewTips 变化时把轮播索引收敛到有效范围
-  useEffect(() => {
-    if (viewTips.length === 0) {
-      setCarouselIndex(0);
-    } else if (carouselIndex >= viewTips.length) {
-      setCarouselIndex(viewTips.length - 1);
-    }
-  }, [viewTips.length, carouselIndex]);
-
-  // 抽屉应默认展示的那一条:本页教程(matchPageGuide 编辑器感知)→ actionUrl 命中当前页的第一条 → 列表第一条。
-  // 「打开 / 切作用域 / 切路由」三处复用同一口径,绝不再用 Math.random() 兜底
-  //(那正是「打开却是别人的教程」的根因,用户 2026-06-04)。
-  const defaultIndex = (() => {
-    if (viewTips.length === 0) return -1;
-    const guide = matchPageGuide(viewTips, dismissed, location.pathname, location.search);
-    if (guide) {
-      const gi = viewTips.findIndex((t) => t.id === guide.id);
-      if (gi >= 0) return gi;
-    }
-    const ai = viewTips.findIndex((t) => {
-      if (!t.actionUrl) return false;
-      if (!actionQuerySatisfied(t.actionUrl, location.search)) return false; // query-scoped tip 按 tab gate(Codex P2)
-      const url = routePathOf(t.actionUrl); // 剥离 deep-link query 再比路径
-      return location.pathname === url || location.pathname.startsWith(url + '/');
-    });
-    return ai >= 0 ? ai : 0;
-  })();
-
-  // 切换「本页 / 全部」作用域,或在抽屉打开期间切换路由 → 按 defaultIndex 重新选定展示项。
-  // 修复 Bugbot:① 从「全部」切回「本页」固定回 0 会错过后面更匹配的本页教程(Medium);
-  //   ② 抽屉开着时 in-app 导航,carouselIndex 只被 clamp 不重选,会停在别页同序号的 tip 上(Low)。
-  // 只在这两个「上下文切换」时重选;不把 defaultIndex 放进 deps,避免后台轮询刷新 tips 时打断用户浏览。
-  useEffect(() => {
-    setCarouselIndex(defaultIndex >= 0 ? defaultIndex : 0);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showAllPages, location.pathname]);
-
   // 关闭抽屉后复位回「本页」,保证下次打开还是本页教程语义
   useEffect(() => {
     if (!expanded) setShowAllPages(false);
   }, [expanded]);
-
-  const lastExpandedRef = useRef(false);
-  useEffect(() => {
-    if (expanded && !lastExpandedRef.current) {
-      // 上次未打开 → 这次打开 → 选定 index(无匹配则落到第一条,不再随机)
-      setCarouselIndex(defaultIndex >= 0 ? defaultIndex : 0);
-    }
-    lastExpandedRef.current = expanded;
-  }, [expanded, defaultIndex, viewTips.length]);
 
   // ── dock 总高度广播:小书移除后底部不再有悬浮组,抽屉也改到右上角,dockBottom 恒为 20 ──
   // 不再随 expanded 变化、也不需要 ResizeObserver(它过去测书的高度,现在恒定 20,纯属空转,Bugbot)。
@@ -345,15 +296,16 @@ export function TipsDrawer() {
 
   // ── 徽章计数 ────────────────────────────────────────
 
-  // ── 上报 seen(轮播模式下只上报当前展示的那一条,减少一次性打 4-5 条 API 的负载)──
+  // ── 上报 seen(列表模式:抽屉展开时把当前可见的每条 tip 各上报一次)──
   const seenReportedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (!expanded || viewTips.length === 0) return;
-    const current = viewTips[Math.min(carouselIndex, viewTips.length - 1)];
-    if (!current || seenReportedRef.current.has(current.id)) return;
-    seenReportedRef.current.add(current.id);
-    void trackTip(current.id, 'seen');
-  }, [expanded, viewTips, carouselIndex]);
+    if (!expanded) return;
+    viewTips.forEach((t) => {
+      if (seenReportedRef.current.has(t.id)) return;
+      seenReportedRef.current.add(t.id);
+      void trackTip(t.id, 'seen');
+    });
+  }, [expanded, viewTips]);
 
   const handleOpenTip = useCallback(
     (tip: (typeof tips)[number]) => {
@@ -381,6 +333,18 @@ export function TipsDrawer() {
     },
     [navigate, location.pathname],
   );
+
+  // 单套教程直接开讲(TipsEntryButton 派发 START_TUTORIAL_EVENT):找到该 tip 直接走 handleOpenTip,不展开面板。
+  useEffect(() => {
+    const onStart = (e: Event) => {
+      const tipId = (e as CustomEvent<{ tipId?: string }>).detail?.tipId;
+      if (!tipId) return;
+      const tip = useDailyTipsStore.getState().items.find((t) => t.id === tipId);
+      if (tip) handleOpenTip(tip);
+    };
+    window.addEventListener(START_TUTORIAL_EVENT, onStart);
+    return () => window.removeEventListener(START_TUTORIAL_EVENT, onStart);
+  }, [handleOpenTip]);
 
   const handleDismissTip = (tipId: string) => {
     void trackTip(tipId, 'dismissed');
@@ -478,104 +442,17 @@ export function TipsDrawer() {
                 {showAllPages ? '只看本页' : `全部 ${tips.length}`}
               </button>
             )}
-            {viewTips.length > 0 && (() => {
-              const cur = viewTips[Math.min(carouselIndex, viewTips.length - 1)];
-              // 已学会的教程不再显示「我已学会」按钮,改为低调「已学会」标签(仍可重看,故卡片保留)。
-              if (cur.learned) {
-                return (
-                  <span
-                    title="本页教程已学会,可随时重看"
-                    style={{
-                      display: 'inline-flex', alignItems: 'center', gap: 3,
-                      padding: '3px 7px', borderRadius: 999, fontSize: 11, fontWeight: 600,
-                      background: 'rgba(255,255,255,0.06)', color: 'rgba(52,211,153,0.85)', marginLeft: 2,
-                    }}
-                  >
-                    <GraduationCap size={11} strokeWidth={2.4} />
-                    已学会
-                  </span>
-                );
-              }
-              return (
-                <button
-                  type="button"
-                  onClick={() => handleMarkLearned(cur.id)}
-                  title="我已学会(收起本条;升级后会再次出现)"
-                  style={{
-                    border: 'none',
-                    background: 'rgba(52,211,153,0.12)',
-                    color: 'rgba(52,211,153,0.95)',
-                    cursor: 'pointer',
-                    padding: '3px 7px',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 3,
-                    borderRadius: 999,
-                    fontSize: 11,
-                    fontWeight: 600,
-                    marginLeft: 2,
-                  }}
-                >
-                  <GraduationCap size={11} strokeWidth={2.4} />
-                  我已学会
-                </button>
-              );
-            })()}
-            {viewTips.length > 1 && (
-              <div
+            {viewTips.length > 0 && (
+              <span
                 style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 2,
-                  marginLeft: 4,
+                  fontSize: 11,
+                  color: 'rgba(255,255,255,0.55)',
+                  fontFamily: 'ui-monospace, Menlo, monospace',
+                  marginLeft: 2,
                 }}
               >
-                <button
-                  type="button"
-                  onClick={() =>
-                    setCarouselIndex((i) => (i - 1 + viewTips.length) % viewTips.length)
-                  }
-                  title="上一条"
-                  style={{
-                    border: 'none',
-                    background: 'rgba(255,255,255,0.04)',
-                    color: 'rgba(255,255,255,0.65)',
-                    cursor: 'pointer',
-                    padding: '3px 4px',
-                    display: 'inline-flex',
-                    borderRadius: 6,
-                  }}
-                >
-                  <ChevronLeft size={12} />
-                </button>
-                <span
-                  style={{
-                    fontSize: 11,
-                    color: 'rgba(255,255,255,0.55)',
-                    fontFamily: 'ui-monospace, Menlo, monospace',
-                    minWidth: 32,
-                    textAlign: 'center',
-                  }}
-                >
-                  {Math.min(carouselIndex, viewTips.length - 1) + 1} / {viewTips.length}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setCarouselIndex((i) => (i + 1) % viewTips.length)}
-                  title="下一条"
-                  style={{
-                    border: 'none',
-                    background: 'rgba(255,255,255,0.04)',
-                    color: 'rgba(255,255,255,0.65)',
-                    cursor: 'pointer',
-                    padding: '3px 4px',
-                    display: 'inline-flex',
-                    borderRadius: 6,
-                  }}
-                >
-                  <ChevronRight size={12} />
-                </button>
-              </div>
+                {viewTips.length} 套
+              </span>
             )}
             {pinned && (
               <span
@@ -685,52 +562,129 @@ export function TipsDrawer() {
                 </>
               )}
             </div>
-          ) : (() => {
-            // 轮播模式:只渲染当前索引的 tip;分页器在上面 header 里
-            const t = viewTips[Math.min(carouselIndex, viewTips.length - 1)];
-            const stepCount = t.autoAction?.steps?.length ?? 0;
-            const stepsPreview =
-              stepCount > 0
-                ? `📍 ${stepCount} 步 · 跳转 → 高亮 → 点击`
-                : null;
-            return (
-              <TipCard
-                key={t.id}
-                icon={<MapPin size={14} />}
-                accent={
-                  t.isTargeted
-                    ? 'rgba(244,63,94,0.95)'
-                    : 'rgba(52,211,153,0.95)'
-                }
-                title={t.title}
-                body={
-                  <>
-                    {stepsPreview && (
-                      <div
-                        style={{
-                          fontSize: 11,
-                          color: 'rgba(196,181,253,0.85)',
-                          marginBottom: 6,
-                          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                        }}
-                      >
-                        {stepsPreview}
+          ) : (
+            // 列表模式(选择面板,诉求 4/7):本页每套教程一张卡,展示步数/约时/状态 + 「跟我做」。
+            viewTips.map((t) => {
+              const stepCount = t.autoAction?.steps?.length ?? 0;
+              const estMin = stepCount > 0 ? Math.max(1, Math.round(stepCount * 0.5)) : 0;
+              const isUpdate = (t.sourceId?.includes('-update-') ?? false) || t.sourceType === 'feature-release';
+              const isPageGuide = t.sourceId?.endsWith('-page-guide') ?? false;
+              const accent = t.isTargeted
+                ? 'rgba(244,63,94,0.95)'
+                : t.learned
+                  ? 'rgba(52,211,153,0.85)'
+                  : 'rgba(167,139,250,0.95)';
+              const chip = t.learned
+                ? { text: '已学会', bg: 'rgba(52,211,153,0.14)', fg: 'rgba(52,211,153,0.95)', cap: true }
+                : t.isTargeted
+                  ? { text: '为你推送', bg: 'rgba(244,63,94,0.14)', fg: 'rgba(244,63,94,0.95)', cap: false }
+                  : isUpdate
+                    ? { text: '更新', bg: 'rgba(56,189,248,0.14)', fg: 'rgba(125,211,252,0.95)', cap: false }
+                    : isPageGuide
+                      ? { text: '推荐', bg: 'rgba(167,139,250,0.16)', fg: '#c4b5fd', cap: false }
+                      : null;
+              return (
+                <div
+                  key={t.id}
+                  style={{
+                    position: 'relative',
+                    borderRadius: 12,
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    borderLeft: `3px solid ${accent}`,
+                    background: 'rgba(255,255,255,0.03)',
+                    padding: '10px 12px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                    <span style={{ color: accent, marginTop: 1, flexShrink: 0, display: 'inline-flex' }}>
+                      {stepCount > 0 ? <MapPin size={14} /> : <Sparkles size={14} />}
+                    </span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary,#fff)', lineHeight: 1.4 }}>
+                        {t.title}
                       </div>
+                      {(stepCount > 0 || chip) && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, flexWrap: 'wrap' }}>
+                          {stepCount > 0 && (
+                            <span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.5)', fontFamily: 'ui-monospace, Menlo, monospace' }}>
+                              {stepCount} 步 · 约 {estMin} 分钟
+                            </span>
+                          )}
+                          {chip && (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, padding: '1px 7px', borderRadius: 999, fontSize: 10, fontWeight: 600, background: chip.bg, color: chip.fg }}>
+                              {chip.cap && <GraduationCap size={10} strokeWidth={2.6} />}
+                              {chip.text}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleDismissTip(t.id)}
+                      title="本次关闭"
+                      style={{ border: 'none', background: 'transparent', color: 'rgba(255,255,255,0.35)', cursor: 'pointer', padding: 2, display: 'inline-flex', flexShrink: 0 }}
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                  {t.body && (
+                    <div style={{ fontSize: 11.5, lineHeight: 1.5, color: 'rgba(255,255,255,0.62)', whiteSpace: 'pre-wrap', paddingLeft: 22 }}>
+                      {t.body}
+                    </div>
+                  )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 22 }}>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenTip(t)}
+                      style={{
+                        flex: 1,
+                        border: '1px solid rgba(167,139,250,0.4)',
+                        background: 'linear-gradient(135deg, rgba(168,85,247,0.22), rgba(99,102,241,0.16))',
+                        color: '#c4b5fd',
+                        cursor: 'pointer',
+                        padding: '6px 10px',
+                        borderRadius: 8,
+                        fontSize: 12,
+                        fontWeight: 600,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 5,
+                      }}
+                    >
+                      <MapPin size={12} />
+                      {stepCount > 0 ? (t.learned ? '重看一遍' : '跟我做') : (t.ctaText ?? '去看看')}
+                    </button>
+                    {!t.learned && stepCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => handleMarkLearned(t.id)}
+                        title="我已学会(升级后会再次提醒)"
+                        style={{ border: 'none', background: 'rgba(52,211,153,0.12)', color: 'rgba(52,211,153,0.95)', cursor: 'pointer', padding: '6px 9px', borderRadius: 8, fontSize: 11.5, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0 }}
+                      >
+                        <GraduationCap size={12} strokeWidth={2.4} />
+                        已会
+                      </button>
                     )}
-                    {t.body && (
-                      <span style={{ whiteSpace: 'pre-wrap' }}>{t.body}</span>
+                    {!isPageGuide && (
+                      <button
+                        type="button"
+                        onClick={() => handleDismissForever(t.id)}
+                        title="不再提示这条"
+                        style={{ border: 'none', background: 'transparent', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', padding: '6px 4px', borderRadius: 8, fontSize: 11, flexShrink: 0 }}
+                      >
+                        不再提示
+                      </button>
                     )}
-                  </>
-                }
-                targeted={t.isTargeted}
-                ctaText={t.ctaText ?? '去看看'}
-                onCta={() => handleOpenTip(t)}
-                onClose={() => handleDismissTip(t.id)}
-                onDismissForever={() => handleDismissForever(t.id)}
-                variant="card"
-              />
-            );
-          })()}
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
         <style>{`
           @keyframes tipsDrawerSlide {

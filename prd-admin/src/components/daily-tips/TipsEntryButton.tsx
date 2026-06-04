@@ -5,8 +5,10 @@ import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { useAuthStore } from '@/stores/authStore';
 import { matchPageGuide, filterPageTips } from './pageGuideMatch';
 
-/** 点击内嵌入口时派发,TipsDrawer 监听后展开抽屉。入口与抽屉解耦,入口可内嵌进任意页头。 */
+/** 点击内嵌入口时派发,TipsDrawer 监听后展开抽屉(多套教程时弹选择面板)。入口与抽屉解耦,入口可内嵌进任意页头。 */
 export const OPEN_TIPS_DRAWER_EVENT = 'open-tips-drawer';
+/** 本页仅一套教程时直接开讲(跳过选择面板),detail.tipId 指定要开的 tip。 */
+export const START_TUTORIAL_EVENT = 'start-tutorial';
 
 /**
  * 内嵌进各页头部的「本页教程」入口 —— 不是右上角悬浮浮层,而是融入页面头部布局的一个普通按钮。
@@ -57,8 +59,14 @@ export function TipsEntryButton({ className, compact = false }: { className?: st
       data-tour-entry="1"
       title={newbie ? '本页教程 · 跟着走一遍' : '本页教程 / 新手指引'}
       onClick={() => {
-        // 只派发事件;拉取 tips 的职责统一在 TipsDrawer 的监听里(它会 load({force:true})),避免两处重复请求。
-        window.dispatchEvent(new CustomEvent(OPEN_TIPS_DRAWER_EVENT));
+        // 诉求 4/7:本页只有一套教程 → 直接开讲(不弹面板);多套 → 弹选择面板(抽屉列表)让用户挑。
+        // 拉取 tips 的职责统一在 TipsDrawer 的监听里(load({force:true})),避免两处重复请求。
+        const tutorials = pageTips.filter((t) => (t.autoAction?.steps?.length ?? 0) > 0);
+        if (tutorials.length === 1) {
+          window.dispatchEvent(new CustomEvent(START_TUTORIAL_EVENT, { detail: { tipId: tutorials[0].id } }));
+        } else {
+          window.dispatchEvent(new CustomEvent(OPEN_TIPS_DRAWER_EVENT));
+        }
       }}
       style={{
         height: 28,
