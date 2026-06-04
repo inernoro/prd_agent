@@ -66,7 +66,7 @@ export default function OpenApiPanel({ onActionsReady }: { onActionsReady?: (a: 
       ]);
       if (id !== fetchIdRef.current) return; // 更晚的刷新已开始，丢弃这份过期响应
       if (b.success && b.data) setRows(b.data);
-      else if (!b.success) { setRows([]); toast.error(b.error?.message ?? '加载失败'); } // 失败清空，避免汇总/列表展示过期数据误导
+      else if (!b.success) { setRows([]); setDetail(null); toast.error(b.error?.message ?? '加载失败'); } // 失败清空 + 关抽屉，避免列表清空而抽屉仍展示过期 Key 数据误导
       if (p.success && p.data) setPools(p.data);
       else if (!p.success) { setPools([]); toast.error(p.error?.message ?? '模型池加载失败'); } // 失败清空：避免白名单选择器展示已下线/过期池选项被误存进 Key
     } finally { if (id === fetchIdRef.current) setLoading(false); }

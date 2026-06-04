@@ -81,7 +81,12 @@ public class OpenApiController : ControllerBase
         // [Authorize] 已过但 AgentApiKey 行查不到（鉴权后被删/撤销）→ 401，禁止无 Key 走限流/配额旁路（Bugbot High）。
         if (key == null) { await WriteJsonErrorAsync(401, "invalid_request_error", "无效或已过期的 API Key", "invalid_api_key"); return; }
 
-        var body = await ReadBodyAsync(httpAborted);
+        var (body, bodyTooLarge) = await ReadBodyAsync(httpAborted);
+        if (bodyTooLarge)
+        {
+            await LogAsync(key, requestId, "chat", null, null, null, false, 413, "input_too_large", null, null, sw);
+            await WriteJsonErrorAsync(413, "invalid_request_error", $"请求体过大（原始上限 {MaxBodyChars} 字符）", "input_too_large"); return;
+        }
         if (body == null) { await WriteJsonErrorAsync(400, "invalid_request_error", "请求体必须是合法 JSON"); return; }
 
         var requestedModel = ReadString(body, "model");
@@ -302,7 +307,12 @@ public class OpenApiController : ControllerBase
         // [Authorize] 已过但 AgentApiKey 行查不到（鉴权后被删/撤销）→ 401，禁止无 Key 走限流/配额旁路（Bugbot High）。
         if (key == null) { await WriteJsonErrorAsync(401, "invalid_request_error", "无效或已过期的 API Key", "invalid_api_key"); return; }
 
-        var body = await ReadBodyAsync(httpAborted);
+        var (body, bodyTooLarge) = await ReadBodyAsync(httpAborted);
+        if (bodyTooLarge)
+        {
+            await LogAsync(key, requestId, "image", null, null, null, false, 413, "input_too_large", null, null, sw);
+            await WriteJsonErrorAsync(413, "invalid_request_error", $"请求体过大（原始上限 {MaxBodyChars} 字符）", "input_too_large"); return;
+        }
         if (body == null) { await WriteJsonErrorAsync(400, "invalid_request_error", "请求体必须是合法 JSON"); return; }
 
         var requestedModel = ReadString(body, "model");
@@ -615,12 +625,14 @@ public class OpenApiController : ControllerBase
     /// 逻辑输入上限仍由 MaxInputChars 管（含多模态 base64）。给足余量让正常请求 + 合理图片通过。</summary>
     private const int MaxBodyChars = 8 * 1024 * 1024;
 
-    private async Task<JsonObject?> ReadBodyAsync(CancellationToken ct)
+    /// <summary>读取请求体。返回 (body, tooLarge)：tooLarge=true 表示超原始上限（应回 413 input_too_large，
+    /// 与"格式非法"区分，Bugbot）；body=null 且 tooLarge=false 表示解析失败/非对象（应回 400 invalid JSON）。</summary>
+    private async Task<(JsonObject? body, bool tooLarge)> ReadBodyAsync(CancellationToken ct)
     {
         try
         {
             // 早拒：Content-Length 已超上限，连读都不读（Bugbot）
-            if (Request.ContentLength is long cl && cl > MaxBodyChars) return null;
+            if (Request.ContentLength is long cl && cl > MaxBodyChars) return (null, true);
             using var reader = new StreamReader(Request.Body, Encoding.UTF8);
             var buffer = new char[16384];
             var sb = new StringBuilder();
@@ -628,14 +640,14 @@ public class OpenApiController : ControllerBase
             while ((n = await reader.ReadAsync(buffer, ct)) > 0)
             {
                 sb.Append(buffer, 0, n);
-                if (sb.Length > MaxBodyChars) return null; // 无 Content-Length（分块）也有界，超界即拒，不无限读
+                if (sb.Length > MaxBodyChars) return (null, true); // 无 Content-Length（分块）也有界，超界即拒，不无限读
             }
-            if (sb.Length == 0) return new JsonObject();
+            if (sb.Length == 0) return (new JsonObject(), false);
             var raw = sb.ToString();
-            if (string.IsNullOrWhiteSpace(raw)) return new JsonObject();
-            return JsonNode.Parse(raw) as JsonObject;
+            if (string.IsNullOrWhiteSpace(raw)) return (new JsonObject(), false);
+            return (JsonNode.Parse(raw) as JsonObject, false);
         }
-        catch { return null; }
+        catch { return (null, false); }
     }
 
     private object BuildChunk(string id, long created, string model, object delta, string? finishReason, string? errorMessage = null)

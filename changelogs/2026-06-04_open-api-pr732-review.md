@@ -30,3 +30,5 @@
 | fix | prd-api | 开放接口退配额覆盖所有零输出失败路径：chat 非流式/流式异常 catch + image 上游失败/异常（image 用 reserved 标记避免误退未占额请求） |
 | fix | prd-api | 开放接口绑定失效预警移除反向前缀 act.StartsWith(exp)：该方向非 ModelResolver 匹配档，会吞掉"绑定被删回落更长默认模型"的降级预警 |
 | fix | prd-api | 开放接口流式 catch 退额前先快照 HasStarted，避免写完 JSON 错误体后 HasStarted 翻 true 导致零输出 pre-stream 异常不退额 |
+| fix | prd-api | 开放接口超大请求体返回 413 input_too_large（ReadBodyAsync 区分超限与格式非法），不再与"格式非法"共用 400 误导客户端 |
+| fix | prd-admin | 开放接口客户列表加载失败时一并关闭详情抽屉，避免列表清空而抽屉仍展示过期 Key 数据 |
