@@ -1189,6 +1189,50 @@ async function buildReadinessTimeoutMessage(
   return fallback;
 }
 
+/**
+ * 给 GitHub check-run 的失败 output 生成"根因 + 容器日志尾部"markdown。
+ *
+ * 为什么:agent 跑在沙箱里(无 CDS 网络白名单 / 无 AI_ACCESS_KEY)时根本拉不到
+ * 容器日志,只能跪求用户手动贴。但 CDS 本来就把构建状态推回 GitHub PR Check,
+ * 而 agent 通过 GitHub 是够得着的。把真实根因(如 error CS0101)+ 容器日志尾部
+ * 写进 check-run 的 output.text,agent 不需要任何 CDS 凭据/网络就能读到根因。
+ *
+ * 无 error 服务时返回空串(调用方据此决定是否传 failureDetail)。
+ */
+export async function buildCheckRunFailurePostmortem(
+  entry: Pick<BranchEntry, 'services'>,
+  containerService: Pick<ContainerService, 'getLogs'>,
+): Promise<string> {
+  const errorServices = Object.entries(entry.services || {}).filter(([, svc]) => svc.status === 'error');
+  if (errorServices.length === 0) return '';
+  const sections: string[] = [];
+  for (const [profileId, svc] of errorServices) {
+    let logs = '';
+    try {
+      logs = await containerService.getLogs(svc.containerName, 60);
+    } catch {
+      // 容器名不存在 / docker 拉不到 — 仍用 errorMessage 作为根因兜底
+    }
+    const cause = logs ? detectContainerFatalCause(logs) : null;
+    const sideLabel = cause
+      ? (cause.side === 'code' ? '代码侧' : cause.side === 'config' ? '配置侧' : 'CDS 侧')
+      : '未识别';
+    const rootCause = cause?.summary || svc.errorMessage || '启动失败';
+    const lines = [`- **${profileId}**（${sideLabel}）：${rootCause}`];
+    const tail = logs
+      .split('\n')
+      .map((l) => l.replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s+/, ''))
+      .filter((l) => l.trim())
+      .slice(-25)
+      .join('\n');
+    if (tail) {
+      lines.push('', `<details><summary>${profileId} 容器日志尾部</summary>`, '', '```', tail, '```', '</details>');
+    }
+    sections.push(lines.join('\n'));
+  }
+  return ['### 失败根因（CDS 自动诊断）', '', ...sections].join('\n');
+}
+
 function parseListenPorts(output: string): Set<number> {
   const ports = new Set<number>();
   for (const line of output.split('\n')) {
@@ -5445,10 +5489,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         : completeMsg;
       // 2026-04-27: 同上，把 finalize 的 throw 落到 opLog.events 里。
       try {
+        const failureDetail = finalConclusion === 'failure'
+          ? await buildCheckRunFailurePostmortem(entry, containerService)
+          : undefined;
         await checkRunRunner.finalize(entry, {
           conclusion: finalConclusion,
           summary,
           previewUrl: checkRunRunner.derivePreviewUrl(entry),
+          failureDetail,
           logTail: opLog.events.slice(-80).map((ev) => {
             const st = ev.status || '?';
             const ttl = ev.title || ev.step;
@@ -5515,10 +5563,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       logDeploy(id, `部署失败: ${errMsg}`);
       sendSSE(res, 'error', { message: errMsg });
       try {
+        const failureDetail = await buildCheckRunFailurePostmortem(entry, containerService);
         await checkRunRunner.finalize(entry, {
           conclusion: 'failure',
           summary: errMsg || '部署失败',
           previewUrl: checkRunRunner.derivePreviewUrl(entry),
+          failureDetail,
           logTail: opLog.events.slice(-80).map((ev) => {
             const st = ev.status || '?';
             const ttl = ev.title || ev.step;

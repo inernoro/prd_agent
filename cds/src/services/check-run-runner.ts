@@ -173,6 +173,13 @@ export class CheckRunRunner {
      * "Show more" affordance, which is perfect for failure postmortem.
      */
     logTail?: string;
+    /**
+     * Optional markdown rendered ABOVE the deploy-log fence — used for the
+     * auto-diagnosed failure root cause + container log tail. This is the
+     * channel a sandboxed agent (no CDS network/credential) reads via GitHub
+     * to learn why the deploy failed, instead of begging the user for logs.
+     */
+    failureDetail?: string;
   }): Promise<void> {
     if (!this.enabled) return;
     const id = entry.githubCheckRunId;
@@ -195,11 +202,16 @@ export class CheckRunRunner {
 
     // GitHub's output.text caps at 65535 chars; we trim to 30k to stay
     // comfortably under the limit with room for markdown chrome.
-    let text: string | undefined;
-    if (opts.logTail && opts.logTail.trim()) {
-      const tail = opts.logTail.slice(-30_000);
-      text = '### Deploy log (尾部)\n\n```\n' + tail + '\n```';
+    // 失败根因(failureDetail)放在最上面,部署日志尾部(logTail)放下面。
+    const textParts: string[] = [];
+    if (opts.failureDetail && opts.failureDetail.trim()) {
+      textParts.push(opts.failureDetail.trim());
     }
+    if (opts.logTail && opts.logTail.trim()) {
+      textParts.push('### Deploy log (尾部)\n\n```\n' + opts.logTail.trim() + '\n```');
+    }
+    let text: string | undefined = textParts.length > 0 ? textParts.join('\n\n') : undefined;
+    if (text && text.length > 30_000) text = text.slice(-30_000);
 
     let patched = false;
     try {

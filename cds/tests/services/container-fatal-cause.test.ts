@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { detectContainerFatalCause } from '../../src/routes/branches.js';
+import { detectContainerFatalCause, buildCheckRunFailurePostmortem } from '../../src/routes/branches.js';
+
+// 用最小 stub 顶替 ContainerService.getLogs
+function fakeContainerService(logsByName: Record<string, string>) {
+  return {
+    getLogs: async (name: string) => {
+      if (!(name in logsByName)) throw new Error('no such container');
+      return logsByName[name];
+    },
+  };
+}
 
 // 回归:容器内编译/构建失败导致就绪探测超时时,根因必须从日志里被点名出来,
 // 而不是被顶层 errorMessage("就绪探测超时")淹没、最终误判成"未分类/CDS 侧"。
@@ -51,5 +61,41 @@ describe('detectContainerFatalCause', () => {
     const cause = detectContainerFatalCause(logs);
     expect(cause?.category).toBe('build-failed');
     expect(cause?.summary).toContain('error CS1002');
+  });
+});
+
+// 回归:agent 在沙箱里读不到 CDS,但能从 GitHub PR Check 读到根因。
+// buildCheckRunFailurePostmortem 必须把真实编译错误+日志尾部点名出来。
+describe('buildCheckRunFailurePostmortem', () => {
+  it('没有 error 服务时返回空串', async () => {
+    const entry = { services: { api: { status: 'running', containerName: 'c-api' } } } as any;
+    expect(await buildCheckRunFailurePostmortem(entry, fakeContainerService({}))).toBe('');
+  });
+
+  it('error 服务的容器日志里有 CS 编译错误 → 点名根因 + 代码侧 + 折叠日志', async () => {
+    const entry = {
+      services: { 'api-prd-agent': { status: 'error', containerName: 'c-api', errorMessage: '就绪探测超时' } },
+    } as any;
+    const logs = [
+      '2026-06-04T08:06:18.961205339Z Foo.cs(2206,14): error CS0101: already contains a definition for AddCommentRequest',
+      '2026-06-04T08:06:18.961515003Z Build FAILED.',
+    ].join('\n');
+    const md = await buildCheckRunFailurePostmortem(entry, fakeContainerService({ 'c-api': logs }));
+    expect(md).toContain('失败根因');
+    expect(md).toContain('api-prd-agent');
+    expect(md).toContain('代码侧');
+    expect(md).toContain('error CS0101');
+    expect(md).toContain('<details>');
+    // 时间戳前缀被剥掉
+    expect(md).not.toContain('2026-06-04T08:06:18');
+  });
+
+  it('拉不到容器日志时降级用 errorMessage 作为根因,不抛错', async () => {
+    const entry = {
+      services: { api: { status: 'error', containerName: 'gone', errorMessage: '容器已丢失' } },
+    } as any;
+    const md = await buildCheckRunFailurePostmortem(entry, fakeContainerService({}));
+    expect(md).toContain('未识别');
+    expect(md).toContain('容器已丢失');
   });
 });
