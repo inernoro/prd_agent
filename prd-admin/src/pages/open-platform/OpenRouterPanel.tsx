@@ -183,17 +183,18 @@ export default function OpenRouterPanel({ onActionsReady }: OpenRouterPanelProps
           </div>
         </GlassCard>
       ) : (
-        <GlassCard className="p-0 overflow-hidden">
-          <table className="w-full text-[13px]">
+        <GlassCard className="p-0">
+          <div style={{ overflowX: 'auto' }}>
+          <table className="w-full text-[13px]" style={{ minWidth: 980 }}>
             <thead>
               <tr className="text-white/45 text-left border-b border-white/[0.08]">
-                <th className="px-4 py-3 font-medium">Key / 客户</th>
-                <th className="px-4 py-3 font-medium">Chat 绑定</th>
-                <th className="px-4 py-3 font-medium">生图绑定</th>
-                <th className="px-4 py-3 font-medium">实际解析</th>
-                <th className="px-4 py-3 font-medium">限额（每分钟 / 每日请求 / 每日token，留空不限）</th>
-                <th className="px-4 py-3 font-medium">今日用量</th>
-                <th className="px-4 py-3 font-medium text-right">操作</th>
+                <th className="px-3 py-3 font-medium">Key / 客户</th>
+                <th className="px-3 py-3 font-medium">Chat 绑定</th>
+                <th className="px-3 py-3 font-medium">生图绑定</th>
+                <th className="px-3 py-3 font-medium">实际解析</th>
+                <th className="px-3 py-3 font-medium" title="每分钟速率 / 每日请求 / 每日token，留空=不限">限额 <span className="text-white/30 font-normal">分·日req·日tok</span></th>
+                <th className="px-3 py-3 font-medium">今日用量</th>
+                <th className="px-3 py-3 font-medium text-right">操作</th>
               </tr>
             </thead>
             <tbody>
@@ -202,17 +203,17 @@ export default function OpenRouterPanel({ onActionsReady }: OpenRouterPanelProps
                 const patch = (p: Partial<EditState>) => setEdits((s) => ({ ...s, [r.keyId]: { ...e, ...p } }));
                 return (
                   <tr key={r.keyId} className="border-b border-white/[0.05] hover:bg-white/[0.02] align-top">
-                    <td className="px-4 py-3">
+                    <td className="px-3 py-3">
                       <div className="text-white/85">{r.name}</div>
                       <div className="text-white/40 text-xs">{r.ownerName}{r.isActive ? '' : ' · 已禁用'}</div>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-3 py-3">
                       <BindingSelect pools={chatPools} value={e.chat} onChange={(v) => patch({ chat: v })} />
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-3 py-3">
                       <BindingSelect pools={imagePools} value={e.image} onChange={(v) => patch({ image: v })} />
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-3 py-3">
                       <div className="text-white/70 text-xs flex items-center gap-1">
                         {r.chatResolvedModel ?? '—'}
                         {r.chatIsFallback && (
@@ -221,7 +222,7 @@ export default function OpenRouterPanel({ onActionsReady }: OpenRouterPanelProps
                       </div>
                       <div className="text-white/40 text-xs">{r.imageResolvedModel ?? '—'}</div>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-3 py-3">
                       <div className="flex items-center gap-1">
                         <LimitInput value={e.rate} onChange={(v) => patch({ rate: v })} ph="∞" />
                         <span className="text-white/30">/</span>
@@ -230,11 +231,11 @@ export default function OpenRouterPanel({ onActionsReady }: OpenRouterPanelProps
                         <LimitInput value={e.dayTok} onChange={(v) => patch({ dayTok: v })} ph="∞" wide />
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-xs text-white/60">
+                    <td className="px-3 py-3 text-xs text-white/60">
                       <div>{r.todayRequests} 次</div>
                       <div className="text-white/40">{r.todayTokens.toLocaleString()} tok</div>
                     </td>
-                    <td className="px-4 py-3 text-right">
+                    <td className="px-3 py-3 text-right">
                       <Button
                         variant="ghost"
                         disabled={!dirty(r) || savingId === r.keyId}
@@ -248,6 +249,7 @@ export default function OpenRouterPanel({ onActionsReady }: OpenRouterPanelProps
               })}
             </tbody>
           </table>
+          </div>
         </GlassCard>
       )}
     </div>
