@@ -12,7 +12,6 @@
  * 数据来自 GET /products/{id}/graph 的全量 nodes/edges，过滤/折叠/追溯均在前端计算。
  */
 import { useEffect, useMemo, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -30,8 +29,16 @@ import {
   type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Search, GitFork, Maximize2, Minimize2, X } from 'lucide-react';
-import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { Search, GitFork, Maximize2, Minimize2, X, Sparkles, ExternalLink } from 'lucide-react';
+import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+
+/** 富文本 → 纯文本（抽屉里展示干净摘要，不再糊出 HTML 标签）。 */
+function htmlToText(html: string): string {
+  if (!html) return '';
+  if (typeof window === 'undefined' || typeof window.DOMParser === 'undefined') return html.replace(/<[^>]+>/g, ' ');
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  return (doc.body.textContent || '').replace(/\s+\n/g, '\n').replace(/[ \t]{2,}/g, ' ').trim();
+}
 import {
   getProductGraph,
   getOverviewGraph,
@@ -41,6 +48,7 @@ import {
   listVersions,
   listCustomers,
   listTracedDefects,
+  summarizeItem,
   type GraphNode,
   type GraphEdge,
 } from '@/services/real/productAgent';
@@ -90,7 +98,6 @@ function idType(id: string): NodeType {
 }
 
 function ProductGraphInner({ productId, overview }: { productId?: string; overview?: boolean }) {
-  const navigate = useNavigate();
   const [raw, setRaw] = useState<{ nodes: GraphNode[]; edges: GraphEdge[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -526,7 +533,7 @@ function ProductGraphInner({ productId, overview }: { productId?: string; overvi
             onOpenDetail={() => {
               const [t, rawId] = selected.id.split(':', 2);
               const pid = selected.productId ?? productId;
-              if (pid && (t === 'requirement' || t === 'feature' || t === 'defect')) navigate(`/product-agent/p/${pid}/${t}/${rawId}`);
+              if (pid && (t === 'requirement' || t === 'feature' || t === 'defect')) window.open(`/product-agent/p/${pid}/${t}/${rawId}`, '_blank', 'noopener');
             }}
           />
         )}
@@ -555,6 +562,20 @@ function NodeDrawer({
   const [rows, setRows] = useState<{ label: string; value: string }[]>([]);
   const [desc, setDesc] = useState<string>('');
   const [busy, setBusy] = useState(true);
+  const [summary, setSummary] = useState<string | null>(null);
+  const [summaryBusy, setSummaryBusy] = useState(false);
+  const [summaryMsg, setSummaryMsg] = useState<string | null>(null);
+
+  useEffect(() => { setSummary(null); setSummaryMsg(null); }, [node.id]);
+
+  const runSummary = async () => {
+    setSummaryBusy(true);
+    setSummaryMsg(null);
+    const res = await summarizeItem(type, rawId);
+    setSummaryBusy(false);
+    if (res.success && res.data.summary) setSummary(res.data.summary);
+    else setSummaryMsg(res.success ? (res.data.message ?? '暂无可摘要内容') : (res.error?.message ?? '摘要失败'));
+  };
 
   useEffect(() => {
     let alive = true;
@@ -607,8 +628,8 @@ function NodeDrawer({
         {/* 操作 */}
         <div className="flex items-center gap-2">
           {canOpen && (
-            <button onClick={onOpenDetail} className="flex-1 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm">
-              编辑 / 完整详情
+            <button onClick={onOpenDetail} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm">
+              <ExternalLink size={13} /> 新窗口打开详情
             </button>
           )}
           <button onClick={onTrace} className="flex-1 px-3 py-1.5 rounded-lg border border-amber-400/30 text-amber-300 hover:bg-amber-400/10 text-sm">
@@ -628,10 +649,34 @@ function NodeDrawer({
                 rows.map((row, i) => <DrawerRow key={i} label={row.label} value={row.value} />)
               )}
             </div>
+            {/* 摘要：默认干净纯文本节选；canOpen 类型可点 AI 摘要生成 2-3 句概括 */}
             <div>
-              <div className="text-[11px] text-white/40 mb-1">描述</div>
-              <div className="text-sm text-white/75 whitespace-pre-wrap rounded-lg border border-white/10 bg-white/[0.02] p-3 min-h-[60px]">
-                {desc || <span className="text-white/30">（未填写）</span>}
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[11px] text-white/40">{summary ? 'AI 摘要' : '描述节选'}</span>
+                {canOpen && desc && (
+                  <button
+                    onClick={runSummary}
+                    disabled={summaryBusy}
+                    className="flex items-center gap-1 text-[11px] text-cyan-300 hover:text-cyan-200 disabled:opacity-50"
+                  >
+                    {summaryBusy ? <MapSpinner size={11} /> : <Sparkles size={11} />} {summary ? '重新摘要' : 'AI 摘要'}
+                  </button>
+                )}
+              </div>
+              <div className="text-sm text-white/80 whitespace-pre-wrap rounded-lg border border-white/10 bg-white/[0.02] p-3 min-h-[60px]">
+                {summary ? (
+                  summary
+                ) : desc ? (
+                  <>
+                    <span className="text-white/70">{htmlToText(desc).slice(0, 220)}{htmlToText(desc).length > 220 ? '…' : ''}</span>
+                    {htmlToText(desc).length > 220 && canOpen && (
+                      <button onClick={onOpenDetail} className="block mt-1.5 text-[11px] text-cyan-300 hover:underline">查看完整详情 ↗</button>
+                    )}
+                  </>
+                ) : (
+                  <span className="text-white/30">（未填写）</span>
+                )}
+                {summaryMsg && <div className="text-[11px] text-amber-300/80 mt-1.5">{summaryMsg}</div>}
               </div>
             </div>
           </>

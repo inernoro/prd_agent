@@ -206,6 +206,11 @@ export function globalSearch(keyword: string) {
   return apiRequest<GlobalSearchResult>(`/api/product/search?keyword=${encodeURIComponent(keyword)}`);
 }
 
+// ── AI 摘要（图谱抽屉）──
+export function summarizeItem(entityType: string, entityId: string) {
+  return apiRequest<{ summary: string | null; message?: string }>(`/api/product/items/${entityType}/${entityId}/summary`);
+}
+
 // ── RTM 需求可追溯矩阵 ──
 export interface RtmRow {
   id: string;

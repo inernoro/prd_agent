@@ -1,10 +1,13 @@
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -24,11 +27,15 @@ public class ProductAgentController : ControllerBase
 {
     private readonly MongoDbContext _db;
     private readonly ILogger<ProductAgentController> _logger;
+    private readonly ILlmGateway _gateway;
+    private readonly ILLMRequestContextAccessor _llmRequestContext;
 
-    public ProductAgentController(MongoDbContext db, ILogger<ProductAgentController> logger)
+    public ProductAgentController(MongoDbContext db, ILogger<ProductAgentController> logger, ILlmGateway gateway, ILLMRequestContextAccessor llmRequestContext)
     {
         _db = db;
         _logger = logger;
+        _gateway = gateway;
+        _llmRequestContext = llmRequestContext;
     }
 
     private string GetUserId() => this.GetRequiredUserId();
@@ -1468,6 +1475,75 @@ public class ProductAgentController : ControllerBase
         targets.AddRange(mentions.Select(m => (string?)m));
         await NotifyItemAsync(targets, userId, $"新评论 · {ctx.Value.no}", $"{actorName ?? "有人"} 评论了「{ctx.Value.title}」", ItemUrl(ctx.Value.productId, entityType, entityId));
         return Ok(ApiResponse<object>.Ok(act));
+    }
+
+    /// <summary>AI 摘要：对需求/功能/缺陷的标题+描述生成 2-3 句中文概括（图谱抽屉用）。走 ILlmGateway。</summary>
+    [HttpGet("items/{entityType}/{entityId}/summary")]
+    public async Task<IActionResult> SummarizeItem(string entityType, string entityId, CancellationToken ct)
+    {
+        string productId, title, raw, kindLabel;
+        switch (entityType)
+        {
+            case ProductEntityType.Requirement:
+            {
+                var r = await _db.Requirements.Find(x => x.Id == entityId && !x.IsDeleted).FirstOrDefaultAsync();
+                if (r == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "对象不存在"));
+                productId = r.ProductId; title = r.Title; raw = r.Description ?? ""; kindLabel = "需求";
+                break;
+            }
+            case ProductEntityType.Feature:
+            {
+                var f = await _db.Features.Find(x => x.Id == entityId && !x.IsDeleted).FirstOrDefaultAsync();
+                if (f == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "对象不存在"));
+                productId = f.ProductId; title = f.Title; raw = f.Description ?? ""; kindLabel = "功能";
+                break;
+            }
+            case "defect":
+            {
+                var d = await _db.DefectReports.Find(x => x.Id == entityId && !x.IsDeleted).FirstOrDefaultAsync();
+                if (d == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "对象不存在"));
+                productId = d.TracedProductId ?? ""; title = d.Title ?? ""; raw = d.RawContent; kindLabel = "缺陷";
+                break;
+            }
+            default:
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅支持需求/功能/缺陷摘要"));
+        }
+        if (string.IsNullOrEmpty(productId) || await FindAccessibleProductAsync(productId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "无权访问该对象"));
+
+        var text = System.Text.RegularExpressions.Regex.Replace(raw ?? "", "<[^>]+>", " ")
+            .Replace("&nbsp;", " ").Replace("&amp;", "&").Replace("&lt;", "<").Replace("&gt;", ">").Trim();
+        if (text.Length == 0)
+            return Ok(ApiResponse<object>.Ok(new { summary = (string?)null, message = "暂无描述内容可摘要" }));
+        if (text.Length > 8000) text = text[..8000];
+
+        var userId = GetUserId();
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"), GroupId: null, SessionId: null, UserId: userId,
+            ViewRole: null, DocumentChars: text.Length, DocumentHash: null,
+            SystemPromptRedacted: "product-graph-summary", RequestType: "chat",
+            AppCallerCode: AppCallerRegistry.Product.GraphSummary));
+
+        var systemPrompt = $"你是产品研发助手。下面是一条「{kindLabel}」的标题与描述，请用 2-3 句中文概括其核心（背景/痛点 + 期望或影响），输出纯文本，不要 markdown、不要前缀。";
+        var body = new JsonObject
+        {
+            ["messages"] = new JsonArray
+            {
+                new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                new JsonObject { ["role"] = "user", ["content"] = $"标题：{title}\n描述：{text}" },
+            },
+            ["temperature"] = 0.3,
+            ["max_tokens"] = 400,
+        };
+        var resp = await _gateway.SendAsync(new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.Product.GraphSummary,
+            ModelType = "chat",
+            RequestBody = body,
+        }, ct);
+        if (!resp.Success || string.IsNullOrWhiteSpace(resp.Content))
+            return Ok(ApiResponse<object>.Ok(new { summary = (string?)null, message = "摘要生成失败，请稍后重试" }));
+        return Ok(ApiResponse<object>.Ok(new { summary = resp.Content!.Trim() }));
     }
 
     // ════════════════════════ 批量导入 ════════════════════════
