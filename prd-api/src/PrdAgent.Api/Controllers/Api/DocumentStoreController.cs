@@ -2565,37 +2565,23 @@ public class DocumentStoreController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "暂存图片过多，无法保存"));
 
         var now = DateTime.UtcNow;
-        // find-then-insert/update：比 upsert+SetOnInsert(_id) 更显式可读；同一用户对同一条目的
-        // 写入已在前端去抖，并发可忽略（CancellationToken.None 遵循 server-authority）。
-        var existing = await _db.DocumentStoreConversations
-            .Find(c => c.SourceEntryId == entryId && c.UserId == userId)
-            .FirstOrDefaultAsync();
-        if (existing == null)
-        {
-            await _db.DocumentStoreConversations.InsertOneAsync(new DocumentStoreConversation
-            {
-                UserId = userId,
-                SourceEntryId = entryId,
-                StoreId = store!.Id,
-                MessagesJson = messagesJson,
-                PendingImagesJson = pendingJson,
-                ActiveRefJson = request.ActiveRefJson,
-                CreatedAt = now,
-                UpdatedAt = now,
-            }, cancellationToken: CancellationToken.None);
-        }
-        else
-        {
-            await _db.DocumentStoreConversations.UpdateOneAsync(
-                c => c.Id == existing.Id,
-                Builders<DocumentStoreConversation>.Update
-                    .Set(c => c.MessagesJson, messagesJson)
-                    .Set(c => c.PendingImagesJson, pendingJson)
-                    .Set(c => c.ActiveRefJson, request.ActiveRefJson)
-                    .Set(c => c.StoreId, store!.Id)
-                    .Set(c => c.UpdatedAt, now),
-                cancellationToken: CancellationToken.None);
-        }
+        // 原子 upsert（替代 find-then-insert/update）：单次 UpdateOne(IsUpsert) 把"查 + 插/改"合并为
+        // 一个操作，消除两标签页并发各自 read-miss 后各插一行的窗口（Codex P2）。彻底去重还需
+        // (UserId, SourceEntryId) 唯一索引（本仓库禁运行时建索引，见 doc/guide.mongodb-indexes.md，由 DBA 建）。
+        var filter = Builders<DocumentStoreConversation>.Filter.And(
+            Builders<DocumentStoreConversation>.Filter.Eq(c => c.SourceEntryId, entryId),
+            Builders<DocumentStoreConversation>.Filter.Eq(c => c.UserId, userId));
+        var update = Builders<DocumentStoreConversation>.Update
+            .Set(c => c.MessagesJson, messagesJson)
+            .Set(c => c.PendingImagesJson, pendingJson)
+            .Set(c => c.ActiveRefJson, request.ActiveRefJson)
+            .Set(c => c.StoreId, store!.Id)
+            .Set(c => c.UpdatedAt, now)
+            // _id 与 CreatedAt 仅首次插入写；UserId/SourceEntryId 由 filter 等值自动落到新文档（不可再 SetOnInsert，否则路径冲突）。
+            .SetOnInsert(c => c.Id, Guid.NewGuid().ToString("N"))
+            .SetOnInsert(c => c.CreatedAt, now);
+        await _db.DocumentStoreConversations.UpdateOneAsync(
+            filter, update, new UpdateOptions { IsUpsert = true }, CancellationToken.None);
         return Ok(ApiResponse<object>.Ok(new { ok = true }));
     }
 

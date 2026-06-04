@@ -103,7 +103,8 @@ export async function getAgentParameters(agentKey: string): Promise<ApiResponse<
  * 复用现有 POST /api/defect-agent/defects（content 即智能体抽取的缺陷正文，标题后端自动归一，
  * ProjectId 可空）。这是"统一信封产出 → 各智能体原生系统"巧思的第一个落地动作。
  */
-export async function createDefectFromContent(content: string): Promise<ApiResponse<{ id: string; title: string }>> {
+export async function createDefectFromContent(content: string): Promise<ApiResponse<{ defect: { id: string; title: string } }>> {
+  // POST /api/defect-agent/defects 返回 { defect }，标题在 defect.title（Bugbot Low：toast 读错字段）
   return await apiRequest(api.defectAgent.defects.list(), { method: 'POST', body: { content } });
 }
 

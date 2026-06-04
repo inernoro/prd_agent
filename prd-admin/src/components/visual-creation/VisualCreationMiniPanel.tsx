@@ -261,6 +261,10 @@ export function VisualCreationMiniPanel({
       setResultUrl(initialResult);
       setGenState('done');
       setGenError(null);
+    } else if (!initialResult && resultUrl && genState === 'done') {
+      // 父级清空暂存图（如插入文档成功后）→ 同步清掉面板里已展示的结果，避免在同一面板里被重复插入（Codex P2）
+      setResultUrl(null);
+      setGenState('idle');
     }
     // 只对 initialResult 的变化作出反应；resultUrl 自身变化不应触发本同步
     // eslint-disable-next-line react-hooks/exhaustive-deps

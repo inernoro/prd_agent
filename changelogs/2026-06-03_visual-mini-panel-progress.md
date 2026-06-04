@@ -8,3 +8,6 @@
 | fix | prd-admin | 视觉创作 mini 面板同步 initialResult/initialPrompt 的后续 prop 变化:修复后端异步回填的暂存图被隐藏、"为这段配图"重新预填不生效(Bugbot Medium) |
 | fix | prd-admin | 智能体抽屉暂存图生命周期:切换文档重置 pendingVisualUrl(防串档) + 插入文档后清空(防重开重复回填/重复插入)(Codex P2 x2) |
 | fix | prd-admin | 智能体抽屉重开恢复合并后端+sessionStorage 两源(id+内容去重 union),修复切档取消去抖后端保存后只取较旧后端快照丢本地新消息(Cursor Medium);新增 mergeChatSnapshots 单测 |
+| fix | prd-api | 智能体宇宙 invoke 补齐 review:每 agent 强制 {agentKey}.use 权限门(防 ai-toolbox.use 越权调 visual/defect, Codex P1) + 透传多轮 history(custom 走 messages 数组/adapter 折叠进消息, Cursor High) + custom 体补 EnabledTools(抽 ToolboxPromptEnricher 共享, Codex P2) |
+| fix | prd-api | 知识库对话保存改原子 upsert(UpdateOne+IsUpsert)替代 find-then-insert,消除多标签页并发插重复行(Codex P2);唯一索引要求登记 guide.mongodb-indexes |
+| fix | prd-admin | 视觉创作 mini 面板:父级清空暂存图(插入文档后)时同步清面板结果态,防同一面板重复插入(Codex P2);缺陷创建 toast 读 res.data.defect.title 修正(Bugbot Low) |

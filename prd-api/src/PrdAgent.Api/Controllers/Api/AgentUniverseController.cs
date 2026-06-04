@@ -165,6 +165,20 @@ public class AgentUniverseController : ControllerBase
             return;
         }
 
+        // 权限隔离：统一 invoke 不能绕过各智能体自己的原生权限门（Codex P1）。每个能力对应
+        // "{agentKey}.use"（visual-agent.use / defect-agent.use / literary-agent.use / prd-agent.use），
+        // 与 ImageGenController / DefectAgentController 的 AdminController 门一致；root/super 自动放行。
+        var requiredPerm = $"{cap.AgentKey}.use";
+        if (!HasPermission(requiredPerm))
+        {
+            await WriteSseEventAsync("error", new
+            {
+                code = "PERMISSION_DENIED",
+                message = $"需要「{cap.Name}」权限（{requiredPerm}），当前账号未开通，请联系管理员。",
+            });
+            return;
+        }
+
         var text = (request.Text ?? string.Empty).Trim();
         var action = string.IsNullOrWhiteSpace(request.Action) ? cap.DefaultAction : request.Action!.Trim();
 
@@ -190,6 +204,11 @@ public class AgentUniverseController : ControllerBase
             await WriteSseEventAsync("error", new { code = "EMPTY_INPUT", message = "请先输入内容" });
             return;
         }
+
+        // 多轮上下文：适配器没有独立 history 通道，把短气泡历史折叠进当前消息前缀，
+        // 让 chat / 结构化智能体也能看到上文（Cursor High / Codex P2：invoke 丢 history）。生成型无需。
+        if (cap.InvokeMode != AgentInvokeModes.Generation)
+            userMessage = PrependHistory(userMessage, request.History);
 
         var context = new AgentExecutionContext
         {
@@ -320,6 +339,10 @@ public class AgentUniverseController : ControllerBase
                                 + string.Join("\n\n", kbParts);
         }
 
+        // 工具能力注入：自定义体配置的 EnabledTools（webSearch/imageGen/...）必须像 direct-chat 一样
+        // 折叠进 systemPrompt，否则统一 invoke 路径下这些能力静默丢失（Cursor/Codex P2）。
+        systemPrompt = ToolboxPromptEnricher.EnrichSystemPromptWithTools(systemPrompt, item.EnabledTools);
+
         var userMessage = BuildDocUserMessage(text, request.DocumentContent);
 
         // 使用次数 +1（与 direct-chat 一致）
@@ -348,6 +371,26 @@ public class AgentUniverseController : ControllerBase
             timestamp = DateTime.UtcNow,
         });
 
+        // 多轮历史：把短气泡历史插在 system 与当前 user 之间，恢复 direct-chat 的多轮上下文
+        // （Cursor High / Codex P2：invoke 丢 history）。
+        var messages = new JsonArray
+        {
+            new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+        };
+        if (request.History is { Count: > 0 })
+        {
+            foreach (var h in request.History)
+            {
+                if (string.IsNullOrWhiteSpace(h.Content)) continue;
+                messages.Add(new JsonObject
+                {
+                    ["role"] = h.Role == "assistant" ? "assistant" : "user",
+                    ["content"] = h.Content,
+                });
+            }
+        }
+        messages.Add(new JsonObject { ["role"] = "user", ["content"] = userMessage });
+
         var gwReq = new GatewayRequest
         {
             AppCallerCode = AppCallerRegistry.AiToolbox.Orchestration.Chat,
@@ -355,11 +398,7 @@ public class AgentUniverseController : ControllerBase
             Stream = true,
             RequestBody = new JsonObject
             {
-                ["messages"] = new JsonArray
-                {
-                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
-                    new JsonObject { ["role"] = "user", ["content"] = userMessage },
-                },
+                ["messages"] = messages,
                 ["temperature"] = item.Temperature,
             },
             Context = new GatewayRequestContext { UserId = userId },
@@ -388,6 +427,30 @@ public class AgentUniverseController : ControllerBase
         if (string.IsNullOrWhiteSpace(documentContent)) return text;
         if (string.IsNullOrWhiteSpace(text)) return documentContent!;
         return $"{text}\n\n[参考文档]\n{documentContent}";
+    }
+
+    /// <summary>把多轮历史（短气泡文本）折叠进当前用户消息前缀，让无独立 history 通道的适配器也能看到上文。</summary>
+    private static string PrependHistory(string userMessage, List<AgentInvokeHistoryItem>? history)
+    {
+        if (history == null || history.Count == 0) return userMessage;
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("[对话历史]");
+        foreach (var h in history)
+        {
+            if (string.IsNullOrWhiteSpace(h.Content)) continue;
+            sb.AppendLine($"{(h.Role == "assistant" ? "助手" : "用户")}：{h.Content}");
+        }
+        sb.AppendLine();
+        sb.AppendLine("[当前指令]");
+        sb.Append(userMessage);
+        return sb.ToString();
+    }
+
+    /// <summary>是否具备指定权限（中间件已把有效权限注入 permissions claim）。super 视为全通过。</summary>
+    private bool HasPermission(string perm)
+    {
+        var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
+        return permissions.Contains(perm) || permissions.Contains(AdminPermissionCatalog.Super);
     }
 
     private async Task WriteSseEventAsync(string eventName, object data)

@@ -895,7 +895,7 @@ export function ReprocessChatDrawer({
         toast.error('创建缺陷失败', perm ? '需要缺陷管理权限（defect-agent.use），请联系管理员开通' : m);
         return;
       }
-      toast.success('缺陷已创建', `「${res.data?.title || '新缺陷'}」已建入缺陷库，可去缺陷管理指派/处理`);
+      toast.success('缺陷已创建', `「${res.data?.defect?.title || '新缺陷'}」已建入缺陷库，可去缺陷管理指派/处理`);
     }
   }, [toolboxItems]);
 
