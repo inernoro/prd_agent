@@ -3,13 +3,13 @@ using PrdAgent.Core.Attributes;
 namespace PrdAgent.Core.Models;
 
 /// <summary>
-/// OpenRouter 对外网关请求日志（与 <see cref="OpenPlatformRequestLog"/> 分离，便于按 Key 聚合用量/降级）。
+/// OpenApi 对外网关请求日志（与 <see cref="OpenPlatformRequestLog"/> 分离，便于按 Key 聚合用量/降级）。
 ///
 /// 记录每次外部调用方通过 /api/v1/chat/completions、/api/v1/images/generations 的调用：
 /// 请求模型 vs 实际解析模型、命中的池、是否降级、token、耗时、状态。
 /// </summary>
 [AppOwnership(AppNames.OpenPlatform, AppNames.OpenPlatformDisplay, IsPrimary = true)]
-public class OpenRouterRequestLog
+public class OpenApiRequestLog
 {
     /// <summary>日志唯一标识</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString("N");

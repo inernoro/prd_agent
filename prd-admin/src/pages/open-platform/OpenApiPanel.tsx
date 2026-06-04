@@ -7,10 +7,10 @@ import { toast } from '@/lib/toast';
 import { RefreshCw, ShieldAlert, Plug } from 'lucide-react';
 
 /**
- * 开放平台 - OpenRouter 对外网关绑定管理。
+ * 开放平台 - OpenApi 对外网关绑定管理。
  *
  * 把「哪个客户(Key) 用哪个固定模型/池」列出来，避免改总池误伤客户（用户明确诉求）。
- * 支持为每个授予 open-router:call 的 Key 设置 chat / image 的固定模型池绑定；
+ * 支持为每个授予 open-api:call 的 Key 设置 chat / image 的固定模型池绑定；
  * 留空 = 回落默认池（default:chat / default:image）。
  */
 
@@ -52,11 +52,11 @@ interface Pool {
   models: string[];
 }
 
-interface OpenRouterPanelProps {
+interface OpenApiPanelProps {
   onActionsReady?: (actions: React.ReactNode) => void;
 }
 
-export default function OpenRouterPanel({ onActionsReady }: OpenRouterPanelProps) {
+export default function OpenApiPanel({ onActionsReady }: OpenApiPanelProps) {
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<BindingRow[]>([]);
   const [pools, setPools] = useState<Pool[]>([]);
@@ -68,8 +68,8 @@ export default function OpenRouterPanel({ onActionsReady }: OpenRouterPanelProps
     setLoading(true);
     try {
       const [bindRes, poolRes] = await Promise.all([
-        apiRequest<BindingRow[]>('/api/open-router/bindings', { auth: true }),
-        apiRequest<Pool[]>('/api/open-router/pools', { auth: true }),
+        apiRequest<BindingRow[]>('/api/open-api/bindings', { auth: true }),
+        apiRequest<Pool[]>('/api/open-api/pools', { auth: true }),
       ]);
       if (bindRes.success && bindRes.data) {
         setRows(bindRes.data);
@@ -120,7 +120,7 @@ export default function OpenRouterPanel({ onActionsReady }: OpenRouterPanelProps
     if (!edit) return;
     setSavingId(keyId);
     try {
-      const res = await apiRequest(`/api/open-router/bindings/${keyId}`, {
+      const res = await apiRequest(`/api/open-api/bindings/${keyId}`, {
         method: 'PUT',
         auth: true,
         body: {
@@ -155,7 +155,7 @@ export default function OpenRouterPanel({ onActionsReady }: OpenRouterPanelProps
     );
   };
 
-  if (loading) return <MapSectionLoader text="正在加载 OpenRouter 绑定…" />;
+  if (loading) return <MapSectionLoader text="正在加载 OpenApi 绑定…" />;
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-4" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
@@ -163,11 +163,11 @@ export default function OpenRouterPanel({ onActionsReady }: OpenRouterPanelProps
         <div className="flex items-start gap-3">
           <Plug size={18} className="text-white/50 mt-0.5 shrink-0" />
           <div className="text-[13px] text-white/70 leading-relaxed">
-            <div className="font-medium text-white/85 mb-1">OpenRouter 对外网关 · 固定模型绑定</div>
-            外部调用方用标准 OpenRouter/OpenAI 方式接入：
+            <div className="font-medium text-white/85 mb-1">开放接口 · 对外网关固定模型绑定</div>
+            外部调用方用标准 OpenAI 兼容方式接入：
             <code className="mx-1 px-1.5 py-0.5 rounded bg-white/[0.06] text-white/80">POST /api/v1/chat/completions</code>
             <code className="mx-1 px-1.5 py-0.5 rounded bg-white/[0.06] text-white/80">/api/v1/images/generations</code>。
-            每个 <code className="px-1 rounded bg-white/[0.06]">sk-ak-*</code> Key（需授予 <code className="px-1 rounded bg-white/[0.06]">open-router:call</code> scope）
+            每个 <code className="px-1 rounded bg-white/[0.06]">sk-ak-*</code> Key（需授予 <code className="px-1 rounded bg-white/[0.06]">open-api:call</code> scope）
             在此绑定自己的固定模型池——<span className="text-white/85">留空即回落默认池</span>，互不影响，改总池不会误伤已绑定客户。
           </div>
         </div>
@@ -176,9 +176,9 @@ export default function OpenRouterPanel({ onActionsReady }: OpenRouterPanelProps
       {rows.length === 0 ? (
         <GlassCard className="p-10 flex flex-col items-center justify-center text-center gap-3">
           <ShieldAlert size={32} className="text-white/30" />
-          <div className="text-white/70 text-sm">还没有授予 <code className="px-1 rounded bg-white/[0.06]">open-router:call</code> 的 Key</div>
+          <div className="text-white/70 text-sm">还没有授予 <code className="px-1 rounded bg-white/[0.06]">open-api:call</code> 的 Key</div>
           <div className="text-white/45 text-xs max-w-md">
-            在「接入 AI」弹窗创建 <code className="px-1 rounded bg-white/[0.06]">sk-ak-*</code> Key 并勾选 <code className="px-1 rounded bg-white/[0.06]">open-router:call</code> scope 后，
+            在「接入 AI」弹窗创建 <code className="px-1 rounded bg-white/[0.06]">sk-ak-*</code> Key 并勾选 <code className="px-1 rounded bg-white/[0.06]">open-api:call</code> scope 后，
             即可在此为其绑定固定模型；未绑定的 Key 默认走 default:chat / default:image。
           </div>
         </GlassCard>

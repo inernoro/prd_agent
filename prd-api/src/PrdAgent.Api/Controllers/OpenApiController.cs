@@ -13,29 +13,29 @@ using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using AppCallerRegistry = PrdAgent.Core.Models.AppCallerRegistry;
 
-namespace PrdAgent.Api.Controllers.OpenRouter;
+namespace PrdAgent.Api.Controllers;
 
 /// <summary>
-/// OpenRouter 式对外开放网关。
+/// 开放接口（OpenAI 兼容）对外网关。
 ///
-/// 外部调用方用标准 OpenAI/OpenRouter 请求方式接入（base_url 指到本服务即可）：
+/// 外部调用方用标准 OpenAI 兼容请求方式接入（base_url 指到本服务即可）：
 ///   - POST /api/v1/chat/completions （流式 SSE + 非流式）
 ///   - POST /api/v1/images/generations
 ///   - GET  /api/v1/models
 ///
-/// 鉴权：`sk-ak-*` AgentApiKey（scheme=ApiKey）+ scope `open-router:call`。
+/// 鉴权：`sk-ak-*` AgentApiKey（scheme=ApiKey）+ scope `open-api:call`。
 ///
-/// 稳定性核心（见 doc/debt.open-router.md、.claude/rules/compute-then-send + server-authority）：
+/// 稳定性核心（见 doc/debt.open-api.md、.claude/rules/compute-then-send + server-authority）：
 /// - 每个 Key 的「固定模型 / 小模型池」绑定走 ModelResolver 的 expectedModel 通道。
 ///   客户端 body 里的 model 字段【不】用于调度（避免外部任意挑模型），仅记录。
 /// - 未绑定的 Key → expectedModel=null → 回落到 default:chat / default:image 默认池。
 /// - LLM 调用使用 CancellationToken.None：客户端断开不取消服务器任务。
 /// </summary>
 [ApiController]
-public class OpenRouterController : ControllerBase
+public class OpenApiController : ControllerBase
 {
-    /// <summary>调用 OpenRouter 网关所需 scope。</summary>
-    public const string ScopeCall = "open-router:call";
+    /// <summary>调用 OpenApi 网关所需 scope。</summary>
+    public const string ScopeCall = "open-api:call";
 
     private static readonly JsonSerializerOptions SnakeCase = new()
     {
@@ -45,15 +45,15 @@ public class OpenRouterController : ControllerBase
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly MongoDbContext _db;
-    private readonly IOpenRouterUsageService _usage;
-    private readonly ILogger<OpenRouterController> _logger;
+    private readonly IOpenApiUsageService _usage;
+    private readonly ILogger<OpenApiController> _logger;
 
-    public OpenRouterController(
+    public OpenApiController(
         ILlmGateway gateway,
         ILLMRequestContextAccessor llmRequestContext,
         MongoDbContext db,
-        IOpenRouterUsageService usage,
-        ILogger<OpenRouterController> logger)
+        IOpenApiUsageService usage,
+        ILogger<OpenApiController> logger)
     {
         _gateway = gateway;
         _llmRequestContext = llmRequestContext;
@@ -104,7 +104,7 @@ public class OpenRouterController : ControllerBase
 
         var requestedModel = ReadString(body, "model");
         var stream = ReadBool(body, "stream");
-        var binding = key?.OpenRouterChatBinding;
+        var binding = key?.OpenApiChatBinding;
 
         // 客户端 model 不参与调度：移除后由 Gateway 注入解析模型，调度只看 Key 绑定。
         body.Remove("model");
@@ -114,7 +114,7 @@ public class OpenRouterController : ControllerBase
 
         var request = new GatewayRequest
         {
-            AppCallerCode = AppCallerRegistry.OpenRouter.Proxy.Chat,
+            AppCallerCode = AppCallerRegistry.OpenApi.Proxy.Chat,
             ModelType = ModelTypes.Chat,
             ExpectedModel = string.IsNullOrWhiteSpace(binding) ? null : binding,
             RequestBody = body,
@@ -133,7 +133,7 @@ public class OpenRouterController : ControllerBase
             DocumentHash: null,
             SystemPromptRedacted: null,
             RequestType: "chat",
-            AppCallerCode: AppCallerRegistry.OpenRouter.Proxy.Chat));
+            AppCallerCode: AppCallerRegistry.OpenApi.Proxy.Chat));
 
         if (stream)
             await StreamChatAsync(request, key, requestId, requestedModel, binding, sw);
@@ -214,7 +214,7 @@ public class OpenRouterController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[OpenRouter] chat 流式失败 keyId={KeyId}", key?.Id);
+            _logger.LogError(ex, "[OpenApi] chat 流式失败 keyId={KeyId}", key?.Id);
             await LogAsync(key, requestId, "chat", requestedModel, binding, resolution, true, 500, "INTERNAL_ERROR", promptTokens, completionTokens, sw);
         }
     }
@@ -269,7 +269,7 @@ public class OpenRouterController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[OpenRouter] chat 非流式失败 keyId={KeyId}", key?.Id);
+            _logger.LogError(ex, "[OpenApi] chat 非流式失败 keyId={KeyId}", key?.Id);
             await LogAsync(key, requestId, "chat", requestedModel, binding, null, false, 500, "INTERNAL_ERROR", null, null, sw);
             await WriteJsonErrorAsync(500, "api_error", "内部错误");
         }
@@ -294,7 +294,7 @@ public class OpenRouterController : ControllerBase
         }
 
         var requestedModel = ReadString(body, "model");
-        var binding = key?.OpenRouterImageBinding;
+        var binding = key?.OpenApiImageBinding;
         body.Remove("model");
 
         // Phase 2：按 Key 限流桶 + 每日配额准入（拒绝即 429）
@@ -310,13 +310,13 @@ public class OpenRouterController : ControllerBase
             DocumentHash: null,
             SystemPromptRedacted: null,
             RequestType: "generation",
-            AppCallerCode: AppCallerRegistry.OpenRouter.Proxy.Generation));
+            AppCallerCode: AppCallerRegistry.OpenApi.Proxy.Generation));
 
         try
         {
             // compute-then-send：先解析一次，再用 resolution 直发，发送阶段不二次 resolve
             var resolution = await _gateway.ResolveModelAsync(
-                AppCallerRegistry.OpenRouter.Proxy.Generation,
+                AppCallerRegistry.OpenApi.Proxy.Generation,
                 ModelTypes.ImageGen,
                 expectedModel: string.IsNullOrWhiteSpace(binding) ? null : binding,
                 CancellationToken.None);
@@ -330,7 +330,7 @@ public class OpenRouterController : ControllerBase
 
             var raw = new GatewayRawRequest
             {
-                AppCallerCode = AppCallerRegistry.OpenRouter.Proxy.Generation,
+                AppCallerCode = AppCallerRegistry.OpenApi.Proxy.Generation,
                 ModelType = ModelTypes.ImageGen,
                 EndpointPath = "/v1/images/generations",
                 ExpectedModel = resolution.ActualModel,
@@ -353,7 +353,7 @@ public class OpenRouterController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[OpenRouter] image 生成失败 keyId={KeyId}", key?.Id);
+            _logger.LogError(ex, "[OpenApi] image 生成失败 keyId={KeyId}", key?.Id);
             await LogAsync(key, requestId, "image", requestedModel, binding, null, false, 500, "INTERNAL_ERROR", null, null, sw);
             await WriteJsonErrorAsync(500, "api_error", "内部错误");
         }
@@ -365,8 +365,8 @@ public class OpenRouterController : ControllerBase
     [AllowAnonymous]
     public async Task<IActionResult> GetModels(CancellationToken httpAborted)
     {
-        // 匿名可访问：带有效 OpenRouter Key 时返回该 Key 的真实解析模型；
-        // 否则返回默认池可用模型（贴近 OpenRouter，比历史 stub 更有用）。
+        // 匿名可访问：带有效 OpenApi Key 时返回该 Key 的真实解析模型；
+        // 否则返回默认池可用模型（贴近 OpenApi，比历史 stub 更有用）。
         var key = await TryLoadKeyFromAuthAsync(httpAborted);
         var models = new List<object>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -390,12 +390,12 @@ public class OpenRouterController : ControllerBase
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "[OpenRouter] /v1/models 解析 {Code} 失败", code);
+                _logger.LogWarning(ex, "[OpenApi] /v1/models 解析 {Code} 失败", code);
             }
         }
 
-        await AddResolvedAsync(AppCallerRegistry.OpenRouter.Proxy.Chat, ModelTypes.Chat, key?.OpenRouterChatBinding);
-        await AddResolvedAsync(AppCallerRegistry.OpenRouter.Proxy.Generation, ModelTypes.ImageGen, key?.OpenRouterImageBinding);
+        await AddResolvedAsync(AppCallerRegistry.OpenApi.Proxy.Chat, ModelTypes.Chat, key?.OpenApiChatBinding);
+        await AddResolvedAsync(AppCallerRegistry.OpenApi.Proxy.Generation, ModelTypes.ImageGen, key?.OpenApiImageBinding);
 
         return Ok(new { @object = "list", data = models });
     }
@@ -490,7 +490,7 @@ public class OpenRouterController : ControllerBase
     {
         try
         {
-            var log = new OpenRouterRequestLog
+            var log = new OpenApiRequestLog
             {
                 KeyId = key?.Id ?? "unknown",
                 OwnerUserId = key?.OwnerUserId,
@@ -512,11 +512,11 @@ public class OpenRouterController : ControllerBase
                 UserAgent = Request.Headers.UserAgent.ToString(),
                 CreatedAt = DateTime.UtcNow
             };
-            await _db.OpenRouterRequestLogs.InsertOneAsync(log, cancellationToken: CancellationToken.None);
+            await _db.OpenApiRequestLogs.InsertOneAsync(log, cancellationToken: CancellationToken.None);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[OpenRouter] 写请求日志失败");
+            _logger.LogError(ex, "[OpenApi] 写请求日志失败");
         }
     }
 }

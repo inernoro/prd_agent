@@ -609,7 +609,7 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
   {
-    // 开放平台：对外 API 网关（OpenRouter 式）+ 外部授权 / API 应用 / 调用日志的统一管理入口。
+    // 开放平台：对外开放接口 API 网关（OpenAI 兼容）+ 外部授权 / API 应用 / 调用日志的统一管理入口。
     // 从 App.tsx 手写 Route 移入 SSOT，自动出现在首页、Cmd+K 搜索、设置「我的导航」可添加池。
     path: '/open-platform',
     permission: 'open-platform.manage',
@@ -617,10 +617,10 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     nav: {
       label: '开放平台',
       shortLabel: '开放',
-      description: '对外 OpenRouter 式 API 网关、外部授权、API 应用与调用日志管理',
+      description: '对外开放接口（OpenAI 兼容）API 网关、外部授权、API 应用与调用日志管理',
       icon: 'Plug',
       section: 'infra',
-      tags: ['开放平台', 'open-platform', 'openrouter', 'API', '网关', '授权', '调用日志'],
+      tags: ['开放平台', 'open-platform', 'open-api', 'API', '网关', '授权', '调用日志'],
     },
   },
 ];

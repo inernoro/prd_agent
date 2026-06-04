@@ -7,13 +7,13 @@ using StackExchange.Redis;
 namespace PrdAgent.Infrastructure.Services;
 
 /// <summary>
-/// OpenRouter 对外网关韧性服务（Phase 2）。Redis 抖动一律 fail-open（放行），不打断网关。
+/// OpenApi 对外网关韧性服务（Phase 2）。Redis 抖动一律 fail-open（放行），不打断网关。
 /// </summary>
-public class OpenRouterUsageService : IOpenRouterUsageService
+public class OpenApiUsageService : IOpenApiUsageService
 {
     private readonly ConnectionMultiplexer _redis;
     private readonly MongoDbContext _db;
-    private readonly ILogger<OpenRouterUsageService> _logger;
+    private readonly ILogger<OpenApiUsageService> _logger;
 
     private const int DefaultRatePerMin = 120;
 
@@ -26,7 +26,7 @@ public class OpenRouterUsageService : IOpenRouterUsageService
         redis.call('EXPIRE', KEYS[1], 120)
         return 1";
 
-    public OpenRouterUsageService(ConnectionMultiplexer redis, MongoDbContext db, ILogger<OpenRouterUsageService> logger)
+    public OpenApiUsageService(ConnectionMultiplexer redis, MongoDbContext db, ILogger<OpenApiUsageService> logger)
     {
         _redis = redis;
         _db = db;
@@ -43,7 +43,7 @@ public class OpenRouterUsageService : IOpenRouterUsageService
         return Math.Max(1, (int)(now.Date.AddDays(1) - now).TotalSeconds);
     }
 
-    public async Task<OpenRouterUsageDecision> CheckAndReserveAsync(AgentApiKey key, CancellationToken ct = default)
+    public async Task<OpenApiUsageDecision> CheckAndReserveAsync(AgentApiKey key, CancellationToken ct = default)
     {
         try
         {
@@ -51,25 +51,25 @@ public class OpenRouterUsageService : IOpenRouterUsageService
             var day = Day();
 
             // 1. 每日 token 配额预检（只读，超额直接拒）
-            if (key.OpenRouterDailyTokenQuota is long tq && tq > 0)
+            if (key.OpenApiDailyTokenQuota is long tq && tq > 0)
             {
                 var v = await db.StringGetAsync(TokKey(key.Id, day));
                 if (v.HasValue && (long)v >= tq)
-                    return OpenRouterUsageDecision.Deny("daily_token_quota_exceeded",
+                    return OpenApiUsageDecision.Deny("daily_token_quota_exceeded",
                         $"今日 token 配额已用尽（上限 {tq}）", SecondsToMidnight());
             }
 
             // 2. 每日请求配额
-            if (key.OpenRouterDailyRequestQuota is long rq && rq > 0)
+            if (key.OpenApiDailyRequestQuota is long rq && rq > 0)
             {
                 var v = await db.StringGetAsync(ReqKey(key.Id, day));
                 if (v.HasValue && (long)v >= rq)
-                    return OpenRouterUsageDecision.Deny("daily_request_quota_exceeded",
+                    return OpenApiUsageDecision.Deny("daily_request_quota_exceeded",
                         $"今日请求数配额已用尽（上限 {rq}）", SecondsToMidnight());
             }
 
             // 3. 每分钟速率（按 Key 桶，原子滑动窗口）
-            var limit = key.OpenRouterRateLimitPerMin is int r && r > 0 ? r : DefaultRatePerMin;
+            var limit = key.OpenApiRateLimitPerMin is int r && r > 0 ? r : DefaultRatePerMin;
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var windowStart = now - 60_000;
             var member = $"{now}-{Guid.NewGuid():N}";
@@ -77,7 +77,7 @@ public class OpenRouterUsageService : IOpenRouterUsageService
                 new RedisKey[] { $"or:rate:{key.Id}" },
                 new RedisValue[] { windowStart, limit, now, member });
             if (allowed == 0)
-                return OpenRouterUsageDecision.Deny("rate_limit_exceeded",
+                return OpenApiUsageDecision.Deny("rate_limit_exceeded",
                     $"超过每分钟 {limit} 次速率上限，请稍后重试", 5);
 
             // 4. 占用一个每日请求额度
@@ -85,12 +85,12 @@ public class OpenRouterUsageService : IOpenRouterUsageService
             await db.StringIncrementAsync(reqKey);
             await db.KeyExpireAsync(reqKey, TimeSpan.FromDays(2));
 
-            return OpenRouterUsageDecision.Allow;
+            return OpenApiUsageDecision.Allow;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[OpenRouterUsage] 准入检查异常，fail-open 放行 keyId={KeyId}", key.Id);
-            return OpenRouterUsageDecision.Allow;
+            _logger.LogWarning(ex, "[OpenApiUsage] 准入检查异常，fail-open 放行 keyId={KeyId}", key.Id);
+            return OpenApiUsageDecision.Allow;
         }
     }
 
@@ -105,32 +105,32 @@ public class OpenRouterUsageService : IOpenRouterUsageService
             var total = await db.StringIncrementAsync(k, tokens);
             await db.KeyExpireAsync(k, TimeSpan.FromDays(2));
 
-            if (key.OpenRouterDailyTokenQuota is long tq && tq > 0)
+            if (key.OpenApiDailyTokenQuota is long tq && tq > 0)
             {
                 if (total >= tq)
                     await AlertOnceAsync(key, "token-100", "warning", day,
-                        $"OpenRouter 配额耗尽：{key.Name}",
+                        $"OpenApi 配额耗尽：{key.Name}",
                         $"客户「{key.Name}」今日 token 配额 {tq} 已耗尽（已用 {total}），后续请求将被拒绝。");
                 else if ((double)total / tq >= 0.8)
                     await AlertOnceAsync(key, "token-80", "info", day,
-                        $"OpenRouter 配额预警：{key.Name}",
+                        $"OpenApi 配额预警：{key.Name}",
                         $"客户「{key.Name}」今日 token 已用 {total}/{tq}（≥80%）。");
             }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[OpenRouterUsage] 记录 token 异常 keyId={KeyId}", key.Id);
+            _logger.LogWarning(ex, "[OpenApiUsage] 记录 token 异常 keyId={KeyId}", key.Id);
         }
     }
 
     public async Task NotifyFallbackAsync(AgentApiKey key, string? resolvedModel, string? originalPool, string? reason, CancellationToken ct = default)
     {
         await AlertOnceAsync(key, "fallback", "warning", Day(),
-            $"OpenRouter 专属模型降级：{key.Name}",
+            $"OpenApi 专属模型降级：{key.Name}",
             $"客户「{key.Name}」的专属模型已降级（实际解析 {resolvedModel ?? "未知"}，原池 {originalPool ?? "未知"}，原因 {reason ?? "未知"}）。请检查模型池健康，避免影响该客户。");
     }
 
-    public async Task<OpenRouterUsageSnapshot> GetUsageAsync(string keyId, CancellationToken ct = default)
+    public async Task<OpenApiUsageSnapshot> GetUsageAsync(string keyId, CancellationToken ct = default)
     {
         try
         {
@@ -138,7 +138,7 @@ public class OpenRouterUsageService : IOpenRouterUsageService
             var day = Day();
             var reqs = await db.StringGetAsync(ReqKey(keyId, day));
             var tok = await db.StringGetAsync(TokKey(keyId, day));
-            return new OpenRouterUsageSnapshot
+            return new OpenApiUsageSnapshot
             {
                 TodayRequests = reqs.HasValue ? (long)reqs : 0,
                 TodayTokens = tok.HasValue ? (long)tok : 0
@@ -146,8 +146,8 @@ public class OpenRouterUsageService : IOpenRouterUsageService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[OpenRouterUsage] 读取用量异常 keyId={KeyId}", keyId);
-            return new OpenRouterUsageSnapshot();
+            _logger.LogWarning(ex, "[OpenApiUsage] 读取用量异常 keyId={KeyId}", keyId);
+            return new OpenApiUsageSnapshot();
         }
     }
 
@@ -164,7 +164,7 @@ public class OpenRouterUsageService : IOpenRouterUsageService
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "[OpenRouterUsage] 预警去重标记失败，继续发通知 keyId={KeyId}", key.Id);
+                _logger.LogWarning(ex, "[OpenApiUsage] 预警去重标记失败，继续发通知 keyId={KeyId}", key.Id);
             }
 
             await _db.AdminNotifications.InsertOneAsync(new AdminNotification
@@ -173,16 +173,16 @@ public class OpenRouterUsageService : IOpenRouterUsageService
                 Message = message,
                 Level = level,
                 Status = "open",
-                Source = "open-router",
-                Key = $"open-router:{type}:{key.Id}:{day}",
-                ActionLabel = "查看 OpenRouter 网关",
-                ActionUrl = "/open-platform?tab=openrouter",
+                Source = "open-api",
+                Key = $"open-api:{type}:{key.Id}:{day}",
+                ActionLabel = "查看 OpenApi 网关",
+                ActionUrl = "/open-platform?tab=open-api",
                 ActionKind = "navigate"
             });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[OpenRouterUsage] 写管理预警失败 keyId={KeyId} type={Type}", key.Id, type);
+            _logger.LogError(ex, "[OpenApiUsage] 写管理预警失败 keyId={KeyId} type={Type}", key.Id, type);
         }
     }
 }

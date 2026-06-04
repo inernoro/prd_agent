@@ -85,8 +85,8 @@ public class MongoDbContext
     // Agent 开放接口 API Key（海鲜市场开放接口 / Agent 开放入口 M2M 鉴权）
     public IMongoCollection<AgentApiKey> AgentApiKeys => _database.GetCollection<AgentApiKey>("agent_api_keys");
 
-    // OpenRouter 对外网关请求日志（按 Key 聚合用量/降级，与 OpenPlatform 日志分离）
-    public IMongoCollection<OpenRouterRequestLog> OpenRouterRequestLogs => _database.GetCollection<OpenRouterRequestLog>("open_router_request_logs");
+    // OpenApi 对外网关请求日志（按 Key 聚合用量/降级，与 OpenPlatform 日志分离）
+    public IMongoCollection<OpenApiRequestLog> OpenApiRequestLogs => _database.GetCollection<OpenApiRequestLog>("open_api_request_logs");
 
     // 基础设施连接（MAP 端 —— 与 CDS / 未来执行器的剪贴板配对密钥连接，
     // 详见 spec.cds-map-pairing-protocol）

@@ -273,7 +273,7 @@ docs:
   debt.daily-tips: 小技巧与首页提醒过时机制债务台账
   debt.library-doc-reader: 殿堂阅读器（克莱风暖色）保留未融合 DocBrowser 的债务台账
   debt.report-detail: 周报详情页（异构数据 + 多 tabs + 右栏面板）保留独立实现的债务台账
-  debt.open-router: OpenRouter 对外开放网关债务台账（伞形 code 不变量 + 限流/降级/预警/配额 Phase 2 留尾）
+  debt.open-api: 开放接口对外网关债务台账（伞形 code 不变量 + 限流/降级/预警/配额 Phase 2 留尾）
 
   # ── 七、周报（降序：最新在前）──
   report.cds-visual-deploy: CDS 绝对可视化一键部署 · 完整报告（交付总览 + dogfood 修的真 bug + 各轮验收分享链）

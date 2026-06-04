@@ -11,7 +11,7 @@ using AppCallerRegistry = PrdAgent.Core.Models.AppCallerRegistry;
 namespace PrdAgent.Api.Controllers.Api;
 
 /// <summary>
-/// 管理后台 - OpenRouter 对外网关。
+/// 管理后台 - OpenApi 对外网关。
 ///
 /// 职责：把「哪个客户(Key) 用哪个固定模型/池」列出来，避免改总池误伤客户；
 /// 并支持设置/清除每个 Key 的 chat / image 绑定、查看可绑定的模型池、查看调用日志。
@@ -19,17 +19,17 @@ namespace PrdAgent.Api.Controllers.Api;
 /// 权限复用 OpenPlatformManage（与「开放平台」语义一致）。
 /// </summary>
 [ApiController]
-[Route("api/open-router")]
+[Route("api/open-api")]
 [Authorize]
 [AdminController("open-platform", AdminPermissionCatalog.OpenPlatformManage)]
-public class AdminOpenRouterController : ControllerBase
+public class AdminOpenApiController : ControllerBase
 {
     private readonly MongoDbContext _db;
     private readonly ILlmGateway _gateway;
-    private readonly IOpenRouterUsageService _usage;
-    private readonly ILogger<AdminOpenRouterController> _logger;
+    private readonly IOpenApiUsageService _usage;
+    private readonly ILogger<AdminOpenApiController> _logger;
 
-    public AdminOpenRouterController(MongoDbContext db, ILlmGateway gateway, IOpenRouterUsageService usage, ILogger<AdminOpenRouterController> logger)
+    public AdminOpenApiController(MongoDbContext db, ILlmGateway gateway, IOpenApiUsageService usage, ILogger<AdminOpenApiController> logger)
     {
         _db = db;
         _gateway = gateway;
@@ -37,12 +37,12 @@ public class AdminOpenRouterController : ControllerBase
         _logger = logger;
     }
 
-    /// <summary>列出所有授予 open-router:call 的 Key 及其固定模型绑定（含实际解析结果）。</summary>
+    /// <summary>列出所有授予 open-api:call 的 Key 及其固定模型绑定（含实际解析结果）。</summary>
     [HttpGet("bindings")]
     public async Task<IActionResult> ListBindings(CancellationToken ct)
     {
         var keys = await _db.AgentApiKeys
-            .Find(k => k.Scopes.Contains(OpenRouter.OpenRouterController.ScopeCall))
+            .Find(k => k.Scopes.Contains(OpenApiController.ScopeCall))
             .ToListAsync(ct);
 
         var userIds = keys.Select(k => k.OwnerUserId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
@@ -56,8 +56,8 @@ public class AdminOpenRouterController : ControllerBase
         var result = new List<object>();
         foreach (var k in keys)
         {
-            var chatResolved = await SafeResolveAsync(AppCallerRegistry.OpenRouter.Proxy.Chat, ModelTypes.Chat, k.OpenRouterChatBinding, ct);
-            var imageResolved = await SafeResolveAsync(AppCallerRegistry.OpenRouter.Proxy.Generation, ModelTypes.ImageGen, k.OpenRouterImageBinding, ct);
+            var chatResolved = await SafeResolveAsync(AppCallerRegistry.OpenApi.Proxy.Chat, ModelTypes.Chat, k.OpenApiChatBinding, ct);
+            var imageResolved = await SafeResolveAsync(AppCallerRegistry.OpenApi.Proxy.Generation, ModelTypes.ImageGen, k.OpenApiImageBinding, ct);
             var usage = await _usage.GetUsageAsync(k.Id, ct);
             result.Add(new
             {
@@ -66,16 +66,16 @@ public class AdminOpenRouterController : ControllerBase
                 ownerUserId = k.OwnerUserId,
                 ownerName = userNameById.TryGetValue(k.OwnerUserId, out var n) ? n : k.OwnerUserId,
                 isActive = k.IsActive,
-                chatBinding = k.OpenRouterChatBinding,
-                imageBinding = k.OpenRouterImageBinding,
+                chatBinding = k.OpenApiChatBinding,
+                imageBinding = k.OpenApiImageBinding,
                 chatResolvedModel = chatResolved.model,
                 chatResolutionType = chatResolved.type,
                 chatIsFallback = chatResolved.isFallback,
                 imageResolvedModel = imageResolved.model,
                 imageResolutionType = imageResolved.type,
-                dailyTokenQuota = k.OpenRouterDailyTokenQuota,
-                dailyRequestQuota = k.OpenRouterDailyRequestQuota,
-                rateLimitPerMin = k.OpenRouterRateLimitPerMin,
+                dailyTokenQuota = k.OpenApiDailyTokenQuota,
+                dailyRequestQuota = k.OpenApiDailyRequestQuota,
+                rateLimitPerMin = k.OpenApiRateLimitPerMin,
                 todayRequests = usage.TodayRequests,
                 todayTokens = usage.TodayTokens,
                 totalRequests = k.TotalRequests,
@@ -95,11 +95,11 @@ public class AdminOpenRouterController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "Key 不存在"));
 
         var update = Builders<AgentApiKey>.Update
-            .Set(k => k.OpenRouterChatBinding, Normalize(req.ChatBinding))
-            .Set(k => k.OpenRouterImageBinding, Normalize(req.ImageBinding))
-            .Set(k => k.OpenRouterDailyTokenQuota, req.DailyTokenQuota)
-            .Set(k => k.OpenRouterDailyRequestQuota, req.DailyRequestQuota)
-            .Set(k => k.OpenRouterRateLimitPerMin, req.RateLimitPerMin);
+            .Set(k => k.OpenApiChatBinding, Normalize(req.ChatBinding))
+            .Set(k => k.OpenApiImageBinding, Normalize(req.ImageBinding))
+            .Set(k => k.OpenApiDailyTokenQuota, req.DailyTokenQuota)
+            .Set(k => k.OpenApiDailyRequestQuota, req.DailyRequestQuota)
+            .Set(k => k.OpenApiRateLimitPerMin, req.RateLimitPerMin);
 
         await _db.AgentApiKeys.UpdateOneAsync(k => k.Id == keyId, update, cancellationToken: ct);
         return Ok(ApiResponse<object>.Ok(new { keyId, ok = true }));
@@ -132,10 +132,10 @@ public class AdminOpenRouterController : ControllerBase
     public async Task<IActionResult> ListLogs([FromQuery] string? keyId, [FromQuery] int limit = 100, CancellationToken ct = default)
     {
         var filter = string.IsNullOrWhiteSpace(keyId)
-            ? Builders<OpenRouterRequestLog>.Filter.Empty
-            : Builders<OpenRouterRequestLog>.Filter.Eq(l => l.KeyId, keyId);
+            ? Builders<OpenApiRequestLog>.Filter.Empty
+            : Builders<OpenApiRequestLog>.Filter.Eq(l => l.KeyId, keyId);
 
-        var logs = await _db.OpenRouterRequestLogs
+        var logs = await _db.OpenApiRequestLogs
             .Find(filter)
             .SortByDescending(l => l.CreatedAt)
             .Limit(Math.Clamp(limit, 1, 500))
@@ -155,7 +155,7 @@ public class AdminOpenRouterController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[AdminOpenRouter] 解析 {Code} 失败", code);
+            _logger.LogWarning(ex, "[AdminOpenApi] 解析 {Code} 失败", code);
             return (null, "Error", false);
         }
     }

@@ -27,8 +27,8 @@ public class PublicModelsController : ControllerBase
         return GetModelsInternal();
     }
 
-    // 注：GET /api/v1/models 已移交 OpenRouterController（返回按 Key 解析的真实模型列表，
-    // 贴近 OpenRouter）。此处仅保留 /api/v1/config/models 作为历史兼容别名。
+    // 注：GET /api/v1/models 已移交 OpenApiController（返回按 Key 解析的真实模型列表，
+    // 贴近 OpenApi）。此处仅保留 /api/v1/config/models 作为历史兼容别名。
 
     /// <summary>
     /// 内部实现：返回模型列表

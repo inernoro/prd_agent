@@ -28,7 +28,7 @@ public class AgentApiKeysController : ControllerBase
         DefectAgentController.AgentFixScope,
         DocumentStoreController.ScopeRead,
         DocumentStoreController.ScopeWrite,
-        Controllers.OpenRouter.OpenRouterController.ScopeCall,
+        OpenApiController.ScopeCall,
     };
 
     // 默认 TTL：365 天（符合需求"授权时间尽可能长"）

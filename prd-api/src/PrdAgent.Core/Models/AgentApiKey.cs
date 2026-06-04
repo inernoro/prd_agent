@@ -68,7 +68,7 @@ public class AgentApiKey
     /// </summary>
     public int GracePeriodDays { get; set; } = 7;
 
-    // ── OpenRouter 对外网关绑定（按 Key 固定模型，避免总池调度影响客户） ──
+    // ── OpenApi 对外网关绑定（按 Key 固定模型，避免总池调度影响客户） ──
     //
     // 取值约定（两者择一即可，都走 ModelResolver 的 expectedModel 通道）：
     //   - 模型池 Code（如 "claude-pool"）→ 绑定一个「小模型池」，池内含 1 个模型即固定模型，
@@ -76,18 +76,18 @@ public class AgentApiKey
     //   - 模型 id（如 "claude-sonnet-4-6"）→ 绑定一个固定模型。
     // null / 空 → 未绑定，回落到 default:chat / default:image 默认池。
 
-    /// <summary>OpenRouter chat 端点绑定的模型池 Code 或模型 id；null=默认 chat 池。</summary>
-    public string? OpenRouterChatBinding { get; set; }
+    /// <summary>OpenApi chat 端点绑定的模型池 Code 或模型 id；null=默认 chat 池。</summary>
+    public string? OpenApiChatBinding { get; set; }
 
-    /// <summary>OpenRouter 生图端点绑定的模型池 Code 或模型 id；null=默认 image 池。</summary>
-    public string? OpenRouterImageBinding { get; set; }
+    /// <summary>OpenApi 生图端点绑定的模型池 Code 或模型 id；null=默认 image 池。</summary>
+    public string? OpenApiImageBinding { get; set; }
 
-    /// <summary>每日 token 配额（OpenRouter 网关用）；null=不限。Phase 2 配额预警消费此字段。</summary>
-    public long? OpenRouterDailyTokenQuota { get; set; }
+    /// <summary>每日 token 配额（OpenApi 网关用）；null=不限。Phase 2 配额预警消费此字段。</summary>
+    public long? OpenApiDailyTokenQuota { get; set; }
 
-    /// <summary>每日请求数配额（OpenRouter 网关用）；null=不限。Phase 2 消费。</summary>
-    public long? OpenRouterDailyRequestQuota { get; set; }
+    /// <summary>每日请求数配额（OpenApi 网关用）；null=不限。Phase 2 消费。</summary>
+    public long? OpenApiDailyRequestQuota { get; set; }
 
-    /// <summary>每分钟请求速率上限（OpenRouter 网关用）；null=用系统默认。Phase 2 按 Key 限流桶消费。</summary>
-    public int? OpenRouterRateLimitPerMin { get; set; }
+    /// <summary>每分钟请求速率上限（OpenApi 网关用）；null=用系统默认。Phase 2 按 Key 限流桶消费。</summary>
+    public int? OpenApiRateLimitPerMin { get; set; }
 }
