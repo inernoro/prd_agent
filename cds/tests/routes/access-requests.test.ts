@@ -177,6 +177,8 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     const machine = { 'x-machine-key': '1' };
     expect((await request(server, 'POST', `/api/access-requests/${reqId}/approve`, {}, machine)).status).toBe(403);
     expect((await request(server, 'POST', `/api/access-requests/${reqId}/reject`, {}, machine)).status).toBe(403);
+    // 列表也只给登录用户:机器密钥不得跨项目枚举别人的申请
+    expect((await request(server, 'GET', '/api/access-requests', undefined, machine)).status).toBe(403);
     // 申请仍 pending(没被机器密钥动过)
     const poll = await request(server, 'GET', `/api/projects/proj-a/access-requests/${reqId}?token=${init.body.pollToken}`);
     expect(poll.body.status).toBe('pending');

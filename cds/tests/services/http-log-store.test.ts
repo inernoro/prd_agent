@@ -23,6 +23,12 @@ describe('http log body redaction', () => {
     expect(result.bodyPreview).not.toContain('tok_123');
   });
 
+  it('redacts the one-time authorizationKey (被动授权 cdsp_ 明文不得落日志)', () => {
+    const result = bodyPreviewFromUnknown({ status: 'approved', authorizationKey: 'cdsp_demo_abc123secretplaintext' });
+    expect(result.bodyPreview).toContain('"authorizationKey":"[redacted]"');
+    expect(result.bodyPreview).not.toContain('cdsp_demo_abc123secretplaintext');
+  });
+
   it('keeps malformed html-like previews linear and bounded', () => {
     const hostile = `<html>${' "not-a-json-key": "'.repeat(600)}${'x'.repeat(9000)}</html>`;
     const started = performance.now();

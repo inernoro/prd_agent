@@ -147,7 +147,10 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
   // 操作员通道:列表 / 批准 / 拒绝(走全局中间件 cookie / 全权 key 鉴权)
   // ───────────────────────────────────────────────────────────────────────
 
-  router.get('/access-requests', (_req, res) => {
+  router.get('/access-requests', (req, res) => {
+    // 列表是操作员审批盒的数据源,只给登录用户。机器密钥不得跨项目枚举别人的
+    // 申请方/用途(信息泄露),与 approve/reject 的人类门槛保持一致。
+    if (!requireHumanOperator(req, res)) return;
     const decidedCount = stateService.listAccessRequests().filter((r) => r.status !== 'pending').length;
     if (decidedCount > 20) stateService.pruneAccessRequests(AUDIT_RETENTION_MS);
     const list = stateService.listAccessRequests().map(publicView);

@@ -877,6 +877,18 @@ function broadcastAiPairing(event: string, data: unknown) {
   }
 }
 
+/**
+ * 被动授权的「发起申请 / 轮询结果」两个端点是 public(免密)—— 见
+ * routes/access-requests.ts 顶部说明:agent 无任何预置凭据也要能发起。两种 auth
+ * 模式(basic / github)的网关都必须放行这两条,否则 github 模式下 agent 会 401、
+ * 整个特性走不通。集中在这里,避免两处网关各写一份导致漂移。
+ */
+function isPublicAccessRequestRoute(method: string, path: string): boolean {
+  if (method === 'POST' && /^\/api\/projects\/[^/]+\/access-requests$/.test(path)) return true;
+  if (method === 'GET' && /^\/api\/projects\/[^/]+\/access-requests\/[^/]+$/.test(path)) return true;
+  return false;
+}
+
 /** Check if a request is from an approved AI session */
 function resolveAiSession(req: express.Request, stateService?: StateService): ApprovedAiSession | null {
   // Static mode: CDS_AI_ACCESS_KEY (canonical) 或 legacy AI_ACCESS_KEY 二者命中其一即放行；
@@ -1474,6 +1486,8 @@ export function createServer(deps: ServerDeps): express.Express {
       if (req.path === '/') return next();
       if (req.path === '/login' || req.path === '/login.html' || req.path === '/api/login' || req.path === '/api/logout') return next();
       if (req.path.startsWith('/api/ai/request-access') || req.path.startsWith('/api/ai/request-status/')) return next();
+      // 被动授权:免密发起/轮询授权申请(github 模式同样放行,否则 agent 401)。
+      if (isPublicAccessRequestRoute(req.method, req.path)) return next();
       if (req.path === '/api/cds-system/connections/authorize'
         || req.path === '/api/cds-system/connections/token'
         || req.path === '/api/cds-system/connections/accept') return next();
@@ -1941,8 +1955,7 @@ export function createServer(deps: ServerDeps): express.Express {
       //   - 轮询要 pollToken(发起时一次性返回给发起方),拿不到票据就取不走密钥;
       //   - 真正的密钥签发 100% 由用户在右下角亲手点批准。
       // 故这两个路径无条件放行;真正危险的 approve/reject/list 仍走下方鉴权。
-      if (reqMethod === 'POST' && /^\/api\/projects\/[^/]+\/access-requests$/.test(reqPath)) return next();
-      if (reqMethod === 'GET' && /^\/api\/projects\/[^/]+\/access-requests\/[^/]+$/.test(reqPath)) return next();
+      if (isPublicAccessRequestRoute(reqMethod, reqPath)) return next();
 
       // Check human cookie auth
       const cookieToken = parseCookie(req.headers.cookie || '', 'cds_token');

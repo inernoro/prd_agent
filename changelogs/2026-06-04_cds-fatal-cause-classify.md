@@ -8,3 +8,4 @@
 | refactor | cds | 被动授权改为最短路径:删除「请求密钥」概念与项目设置「授权密钥」tab,改为 Agent 免密直接发起授权申请(按项目限量防刷)+ 一次性 pollToken 取结果,用户只需右下角一键批准,前置步骤归零 |
 | fix | cds | 修复授权申请轮询用项目 slug 时误报 404:轮询端点改用 getProject 把 slug/id 统一解析为 project.id 再比对(发起存的是 project.id,真实环境用 slug 轮询会漏判) |
 | fix | cds | 被动授权审批加固:approve/reject 仅限登录用户(cookie/GitHub),拒绝机器密钥——杜绝项目 A 的 cdsp_ key 批准项目 B 申请的跨项目越权;批准签发授权密钥失败时回滚已签发 key 防游离;失败诊断 check-run 文本截断只砍日志尾部、保住顶部根因 |
+| fix | cds | 被动授权二轮加固:github 鉴权模式同样放行免密发起/轮询(抽 isPublicAccessRequestRoute 共享,防两网关漂移);授权申请列表改登录用户专属(机器密钥不得跨项目枚举申请方/用途);一次性 authorizationKey 明文加入 HTTP 日志 redactor(authoriz),不再落 cds_http_logs |
