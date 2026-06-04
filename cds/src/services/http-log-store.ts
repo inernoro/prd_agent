@@ -67,7 +67,10 @@ const DEFAULT_RETENTION_DAYS = 3;
 const DEFAULT_MAX_DOCUMENTS = 50_000;
 const HEADER_DENY = /^(authorization|cookie|set-cookie|x-ai-access-key|ai-access-key|x-cds-ai-token|x-cds-project-key)$/i;
 const HEADER_SECRET = /(token|secret|password|passwd|api[-_]?key|access[-_]?key|session|jwt|credential)/i;
-const BODY_SECRET_KEY = /(token|secret|password|passwd|api[-_]?key|access[-_]?key|session|jwt|credential)/i;
+// `authoriz` 覆盖 authorizationKey(被动授权一次性交付的 cdsp_ 明文)等字段 ——
+// 否则一次性密钥会落进 cds_http_logs 的 response body 预览、被 /api/http-logs 取回,
+// 破坏「明文只交付一次」。redactor 只动日志副本,不影响真实 HTTP 响应。
+const BODY_SECRET_KEY = /(token|secret|password|passwd|api[-_]?key|access[-_]?key|authoriz|session|jwt|credential)/i;
 const MAX_HEADER_VALUE = 300;
 const MAX_BODY_PREVIEW_BYTES = 8 * 1024;
 const MAX_ERROR_MESSAGE = 1200;

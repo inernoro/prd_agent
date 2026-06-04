@@ -11,6 +11,7 @@ import { createOperatorConsoleRouter } from './routes/operator-console.js';
 import { createBridgeRouter } from './routes/bridge.js';
 import { createProjectsRouter, assertProjectAccess } from './routes/projects.js';
 import { createPendingImportRouter } from './routes/pending-import.js';
+import { createAccessRequestsRouter } from './routes/access-requests.js';
 import { createProjectInfraResyncRouter } from './routes/project-infra-resync.js';
 import { createProjectComposeRouter } from './routes/project-compose.js';
 import { createProjectStorageRouter } from './routes/project-storage.js';
@@ -594,6 +595,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /cleanup-cross-project-services': '清理跨项目服务',
     'GET /pending-imports': '列出待导入项目',
     'POST /projects/:id/pending-import': '提交待导入配置',
+    'GET /access-requests': '列出授权申请',
     'GET /projects/:id/activity-logs': '获取项目活动日志',
     'GET /projects/:id/recent-auto-deploys': '查看自动部署历史',
     'GET /projects/:id/preview-mode': '获取项目预览模式',
@@ -747,6 +749,10 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/pending-imports\/(.+)$/, '查询待导入项目'],
     [/^POST \/pending-imports\/(.+)\/approve$/, '批准导入'],
     [/^POST \/pending-imports\/(.+)\/reject$/, '拒绝导入'],
+    [/^POST \/projects\/[^/]+\/access-requests$/, '发起授权申请'],
+    [/^GET \/projects\/[^/]+\/access-requests\/[^/]+$/, '轮询授权结果'],
+    [/^POST \/access-requests\/[^/]+\/approve$/, '批准授权申请'],
+    [/^POST \/access-requests\/[^/]+\/reject$/, '拒绝授权申请'],
     // 项目虚拟 cds-compose.yml
     [/^GET \/projects\/(.+)\/compose\.yml$/, '下载项目配置'],
     [/^GET \/projects\/(.+)\/compose$/, '获取项目配置'],
@@ -869,6 +875,18 @@ function broadcastAiPairing(event: string, data: unknown) {
   for (const client of aiPairingClients) {
     try { client.write(msg); } catch { aiPairingClients.delete(client); }
   }
+}
+
+/**
+ * 被动授权的「发起申请 / 轮询结果」两个端点是 public(免密)—— 见
+ * routes/access-requests.ts 顶部说明:agent 无任何预置凭据也要能发起。两种 auth
+ * 模式(basic / github)的网关都必须放行这两条,否则 github 模式下 agent 会 401、
+ * 整个特性走不通。集中在这里,避免两处网关各写一份导致漂移。
+ */
+function isPublicAccessRequestRoute(method: string, path: string): boolean {
+  if (method === 'POST' && /^\/api\/projects\/[^/]+\/access-requests$/.test(path)) return true;
+  if (method === 'GET' && /^\/api\/projects\/[^/]+\/access-requests\/[^/]+$/.test(path)) return true;
+  return false;
 }
 
 /** Check if a request is from an approved AI session */
@@ -1468,6 +1486,8 @@ export function createServer(deps: ServerDeps): express.Express {
       if (req.path === '/') return next();
       if (req.path === '/login' || req.path === '/login.html' || req.path === '/api/login' || req.path === '/api/logout') return next();
       if (req.path.startsWith('/api/ai/request-access') || req.path.startsWith('/api/ai/request-status/')) return next();
+      // 被动授权:免密发起/轮询授权申请(github 模式同样放行,否则 agent 401)。
+      if (isPublicAccessRequestRoute(req.method, req.path)) return next();
       if (req.path === '/api/cds-system/connections/authorize'
         || req.path === '/api/cds-system/connections/token'
         || req.path === '/api/cds-system/connections/accept') return next();
@@ -1926,6 +1946,16 @@ export function createServer(deps: ServerDeps): express.Express {
       ) {
         return next();
       }
+
+      // 被动授权 — 发起/轮询授权申请的两个端点是 public(免密)。
+      //
+      // 这是「最短路径」的代价:agent 没有任何预置凭据也要能发起申请,否则又
+      // 退回到「先给 agent 发钥匙」的前置步骤。免密的爆炸半径被严格限制:
+      //   - 发起只能创建一条 pending 申请(路由内按项目限量防刷),不读不写不签发;
+      //   - 轮询要 pollToken(发起时一次性返回给发起方),拿不到票据就取不走密钥;
+      //   - 真正的密钥签发 100% 由用户在右下角亲手点批准。
+      // 故这两个路径无条件放行;真正危险的 approve/reject/list 仍走下方鉴权。
+      if (isPublicAccessRequestRoute(reqMethod, reqPath)) return next();
 
       // Check human cookie auth
       const cookieToken = parseCookie(req.headers.cookie || '', 'cds_token');
@@ -2772,6 +2802,10 @@ export function createServer(deps: ServerDeps): express.Express {
   // Mounted at /api so the nested /projects/:id/pending-import path works
   // alongside the rest of the projects router.
   app.use('/api', createPendingImportRouter({ stateService: deps.stateService }));
+
+  // 被动授权 — agent 免密发起授权申请 + 用户右下角一键批准签发授权密钥。
+  // 注意 发起/轮询两个端点的 public 放行在上面的全局认证中间件里(搜 access-requests)。
+  app.use('/api', createAccessRequestsRouter({ stateService: deps.stateService, authMode }));
   // 2026-05-29 项目基础设施重新同步(用户反馈:断头应用,缺 yaml resync)
   app.use('/api', createProjectInfraResyncRouter({
     stateService: deps.stateService,

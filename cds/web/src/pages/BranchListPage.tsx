@@ -940,9 +940,12 @@ function branchIssueCategory(branch: BranchSummary): BranchIssueCategory {
     return 'deploy-config';
   }
 
-  // 应用代码(异常退出/缺依赖/启动失败/健康检查)
+  // 应用代码(编译失败/异常退出/缺依赖/启动失败/健康检查/就绪探测超时)
+  // 注:就绪探测超时多为应用代码侧根因(编译失败/启动崩溃),后端 detectContainerFatalCause
+  // 已把根因(如 error CS0101)点名到 errorMessage,这里一并归到 app-code,
+  // 不再误落到"未分类错误"(参见 cds/src/routes/branches.ts:detectContainerFatalCause)。
   if (
-    /容器异常退出|容器.*启动后退出|疑似崩溃|exit\s*(code|ed with code)?\s*[:=]?\s*\d+|cannot find module|module not found|module_not_found|启动信号超时|健康检查.*超时|health.*(check.*timeout|probe failed)|readiness probe failed/.test(text)
+    /容器异常退出|容器.*启动后退出|疑似崩溃|exit\s*(code|ed with code)?\s*[:=]?\s*\d+|cannot find module|module not found|module_not_found|启动信号超时|就绪探测超时|容器进程未监听端口|构建失败|编译失败|编译错误|代码侧根因|error\s+cs\d|error\s+ts\d|健康检查.*超时|health.*(check.*timeout|probe failed)|readiness probe failed/.test(text)
   ) {
     return 'app-code';
   }
@@ -4394,12 +4397,12 @@ function BranchCard({
           const unhealthy = drift.unhealthyProfileIds;
           const parts: string[] = [];
           if (missing.length > 0) parts.push(`缺 ${missing.length} 个服务`);
-          if (unhealthy.length > 0) parts.push(`${unhealthy.length} 个异常`);
+          if (unhealthy.length > 0) parts.push(`${unhealthy.length} 个服务异常`);
           const detailLines = [
             `期望 ${drift.expectedCount} 个服务，实际健康 ${drift.healthyCount} 个`,
             missing.length > 0 ? `缺失（从未部署或被移除）: ${missing.join(', ')}` : '',
             unhealthy.length > 0 ? `异常（停止/错误）: ${unhealthy.join(', ')}` : '',
-            '点击一键收敛：按项目最新构建配置重新部署，补齐缺失服务',
+            '点击重新部署：按项目最新构建配置重新部署，补齐缺失/异常的服务',
           ].filter(Boolean);
           return (
             <button
@@ -4414,7 +4417,7 @@ function BranchCard({
             >
               <AlertTriangle className="h-3 w-3" aria-hidden />
               <span>{parts.join(' · ')}</span>
-              <span className="text-amber-600/70 dark:text-amber-400/70">收敛</span>
+              <span className="text-amber-600/70 dark:text-amber-400/70">重新部署</span>
             </button>
           );
         })() : null}
