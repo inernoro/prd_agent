@@ -359,18 +359,34 @@ public class DocumentStoreSyncController : ControllerBase
         var (store, error) = await LoadWritableStoreAsync(storeId, userId);
         if (error != null) return error;
 
+        // 既匹配「本库作为发起方(LocalStoreId)」的配对，也匹配「本库作为本地配对的对端(RemoteStoreId)」的配对，
+        // 这样本地两库配对的【目标库】详情右上角也能显示同步徽章（用户要求：任何同步中的库都标）。
         var links = await _db.DocumentStoreSyncLinks
-            .Find(l => l.LocalStoreId == storeId && l.OwnerId == userId)
+            .Find(l => l.OwnerId == userId
+                && (l.LocalStoreId == storeId
+                    || (l.LinkType == DocumentSyncLinkType.Local && l.RemoteStoreId == storeId)))
             .SortByDescending(l => l.UpdatedAt)
             .ToListAsync();
 
-        var localSig = await ComputeSignatureAsync(storeId);
+        var thisSig = await ComputeSignatureAsync(storeId);
         var items = new List<object>();
         foreach (var l in links)
         {
-            var remoteSig = await GetRemoteSignatureAsync(l);
-            var status = ResolveStatus(l, localSig, remoteSig);
-            items.Add(ToDto(l, status, localSig, remoteSig));
+            string status;
+            if (l.LocalStoreId == storeId)
+            {
+                // 正向：本库即配对的本地侧
+                var remoteSig = await GetRemoteSignatureAsync(l);
+                status = ResolveStatus(l, thisSig, remoteSig);
+            }
+            else
+            {
+                // 反向（本地配对的对端侧）：本库 = 配对的 remote，另一库 = 配对的 local。
+                // 交换签名槽位让 ResolveStatus 仍按 LastLocal/LastRemote 正确比对。
+                var otherSig = await ComputeSignatureAsync(l.LocalStoreId);
+                status = ResolveStatus(l, otherSig, thisSig);
+            }
+            items.Add(ToDto(l, status, null, null));
         }
         return Ok(ApiResponse<object>.Ok(new { items, hasSyncToken = !string.IsNullOrEmpty(store!.SyncToken) }));
     }
@@ -621,7 +637,7 @@ public class DocumentStoreSyncController : ControllerBase
             link.LastRemoteSignature = remoteSig;
             link.Status = DocumentSyncLinkStatus.Synced;
             link.LastResult = resultText;
-            return Ok(ApiResponse<object>.Ok(ToDto(link, DocumentSyncLinkStatus.Synced, localSig, remoteSig)));
+            return Ok(ApiResponse<object>.Ok(ToDto(link, DocumentSyncLinkStatus.Synced, localSig, remoteSig, local!.Name)));
         }
         catch (Exception ex)
         {
