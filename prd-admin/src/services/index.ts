@@ -1879,6 +1879,8 @@ export {
   listStoreViewEvents,
   getStoreAnalytics,
   getStoresAnalyticsSummary,
+  getAllStoresAnalytics,
+  listAllStoresViewEvents,
   // 批次 D：划词评论
   createInlineComment,
   listInlineComments,

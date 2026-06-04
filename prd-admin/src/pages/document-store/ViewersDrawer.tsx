@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Eye, Users, Clock, X, UserCircle2, Download, FileText } from 'lucide-react';
 import type { EChartsOption } from 'echarts';
-import { listStoreViewEvents, getStoreAnalytics } from '@/services';
+import { listStoreViewEvents, getStoreAnalytics, listAllStoresViewEvents, getAllStoresAnalytics } from '@/services';
 import type {
   DocumentStoreViewEvent,
   DocumentStoreAnalytics,
@@ -103,13 +103,19 @@ const RANGE_OPTIONS: { label: string; days: number }[] = [
 
 // ── Drawer ──
 
-export type ViewersDrawerProps = {
-  storeId: string;
-  storeName: string;
-  onClose: () => void;
-};
+// scope='store'：单个知识库；scope='account'：我名下所有知识库聚合（列表页「统计」入口）。
+export type ViewersDrawerProps = { onClose: () => void } & (
+  | { scope?: 'store'; storeId: string; storeName: string }
+  | { scope: 'account'; storeId?: undefined; storeName?: undefined }
+);
 
-export function ViewersDrawer({ storeId, storeName, onClose }: ViewersDrawerProps) {
+export function ViewersDrawer(props: ViewersDrawerProps) {
+  const { onClose } = props;
+  const isAccount = props.scope === 'account';
+  const storeId = isAccount ? null : props.storeId;
+  const headerSub = isAccount ? '全部知识库 · 我的空间' : (props.storeName ?? '');
+  const exportName = isAccount ? '全部知识库' : (props.storeName ?? '知识库');
+
   const [eventsLoading, setEventsLoading] = useState(true);
   const [events, setEvents] = useState<DocumentStoreViewEvent[]>([]);
   const [analytics, setAnalytics] = useState<DocumentStoreAnalytics | null>(null);
@@ -117,29 +123,29 @@ export function ViewersDrawer({ storeId, storeName, onClose }: ViewersDrawerProp
   const [days, setDays] = useState(30);
   const tz = useMemo(() => localTzOffset(), []);
 
-  // 流水列表只随 storeId 加载一次（始终展示最近活动，不随时间档变化）
+  // 流水列表加载一次（始终展示最近活动，不随时间档变化）
   const loadEvents = useCallback(async () => {
     setEventsLoading(true);
-    const res = await listStoreViewEvents(storeId, 50);
+    const res = isAccount ? await listAllStoresViewEvents(50) : await listStoreViewEvents(storeId!, 50);
     if (res.success) {
       setEvents(res.data.events);
     } else {
       toast.error('加载访客列表失败', res.error?.message);
     }
     setEventsLoading(false);
-  }, [storeId]);
+  }, [isAccount, storeId]);
 
   // 聚合报表随时间档重新拉取
   const loadAnalytics = useCallback(async () => {
     setAnalyticsLoading(true);
-    const res = await getStoreAnalytics(storeId, days, tz);
+    const res = isAccount ? await getAllStoresAnalytics(days, tz) : await getStoreAnalytics(storeId!, days, tz);
     if (res.success) {
       setAnalytics(res.data);
     } else {
       toast.error('加载访客报表失败', res.error?.message);
     }
     setAnalyticsLoading(false);
-  }, [storeId, days, tz]);
+  }, [isAccount, storeId, days, tz]);
 
   useEffect(() => { loadEvents(); }, [loadEvents]);
   useEffect(() => { loadAnalytics(); }, [loadAnalytics]);
@@ -221,10 +227,10 @@ export function ViewersDrawer({ storeId, storeName, onClose }: ViewersDrawerProp
             </div>
             <div className="min-w-0">
               <p className="truncate text-[13px] font-semibold text-token-primary">
-                访客记录
+                {isAccount ? '访客统计 · 全部知识库' : '访客记录'}
               </p>
               <p className="truncate text-[10px] text-token-muted">
-                {storeName}
+                {headerSub}
               </p>
             </div>
           </div>
@@ -250,7 +256,7 @@ export function ViewersDrawer({ storeId, storeName, onClose }: ViewersDrawerProp
               ))}
             </div>
             <button
-              onClick={() => exportCsv(events, storeName)}
+              onClick={() => exportCsv(events, exportName)}
               disabled={events.length === 0}
               title="导出当前已加载的最近 50 条访问明细为 CSV"
               className="inline-flex items-center gap-1 rounded-[8px] px-2.5 py-1.5 text-[11px] font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"

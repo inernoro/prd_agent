@@ -1212,6 +1212,8 @@ export const api = {
       storeViewEvents: (storeId: string) => `/api/document-store/stores/${storeId}/view-events`,
       storeAnalytics: (storeId: string) => `/api/document-store/stores/${storeId}/analytics`,
       storesAnalyticsSummary: () => '/api/document-store/stores/analytics-summary',
+      storesAnalyticsAll: () => '/api/document-store/stores/analytics-all',
+      storesViewEventsAll: () => '/api/document-store/stores/view-events-all',
       // 批次 D：划词评论
       inlineComments: (entryId: string) => `/api/document-store/entries/${entryId}/inline-comments`,
       inlineCommentDetail: (commentId: string) => `/api/document-store/inline-comments/${commentId}`,

@@ -588,6 +588,27 @@ export async function getStoresAnalyticsSummary() {
   );
 }
 
+/** 账号级访客聚合报表（我名下所有知识库，与单库报表同结构） */
+export async function getAllStoresAnalytics(days = 30, tz?: string) {
+  const qs = new URLSearchParams({ days: String(days) });
+  if (tz) qs.set('tz', tz);
+  return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreAnalytics>(
+    `${api.documentStore.entries.storesAnalyticsAll()}?${qs.toString()}`,
+    { method: 'GET' },
+  );
+}
+
+/** 账号级访客明细（我名下所有知识库最近访问，与单库 view-events 同结构） */
+export async function listAllStoresViewEvents(limit = 50) {
+  return await apiRequest<{
+    stats: import('@/services/contracts/documentStore').DocumentStoreViewStats;
+    events: import('@/services/contracts/documentStore').DocumentStoreViewEvent[];
+  }>(
+    `${api.documentStore.entries.storesViewEventsAll()}?limit=${limit}`,
+    { method: 'GET' },
+  );
+}
+
 // ── 批次 D：划词评论 ──
 
 /** 创建划词评论 */

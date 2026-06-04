@@ -3686,28 +3686,36 @@ public class DocumentStoreController : ControllerBase
         var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+        return Ok(ApiResponse<object>.Ok(await BuildViewEventsPayloadAsync(new List<string> { storeId }, limit)));
+    }
 
+    /// <summary>账号级访客列表：聚合我名下所有知识库的最近访问（仅 owner）</summary>
+    [HttpGet("stores/view-events-all")]
+    public async Task<IActionResult> ListAllStoresViewEvents([FromQuery] int limit = 50)
+    {
+        var userId = GetUserId();
+        var storeIds = await _db.DocumentStores.Find(s => s.OwnerId == userId).Project(s => s.Id).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(await BuildViewEventsPayloadAsync(storeIds, limit)));
+    }
+
+    /// <summary>访客列表 payload 构造：stats 聚合 + 最近事件 + entry 标题。storeIds 决定范围，为空时返回空结构。</summary>
+    private async Task<object> BuildViewEventsPayloadAsync(List<string> storeIds, int limit)
+    {
         limit = Math.Clamp(limit, 1, 200);
 
+        var matchFilter = Builders<DocumentStoreViewEvent>.Filter.In(e => e.StoreId, storeIds);
         var events = await _db.DocumentStoreViewEvents
-            .Find(e => e.StoreId == storeId)
+            .Find(matchFilter)
             .SortByDescending(e => e.EnteredAt)
             .Limit(limit)
             .ToListAsync();
 
-        // 聚合统计：总访问量、独立访客数、总停留时长
-        // 经 B8 去重改造后，每条 view event 已是"去重窗口内的一次访问"，
-        // 因此事件文档总数即为去重后的总访问量（不再因刷新虚高）。
-        // 独立访客 / 总时长必须基于全量事件聚合——用 MongoDB 聚合管道在服务端算，
-        // 不把该 store 的全量事件文档拉回应用层（store 访问量大时内存/延迟不可控）。
-        //
-        // BSON 元素名说明：本项目 MongoDB 没有 camelCase ConventionPack，
-        // 元素名即 C# 属性名原样 PascalCase（StoreId/ViewerUserId/AnonSessionToken/DurationMs），
-        // 仅 Id 属性映射为 _id（driver 默认）。
+        // 聚合统计：总访问量、独立访客数、总停留时长。基于全量事件用聚合管道在服务端算，
+        // 不把全量事件文档拉回应用层（访问量大时内存/延迟不可控）。
+        // BSON 元素名为 C# 属性名原样 PascalCase（StoreId/ViewerUserId/AnonSessionToken/DurationMs），仅 Id → _id。
         var statsPipeline = new[]
         {
-            new BsonDocument("$match", new BsonDocument("StoreId", storeId)),
-            // 访客分组键：ViewerUserId ?? AnonSessionToken ?? _id（与原 LINQ 语义一致）
+            new BsonDocument("$match", new BsonDocument("StoreId", new BsonDocument("$in", new BsonArray(storeIds)))),
             new BsonDocument("$project", new BsonDocument
             {
                 { "visitor", new BsonDocument("$ifNull", new BsonArray
@@ -3720,7 +3728,6 @@ public class DocumentStoreController : ControllerBase
             }),
             new BsonDocument("$facet", new BsonDocument
             {
-                // totals：总访问量 + 总停留时长
                 { "totals", new BsonArray
                     {
                         new BsonDocument("$group", new BsonDocument
@@ -3732,7 +3739,6 @@ public class DocumentStoreController : ControllerBase
                         })
                     }
                 },
-                // uniques：独立访客数（两段 group + $count，避免大基数 $addToSet 内存压力）
                 { "uniques", new BsonArray
                     {
                         new BsonDocument("$group", new BsonDocument("_id", "$visitor")),
@@ -3751,7 +3757,6 @@ public class DocumentStoreController : ControllerBase
         long totalDurationMs = 0;
         if (statsResult != null)
         {
-            // facet 分支无文档时为空数组，全部兜底 0
             if (statsResult.TryGetValue("totals", out var totalsVal)
                 && totalsVal is BsonArray totalsArr && totalsArr.Count > 0
                 && totalsArr[0] is BsonDocument totalsDoc)
@@ -3777,7 +3782,7 @@ public class DocumentStoreController : ControllerBase
             .ToListAsync();
         var entryTitles = entries.ToDictionary(e => e.Id, e => e.Title);
 
-        return Ok(ApiResponse<object>.Ok(new
+        return new
         {
             stats = new
             {
@@ -3801,7 +3806,7 @@ public class DocumentStoreController : ControllerBase
                 e.UserAgent,
                 e.Referer,
             }),
-        }));
+        };
     }
 
     /// <summary>知识库访客聚合报表（仅 owner）：趋势 / 时段分布 / 文档排行 / 停留分布 / KPI。</summary>
@@ -3815,7 +3820,23 @@ public class DocumentStoreController : ControllerBase
         var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+        return Ok(ApiResponse<object>.Ok(await BuildAnalyticsPayloadAsync(new List<string> { storeId }, days, tz)));
+    }
 
+    /// <summary>账号级访客聚合报表（我名下所有知识库聚合，仅 owner）：与单库报表同结构。</summary>
+    [HttpGet("stores/analytics-all")]
+    public async Task<IActionResult> GetAllStoresAnalytics(
+        [FromQuery] int days = 30,
+        [FromQuery] string? tz = null)
+    {
+        var userId = GetUserId();
+        var storeIds = await _db.DocumentStores.Find(s => s.OwnerId == userId).Project(s => s.Id).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(await BuildAnalyticsPayloadAsync(storeIds, days, tz)));
+    }
+
+    /// <summary>访客聚合报表 payload 构造：storeIds 决定范围（单库或账号全量），为空时返回零填充结构。</summary>
+    private async Task<object> BuildAnalyticsPayloadAsync(List<string> storeIds, int days, string? tz)
+    {
         days = Math.Clamp(days, 1, 365);
         // tz 仅接受 "+08:00" / "-05:30" 形式的 UTC 偏移，非法则按 UTC 聚合（日界/小时按 UTC 划分）。
         var tzValid = !string.IsNullOrEmpty(tz) && System.Text.RegularExpressions.Regex.IsMatch(tz, @"^[+-]\d{2}:\d{2}$");
@@ -3835,7 +3856,7 @@ public class DocumentStoreController : ControllerBase
         {
             new BsonDocument("$match", new BsonDocument
             {
-                { "StoreId", storeId },
+                { "StoreId", new BsonDocument("$in", new BsonArray(storeIds)) },
                 { "EnteredAt", new BsonDocument("$gte", since) },
             }),
             // 统一预处理：访客键 + 停留毫秒（null→0）
@@ -3974,7 +3995,7 @@ public class DocumentStoreController : ControllerBase
         var returningRate = unique > 0 ? (double)returning / unique : 0;
         var bounceRate = measured > 0 ? (double)bLt5 / measured : 0;
 
-        return Ok(ApiResponse<object>.Ok(new
+        return new
         {
             rangeDays = days,
             kpi = new
@@ -3990,7 +4011,7 @@ public class DocumentStoreController : ControllerBase
             hourly,
             topEntries,
             dwellBuckets = new { lt5s = bLt5, s5_30 = b5_30, s30_2m = b30_2m, gt2m = bGt2m, measured },
-        }));
+        };
     }
 
     /// <summary>账号级访客总计（我名下所有知识库聚合）：总访问 / 独立访客 / 总停留。</summary>

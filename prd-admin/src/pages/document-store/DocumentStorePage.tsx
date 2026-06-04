@@ -29,6 +29,7 @@ import {
   ArrowUpDown,
   Check,
   Tag,
+  BarChart3,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -110,6 +111,44 @@ function formatDwellCompact(ms: number): string {
   if (min < 60) return `${min} 分`;
   const hr = Math.floor(min / 60);
   return `${hr} 小时${min % 60 ? ` ${min % 60} 分` : ''}`;
+}
+
+// 账号级总计的「缓过来」动效：数字从上一个值缓动到目标值（easeOutCubic）。
+function useCountUp(target: number, durationMs = 700): number {
+  const [val, setVal] = useState(target);
+  const fromRef = useRef(target);
+  useEffect(() => {
+    const from = fromRef.current;
+    const to = target;
+    if (from === to) return;
+    let raf = 0;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / durationMs);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setVal(from + (to - from) * eased);
+      if (t < 1) raf = requestAnimationFrame(tick);
+      else { fromRef.current = to; setVal(to); }
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, durationMs]);
+  return val;
+}
+
+function AnimatedStat({ value, format }: { value: number; format: (n: number) => string }) {
+  const v = useCountUp(value);
+  return <strong style={{ color: 'var(--text-primary)' }}>{format(v)}</strong>;
+}
+
+// 挂载后淡入，避免账号总计「突然蹦出来」撑宽整行。
+function FadeIn({ children }: { children: React.ReactNode }) {
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    const r = requestAnimationFrame(() => setShown(true));
+    return () => cancelAnimationFrame(r);
+  }, []);
+  return <span style={{ opacity: shown ? 1 : 0, transition: 'opacity 0.45s ease' }}>{children}</span>;
 }
 
 // ── 创建空间对话框 ──
@@ -948,8 +987,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
                 发布到智识殿堂
               </button>
             )}
-            <Button variant="secondary" size="xs" onClick={() => setShowViewers(true)}>
-              <Users size={13} /> 访客
+            <Button variant="secondary" size="xs" onClick={() => setShowViewers(true)} title="查看本知识库的访客统计报表">
+              <BarChart3 size={13} /> 统计
             </Button>
             <Button variant="secondary" size="xs" onClick={() => setShowShareDialog(true)}>
               <Share2 size={13} /> 分享
@@ -1560,6 +1599,9 @@ export function DocumentStorePage() {
     return () => { cancelled = true; };
   }, [tab]);
 
+  // 列表页「统计」入口：打开账号级访客报表抽屉（聚合全部知识库）
+  const [showAccountViewers, setShowAccountViewers] = useState(false);
+
   const tabs: { key: StoreTab; label: string; icon: typeof Library }[] = [
     { key: 'mine', label: '我的空间', icon: Library },
     { key: 'team', label: '团队空间', icon: Users },
@@ -1698,16 +1740,17 @@ export function DocumentStorePage() {
             共 <strong style={{ color: 'var(--text-primary)' }}>{totalStores}</strong> 个知识库
             <span className="opacity-50 mx-1.5">·</span>
             <strong style={{ color: 'var(--text-primary)' }}>{totalDocs}</strong> 篇文章
-            {/* 账号级访客总计：仅「我的空间」展示（团队/收藏/点赞不是我的访客数据） */}
+            {/* 账号级访客总计：仅「我的空间」展示（团队/收藏/点赞不是我的访客数据）。
+                数字 count-up 缓动 + 整段淡入，避免突然蹦出。 */}
             {tab === 'mine' && accountSummary && (
-              <>
+              <FadeIn>
                 <span className="opacity-50 mx-1.5">·</span>
-                <strong style={{ color: 'var(--text-primary)' }}>{formatCountCompact(accountSummary.totalViews)}</strong> 次访问
+                <AnimatedStat value={accountSummary.totalViews} format={formatCountCompact} /> 次访问
                 <span className="opacity-50 mx-1.5">·</span>
-                <strong style={{ color: 'var(--text-primary)' }}>{formatCountCompact(accountSummary.uniqueVisitors)}</strong> 访客
+                <AnimatedStat value={accountSummary.uniqueVisitors} format={formatCountCompact} /> 访客
                 <span className="opacity-50 mx-1.5">·</span>
-                停留 <strong style={{ color: 'var(--text-primary)' }}>{formatDwellCompact(accountSummary.totalDurationMs)}</strong>
-              </>
+                停留 <AnimatedStat value={accountSummary.totalDurationMs} format={formatDwellCompact} />
+              </FadeIn>
             )}
           </span>
 
@@ -1884,6 +1927,17 @@ export function DocumentStorePage() {
           </div>
 
           <span className="flex-1" />
+          {/* 列表页「统计」入口：分析全部知识库（区别于知识库内的单库统计） */}
+          {tab === 'mine' && (
+            <Button
+              variant="secondary"
+              size="xs"
+              onClick={() => setShowAccountViewers(true)}
+              title="查看全部知识库的访客统计报表（趋势 / 时段 / 排行 / 停留）"
+            >
+              <BarChart3 size={13} /> 统计
+            </Button>
+          )}
           <Button
             variant="primary"
             size="xs"
@@ -2189,6 +2243,11 @@ export function DocumentStorePage() {
           </div>
         )}
       </div>
+
+      {/* 账号级访客统计抽屉（列表页「统计」入口，聚合全部知识库） */}
+      {showAccountViewers && (
+        <ViewersDrawer scope="account" onClose={() => setShowAccountViewers(false)} />
+      )}
 
       {showCreate && (
         <CreateStoreDialog

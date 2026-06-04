@@ -6,3 +6,6 @@
 | feat | prd-admin | 访客记录抽屉升级为聚合报表：时间档切换（7/30/90天）、KPI 扩展（平均停留/回访率/跳出率）、访问趋势折线 + 24h时段柱图（ECharts）、停留分布条、文档访问排行、CSV 导出 |
 | feat | prd-api | 新增账号级访客总计端点 GET /stores/analytics-summary（聚合我名下所有知识库的总访问/独立访客/总停留） |
 | feat | prd-admin | 知识库「我的空间」统计行内联扩展账号级总计：在「共 N 个知识库 · M 篇文章」后追加 总访问/访客/总停留 |
+| feat | prd-api | 访客报表/明细端点重构为「按 storeIds 聚合」可复用，新增账号级 GET /stores/analytics-all 与 /stores/view-events-all（聚合我名下所有知识库） |
+| feat | prd-admin | 知识库列表页新增「统计」按钮（分析全部知识库），知识库内「访客」按钮改为「统计」（分析本库）；ViewersDrawer 支持 account 范围复用同一报表 |
+| feat | prd-admin | 账号级访客总计数字 count-up 缓动 + 整段淡入，避免异步加载后突然蹦出撑宽统计行 |
