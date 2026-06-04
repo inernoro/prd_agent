@@ -46,18 +46,18 @@ export function LoginPage(): JSX.Element {
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#0c0a10] text-[#f7f5ff]">
+    <main className="relative min-h-screen overflow-hidden bg-[#15121d] text-[#f7f5ff]">
       <ShapeGrid
         className="absolute inset-0 h-full w-full"
         direction="diagonal"
         speed={0.32}
         squareSize={34}
         shape="hexagon"
-        borderColor="rgba(255,255,255,0.09)"
-        hoverFillColor="rgba(255,255,255,0.04)"
+        borderColor="rgba(255,255,255,0.14)"
+        hoverFillColor="rgba(255,255,255,0.05)"
         hoverTrailAmount={0}
       />
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(900px_620px_at_54%_44%,rgba(255,255,255,0.07),transparent_38%,rgba(12,10,16,0.82)_100%),linear-gradient(90deg,rgba(12,10,16,0.9),rgba(12,10,16,0.22)_48%,rgba(12,10,16,0.84))]" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(1000px_700px_at_50%_42%,rgba(255,255,255,0.11),transparent_46%),linear-gradient(180deg,rgba(21,18,29,0.42),rgba(15,12,21,0.72))]" />
 
       <section className="relative z-10 flex min-h-screen items-center justify-center px-5 py-10">
         <div className="grid w-full max-w-5xl items-center gap-10 lg:grid-cols-[minmax(0,1fr)_420px]">
