@@ -891,7 +891,12 @@ public sealed class ChangelogReader : IChangelogReader
     /// GitHub Contents API：列出 changelogs/ 目录，返回所有文件名。
     /// 1 次 API 请求即可获得整个目录列表。
     /// </summary>
-    private async Task<List<string>> ListChangelogFragmentsFromGitHubAsync(HttpClient client)
+    /// <summary>
+    /// 列出 changelogs/ 目录下的 .md 文件名。
+    /// 返回 null 表示「拉取失败」（API 错误/限速/异常）—— 调用方据此保留旧存量、不误判为空；
+    /// 返回空列表表示「目录确实没有碎片」（碎片已被 assemble-changelog 合并进 CHANGELOG）。
+    /// </summary>
+    private async Task<List<string>?> ListChangelogFragmentsFromGitHubAsync(HttpClient client)
     {
         var owner = GetGitHubOwner();
         var repo = GetGitHubRepo();
@@ -911,7 +916,7 @@ public sealed class ChangelogReader : IChangelogReader
                 _logger.LogWarning(
                     "[Changelog] GitHub Contents API 失败 {Url} status={Status} rateRemaining={RateRemaining}",
                     url, (int)resp.StatusCode, rateRemaining ?? "n/a");
-                return new List<string>();
+                return null; // 拉取失败：调用方保留旧存量，不当作「空」
             }
             if (rateRemaining != null)
             {
@@ -922,7 +927,7 @@ public sealed class ChangelogReader : IChangelogReader
             using var doc = JsonDocument.Parse(json);
             if (doc.RootElement.ValueKind != JsonValueKind.Array)
             {
-                return new List<string>();
+                return null; // 非预期响应：当作失败，保留旧存量
             }
 
             var names = new List<string>();
@@ -944,7 +949,7 @@ public sealed class ChangelogReader : IChangelogReader
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[Changelog] GitHub Contents API 异常 {Url}", url);
-            return new List<string>();
+            return null; // 异常：当作失败，保留旧存量
         }
     }
 
@@ -962,12 +967,16 @@ public sealed class ChangelogReader : IChangelogReader
         var client = CreateGitHubClient();
 
         var allNames = await ListChangelogFragmentsFromGitHubAsync(client).ConfigureAwait(false);
-        if (allNames.Count == 0)
+        if (allNames == null)
         {
+            // 拉取失败（API 错误/限速）：标记不可用，保留旧存量、不误清空
             view.DataSourceAvailable = false;
             return view;
         }
 
+        // 成功（即使目录为空）：数据源可用。空目录 = 碎片都已合并进 CHANGELOG，
+        // 待发布列表应清空——返回「可用的空视图」，让其落库 + 推送「已清空」给客户端，
+        // 否则生产实例会一直 hydrate 旧的非空快照，页面永远显示已发布内容（Codex P2）。
         view.DataSourceAvailable = true;
 
         var filtered = new List<(string name, DateOnly date)>();

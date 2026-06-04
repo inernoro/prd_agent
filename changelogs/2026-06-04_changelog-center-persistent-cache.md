@@ -12,3 +12,4 @@
 | fix | prd-api | 更新中心快照 UpsertIfChangedAsync 比对读也按 UpdatedAt 倒序，与 GetAsync 一致，重复行下不比错行 |
 | fix | prd-api | 更新中心快照写入改为定向更新最新行(按 Id)，变化检测/写入/hydrate 三者命中同一记录 |
 | fix | prd-admin | 更新中心 store 加单调请求号 stale-response 守卫，丢弃乱序旧响应，防旧拉取覆盖 SSE 新数据 |
+| fix | prd-api | 更新中心 GitHub 路径区分「拉取失败」与「目录确实为空」：空目录落库+推送清空待发布列表，不再永远 hydrate 旧非空快照 |
