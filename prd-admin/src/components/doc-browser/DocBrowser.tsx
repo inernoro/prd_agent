@@ -510,8 +510,19 @@ function EntryIcon({ entry, isPrimary, isPinned, isOpen }: { entry: DocBrowserEn
   if (isPrimary) return <Star size={14} style={{ color: 'rgba(234,179,8,0.85)' }} />;
   if (isPinned) return <Pin size={14} style={{ color: 'rgba(59,130,246,0.7)' }} />;
   if (entry.sourceType === 'github_directory') return <Github size={14} style={{ color: 'rgba(130,80,223,0.7)' }} />;
-  // 订阅源图标弱化为中性灰：整库都是订阅源时，金色 RSS 每条都亮太啰嗦；保留波浪形状区分类型即可
-  if (entry.sourceType === 'subscription') return <Rss size={14} style={{ color: 'var(--text-muted)' }} />;
+  // 订阅源：用 Rss 图标本身的颜色表达同步状态（替代此前会独占一行徽章行的状态小圆点）。
+  // 健康=中性灰（不啰嗦），出错=红，暂停=琥珀，同步中=蓝；让异常状态在文档树里直接可见。
+  if (entry.sourceType === 'subscription') {
+    const color = entry.syncStatus === 'error' ? 'rgba(248,113,113,0.95)'
+      : entry.isPaused ? 'rgba(234,179,8,0.95)'
+      : entry.syncStatus === 'syncing' ? 'rgba(96,165,250,0.95)'
+      : 'var(--text-muted)';
+    const title = entry.syncStatus === 'error' ? '订阅同步出错'
+      : entry.isPaused ? '订阅已暂停'
+      : entry.syncStatus === 'syncing' ? '订阅同步中'
+      : '订阅源';
+    return <Rss size={14} style={{ color }} aria-label={title}><title>{title}</title></Rss>;
+  }
 
   // 通过注册表按文件名/MIME 类型查找对应图标
   const cfg = getFileTypeConfig(entry.title, entry.contentType);
@@ -1030,17 +1041,12 @@ function TreeNode({
   const verdictForRow = !isFolder ? getVerdictConfig(entry.metadata?.verdict) : null;
   const isFreshForRow = !isFolder && (isEntryFresh ? isEntryFresh(entry) : isRecentlyChanged(entry.lastChangedAt));
   const isContentMatch = !isFolder && contentMatchIds.has(entry.id);
-  // 订阅状态点只在「非健康」（暂停/同步中/出错）时才占徽章行：健康（已同步）不画绿点，
-  // 否则每条都顶一个绿点、副行只剩这一个点显得空旷。健康订阅条目因此回落为单行紧凑布局。
-  const isSubscriptionAbnormal = !isFolder && entry.sourceType === 'subscription'
-    && (!!entry.isPaused || entry.syncStatus === 'syncing' || entry.syncStatus === 'error');
-  const isSubscriptionDot = isSubscriptionAbnormal && !!onOpenSubscription;
   const hasTags = !isFolder && (entry.tags?.length ?? 0) > 0;
   const hasBadgeRow =
     !isFolder && (
       isShared || reprocessing !== undefined || !!verdictForRow ||
       hasTags || isContentMatch ||
-      isSubscriptionDot || isPrimary || (isPinned && !isPrimary)
+      isPrimary || (isPinned && !isPrimary)
     );
 
 
@@ -1151,7 +1157,9 @@ function TreeNode({
               {isChecked && <Check size={10} style={{ color: '#fff' }} />}
             </span>
           )}
-          <EntryIcon entry={entry} isPrimary={isPrimary} isPinned={isPinned} isOpen={isOpen} />
+          <span className="flex-shrink-0 inline-flex items-center justify-center" style={{ width: 14, height: 14 }}>
+            <EntryIcon entry={entry} isPrimary={isPrimary} isPinned={isPinned} isOpen={isOpen} />
+          </span>
 
           {/* 非文件夹标题不再 flex-1 撑满：取自然宽度，让 NEW 紧贴标题末尾（时间靠 ml-auto 顶右） */}
           <span className={`${isFolder ? 'flex-1 ' : ''}truncate min-w-0`}
@@ -1268,31 +1276,6 @@ function TreeNode({
             title="该文件因正文内容命中而被搜出（标题未含关键词）"
           >
             内容包含
-          </span>
-        )}
-
-        {/* 订阅状态点：仅非健康（暂停/同步中/出错）才显示；健康已同步不画点（去重复绿点） */}
-        {isSubscriptionAbnormal && onOpenSubscription && (
-          <span
-            onClick={(e) => { e.stopPropagation(); onOpenSubscription(entry.id); }}
-            className="flex-shrink-0 cursor-pointer"
-            title={
-              entry.isPaused ? '订阅已暂停（点击查看详情）'
-              : entry.syncStatus === 'syncing' ? '同步中（点击查看详情）'
-              : entry.syncStatus === 'error' ? '同步出错（点击查看详情）'
-              : '订阅源（点击查看详情）'
-            }
-          >
-            <span
-              className="block w-1.5 h-1.5 rounded-full"
-              style={{
-                background: entry.isPaused ? 'rgba(148,163,184,0.7)'
-                  : entry.syncStatus === 'syncing' ? 'rgba(96,165,250,0.85)'
-                  : entry.syncStatus === 'error' ? 'rgba(248,113,113,0.85)'
-                  : 'rgba(74,222,128,0.85)',
-                boxShadow: entry.syncStatus === 'syncing' ? '0 0 6px rgba(96,165,250,0.6)' : 'none',
-              }}
-            />
           </span>
         )}
 

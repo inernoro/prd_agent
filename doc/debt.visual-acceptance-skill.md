@@ -17,6 +17,21 @@
 
 - **归档后自查能否打开**（用户要求 2026-05-27「创建之后要能打开」）：新增 `scripts/verify-open.mjs`——headless 打开分享链断言报告真渲染(标题 + 正文 + 截图)，exit 0=能看、exit 2=空/打不开→重新推送验收。SKILL.md 工作流第 5 步定为强制：归档后必跑，杜绝"建了条目但点开空白"流到用户手里。全链路复验已实测：脚本归档(写正文 success + hasContent 校验) → 分享链 → verify-open(必现文字命中 + 4 图齐 + 无死页 exit 0) 全绿。历史 2 条空壳(旧MECE + SaaS)已删除，库内仅剩有内容条目。
 
+## wave v1.0 已落地（2026-06-04，固化自元 issue #605 三位执行 Agent 反馈）
+
+harness `scripts/harness.mjs` 实装、本地自测 10/10 通过（local http 造 console.error + 500 + 未捕获异常 + 撑破 modal + dark-only 页，断言全部命中）：
+
+- **运行时错误自动捕获**（issue #605 二.2，"机器最该补、人最易漏"）：`attachAutoCapture`，`launch()` 默认装。pageerror→P0、同源 5xx→P0、console.error→P1、同源 4xx→P1、requestfailed→P1。判级保守去噪：只计同源（app 自己 host），跨域第三方不计；401/403/404 跳过；主动 abort 跳过；`ignore` 正则白名单。`blockSeverity`（默认 P0）：≥此级别的 finding 自动折叠进"截图那一刻"的 warnings → `archive_report.py` 准入（§3.5 第 4 项）直接拒收，把机器抓到的严重运行时错误变成硬门禁。P1 记 result.json 不硬阻断。
+- **机读 result.json**（issue #605 二.3）：`writeManifest(outDir, extra)` 除 manifest.json（契约不变）外同写 result.json = `{verdict,target,themeSupport,timing,shots,autoFindings,autoFindingsSummary}`，下游 Agent 直接消费不解析 markdown。
+- **dark-only 双主题伪命令消除**（issue #605 二.2）：`detectThemeSupport` 切 dark/light 采样 body 背景亮度，差 < 24 判 dark-only，driver 据此单图 + 注明，不计 fail。
+- **导航 timing**（issue #605 二.5）：`captureTiming`，呼应 CLAUDE §6。
+- **过程视频**（issue #605 二.1）：见下方"录屏决定重审"。
+- 标准同步：`reference/standard-v2.md` §5.3/5.4/5.5 + header；离线镜像 `doc/rule.issues-system.md` §5 bump v1.0。
+
+### 录屏决定重审（2026-06-04）
+
+2026-05-27 用户原话"录屏幕有点难了"判"明确不做"，顾虑是**体积大 + 阅读器不渲染 + 进知识库正文膨胀**，但当时也留口"未来若要做必须走外部对象存储 + 仅存链接，不进知识库正文"。issue #605 二.1 执行 Agent 复提视频为最高 ROI。**调和方案（不违背原决定）**：`launch(cfg,{recordVideoDir})` + `finalizeVideo()` 产 `walkthrough.webm` 作**默认关闭的本地可选附件**，**绝不自动上传知识库正文**——完全落在原决定的"未来若要做"caveat 内。需长期托管仍走外部对象存储仅存链接。
+
 ## wave 2 待补（差异化）
 
 - **E5 自动识别变化区画框**：当前 `stepShot` 的高亮区要调用方手传 locator。理想是操作前后 DOM diff 自动定位"新增/变化的元素"并自动画框，driver 不用手指。可借 MutationObserver 在 `stepClick` 内记录点击后新增节点，回传给下一张 `stepShot` 当默认 highlight。
@@ -30,5 +45,5 @@
 
 ## 明确不做（用户 2026-05-27 定）
 
-- **录屏（screen recording）**：用户原话"录屏幕有点难了"。Playwright 有 `recordVideo` 能力，但产物大、入库膨胀（与"代码里不允许验收图片"的体积顾虑同源）、且分享阅读器不渲染视频。结论：不做，留此条说明缘由，未来若要做必须走外部对象存储 + 仅存链接，不进知识库正文。
+- **录屏（screen recording）**：用户原话"录屏幕有点难了"。Playwright 有 `recordVideo` 能力，但产物大、入库膨胀（与"代码里不允许验收图片"的体积顾虑同源）、且分享阅读器不渲染视频。结论：不做，留此条说明缘由，未来若要做必须走外部对象存储 + 仅存链接，不进知识库正文。**（2026-06-04 重审：已按此 caveat 落地为"默认关闭的本地可选附件，不进知识库正文"，见上方 wave v1.0「录屏决定重审」。原顾虑未被违背。）**
 - **自动把操作过程转成视角偏移 + 标注的现成开源组件**：子智能体 2026-05-27 搜过 GitHub，无 Playwright 可直接集成的"自动平移/缩放镜头 + 标注"库。最接近的 Screenize（操作录制转视频）、rrweb（会话回放）都不是 Playwright 截图链路能直接拼的（一个是独立录屏 app，一个是 DOM 事件回放 SDK）。结论：放弃找现成轮子；我们自建的 `box`/`stepClick` 红框 + 序号已覆盖"标注"这一核心诉求（"视角偏移"= 镜头跟随，属录屏范畴，随上一条一起不做）。

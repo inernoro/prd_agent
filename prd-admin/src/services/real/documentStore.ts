@@ -570,6 +570,45 @@ export async function listStoreViewEvents(storeId: string, limit = 50) {
   );
 }
 
+/** 获取知识库访客聚合报表（仅 owner）。days 取值范围 1-365，tz 形如 "+08:00" */
+export async function getStoreAnalytics(storeId: string, days = 30, tz?: string) {
+  const qs = new URLSearchParams({ days: String(days) });
+  if (tz) qs.set('tz', tz);
+  return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreAnalytics>(
+    `${api.documentStore.entries.storeAnalytics(storeId)}?${qs.toString()}`,
+    { method: 'GET' },
+  );
+}
+
+/** 账号级访客总计（我名下所有知识库聚合，仅 owner 自己） */
+export async function getStoresAnalyticsSummary() {
+  return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreAccountSummary>(
+    api.documentStore.entries.storesAnalyticsSummary(),
+    { method: 'GET' },
+  );
+}
+
+/** 账号级访客聚合报表（我名下所有知识库，与单库报表同结构） */
+export async function getAllStoresAnalytics(days = 30, tz?: string) {
+  const qs = new URLSearchParams({ days: String(days) });
+  if (tz) qs.set('tz', tz);
+  return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreAnalytics>(
+    `${api.documentStore.entries.storesAnalyticsAll()}?${qs.toString()}`,
+    { method: 'GET' },
+  );
+}
+
+/** 账号级访客明细（我名下所有知识库最近访问，与单库 view-events 同结构） */
+export async function listAllStoresViewEvents(limit = 50) {
+  return await apiRequest<{
+    stats: import('@/services/contracts/documentStore').DocumentStoreViewStats;
+    events: import('@/services/contracts/documentStore').DocumentStoreViewEvent[];
+  }>(
+    `${api.documentStore.entries.storesViewEventsAll()}?limit=${limit}`,
+    { method: 'GET' },
+  );
+}
+
 // ── 批次 D：划词评论 ──
 
 /** 创建划词评论 */
