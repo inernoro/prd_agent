@@ -14,3 +14,5 @@
 | fix | prd-admin | 更新中心 store 加单调请求号 stale-response 守卫，丢弃乱序旧响应，防旧拉取覆盖 SSE 新数据 |
 | fix | prd-api | 更新中心 GitHub 路径区分「拉取失败」与「目录确实为空」：空目录落库+推送清空待发布列表，不再永远 hydrate 旧非空快照 |
 | fix | prd-api | 更新中心 GitHub 待发布：碎片全部 raw 拉取失败致空时标记不可用，避免假空覆盖好快照 |
+| fix | prd-api | 更新中心 GitHub 待发布任一碎片拉取失败即不落库（保留完整旧快照），避免持久化不完整列表 |
+| fix | prd-admin | 更新中心 GitHub 日志后台/SSE 成功刷新也清错误横幅，不再失败后残留红色提示 |

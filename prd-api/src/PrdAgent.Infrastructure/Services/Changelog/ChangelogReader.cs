@@ -1030,14 +1030,16 @@ public sealed class ChangelogReader : IChangelogReader
             "[Changelog] GitHub 待发布拉取完成 files={Files} failures={Failures} concurrency={Concurrency} elapsed={Elapsed}ms",
             filtered.Count, failures, MaxGitHubFetchConcurrency, sw.ElapsedMilliseconds);
 
-        // 目录列出成功但「有碎片却一个都没拉到」（raw 拉取全/部分失败导致最终为空）：
-        // 这是拉取失败，不是「确实清空」。标记不可用、保留旧存量，避免用假空覆盖好快照 + 误推清空
-        // （Bugbot Medium）。注意：failures==0 的空（碎片确已合并 / 文件无有效条目）才是真清空，照常落库。
-        if (failures > 0 && view.Fragments.Count == 0)
+        // 任一碎片 raw 拉取失败（全失败致空，或部分失败致列表不完整）都不落库：
+        // 否则会用「不完整/假空的待发布列表」覆盖上一份完整快照并推给客户端，丢掉失败的碎片、
+        // 在不完整↔完整之间抖动（Bugbot/Codex Medium）。保留旧存量（完整、仅稍旧），等下个
+        // Worker 周期重试，直到一次完全成功才更新。failures==0 才是可信结果（含真清空），照常落库。
+        // 注意：本地源路径读文件无 per-file 网络失败，不受此影响；这里只针对无本地源的 GitHub fallback。
+        if (failures > 0)
         {
             _logger.LogWarning(
-                "[Changelog] GitHub 待发布全部碎片拉取失败 files={Files} failures={Failures}，保留旧存量不误清空",
-                filtered.Count, failures);
+                "[Changelog] GitHub 待发布存在碎片拉取失败 files={Files} failures={Failures} parsed={Parsed}，保留旧存量、本周期不落库",
+                filtered.Count, failures, view.Fragments.Count);
             view.DataSourceAvailable = false;
             return view;
         }

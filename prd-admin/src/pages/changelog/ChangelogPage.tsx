@@ -325,6 +325,9 @@ export default function ChangelogPage() {
       const previous = githubLogsRef.current;
       const res = await getChangelogGitHubLogs(GITHUB_LOGS_FETCH_LIMIT, force);
       if (res.success) {
+        // 成功就清错误横幅（无论 foreground/trailing/SSE 触发）：否则前一次前台失败留下的
+        // 红色「注意」横幅会在后台成功更新后仍挂着，与实际状态不符（Bugbot Medium）。
+        setGitHubLogsError(null);
         const previousShas = new Set((previous?.logs ?? []).map((log) => log.sha));
         const insertedShas = previous
           ? res.data.logs.filter((log) => !previousShas.has(log.sha)).map((log) => log.sha)
