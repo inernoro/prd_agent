@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { DailyTip } from '@/services/real/dailyTips';
 import { listVisibleTips, markTipAsLearned } from '@/services/real/dailyTips';
+import { registerLogoutReset } from '@/stores/authStore';
 
 const DISMISSED_KEY = 'dailyTipDismissedIds';
 
@@ -128,6 +129,15 @@ export const useDailyTipsStore = create<DailyTipsState>((set, get) => ({
       .filter((t) => !dismissed.has(t.id));
   },
 }));
+
+// ── 账号切换 / 登出时清空 user-scoped 状态 ──
+// locallyLearnedVersions 是模块级内存,跨账号切换(同一标签不刷新页面)不会自动清,
+// 否则上个用户学会的共享 seed sourceId 会让下个用户的入口脉冲 / 自动开讲被错误压制(Bugbot High)。
+// 同时复位 items/loaded/dismissed,避免残留上个用户的 tip(sessionStorage 在 logout 时也会被 clear)。
+registerLogoutReset(() => {
+  locallyLearnedVersions.clear();
+  useDailyTipsStore.setState({ items: [], loaded: false, loading: false, dismissed: new Set() });
+});
 
 // ── 自动轮询:60s 刷新一次;标签页从隐藏变可见时立即刷新 ──
 // 让管理员后台「推送」操作在 1 分钟内送达用户,不需要用户手动 F5。

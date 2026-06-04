@@ -14,12 +14,30 @@ export function isEditorPageGuide(sourceId: string | null | undefined): boolean 
 
 /**
  * 取 actionUrl 的路由路径部分(去掉 ?query 和 #hash),用于和 location.pathname 比较。
- * 有的 tip 的 actionUrl 带 deep-link query(如 nav-order-customize 的 `/settings?tab=nav-order`),
- * 路径匹配必须只比 pathname,否则永远匹配不上 → 入口按钮被隐藏、作用域抽屉看不到该教程(Codex P2)。
  * 导航仍用完整 actionUrl(handleOpenTip),query 只在匹配阶段剥离。
  */
 export function routePathOf(actionUrl: string): string {
   return actionUrl.split('?')[0].split('#')[0];
+}
+
+/**
+ * actionUrl 的 query 约束是否被当前 location.search 满足。
+ * - actionUrl 不带 query(绝大多数 tip)→ 恒真,只按路径匹配。
+ * - actionUrl 带 query(deep-link 到具体子页 tab,如 nav-order-customize 的 `/settings?tab=nav-order`)
+ *   → 要求其每个参数在当前 search 中同值出现,这样:
+ *     · 仅路径比较会「永远匹配不上」(Codex:入口被隐藏)——已用 routePathOf 解决路径侧;
+ *     · 仅剥离 query 又会「过度匹配」到 /settings 的每个 tab(Codex:account/skin tab 也弹 nav-order 教程)。
+ *   两者都不对,正解是路径用 routePathOf 比 + query 用本函数 gate。
+ */
+export function actionQuerySatisfied(actionUrl: string, search: string): boolean {
+  const qIndex = actionUrl.indexOf('?');
+  if (qIndex < 0) return true;
+  const want = new URLSearchParams(actionUrl.slice(qIndex + 1).split('#')[0]);
+  const have = new URLSearchParams(search || '');
+  for (const [k, v] of want) {
+    if (have.get(k) !== v) return false;
+  }
+  return true;
 }
 
 /**
@@ -39,12 +57,14 @@ export function matchPageGuide(
   items: DailyTip[],
   dismissed: Set<string>,
   pathname: string,
+  search = '',
 ): DailyTip | null {
   return items.find((t) => {
     if (dismissed.has(t.id)) return false;
     if (t.learned) return false; // 已学会的不再算「未走完」→ 不自动开讲、入口不脉冲(仍可手动重看)
     if (t.kind !== 'card' && t.kind !== 'spotlight') return false;
     if (typeof t.sourceId !== 'string' || !t.sourceId.endsWith('-page-guide') || !t.actionUrl) return false;
+    if (!actionQuerySatisfied(t.actionUrl, search)) return false;
     const isEditor = isEditorPageGuide(t.sourceId);
     const url = routePathOf(t.actionUrl);
     if (pathname === url) return !isEditor;
@@ -70,12 +90,14 @@ export function filterPageTips(
   items: DailyTip[],
   dismissed: Set<string>,
   pathname: string,
+  search = '',
 ): DailyTip[] {
   return items.filter((t) => {
     if (dismissed.has(t.id)) return false;
     if (t.kind !== 'card' && t.kind !== 'spotlight') return false;
     if (t.isTargeted) return true;
     if (!t.actionUrl) return false;
+    if (!actionQuerySatisfied(t.actionUrl, search)) return false;
     const url = routePathOf(t.actionUrl);
     const isPageGuide = typeof t.sourceId === 'string' && t.sourceId.endsWith('-page-guide');
     if (isPageGuide) {

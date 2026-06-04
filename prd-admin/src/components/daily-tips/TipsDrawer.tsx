@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Sparkles, X, Pin, PinOff, MapPin, ChevronLeft, ChevronRight, GraduationCap } from 'lucide-react';
 import { OPEN_TIPS_DRAWER_EVENT } from './TipsEntryButton';
-import { matchPageGuide, isEditorPageGuide, filterPageTips, routePathOf } from './pageGuideMatch';
+import { matchPageGuide, isEditorPageGuide, filterPageTips, routePathOf, actionQuerySatisfied } from './pageGuideMatch';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { writeSpotlightPayload, SPOTLIGHT_PAYLOAD_UPDATED_EVENT } from './TipsRotator';
 import { trackTip, dismissTipForever } from '@/services/real/dailyTips';
@@ -207,16 +207,16 @@ export function TipsDrawer() {
   // 用 store 稳定引用 items + dismissed(而非 cardTips() 每次新建的 tips 数组),memo 才真正能缓存(Bugbot)。
   // 与 TipsEntryButton 共用 matchPageGuide,避免两份 inline 拷贝随规则漂移。
   const pageGuideHere = useMemo(
-    () => matchPageGuide(items, dismissed, location.pathname),
-    [items, dismissed, location.pathname],
+    () => matchPageGuide(items, dismissed, location.pathname, location.search),
+    [items, dismissed, location.pathname, location.search],
   );
 
   // ── 本页相关教程子集 ──────────────────────────────────
   // 与 TipsEntryButton 共用 filterPageTips(SSOT):只展示属于本页的教程,
-  // 彻底消除「开 A 页弹 B 页教程」。规则细节见 pageGuideMatch.ts。
+  // 彻底消除「开 A 页弹 B 页教程」。带 location.search 让 query-scoped tip 按 tab 精确匹配(Codex P2)。
   const pageTips = useMemo(
-    () => filterPageTips(items, dismissed, location.pathname),
-    [items, dismissed, location.pathname],
+    () => filterPageTips(items, dismissed, location.pathname, location.search),
+    [items, dismissed, location.pathname, location.search],
   );
   // 抽屉实际展示的列表:默认「本页」,用户可切「全部」浏览所有页面的教程。
   const viewTips = showAllPages ? tips : pageTips;
@@ -288,14 +288,15 @@ export function TipsDrawer() {
   //(那正是「打开却是别人的教程」的根因,用户 2026-06-04)。
   const defaultIndex = (() => {
     if (viewTips.length === 0) return -1;
-    const guide = matchPageGuide(viewTips, dismissed, location.pathname);
+    const guide = matchPageGuide(viewTips, dismissed, location.pathname, location.search);
     if (guide) {
       const gi = viewTips.findIndex((t) => t.id === guide.id);
       if (gi >= 0) return gi;
     }
     const ai = viewTips.findIndex((t) => {
       if (!t.actionUrl) return false;
-      const url = routePathOf(t.actionUrl); // 剥离 deep-link query 再比路径(Codex P2)
+      if (!actionQuerySatisfied(t.actionUrl, location.search)) return false; // query-scoped tip 按 tab gate(Codex P2)
+      const url = routePathOf(t.actionUrl); // 剥离 deep-link query 再比路径
       return location.pathname === url || location.pathname.startsWith(url + '/');
     });
     return ai >= 0 ? ai : 0;

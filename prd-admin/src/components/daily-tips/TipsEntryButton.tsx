@@ -32,15 +32,16 @@ export function TipsEntryButton({ className, compact = false }: { className?: st
     if (isAuthenticated && !loaded) load();
   }, [isAuthenticated, loaded, load]);
 
-  // 本页相关教程(与 TipsDrawer 抽屉作用域共用同一过滤逻辑)。
+  // 本页相关教程(与 TipsDrawer 抽屉作用域共用同一过滤逻辑)。带 location.search:query-scoped
+  // 的 tip(如 nav-order-customize 的 ?tab=nav-order)只在对应 tab 才算「本页」(Codex P2)。
   const pageTips = useMemo(
-    () => filterPageTips(items, dismissed, location.pathname),
-    [items, dismissed, location.pathname],
+    () => filterPageTips(items, dismissed, location.pathname, location.search),
+    [items, dismissed, location.pathname, location.search],
   );
   // newbie:本页有「未走完的 *-page-guide」→ 强调色 + 脉冲,提示有完整上手教程没走完。
   const newbie = useMemo(
-    () => !!matchPageGuide(items, dismissed, location.pathname),
-    [items, dismissed, location.pathname],
+    () => !!matchPageGuide(items, dismissed, location.pathname, location.search),
+    [items, dismissed, location.pathname, location.search],
   );
 
   // 未登录不渲染:像 /library 这种公开页匿名访客也会渲染头部,但根挂载的 TipsDrawer 仅登录后挂,
