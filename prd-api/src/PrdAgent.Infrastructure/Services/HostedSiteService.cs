@@ -1865,7 +1865,8 @@ public class HostedSiteService : IHostedSiteService
     // 标为此值；startup backfill 把 < 此值的存量站点重新注入升级（无需用户重传）。
     // v1：框架感知 + 合成左右键兜底（对忽略 isTrusted 的自定义 deck 无效）
     // v2：改「可靠驱动优先」，新增任意带 next()/prev() 的自定义元素（如 deck-stage）直驱
-    private const int SlideNavVersion = 2;
+    // v3：分档 + 透明可控 —— 高可信自动开（角落提示条可关）、低可信(.slide≥2)仅邀请不劫持
+    private const int SlideNavVersion = 3;
 
     // 注入块起始标记。注入块形如 {marker}<script>...</script>，剥离时从 marker 找到其后
     // 第一个 </script> 一并删除，因此升级垫片版本时旧块会被整体替换而非被「幂等跳过」。
@@ -1921,9 +1922,12 @@ public class HostedSiteService : IHostedSiteService
 (function(){
   if (window.__mapSlideNavCompat) return;
   window.__mapSlideNavCompat = true;
-  var SNAP_AXIS = null; // 'x' | 'y' | null
-  var scroller = null;
-  var driver = null;    // 可靠驱动 { next, prev }，解析失败为 null
+  var SNAP_AXIS = null, scroller = null, driver = null;
+  var navOn = false, decided = false, pill = null;
+  // 记住用户对「本 deck」的选择（on/off）。用 sessionStorage（随标签页关闭清空，符合 no-localStorage 约定）
+  var KEY = 'mapSlideNav:' + (location.pathname || '');
+  function getPref(){ try { return sessionStorage.getItem(KEY); } catch(e){ return null; } }
+  function setPref(v){ try { sessionStorage.setItem(KEY, v); } catch(e){} }
   function gcs(el, p){ try { return getComputedStyle(el)[p] || ''; } catch(e){ return ''; } }
   function findSnapScroller(){
     var cands = [document.scrollingElement, document.documentElement, document.body];
@@ -1954,7 +1958,7 @@ public class HostedSiteService : IHostedSiteService
     }
     return null;
   }
-  // 解析「可靠驱动」：直接调 deck 自身导航 API，规避合成键盘事件 isTrusted=false 被忽略的问题
+  // 「可靠驱动」= 高可信信号：直接调 deck 自身导航 API（规避合成事件 isTrusted=false 被忽略）
   function resolveDriver(){
     try {
       if (window.Reveal && typeof window.Reveal.next === 'function')
@@ -1969,20 +1973,15 @@ public class HostedSiteService : IHostedSiteService
     } catch(e){}
     return null;
   }
+  // 低可信信号：仅靠 .slide 类元素 ≥2（最易误判，故只用于「邀请」不自动劫持）
+  function looseSlides(){
+    return document.querySelectorAll('.swiper-slide, .reveal .slides > section, section.slide, .slide, [data-slide], .step, .slidev-page').length >= 2;
+  }
   var SYN = '__mapSyn';
   function synthArrow(dir){
-    // 无可靠驱动时的尽力兜底：按主流 PPT 约定把翻页意图转成左右方向键补发
     var ev = new KeyboardEvent('keydown', { key: dir>0?'ArrowRight':'ArrowLeft', code: dir>0?'ArrowRight':'ArrowLeft', keyCode: dir>0?39:37, which: dir>0?39:37, bubbles:true, cancelable:true });
     ev[SYN] = true;
     (document.activeElement || document.body || document).dispatchEvent(ev);
-  }
-  function looksLikeDeck(){
-    if (window.Reveal || window.Swiper || window.impress) return true;
-    if (document.querySelector('.reveal .slides, .swiper, .swiper-container, #impress, .slidev-layout, .slidev-page')) return true;
-    if (findDeckElement()) return true;
-    if (findSnapScroller()) return true;
-    if (document.querySelectorAll('.swiper-slide, .reveal .slides > section, section.slide, .slide, [data-slide], .step, .slidev-page').length >= 2) return true;
-    return false;
   }
   function inEditable(t){ return !!(t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)); }
   function onKey(e){
@@ -1993,14 +1992,11 @@ public class HostedSiteService : IHostedSiteService
     var isSpace = (k === ' ' || k === 'Spacebar');
     var dir = (k === 'ArrowDown' || k === 'PageDown' || (isSpace && !e.shiftKey)) ? 1
             : ((k === 'ArrowUp' || k === 'PageUp' || (isSpace && e.shiftKey)) ? -1 : 0);
-    if (!dir) return; // 左右键交给页面原生处理（它本来就支持）
+    if (!dir) return; // 左右键交给页面原生处理
     if (!driver) driver = resolveDriver();
     if (driver){ dir>0 ? driver.next() : driver.prev(); e.preventDefault(); e.stopPropagation(); return; }
-    // 无可靠驱动：仅对上下方向键尽力合成左右键，且不 preventDefault/stopPropagation，
-    // 避免把 deck 原生可用的 Space/PageDown/ArrowDown 一并废掉（帮倒忙）
-    if (isVert) synthArrow(dir);
+    if (isVert) synthArrow(dir); // 无可靠驱动：仅上下键尽力合成，不抑制原生
   }
-  // 滚轮/触摸仅在「横向 scroll-snap」这一明确场景接管纵向手势，避免误伤 deck 内部滚动
   var wheelLock = 0;
   function onWheel(e){
     if (!(scroller && SNAP_AXIS === 'x')) return;
@@ -2015,28 +2011,61 @@ public class HostedSiteService : IHostedSiteService
     if (!(scroller && SNAP_AXIS === 'x')) return;
     var t = e.changedTouches && e.changedTouches[0]; if (!t) return;
     var dx = t.clientX - tsx, dy = t.clientY - tsy;
-    if (Math.abs(dy) < 40 || Math.abs(dy) < Math.abs(dx)) return; // 仅响应明显纵向滑动
+    if (Math.abs(dy) < 40 || Math.abs(dy) < Math.abs(dx)) return;
     snap(dy < 0 ? 1 : -1);
   }
-  var bound = false;
-  function bind(){
-    if (bound || !looksLikeDeck()) return;
-    bound = true;
-    driver = resolveDriver();
+  function bindNav(){
+    if (navOn) return; navOn = true;
     window.addEventListener('keydown', onKey, true);
     window.addEventListener('wheel', onWheel, { passive:false, capture:true });
     window.addEventListener('touchstart', onTouchStart, { passive:true });
     window.addEventListener('touchend', onTouchEnd, { passive:true });
   }
-  if (document.readyState !== 'loading') bind();
-  document.addEventListener('DOMContentLoaded', bind);
-  window.addEventListener('load', bind);
-  // 框架/自定义元素可能异步 upgrade：未绑定则重试 bind，已绑定但驱动仍空则重试解析
+  function unbindNav(){
+    if (!navOn) return; navOn = false;
+    window.removeEventListener('keydown', onKey, true);
+    window.removeEventListener('wheel', onWheel, true);
+    window.removeEventListener('touchstart', onTouchStart);
+    window.removeEventListener('touchend', onTouchEnd);
+  }
+  // ── 角落提示条（透明可控）：on=已开启可关，off=邀请开启 ──
+  function mk(tag, css, txt){ var e=document.createElement(tag); if(css)e.setAttribute('style',css); if(txt!=null)e.textContent=txt; return e; }
+  function removePill(){ if (pill && pill.parentNode) pill.parentNode.removeChild(pill); pill=null; }
+  function renderPill(on){
+    removePill();
+    var box = mk('div', 'position:fixed;left:12px;bottom:12px;z-index:2147483000;display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;font:500 12px/1.4 -apple-system,system-ui,sans-serif;background:rgba(20,20,28,0.74);color:#fff;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);box-shadow:0 4px 16px rgba(0,0,0,.3);opacity:1;transition:opacity .4s;user-select:none;');
+    box.appendChild(mk('span', 'width:7px;height:7px;border-radius:50%;flex:0 0 auto;background:'+(on?'#34d399':'#9ca3af')+';'));
+    box.appendChild(mk('span', 'white-space:nowrap;', on ? '上下键翻页 已开启' : '幻灯片：上下键翻页?'));
+    var btn = mk('button', 'border:none;border-radius:6px;padding:3px 8px;font:inherit;cursor:pointer;white-space:nowrap;background:'+(on?'rgba(255,255,255,.16)':'rgba(52,211,153,.92)')+';color:'+(on?'#fff':'#06281d')+';', on ? '关闭' : '开启');
+    btn.addEventListener('click', function(ev){ ev.stopPropagation(); ev.preventDefault(); if (on) disable(true); else enable(true); });
+    box.appendChild(btn);
+    (document.documentElement || document.body).appendChild(box);
+    pill = box;
+    setTimeout(function(){ if (pill === box) box.style.opacity = '0.32'; }, 4500);
+    box.addEventListener('mouseenter', function(){ box.style.opacity = '1'; });
+    box.addEventListener('mouseleave', function(){ box.style.opacity = '0.32'; });
+  }
+  function enable(remember){ if (!driver) driver = resolveDriver(); bindNav(); if (remember) setPref('on'); renderPill(true); }
+  function disable(remember){ unbindNav(); if (remember) setPref('off'); renderPill(false); }
+  // 决策：高可信→自动开+可关；低可信→邀请（不自动劫持）；非幻灯片→什么都不做
+  function decide(){
+    if (decided) return;
+    driver = resolveDriver();
+    var high = !!driver;
+    if (!high && !looseSlides()) return; // 还不像幻灯片：暂不决策，等异步 upgrade 后重试
+    decided = true;
+    var p = getPref();
+    if (p === 'on'){ enable(false); return; }   // 用户曾主动开
+    if (p === 'off'){ renderPill(false); return; } // 用户曾关闭：留邀请条可重新开
+    if (high) enable(false);                      // 高可信：自动开 + 可关提示
+    else renderPill(false);                       // 低可信：仅邀请，绝不自动劫持
+  }
+  if (document.readyState !== 'loading') decide();
+  document.addEventListener('DOMContentLoaded', decide);
+  window.addEventListener('load', decide);
+  // 框架/自定义元素可能异步 upgrade：未决策则重试
   var tries = 0;
-  var timer = setInterval(function(){
-    if (!bound) bind(); else if (!driver) driver = resolveDriver();
-    if (++tries > 30) clearInterval(timer);
-  }, 300);
+  var timer = setInterval(function(){ if (!decided) decide(); if (decided || ++tries > 30) clearInterval(timer); }, 300);
 })();
 </script>";
 
