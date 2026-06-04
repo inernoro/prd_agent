@@ -1275,6 +1275,8 @@ export const api = {
     },
     /** AI 总结（走 ILlmGateway + prd-admin.changelog.aiSummary::chat） */
     aiSummary: () => '/api/changelog/ai-summary',
+    /** SSE 实时推送：后台刷新有更新时服务器主动推 update 事件 */
+    stream: () => '/api/changelog/stream',
     sources: {
       list: () => '/api/changelog/sources',
       create: () => '/api/changelog/sources',

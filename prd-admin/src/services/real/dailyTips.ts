@@ -44,6 +44,8 @@ export interface DailyTip {
   sourceId?: string | null;
   /** 内容版本号(默认 1)。管理员升级 tip 时 +1,旧的"已学会"用户会重新看到 */
   version?: number;
+  /** 该 *-page-guide 是否已被当前用户「学会」。学会后仍返回(供重看),前端据此停止自动开讲 + 入口脉冲。 */
+  learned?: boolean;
   createdAt?: string;
   /** 当前用户在该 tip 上的投递状态(pending/seen/clicked/dismissed),无投递记录时为 null */
   deliveryStatus?: string | null;

@@ -125,6 +125,10 @@
 - [总裁面板与周报 Agent 设计文档](design.executive-dashboard) `design.executive-dashboard`
   > 高管视角的数据面板与周报 Agent 的设计
 
+- [产品管理 Agent 设计](design.product-agent) `design.product-agent`
+  > 产品-版本-需求-功能-缺陷-客户全链路串联、版本化管理、分级追溯与知识图谱（参考 TAPD / RTM）
+- [产品管理 Agent 债务台账](debt.product-agent) `debt.product-agent`
+  > 产品管理智能体已知边界与后续波次债务
 - [缺陷管理 Agent 功能设计](design.defect-agent) `design.defect-agent`
   > 缺陷提交、跟踪与升级流程的功能设计
 
@@ -669,6 +673,8 @@
 
 - [智能体宇宙 · 债务台账](debt.agent-universe) `debt.agent-universe`
   > MVP 边界：仅视觉创作走真实生图、文学图文一体待补、信封仅再加工接入、img2img 占位
+- [更新中心（终身存储 + SSE 推送）债务台账](debt.changelog-center) `debt.changelog-center`
+  > 3 条 open：推送中枢进程内单例（多实例需 Redis/change stream）/ 刷新周期不分视图冷热 / GitHub 日志前端 35s 轮询与 SSE 并存
 - [项目管理智能体 · 债务台账](debt.pm-agent) `debt.pm-agent`
   > Phase 1 MVP 仅交付执行层；治理层（干系人/NPSS/奖金/盘点）待 Phase 2-3；Leader 职级强校验待 User 加字段
 - [视频生成 Agent · 债务台账](debt.video-agent) `debt.video-agent`

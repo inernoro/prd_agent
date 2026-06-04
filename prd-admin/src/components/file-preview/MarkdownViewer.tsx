@@ -12,6 +12,8 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { ImageLightbox } from '@/components/ui/ImageLightbox';
+import { MermaidDiagram } from '@/components/ui/MermaidDiagram';
+import { UpdateTimeline, parseMermaidTimeline } from '@/components/ui/UpdateTimeline';
 // SSOT：与 TOC（markdownToc.ts）共用同一套「标题文本 → slug」规则，
 // 保证目录点击能精确跳到带内嵌 HTML 的标题（rehypeRaw 渲染后）。
 import { headingTextToSlug } from '@/lib/markdownToc';
@@ -244,8 +246,15 @@ function MarkdownViewerBase({ content }: { content: string }) {
             if (!isBlock) {
               return <code className="px-1.5 py-0.5 rounded text-[12px]" style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(248,113,113,0.9)' }} {...props}>{children}</code>;
             }
-            // 块级且指定了语言 → Prism 高亮
+            // 块级且指定了语言 → Mermaid 图表交给 MermaidDiagram 渲染，其余走 Prism 高亮
             if (match) {
+              if (match[1].toLowerCase() === 'mermaid') {
+                // timeline 类型横向太挤、看不清 → 改用纵向时间线组件；其余 mermaid 图照旧
+                if (parseMermaidTimeline(text)) {
+                  return <UpdateTimeline code={text} />;
+                }
+                return <MermaidDiagram code={text} />;
+              }
               return (
                 <CodeBlockShell text={text}>
                   <SyntaxHighlighter

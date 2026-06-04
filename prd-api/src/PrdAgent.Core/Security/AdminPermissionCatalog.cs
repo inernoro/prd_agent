@@ -267,6 +267,21 @@ public static class AdminPermissionCatalog
     public const string PmAgentAudit = "pm-agent.audit";
 
     /// <summary>
+    /// 产品管理智能体权限：产品/版本/需求/功能/客户的创建编辑、关系串联、知识图谱、缺陷追溯（普通用户级 Agent 权限）
+    /// </summary>
+    public const string ProductAgentUse = "product-agent.use";
+
+    /// <summary>
+    /// 产品管理-管理：自定义表单模板与流程定义、删除产品等管理操作
+    /// </summary>
+    public const string ProductAgentManage = "product-agent.manage";
+
+    /// <summary>
+    /// 产品管理-管理层总览：查看跨全部产品的聚合仪表盘/列表 + 全局表单/流程设置（公司管理层视角）
+    /// </summary>
+    public const string ProductAgentAdmin = "product-agent.admin";
+
+    /// <summary>
     /// 工作空间权限（读）：查看工作空间列表
     /// </summary>
     public const string WorkspacesRead = "workspaces.read";
@@ -388,6 +403,10 @@ public static class AdminPermissionCatalog
         new(PmAgentUse, "项目管理智能体", "项目立项、任务看板、甘特图与 AI 需求拆解"),
         new(PmAgentDashboard, "项目管理-组织NPSS看板", "查看公司级 NPSS 经营看板与奖金测算（仅授予管理层）"),
         new(PmAgentAudit, "项目管理-审计日志", "查看项目操作留痕审计日志（合规/追溯，仅授予管理层）"),
+
+        new(ProductAgentUse, "产品管理智能体", "产品-版本-需求-功能-缺陷-客户全链路串联、知识图谱、知识库挂载"),
+        new(ProductAgentManage, "产品管理-管理", "自定义表单模板与流程定义、删除产品等管理操作"),
+        new(ProductAgentAdmin, "产品管理-管理层总览", "跨全部产品的聚合仪表盘/列表 + 全局表单/流程设置（管理层）"),
 
         new(WorkspacesRead, "工作空间-读", "查看工作空间列表与详情"),
         new(WorkspacesWrite, "工作空间-写", "创建/编辑/删除工作空间、发送指令"),

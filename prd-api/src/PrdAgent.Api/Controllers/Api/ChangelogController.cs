@@ -1,5 +1,6 @@
 using System.Linq;
 using System.Text.Json;
+using System.Threading.Channels;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authorization;
@@ -37,15 +38,18 @@ public class ChangelogController : ControllerBase
     private readonly IChangelogReader _reader;
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
+    private readonly IChangelogPushHub _pushHub;
 
     public ChangelogController(
         IChangelogReader reader,
         ILlmGateway gateway,
-        ILLMRequestContextAccessor llmRequestContext)
+        ILLMRequestContextAccessor llmRequestContext,
+        IChangelogPushHub pushHub)
     {
         _reader = reader;
         _gateway = gateway;
         _llmRequestContext = llmRequestContext;
+        _pushHub = pushHub;
     }
 
     /// <summary>
@@ -84,6 +88,77 @@ public class ChangelogController : ControllerBase
         var view = await _reader.GetGitHubLogsAsync(limit, force).ConfigureAwait(false);
         if (!force) SetClientCacheHeaders();
         return Ok(ApiResponse<GitHubLogsDto>.Ok(MapGitHubLogs(view)));
+    }
+
+    /// <summary>
+    /// 更新中心实时推送（SSE）。
+    /// 连接时先发一条 meta（含后台刷新周期，供前端「更新规则」展示），随后保持长连接：
+    /// 后台 Worker 刷新发现内容变化时推 update 事件，前端据此重新读取存量并平滑替换。
+    /// 无变化时每 15s 发 ping 心跳保活。客户端断开即清理订阅（仅终止本订阅，不影响后台任务）。
+    /// </summary>
+    [HttpGet("stream")]
+    [Produces("text/event-stream")]
+    public async Task Stream()
+    {
+        var ct = HttpContext.RequestAborted;
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Connection = "keep-alive";
+        Response.Headers["X-Accel-Buffering"] = "no";
+
+        var (subscriptionId, reader) = _pushHub.Subscribe();
+        var heartbeat = TimeSpan.FromSeconds(15);
+        try
+        {
+            await WriteSseEventAsync("meta", new
+            {
+                refreshIntervalHours = _reader.GetRefreshIntervalHours(),
+                serverTime = DateTimeOffset.UtcNow.ToString("o"),
+            }, ct).ConfigureAwait(false);
+
+            while (!ct.IsCancellationRequested)
+            {
+                ChangelogPushEvent? evt = null;
+                try
+                {
+                    using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    waitCts.CancelAfter(heartbeat);
+                    evt = await reader.ReadAsync(waitCts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    if (ct.IsCancellationRequested) break;
+                    // 心跳超时：发 ping 保活，继续等下一条事件
+                    await WriteSseEventAsync("ping", new { t = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() }, ct).ConfigureAwait(false);
+                    continue;
+                }
+                catch (ChannelClosedException)
+                {
+                    break;
+                }
+
+                if (evt is null) continue;
+                await WriteSseEventAsync("update", new
+                {
+                    viewType = evt.ViewType,
+                    fetchedAt = evt.FetchedAt.ToString("o"),
+                    source = evt.Source,
+                }, ct).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) { /* 客户端断开 */ }
+        catch (ObjectDisposedException) { /* 客户端断开 */ }
+        finally
+        {
+            _pushHub.Unsubscribe(subscriptionId);
+        }
+    }
+
+    private async Task WriteSseEventAsync(string evt, object data, CancellationToken ct)
+    {
+        var json = JsonSerializer.Serialize(data, AiSummaryPayloadJsonOptions);
+        await Response.WriteAsync($"event: {evt}\ndata: {json}\n\n", ct).ConfigureAwait(false);
+        await Response.Body.FlushAsync(ct).ConfigureAwait(false);
     }
 
     /// <summary>

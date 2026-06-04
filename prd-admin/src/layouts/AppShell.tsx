@@ -18,6 +18,9 @@ import {
   UserCog,
   Settings,
   Bell,
+  BellOff,
+  Moon,
+  AlertTriangle,
   CheckCircle2,
   X,
   Bug,
@@ -73,7 +76,7 @@ import { GlobalDefectSubmitDialog, DefectSubmitButton } from '@/components/ui/Gl
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import { ChangelogBell } from '@/components/changelog/ChangelogBell';
 import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
-import { FLOATING_DOCK_COLLAPSED_KEY, FLOATING_DOCK_EVENT, FLOATING_DOCK_HEIGHT_EVENT } from '@/components/daily-tips/TipsDrawer';
+import { FLOATING_DOCK_COLLAPSED_KEY, FLOATING_DOCK_EVENT } from '@/components/daily-tips/TipsDrawer';
 import { CommandPalette } from '@/components/command-palette/CommandPalette';
 import { getSidebarMenuItems } from '@/lib/adminMenuCatalog';
 
@@ -236,6 +239,33 @@ export default function AppShell() {
   const [handlingAll, setHandlingAll] = useState(false);
   const [handlingId, setHandlingId] = useState<string | null>(null);
 
+  // ── 免打扰(Do-Not-Disturb)防打扰机制 ──────────────────────
+  // 业界通行做法:用户主动「免打扰 N 小时」后,通知不再自动弹出打断,只保留一个安静的
+  // 铃铛入口(BellOff);到期自动恢复。snoozeUntil 走 sessionStorage(no-localStorage 规则),
+  // 关闭标签页即重置。点击安静铃铛可立即结束免打扰并查看。
+  const [snoozeUntil, setSnoozeUntil] = useState<number>(() => {
+    try { return Number(sessionStorage.getItem('notifSnoozeUntil') || 0) || 0; } catch { return 0; }
+  });
+  const [, setSnoozeTick] = useState(0);
+  useEffect(() => {
+    if (snoozeUntil <= Date.now()) return;
+    const t = window.setTimeout(() => setSnoozeTick((x) => x + 1), Math.max(50, snoozeUntil - Date.now() + 50));
+    return () => window.clearTimeout(t);
+  }, [snoozeUntil]);
+  const isSnoozed = snoozeUntil > Date.now();
+  const snooze = useCallback((ms: number) => {
+    const until = Date.now() + ms;
+    setSnoozeUntil(until);
+    try { sessionStorage.setItem('notifSnoozeUntil', String(until)); } catch { /* noop */ }
+    // 不要在这里 setToastCollapsed(true):免打扰期间 isSnoozed 已经强制走安静铃铛分支;
+    // 若再置 toastCollapsed,到期后 isSnoozed 转 false 但 toastCollapsed 仍为 true,
+    // 卡片永远回不来,违背「到期自动恢复」的文案(Bugbot Medium)。
+  }, []);
+  const clearSnooze = useCallback(() => {
+    setSnoozeUntil(0);
+    try { sessionStorage.removeItem('notifSnoozeUntil'); } catch { /* noop */ }
+  }, []);
+
   // ── 悬浮组整体折叠(联动 TipsDrawer 的「收起书 + 铃铛」把手) ──
   // TipsDrawer 通过 sessionStorage(FLOATING_DOCK_COLLAPSED_KEY) + FLOATING_DOCK_EVENT
   // 自定义事件广播状态;AppShell 订阅后把通知铃铛移到右边缘(只露半个,鼠标 hover 时滑回)。
@@ -271,17 +301,9 @@ export default function AppShell() {
     return () => window.removeEventListener('mousemove', onMove);
   }, [dockCollapsed]);
 
-  // ── 通知卡动态 bottom 定位:TipsDrawer 广播 dock 总高度,通知卡随之上移避免重叠 ──
-  // 默认 136 = 书图标 bottom(80) + 书高(48) + 间距(8),确保初始渲染书图标可见
-  const [notifCardBottom, setNotifCardBottom] = useState(136);
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent<{ dockBottom: number }>).detail;
-      if (detail?.dockBottom != null) setNotifCardBottom(detail.dockBottom);
-    };
-    window.addEventListener(FLOATING_DOCK_HEIGHT_EVENT, handler);
-    return () => window.removeEventListener(FLOATING_DOCK_HEIGHT_EVENT, handler);
-  }, []);
+  // 注:旧版右下角有「教程小书」悬浮组,通知卡曾按其高度上移避让(notifCardBottom + FLOATING_DOCK_HEIGHT_EVENT)。
+  // 小书早已移除(改为各页头部 TipsEntryButton),那套避让逻辑成了"为不存在的元素预留空位"——
+  // 导致通知卡停在 bottom:136 的半空中而非真正的右下角。已彻底删除,通知卡固定贴底(bottom:20),与收缩铃铛同一角落。
 
   // 导航滚动状态：用于显示渐变阴影指示器
   const navRef = useRef<HTMLElement>(null);
@@ -567,7 +589,7 @@ export default function AppShell() {
   // 关键修复：超时后一次性 dismiss 全部当前通知，防止逐条弹出形成无限循环
   useEffect(() => {
     if (!toastNotification) return;
-    if (toastHovering || toastCollapsed) return;
+    if (toastHovering || toastCollapsed || isSnoozed) return; // 免打扰时不静默清除,只暂停弹出
     const timer = window.setTimeout(() => {
       setDismissedToastIds((prev) => {
         const next = new Set(prev);
@@ -579,7 +601,7 @@ export default function AppShell() {
       });
     }, 12000);
     return () => window.clearTimeout(timer);
-  }, [toastNotification, toastHovering, toastCollapsed, activeNotifications]);
+  }, [toastNotification, toastHovering, toastCollapsed, isSnoozed, activeNotifications]);
 
   // 当通知消失时，重置收缩状态
   useEffect(() => {
@@ -614,18 +636,27 @@ export default function AppShell() {
       {/* TipsDrawer 已上移到 App 根挂载(全局唯一,跨路由不卸载),此处不再渲染 */}
       <CommandPalette />
       {/* 移动端顶栏已有 Bell 按钮，隐藏右下浮球避免和 MobileTabBar "+" 重叠 */}
-      {!suppressFloatingDock && !isMobile && toastNotification && (
-        toastCollapsed ? (
-          // 收缩状态：浮动按钮;如果悬浮组整体折叠了,这个按钮会跟着贴到屏幕右边缘
+      {!suppressFloatingDock && !isMobile && toastNotification && (() => {
+        const tone = getNotificationTone(toastNotification.level);
+        const level = (toastNotification.level ?? '').toLowerCase();
+        const LevelIcon = level === 'warning' || level === 'error'
+          ? AlertTriangle
+          : level === 'success'
+            ? CheckCircle2
+            : Bell;
+        // 免打扰时强制走「安静铃铛」分支:不自动弹卡片打断,只保留入口
+        const showCollapsed = toastCollapsed || isSnoozed;
+        return showCollapsed ? (
+          // 收缩 / 免打扰状态：浮动按钮;如果悬浮组整体折叠了,这个按钮会跟着贴到屏幕右边缘
           <button
             type="button"
             className="fixed bottom-5 z-[120] h-12 w-12 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-105"
             style={{
               ...glassFloatingButton,
               right: dockCollapsed ? (dockEdgeHover ? 12 : -20) : 20,
-              opacity: dockCollapsed && !dockEdgeHover ? 0.6 : 1,
+              opacity: dockCollapsed && !dockEdgeHover ? 0.6 : isSnoozed ? 0.7 : 1,
               background: 'var(--panel-solid, rgba(18, 18, 22, 0.92))',
-              border: `1px solid ${getNotificationTone(toastNotification.level).border}`,
+              border: `1px solid ${isSnoozed ? 'var(--border-subtle, rgba(127,127,127,0.25))' : tone.border}`,
               transition: 'right 240ms cubic-bezier(.2,.8,.2,1), opacity 240ms ease-out, transform 180ms ease-out',
             }}
             onClick={() => {
@@ -636,13 +667,17 @@ export default function AppShell() {
                   detail: { collapsed: false },
                 }));
               }
+              if (isSnoozed) clearSnooze(); // 点安静铃铛 = 立即结束免打扰并查看
               setToastCollapsed(false);
             }}
             onMouseEnter={() => setToastHovering(true)}
             onMouseLeave={() => setToastHovering(false)}
-            aria-label="展开通知"
+            aria-label={isSnoozed ? '免打扰中,点击恢复通知' : '展开通知'}
+            title={isSnoozed ? '免打扰中,点击恢复通知' : '展开通知'}
           >
-            <Bell size={18} style={{ color: getNotificationTone(toastNotification.level).text }} />
+            {isSnoozed
+              ? <BellOff size={18} style={{ color: 'var(--text-muted)' }} />
+              : <Bell size={18} style={{ color: tone.text }} />}
             {/* 未读数徽章 */}
             <span
               className="absolute -top-1 -right-1 min-w-5 h-5 px-1 rounded-full flex items-center justify-center text-[10px] font-bold"
@@ -652,98 +687,52 @@ export default function AppShell() {
             </span>
           </button>
         ) : (
-          // 展开状态：完整通知卡片
+          // 展开状态：完整通知卡片(重设计:左侧色条 + 图标徽章 + 两段式底部操作,避免按钮换行错乱)
           <div
-            className="fixed right-5 z-[120] w-[360px] rounded-[18px] p-4 shadow-xl"
+            className="fixed right-5 z-[120] w-[372px] overflow-hidden"
             style={{
               ...glassFloatingButton,
-              bottom: notifCardBottom,
-              minHeight: 110,
-              transition: 'bottom 260ms cubic-bezier(.2,.8,.2,1)',
-              background: 'var(--panel-solid, rgba(18, 18, 22, 0.92))',
-              border: `1px solid ${getNotificationTone(toastNotification.level).border}`,
-              boxShadow: '0 12px 30px rgba(0,0,0,0.45)',
+              bottom: 20,
+              minHeight: 112,
+              borderRadius: 16,
+              background: 'var(--panel-solid, rgba(18, 18, 22, 0.94))',
+              border: `1px solid ${tone.border}`,
+              boxShadow: '0 18px 48px -12px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.02) inset',
+              animation: 'notifToastIn 240ms cubic-bezier(.2,.8,.2,1)',
             }}
             onMouseEnter={() => setToastHovering(true)}
             onMouseLeave={() => setToastHovering(false)}
           >
-            <div className="flex items-start gap-3">
+            {/* 左侧等级色条 */}
+            <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, background: tone.text, opacity: 0.9 }} />
+            {/* 头部:图标徽章 + 标题 + 条数 + 右侧操作 */}
+            <div className="flex items-start gap-2.5 pl-4 pr-3 pt-3.5">
               <div
-                className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full"
-                style={{ background: getNotificationTone(toastNotification.level).text }}
-              />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[13px] font-semibold leading-snug" style={{ color: 'var(--text-primary)' }}>
+                className="mt-0.5 h-7 w-7 shrink-0 rounded-[9px] flex items-center justify-center"
+                style={{ background: tone.bg, border: `1px solid ${tone.border}` }}
+              >
+                <LevelIcon size={15} style={{ color: tone.text }} />
+              </div>
+              <div className="flex-1 min-w-0 pt-0.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-[13px] font-semibold leading-snug truncate" style={{ color: 'var(--text-primary)' }}>
                     {toastNotification.title}
                   </span>
-                  {/* 消息总量徽章 */}
                   {notificationCount > 0 && (
                     <span
                       className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none"
-                      style={{ background: 'rgba(255,255,255,0.12)', color: 'var(--text-muted)' }}
+                      style={{ background: tone.bg, color: tone.text }}
                     >
                       {notificationCount > 999 ? '999+' : notificationCount} 条
                     </span>
                   )}
                 </div>
-                {/* 消息 + 附件区域:固定 maxHeight 防止批量切换时面板高度跳变 */}
-                <div style={{ maxHeight: 72, overflowY: 'auto', overscrollBehavior: 'contain' }}>
-                {toastNotification.message && (
-                  looksLikeMarkdown(toastNotification.message) ? (
-                    <div
-                      className="mt-1 text-[12px] leading-relaxed"
-                      style={{ color: 'var(--text-muted)' }}
-                      dangerouslySetInnerHTML={{ __html: renderNotificationMarkdown(toastNotification.message) }}
-                    />
-                  ) : (
-                    <div className="mt-1 text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-                      {toastNotification.message}
-                    </div>
-                  )
-                )}
-                {toastNotification.attachments && toastNotification.attachments.length > 0 && (
-                  <div className="mt-2 flex flex-col gap-1">
-                    {toastNotification.attachments.map((att, i) => (
-                      <a
-                        key={i}
-                        href={att.url}
-                        download={ensureDownloadName(att.name, att.mimeType)}
-                        onClick={async (e) => {
-                          e.preventDefault();
-                          try {
-                            const resp = await fetch(att.url);
-                            const blob = await resp.blob();
-                            const blobUrl = URL.createObjectURL(blob);
-                            const link = document.createElement('a');
-                            link.href = blobUrl;
-                            link.download = ensureDownloadName(att.name, att.mimeType);
-                            link.click();
-                            URL.revokeObjectURL(blobUrl);
-                          } catch {
-                            window.open(att.url, '_blank');
-                          }
-                        }}
-                        className="inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-[6px] transition-colors hover:bg-white/10 cursor-pointer no-underline"
-                        style={{ color: 'var(--accent-gold)' }}
-                      >
-                        <Download size={12} />
-                        <span>{ensureDownloadName(att.name, att.mimeType)}</span>
-                        {att.sizeBytes > 0 && (
-                          <span style={{ color: 'var(--text-muted)' }}>
-                            ({(att.sizeBytes / 1024).toFixed(1)} KB)
-                          </span>
-                        )}
-                      </a>
-                    ))}
-                  </div>
-                )}
-                </div>{/* end scrollable content area */}
               </div>
               {/* 收缩按钮 */}
               <button
                 type="button"
-                className="h-7 w-7 inline-flex items-center justify-center rounded-full hover:bg-white/10"
+                className="h-7 w-7 shrink-0 inline-flex items-center justify-center rounded-full transition-colors hover:bg-white/10"
+                style={{ color: 'var(--text-muted)' }}
                 onClick={() => setToastCollapsed(true)}
                 aria-label="收缩通知"
                 title="收缩为浮动按钮"
@@ -753,64 +742,176 @@ export default function AppShell() {
               {/* 关闭按钮 */}
               <button
                 type="button"
-                className="h-7 w-7 inline-flex items-center justify-center rounded-full hover:bg-white/10"
+                className="h-7 w-7 shrink-0 inline-flex items-center justify-center rounded-full transition-colors hover:bg-white/10"
+                style={{ color: 'var(--text-muted)' }}
                 onClick={() => dismissToast(toastNotification.id)}
                 aria-label="稍后提醒"
+                title="稍后提醒"
               >
                 <X size={14} />
               </button>
             </div>
-            <div className="mt-3 flex items-center gap-2 flex-wrap">
-              {/* 一键全部处理：仅当有多条时显示 */}
-              {notificationCount > 1 && (
-                <button
-                  type="button"
-                  disabled={handlingAll}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] rounded-full transition-all duration-100 hover:brightness-110 active:scale-[0.93] active:brightness-90 disabled:opacity-60 disabled:cursor-not-allowed"
-                  style={{ background: 'rgba(255,165,0,0.18)', color: 'var(--accent-gold)', border: '1px solid rgba(255,165,0,0.3)' }}
-                  onClick={handleAllNotifications}
-                >
-                  {handlingAll ? <MapSpinner size={12} /> : null}
-                  全部处理 ({notificationCount > 999 ? '999+' : notificationCount})
-                </button>
+            {/* 消息 + 附件区域:固定 maxHeight 防止批量切换时面板高度跳变 */}
+            <div className="pl-[58px] pr-4 mt-1.5" style={{ maxHeight: 84, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+              {toastNotification.message && (
+                looksLikeMarkdown(toastNotification.message) ? (
+                  <div
+                    className="text-[12px] leading-relaxed"
+                    style={{ color: 'var(--text-muted)' }}
+                    dangerouslySetInnerHTML={{ __html: renderNotificationMarkdown(toastNotification.message) }}
+                  />
+                ) : (
+                  <div className="text-[12px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                    {toastNotification.message}
+                  </div>
+                )
               )}
-              {/* 一键已读：从视图隐藏但不标记处理 */}
-              {notificationCount > 1 && (
-                <button
-                  type="button"
-                  className="px-3 py-1.5 text-[12px] rounded-full transition-all duration-100 hover:bg-white/15 active:scale-[0.93] active:brightness-75"
-                  style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
-                  onClick={dismissAllToasts}
-                >
-                  全部忽略
-                </button>
+              {toastNotification.attachments && toastNotification.attachments.length > 0 && (
+                <div className="mt-2 flex flex-col gap-1">
+                  {toastNotification.attachments.map((att, i) => (
+                    <a
+                      key={i}
+                      href={att.url}
+                      download={ensureDownloadName(att.name, att.mimeType)}
+                      onClick={async (e) => {
+                        e.preventDefault();
+                        try {
+                          const resp = await fetch(att.url);
+                          const blob = await resp.blob();
+                          const blobUrl = URL.createObjectURL(blob);
+                          const link = document.createElement('a');
+                          link.href = blobUrl;
+                          link.download = ensureDownloadName(att.name, att.mimeType);
+                          link.click();
+                          URL.revokeObjectURL(blobUrl);
+                        } catch {
+                          window.open(att.url, '_blank');
+                        }
+                      }}
+                      className="inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-[6px] transition-colors hover:bg-white/10 cursor-pointer no-underline"
+                      style={{ color: 'var(--accent-gold)' }}
+                    >
+                      <Download size={12} />
+                      <span>{ensureDownloadName(att.name, att.mimeType)}</span>
+                      {att.sizeBytes > 0 && (
+                        <span style={{ color: 'var(--text-muted)' }}>
+                          ({(att.sizeBytes / 1024).toFixed(1)} KB)
+                        </span>
+                      )}
+                    </a>
+                  ))}
+                </div>
               )}
-              <div className="flex-1" />
-              {toastNotification.actionUrl && (
+            </div>
+            {/* 底部操作:两段式 —— 批量行(多条时) + 单条行,避免 4 个按钮挤在一行换行错乱 */}
+            <div className="pl-[58px] pr-4 pt-2.5 pb-3.5 flex flex-col gap-2">
+              {notificationCount > 1 && (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={handlingAll}
+                    className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-[12px] font-medium rounded-[9px] transition-all duration-100 hover:brightness-110 active:scale-[0.97] active:brightness-90 disabled:opacity-60 disabled:cursor-not-allowed"
+                    style={{ background: 'rgba(255,165,0,0.16)', color: 'var(--accent-gold)', border: '1px solid rgba(255,165,0,0.28)' }}
+                    onClick={handleAllNotifications}
+                  >
+                    {handlingAll ? <MapSpinner size={12} /> : null}
+                    全部处理 ({notificationCount > 999 ? '999+' : notificationCount})
+                  </button>
+                  <button
+                    type="button"
+                    className="shrink-0 px-3 py-1.5 text-[12px] rounded-[9px] transition-all duration-100 hover:bg-white/12 active:scale-[0.97]"
+                    style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)' }}
+                    onClick={dismissAllToasts}
+                  >
+                    全部忽略
+                  </button>
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                {/* 免打扰(防打扰机制):snooze 一段时间,期间不再自动弹出 */}
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger asChild>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 px-2 py-1.5 text-[12px] rounded-[9px] transition-colors hover:bg-white/10"
+                      style={{ color: 'var(--text-muted)' }}
+                      title="免打扰:暂停通知自动弹出"
+                    >
+                      <Moon size={13} />
+                      免打扰
+                    </button>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content
+                      className="min-w-[168px] rounded-[12px] p-1.5 z-[130]"
+                      style={glassPanel}
+                      sideOffset={8}
+                      align="start"
+                      side="top"
+                    >
+                      <div className="px-2.5 py-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        免打扰时段内不自动弹出
+                      </div>
+                      {[
+                        { label: '1 小时', ms: 60 * 60 * 1000 },
+                        { label: '4 小时', ms: 4 * 60 * 60 * 1000 },
+                      ].map((opt) => (
+                        <DropdownMenu.Item
+                          key={opt.label}
+                          className="flex items-center gap-2 px-2.5 py-2 rounded-[8px] cursor-pointer outline-none transition-colors hover:bg-white/8 text-[13px]"
+                          style={{ color: 'var(--text-secondary)' }}
+                          onSelect={() => snooze(opt.ms)}
+                        >
+                          <Moon size={14} className="shrink-0" />
+                          <span>{opt.label}</span>
+                        </DropdownMenu.Item>
+                      ))}
+                      <DropdownMenu.Item
+                        className="flex items-center gap-2 px-2.5 py-2 rounded-[8px] cursor-pointer outline-none transition-colors hover:bg-white/8 text-[13px]"
+                        style={{ color: 'var(--text-secondary)' }}
+                        onSelect={() => {
+                          const end = new Date();
+                          end.setHours(23, 59, 59, 999);
+                          snooze(Math.max(60 * 1000, end.getTime() - Date.now()));
+                        }}
+                      >
+                        <Moon size={14} className="shrink-0" />
+                        <span>今天剩余时间</span>
+                      </DropdownMenu.Item>
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Root>
+                <div className="flex-1" />
+                {toastNotification.actionUrl && (
+                  <button
+                    type="button"
+                    disabled={handlingId === toastNotification.id}
+                    className="px-3 py-1.5 text-[12px] rounded-[9px] transition-all duration-100 hover:bg-white/15 active:scale-[0.97] disabled:opacity-60"
+                    style={{ background: 'rgba(255, 255, 255, 0.08)', color: 'var(--text-primary)' }}
+                    onClick={() => handleNotification(toastNotification.id, toastNotification.actionUrl)}
+                  >
+                    {toastNotification.actionLabel || '查看详情'}
+                  </button>
+                )}
                 <button
                   type="button"
                   disabled={handlingId === toastNotification.id}
-                  className="px-3 py-1.5 text-[12px] rounded-full transition-all duration-100 hover:bg-white/15 active:scale-[0.93] active:brightness-75 disabled:opacity-60"
-                  style={{ background: 'rgba(255, 255, 255, 0.08)', color: 'var(--text-primary)' }}
-                  onClick={() => handleNotification(toastNotification.id, toastNotification.actionUrl)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium rounded-[9px] transition-all duration-100 hover:brightness-110 active:scale-[0.97] active:brightness-90 disabled:opacity-60 disabled:cursor-not-allowed"
+                  style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
+                  onClick={() => handleNotification(toastNotification.id)}
                 >
-                  {toastNotification.actionLabel || '查看详情'}
+                  {handlingId === toastNotification.id ? <MapSpinner size={12} color="#1a1a1a" /> : null}
+                  标记已处理
                 </button>
-              )}
-              <button
-                type="button"
-                disabled={handlingId === toastNotification.id}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] rounded-full transition-all duration-100 hover:brightness-110 active:scale-[0.93] active:brightness-90 disabled:opacity-60 disabled:cursor-not-allowed"
-                style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
-                onClick={() => handleNotification(toastNotification.id)}
-              >
-                {handlingId === toastNotification.id ? <MapSpinner size={12} color="#1a1a1a" /> : null}
-                标记已处理
-              </button>
+              </div>
             </div>
+            <style>{`@keyframes notifToastIn {
+              from { opacity: 0; transform: translateY(12px) scale(0.98); }
+              to   { opacity: 1; transform: translateY(0) scale(1); }
+            }`}</style>
           </div>
-        )
-      )}
+        );
+      })()}
       {/* ── 移动端: 顶部导航栏 ── */}
       {/* 首页 (isHomePage) 做 Apple Today 式透明顶栏：
        *   - 左: menu 按钮

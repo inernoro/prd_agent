@@ -157,6 +157,31 @@ async function resolveVisitUrl(site: HostedSite): Promise<string> {
 
 type GroupMode = 'time' | 'folder';
 
+// ─── 列表偏好持久化（排序/视图/分组）───
+// 用 localStorage：纯 UI 偏好（非敏感、设备本地、发版后用旧值无害），
+// 关浏览器重开也要记住用户的排序/视图选择。符合 .claude/rules/no-localstorage.md 的例外清单。
+const PREF_KEYS = {
+  sort: 'webpages.pref.sort',
+  viewMode: 'webpages.pref.viewMode',
+  groupMode: 'webpages.pref.groupMode',
+} as const;
+
+function readPref(key: string, fallback: string): string {
+  try {
+    return localStorage.getItem(key) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writePref(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* 隐私模式 / 存储已满时静默降级 */
+  }
+}
+
 /** 把日期格式化成分组标题：今天 / 昨天 / M月D日 / YYYY年M月D日 */
 function toDateBucketLabel(iso: string): string {
   const d = new Date(iso);
@@ -298,8 +323,10 @@ export default function WebPagesPage() {
   const [myWebHostingRole, setMyWebHostingRole] = useState<WebHostingRole | null>(null);
   const [keyword, setKeyword] = useState('');
   const [activeTag, setActiveTag] = useState<string | null>(null);
-  const [sort, setSort] = useState('newest');
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [sort, setSort] = useState(() => readPref(PREF_KEYS.sort, 'newest'));
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>(
+    () => readPref(PREF_KEYS.viewMode, 'grid') as 'grid' | 'list',
+  );
 
   // 空间 → 作用域（个人空间走 mine 再客户端剔除已进团队的；团队空间走 team）。下游隔离/角色门控不变
   const teamScope = useMemo(
@@ -308,7 +335,15 @@ export default function WebPagesPage() {
       : { scope: 'mine' as const, teamId: null }),
     [currentSpace],
   );
-  const [groupMode, setGroupMode] = useState<GroupMode>('time');
+  const [groupMode, setGroupMode] = useState<GroupMode>(
+    () => readPref(PREF_KEYS.groupMode, 'time') as GroupMode,
+  );
+
+  // 排序/视图/分组偏好变化即写回 localStorage，刷新/重开浏览器后自动恢复
+  useEffect(() => { writePref(PREF_KEYS.sort, sort); }, [sort]);
+  useEffect(() => { writePref(PREF_KEYS.viewMode, viewMode); }, [viewMode]);
+  useEffect(() => { writePref(PREF_KEYS.groupMode, groupMode); }, [groupMode]);
+
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   // 已分享站点集合（单站点分享）：驱动卡片「已分享」标记 + 分享按钮转「取消分享」 + 投放槽读心
   const [sharedSiteIds, setSharedSiteIds] = useState<Set<string>>(new Set());

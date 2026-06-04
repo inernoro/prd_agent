@@ -1,6 +1,6 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
-import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection } from '../types.js';
+import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
@@ -1620,6 +1620,55 @@ export class StateService {
     entry.lastUsedAt = new Date().toISOString();
     // Save is best-effort — a failed save here shouldn't block the request.
     try { this.save(); } catch { /* ignore */ }
+  }
+
+  // ── 授权申请(Access Request)— 顶层队列,平行于 pendingImports ──
+
+  addAccessRequest(item: AccessRequest): void {
+    if (!this.state.accessRequests) this.state.accessRequests = [];
+    this.state.accessRequests.push(item);
+    this.save();
+  }
+
+  listAccessRequests(): AccessRequest[] {
+    return this.state.accessRequests || [];
+  }
+
+  /** 某项目当前 pending 的授权申请数,用于免密发起的限量防刷。 */
+  countPendingAccessRequests(projectId: string): number {
+    return (this.state.accessRequests || []).filter(
+      (r) => r.projectId === projectId && r.status === 'pending',
+    ).length;
+  }
+
+  getAccessRequest(id: string): AccessRequest | undefined {
+    return (this.state.accessRequests || []).find((r) => r.id === id);
+  }
+
+  updateAccessRequest(id: string, updates: Partial<AccessRequest>): void {
+    const list = this.state.accessRequests || [];
+    const idx = list.findIndex((r) => r.id === id);
+    if (idx === -1) throw new Error(`Access request '${id}' not found`);
+    list[idx] = { ...list[idx], ...updates };
+    this.save();
+  }
+
+  /** Drop decided access requests older than olderThanMs. Returns dropped count. */
+  pruneAccessRequests(olderThanMs: number): number {
+    const list = this.state.accessRequests;
+    if (!list || list.length === 0) return 0;
+    const now = Date.now();
+    const kept = list.filter((r) => {
+      if (r.status === 'pending') return true;
+      if (!r.decidedAt) return true;
+      return now - new Date(r.decidedAt).getTime() < olderThanMs;
+    });
+    const dropped = list.length - kept.length;
+    if (dropped > 0) {
+      this.state.accessRequests = kept;
+      this.save();
+    }
+    return dropped;
   }
 
   // ── Global (bootstrap-equivalent) Agent Keys ──

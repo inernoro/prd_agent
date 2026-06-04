@@ -113,6 +113,22 @@ public static class Desktop
 }
 
 /// <summary>
+/// 产品管理智能体
+/// </summary>
+public static class Product
+{
+    public const string AppName = "产品管理智能体";
+
+    [AppCallerMetadata(
+        "产品管理-图谱摘要",
+        "图谱抽屉里对需求/功能/缺陷描述做 AI 摘要",
+        ModelTypes = new[] { ModelTypes.Chat },
+        Category = "Analysis"
+    )]
+    public const string GraphSummary = "product-agent.graph-summary::chat";
+}
+
+/// <summary>
 /// Visual Agent 视觉创作
 /// </summary>
 public static class VisualAgent

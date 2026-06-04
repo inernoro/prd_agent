@@ -157,6 +157,21 @@ public class DefectReport
     /// <summary>所属团队名称（冗余）</summary>
     public string? TeamName { get; set; }
 
+    // ===== 产品管理智能体（product-agent）追溯引用 =====
+    // 缺陷追溯需求：由 product-agent 写入，defect-agent 不感知这些字段（仅追加，不改既有逻辑）。
+
+    /// <summary>追溯到的产品 ID（product-agent.products）</summary>
+    public string? TracedProductId { get; set; }
+
+    /// <summary>追溯到的需求 ID（product-agent.requirements）</summary>
+    public string? TracedRequirementId { get; set; }
+
+    /// <summary>追溯到的产品版本 ID（product-agent.product_versions）</summary>
+    public string? TracedVersionId { get; set; }
+
+    /// <summary>追溯到的功能 ID（product-agent.features）</summary>
+    public string? TracedFeatureId { get; set; }
+
     // ===== Phase 2: 待验收 =====
 
     /// <summary>验收人 UserId（通常是 reporter）</summary>
