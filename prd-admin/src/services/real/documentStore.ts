@@ -570,6 +570,16 @@ export async function listStoreViewEvents(storeId: string, limit = 50) {
   );
 }
 
+/** 获取知识库访客聚合报表（仅 owner）。days 取值范围 1-365，tz 形如 "+08:00" */
+export async function getStoreAnalytics(storeId: string, days = 30, tz?: string) {
+  const qs = new URLSearchParams({ days: String(days) });
+  if (tz) qs.set('tz', tz);
+  return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreAnalytics>(
+    `${api.documentStore.entries.storeAnalytics(storeId)}?${qs.toString()}`,
+    { method: 'GET' },
+  );
+}
+
 // ── 批次 D：划词评论 ──
 
 /** 创建划词评论 */

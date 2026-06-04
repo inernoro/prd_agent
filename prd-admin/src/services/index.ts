@@ -1877,6 +1877,7 @@ export {
   logEntryView,
   leaveEntryView,
   listStoreViewEvents,
+  getStoreAnalytics,
   // 批次 D：划词评论
   createInlineComment,
   listInlineComments,

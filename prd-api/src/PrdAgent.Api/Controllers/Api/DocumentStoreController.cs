@@ -3804,9 +3804,196 @@ public class DocumentStoreController : ControllerBase
         }));
     }
 
-    // ─────────────────────────────────────────────
-    // 批次 D：文档划词评论
-    // ─────────────────────────────────────────────
+    /// <summary>知识库访客聚合报表（仅 owner）：趋势 / 时段分布 / 文档排行 / 停留分布 / KPI。</summary>
+    [HttpGet("stores/{storeId}/analytics")]
+    public async Task<IActionResult> GetStoreAnalytics(
+        string storeId,
+        [FromQuery] int days = 30,
+        [FromQuery] string? tz = null)
+    {
+        var userId = GetUserId();
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
+        days = Math.Clamp(days, 1, 365);
+        // tz 仅接受 "+08:00" / "-05:30" 形式的 UTC 偏移，非法则按 UTC 聚合（日界/小时按 UTC 划分）。
+        var tzValid = !string.IsNullOrEmpty(tz) && System.Text.RegularExpressions.Regex.IsMatch(tz, @"^[+-]\d{2}:\d{2}$");
+        var since = DateTime.UtcNow.AddDays(-days);
+
+        // 日期/小时分桶带时区参数，保证日界与用户本地时区一致
+        BsonDocument DayExpr() => tzValid
+            ? new BsonDocument("$dateToString", new BsonDocument { { "format", "%Y-%m-%d" }, { "date", "$EnteredAt" }, { "timezone", tz! } })
+            : new BsonDocument("$dateToString", new BsonDocument { { "format", "%Y-%m-%d" }, { "date", "$EnteredAt" } });
+        BsonDocument HourExpr() => tzValid
+            ? new BsonDocument("$hour", new BsonDocument { { "date", "$EnteredAt" }, { "timezone", tz! } })
+            : new BsonDocument("$hour", "$EnteredAt");
+
+        BsonDocument Cond(BsonValue test, int t, int f) => new("$cond", new BsonArray { test, t, f });
+
+        var pipeline = new[]
+        {
+            new BsonDocument("$match", new BsonDocument
+            {
+                { "StoreId", storeId },
+                { "EnteredAt", new BsonDocument("$gte", since) },
+            }),
+            // 统一预处理：访客键 + 停留毫秒（null→0）
+            new BsonDocument("$project", new BsonDocument
+            {
+                { "visitor", new BsonDocument("$ifNull", new BsonArray
+                    { "$ViewerUserId", new BsonDocument("$ifNull", new BsonArray { "$AnonSessionToken", "$_id" }) }) },
+                { "D", new BsonDocument("$ifNull", new BsonArray { "$DurationMs", 0 }) },
+                { "EnteredAt", 1 },
+                { "EntryId", 1 },
+            }),
+            new BsonDocument("$facet", new BsonDocument
+            {
+                // 总计 + 停留分桶（停留仅统计已测得 D>0 的事件）
+                { "totals", new BsonArray { new BsonDocument("$group", new BsonDocument
+                    {
+                        { "_id", BsonNull.Value },
+                        { "count", new BsonDocument("$sum", 1) },
+                        { "duration", new BsonDocument("$sum", "$D") },
+                        { "measured", new BsonDocument("$sum", Cond(new BsonDocument("$gt", new BsonArray { "$D", 0 }), 1, 0)) },
+                        { "bLt5", new BsonDocument("$sum", Cond(new BsonDocument("$and", new BsonArray
+                            { new BsonDocument("$gt", new BsonArray { "$D", 0 }), new BsonDocument("$lt", new BsonArray { "$D", 5000 }) }), 1, 0)) },
+                        { "b5_30", new BsonDocument("$sum", Cond(new BsonDocument("$and", new BsonArray
+                            { new BsonDocument("$gte", new BsonArray { "$D", 5000 }), new BsonDocument("$lt", new BsonArray { "$D", 30000 }) }), 1, 0)) },
+                        { "b30_2m", new BsonDocument("$sum", Cond(new BsonDocument("$and", new BsonArray
+                            { new BsonDocument("$gte", new BsonArray { "$D", 30000 }), new BsonDocument("$lt", new BsonArray { "$D", 120000 }) }), 1, 0)) },
+                        { "bGt2m", new BsonDocument("$sum", Cond(new BsonDocument("$gte", new BsonArray { "$D", 120000 }), 1, 0)) },
+                    }) } },
+                // 独立访客 + 回访访客（同一访客出现 >1 次）
+                { "visitors", new BsonArray
+                    {
+                        new BsonDocument("$group", new BsonDocument { { "_id", "$visitor" }, { "c", new BsonDocument("$sum", 1) } }),
+                        new BsonDocument("$group", new BsonDocument
+                        {
+                            { "_id", BsonNull.Value },
+                            { "unique", new BsonDocument("$sum", 1) },
+                            { "returning", new BsonDocument("$sum", Cond(new BsonDocument("$gt", new BsonArray { "$c", 1 }), 1, 0)) },
+                        }),
+                    } },
+                // 按天趋势
+                { "trend", new BsonArray
+                    {
+                        new BsonDocument("$group", new BsonDocument { { "_id", DayExpr() }, { "v", new BsonDocument("$sum", 1) } }),
+                    } },
+                // 24 小时分布
+                { "hourly", new BsonArray
+                    {
+                        new BsonDocument("$group", new BsonDocument { { "_id", HourExpr() }, { "v", new BsonDocument("$sum", 1) } }),
+                    } },
+                // 文档排行 Top 8
+                { "topEntries", new BsonArray
+                    {
+                        new BsonDocument("$group", new BsonDocument
+                            { { "_id", "$EntryId" }, { "v", new BsonDocument("$sum", 1) }, { "d", new BsonDocument("$sum", "$D") } }),
+                        new BsonDocument("$sort", new BsonDocument("v", -1)),
+                        new BsonDocument("$limit", 8),
+                    } },
+            }),
+        };
+
+        var facet = await _db.DocumentStoreViewEvents.Aggregate<BsonDocument>(pipeline).FirstOrDefaultAsync();
+
+        long totalViews = 0, totalDurationMs = 0, measured = 0, bLt5 = 0, b5_30 = 0, b30_2m = 0, bGt2m = 0;
+        int unique = 0, returning = 0;
+        var trendMap = new Dictionary<string, long>();
+        var hourlyMap = new Dictionary<int, long>();
+        var topRaw = new List<(string? entryId, long v, long d)>();
+
+        if (facet != null)
+        {
+            BsonDocument? First(string key) =>
+                facet.TryGetValue(key, out var v) && v is BsonArray a && a.Count > 0 && a[0] is BsonDocument d ? d : null;
+
+            var t = First("totals");
+            if (t != null)
+            {
+                totalViews = t.GetValue("count", 0).ToInt64();
+                totalDurationMs = t.GetValue("duration", 0).ToInt64();
+                measured = t.GetValue("measured", 0).ToInt64();
+                bLt5 = t.GetValue("bLt5", 0).ToInt64();
+                b5_30 = t.GetValue("b5_30", 0).ToInt64();
+                b30_2m = t.GetValue("b30_2m", 0).ToInt64();
+                bGt2m = t.GetValue("bGt2m", 0).ToInt64();
+            }
+            var vis = First("visitors");
+            if (vis != null)
+            {
+                unique = vis.GetValue("unique", 0).ToInt32();
+                returning = vis.GetValue("returning", 0).ToInt32();
+            }
+            if (facet.TryGetValue("trend", out var tv) && tv is BsonArray ta)
+                foreach (var d in ta.OfType<BsonDocument>())
+                    if (!d["_id"].IsBsonNull) trendMap[d["_id"].AsString] = d.GetValue("v", 0).ToInt64();
+            if (facet.TryGetValue("hourly", out var hv) && hv is BsonArray ha)
+                foreach (var d in ha.OfType<BsonDocument>())
+                    if (!d["_id"].IsBsonNull) hourlyMap[d["_id"].ToInt32()] = d.GetValue("v", 0).ToInt64();
+            if (facet.TryGetValue("topEntries", out var ev) && ev is BsonArray ea)
+                foreach (var d in ea.OfType<BsonDocument>())
+                    topRaw.Add((d["_id"].IsBsonNull ? null : d["_id"].AsString, d.GetValue("v", 0).ToInt64(), d.GetValue("d", 0).ToInt64()));
+        }
+
+        // 趋势补零：按本地时区生成连续日期序列（缺失天 = 0），避免折线断裂
+        var trend = new List<object>();
+        var tzInfo = TimeSpan.Zero;
+        if (tzValid)
+        {
+            var tzs = tz!;
+            var sign = tzs[0] == '-' ? -1 : 1;
+            tzInfo = new TimeSpan(sign * int.Parse(tzs.Substring(1, 2)), sign * int.Parse(tzs.Substring(4, 2)), 0);
+        }
+        var localToday = (DateTime.UtcNow + tzInfo).Date;
+        for (var i = days - 1; i >= 0; i--)
+        {
+            var day = localToday.AddDays(-i).ToString("yyyy-MM-dd");
+            trend.Add(new { date = day, views = trendMap.TryGetValue(day, out var c) ? c : 0 });
+        }
+
+        // 24 小时补零
+        var hourly = new List<object>();
+        for (var h = 0; h < 24; h++)
+            hourly.Add(new { hour = h, views = hourlyMap.TryGetValue(h, out var c) ? c : 0 });
+
+        // 文档标题补充
+        var entryIds = topRaw.Where(x => x.entryId != null).Select(x => x.entryId!).Distinct().ToList();
+        var entryDocs = await _db.DocumentEntries.Find(e => entryIds.Contains(e.Id)).ToListAsync();
+        var titles = entryDocs.ToDictionary(e => e.Id, e => e.Title);
+        var topEntries = topRaw.Select(x => new
+        {
+            entryId = x.entryId,
+            title = x.entryId != null && titles.TryGetValue(x.entryId, out var ti) ? ti : null,
+            views = x.v,
+            totalDurationMs = x.d,
+        }).ToList();
+
+        var avgDurationMs = measured > 0 ? (double)totalDurationMs / measured : 0;
+        var returningRate = unique > 0 ? (double)returning / unique : 0;
+        var bounceRate = measured > 0 ? (double)bLt5 / measured : 0;
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            rangeDays = days,
+            kpi = new
+            {
+                totalViews,
+                uniqueVisitors = unique,
+                totalDurationMs,
+                avgDurationMs,
+                returningRate,
+                bounceRate,
+            },
+            trend,
+            hourly,
+            topEntries,
+            dwellBuckets = new { lt5s = bLt5, s5_30 = b5_30, s30_2m = b30_2m, gt2m = bGt2m, measured },
+        }));
+    }
+
+
 
     /// <summary>创建划词评论</summary>
     [HttpPost("entries/{entryId}/inline-comments")]

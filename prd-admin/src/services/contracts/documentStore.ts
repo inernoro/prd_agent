@@ -357,6 +357,29 @@ export type DocumentStoreViewStats = {
   totalDurationMs: number;
 };
 
+// ── 波次一：访客聚合报表 ──
+
+export type DocumentStoreAnalytics = {
+  rangeDays: number;
+  kpi: {
+    totalViews: number;
+    uniqueVisitors: number;
+    totalDurationMs: number;
+    avgDurationMs: number;
+    /** 0..1：有回访的访客 / 独立访客 */
+    returningRate: number;
+    /** 0..1：停留 <5s 的事件 / 已测得停留的事件 */
+    bounceRate: number;
+  };
+  /** 按本地时区连续补零的每日访问量 */
+  trend: { date: string; views: number }[];
+  /** 0-23 时段访问量（已补零） */
+  hourly: { hour: number; views: number }[];
+  topEntries: { entryId?: string | null; title?: string | null; views: number; totalDurationMs: number }[];
+  /** 停留时长分桶（仅统计已测得停留的事件，measured 为分母） */
+  dwellBuckets: { lt5s: number; s5_30: number; s30_2m: number; gt2m: number; measured: number };
+};
+
 // ── 批次 D：划词评论 ──
 
 export type DocumentInlineComment = {
