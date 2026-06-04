@@ -231,10 +231,11 @@ export function TipsDrawer() {
       setHiddenByUser(false);
     }
     setExpanded(true);
-    // pageGuideHere 必须进 deps:否则首屏若落在「有教程页」early-return 后,
-    // 切到「无教程页」时本 effect 不再 fire,自动弹窗整 session 失效(Bugbot)。
+    // pageGuideHere + location.pathname 必须进 deps:否则首屏若落在「首页/有教程页」early-return 后,
+    // 切到「无教程页」时本 effect 不再 fire,自动弹窗整 session 失效(Bugbot)。location.pathname 尤其关键——
+    // 首页守卫 `=== '/'` 依赖它,不进 deps 则导航后守卫不重算(Bugbot Medium「Home guard skips route changes」)。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, tips, pageGuideHere]);
+  }, [loaded, tips, pageGuideHere, location.pathname]);
 
   // ── 新用户兜底:本 session 第一次访问、有任意 tip 时自动弹一次 ──
   // 让用户第一次看到书时就知道它是做什么的(管理员没推送也能看到 seed 内容)
@@ -251,10 +252,11 @@ export function TipsDrawer() {
     if (hasAutoOpenedToday()) return; // 每天只自动弹一次
     markAutoOpenedToday();
     setExpanded(true);
-    // pageGuideHere 必须进 deps:deps 仅在 tips 首次加载时翻一次,若那一刻当前页有教程被
-    // early-return,切到无教程页后本 effect 永不再 fire → 抽屉整 session 不再自动弹(Bugbot)。
+    // pageGuideHere + location.pathname 必须进 deps:本 effect 的 deps 否则仅在 tips 首次加载时翻一次,
+    // 若那一刻落在首页(被 `=== '/'` 守卫 early-return)或有教程页,切到无教程页后本 effect 永不再 fire →
+    // 抽屉整 session 不再自动弹(Bugbot Medium「Home guard skips route changes」)。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, tips.length > 0, pageGuideHere]);
+  }, [loaded, tips.length > 0, pageGuideHere, location.pathname]);
 
   // ── 强制新手引导:进入任意页面,若该页有「未走完」的本页教程(*-page-guide),自动开讲一次 ──
   // 目标(用户 2026-06-02 强调):人人都过一次,避免「不知道怎么操作」;每个应用走自己的完整教程。
