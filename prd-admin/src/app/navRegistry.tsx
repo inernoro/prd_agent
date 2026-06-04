@@ -31,6 +31,9 @@ const LibraryLandingPage = lazy(() => import('@/pages/library/LibraryLandingPage
 const EmergenceExplorerPage = lazy(() => import('@/pages/emergence').then(m => ({ default: m.EmergenceExplorerPage })));
 const TaskTreePage = lazy(() => import('@/pages/task-tree').then(m => ({ default: m.TaskTreePage })));
 const PmAgentPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.PmAgentPage })));
+const OverviewShell = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.OverviewShell })));
+const SingleProductView = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.SingleProductView })));
+const ProductObjectDetailPage = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.ProductObjectDetailPage })));
 const ChangelogPage = lazy(() => import('@/pages/changelog/ChangelogPage'));
 const SkillAgentPage = lazy(() => import('@/pages/SkillAgentPage'));
 const ArenaPage = lazy(() => import('@/pages/arena/ArenaPage').then(m => ({ default: m.ArenaPage })));
@@ -335,6 +338,36 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       appKey: 'pm-agent',
       wip: true,
       tags: ['项目管理', 'PMO', '看板', '甘特图', '任务拆解'],
+    },
+  },
+  {
+    // 单产品视图（进入某个具体产品看其全部信息），参数化子路由，全屏，不进导航
+    path: '/product-agent/p/:productId',
+    placement: 'fullscreen',
+    permission: 'product-agent.use',
+    element: fullscreenGuarded('product-agent.use', <SingleProductView />),
+  },
+  {
+    // 对象独立详情/新建页（需求/功能/缺陷，:id 为 new 时是新建），参数化子路由，全屏，不进导航
+    path: '/product-agent/p/:productId/:kind/:id',
+    placement: 'fullscreen',
+    permission: 'product-agent.use',
+    element: fullscreenGuarded('product-agent.use', <ProductObjectDetailPage />),
+  },
+  {
+    path: '/product-agent',
+    placement: 'fullscreen',
+    permission: 'product-agent.use',
+    element: fullscreenGuarded('product-agent.use', <OverviewShell />),
+    nav: {
+      label: '产品管理智能体',
+      shortLabel: '产品',
+      description: '产品-版本-需求-功能-缺陷-客户全链路串联，版本化管理、分级追溯与知识图谱',
+      icon: 'Boxes',
+      section: 'toolbox',
+      appKey: 'product-agent',
+      wip: true,
+      tags: ['产品管理', '版本', '需求', '功能', '缺陷追溯', '知识图谱', 'RTM'],
     },
   },
   {

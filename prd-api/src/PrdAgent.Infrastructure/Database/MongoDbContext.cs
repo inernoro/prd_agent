@@ -49,6 +49,7 @@ public class MongoDbContext
     public IMongoCollection<AppSettings> AppSettings => _database.GetCollection<AppSettings>("appsettings");
     public IMongoCollection<AdminNotification> AdminNotifications => _database.GetCollection<AdminNotification>("admin_notifications");
     public IMongoCollection<DailyTip> DailyTips => _database.GetCollection<DailyTip>("daily_tips");
+    public IMongoCollection<ChangelogSnapshot> ChangelogSnapshots => _database.GetCollection<ChangelogSnapshot>("changelog_snapshots");
     public IMongoCollection<AutomationRule> AutomationRules => _database.GetCollection<AutomationRule>("automation_rules");
     /// <summary>
     /// PRD 问答系统提示词（非 JSON 输出任务）：按角色（PM/DEV/QA）可被管理后台覆盖
@@ -325,6 +326,21 @@ public class MongoDbContext
     public IMongoCollection<PmMilestone> PmMilestones => _database.GetCollection<PmMilestone>("pm_milestones");
     public IMongoCollection<PmRisk> PmRisks => _database.GetCollection<PmRisk>("pm_risks");
     public IMongoCollection<PmAuditLog> PmAuditLogs => _database.GetCollection<PmAuditLog>("pm_audit_logs");
+
+    // Product Management 产品管理（产品-版本-需求-功能-客户 + 通用表单/状态机引擎）
+    public IMongoCollection<Product> Products => _database.GetCollection<Product>("products");
+    public IMongoCollection<ProductVersion> ProductVersions => _database.GetCollection<ProductVersion>("product_versions");
+    public IMongoCollection<Requirement> Requirements => _database.GetCollection<Requirement>("requirements");
+    public IMongoCollection<Feature> Features => _database.GetCollection<Feature>("features");
+    public IMongoCollection<FeatureVersion> FeatureVersions => _database.GetCollection<FeatureVersion>("feature_versions");
+    public IMongoCollection<Customer> Customers => _database.GetCollection<Customer>("customers");
+    public IMongoCollection<ProductCategory> ProductCategories => _database.GetCollection<ProductCategory>("product_categories");
+    public IMongoCollection<ProductDescTemplate> ProductDescTemplates => _database.GetCollection<ProductDescTemplate>("product_desc_templates");
+    public IMongoCollection<ProductItemActivity> ProductItemActivities => _database.GetCollection<ProductItemActivity>("product_item_activities");
+    public IMongoCollection<ProductItemSummary> ProductItemSummaries => _database.GetCollection<ProductItemSummary>("product_item_summaries");
+    public IMongoCollection<ProductFormTemplate> ProductFormTemplates => _database.GetCollection<ProductFormTemplate>("product_form_templates");
+    public IMongoCollection<ProductWorkflowDefinition> ProductWorkflowDefinitions => _database.GetCollection<ProductWorkflowDefinition>("product_workflow_definitions");
+    public IMongoCollection<VersionUpgradeRequest> VersionUpgradeRequests => _database.GetCollection<VersionUpgradeRequest>("version_upgrade_requests");
 
     // Asset Registry 资产登记簿（跨存储迁移基础设施）
     public IMongoCollection<AssetRegistryEntry> AssetRegistry => _database.GetCollection<AssetRegistryEntry>("asset_registry");
@@ -1632,6 +1648,19 @@ public class MongoDbContext
             SubmissionLikes.Indexes.CreateOne(new CreateIndexModel<SubmissionLike>(
                 Builders<SubmissionLike>.IndexKeys.Ascending(x => x.SubmissionId).Ascending(x => x.UserId),
                 new CreateIndexOptions { Name = "uniq_submission_likes_sid_uid", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+
+        // ChangelogSnapshots：按 Key 唯一（防多实例/多 Worker upsert 竞态插入重复行，
+        // 导致 GetAsync 命中任意旧行）。DBA 手建，定义见 doc/guide.mongodb-indexes.md。
+        try
+        {
+            ChangelogSnapshots.Indexes.CreateOne(new CreateIndexModel<ChangelogSnapshot>(
+                Builders<ChangelogSnapshot>.IndexKeys.Ascending(x => x.Key),
+                new CreateIndexOptions { Name = "uniq_changelog_snapshots_key", Unique = true }));
         }
         catch (MongoCommandException ex) when (IsIndexConflict(ex))
         {
