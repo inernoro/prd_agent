@@ -170,6 +170,9 @@ public sealed class DailyTipsController : ControllerBase
                     Tier = (x.SourceId != null && codeSeedTier.TryGetValue(x.SourceId, out var codeTier))
                         ? codeTier
                         : x.Tier,
+                    // learned:该 (SourceId, Version) 是否已在用户 LearnedTips 里。*-page-guide 学会后
+                    // 仍返回(供重看),前端按此字段停止自动开讲 / 入口脉冲;非 page-guide 学会即被上面过滤掉。
+                    learned = IsLearned(x, learnedMap),
                     x.CreatedAt,
                     // 若用户有投递记录,附带 delivery 状态便于前端轻量展示
                     deliveryStatus = mine?.Status,
@@ -371,6 +374,17 @@ public sealed class DailyTipsController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { learned = new { sourceId, version = learnedVersion, tier } }));
     }
 
+    private static bool IsLearned(DailyTip t, Dictionary<string, int> learnedMap)
+    {
+        var key = t.SourceId ?? t.Id;
+        return learnedMap.TryGetValue(key, out var learnedVer) && learnedVer >= t.Version;
+    }
+
+    /// <summary>是否为「本页完整教程」seed(*-page-guide)。这类教程学会后仍保留(供用户重看),
+    /// 仅靠前端 learned 标记抑制自动开讲 / 入口脉冲;其余 tip 学会即隐藏。</summary>
+    private static bool IsPageGuide(DailyTip t)
+        => t.SourceId != null && t.SourceId.EndsWith("-page-guide", StringComparison.Ordinal);
+
     private static List<DailyTip> FilterLearned(List<DailyTip> items, Dictionary<string, int> learnedMap)
     {
         if (learnedMap.Count == 0) return items;
@@ -380,11 +394,9 @@ public sealed class DailyTipsController : ControllerBase
         // - advanced: MarkLearned 写入真实 Version → 管理员 bump 后 learnedVer < t.Version → 重弹。
         // - 兼容性：本 PR 之前已学的 tip 仍按 Version 对比，行为完全不变；这些用户在 tip
         //   下次升 Version 时会再看到一次，重新「完成」后按当前 Tier 写入 sentinel 或新 Version。
-        return items.Where(t =>
-        {
-            var key = t.SourceId ?? t.Id;
-            return !(learnedMap.TryGetValue(key, out var learnedVer) && learnedVer >= t.Version);
-        }).ToList();
+        // 例外(用户 2026-06-04 要求「学会后按钮保留可重看」):*-page-guide 学会后不隐藏,
+        //   仍随响应返回(DTO 带 learned=true),前端据此停止自动开讲 + 脉冲,但保留入口供重看。
+        return items.Where(t => !IsLearned(t, learnedMap) || IsPageGuide(t)).ToList();
     }
 
     /// <summary>

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Sparkles, X, Pin, PinOff, MapPin, ChevronLeft, ChevronRight, GraduationCap } from 'lucide-react';
 import { OPEN_TIPS_DRAWER_EVENT } from './TipsEntryButton';
-import { matchPageGuide, isEditorPageGuide } from './pageGuideMatch';
+import { matchPageGuide, isEditorPageGuide, filterPageTips, routePathOf, actionQuerySatisfied } from './pageGuideMatch';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { writeSpotlightPayload, SPOTLIGHT_PAYLOAD_UPDATED_EVENT } from './TipsRotator';
 import { trackTip, dismissTipForever } from '@/services/real/dailyTips';
@@ -191,6 +191,10 @@ export function TipsDrawer() {
   const [expanded, setExpanded] = useState<boolean>(false);
   // 轮播索引(抽屉当前展示第几条 tip)
   const [carouselIndex, setCarouselIndex] = useState<number>(0);
+  // 「本页教程」语义:抽屉默认只展示与当前页相关的教程,避免在 A 页打开却弹出 B 页的教程
+  //(用户 2026-06-04 反馈:每页顶部「本页教程」打开的却是别人的教程)。
+  // 用户可显式切到「全部教程」浏览所有页面的教程;关闭抽屉后自动复位回「本页」。
+  const [showAllPages, setShowAllPages] = useState<boolean>(false);
 
   // 注:右下角「教程小书」入口已删除(改为各页头部内嵌 TipsEntryButton),
   // 本组件只剩「展开后的教程抽屉气泡」一种可见形态——展开 = 渲染抽屉,未展开 = 不渲染。
@@ -203,9 +207,19 @@ export function TipsDrawer() {
   // 用 store 稳定引用 items + dismissed(而非 cardTips() 每次新建的 tips 数组),memo 才真正能缓存(Bugbot)。
   // 与 TipsEntryButton 共用 matchPageGuide,避免两份 inline 拷贝随规则漂移。
   const pageGuideHere = useMemo(
-    () => matchPageGuide(items, dismissed, location.pathname),
-    [items, dismissed, location.pathname],
+    () => matchPageGuide(items, dismissed, location.pathname, location.search),
+    [items, dismissed, location.pathname, location.search],
   );
+
+  // ── 本页相关教程子集 ──────────────────────────────────
+  // 与 TipsEntryButton 共用 filterPageTips(SSOT):只展示属于本页的教程,
+  // 彻底消除「开 A 页弹 B 页教程」。带 location.search 让 query-scoped tip 按 tab 精确匹配(Codex P2)。
+  const pageTips = useMemo(
+    () => filterPageTips(items, dismissed, location.pathname, location.search),
+    [items, dismissed, location.pathname, location.search],
+  );
+  // 抽屉实际展示的列表:默认「本页」,用户可切「全部」浏览所有页面的教程。
+  const viewTips = showAllPages ? tips : pageTips;
 
   // ── 推送自动展开:按 tip.id 记忆,每条定向 tip 本 session 只弹一次 ──
   // 轮询时如果管理员新推了一条,tips 里会多出一个 isTargeted 的新 id,它不在
@@ -232,24 +246,13 @@ export function TipsDrawer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, tips, pageGuideHere]);
 
-  // ── 新用户兜底:本 session 第一次访问、有任意 tip 时自动弹一次 ──
-  // 让用户第一次看到书时就知道它是做什么的(管理员没推送也能看到 seed 内容)
-  // 新用户兜底:本日第一次访问、有任意 tip 时自动弹一次
-  // 让用户第一次看到书时就知道它是做什么的(管理员没推送也能看到 seed 内容)
-  // 日级节流 AUTO_OPEN_DATE_KEY 是单一 source of truth;
-  // 历史的 FIRST_VISIT_SHOWN_KEY 已删除以避免与日级节流双 flag 不一致
-  // (bugbot ref1: 旧 flag 会在 targeted-tip 路径先触发时永远不被写入,跨日 remount 会让新用户路径误触发)
-  useEffect(() => {
-    if (!loaded) return;
-    if (pageGuideHere) return; // 本页有未走完教程 → 走 Spotlight 自动开讲,不展开抽屉(避免叠加)
-    if (tips.length === 0) return;
-    if (hasAutoOpenedToday()) return; // 每天只自动弹一次
-    markAutoOpenedToday();
-    setExpanded(true);
-    // pageGuideHere 必须进 deps:deps 仅在 tips 首次加载时翻一次,若那一刻当前页有教程被
-    // early-return,切到无教程页后本 effect 永不再 fire → 抽屉整 session 不再自动弹(Bugbot)。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, tips.length > 0, pageGuideHere]);
+  // ── 新用户兜底自动弹抽屉:已移除 ──────────────────────────
+  // 历史上「本日第一次访问且本页有任意 tip 就自动展开抽屉」会在用户没点任何按钮时
+  // 自己弹出教程(例如本页 *-page-guide 已学会、却把残留的「本周改动」公告弹出来),
+  // 用户 2026-06-04 反馈「没点按钮却弹窗出来教程」。教程入口已是页头常驻按钮(TipsEntryButton),
+  // 不需要再自动展开抽屉来「证明书的存在」。保留的自动行为只剩两类(均为明确意图):
+  //   1) 管理员定向推送(isTargeted)→ 上面的 effect 自动弹;
+  //   2) 本页未走完的 *-page-guide → 下面的 effect 走 Spotlight 强制开讲(onboarding 规则)。
 
   // ── 强制新手引导:进入任意页面,若该页有「未走完」的本页教程(*-page-guide),自动开讲一次 ──
   // 目标(用户 2026-06-02 强调):人人都过一次,避免「不知道怎么操作」;每个应用走自己的完整教程。
@@ -271,47 +274,56 @@ export function TipsDrawer() {
     writeSpotlightPayload(guide);
   }, [loaded, pageGuideHere]);
 
-  // tips 变化时把轮播索引收敛到有效范围
+  // viewTips 变化时把轮播索引收敛到有效范围
   useEffect(() => {
-    if (tips.length === 0) {
+    if (viewTips.length === 0) {
       setCarouselIndex(0);
-    } else if (carouselIndex >= tips.length) {
-      setCarouselIndex(tips.length - 1);
+    } else if (carouselIndex >= viewTips.length) {
+      setCarouselIndex(viewTips.length - 1);
     }
-  }, [tips.length, carouselIndex]);
+  }, [viewTips.length, carouselIndex]);
 
-  // 抽屉每次「打开」时选一条 tip,避免用户每次都看到同一条;
-  // 优先级:当前页面有匹配的「本页教程」→ 选它(让用户在正确位置看到「这页有教程」);否则随机。
-  const pageMatchedIndex = useMemo(() => {
-    if (tips.length === 0) return -1;
-    // 先按 matchPageGuide 的编辑器感知规则定位本页教程:在 /visual-agent/:id 这类编辑器子路由
-    // 上,它只命中 *-editor-page-guide,不会误选同 actionUrl 前缀的列表教程(后者 CTA 会把用户
-    // 导离编辑器,Codex P2)。
-    const guide = matchPageGuide(tips, dismissed, location.pathname);
+  // 抽屉应默认展示的那一条:本页教程(matchPageGuide 编辑器感知)→ actionUrl 命中当前页的第一条 → 列表第一条。
+  // 「打开 / 切作用域 / 切路由」三处复用同一口径,绝不再用 Math.random() 兜底
+  //(那正是「打开却是别人的教程」的根因,用户 2026-06-04)。
+  const defaultIndex = (() => {
+    if (viewTips.length === 0) return -1;
+    const guide = matchPageGuide(viewTips, dismissed, location.pathname, location.search);
     if (guide) {
-      const gi = tips.findIndex((t) => t.id === guide.id);
+      const gi = viewTips.findIndex((t) => t.id === guide.id);
       if (gi >= 0) return gi;
     }
-    // 非教程类 tip 兜底:完整匹配 / 列表路由前缀匹配(/defect-agent 匹配 /defect-agent/123)
-    return tips.findIndex((t) => {
+    const ai = viewTips.findIndex((t) => {
       if (!t.actionUrl) return false;
-      return location.pathname === t.actionUrl
-        || location.pathname.startsWith(t.actionUrl + '/');
+      if (!actionQuerySatisfied(t.actionUrl, location.search)) return false; // query-scoped tip 按 tab gate(Codex P2)
+      const url = routePathOf(t.actionUrl); // 剥离 deep-link query 再比路径
+      return location.pathname === url || location.pathname.startsWith(url + '/');
     });
-  }, [tips, dismissed, location.pathname]);
+    return ai >= 0 ? ai : 0;
+  })();
+
+  // 切换「本页 / 全部」作用域,或在抽屉打开期间切换路由 → 按 defaultIndex 重新选定展示项。
+  // 修复 Bugbot:① 从「全部」切回「本页」固定回 0 会错过后面更匹配的本页教程(Medium);
+  //   ② 抽屉开着时 in-app 导航,carouselIndex 只被 clamp 不重选,会停在别页同序号的 tip 上(Low)。
+  // 只在这两个「上下文切换」时重选;不把 defaultIndex 放进 deps,避免后台轮询刷新 tips 时打断用户浏览。
+  useEffect(() => {
+    setCarouselIndex(defaultIndex >= 0 ? defaultIndex : 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showAllPages, location.pathname]);
+
+  // 关闭抽屉后复位回「本页」,保证下次打开还是本页教程语义
+  useEffect(() => {
+    if (!expanded) setShowAllPages(false);
+  }, [expanded]);
 
   const lastExpandedRef = useRef(false);
   useEffect(() => {
     if (expanded && !lastExpandedRef.current) {
-      // 上次未打开 → 这次打开 → 重新选 index
-      if (pageMatchedIndex >= 0) {
-        setCarouselIndex(pageMatchedIndex);
-      } else if (tips.length > 0) {
-        setCarouselIndex(Math.floor(Math.random() * tips.length));
-      }
+      // 上次未打开 → 这次打开 → 选定 index(无匹配则落到第一条,不再随机)
+      setCarouselIndex(defaultIndex >= 0 ? defaultIndex : 0);
     }
     lastExpandedRef.current = expanded;
-  }, [expanded, pageMatchedIndex, tips.length]);
+  }, [expanded, defaultIndex, viewTips.length]);
 
   // ── dock 总高度广播:小书移除后底部不再有悬浮组,抽屉也改到右上角,dockBottom 恒为 20 ──
   // 不再随 expanded 变化、也不需要 ResizeObserver(它过去测书的高度,现在恒定 20,纯属空转,Bugbot)。
@@ -336,12 +348,12 @@ export function TipsDrawer() {
   // ── 上报 seen(轮播模式下只上报当前展示的那一条,减少一次性打 4-5 条 API 的负载)──
   const seenReportedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (!expanded || tips.length === 0) return;
-    const current = tips[Math.min(carouselIndex, tips.length - 1)];
+    if (!expanded || viewTips.length === 0) return;
+    const current = viewTips[Math.min(carouselIndex, viewTips.length - 1)];
     if (!current || seenReportedRef.current.has(current.id)) return;
     seenReportedRef.current.add(current.id);
     void trackTip(current.id, 'seen');
-  }, [expanded, tips, carouselIndex]);
+  }, [expanded, viewTips, carouselIndex]);
 
   const handleOpenTip = useCallback(
     (tip: (typeof tips)[number]) => {
@@ -385,10 +397,9 @@ export function TipsDrawer() {
   // 与 dismiss-forever 不同 — 管理员升级 tip.Version 后会重新出现。
   const handleMarkLearned = (tipId: string) => {
     void markLearned(tipId);
-    // 列表清空时自动收起,避免用户看到空抽屉
-    if (tips.length <= 1) {
-      setExpanded(false);
-    }
+    // 点「我已学会」即视为确认 → 收起抽屉。page-guide 学会后仍保留在 items 里(可重看),
+    // 但此刻关掉抽屉给用户「已确认」的反馈;入口按钮仍在,随时可再点开重看。
+    setExpanded(false);
   };
 
   // 小书「永远存在」:即使 tips 为空、也没 pinned,依然在右下角悬浮,
@@ -445,9 +456,46 @@ export function TipsDrawer() {
             }}
           >
             <Sparkles size={14} style={{ color: '#c4b5fd' }} />
-            教程
-            {tips.length > 0 && (() => {
-              const cur = tips[Math.min(carouselIndex, tips.length - 1)];
+            {showAllPages ? '全部教程' : '本页教程'}
+            {/* 「本页 / 全部」切换:仅当其它页面还有更多教程时才展示,避免无意义按钮 */}
+            {(showAllPages || tips.length > pageTips.length) && (
+              <button
+                type="button"
+                onClick={() => setShowAllPages((v) => !v)}
+                title={showAllPages ? '只看本页教程' : '浏览全部页面的教程'}
+                style={{
+                  border: '1px solid rgba(196,181,253,0.30)',
+                  background: 'rgba(196,181,253,0.10)',
+                  color: '#c4b5fd',
+                  cursor: 'pointer',
+                  padding: '2px 7px',
+                  borderRadius: 999,
+                  fontSize: 10,
+                  fontWeight: 600,
+                  marginLeft: 2,
+                }}
+              >
+                {showAllPages ? '只看本页' : `全部 ${tips.length}`}
+              </button>
+            )}
+            {viewTips.length > 0 && (() => {
+              const cur = viewTips[Math.min(carouselIndex, viewTips.length - 1)];
+              // 已学会的教程不再显示「我已学会」按钮,改为低调「已学会」标签(仍可重看,故卡片保留)。
+              if (cur.learned) {
+                return (
+                  <span
+                    title="本页教程已学会,可随时重看"
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 3,
+                      padding: '3px 7px', borderRadius: 999, fontSize: 11, fontWeight: 600,
+                      background: 'rgba(255,255,255,0.06)', color: 'rgba(52,211,153,0.85)', marginLeft: 2,
+                    }}
+                  >
+                    <GraduationCap size={11} strokeWidth={2.4} />
+                    已学会
+                  </span>
+                );
+              }
               return (
                 <button
                   type="button"
@@ -473,7 +521,7 @@ export function TipsDrawer() {
                 </button>
               );
             })()}
-            {tips.length > 1 && (
+            {viewTips.length > 1 && (
               <div
                 style={{
                   display: 'inline-flex',
@@ -485,7 +533,7 @@ export function TipsDrawer() {
                 <button
                   type="button"
                   onClick={() =>
-                    setCarouselIndex((i) => (i - 1 + tips.length) % tips.length)
+                    setCarouselIndex((i) => (i - 1 + viewTips.length) % viewTips.length)
                   }
                   title="上一条"
                   style={{
@@ -509,11 +557,11 @@ export function TipsDrawer() {
                     textAlign: 'center',
                   }}
                 >
-                  {Math.min(carouselIndex, tips.length - 1) + 1} / {tips.length}
+                  {Math.min(carouselIndex, viewTips.length - 1) + 1} / {viewTips.length}
                 </span>
                 <button
                   type="button"
-                  onClick={() => setCarouselIndex((i) => (i + 1) % tips.length)}
+                  onClick={() => setCarouselIndex((i) => (i + 1) % viewTips.length)}
                   title="下一条"
                   style={{
                     border: 'none',
@@ -594,7 +642,7 @@ export function TipsDrawer() {
             gap: 10,
           }}
         >
-          {tips.length === 0 ? (
+          {viewTips.length === 0 ? (
             <div
               style={{
                 padding: '32px 12px',
@@ -604,15 +652,42 @@ export function TipsDrawer() {
                 lineHeight: 1.6,
               }}
             >
-              暂无教程
-              <br />
-              <span style={{ fontSize: 11, opacity: 0.7 }}>
-                有新教程时这里会自动弹出
-              </span>
+              {/* 本页没有相关教程时,不再随机展示别页教程,而是给出明确空态 + 可主动浏览全部 */}
+              {!showAllPages && tips.length > 0 ? (
+                <>
+                  本页暂无专属教程
+                  <br />
+                  <button
+                    type="button"
+                    onClick={() => setShowAllPages(true)}
+                    style={{
+                      marginTop: 10,
+                      border: '1px solid rgba(196,181,253,0.35)',
+                      background: 'rgba(196,181,253,0.12)',
+                      color: '#c4b5fd',
+                      cursor: 'pointer',
+                      padding: '5px 12px',
+                      borderRadius: 999,
+                      fontSize: 12,
+                      fontWeight: 600,
+                    }}
+                  >
+                    浏览全部教程({tips.length})
+                  </button>
+                </>
+              ) : (
+                <>
+                  暂无教程
+                  <br />
+                  <span style={{ fontSize: 11, opacity: 0.7 }}>
+                    有新教程时这里会自动弹出
+                  </span>
+                </>
+              )}
             </div>
           ) : (() => {
             // 轮播模式:只渲染当前索引的 tip;分页器在上面 header 里
-            const t = tips[Math.min(carouselIndex, tips.length - 1)];
+            const t = viewTips[Math.min(carouselIndex, viewTips.length - 1)];
             const stepCount = t.autoAction?.steps?.length ?? 0;
             const stepsPreview =
               stepCount > 0

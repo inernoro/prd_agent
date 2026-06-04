@@ -1,9 +1,9 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import { BookOpen } from 'lucide-react';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { useAuthStore } from '@/stores/authStore';
-import { matchPageGuide } from './pageGuideMatch';
+import { matchPageGuide, filterPageTips } from './pageGuideMatch';
 
 /** 点击内嵌入口时派发,TipsDrawer 监听后展开抽屉。入口与抽屉解耦,入口可内嵌进任意页头。 */
 export const OPEN_TIPS_DRAWER_EVENT = 'open-tips-drawer';
@@ -21,17 +21,34 @@ export const OPEN_TIPS_DRAWER_EVENT = 'open-tips-drawer';
 export function TipsEntryButton({ className, compact = false }: { className?: string; compact?: boolean }) {
   const location = useLocation();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const loaded = useDailyTipsStore((s) => s.loaded);
+  const load = useDailyTipsStore((s) => s.load);
   const items = useDailyTipsStore((s) => s.items);
   const dismissed = useDailyTipsStore((s) => s.dismissed);
 
+  // 自己也确保 tips 已加载:按钮可能挂在某些不挂 TipsDrawer 的场景里,
+  // 不主动 load 就会因 items 为空而永远不显示(rules-of-hooks:hook 必须在 early-return 前)。
+  useEffect(() => {
+    if (isAuthenticated && !loaded) load();
+  }, [isAuthenticated, loaded, load]);
+
+  // 本页相关教程(与 TipsDrawer 抽屉作用域共用同一过滤逻辑)。带 location.search:query-scoped
+  // 的 tip(如 nav-order-customize 的 ?tab=nav-order)只在对应 tab 才算「本页」(Codex P2)。
+  const pageTips = useMemo(
+    () => filterPageTips(items, dismissed, location.pathname, location.search),
+    [items, dismissed, location.pathname, location.search],
+  );
+  // newbie:本页有「未走完的 *-page-guide」→ 强调色 + 脉冲,提示有完整上手教程没走完。
   const newbie = useMemo(
-    () => !!matchPageGuide(items, dismissed, location.pathname),
-    [items, dismissed, location.pathname],
+    () => !!matchPageGuide(items, dismissed, location.pathname, location.search),
+    [items, dismissed, location.pathname, location.search],
   );
 
   // 未登录不渲染:像 /library 这种公开页匿名访客也会渲染头部,但根挂载的 TipsDrawer 仅登录后挂,
   // 此时入口点了没人接、还会打 401 的 daily-tips 接口。所以匿名一律不显示入口(放在所有 hook 之后,满足 rules-of-hooks)。
   if (!isAuthenticated) return null;
+  // 本页没有任何教程 → 不显示按钮(用户 2026-06-04 要求:该页面没有教程就不显示这个按钮)。
+  if (pageTips.length === 0) return null;
 
   return (
     <button
