@@ -44,6 +44,14 @@ public class HostedSiteBackfillService : BackgroundService
             {
                 _logger.LogInformation("HostedSiteBackfillService: 已迁移 {Count} 条存量分享到 public Visibility", visCount);
             }
+
+            // 翻页方向兼容垫片回填（2026-06-03）：把存量 PPT / 旧垫片版本的站点重新注入当前版垫片，
+            // 让用户无需重新上传即可获得「上下键也能翻页」。注入保持在隔离对象存储域名上。
+            var navCount = await siteService.BackfillSlideNavCompatAsync(stoppingToken);
+            if (navCount > 0)
+            {
+                _logger.LogInformation("HostedSiteBackfillService: 已为 {Count} 个存量站点注入/升级翻页兼容垫片", navCount);
+            }
         }
         catch (OperationCanceledException) { /* 正常停机 */ }
         catch (Exception ex)

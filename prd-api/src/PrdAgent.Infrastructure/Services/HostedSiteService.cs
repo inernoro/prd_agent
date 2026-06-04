@@ -157,6 +157,7 @@ public class HostedSiteService : IHostedSiteService
             Tags = tags ?? new(),
             Folder = folder?.Trim(),
             OwnerUserId = userId,
+            SlideNavCompatVersion = SlideNavVersion, // 上传即注入当前版垫片
         };
 
         await _db.HostedSites.InsertOneAsync(site, cancellationToken: ct);
@@ -199,6 +200,7 @@ public class HostedSiteService : IHostedSiteService
             Folder = folder?.Trim(),
             OwnerUserId = userId,
             WrappedAssetType = string.IsNullOrWhiteSpace(wrappedAssetType) ? null : wrappedAssetType.Trim().ToLowerInvariant(),
+            SlideNavCompatVersion = SlideNavVersion, // 上传即注入当前版垫片（ZIP 内 HTML 条目已注入）
         };
 
         await _db.HostedSites.InsertOneAsync(site, cancellationToken: ct);
@@ -334,7 +336,8 @@ public class HostedSiteService : IHostedSiteService
                 .Set(x => x.TotalSize, totalSize)
                 .Set(x => x.WrappedAssetType, normalizedType)
                 .Set(x => x.UpdatedAt, now)
-                .Set(x => x.ContentVersion, now),
+                .Set(x => x.ContentVersion, now)
+                .Set(x => x.SlideNavCompatVersion, SlideNavVersion), // 重传内容已注入当前版垫片
             cancellationToken: ct);
 
         // 清理旧文件中不再被新文件集复用的 key。同 key（如 index.html）已被新内容
@@ -1240,6 +1243,74 @@ public class HostedSiteService : IHostedSiteService
         return backfilled;
     }
 
+    /// <summary>
+    /// 存量站点回填「幻灯片翻页方向兼容垫片」：把 SlideNavCompatVersion &lt; 当前版本的站点
+    /// 的 HTML 文件从 COS 拉回、重新注入当前版垫片、原地覆盖回 COS，并升级版本号。
+    /// 让用户上传该功能之前的旧 PPT、以及垫片代码升级后的存量站点都自动获得最新垫片，
+    /// 无需用户重新上传。注入保持在隔离的对象存储域名上（不改变 iframe 跨域隔离的安全模型）。
+    /// 幂等：内容无变化不重写 COS；处理后无条件升级版本号，下次启动不再重复扫描。
+    /// </summary>
+    public async Task<int> BackfillSlideNavCompatAsync(CancellationToken ct = default)
+    {
+        var fb = Builders<HostedSite>.Filter;
+        // 版本 < 当前的站点要升级；外加字段缺失的存量文档（$lt 不匹配缺失字段，需 Exists(false) 兜住）
+        var filter = fb.Or(
+            fb.Lt(x => x.SlideNavCompatVersion, SlideNavVersion),
+            fb.Exists(x => x.SlideNavCompatVersion, false));
+
+        var candidates = await _db.HostedSites.Find(filter).ToListAsync(ct);
+        var injectedSites = 0;
+
+        foreach (var site in candidates)
+        {
+            if (ct.IsCancellationRequested) break;
+            try
+            {
+                var htmlFiles = (site.Files ?? new List<HostedSiteFile>())
+                    .Where(f => !string.IsNullOrEmpty(f.CosKey) &&
+                                string.Equals(f.MimeType, "text/html", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                var anyChanged = false;
+                foreach (var f in htmlFiles)
+                {
+                    var bytes = await _storage.TryDownloadBytesAsync(f.CosKey, ct);
+                    if (bytes == null || bytes.Length == 0) continue;
+                    var injected = InjectSlideNavCompat(bytes);
+                    if (injected.Length == bytes.Length && injected.SequenceEqual(bytes))
+                        continue; // 已是当前版垫片，无需重写
+                    await _storage.UploadToKeyAsync(f.CosKey, injected, "text/html; charset=utf-8",
+                        CancellationToken.None, SiteCacheControl);
+                    anyChanged = true;
+                }
+
+                // 升级版本号；内容有变则同时 bump ContentVersion + SiteUrl（?v 击穿 CDN/浏览器缓存）
+                var now = DateTime.UtcNow;
+                var update = Builders<HostedSite>.Update.Set(x => x.SlideNavCompatVersion, SlideNavVersion);
+                if (anyChanged && !string.IsNullOrEmpty(site.EntryFile))
+                {
+                    var newUrl = AppendVersion(_storage.BuildUrlForKey(_storage.BuildSiteKey(site.Id, site.EntryFile)), now);
+                    update = update.Set(x => x.SiteUrl, newUrl)
+                                   .Set(x => x.ContentVersion, now)
+                                   .Set(x => x.UpdatedAt, now);
+                    injectedSites++;
+                }
+                await _db.HostedSites.UpdateOneAsync(x => x.Id == site.Id, update, cancellationToken: ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "翻页垫片回填失败: site={SiteId}", site.Id);
+            }
+        }
+
+        if (injectedSites > 0 || candidates.Count > 0)
+        {
+            _logger.LogInformation("翻页垫片回填完成: candidates={Candidates} injectedSites={Injected} version={Version}",
+                candidates.Count, injectedSites, SlideNavVersion);
+        }
+        return injectedSites;
+    }
+
     // ─────────────────────────────────────────────
     // 观看记录
     // ─────────────────────────────────────────────
@@ -1790,42 +1861,57 @@ public class HostedSiteService : IHostedSiteService
     // 幻灯片翻页方向兼容垫片
     // ─────────────────────────────────────────────
 
-    // 幂等标记：注入前检测，已存在则跳过（避免「下载已托管页再重传」造成二次注入）。
+    // 垫片版本号：垫片脚本逻辑每次实质修改都要 +1。上传时把站点 SlideNavCompatVersion
+    // 标为此值；startup backfill 把 < 此值的存量站点重新注入升级（无需用户重传）。
+    // v1：框架感知 + 合成左右键兜底（对忽略 isTrusted 的自定义 deck 无效）
+    // v2：改「可靠驱动优先」，新增任意带 next()/prev() 的自定义元素（如 deck-stage）直驱
+    private const int SlideNavVersion = 2;
+
+    // 注入块起始标记。注入块形如 {marker}<script>...</script>，剥离时从 marker 找到其后
+    // 第一个 </script> 一并删除，因此升级垫片版本时旧块会被整体替换而非被「幂等跳过」。
     private const string SlideNavMarker = "<!--map-slide-nav-compat-->";
 
     /// <summary>
-    /// 给「用户上传的幻灯片类 HTML」注入翻页方向兼容垫片，让只认左右方向键的 PPT 导出页
-    /// 也能用上下方向键 / 空格 / PageUp-Down / 滚轮 / 触摸滑动翻页（反之亦然）。
+    /// 给幻灯片类 HTML 注入翻页方向兼容垫片，让只认左右方向键的 PPT 导出页也能用
+    /// 上下方向键 / 空格 / PageUp-Down / 滚轮 / 触摸滑动翻页（反之亦然）。
     ///
-    /// 设计要点（对应 .claude/rules 与本次需求评审）：
-    /// - 跨域 iframe 无法从父页面拦截键盘，因此垫片必须随内容一起下发、在 iframe 内部运行。
-    /// - 保守接管：运行时判定「这是不是幻灯片」（检测 reveal/Swiper/impress/slidev 全局对象、
-    ///   .slide 类元素 ≥2、或 scroll-snap 容器），普通滚动网页一律不接管，避免劫持正常滚动。
-    /// - 框架感知优先：识别到框架就调它的 next/prev API（避免 reveal 子页层级跳错）；
-    ///   其次驱动 scroll-snap 容器；都不行才回退「把上下意图合成为左右方向键」补发。
-    /// - 仅用于上传路径（CreateFromHtml / Zip / Reupload），不动 API/工作流生成内容。
+    /// 设计要点：
+    /// - 跨域 iframe 无法从父页面拦截键盘，垫片必须随内容下发、在 iframe 内部运行。
+    /// - 保守接管：运行时判定是幻灯片（reveal/Swiper/impress/slidev、带 next-prev 的自定义元素、
+    ///   .slide ≥2、scroll-snap）才接管，普通滚动网页不碰。
+    /// - 可靠驱动优先：调 deck 自身导航 API（规避合成事件 isTrusted=false 被忽略）。
+    /// - 升级安全：先剥离任何旧版本注入块（从 marker 到其后第一个 &lt;/script&gt;），再插入当前版本，
+    ///   因此垫片代码升级后重跑会把旧块换成新块，而不是被旧 marker 幂等跳过。
+    /// - 上传路径即时注入；startup backfill 对存量站点补注入（HostedSiteBackfillService）。
     /// </summary>
     private static byte[] InjectSlideNavCompat(byte[] htmlBytes)
     {
         var html = System.Text.Encoding.UTF8.GetString(htmlBytes);
-        if (html.Contains(SlideNavMarker, StringComparison.Ordinal))
-            return htmlBytes; // 已注入过，幂等返回
 
         // 没有任何 HTML 结构信号（既无 </body> 也无 </html> 也无 <html）的内容不处理，
         // 避免把脚本塞进纯文本/JSON 等被误判为 text/html 的文件。
-        var bodyIdx = html.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
-        var htmlIdx = html.LastIndexOf("</html>", StringComparison.OrdinalIgnoreCase);
-        if (bodyIdx < 0 && htmlIdx < 0 &&
+        if (html.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase) < 0 &&
+            html.LastIndexOf("</html>", StringComparison.OrdinalIgnoreCase) < 0 &&
             html.IndexOf("<html", StringComparison.OrdinalIgnoreCase) < 0)
             return htmlBytes;
 
-        string injected;
-        if (bodyIdx >= 0)
-            injected = html[..bodyIdx] + SlideNavCompatScript + html[bodyIdx..];
-        else if (htmlIdx >= 0)
-            injected = html[..htmlIdx] + SlideNavCompatScript + html[htmlIdx..];
-        else
-            injected = html + SlideNavCompatScript;
+        // 1) 剥离已有注入块（任何旧版本）：从 marker 到其后第一个 </script>
+        var start = html.IndexOf(SlideNavMarker, StringComparison.Ordinal);
+        if (start >= 0)
+        {
+            var close = html.IndexOf("</script>", start, StringComparison.OrdinalIgnoreCase);
+            html = close >= 0
+                ? html.Remove(start, (close + "</script>".Length) - start)
+                : html.Remove(start, SlideNavMarker.Length); // 只有裸 marker 没脚本，删掉 marker
+        }
+
+        // 2) 插入当前版本注入块（剥离后重新定位锚点）
+        var bodyIdx = html.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
+        var htmlIdx = html.LastIndexOf("</html>", StringComparison.OrdinalIgnoreCase);
+        string injected = bodyIdx >= 0
+            ? html[..bodyIdx] + SlideNavCompatScript + html[bodyIdx..]
+            : (htmlIdx >= 0 ? html[..htmlIdx] + SlideNavCompatScript + html[htmlIdx..]
+                            : html + SlideNavCompatScript);
 
         return System.Text.Encoding.UTF8.GetBytes(injected);
     }
