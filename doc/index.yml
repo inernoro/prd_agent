@@ -66,6 +66,7 @@ docs:
   design.channel-adapter: 多通道适配器设计
   design.apple-shortcuts: 苹果快捷指令集成设计方案
   design.executive-dashboard: 总裁面板与周报 Agent 设计文档
+  design.product-agent: 产品管理 Agent（产品-版本-需求-功能-缺陷-客户）设计
   design.defect-agent: 缺陷管理 Agent 功能设计
   design.defect-labels: 缺陷管理标签体系设计
   design.defect-image-analysis: 缺陷截图 VLM 预解析设计文档
@@ -257,6 +258,7 @@ docs:
   # 已知边界 / 后续可补 / 留尾风险，命名规范见 rule.doc-naming.md「debt.* 专项约定」
   debt.agent-universe: 智能体宇宙 · 债务台账
   debt.pm-agent: 项目管理智能体 · 债务台账
+  debt.product-agent: 产品管理智能体 · 债务台账
   debt.video-agent: 视频生成 Agent · 债务台账
   debt.workflow-agent: 工作流 Agent · 债务台账
   debt.asset-storage: 资源存储（IAssetStorage 实现）债务台账

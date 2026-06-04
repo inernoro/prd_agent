@@ -125,6 +125,10 @@
 - [总裁面板与周报 Agent 设计文档](design.executive-dashboard) `design.executive-dashboard`
   > 高管视角的数据面板与周报 Agent 的设计
 
+- [产品管理 Agent 设计](design.product-agent) `design.product-agent`
+  > 产品-版本-需求-功能-缺陷-客户全链路串联、版本化管理、分级追溯与知识图谱（参考 TAPD / RTM）
+- [产品管理 Agent 债务台账](debt.product-agent) `debt.product-agent`
+  > 产品管理智能体已知边界与后续波次债务
 - [缺陷管理 Agent 功能设计](design.defect-agent) `design.defect-agent`
   > 缺陷提交、跟踪与升级流程的功能设计
 
