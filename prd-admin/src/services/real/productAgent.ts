@@ -174,6 +174,27 @@ export function deleteDescTemplate(templateId: string) {
   return apiRequest<{ deleted: boolean }>(`/api/product/desc-templates/${templateId}`, { method: 'DELETE' });
 }
 
+// ── RTM 需求可追溯矩阵 ──
+export interface RtmRow {
+  id: string;
+  requirementNo: string;
+  title: string;
+  grade: string;
+  currentState?: string | null;
+  versions: { id: string; name: string }[];
+  customers: { id: string; name: string }[];
+  features: { id: string; featureNo: string; title: string }[];
+  defects: { id: string; defectNo: string; title?: string | null; status: string }[];
+}
+export interface RtmData {
+  rows: RtmRow[];
+  orphanFeatures: { id: string; featureNo: string; title: string }[];
+  stats: { total: number; withoutFeature: number; withoutVersion: number; orphanFeatures: number };
+}
+export function getRtm(productId: string) {
+  return apiRequest<RtmData>(`/api/product/products/${productId}/rtm`);
+}
+
 // ── 通用状态机 / 流程引擎 ──
 export function listWorkflowDefinitions(params?: { entityType?: ProductEntityType; productId?: string }) {
   const q = new URLSearchParams();

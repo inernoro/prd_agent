@@ -1470,6 +1470,53 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(act));
     }
 
+    // ════════════════════════ RTM 需求可追溯矩阵 ════════════════════════
+
+    /// <summary>需求可追溯矩阵：每条需求 → 归属版本 / 实现功能 / 关联客户 / 追溯缺陷 + 覆盖缺口统计。</summary>
+    [HttpGet("products/{productId}/rtm")]
+    public async Task<IActionResult> GetRtm(string productId)
+    {
+        if (await FindAccessibleProductAsync(productId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+
+        var reqs = await _db.Requirements.Find(r => r.ProductId == productId && !r.IsDeleted).SortByDescending(r => r.CreatedAt).ToListAsync();
+        var feats = await _db.Features.Find(f => f.ProductId == productId && !f.IsDeleted).ToListAsync();
+        var versions = await _db.ProductVersions.Find(v => v.ProductId == productId && !v.IsDeleted).ToListAsync();
+        var customers = await _db.Customers.Find(c => c.ProductId == productId && !c.IsDeleted).ToListAsync();
+        var defects = await _db.DefectReports.Find(d => d.TracedProductId == productId && !d.IsDeleted).ToListAsync();
+
+        var versionName = versions.ToDictionary(v => v.Id, v => v.VersionName);
+        var customerName = customers.ToDictionary(c => c.Id, c => c.Name);
+
+        var rows = reqs.Select(r =>
+        {
+            var implFeatures = feats.Where(f => f.RequirementIds.Contains(r.Id)).Select(f => new { f.Id, f.FeatureNo, f.Title }).ToList();
+            var reqDefects = defects.Where(d => d.TracedRequirementId == r.Id).Select(d => new { d.Id, d.DefectNo, d.Title, d.Status }).ToList();
+            return new
+            {
+                r.Id, r.RequirementNo, r.Title, r.Grade, r.CurrentState,
+                versions = r.VersionIds.Where(versionName.ContainsKey).Select(id => new { id, name = versionName[id] }).ToList(),
+                customers = r.CustomerIds.Where(customerName.ContainsKey).Select(id => new { id, name = customerName[id] }).ToList(),
+                features = implFeatures,
+                defects = reqDefects,
+            };
+        }).ToList();
+
+        var reqIdSet = reqs.Select(r => r.Id).ToHashSet();
+        var orphanFeatures = feats
+            .Where(f => f.RequirementIds.Count == 0 || !f.RequirementIds.Any(reqIdSet.Contains))
+            .Select(f => new { f.Id, f.FeatureNo, f.Title }).ToList();
+
+        var stats = new
+        {
+            total = reqs.Count,
+            withoutFeature = rows.Count(x => x.features.Count == 0),
+            withoutVersion = rows.Count(x => x.versions.Count == 0),
+            orphanFeatures = orphanFeatures.Count,
+        };
+        return Ok(ApiResponse<object>.Ok(new { rows, orphanFeatures, stats }));
+    }
+
     // ════════════════════════ 管理层总览（跨产品聚合，P1）════════════════════════
 
     /// <summary>当前用户是否管理层（看全部产品 + 全局设置）。</summary>

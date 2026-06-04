@@ -9,13 +9,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { EChartsOption } from 'echarts';
-import { Plus, Trash2, GitBranch, ListChecks, Puzzle, Users, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard } from 'lucide-react';
+import { Plus, Trash2, GitBranch, ListChecks, Puzzle, Users, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard, Table2 } from 'lucide-react';
 import { EChart } from '@/components/charts/EChart';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
 import { VersionRelationModal, ProductKnowledgePanel, DefectLinkerModal } from './ProductRelationModals';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { KanbanBoard } from './KanbanBoard';
+import { RtmMatrix } from './RtmMatrix';
 import { UpgradeRequestsTab } from './UpgradeRequestsTab';
 import {
   getProduct,
@@ -41,7 +42,7 @@ import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL } from './types';
 import { useProductCategories, categoryLabel } from './productCategories';
 import { useEffectiveWorkflow } from './DynamicForm';
 
-type Section = 'overview' | 'versions' | 'requirements' | 'features' | 'board' | 'defects' | 'customers' | 'knowledge' | 'graph';
+type Section = 'overview' | 'versions' | 'requirements' | 'features' | 'board' | 'rtm' | 'defects' | 'customers' | 'knowledge' | 'graph';
 
 const CHART_COLORS = ['#22D3EE', '#FBBF24', '#A78BFA', '#4ADE80', '#F87171', '#60A5FA'];
 
@@ -51,6 +52,7 @@ const NAV: NavItem<Section>[] = [
   { key: 'requirements', label: '需求', icon: ListChecks },
   { key: 'features', label: '功能', icon: Puzzle },
   { key: 'board', label: '看板', icon: LayoutGrid },
+  { key: 'rtm', label: '追溯矩阵', icon: Table2 },
   { key: 'defects', label: '缺陷', icon: Bug },
   { key: 'customers', label: '客户', icon: Users },
   { key: 'knowledge', label: '知识库', icon: BookOpen },
@@ -95,7 +97,7 @@ export function SingleProductView() {
   }
 
   const SECTION_TITLE: Record<Section, string> = {
-    overview: '概览', versions: '版本（含升级申请）', requirements: '需求', features: '功能', board: '看板',
+    overview: '概览', versions: '版本（含升级申请）', requirements: '需求', features: '功能', board: '看板', rtm: '追溯矩阵',
     defects: '缺陷', customers: '客户', knowledge: '知识库', graph: '图谱',
   };
 
@@ -128,6 +130,10 @@ export function SingleProductView() {
       ) : active === 'board' ? (
         <div className="flex-1 min-h-0 p-4">
           <BoardTab productId={product.id} />
+        </div>
+      ) : active === 'rtm' ? (
+        <div className="flex-1 min-h-0 p-4">
+          <RtmMatrix productId={product.id} />
         </div>
       ) : (
         <SectionShell title={SECTION_TITLE[active]}>
