@@ -273,9 +273,8 @@ public class DocumentStoreSyncController : ControllerBase
                         skipped++;
                         continue;
                     }
-                    var parsed = await _documentService.ParseAsync(fe.Content);
-                    parsed.Title = fe.Title;
-                    await _documentService.SaveAsync(parsed);
+                    var oldDocId = exEntry.DocumentId;
+                    var parsed = await BuildAndSaveDocAsync(fe.Content, fe.Title);
                     await _db.DocumentEntries.UpdateOneAsync(
                         e => e.Id == exEntry.Id,
                         Builders<DocumentEntry>.Update
@@ -290,13 +289,12 @@ public class DocumentStoreSyncController : ControllerBase
                             .Set(e => e.UpdatedByName, actorName)
                             .Set(e => e.UpdatedAt, DateTime.UtcNow)
                             .Set(e => e.LastChangedAt, DateTime.UtcNow));
+                    await CleanupReplacedDocAsync(oldDocId, parsed.Id, exEntry.Id);
                     updated++;
                 }
                 else
                 {
-                    var parsed = await _documentService.ParseAsync(fe.Content);
-                    parsed.Title = fe.Title;
-                    await _documentService.SaveAsync(parsed);
+                    var parsed = await BuildAndSaveDocAsync(fe.Content, fe.Title);
                     var entry = new DocumentEntry
                     {
                         StoreId = target.Id,
@@ -343,6 +341,39 @@ public class DocumentStoreSyncController : ControllerBase
         var m = metadata != null ? new Dictionary<string, string>(metadata) : new Dictionary<string, string>();
         m[SyncLineageKey] = lineageId;
         return m;
+    }
+
+    // 同步写正文：空/纯空白是合法的空文本文档，但 DocumentService.ParseAsync 会对其抛异常，
+    // 故此处手工构造一个内容寻址（hash 派生 Id）的空文档，避免空文档每次同步都失败（Codex P2）。
+    private async Task<ParsedPrd> BuildAndSaveDocAsync(string content, string title)
+    {
+        ParsedPrd parsed;
+        if (string.IsNullOrWhiteSpace(content))
+            parsed = new ParsedPrd { Id = Sha256Hex(content.Replace("\r\n", "\n")), RawContent = content };
+        else
+            parsed = await _documentService.ParseAsync(content);
+        parsed.Title = title;
+        await _documentService.SaveAsync(parsed);
+        return parsed;
+    }
+
+    // 替换正文后清理被换下的旧 ParsedPrd：内容寻址 Id，仍有其它条目引用则跳过（防误删共享正文）。
+    // 与 DocumentStoreController 替换路径同口径；失败只记日志不影响同步结果。
+    private async Task CleanupReplacedDocAsync(string? oldDocId, string newDocId, string keepEntryId)
+    {
+        if (string.IsNullOrEmpty(oldDocId) || oldDocId == newDocId) return;
+        try
+        {
+            var stillReferenced = await _db.DocumentEntries
+                .Find(e => e.DocumentId == oldDocId && e.Id != keepEntryId)
+                .AnyAsync(CancellationToken.None);
+            if (!stillReferenced)
+                await _db.Documents.DeleteOneAsync(d => d.Id == oldDocId, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[doc-sync] 清理旧 ParsedPrd 失败 docId={DocId}", oldDocId);
+        }
     }
 
     // 标签集合相等（顺序无关）。
@@ -589,6 +620,9 @@ public class DocumentStoreSyncController : ControllerBase
         if (payload == null || string.IsNullOrWhiteSpace(payload.BaseUrl)
             || string.IsNullOrWhiteSpace(payload.StoreId) || string.IsNullOrWhiteSpace(payload.Token))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "连接链接缺少必要信息"));
+        // 自连禁止：粘贴本库自己的连接链接 = 把库同步给自己（还会 HTTP 回环），直接拦下给明确错误。
+        if (payload.StoreId == storeId)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不能连接知识库自己，请粘贴另一个库的连接链接"));
 
         var direction = DocumentSyncDirection.IsValid(request.Direction) ? request.Direction! : DocumentSyncDirection.Both;
 
