@@ -1837,6 +1837,7 @@ public class HostedSiteService : IHostedSiteService
   window.__mapSlideNavCompat = true;
   var SNAP_AXIS = null; // 'x' | 'y' | null
   var scroller = null;
+  var driver = null;    // 可靠驱动 { next, prev }，解析失败为 null
   function gcs(el, p){ try { return getComputedStyle(el)[p] || ''; } catch(e){ return ''; } }
   function findSnapScroller(){
     var cands = [document.scrollingElement, document.documentElement, document.body];
@@ -1853,78 +1854,89 @@ public class HostedSiteService : IHostedSiteService
     }
     return false;
   }
-  function slideEls(){
-    return document.querySelectorAll('.swiper-slide, .reveal .slides > section, section.slide, .slide, [data-slide], .step, .slidev-page');
-  }
-  function looksLikeDeck(){
-    if (window.Reveal || window.Swiper || window.impress) return true;
-    if (document.querySelector('.reveal .slides, .swiper, .swiper-container, #impress, .slidev-layout, .slidev-page')) return true;
-    if (findSnapScroller()) return true;
-    if (slideEls().length >= 2) return true;
-    return false;
-  }
-  function frameworkGo(dir){ // dir: 1=next, -1=prev
-    try {
-      if (window.Reveal && window.Reveal.next){ dir>0?window.Reveal.next():window.Reveal.prev(); return true; }
-      var sw = document.querySelector('.swiper, .swiper-container');
-      if (sw && sw.swiper){ dir>0?sw.swiper.slideNext():sw.swiper.slidePrev(); return true; }
-      if (window.impress){ var im=window.impress(); dir>0?im.next():im.prev(); return true; }
-    } catch(e){}
-    return false;
-  }
-  function snapGo(dir){
-    if (!scroller) return false;
+  function snap(dir){
+    if (!scroller) return;
     if ((SNAP_AXIS||'y') === 'x') scroller.scrollBy({ left: dir*scroller.clientWidth, behavior:'smooth' });
     else scroller.scrollBy({ top: dir*scroller.clientHeight, behavior:'smooth' });
-    return true;
+  }
+  // 自定义元素（标签含 '-'）且同时暴露 next()/prev() 方法 —— 覆盖 web component 类 deck
+  function findDeckElement(){
+    var all = document.getElementsByTagName('*');
+    for (var i=0;i<all.length;i++){
+      var el = all[i];
+      if (el.tagName.indexOf('-') > 0 && typeof el.next === 'function' && typeof el.prev === 'function') return el;
+    }
+    return null;
+  }
+  // 解析「可靠驱动」：直接调 deck 自身导航 API，规避合成键盘事件 isTrusted=false 被忽略的问题
+  function resolveDriver(){
+    try {
+      if (window.Reveal && typeof window.Reveal.next === 'function')
+        return { next: function(){ window.Reveal.next(); }, prev: function(){ window.Reveal.prev(); } };
+      var sw = document.querySelector('.swiper, .swiper-container');
+      if (sw && sw.swiper)
+        return { next: function(){ sw.swiper.slideNext(); }, prev: function(){ sw.swiper.slidePrev(); } };
+      if (window.impress){ var im = window.impress(); if (im) return { next: function(){ im.next(); }, prev: function(){ im.prev(); } }; }
+      var deck = findDeckElement();
+      if (deck) return { next: function(){ deck.next(); }, prev: function(){ deck.prev(); } };
+      if (findSnapScroller()) return { next: function(){ snap(1); }, prev: function(){ snap(-1); } };
+    } catch(e){}
+    return null;
   }
   var SYN = '__mapSyn';
   function synthArrow(dir){
-    // 无可识别 API 且无 scroll-snap：按主流 PPT 约定把翻页意图转成左右方向键补发
+    // 无可靠驱动时的尽力兜底：按主流 PPT 约定把翻页意图转成左右方向键补发
     var ev = new KeyboardEvent('keydown', { key: dir>0?'ArrowRight':'ArrowLeft', code: dir>0?'ArrowRight':'ArrowLeft', keyCode: dir>0?39:37, which: dir>0?39:37, bubbles:true, cancelable:true });
     ev[SYN] = true;
     (document.activeElement || document.body || document).dispatchEvent(ev);
   }
-  function go(dir){
-    if (frameworkGo(dir)) return true;
-    if (snapGo(dir)) return true;
-    synthArrow(dir);
-    return true;
+  function looksLikeDeck(){
+    if (window.Reveal || window.Swiper || window.impress) return true;
+    if (document.querySelector('.reveal .slides, .swiper, .swiper-container, #impress, .slidev-layout, .slidev-page')) return true;
+    if (findDeckElement()) return true;
+    if (findSnapScroller()) return true;
+    if (document.querySelectorAll('.swiper-slide, .reveal .slides > section, section.slide, .slide, [data-slide], .step, .slidev-page').length >= 2) return true;
+    return false;
   }
+  function inEditable(t){ return !!(t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)); }
   function onKey(e){
-    if (e[SYN] || e.defaultPrevented) return;
-    if (e.altKey || e.ctrlKey || e.metaKey) return;
-    var t = e.target;
-    if (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
-    if (t && t.isContentEditable) return;
-    var k = e.key, dir = 0;
-    if (k === 'ArrowDown' || k === 'PageDown') dir = 1;
-    else if (k === 'ArrowUp' || k === 'PageUp') dir = -1;
-    else if (k === ' ' || k === 'Spacebar') dir = e.shiftKey ? -1 : 1;
-    else return; // 左右键交给页面原生处理（它本来就支持）
-    if (go(dir)) { e.preventDefault(); e.stopPropagation(); }
+    if (e[SYN] || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+    if (inEditable(e.target)) return;
+    var k = e.key;
+    var isVert = (k === 'ArrowDown' || k === 'ArrowUp');
+    var isSpace = (k === ' ' || k === 'Spacebar');
+    var dir = (k === 'ArrowDown' || k === 'PageDown' || (isSpace && !e.shiftKey)) ? 1
+            : ((k === 'ArrowUp' || k === 'PageUp' || (isSpace && e.shiftKey)) ? -1 : 0);
+    if (!dir) return; // 左右键交给页面原生处理（它本来就支持）
+    if (!driver) driver = resolveDriver();
+    if (driver){ dir>0 ? driver.next() : driver.prev(); e.preventDefault(); e.stopPropagation(); return; }
+    // 无可靠驱动：仅对上下方向键尽力合成左右键，且不 preventDefault/stopPropagation，
+    // 避免把 deck 原生可用的 Space/PageDown/ArrowDown 一并废掉（帮倒忙）
+    if (isVert) synthArrow(dir);
   }
+  // 滚轮/触摸仅在「横向 scroll-snap」这一明确场景接管纵向手势，避免误伤 deck 内部滚动
   var wheelLock = 0;
   function onWheel(e){
-    if (SNAP_AXIS === 'y') return; // 纵向 snap 浏览器原生即可处理，不接管
+    if (!(scroller && SNAP_AXIS === 'x')) return;
     if (Date.now() < wheelLock) return;
     var dy = e.deltaY||0, dx = e.deltaX||0;
     if (Math.abs(dy) <= Math.abs(dx) || dy === 0) return;
-    if (go(dy > 0 ? 1 : -1)) { e.preventDefault(); wheelLock = Date.now() + 600; }
+    snap(dy > 0 ? 1 : -1); e.preventDefault(); wheelLock = Date.now() + 600;
   }
   var tsx=0, tsy=0;
   function onTouchStart(e){ var t=e.touches&&e.touches[0]; if (t){ tsx=t.clientX; tsy=t.clientY; } }
   function onTouchEnd(e){
-    if (SNAP_AXIS === 'y') return;
+    if (!(scroller && SNAP_AXIS === 'x')) return;
     var t = e.changedTouches && e.changedTouches[0]; if (!t) return;
     var dx = t.clientX - tsx, dy = t.clientY - tsy;
     if (Math.abs(dy) < 40 || Math.abs(dy) < Math.abs(dx)) return; // 仅响应明显纵向滑动
-    go(dy < 0 ? 1 : -1);
+    snap(dy < 0 ? 1 : -1);
   }
   var bound = false;
   function bind(){
     if (bound || !looksLikeDeck()) return;
     bound = true;
+    driver = resolveDriver();
     window.addEventListener('keydown', onKey, true);
     window.addEventListener('wheel', onWheel, { passive:false, capture:true });
     window.addEventListener('touchstart', onTouchStart, { passive:true });
@@ -1933,8 +1945,12 @@ public class HostedSiteService : IHostedSiteService
   if (document.readyState !== 'loading') bind();
   document.addEventListener('DOMContentLoaded', bind);
   window.addEventListener('load', bind);
+  // 框架/自定义元素可能异步 upgrade：未绑定则重试 bind，已绑定但驱动仍空则重试解析
   var tries = 0;
-  var timer = setInterval(function(){ bind(); if (bound || ++tries > 20) clearInterval(timer); }, 300);
+  var timer = setInterval(function(){
+    if (!bound) bind(); else if (!driver) driver = resolveDriver();
+    if (++tries > 30) clearInterval(timer);
+  }, 300);
 })();
 </script>";
 
