@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
@@ -39,18 +39,21 @@ export default function OpenApiPanel({ onActionsReady }: { onActionsReady?: (a: 
   const [pools, setPools] = useState<Pool[]>([]);
   const [detail, setDetail] = useState<BindingRow | null>(null);
   const [q, setQ] = useState('');
+  const fetchIdRef = useRef(0);
 
   const load = useCallback(async () => {
+    const id = ++fetchIdRef.current;
     setLoading(true);
     try {
       const [b, p] = await Promise.all([
         apiRequest<BindingRow[]>('/api/open-api/bindings', { auth: true }),
         apiRequest<Pool[]>('/api/open-api/pools', { auth: true }),
       ]);
+      if (id !== fetchIdRef.current) return; // 更晚的刷新已开始，丢弃这份过期响应
       if (b.success && b.data) setRows(b.data);
       else if (!b.success) toast.error(b.error?.message ?? '加载失败');
       if (p.success && p.data) setPools(p.data);
-    } finally { setLoading(false); }
+    } finally { if (id === fetchIdRef.current) setLoading(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -65,8 +68,6 @@ export default function OpenApiPanel({ onActionsReady }: { onActionsReady?: (a: 
   const totalTok = rows.reduce((s, r) => s + r.todayTokens, 0);
   const configured = rows.filter((r) => r.chatModels.length > 0 || r.imageModels.length > 0).length;
   const filtered = q.trim() ? rows.filter((r) => (r.name + r.ownerName).toLowerCase().includes(q.trim().toLowerCase())) : rows;
-
-  if (loading) return <MapSectionLoader text="正在加载开放接口…" />;
 
   return (
     <div data-tour-id="open-api-root" className="h-full min-h-0 flex flex-col gap-4" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
@@ -87,7 +88,9 @@ export default function OpenApiPanel({ onActionsReady }: { onActionsReady?: (a: 
       </div>
 
       <div data-tour-id="open-api-list" className="flex flex-col gap-4">
-      {rows.length === 0 ? (
+      {loading ? (
+        <MapSectionLoader text="正在加载开放接口…" />
+      ) : rows.length === 0 ? (
         <GlassCard className="p-10 flex flex-col items-center justify-center text-center gap-3">
           <ShieldAlert size={32} className="text-white/30" />
           <div className="text-white/70 text-sm">还没有授予 <code className="px-1 rounded bg-white/[0.06]">open-api:call</code> 的 Key</div>
@@ -112,7 +115,7 @@ export default function OpenApiPanel({ onActionsReady }: { onActionsReady?: (a: 
       </div>
 
       {detail && (
-        <KeyDetailDrawer row={detail} chatOptions={chatOptions} imageOptions={imageOptions}
+        <KeyDetailDrawer key={detail.keyId} row={detail} chatOptions={chatOptions} imageOptions={imageOptions}
           onClose={() => setDetail(null)} onSaved={() => { setDetail(null); load(); }} />
       )}
     </div>
@@ -203,6 +206,7 @@ function KeyDetailDrawer({ row, chatOptions, imageOptions, onClose, onSaved }: {
   const [logs, setLogs] = useState<LogRow[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
   const [shown, setShown] = useState(false);
+  const logFetchRef = useRef(0);
 
   useEffect(() => {
     const t = setTimeout(() => setShown(true), 10);
@@ -212,12 +216,14 @@ function KeyDetailDrawer({ row, chatOptions, imageOptions, onClose, onSaved }: {
   }, [onClose]);
 
   const loadLogs = useCallback(async () => {
+    const id = ++logFetchRef.current;
     setLogsLoading(true);
     try {
       const res = await apiRequest<LogRow[]>(`/api/open-api/logs?keyId=${encodeURIComponent(row.keyId)}&limit=100`, { auth: true });
+      if (id !== logFetchRef.current) return; // 更晚的请求已开始，丢弃过期日志
       if (res.success && res.data) setLogs(res.data);
       else if (!res.success) toast.error(res.error?.message ?? '加载日志失败');
-    } finally { setLogsLoading(false); }
+    } finally { if (id === logFetchRef.current) setLogsLoading(false); }
   }, [row.keyId]);
 
   useEffect(() => { if (tab === 'logs') loadLogs(); }, [tab, loadLogs]);

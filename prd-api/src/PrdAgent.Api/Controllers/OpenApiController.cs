@@ -315,6 +315,16 @@ public class OpenApiController : ControllerBase
     public async Task<IActionResult> GetModels(CancellationToken httpAborted)
     {
         var key = await TryLoadKeyFromAuthAsync(httpAborted);
+
+        // 带了 sk- 凭据但解析不出有效 Key（错/过期/撤销）→ 401，避免错 key 看似有效。
+        // 完全匿名（无凭据）才返回默认池清单用于发现。
+        if (key == null && HasApiKeyCredential())
+            return new ContentResult
+            {
+                StatusCode = 401, ContentType = "application/json",
+                Content = JsonSerializer.Serialize(new { error = new { message = "无效或已过期的 API Key", type = "invalid_request_error", code = "invalid_api_key" } })
+            };
+
         var models = new List<object>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -439,6 +449,18 @@ public class OpenApiController : ControllerBase
         var keyId = User.FindFirst("agentApiKeyId")?.Value ?? User.FindFirst("appId")?.Value;
         if (string.IsNullOrWhiteSpace(keyId)) return null;
         return await _db.AgentApiKeys.Find(k => k.Id == keyId).FirstOrDefaultAsync(ct);
+    }
+
+    /// <summary>请求是否携带了 sk-* API Key 凭据（用于区分"匿名"与"带了无效 key"）。JWT 不算。</summary>
+    private bool HasApiKeyCredential()
+    {
+        if (Request.Headers.TryGetValue("Authorization", out var auth))
+        {
+            var v = auth.ToString();
+            var token = v.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ? v["Bearer ".Length..].Trim() : v.Trim();
+            if (token.StartsWith("sk-", StringComparison.Ordinal)) return true;
+        }
+        return Request.Headers.ContainsKey("X-AI-Access-Key");
     }
 
     /// <summary>用于 [AllowAnonymous] 端点：手动触发 ApiKey 认证，带 Key 时取回 Key，无则返回 null。</summary>
