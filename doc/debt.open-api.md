@@ -40,6 +40,8 @@
 
 1. **model 字段语义**：从"静默忽略"改为**按 Key 模型白名单**——client 可在白名单内自选，
    越界 400 `model_not_allowed`，不填用白名单第一个（默认），白名单空=默认池。
+   白名单条目支持**模型 id 或模型池 code**两类（后端 `FindPreferredModel` 双档匹配，
+   管理 UI 选择器同列两类，池 code 让客户走整池故障转移）。
 2. **密钥自省** `GET /api/v1/key`：返回白名单/配额/今日用量/有效期，不打模型。
 3. **可观测性对齐**：响应 `id = chatcmpl-<requestId>` 与日志同源可回溯；成功/429 回写
    `X-RateLimit-Limit/Remaining/Reset`。

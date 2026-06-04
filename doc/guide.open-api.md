@@ -70,6 +70,10 @@ curl -X POST https://<域名>/api/v1/chat/completions \
 
 > 与 OpenRouter 区别：OpenRouter 路由到任意 model；本平台把可选模型**限定在 Key 的白名单内**，便于按客户固定/隔离模型。
 
+白名单条目可以是**单个模型 id**（钉死该模型）或**模型池 code**（让该客户走整个池，享池内健康度/故障转移，不钉死单一模型）。
+两者都经 `ModelResolver.FindPreferredModel` 的 `expectedModel` 通道解析（先按模型 id 精确匹配，再按池 code 匹配）。
+管理后台「开放接口」tab 的白名单选择器同时列出模型 id 与「池 · {名称}」两类选项。
+
 ## 四、限流与配额
 
 - 每分钟速率：响应头 `X-RateLimit-Limit/Remaining/Reset`；超限 **429** + `Retry-After`。

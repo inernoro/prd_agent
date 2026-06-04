@@ -32,6 +32,21 @@ interface BindingRow {
   todayTokens: number;
 }
 interface Pool { id: string; name: string; code: string; modelType: string; isDefault: boolean; models: string[]; }
+// 白名单可选项：既可选「单个模型 id」（钉死该模型），也可选「模型池 code」
+// （让客户走该池，享池内健康度/故障转移；后端 ModelResolver.FindPreferredModel 按 id 或池 code 匹配）。
+type WLOption = { value: string; label: string };
+function buildWhitelistOptions(pools: Pool[], modelType: string): WLOption[] {
+  const ps = pools.filter((p) => p.modelType === modelType);
+  const seen = new Set<string>();
+  const out: WLOption[] = [];
+  for (const p of ps) {
+    if (p.code && !seen.has(p.code)) { seen.add(p.code); out.push({ value: p.code, label: `池 · ${p.name}` }); }
+  }
+  for (const p of ps) for (const m of p.models) {
+    if (!seen.has(m)) { seen.add(m); out.push({ value: m, label: m }); }
+  }
+  return out;
+}
 
 export default function OpenApiPanel({ onActionsReady }: { onActionsReady?: (a: React.ReactNode) => void }) {
   const [loading, setLoading] = useState(true);
@@ -61,8 +76,8 @@ export default function OpenApiPanel({ onActionsReady }: { onActionsReady?: (a: 
     onActionsReady?.(<Button variant="ghost" onClick={load} disabled={loading}><RefreshCw size={14} /> 刷新</Button>);
   }, [onActionsReady, load, loading]);
 
-  const chatOptions = Array.from(new Set(pools.filter((p) => p.modelType === 'chat').flatMap((p) => p.models)));
-  const imageOptions = Array.from(new Set(pools.filter((p) => p.modelType === 'generation').flatMap((p) => p.models)));
+  const chatOptions = buildWhitelistOptions(pools, 'chat');
+  const imageOptions = buildWhitelistOptions(pools, 'generation');
 
   const totalReq = rows.reduce((s, r) => s + r.todayRequests, 0);
   const totalTok = rows.reduce((s, r) => s + r.todayTokens, 0);
@@ -194,7 +209,7 @@ interface LogRow {
 
 
 function KeyDetailDrawer({ row, chatOptions, imageOptions, onClose, onSaved }: {
-  row: BindingRow; chatOptions: string[]; imageOptions: string[]; onClose: () => void; onSaved: () => void;
+  row: BindingRow; chatOptions: WLOption[]; imageOptions: WLOption[]; onClose: () => void; onSaved: () => void;
 }) {
   const [tab, setTab] = useState<'config' | 'logs'>('config');
   const [chat, setChat] = useState<string[]>([...row.chatModels]);
@@ -392,8 +407,9 @@ function NumField({ label, unit, value, onChange }: { label: string; unit: strin
   );
 }
 
-function WhitelistPicker({ options, value, onChange }: { options: string[]; value: string[]; onChange: (v: string[]) => void }) {
-  const remaining = options.filter((o) => !value.includes(o));
+function WhitelistPicker({ options, value, onChange }: { options: WLOption[]; value: string[]; onChange: (v: string[]) => void }) {
+  const labelOf = (v: string) => options.find((o) => o.value === v)?.label ?? v;
+  const remaining = options.filter((o) => !value.includes(o.value));
   return (
     <div>
       <div className="flex flex-wrap gap-1.5 mb-2">
@@ -401,7 +417,7 @@ function WhitelistPicker({ options, value, onChange }: { options: string[]; valu
         {value.map((m, i) => (
           <span key={m} className="inline-flex items-center gap-1.5 pl-2 pr-1.5 py-1 rounded-md bg-white/[0.07] border border-white/[0.08] text-white/80 text-xs">
             {i === 0 && <span className="text-emerald-400 text-[10px] font-medium">默认</span>}
-            {m}
+            {labelOf(m)}
             <button type="button" className="text-white/35 hover:text-white/85" onClick={() => onChange(value.filter((x) => x !== m))}><X size={11} /></button>
           </span>
         ))}
@@ -409,8 +425,8 @@ function WhitelistPicker({ options, value, onChange }: { options: string[]; valu
       {remaining.length > 0 && (
         <select value="" onChange={(e) => { if (e.target.value) onChange([...value, e.target.value]); }}
           className="bg-white/[0.04] border border-white/[0.12] rounded-md px-2 py-1.5 text-white/70 text-xs w-full focus:outline-none focus:border-white/30">
-          <option value="" className="bg-[#1E1F20]">+ 添加模型…</option>
-          {remaining.map((o) => <option key={o} value={o} className="bg-[#1E1F20]">{o}</option>)}
+          <option value="" className="bg-[#1E1F20]">+ 添加模型 / 模型池…</option>
+          {remaining.map((o) => <option key={o.value} value={o.value} className="bg-[#1E1F20]">{o.label}</option>)}
         </select>
       )}
     </div>

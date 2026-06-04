@@ -17,14 +17,31 @@ public class OpenApiUsageService : IOpenApiUsageService
 
     private const int DefaultRatePerMin = 120;
 
-    // 每分钟滑动窗口：移除过期 → 计数 → 未超则写入。返回 {allowed(0/1), 当前计数}，供回写 X-RateLimit-*。
-    private const string RateScript = @"
+    // 单条原子准入：每日请求配额 + 每分钟滑动窗口合并到一个 Lua 脚本，整体原子提交。
+    //   KEYS[1]=速率 ZSET (or:rate)  KEYS[2]=每日请求计数 (or:reqs:{day})
+    //   ARGV: [1]=windowStart(ms) [2]=速率上限/min [3]=now(ms) [4]=member [5]=每日请求配额(0=不限) [6]=每日 key TTL 秒
+    //   返回 {decision, rateCount, dailyCount}，decision: 0 放行 / 1 速率超限 / 2 每日请求超限
+    // 设计要点（对应 PR#732 review）：
+    //   - 日配额走 INCR-then-check，消除"读-判-写"竞态；且排在速率窗口前，日配额拒绝不写 rate ZSET（不占速率槽）
+    //   - 速率拒绝时在同一脚本内 DECR 回滚日配额（请求未放行）
+    //   - 整脚本原子：要么全提交要么不执行，不存在"INCR 了却没回滚"的悬挂状态，故 fail-open 无需补偿
+    private const string AdmitScript = @"
+        local dq = tonumber(ARGV[5])
+        local dcount = redis.call('INCR', KEYS[2])
+        redis.call('EXPIRE', KEYS[2], tonumber(ARGV[6]))
+        if dq > 0 and dcount > dq then
+            redis.call('DECR', KEYS[2])
+            return {2, 0, dcount - 1}
+        end
         redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
-        local n = redis.call('ZCARD', KEYS[1])
-        if n >= tonumber(ARGV[2]) then return {0, n} end
+        local rn = redis.call('ZCARD', KEYS[1])
+        if rn >= tonumber(ARGV[2]) then
+            redis.call('DECR', KEYS[2])
+            return {1, rn, dcount - 1}
+        end
         redis.call('ZADD', KEYS[1], ARGV[3], ARGV[4])
         redis.call('EXPIRE', KEYS[1], 120)
-        return {1, n + 1}";
+        return {0, rn + 1, dcount}";
 
     public OpenApiUsageService(ConnectionMultiplexer redis, MongoDbContext db, ILogger<OpenApiUsageService> logger)
     {
@@ -60,39 +77,28 @@ public class OpenApiUsageService : IOpenApiUsageService
                         $"今日 token 配额已用尽（上限 {tq}）", SecondsToMidnight(), limit);
             }
 
-            // 2. 每日请求配额：先 INCR 占用再判定，超额回滚（DECR），消除"读-判-写"竞态。
-            //    放在速率窗口之前——日配额拒绝时不会白白占用一个分钟桶槽位（rate ZSET 槽位）。
-            var reqKey = ReqKey(key.Id, day);
-            var reqCount = await db.StringIncrementAsync(reqKey);
-            await db.KeyExpireAsync(reqKey, TimeSpan.FromDays(2));
-            if (key.OpenApiDailyRequestQuota is long rq && rq > 0 && reqCount > rq)
-            {
-                await db.StringDecrementAsync(reqKey);
-                return OpenApiUsageDecision.Deny("daily_request_quota_exceeded",
-                    $"今日请求数配额已用尽（上限 {rq}）", SecondsToMidnight(), limit);
-            }
-
-            // 3. 每分钟速率（按 Key 桶，原子滑动窗口，返回当前计数）。RateScript 仅在放行时
-            //    才写入 ZSET，所以速率拒绝本身不占槽位；但此处请求未放行，须回滚上一步的日配额占用。
+            // 2. 速率 + 每日请求配额：单条 Lua 原子准入（见 AdmitScript 注释）。
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            var windowStart = now - 60_000;
+            var quota = key.OpenApiDailyRequestQuota is long rq && rq > 0 ? rq : 0L;
             var member = $"{now}-{Guid.NewGuid():N}";
-            var res = (RedisValue[])(await db.ScriptEvaluateAsync(RateScript,
-                new RedisKey[] { $"or:rate:{key.Id}" },
-                new RedisValue[] { windowStart, limit, now, member }))!;
-            var allowed = (int)res[0] == 1;
-            var count = (int)res[1];
-            if (!allowed)
-            {
-                await db.StringDecrementAsync(reqKey);
+            var res = (RedisValue[])(await db.ScriptEvaluateAsync(AdmitScript,
+                new RedisKey[] { $"or:rate:{key.Id}", ReqKey(key.Id, day) },
+                new RedisValue[] { now - 60_000, limit, now, member, quota, (long)TimeSpan.FromDays(2).TotalSeconds }))!;
+            var decision = (int)res[0];
+            var rateCount = (int)res[1];
+
+            if (decision == 2)
+                return OpenApiUsageDecision.Deny("daily_request_quota_exceeded",
+                    $"今日请求数配额已用尽（上限 {quota}）", SecondsToMidnight(), limit);
+            if (decision == 1)
                 return OpenApiUsageDecision.Deny("rate_limit_exceeded",
                     $"超过每分钟 {limit} 次速率上限，请稍后重试", 5, limit);
-            }
 
-            return OpenApiUsageDecision.Allow(limit, limit - count);
+            return OpenApiUsageDecision.Allow(limit, Math.Max(0, limit - rateCount));
         }
         catch (Exception ex)
         {
+            // Redis 抖动 fail-open 放行。AdmitScript 原子提交，此处不存在半提交的日配额需回滚。
             _logger.LogWarning(ex, "[OpenApiUsage] 准入检查异常，fail-open 放行 keyId={KeyId}", key.Id);
             return OpenApiUsageDecision.Allow(0, 0);
         }
