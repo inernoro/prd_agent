@@ -59,12 +59,16 @@
 - **图片端点真实出图未端到端验**：只验路由/鉴权；图片无 token/成本计。
 - **日志无 TTL**：`open_api_request_logs` 含 IP/UA，无自动过期（按 no-auto-index 规则由 DBA 建 TTL 索引）。
 - **MaxInputChars 全局常量**：未做按 Key 可配。
-- **非流式 chat 丢失 tool_calls / 多选(n) / finish_reason=length（Codex PR#732 P2）**：
-  非流式把上游结果压成单条 `finish_reason=stop` + `message.content=Content`，工具调用/截断/多选信息丢失。
-  根因：`ILlmGateway` 只暴露归一化的 `Content` 文本，不暴露结构化 `choices/tool_calls/finish_reason`；
-  `RawResponseBody` 是**上游原始格式**（Claude 适配器返回 Claude 格式，非 OpenAI），**直接透传不安全**。
-  正解需 Gateway 层补「provider-agnostic 结构化 choices」再由本控制器重建 OpenAI body（流式 ToolCall chunk 同理）——
-  属 Gateway 架构改动，单独排期。当前对纯文本 chat 正确，工具/多选场景为已知边界。
+- **chat 工具调用 tool_calls / 多选(n) / finish_reason=length 丢失（Codex PR#732 P2，流式+非流式）**：
+  非流式把上游压成单条 `finish_reason=stop` + `message.content=Content`；流式只发 role/content delta，
+  不发 `delta.tool_calls`。两者同一根因：`ILlmGateway` 只暴露归一化的 `Content`/reasoning/finish 文本，
+  不暴露结构化 `choices/tool_calls/finish_reason`；`RawResponseBody` 是**上游原始格式**（Claude 适配器返回
+  Claude 格式，非 OpenAI），**直接透传不安全**。正解需 Gateway 层补「provider-agnostic 结构化 choices +
+  流式 ToolCall chunk」再由本控制器重建 OpenAI body——属 Gateway 架构改动，单独排期。
+  当前对纯文本 chat（流式/非流式）正确，工具/多选/截断场景为已知边界。
+- **流式 pre-stream 错误已修**（PR#732 P2）：解析/上游在吐第一个 token 前失败时，原先写 SSE error chunk 但
+  HTTP 仍 200（客户端误判成功）。现改为 `Response.HasStarted==false` 时返回 502 + JSON 错误体；
+  已开始的流仍只能发流内 error 事件 + `[DONE]`（HTTP 头已 200 发出，无法回改状态码）。
 
 ## 已知边界（Phase 2 留尾）
 

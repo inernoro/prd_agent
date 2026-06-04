@@ -167,6 +167,19 @@ public class OpenApiController : ControllerBase
                 else if (chunk.Type == GatewayChunkType.Error)
                 {
                     errorCode = "LLM_ERROR";
+                    if (!Response.HasStarted)
+                    {
+                        // 流还没开始（解析/上游在吐第一个 token 前就失败，如无默认池 / 上游 401/429）
+                        // → 返回真正的非 2xx + JSON 错误，不要伪装成成功的 200 SSE 流
+                        //   （OpenAI 客户端会把 200 + 空流当成功，只有内部日志记录了失败）。
+                        Response.StatusCode = 502;
+                        Response.ContentType = "application/json";
+                        await Response.WriteAsync(JsonSerializer.Serialize(new { error = new { message = chunk.Error ?? "上游错误", type = "api_error", code = "upstream_error" } }));
+                        await Response.Body.FlushAsync();
+                        doneSent = true; // 已发 JSON 错误体，禁止后续再写 SSE / [DONE]
+                        break;
+                    }
+                    // 流已开始：只能在 SSE 流内发错误事件 + 终止符
                     await WriteSseAsync(BuildChunk(chatId, created, resolvedModel, new { }, "error", chunk.Error));
                     await SendDoneAsync();
                     break;
@@ -479,22 +492,35 @@ public class OpenApiController : ControllerBase
         return await _db.AgentApiKeys.Find(k => k.Id == keyId).FirstOrDefaultAsync(ct);
     }
 
-    /// <summary>请求是否携带了 sk-* API Key 凭据（用于区分"匿名"与"带了无效 key"）。JWT 不算。</summary>
+    /// <summary>
+    /// 请求是否携带了 open-api 专用 sk-ak-* 密钥（用于 /v1/models 区分"无效 key→401"与"匿名→发现清单"）。
+    /// 只认 sk-ak-* 前缀：平台 AI_ACCESS_KEY（X-AI-Access-Key 头，非 sk-ak-*）与旧版 sk-{32} App key
+    /// 做模型发现不应被 401（Bugbot），JWT 会话也不算。
+    /// </summary>
     private bool HasApiKeyCredential()
     {
         if (Request.Headers.TryGetValue("Authorization", out var auth))
         {
             var v = auth.ToString();
             var token = v.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ? v["Bearer ".Length..].Trim() : v.Trim();
-            if (token.StartsWith("sk-", StringComparison.Ordinal)) return true;
+            if (token.StartsWith("sk-ak-", StringComparison.Ordinal)) return true;
         }
-        return Request.Headers.ContainsKey("X-AI-Access-Key");
+        return Request.Headers.TryGetValue("X-AI-Access-Key", out var xak)
+            && xak.ToString().Trim().StartsWith("sk-ak-", StringComparison.Ordinal);
     }
 
     /// <summary>用于 [AllowAnonymous] 端点：手动触发 ApiKey 认证，带 Key 时取回 Key，无则返回 null。</summary>
     private async Task<AgentApiKey?> TryLoadKeyFromAuthAsync(CancellationToken ct)
     {
-        if (User?.Identity?.IsAuthenticated == true) return await LoadKeyAsync(ct);
+        // 当前主体已带 agentApiKeyId（ApiKey scheme 已认证）→ 直接取。
+        if (User?.Identity?.IsAuthenticated == true)
+        {
+            var k = await LoadKeyAsync(ct);
+            if (k != null) return k;
+            // JWT 会话也算 authenticated，但没有 agentApiKeyId；若同时带了有效 sk-ak-* bearer，
+            // 不能就此返回 null（否则 /v1/models 会把"会话 cookie + 有效 open-api key"误判为无效 key→401）。
+            // 继续往下显式跑一次 ApiKey 认证，取回 sk-ak-* 绑定的 key。
+        }
         var auth = await HttpContext.AuthenticateAsync("ApiKey");
         var keyId = auth.Principal?.FindFirst("agentApiKeyId")?.Value ?? auth.Principal?.FindFirst("appId")?.Value;
         if (string.IsNullOrWhiteSpace(keyId)) return null;
