@@ -174,6 +174,11 @@ export function deleteDescTemplate(templateId: string) {
   return apiRequest<{ deleted: boolean }>(`/api/product/desc-templates/${templateId}`, { method: 'DELETE' });
 }
 
+// ── 批量操作 ──
+export function batchUpdateItems(body: { entityType: 'requirement' | 'feature'; ids: string[]; op: 'delete' | 'assign' | 'grade'; assigneeId?: string | null; grade?: string }) {
+  return apiRequest<{ affected: number }>('/api/product/items/batch', { method: 'POST', body });
+}
+
 // ── 全局搜索 ──
 export interface GlobalSearchResult {
   products: { id: string; no: string; name: string }[];

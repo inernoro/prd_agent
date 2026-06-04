@@ -1470,6 +1470,64 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(act));
     }
 
+    // ════════════════════════ 批量操作 ════════════════════════
+
+    /// <summary>批量操作需求 / 功能：删除 / 指派处理人 / 改分级（仅作用于有权访问的产品下的对象）。</summary>
+    [HttpPost("items/batch")]
+    public async Task<IActionResult> BatchUpdate([FromBody] BatchRequest request)
+    {
+        if (request.Ids == null || request.Ids.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "未选择对象"));
+        if (request.EntityType is not (ProductEntityType.Requirement or ProductEntityType.Feature))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅支持批量操作需求 / 功能"));
+        if (request.Op is not ("delete" or "assign" or "grade"))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的批量操作"));
+        if (request.Op == "grade" && !ProductItemGrade.All.Contains(request.Grade ?? ""))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的分级"));
+
+        var scope = await GetAccessibleProductIdsAsync(GetUserId());
+        var now = DateTime.UtcNow;
+        var affectedProducts = new HashSet<string>();
+        var count = 0;
+
+        if (request.EntityType == ProductEntityType.Requirement)
+        {
+            var items = (await _db.Requirements.Find(r => request.Ids.Contains(r.Id) && !r.IsDeleted).ToListAsync())
+                .Where(r => scope == null || scope.Contains(r.ProductId)).ToList();
+            foreach (var r in items)
+            {
+                var u = request.Op switch
+                {
+                    "delete" => Builders<Requirement>.Update.Set(x => x.IsDeleted, true).Set(x => x.UpdatedAt, now),
+                    "assign" => Builders<Requirement>.Update.Set(x => x.AssigneeId, string.IsNullOrWhiteSpace(request.AssigneeId) ? null : request.AssigneeId).Set(x => x.UpdatedAt, now),
+                    _ => Builders<Requirement>.Update.Set(x => x.Grade, request.Grade!).Set(x => x.UpdatedAt, now),
+                };
+                await _db.Requirements.UpdateOneAsync(x => x.Id == r.Id, u);
+                affectedProducts.Add(r.ProductId);
+                count++;
+            }
+        }
+        else
+        {
+            var items = (await _db.Features.Find(f => request.Ids.Contains(f.Id) && !f.IsDeleted).ToListAsync())
+                .Where(f => scope == null || scope.Contains(f.ProductId)).ToList();
+            foreach (var f in items)
+            {
+                var u = request.Op switch
+                {
+                    "delete" => Builders<Feature>.Update.Set(x => x.IsDeleted, true).Set(x => x.UpdatedAt, now),
+                    "assign" => Builders<Feature>.Update.Set(x => x.AssigneeId, string.IsNullOrWhiteSpace(request.AssigneeId) ? null : request.AssigneeId).Set(x => x.UpdatedAt, now),
+                    _ => Builders<Feature>.Update.Set(x => x.Grade, request.Grade!).Set(x => x.UpdatedAt, now),
+                };
+                await _db.Features.UpdateOneAsync(x => x.Id == f.Id, u);
+                affectedProducts.Add(f.ProductId);
+                count++;
+            }
+        }
+        foreach (var pid in affectedProducts) await RecalcProductCountsAsync(pid);
+        return Ok(ApiResponse<object>.Ok(new { affected = count }));
+    }
+
     // ════════════════════════ 全局搜索（跨对象） ════════════════════════
 
     /// <summary>跨对象全局搜索：产品 / 需求 / 功能 / 客户 / 缺陷，按关键词分组返回 top-N（受访问范围约束）。</summary>
@@ -2035,6 +2093,16 @@ public class AddCommentRequest
 {
     public string Content { get; set; } = string.Empty;
     public List<string>? Mentions { get; set; }
+}
+
+public class BatchRequest
+{
+    public string EntityType { get; set; } = string.Empty;
+    public List<string> Ids { get; set; } = new();
+    /// <summary>delete / assign / grade</summary>
+    public string Op { get; set; } = string.Empty;
+    public string? AssigneeId { get; set; }
+    public string? Grade { get; set; }
 }
 
 public class TraceDefectRequest

@@ -17,6 +17,7 @@ import { VersionRelationModal, ProductKnowledgePanel, DefectLinkerModal } from '
 import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { KanbanBoard } from './KanbanBoard';
 import { RtmMatrix } from './RtmMatrix';
+import { BatchBar } from './BatchBar';
 import { UpgradeRequestsTab } from './UpgradeRequestsTab';
 import {
   getProduct,
@@ -372,8 +373,10 @@ function RequirementsTab({ productId }: { productId: string }) {
   const [items, setItems] = useState<Requirement[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'list' | 'board'>('list');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const { workflow } = useEffectiveWorkflow('requirement', productId);
   const openDetail = (id: string) => navigate(`/product-agent/p/${productId}/requirement/${id}`);
+  const toggleSel = (id: string) => setSelected((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -409,19 +412,25 @@ function RequirementsTab({ productId }: { productId: string }) {
         />
       ) : (
         <div className="flex flex-col gap-2">
+          {selected.size > 0 && (
+            <BatchBar entityType="requirement" ids={[...selected]} onDone={reload} onClear={() => setSelected(new Set())} />
+          )}
           {orderByHierarchy(items).map(({ item: r, depth }) => (
-            <div key={r.id} style={{ marginLeft: depth * 24 }} className={depth > 0 ? 'border-l-2 border-white/10 pl-2' : undefined}>
-              <Row
-                title={r.title}
-                badge={ITEM_GRADE_LABEL[r.grade]}
-                sub={`${r.requirementNo} · 客户 ${r.customerIds.length} · 版本 ${r.versionIds.length}`}
-                onClick={() => openDetail(r.id)}
-                actionLabel="查看详情"
-                onDelete={async () => {
-                  await deleteRequirement(r.id);
-                  await reload();
-                }}
-              />
+            <div key={r.id} style={{ marginLeft: depth * 24 }} className="flex items-center gap-2">
+              <input type="checkbox" checked={selected.has(r.id)} onChange={() => toggleSel(r.id)} className="accent-cyan-500 shrink-0" />
+              <div className={`flex-1 min-w-0 ${depth > 0 ? 'border-l-2 border-white/10 pl-2' : ''}`}>
+                <Row
+                  title={r.title}
+                  badge={ITEM_GRADE_LABEL[r.grade]}
+                  sub={`${r.requirementNo} · 客户 ${r.customerIds.length} · 版本 ${r.versionIds.length}`}
+                  onClick={() => openDetail(r.id)}
+                  actionLabel="查看详情"
+                  onDelete={async () => {
+                    await deleteRequirement(r.id);
+                    await reload();
+                  }}
+                />
+              </div>
             </div>
           ))}
         </div>
@@ -435,6 +444,8 @@ function FeaturesTab({ productId }: { productId: string }) {
   const navigate = useNavigate();
   const [items, setItems] = useState<Feature[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const toggleSel = (id: string) => setSelected((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -455,19 +466,25 @@ function FeaturesTab({ productId }: { productId: string }) {
         <EmptyHint text="还没有功能。点「新建功能」打开独立页面填写。功能跨版本演进，可实现需求、被版本纳入（功能版本化）。" />
       ) : (
         <div className="flex flex-col gap-2">
+          {selected.size > 0 && (
+            <BatchBar entityType="feature" ids={[...selected]} onDone={reload} onClear={() => setSelected(new Set())} />
+          )}
           {orderByHierarchy(items).map(({ item: f, depth }) => (
-            <div key={f.id} style={{ marginLeft: depth * 24 }} className={depth > 0 ? 'border-l-2 border-white/10 pl-2' : undefined}>
-              <Row
-                title={f.title}
-                badge={ITEM_GRADE_LABEL[f.grade]}
-                sub={`${f.featureNo} · 实现需求 ${f.requirementIds.length}`}
-                onClick={() => navigate(`/product-agent/p/${productId}/feature/${f.id}`)}
-                actionLabel="查看详情"
-                onDelete={async () => {
-                  await deleteFeature(f.id);
-                  await reload();
-                }}
-              />
+            <div key={f.id} style={{ marginLeft: depth * 24 }} className="flex items-center gap-2">
+              <input type="checkbox" checked={selected.has(f.id)} onChange={() => toggleSel(f.id)} className="accent-cyan-500 shrink-0" />
+              <div className={`flex-1 min-w-0 ${depth > 0 ? 'border-l-2 border-white/10 pl-2' : ''}`}>
+                <Row
+                  title={f.title}
+                  badge={ITEM_GRADE_LABEL[f.grade]}
+                  sub={`${f.featureNo} · 实现需求 ${f.requirementIds.length}`}
+                  onClick={() => navigate(`/product-agent/p/${productId}/feature/${f.id}`)}
+                  actionLabel="查看详情"
+                  onDelete={async () => {
+                    await deleteFeature(f.id);
+                    await reload();
+                  }}
+                />
+              </div>
             </div>
           ))}
         </div>
