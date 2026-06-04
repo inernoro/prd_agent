@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Upload, X, FileText, Bold, Italic, Underline, List, ListOrdered, Heading } from 'lucide-react';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { sanitizeHtml } from '@/lib/sanitizeHtml';
 import { uploadAttachment } from '@/services/real/aiToolbox';
 import {
   listFormTemplates,
@@ -251,7 +252,7 @@ export function RichTextField({ value, onChange, minHeight = 120, placeholder }:
   // 未聚焦时同步外部值（初次加载 / 切换对象），聚焦输入时不打断
   useEffect(() => {
     const el = ref.current;
-    if (el && document.activeElement !== el && el.innerHTML !== value) el.innerHTML = value || '';
+    if (el && document.activeElement !== el && el.innerHTML !== value) el.innerHTML = sanitizeHtml(value);
   }, [value]);
 
   const exec = (cmd: string, arg?: string) => {
