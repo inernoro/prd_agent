@@ -1470,6 +1470,48 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(act));
     }
 
+    // ════════════════════════ 全局搜索（跨对象） ════════════════════════
+
+    /// <summary>跨对象全局搜索：产品 / 需求 / 功能 / 客户 / 缺陷，按关键词分组返回 top-N（受访问范围约束）。</summary>
+    [HttpGet("search")]
+    public async Task<IActionResult> GlobalSearch([FromQuery] string keyword, [FromQuery] int limit = 8)
+    {
+        var kw = (keyword ?? string.Empty).Trim();
+        if (kw.Length == 0)
+            return Ok(ApiResponse<object>.Ok(new { products = Array.Empty<object>(), requirements = Array.Empty<object>(), features = Array.Empty<object>(), customers = Array.Empty<object>(), defects = Array.Empty<object>() }));
+        const StringComparison oic = StringComparison.OrdinalIgnoreCase;
+        var scope = await GetAccessibleProductIdsAsync(GetUserId());
+
+        var pf = Builders<Product>.Filter.And(
+            Builders<Product>.Filter.Eq(p => p.IsDeleted, false),
+            scope == null ? Builders<Product>.Filter.Empty : Builders<Product>.Filter.In(p => p.Id, scope));
+        var products = (await _db.Products.Find(pf).Limit(2000).ToListAsync())
+            .Where(p => p.Name.Contains(kw, oic) || p.ProductNo.Contains(kw, oic))
+            .Take(limit).Select(p => new { p.Id, no = p.ProductNo, p.Name }).ToList();
+
+        var reqs = (await FindInScopeAsync<Requirement>(scope, r => r.ProductId, r => r.IsDeleted))
+            .Where(r => (r.Title?.Contains(kw, oic) ?? false) || r.RequirementNo.Contains(kw, oic))
+            .Take(limit).Select(r => new { r.Id, r.ProductId, no = r.RequirementNo, title = r.Title }).ToList();
+
+        var feats = (await FindInScopeAsync<Feature>(scope, f => f.ProductId, f => f.IsDeleted))
+            .Where(f => (f.Title?.Contains(kw, oic) ?? false) || f.FeatureNo.Contains(kw, oic))
+            .Take(limit).Select(f => new { f.Id, f.ProductId, no = f.FeatureNo, title = f.Title }).ToList();
+
+        var custs = (await FindInScopeAsync<Customer>(scope, c => c.ProductId, c => c.IsDeleted))
+            .Where(c => c.Name.Contains(kw, oic) || (c.Company?.Contains(kw, oic) ?? false))
+            .Take(limit).Select(c => new { c.Id, c.ProductId, c.Name }).ToList();
+
+        var df = Builders<DefectReport>.Filter.And(
+            Builders<DefectReport>.Filter.Eq(d => d.IsDeleted, false),
+            Builders<DefectReport>.Filter.Ne(d => d.TracedProductId, (string?)null),
+            scope == null ? Builders<DefectReport>.Filter.Empty : Builders<DefectReport>.Filter.In(d => d.TracedProductId, scope));
+        var defects = (await _db.DefectReports.Find(df).Limit(3000).ToListAsync())
+            .Where(d => (d.Title?.Contains(kw, oic) ?? false) || d.DefectNo.Contains(kw, oic))
+            .Take(limit).Select(d => new { d.Id, productId = d.TracedProductId, no = d.DefectNo, title = d.Title }).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new { products, requirements = reqs, features = feats, customers = custs, defects }));
+    }
+
     // ════════════════════════ RTM 需求可追溯矩阵 ════════════════════════
 
     /// <summary>需求可追溯矩阵：每条需求 → 归属版本 / 实现功能 / 关联客户 / 追溯缺陷 + 覆盖缺口统计。</summary>

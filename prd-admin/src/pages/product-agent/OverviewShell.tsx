@@ -24,6 +24,7 @@ import {
 import { EChart } from '@/components/charts/EChart';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
+import { GlobalSearch } from './GlobalSearch';
 import { ProductsSection } from './ProductsSection';
 import { SettingsSection } from './SettingsSection';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
@@ -80,12 +81,15 @@ export function OverviewShell() {
       title="产品管理"
       subtitle="全局总览"
       topSlot={
-        <button
-          onClick={() => navigate('/')}
-          className="flex items-center gap-1.5 text-[11px] text-white/40 hover:text-white mb-2"
-        >
-          <ArrowLeft size={13} /> 返回首页
-        </button>
+        <div className="flex flex-col gap-2 mb-2">
+          <button
+            onClick={() => navigate('/')}
+            className="flex items-center gap-1.5 text-[11px] text-white/40 hover:text-white"
+          >
+            <ArrowLeft size={13} /> 返回首页
+          </button>
+          <GlobalSearch />
+        </div>
       }
       items={navItems}
       active={active}

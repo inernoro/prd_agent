@@ -174,6 +174,18 @@ export function deleteDescTemplate(templateId: string) {
   return apiRequest<{ deleted: boolean }>(`/api/product/desc-templates/${templateId}`, { method: 'DELETE' });
 }
 
+// ── 全局搜索 ──
+export interface GlobalSearchResult {
+  products: { id: string; no: string; name: string }[];
+  requirements: { id: string; productId: string; no: string; title: string }[];
+  features: { id: string; productId: string; no: string; title: string }[];
+  customers: { id: string; productId: string; name: string }[];
+  defects: { id: string; productId: string; no: string; title?: string | null }[];
+}
+export function globalSearch(keyword: string) {
+  return apiRequest<GlobalSearchResult>(`/api/product/search?keyword=${encodeURIComponent(keyword)}`);
+}
+
 // ── RTM 需求可追溯矩阵 ──
 export interface RtmRow {
   id: string;
