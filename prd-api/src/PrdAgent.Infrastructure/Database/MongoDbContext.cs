@@ -1638,5 +1638,18 @@ public class MongoDbContext
         {
             // ignore
         }
+
+        // ChangelogSnapshots：按 Key 唯一（防多实例/多 Worker upsert 竞态插入重复行，
+        // 导致 GetAsync 命中任意旧行）。DBA 手建，定义见 doc/guide.mongodb-indexes.md。
+        try
+        {
+            ChangelogSnapshots.Indexes.CreateOne(new CreateIndexModel<ChangelogSnapshot>(
+                Builders<ChangelogSnapshot>.IndexKeys.Ascending(x => x.Key),
+                new CreateIndexOptions { Name = "uniq_changelog_snapshots_key", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
     }
 }

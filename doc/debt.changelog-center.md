@@ -26,9 +26,9 @@ ChangelogPushHub / ChangelogRefreshWorker）、`ChangelogController` 的 `/api/c
 
 | # | 边界 | 说明 | 偿还建议 |
 |---|------|------|----------|
-| 1 | 推送中枢是进程内单例 | `ChangelogPushHub` 用进程内 Channel 广播。多实例水平扩展时，A 实例的 Worker 刷新只能推给连到 A 的浏览器，连到 B 的收不到。当前单实例部署无影响。 | 多实例化时改用 Redis pub/sub 或 Mongo change stream 做跨实例广播，订阅端不变。 |
+| 1 | 推送中枢是进程内单例 | `ChangelogPushHub` 用进程内 Channel 广播。多实例水平扩展时，A 实例的 Worker 刷新只能推给连到 A 的浏览器，连到 B 的收不到。当前单实例部署无影响。**另**：多实例并发 upsert `changelog_snapshots` 需 `Key` 唯一索引兜底（已在 `doc/guide.mongodb-indexes.md` + `MongoDbContext.CreateIndexes()` 登记 `uniq_changelog_snapshots_key`，DBA 手建；`GetAsync` 已加 `SortByDescending(UpdatedAt)` 防御性读，重复行也只取最新）。 | 多实例化时：(a) 改用 Redis pub/sub 或 Mongo change stream 做跨实例广播，订阅端不变；(b) 上线前由 DBA 建好 `uniq_changelog_snapshots_key` 唯一索引。 |
 | 2 | 刷新周期为全局，不分视图冷热 | 三个视图（待发布/历史发布/GitHub 日志）共用同一刷新周期。GitHub 日志变化最频繁、历史发布最稳定，统一 4h 对日志略保守。 | 如需更实时，可拆分各视图独立周期，或接 GitHub push webhook 触发即时刷新（仓库已有 webhook 基建）。 |
-| 3 | GitHub 日志前端仍保留 35s 轮询 | `ChangelogPage` 既有的 `GITHUB_LOGS_LIVE_POLL_MS` 客户端轮询未移除，与新的 SSE 推送并存（轮询 force=true 仍会触发真实拉取）。本次为控制改动面未动它。 | 评估改为依赖 SSE 推送后下调/移除该轮询，进一步贴合「加载只读存量、刷新交给服务器」。 |
+| 3 | GitHub 日志前端仍保留 35s 轮询 | `ChangelogPage` 既有的 `GITHUB_LOGS_LIVE_POLL_MS` 客户端轮询未移除，与新的 SSE 推送并存（轮询 force=true 仍会触发真实拉取）。本次为控制改动面未动它。已加 trailing-edge：在途轮询期间到达的 SSE update 不再被吞，待在途请求结束补跑一次。 | 评估改为依赖 SSE 推送后下调/移除该轮询，进一步贴合「加载只读存量、刷新交给服务器」。 |
 
 ## 偿还触发条件
 

@@ -256,6 +256,10 @@ export default function ChangelogPage() {
   const scrollRootRef = useRef<HTMLDivElement>(null);
   const githubLogsRef = useRef<GitHubLogsView | null>(githubLogs);
   const githubLogsRefreshInFlightRef = useRef(false);
+  // 在途刷新期间又被请求一次（如 35s 轮询在跑时 SSE update 到达）→ 标记 pending，
+  // 在途请求结束后补跑一次，避免「服务器 push 的更新被在途请求吞掉」（Bugbot #722 Medium）。
+  const githubLogsPendingRef = useRef(false);
+  const refreshGitHubLogsRef = useRef<((opts?: { force?: boolean; foreground?: boolean; showError?: boolean }) => Promise<void>) | null>(null);
   const newGitHubLogClearTimerRef = useRef<number | null>(null);
 
   /**
@@ -302,7 +306,11 @@ export default function ChangelogPage() {
     foreground?: boolean;
     showError?: boolean;
   } = {}) => {
-    if (githubLogsRefreshInFlightRef.current) return;
+    if (githubLogsRefreshInFlightRef.current) {
+      // 在途时不丢弃：记一个 pending，待在途请求结束后补跑一次（拿到 SSE push 的最新数据）
+      githubLogsPendingRef.current = true;
+      return;
+    }
     githubLogsRefreshInFlightRef.current = true;
     if (foreground) {
       setLoadingGitHubLogs(true);
@@ -342,8 +350,19 @@ export default function ChangelogPage() {
     } finally {
       githubLogsRefreshInFlightRef.current = false;
       if (foreground) setLoadingGitHubLogs(false);
+      // 在途期间被合并掉的请求补跑一次（trailing-edge），确保 SSE push 的更新最终落到页面
+      if (githubLogsPendingRef.current) {
+        githubLogsPendingRef.current = false;
+        void refreshGitHubLogsRef.current?.({ force: false });
+      }
     }
   }, []);
+
+  // refreshGitHubLogs 自身稳定（[] deps）；用 ref 持有它，供 finally 里的 trailing-edge 补跑调用，
+  // 避免 useCallback 自引用导致的依赖环。
+  useEffect(() => {
+    refreshGitHubLogsRef.current = refreshGitHubLogs;
+  }, [refreshGitHubLogs]);
 
   useEffect(() => {
     if (activeTab !== 'update_center') return;
@@ -407,7 +426,7 @@ export default function ChangelogPage() {
     setJustUpdatedAt(Date.now());
   }, [loadCurrentWeek, loadReleases, refreshGitHubLogs]);
 
-  const { start: startChangelogStream, abort: abortChangelogStream } = useSseStream({
+  const { start: startChangelogStream, abort: abortChangelogStream, phase: changelogStreamPhase } = useSseStream({
     url: api.changelog.stream(),
     onEvent: {
       meta: (d) => {
@@ -421,6 +440,16 @@ export default function ChangelogPage() {
     },
     onError: () => setLiveConnected(false),
   });
+
+  // 流「干净结束」（代理超时/网络掉线但没触发 onError，hook 把 phase 置 done）或出错（phase error）时，
+  // 都说明连接已断：立刻清掉「实时同步」徽标（不虚标连接健康，Bugbot #722 Low），
+  // 并把 lastBeat 清零，让 watchdog 下一个 tick 立即重连。
+  useEffect(() => {
+    if (changelogStreamPhase === 'done' || changelogStreamPhase === 'error') {
+      setLiveConnected(false);
+      lastBeatRef.current = 0;
+    }
+  }, [changelogStreamPhase]);
 
   // 进页面即建立实时连接，离开时断开（仅断本订阅，不影响服务器后台刷新任务）。
   // watchdog：心跳 15s/次，若 45s 内无任何信号则判定掉线并自动重连（start 内部会 abort 旧连接）。

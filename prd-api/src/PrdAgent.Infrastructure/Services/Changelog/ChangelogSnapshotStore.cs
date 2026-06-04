@@ -53,8 +53,12 @@ public sealed class ChangelogSnapshotStore : IChangelogSnapshotStore
     {
         try
         {
+            // 防御性读取：按 UpdatedAt 倒序取，万一在没有唯一索引的环境里发生过 upsert 竞态
+            // 产生了同 Key 重复行，也只会命中「最新写入」的那条，不会 hydrate 到任意旧行。
+            // 根治靠 changelog_snapshots.Key 唯一索引（见 doc/guide.mongodb-indexes.md，DBA 手建）。
             return await _db.ChangelogSnapshots
                 .Find(x => x.Key == key)
+                .SortByDescending(x => x.UpdatedAt)
                 .FirstOrDefaultAsync(ct)
                 .ConfigureAwait(false);
         }

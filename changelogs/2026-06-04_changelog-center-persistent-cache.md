@@ -4,3 +4,6 @@
 | feat | prd-admin | 更新中心头部展示「更新时间 + 更新规则（每 N 小时自动刷新·终身缓存）+ 实时同步状态」 |
 | feat | prd-admin | 更新中心订阅 SSE，服务器有更新自动推送并静默重读存量，无需手动刷新 |
 | fix | prd-api | 更新中心冷实例 hydrate 到陈旧快照时也后台静默 revalidate，与热缓存路径对称（修复重启后首请求停在旧快照需等 Worker 周期的不对称） |
+| fix | prd-api | 更新中心快照 GetAsync 改按 UpdatedAt 倒序取最新；登记 changelog_snapshots.Key 唯一索引（防多实例并发 upsert 重复行） |
+| fix | prd-admin | 更新中心 GitHub 日志在途刷新期间到达的 SSE update 改 trailing-edge 补跑，不再被吞 |
+| fix | prd-admin | 更新中心 SSE 流干净结束时也清掉「实时同步」徽标并触发重连，不再虚标连接健康 |
