@@ -106,6 +106,7 @@ docs:
   design.system-emergence: 系统涌现：从基础组件到协同智能
   design.visual-agent: Visual Agent (视觉创作) 架构设计
   design.document-store: 文档空间设计
+  design.document-store-sync: 知识库跨环境/本地库双向同步设计（令牌配对+血缘幂等+签名改动检测，含架构图）
   design.emergence-explorer: 涌现探索器设计
   design.pr-review-v2: PR Review V2 设计（OAuth 最小可审查工作台）
   design.page-agent-bridge: Page Agent Bridge 设计（编码 Agent 浏览器之眼）

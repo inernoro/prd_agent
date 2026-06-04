@@ -242,6 +242,9 @@
 - [文档空间设计](design.document-store) `design.document-store`
   > 文档空间多文档上传、内容预览与订阅源定期同步设计
 
+- [知识库跨环境同步设计](design.document-store-sync) `design.document-store-sync`
+  > 任一知识库与另一处库（跨环境/本环境两库）永久令牌配对、单/双向手动同步、血缘 ID 幂等 upsert、签名快照改动检测；含组件架构/数据流/双向决策架构图
+
 - [涌现探索器设计](design.emergence-explorer) `design.emergence-explorer`
   > 种子→探索→涌现三维度 + SSE 流式 + ReactFlow 画布的架构设计
 

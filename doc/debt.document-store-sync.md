@@ -4,7 +4,7 @@
 |---|---|
 | 模块 | 知识库跨环境 / 本地库↔库 同步（`DocumentStoreSyncController` + `SyncManagerPanel`） |
 | 状态 | open（首版已交付，2026-06-04；以下为已知边界） |
-| 关联 | `prd-api/.../Controllers/Api/DocumentStoreSyncController.cs`、`prd-admin/src/pages/document-store/SyncManagerPanel.tsx`、集合 `document_store_sync_links`、`DocumentStore.SyncToken` |
+| 关联 | `prd-api/.../Controllers/Api/DocumentStoreSyncController.cs`、`prd-admin/src/pages/document-store/SyncManagerPanel.tsx`、集合 `document_store_sync_links`、`DocumentStore.SyncToken`、设计文档 `design.document-store-sync.md` |
 | 提出 | 用户需求：两个环境（或同环境两个库）之间互相同步知识库内容，令牌永久有效、支持单向/双向、手动触发 + 改动检测 |
 
 ---
