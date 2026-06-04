@@ -2109,9 +2109,10 @@ export function DocBrowser({
   }
 
   const isCards = appearance === 'cards';
-  // cards: 双独立圆角卡片 + 12px gap（周报风格）；inset: 单容器无 gap（知识库/分享）
+  // cards: 双独立圆角卡片 + 中间 12px 可拖拽分隔条（周报风格）；inset: 单容器无 gap（知识库/分享）
+  // cards 模式不再用 gap-3，改由两卡片之间的 ResizeHandle（宽 12px）承担间距 + 拖拽调宽
   const rootClass = isCards
-    ? 'flex flex-1 gap-3 overflow-hidden p-3 rounded-2xl surface-raised'
+    ? 'flex flex-1 overflow-hidden p-3 rounded-2xl surface-raised'
     : 'surface-inset flex flex-1 gap-0 overflow-hidden rounded-[12px]';
   // cards 模式下左右各自包圆角卡片；inset 模式下走原生分隔线
   const sidebarClass = isCards
@@ -2516,6 +2517,30 @@ export function DocBrowser({
           </div>
         )}
       </div>
+
+      {/* cards 模式：两卡片之间的可拖拽分隔条（宽 12px，兼作视觉间距）。
+          与 inset 模式的 sidebar 内嵌把手共用同一套 resize 逻辑（resizeBaseLeftRef + setResizing）。
+          不挂在 sidebar 内部（会被其 overflow-hidden+rounded 裁切），改作独立 flex 兄弟。 */}
+      {isCards && (
+        <div
+          className="relative flex-shrink-0 self-stretch group/resize"
+          style={{ width: 12, cursor: 'col-resize' }}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            resizeBaseLeftRef.current = sidebarRef.current?.getBoundingClientRect().left ?? 0;
+            setResizing(true);
+          }}
+          title="拖拽调整列表宽度"
+        >
+          <div
+            className="absolute top-0 bottom-0 left-1/2 -translate-x-1/2 rounded-full transition-all duration-150 group-hover/resize:bg-[rgba(59,130,246,0.35)]"
+            style={{
+              width: resizing ? 3 : 2,
+              background: resizing ? 'rgba(59,130,246,0.6)' : 'var(--border-faint)',
+            }}
+          />
+        </div>
+      )}
 
       {/* 右侧：文档预览 */}
       <div
