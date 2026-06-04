@@ -203,15 +203,22 @@ export class CheckRunRunner {
     // GitHub's output.text caps at 65535 chars; we trim to 30k to stay
     // comfortably under the limit with room for markdown chrome.
     // 失败根因(failureDetail)放在最上面,部署日志尾部(logTail)放下面。
-    const textParts: string[] = [];
-    if (opts.failureDetail && opts.failureDetail.trim()) {
-      textParts.push(opts.failureDetail.trim());
+    // 关键:截断只能砍 logTail 的尾部,绝不能把顶部的 failureDetail(根因)截掉
+    // —— 否则 sandbox agent 在大日志失败时反而读不到根因(整个特性失去意义)。
+    const CAP = 30_000;
+    const detailBlock = (opts.failureDetail || '').trim();
+    const logBlock = (opts.logTail || '').trim();
+    const parts: string[] = [];
+    if (detailBlock) parts.push(detailBlock.length > CAP ? detailBlock.slice(0, CAP) : detailBlock);
+    if (logBlock) {
+      const used = parts.reduce((n, p) => n + p.length + 2, 0); // +2 ≈ '\n\n' 分隔
+      const budget = CAP - used - 40; // 给 fence 标记留点余量
+      if (budget > 200) {
+        const tail = logBlock.length > budget ? logBlock.slice(-budget) : logBlock;
+        parts.push('### Deploy log (尾部)\n\n```\n' + tail + '\n```');
+      }
     }
-    if (opts.logTail && opts.logTail.trim()) {
-      textParts.push('### Deploy log (尾部)\n\n```\n' + opts.logTail.trim() + '\n```');
-    }
-    let text: string | undefined = textParts.length > 0 ? textParts.join('\n\n') : undefined;
-    if (text && text.length > 30_000) text = text.slice(-30_000);
+    const text: string | undefined = parts.length > 0 ? parts.join('\n\n') : undefined;
 
     let patched = false;
     try {

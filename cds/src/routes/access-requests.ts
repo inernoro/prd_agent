@@ -161,8 +161,26 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     return 'operator';
   }
 
+  // 授权审批必须是「登录的人」在 CDS 界面做的决定,不接受任何机器密钥
+  // (static AI key / cdsg_ 全局 key / cdsp_ 项目 key)。否则审批端点不在
+  // /projects/:id 下、不过 assertProjectAccess,项目 A 的 cdsp_ key 就能批准
+  // 项目 B 的申请并签发 B 的全权密钥(跨项目越权)。这违背「人审批」模型。
+  function requireHumanOperator(req: import('express').Request, res: import('express').Response): boolean {
+    const r = req as unknown as { _cdsCookieAuth?: boolean; cdsUser?: { login?: string; githubLogin?: string } };
+    const isHuman = r._cdsCookieAuth === true || !!(r.cdsUser && (r.cdsUser.login || r.cdsUser.githubLogin));
+    if (!isHuman) {
+      res.status(403).json({
+        error: 'human_approval_required',
+        message: '授权审批必须由登录用户在 CDS 界面完成,机器密钥(API key)不可批准/拒绝授权申请。',
+      });
+      return false;
+    }
+    return true;
+  }
+
   // 批准:当场签发一把全权项目 AgentKey(授权密钥),明文挂记录上待发起方取走一次。
   router.post('/access-requests/:reqId/approve', (req, res) => {
+    if (!requireHumanOperator(req, res)) return;
     const item = stateService.getAccessRequest(req.params.reqId);
     if (!item) {
       res.status(404).json({ error: 'request_not_found', message: `Access request '${req.params.reqId}' not found.` });
@@ -194,6 +212,11 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     };
     try {
       stateService.addAgentKey(project.id, keyEntry);
+    } catch (err) {
+      res.status(500).json({ error: 'state_save_failed', message: (err as Error).message });
+      return;
+    }
+    try {
       stateService.updateAccessRequest(item.id, {
         status: 'approved',
         decidedAt: now.toISOString(),
@@ -202,6 +225,9 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
         issuedKeyPlaintext: plaintext,
       });
     } catch (err) {
+      // 回滚刚签发的 key —— 否则申请仍 pending、项目里却多了一把游离 RW key,
+      // 重试还会再签一把。best-effort 吊销保证不留可用的孤儿密钥。
+      try { stateService.revokeAgentKey(project.id, keyId); } catch { /* best-effort */ }
       res.status(500).json({ error: 'state_save_failed', message: (err as Error).message });
       return;
     }
@@ -212,6 +238,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
   });
 
   router.post('/access-requests/:reqId/reject', (req, res) => {
+    if (!requireHumanOperator(req, res)) return;
     const item = stateService.getAccessRequest(req.params.reqId);
     if (!item) {
       res.status(404).json({ error: 'request_not_found', message: `Access request '${req.params.reqId}' not found.` });

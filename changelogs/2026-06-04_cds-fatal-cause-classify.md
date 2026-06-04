@@ -7,3 +7,4 @@
 | feat | cds | 项目设置新增「授权密钥」tab 签发/吊销请求密钥;AppShell 右下角新增「授权申请」审批盒(复用 pending-import 被动审批底座 + SSE 实时刷新) |
 | refactor | cds | 被动授权改为最短路径:删除「请求密钥」概念与项目设置「授权密钥」tab,改为 Agent 免密直接发起授权申请(按项目限量防刷)+ 一次性 pollToken 取结果,用户只需右下角一键批准,前置步骤归零 |
 | fix | cds | 修复授权申请轮询用项目 slug 时误报 404:轮询端点改用 getProject 把 slug/id 统一解析为 project.id 再比对(发起存的是 project.id,真实环境用 slug 轮询会漏判) |
+| fix | cds | 被动授权审批加固:approve/reject 仅限登录用户(cookie/GitHub),拒绝机器密钥——杜绝项目 A 的 cdsp_ key 批准项目 B 申请的跨项目越权;批准签发授权密钥失败时回滚已签发 key 防游离;失败诊断 check-run 文本截断只砍日志尾部、保住顶部根因 |

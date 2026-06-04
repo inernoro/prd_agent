@@ -82,7 +82,9 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     app.use((req, _res, next) => {
       if (req.method === 'POST' && /^\/api\/projects\/[^/]+\/access-requests$/.test(req.path)) return next();
       if (req.method === 'GET' && /^\/api\/projects\/[^/]+\/access-requests\/[^/]+$/.test(req.path)) return next();
-      (req as any)._cdsCookieAuth = true;
+      // 默认模拟人类 cookie 登录;带 x-machine-key 头时模拟「机器密钥通过全局鉴权
+      // 但不是人」—— 用于验证 approve/reject 拒绝机器密钥。
+      if (req.headers['x-machine-key'] !== '1') (req as any)._cdsCookieAuth = true;
       next();
     });
     app.use('/api', createAccessRequestsRouter({ stateService }));
@@ -165,6 +167,21 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
   it('发起到不存在的项目 → 404', async () => {
     const res = await request(server, 'POST', '/api/projects/nope/access-requests', { purpose: 'x' });
     expect(res.status).toBe(404);
+  });
+
+  // 回归(Cursor/Codex 评审):approve/reject 必须是登录的人,机器密钥(API key)→ 403。
+  // 否则项目 A 的 cdsp_ key 能批准项目 B 的申请 = 跨项目越权。
+  it('机器密钥不能批准/拒绝(只有登录用户可以)', async () => {
+    const init = await request(server, 'POST', '/api/projects/proj-a/access-requests', { purpose: 'x' });
+    const reqId = init.body.requestId as string;
+    const machine = { 'x-machine-key': '1' };
+    expect((await request(server, 'POST', `/api/access-requests/${reqId}/approve`, {}, machine)).status).toBe(403);
+    expect((await request(server, 'POST', `/api/access-requests/${reqId}/reject`, {}, machine)).status).toBe(403);
+    // 申请仍 pending(没被机器密钥动过)
+    const poll = await request(server, 'GET', `/api/projects/proj-a/access-requests/${reqId}?token=${init.body.pollToken}`);
+    expect(poll.body.status).toBe('pending');
+    // 人类(默认 cookie)可以批准
+    expect((await request(server, 'POST', `/api/access-requests/${reqId}/approve`, {})).status).toBe(200);
   });
 
   // 回归(真实环境抓到):发起存的是 project.id,调用方用 slug 轮询时不能误判 404。
