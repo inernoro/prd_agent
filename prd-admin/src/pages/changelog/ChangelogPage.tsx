@@ -258,7 +258,9 @@ export default function ChangelogPage() {
   const githubLogsRefreshInFlightRef = useRef(false);
   // 在途刷新期间又被请求一次（如 35s 轮询在跑时 SSE update 到达）→ 标记 pending，
   // 在途请求结束后补跑一次，避免「服务器 push 的更新被在途请求吞掉」（Bugbot #722 Medium）。
+  // pendingForce 取或：保留在途期间任一次硬刷新意图，补跑不把 force=true 降级为只读重读。
   const githubLogsPendingRef = useRef(false);
+  const githubLogsPendingForceRef = useRef(false);
   const refreshGitHubLogsRef = useRef<((opts?: { force?: boolean; foreground?: boolean; showError?: boolean }) => Promise<void>) | null>(null);
   const newGitHubLogClearTimerRef = useRef<number | null>(null);
 
@@ -307,8 +309,10 @@ export default function ChangelogPage() {
     showError?: boolean;
   } = {}) => {
     if (githubLogsRefreshInFlightRef.current) {
-      // 在途时不丢弃：记一个 pending，待在途请求结束后补跑一次（拿到 SSE push 的最新数据）
+      // 在途时不丢弃：记一个 pending，待在途请求结束后补跑一次（拿到 SSE push 的最新数据）。
+      // force 取或：保留在途期间任一次硬刷新意图。
       githubLogsPendingRef.current = true;
+      githubLogsPendingForceRef.current = githubLogsPendingForceRef.current || force;
       return;
     }
     githubLogsRefreshInFlightRef.current = true;
@@ -350,10 +354,13 @@ export default function ChangelogPage() {
     } finally {
       githubLogsRefreshInFlightRef.current = false;
       if (foreground) setLoadingGitHubLogs(false);
-      // 在途期间被合并掉的请求补跑一次（trailing-edge），确保 SSE push 的更新最终落到页面
+      // 在途期间被合并掉的请求补跑一次（trailing-edge），确保 SSE push 的更新最终落到页面，
+      // 保留 force 意图（避免用户硬刷新被降级为只读重读）
       if (githubLogsPendingRef.current) {
         githubLogsPendingRef.current = false;
-        void refreshGitHubLogsRef.current?.({ force: false });
+        const f = githubLogsPendingForceRef.current;
+        githubLogsPendingForceRef.current = false;
+        void refreshGitHubLogsRef.current?.({ force: f });
       }
     }
   }, []);

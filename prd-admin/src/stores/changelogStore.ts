@@ -76,10 +76,14 @@ export function selectRecentEntries(
 }
 
 // 冷加载在途时被守卫挡掉的重读请求（如 SSE update 在初次冷加载期间到达）记一个 pending，
-// 待在途请求结束后补跑一次 force=false 的后台重读，避免页面停在「冷加载启动时拿到的旧快照」
+// 待在途请求结束后补跑一次，避免页面停在「冷加载启动时拿到的旧快照」
 // （Codex P2：store-backed tab 也要 queue SSE reload，与 GitHub 日志的 trailing-edge 对称）。
+// force 取「或」：在途期间若有任一次 force=true（如用户点了头部刷新），补跑须保留 force，
+// 不能把硬刷新静默降级为只读重读（Bugbot Medium）。
 let pendingCurrentWeekReload = false;
+let pendingCurrentWeekForce = false;
 let pendingReleasesReload = false;
+let pendingReleasesForce = false;
 
 export const useChangelogStore = create<ChangelogState>()(
   persist(
@@ -96,8 +100,10 @@ export const useChangelogStore = create<ChangelogState>()(
       loadCurrentWeek: async (force?: boolean) => {
         const { loadingCurrent, currentWeek } = get();
         if (loadingCurrent) {
-          // 冷加载在途：不丢弃，记 pending，待结束补跑（拿到 SSE push 后的最新存量）
+          // 冷加载在途：不丢弃，记 pending，待结束补跑（拿到 SSE push 后的最新存量）。
+          // force 取或：保留在途期间任一次硬刷新意图。
           pendingCurrentWeekReload = true;
+          pendingCurrentWeekForce = pendingCurrentWeekForce || force === true;
           return;
         }
         const hasCache = currentWeek != null;
@@ -111,10 +117,12 @@ export const useChangelogStore = create<ChangelogState>()(
         } else {
           set({ loadingCurrent: false }); // 后台刷新失败：保留旧数据，不打扰
         }
-        // trailing-edge：在途期间被合并掉的重读补跑一次（force=false 读存量，此时已是最新快照）
+        // trailing-edge：在途期间被合并掉的重读补跑一次，保留 force 意图（避免硬刷新被降级）
         if (pendingCurrentWeekReload) {
           pendingCurrentWeekReload = false;
-          void get().loadCurrentWeek(false);
+          const f = pendingCurrentWeekForce;
+          pendingCurrentWeekForce = false;
+          void get().loadCurrentWeek(f);
         }
       },
 
@@ -122,6 +130,7 @@ export const useChangelogStore = create<ChangelogState>()(
         const { loadingReleases, releases } = get();
         if (loadingReleases) {
           pendingReleasesReload = true;
+          pendingReleasesForce = pendingReleasesForce || force === true;
           return;
         }
         const hasCache = releases != null;
@@ -136,7 +145,9 @@ export const useChangelogStore = create<ChangelogState>()(
         }
         if (pendingReleasesReload) {
           pendingReleasesReload = false;
-          void get().loadReleases(limit, false);
+          const f = pendingReleasesForce;
+          pendingReleasesForce = false;
+          void get().loadReleases(limit, f);
         }
       },
 

@@ -8,3 +8,4 @@
 | fix | prd-admin | 更新中心 GitHub 日志在途刷新期间到达的 SSE update 改 trailing-edge 补跑，不再被吞 |
 | fix | prd-admin | 更新中心 SSE 流干净结束时也清掉「实时同步」徽标并触发重连，不再虚标连接健康 |
 | fix | prd-admin | 更新中心 loadCurrentWeek/loadReleases 冷加载在途时也 trailing-edge 补跑 SSE 重读，避免页面停在旧快照 |
+| fix | prd-admin | 更新中心 trailing-edge 补跑保留 force 意图，避免冷加载在途时用户硬刷新被降级为只读重读 |
