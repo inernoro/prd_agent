@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Eye, Users, Clock, X, UserCircle2, Download, FileText, ChevronRight, Library, Tag } from 'lucide-react';
 import type { EChartsOption } from 'echarts';
@@ -141,10 +141,14 @@ export function ViewersDrawer(props: ViewersDrawerProps) {
     setEventsLoading(false);
   }, [isAccount, storeId]);
 
-  // 聚合报表随时间档重新拉取
+  // 聚合报表随时间档重新拉取。用 seq 守卫：切档快速切换时，丢弃迟到的旧请求结果，
+  // 避免慢的旧响应覆盖新档数据（参见 prd-admin async-fetch stale-response 规则）。
+  const analyticsSeq = useRef(0);
   const loadAnalytics = useCallback(async () => {
+    const seq = ++analyticsSeq.current;
     setAnalyticsLoading(true);
     const res = isAccount ? await getAllStoresAnalytics(days, tz) : await getStoreAnalytics(storeId!, days, tz);
+    if (seq !== analyticsSeq.current) return; // 已有更新的请求在途，丢弃本次
     if (res.success) {
       setAnalytics(res.data);
     } else {

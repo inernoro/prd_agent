@@ -100,8 +100,10 @@ const ACCEPT_TYPES = '.md,.txt,.pdf,.doc,.docx,.json,.yaml,.yml,.csv';
 
 // 账号级总计的紧凑格式化：大数走「万」，停留走「时/分」。
 function formatCountCompact(n: number): string {
-  if (n < 10_000) return String(n);
-  return `${(n / 10_000).toFixed(n % 10_000 === 0 ? 0 : 1)} 万`;
+  // count-up 动画喂进来的是插值浮点，先取整，避免 <1万 时闪现小数
+  const r = Math.round(n);
+  if (r < 10_000) return String(r);
+  return `${(r / 10_000).toFixed(r % 10_000 === 0 ? 0 : 1)} 万`;
 }
 function formatDwellCompact(ms: number): string {
   if (!ms || ms < 1000) return '0 秒';
