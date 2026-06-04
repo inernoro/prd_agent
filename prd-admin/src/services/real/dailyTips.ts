@@ -61,9 +61,14 @@ export type TutorialCategory = 'onboarding' | 'update' | 'task';
 /** 单条官方教程的进度条目(来自 GET /api/daily-tips/progress) */
 export interface TutorialProgressItem {
   sourceId: string;
+  /** visible 端点里这条 seed 的 id(seed-{sourceId}),供学习中心直接开讲 */
+  tipId: string;
   title: string;
   body?: string | null;
   actionUrl: string;
+  ctaText?: string | null;
+  targetSelector?: string | null;
+  autoAction?: DailyTipAutoAction | null;
   steps: number;
   category: TutorialCategory;
   version: number;

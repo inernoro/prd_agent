@@ -398,9 +398,14 @@ public sealed class DailyTipsController : ControllerBase
         var items = catalog.Select(s => new
         {
             sourceId = s.SourceId,
+            // tipId = visible 端点里这条 seed 的 id(seed-{sourceId});供学习中心直接开讲(markLearned 认 seed- 前缀)。
+            tipId = s.Id,
             title = s.Title,
             body = s.Body,
             actionUrl = s.ActionUrl,
+            ctaText = s.CtaText,
+            targetSelector = s.TargetSelector,
+            autoAction = s.AutoAction,
             steps = s.AutoAction!.Steps!.Count,
             category = CategoryOf(s),
             version = s.Version,
