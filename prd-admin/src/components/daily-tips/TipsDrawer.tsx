@@ -237,6 +237,12 @@ export function TipsDrawer() {
     if (hiddenByUser) {
       setHiddenByUser(false);
     }
+    // 被推送的 tip 若不属于当前页(filterPageTips 已按 actionUrl 页面限定将其排除在 pageTips 之外),
+    // 自动展开时切到「全部教程」,否则抽屉打开却看不到刚推送的内容(本页列表里没有它)。
+    // 属于本页则保持「本页教程」语义(showAllPages 默认 false)。
+    if (!pageTips.some((p) => p.id === newTargeted.id)) {
+      setShowAllPages(true);
+    }
     setExpanded(true);
     // pageGuideHere 必须进 deps:否则首屏若落在「有教程页」early-return 后,
     // 切到「无教程页」时本 effect 不再 fire,自动弹窗整 session 失效(Bugbot)。
