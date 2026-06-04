@@ -260,6 +260,7 @@ docs:
   # ── 六、技术债务台账（按模块）──
   # 已知边界 / 后续可补 / 留尾风险，命名规范见 rule.doc-naming.md「debt.* 专项约定」
   debt.agent-universe: 智能体宇宙 · 债务台账
+  debt.onboarding-tips: 页面教程(小技巧)系统 · 债务台账
   debt.pm-agent: 项目管理智能体 · 债务台账
   debt.product-agent: 产品管理智能体 · 债务台账
   debt.video-agent: 视频生成 Agent · 债务台账
@@ -332,3 +333,4 @@ docs:
   report.skill-eval-sample-technical: 文档技能评测·technical-writing 样本输出
   report.skill-eval-sample-diataxis: 文档技能评测·documentation-writer（Diátaxis）样本输出
   report.cds-mongo-log-split-incident-2026-05-23: CDS Mongo 日志拆分事故复盘（2026-05-23）
+  report.tutorial-coverage: 页面教程全量路由覆盖审计（2026-06-04）

@@ -418,6 +418,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | **agent-guide** | `/help` | 无需输入 → 读取 `.agent-workspace/` 进度文件，告知当前阶段和下一步操作 |
 | **create-executor** | `/create-executor` | 输入执行器名称和用途 → 自动读取代码、生成执行器、注册、自测，全自动接入 CLI Agent 执行器 |
 | **createzzdemo** | `/createzzdemo` | 输入教程名 → 枚举 A-F 6 类步骤让用户选组合，生成 DailyTipUpsert JSON 入库，含大全套 showcase 回归模板 |
+| **tutorial-daily-maintain** | `/tutorial-daily-maintain` | 定时(建议每日) → 扫 git 增量映射受影响页面教程 → 锚点漂移检测(P0-P2) → 起草「本周有更新」提醒(advanced/`*-update-*`) → 教程健康报告发布到独立验收知识库。首版只产草稿+告警，不自动改 seed |
 | **entropy-cleanup** | `/entropy` | 无需输入 → 扫描 doc/ 命名、index.yml、guide.list、技能表、changelog 碎片、codebase-snapshot 五维一致性，输出欠款清单并自动补齐 |
 | **laowang** | `老王`、`/laowang` | 用户卡住/任务太难/争执不下时触发 → 用米多解决问题五步法（直面问题 → 抓主要矛盾 → 责任到人 → 备齐资源 → 做好才算做）强制拆解。风格直率，副作用：50% 概率追加一项延伸任务 |
 
