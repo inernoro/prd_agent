@@ -148,7 +148,7 @@ doc-store 归档是两步:`POST /entries`(建标题条目)→ `PUT /entries/{id}
 
 **判级规则(保守,避免误杀)**:只计**同源**(app 自己的 host)请求,跨域第三方/CDN 不计;401/403/404 高噪声跳过;主动 abort 的 fetch 跳过;支持 `ignore` 正则白名单。
 
-**硬门禁**:`blockSeverity`(默认 `P0`)——任何 ≥ 此级别的 finding 会**自动折叠进"截图那一刻"的 warnings**,从而被 `archive_report.py` 准入校验(§3.5 第 4 项)**直接拒收**。即:取证过程中页面抛了未捕获异常或后端 5xx,**这轮验收无法归档为 pass**,必须先修。P1 仍记进 `result.json` 供报告引用,但不硬阻断(避免一条第三方 console 噪声卡死整轮)。
+**硬门禁**:`blockSeverity`(默认 `P0`)——任何 ≥ 此级别的 finding 会**自动折叠进"截图那一刻"的 warnings**,从而被 `archive_report.py` 准入校验(§3.5 第 4 项)**直接拒收**。即:取证过程中页面抛了未捕获异常或后端 5xx,**这轮验收无法归档为 pass**,必须先修。P1 仍记进 `result.json` 供报告引用,但不硬阻断(避免一条第三方 console 噪声卡死整轮)。**末次截图之后才发生的 P0**(收尾时抛的异常/5xx)由 `writeManifest` 收尾兜底挂到最后一张截图的 warnings,确保进 manifest 照样拒收,不会只躺在 `result.json` 里被放过(`result.json.autoFindingsSummary.unattachedBlockers` 恒应为 0)。
 
 **机读产物 `result.json`(v1.0,issue #605 二.3)**:`writeManifest(outDir, extra)` 除写 `manifest.json`(截图数组,契约不变)外,同写一份 `result.json` = `{verdict, target, themeSupport, timing, shots, autoFindings, autoFindingsSummary}`,供下游 Agent(`issues-visual-run` / autofix)**直接消费,不必解析 markdown**。
 

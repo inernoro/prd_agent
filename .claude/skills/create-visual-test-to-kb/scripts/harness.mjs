@@ -211,6 +211,9 @@ export function findings() { return autoFindings; }
 // driver 据此单图取证 + 注明，不被逼交两张一模一样的图、也不计 fail。
 export async function detectThemeSupport(page, cfg) {
   const attr = (cfg && cfg.screenshot && cfg.screenshot.themeAttr) || 'data-theme';
+  // 记录探测前的主题；探测结束必须恢复，否则页面被遗留在 light（最后一次 setAttribute）——
+  // driver 探测后若未显式 setTheme 就截图会截到错主题，违反 §5.4（Bugbot #2，2026-06-04）。
+  const original = await page.evaluate(([a]) => document.documentElement.getAttribute(a), [attr]);
   const lum = async () => page.evaluate(() => {
     const bg = getComputedStyle(document.body).backgroundColor || 'rgb(0,0,0)';
     const m = bg.match(/\d+/g) || [0, 0, 0];
@@ -226,7 +229,10 @@ export async function detectThemeSupport(page, cfg) {
   const delta = Math.abs(lightLum - darkLum);
   // 亮度差 < 24 视为"切了主题但没变"——该页不真支持双主题
   const supportsLight = delta >= 24;
-  return { supportsLight, darkLum: Math.round(darkLum), lightLum: Math.round(lightLum), delta: Math.round(delta) };
+  // 恢复探测前主题；探测前无显式主题则回到 dark（应用默认，prd-admin 全局暗色）
+  await page.evaluate(([a, m]) => document.documentElement.setAttribute(a, m), [attr, original || 'dark']);
+  await page.waitForTimeout(200);
+  return { supportsLight, darkLum: Math.round(darkLum), lightLum: Math.round(lightLum), delta: Math.round(delta), restoredTheme: original || 'dark' };
 }
 
 // ── v1.0：导航 timing（issue #605 二.5，呼应 CLAUDE §6 禁止空白等待）──
@@ -434,9 +440,25 @@ export function manifest() { return shots; }
 // extra 可带 { verdict, target, themeSupport, timing, branch, commit }。
 export function writeManifest(outDir, extra = {}) {
   const fs = require('fs');
+  // 闭合"晚到 P0"漏洞（Bugbot #1，2026-06-04）：drainFindingsForShot 只把 finding 折叠进"之后某次
+  // shot() 调用"的 warnings。最后一张截图之后才抛的 ≥blockSeverity finding（典型：收尾时的未捕获
+  // 异常 / 5xx）没有后续 shot 来 drain，会只躺在 result.json 里、不进 manifest.json，而 archive_report.py
+  // 只按 manifest warnings 拒收 → 这轮可能照样 archive 成 pass。收尾时把这些"孤儿 blocker"挂到最后一张
+  // 截图的 warnings 上，确保它进 manifest → 准入照样拒收。零截图的情况由档位截图下限(L0≥1)兜底拒收。
+  const orphanBlockers = autoFindings.filter(
+    (f) => !f._attached && _sevGte(f.severity, _autoCaptureCfg.blockSeverity),
+  );
+  if (orphanBlockers.length && shots.length) {
+    const last = shots[shots.length - 1];
+    last.warnings = (last.warnings || []).concat(
+      orphanBlockers.map((f) => `自动捕获(${f.severity},${f.kind},末次截图后/未挂载): ${f.message}`),
+    );
+    orphanBlockers.forEach((f) => { f._attached = true; });
+  }
   fs.writeFileSync(`${outDir}/manifest.json`, JSON.stringify(shots, null, 2));
   const p0 = autoFindings.filter((f) => f.severity === 'P0').length;
   const p1 = autoFindings.filter((f) => f.severity === 'P1').length;
+  const unattachedBlockers = autoFindings.filter((f) => !f._attached && _sevGte(f.severity, _autoCaptureCfg.blockSeverity)).length;
   const result = {
     generatedAt: new Date().toISOString(),
     verdict: extra.verdict || null,
@@ -447,11 +469,11 @@ export function writeManifest(outDir, extra = {}) {
     timing: extra.timing || null,
     shots: shots.map((s) => ({ name: s.name, caption: s.caption, warnings: s.warnings || [] })),
     autoFindings: autoFindings.map(({ _attached, ...f }) => f),
-    autoFindingsSummary: { P0: p0, P1: p1, total: autoFindings.length },
+    autoFindingsSummary: { P0: p0, P1: p1, total: autoFindings.length, unattachedBlockers },
   };
   fs.writeFileSync(`${outDir}/result.json`, JSON.stringify(result, null, 2));
   if (p0 || p1) {
-    console.log(`  [自动捕获] P0=${p0} P1=${p1}（详见 result.json autoFindings；P0 已折叠进对应截图 warnings → 准入会拒收）`);
+    console.log(`  [自动捕获] P0=${p0} P1=${p1}（详见 result.json autoFindings；P0 已折叠进截图 warnings → 准入会拒收）`);
   }
   return `${outDir}/manifest.json`;
 }
