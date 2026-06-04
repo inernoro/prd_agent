@@ -146,6 +146,16 @@ export function SpotlightOverlay() {
     const autoAction: DailyTipAutoAction | null = payload.autoAction ?? null;
     const scroll = (autoAction?.scroll as 'center' | 'top' | 'none' | null) ?? 'center';
 
+    // 切步时:若新一步的目标当前不在 DOM,先清掉旧光圈(改显「正在定位…」气泡),
+    // 避免连续多步都找不到目标时,旧光圈一直停在上一处元素上,
+    // 让用户误以为「每一步都指向同一个元素」(用户 2026-06-04 反馈的网页托管教程现象)。
+    // 若目标已在 DOM,则保留旧 rect 等下方 poll 立即覆盖,保持无闪烁切换。
+    try {
+      if (!document.querySelector(currentSelector)) setRect(null);
+    } catch {
+      setRect(null);
+    }
+
     // 轮询等目标元素就绪(Reveal 动效 + 异步加载场景)
     // 250ms × 40 = 10s 上限,给慢服务器 + 慢网络 + React 渲染余地
     // 找不到就 setSeekTimedOut(true) 走友好失败卡片
