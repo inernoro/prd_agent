@@ -324,6 +324,7 @@ function TableToolbar({
   filters,
   filterValue,
   setFilterValue,
+  extra,
 }: {
   keyword: string;
   setKeyword: (v: string) => void;
@@ -331,6 +332,7 @@ function TableToolbar({
   filters?: { value: string; label: string }[];
   filterValue?: string;
   setFilterValue?: (v: string) => void;
+  extra?: React.ReactNode;
 }) {
   return (
     <div className="flex items-center gap-2 mb-3 flex-wrap">
@@ -357,7 +359,20 @@ function TableToolbar({
           ))}
         </>
       )}
+      {extra && <div className="ml-auto flex items-center gap-2">{extra}</div>}
     </div>
+  );
+}
+
+/** 「我负责的」过滤开关。 */
+function MineToggle({ mine, setMine }: { mine: boolean; setMine: (v: boolean) => void }) {
+  return (
+    <button
+      onClick={() => setMine(!mine)}
+      className={`px-2.5 py-1 rounded-md text-xs border ${mine ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/40' : 'text-white/50 border-white/10 hover:bg-white/5'}`}
+    >
+      我负责的
+    </button>
   );
 }
 
@@ -372,13 +387,14 @@ function RequirementsTable() {
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState('');
   const [grade, setGrade] = useState('');
+  const [mine, setMine] = useState(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
-    const res = await getOverviewRequirements({ keyword: keyword.trim() || undefined, grade: grade || undefined });
+    const res = await getOverviewRequirements({ keyword: keyword.trim() || undefined, grade: grade || undefined, mine: mine || undefined });
     if (res.success) setRows(res.data.items);
     setLoading(false);
-  }, [keyword, grade]);
+  }, [keyword, grade, mine]);
   useEffect(() => {
     void reload();
   }, [reload]);
@@ -386,9 +402,9 @@ function RequirementsTable() {
   if (loading) return <MapSectionLoader text="正在加载需求…" />;
   return (
     <div>
-      <TableToolbar keyword={keyword} setKeyword={setKeyword} filterLabel="全部分级" filters={ITEM_GRADE_FILTERS} filterValue={grade} setFilterValue={setGrade} />
+      <TableToolbar keyword={keyword} setKeyword={setKeyword} filterLabel="全部分级" filters={ITEM_GRADE_FILTERS} filterValue={grade} setFilterValue={setGrade} extra={<MineToggle mine={mine} setMine={setMine} />} />
       {rows.length === 0 ? (
-        <div className="text-center text-white/40 text-sm py-12">没有需求</div>
+        <div className="text-center text-white/40 text-sm py-12">{mine ? '没有指派给你的需求' : '没有需求'}</div>
       ) : (
         <DataTable
           rows={rows}
@@ -399,6 +415,7 @@ function RequirementsTable() {
             { header: '产品', render: (r) => <span className="text-white/55 text-xs">{r.productName}</span> },
             { header: '分级', render: (r) => GRADE_BADGE(r.grade) },
             { header: '状态', render: (r) => <span className="text-white/55 text-xs">{r.currentState || '-'}</span> },
+            { header: '处理人', render: (r) => <span className="text-white/55 text-xs">{r.assigneeName || '-'}</span> },
             { header: '版本', render: (r) => <span className="text-white/55 text-xs">{r.versionCount}</span> },
             { header: '客户', render: (r) => <span className="text-white/55 text-xs">{r.customerCount}</span> },
             { header: '更新', render: (r) => <span className="text-white/35 text-xs">{relTime(r.updatedAt)}</span> },
@@ -415,13 +432,14 @@ function FeaturesTable() {
   const [loading, setLoading] = useState(true);
   const [keyword, setKeyword] = useState('');
   const [grade, setGrade] = useState('');
+  const [mine, setMine] = useState(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
-    const res = await getOverviewFeatures({ keyword: keyword.trim() || undefined, grade: grade || undefined });
+    const res = await getOverviewFeatures({ keyword: keyword.trim() || undefined, grade: grade || undefined, mine: mine || undefined });
     if (res.success) setRows(res.data.items);
     setLoading(false);
-  }, [keyword, grade]);
+  }, [keyword, grade, mine]);
   useEffect(() => {
     void reload();
   }, [reload]);
@@ -429,9 +447,9 @@ function FeaturesTable() {
   if (loading) return <MapSectionLoader text="正在加载功能…" />;
   return (
     <div>
-      <TableToolbar keyword={keyword} setKeyword={setKeyword} filterLabel="全部分级" filters={ITEM_GRADE_FILTERS} filterValue={grade} setFilterValue={setGrade} />
+      <TableToolbar keyword={keyword} setKeyword={setKeyword} filterLabel="全部分级" filters={ITEM_GRADE_FILTERS} filterValue={grade} setFilterValue={setGrade} extra={<MineToggle mine={mine} setMine={setMine} />} />
       {rows.length === 0 ? (
-        <div className="text-center text-white/40 text-sm py-12">没有功能</div>
+        <div className="text-center text-white/40 text-sm py-12">{mine ? '没有指派给你的功能' : '没有功能'}</div>
       ) : (
         <DataTable
           rows={rows}
@@ -442,6 +460,7 @@ function FeaturesTable() {
             { header: '产品', render: (r) => <span className="text-white/55 text-xs">{r.productName}</span> },
             { header: '分级', render: (r) => GRADE_BADGE(r.grade) },
             { header: '状态', render: (r) => <span className="text-white/55 text-xs">{r.currentState || '-'}</span> },
+            { header: '处理人', render: (r) => <span className="text-white/55 text-xs">{r.assigneeName || '-'}</span> },
             { header: '实现需求', render: (r) => <span className="text-white/55 text-xs">{r.requirementCount}</span> },
             { header: '更新', render: (r) => <span className="text-white/35 text-xs">{relTime(r.updatedAt)}</span> },
           ]}

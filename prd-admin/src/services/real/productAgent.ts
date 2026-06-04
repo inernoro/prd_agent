@@ -190,7 +190,7 @@ export function deleteWorkflowDefinition(definitionId: string) {
 }
 
 // ── 通用状态流转 ──
-export function transition(body: { entityType: ProductEntityType; entityId: string; transitionKey: string; comment?: string }) {
+export function transition(body: { entityType: ProductEntityType; entityId: string; transitionKey: string; comment?: string; assigneeId?: string | null }) {
   return apiRequest<{ entityId: string; newState: string }>('/api/product/transition', { method: 'POST', body });
 }
 
@@ -311,23 +311,25 @@ export function getOverviewStats() {
 }
 export interface OverviewRequirementRow {
   id: string; productId: string; productName: string; requirementNo: string; title: string;
-  grade: string; currentState?: string | null; versionCount: number; customerCount: number; assigneeId?: string | null; updatedAt: string;
+  grade: string; currentState?: string | null; versionCount: number; customerCount: number; assigneeId?: string | null; assigneeName?: string | null; updatedAt: string;
 }
-export function getOverviewRequirements(params?: { grade?: string; keyword?: string }) {
+export function getOverviewRequirements(params?: { grade?: string; keyword?: string; mine?: boolean }) {
   const q = new URLSearchParams();
   if (params?.grade) q.set('grade', params.grade);
   if (params?.keyword) q.set('keyword', params.keyword);
+  if (params?.mine) q.set('mine', 'true');
   const qs = q.toString();
   return apiRequest<ListWrap<OverviewRequirementRow>>(`/api/product/overview/requirements${qs ? `?${qs}` : ''}`);
 }
 export interface OverviewFeatureRow {
   id: string; productId: string; productName: string; featureNo: string; title: string;
-  grade: string; currentState?: string | null; requirementCount: number; updatedAt: string;
+  grade: string; currentState?: string | null; requirementCount: number; assigneeId?: string | null; assigneeName?: string | null; updatedAt: string;
 }
-export function getOverviewFeatures(params?: { grade?: string; keyword?: string }) {
+export function getOverviewFeatures(params?: { grade?: string; keyword?: string; mine?: boolean }) {
   const q = new URLSearchParams();
   if (params?.grade) q.set('grade', params.grade);
   if (params?.keyword) q.set('keyword', params.keyword);
+  if (params?.mine) q.set('mine', 'true');
   const qs = q.toString();
   return apiRequest<ListWrap<OverviewFeatureRow>>(`/api/product/overview/features${qs ? `?${qs}` : ''}`);
 }

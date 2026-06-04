@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Save, Unlink, ExternalLink, ListChecks, Puzzle, Bug, Link2, FileText } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { RequirementRelationModal, DefectLinkerModal } from './ProductRelationModals';
 import { FormFieldsRenderer, RichTextField, useEffectiveTemplate, useEffectiveWorkflow } from './DynamicForm';
 import { WorkflowBar } from './WorkflowBar';
@@ -395,6 +396,7 @@ function CreateObjectForm({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [grade, setGrade] = useState<ItemGrade>('p2');
+  const [assigneeId, setAssigneeId] = useState('');
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const entityType = kind === 'feature' ? 'feature' : 'requirement';
@@ -413,7 +415,7 @@ function CreateObjectForm({
   const create = async () => {
     if (!title.trim()) return;
     setSaving(true);
-    const payload = { title: title.trim(), description, grade, formData, templateId: template?.id, workflowDefId: workflow?.id };
+    const payload = { title: title.trim(), description, grade, assigneeId: assigneeId || null, formData, templateId: template?.id, workflowDefId: workflow?.id };
     const res = kind === 'requirement' ? await createRequirement(productId, payload) : await createFeature(productId, payload);
     setSaving(false);
     if (res.success && res.data) onCreated(res.data.id);
@@ -450,6 +452,10 @@ function CreateObjectForm({
               <FieldLabel required>分级</FieldLabel>
               <GradeField grade={grade} setGrade={setGrade} />
             </div>
+            <div className="flex flex-col gap-1.5">
+              <FieldLabel>处理人</FieldLabel>
+              <UserSearchSelect value={assigneeId} onChange={setAssigneeId} />
+            </div>
             {split.others.length > 0 && (
               <div className="pt-1 border-t border-white/5">
                 <FormFieldsRenderer fields={split.others} values={formData} onChange={setField} productId={productId} />
@@ -483,6 +489,7 @@ function RequirementDetail({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [grade, setGrade] = useState<ItemGrade>('p2');
+  const [assigneeId, setAssigneeId] = useState('');
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [showRel, setShowRel] = useState(false);
@@ -495,6 +502,7 @@ function RequirementDetail({
       setTitle(requirement.title);
       setDescription(requirement.description ?? '');
       setGrade(requirement.grade);
+      setAssigneeId(requirement.assigneeId ?? '');
       setFormData(requirement.formData ?? {});
     }
   }, [requirement]);
@@ -505,16 +513,17 @@ function RequirementDetail({
       title !== requirement.title ||
       description !== (requirement.description ?? '') ||
       grade !== requirement.grade ||
+      assigneeId !== (requirement.assigneeId ?? '') ||
       !recordEqual(formData, requirement.formData ?? {})
     );
-  }, [requirement, title, description, grade, formData]);
+  }, [requirement, title, description, grade, assigneeId, formData]);
 
   if (!requirement) return <NotFound />;
   const setField = (k: string, v: string) => setFormData((d) => ({ ...d, [k]: v }));
 
   const save = async () => {
     setSaving(true);
-    await updateRequirement(requirement.id, { title: title.trim(), description, grade, formData });
+    await updateRequirement(requirement.id, { title: title.trim(), description, grade, assigneeId: assigneeId || null, formData });
     setSaving(false);
     onReload();
   };
@@ -530,7 +539,7 @@ function RequirementDetail({
       saving={saving}
       onSave={save}
       workflow={
-        requirement.workflowDefId ? (
+        workflow ? (
           <WorkflowBar workflow={workflow} entityType="requirement" entityId={requirement.id} currentState={requirement.currentState} onChanged={onReload} />
         ) : undefined
       }
@@ -553,6 +562,10 @@ function RequirementDetail({
               <div className="flex flex-col gap-1.5">
                 <FieldLabel required>分级</FieldLabel>
                 <GradeField grade={grade} setGrade={setGrade} />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel>处理人</FieldLabel>
+                <UserSearchSelect value={assigneeId} onChange={setAssigneeId} />
               </div>
               {requirement.currentState && (
                 <div className="flex flex-col gap-1.5">
@@ -644,6 +657,7 @@ function FeatureDetail({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [grade, setGrade] = useState<ItemGrade>('p2');
+  const [assigneeId, setAssigneeId] = useState('');
   const [selReqs, setSelReqs] = useState<Set<string>>(new Set());
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -667,6 +681,7 @@ function FeatureDetail({
       setTitle(feature.title);
       setDescription(feature.description ?? '');
       setGrade(feature.grade);
+      setAssigneeId(feature.assigneeId ?? '');
       setSelReqs(new Set(feature.requirementIds));
       setFormData(feature.formData ?? {});
     }
@@ -679,10 +694,11 @@ function FeatureDetail({
       title !== feature.title ||
       description !== (feature.description ?? '') ||
       grade !== feature.grade ||
+      assigneeId !== (feature.assigneeId ?? '') ||
       !reqSetEqual(selReqs, feature.requirementIds) ||
       !recordEqual(formData, feature.formData ?? {})
     );
-  }, [feature, title, description, grade, selReqs, formData]);
+  }, [feature, title, description, grade, assigneeId, selReqs, formData]);
 
   if (!feature) return <NotFound />;
   const productId = feature.productId;
@@ -690,7 +706,7 @@ function FeatureDetail({
 
   const save = async () => {
     setSaving(true);
-    await updateFeature(feature.id, { title: title.trim(), description, grade, requirementIds: Array.from(selReqs), formData });
+    await updateFeature(feature.id, { title: title.trim(), description, grade, assigneeId: assigneeId || null, requirementIds: Array.from(selReqs), formData });
     setSaving(false);
     onReload();
   };
@@ -716,7 +732,7 @@ function FeatureDetail({
       saving={saving}
       onSave={save}
       workflow={
-        feature.workflowDefId ? (
+        workflow ? (
           <WorkflowBar workflow={workflow} entityType="feature" entityId={feature.id} currentState={feature.currentState} onChanged={onReload} />
         ) : undefined
       }
@@ -739,6 +755,10 @@ function FeatureDetail({
               <div className="flex flex-col gap-1.5">
                 <FieldLabel required>分级</FieldLabel>
                 <GradeField grade={grade} setGrade={setGrade} />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel>处理人</FieldLabel>
+                <UserSearchSelect value={assigneeId} onChange={setAssigneeId} />
               </div>
               {feature.currentState && (
                 <div className="flex flex-col gap-1.5">

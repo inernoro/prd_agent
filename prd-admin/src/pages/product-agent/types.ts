@@ -122,6 +122,7 @@ export interface Feature {
   workflowDefId?: string | null;
   formData: Record<string, string>;
   ownerId: string;
+  assigneeId?: string | null;
   createdAt: string;
   updatedAt: string;
 }
