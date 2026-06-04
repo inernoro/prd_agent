@@ -60,7 +60,20 @@ public class OpenApiUsageService : IOpenApiUsageService
                         $"今日 token 配额已用尽（上限 {tq}）", SecondsToMidnight(), limit);
             }
 
-            // 每分钟速率（按 Key 桶，原子滑动窗口，返回当前计数）
+            // 2. 每日请求配额：先 INCR 占用再判定，超额回滚（DECR），消除"读-判-写"竞态。
+            //    放在速率窗口之前——日配额拒绝时不会白白占用一个分钟桶槽位（rate ZSET 槽位）。
+            var reqKey = ReqKey(key.Id, day);
+            var reqCount = await db.StringIncrementAsync(reqKey);
+            await db.KeyExpireAsync(reqKey, TimeSpan.FromDays(2));
+            if (key.OpenApiDailyRequestQuota is long rq && rq > 0 && reqCount > rq)
+            {
+                await db.StringDecrementAsync(reqKey);
+                return OpenApiUsageDecision.Deny("daily_request_quota_exceeded",
+                    $"今日请求数配额已用尽（上限 {rq}）", SecondsToMidnight(), limit);
+            }
+
+            // 3. 每分钟速率（按 Key 桶，原子滑动窗口，返回当前计数）。RateScript 仅在放行时
+            //    才写入 ZSET，所以速率拒绝本身不占槽位；但此处请求未放行，须回滚上一步的日配额占用。
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var windowStart = now - 60_000;
             var member = $"{now}-{Guid.NewGuid():N}";
@@ -70,18 +83,10 @@ public class OpenApiUsageService : IOpenApiUsageService
             var allowed = (int)res[0] == 1;
             var count = (int)res[1];
             if (!allowed)
-                return OpenApiUsageDecision.Deny("rate_limit_exceeded",
-                    $"超过每分钟 {limit} 次速率上限，请稍后重试", 5, limit);
-
-            // 每日请求配额：先 INCR 占用再判定，超额回滚（DECR），消除"读-判-写"竞态
-            var reqKey = ReqKey(key.Id, day);
-            var reqCount = await db.StringIncrementAsync(reqKey);
-            await db.KeyExpireAsync(reqKey, TimeSpan.FromDays(2));
-            if (key.OpenApiDailyRequestQuota is long rq && rq > 0 && reqCount > rq)
             {
                 await db.StringDecrementAsync(reqKey);
-                return OpenApiUsageDecision.Deny("daily_request_quota_exceeded",
-                    $"今日请求数配额已用尽（上限 {rq}）", SecondsToMidnight(), limit);
+                return OpenApiUsageDecision.Deny("rate_limit_exceeded",
+                    $"超过每分钟 {limit} 次速率上限，请稍后重试", 5, limit);
             }
 
             return OpenApiUsageDecision.Allow(limit, limit - count);

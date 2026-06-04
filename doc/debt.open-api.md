@@ -44,6 +44,7 @@
 3. **可观测性对齐**：响应 `id = chatcmpl-<requestId>` 与日志同源可回溯；成功/429 回写
    `X-RateLimit-Limit/Remaining/Reset`。
 4. **成本防爆**：单请求输入字符上限 `MaxInputChars=200000`，超限 400 `input_too_large`。
+   字符统计含多模态 `image_url`（base64 数据 URI 或 url 字符串），大图不绕过上限（Codex PR#732 P2）。
 5. **接入指南**：`doc/guide.open-api.md`（quickstart + 契约 + 白名单语义）。
 
 ## 仍未做（按优先级排期，本轮我主动决定不做的）

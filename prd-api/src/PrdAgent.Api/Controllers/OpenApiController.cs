@@ -426,7 +426,18 @@ public class OpenApiController : ControllerBase
                 if (c is JsonValue cv && cv.TryGetValue<string>(out var s)) n += s.Length;
                 else if (c is JsonArray ca)
                     foreach (var part in ca)
-                        if (part is JsonObject po && po.TryGetPropertyValue("text", out var t) && t is JsonValue tv && tv.TryGetValue<string>(out var ts)) n += ts.Length;
+                    {
+                        if (part is not JsonObject po) continue;
+                        // 文本部分
+                        if (po.TryGetPropertyValue("text", out var t) && t is JsonValue tv && tv.TryGetValue<string>(out var ts)) n += ts.Length;
+                        // 多模态图片：image_url 可能是 {url:"data:image/...;base64,..."} 或直接字符串，
+                        // base64 体量必须计入上限，否则大图绕过 MaxInputChars 直打上游。
+                        if (po.TryGetPropertyValue("image_url", out var iu))
+                        {
+                            if (iu is JsonObject iuo && iuo.TryGetPropertyValue("url", out var u) && u is JsonValue uv && uv.TryGetValue<string>(out var us)) n += us.Length;
+                            else if (iu is JsonValue iuv && iuv.TryGetValue<string>(out var ius)) n += ius.Length;
+                        }
+                    }
             }
         }
         if (body.TryGetPropertyValue("prompt", out var p) && p is JsonValue pv && pv.TryGetValue<string>(out var ps)) n += ps.Length;
