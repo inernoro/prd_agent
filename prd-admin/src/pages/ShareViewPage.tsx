@@ -442,7 +442,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
           src={site.pdfAssetUrl || site.siteUrl}
           title={site.title}
           style={{ flex: 1, border: 'none', width: '100%' }}
-          sandbox={site.pdfAssetUrl ? undefined : 'allow-scripts allow-same-origin allow-popups allow-forms'}
+          sandbox={site.pdfAssetUrl ? undefined : 'allow-scripts allow-same-origin allow-popups allow-forms allow-fullscreen'}
           allowFullScreen
         />
 

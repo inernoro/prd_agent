@@ -62,9 +62,10 @@
 | 1 | reveal.js 带纵向子页（vertical stacks）的 deck，垫片调 `Reveal.next()/prev()`（按阅读顺序前进），而非 reveal 原生的「进入纵向子页」 | 极少数依赖纵向栈结构的 reveal deck，上下键语义被改为「统一前进」。为保证「上下键一定能翻页」的刻意取舍 | 若有反馈，对 reveal 改用 `Reveal.down()/up()` 优先、`next()/prev()` 兜底 |
 | 2 | 既无任何可识别驱动（reveal/swiper/impress/带 next-prev 的自定义元素/scroll-snap 全不命中）、又忽略 `isTrusted=false` 合成事件的纯 JS deck，用户点「开启」后上下键兜底仍可能不生效 | 长尾 deck（v4 起为邀请式，需用户主动点开启）。此时不破坏原生键，只是开启后上下键无增益 | 评估直接 DOM 滚动或探测 deck 内部 index 字段 |
 | 5（v4 已缓解） | 误判普通网页为幻灯片（主要靠 `.slide≥2` 松散启发） | v4 起一律邀请式，不点「开启」就完全不绑定键盘，误判最多多显示一个可忽略的角落邀请条，**不再劫持任何键** | 可进一步给邀请条加「不是幻灯片?隐藏」 |
-| 3 | 仅覆盖用户上传路径（CreateFromHtml / Zip / Reupload），未覆盖 API/工作流生成内容（CreateFromContentAsync） | 工作流生成的周报类幻灯片不享受兼容 | 按需扩展到 CreateFromContentAsync 或改 CapsuleExecutor 模板 |
+| 3（已解决，PR #721 review） | ~~仅覆盖用户上传路径，未覆盖 API/工作流生成内容（CreateFromContentAsync）~~ | `CreateFromContentAsync` 现也注入当前版垫片 + 标版本号（Codex P2 反馈），API/工作流/工作空间发布的幻灯片创建即生效，无需等重启 backfill | — |
 | 4（已解决） | ~~垫片随上传注入一次，历史站点不含垫片需重传~~ | 已由 startup 存量回填解决（见上「零重传直接生效」），老 PPT 无需重传自动生效 | 遗留：回填首启 IO 偏重，无批量限流 |
-| 6（已修复，PR #721 review） | ~~回填对 `saved-share` 引用副本按 `savedId` 重建 SiteUrl→404 + 写回原站共享对象；下载瞬时失败仍升级版本号致永久跳过~~ | saved-share 现只升级版本号不重写其 URL/COS（原站回填覆盖）；下载失败 `deferred` 保旧版本下次重试；URL 取入口文件真实 CosKey 不再按 site.Id 推断 | Codex P1 + Bugbot Medium 反馈，commit 见下 |
+| 6（已修复，PR #721 review） | ~~回填对 `saved-share` 引用副本按 `savedId` 重建 SiteUrl→404 + 写回原站共享对象；下载瞬时失败仍升级版本号致永久跳过；saved-share 不刷新 `?v=` 致 library 访客读旧缓存~~ | saved-share 不重写 COS（原站回填覆盖），但刷新自身 `?v=`/ContentVersion（取入口真实 CosKey，不动 UpdatedAt）击穿缓存；普通站下载失败 `deferred` 保旧版本下次重试；URL 一律取入口文件真实 CosKey 不按 site.Id 推断 | Codex P1 + Bugbot ×3 反馈 |
+| 7 | iframe `sandbox` 原缺 `allow-fullscreen`，deck 自带全屏按钮（reveal「F」等）失效 | 已加 `allow-fullscreen`（Bugbot 反馈）。MAP 顶栏「全屏演示」是父页驱动不受影响，本项补的是 deck 内部全屏 | — |
 
 ### 测试状态
 

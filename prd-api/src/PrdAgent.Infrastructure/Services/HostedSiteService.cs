@@ -219,8 +219,10 @@ public class HostedSiteService : IHostedSiteService
     {
         var siteId = Guid.NewGuid().ToString("N");
         var now = DateTime.UtcNow;
-        var htmlBytes = RewriteAbsolutePathsInHtml(
-            System.Text.Encoding.UTF8.GetBytes(htmlContent), "index.html");
+        // API/工作流/工作空间发布的页面同样要注入当前版翻页垫片（与 CreateFromHtml/Reupload 一致），
+        // 否则这类站点要等下次服务重启的 backfill 才有 shim。
+        var htmlBytes = InjectSlideNavCompat(RewriteAbsolutePathsInHtml(
+            System.Text.Encoding.UTF8.GetBytes(htmlContent), "index.html"));
 
         var cosKey = _storage.BuildSiteKey(siteId, "index.html");
         await _storage.UploadToKeyAsync(cosKey, htmlBytes, "text/html; charset=utf-8", CancellationToken.None, SiteCacheControl);
@@ -246,6 +248,7 @@ public class HostedSiteService : IHostedSiteService
             Tags = tags ?? new(),
             Folder = folder?.Trim(),
             OwnerUserId = userId,
+            SlideNavCompatVersion = SlideNavVersion, // 创建即注入当前版垫片
         };
 
         await _db.HostedSites.InsertOneAsync(site, cancellationToken: ct);
@@ -1273,9 +1276,21 @@ public class HostedSiteService : IHostedSiteService
                 // 这里仅升级版本号防止每次启动重复扫描。
                 if (string.Equals(site.SourceType, "saved-share", StringComparison.OrdinalIgnoreCase))
                 {
-                    await _db.HostedSites.UpdateOneAsync(x => x.Id == site.Id,
-                        Builders<HostedSite>.Update.Set(x => x.SlideNavCompatVersion, SlideNavVersion),
-                        cancellationToken: ct);
+                    // 不重写 COS（原站回填覆盖共享对象），但刷新自己的 ?v= 让 library 访客击穿旧缓存、
+                    // 加载到带新垫片的对象。URL 取入口 HTML 的真实 CosKey（指向原站对象），绝不按 savedId 推断。
+                    // 不动 UpdatedAt，避免被动回填把用户收藏列表重新排序。
+                    var savedUpdate = Builders<HostedSite>.Update.Set(x => x.SlideNavCompatVersion, SlideNavVersion);
+                    var savedEntryKey = (site.Files ?? new List<HostedSiteFile>())
+                        .FirstOrDefault(f => !string.IsNullOrEmpty(f.CosKey) &&
+                            string.Equals(f.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase))?.CosKey;
+                    if (!string.IsNullOrEmpty(savedEntryKey))
+                    {
+                        var savedNow = DateTime.UtcNow;
+                        savedUpdate = savedUpdate
+                            .Set(x => x.SiteUrl, AppendVersion(_storage.BuildUrlForKey(savedEntryKey), savedNow))
+                            .Set(x => x.ContentVersion, savedNow);
+                    }
+                    await _db.HostedSites.UpdateOneAsync(x => x.Id == site.Id, savedUpdate, cancellationToken: ct);
                     continue;
                 }
 
