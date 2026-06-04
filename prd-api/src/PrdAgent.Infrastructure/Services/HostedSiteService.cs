@@ -1263,6 +1263,13 @@ public class HostedSiteService : IHostedSiteService
             fb.Exists(x => x.SlideNavCompatVersion, false));
 
         var candidates = await _db.HostedSites.Find(filter).ToListAsync(ct);
+
+        // 先处理原站(非 saved-share)、后处理引用副本：保证副本刷新 ?v= 时共享 COS 对象已是当前版，
+        // 避免「副本先于原站被刷新 → 客户端/CDN 在窗口内把旧字节缓存到新版本号下，而原站后续重写
+        // 不会再 bump 已标记当前版的副本」这一竞态（Codex P2 反馈）。
+        candidates = candidates
+            .OrderBy(s => string.Equals(s.SourceType, "saved-share", StringComparison.OrdinalIgnoreCase) ? 1 : 0)
+            .ToList();
         var injectedSites = 0;
 
         foreach (var site in candidates)

@@ -64,7 +64,7 @@
 | 5（v4 已缓解） | 误判普通网页为幻灯片（主要靠 `.slide≥2` 松散启发） | v4 起一律邀请式，不点「开启」就完全不绑定键盘，误判最多多显示一个可忽略的角落邀请条，**不再劫持任何键** | 可进一步给邀请条加「不是幻灯片?隐藏」 |
 | 3（已解决，PR #721 review） | ~~仅覆盖用户上传路径，未覆盖 API/工作流生成内容（CreateFromContentAsync）~~ | `CreateFromContentAsync` 现也注入当前版垫片 + 标版本号（Codex P2 反馈），API/工作流/工作空间发布的幻灯片创建即生效，无需等重启 backfill | — |
 | 4（已解决） | ~~垫片随上传注入一次，历史站点不含垫片需重传~~ | 已由 startup 存量回填解决（见上「零重传直接生效」），老 PPT 无需重传自动生效 | 遗留：回填首启 IO 偏重，无批量限流 |
-| 6（已修复，PR #721 review） | ~~回填对 `saved-share` 引用副本按 `savedId` 重建 SiteUrl→404 + 写回原站共享对象；下载瞬时失败仍升级版本号致永久跳过；saved-share 不刷新 `?v=` 致 library 访客读旧缓存~~ | saved-share 不重写 COS（原站回填覆盖），但刷新自身 `?v=`/ContentVersion（取入口真实 CosKey，不动 UpdatedAt）击穿缓存；普通站下载失败 `deferred` 保旧版本下次重试；URL 一律取入口文件真实 CosKey 不按 site.Id 推断 | Codex P1 + Bugbot ×3 反馈 |
+| 6（已修复，PR #721 review） | ~~回填对 `saved-share` 引用副本按 `savedId` 重建 SiteUrl→404 + 写回原站共享对象；下载瞬时失败仍升级版本号致永久跳过；saved-share 不刷新 `?v=` 致 library 访客读旧缓存~~ | saved-share 不重写 COS（原站回填覆盖），但刷新自身 `?v=`/ContentVersion（取入口真实 CosKey，不动 UpdatedAt）击穿缓存；普通站下载失败 `deferred` 保旧版本下次重试；URL 一律取入口文件真实 CosKey 不按 site.Id 推断；回填**先原站后副本**排序，避免副本先于原站刷新致旧字节被缓存到新版本号下的竞态 | Codex P1/P2 + Bugbot ×3 反馈 |
 | 7 | iframe `sandbox` 原缺 `allow-fullscreen`，deck 自带全屏按钮（reveal「F」等）失效 | 已加 `allow-fullscreen`（Bugbot 反馈）。MAP 顶栏「全屏演示」是父页驱动不受影响，本项补的是 deck 内部全屏 | — |
 
 ### 测试状态
