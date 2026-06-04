@@ -373,16 +373,15 @@ public sealed class ChangelogReader : IChangelogReader
                 return fresh;
             }
 
-            // 拉取失败：内存有旧值 → 用内存；否则尝试数据库存量；都没有才返回不可用结果
+            // 拉取失败：内存有旧值 → 用内存；否则回退数据库存量；都没有才返回不可用结果。
+            // force 只意味着「绕过缓存去重新拉取」；一旦拉取失败，仍应回退到最佳存量（内存→DB），
+            // 不能把空的不可用视图返回给客户端覆盖好 UI。冷实例 + force + 上游失败时尤其重要（Bugbot Medium）。
             if (_cache.TryGetValue(cacheKey, out CacheEntry<T>? stale) && stale != null)
             {
                 return stale.Value;
             }
-            if (!force)
-            {
-                var hydrated = await TryHydrateFromStoreAsync<T>(cacheKey).ConfigureAwait(false);
-                if (hydrated != null) return hydrated;
-            }
+            var hydrated = await TryHydrateFromStoreAsync<T>(cacheKey).ConfigureAwait(false);
+            if (hydrated != null) return hydrated;
             return fresh;
         }
         finally
