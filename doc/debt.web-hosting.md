@@ -6,7 +6,7 @@
 
 | 指标 | 当前值 |
 |------|--------|
-| open | 3 |
+| open | 4 |
 | in-progress | 0 |
 | paid | 0 |
 
@@ -21,6 +21,23 @@
 `InjectSlideNavCompat()` 在用户上传幻灯片类 HTML 时注入运行时垫片，让只认左右
 方向键的 PPT 导出页也能用上下方向键 / 空格 / PageUp-Down / 滚轮 / 触摸翻页。
 跨域 iframe 决定了只能从内容内部解决（父页面抓不到 iframe 键盘事件），故随内容下发。
+
+### 零重传直接生效（2026-06-03，存量回填）
+
+用户要求：不能让大家重新上传才生效，要对**存量 PPT 直接生效**。
+
+- **否决「访问时后端代理注入」**：托管内容现从独立域名 `cfi.miduo.org` 经 iframe 加载，
+  与主站跨域隔离——这是故意的，防止用户上传的任意 HTML 触达主站登录态。若改为主站同源
+  代理注入，等于让任意上传 HTML 读到访客 token（XSS 级安全回归）。故否决。
+- **采用「存量回填」**（保持隔离域名 + 零安全回归 + 用户零操作）：
+  - `HostedSite.SlideNavCompatVersion` 版本号；上传/重传写当前版。
+  - `InjectSlideNavCompat` 改「先剥离任何旧版本注入块、再插当前版」，垫片升级时替换旧块。
+  - `BackfillSlideNavCompatAsync`：版本落后/缺失的站点 HTML 从 COS 拉回重注入、原地覆盖、
+    bump `ContentVersion`+`SiteUrl`（?v 击穿缓存）、升级版本号；幂等。
+  - 接入 `HostedSiteBackfillService` startup 任务（30s 延迟 + 异常隔离）。
+  - 垫片代码以后升级只需 `SlideNavVersion`+1，下次启动自动把存量换新版。
+- **回填债务**：首次启动会下载+重传所有版本落后站点的 HTML（无批量限流），站点量极大时
+  startup IO 偏重；后续启动因版本号已升级而跳过。必要时可加分批/节流或异步队列。
 
 ### 实现演进（重要）
 
@@ -50,4 +67,7 @@
     ArrowDown 连按 `_index` 0→1→2→3、ArrowUp→2、PageDown→3、Space→4→5，零 console 错误。
     完整部署路径验证（线上 API 注入 → COS → 浏览器）通过。
   - 负向：普通长文页面 ArrowDown 仍触发原生滚动（scrollY 0→120），垫片未接管 —— 保守判定生效。
-  - 注入校验：marker 幂等出现 1 次、位于 `</body>` 前、原 deck 内容完整保留。
+  - 注入校验：marker 出现 1 次、原 deck 内容完整保留。
+  - **存量回填取证（2026-06-03）**：用户原始 PPT（站点 264dfc，**从未重传**）经 startup
+    backfill 后，COS 文件 marker=1、`?v` 已 bump；Playwright 直测该线上文件 ArrowDown
+    `_index` 0→1→2、ArrowUp→1，零 console 错误 —— 零重传直接生效已验证。
