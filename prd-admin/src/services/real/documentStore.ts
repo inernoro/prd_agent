@@ -580,6 +580,14 @@ export async function getStoreAnalytics(storeId: string, days = 30, tz?: string)
   );
 }
 
+/** 账号级访客总计（我名下所有知识库聚合，仅 owner 自己） */
+export async function getStoresAnalyticsSummary() {
+  return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreAccountSummary>(
+    api.documentStore.entries.storesAnalyticsSummary(),
+    { method: 'GET' },
+  );
+}
+
 // ── 批次 D：划词评论 ──
 
 /** 创建划词评论 */

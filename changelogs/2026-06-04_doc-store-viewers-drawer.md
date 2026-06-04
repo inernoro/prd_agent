@@ -4,3 +4,5 @@
 | fix | prd-admin | 移除 DocBrowser 订阅条目的状态小圆点（出错红点等），不再为单个小点占用整行徽章行 |
 | feat | prd-api | 新增知识库访客聚合报表端点 GET /stores/{id}/analytics（按天趋势/24h时段/文档排行/停留分布/KPI，MongoDB $facet 聚合，支持时间档 days + 本地时区 tz） |
 | feat | prd-admin | 访客记录抽屉升级为聚合报表：时间档切换（7/30/90天）、KPI 扩展（平均停留/回访率/跳出率）、访问趋势折线 + 24h时段柱图（ECharts）、停留分布条、文档访问排行、CSV 导出 |
+| feat | prd-api | 新增账号级访客总计端点 GET /stores/analytics-summary（聚合我名下所有知识库的总访问/独立访客/总停留） |
+| feat | prd-admin | 知识库「我的空间」统计行内联扩展账号级总计：在「共 N 个知识库 · M 篇文章」后追加 总访问/访客/总停留 |

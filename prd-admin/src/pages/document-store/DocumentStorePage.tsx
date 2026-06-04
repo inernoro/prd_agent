@@ -69,6 +69,7 @@ import {
   listMyFavoriteDocumentStores,
   listMyLikedDocumentStores,
   setStoreTeams,
+  getStoresAnalyticsSummary,
 } from '@/services';
 import { ShareToTeamDialog } from '@/components/team/ShareToTeamDialog';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -82,6 +83,7 @@ import type {
   DocumentEntry,
   DocumentStoreShareLink,
   InteractionStoreCard,
+  DocumentStoreAccountSummary,
 } from '@/services/contracts/documentStore';
 import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/DocBrowser';
 import { ACCEPTANCE_TEMPLATE_KEY } from '@/lib/acceptanceVerdictRegistry';
@@ -94,6 +96,21 @@ import { ViewersDrawer } from './ViewersDrawer';
 import { useReprocessRunStore, selectStreamingByEntry } from '@/stores/reprocessRunStore';
 
 const ACCEPT_TYPES = '.md,.txt,.pdf,.doc,.docx,.json,.yaml,.yml,.csv';
+
+// 账号级总计的紧凑格式化：大数走「万」，停留走「时/分」。
+function formatCountCompact(n: number): string {
+  if (n < 10_000) return String(n);
+  return `${(n / 10_000).toFixed(n % 10_000 === 0 ? 0 : 1)} 万`;
+}
+function formatDwellCompact(ms: number): string {
+  if (!ms || ms < 1000) return '0 秒';
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec} 秒`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} 分`;
+  const hr = Math.floor(min / 60);
+  return `${hr} 小时${min % 60 ? ` ${min % 60} 分` : ''}`;
+}
 
 // ── 创建空间对话框 ──
 function CreateStoreDialog({ onClose, onCreated }: {
@@ -1531,6 +1548,18 @@ export function DocumentStorePage() {
     sessionStorage.setItem('doc-store-tab', tab);
   }, [tab]);
 
+  // 账号级访客总计（仅「我的空间」：访客/停留是「谁看了我的库」，只有 owner 才有意义）
+  const [accountSummary, setAccountSummary] = useState<DocumentStoreAccountSummary | null>(null);
+  useEffect(() => {
+    if (tab !== 'mine') return;
+    let cancelled = false;
+    (async () => {
+      const res = await getStoresAnalyticsSummary();
+      if (!cancelled && res.success) setAccountSummary(res.data);
+    })();
+    return () => { cancelled = true; };
+  }, [tab]);
+
   const tabs: { key: StoreTab; label: string; icon: typeof Library }[] = [
     { key: 'mine', label: '我的空间', icon: Library },
     { key: 'team', label: '团队空间', icon: Users },
@@ -1669,6 +1698,17 @@ export function DocumentStorePage() {
             共 <strong style={{ color: 'var(--text-primary)' }}>{totalStores}</strong> 个知识库
             <span className="opacity-50 mx-1.5">·</span>
             <strong style={{ color: 'var(--text-primary)' }}>{totalDocs}</strong> 篇文章
+            {/* 账号级访客总计：仅「我的空间」展示（团队/收藏/点赞不是我的访客数据） */}
+            {tab === 'mine' && accountSummary && (
+              <>
+                <span className="opacity-50 mx-1.5">·</span>
+                <strong style={{ color: 'var(--text-primary)' }}>{formatCountCompact(accountSummary.totalViews)}</strong> 次访问
+                <span className="opacity-50 mx-1.5">·</span>
+                <strong style={{ color: 'var(--text-primary)' }}>{formatCountCompact(accountSummary.uniqueVisitors)}</strong> 访客
+                <span className="opacity-50 mx-1.5">·</span>
+                停留 <strong style={{ color: 'var(--text-primary)' }}>{formatDwellCompact(accountSummary.totalDurationMs)}</strong>
+              </>
+            )}
           </span>
 
           {/* 搜索 */}

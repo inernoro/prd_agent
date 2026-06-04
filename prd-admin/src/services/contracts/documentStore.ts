@@ -380,6 +380,13 @@ export type DocumentStoreAnalytics = {
   dwellBuckets: { lt5s: number; s5_30: number; s30_2m: number; gt2m: number; measured: number };
 };
 
+/** 账号级访客总计（我名下所有知识库聚合） */
+export type DocumentStoreAccountSummary = {
+  totalViews: number;
+  uniqueVisitors: number;
+  totalDurationMs: number;
+};
+
 // ── 批次 D：划词评论 ──
 
 export type DocumentInlineComment = {

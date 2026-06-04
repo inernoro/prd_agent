@@ -3993,7 +3993,61 @@ public class DocumentStoreController : ControllerBase
         }));
     }
 
+    /// <summary>账号级访客总计（我名下所有知识库聚合）：总访问 / 独立访客 / 总停留。</summary>
+    [HttpGet("stores/analytics-summary")]
+    public async Task<IActionResult> GetStoresAnalyticsSummary()
+    {
+        var userId = GetUserId();
+        var storeIds = await _db.DocumentStores
+            .Find(s => s.OwnerId == userId)
+            .Project(s => s.Id)
+            .ToListAsync();
 
+        if (storeIds.Count == 0)
+            return Ok(ApiResponse<object>.Ok(new { totalViews = 0L, uniqueVisitors = 0, totalDurationMs = 0L }));
+
+        var pipeline = new[]
+        {
+            new BsonDocument("$match", new BsonDocument("StoreId", new BsonDocument("$in", new BsonArray(storeIds)))),
+            new BsonDocument("$project", new BsonDocument
+            {
+                { "visitor", new BsonDocument("$ifNull", new BsonArray
+                    { "$ViewerUserId", new BsonDocument("$ifNull", new BsonArray { "$AnonSessionToken", "$_id" }) }) },
+                { "D", new BsonDocument("$ifNull", new BsonArray { "$DurationMs", 0 }) },
+            }),
+            new BsonDocument("$facet", new BsonDocument
+            {
+                { "totals", new BsonArray { new BsonDocument("$group", new BsonDocument
+                    {
+                        { "_id", BsonNull.Value },
+                        { "count", new BsonDocument("$sum", 1) },
+                        { "duration", new BsonDocument("$sum", "$D") },
+                    }) } },
+                { "visitors", new BsonArray
+                    {
+                        new BsonDocument("$group", new BsonDocument("_id", "$visitor")),
+                        new BsonDocument("$count", "c"),
+                    } },
+            }),
+        };
+
+        var facet = await _db.DocumentStoreViewEvents.Aggregate<BsonDocument>(pipeline).FirstOrDefaultAsync();
+
+        long totalViews = 0, totalDurationMs = 0;
+        int uniqueVisitors = 0;
+        if (facet != null)
+        {
+            if (facet.TryGetValue("totals", out var tv) && tv is BsonArray ta && ta.Count > 0 && ta[0] is BsonDocument td)
+            {
+                totalViews = td.GetValue("count", 0).ToInt64();
+                totalDurationMs = td.GetValue("duration", 0).ToInt64();
+            }
+            if (facet.TryGetValue("visitors", out var vv) && vv is BsonArray va && va.Count > 0 && va[0] is BsonDocument vd)
+                uniqueVisitors = vd.GetValue("c", 0).ToInt32();
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { totalViews, uniqueVisitors, totalDurationMs }));
+    }
 
     /// <summary>创建划词评论</summary>
     [HttpPost("entries/{entryId}/inline-comments")]
