@@ -33,4 +33,7 @@
 ### 测试状态
 
 - CDS 远端编译通过 + API/admin 容器 running（compile + boot 已验证）
-- 浏览器内真实 deck 的翻页行为（上下键是否真的翻页）尚未端到端取证——需上传样例 deck 后用 Playwright 直连预览域名验收，或真人上传 PPT 验证
+- 端到端浏览器取证（2026-06-03，Playwright 直连预览域名）：
+  - 正向：上传「只绑左右方向键、无框架、无 scroll-snap」的横向 deck，按 下/上/PageDown/空格 均正确翻页（1/4→下→2/4→下→3/4→上→2/4→PageDown→3/4→空格→4/4），零 console 错误 —— 兜底合成左右键路径生效
+  - 负向：上传普通长文页面，ArrowDown 仍触发原生滚动（scrollY 0→120），垫片未接管 —— 保守判定生效
+  - 注入校验：marker 幂等出现 1 次、位于 `</body>` 前、原 deck 内容完整保留
