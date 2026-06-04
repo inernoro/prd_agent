@@ -219,9 +219,12 @@ public class OpenApiController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "[OpenApi] chat 流式失败 keyId={KeyId}", key?.Id);
+            // 必须在写错误体之前快照"流是否已开始"——下面写 JSON 会把 HasStarted 翻成 true，
+            // 若之后再判 HasStarted 退额条件永远不成立（Codex P2）。
+            var startedBeforeCatch = Response.HasStarted;
             // 已开始流式则补终止符让客户端收尾（HTTP 已 200）；未开始则回 500 + OpenAI 形状 JSON 错误体
             // （此前只设状态码、Content-Type 仍是 event-stream，客户端拿到空响应——与 pre-stream 502 路径不一致，Bugbot）。
-            if (Response.HasStarted) { try { await SendDoneAsync(); } catch { /* 连接已断，忽略 */ } }
+            if (startedBeforeCatch) { try { await SendDoneAsync(); } catch { /* 连接已断，忽略 */ } }
             else
             {
                 Response.StatusCode = 500;
@@ -234,7 +237,7 @@ public class OpenApiController : ControllerBase
                 catch { /* 连接已断，忽略 */ }
             }
             // 进到本方法说明准入已占额；异常且零输出（流未开始）→ 退回每日请求额度。有部分输出则不退（已产生工作）。
-            if (key != null && !Response.HasStarted) await _usage.RefundDailyRequestAsync(key, CancellationToken.None);
+            if (key != null && !startedBeforeCatch) await _usage.RefundDailyRequestAsync(key, CancellationToken.None);
             await LogAsync(key, requestId, "chat", requestedModel, chosen, resolution, true, Response.StatusCode, "INTERNAL_ERROR", promptTokens, completionTokens, sw);
             // 即使中途失败，已产生的 token 也要计入配额、并跑绑定/降级预警（与成功路径一致，否则用量/预警会漏，Bugbot）。
             await RecordUsageAsync(key, bound, resolution, promptTokens, completionTokens);
