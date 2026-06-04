@@ -257,7 +257,9 @@ export default function AppShell() {
     const until = Date.now() + ms;
     setSnoozeUntil(until);
     try { sessionStorage.setItem('notifSnoozeUntil', String(until)); } catch { /* noop */ }
-    setToastCollapsed(true);
+    // 不要在这里 setToastCollapsed(true):免打扰期间 isSnoozed 已经强制走安静铃铛分支;
+    // 若再置 toastCollapsed,到期后 isSnoozed 转 false 但 toastCollapsed 仍为 true,
+    // 卡片永远回不来,违背「到期自动恢复」的文案(Bugbot Medium)。
   }, []);
   const clearSnooze = useCallback(() => {
     setSnoozeUntil(0);

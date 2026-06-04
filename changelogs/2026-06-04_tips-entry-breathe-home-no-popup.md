@@ -4,3 +4,5 @@
 | fix | prd-admin | 重设计右下角通知卡片:左侧等级色条 + 图标徽章 + 两段式底部操作(批量行/单条行),修复按钮换行错乱 |
 | feat | prd-admin | 通知新增「免打扰」防打扰机制:可暂停 1 小时/4 小时/今天剩余时间,期间通知不自动弹出只留安静铃铛,点击即恢复 |
 | fix | prd-admin | 通知卡固定贴右下角(bottom:20):删除为已移除的「教程小书」预留底距的遗留逻辑(notifCardBottom/FLOATING_DOCK_HEIGHT_EVENT),修复通知卡停在半空中而非真正右下角 |
+| fix | prd-admin | 免打扰到期后通知卡自动恢复:snooze 不再置 toastCollapsed,避免免打扰窗口结束后卡片永久收起(Bugbot) |
+| fix | prd-admin | matchPageGuide 与抽屉过滤统一 strip query/hash:防止带 query 的 actionUrl 在抽屉显示却不触发 Spotlight/脉冲(Bugbot) |

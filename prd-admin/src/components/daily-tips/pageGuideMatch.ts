@@ -34,9 +34,14 @@ export function matchPageGuide(
     if (dismissed.has(t.id)) return false;
     if (t.kind !== 'card' && t.kind !== 'spotlight') return false;
     if (typeof t.sourceId !== 'string' || !t.sourceId.endsWith('-page-guide') || !t.actionUrl) return false;
+    // actionUrl 可能带 query/hash(如 /marketplace?type=skill);只比对 pathname 部分。
+    // 必须与 TipsDrawer 的 tips 过滤用同一套 stripping,否则会出现「抽屉里显示了本页教程,
+    // 但 Spotlight 自动开讲 + 头部 newbie 脉冲因全串比对不命中而不触发」的漂移(Bugbot Medium)。
+    const urlPath = t.actionUrl.split('?')[0].split('#')[0];
+    if (!urlPath) return false;
     const isEditor = isEditorPageGuide(t.sourceId);
-    if (pathname === t.actionUrl) return !isEditor;
-    if (pathname.startsWith(t.actionUrl + '/') || pathname.startsWith(t.actionUrl + '-fullscreen/')) return isEditor;
+    if (pathname === urlPath) return !isEditor;
+    if (pathname.startsWith(urlPath + '/') || pathname.startsWith(urlPath + '-fullscreen/')) return isEditor;
     return false;
   }) ?? null;
 }
