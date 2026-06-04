@@ -46,6 +46,25 @@ type Section = 'overview' | 'versions' | 'requirements' | 'features' | 'board' |
 
 const CHART_COLORS = ['#22D3EE', '#FBBF24', '#A78BFA', '#4ADE80', '#F87171', '#60A5FA'];
 
+/** 按 parentId 把扁平列表排成父子层级顺序（深度优先），返回每项 + 缩进深度。 */
+function orderByHierarchy<T extends { id: string; parentId?: string | null }>(items: T[]): { item: T; depth: number }[] {
+  const ids = new Set(items.map((i) => i.id));
+  const byParent = new Map<string, T[]>();
+  for (const it of items) {
+    const pid = it.parentId && ids.has(it.parentId) ? it.parentId : '__root__';
+    (byParent.get(pid) ?? byParent.set(pid, []).get(pid)!).push(it);
+  }
+  const out: { item: T; depth: number }[] = [];
+  const walk = (pid: string, depth: number) => {
+    for (const it of byParent.get(pid) ?? []) {
+      out.push({ item: it, depth });
+      walk(it.id, depth + 1);
+    }
+  };
+  walk('__root__', 0);
+  return out;
+}
+
 const NAV: NavItem<Section>[] = [
   { key: 'overview', label: '概览', icon: LayoutDashboard },
   { key: 'versions', label: '版本', icon: GitBranch },
@@ -390,19 +409,20 @@ function RequirementsTab({ productId }: { productId: string }) {
         />
       ) : (
         <div className="flex flex-col gap-2">
-          {items.map((r) => (
-            <Row
-              key={r.id}
-              title={r.title}
-              badge={ITEM_GRADE_LABEL[r.grade]}
-              sub={`${r.requirementNo} · 客户 ${r.customerIds.length} · 版本 ${r.versionIds.length}`}
-              onClick={() => openDetail(r.id)}
-              actionLabel="查看详情"
-              onDelete={async () => {
-                await deleteRequirement(r.id);
-                await reload();
-              }}
-            />
+          {orderByHierarchy(items).map(({ item: r, depth }) => (
+            <div key={r.id} style={{ marginLeft: depth * 24 }} className={depth > 0 ? 'border-l-2 border-white/10 pl-2' : undefined}>
+              <Row
+                title={r.title}
+                badge={ITEM_GRADE_LABEL[r.grade]}
+                sub={`${r.requirementNo} · 客户 ${r.customerIds.length} · 版本 ${r.versionIds.length}`}
+                onClick={() => openDetail(r.id)}
+                actionLabel="查看详情"
+                onDelete={async () => {
+                  await deleteRequirement(r.id);
+                  await reload();
+                }}
+              />
+            </div>
           ))}
         </div>
       )}
@@ -435,19 +455,20 @@ function FeaturesTab({ productId }: { productId: string }) {
         <EmptyHint text="还没有功能。点「新建功能」打开独立页面填写。功能跨版本演进，可实现需求、被版本纳入（功能版本化）。" />
       ) : (
         <div className="flex flex-col gap-2">
-          {items.map((f) => (
-            <Row
-              key={f.id}
-              title={f.title}
-              badge={ITEM_GRADE_LABEL[f.grade]}
-              sub={`${f.featureNo} · 实现需求 ${f.requirementIds.length}`}
-              onClick={() => navigate(`/product-agent/p/${productId}/feature/${f.id}`)}
-              actionLabel="查看详情"
-              onDelete={async () => {
-                await deleteFeature(f.id);
-                await reload();
-              }}
-            />
+          {orderByHierarchy(items).map(({ item: f, depth }) => (
+            <div key={f.id} style={{ marginLeft: depth * 24 }} className={depth > 0 ? 'border-l-2 border-white/10 pl-2' : undefined}>
+              <Row
+                title={f.title}
+                badge={ITEM_GRADE_LABEL[f.grade]}
+                sub={`${f.featureNo} · 实现需求 ${f.requirementIds.length}`}
+                onClick={() => navigate(`/product-agent/p/${productId}/feature/${f.id}`)}
+                actionLabel="查看详情"
+                onDelete={async () => {
+                  await deleteFeature(f.id);
+                  await reload();
+                }}
+              />
+            </div>
           ))}
         </div>
       )}

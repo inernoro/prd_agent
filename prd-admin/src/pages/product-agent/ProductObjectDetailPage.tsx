@@ -145,6 +145,7 @@ export function ProductObjectDetailPage() {
             <RequirementDetail
               productId={productId}
               requirement={requirements.find((r) => r.id === id)}
+              allRequirements={requirements}
               versionName={versionName}
               customerName={customerName}
               tracedDefects={tracedDefects.filter((d) => d.tracedRequirementId === id)}
@@ -155,6 +156,7 @@ export function ProductObjectDetailPage() {
             <FeatureDetail
               feature={features.find((f) => f.id === id)}
               requirements={requirements}
+              allFeatures={features}
               featureVersions={featureVersions}
               versionName={versionName}
               onReload={reload}
@@ -306,6 +308,22 @@ function GradeField({ grade, setGrade }: { grade: ItemGrade; setGrade: (g: ItemG
         </button>
       ))}
     </div>
+  );
+}
+
+/** 父项选择（单选下拉，用于设置需求/功能的父子层级）。 */
+function ParentSelect({ value, onChange, options, placeholder }: { value: string; onChange: (v: string) => void; options: { id: string; label: string }[]; placeholder: string }) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40"
+    >
+      <option value="">{placeholder}</option>
+      {options.map((o) => (
+        <option key={o.id} value={o.id}>{o.label}</option>
+      ))}
+    </select>
   );
 }
 
@@ -485,6 +503,7 @@ function CreateObjectForm({
 function RequirementDetail({
   productId,
   requirement,
+  allRequirements,
   versionName,
   customerName,
   tracedDefects,
@@ -493,6 +512,7 @@ function RequirementDetail({
 }: {
   productId: string;
   requirement?: Requirement;
+  allRequirements: Requirement[];
   versionName: Map<string, string>;
   customerName: Map<string, string>;
   tracedDefects: TracedDefect[];
@@ -503,6 +523,7 @@ function RequirementDetail({
   const [description, setDescription] = useState('');
   const [grade, setGrade] = useState<ItemGrade>('p2');
   const [assigneeId, setAssigneeId] = useState('');
+  const [parentId, setParentId] = useState('');
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [showRel, setShowRel] = useState(false);
@@ -516,6 +537,7 @@ function RequirementDetail({
       setDescription(requirement.description ?? '');
       setGrade(requirement.grade);
       setAssigneeId(requirement.assigneeId ?? '');
+      setParentId(requirement.parentId ?? '');
       setFormData(requirement.formData ?? {});
     }
   }, [requirement]);
@@ -527,16 +549,17 @@ function RequirementDetail({
       description !== (requirement.description ?? '') ||
       grade !== requirement.grade ||
       assigneeId !== (requirement.assigneeId ?? '') ||
+      parentId !== (requirement.parentId ?? '') ||
       !recordEqual(formData, requirement.formData ?? {})
     );
-  }, [requirement, title, description, grade, assigneeId, formData]);
+  }, [requirement, title, description, grade, assigneeId, parentId, formData]);
 
   if (!requirement) return <NotFound />;
   const setField = (k: string, v: string) => setFormData((d) => ({ ...d, [k]: v }));
 
   const save = async () => {
     setSaving(true);
-    await updateRequirement(requirement.id, { title: title.trim(), description, grade, assigneeId: assigneeId || null, formData });
+    await updateRequirement(requirement.id, { title: title.trim(), description, grade, assigneeId: assigneeId || null, parentId, formData });
     setSaving(false);
     onReload();
   };
@@ -593,6 +616,15 @@ function RequirementDetail({
               <div className="flex flex-col gap-1.5">
                 <FieldLabel>处理人</FieldLabel>
                 <UserSearchSelect value={assigneeId} onChange={setAssigneeId} />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel>父需求</FieldLabel>
+                <ParentSelect
+                  value={parentId}
+                  onChange={setParentId}
+                  options={allRequirements.filter((r) => r.id !== requirement.id).map((r) => ({ id: r.id, label: r.title }))}
+                  placeholder="无（顶层需求）"
+                />
               </div>
               {requirement.currentState && (
                 <div className="flex flex-col gap-1.5">
@@ -675,12 +707,14 @@ function DefectList({ defects, onClick, empty }: { defects: TracedDefect[]; onCl
 function FeatureDetail({
   feature,
   requirements,
+  allFeatures,
   featureVersions,
   versionName,
   onReload,
 }: {
   feature?: Feature;
   requirements: Requirement[];
+  allFeatures: Feature[];
   featureVersions: FeatureVersion[];
   versionName: Map<string, string>;
   onReload: () => void;
@@ -690,6 +724,7 @@ function FeatureDetail({
   const [description, setDescription] = useState('');
   const [grade, setGrade] = useState<ItemGrade>('p2');
   const [assigneeId, setAssigneeId] = useState('');
+  const [parentId, setParentId] = useState('');
   const [selReqs, setSelReqs] = useState<Set<string>>(new Set());
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -714,6 +749,7 @@ function FeatureDetail({
       setDescription(feature.description ?? '');
       setGrade(feature.grade);
       setAssigneeId(feature.assigneeId ?? '');
+      setParentId(feature.parentId ?? '');
       setSelReqs(new Set(feature.requirementIds));
       setFormData(feature.formData ?? {});
     }
@@ -727,10 +763,11 @@ function FeatureDetail({
       description !== (feature.description ?? '') ||
       grade !== feature.grade ||
       assigneeId !== (feature.assigneeId ?? '') ||
+      parentId !== (feature.parentId ?? '') ||
       !reqSetEqual(selReqs, feature.requirementIds) ||
       !recordEqual(formData, feature.formData ?? {})
     );
-  }, [feature, title, description, grade, assigneeId, selReqs, formData]);
+  }, [feature, title, description, grade, assigneeId, parentId, selReqs, formData]);
 
   if (!feature) return <NotFound />;
   const productId = feature.productId;
@@ -738,7 +775,7 @@ function FeatureDetail({
 
   const save = async () => {
     setSaving(true);
-    await updateFeature(feature.id, { title: title.trim(), description, grade, assigneeId: assigneeId || null, requirementIds: Array.from(selReqs), formData });
+    await updateFeature(feature.id, { title: title.trim(), description, grade, assigneeId: assigneeId || null, parentId, requirementIds: Array.from(selReqs), formData });
     setSaving(false);
     onReload();
   };
@@ -794,6 +831,15 @@ function FeatureDetail({
               <div className="flex flex-col gap-1.5">
                 <FieldLabel>处理人</FieldLabel>
                 <UserSearchSelect value={assigneeId} onChange={setAssigneeId} />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel>父功能</FieldLabel>
+                <ParentSelect
+                  value={parentId}
+                  onChange={setParentId}
+                  options={allFeatures.filter((f) => f.id !== feature.id).map((f) => ({ id: f.id, label: f.title }))}
+                  placeholder="无（顶层功能）"
+                />
               </div>
               {feature.currentState && (
                 <div className="flex flex-col gap-1.5">
