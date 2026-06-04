@@ -140,6 +140,15 @@ public class OpenApiController : ControllerBase
         int? promptTokens = null, completionTokens = null;
         string? errorCode = null;
         var isFirst = true;
+        var doneSent = false;
+
+        async Task SendDoneAsync()
+        {
+            if (doneSent) return;
+            doneSent = true;
+            await Response.WriteAsync("data: [DONE]\n\n");
+            await Response.Body.FlushAsync();
+        }
 
         try
         {
@@ -159,6 +168,7 @@ public class OpenApiController : ControllerBase
                 {
                     errorCode = "LLM_ERROR";
                     await WriteSseAsync(BuildChunk(chatId, created, resolvedModel, new { }, "error", chunk.Error));
+                    await SendDoneAsync();
                     break;
                 }
                 else if (chunk.Type == GatewayChunkType.Done)
@@ -175,11 +185,13 @@ public class OpenApiController : ControllerBase
                         usage = new { prompt_tokens = promptTokens ?? 0, completion_tokens = completionTokens ?? 0, total_tokens = (promptTokens ?? 0) + (completionTokens ?? 0) }
                     };
                     await WriteSseAsync(done);
-                    await Response.WriteAsync("data: [DONE]\n\n");
-                    await Response.Body.FlushAsync();
+                    await SendDoneAsync();
                     break;
                 }
             }
+
+            // 上游正常结束但没吐 Done chunk（极少数适配器）也补一个终止符
+            await SendDoneAsync();
 
             await LogAsync(key, requestId, "chat", requestedModel, chosen, resolution, true, errorCode == null ? 200 : 500, errorCode, promptTokens, completionTokens, sw);
             await RecordUsageAsync(key, bound, resolution, promptTokens, completionTokens);
@@ -187,6 +199,11 @@ public class OpenApiController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "[OpenApi] chat 流式失败 keyId={KeyId}", key?.Id);
+            // 已开始流式则补终止符，让 OpenAI SDK 客户端正常收尾
+            if (Response.HasStarted)
+            {
+                try { await SendDoneAsync(); } catch { /* 连接已断，忽略 */ }
+            }
             await LogAsync(key, requestId, "chat", requestedModel, chosen, resolution, true, 500, "INTERNAL_ERROR", promptTokens, completionTokens, sw);
         }
     }

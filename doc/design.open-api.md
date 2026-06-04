@@ -178,4 +178,3 @@
 - `doc/debt.open-api.md`：债务台账（并发/账本/embeddings/日志TTL 等留尾）
 - `doc/design.model-pool.md`：三级模型池调度
 - `.claude/rules/llm-gateway.md`、`server-authority.md`、`compute-then-send.md`
-</content>

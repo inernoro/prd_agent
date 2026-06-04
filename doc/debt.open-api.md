@@ -29,6 +29,8 @@
    chat/image 入口 `CheckAndReserveAsync` 准入，超限返回 429 + Retry-After。不再依赖粗粒度 user 桶。
 2. **每日配额拦截**：`or:reqs:{keyId}:{day}` / `or:tok:{keyId}:{day}` 计数，按
    `OpenApiDailyRequestQuota` / `OpenApiDailyTokenQuota`（null=不限）拦截，超额 429。
+   请求配额走 **INCR-then-check + 超额回滚（DECR）** 原子占用，消除"读-判-写"竞态
+   （Codex/Bugbot PR#732 复检项）。token 配额因 token 数请求前未知，保留只读预检（已知边界）。
 3. **预警**：配额跨 80% / 100% 阈值、专属绑定 Key 降级（IsFallback）→ 写 `AdminNotification`
    （Source=open-api，按天 Redis SETNX 去重）。Redis 抖动一律 fail-open，不打断网关。
 4. **监控**：管理 tab 展示每 Key 今日请求数 / token；可在线编辑限额。
@@ -84,4 +86,3 @@
 - 前端：`navCoverage.test.ts` 确认 `/open-platform` 已进 NAV_REGISTRY。
 - 端到端：CDS 部署后用 `sk-ak-*` Key 打 `/api/v1/chat/completions`（流式+非流式）、
   `/api/v1/images/generations`、`/api/v1/models` 验收；绑定 Key→固定模型、未绑定→默认池。
-</content>
