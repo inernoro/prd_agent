@@ -133,7 +133,7 @@ public class HostedSiteService : IHostedSiteService
     {
         var siteId = Guid.NewGuid().ToString("N");
         var now = DateTime.UtcNow;
-        var rewritten = RewriteAbsolutePathsInHtml(htmlBytes, "index.html");
+        var rewritten = InjectSlideNavCompat(RewriteAbsolutePathsInHtml(htmlBytes, "index.html"));
         var cosKey = _storage.BuildSiteKey(siteId, "index.html");
         await _storage.UploadToKeyAsync(cosKey, rewritten, "text/html; charset=utf-8", CancellationToken.None, SiteCacheControl);
 
@@ -157,6 +157,7 @@ public class HostedSiteService : IHostedSiteService
             Tags = tags ?? new(),
             Folder = folder?.Trim(),
             OwnerUserId = userId,
+            SlideNavCompatVersion = SlideNavVersion, // 上传即注入当前版垫片
         };
 
         await _db.HostedSites.InsertOneAsync(site, cancellationToken: ct);
@@ -199,6 +200,7 @@ public class HostedSiteService : IHostedSiteService
             Folder = folder?.Trim(),
             OwnerUserId = userId,
             WrappedAssetType = string.IsNullOrWhiteSpace(wrappedAssetType) ? null : wrappedAssetType.Trim().ToLowerInvariant(),
+            SlideNavCompatVersion = SlideNavVersion, // 上传即注入当前版垫片（ZIP 内 HTML 条目已注入）
         };
 
         await _db.HostedSites.InsertOneAsync(site, cancellationToken: ct);
@@ -217,8 +219,10 @@ public class HostedSiteService : IHostedSiteService
     {
         var siteId = Guid.NewGuid().ToString("N");
         var now = DateTime.UtcNow;
-        var htmlBytes = RewriteAbsolutePathsInHtml(
-            System.Text.Encoding.UTF8.GetBytes(htmlContent), "index.html");
+        // API/工作流/工作空间发布的页面同样要注入当前版翻页垫片（与 CreateFromHtml/Reupload 一致），
+        // 否则这类站点要等下次服务重启的 backfill 才有 shim。
+        var htmlBytes = InjectSlideNavCompat(RewriteAbsolutePathsInHtml(
+            System.Text.Encoding.UTF8.GetBytes(htmlContent), "index.html"));
 
         var cosKey = _storage.BuildSiteKey(siteId, "index.html");
         await _storage.UploadToKeyAsync(cosKey, htmlBytes, "text/html; charset=utf-8", CancellationToken.None, SiteCacheControl);
@@ -244,6 +248,7 @@ public class HostedSiteService : IHostedSiteService
             Tags = tags ?? new(),
             Folder = folder?.Trim(),
             OwnerUserId = userId,
+            SlideNavCompatVersion = SlideNavVersion, // 创建即注入当前版垫片
         };
 
         await _db.HostedSites.InsertOneAsync(site, cancellationToken: ct);
@@ -297,7 +302,7 @@ public class HostedSiteService : IHostedSiteService
         }
         else if (ext is ".html" or ".htm")
         {
-            var rewritten = RewriteAbsolutePathsInHtml(fileBytes, "index.html");
+            var rewritten = InjectSlideNavCompat(RewriteAbsolutePathsInHtml(fileBytes, "index.html"));
             var cosKey = _storage.BuildSiteKey(siteId, "index.html");
             await _storage.UploadToKeyAsync(cosKey, rewritten, "text/html; charset=utf-8", CancellationToken.None, SiteCacheControl);
             siteFiles = new List<HostedSiteFile>
@@ -334,7 +339,8 @@ public class HostedSiteService : IHostedSiteService
                 .Set(x => x.TotalSize, totalSize)
                 .Set(x => x.WrappedAssetType, normalizedType)
                 .Set(x => x.UpdatedAt, now)
-                .Set(x => x.ContentVersion, now),
+                .Set(x => x.ContentVersion, now)
+                .Set(x => x.SlideNavCompatVersion, SlideNavVersion), // 重传内容已注入当前版垫片
             cancellationToken: ct);
 
         // 清理旧文件中不再被新文件集复用的 key。同 key（如 index.html）已被新内容
@@ -1240,6 +1246,131 @@ public class HostedSiteService : IHostedSiteService
         return backfilled;
     }
 
+    /// <summary>
+    /// 存量站点回填「幻灯片翻页方向兼容垫片」：把 SlideNavCompatVersion &lt; 当前版本的站点
+    /// 的 HTML 文件从 COS 拉回、重新注入当前版垫片、原地覆盖回 COS，并升级版本号。
+    /// 让用户上传该功能之前的旧 PPT、以及垫片代码升级后的存量站点都自动获得最新垫片，
+    /// 无需用户重新上传。注入保持在隔离的对象存储域名上（不改变 iframe 跨域隔离的安全模型）。
+    /// 幂等：内容无变化不重写 COS；处理成功才升级版本号（下载瞬时失败则保持旧版下次重试）。
+    /// saved-share 引用副本只升级版本号、不重写其指向原站的 COS key / SiteUrl（由原站回填覆盖）。
+    /// </summary>
+    public async Task<int> BackfillSlideNavCompatAsync(CancellationToken ct = default)
+    {
+        var fb = Builders<HostedSite>.Filter;
+        // 版本 < 当前的站点要升级；外加字段缺失的存量文档（$lt 不匹配缺失字段，需 Exists(false) 兜住）
+        var filter = fb.Or(
+            fb.Lt(x => x.SlideNavCompatVersion, SlideNavVersion),
+            fb.Exists(x => x.SlideNavCompatVersion, false));
+
+        var candidates = await _db.HostedSites.Find(filter).ToListAsync(ct);
+
+        // 先处理原站(非 saved-share)、后处理引用副本：保证副本刷新 ?v= 时共享 COS 对象已是当前版，
+        // 避免「副本先于原站被刷新 → 客户端/CDN 在窗口内把旧字节缓存到新版本号下，而原站后续重写
+        // 不会再 bump 已标记当前版的副本」这一竞态（Codex P2 反馈）。
+        candidates = candidates
+            .OrderBy(s => string.Equals(s.SourceType, "saved-share", StringComparison.OrdinalIgnoreCase) ? 1 : 0)
+            .ToList();
+        var injectedSites = 0;
+
+        foreach (var site in candidates)
+        {
+            if (ct.IsCancellationRequested) break;
+            try
+            {
+                // saved-share 是引用副本：Files/SiteUrl/EntryFile 全部照搬原站（CosKey 指向 {originalId}），
+                // 自身 Id 是新 GUID。绝不下载后回写 COS（避免跨租户写 + 按 savedId 重建 404）——共享对象由原站回填升级。
+                // 这里只在「读取共享对象、确认它确实已含当前版 shim」之后，才给副本刷 ?v= + 标版本：检验地面真值
+                // （直接比对对象字节），而非靠版本号 / 处理顺序推断。这样对任意回填顺序、原站 deferred / 下载失败都正确，
+                // 杜绝「副本被提前标当前版后再不刷新」的整类竞态；确认不了就 defer（不标版本），下次启动重试。
+                if (string.Equals(site.SourceType, "saved-share", StringComparison.OrdinalIgnoreCase))
+                {
+                    var savedEntryKey = (site.Files ?? new List<HostedSiteFile>())
+                        .FirstOrDefault(f => !string.IsNullOrEmpty(f.CosKey) &&
+                            string.Equals(f.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase))?.CosKey;
+                    if (string.IsNullOrEmpty(savedEntryKey))
+                    {
+                        // 无 HTML 入口（纯 PDF/图片副本），无 shim 可享 → 直接标版本防重复扫描
+                        await _db.HostedSites.UpdateOneAsync(x => x.Id == site.Id,
+                            Builders<HostedSite>.Update.Set(x => x.SlideNavCompatVersion, SlideNavVersion),
+                            cancellationToken: ct);
+                        continue;
+                    }
+                    var sharedBytes = await _storage.TryDownloadBytesAsync(savedEntryKey, ct);
+                    if (sharedBytes == null || sharedBytes.Length == 0)
+                        continue; // 读不到共享对象（瞬时失败 / 原站未就绪）→ defer，保旧版本下次重试
+                    var reinjected = InjectSlideNavCompat(sharedBytes);
+                    if (reinjected.Length != sharedBytes.Length || !reinjected.SequenceEqual(sharedBytes))
+                        continue; // 共享对象尚未被原站升级到当前版 → defer，等原站先升级，下次再刷副本
+                    // 已确认共享对象含当前版 shim → 安全刷 ?v= 击穿缓存 + 标版本。URL 取入口真实 CosKey（指向原站对象），
+                    // 不动 UpdatedAt 以免被动回填重排用户收藏列表。
+                    var savedNow = DateTime.UtcNow;
+                    await _db.HostedSites.UpdateOneAsync(x => x.Id == site.Id,
+                        Builders<HostedSite>.Update
+                            .Set(x => x.SlideNavCompatVersion, SlideNavVersion)
+                            .Set(x => x.SiteUrl, AppendVersion(_storage.BuildUrlForKey(savedEntryKey), savedNow))
+                            .Set(x => x.ContentVersion, savedNow),
+                        cancellationToken: ct);
+                    continue;
+                }
+
+                var htmlFiles = (site.Files ?? new List<HostedSiteFile>())
+                    .Where(f => !string.IsNullOrEmpty(f.CosKey) &&
+                                string.Equals(f.MimeType, "text/html", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                var anyChanged = false;
+                var deferred = false;          // 有 HTML 下载失败/为空（可能瞬时）→ 本轮不升级版本，下次启动重试
+                HostedSiteFile? entryHtml = null;
+                foreach (var f in htmlFiles)
+                {
+                    var bytes = await _storage.TryDownloadBytesAsync(f.CosKey, ct);
+                    if (bytes == null || bytes.Length == 0) { deferred = true; continue; }
+                    if (string.Equals(f.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase))
+                        entryHtml = f;
+                    var injected = InjectSlideNavCompat(bytes);
+                    if (injected.Length == bytes.Length && injected.SequenceEqual(bytes))
+                        continue; // 已是当前版垫片，无需重写
+                    await _storage.UploadToKeyAsync(f.CosKey, injected, "text/html; charset=utf-8",
+                        CancellationToken.None, SiteCacheControl);
+                    anyChanged = true;
+                }
+
+                // 下载存在失败：保持旧版本号，下次启动重试，避免把「未真正处理」的站点永久排除在回填之外
+                if (deferred) continue;
+
+                // 升级版本号；内容有变则同时 bump ContentVersion + SiteUrl（?v 击穿 CDN/浏览器缓存）
+                var now = DateTime.UtcNow;
+                var update = Builders<HostedSite>.Update.Set(x => x.SlideNavCompatVersion, SlideNavVersion);
+                if (anyChanged)
+                {
+                    // URL 一律取入口 HTML 的真实 CosKey 构造，绝不依据 site.Id 推断 key（saved-share 上面已 return）
+                    var entryKey = entryHtml?.CosKey
+                        ?? (string.IsNullOrEmpty(site.EntryFile) ? null : _storage.BuildSiteKey(site.Id, site.EntryFile));
+                    if (!string.IsNullOrEmpty(entryKey))
+                    {
+                        var newUrl = AppendVersion(_storage.BuildUrlForKey(entryKey), now);
+                        update = update.Set(x => x.SiteUrl, newUrl)
+                                       .Set(x => x.ContentVersion, now)
+                                       .Set(x => x.UpdatedAt, now);
+                    }
+                    injectedSites++;
+                }
+                await _db.HostedSites.UpdateOneAsync(x => x.Id == site.Id, update, cancellationToken: ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "翻页垫片回填失败: site={SiteId}", site.Id);
+            }
+        }
+
+        if (injectedSites > 0 || candidates.Count > 0)
+        {
+            _logger.LogInformation("翻页垫片回填完成: candidates={Candidates} injectedSites={Injected} version={Version}",
+                candidates.Count, injectedSites, SlideNavVersion);
+        }
+        return injectedSites;
+    }
+
     // ─────────────────────────────────────────────
     // 观看记录
     // ─────────────────────────────────────────────
@@ -1707,7 +1838,7 @@ public class HostedSiteService : IHostedSiteService
                 var entryBytes = entryMs.ToArray();
 
                 if (mimeType == "text/html")
-                    entryBytes = RewriteAbsolutePathsInHtml(entryBytes, relativePath);
+                    entryBytes = InjectSlideNavCompat(RewriteAbsolutePathsInHtml(entryBytes, relativePath));
 
                 var cosKey = _storage.BuildSiteKey(siteId, relativePath);
                 await _storage.UploadToKeyAsync(cosKey, entryBytes,
@@ -1785,6 +1916,216 @@ public class HostedSiteService : IHostedSiteService
             RegexOptions.IgnoreCase);
         return System.Text.Encoding.UTF8.GetBytes(html);
     }
+
+    // ─────────────────────────────────────────────
+    // 幻灯片翻页方向兼容垫片
+    // ─────────────────────────────────────────────
+
+    // 垫片版本号：垫片脚本逻辑每次实质修改都要 +1。上传时把站点 SlideNavCompatVersion
+    // 标为此值；startup backfill 把 < 此值的存量站点重新注入升级（无需用户重传）。
+    // v1：框架感知 + 合成左右键兜底（对忽略 isTrusted 的自定义 deck 无效）
+    // v2：改「可靠驱动优先」，新增任意带 next()/prev() 的自定义元素（如 deck-stage）直驱
+    // v3：分档 + 透明可控 —— 高可信自动开（角落提示条可关）、低可信(.slide≥2)仅邀请不劫持
+    // v4：一律邀请式 —— 任何情况都不自动劫持键盘，必须用户点角落「开启」才生效（会话内记住）
+    private const int SlideNavVersion = 4;
+
+    // 注入块起始标记。注入块形如 {marker}<script>...</script>，剥离时从 marker 找到其后
+    // 第一个 </script> 一并删除，因此升级垫片版本时旧块会被整体替换而非被「幂等跳过」。
+    private const string SlideNavMarker = "<!--map-slide-nav-compat-->";
+
+    /// <summary>
+    /// 给幻灯片类 HTML 注入翻页方向兼容垫片，让只认左右方向键的 PPT 导出页也能用
+    /// 上下方向键 / 空格 / PageUp-Down / 滚轮 / 触摸滑动翻页（反之亦然）。
+    ///
+    /// 设计要点：
+    /// - 跨域 iframe 无法从父页面拦截键盘，垫片必须随内容下发、在 iframe 内部运行。
+    /// - 保守接管：运行时判定是幻灯片（reveal/Swiper/impress/slidev、带 next-prev 的自定义元素、
+    ///   .slide ≥2、scroll-snap）才接管，普通滚动网页不碰。
+    /// - 可靠驱动优先：调 deck 自身导航 API（规避合成事件 isTrusted=false 被忽略）。
+    /// - 升级安全：先剥离任何旧版本注入块（从 marker 到其后第一个 &lt;/script&gt;），再插入当前版本，
+    ///   因此垫片代码升级后重跑会把旧块换成新块，而不是被旧 marker 幂等跳过。
+    /// - 上传路径即时注入；startup backfill 对存量站点补注入（HostedSiteBackfillService）。
+    /// </summary>
+    private static byte[] InjectSlideNavCompat(byte[] htmlBytes)
+    {
+        var html = System.Text.Encoding.UTF8.GetString(htmlBytes);
+
+        // 没有任何 HTML 结构信号（既无 </body> 也无 </html> 也无 <html）的内容不处理，
+        // 避免把脚本塞进纯文本/JSON 等被误判为 text/html 的文件。
+        if (html.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase) < 0 &&
+            html.LastIndexOf("</html>", StringComparison.OrdinalIgnoreCase) < 0 &&
+            html.IndexOf("<html", StringComparison.OrdinalIgnoreCase) < 0)
+            return htmlBytes;
+
+        // 1) 剥离已有注入块（任何旧版本）：从 marker 到其后第一个 </script>
+        var start = html.IndexOf(SlideNavMarker, StringComparison.Ordinal);
+        if (start >= 0)
+        {
+            var close = html.IndexOf("</script>", start, StringComparison.OrdinalIgnoreCase);
+            html = close >= 0
+                ? html.Remove(start, (close + "</script>".Length) - start)
+                : html.Remove(start, SlideNavMarker.Length); // 只有裸 marker 没脚本，删掉 marker
+        }
+
+        // 2) 插入当前版本注入块（剥离后重新定位锚点）
+        var bodyIdx = html.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
+        var htmlIdx = html.LastIndexOf("</html>", StringComparison.OrdinalIgnoreCase);
+        string injected = bodyIdx >= 0
+            ? html[..bodyIdx] + SlideNavCompatScript + html[bodyIdx..]
+            : (htmlIdx >= 0 ? html[..htmlIdx] + SlideNavCompatScript + html[htmlIdx..]
+                            : html + SlideNavCompatScript);
+
+        return System.Text.Encoding.UTF8.GetBytes(injected);
+    }
+
+    // 注入的运行时脚本：自包含 IIFE，全部用单引号避免 C# verbatim 字符串的双引号转义。
+    private const string SlideNavCompatScript = SlideNavMarker + @"<script>
+(function(){
+  if (window.__mapSlideNavCompat) return;
+  window.__mapSlideNavCompat = true;
+  var SNAP_AXIS = null, scroller = null, driver = null;
+  var navOn = false, decided = false, pill = null;
+  // 记住用户对「本 deck」的选择（on/off）。用 sessionStorage（随标签页关闭清空，符合 no-localStorage 约定）
+  var KEY = 'mapSlideNav:' + (location.pathname || '');
+  function getPref(){ try { return sessionStorage.getItem(KEY); } catch(e){ return null; } }
+  function setPref(v){ try { sessionStorage.setItem(KEY, v); } catch(e){} }
+  function gcs(el, p){ try { return getComputedStyle(el)[p] || ''; } catch(e){ return ''; } }
+  function findSnapScroller(){
+    var cands = [document.scrollingElement, document.documentElement, document.body];
+    var main = document.querySelector('.slides, .reveal .slides, .swiper-wrapper, [class*=slides], main, #app');
+    if (main) cands.push(main);
+    for (var i=0;i<cands.length;i++){
+      var el = cands[i]; if (!el) continue;
+      var st = gcs(el, 'scrollSnapType') || gcs(el, 'scroll-snap-type');
+      if (st && /mandatory|proximity/.test(st)){
+        scroller = el;
+        SNAP_AXIS = /(^|\s)x(\s|$)|inline/.test(st) ? 'x' : ((/(^|\s)y(\s|$)|block/.test(st)) ? 'y' : null);
+        return true;
+      }
+    }
+    return false;
+  }
+  function snap(dir){
+    if (!scroller) return;
+    if ((SNAP_AXIS||'y') === 'x') scroller.scrollBy({ left: dir*scroller.clientWidth, behavior:'smooth' });
+    else scroller.scrollBy({ top: dir*scroller.clientHeight, behavior:'smooth' });
+  }
+  // 自定义元素（标签含 '-'）且同时暴露 next()/prev() 方法 —— 覆盖 web component 类 deck
+  function findDeckElement(){
+    var all = document.getElementsByTagName('*');
+    for (var i=0;i<all.length;i++){
+      var el = all[i];
+      if (el.tagName.indexOf('-') > 0 && typeof el.next === 'function' && typeof el.prev === 'function') return el;
+    }
+    return null;
+  }
+  // 「可靠驱动」= 高可信信号：直接调 deck 自身导航 API（规避合成事件 isTrusted=false 被忽略）
+  function resolveDriver(){
+    try {
+      if (window.Reveal && typeof window.Reveal.next === 'function')
+        return { next: function(){ window.Reveal.next(); }, prev: function(){ window.Reveal.prev(); } };
+      var sw = document.querySelector('.swiper, .swiper-container');
+      if (sw && sw.swiper)
+        return { next: function(){ sw.swiper.slideNext(); }, prev: function(){ sw.swiper.slidePrev(); } };
+      if (window.impress){ var im = window.impress(); if (im) return { next: function(){ im.next(); }, prev: function(){ im.prev(); } }; }
+      var deck = findDeckElement();
+      if (deck) return { next: function(){ deck.next(); }, prev: function(){ deck.prev(); } };
+      if (findSnapScroller()) return { next: function(){ snap(1); }, prev: function(){ snap(-1); } };
+    } catch(e){}
+    return null;
+  }
+  // 低可信信号：仅靠 .slide 类元素 ≥2（最易误判，故只用于「邀请」不自动劫持）
+  function looseSlides(){
+    return document.querySelectorAll('.swiper-slide, .reveal .slides > section, section.slide, .slide, [data-slide], .step, .slidev-page').length >= 2;
+  }
+  var SYN = '__mapSyn';
+  function synthArrow(dir){
+    var ev = new KeyboardEvent('keydown', { key: dir>0?'ArrowRight':'ArrowLeft', code: dir>0?'ArrowRight':'ArrowLeft', keyCode: dir>0?39:37, which: dir>0?39:37, bubbles:true, cancelable:true });
+    ev[SYN] = true;
+    (document.activeElement || document.body || document).dispatchEvent(ev);
+  }
+  function inEditable(t){ return !!(t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)); }
+  function onKey(e){
+    if (e[SYN] || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+    if (inEditable(e.target)) return;
+    var k = e.key;
+    var isVert = (k === 'ArrowDown' || k === 'ArrowUp');
+    var isSpace = (k === ' ' || k === 'Spacebar');
+    var dir = (k === 'ArrowDown' || k === 'PageDown' || (isSpace && !e.shiftKey)) ? 1
+            : ((k === 'ArrowUp' || k === 'PageUp' || (isSpace && e.shiftKey)) ? -1 : 0);
+    if (!dir) return; // 左右键交给页面原生处理
+    if (!driver) driver = resolveDriver();
+    if (driver){ dir>0 ? driver.next() : driver.prev(); e.preventDefault(); e.stopPropagation(); return; }
+    if (isVert) synthArrow(dir); // 无可靠驱动：仅上下键尽力合成，不抑制原生
+  }
+  var wheelLock = 0;
+  function onWheel(e){
+    if (!(scroller && SNAP_AXIS === 'x')) return;
+    if (Date.now() < wheelLock) return;
+    var dy = e.deltaY||0, dx = e.deltaX||0;
+    if (Math.abs(dy) <= Math.abs(dx) || dy === 0) return;
+    snap(dy > 0 ? 1 : -1); e.preventDefault(); wheelLock = Date.now() + 600;
+  }
+  var tsx=0, tsy=0;
+  function onTouchStart(e){ var t=e.touches&&e.touches[0]; if (t){ tsx=t.clientX; tsy=t.clientY; } }
+  function onTouchEnd(e){
+    if (!(scroller && SNAP_AXIS === 'x')) return;
+    var t = e.changedTouches && e.changedTouches[0]; if (!t) return;
+    var dx = t.clientX - tsx, dy = t.clientY - tsy;
+    if (Math.abs(dy) < 40 || Math.abs(dy) < Math.abs(dx)) return;
+    snap(dy < 0 ? 1 : -1);
+  }
+  function bindNav(){
+    if (navOn) return; navOn = true;
+    window.addEventListener('keydown', onKey, true);
+    window.addEventListener('wheel', onWheel, { passive:false, capture:true });
+    window.addEventListener('touchstart', onTouchStart, { passive:true });
+    window.addEventListener('touchend', onTouchEnd, { passive:true });
+  }
+  function unbindNav(){
+    if (!navOn) return; navOn = false;
+    window.removeEventListener('keydown', onKey, true);
+    window.removeEventListener('wheel', onWheel, true);
+    window.removeEventListener('touchstart', onTouchStart);
+    window.removeEventListener('touchend', onTouchEnd);
+  }
+  // ── 角落提示条（透明可控）：on=已开启可关，off=邀请开启 ──
+  function mk(tag, css, txt){ var e=document.createElement(tag); if(css)e.setAttribute('style',css); if(txt!=null)e.textContent=txt; return e; }
+  function removePill(){ if (pill && pill.parentNode) pill.parentNode.removeChild(pill); pill=null; }
+  function renderPill(on){
+    removePill();
+    var box = mk('div', 'position:fixed;left:12px;bottom:12px;z-index:2147483000;display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;font:500 12px/1.4 -apple-system,system-ui,sans-serif;background:rgba(20,20,28,0.74);color:#fff;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);box-shadow:0 4px 16px rgba(0,0,0,.3);opacity:1;transition:opacity .4s;user-select:none;');
+    box.appendChild(mk('span', 'width:7px;height:7px;border-radius:50%;flex:0 0 auto;background:'+(on?'#34d399':'#9ca3af')+';'));
+    box.appendChild(mk('span', 'white-space:nowrap;', on ? '上下键翻页 已开启' : '幻灯片：上下键翻页?'));
+    var btn = mk('button', 'border:none;border-radius:6px;padding:3px 8px;font:inherit;cursor:pointer;white-space:nowrap;background:'+(on?'rgba(255,255,255,.16)':'rgba(52,211,153,.92)')+';color:'+(on?'#fff':'#06281d')+';', on ? '关闭' : '开启');
+    btn.addEventListener('click', function(ev){ ev.stopPropagation(); ev.preventDefault(); if (on) disable(true); else enable(true); });
+    box.appendChild(btn);
+    (document.documentElement || document.body).appendChild(box);
+    pill = box;
+    setTimeout(function(){ if (pill === box) box.style.opacity = '0.32'; }, 4500);
+    box.addEventListener('mouseenter', function(){ box.style.opacity = '1'; });
+    box.addEventListener('mouseleave', function(){ box.style.opacity = '0.32'; });
+  }
+  function enable(remember){ if (!driver) driver = resolveDriver(); bindNav(); if (remember) setPref('on'); renderPill(true); }
+  function disable(remember){ unbindNav(); if (remember) setPref('off'); renderPill(false); }
+  // 决策：一律邀请式 —— 无论高/低可信都不自动劫持键盘，只弹角落邀请条，用户主动点「开启」才绑定。
+  // 仅当用户本会话已对同一 deck 点过「开启」（sessionStorage='on'）才自动开。非幻灯片：什么都不做。
+  function decide(){
+    if (decided) return;
+    driver = resolveDriver();
+    if (!driver && !looseSlides()) return; // 还不像幻灯片：暂不决策，等异步 upgrade 后重试
+    decided = true;
+    if (getPref() === 'on') enable(false); // 本会话已主动开过 → 直接开
+    else renderPill(false);                // 默认仅邀请，绝不自动劫持键盘
+  }
+  if (document.readyState !== 'loading') decide();
+  document.addEventListener('DOMContentLoaded', decide);
+  window.addEventListener('load', decide);
+  // 框架/自定义元素可能异步 upgrade：未决策则重试
+  var tries = 0;
+  var timer = setInterval(function(){ if (!decided) decide(); if (decided || ++tries > 30) clearInterval(timer); }, 300);
+})();
+</script>";
 
     // ─────────────────────────────────────────────
     // 评论

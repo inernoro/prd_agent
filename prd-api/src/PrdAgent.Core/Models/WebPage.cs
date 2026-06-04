@@ -112,6 +112,13 @@ public class HostedSite
     /// 所有创建路径都会显式赋 now，老文档则在读取侧回退到 CreatedAt（见 TryBuildPdfAssetUrl）。
     /// </summary>
     public DateTime ContentVersion { get; set; }
+
+    /// <summary>
+    /// 已注入的「幻灯片翻页方向兼容垫片」版本号。0 = 从未注入（存量旧站）。
+    /// 上传时注入当前版本；startup backfill 把 &lt; 当前版本的站点重新注入并升级，
+    /// 让垫片代码升级后存量站点自动获得新版（无需用户重传）。详见 HostedSiteService.SlideNavVersion。
+    /// </summary>
+    public int SlideNavCompatVersion { get; set; }
 }
 
 /// <summary>站点文件清单项</summary>
