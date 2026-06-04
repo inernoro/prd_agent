@@ -71,17 +71,30 @@ public class DocumentStoreSyncController : ControllerBase
         return Convert.ToHexString(sha.ComputeHash(Encoding.UTF8.GetBytes(s ?? string.Empty))).ToLowerInvariant();
     }
 
-    /// <summary>加载并校验可写空间（owner 或团队成员）。无权返回 null + error。</summary>
+    /// <summary>加载并校验可写空间（owner / 团队成员 / 项目库成员）。无权返回 null + error。
+    /// 与 DocumentStoreController.CanWriteStoreAsync 的可写判定保持一致（含 PmProject 成员），
+    /// 否则项目知识库的成员能编辑该库却用不了同步功能（Codex P2）。</summary>
     private async Task<(DocumentStore? store, IActionResult? error)> LoadWritableStoreAsync(string storeId, string userId)
     {
         var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
         if (store == null)
             return (null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库不存在")));
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
-        var canWrite = store.OwnerId == userId || (store.SharedTeamIds != null && store.SharedTeamIds.Any(myTeamIds.Contains));
+        var canWrite = store.OwnerId == userId
+            || (store.SharedTeamIds != null && store.SharedTeamIds.Any(myTeamIds.Contains))
+            || await IsPmProjectWriterAsync(store, userId);
         if (!canWrite)
             return (null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库不存在")));
         return (store, null);
+    }
+
+    /// <summary>项目知识库写权限：owner/leader/成员（与 DocumentStoreController.IsPmProjectMemberAsync(write:true) 同口径）。</summary>
+    private async Task<bool> IsPmProjectWriterAsync(DocumentStore s, string userId)
+    {
+        if (string.IsNullOrEmpty(s.PmProjectId)) return false;
+        var p = await _db.PmProjects.Find(x => x.Id == s.PmProjectId && !x.IsDeleted).FirstOrDefaultAsync();
+        if (p == null) return false;
+        return p.OwnerId == userId || p.LeaderId == userId || p.MemberIds.Contains(userId);
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -667,7 +680,9 @@ public class DocumentStoreSyncController : ControllerBase
                 var preRemoteSig = await GetRemoteSignatureAsync(link);
                 var firstSync = link.LastSyncedAt == null;
                 var localChanged = firstSync || preLocalSig != link.LastLocalSignature;
-                var remoteChanged = firstSync || (preRemoteSig != null && preRemoteSig != link.LastRemoteSignature);
+                // 对端签名取不到（null）时，不能当作"未变"——否则会跳过 pull 却把快照刷成最新，掩盖对端真实漂移。
+                // 当作"可能有变"去尝试 pull：对端真不可达时 DoPullAsync 会抛错落到 error，绝不假装已同步。
+                var remoteChanged = firstSync || preRemoteSig == null || preRemoteSig != link.LastRemoteSignature;
 
                 if (firstSync || (localChanged && remoteChanged))
                 {
@@ -693,10 +708,11 @@ public class DocumentStoreSyncController : ControllerBase
             var localSig = await ComputeSignatureAsync(link.LocalStoreId);
             var remoteSig = await GetRemoteSignatureAsync(link);
             var resultText = string.Join("；", summary);
-            // 对端签名抓取失败（null）时不能判 synced：否则 LastRemoteSignature 为 null，
-            // ResolveStatus 永远侦测不到对端改动，pull/both 链接会假装"已同步"。此时标 pending 提示用户重试。
-            var postStatus = remoteSig == null ? DocumentSyncLinkStatus.Pending : DocumentSyncLinkStatus.Synced;
-            if (remoteSig == null) resultText = string.IsNullOrEmpty(resultText) ? "同步已执行，但对端状态获取失败，请稍后重试确认" : resultText + "；对端状态获取失败，请稍后重试确认";
+            // 对端签名抓取失败（null）时，仅当该方向"在意对端"才标 pending（pull/both）：
+            // 否则 LastRemoteSignature 为 null 会让 pull/both 假装"已同步"。push-only 不关心对端漂移，照常 synced。
+            var remoteMatters = link.Direction != DocumentSyncDirection.Push;
+            var postStatus = (remoteSig == null && remoteMatters) ? DocumentSyncLinkStatus.Pending : DocumentSyncLinkStatus.Synced;
+            if (remoteSig == null && remoteMatters) resultText = string.IsNullOrEmpty(resultText) ? "同步已执行，但对端状态获取失败，请稍后重试确认" : resultText + "；对端状态获取失败，请稍后重试确认";
             await _db.DocumentStoreSyncLinks.UpdateOneAsync(l => l.Id == link.Id,
                 Builders<DocumentStoreSyncLink>.Update
                     .Set(l => l.LastSyncedAt, DateTime.UtcNow)
