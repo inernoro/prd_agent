@@ -6,7 +6,7 @@
 
 | 指标 | 当前值 |
 |------|--------|
-| open | 4 |
+| open | 5 |
 | in-progress | 0 |
 | paid | 0 |
 
@@ -49,13 +49,19 @@
   **任意标签含 `-` 且暴露 `next()/prev()` 的自定义元素** + 横向 scroll-snap 直驱。
   只有解析到可靠驱动才接管 + preventDefault/stopPropagation；无可靠驱动时只对上下方向键
   尽力合成且**不抑制原生**（不再废掉原生可用键）。
+- v3：分档 + 透明可控 —— 高可信自动开 + 角落可关提示条；低可信(.slide≥2)仅邀请。
+- v4（当前）：**一律邀请式（零自动劫持）** —— 按用户选择，任何幻灯片默认都不自动接管键盘，
+  只在 iframe 角落弹邀请条「幻灯片：上下键翻页? · 开启」，用户主动点才绑定键盘；
+  选择记入 `sessionStorage` 按 deck 记住（本会话内再开同 deck 直接生效）。彻底消除
+  「静默注入 JS 劫持按键」的顾虑——不点就完全不碰任何键，误判普通页也零影响。
 
 ### 已知边界（open）
 
 | # | 边界 | 影响 | 后续可补 |
 |---|------|------|----------|
 | 1 | reveal.js 带纵向子页（vertical stacks）的 deck，垫片调 `Reveal.next()/prev()`（按阅读顺序前进），而非 reveal 原生的「进入纵向子页」 | 极少数依赖纵向栈结构的 reveal deck，上下键语义被改为「统一前进」。为保证「上下键一定能翻页」的刻意取舍 | 若有反馈，对 reveal 改用 `Reveal.down()/up()` 优先、`next()/prev()` 兜底 |
-| 2 | 既无任何可识别驱动（reveal/swiper/impress/带 next-prev 的自定义元素/scroll-snap 全不命中）、又忽略 `isTrusted=false` 合成事件的纯 JS deck，上下键兜底可能不生效 | 长尾 deck（已大幅收窄：自定义元素只要暴露 next/prev 就走可靠驱动）。此时不破坏原生键，只是上下键无增益 | 评估直接 DOM 滚动或探测 deck 内部 index 字段 |
+| 2 | 既无任何可识别驱动（reveal/swiper/impress/带 next-prev 的自定义元素/scroll-snap 全不命中）、又忽略 `isTrusted=false` 合成事件的纯 JS deck，用户点「开启」后上下键兜底仍可能不生效 | 长尾 deck（v4 起为邀请式，需用户主动点开启）。此时不破坏原生键，只是开启后上下键无增益 | 评估直接 DOM 滚动或探测 deck 内部 index 字段 |
+| 5（v4 已缓解） | 误判普通网页为幻灯片（主要靠 `.slide≥2` 松散启发） | v4 起一律邀请式，不点「开启」就完全不绑定键盘，误判最多多显示一个可忽略的角落邀请条，**不再劫持任何键** | 可进一步给邀请条加「不是幻灯片?隐藏」 |
 | 3 | 仅覆盖用户上传路径（CreateFromHtml / Zip / Reupload），未覆盖 API/工作流生成内容（CreateFromContentAsync） | 工作流生成的周报类幻灯片不享受兼容 | 按需扩展到 CreateFromContentAsync 或改 CapsuleExecutor 模板 |
 | 4（已解决） | ~~垫片随上传注入一次，历史站点不含垫片需重传~~ | 已由 startup 存量回填解决（见上「零重传直接生效」），老 PPT 无需重传自动生效 | 遗留：回填首启 IO 偏重，无批量限流 |
 
