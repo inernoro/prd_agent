@@ -5,7 +5,7 @@ import { Button } from '@/components/design/Button';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { apiRequest } from '@/services/real/apiClient';
 import { toast } from '@/lib/toast';
-import { RefreshCw, ShieldAlert, Plug, X, Settings2, Activity, Copy } from 'lucide-react';
+import { RefreshCw, ShieldAlert, Plug, X, Settings2, Activity, Copy, Search } from 'lucide-react';
 
 /**
  * 开放平台 - 开放接口（OpenAI 兼容）对外网关。
@@ -38,6 +38,7 @@ export default function OpenApiPanel({ onActionsReady }: { onActionsReady?: (a: 
   const [rows, setRows] = useState<BindingRow[]>([]);
   const [pools, setPools] = useState<Pool[]>([]);
   const [detail, setDetail] = useState<BindingRow | null>(null);
+  const [q, setQ] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -60,20 +61,30 @@ export default function OpenApiPanel({ onActionsReady }: { onActionsReady?: (a: 
   const chatOptions = Array.from(new Set(pools.filter((p) => p.modelType === 'chat').flatMap((p) => p.models)));
   const imageOptions = Array.from(new Set(pools.filter((p) => p.modelType === 'generation').flatMap((p) => p.models)));
 
+  const totalReq = rows.reduce((s, r) => s + r.todayRequests, 0);
+  const totalTok = rows.reduce((s, r) => s + r.todayTokens, 0);
+  const configured = rows.filter((r) => r.chatModels.length > 0 || r.imageModels.length > 0).length;
+  const filtered = q.trim() ? rows.filter((r) => (r.name + r.ownerName).toLowerCase().includes(q.trim().toLowerCase())) : rows;
+
   if (loading) return <MapSectionLoader text="正在加载开放接口…" />;
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-4" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
-      <GlassCard className="p-4">
-        <div className="flex items-start gap-3">
+      {/* 概览：说明 + 指标 */}
+      <div className="flex flex-col lg:flex-row gap-3">
+        <GlassCard className="p-4 flex items-start gap-3 flex-1">
           <Plug size={18} className="text-white/50 mt-0.5 shrink-0" />
           <div className="text-[13px] text-white/70 leading-relaxed">
             <div className="font-medium text-white/85 mb-1">开放接口 · OpenAI 兼容对外网关</div>
-            外部客户用标准 OpenAI 方式接入，Base URL <code className="px-1 rounded bg-white/[0.06]">/api/v1</code>，密钥 <code className="px-1 rounded bg-white/[0.06]">sk-ak-*</code>（scope <code className="px-1 rounded bg-white/[0.06]">open-api:call</code>）。
-            点「管理」配模型白名单 / 限额，并查该客户调用日志排障。
+            外部客户用标准 OpenAI 方式接入，Base URL <code className="px-1 rounded bg-white/[0.06]">/api/v1</code>，密钥 <code className="px-1 rounded bg-white/[0.06]">sk-ak-*</code>。点「管理」配模型白名单 / 限额，并查该客户调用日志排障。
           </div>
+        </GlassCard>
+        <div className="grid grid-cols-3 gap-2.5 lg:w-[420px] shrink-0">
+          <StatTile label="授权 Key" value={String(rows.length)} sub={`${configured} 个已配白名单`} />
+          <StatTile label="今日请求" value={totalReq.toLocaleString()} sub="全部客户合计" />
+          <StatTile label="今日 token" value={fmtK(totalTok)} sub="全部客户合计" />
         </div>
-      </GlassCard>
+      </div>
 
       {rows.length === 0 ? (
         <GlassCard className="p-10 flex flex-col items-center justify-center text-center gap-3">
@@ -82,48 +93,93 @@ export default function OpenApiPanel({ onActionsReady }: { onActionsReady?: (a: 
           <div className="text-white/45 text-xs max-w-md">在「接入 AI」弹窗创建 sk-ak-* Key 并勾选 open-api:call scope 后即可在此管理。</div>
         </GlassCard>
       ) : (
-        <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))' }}>
-          {rows.map((r) => (
-            <GlassCard key={r.keyId} className="p-3.5 flex flex-col gap-2">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="text-white/90 text-sm truncate">{r.name}</div>
-                  <div className="text-white/40 text-xs truncate">{r.ownerName}{r.isActive ? '' : ' · 已禁用'}</div>
-                </div>
-                <Button variant="ghost" onClick={() => setDetail(r)}><Settings2 size={13} /> 管理</Button>
-              </div>
-              <div className="text-xs text-white/55 flex flex-col gap-0.5">
-                <div className="flex items-center gap-1">
-                  <span className="text-white/35 w-12 shrink-0">默认</span>
-                  <span className="truncate">{r.chatModels.length ? r.chatModels[0] : (r.chatResolvedModel ?? '默认池')}</span>
-                  {r.chatIsFallback && <span className="text-amber-400">降级</span>}
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="text-white/35 w-12 shrink-0">白名单</span>
-                  <span className="truncate text-white/45">{r.chatModels.length ? `${r.chatModels.length} 个模型` : '未配置（默认池）'}</span>
-                </div>
-                <div className="flex items-center gap-3 mt-0.5">
-                  <span className="text-white/35">今日 <span className="text-white/70">{r.todayRequests}</span> 次 / <span className="text-white/70">{r.todayTokens.toLocaleString()}</span> tok</span>
-                  <span className="text-white/35">限速 {r.rateLimitPerMin ?? '默认'}/min</span>
-                </div>
-              </div>
-            </GlassCard>
-          ))}
-        </div>
+        <>
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1 max-w-xs">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/30" />
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索 Key / 客户…"
+                className="w-full bg-white/[0.04] border border-white/[0.1] rounded-lg pl-8 pr-3 py-1.5 text-xs text-white/85 focus:outline-none focus:border-white/25" />
+            </div>
+            <span className="text-white/35 text-xs">{filtered.length} / {rows.length}</span>
+          </div>
+
+          <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(330px, 1fr))' }}>
+            {filtered.map((r) => <KeyCard key={r.keyId} r={r} onManage={() => setDetail(r)} />)}
+          </div>
+        </>
       )}
 
       {detail && (
-        <KeyDetailDrawer
-          row={detail}
-          chatOptions={chatOptions}
-          imageOptions={imageOptions}
-          onClose={() => setDetail(null)}
-          onSaved={() => { setDetail(null); load(); }}
-        />
+        <KeyDetailDrawer row={detail} chatOptions={chatOptions} imageOptions={imageOptions}
+          onClose={() => setDetail(null)} onSaved={() => { setDetail(null); load(); }} />
       )}
     </div>
   );
 }
+
+function fmtK(n: number): string { return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n); }
+
+function StatTile({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <GlassCard className="p-3 flex flex-col justify-center">
+      <div className="text-white/40 text-[11px]">{label}</div>
+      <div className="text-white/90 text-lg font-semibold leading-tight mt-0.5">{value}</div>
+      {sub && <div className="text-white/30 text-[10px] mt-0.5 truncate">{sub}</div>}
+    </GlassCard>
+  );
+}
+
+const AVATAR_COLORS = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#14b8a6', '#ef4444'];
+function avatarColor(s: string): string { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) >>> 0; return AVATAR_COLORS[h % AVATAR_COLORS.length]; }
+
+function KeyCard({ r, onManage }: { r: BindingRow; onManage: () => void }) {
+  const color = avatarColor(r.keyId);
+  const defaultModel = r.chatModels.length ? r.chatModels[0] : (r.chatResolvedModel ?? '默认池');
+  const extra = Math.max(0, r.chatModels.length - 1);
+  const quotaPct = r.dailyTokenQuota ? Math.min(100, Math.round((r.todayTokens / r.dailyTokenQuota) * 100)) : null;
+  return (
+    <GlassCard className="p-4 flex flex-col gap-3 transition-colors hover:border-white/20">
+      <div className="flex items-center gap-2.5">
+        <div className="w-8 h-8 rounded-lg flex items-center justify-center text-[13px] font-semibold shrink-0"
+          style={{ background: `${color}26`, color }}>{(r.name || '?').slice(0, 1).toUpperCase()}</div>
+        <div className="min-w-0 flex-1">
+          <div className="text-white/90 text-sm truncate">{r.name}</div>
+          <div className="text-white/40 text-xs truncate">{r.ownerName}</div>
+        </div>
+        <span className={`inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded ${r.isActive ? 'text-emerald-300/90 bg-emerald-500/10' : 'text-white/40 bg-white/[0.05]'}`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${r.isActive ? 'bg-emerald-400' : 'bg-white/30'}`} />{r.isActive ? '启用' : '禁用'}
+        </span>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/[0.06] text-white/75 text-[11px]">
+          {r.chatModels.length ? <span className="text-emerald-400 text-[10px]">默认</span> : <span className="text-white/35 text-[10px]">默认池</span>}
+          <span className="truncate max-w-[150px]">{defaultModel}</span>
+        </span>
+        {extra > 0 && <span className="px-1.5 py-0.5 rounded bg-white/[0.04] text-white/45 text-[11px]">+{extra}</span>}
+        {r.chatIsFallback && <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 text-[11px]">降级</span>}
+      </div>
+
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center justify-between text-[11px]">
+          <span className="text-white/40">今日用量</span>
+          <span className="text-white/70">{r.todayRequests} 次 · {r.todayTokens.toLocaleString()} tok</span>
+        </div>
+        {quotaPct !== null && (
+          <div className="h-1 rounded-full bg-white/[0.06] overflow-hidden">
+            <div className="h-full rounded-full" style={{ width: `${quotaPct}%`, background: quotaPct >= 90 ? '#ef4444' : quotaPct >= 70 ? '#f59e0b' : '#10b981' }} />
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center justify-between pt-2 border-t border-white/[0.06]">
+        <span className="text-white/35 text-[11px]">限速 {r.rateLimitPerMin ? `${r.rateLimitPerMin}/min` : '默认'}</span>
+        <Button variant="ghost" onClick={onManage}><Settings2 size={13} /> 管理</Button>
+      </div>
+    </GlassCard>
+  );
+}
+
 
 interface LogRow {
   requestId: string; endpoint: string; requestedModel: string | null; resolvedModel: string | null;
