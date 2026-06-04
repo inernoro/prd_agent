@@ -10,6 +10,7 @@ import {
 } from './TipsRotator';
 import type { DailyTipAutoAction } from '@/services/real/dailyTips';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
+import { actionUrlPath } from './pageGuideMatch';
 import { fireConfetti } from './fireConfetti';
 
 /**
@@ -81,6 +82,24 @@ export function SpotlightOverlay() {
       setStepIndex(0);
       setDismissed(false);
       setSeekTimedOut(false);
+
+      // ★ 首步导航统一在 overlay 内做(根治跨组件竞态)。
+      // 背景:overlay 过去只在「下一步」时按 step.navigateTo 切路由,首步从不切,于是调用方若想让
+      // 首步落在正确页面/tab,就得自己 navigate——但调用方 navigate 与本组件「读 payload→立即按当前路由
+      // poll 锚点」在不同 tick,会在旧 tab 上找锚点形成竞态(Bugbot/Codex 连环报)。
+      // 把首步导航搬进来后,navigate 与 poll 同组件、同 advance 逻辑(见下方「下一步」),poll 会在路由
+      // 应用后的新页面里找到锚点,彻底无竞态。调用方(handleOpenTip / 强制自动开讲 effect)只写 payload。
+      // 语义同 tipNavTarget:首步 navigateTo 含 query/hash(如 /settings?tab=nav-order)才比对全量并切 tab;
+      // 不含 query 时只比 pathname,避免抹掉用户当前 query。
+      const firstNav = initial.autoAction?.steps?.[0]?.navigateTo;
+      if (firstNav) {
+        const navPath = actionUrlPath(firstNav);
+        const navHasState = firstNav.length > navPath.length;
+        const needNavigate = navHasState
+          ? (window.location.pathname + window.location.search + window.location.hash) !== firstNav
+          : window.location.pathname !== navPath;
+        if (needNavigate) navigate(firstNav);
+      }
     };
 
     readAndStart();
@@ -88,6 +107,8 @@ export function SpotlightOverlay() {
     return () => {
       window.removeEventListener(SPOTLIGHT_PAYLOAD_UPDATED_EVENT, readAndStart);
     };
+    // navigate 在 react-router v6 稳定;readAndStart 仅消费一次 payload,re-run 也会因 sessionStorage 已清而 no-op。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ---- 当前 step 的 selector(Steps 优先,否则用 payload.selector)----

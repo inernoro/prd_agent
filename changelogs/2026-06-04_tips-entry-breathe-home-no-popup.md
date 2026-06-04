@@ -13,3 +13,4 @@
 | fix | prd-admin | 教程 CTA 导航保留 query 作为目标状态:页面匹配 strip query,但 handleOpenTip 对带 query 的 actionUrl(如 /settings?tab=nav-order)要求 pathname+query 完全一致才算已到,否则 navigate 切到目标 tab,修复同 pathname 不同 tab 时 tour 超时(Codex P2) |
 | fix | prd-admin | 抽取 tipNavTarget 统一「是否导航+导航到哪」:强制自动开讲 effect 与 handleOpenTip 同口径保留 query 作为目标状态,修复带 query 的本页教程自动开讲时不切 tab、tour 找不到锚点还被标记已开讲(Bugbot),并加单测 |
 | fix | prd-admin | 强制自动开讲 effect 回退到仅写 payload,不在同 tick navigate:避免 overlay 同步消费 payload 后在旧 tab 找锚点的竞态;页面内跳转由 tour 各步 navigateTo 在 overlay 内统一驱动(Bugbot) |
+| fix | prd-admin | 根治教程导航竞态:首步导航统一搬进 SpotlightOverlay(读 payload 时按 steps[0].navigateTo 切路由,navigate 与 poll 同组件无竞态)。auto-start effect 不再 navigate;handleOpenTip 仅对无导览步骤的单 selector tip 兜底导航。带 query 的本页教程(如 /settings?tab=nav-order)在任意 tab 自动开讲都会先切到正确 tab(Bugbot/Codex 根治) |

@@ -357,10 +357,13 @@ export function TipsDrawer() {
       writeSpotlightPayload(tip);
       // 抽屉故意保留打开,让用户边跟着 Spotlight 引导,边对照教程步骤 /
       // 决定点「不再提示」;不再像以前那样 setExpanded(false) 把引导面板秒关。
-      // 是否/导航到哪走 tipNavTarget(保留 query 作为目标状态),与强制自动开讲 effect 同口径。
-      const navTarget = tipNavTarget(tip, location);
-      if (navTarget) {
-        navigate(navTarget); // 完整 url(含 query/hash),把用户带到目标状态(如切到 ?tab=nav-order)
+      // 导航职责:有「首步 navigateTo」的导览(多步教程)统一由 SpotlightOverlay 在读 payload 时切路由
+      // (navigate 与 poll 同组件、无竞态),这里不再 navigate,避免双重导航。
+      // 只有「无导览步骤」的单 selector tip,overlay 不会自己导航,才由这里按 tipNavTarget 把用户带到目标页。
+      const hasFirstStepNav = !!tip.autoAction?.steps?.[0]?.navigateTo;
+      if (!hasFirstStepNav) {
+        const navTarget = tipNavTarget(tip, location);
+        if (navTarget) navigate(navTarget);
       }
     },
     [navigate, location],
