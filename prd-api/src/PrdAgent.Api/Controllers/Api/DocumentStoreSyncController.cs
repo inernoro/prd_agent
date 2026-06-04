@@ -548,20 +548,59 @@ public class DocumentStoreSyncController : ControllerBase
         var summary = new List<string>();
         try
         {
-            // pull：对端 → 本地
-            if (link.Direction is DocumentSyncDirection.Pull or DocumentSyncDirection.Both)
+            async Task DoPullAsync()
             {
                 var bundle = await FetchRemoteBundleAsync(link);
                 if (bundle == null) throw new InvalidOperationException("拉取对端内容失败");
                 var r = await ApplyBundleAsync(local!, bundle, actorUserId, actorName, actorAvatar);
                 summary.Add($"拉取 新增{r.Created}/更新{r.Updated}/跳过{r.Skipped}" + (r.Failed > 0 ? $"/失败{r.Failed}" : ""));
             }
-            // push：本地 → 对端
-            if (link.Direction is DocumentSyncDirection.Push or DocumentSyncDirection.Both)
+            async Task DoPushAsync()
             {
                 var localBundle = await BuildBundleAsync(local!);
                 var r = await PushBundleAsync(link, localBundle, actorUserId, actorName, actorAvatar);
                 summary.Add($"推送 新增{r.Created}/更新{r.Updated}/跳过{r.Skipped}" + (r.Failed > 0 ? $"/失败{r.Failed}" : ""));
+            }
+
+            if (link.Direction == DocumentSyncDirection.Pull)
+            {
+                await DoPullAsync();
+            }
+            else if (link.Direction == DocumentSyncDirection.Push)
+            {
+                await DoPushAsync();
+            }
+            else
+            {
+                // both：用上次同步的签名快照判定"哪一侧改了"，避免无脑 pull/push 互相覆盖丢数据。
+                // - 仅本地改 → push；仅对端改 → pull；
+                // - 两侧都改（真冲突）→ 先 push 再 pull：共享条目以本地为准（不自动合并冲突），
+                //   两侧各自新增的条目都保留（不丢数据）；
+                // - 首次同步 → 同上 push+pull 取并集。
+                var preLocalSig = await ComputeSignatureAsync(link.LocalStoreId);
+                var preRemoteSig = await GetRemoteSignatureAsync(link);
+                var firstSync = link.LastSyncedAt == null;
+                var localChanged = firstSync || preLocalSig != link.LastLocalSignature;
+                var remoteChanged = firstSync || (preRemoteSig != null && preRemoteSig != link.LastRemoteSignature);
+
+                if (firstSync || (localChanged && remoteChanged))
+                {
+                    if (!firstSync) summary.Add("两侧都有改动，冲突条目以本地为准");
+                    await DoPushAsync();
+                    await DoPullAsync();
+                }
+                else if (localChanged)
+                {
+                    await DoPushAsync();
+                }
+                else if (remoteChanged)
+                {
+                    await DoPullAsync();
+                }
+                else
+                {
+                    summary.Add("两侧均无变化");
+                }
             }
 
             // 同步后快照两侧签名
@@ -748,10 +787,17 @@ public class DocumentStoreSyncController : ControllerBase
     {
         if (link.Status == DocumentSyncLinkStatus.Error) return DocumentSyncLinkStatus.Error;
         if (link.LastSyncedAt == null) return DocumentSyncLinkStatus.Never;
-        // 任一侧签名与上次同步快照不一致 = 待同步
+        // 签名与上次同步快照不一致 = 该侧有改动。按方向只关心"会被本次同步搬动"的那侧：
+        // push 只看本地、pull 只看对端、both 看任一侧。
         var localChanged = localSig != null && link.LastLocalSignature != null && localSig != link.LastLocalSignature;
         var remoteChanged = remoteSig != null && link.LastRemoteSignature != null && remoteSig != link.LastRemoteSignature;
-        return (localChanged || remoteChanged) ? DocumentSyncLinkStatus.Pending : DocumentSyncLinkStatus.Synced;
+        var relevant = link.Direction switch
+        {
+            DocumentSyncDirection.Push => localChanged,
+            DocumentSyncDirection.Pull => remoteChanged,
+            _ => localChanged || remoteChanged,
+        };
+        return relevant ? DocumentSyncLinkStatus.Pending : DocumentSyncLinkStatus.Synced;
     }
 
     private static object ToDto(DocumentStoreSyncLink l, string status, string? localSig, string? remoteSig, string? localStoreName = null)
