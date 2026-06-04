@@ -625,9 +625,11 @@ public class DocumentStoreSyncController : ControllerBase
                 Builders<DocumentStore>.Update.Set(s => s.SyncToken, token).Set(s => s.UpdatedAt, DateTime.UtcNow));
         }
 
+        // 未显式传 BaseUrl 时回退到当前请求地址：必须带上 PathBase（子路径部署如 /prod），
+        // 否则生成的 skblink 丢前缀，对端探测打到 https://host/api 而非 https://host/prod/api（Codex P2）。
         var baseUrl = !string.IsNullOrWhiteSpace(request?.BaseUrl)
             ? request!.BaseUrl!.TrimEnd('/')
-            : $"{Request.Scheme}://{Request.Host}";
+            : $"{Request.Scheme}://{Request.Host}{Request.PathBase}".TrimEnd('/');
 
         var payload = new SyncLinkPayload
         {

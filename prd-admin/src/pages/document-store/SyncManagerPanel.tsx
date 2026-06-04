@@ -14,12 +14,23 @@ import {
 import { listDocumentStoresWithPreview } from '@/services/real/documentStore';
 import type { DocumentStoreWithPreview } from '@/services/contracts/documentStore';
 import { useTeamStore } from '@/stores/teamStore';
+import { useAuthStore } from '@/stores/authStore';
 
 const DIRECTIONS: { key: SyncDirection; label: string; icon: typeof ArrowRight }[] = [
   { key: 'both', label: '双向同步', icon: ArrowLeftRight },
   { key: 'pull', label: '对端 → 本地', icon: ArrowLeft },
   { key: 'push', label: '本地 → 对端', icon: ArrowRight },
 ];
+
+// 方向用真实库名描述，避免「本地/对端」泛指——库对级共享配对下任何人都能改方向/运行，
+// 不点名哪个库会被覆盖就可能误把自己的库推没了（Bugbot High）。
+function namedDirLabel(key: SyncDirection, l: { localStoreName?: string | null; remoteStoreName?: string | null; remoteStoreId?: string }): string {
+  const a = l.localStoreName || '本库';
+  const b = l.remoteStoreName || l.remoteStoreId || '对端';
+  if (key === 'push') return `${a} → ${b}（${b} 被覆盖）`;
+  if (key === 'pull') return `${b} → ${a}（${a} 被覆盖）`;
+  return `${a} ⇄ ${b}（双向）`;
+}
 
 function StatusBadge({ status }: { status: SyncLinkStatus }) {
   if (status === 'synced')
@@ -83,6 +94,7 @@ export function SyncManagerPanel() {
   // 防 stale 响应：快速点刷新 / 切走再回来时，旧请求回填会覆盖新数据。
   // 单调递增序号锁住"只有最新一次请求才能 setState"（与 DocumentStorePage 的 listFetchSeq 同款，
   // 满足 prd-admin learned rule: tab/filter 触发的 async fetch 必须有 fetchId stale-guard）。
+  const currentUserId = useAuthStore((s) => s.user?.userId ?? null);
   const loadSeq = useRef(0);
   const load = useCallback(async () => {
     const mySeq = ++loadSeq.current;
@@ -233,7 +245,7 @@ export function SyncManagerPanel() {
                           className={`inline-flex items-center gap-1 px-2 py-1 rounded-[8px] text-[12px] transition-colors duration-150 ${
                             active ? 'surface-action-accent text-token-primary' : 'text-token-muted hover:bg-white/6'
                           }`}
-                          title={d.label}
+                          title={namedDirLabel(d.key, link)}
                         >
                           <Icon size={12} />{d.label}
                         </button>
@@ -250,8 +262,12 @@ export function SyncManagerPanel() {
                     </Button>
                   </div>
                 </div>
+                {/* 当前方向按真实库名明示哪个库会被覆盖（库对级共享配对人人可运行，必须点名） */}
+                <p className="mt-2 text-[11px] text-token-muted">
+                  当前同步：{namedDirLabel(link.direction, link)}
+                </p>
                 {link.lastResult && (
-                  <p className="mt-2 text-[11px] text-token-muted">{link.lastResult}</p>
+                  <p className="mt-1 text-[11px] text-token-muted">{link.lastResult}</p>
                 )}
               </div>
             ))}
@@ -268,7 +284,8 @@ export function SyncManagerPanel() {
       )}
       {showGenerate && (
         <GenerateLinkDialog
-          stores={myStores}
+          // 生成连接链接只能用自己拥有的库（后端 GenerateLink 仅放行 owner，团队共享库会 403）
+          stores={myStores.filter(s => s.ownerId === currentUserId)}
           onClose={() => setShowGenerate(false)}
         />
       )}
