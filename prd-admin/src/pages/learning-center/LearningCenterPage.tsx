@@ -7,6 +7,7 @@ import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { writeSpotlightPayload } from '@/components/daily-tips/TipsRotator';
 import type { DailyTip, TutorialProgressItem, TutorialCategory } from '@/services/real/dailyTips';
 import { trackTip } from '@/services/real/dailyTips';
+import { difficultyMeta } from '@/components/daily-tips/difficultyMeta';
 
 /**
  * 学习中心(诉求 11):一处看全部官方教程 + 自己的掌握进度,随时点「跟我做 / 重看」开讲。
@@ -48,6 +49,16 @@ export default function LearningCenterPage() {
   const pct = total > 0 ? Math.round((learned / total) * 100) : 0;
   const complete = total > 0 && learned >= total;
 
+  // 经验 / 等级(完成任意教程累计经验,后端按难度计权)。
+  const xp = progress?.xp ?? 0;
+  const level = progress?.level ?? 1;
+  const levelName = progress?.levelName ?? '新手';
+  const xpToNext = progress?.xpToNext ?? 0;
+  const levelFloorXp = progress?.levelFloorXp ?? 0;
+  const nextLevelXp = progress?.nextLevelXp ?? 0;
+  const maxed = xpToNext <= 0 || nextLevelXp <= levelFloorXp;
+  const levelPct = maxed ? 100 : Math.round(((xp - levelFloorXp) / (nextLevelXp - levelFloorXp)) * 100);
+
   function start(item: TutorialProgressItem) {
     void trackTip(item.tipId, 'clicked');
     const tipLike: DailyTip = {
@@ -75,13 +86,13 @@ export default function LearningCenterPage() {
           <MapSectionLoader text="正在加载教程进度…" />
         ) : (
           <div className="flex flex-col gap-5 pb-6">
-            {/* 掌握度总览 */}
+            {/* 掌握度 + 等级总览 */}
             <div
-              className="rounded-2xl p-5 flex items-center gap-5"
+              className="rounded-2xl p-5 flex items-center gap-5 flex-wrap"
               style={{ background: 'var(--bg-card, #1E1F20)', border: '1px solid rgba(255,255,255,0.08)' }}
             >
               <MasteryRing pct={pct} complete={complete} />
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1" style={{ minWidth: 220 }}>
                 <div className="text-[18px] font-bold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
                   {complete ? '已毕业 · 全部本页教程已掌握' : `已掌握 ${learned} / ${total} 套本页教程`}
                   {complete && <GraduationCap size={18} className="text-emerald-400" />}
@@ -90,6 +101,39 @@ export default function LearningCenterPage() {
                   {complete
                     ? '随时可以点「重看一遍」复习,或看看本周更新。'
                     : '点任意教程的「跟我做」, 跟着高亮一步步走完, 头像上的进度环会同步填满。'}
+                </div>
+              </div>
+
+              {/* 等级 / 经验:完成越多经验越多 */}
+              <div
+                className="flex flex-col gap-2"
+                style={{ minWidth: 200, paddingLeft: 16, borderLeft: '1px solid rgba(255,255,255,0.08)' }}
+              >
+                <div className="flex items-baseline gap-2">
+                  <span
+                    className="inline-flex items-center justify-center font-bold"
+                    style={{
+                      minWidth: 30, height: 30, padding: '0 8px', borderRadius: 8, fontSize: 13,
+                      background: 'linear-gradient(135deg, rgba(168,85,247,0.28), rgba(99,102,241,0.20))',
+                      border: '1px solid rgba(196,181,253,0.4)', color: '#c4b5fd',
+                    }}
+                  >
+                    Lv.{level}
+                  </span>
+                  <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>{levelName}</span>
+                  <span className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>经验 {xp}</span>
+                </div>
+                <div style={{ height: 8, borderRadius: 999, background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
+                  <div
+                    style={{
+                      width: `${levelPct}%`, height: '100%', borderRadius: 999,
+                      background: maxed ? '#34d399' : 'linear-gradient(90deg, #a78bfa, #818cf8)',
+                      transition: 'width 600ms cubic-bezier(.4,0,.2,1)',
+                    }}
+                  />
+                </div>
+                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  {maxed ? '已达最高等级' : `距 Lv.${level + 1} 还差 ${xpToNext} 经验`}
                 </div>
               </div>
             </div>
@@ -173,6 +217,7 @@ function MasteryRing({ pct, complete }: { pct: number; complete: boolean }) {
 
 function TutorialCard({ item, onStart }: { item: TutorialProgressItem; onStart: () => void }) {
   const mins = estMinutes(item.steps);
+  const diff = difficultyMeta(item.difficulty);
   return (
     <div
       className="rounded-xl p-4 flex flex-col gap-2.5"
@@ -185,6 +230,12 @@ function TutorialCard({ item, onStart }: { item: TutorialProgressItem; onStart: 
       <div className="flex items-start gap-2">
         <span className="text-[13.5px] font-semibold flex-1 min-w-0" style={{ color: 'var(--text-primary)', lineHeight: 1.4 }}>
           {item.title}
+        </span>
+        <span
+          className="inline-flex items-center shrink-0 px-2 py-0.5 rounded-full text-[10px] font-semibold"
+          style={{ background: diff.bg, color: diff.fg }}
+        >
+          {diff.label}
         </span>
         {item.learned && (
           <span
@@ -203,7 +254,7 @@ function TutorialCard({ item, onStart }: { item: TutorialProgressItem; onStart: 
       )}
       <div className="flex items-center justify-between gap-2 mt-1">
         <span className="text-[10.5px] font-mono" style={{ color: 'var(--text-muted)' }}>
-          {item.steps} 步 · 约 {mins} 分钟
+          {item.steps} 步 · 约 {mins} 分钟 · {item.learned ? `已得 +${item.xpReward}` : `+${item.xpReward}`} 经验
         </span>
         <button
           type="button"

@@ -54,6 +54,7 @@ import { HomeAmbientBackdrop } from '@/components/effects/HomeAmbientBackdrop';
 import { Reveal } from '@/pages/home/components/Reveal';
 import { TipsRotator } from '@/components/daily-tips/TipsRotator';
 import { UpdateCenterNewsTeaser } from '@/components/ai-news/UpdateCenterNewsTeaser';
+import { LearningCenterTeaser } from '@/components/daily-tips/LearningCenterTeaser';
 
 /**
  * 进场动效节奏 —— 与 /home LandingPage 同款 Reveal 组件，duration 减半（1000ms）让整体速度翻倍。
@@ -923,6 +924,13 @@ export default function AgentLauncherPage() {
               </div>
             </div>
             {/* end hero content */}
+
+            {/* ── 教程中心承接卡(首页顶部,承接到独立的 /learning-center) ── */}
+            {!searchQuery.trim() && (
+              <div className={`relative z-10 ${isMobile ? 'px-5 pb-2' : 'px-8 pb-3'}`}>
+                <LearningCenterTeaser />
+              </div>
+            )}
 
             {/* ── Quick Links — Extended Hero Background Area ── */}
             {!searchQuery.trim() && (

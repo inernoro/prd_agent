@@ -293,10 +293,10 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       shortLabel: '学习',
       description: '所有官方教程与你的掌握进度,随时点「跟我做」走一遍',
       icon: 'GraduationCap',
-      section: 'toolbox',
+      // 普通用户导航中单独存在(用户 2026-06-04):从百宝箱(toolbox)升为基础设施(infra)一级入口,去 wip。
+      section: 'infra',
       appKey: 'learning-center',
       tags: ['教程', '新手引导', '学习进度', '帮助'],
-      wip: true,
     },
   },
   {

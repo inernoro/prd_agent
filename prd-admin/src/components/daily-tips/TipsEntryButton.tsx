@@ -59,14 +59,10 @@ export function TipsEntryButton({ className, compact = false }: { className?: st
       data-tour-entry="1"
       title={newbie ? '本页教程 · 跟着走一遍' : '本页教程 / 新手指引'}
       onClick={() => {
-        // 诉求 4/7:本页只有一套教程 → 直接开讲(不弹面板);多套 → 弹选择面板(抽屉列表)让用户挑。
-        // 拉取 tips 的职责统一在 TipsDrawer 的监听里(load({force:true})),避免两处重复请求。
-        const tutorials = pageTips.filter((t) => (t.autoAction?.steps?.length ?? 0) > 0);
-        if (tutorials.length === 1) {
-          window.dispatchEvent(new CustomEvent(START_TUTORIAL_EVENT, { detail: { tipId: tutorials[0].id } }));
-        } else {
-          window.dispatchEvent(new CustomEvent(OPEN_TIPS_DRAWER_EVENT));
-        }
+        // 用户 2026-06-04:点击「本页教程」必须展示**完整列表**(哪怕本页只有一套),让用户看清本页全部
+        // 教程再自行选择,不再「只有一套就直接开讲、跳过列表」。拉取 tips 的职责统一在 TipsDrawer 的监听里
+        // (load({force:true})),避免两处重复请求。
+        window.dispatchEvent(new CustomEvent(OPEN_TIPS_DRAWER_EVENT));
       }}
       style={{
         height: 28,

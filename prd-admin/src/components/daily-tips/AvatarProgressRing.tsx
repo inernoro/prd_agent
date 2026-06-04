@@ -1,5 +1,4 @@
 import { useEffect } from 'react';
-import { GraduationCap } from 'lucide-react';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 
 /**
@@ -30,6 +29,11 @@ export function AvatarProgressRing({
   const pct = total > 0 ? Math.min(1, learned / total) : 0;
   const complete = total > 0 && learned >= total;
 
+  // 等级(完成任意教程累计经验,后端按难度计权)。在头像右下角以小徽章展示等级数字。
+  const level = progress?.level ?? 0;
+  const levelName = progress?.levelName ?? '';
+  const xp = progress?.xp ?? 0;
+
   const r = (size - stroke) / 2;
   const circ = 2 * Math.PI * r;
   const offset = circ * (1 - pct);
@@ -39,7 +43,11 @@ export function AvatarProgressRing({
   return (
     <div
       style={{ position: 'relative', width: size, height: size, flexShrink: 0 }}
-      title={total > 0 ? `教程掌握度 ${learned}/${total}${complete ? ' · 已毕业' : ''}` : '本页教程'}
+      title={
+        level > 0
+          ? `Lv.${level} ${levelName} · 经验 ${xp}${total > 0 ? ` · 掌握度 ${learned}/${total}` : ''}${complete ? ' · 已毕业' : ''}`
+          : (total > 0 ? `教程掌握度 ${learned}/${total}` : '本页教程')
+      }
     >
       <svg
         width={size}
@@ -71,23 +79,30 @@ export function AvatarProgressRing({
       <div style={{ position: 'absolute', inset: stroke + 1.5, borderRadius: 999, overflow: 'hidden' }}>
         {children}
       </div>
-      {complete && (
+      {level > 0 && (
+        // 等级徽章:数字=等级,颜色=是否已毕业(掌握度满环时转绿)。把「等级」和「毕业」两个信号合一,
+        // 不在 30px 头像上堆两个角标。
         <div
           style={{
             position: 'absolute',
-            right: -2,
-            bottom: -2,
-            width: 13,
-            height: 13,
+            right: -3,
+            bottom: -3,
+            minWidth: 14,
+            height: 14,
+            padding: '0 3px',
             borderRadius: 999,
-            background: '#34d399',
+            background: complete ? '#34d399' : 'linear-gradient(135deg,#a78bfa,#818cf8)',
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
+            fontSize: 9,
+            fontWeight: 800,
+            lineHeight: 1,
+            color: complete ? '#06281d' : '#1a1033',
             boxShadow: '0 0 0 1.5px var(--bg-card, #1E1F20)',
           }}
         >
-          <GraduationCap size={8} strokeWidth={3} color="#0b0b10" />
+          {level}
         </div>
       )}
     </div>

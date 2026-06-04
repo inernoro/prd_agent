@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Sparkles, X, Pin, PinOff, MapPin, GraduationCap } from 'lucide-react';
 import { OPEN_TIPS_DRAWER_EVENT, START_TUTORIAL_EVENT } from './TipsEntryButton';
 import { matchPageGuide, isEditorPageGuide, filterPageTips } from './pageGuideMatch';
+import { difficultyMeta } from './difficultyMeta';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { writeSpotlightPayload, SPOTLIGHT_PAYLOAD_UPDATED_EVENT } from './TipsRotator';
 import { trackTip, dismissTipForever } from '@/services/real/dailyTips';
@@ -573,6 +574,8 @@ export function TipsDrawer() {
             viewTips.map((t) => {
               const stepCount = t.autoAction?.steps?.length ?? 0;
               const estMin = stepCount > 0 ? Math.max(1, Math.round(stepCount * 0.5)) : 0;
+              const diff = difficultyMeta(t.difficulty);
+              const xpReward = t.xpReward ?? 0;
               const isUpdate = (t.sourceId?.includes('-update-') ?? false) || t.sourceType === 'feature-release';
               const isPageGuide = t.sourceId?.endsWith('-page-guide') ?? false;
               const accent = t.isTargeted
@@ -616,7 +619,12 @@ export function TipsDrawer() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, flexWrap: 'wrap' }}>
                           {stepCount > 0 && (
                             <span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.5)', fontFamily: 'ui-monospace, Menlo, monospace' }}>
-                              {stepCount} 步 · 约 {estMin} 分钟
+                              {stepCount} 步 · 约 {estMin} 分钟 · +{xpReward} 经验
+                            </span>
+                          )}
+                          {stepCount > 0 && (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', padding: '1px 7px', borderRadius: 999, fontSize: 10, fontWeight: 600, background: diff.bg, color: diff.fg }}>
+                              {diff.label}
                             </span>
                           )}
                           {chip && (

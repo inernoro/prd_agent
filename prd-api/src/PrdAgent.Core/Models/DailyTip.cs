@@ -89,6 +89,13 @@ public class DailyTip
     /// </summary>
     public string Tier { get; set; } = "basic";
 
+    /// <summary>
+    /// 教程难度:beginner(初) / intermediate(中) / advanced(高)。决定完成后获得的经验值权重
+    /// (初 10 / 中 20 / 高 40)。为空时由步数自动推断(≤4 步=初, 5-8 步=中, ≥9 步=高),
+    /// 个别页面难度偏高可在此显式上调(用户 2026-06-04:「部分页面难度过高可以增加」)。
+    /// </summary>
+    public string? Difficulty { get; set; }
+
     /// <summary>是否启用</summary>
     public bool IsActive { get; set; } = true;
 

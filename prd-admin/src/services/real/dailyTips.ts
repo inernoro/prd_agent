@@ -2,9 +2,14 @@ import { apiRequest } from '@/services/real/apiClient';
 import { api } from '@/services/api';
 import type { ApiResponse } from '@/types/api';
 
-// ============ Types（对齐后端 DailyTipsController / AdminDailyTipsController） ============
+// ============ Types（对齐后端 DailyTipsController） ============
+// 注:「小技巧管理」后台(create/update/delete/push/seed/reset)已于 2026-06-04 整体下线,
+// 教程统一为代码内置 seed(BuildDefaultTips)。本文件只保留运行时(用户侧)读取与交互所需的导出。
 
 export type DailyTipKind = 'text' | 'card' | 'spotlight';
+
+/** 教程难度:初(beginner) / 中(intermediate) / 高(advanced)。决定完成后获得的经验值权重。 */
+export type TutorialDifficulty = 'beginner' | 'intermediate' | 'advanced';
 
 /** Tip 落地页后的自动引导动作(由 SpotlightOverlay 按序执行)。 */
 export interface DailyTipAutoAction {
@@ -51,6 +56,10 @@ export interface DailyTip {
   deliveryStatus?: string | null;
   deliveryViewCount?: number | null;
   deliveryMaxViews?: number | null;
+  /** 难度分级:初/中/高(后端下发,缺省 beginner)。 */
+  difficulty?: TutorialDifficulty;
+  /** 完成该教程可获得的经验值(后端按 difficulty 计算)。 */
+  xpReward?: number;
 }
 
 export type TrackAction = 'seen' | 'clicked' | 'dismissed';
@@ -73,6 +82,10 @@ export interface TutorialProgressItem {
   category: TutorialCategory;
   version: number;
   learned: boolean;
+  /** 难度:初/中/高。 */
+  difficulty: TutorialDifficulty;
+  /** 完成该教程可获得的经验值。 */
+  xpReward: number;
 }
 
 export interface TutorialProgress {
@@ -80,59 +93,20 @@ export interface TutorialProgress {
   total: number;
   /** 已学会的本页教程数 */
   learned: number;
+  /** 累计经验值(所有已完成教程的 xpReward 之和,完成越多越高) */
+  xp: number;
+  /** 当前等级(后端按 xp 阈值计算,从 1 起) */
+  level: number;
+  /** 当前等级名(新手 / 进阶 / 高手 / 大师 / 宗师) */
+  levelName: string;
+  /** 升到下一级还需的经验值;已满级为 0 */
+  xpToNext: number;
+  /** 当前等级区间起点经验(用于画等级内进度条) */
+  levelFloorXp: number;
+  /** 下一级所需经验阈值(满级时等于 levelFloorXp) */
+  nextLevelXp: number;
   /** 全部官方教程(含 task / update) */
   items: TutorialProgressItem[];
-}
-
-export interface DailyTipDelivery {
-  userId: string;
-  userDisplayName?: string | null;
-  status: 'pending' | 'seen' | 'clicked' | 'dismissed';
-  viewCount: number;
-  maxViews: number;
-  pushedAt: string;
-  lastSeenAt?: string | null;
-  clickedAt?: string | null;
-  dismissedAt?: string | null;
-}
-
-export interface DailyTipStatsSummary {
-  total: number;
-  pending: number;
-  seen: number;
-  clicked: number;
-  dismissed: number;
-}
-
-export interface DailyTipAdmin extends DailyTip {
-  targetUserId?: string | null;
-  targetRoles?: string[] | null;
-  displayOrder: number;
-  isActive: boolean;
-  startAt?: string | null;
-  endAt?: string | null;
-  sourceId?: string | null;
-  createdBy?: string;
-  updatedAt?: string;
-}
-
-export interface DailyTipUpsert {
-  kind: DailyTipKind;
-  title: string;
-  body?: string | null;
-  coverImageUrl?: string | null;
-  actionUrl: string;
-  ctaText?: string | null;
-  targetSelector?: string | null;
-  autoAction?: DailyTipAutoAction | null;
-  targetUserId?: string | null;
-  targetRoles?: string[] | null;
-  displayOrder?: number;
-  isActive?: boolean;
-  startAt?: string | null;
-  endAt?: string | null;
-  /** 场景分类:feature-release / tip / bug-fix / onboarding / manual(默认) */
-  sourceType?: string | null;
 }
 
 // ============ 公共读取 ============
@@ -141,87 +115,12 @@ export async function listVisibleTips(): Promise<ApiResponse<{ items: DailyTip[]
   return await apiRequest<{ items: DailyTip[] }>(api.dailyTips.visible(), { method: 'GET' });
 }
 
-/** 当前用户对全部官方教程的学习进度(头像进度环 + 学习中心页消费)。 */
+/** 当前用户对全部官方教程的学习进度 + 经验/等级(头像进度环 + 学习中心页消费)。 */
 export async function getTutorialProgress(): Promise<ApiResponse<TutorialProgress>> {
   return await apiRequest<TutorialProgress>(api.dailyTips.progress(), { method: 'GET' });
 }
 
-// ============ 管理后台 ============
-
-export async function listTipsAdmin(): Promise<ApiResponse<{ items: DailyTipAdmin[] }>> {
-  return await apiRequest<{ items: DailyTipAdmin[] }>(api.dailyTips.admin.list(), { method: 'GET' });
-}
-
-export async function createTip(
-  body: DailyTipUpsert,
-): Promise<ApiResponse<{ item: DailyTipAdmin }>> {
-  return await apiRequest<{ item: DailyTipAdmin }>(api.dailyTips.admin.create(), {
-    method: 'POST',
-    body,
-  });
-}
-
-export async function updateTip(
-  id: string,
-  body: DailyTipUpsert,
-): Promise<ApiResponse<{ item: DailyTipAdmin }>> {
-  return await apiRequest<{ item: DailyTipAdmin }>(api.dailyTips.admin.update(id), {
-    method: 'PUT',
-    body,
-  });
-}
-
-export async function deleteTip(id: string): Promise<ApiResponse<{ deleted: boolean }>> {
-  return await apiRequest<{ deleted: boolean }>(api.dailyTips.admin.delete(id), {
-    method: 'DELETE',
-  });
-}
-
-/** 推送 tip 给指定用户 / 按角色 / 全体。reset=true 时重置已有记录为 pending。
- *  scope: "all" / "role:PM" / "role:DEV" / "role:QA" / "role:ADMIN",与 userIds 取并集。 */
-export async function pushTip(
-  id: string,
-  body: { userIds?: string[]; scope?: string; maxViews?: number; reset?: boolean },
-): Promise<ApiResponse<{ pushedCount: number; totalDeliveries: number; deliveries: DailyTipDelivery[] }>> {
-  return await apiRequest<{ pushedCount: number; totalDeliveries: number; deliveries: DailyTipDelivery[] }>(
-    api.dailyTips.admin.push(id),
-    { method: 'POST', body },
-  );
-}
-
-/**
- * 一键植入内置默认 tip。幂等:按 SourceId 判重,已存在的不动。
- * 同时清理已废弃的 seed(如旧的 showcase-all-features)。
- * 用于新环境或清空后让管理员一次性把 seed 变成真实数据,之后可再编辑。
- */
-export async function seedDefaultTips(): Promise<
-  ApiResponse<{ insertedCount: number; skippedCount: number; totalDefaults: number }>
-> {
-  return await apiRequest<{ insertedCount: number; skippedCount: number; totalDefaults: number }>(
-    api.dailyTips.admin.seed(),
-    { method: 'POST', body: {} },
-  );
-}
-
-/** 清空所有 DailyTip 并重新植入 seed。危险操作,调用方应先二次确认。 */
-export async function resetDefaultTips(): Promise<
-  ApiResponse<{ deletedCount: number; insertedCount: number }>
-> {
-  return await apiRequest<{ deletedCount: number; insertedCount: number }>(
-    api.dailyTips.admin.reset(),
-    { method: 'POST', body: {} },
-  );
-}
-
-/** 查看 tip 的推送统计(每用户状态 + 汇总)。 */
-export async function getTipStats(
-  id: string,
-): Promise<ApiResponse<{ summary: DailyTipStatsSummary; items: DailyTipDelivery[] }>> {
-  return await apiRequest<{ summary: DailyTipStatsSummary; items: DailyTipDelivery[] }>(
-    api.dailyTips.admin.stats(id),
-    { method: 'GET' },
-  );
-}
+// ============ 用户交互 ============
 
 /** 记录当前用户对 tip 的交互动作:seen / clicked / dismissed。静默失败(不阻塞 UI)。 */
 export async function trackTip(id: string, action: TrackAction): Promise<void> {
@@ -247,8 +146,7 @@ export async function dismissTipForever(
 
 /**
  * 标记某条 tip 为「已学会」。把 (SourceId, Version) 写入 User.LearnedTips,
- * 之后 /visible 端点过滤时不再返回;管理员升级 tip.Version 后会重新出现。
- * Tour 走完最后一步 / 用户主动点「✓ 我已学会」时调用。
+ * 之后掌握度 +1、累计经验 +xpReward;Tour 走完最后一步 / 用户主动点「✓ 我已学会」时调用。
  */
 export async function markTipAsLearned(
   id: string,

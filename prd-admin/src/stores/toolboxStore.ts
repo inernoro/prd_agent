@@ -471,7 +471,6 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
     usageCount: 0,
     createdAt: new Date().toISOString(),
     createdByName: '官方',
-    wip: true,
   },
   {
     id: 'builtin-share-link-tester',
