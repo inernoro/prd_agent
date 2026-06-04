@@ -232,6 +232,8 @@ public class OpenApiController : ControllerBase
                 catch { /* 连接已断，忽略 */ }
             }
             await LogAsync(key, requestId, "chat", requestedModel, chosen, resolution, true, Response.StatusCode, "INTERNAL_ERROR", promptTokens, completionTokens, sw);
+            // 即使中途失败，已产生的 token 也要计入配额、并跑绑定/降级预警（与成功路径一致，否则用量/预警会漏，Bugbot）。
+            await RecordUsageAsync(key, bound, resolution, promptTokens, completionTokens);
         }
     }
 
@@ -306,8 +308,6 @@ public class OpenApiController : ControllerBase
         }
         body.Remove("model");
 
-        if (!await PassUsageGateAsync(key, requestId, "image", requestedModel, chosen, sw)) return;
-
         using var _scope = _llmRequestContext.BeginScope(new LlmRequestContext(
             RequestId: requestId, GroupId: null, SessionId: null, UserId: key?.OwnerUserId,
             ViewRole: null, DocumentChars: null, DocumentHash: null, SystemPromptRedacted: null,
@@ -316,6 +316,7 @@ public class OpenApiController : ControllerBase
         var bound = (key?.OpenApiImageModels?.Count ?? 0) > 0;
         try
         {
+            // 先解析模型（廉价、不占额）。解析失败时不消耗配额/限速槽——避免错配绑定（模型/池被删）空烧客户每日额度（Bugbot）。
             var resolution = await _gateway.ResolveModelAsync(
                 AppCallerRegistry.OpenApi.Proxy.Generation, ModelTypes.ImageGen,
                 expectedModel: string.IsNullOrWhiteSpace(chosen) ? null : chosen, CancellationToken.None);
@@ -326,6 +327,9 @@ public class OpenApiController : ControllerBase
                 await WriteJsonErrorAsync(502, "api_error", resolution.ErrorMessage ?? "未找到可用生图模型");
                 return;
             }
+
+            // 解析成功才占用限流/每日配额（429 时 PassUsageGateAsync 已写响应，直接返回）。
+            if (!await PassUsageGateAsync(key, requestId, "image", requestedModel, chosen, sw)) return;
 
             var raw = new GatewayRawRequest
             {

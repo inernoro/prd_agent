@@ -23,3 +23,5 @@
 | chore | prd-api | AgentApiKeysController 显式 using 父命名空间引用 OpenApiController.ScopeCall（跨命名空间引用更清晰） |
 | docs | prd-api | guide.mongodb-indexes 补 open_api_request_logs 索引（KeyId+CreatedAt / CreatedAt / RequestId / 可选 TTL），按 no-auto-index 规则由 DBA 手动建 |
 | fix | prd-admin | 开放接口列表刷新后同步已打开抽屉的 detail 到最新行，头部今日用量/限额默认不再停留在打开时快照 |
+| fix | prd-api | 开放接口流式 chat 中途失败时也调 RecordUsageAsync，已产生 token 计入配额并跑降级预警，不再漏记 |
+| fix | prd-api | 开放接口生图先解析模型再占配额：MODEL_NOT_FOUND 时不再空烧客户每日额度/限速槽 |
