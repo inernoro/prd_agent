@@ -21,6 +21,26 @@ function writeDismissed(ids: Set<string>) {
   }
 }
 
+/**
+ * 本会话内「已学会」的 *-page-guide sourceId 乐观覆盖集。
+ * markLearned 是乐观更新(先本地标 learned=true,再异步 POST mark-learned),而 load 会用 /visible
+ * 整包替换 items。若一次并发/陈旧刷新(抽屉打开时 load(force) / 60s 轮询 / 标签可见)在服务端回显
+ * learned 之前落地,就会把乐观标记冲掉,matchPageGuide 又把该教程当成「没走完」→ 重新脉冲/自动开讲。
+ * 解决:把学会的 sourceId 记进本集合,每次 load 落库后再叠加一次 learned=true,刷新不会再清掉它。
+ * 仅内存(刷新页面后服务端 LearnedTips 已是权威源,/visible 自带 learned=true)。
+ */
+const locallyLearnedSourceIds = new Set<string>();
+
+/** 用本会话乐观学会集叠加 learned=true,保证刷新不丢标记 */
+function applyLocalLearned(items: DailyTip[]): DailyTip[] {
+  if (locallyLearnedSourceIds.size === 0) return items;
+  return items.map((t) =>
+    t.sourceId && locallyLearnedSourceIds.has(t.sourceId) && !t.learned
+      ? { ...t, learned: true }
+      : t,
+  );
+}
+
 interface DailyTipsState {
   items: DailyTip[];
   loaded: boolean;
@@ -51,7 +71,8 @@ export const useDailyTipsStore = create<DailyTipsState>((set, get) => ({
     try {
       const res = await listVisibleTips();
       if (res.success && res.data) {
-        set({ items: res.data.items ?? [], loaded: true });
+        // applyLocalLearned:叠加本会话乐观学会标记,避免陈旧刷新把 learned=true 冲掉(Bugbot)
+        set({ items: applyLocalLearned(res.data.items ?? []), loaded: true });
       } else {
         set({ loaded: true });
       }
@@ -75,6 +96,8 @@ export const useDailyTipsStore = create<DailyTipsState>((set, get) => ({
     const tip = get().items.find((t) => t.id === id);
     const isPageGuide = typeof tip?.sourceId === 'string' && tip.sourceId.endsWith('-page-guide');
     if (isPageGuide) {
+      // 记进本会话乐观学会集,后续任何 load 整包替换 items 时都会再叠加 learned=true(Bugbot)
+      if (tip?.sourceId) locallyLearnedSourceIds.add(tip.sourceId);
       set({ items: get().items.map((t) => (t.id === id ? { ...t, learned: true } : t)) });
     } else {
       set({ items: get().items.filter((t) => t.id !== id) });
