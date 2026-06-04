@@ -9,3 +9,4 @@
 | fix | cds | 修复授权申请轮询用项目 slug 时误报 404:轮询端点改用 getProject 把 slug/id 统一解析为 project.id 再比对(发起存的是 project.id,真实环境用 slug 轮询会漏判) |
 | fix | cds | 被动授权审批加固:approve/reject 仅限登录用户(cookie/GitHub),拒绝机器密钥——杜绝项目 A 的 cdsp_ key 批准项目 B 申请的跨项目越权;批准签发授权密钥失败时回滚已签发 key 防游离;失败诊断 check-run 文本截断只砍日志尾部、保住顶部根因 |
 | fix | cds | 被动授权二轮加固:github 鉴权模式同样放行免密发起/轮询(抽 isPublicAccessRequestRoute 共享,防两网关漂移);授权申请列表改登录用户专属(机器密钥不得跨项目枚举申请方/用途);一次性 authorizationKey 明文加入 HTTP 日志 redactor(authoriz),不再落 cds_http_logs |
+| fix | cds | 被动授权三轮加固:disabled 鉴权模式放行审批(本地 dev 操作员即用户,否则 403 用不了);轮询票据改 X-Poll-Token header only,去掉 ?token= query(URL 会进 HTTP 日志/activity 广播不脱敏,泄露可取密钥的票据);审批人身份读 cdsUser.githubLogin(github 模式审计不再全记 operator) |

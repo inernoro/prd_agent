@@ -2805,7 +2805,7 @@ export function createServer(deps: ServerDeps): express.Express {
 
   // 被动授权 — agent 免密发起授权申请 + 用户右下角一键批准签发授权密钥。
   // 注意 发起/轮询两个端点的 public 放行在上面的全局认证中间件里(搜 access-requests)。
-  app.use('/api', createAccessRequestsRouter({ stateService: deps.stateService }));
+  app.use('/api', createAccessRequestsRouter({ stateService: deps.stateService, authMode }));
   // 2026-05-29 项目基础设施重新同步(用户反馈:断头应用,缺 yaml resync)
   app.use('/api', createProjectInfraResyncRouter({
     stateService: deps.stateService,

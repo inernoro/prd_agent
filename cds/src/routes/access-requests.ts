@@ -26,6 +26,12 @@ import { cdsEventsBus } from '../services/cds-events-bus.js';
 
 export interface AccessRequestsRouterDeps {
   stateService: StateService;
+  /**
+   * CDS 鉴权模式。disabled 模式(本地 dev,全站无鉴权)下没有任何中间件会标记
+   * cookie/github 身份,此时审批盒所在的 dashboard 用户「就是」操作员,审批必须
+   * 放行;否则 approve/reject/list 会对所有人 403,本地 dev 用不了。
+   */
+  authMode?: 'disabled' | 'basic' | 'github';
 }
 
 /** Audit retention: decided access requests disappear from list after 7d. */
@@ -41,12 +47,16 @@ function sha256(s: string): string {
   return createHash('sha256').update(s).digest('hex');
 }
 
-/** Extract the poll token from header X-Poll-Token or ?token= query. */
+/**
+ * Extract the poll token from the X-Poll-Token header ONLY.
+ *
+ * 故意不收 ?token= query —— URL 会被 HTTP 日志(req.originalUrl)和 activity 广播
+ * (query)原样记录且不脱敏,把「能取走授权密钥的票据」泄进日志/订阅者,别人就能
+ * 在批准后抢先取走密钥。header 名含 'token' 已被日志 redactor 脱敏,安全。
+ */
 function extractPollToken(req: import('express').Request): string {
   const h = req.headers['x-poll-token'];
-  if (typeof h === 'string' && h) return h;
-  const q = req.query.token;
-  return typeof q === 'string' ? q : '';
+  return typeof h === 'string' ? h : '';
 }
 
 /** Strip the authorization-key plaintext + poll-token hash before returning to operator UI. */
@@ -61,6 +71,7 @@ function pendingCount(stateService: StateService): number {
 
 export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Router {
   const { stateService } = deps;
+  const authDisabled = deps.authMode === 'disabled';
   const router = Router();
 
   // ───────────────────────────────────────────────────────────────────────
@@ -158,7 +169,10 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
   });
 
   function decider(req: import('express').Request): string {
-    const gh = (req as unknown as { cdsUser?: { login?: string } }).cdsUser;
+    // github 模式身份在 cdsUser.githubLogin(不是 .login),否则审计里全是 'operator'、
+    // 签发的 AgentKey.createdBy 也丢了「谁批的」。两个字段都读。
+    const gh = (req as unknown as { cdsUser?: { login?: string; githubLogin?: string } }).cdsUser;
+    if (gh?.githubLogin) return gh.githubLogin;
     if (gh?.login) return gh.login;
     if ((req as unknown as { _cdsCookieAuth?: boolean })._cdsCookieAuth) return 'cookie';
     return 'operator';
@@ -169,6 +183,8 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
   // /projects/:id 下、不过 assertProjectAccess,项目 A 的 cdsp_ key 就能批准
   // 项目 B 的申请并签发 B 的全权密钥(跨项目越权)。这违背「人审批」模型。
   function requireHumanOperator(req: import('express').Request, res: import('express').Response): boolean {
+    // disabled 模式全站无鉴权,dashboard 用户即操作员 → 放行(否则本地 dev 用不了)。
+    if (authDisabled) return true;
     const r = req as unknown as { _cdsCookieAuth?: boolean; cdsUser?: { login?: string; githubLogin?: string } };
     const isHuman = r._cdsCookieAuth === true || !!(r.cdsUser && (r.cdsUser.login || r.cdsUser.githubLogin));
     if (!isHuman) {

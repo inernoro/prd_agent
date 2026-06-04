@@ -110,9 +110,9 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     // 无 token
     expect((await request(server, 'GET', `/api/projects/proj-a/access-requests/${reqId}`)).status).toBe(403);
     // 错 token
-    expect((await request(server, 'GET', `/api/projects/proj-a/access-requests/${reqId}?token=wrong`)).status).toBe(403);
+    expect((await request(server, 'GET', `/api/projects/proj-a/access-requests/${reqId}`, undefined, { 'X-Poll-Token': 'wrong' })).status).toBe(403);
     // 对 token → 200 pending
-    const ok = await request(server, 'GET', `/api/projects/proj-a/access-requests/${reqId}?token=${init.body.pollToken}`);
+    const ok = await request(server, 'GET', `/api/projects/proj-a/access-requests/${reqId}`, undefined, { 'X-Poll-Token': init.body.pollToken });
     expect(ok.body).toEqual({ status: 'pending' });
   });
 
@@ -143,7 +143,7 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     expect(JSON.stringify(approve.body)).not.toContain('cdsp_');
 
     // 凭 token 轮询 → 取到授权密钥一次,且它是可用的全权项目 key
-    const deliver = await request(server, 'GET', `/api/projects/proj-a/access-requests/${reqId}?token=${token}`);
+    const deliver = await request(server, 'GET', `/api/projects/proj-a/access-requests/${reqId}`, undefined, { 'X-Poll-Token': token });
     expect(deliver.body.status).toBe('approved');
     expect(deliver.body.authorizationKey).toMatch(/^cdsp_/);
     expect(stateService.findAgentKeyForAuth(deliver.body.authorizationKey)).toEqual(
@@ -151,7 +151,7 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     );
 
     // 再轮询 → 无明文(一次性交付)
-    const deliver2 = await request(server, 'GET', `/api/projects/proj-a/access-requests/${reqId}?token=${token}`);
+    const deliver2 = await request(server, 'GET', `/api/projects/proj-a/access-requests/${reqId}`, undefined, { 'X-Poll-Token': token });
     expect(deliver2.body).toEqual({ status: 'approved', delivered: true });
   });
 
@@ -160,13 +160,32 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     const reqId = init.body.requestId as string;
     const rej = await request(server, 'POST', `/api/access-requests/${reqId}/reject`, { reason: '不批' });
     expect(rej.status).toBe(200);
-    const poll = await request(server, 'GET', `/api/projects/proj-a/access-requests/${reqId}?token=${init.body.pollToken}`);
+    const poll = await request(server, 'GET', `/api/projects/proj-a/access-requests/${reqId}`, undefined, { 'X-Poll-Token': init.body.pollToken });
     expect(poll.body).toEqual({ status: 'rejected', rejectReason: '不批' });
   });
 
   it('发起到不存在的项目 → 404', async () => {
     const res = await request(server, 'POST', '/api/projects/nope/access-requests', { purpose: 'x' });
     expect(res.status).toBe(404);
+  });
+
+  // 回归(Cursor):CDS_AUTH_MODE=disabled 本地 dev 全站无鉴权,审批盒所在 dashboard
+  // 用户即操作员,approve/reject/list 必须放行,否则本地 dev 用不了。
+  it('disabled 模式:无 cookie 身份也能列出/批准', async () => {
+    const app2 = express();
+    app2.use(express.json());
+    app2.use((req, _res, next) => { next(); }); // 不 stamp 任何身份(模拟 disabled)
+    app2.use('/api', createAccessRequestsRouter({ stateService, authMode: 'disabled' }));
+    const srv2 = app2.listen(0);
+    try {
+      const init = await request(srv2, 'POST', '/api/projects/proj-a/access-requests', { purpose: 'disabled' });
+      expect(init.status).toBe(201);
+      const reqId = init.body.requestId as string;
+      expect((await request(srv2, 'GET', '/api/access-requests')).status).toBe(200);
+      expect((await request(srv2, 'POST', `/api/access-requests/${reqId}/approve`, {})).status).toBe(200);
+    } finally {
+      await new Promise<void>((resolve) => srv2.close(() => resolve()));
+    }
   });
 
   // 回归(Cursor/Codex 评审):approve/reject 必须是登录的人,机器密钥(API key)→ 403。
@@ -180,7 +199,7 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     // 列表也只给登录用户:机器密钥不得跨项目枚举别人的申请
     expect((await request(server, 'GET', '/api/access-requests', undefined, machine)).status).toBe(403);
     // 申请仍 pending(没被机器密钥动过)
-    const poll = await request(server, 'GET', `/api/projects/proj-a/access-requests/${reqId}?token=${init.body.pollToken}`);
+    const poll = await request(server, 'GET', `/api/projects/proj-a/access-requests/${reqId}`, undefined, { 'X-Poll-Token': init.body.pollToken });
     expect(poll.body.status).toBe('pending');
     // 人类(默认 cookie)可以批准
     expect((await request(server, 'POST', `/api/access-requests/${reqId}/approve`, {})).status).toBe(200);
@@ -194,10 +213,10 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     const reqId = init.body.requestId as string;
     const token = init.body.pollToken as string;
     // 用 slug 轮询
-    expect((await request(server, 'GET', `/api/projects/proj-alpha/access-requests/${reqId}?token=${token}`)).body)
+    expect((await request(server, 'GET', `/api/projects/proj-alpha/access-requests/${reqId}`, undefined, { 'X-Poll-Token': token })).body)
       .toEqual({ status: 'pending' });
     // 用 id 轮询(同一项目)
-    expect((await request(server, 'GET', `/api/projects/proj-a/access-requests/${reqId}?token=${token}`)).body)
+    expect((await request(server, 'GET', `/api/projects/proj-a/access-requests/${reqId}`, undefined, { 'X-Poll-Token': token })).body)
       .toEqual({ status: 'pending' });
   });
 });
