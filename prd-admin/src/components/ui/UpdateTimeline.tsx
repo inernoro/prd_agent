@@ -93,70 +93,131 @@ export function parseMermaidTimeline(src: string): ParsedTimeline | null {
 
 const ACCENT = '#a855f7';
 
+/**
+ * 变更类型注册表（registry，不写 switch）。按关键词从事件文案推断类型，
+ * 给卡片左条 + 标题前圆点上色，让用户扫读时能快速区分"新增/修复/优化"。
+ * 借鉴主流 changelog（Linear / GitHub / Stripe）用颜色区分变更类型的做法。
+ */
+const CHANGE_TYPES = [
+  { key: 'fix', color: '#f59e0b', keywords: ['修复', '修正', '纠正', 'fix', 'bug', '补齐', '补点', '回滚', '误判'] },
+  { key: 'feat', color: '#34d399', keywords: ['新增', '上线', '落地', '成型', '接入', '支持', '开闸', '打通', '成主线', '合入', '发布', '引入'] },
+  { key: 'improve', color: '#38bdf8', keywords: ['优化', '重写', '重构', '升级', '收敛', '收口', '治理', '稳定', '统一', '澄清', '迁移', '对齐', '增强', '加固', '提速', '改版'] },
+] as const;
+
+function inferTypeColor(ev: TimelineEvent): string {
+  const text = `${ev.title} ${ev.details.join(' ')}`;
+  for (const t of CHANGE_TYPES) {
+    if (t.keywords.some((k) => text.includes(k))) return t.color;
+  }
+  return ACCENT;
+}
+
+const TIMELINE_CSS = `
+.upd-tl-card{
+  position:relative;
+  border:1px solid var(--border-faint);
+  border-left:2px solid var(--tl-accent,#a855f7);
+  background:color-mix(in srgb, var(--tl-accent,#a855f7) 5%, transparent);
+  border-radius:8px;
+  padding:10px 12px;
+  transition:transform .14s ease, border-color .14s ease, background .14s ease, box-shadow .14s ease;
+}
+.upd-tl-card:hover{
+  transform:translateY(-2px);
+  border-color:color-mix(in srgb, var(--tl-accent,#a855f7) 45%, var(--border-faint));
+  background:color-mix(in srgb, var(--tl-accent,#a855f7) 9%, transparent);
+  box-shadow:0 8px 20px -10px color-mix(in srgb, var(--tl-accent,#a855f7) 60%, transparent);
+}
+`;
+
 function TimelineBody({ data }: { data: ParsedTimeline }) {
   return (
-    <div className="px-1 py-1">
+    <div className="px-1 py-1 relative">
+      <style>{TIMELINE_CSS}</style>
+
       {data.title && (
-        <div
-          className="text-[15px] font-semibold mb-5 text-center"
-          style={{ color: 'var(--text-primary)' }}
-        >
+        <div className="text-[15px] font-semibold mb-5 text-center" style={{ color: 'var(--text-primary)' }}>
           {data.title}
         </div>
       )}
 
+      {/* 时间轴主轴线（贯穿全部 section，左侧 spine） */}
+      <span
+        aria-hidden
+        className="absolute"
+        style={{ left: 7, top: data.title ? 44 : 6, bottom: 6, width: 2, background: 'var(--border-faint)' }}
+      />
+
       <div className="flex flex-col gap-5">
         {data.sections.map((section, si) => (
-          <div
-            key={`${section.label}-${si}`}
-            className="flex flex-col sm:flex-row gap-2 sm:gap-4"
-          >
-            {/* 左侧：日期标签列（窄屏时退化为顶部一行） */}
-            {section.label && (
-              <div className="shrink-0 sm:w-[92px] pt-0.5">
+          <div key={`${section.label}-${si}`} className="relative flex gap-3 sm:gap-4">
+            {/* 左侧：轴上节点 + 日期标签 + 当天计数 */}
+            <div className="relative shrink-0" style={{ width: 104 }}>
+              {section.label && (
                 <span
-                  className="inline-flex items-center text-[12px] font-semibold px-2.5 py-1 rounded-md whitespace-nowrap"
+                  aria-hidden
+                  className="absolute rounded-full"
                   style={{
-                    background: 'rgba(168,85,247,0.14)',
-                    color: '#d8b4fe',
-                    border: '1px solid rgba(168,85,247,0.28)',
-                    fontVariantNumeric: 'tabular-nums',
+                    left: 1.5,
+                    top: 7,
+                    width: 11,
+                    height: 11,
+                    background: ACCENT,
+                    boxShadow: '0 0 0 3px var(--bg-input, rgba(20,20,24,1)), 0 0 0 4px rgba(168,85,247,0.28)',
                   }}
-                >
-                  {section.label}
-                </span>
-              </div>
-            )}
+                />
+              )}
+              {section.label && (
+                <div style={{ paddingLeft: 24 }} className="flex flex-col gap-1 items-start">
+                  <span
+                    className="inline-flex items-center text-[12px] font-semibold px-2.5 py-1 rounded-md whitespace-nowrap"
+                    style={{
+                      background: 'rgba(168,85,247,0.14)',
+                      color: '#d8b4fe',
+                      border: '1px solid rgba(168,85,247,0.28)',
+                      fontVariantNumeric: 'tabular-nums',
+                    }}
+                  >
+                    {section.label}
+                  </span>
+                  <span className="text-[10.5px] pl-1" style={{ color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+                    {section.events.length} 项
+                  </span>
+                </div>
+              )}
+            </div>
 
             {/* 右侧：事件卡片墙，宽屏自动多列铺满，窄屏单列 */}
             <div
               className="flex-1 grid gap-2.5"
               style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', alignItems: 'start' }}
             >
-              {section.events.map((ev, ei) => (
-                <div
-                  key={`${ev.title}-${ei}`}
-                  className="rounded-lg px-3 py-2.5"
-                  style={{
-                    background: 'rgba(168,85,247,0.05)',
-                    border: '1px solid var(--border-faint)',
-                    borderLeft: `2px solid ${ACCENT}`,
-                  }}
-                >
-                  <div className="text-[13px] font-semibold leading-snug" style={{ color: 'var(--text-primary)' }}>
-                    {ev.title}
-                  </div>
-                  {ev.details.length > 0 && (
-                    <div className="mt-1 flex flex-col gap-0.5">
-                      {ev.details.map((d, di) => (
-                        <div key={di} className="text-[12px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                          {d}
-                        </div>
-                      ))}
+              {section.events.map((ev, ei) => {
+                const color = inferTypeColor(ev);
+                return (
+                  <div
+                    key={`${ev.title}-${ei}`}
+                    className="upd-tl-card"
+                    style={{ ['--tl-accent' as string]: color }}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span aria-hidden className="rounded-full shrink-0" style={{ width: 6, height: 6, background: color }} />
+                      <span className="text-[13px] font-semibold leading-snug" style={{ color: 'var(--text-primary)' }}>
+                        {ev.title}
+                      </span>
                     </div>
-                  )}
-                </div>
-              ))}
+                    {ev.details.length > 0 && (
+                      <div className="mt-1 flex flex-col gap-0.5" style={{ paddingLeft: 13 }}>
+                        {ev.details.map((d, di) => (
+                          <div key={di} className="text-[12px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                            {d}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         ))}
