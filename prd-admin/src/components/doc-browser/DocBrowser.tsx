@@ -510,8 +510,19 @@ function EntryIcon({ entry, isPrimary, isPinned, isOpen }: { entry: DocBrowserEn
   if (isPrimary) return <Star size={14} style={{ color: 'rgba(234,179,8,0.85)' }} />;
   if (isPinned) return <Pin size={14} style={{ color: 'rgba(59,130,246,0.7)' }} />;
   if (entry.sourceType === 'github_directory') return <Github size={14} style={{ color: 'rgba(130,80,223,0.7)' }} />;
-  // 订阅源图标弱化为中性灰：整库都是订阅源时，金色 RSS 每条都亮太啰嗦；保留波浪形状区分类型即可
-  if (entry.sourceType === 'subscription') return <Rss size={14} style={{ color: 'var(--text-muted)' }} />;
+  // 订阅源：用 Rss 图标本身的颜色表达同步状态（替代此前会独占一行徽章行的状态小圆点）。
+  // 健康=中性灰（不啰嗦），出错=红，暂停=琥珀，同步中=蓝；让异常状态在文档树里直接可见。
+  if (entry.sourceType === 'subscription') {
+    const color = entry.syncStatus === 'error' ? 'rgba(248,113,113,0.95)'
+      : entry.isPaused ? 'rgba(234,179,8,0.95)'
+      : entry.syncStatus === 'syncing' ? 'rgba(96,165,250,0.95)'
+      : 'var(--text-muted)';
+    const title = entry.syncStatus === 'error' ? '订阅同步出错'
+      : entry.isPaused ? '订阅已暂停'
+      : entry.syncStatus === 'syncing' ? '订阅同步中'
+      : '订阅源';
+    return <Rss size={14} style={{ color }} aria-label={title}><title>{title}</title></Rss>;
+  }
 
   // 通过注册表按文件名/MIME 类型查找对应图标
   const cfg = getFileTypeConfig(entry.title, entry.contentType);

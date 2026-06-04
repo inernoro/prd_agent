@@ -13,3 +13,5 @@
 | feat | prd-api | 访客聚合报表新增「知识库访问排行 topStores」「标签访问统计 tagStats（lookup 文档标签聚合）」，文档排行/流水补 storeId 供点击跳转 |
 | feat | prd-admin | 访客统计抽屉新增 最受欢迎文档(可点击跳转)/知识库访问排行(可点击)/标签访问统计；点击文档排行或流水中的文档直达对应知识库并打开该文档 |
 | fix | prd-admin | 修复 Bugbot 反馈：访客报表切时间档加 seq 守卫防旧响应覆盖；账号总计 count-up 动画期间数字取整，避免闪现小数 |
+| fix | prd-api | 修复 Codex/Bugbot 反馈：访客报表 $match 下界对齐 trend 首日本地零点（KPI/排行与趋势之和一致）；账号级三端点排除 PmProjectId 项目库，与「我的空间」列表口径一致 |
+| fix | prd-admin | 订阅源同步状态改用 Rss 图标变色表达（出错红/暂停琥珀/同步中蓝/健康灰）+ title，恢复异常状态在文档树的可见性，且不再独占徽章行 |

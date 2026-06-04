@@ -3694,7 +3694,7 @@ public class DocumentStoreController : ControllerBase
     public async Task<IActionResult> ListAllStoresViewEvents([FromQuery] int limit = 50)
     {
         var userId = GetUserId();
-        var storeIds = await _db.DocumentStores.Find(s => s.OwnerId == userId).Project(s => s.Id).ToListAsync();
+        var storeIds = await _db.DocumentStores.Find(s => s.OwnerId == userId && s.PmProjectId == null).Project(s => s.Id).ToListAsync();
         return Ok(ApiResponse<object>.Ok(await BuildViewEventsPayloadAsync(storeIds, limit)));
     }
 
@@ -3831,7 +3831,7 @@ public class DocumentStoreController : ControllerBase
         [FromQuery] string? tz = null)
     {
         var userId = GetUserId();
-        var storeIds = await _db.DocumentStores.Find(s => s.OwnerId == userId).Project(s => s.Id).ToListAsync();
+        var storeIds = await _db.DocumentStores.Find(s => s.OwnerId == userId && s.PmProjectId == null).Project(s => s.Id).ToListAsync();
         return Ok(ApiResponse<object>.Ok(await BuildAnalyticsPayloadAsync(storeIds, days, tz)));
     }
 
@@ -3841,7 +3841,17 @@ public class DocumentStoreController : ControllerBase
         days = Math.Clamp(days, 1, 365);
         // tz 仅接受 "+08:00" / "-05:30" 形式的 UTC 偏移，非法则按 UTC 聚合（日界/小时按 UTC 划分）。
         var tzValid = !string.IsNullOrEmpty(tz) && System.Text.RegularExpressions.Regex.IsMatch(tz, @"^[+-]\d{2}:\d{2}$");
-        var since = DateTime.UtcNow.AddDays(-days);
+        var tzInfo = TimeSpan.Zero;
+        if (tzValid)
+        {
+            var tzs = tz!;
+            var sign = tzs[0] == '-' ? -1 : 1;
+            tzInfo = new TimeSpan(sign * int.Parse(tzs.Substring(1, 2)), sign * int.Parse(tzs.Substring(4, 2)), 0);
+        }
+        var localToday = (DateTime.UtcNow + tzInfo).Date;
+        // 匹配下界对齐 trend 首日的本地零点：trend 渲染 [localToday-(days-1) .. localToday] 共 days 个本地日；
+        // 若用 UtcNow.AddDays(-days) 会多纳入一个不在 trend 里的部分日，导致 KPI/排行 之和 > 趋势之和（Codex P2）。
+        var since = localToday.AddDays(-(days - 1)) - tzInfo;
 
         // 日期/小时分桶带时区参数，保证日界与用户本地时区一致
         BsonDocument DayExpr() => tzValid
@@ -4000,16 +4010,9 @@ public class DocumentStoreController : ControllerBase
                         tagStats.Add(new { tag = d["_id"].AsString, views = d.GetValue("v", 0).ToInt64() });
         }
 
-        // 趋势补零：按本地时区生成连续日期序列（缺失天 = 0），避免折线断裂
+        // 趋势补零：按本地时区生成连续日期序列（缺失天 = 0），避免折线断裂。
+        // tzInfo / localToday 已在方法开头计算（与 since 同源，保证匹配范围与趋势桶对齐）。
         var trend = new List<object>();
-        var tzInfo = TimeSpan.Zero;
-        if (tzValid)
-        {
-            var tzs = tz!;
-            var sign = tzs[0] == '-' ? -1 : 1;
-            tzInfo = new TimeSpan(sign * int.Parse(tzs.Substring(1, 2)), sign * int.Parse(tzs.Substring(4, 2)), 0);
-        }
-        var localToday = (DateTime.UtcNow + tzInfo).Date;
         for (var i = days - 1; i >= 0; i--)
         {
             var day = localToday.AddDays(-i).ToString("yyyy-MM-dd");
@@ -4076,8 +4079,9 @@ public class DocumentStoreController : ControllerBase
     public async Task<IActionResult> GetStoresAnalyticsSummary()
     {
         var userId = GetUserId();
+        // 与「我的空间」列表口径一致：排除项目库（PmProjectId 非空），避免总计纳入该 tab 看不到的库
         var storeIds = await _db.DocumentStores
-            .Find(s => s.OwnerId == userId)
+            .Find(s => s.OwnerId == userId && s.PmProjectId == null)
             .Project(s => s.Id)
             .ToListAsync();
 
