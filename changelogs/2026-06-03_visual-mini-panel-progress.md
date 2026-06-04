@@ -6,3 +6,4 @@
 | feat | prd-admin | 智能体抽屉接入对话后端持久化:开抽屉从后端恢复(优先于 sessionStorage,避开旧 run 污染)、去抖落库、"开启全新对话"清后端;mini 面板「已生成未插入」图随对话持久化 + 重开回填 |
 | fix | prd-admin | 智能体抽屉:取消挂起的去抖后端保存于"新对话"清空前 + 切换文档时,杜绝 pending save 在 DELETE/切换后落库把旧对话复活或写错文档(Bugbot/Codex P2/Medium) |
 | fix | prd-admin | 视觉创作 mini 面板同步 initialResult/initialPrompt 的后续 prop 变化:修复后端异步回填的暂存图被隐藏、"为这段配图"重新预填不生效(Bugbot Medium) |
+| fix | prd-admin | 智能体抽屉暂存图生命周期:切换文档重置 pendingVisualUrl(防串档) + 插入文档后清空(防重开重复回填/重复插入)(Codex P2 x2) |

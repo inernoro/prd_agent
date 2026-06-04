@@ -266,6 +266,9 @@ export function ReprocessChatDrawer({
     setError(null);
     setApplying(null);
     setInput('');
+    // 切文档必须把上一篇「已生成未插入」的暂存图也清掉：否则新文档若无暂存图，
+    // 旧 URL 会残留并被持久化进新文档的 pendingImagesJson（Codex P2：pending image 串档）
+    setPendingVisualUrl(null);
     setDocContent('');
     setDocTruncated(false);
     setDocLoadError(null);
@@ -881,6 +884,9 @@ export function ReprocessChatDrawer({
     if (entryIdRef.current !== requestedEntryId) return;
     if (!res.success) { toast.error('插入失败', res.error?.message); return; }
     toast.success('已插入文档', '配图已追加到文末');
+    // 已插入 = 不再是「已生成未插入」，清掉暂存图：否则去抖保存继续把它当未插入图落库，
+    // 重开抽屉又回填并再次提示插入，产生重复 markdown（Codex P2：clear pending image after insert）
+    setPendingVisualUrl(null);
     try {
       const refreshed = await getDocumentContent(requestedEntryId);
       if (entryIdRef.current === requestedEntryId && refreshed.success) {
