@@ -2526,6 +2526,78 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<DocumentStoreAgentRun?>.Ok(run));
     }
 
+    // ────────────────────────────────────────────────────────────────────
+    // 智能体抽屉 direct-chat 对话持久化（关浏览器标签页/换设备都不丢）。
+    // 按 (userId, entryId) 唯一一条、覆盖式 upsert —— 不走 Run，规避"旧 run 污染新会话"老 bug。
+    // 详见 DocumentStoreConversation.cs 设计说明。
+    // ────────────────────────────────────────────────────────────────────
+
+    /// <summary>读取某文档的智能体对话（含 messages / 暂存图 / 选中智能体），用于重开抽屉恢复。</summary>
+    [HttpGet("entries/{entryId}/reprocess/conversation")]
+    public async Task<IActionResult> GetReprocessConversation(string entryId)
+    {
+        // team writable 同 active-run：协作成员也能看到自己在该条目下的对话历史
+        var userId = GetUserId();
+        var (_, _, err) = await LoadWritableEntryAsync(entryId, userId);
+        if (err != null) return err;
+        var convo = await _db.DocumentStoreConversations
+            .Find(c => c.SourceEntryId == entryId && c.UserId == userId)
+            .FirstOrDefaultAsync();
+        return Ok(ApiResponse<DocumentStoreConversation?>.Ok(convo));
+    }
+
+    /// <summary>覆盖式保存某文档的智能体对话（前端去抖调用）。messages / pendingImages 为前端拥有形状的 JSON blob。</summary>
+    [HttpPut("entries/{entryId}/reprocess/conversation")]
+    public async Task<IActionResult> SaveReprocessConversation(string entryId, [FromBody] SaveConversationRequest request)
+    {
+        var userId = GetUserId();
+        var (entry, store, err) = await LoadWritableEntryAsync(entryId, userId);
+        if (err != null) return err;
+        if (entry!.IsFolder)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持对话持久化"));
+
+        var messagesJson = string.IsNullOrWhiteSpace(request.MessagesJson) ? "[]" : request.MessagesJson!;
+        var pendingJson = string.IsNullOrWhiteSpace(request.PendingImagesJson) ? "[]" : request.PendingImagesJson!;
+        // 体积护栏：避免客户端塞超大 blob 撑爆集合
+        if (messagesJson.Length > 256 * 1024)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "对话内容过大，无法保存"));
+        if (pendingJson.Length > 64 * 1024)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "暂存图片过多，无法保存"));
+
+        var now = DateTime.UtcNow;
+        // 原子 upsert（替代 find-then-insert/update）：单次 UpdateOne(IsUpsert) 把"查 + 插/改"合并为
+        // 一个操作，消除两标签页并发各自 read-miss 后各插一行的窗口（Codex P2）。彻底去重还需
+        // (UserId, SourceEntryId) 唯一索引（本仓库禁运行时建索引，见 doc/guide.mongodb-indexes.md，由 DBA 建）。
+        var filter = Builders<DocumentStoreConversation>.Filter.And(
+            Builders<DocumentStoreConversation>.Filter.Eq(c => c.SourceEntryId, entryId),
+            Builders<DocumentStoreConversation>.Filter.Eq(c => c.UserId, userId));
+        var update = Builders<DocumentStoreConversation>.Update
+            .Set(c => c.MessagesJson, messagesJson)
+            .Set(c => c.PendingImagesJson, pendingJson)
+            .Set(c => c.ActiveRefJson, request.ActiveRefJson)
+            .Set(c => c.StoreId, store!.Id)
+            .Set(c => c.UpdatedAt, now)
+            // _id 与 CreatedAt 仅首次插入写；UserId/SourceEntryId 由 filter 等值自动落到新文档（不可再 SetOnInsert，否则路径冲突）。
+            .SetOnInsert(c => c.Id, Guid.NewGuid().ToString("N"))
+            .SetOnInsert(c => c.CreatedAt, now);
+        await _db.DocumentStoreConversations.UpdateOneAsync(
+            filter, update, new UpdateOptions { IsUpsert = true }, CancellationToken.None);
+        return Ok(ApiResponse<object>.Ok(new { ok = true }));
+    }
+
+    /// <summary>清空某文档的智能体对话（"开启全新对话"）。</summary>
+    [HttpDelete("entries/{entryId}/reprocess/conversation")]
+    public async Task<IActionResult> ClearReprocessConversation(string entryId)
+    {
+        var userId = GetUserId();
+        var (_, _, err) = await LoadWritableEntryAsync(entryId, userId);
+        if (err != null) return err;
+        await _db.DocumentStoreConversations.DeleteManyAsync(
+            c => c.SourceEntryId == entryId && c.UserId == userId,
+            cancellationToken: CancellationToken.None);
+        return Ok(ApiResponse<object>.Ok(new { ok = true }));
+    }
+
     /// <summary>
     /// 写回任意一段内容到文档（replace / append / new），不依赖 reprocess Run。
     /// 用于：抽屉直接通过 /ai-toolbox/direct-chat 拿到的回复内容，前端把字符串塞进来就能落库。
@@ -4032,6 +4104,19 @@ public class ReprocessChatRequest
 
     /// <summary>若由模板 chip 触发，记录所选模板 key（仅首条消息生效，决定 system prompt）</summary>
     public string? TemplateKey { get; set; }
+}
+
+/// <summary>覆盖式保存智能体抽屉对话。三个字段都是前端拥有形状的 JSON，后端不解析。</summary>
+public class SaveConversationRequest
+{
+    /// <summary>sanitized ChatMessage[] 的 JSON 字符串</summary>
+    public string? MessagesJson { get; set; }
+
+    /// <summary>mini 面板「已生成未插入」图片数组的 JSON 字符串</summary>
+    public string? PendingImagesJson { get; set; }
+
+    /// <summary>当前选中智能体引用的 JSON 字符串（可空）</summary>
+    public string? ActiveRefJson { get; set; }
 }
 
 public class ReprocessApplyRequest

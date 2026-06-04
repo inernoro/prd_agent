@@ -916,6 +916,13 @@ export const api = {
     stream: (runId: string) => `/api/ai-toolbox/runs/${runId}/stream`,
   },
 
+  // ============ Agent Universe 智能体宇宙（统一能力契约 + 调用信封）============
+  agentUniverse: {
+    capabilities: () => '/api/agent-universe/capabilities',
+    invoke: () => '/api/agent-universe/invoke',
+    parameters: (agentKey: string) => `/api/agent-universe/agents/${agentKey}/parameters`,
+  },
+
   // ============ Transcript Agent 音视频转录 ============
   transcriptAgent: {
     workspaces: () => '/api/transcript-agent/workspaces',
@@ -1197,6 +1204,7 @@ export const api = {
       reprocessActiveRun: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess/active-run`,
       reprocessApply: (runId: string) => `/api/document-store/agent-runs/${runId}/apply`,
       reprocessApplyContent: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess/apply-content`,
+      reprocessConversation: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess/conversation`,
       latestAgentRun: (entryId: string) => `/api/document-store/entries/${entryId}/agent-runs/latest`,
       // 批次 C：浏览事件埋点
       logView: (entryId: string) => `/api/document-store/entries/${entryId}/view`,

@@ -345,6 +345,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | `codebase-snapshot.md` | 无 glob (手动维护) | 项目快照：架构模式、功能注册表、118 个 MongoDB 集合 |
 | `zero-friction-input.md` | `**/*.{ts,tsx}` | 能上传不手输，不确定就两个都给，禁止空白发呆 |
 | `guided-exploration.md` | `**/*.{ts,tsx}` | 陌生页面 3 秒内知道做什么，空状态必须有引导 |
+| `chief-designer-usability.md` | `prd-admin/src/**/*.tsx`, `prd-desktop/src/**/*.tsx` | 好用四原则（首席设计师视角）：快启动无等待 / 奥卡姆剃刀剃掉不需人类处 / 不遮挡可视化够明显 / 短途减步不杜撰长链；交付前四条自审，两条不及格即返工 |
 | `no-rootless-tree.md` | `**/*.{cs,ts,tsx}` | 无根之木禁令 + 借用法则：不假定不存在的能力，缺什么借什么 |
 | `bridge-ops.md` | `cds/src/**/*.ts` | Bridge 操作规范：鼠标轨迹 + spa-navigate + description 必填 |
 | `navigation-registry.md` | 新 Agent / 新功能入口 | SSOT 模型：路由信息写到 launcherCatalog/agentSwitcherStore/toolboxStore，「设置→导航顺序」+ Cmd+K 自动同步；CI 跑 `navCoverage` 测试，未登记或 phantom 路由直接 fail |

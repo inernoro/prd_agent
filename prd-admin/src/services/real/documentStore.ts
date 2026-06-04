@@ -483,6 +483,36 @@ export async function getActiveReprocessRun(entryId: string) {
   );
 }
 
+// ── 智能体抽屉对话的后端持久化（关浏览器标签页/换设备都不丢；详见 DocumentStoreConversation.cs） ──
+
+/** 读取某文档的智能体对话（含 messages / 暂存图 / 选中智能体），用于重开抽屉恢复 */
+export async function getReprocessConversation(entryId: string) {
+  return await apiRequest<import('@/services/contracts/documentStore').DocumentStoreConversation | null>(
+    api.documentStore.entries.reprocessConversation(entryId),
+    { method: 'GET' },
+  );
+}
+
+/** 覆盖式保存某文档的智能体对话（去抖调用）。三个字段都是前端拥有形状的 JSON 字符串 */
+export async function saveReprocessConversation(entryId: string, input: {
+  messagesJson: string;
+  pendingImagesJson: string;
+  activeRefJson?: string | null;
+}) {
+  return await apiRequest<{ ok: boolean }>(
+    api.documentStore.entries.reprocessConversation(entryId),
+    { method: 'PUT', body: input },
+  );
+}
+
+/** 清空某文档的智能体对话（"开启全新对话"） */
+export async function clearReprocessConversation(entryId: string) {
+  return await apiRequest<{ ok: boolean }>(
+    api.documentStore.entries.reprocessConversation(entryId),
+    { method: 'DELETE' },
+  );
+}
+
 /** 写回任意内容到文档（不依赖 Run；用于通过 /ai-toolbox/direct-chat 直调拿回的内容） */
 export async function applyReprocessContent(entryId: string, input: {
   mode: 'replace' | 'append' | 'new';
