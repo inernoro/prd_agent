@@ -201,5 +201,9 @@
   .cdsh-board { max-width: 560px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .cdsh-root * { animation-duration: .001ms !important; animation-iteration-count: 1 !important; }
+  /* Also target .cdsh-bg children: LoginPage reuses these background layers on
+     a <main> without .cdsh-root, so the scope must cover both mount points. */
+  .cdsh-root *,
+  .cdsh-bg,
+  .cdsh-bg * { animation-duration: .001ms !important; animation-iteration-count: 1 !important; }
 }

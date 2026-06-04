@@ -22,14 +22,18 @@ export function HomePage(): JSX.Element {
   const [feedOff, setFeedOff] = useState(false);
 
   useEffect(() => {
-    const timer = setInterval(() => {
+    let fadeTimer: number | undefined;
+    const timer = window.setInterval(() => {
       setFeedOff(true);
-      window.setTimeout(() => {
+      fadeTimer = window.setTimeout(() => {
         setFeedIndex((i) => (i + 1) % FEED_LINES.length);
         setFeedOff(false);
       }, 360);
     }, 2600);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      if (fadeTimer !== undefined) clearTimeout(fadeTimer);
+    };
   }, []);
 
   return (
