@@ -328,18 +328,19 @@ function ProductGraphInner({ productId, overview }: { productId?: string; overvi
         return { ...node, style: { ...baseS, opacity: dim ? 0.16 : 1, ...(ring ? { boxShadow: `0 0 0 ${isSel ? 3 : 2}px ${ring}` } : {}) } };
       }),
     );
-    const traceColor = traceAnchor ? (TYPE_META[idType(traceAnchor)]?.color ?? '#fbbf24') : '#fbbf24';
     setEdges((es) =>
       es.map((e) => {
         const inTrace = traceIds && traceIds.has(e.source) && traceIds.has(e.target);
+        // 每条追溯边按各自「母体（来源节点）」的类型色着色 —— 同一追溯网呈现多种颜色
+        const edgeColor = TYPE_META[idType(e.source)]?.color ?? '#fbbf24';
         return {
           ...e,
           animated: !!inTrace,
           markerEnd: inTrace
-            ? { type: MarkerType.ArrowClosed, width: 16, height: 16, color: traceColor }
+            ? { type: MarkerType.ArrowClosed, width: 16, height: 16, color: edgeColor }
             : e.markerEnd,
           style: {
-            stroke: inTrace ? traceColor : 'rgba(255,255,255,0.16)',
+            stroke: inTrace ? edgeColor : 'rgba(255,255,255,0.16)',
             strokeWidth: inTrace ? 2 : 1,
             opacity: traceIds && !inTrace ? 0.1 : 1,
           },
