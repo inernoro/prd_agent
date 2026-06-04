@@ -65,6 +65,9 @@
   判定是否"未honored"，未honored 则补发降级预警。**权威修法**应由 `ModelResolver` 在 expectedModel 未命中分支
   显式置一个 `ExpectedModelHonored=false` 信号（属共享核心改动，单独排期）；当前控制器启发式对极端别名/大小写
   边界可能漏判，但不会误拒请求。
+  **策略决定（用户 2026-06-04 PR#732）**：ModelResolver 的「版本容差」前缀匹配（如绑定 model-v3.2、池里 model-v3）
+  视为「已遵守」**不报警**，贴合 ModelResolver 设计意图、避免版本容差绑定刷屏；仅彻底回落默认池才报警。
+  Bugbot 建议「任何非精确匹配都报警」未采纳（会对版本容差客户产生噪音）。
 - **chat 工具调用 tool_calls / 多选(n) / finish_reason=length 丢失（Codex PR#732 P2，流式+非流式）**：
   非流式把上游压成单条 `finish_reason=stop` + `message.content=Content`；流式只发 role/content delta，
   不发 `delta.tool_calls`。两者同一根因：`ILlmGateway` 只暴露归一化的 `Content`/reasoning/finish 文本，

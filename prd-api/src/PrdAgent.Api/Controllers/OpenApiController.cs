@@ -506,6 +506,8 @@ public class OpenApiController : ControllerBase
         // 绑定失效检测（Codex PR#732 P2）：绑定的 Key，若 expectedModel 既没匹配到模型 id（精确/前缀容差），
         // 也没匹配到池 code，说明绑定的模型/池被删/改名，ModelResolver 静默走了默认调度（不算 IsFallback）。
         // 此时该客户其实跑在共享默认池上却毫无察觉 → 补发降级预警，让管理员看见。
+        // 策略决定（用户 2026-06-04 PR#732）：ModelResolver 的「版本容差」前缀匹配视为「已遵守」，不报警
+        // （贴合其设计意图，避免版本容差绑定刷屏）；仅当连容差都不沾边、彻底回落默认时才报警。
         var exp = resolution.ExpectedModel;
         if (!string.IsNullOrWhiteSpace(exp))
         {
