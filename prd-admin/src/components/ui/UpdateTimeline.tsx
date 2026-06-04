@@ -79,10 +79,19 @@ export function parseMermaidTimeline(src: string): ParsedTimeline | null {
     }
 
     // 事件行：用冒号切分（兼容全角／半角冒号），第一段为标题，其余为说明项
+    const isContinuation = /^[:：]/.test(line); // 冒号开头 = mermaid timeline 的"接续事件"语法
     const parts = line.split(/\s*[:：]\s*/).map((p) => p.trim()).filter(Boolean);
     if (parts.length === 0) continue;
+
+    // 接续行（如 "  : 另一个事件"）：归属到上一条事件，作为追加说明，而非新建顶层事件卡
+    const section = ensureSection();
+    if (isContinuation && section.events.length > 0) {
+      section.events[section.events.length - 1].details.push(...parts);
+      continue;
+    }
+
     const [eventTitle, ...details] = parts;
-    ensureSection().events.push({ title: eventTitle, details });
+    section.events.push({ title: eventTitle, details });
   }
 
   // 过滤掉完全没有事件的空 section（如只写了 section 头但没内容）

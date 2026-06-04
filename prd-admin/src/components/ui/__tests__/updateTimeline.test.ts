@@ -46,6 +46,23 @@ describe('parseMermaidTimeline', () => {
     expect(parsed!.sections[0].events).toHaveLength(2);
   });
 
+  it('mermaid 接续事件语法（冒号开头行）归属到上一条事件', () => {
+    const parsed = parseMermaidTimeline(
+      'timeline\nsection D1\n时间点 : 事件甲\n    : 事件乙\n    : 事件丙',
+    );
+    expect(parsed!.sections[0].events).toHaveLength(1);
+    expect(parsed!.sections[0].events[0]).toEqual({
+      title: '时间点',
+      details: ['事件甲', '事件乙', '事件丙'],
+    });
+  });
+
+  it('接续行无前置事件时降级为普通事件，不丢内容', () => {
+    const parsed = parseMermaidTimeline('timeline\nsection D1\n : 孤立事件');
+    expect(parsed!.sections[0].events).toHaveLength(1);
+    expect(parsed!.sections[0].events[0].title).toBe('孤立事件');
+  });
+
   it('非 timeline（flowchart）返回 null，交回 MermaidDiagram', () => {
     expect(parseMermaidTimeline('flowchart TD\n A --> B')).toBeNull();
     expect(parseMermaidTimeline('graph LR\n A-->B')).toBeNull();
