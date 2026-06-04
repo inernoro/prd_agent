@@ -702,6 +702,9 @@
 - [功能验收体系 · 债务台账](debt.acceptance-system) `debt.acceptance-system`
   > 标准创建/执行/结果三方经知识库打通的未来架构：分阶段还债（先 schema 化+版本绑定，后拆 Agent），含触发条件与 YAGNI 边界
 
+- [知识库跨环境同步 · 债务台账](debt.document-store-sync) `debt.document-store-sync`
+  > 库↔库/跨环境同步首版已知边界：不传播删除、只搬文本、双向冲突本地优先、库级变更检测、令牌永久、需网络互通
+
 - [分享链接安全债务台账](debt.share-link-security) `debt.share-link-security`
   > 分享链接系统的已知安全边界与待补项
 
