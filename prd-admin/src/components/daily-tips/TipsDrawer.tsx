@@ -123,11 +123,14 @@ export function TipsDrawer() {
     const isPageBound = isPageGuide || (hasTour && !!url);
     if (!isPageBound) return true; // 页面无关的公告/提示,任意页展示
     if (!url) return false;
-    if (isEditorPageGuide(sid)) {
-      return location.pathname.startsWith(url + '/') || location.pathname.startsWith(url + '-fullscreen/');
-    }
-    // actionUrl 可能带 query(如 /marketplace?type=skill),只比对 pathname 部分
+    // actionUrl 可能带 query/hash(如 /marketplace?type=skill),统一只比对 pathname 部分。
+    // 编辑器与非编辑器分支都用 urlPath,与 matchPageGuide 同口径——否则带 query 的编辑器教程
+    // 会出现「Spotlight/newbie 触发但抽屉里看不到」的漂移(Bugbot Medium「Editor filter ignores URL stripping」)。
     const urlPath = url.split('?')[0].split('#')[0];
+    if (!urlPath) return false;
+    if (isEditorPageGuide(sid)) {
+      return location.pathname.startsWith(urlPath + '/') || location.pathname.startsWith(urlPath + '-fullscreen/');
+    }
     return location.pathname === urlPath;
   });
   // 触发(重新)挂钩:items / dismissed 变化时列表应刷新

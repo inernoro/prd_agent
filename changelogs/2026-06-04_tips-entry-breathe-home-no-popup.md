@@ -7,3 +7,4 @@
 | fix | prd-admin | 免打扰到期后通知卡自动恢复:snooze 不再置 toastCollapsed,避免免打扰窗口结束后卡片永久收起(Bugbot) |
 | fix | prd-admin | matchPageGuide 与抽屉过滤统一 strip query/hash:防止带 query 的 actionUrl 在抽屉显示却不触发 Spotlight/脉冲(Bugbot) |
 | fix | prd-admin | 教程抽屉自动展开 effect 把 location.pathname 纳入 deps:修复首页守卫导致导航后 effect 不再触发、整 session 不再自动弹的问题(Bugbot) |
+| fix | prd-admin | 教程抽屉 editor 分支也 strip query/hash:与 matchPageGuide/非 editor 分支统一口径,防带 query 的编辑器教程出现「Spotlight 触发但抽屉看不到」漂移(Bugbot) |
