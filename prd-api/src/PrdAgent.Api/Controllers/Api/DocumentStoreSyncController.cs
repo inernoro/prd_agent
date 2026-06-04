@@ -294,6 +294,13 @@ public class DocumentStoreSyncController : ControllerBase
                 if (fe.Content == null) { skipped++; continue; }
                 var parentId = ResolveParent(fe.ParentLineageId);
 
+                // 同血缘已被文件夹占用：类型冲突，跳过而非再插一条文件，避免一个 store 内出现重复 lineage（Bugbot）。
+                if (byLineage.TryGetValue(fe.LineageId, out var exFolderConflict) && exFolderConflict.IsFolder)
+                {
+                    skipped++;
+                    continue;
+                }
+
                 if (byLineage.TryGetValue(fe.LineageId, out var exEntry) && !exEntry.IsFolder)
                 {
                     // 已存在：内容未变则跳过，避免 bump UpdatedAt 导致永远 pending
@@ -518,9 +525,11 @@ public class DocumentStoreSyncController : ControllerBase
             else
             {
                 // 反向（本地配对的对端侧）：本库 = 配对的 remote，另一库 = 配对的 local。
-                // 交换签名槽位让 ResolveStatus 仍按 LastLocal/LastRemote 正确比对。
+                // 交换签名槽位让 ResolveStatus 按 LastLocal/LastRemote 正确比对。
+                // 用 ignoreDirection：从对端侧看徽章，关心的是"两库是否一致"，不论配对方向——
+                // 否则 push-only 配对在对端改了内容也只会显示已同步，掩盖待覆盖/不一致（Bugbot）。
                 var otherSig = await ComputeSignatureAsync(l.LocalStoreId);
-                status = ResolveStatus(l, otherSig, thisSig);
+                status = ResolveStatus(l, otherSig, thisSig, ignoreDirection: true);
             }
             items.Add(ToDto(l, status, null, null));
         }
@@ -1031,7 +1040,7 @@ public class DocumentStoreSyncController : ControllerBase
         return (userId, name, user?.AvatarFileName);
     }
 
-    private static string ResolveStatus(DocumentStoreSyncLink link, string? localSig, string? remoteSig)
+    private static string ResolveStatus(DocumentStoreSyncLink link, string? localSig, string? remoteSig, bool ignoreDirection = false)
     {
         // 已落库的 error 优先于一切（含首次运行就失败、LastSyncedAt 仍为 null 的情况）：
         // 否则首跑因对端不可达而失败的链接刷新后会被当成"从未同步"，掩盖错误（Codex P2）。
@@ -1047,12 +1056,14 @@ public class DocumentStoreSyncController : ControllerBase
         var remoteChanged = remoteSig == null
             || link.LastRemoteSignature == null
             || remoteSig != link.LastRemoteSignature;
-        var relevant = link.Direction switch
-        {
-            DocumentSyncDirection.Push => localChanged,
-            DocumentSyncDirection.Pull => remoteChanged,
-            _ => localChanged || remoteChanged,
-        };
+        var relevant = ignoreDirection
+            ? (localChanged || remoteChanged)
+            : link.Direction switch
+            {
+                DocumentSyncDirection.Push => localChanged,
+                DocumentSyncDirection.Pull => remoteChanged,
+                _ => localChanged || remoteChanged,
+            };
         // error 已在方法开头优先返回（落库 error 一直显示「同步出错」，直到一次成功同步清成 synced）。
         return relevant ? DocumentSyncLinkStatus.Pending : DocumentSyncLinkStatus.Synced;
     }
