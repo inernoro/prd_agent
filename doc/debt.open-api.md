@@ -34,6 +34,27 @@
 4. **监控**：管理 tab 展示每 Key 今日请求数 / token；可在线编辑限额。
    Redis 异常时用量读取 fail-open 返回 0。
 
+## Phase 3 已偿还（2026-06-04）
+
+1. **model 字段语义**：从"静默忽略"改为**按 Key 模型白名单**——client 可在白名单内自选，
+   越界 400 `model_not_allowed`，不填用白名单第一个（默认），白名单空=默认池。
+2. **密钥自省** `GET /api/v1/key`：返回白名单/配额/今日用量/有效期，不打模型。
+3. **可观测性对齐**：响应 `id = chatcmpl-<requestId>` 与日志同源可回溯；成功/429 回写
+   `X-RateLimit-Limit/Remaining/Reset`。
+4. **成本防爆**：单请求输入字符上限 `MaxInputChars=200000`，超限 400 `input_too_large`。
+5. **接入指南**：`doc/guide.open-api.md`（quickstart + 契约 + 白名单语义）。
+
+## 仍未做（按优先级排期，本轮我主动决定不做的）
+
+- **并发上限**：限流只算每分钟次数，未限同时并发流。并发计数器需所有路径（含流式断开）
+  可靠 decrement，泄漏风险高，单独排期。
+- **成本/额度账本**：只有 token 计数，无 credits / `usage.cost` / 计费对账。商用前补。
+- **单次生成回查 `/v1/generation?id=`**：日志已存大部分字段，缺独立查询端点。
+- **embeddings 端点**：`/v1/embeddings` 返 404（无 embedding 模型池验证）。
+- **图片端点真实出图未端到端验**：只验路由/鉴权；图片无 token/成本计。
+- **日志无 TTL**：`open_api_request_logs` 含 IP/UA，无自动过期（按 no-auto-index 规则由 DBA 建 TTL 索引）。
+- **MaxInputChars 全局常量**：未做按 Key 可配。
+
 ## 已知边界（Phase 2 留尾）
 
 1. **监控仅当日 + 列表级**：用量看当天 Redis 计数 + 最近日志，未做跨天趋势图/聚合报表。

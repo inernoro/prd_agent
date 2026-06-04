@@ -17,14 +17,14 @@ public class OpenApiUsageService : IOpenApiUsageService
 
     private const int DefaultRatePerMin = 120;
 
-    // 每分钟滑动窗口：移除过期 → 计数 → 未超则写入。member 用唯一值避免同毫秒覆盖。
+    // 每分钟滑动窗口：移除过期 → 计数 → 未超则写入。返回 {allowed(0/1), 当前计数}，供回写 X-RateLimit-*。
     private const string RateScript = @"
         redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
         local n = redis.call('ZCARD', KEYS[1])
-        if n >= tonumber(ARGV[2]) then return 0 end
+        if n >= tonumber(ARGV[2]) then return {0, n} end
         redis.call('ZADD', KEYS[1], ARGV[3], ARGV[4])
         redis.call('EXPIRE', KEYS[1], 120)
-        return 1";
+        return {1, n + 1}";
 
     public OpenApiUsageService(ConnectionMultiplexer redis, MongoDbContext db, ILogger<OpenApiUsageService> logger)
     {
@@ -49,6 +49,7 @@ public class OpenApiUsageService : IOpenApiUsageService
         {
             var db = _redis.GetDatabase();
             var day = Day();
+            var limit = key.OpenApiRateLimitPerMin is int r && r > 0 ? r : DefaultRatePerMin;
 
             // 1. 每日 token 配额预检（只读，超额直接拒）
             if (key.OpenApiDailyTokenQuota is long tq && tq > 0)
@@ -56,7 +57,7 @@ public class OpenApiUsageService : IOpenApiUsageService
                 var v = await db.StringGetAsync(TokKey(key.Id, day));
                 if (v.HasValue && (long)v >= tq)
                     return OpenApiUsageDecision.Deny("daily_token_quota_exceeded",
-                        $"今日 token 配额已用尽（上限 {tq}）", SecondsToMidnight());
+                        $"今日 token 配额已用尽（上限 {tq}）", SecondsToMidnight(), limit);
             }
 
             // 2. 每日请求配额
@@ -65,32 +66,33 @@ public class OpenApiUsageService : IOpenApiUsageService
                 var v = await db.StringGetAsync(ReqKey(key.Id, day));
                 if (v.HasValue && (long)v >= rq)
                     return OpenApiUsageDecision.Deny("daily_request_quota_exceeded",
-                        $"今日请求数配额已用尽（上限 {rq}）", SecondsToMidnight());
+                        $"今日请求数配额已用尽（上限 {rq}）", SecondsToMidnight(), limit);
             }
 
-            // 3. 每分钟速率（按 Key 桶，原子滑动窗口）
-            var limit = key.OpenApiRateLimitPerMin is int r && r > 0 ? r : DefaultRatePerMin;
+            // 3. 每分钟速率（按 Key 桶，原子滑动窗口，返回当前计数）
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var windowStart = now - 60_000;
             var member = $"{now}-{Guid.NewGuid():N}";
-            var allowed = (long)await db.ScriptEvaluateAsync(RateScript,
+            var res = (RedisValue[])(await db.ScriptEvaluateAsync(RateScript,
                 new RedisKey[] { $"or:rate:{key.Id}" },
-                new RedisValue[] { windowStart, limit, now, member });
-            if (allowed == 0)
+                new RedisValue[] { windowStart, limit, now, member }))!;
+            var allowed = (int)res[0] == 1;
+            var count = (int)res[1];
+            if (!allowed)
                 return OpenApiUsageDecision.Deny("rate_limit_exceeded",
-                    $"超过每分钟 {limit} 次速率上限，请稍后重试", 5);
+                    $"超过每分钟 {limit} 次速率上限，请稍后重试", 5, limit);
 
             // 4. 占用一个每日请求额度
             var reqKey = ReqKey(key.Id, day);
             await db.StringIncrementAsync(reqKey);
             await db.KeyExpireAsync(reqKey, TimeSpan.FromDays(2));
 
-            return OpenApiUsageDecision.Allow;
+            return OpenApiUsageDecision.Allow(limit, limit - count);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[OpenApiUsage] 准入检查异常，fail-open 放行 keyId={KeyId}", key.Id);
-            return OpenApiUsageDecision.Allow;
+            return OpenApiUsageDecision.Allow(0, 0);
         }
     }
 

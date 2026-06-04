@@ -167,6 +167,7 @@ docs:
   guide.mongodb-indexes: MongoDB 索引手册
   guide.multi-image-compose-test: 多图组合功能测试备忘录
   guide.doubao-asr-relay: 豆包 ASR 模型中继接入指南
+  guide.open-api: 开放接口（OpenAI 兼容对外网关）接入指南
   guide.review-agent: 产品评审员使用手册
   guide.cds-cluster-setup: CDS 集群扩容指南
   guide.cds-forwarder-deploy: CDS Forwarder 部署 / 迁移 / 卸载 Runbook

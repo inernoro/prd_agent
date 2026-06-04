@@ -421,6 +421,7 @@
   > 多图组合生成功能的测试用例与验证记录
 
 - [豆包 ASR 模型中继接入指南](guide.doubao-asr-relay) `guide.doubao-asr-relay`
+- [开放接口（OpenAI 兼容对外网关）接入指南](guide.open-api) `guide.open-api`
   > 豆包流式 ASR WebSocket 中继的接入与配置指南
 
 - [CDS 集群扩容指南](guide.cds-cluster-setup) `guide.cds-cluster-setup`

@@ -71,19 +71,20 @@ public class AgentApiKey
     /// </summary>
     public int GracePeriodDays { get; set; } = 7;
 
-    // ── OpenApi 对外网关绑定（按 Key 固定模型，避免总池调度影响客户） ──
+    // ── OpenApi 对外网关：按 Key 模型白名单（客户可在白名单内自选，避免总池调度误伤客户） ──
     //
-    // 取值约定（两者择一即可，都走 ModelResolver 的 expectedModel 通道）：
-    //   - 模型池 Code（如 "claude-pool"）→ 绑定一个「小模型池」，池内含 1 个模型即固定模型，
-    //     含多个则可故障转移；
-    //   - 模型 id（如 "claude-sonnet-4-6"）→ 绑定一个固定模型。
-    // null / 空 → 未绑定，回落到 default:chat / default:image 默认池。
+    // 白名单元素 = 客户在请求 body 的 model 字段可填的模型 id（如 "deepseek/deepseek-v3.2"），
+    // 也兼容模型池 Code（ModelResolver 的 expectedModel 通道按 id/前缀/池Code 三档匹配）。
+    // 语义：
+    //   - 白名单非空：client model 命中白名单 → 用之；client 不填 → 用白名单第一个作默认；
+    //     client 填了白名单外的 → 400 model_not_allowed（返回允许清单）。
+    //   - 白名单为空：未绑定，回落 default:chat / default:image 默认池（client model 被忽略）。
 
-    /// <summary>OpenApi chat 端点绑定的模型池 Code 或模型 id；null=默认 chat 池。</summary>
-    public string? OpenApiChatBinding { get; set; }
+    /// <summary>OpenApi chat 端点的模型白名单（model id 或池 Code）；空=未绑定走默认 chat 池。第一个为默认。</summary>
+    public List<string> OpenApiChatModels { get; set; } = new();
 
-    /// <summary>OpenApi 生图端点绑定的模型池 Code 或模型 id；null=默认 image 池。</summary>
-    public string? OpenApiImageBinding { get; set; }
+    /// <summary>OpenApi 生图端点的模型白名单（model id 或池 Code）；空=未绑定走默认 image 池。第一个为默认。</summary>
+    public List<string> OpenApiImageModels { get; set; } = new();
 
     /// <summary>每日 token 配额（OpenApi 网关用）；null=不限。Phase 2 配额预警消费此字段。</summary>
     public long? OpenApiDailyTokenQuota { get; set; }

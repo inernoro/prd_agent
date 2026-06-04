@@ -56,8 +56,9 @@ public class AdminOpenApiController : ControllerBase
         var result = new List<object>();
         foreach (var k in keys)
         {
-            var chatResolved = await SafeResolveAsync(AppCallerRegistry.OpenApi.Proxy.Chat, ModelTypes.Chat, k.OpenApiChatBinding, ct);
-            var imageResolved = await SafeResolveAsync(AppCallerRegistry.OpenApi.Proxy.Generation, ModelTypes.ImageGen, k.OpenApiImageBinding, ct);
+            // 默认（白名单第一个）的实际解析，供管理快速核对客户当前默认拿到的是哪个模型
+            var chatResolved = await SafeResolveAsync(AppCallerRegistry.OpenApi.Proxy.Chat, ModelTypes.Chat, k.OpenApiChatModels.FirstOrDefault(), ct);
+            var imageResolved = await SafeResolveAsync(AppCallerRegistry.OpenApi.Proxy.Generation, ModelTypes.ImageGen, k.OpenApiImageModels.FirstOrDefault(), ct);
             var usage = await _usage.GetUsageAsync(k.Id, ct);
             result.Add(new
             {
@@ -66,8 +67,8 @@ public class AdminOpenApiController : ControllerBase
                 ownerUserId = k.OwnerUserId,
                 ownerName = userNameById.TryGetValue(k.OwnerUserId, out var n) ? n : k.OwnerUserId,
                 isActive = k.IsActive,
-                chatBinding = k.OpenApiChatBinding,
-                imageBinding = k.OpenApiImageBinding,
+                chatModels = k.OpenApiChatModels,
+                imageModels = k.OpenApiImageModels,
                 chatResolvedModel = chatResolved.model,
                 chatResolutionType = chatResolved.type,
                 chatIsFallback = chatResolved.isFallback,
@@ -86,7 +87,7 @@ public class AdminOpenApiController : ControllerBase
         return Ok(ApiResponse<object>.Ok(result));
     }
 
-    /// <summary>设置/清除某 Key 的 chat / image 绑定（传 null 或空串=清除→回落默认池）。</summary>
+    /// <summary>设置某 Key 的 chat / image 模型白名单（空数组=清除→回落默认池）+ 限额。第一个为客户默认。</summary>
     [HttpPut("bindings/{keyId}")]
     public async Task<IActionResult> SetBinding(string keyId, [FromBody] SetBindingRequest req, CancellationToken ct)
     {
@@ -95,8 +96,8 @@ public class AdminOpenApiController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "Key 不存在"));
 
         var update = Builders<AgentApiKey>.Update
-            .Set(k => k.OpenApiChatBinding, Normalize(req.ChatBinding))
-            .Set(k => k.OpenApiImageBinding, Normalize(req.ImageBinding))
+            .Set(k => k.OpenApiChatModels, CleanList(req.ChatModels))
+            .Set(k => k.OpenApiImageModels, CleanList(req.ImageModels))
             .Set(k => k.OpenApiDailyTokenQuota, req.DailyTokenQuota)
             .Set(k => k.OpenApiDailyRequestQuota, req.DailyRequestQuota)
             .Set(k => k.OpenApiRateLimitPerMin, req.RateLimitPerMin);
@@ -160,12 +161,13 @@ public class AdminOpenApiController : ControllerBase
         }
     }
 
-    private static string? Normalize(string? v) => string.IsNullOrWhiteSpace(v) ? null : v.Trim();
+    private static List<string> CleanList(List<string>? v)
+        => (v ?? new List<string>()).Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s.Trim()).Distinct().ToList();
 
     public class SetBindingRequest
     {
-        public string? ChatBinding { get; set; }
-        public string? ImageBinding { get; set; }
+        public List<string>? ChatModels { get; set; }
+        public List<string>? ImageModels { get; set; }
         public long? DailyTokenQuota { get; set; }
         public long? DailyRequestQuota { get; set; }
         public int? RateLimitPerMin { get; set; }

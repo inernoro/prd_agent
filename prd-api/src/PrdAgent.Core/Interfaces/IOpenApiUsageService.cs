@@ -25,12 +25,15 @@ public interface IOpenApiUsageService
     Task<OpenApiUsageSnapshot> GetUsageAsync(string keyId, CancellationToken ct = default);
 }
 
-/// <summary>准入决策。</summary>
-public sealed record OpenApiUsageDecision(bool Allowed, string? Code, string? Message, int? RetryAfterSeconds)
+/// <summary>准入决策（含每分钟速率头信息，供 X-RateLimit-* 回写）。</summary>
+public sealed record OpenApiUsageDecision(
+    bool Allowed, string? Code, string? Message, int? RetryAfterSeconds,
+    int RateLimit = 0, int RateRemaining = 0, int RateResetSeconds = 60)
 {
-    public static readonly OpenApiUsageDecision Allow = new(true, null, null, null);
-    public static OpenApiUsageDecision Deny(string code, string message, int? retryAfter = null)
-        => new(false, code, message, retryAfter);
+    public static OpenApiUsageDecision Allow(int limit, int remaining)
+        => new(true, null, null, null, limit, Math.Max(0, remaining), 60);
+    public static OpenApiUsageDecision Deny(string code, string message, int? retryAfter, int limit)
+        => new(false, code, message, retryAfter, limit, 0, retryAfter ?? 60);
 }
 
 /// <summary>当日用量快照。</summary>
