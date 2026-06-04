@@ -724,6 +724,9 @@ export const api = {
     feedback: () => '/api/zhunxing/feedback',
     feedbacks: () => '/api/zhunxing/feedbacks',
     feedbackSummary: () => '/api/zhunxing/feedbacks/summary',
+    feedbackWorkflow: (feedbackId: string) => `/api/zhunxing/feedbacks/${feedbackId}/workflow`,
+    feedbackReplay: (feedbackId: string) => `/api/zhunxing/feedbacks/${feedbackId}/replay`,
+    feedbackFollowUp: (feedbackId: string) => `/api/zhunxing/feedbacks/${feedbackId}/follow-up`,
   },
 
   // ============ V1 API (用户端) ============

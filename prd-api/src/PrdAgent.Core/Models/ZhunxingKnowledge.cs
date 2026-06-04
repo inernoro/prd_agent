@@ -167,6 +167,12 @@ public class ZhunxingFeedbackSummary
     public long NoMatchCount { get; set; }
     public long AnswerInaccurateCount { get; set; }
     public long MissingContextCount { get; set; }
+    public long PendingCount { get; set; }
+    public long ResolvedCount { get; set; }
+    public long ClosedCount { get; set; }
+    public long FollowUpNotifiedCount { get; set; }
+    public long ReplayVerifiedCount { get; set; }
+    public long ReplayMatchedCount { get; set; }
     public List<ZhunxingFeedbackCluster> TopNoMatchQuestions { get; set; } = new();
 }
 
@@ -196,7 +202,64 @@ public class ZhunxingFeedbackListItem
     public string FeedbackType { get; set; } = string.Empty;
     public string? Comment { get; set; }
     public List<string> CitationClauseIds { get; set; } = new();
+    public string Status { get; set; } = ZhunxingFeedbackStatuses.New;
+    public string? OwnerDepartment { get; set; }
+    public string? AssigneeUserId { get; set; }
+    public string? ResolutionType { get; set; }
+    public string? ResolutionNote { get; set; }
+    public string? ResolvedBy { get; set; }
+    public DateTime? ResolvedAt { get; set; }
+    public string? ReplayQuestion { get; set; }
+    public bool? ReplayMatched { get; set; }
+    public double? ReplayConfidence { get; set; }
+    public string? ReplayRiskLevel { get; set; }
+    public string? ReplayAnswerSnippet { get; set; }
+    public DateTime? ReplayAt { get; set; }
+    public string? FollowUpNote { get; set; }
+    public string? FollowUpBy { get; set; }
+    public DateTime? FollowUpNotifiedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
     public DateTime CreatedAt { get; set; }
+}
+
+public class UpdateZhunxingFeedbackWorkflowRequest
+{
+    public string? Status { get; set; }
+    public string? OwnerDepartment { get; set; }
+    public string? AssigneeUserId { get; set; }
+    public string? ResolutionType { get; set; }
+    public string? ResolutionNote { get; set; }
+}
+
+public class ReplayZhunxingFeedbackRequest
+{
+    public string? Question { get; set; }
+    public int TopK { get; set; } = 3;
+}
+
+public class MarkZhunxingFeedbackFollowUpRequest
+{
+    public string? FollowUpNote { get; set; }
+}
+
+public class ZhunxingFeedbackReplayResult
+{
+    public string FeedbackId { get; set; } = string.Empty;
+    public string Question { get; set; } = string.Empty;
+    public bool Matched { get; set; }
+    public double Confidence { get; set; }
+    public string RiskLevel { get; set; } = ZhunxingRiskLevels.Public;
+    public string Answer { get; set; } = string.Empty;
+    public DateTime ReplayedAt { get; set; }
+    public bool RegressionDetected { get; set; }
+}
+
+public class ZhunxingFeedbackFollowUpResult
+{
+    public string FeedbackId { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+    public DateTime FollowUpNotifiedAt { get; set; }
+    public string Status { get; set; } = ZhunxingFeedbackStatuses.Closed;
 }
 
 [AppOwnership(AppNames.ZhunxingAgent, AppNames.ZhunxingAgentDisplay, IsPrimary = true)]
@@ -210,6 +273,23 @@ public class ZhunxingAskFeedback
     public string FeedbackType { get; set; } = ZhunxingFeedbackTypes.NoMatch;
     public string? Comment { get; set; }
     public List<string> CitationClauseIds { get; set; } = new();
+    public string Status { get; set; } = ZhunxingFeedbackStatuses.New;
+    public string? OwnerDepartment { get; set; }
+    public string? AssigneeUserId { get; set; }
+    public string? ResolutionType { get; set; }
+    public string? ResolutionNote { get; set; }
+    public string? ResolvedBy { get; set; }
+    public DateTime? ResolvedAt { get; set; }
+    public string? ReplayQuestion { get; set; }
+    public bool? ReplayMatched { get; set; }
+    public double? ReplayConfidence { get; set; }
+    public string? ReplayRiskLevel { get; set; }
+    public string? ReplayAnswerSnippet { get; set; }
+    public DateTime? ReplayAt { get; set; }
+    public string? FollowUpNote { get; set; }
+    public string? FollowUpBy { get; set; }
+    public DateTime? FollowUpNotifiedAt { get; set; }
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
@@ -218,4 +298,22 @@ public static class ZhunxingFeedbackTypes
     public const string NoMatch = "no_match";
     public const string AnswerInaccurate = "answer_inaccurate";
     public const string MissingContext = "missing_context";
+}
+
+public static class ZhunxingFeedbackStatuses
+{
+    public const string New = "new";
+    public const string Triaged = "triaged";
+    public const string InProgress = "in_progress";
+    public const string Resolved = "resolved";
+    public const string Closed = "closed";
+}
+
+public static class ZhunxingFeedbackResolutionTypes
+{
+    public const string AddClause = "add_clause";
+    public const string UpdateClause = "update_clause";
+    public const string RetrievalTuning = "retrieval_tuning";
+    public const string ProcessClarification = "process_clarification";
+    public const string Other = "other";
 }

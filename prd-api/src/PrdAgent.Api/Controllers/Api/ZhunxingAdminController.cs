@@ -1,4 +1,6 @@
+using System.Linq;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Interfaces;
@@ -13,7 +15,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [ApiController]
 [Route("api/zhunxing")]
 [Authorize]
-[AdminController("zhunxing-agent", AdminPermissionCatalog.ZhunxingAgentRead, WritePermission = AdminPermissionCatalog.ZhunxingAgentWrite)]
+[AdminController("zhunxing-agent", AdminPermissionCatalog.ZhunxingAgentRead, WritePermission = AdminPermissionCatalog.ZhunxingAgentRead)]
 public class ZhunxingAdminController : ControllerBase
 {
     private readonly IZhunxingKnowledgeService _knowledgeService;
@@ -56,6 +58,20 @@ public class ZhunxingAdminController : ControllerBase
         }
     }
 
+    private bool HasPermission(string perm)
+    {
+        var permissions = User.FindAll("permissions").Select(c => c.Value).ToHashSet(StringComparer.Ordinal);
+        return permissions.Contains(perm) || permissions.Contains(AdminPermissionCatalog.Super);
+    }
+
+    private IActionResult? EnsureWritePermission()
+    {
+        if (HasPermission(AdminPermissionCatalog.ZhunxingAgentWrite))
+            return null;
+
+        return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "缺少准星写权限"));
+    }
+
     [HttpPost("feedback")]
     public async Task<IActionResult> SubmitFeedback([FromBody] CreateZhunxingAskFeedbackRequest request, CancellationToken ct = default)
     {
@@ -81,6 +97,7 @@ public class ZhunxingAdminController : ControllerBase
     [HttpGet("feedbacks")]
     public async Task<IActionResult> ListFeedbacks(
         [FromQuery] string? feedbackType = null,
+        [FromQuery] string? status = null,
         [FromQuery] bool? matched = null,
         [FromQuery] string? keyword = null,
         [FromQuery] int page = 1,
@@ -89,12 +106,91 @@ public class ZhunxingAdminController : ControllerBase
     {
         var result = await _knowledgeService.ListFeedbacksAsync(
             feedbackType,
+            status,
             matched,
             keyword,
             page,
             pageSize,
             ct);
         return Ok(ApiResponse<ZhunxingFeedbackListResult>.Ok(result));
+    }
+
+    [HttpPatch("feedbacks/{feedbackId}/workflow")]
+    public async Task<IActionResult> UpdateFeedbackWorkflow(
+        [FromRoute] string feedbackId,
+        [FromBody] UpdateZhunxingFeedbackWorkflowRequest request,
+        CancellationToken ct = default)
+    {
+        var denied = EnsureWritePermission();
+        if (denied != null)
+            return denied;
+
+        try
+        {
+            var operatorUserId = this.GetRequiredUserId();
+            var result = await _knowledgeService.UpdateFeedbackWorkflowAsync(operatorUserId, feedbackId, request, ct);
+            return Ok(ApiResponse<ZhunxingFeedbackListItem>.Ok(result));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, ex.Message));
+        }
+    }
+
+    [HttpPost("feedbacks/{feedbackId}/replay")]
+    public async Task<IActionResult> ReplayFeedback(
+        [FromRoute] string feedbackId,
+        [FromBody] ReplayZhunxingFeedbackRequest request,
+        CancellationToken ct = default)
+    {
+        var denied = EnsureWritePermission();
+        if (denied != null)
+            return denied;
+
+        try
+        {
+            var operatorUserId = this.GetRequiredUserId();
+            var result = await _knowledgeService.ReplayFeedbackAsync(operatorUserId, feedbackId, request, ct);
+            return Ok(ApiResponse<ZhunxingFeedbackReplayResult>.Ok(result));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, ex.Message));
+        }
+    }
+
+    [HttpPost("feedbacks/{feedbackId}/follow-up")]
+    public async Task<IActionResult> MarkFeedbackFollowUp(
+        [FromRoute] string feedbackId,
+        [FromBody] MarkZhunxingFeedbackFollowUpRequest request,
+        CancellationToken ct = default)
+    {
+        var denied = EnsureWritePermission();
+        if (denied != null)
+            return denied;
+
+        try
+        {
+            var operatorUserId = this.GetRequiredUserId();
+            var result = await _knowledgeService.MarkFeedbackFollowUpAsync(operatorUserId, feedbackId, request, ct);
+            return Ok(ApiResponse<ZhunxingFeedbackFollowUpResult>.Ok(result));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, ex.Message));
+        }
     }
 
     [HttpGet("documents")]
@@ -107,6 +203,10 @@ public class ZhunxingAdminController : ControllerBase
     [HttpPost("documents")]
     public async Task<IActionResult> CreateDocument([FromBody] CreateZhunxingDocumentRequest request, CancellationToken ct = default)
     {
+        var denied = EnsureWritePermission();
+        if (denied != null)
+            return denied;
+
         try
         {
             var userId = this.GetRequiredUserId();
@@ -136,6 +236,10 @@ public class ZhunxingAdminController : ControllerBase
     [HttpPost("clauses")]
     public async Task<IActionResult> CreateClause([FromBody] CreateZhunxingClauseRequest request, CancellationToken ct = default)
     {
+        var denied = EnsureWritePermission();
+        if (denied != null)
+            return denied;
+
         try
         {
             var userId = this.GetRequiredUserId();
@@ -158,6 +262,10 @@ public class ZhunxingAdminController : ControllerBase
     [HttpPost("bootstrap/attendance")]
     public async Task<IActionResult> BootstrapAttendance(CancellationToken ct = default)
     {
+        var denied = EnsureWritePermission();
+        if (denied != null)
+            return denied;
+
         var userId = this.GetRequiredUserId();
         var result = await _knowledgeService.BootstrapAttendanceSampleAsync(userId, ct);
         return Ok(ApiResponse<object>.Ok(result));
@@ -169,6 +277,10 @@ public class ZhunxingAdminController : ControllerBase
     [HttpPost("bootstrap/app-registry")]
     public async Task<IActionResult> BootstrapAppRegistry(CancellationToken ct = default)
     {
+        var denied = EnsureWritePermission();
+        if (denied != null)
+            return denied;
+
         var app = await _appRegistryService.GetAppByIdAsync("zhunxing-agent", ct);
         var appCreated = false;
         if (app == null)

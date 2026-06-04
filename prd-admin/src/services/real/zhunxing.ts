@@ -49,6 +49,12 @@ export interface ZhunxingFeedbackSummary {
   noMatchCount: number;
   answerInaccurateCount: number;
   missingContextCount: number;
+  pendingCount: number;
+  resolvedCount: number;
+  closedCount: number;
+  followUpNotifiedCount: number;
+  replayVerifiedCount: number;
+  replayMatchedCount: number;
   topNoMatchQuestions: ZhunxingFeedbackCluster[];
 }
 
@@ -61,6 +67,23 @@ export interface ZhunxingFeedbackListItem {
   feedbackType: string;
   comment?: string;
   citationClauseIds: string[];
+  status: 'new' | 'triaged' | 'in_progress' | 'resolved' | 'closed';
+  ownerDepartment?: string;
+  assigneeUserId?: string;
+  resolutionType?: string;
+  resolutionNote?: string;
+  resolvedBy?: string;
+  resolvedAt?: string;
+  replayQuestion?: string;
+  replayMatched?: boolean;
+  replayConfidence?: number;
+  replayRiskLevel?: string;
+  replayAnswerSnippet?: string;
+  replayAt?: string;
+  followUpNote?: string;
+  followUpBy?: string;
+  followUpNotifiedAt?: string;
+  updatedAt: string;
   createdAt: string;
 }
 
@@ -69,6 +92,41 @@ export interface ZhunxingFeedbackListResult {
   page: number;
   pageSize: number;
   items: ZhunxingFeedbackListItem[];
+}
+
+export interface UpdateZhunxingFeedbackWorkflowRequest {
+  status?: 'new' | 'triaged' | 'in_progress' | 'resolved' | 'closed';
+  ownerDepartment?: string;
+  assigneeUserId?: string;
+  resolutionType?: 'add_clause' | 'update_clause' | 'retrieval_tuning' | 'process_clarification' | 'other';
+  resolutionNote?: string;
+}
+
+export interface ReplayZhunxingFeedbackRequest {
+  question?: string;
+  topK?: number;
+}
+
+export interface MarkZhunxingFeedbackFollowUpRequest {
+  followUpNote?: string;
+}
+
+export interface ZhunxingFeedbackReplayResult {
+  feedbackId: string;
+  question: string;
+  matched: boolean;
+  confidence: number;
+  riskLevel: string;
+  answer: string;
+  replayedAt: string;
+  regressionDetected: boolean;
+}
+
+export interface ZhunxingFeedbackFollowUpResult {
+  feedbackId: string;
+  message: string;
+  followUpNotifiedAt: string;
+  status: string;
 }
 
 export async function askZhunxing(question: string, topK = 3): Promise<ApiResponse<ZhunxingAskResponse>> {
@@ -99,6 +157,7 @@ export async function getZhunxingFeedbackSummary(top = 10): Promise<ApiResponse<
 export async function listZhunxingFeedbacks(
   params: {
     feedbackType?: string;
+    status?: string;
     matched?: boolean;
     keyword?: string;
     page?: number;
@@ -107,6 +166,7 @@ export async function listZhunxingFeedbacks(
 ): Promise<ApiResponse<ZhunxingFeedbackListResult>> {
   const search = new URLSearchParams();
   if (params.feedbackType) search.set('feedbackType', params.feedbackType);
+  if (params.status) search.set('status', params.status);
   if (params.matched !== undefined) search.set('matched', String(params.matched));
   if (params.keyword?.trim()) search.set('keyword', params.keyword.trim());
   if (params.page) search.set('page', String(params.page));
@@ -114,5 +174,35 @@ export async function listZhunxingFeedbacks(
   const query = search.toString();
   return await apiRequest(`${api.zhunxing.feedbacks()}${query ? `?${query}` : ''}`, {
     method: 'GET',
+  });
+}
+
+export async function updateZhunxingFeedbackWorkflow(
+  feedbackId: string,
+  request: UpdateZhunxingFeedbackWorkflowRequest,
+): Promise<ApiResponse<ZhunxingFeedbackListItem>> {
+  return await apiRequest(api.zhunxing.feedbackWorkflow(feedbackId), {
+    method: 'PATCH',
+    body: request,
+  });
+}
+
+export async function replayZhunxingFeedback(
+  feedbackId: string,
+  request: ReplayZhunxingFeedbackRequest = {},
+): Promise<ApiResponse<ZhunxingFeedbackReplayResult>> {
+  return await apiRequest(api.zhunxing.feedbackReplay(feedbackId), {
+    method: 'POST',
+    body: request,
+  });
+}
+
+export async function markZhunxingFeedbackFollowUp(
+  feedbackId: string,
+  request: MarkZhunxingFeedbackFollowUpRequest = {},
+): Promise<ApiResponse<ZhunxingFeedbackFollowUpResult>> {
+  return await apiRequest(api.zhunxing.feedbackFollowUp(feedbackId), {
+    method: 'POST',
+    body: request,
   });
 }

@@ -818,6 +818,12 @@ public class MongoDbContext
         ZhunxingAskFeedbacks.Indexes.CreateOne(new CreateIndexModel<ZhunxingAskFeedback>(
             Builders<ZhunxingAskFeedback>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_zhunxing_feedbacks_user_created" }));
+        ZhunxingAskFeedbacks.Indexes.CreateOne(new CreateIndexModel<ZhunxingAskFeedback>(
+            Builders<ZhunxingAskFeedback>.IndexKeys.Ascending(x => x.Status).Descending(x => x.UpdatedAt),
+            new CreateIndexOptions { Name = "idx_zhunxing_feedbacks_status_updated" }));
+        ZhunxingAskFeedbacks.Indexes.CreateOne(new CreateIndexModel<ZhunxingAskFeedback>(
+            Builders<ZhunxingAskFeedback>.IndexKeys.Ascending(x => x.AssigneeUserId).Ascending(x => x.Status).Descending(x => x.UpdatedAt),
+            new CreateIndexOptions { Name = "idx_zhunxing_feedbacks_assignee_status_updated" }));
 
         // ModelGroups：按 modelType + isDefaultForType 查询默认分组
         ModelGroups.Indexes.CreateOne(new CreateIndexModel<ModelGroup>(

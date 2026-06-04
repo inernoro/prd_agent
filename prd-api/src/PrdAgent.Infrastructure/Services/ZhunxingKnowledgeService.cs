@@ -278,6 +278,8 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
                 .Select(x => x.Trim())
                 .Distinct(StringComparer.Ordinal)
                 .ToList(),
+            Status = ZhunxingFeedbackStatuses.New,
+            UpdatedAt = DateTime.UtcNow,
             CreatedAt = DateTime.UtcNow,
         };
 
@@ -310,6 +312,30 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
         var missingContextCount = await _db.ZhunxingAskFeedbacks.CountDocumentsAsync(
             Builders<ZhunxingAskFeedback>.Filter.Eq(x => x.FeedbackType, ZhunxingFeedbackTypes.MissingContext),
             cancellationToken: ct);
+        var pendingFilter = Builders<ZhunxingAskFeedback>.Filter.Or(
+            Builders<ZhunxingAskFeedback>.Filter.In(
+                x => x.Status,
+                new[] { ZhunxingFeedbackStatuses.New, ZhunxingFeedbackStatuses.Triaged, ZhunxingFeedbackStatuses.InProgress }),
+            Builders<ZhunxingAskFeedback>.Filter.Eq(x => x.Status, null),
+            Builders<ZhunxingAskFeedback>.Filter.Eq(x => x.Status, string.Empty));
+        var pendingCount = await _db.ZhunxingAskFeedbacks.CountDocumentsAsync(
+            pendingFilter,
+            cancellationToken: ct);
+        var resolvedCount = await _db.ZhunxingAskFeedbacks.CountDocumentsAsync(
+            Builders<ZhunxingAskFeedback>.Filter.Eq(x => x.Status, ZhunxingFeedbackStatuses.Resolved),
+            cancellationToken: ct);
+        var closedCount = await _db.ZhunxingAskFeedbacks.CountDocumentsAsync(
+            Builders<ZhunxingAskFeedback>.Filter.Eq(x => x.Status, ZhunxingFeedbackStatuses.Closed),
+            cancellationToken: ct);
+        var followUpNotifiedCount = await _db.ZhunxingAskFeedbacks.CountDocumentsAsync(
+            Builders<ZhunxingAskFeedback>.Filter.Ne(x => x.FollowUpNotifiedAt, null),
+            cancellationToken: ct);
+        var replayVerifiedCount = await _db.ZhunxingAskFeedbacks.CountDocumentsAsync(
+            Builders<ZhunxingAskFeedback>.Filter.Ne(x => x.ReplayAt, null),
+            cancellationToken: ct);
+        var replayMatchedCount = await _db.ZhunxingAskFeedbacks.CountDocumentsAsync(
+            Builders<ZhunxingAskFeedback>.Filter.Eq(x => x.ReplayMatched, true),
+            cancellationToken: ct);
 
         var noMatchSamples = await _db.ZhunxingAskFeedbacks
             .Find(noMatchFilter)
@@ -341,12 +367,19 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
             NoMatchCount = noMatchCount,
             AnswerInaccurateCount = answerInaccurateCount,
             MissingContextCount = missingContextCount,
+            PendingCount = pendingCount,
+            ResolvedCount = resolvedCount,
+            ClosedCount = closedCount,
+            FollowUpNotifiedCount = followUpNotifiedCount,
+            ReplayVerifiedCount = replayVerifiedCount,
+            ReplayMatchedCount = replayMatchedCount,
             TopNoMatchQuestions = topQuestions,
         };
     }
 
     public async Task<ZhunxingFeedbackListResult> ListFeedbacksAsync(
         string? feedbackType = null,
+        string? status = null,
         bool? matched = null,
         string? keyword = null,
         int page = 1,
@@ -363,6 +396,23 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
         {
             var normalizedType = NormalizeFeedbackType(feedbackType);
             filters.Add(builder.Eq(x => x.FeedbackType, normalizedType));
+        }
+
+        if (!string.IsNullOrWhiteSpace(status)
+            && !string.Equals(status, "all", StringComparison.OrdinalIgnoreCase))
+        {
+            var normalizedStatus = NormalizeFeedbackStatus(status);
+            if (normalizedStatus == ZhunxingFeedbackStatuses.New)
+            {
+                filters.Add(builder.Or(
+                    builder.Eq(x => x.Status, normalizedStatus),
+                    builder.Eq(x => x.Status, null),
+                    builder.Eq(x => x.Status, string.Empty)));
+            }
+            else
+            {
+                filters.Add(builder.Eq(x => x.Status, normalizedStatus));
+            }
         }
 
         if (matched.HasValue)
@@ -391,18 +441,186 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
             Total = total,
             Page = safePage,
             PageSize = safePageSize,
-            Items = items.Select(x => new ZhunxingFeedbackListItem
+            Items = items.Select(ToFeedbackListItem).ToList(),
+        };
+    }
+
+    public async Task<ZhunxingFeedbackListItem> UpdateFeedbackWorkflowAsync(
+        string operatorUserId,
+        string feedbackId,
+        UpdateZhunxingFeedbackWorkflowRequest request,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(feedbackId))
+            throw new ArgumentException("feedbackId 不能为空", nameof(feedbackId));
+
+        var feedback = await _db.ZhunxingAskFeedbacks
+            .Find(x => x.Id == feedbackId)
+            .FirstOrDefaultAsync(ct);
+        if (feedback == null)
+            throw new InvalidOperationException("反馈记录不存在");
+
+        var updateDefs = new List<UpdateDefinition<ZhunxingAskFeedback>>
+        {
+            Builders<ZhunxingAskFeedback>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow),
+        };
+
+        if (request.OwnerDepartment != null)
+        {
+            var ownerDepartment = string.IsNullOrWhiteSpace(request.OwnerDepartment)
+                ? null
+                : request.OwnerDepartment.Trim();
+            updateDefs.Add(Builders<ZhunxingAskFeedback>.Update.Set(x => x.OwnerDepartment, ownerDepartment));
+        }
+
+        if (request.AssigneeUserId != null)
+        {
+            var assigneeUserId = string.IsNullOrWhiteSpace(request.AssigneeUserId)
+                ? null
+                : request.AssigneeUserId.Trim();
+            updateDefs.Add(Builders<ZhunxingAskFeedback>.Update.Set(x => x.AssigneeUserId, assigneeUserId));
+        }
+
+        if (request.ResolutionType != null)
+        {
+            var resolutionType = string.IsNullOrWhiteSpace(request.ResolutionType)
+                ? null
+                : NormalizeResolutionType(request.ResolutionType);
+            updateDefs.Add(Builders<ZhunxingAskFeedback>.Update.Set(x => x.ResolutionType, resolutionType));
+        }
+
+        if (request.ResolutionNote != null)
+        {
+            var resolutionNote = string.IsNullOrWhiteSpace(request.ResolutionNote)
+                ? null
+                : request.ResolutionNote.Trim();
+            updateDefs.Add(Builders<ZhunxingAskFeedback>.Update.Set(x => x.ResolutionNote, resolutionNote));
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Status))
+        {
+            var targetStatus = NormalizeFeedbackStatus(request.Status);
+            if (!CanTransitFeedbackStatus(feedback.Status, targetStatus))
+                throw new ArgumentException($"状态流转不合法：{feedback.Status} -> {targetStatus}", nameof(request.Status));
+
+            updateDefs.Add(Builders<ZhunxingAskFeedback>.Update.Set(x => x.Status, targetStatus));
+
+            if (targetStatus == ZhunxingFeedbackStatuses.Resolved)
             {
-                Id = x.Id,
-                UserId = x.UserId,
-                Question = x.Question,
-                Matched = x.Matched,
-                Confidence = x.Confidence,
-                FeedbackType = x.FeedbackType,
-                Comment = x.Comment,
-                CitationClauseIds = x.CitationClauseIds,
-                CreatedAt = x.CreatedAt,
-            }).ToList(),
+                updateDefs.Add(Builders<ZhunxingAskFeedback>.Update.Set(x => x.ResolvedAt, DateTime.UtcNow));
+                updateDefs.Add(Builders<ZhunxingAskFeedback>.Update.Set(x => x.ResolvedBy, operatorUserId));
+            }
+        }
+
+        await _db.ZhunxingAskFeedbacks.UpdateOneAsync(
+            Builders<ZhunxingAskFeedback>.Filter.Eq(x => x.Id, feedbackId),
+            Builders<ZhunxingAskFeedback>.Update.Combine(updateDefs),
+            cancellationToken: ct);
+
+        var updated = await _db.ZhunxingAskFeedbacks
+            .Find(x => x.Id == feedbackId)
+            .FirstOrDefaultAsync(ct);
+        if (updated == null)
+            throw new InvalidOperationException("反馈记录不存在");
+
+        return ToFeedbackListItem(updated);
+    }
+
+    public async Task<ZhunxingFeedbackReplayResult> ReplayFeedbackAsync(
+        string operatorUserId,
+        string feedbackId,
+        ReplayZhunxingFeedbackRequest request,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(feedbackId))
+            throw new ArgumentException("feedbackId 不能为空", nameof(feedbackId));
+
+        var feedback = await _db.ZhunxingAskFeedbacks
+            .Find(x => x.Id == feedbackId)
+            .FirstOrDefaultAsync(ct);
+        if (feedback == null)
+            throw new InvalidOperationException("反馈记录不存在");
+
+        var replayQuestion = string.IsNullOrWhiteSpace(request.Question)
+            ? feedback.Question
+            : request.Question.Trim();
+        var topK = Math.Clamp(request.TopK <= 0 ? 3 : request.TopK, 1, 5);
+        var askResult = await AskAsync(operatorUserId, new ZhunxingAskRequest
+        {
+            Question = replayQuestion,
+            TopK = topK,
+        }, ct);
+        var replayedAt = DateTime.UtcNow;
+        var regressionDetected = feedback.Status == ZhunxingFeedbackStatuses.Resolved && !askResult.Matched;
+
+        var update = Builders<ZhunxingAskFeedback>.Update
+            .Set(x => x.ReplayQuestion, replayQuestion)
+            .Set(x => x.ReplayMatched, askResult.Matched)
+            .Set(x => x.ReplayConfidence, askResult.Confidence)
+            .Set(x => x.ReplayRiskLevel, askResult.RiskLevel)
+            .Set(x => x.ReplayAnswerSnippet, BuildSnippet(askResult.Answer))
+            .Set(x => x.ReplayAt, replayedAt)
+            .Set(x => x.UpdatedAt, replayedAt);
+        await _db.ZhunxingAskFeedbacks.UpdateOneAsync(
+            Builders<ZhunxingAskFeedback>.Filter.Eq(x => x.Id, feedbackId),
+            update,
+            cancellationToken: ct);
+
+        return new ZhunxingFeedbackReplayResult
+        {
+            FeedbackId = feedbackId,
+            Question = replayQuestion,
+            Matched = askResult.Matched,
+            Confidence = askResult.Confidence,
+            RiskLevel = askResult.RiskLevel,
+            Answer = askResult.Answer,
+            ReplayedAt = replayedAt,
+            RegressionDetected = regressionDetected,
+        };
+    }
+
+    public async Task<ZhunxingFeedbackFollowUpResult> MarkFeedbackFollowUpAsync(
+        string operatorUserId,
+        string feedbackId,
+        MarkZhunxingFeedbackFollowUpRequest request,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(feedbackId))
+            throw new ArgumentException("feedbackId 不能为空", nameof(feedbackId));
+
+        var feedback = await _db.ZhunxingAskFeedbacks
+            .Find(x => x.Id == feedbackId)
+            .FirstOrDefaultAsync(ct);
+        if (feedback == null)
+            throw new InvalidOperationException("反馈记录不存在");
+
+        if (feedback.Status != ZhunxingFeedbackStatuses.Resolved
+            && feedback.Status != ZhunxingFeedbackStatuses.Closed)
+        {
+            throw new ArgumentException("仅已解决状态可执行回访通知");
+        }
+
+        var followUpAt = DateTime.UtcNow;
+        var followUpNote = string.IsNullOrWhiteSpace(request.FollowUpNote)
+            ? "已根据反馈完成规则补充，欢迎重新提问验证效果。"
+            : request.FollowUpNote.Trim();
+        var update = Builders<ZhunxingAskFeedback>.Update
+            .Set(x => x.FollowUpNote, followUpNote)
+            .Set(x => x.FollowUpBy, operatorUserId)
+            .Set(x => x.FollowUpNotifiedAt, followUpAt)
+            .Set(x => x.Status, ZhunxingFeedbackStatuses.Closed)
+            .Set(x => x.UpdatedAt, followUpAt);
+        await _db.ZhunxingAskFeedbacks.UpdateOneAsync(
+            Builders<ZhunxingAskFeedback>.Filter.Eq(x => x.Id, feedbackId),
+            update,
+            cancellationToken: ct);
+
+        return new ZhunxingFeedbackFollowUpResult
+        {
+            FeedbackId = feedbackId,
+            Message = "回访通知已记录",
+            FollowUpNotifiedAt = followUpAt,
+            Status = ZhunxingFeedbackStatuses.Closed,
         };
     }
 
@@ -587,6 +805,97 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
             return normalized;
 
         return ZhunxingFeedbackTypes.NoMatch;
+    }
+
+    private static string NormalizeFeedbackStatus(string? status)
+    {
+        if (string.IsNullOrWhiteSpace(status))
+            return ZhunxingFeedbackStatuses.New;
+
+        var normalized = status.Trim().ToLowerInvariant();
+        if (normalized is ZhunxingFeedbackStatuses.New
+            or ZhunxingFeedbackStatuses.Triaged
+            or ZhunxingFeedbackStatuses.InProgress
+            or ZhunxingFeedbackStatuses.Resolved
+            or ZhunxingFeedbackStatuses.Closed)
+        {
+            return normalized;
+        }
+
+        return ZhunxingFeedbackStatuses.New;
+    }
+
+    private static string NormalizeResolutionType(string? resolutionType)
+    {
+        if (string.IsNullOrWhiteSpace(resolutionType))
+            return ZhunxingFeedbackResolutionTypes.Other;
+
+        var normalized = resolutionType.Trim().ToLowerInvariant();
+        if (normalized is ZhunxingFeedbackResolutionTypes.AddClause
+            or ZhunxingFeedbackResolutionTypes.UpdateClause
+            or ZhunxingFeedbackResolutionTypes.RetrievalTuning
+            or ZhunxingFeedbackResolutionTypes.ProcessClarification
+            or ZhunxingFeedbackResolutionTypes.Other)
+        {
+            return normalized;
+        }
+
+        return ZhunxingFeedbackResolutionTypes.Other;
+    }
+
+    private static bool CanTransitFeedbackStatus(string? sourceStatus, string targetStatus)
+    {
+        var source = NormalizeFeedbackStatus(sourceStatus);
+        if (source == targetStatus)
+            return true;
+
+        return source switch
+        {
+            ZhunxingFeedbackStatuses.New => targetStatus is ZhunxingFeedbackStatuses.Triaged
+                or ZhunxingFeedbackStatuses.InProgress
+                or ZhunxingFeedbackStatuses.Resolved
+                or ZhunxingFeedbackStatuses.Closed,
+            ZhunxingFeedbackStatuses.Triaged => targetStatus is ZhunxingFeedbackStatuses.InProgress
+                or ZhunxingFeedbackStatuses.Resolved
+                or ZhunxingFeedbackStatuses.Closed,
+            ZhunxingFeedbackStatuses.InProgress => targetStatus is ZhunxingFeedbackStatuses.Resolved
+                or ZhunxingFeedbackStatuses.Closed,
+            ZhunxingFeedbackStatuses.Resolved => targetStatus == ZhunxingFeedbackStatuses.Closed,
+            _ => false,
+        };
+    }
+
+    private static ZhunxingFeedbackListItem ToFeedbackListItem(ZhunxingAskFeedback x)
+    {
+        return new ZhunxingFeedbackListItem
+        {
+            Id = x.Id,
+            UserId = x.UserId,
+            Question = x.Question,
+            Matched = x.Matched,
+            Confidence = x.Confidence,
+            FeedbackType = x.FeedbackType,
+            Comment = x.Comment,
+            CitationClauseIds = x.CitationClauseIds,
+            Status = NormalizeFeedbackStatus(x.Status),
+            OwnerDepartment = x.OwnerDepartment,
+            AssigneeUserId = x.AssigneeUserId,
+            ResolutionType = x.ResolutionType,
+            ResolutionNote = x.ResolutionNote,
+            ResolvedBy = x.ResolvedBy,
+            ResolvedAt = x.ResolvedAt,
+            ReplayQuestion = x.ReplayQuestion,
+            ReplayMatched = x.ReplayMatched,
+            ReplayConfidence = x.ReplayConfidence,
+            ReplayRiskLevel = x.ReplayRiskLevel,
+            ReplayAnswerSnippet = x.ReplayAnswerSnippet,
+            ReplayAt = x.ReplayAt,
+            FollowUpNote = x.FollowUpNote,
+            FollowUpBy = x.FollowUpBy,
+            FollowUpNotifiedAt = x.FollowUpNotifiedAt,
+            UpdatedAt = x.UpdatedAt,
+            CreatedAt = x.CreatedAt,
+        };
     }
 
     private static string NormalizeQuestionClusterKey(string question)

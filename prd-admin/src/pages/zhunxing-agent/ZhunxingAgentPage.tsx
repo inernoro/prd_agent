@@ -6,12 +6,17 @@ import {
   askZhunxing,
   getZhunxingFeedbackSummary,
   listZhunxingFeedbacks,
+  markZhunxingFeedbackFollowUp,
+  replayZhunxingFeedback,
   submitZhunxingFeedback,
+  updateZhunxingFeedbackWorkflow,
   type ZhunxingAskResponse,
+  type ZhunxingFeedbackListItem,
   type ZhunxingFeedbackListResult,
   type ZhunxingFeedbackSummary,
 } from '@/services/real/zhunxing';
 import { AlertCircle, BarChart3, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, RefreshCw, Search, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { useAuthStore } from '@/stores/authStore';
 
 const STARTERS = [
   '员工迟到怎么认定？',
@@ -19,7 +24,21 @@ const STARTERS = [
   '请假审批的标准流程是什么？',
 ];
 
+const FEEDBACK_STATUS_LABELS: Record<string, string> = {
+  new: '新建',
+  triaged: '已受理',
+  in_progress: '处理中',
+  resolved: '已解决',
+  closed: '已关闭',
+};
+
 export default function ZhunxingAgentPage() {
+  const permissions = useAuthStore((s) => s.permissions);
+  const hasWritePermission = useMemo(
+    () => permissions.includes('zhunxing-agent.write') || permissions.includes('super'),
+    [permissions],
+  );
+
   const [viewMode, setViewMode] = useState<'ask' | 'dashboard'>('ask');
 
   // Q&A state
@@ -38,10 +57,13 @@ export default function ZhunxingAgentPage() {
   const [feedbackSummary, setFeedbackSummary] = useState<ZhunxingFeedbackSummary | null>(null);
   const [feedbackList, setFeedbackList] = useState<ZhunxingFeedbackListResult | null>(null);
   const [feedbackTypeFilter, setFeedbackTypeFilter] = useState<'all' | 'no_match' | 'answer_inaccurate' | 'missing_context'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'new' | 'triaged' | 'in_progress' | 'resolved' | 'closed'>('all');
   const [matchedFilter, setMatchedFilter] = useState<'all' | 'true' | 'false'>('all');
   const [keywordInput, setKeywordInput] = useState('');
   const [keywordFilter, setKeywordFilter] = useState('');
   const [page, setPage] = useState(1);
+  const [actingFeedbackId, setActingFeedbackId] = useState<string | null>(null);
+  const [dashboardNotice, setDashboardNotice] = useState<string | null>(null);
 
   const confidencePercent = useMemo(() => Math.round((result?.confidence ?? 0) * 100), [result?.confidence]);
 
@@ -132,6 +154,7 @@ export default function ZhunxingAgentPage() {
         getZhunxingFeedbackSummary(8),
         listZhunxingFeedbacks({
           feedbackType: feedbackTypeFilter,
+          status: statusFilter,
           matched,
           keyword: keywordFilter || undefined,
           page,
@@ -156,12 +179,76 @@ export default function ZhunxingAgentPage() {
     } finally {
       setDashboardLoading(false);
     }
-  }, [feedbackTypeFilter, keywordFilter, matchedFilter, page]);
+  }, [feedbackTypeFilter, keywordFilter, matchedFilter, page, statusFilter]);
 
   useEffect(() => {
     if (viewMode !== 'dashboard') return;
     void loadDashboard();
   }, [viewMode, loadDashboard]);
+
+  const updateFeedbackStatus = useCallback(async (item: ZhunxingFeedbackListItem, status: 'triaged' | 'in_progress' | 'resolved' | 'closed') => {
+    if (!hasWritePermission || actingFeedbackId) return;
+    setActingFeedbackId(item.id);
+    setDashboardError(null);
+    setDashboardNotice(null);
+    try {
+      const res = await updateZhunxingFeedbackWorkflow(item.id, { status });
+      if (!res.success || !res.data) {
+        setDashboardError(res.error?.message || '状态更新失败');
+        return;
+      }
+      setDashboardNotice(`反馈已更新为「${FEEDBACK_STATUS_LABELS[status] || status}」`);
+      await loadDashboard();
+    } catch (e) {
+      setDashboardError(e instanceof Error ? e.message : '状态更新失败');
+    } finally {
+      setActingFeedbackId(null);
+    }
+  }, [actingFeedbackId, hasWritePermission, loadDashboard]);
+
+  const replayFeedback = useCallback(async (item: ZhunxingFeedbackListItem) => {
+    if (!hasWritePermission || actingFeedbackId) return;
+    setActingFeedbackId(item.id);
+    setDashboardError(null);
+    setDashboardNotice(null);
+    try {
+      const res = await replayZhunxingFeedback(item.id, { question: item.question, topK: 3 });
+      if (!res.success || !res.data) {
+        setDashboardError(res.error?.message || '回放验证失败');
+        return;
+      }
+      setDashboardNotice(
+        res.data.matched
+          ? `回放验证完成：已命中，置信度 ${Math.round((res.data.confidence ?? 0) * 100)}%`
+          : '回放验证完成：仍未命中，建议继续补充条款',
+      );
+      await loadDashboard();
+    } catch (e) {
+      setDashboardError(e instanceof Error ? e.message : '回放验证失败');
+    } finally {
+      setActingFeedbackId(null);
+    }
+  }, [actingFeedbackId, hasWritePermission, loadDashboard]);
+
+  const followUpFeedback = useCallback(async (item: ZhunxingFeedbackListItem) => {
+    if (!hasWritePermission || actingFeedbackId) return;
+    setActingFeedbackId(item.id);
+    setDashboardError(null);
+    setDashboardNotice(null);
+    try {
+      const res = await markZhunxingFeedbackFollowUp(item.id, {});
+      if (!res.success || !res.data) {
+        setDashboardError(res.error?.message || '回访标记失败');
+        return;
+      }
+      setDashboardNotice('已记录回访通知');
+      await loadDashboard();
+    } catch (e) {
+      setDashboardError(e instanceof Error ? e.message : '回访标记失败');
+    } finally {
+      setActingFeedbackId(null);
+    }
+  }, [actingFeedbackId, hasWritePermission, loadDashboard]);
 
   const askPanel = (
     <>
@@ -415,8 +502,13 @@ export default function ZhunxingAgentPage() {
           {dashboardError}
         </div>
       )}
+      {dashboardNotice && (
+        <div className="mb-3 rounded-lg p-2.5 text-xs" style={{ background: 'rgba(52,211,153,0.08)', border: '1px solid rgba(52,211,153,0.25)', color: '#34D399' }}>
+          {dashboardNotice}
+        </div>
+      )}
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-2 mb-3">
         <div className="rounded-lg p-2.5" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
           <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>总反馈</div>
           <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{feedbackSummary?.totalCount ?? '-'}</div>
@@ -428,6 +520,20 @@ export default function ZhunxingAgentPage() {
         <div className="rounded-lg p-2.5" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
           <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>答案不准确</div>
           <div className="text-sm font-semibold" style={{ color: '#FBBF24' }}>{feedbackSummary?.answerInaccurateCount ?? '-'}</div>
+        </div>
+        <div className="rounded-lg p-2.5" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>待处理工单</div>
+          <div className="text-sm font-semibold" style={{ color: '#FB923C' }}>{feedbackSummary?.pendingCount ?? '-'}</div>
+        </div>
+        <div className="rounded-lg p-2.5" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>已回访</div>
+          <div className="text-sm font-semibold" style={{ color: '#34D399' }}>{feedbackSummary?.followUpNotifiedCount ?? '-'}</div>
+        </div>
+        <div className="rounded-lg p-2.5" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>回放通过</div>
+          <div className="text-sm font-semibold" style={{ color: '#60A5FA' }}>
+            {feedbackSummary?.replayMatchedCount ?? '-'} / {feedbackSummary?.replayVerifiedCount ?? '-'}
+          </div>
         </div>
         <div className="rounded-lg p-2.5" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
           <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>缺少上下文</div>
@@ -474,6 +580,22 @@ export default function ZhunxingAgentPage() {
             <option value="missing_context">缺少上下文</option>
           </select>
           <select
+            value={statusFilter}
+            onChange={(e) => {
+              setStatusFilter(e.target.value as typeof statusFilter);
+              setPage(1);
+            }}
+            className="rounded-md px-2 py-1 text-xs outline-none"
+            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-primary)' }}
+          >
+            <option value="all">工单状态：全部</option>
+            <option value="new">新建</option>
+            <option value="triaged">已受理</option>
+            <option value="in_progress">处理中</option>
+            <option value="resolved">已解决</option>
+            <option value="closed">已关闭</option>
+          </select>
+          <select
             value={matchedFilter}
             onChange={(e) => {
               setMatchedFilter(e.target.value as typeof matchedFilter);
@@ -506,6 +628,11 @@ export default function ZhunxingAgentPage() {
             查询
           </Button>
         </div>
+        {!hasWritePermission && (
+          <div className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>
+            当前账号为只读模式，可查看反馈与回放结果，工单处理操作需 `zhunxing-agent.write` 权限。
+          </div>
+        )}
 
         {dashboardLoading ? (
           <div className="flex items-center justify-center py-8">
@@ -519,6 +646,23 @@ export default function ZhunxingAgentPage() {
                   <span className="text-[11px] px-2 py-0.5 rounded-md" style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)' }}>
                     {item.feedbackType}
                   </span>
+                  <span
+                    className="text-[11px] px-2 py-0.5 rounded-md"
+                    style={{
+                      background: item.status === 'resolved' || item.status === 'closed'
+                        ? 'rgba(52,211,153,0.12)'
+                        : item.status === 'in_progress'
+                          ? 'rgba(96,165,250,0.12)'
+                          : 'rgba(251,146,60,0.12)',
+                      color: item.status === 'resolved' || item.status === 'closed'
+                        ? '#34D399'
+                        : item.status === 'in_progress'
+                          ? '#60A5FA'
+                          : '#FB923C',
+                    }}
+                  >
+                    {FEEDBACK_STATUS_LABELS[item.status] ?? item.status}
+                  </span>
                   <span className="text-[11px] px-2 py-0.5 rounded-md" style={{ background: item.matched ? 'rgba(52,211,153,0.12)' : 'rgba(251,146,60,0.12)', color: item.matched ? '#34D399' : '#FB923C' }}>
                     {item.matched ? '命中' : '未命中'}
                   </span>
@@ -530,9 +674,81 @@ export default function ZhunxingAgentPage() {
                   </span>
                 </div>
                 <div className="text-sm mb-1" style={{ color: 'var(--text-primary)' }}>{item.question}</div>
+                {(item.ownerDepartment || item.assigneeUserId) && (
+                  <div className="text-xs mb-1" style={{ color: 'var(--text-muted)' }}>
+                    {item.ownerDepartment ? `责任部门：${item.ownerDepartment}` : ''}
+                    {item.ownerDepartment && item.assigneeUserId ? ' · ' : ''}
+                    {item.assigneeUserId ? `处理人：${item.assigneeUserId}` : ''}
+                  </div>
+                )}
                 {item.comment ? (
                   <div className="text-xs" style={{ color: 'var(--text-muted)' }}>备注：{item.comment}</div>
                 ) : null}
+                {item.resolutionNote ? (
+                  <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                    处置说明：{item.resolutionNote}
+                  </div>
+                ) : null}
+                {item.replayAt ? (
+                  <div className="text-xs mt-1" style={{ color: item.replayMatched ? '#34D399' : '#FB923C' }}>
+                    回放验证：{item.replayMatched ? '已命中' : '未命中'}（{new Date(item.replayAt).toLocaleString('zh-CN', { hour12: false })}）
+                  </div>
+                ) : null}
+                {item.followUpNotifiedAt ? (
+                  <div className="text-xs mt-1" style={{ color: '#34D399' }}>
+                    已回访：{new Date(item.followUpNotifiedAt).toLocaleString('zh-CN', { hour12: false })}
+                  </div>
+                ) : null}
+                {hasWritePermission && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => void updateFeedbackStatus(item, 'triaged')}
+                      disabled={actingFeedbackId === item.id || item.status !== 'new'}
+                      className="whitespace-nowrap"
+                    >
+                      {actingFeedbackId === item.id ? <MapSpinner size={12} color="var(--text-primary)" /> : null}
+                      受理
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => void updateFeedbackStatus(item, 'in_progress')}
+                      disabled={actingFeedbackId === item.id || (item.status !== 'triaged' && item.status !== 'new')}
+                      className="whitespace-nowrap"
+                    >
+                      处理中
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => void updateFeedbackStatus(item, 'resolved')}
+                      disabled={actingFeedbackId === item.id || (item.status !== 'triaged' && item.status !== 'in_progress' && item.status !== 'new')}
+                      className="whitespace-nowrap"
+                    >
+                      标记已解决
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => void replayFeedback(item)}
+                      disabled={actingFeedbackId === item.id}
+                      className="whitespace-nowrap"
+                    >
+                      回放验证
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => void followUpFeedback(item)}
+                      disabled={actingFeedbackId === item.id || (item.status !== 'resolved' && item.status !== 'closed')}
+                      className="whitespace-nowrap"
+                    >
+                      标记已回访
+                    </Button>
+                  </div>
+                )}
               </div>
             ))}
 

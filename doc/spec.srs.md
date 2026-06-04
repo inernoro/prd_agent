@@ -2168,8 +2168,12 @@ sequenceDiagram
 **功能详述**：
 1. 员工通过自然语言提问公司制度、协作流程问题
 2. 系统基于知识条款检索返回结论
-3. 回答必须附带出处（文档名 + 章节条款）
-4. 无命中时返回标准兜底话术，不输出推测性结论
+3. 回答附带出处（文档名 + 章节条款），支持条款全文展开
+4. 回答返回置信度与聚合风险等级，便于用户判断可信度
+5. 无命中时返回标准兜底话术，并支持一键提交反馈
+6. 管理端提供反馈工单状态流（新建→受理→处理中→已解决→已关闭）
+7. 管理端支持历史问题回放验证（回放是否命中、置信度、回放时间）
+8. 对已解决工单支持回访标记，形成闭环运营记录
 
 **核心接口（新增）**：
 - 前台：`POST /zhunxing/ask` — 规范问答（JWT）
@@ -2177,7 +2181,10 @@ sequenceDiagram
 - 后台：`POST /api/zhunxing/ask` — 管理端准星问答（网关兼容）
 - 后台：`POST /api/zhunxing/feedback` — 提交未命中/不准确反馈
 - 后台：`GET /api/zhunxing/feedbacks/summary` — 反馈摘要与高频未命中聚类
-- 后台：`GET /api/zhunxing/feedbacks` — 反馈列表（支持类型/命中状态/关键词筛选）
+- 后台：`GET /api/zhunxing/feedbacks` — 反馈列表（支持类型/状态/命中状态/关键词筛选）
+- 后台：`PATCH /api/zhunxing/feedbacks/{id}/workflow` — 更新工单状态/责任人/处置信息
+- 后台：`POST /api/zhunxing/feedbacks/{id}/replay` — 历史问题回放验证
+- 后台：`POST /api/zhunxing/feedbacks/{id}/follow-up` — 标记已回访
 - 后台：`GET /api/zhunxing/documents` — 文档列表
 - 后台：`POST /api/zhunxing/documents` — 新建知识文档
 - 后台：`GET /api/zhunxing/clauses` — 条款列表
@@ -2186,8 +2193,8 @@ sequenceDiagram
 - 后台：`POST /api/zhunxing/bootstrap/app-registry` — 一键注册 App Registry 与路由规则
 
 **权限定义**：
-- `zhunxing-agent.read` — 查看准星知识文档与条款
-- `zhunxing-agent.write` — 维护准星知识文档与条款、执行初始化
+- `zhunxing-agent.read` — 访问准星页面、问答、提交反馈、查看反馈看板
+- `zhunxing-agent.write` — 维护知识文档与条款、工单处置、回放验证、回访标记、执行初始化
 
 ---
 

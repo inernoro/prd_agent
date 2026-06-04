@@ -42,10 +42,29 @@ public interface IZhunxingKnowledgeService
 
     Task<ZhunxingFeedbackListResult> ListFeedbacksAsync(
         string? feedbackType = null,
+        string? status = null,
         bool? matched = null,
         string? keyword = null,
         int page = 1,
         int pageSize = 20,
+        CancellationToken ct = default);
+
+    Task<ZhunxingFeedbackListItem> UpdateFeedbackWorkflowAsync(
+        string operatorUserId,
+        string feedbackId,
+        UpdateZhunxingFeedbackWorkflowRequest request,
+        CancellationToken ct = default);
+
+    Task<ZhunxingFeedbackReplayResult> ReplayFeedbackAsync(
+        string operatorUserId,
+        string feedbackId,
+        ReplayZhunxingFeedbackRequest request,
+        CancellationToken ct = default);
+
+    Task<ZhunxingFeedbackFollowUpResult> MarkFeedbackFollowUpAsync(
+        string operatorUserId,
+        string feedbackId,
+        MarkZhunxingFeedbackFollowUpRequest request,
         CancellationToken ct = default);
 
     Task<ZhunxingBootstrapResult> BootstrapAttendanceSampleAsync(

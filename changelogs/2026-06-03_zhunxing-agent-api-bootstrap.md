@@ -7,3 +7,4 @@
 | fix | prd-admin/prd-api | 修复准星问答路径为 /api/zhunxing/ask，并补管理端 ask 接口以适配 CDS 网关转发 |
 | feat | prd-api/prd-admin | 准星问答新增置信度与风险等级、条款全文展开、未命中一键反馈（含 feedback 持久化） |
 | feat | prd-api/prd-admin | 新增准星管理员反馈看板（高频未命中问题聚类、反馈筛选分页列表） |
+| feat | prd-api/prd-admin | 修复准星页面与接口权限错位，新增反馈工单状态流（受理/处理/解决/关闭）、历史问题回放验证与回访闭环 |
