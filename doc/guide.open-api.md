@@ -87,4 +87,3 @@ curl -X POST https://<域名>/api/v1/chat/completions \
 ## 六、暂未支持（见 doc/debt.open-api.md）
 
 `/v1/embeddings`、成本/额度账本、单次生成回查 `/v1/generation`、并发上限。需要再排期。
-</content>
