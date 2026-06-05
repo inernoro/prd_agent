@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { glassBar, glassBarGold, glassTabContainer } from '@/lib/glassStyles';
+import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 
 /**
  * PageHeader 组件
@@ -97,9 +98,10 @@ export function PageHeader(props: PageHeaderProps) {
           </div>
         ))}
 
-        {/* 右侧：操作按钮 */}
-        {actions && (
+        {/* 右侧：本页教程入口(内嵌页头,非悬浮) + 操作按钮。仅有标题/tabs 的页头展示入口。 */}
+        {(actions || title || tabs?.length) && (
           <div className={`flex items-center gap-2 shrink-0 flex-wrap ${!hasLeftContent ? 'ml-auto' : ''}`}>
+            <TipsEntryButton compact />
             {actions}
           </div>
         )}

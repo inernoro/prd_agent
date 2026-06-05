@@ -1,9 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
+import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 
 export interface TabBarItem {
+  /** 可选：新手引导锚点 id，渲染为 data-tour-id 到该 tab 按钮（见 onboarding-tips 规则） */
+  dataTourId?: string;
   key: string;
   label: string;
   icon?: React.ReactNode;
+  /** 可选：转发到 tab 按钮的 data-tour-id，供新手引导锚点（TabBar 默认不转发 data-*） */
+  dataTourId?: string;
 }
 
 interface TabBarProps {
@@ -108,6 +113,7 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
                   type="button"
                   onClick={() => handleChange(item.key)}
                   data-active={isActive}
+                  data-tour-id={item.dataTourId}
                   className="surface-nav-button"
                 >
                   {item.icon}
@@ -132,9 +138,10 @@ export function TabBar({ title, icon, items, activeKey, onChange, actions, varia
           </div>
         )}
 
-        {/* 右侧：操作按钮 */}
-        {actions && (
+        {/* 右侧：本页教程入口(内嵌页头,非悬浮) + 操作按钮。标题模式 / 顶级 tabs 模式都展示入口。 */}
+        {(actions || title || (items && items.length > 0)) && (
           <div className="surface-nav-actions">
+            {(title || (items && items.length > 0)) && <TipsEntryButton compact />}
             {actions}
           </div>
         )}

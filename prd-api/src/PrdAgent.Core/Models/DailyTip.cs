@@ -78,6 +78,17 @@ public class DailyTip
     /// </summary>
     public int Version { get; set; } = 1;
 
+    /// <summary>
+    /// 分层:
+    /// - basic(默认): 基础操作教程 — 用户完成一次后永不再弹(即使 Version 升级)。
+    ///   实现:MarkLearned 时写入 UserLearnedTip.Version = int.MaxValue (哨兵)，
+    ///   FilterLearned 的 learnedVer >= t.Version 永远成立。
+    /// - advanced: 增量/新功能通知 — 用户完成当前 Version 后,管理员升 Version 时再次弹出
+    ///   (层叠推进)。MarkLearned 时写入 UserLearnedTip.Version = 当前 Version,
+    ///   Version 升级后该用户的 learned 记录失效。
+    /// </summary>
+    public string Tier { get; set; } = "basic";
+
     /// <summary>是否启用</summary>
     public bool IsActive { get; set; } = true;
 

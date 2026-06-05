@@ -832,6 +832,16 @@ export interface CdsState {
    */
   pendingImports?: PendingImport[];
   /**
+   * 被动授权 — agent 免密发起的授权申请队列。
+   *
+   * agent 直接 POST /api/projects/:id/access-requests 发起一条申请(无需预置密钥,
+   * 按项目限量防刷),右下角审批盒(AccessRequestInbox,复用 pending-import 的被动审批
+   * 底座)弹出。用户批准 → CDS 当场签发一把项目 AgentKey(授权密钥),明文挂在该申请
+   * 记录上供发起方凭 pollToken 轮询一次取走(取走即清空明文,一次性交付)。拒绝 →
+   * 标记 rejected。与 pendingImports 平级放顶层,审批盒一次列出所有项目的待批申请。
+   */
+  accessRequests?: AccessRequest[];
+  /**
    * FU-04 — worktree directory layout version.
    *
    *   - undefined / 1: legacy flat layout `<worktreeBase>/<slug>`
@@ -1216,6 +1226,10 @@ export interface SelfUpdateTimingBreakdown {
   docOnlyMs?: number;
   noOpMs?: number;
   restartMs?: number;
+  /** 重启前等待 in-flight 分支操作排空的耗时(可达 180s,见 restart-drain.ts)。
+   *  历史上这段不计入任何 step,导致 totalMs 远大于各 step 之和 ——
+   *  进度条大片留白、看不出时间去哪了。2026-06-03 用户反馈后补记。 */
+  drainMs?: number;
   validate?: Record<string, number>;
   [key: string]: number | boolean | string | Record<string, number> | undefined;
 }
@@ -1880,6 +1894,47 @@ export interface AgentKey {
 }
 
 /**
+ * 授权申请(Access Request)— agent 直接发起、等用户右下角一键批准的记录。
+ *
+ * 零前置:agent 无需任何预置密钥就能 POST 发起(免密 + 按项目限量,防刷)。发起时
+ * CDS 当场生成一个一次性「轮询票据」(pollToken),只返回给发起方,用于之后取结果。
+ * 生命周期:pending --(用户批准)--> approved(签发授权密钥) / --(拒绝)--> rejected。
+ * 批准时把全权项目 AgentKey 的**明文**临时挂在 issuedKeyPlaintext 上,发起方凭
+ * pollToken 轮询取走一次;取走后明文清空、deliveredAt 落时间戳(一次性交付)。
+ */
+export interface AccessRequest {
+  /** Random 12-hex id. */
+  id: string;
+  /** 目标项目 id(单项目)。 */
+  projectId: string;
+  /** sha256 of the one-time pollToken issued at submit. Only the submitter holds the plaintext. */
+  pollTokenHash: string;
+  /** 申请方名称(body 传入),用户审批时可见。 */
+  agentName: string;
+  /** 申请理由,用户审批时可见。 */
+  purpose: string;
+  /** Lifecycle: starts 'pending', moves to 'approved' or 'rejected'. */
+  status: 'pending' | 'approved' | 'rejected';
+  /** ISO submit time. */
+  createdAt: string;
+  /** Set when status flips away from 'pending'. */
+  decidedAt?: string;
+  /** GitHub login / 'cookie' / 'global-key' — who decided. */
+  decidedBy?: string;
+  /** 拒绝原因(status='rejected' 时可选)。 */
+  rejectReason?: string;
+  /** 批准时签发的授权密钥(项目 AgentKey)的 id,留作审计/吊销。 */
+  issuedKeyId?: string;
+  /**
+   * 批准时签发的授权密钥**明文**,仅在「已批准未交付」窗口存在。agent 轮询取走
+   * 一次后清空 —— 一次性交付,不长期持久化明文。
+   */
+  issuedKeyPlaintext?: string;
+  /** agent 轮询取走授权密钥明文的时间。置位后再轮询不再返回明文。 */
+  deliveredAt?: string;
+}
+
+/**
  * Global (bootstrap-equivalent) Agent Key — NOT scoped to any project.
  *
  * Project-scoped AgentKey (`cdsp_<slug12>_<suffix>`) can't create projects
@@ -2043,7 +2098,7 @@ export interface InfraHealthCheck {
 
 /** An infrastructure service managed by CDS (e.g., MongoDB, Redis) */
 export interface InfraService {
-  /** Unique identifier (e.g., 'mongodb', 'redis') */
+  /** Unique identifier (e.g., 'mongodb', 'redis'). 2nd+ same-type instance: '<preset>-2'. */
   id: string;
   /**
    * Visibility and ownership scope.
@@ -2071,6 +2126,12 @@ export interface InfraService {
   status: 'running' | 'stopped' | 'error';
   /** Error message if status is 'error' */
   errorMessage?: string;
+  /** Base catalog preset id this instance derives from (e.g. 'postgres' for both 'postgres' and 'postgres-2'). */
+  basePresetId?: string;
+  /** User-chosen database name for schemaful stores (default "app"). Threaded into env + connection strings. */
+  dbName?: string;
+  /** Initialization SQL/commands configured at creation; run against the store via the data panel. */
+  initSql?: string;
   /** Persistent volumes */
   volumes: InfraVolume[];
   /** Environment variables for the container itself */

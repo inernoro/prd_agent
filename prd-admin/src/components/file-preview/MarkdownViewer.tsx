@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, memo } from 'react';
+import { useCallback, useMemo, useState, memo, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -12,9 +12,41 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { parseFrontmatter } from '@/lib/frontmatter';
 import { ImageLightbox } from '@/components/ui/ImageLightbox';
+import { MermaidDiagram } from '@/components/ui/MermaidDiagram';
+import { UpdateTimeline, parseMermaidTimeline } from '@/components/ui/UpdateTimeline';
 // SSOT：与 TOC（markdownToc.ts）共用同一套「标题文本 → slug」规则，
 // 保证目录点击能精确跳到带内嵌 HTML 的标题（rehypeRaw 渲染后）。
 import { headingTextToSlug } from '@/lib/markdownToc';
+import { Copy, Check } from 'lucide-react';
+
+// 代码块复制外壳：hover 显示「复制」按钮，点击写入剪贴板，1.5s 后复位。
+// 按钮绝对定位在外层包裹（而非滚动的 pre 内），长代码横向滚动时按钮不跟着跑。
+// 外层承担代码块上下外边距，内层块的 margin 归零，保证按钮贴块右上角。
+function CodeBlockShell({ text, children }: { text: string; children: ReactNode }) {
+  const [copied, setCopied] = useState(false);
+  const copy = useCallback(() => {
+    if (!navigator.clipboard) return;
+    navigator.clipboard.writeText(text)
+      .then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1500); })
+      .catch(() => {});
+  }, [text]);
+  return (
+    <div className="group relative" style={{ margin: '18px 0' }}>
+      <button
+        type="button"
+        onClick={copy}
+        className="absolute top-2 right-2 inline-flex items-center gap-1 px-1.5 py-1 rounded-md opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
+        style={{ zIndex: 1, background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.14)', color: 'rgba(255,255,255,0.75)', fontSize: 10 }}
+        title="复制代码"
+        aria-label="复制代码"
+      >
+        {copied ? <Check size={11} /> : <Copy size={11} />}
+        {copied ? '已复制' : '复制'}
+      </button>
+      {children}
+    </div>
+  );
+}
 
 // ── Markdown heading slug 辅助 ──
 function childrenToText(children: unknown): string {
@@ -67,7 +99,7 @@ function MarkdownViewerBase({ content }: { content: string }) {
   const body = useMemo(() => parseFrontmatter(content).body, [content]);
 
   // 图片 lightbox：点击 markdown 中任意 <img> 打开放大模态，支持 ← → 切换。
-  // ⚠ 不能用"每次渲染重置 ref + img renderer 中 push"的方式收集图片！
+  // 注意：不能用"每次渲染重置 ref + img renderer 中 push"的方式收集图片！
   // ReactMarkdown 在 body 不变时会缓存子树，img 自定义 renderer 不会重跑，
   // 重置后的 ref 永远是空数组，导致 lightbox 永远不显示（2026-05-28 用户反馈）。
   // 正确做法：用 useMemo 一次性扫 markdown 源码里的 ![alt](src) 模式，
@@ -214,27 +246,37 @@ function MarkdownViewerBase({ content }: { content: string }) {
             if (!isBlock) {
               return <code className="px-1.5 py-0.5 rounded text-[12px]" style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(248,113,113,0.9)' }} {...props}>{children}</code>;
             }
-            // 块级且指定了语言 → Prism 高亮
+            // 块级且指定了语言 → Mermaid 图表交给 MermaidDiagram 渲染，其余走 Prism 高亮
             if (match) {
+              if (match[1].toLowerCase() === 'mermaid') {
+                // timeline 类型横向太挤、看不清 → 改用纵向时间线组件；其余 mermaid 图照旧
+                if (parseMermaidTimeline(text)) {
+                  return <UpdateTimeline code={text} />;
+                }
+                return <MermaidDiagram code={text} />;
+              }
               return (
-                <SyntaxHighlighter
-                  style={oneDark}
-                  language={match[1]}
-                  PreTag="div"
-                  customStyle={{
-                    margin: '18px 0', borderRadius: '10px', fontSize: '12px',
-                    background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.04)',
-                  }}
-                >
-                  {text}
-                </SyntaxHighlighter>
+                <CodeBlockShell text={text}>
+                  <SyntaxHighlighter
+                    style={oneDark}
+                    language={match[1]}
+                    PreTag="div"
+                    customStyle={{
+                      margin: 0, borderRadius: '10px', fontSize: '12px',
+                      background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.04)',
+                    }}
+                  >
+                    {text}
+                  </SyntaxHighlighter>
+                </CodeBlockShell>
               );
             }
             // 块级但无语言 → 纯 <pre>，避免 Prism token 背景污染 ASCII 框图
             return (
+              <CodeBlockShell text={text}>
               <pre
                 style={{
-                  margin: '18px 0',
+                  margin: 0,
                   padding: '14px 16px',
                   borderRadius: '10px',
                   fontSize: '12px',
@@ -249,6 +291,7 @@ function MarkdownViewerBase({ content }: { content: string }) {
               >
                 {text}
               </pre>
+              </CodeBlockShell>
             );
           },
           pre: ({ children }) => <>{children}</>,

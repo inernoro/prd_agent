@@ -43,6 +43,9 @@ public interface IHostedSiteService
     /// <summary>回填存量 PDF 包装站的 WrappedAssetType marker（一次性维护任务，由 HostedSiteBackfillService 启动调用）</summary>
     Task<int> BackfillPdfWrapperMarkersAsync(CancellationToken ct = default);
 
+    /// <summary>存量站点回填幻灯片翻页方向兼容垫片（版本 &lt; 当前的站点重新注入升级，无需用户重传）。</summary>
+    Task<int> BackfillSlideNavCompatAsync(CancellationToken ct = default);
+
     // ── 查询 ──
 
     Task<HostedSite?> GetByIdAsync(string siteId, string userId, CancellationToken ct = default);
@@ -79,6 +82,10 @@ public interface IHostedSiteService
 
     /// <summary>按用户名获取该用户所有公开的站点（公开页聚合，无需登录）</summary>
     Task<List<HostedSite>> ListPublicByUserIdAsync(string ownerUserId, int limit = 60, CancellationToken ct = default);
+
+    /// <summary>按用户获取该用户全部站点（公开 + 私有）。用于项目内成员作品聚合：项目经理/成员在项目空间内查看队友的
+    /// 网页托管作品，不受 owner 公开与否限制（站点文件本身按 URL 直达，Visibility 仅控制公开页是否列出）。</summary>
+    Task<List<HostedSite>> ListAllByUserIdAsync(string ownerUserId, int limit = 60, CancellationToken ct = default);
 
     // ── 分享 ──
 

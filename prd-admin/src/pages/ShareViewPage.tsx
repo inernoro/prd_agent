@@ -4,7 +4,7 @@ import { viewSiteShare, saveSharedSite } from '@/services';
 import type { ShareViewData } from '@/services';
 import { listShareComments } from '@/services/real/webPages';
 import { useAuthStore } from '@/stores/authStore';
-import { Lock, ExternalLink, FileCode2, Eye, EyeOff, AlertCircle, ShieldCheck, Unlock, Download, Check, LogIn, MessageSquare, X } from 'lucide-react';
+import { Lock, ExternalLink, FileCode2, Eye, EyeOff, AlertCircle, ShieldCheck, Unlock, Download, Check, LogIn, MessageSquare, X, Maximize, Minimize } from 'lucide-react';
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
 import { BlurText } from '@/components/reactbits';
 import CommentsSection from '@/components/web-hosting/CommentsSection';
@@ -93,6 +93,23 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     fetchShare();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
+
+  // 全屏演示：对单站点视图容器 requestFullscreen，全屏时隐藏 MAP 顶栏（Esc / 系统手势退出由
+  // fullscreenchange 同步回 state）。iframe 另加 allowFullScreen，让 deck 自带的全屏按钮也能用。
+  const singleViewRef = useRef<HTMLDivElement>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  useEffect(() => {
+    const onFsChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', onFsChange);
+    return () => document.removeEventListener('fullscreenchange', onFsChange);
+  }, []);
+  const togglePresentFullscreen = useCallback(() => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.();
+    } else {
+      singleViewRef.current?.requestFullscreen?.().catch(() => {});
+    }
+  }, []);
 
   // 顶栏「评论 N」初始计数：单站点分享 + token 就绪后拉一次（抽屉打开后由 onCountChange 接管）
   useEffect(() => {
@@ -334,11 +351,11 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   if (data.sites.length === 1) {
     const site = data.sites[0];
     return (
-      <div style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', background: '#0a0a0a' }}>
-        {/* Top bar */}
+      <div ref={singleViewRef} style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', background: '#0a0a0a' }}>
+        {/* Top bar —— 全屏演示时隐藏，让 PPT 占满整屏 */}
         <div style={{
           padding: '8px 16px',
-          display: 'flex',
+          display: isFullscreen ? 'none' : 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           background: 'rgba(17, 17, 17, 0.85)',
@@ -355,6 +372,16 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             </span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {!site.pdfAssetUrl && (
+              <button
+                onClick={togglePresentFullscreen}
+                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 6, border: 'none', background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.85)', fontSize: 13, cursor: 'pointer' }}
+                title="全屏演示（Esc 退出）"
+              >
+                {isFullscreen ? <Minimize size={12} /> : <Maximize size={12} />}
+                全屏演示
+              </button>
+            )}
             {!isOwner && (
               <button
                 onClick={handleSave}
@@ -415,7 +442,8 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
           src={site.pdfAssetUrl || site.siteUrl}
           title={site.title}
           style={{ flex: 1, border: 'none', width: '100%' }}
-          sandbox={site.pdfAssetUrl ? undefined : 'allow-scripts allow-same-origin allow-popups allow-forms'}
+          sandbox={site.pdfAssetUrl ? undefined : 'allow-scripts allow-same-origin allow-popups allow-forms allow-fullscreen'}
+          allowFullScreen
         />
 
         {/* 评论：右侧滑出抽屉（由顶栏「评论」按钮打开）。不占页面布局、不盖 PPT 控件（token 必有） */}

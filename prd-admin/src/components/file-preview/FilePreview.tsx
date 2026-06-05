@@ -84,6 +84,21 @@ export function FilePreview({ entry, preview }: { entry?: DocBrowserEntry; previ
     );
   }
 
+  // HTML 文件预览：用 sandbox iframe 渲染原始文件（fileUrl），实现真预览，
+  // 而非剥标签后的纯文本。sandbox="" 禁用脚本/表单/同源，仅渲染静态 HTML+CSS，防 XSS。
+  const isHtmlFile = (entry.contentType ?? '').toLowerCase().includes('html') || /\.html?$/i.test(entry.title);
+  if (isHtmlFile && fileUrl) {
+    return (
+      <iframe
+        src={fileUrl}
+        title={entry.title}
+        sandbox=""
+        className="w-full rounded-lg"
+        style={{ height: 'calc(100vh - 220px)', border: '1px solid rgba(255,255,255,0.06)', background: '#fff' }}
+      />
+    );
+  }
+
   // 文本预览（Markdown / 提取后的 Office 文本 / 代码）
   if (kind === 'text' && text) {
     return <MarkdownViewer content={text} />;

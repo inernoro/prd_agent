@@ -1275,6 +1275,8 @@ export const getModelGroups = async () => {
 export const createModelGroup = (data: Parameters<IModelGroupsService['createModelGroup']>[0]) => modelGroupsService.createModelGroup(data);
 export const updateModelGroup = (id: string, data: Parameters<IModelGroupsService['updateModelGroup']>[1]) => modelGroupsService.updateModelGroup(id, data);
 export const deleteModelGroup = (id: string) => modelGroupsService.deleteModelGroup(id);
+export const getModelGroupUsage = (id: string) => modelGroupsService.getModelGroupUsage(id);
+export const unbindModelGroup = (id: string, appIds?: string[]) => modelGroupsService.unbindModelGroup(id, appIds);
 export const getGroupMonitoring = async (groupId: string) => {
   const response = await modelGroupsService.getGroupMonitoring(groupId);
   if (response.success && response.data) {
@@ -1860,13 +1862,25 @@ export {
   updateSubscription,
   generateSubtitle,
   listReprocessTemplates,
+  listReprocessAgents,
+  createReprocessAgent,
+  deleteReprocessAgent,
   startReprocess,
+  getActiveReprocessRun,
+  applyReprocessContent,
+  getReprocessConversation,
+  saveReprocessConversation,
+  clearReprocessConversation,
   getAgentRun,
   getLatestAgentRun,
   // 批次 C：浏览事件埋点
   logEntryView,
   leaveEntryView,
   listStoreViewEvents,
+  getStoreAnalytics,
+  getStoresAnalyticsSummary,
+  getAllStoresAnalytics,
+  listAllStoresViewEvents,
   // 批次 D：划词评论
   createInlineComment,
   listInlineComments,
@@ -1909,7 +1923,9 @@ export type {
   DocumentSyncLogEntry,
   SubscriptionDetail,
   DocumentStoreAgentRun,
+  ReprocessChatMessage,
   ReprocessTemplate,
+  ReprocessAgent,
   DocumentStoreViewEvent,
   DocumentStoreViewStats,
   DocumentInlineComment,
@@ -1985,6 +2001,7 @@ export {
   updatePmKnowledgeFileReal as updatePmKnowledgeFile,
   deletePmKnowledgeFileReal as deletePmKnowledgeFile,
   getPmMemberSitesReal as getPmMemberSites,
+  getPmKnowledgeStoreReal as getPmKnowledgeStore,
   listPmDecisionsReal as listPmDecisions,
   createPmDecisionReal as createPmDecision,
   updatePmDecisionReal as updatePmDecision,
@@ -1993,6 +2010,8 @@ export {
   createPmWeeklyReportReal as createPmWeeklyReport,
   updatePmWeeklyReportReal as updatePmWeeklyReport,
   deletePmWeeklyReportReal as deletePmWeeklyReport,
+  listImportableWeeklyReportsReal as listImportableWeeklyReports,
+  importWeeklyReportReal as importWeeklyReport,
   uploadPmWeeklyReportImageReal as uploadPmWeeklyReportImage,
   listPmMeetingsReal as listPmMeetings,
   createPmMeetingReal as createPmMeeting,
@@ -2002,11 +2021,23 @@ export {
   createPmGoalReal as createPmGoal,
   updatePmGoalReal as updatePmGoal,
   deletePmGoalReal as deletePmGoal,
+  listPmGoalCheckInsReal as listPmGoalCheckIns,
+  addPmGoalCheckInReal as addPmGoalCheckIn,
+  scorePmGoalReal as scorePmGoal,
+  listPmGoalCyclesReal as listPmGoalCycles,
+  createPmGoalCycleReal as createPmGoalCycle,
+  updatePmGoalCycleReal as updatePmGoalCycle,
+  deletePmGoalCycleReal as deletePmGoalCycle,
   listPmAuditLogsReal as listPmAuditLogs,
   listPmMilestonesReal as listPmMilestones,
   createPmMilestoneReal as createPmMilestone,
   updatePmMilestoneReal as updatePmMilestone,
   deletePmMilestoneReal as deletePmMilestone,
+  listPmRisksReal as listPmRisks,
+  createPmRiskReal as createPmRisk,
+  updatePmRiskReal as updatePmRisk,
+  deletePmRiskReal as deletePmRisk,
+  getPmBurndownReal as getPmBurndown,
 } from '@/services/real/pmAgent';
 export type {
   PmProject,

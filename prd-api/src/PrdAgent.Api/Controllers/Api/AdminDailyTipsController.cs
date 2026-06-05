@@ -324,7 +324,11 @@ public sealed class AdminDailyTipsController : ControllerBase
 
         // 已废弃 seed 清单 — 一键植入时顺带删除,避免老环境留下不再推荐的演示。
         // 删除条件:SourceType=seed AND SourceId 在此列表里(防止误删管理员手建的 manual tip)。
-        var deprecatedSourceIds = new[] { "showcase-all-features" };
+        // RetiredSeedSourceIds 是被新版 *-page-guide 取代的旧短教程(SSOT 在 DailyTipsController);
+        // showcase-all-features 是 createzzdemo 的回归演示,一并清理。
+        var deprecatedSourceIds = DailyTipsController.RetiredSeedSourceIds
+            .Append("showcase-all-features")
+            .ToArray();
         if (deprecatedSourceIds.Length > 0)
         {
             await _db.DailyTips.DeleteManyAsync(
@@ -366,6 +370,8 @@ public sealed class AdminDailyTipsController : ControllerBase
                 EndAt = seed.EndAt,
                 SourceType = "seed",
                 SourceId = seed.SourceId,
+                Tier = seed.Tier,
+                Version = seed.Version,
                 CreatedBy = this.GetRequiredUserId(),
                 CreatedAt = now,
                 UpdatedAt = now,
@@ -416,6 +422,8 @@ public sealed class AdminDailyTipsController : ControllerBase
             EndAt = seed.EndAt,
             SourceType = "seed",
             SourceId = seed.SourceId,
+            Tier = seed.Tier,
+            Version = seed.Version,
             CreatedBy = this.GetRequiredUserId(),
             CreatedAt = now,
             UpdatedAt = now,

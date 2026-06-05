@@ -22,6 +22,7 @@ import {
   RefreshCw,
   Settings,
   Trash2,
+  Wand2,
   XCircle,
 } from 'lucide-react';
 import dotnetIconUrl from 'devicon/icons/dot-net/dot-net-original.svg';
@@ -49,6 +50,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { apiRequest, ApiError } from '@/lib/api';
+import { useInfraCatalog } from '@/lib/infraCatalog';
+import { RuntimeValidateButton } from '@/components/deployment/RuntimeValidateButton';
 import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
 import { SkillDownloadDialog } from '@/components/SkillDownloadDialog';
@@ -122,10 +125,10 @@ interface GithubReposResponse {
 }
 
 type RuntimeId = 'auto' | 'node' | 'python' | 'dotnet' | 'java' | 'go' | 'rust' | 'php' | 'static' | 'dockerfile' | 'custom';
-type AppServiceRole = 'frontend' | 'backend';
+type AppServiceRole = 'frontend' | 'backend' | 'worker';
 
 interface AppServiceDraft {
-  id: AppServiceRole;
+  id: string;
   name: string;
   role: AppServiceRole;
   enabled: boolean;
@@ -134,6 +137,12 @@ interface AppServiceDraft {
   runtimeCommand: string;
   runtimePort: number;
 }
+
+const APP_SERVICE_ROLES: Array<{ id: AppServiceRole; label: string; entryHint: string }> = [
+  { id: 'frontend', label: '前端', entryHint: '入口 /' },
+  { id: 'backend', label: '后端', entryHint: '入口 /api' },
+  { id: 'worker', label: '后台任务', entryHint: '无 HTTP 入口' },
+];
 
 const RUNTIME_PRESETS: Array<{
   id: RuntimeId;
@@ -233,42 +242,31 @@ const RUNTIME_PRESETS: Array<{
   },
 ];
 
-const INFRA_PRESETS = [
-  { id: 'mongodb', label: 'MongoDB', description: '文档数据库，自动生成 MONGODB_URL。' },
-  { id: 'postgres', label: 'PostgreSQL', description: '关系型数据库，自动生成 DATABASE_URL。' },
-  { id: 'mysql', label: 'MySQL', description: '关系型数据库，自动生成 DATABASE_URL。' },
-  { id: 'redis', label: 'Redis', description: '缓存与队列，自动生成 REDIS_URL。' },
-  { id: 'rabbitmq', label: 'RabbitMQ', description: '消息队列，自动生成 RABBITMQ_URL。' },
-];
-
 function runtimePreset(id: RuntimeId): (typeof RUNTIME_PRESETS)[number] {
   return RUNTIME_PRESETS.find((preset) => preset.id === id) || RUNTIME_PRESETS[0];
 }
 
+function makeOnboardingService(id: string, role: AppServiceRole, name: string, runtimeId: RuntimeId): AppServiceDraft {
+  const preset = runtimePreset(runtimeId);
+  return {
+    id,
+    name,
+    role,
+    enabled: true,
+    runtimeId,
+    runtimeImage: preset.image,
+    runtimeCommand: preset.command,
+    runtimePort: preset.port,
+  };
+}
+
 function defaultOnboardingServices(): AppServiceDraft[] {
-  const frontend = runtimePreset('static');
-  const backend = runtimePreset('node');
+  // 后端默认走「自动识别」而非写死 Node 命令:有 Git 仓库时按真实仓库特征(package.json /
+  // requirements.txt / go.mod / cds-compose.yml…)推断启动命令,泛化到任意技术栈;
+  // 用户选具体运行时才填可编辑的最佳努力默认命令。前端构建产物常见,保留 static。
   return [
-    {
-      id: 'frontend',
-      name: '前端服务',
-      role: 'frontend',
-      enabled: true,
-      runtimeId: frontend.id,
-      runtimeImage: frontend.image,
-      runtimeCommand: frontend.command,
-      runtimePort: frontend.port,
-    },
-    {
-      id: 'backend',
-      name: '后端服务',
-      role: 'backend',
-      enabled: true,
-      runtimeId: backend.id,
-      runtimeImage: backend.image,
-      runtimeCommand: backend.command,
-      runtimePort: backend.port,
-    },
+    makeOnboardingService('frontend', 'frontend', '前端服务', 'static'),
+    makeOnboardingService('backend', 'backend', '后端服务', 'auto'),
   ];
 }
 
@@ -2675,6 +2673,12 @@ function CreateProjectDialog({
   const [autoDetectOnClone, setAutoDetectOnClone] = useState(true);
   const [appServices, setAppServices] = useState<AppServiceDraft[]>(() => defaultOnboardingServices());
   const [selectedInfra, setSelectedInfra] = useState<string[]>([]);
+  const [infraConfig, setInfraConfig] = useState<Record<string, { dbName?: string; initSql?: string }>>({});
+  const [infraExtra, setInfraExtra] = useState<Record<string, Array<{ dbName?: string; initSql?: string }>>>({});
+  const [envText, setEnvText] = useState('');
+  const [detecting, setDetecting] = useState(false);
+  const [detectMsg, setDetectMsg] = useState('');
+  const { groups: infraGroups } = useInfraCatalog();
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [repoPickerOpen, setRepoPickerOpen] = useState(false);
@@ -2686,16 +2690,19 @@ function CreateProjectDialog({
       setAutoDetectOnClone(true);
       setAppServices(defaultOnboardingServices());
       setSelectedInfra([]);
+      setInfraConfig({});
+      setInfraExtra({});
+      setEnvText('');
       return;
     }
     if (autoOpenPicker) setRepoPickerOpen(true);
   }, [open, autoOpenPicker]);
 
-  function updateService(id: AppServiceRole, patch: Partial<AppServiceDraft>): void {
+  function updateService(id: string, patch: Partial<AppServiceDraft>): void {
     setAppServices((current) => current.map((service) => service.id === id ? { ...service, ...patch } : service));
   }
 
-  function chooseServiceRuntime(id: AppServiceRole, next: RuntimeId): void {
+  function chooseServiceRuntime(id: string, next: RuntimeId): void {
     const preset = runtimePreset(next);
     updateService(id, {
       runtimeId: next,
@@ -2705,8 +2712,86 @@ function CreateProjectDialog({
     });
   }
 
+  function addService(): void {
+    setAppServices((current) => [
+      ...current,
+      makeOnboardingService(`service-${Date.now().toString(36)}`, 'backend', `应用服务 ${current.length + 1}`, 'node'),
+    ]);
+  }
+
+  function removeService(id: string): void {
+    setAppServices((current) => (current.length <= 1 ? current : current.filter((service) => service.id !== id)));
+  }
+
   function toggleInfra(id: string): void {
     setSelectedInfra((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  }
+
+  function setInfraConfigField(id: string, field: 'dbName' | 'initSql', value: string): void {
+    setInfraConfig((current) => ({ ...current, [id]: { ...current[id], [field]: value } }));
+  }
+
+  function addExtraInstance(presetId: string): void {
+    setInfraExtra((current) => ({ ...current, [presetId]: [...(current[presetId] || []), {}] }));
+  }
+  function updateExtraInstance(presetId: string, idx: number, field: 'dbName' | 'initSql', value: string): void {
+    setInfraExtra((current) => ({
+      ...current,
+      [presetId]: (current[presetId] || []).map((inst, i) => (i === idx ? { ...inst, [field]: value } : inst)),
+    }));
+  }
+  function removeExtraInstance(presetId: string, idx: number): void {
+    setInfraExtra((current) => ({ ...current, [presetId]: (current[presetId] || []).filter((_, i) => i !== idx) }));
+  }
+
+  // 少绕路:直接粘贴 .env 文本，一行一条 KEY=VALUE（# 注释、export 前缀、引号都容忍）。
+  function parseEnvText(text: string): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const rawLine of text.split('\n')) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#')) continue;
+      const eq = line.indexOf('=');
+      if (eq <= 0) continue;
+      const key = line.slice(0, eq).trim().replace(/^export\s+/, '');
+      let val = line.slice(eq + 1).trim();
+      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) val = val.slice(1, -1);
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) out[key] = val;
+    }
+    return out;
+  }
+
+  // 检测并回填:clone 仓库 → 识别栈 → 把应用服务一键填成真实检测到的配置(取代猜测默认)。
+  async function detectRuntime(): Promise<void> {
+    const url = gitRepoUrl.trim();
+    if (!url) { setDetectMsg('先填上面的 Git 仓库 URL，再检测。'); return; }
+    setDetecting(true);
+    setDetectMsg('正在克隆并分析你的仓库…(几秒到几十秒)');
+    try {
+      const res = await apiRequest<{ services: Array<{ id: string; name: string; role: AppServiceRole; runtime: RuntimeId; dockerImage: string; command: string; port: number; summary?: string; stack?: string; confidence?: number; signals?: string[]; manualSetupRequired?: boolean }>; moduleCount: number }>(
+        '/api/detect-runtime',
+        { method: 'POST', body: { gitRepoUrl: url, gitRef: gitDefaultBranch.trim() || undefined } },
+      );
+      const svcs = res.services || [];
+      if (svcs.length === 0) { setDetectMsg('没识别出已知技术栈，保留手填(或直接试运行验证)。'); return; }
+      setAppServices(svcs.map((s) => ({
+        id: s.id,
+        name: s.name,
+        role: s.role,
+        enabled: true,
+        runtimeId: s.runtime,
+        runtimeImage: s.dockerImage || '',
+        runtimeCommand: s.command || '',
+        runtimePort: s.port || 8080,
+      })));
+      const conf = (c?: number): string => ((c ?? 0) >= 0.8 ? '高' : (c ?? 0) >= 0.5 ? '中' : '低');
+      const lines = svcs.map((s) => `${s.name}：${s.summary || s.runtime}(把握${conf(s.confidence)})`);
+      const uncertain = svcs.some((s) => (s.confidence ?? 0) < 0.6 || s.stack === 'unknown' || s.manualSetupRequired);
+      setDetectMsg(`检测到 ${svcs.length} 个服务并已填好：${lines.join('；')}。${uncertain ? '部分把握不高或未完全识别——强烈建议点「试运行验证」确认，或手改命令/镜像后再部署。' : '把握较高，点「试运行验证」确认一下就能部署。'}`);
+    } catch (e) {
+      setDetectMsg(e instanceof ApiError ? `检测失败：${e.message}` : `检测失败：${String(e)}`);
+    } finally {
+      setDetecting(false);
+    }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -2729,6 +2814,11 @@ function CreateProjectDialog({
           description: description.trim() || undefined,
           autoDetectOnClone: trimmedRepoUrl ? autoDetectOnClone : undefined,
           infraPresets: selectedInfra,
+          infraConfigs: infraConfig,
+          infraExtra: Object.entries(infraExtra).flatMap(([presetId, arr]) =>
+            arr.map((inst) => ({ presetId, dbName: inst.dbName, initSql: inst.initSql })),
+          ),
+          customEnv: parseEnvText(envText),
           onboardingServices: appServices.map((service) => ({
             id: service.id,
             name: service.name,
@@ -2811,6 +2901,21 @@ function CreateProjectDialog({
                   </Button>
                 </div>
               </label>
+              <div className="mt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={detecting || !gitRepoUrl.trim()}
+                  onClick={() => void detectRuntime()}
+                >
+                  {detecting ? <Loader2 className="animate-spin" /> : <Wand2 />}
+                  检测仓库并自动填好配置
+                </Button>
+                <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+                  {detectMsg || '填了 Git 仓库就点这里：CDS 克隆并分析你的代码，按真实技术栈把镜像/命令/端口填好——不用猜，填完可直接试运行验证。'}
+                </p>
+              </div>
               <label className="mt-3 block space-y-1.5">
                 <span className="text-sm font-medium">备注</span>
                 <textarea
@@ -2827,28 +2932,55 @@ function CreateProjectDialog({
                 <Settings className="h-4 w-4" />
                 选择应用服务
                 <span className="ml-auto rounded-full border border-border px-2 py-0.5 text-xs font-normal text-muted-foreground">
-                  前端 + 后端
+                  {appServices.length} 个服务
                 </span>
               </div>
               <div className="grid gap-3 lg:grid-cols-2">
                 {appServices.map((service) => {
                   const preset = runtimePreset(service.runtimeId);
                   const editableRuntime = service.runtimeId !== 'auto' && service.runtimeId !== 'dockerfile';
+                  const roleMeta = APP_SERVICE_ROLES.find((r) => r.id === service.role);
                   return (
                     <div key={service.id} className="rounded-md border border-border bg-background p-3">
-                      <div className="mb-3 flex items-center justify-between gap-3">
-                        <label className="flex items-center gap-2 text-sm font-semibold">
-                          <input
-                            type="checkbox"
-                            className="h-4 w-4 rounded border-input"
-                            checked={service.enabled}
-                            onChange={(event) => updateService(service.id, { enabled: event.target.checked })}
-                          />
-                          {service.name}
-                        </label>
-                        <span className="rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
-                          {service.role === 'frontend' ? '入口 /' : '入口 /api'}
-                        </span>
+                      <div className="mb-3 flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 shrink-0 rounded border-input"
+                          checked={service.enabled}
+                          onChange={(event) => updateService(service.id, { enabled: event.target.checked })}
+                          aria-label="启用该服务"
+                        />
+                        <input
+                          className="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm font-semibold outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                          value={service.name}
+                          onChange={(event) => updateService(service.id, { name: event.target.value })}
+                          disabled={!service.enabled}
+                          placeholder="服务名称"
+                          aria-label="服务名称"
+                        />
+                        <select
+                          className="h-8 shrink-0 rounded-md border border-input bg-background px-2 text-xs outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                          value={service.role}
+                          onChange={(event) => updateService(service.id, { role: event.target.value as AppServiceRole })}
+                          disabled={!service.enabled}
+                          title={roleMeta?.entryHint}
+                          aria-label="服务角色"
+                        >
+                          {APP_SERVICE_ROLES.map((r) => (
+                            <option key={r.id} value={r.id}>{r.label}</option>
+                          ))}
+                        </select>
+                        {appServices.length > 1 ? (
+                          <button
+                            type="button"
+                            className="shrink-0 rounded-md border border-border p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                            onClick={() => removeService(service.id)}
+                            aria-label="移除该服务"
+                            title="移除该服务"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        ) : null}
                       </div>
                       <label className="block space-y-1.5">
                         <span className="text-xs font-medium text-muted-foreground">运行环境</span>
@@ -2897,12 +3029,35 @@ function CreateProjectDialog({
                               disabled={!service.enabled}
                               placeholder={preset.command || '填写容器启动命令'}
                             />
+                            <span className="block text-[11px] leading-4 text-muted-foreground">
+                              按所选运行时给的最佳努力默认，可直接改；想完全交给仓库识别就把运行环境选「自动识别」。
+                            </span>
                           </label>
+                          <div className="md:col-span-2">
+                            <RuntimeValidateButton
+                              gitRepoUrl={gitRepoUrl}
+                              gitRef={gitDefaultBranch}
+                              image={service.runtimeImage}
+                              command={service.runtimeCommand}
+                              port={service.runtimePort}
+                            />
+                          </div>
                         </div>
                       ) : null}
                     </div>
                   );
                 })}
+              </div>
+              <div className="mt-3 flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={addService}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-border px-3 py-2 text-sm text-muted-foreground hover:border-primary hover:text-foreground"
+                >
+                  <Plus className="h-4 w-4" />
+                  添加服务
+                </button>
+                <span className="text-xs text-muted-foreground">默认前端 + 后端，多入口应用可继续添加(后端 / 后台任务)</span>
               </div>
               {gitRepoUrl.trim() ? (
                 <label className="mt-3 flex items-start gap-3 rounded-md border border-border bg-muted/30 px-3 py-3 text-sm">
@@ -2927,31 +3082,142 @@ function CreateProjectDialog({
                 <Database className="h-4 w-4" />
                 选择基础设施
               </div>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                {INFRA_PRESETS.map((preset) => {
-                  const checked = selectedInfra.includes(preset.id);
-                  return (
-                    <button
-                      key={preset.id}
-                      type="button"
-                      onClick={() => toggleInfra(preset.id)}
-                      className={[
-                        'min-h-24 rounded-md border px-3 py-3 text-left transition-colors',
-                        checked ? 'border-primary bg-primary/10' : 'border-border bg-background hover:border-primary/60',
-                      ].join(' ')}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-medium">{preset.label}</span>
-                        <span className={`h-4 w-4 rounded border ${checked ? 'border-primary bg-primary' : 'border-border'}`} />
-                      </div>
-                      <div className="mt-2 text-xs leading-5 text-muted-foreground">{preset.description}</div>
-                    </button>
-                  );
-                })}
+              <div className="space-y-3">
+                {infraGroups.map((group) => (
+                  <div key={group.category}>
+                    <div className="mb-1.5 text-xs font-medium text-muted-foreground">{group.label}</div>
+                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                      {group.items.map((preset) => {
+                        const checked = selectedInfra.includes(preset.id);
+                        return (
+                          <button
+                            key={preset.id}
+                            type="button"
+                            onClick={() => toggleInfra(preset.id)}
+                            className={[
+                              'min-h-24 rounded-md border px-3 py-3 text-left transition-colors',
+                              checked ? 'border-primary bg-primary/10' : 'border-border bg-background hover:border-primary/60',
+                            ].join(' ')}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-medium">{preset.name}</span>
+                              <span className={`h-4 w-4 rounded border ${checked ? 'border-primary bg-primary' : 'border-border'}`} />
+                            </div>
+                            <div className="mt-2 text-xs leading-5 text-muted-foreground">{preset.description}</div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
               </div>
+              {(() => {
+                const dbPresets = infraGroups
+                  .flatMap((g) => g.items)
+                  .filter((i) => selectedInfra.includes(i.id) && (i.supportsDbName || i.supportsInitSql));
+                if (dbPresets.length === 0) return null;
+                return (
+                  <div className="mt-3 space-y-3">
+                    {dbPresets.map((preset) => (
+                      <div key={preset.id} className="rounded-md border border-border bg-background p-3">
+                        <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+                          <Database className="h-3.5 w-3.5" />
+                          {preset.name} · 数据库配置
+                        </div>
+                        {preset.supportsDbName ? (
+                          <label className="block space-y-1.5">
+                            <span className="text-xs font-medium text-muted-foreground">数据库名</span>
+                            <input
+                              className="h-10 w-full rounded-md border border-input bg-background px-3 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                              value={infraConfig[preset.id]?.dbName || ''}
+                              onChange={(event) => setInfraConfigField(preset.id, 'dbName', event.target.value)}
+                              placeholder="app（默认）"
+                            />
+                            <span className="block text-[11px] leading-4 text-muted-foreground">
+                              会写入容器初始化变量并拼进连接串（如 {preset.connectionEnvKeys[0] || 'DATABASE_URL'}）。
+                            </span>
+                          </label>
+                        ) : null}
+                        {preset.supportsInitSql ? (
+                          <label className="mt-2 block space-y-1.5">
+                            <span className="text-xs font-medium text-muted-foreground">初始化 SQL（可选）</span>
+                            <textarea
+                              className="min-h-20 w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                              value={infraConfig[preset.id]?.initSql || ''}
+                              onChange={(event) => setInfraConfigField(preset.id, 'initSql', event.target.value)}
+                              placeholder={'CREATE TABLE items (id serial primary key, name text);'}
+                            />
+                            <span className="block text-[11px] leading-4 text-muted-foreground">
+                              随项目保存；数据库就绪后进入拓扑页数据面板，预填这段 SQL 一键执行初始化。
+                            </span>
+                          </label>
+                        ) : null}
+                        {preset.supportsDbName ? (
+                          <div className="mt-3 border-t border-border pt-3">
+                            {(infraExtra[preset.id] || []).map((inst, idx) => (
+                              <div key={idx} className="mb-2 rounded-md border border-dashed border-border p-2.5">
+                                <div className="mb-1.5 flex items-center justify-between gap-2">
+                                  <span className="text-xs font-medium">
+                                    额外实例 #{idx + 2} · 独立连接串 {(preset.connectionEnvKeys[0] || 'DATABASE_URL')}_{idx + 2}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => removeExtraInstance(preset.id, idx)}
+                                    className="shrink-0 rounded border border-border p-1 text-muted-foreground hover:text-destructive"
+                                    aria-label="移除该实例"
+                                    title="移除该实例"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </button>
+                                </div>
+                                <input
+                                  className="h-9 w-full rounded-md border border-input bg-background px-2.5 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                                  value={inst.dbName || ''}
+                                  onChange={(event) => updateExtraInstance(preset.id, idx, 'dbName', event.target.value)}
+                                  placeholder="库名（默认 app）"
+                                />
+                                <textarea
+                                  className="mt-1.5 min-h-16 w-full resize-y rounded-md border border-input bg-background px-2.5 py-1.5 font-mono text-xs outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                                  value={inst.initSql || ''}
+                                  onChange={(event) => updateExtraInstance(preset.id, idx, 'initSql', event.target.value)}
+                                  placeholder="初始化 SQL（可选）"
+                                />
+                              </div>
+                            ))}
+                            <button
+                              type="button"
+                              onClick={() => addExtraInstance(preset.id)}
+                              className="inline-flex items-center gap-1 rounded-md border border-dashed border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:border-primary hover:text-foreground"
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                              再加一个 {preset.name}（独立容器 + 独立连接串）
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
               <div className="mt-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs leading-5 text-muted-foreground">
                 创建后会生成持久化卷和连接环境变量；进入拓扑页后可启动、重启、查看日志和打开数据库操作入口。
               </div>
+            </section>
+
+            <section className="rounded-md border border-border bg-background/50 p-4">
+              <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+                <KeyRound className="h-4 w-4" />
+                项目环境变量（可选）
+              </div>
+              <textarea
+                className="min-h-24 w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                value={envText}
+                onChange={(event) => setEnvText(event.target.value)}
+                placeholder={'直接粘贴 .env 内容，一行一条，无需准备文件：\nJWT_SECRET=please-change-me\nAPI_BASE=https://api.example.com\n# 以 # 开头是注释，会被忽略'}
+              />
+              <span className="mt-1.5 block text-xs leading-5 text-muted-foreground">
+                就地粘贴即可，不必先去准备 .env 文件；CDS 为基建注入的连接串（DATABASE_URL 等）会自动合并，这里只填你自己的。已识别 {Object.keys(parseEnvText(envText)).length} 个变量。
+              </span>
             </section>
             {error ? (
               <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">

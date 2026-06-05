@@ -21,6 +21,8 @@ export type DocumentStore = {
   sharedTeamIds?: string[];
   /** 知识库模板键（如 acceptance-report-v2）。非空时写入条目按模板校验。 */
   templateKey?: string;
+  /** 用户自定义 tag 颜色映射（tagName → 调色板 key：red/orange/yellow/green/teal/blue/purple/gray） */
+  tagColors?: Record<string, string>;
   createdAt: string;
   updatedAt: string;
 };
@@ -138,9 +140,36 @@ export type DocumentStoreAgentRun = {
   templateKey?: string;
   customPrompt?: string;
   generatedText?: string;
+  /** 多轮对话历史（仅 reprocess 模式有内容） */
+  messages?: ReprocessChatMessage[];
   createdAt: string;
   startedAt?: string;
   endedAt?: string;
+};
+
+/** 文档再加工对话历史中的单条消息 */
+export type ReprocessChatMessage = {
+  seq: number;
+  role: 'user' | 'assistant';
+  content: string;
+  templateKey?: string;
+  createdAt: string;
+};
+
+/**
+ * 智能体抽屉 direct-chat 对话的后端持久化（关浏览器标签页/换设备都不丢）。
+ * messagesJson / pendingImagesJson / activeRefJson 为前端拥有形状的 JSON 字符串，后端不解析。
+ */
+export type DocumentStoreConversation = {
+  id: string;
+  userId: string;
+  sourceEntryId: string;
+  storeId: string;
+  messagesJson: string;
+  pendingImagesJson: string;
+  activeRefJson?: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 /** 再加工模板定义 */
@@ -148,6 +177,20 @@ export type ReprocessTemplate = {
   key: string;
   label: string;
   description: string;
+};
+
+/** 再加工·可调用智能体（system 内置 + personal 用户自建） */
+export type ReprocessAgent = {
+  id: string;
+  key: string;
+  label: string;
+  description: string;
+  /** 调用时叠加到百宝箱通用 chat 链路里的 system prompt */
+  systemPrompt: string;
+  visibility: 'system' | 'personal';
+  /** 当前登录用户是否为创建者（用于显示删除按钮） */
+  isOwn: boolean;
+  createdAt: string;
 };
 
 /** 订阅同步日志中的单条事件（只包含 change/error，不包含无变化的心跳） */
@@ -220,6 +263,8 @@ export type UpdateDocumentStoreInput = {
   tags?: string[];
   isPublic?: boolean;
   templateKey?: string;
+  /** 用户自定义 tag 颜色映射（tagName → 调色板 key） */
+  tagColors?: Record<string, string>;
 };
 
 export type AddDocumentEntryInput = {
@@ -291,6 +336,7 @@ export type DeleteDocumentEntryContract = (
 export type DocumentStoreViewEvent = {
   id: string;
   entryId?: string;
+  storeId?: string;
   entryTitle?: string | null;
   viewerUserId?: string;
   viewerName: string;
@@ -307,6 +353,40 @@ export type DocumentStoreViewEvent = {
 };
 
 export type DocumentStoreViewStats = {
+  totalViews: number;
+  uniqueVisitors: number;
+  totalDurationMs: number;
+};
+
+// ── 波次一：访客聚合报表 ──
+
+export type DocumentStoreAnalytics = {
+  rangeDays: number;
+  kpi: {
+    totalViews: number;
+    uniqueVisitors: number;
+    totalDurationMs: number;
+    avgDurationMs: number;
+    /** 0..1：有回访的访客 / 独立访客 */
+    returningRate: number;
+    /** 0..1：停留 <5s 的事件 / 已测得停留的事件 */
+    bounceRate: number;
+  };
+  /** 按本地时区连续补零的每日访问量 */
+  trend: { date: string; views: number }[];
+  /** 0-23 时段访问量（已补零） */
+  hourly: { hour: number; views: number }[];
+  topEntries: { entryId?: string | null; storeId?: string | null; title?: string | null; views: number; totalDurationMs: number }[];
+  /** 知识库访问排行（账号级聚合下多个库；单库场景前端隐藏） */
+  topStores: { storeId?: string | null; storeName?: string | null; views: number; totalDurationMs: number }[];
+  /** 标签访问统计 Top 12 */
+  tagStats: { tag: string; views: number }[];
+  /** 停留时长分桶（仅统计已测得停留的事件，measured 为分母） */
+  dwellBuckets: { lt5s: number; s5_30: number; s30_2m: number; gt2m: number; measured: number };
+};
+
+/** 账号级访客总计（我名下所有知识库聚合） */
+export type DocumentStoreAccountSummary = {
   totalViews: number;
   uniqueVisitors: number;
   totalDurationMs: number;

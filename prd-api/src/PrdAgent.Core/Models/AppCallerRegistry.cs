@@ -113,6 +113,22 @@ public static class Desktop
 }
 
 /// <summary>
+/// 产品管理智能体
+/// </summary>
+public static class Product
+{
+    public const string AppName = "产品管理智能体";
+
+    [AppCallerMetadata(
+        "产品管理-图谱摘要",
+        "图谱抽屉里对需求/功能/缺陷描述做 AI 摘要",
+        ModelTypes = new[] { ModelTypes.Chat },
+        Category = "Analysis"
+    )]
+    public const string GraphSummary = "product-agent.graph-summary::chat";
+}
+
+/// <summary>
 /// Visual Agent 视觉创作
 /// </summary>
 public static class VisualAgent
@@ -431,6 +447,44 @@ public static class OpenPlatform
             Category = "Proxy"
         )]
         public const string Rerank = "open-platform-agent.proxy::rerank";
+    }
+}
+
+/// <summary>
+/// 开放接口（OpenAI 兼容）对外开放网关。
+///
+/// 与 <see cref="OpenPlatform"/> 的区别：OpenPlatform 是历史 PRD 对话代理；
+/// 这里是真正贴近真实开放平台的对外 LLM 网关（借鉴 OpenRouter 的 OpenAI 兼容风格），外部调用方用标准 OpenAI
+/// 请求方式（顶层 /api/v1/chat/completions 等）接入。
+///
+/// 设计要点（见 .claude/rules + doc/debt.open-api.md）：
+/// - 所有开放接口流量走这里的固定伞形 code（不为每个 Key 派生动态 code，
+///   否则会被 LlmGateway.TryValidateAppCaller 的静态注册表门禁拦下）。
+/// - 每个 Key 的「固定模型 / 小模型池」绑定通过 expectedModel 通道下发：
+///   绑模型 id 或绑模型池 Code 都由 ModelResolver 的 FindPreferredModel 命中。
+/// - 未绑定的 Key 传 expectedModel=null，回落到 default:chat / default:image。
+/// </summary>
+public static class OpenApi
+{
+    public const string AppName = "开放接口网关";
+
+    public static class Proxy
+    {
+        [AppCallerMetadata(
+            "开放接口-聊天网关",
+            "对外开放接口（OpenAI 兼容）chat/completions 网关，按 Key 绑定固定模型，未绑定走默认 chat 池",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Proxy"
+        )]
+        public const string Chat = "open-api.proxy::chat";
+
+        [AppCallerMetadata(
+            "开放接口-生图网关",
+            "对外开放接口（OpenAI 兼容）images/generations 网关，按 Key 绑定固定模型，未绑定走默认 image 池",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Proxy"
+        )]
+        public const string Generation = "open-api.proxy::generation";
     }
 }
 
@@ -1168,6 +1222,39 @@ public static class ProjectManagement
             Category = "Workflow"
         )]
         public const string Chat = "pm-agent.goal-decompose::chat";
+    }
+
+    public static class ClosureReport
+    {
+        [AppCallerMetadata(
+            "AI 结案报告",
+            "基于项目执行数据(目标/里程碑/任务/NPSS 评价/决策)自动生成结案总结报告",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Workflow"
+        )]
+        public const string Chat = "pm-agent.closure-report::chat";
+    }
+
+    public static class HealthDiagnosis
+    {
+        [AppCallerMetadata(
+            "AI 项目健康诊断",
+            "基于在管项目实时数据(进度/逾期/里程碑健康/风险分布/未决决策/预算)给出健康评级、风险信号与改进建议",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Analysis"
+        )]
+        public const string Chat = "pm-agent.health-diagnosis::chat";
+    }
+
+    public static class MilestoneSuggest
+    {
+        [AppCallerMetadata(
+            "AI 里程碑建议",
+            "依据业务目标/团队目标/任务与计划周期，建议分阶段里程碑(名称/说明/验收标准/建议日期)",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Workflow"
+        )]
+        public const string Chat = "pm-agent.milestone-suggest::chat";
     }
 }
 

@@ -36,6 +36,7 @@ import {
   Globe, Search, Share2, EyeOff, Download, Upload, AlertCircle,
 } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
+import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 
 /** Strip ```json:stage_result ... ``` blocks from display text */
 function stripJsonBlocks(text: string): string {
@@ -122,6 +123,8 @@ function Header({ activeTab, onTabChange, onBack }: {
       </div>
 
       <div className="flex-1" />
+
+      <TipsEntryButton compact />
     </div>
   );
 }

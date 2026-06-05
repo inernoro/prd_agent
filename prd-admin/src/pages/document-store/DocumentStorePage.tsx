@@ -3,7 +3,6 @@ import {
   Library,
   Plus,
   Upload,
-  FolderOpen,
   ArrowLeft,
   X,
   Rss,
@@ -30,13 +29,16 @@ import {
   ArrowUpDown,
   Check,
   Tag,
+  FolderSync,
+  BarChart3,
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
 import { Button } from '@/components/design/Button';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { TeamScopeBar, type TeamScope } from '@/components/team/TeamScopeBar';
+import { SyncManagerPanel, StoreSyncBadge } from './SyncManagerPanel';
 import { useTeamStore } from '@/stores/teamStore';
 import { useAuthStore } from '@/stores/authStore';
 import { AnimatePresence } from 'motion/react';
@@ -70,18 +72,21 @@ import {
   listMyFavoriteDocumentStores,
   listMyLikedDocumentStores,
   setStoreTeams,
+  getStoresAnalyticsSummary,
 } from '@/services';
 import { ShareToTeamDialog } from '@/components/team/ShareToTeamDialog';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
+import { DocEmptyState } from '@/components/doc-browser/DocEmptyState';
 import type {
   DocumentStore,
   DocumentStoreWithPreview,
   DocumentEntry,
   DocumentStoreShareLink,
   InteractionStoreCard,
+  DocumentStoreAccountSummary,
 } from '@/services/contracts/documentStore';
 import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/DocBrowser';
 import { ACCEPTANCE_TEMPLATE_KEY } from '@/lib/acceptanceVerdictRegistry';
@@ -89,12 +94,66 @@ import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
 import { SubscriptionDetailDrawer } from './SubscriptionDetailDrawer';
 import { SubtitleGenerationDrawer } from './SubtitleGenerationDrawer';
-import { ReprocessDrawer } from './ReprocessDrawer';
-import { ReprocessRunHost } from './ReprocessRunHost';
+import { ReprocessChatDrawer } from './ReprocessChatDrawer';
 import { ViewersDrawer } from './ViewersDrawer';
 import { useReprocessRunStore, selectStreamingByEntry } from '@/stores/reprocessRunStore';
 
 const ACCEPT_TYPES = '.md,.txt,.pdf,.doc,.docx,.json,.yaml,.yml,.csv';
+
+// 账号级总计的紧凑格式化：大数走「万」，停留走「时/分」。
+function formatCountCompact(n: number): string {
+  // count-up 动画喂进来的是插值浮点，先取整，避免 <1万 时闪现小数
+  const r = Math.round(n);
+  if (r < 10_000) return String(r);
+  return `${(r / 10_000).toFixed(r % 10_000 === 0 ? 0 : 1)} 万`;
+}
+function formatDwellCompact(ms: number): string {
+  if (!ms || ms < 1000) return '0 秒';
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec} 秒`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} 分`;
+  const hr = Math.floor(min / 60);
+  return `${hr} 小时${min % 60 ? ` ${min % 60} 分` : ''}`;
+}
+
+// 账号级总计的「缓过来」动效：数字从上一个值缓动到目标值（easeOutCubic）。
+function useCountUp(target: number, durationMs = 700): number {
+  const [val, setVal] = useState(target);
+  const fromRef = useRef(target);
+  useEffect(() => {
+    const from = fromRef.current;
+    const to = target;
+    if (from === to) return;
+    let raf = 0;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / durationMs);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setVal(from + (to - from) * eased);
+      if (t < 1) raf = requestAnimationFrame(tick);
+      else { fromRef.current = to; setVal(to); }
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, durationMs]);
+  return val;
+}
+
+function AnimatedStat({ value, format }: { value: number; format: (n: number) => string }) {
+  const v = useCountUp(value);
+  return <strong style={{ color: 'var(--text-primary)' }}>{format(v)}</strong>;
+}
+
+// 挂载后淡入，避免账号总计「突然蹦出来」撑宽整行。
+function FadeIn({ children }: { children: React.ReactNode }) {
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    const r = requestAnimationFrame(() => setShown(true));
+    return () => cancelAnimationFrame(r);
+  }, []);
+  return <span style={{ opacity: shown ? 1 : 0, transition: 'opacity 0.45s ease' }}>{children}</span>;
+}
 
 // ── 创建空间对话框 ──
 function CreateStoreDialog({ onClose, onCreated }: {
@@ -530,10 +589,13 @@ function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle, onClos
 }
 
 // ── 空间详情视图（文档列表 + 上传）──
-function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
+function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initialEntryId }: {
   storeId: string;
   onBack: () => void;
   onOpenLibrary: (storeId: string) => void;
+  onManageSync?: () => void;
+  /** 进入时直接打开的文档（从账号统计点击文档跳转而来）；组件按 storeId key 重挂载，挂载时消费一次 */
+  initialEntryId?: string;
 }) {
   const [store, setStore] = useState<DocumentStore | null>(null);
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
@@ -541,6 +603,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
   const [sharedEntryIds, setSharedEntryIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(undefined);
+  // 从账号统计点击文档跳转而来：挂载时打开指定文档（组件按 storeId key 重挂载，仅消费一次）
+  useEffect(() => {
+    if (initialEntryId) setSelectedEntryId(initialEntryId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [showSubscribe, setShowSubscribe] = useState(false);
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [showViewers, setShowViewers] = useState(false);
@@ -564,6 +631,12 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
   // 替换文件：记录待替换的 entryId + 独立 file input
   const replaceTargetRef = useRef<string | null>(null);
   const replaceInputRef = useRef<HTMLInputElement>(null);
+  // tag 颜色保存的 single-flight 队列：
+  // 不只是防 rollback race，还要保证"老请求成功后到达"不会覆盖新意图。
+  // 实现：当前在飞 = inFlight=true；新意图来了写 pending；当前结束后若 pending 非空则继续发，
+  // 总是把最后一个意图作为终态推到服务器（latest-write-wins）。
+  const tagColorInFlightRef = useRef(false);
+  const tagColorPendingRef = useRef<Record<string, import('@/lib/tagPalette').TagColorKey> | null>(null);
 
   // 加载空间详情和条目
   const loadStore = useCallback(async () => {
@@ -613,17 +686,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
     [reprocessSig, storeId],
   );
 
-  // Host 报告任务到达终态：完成则刷新文件树 + 选中新文档（与抽屉是否开着无关）
-  const handleReprocessCompleted = useCallback((status: 'done' | 'failed', outputEntryId?: string) => {
-    if (status === 'done' && outputEntryId) {
-      void loadEntries();
-      setSelectedEntryId(outputEntryId);
-      // 兜底再刷一次：兼容 DB 副本同步延迟
-      setTimeout(() => { void loadEntries(); }, 1500);
-      toast.success('文档加工完成', '已保存为新文档');
-    } else if (status === 'failed') {
-      toast.error('文档加工失败', '可在任务卡片查看原因');
-    }
+  // 写回成功时刷新文件树 + 在 mode='new' 时选中新条目
+  const handleReprocessApplied = useCallback((mode: 'replace' | 'append' | 'new', targetEntryId: string) => {
+    void loadEntries();
+    if (mode === 'new') setSelectedEntryId(targetEntryId);
+    setTimeout(() => { void loadEntries(); }, 1500);
   }, [loadEntries]);
 
   // 文件上传处理
@@ -899,6 +966,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
         }
         actions={
           <div className="flex items-center gap-2">
+            {/* 同步状态徽章：仅当本库已加入同步配对时显示（右上角） */}
+            <StoreSyncBadge storeId={store.id} onManage={onManageSync} />
             {/* 发布到智识殿堂开关 */}
             {store.isPublic ? (
               <div className="flex items-center gap-1">
@@ -932,8 +1001,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
                 发布到智识殿堂
               </button>
             )}
-            <Button variant="secondary" size="xs" onClick={() => setShowViewers(true)}>
-              <Users size={13} /> 访客
+            <Button variant="secondary" size="xs" onClick={() => setShowViewers(true)} title="查看本知识库的访客统计报表">
+              <BarChart3 size={13} /> 统计
             </Button>
             <Button variant="secondary" size="xs" onClick={() => setShowShareDialog(true)}>
               <Share2 size={13} /> 分享
@@ -971,12 +1040,40 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
       <div className="flex-1 min-h-0 flex flex-col pt-3">
         <DocBrowser
           entries={entries}
+          tagColors={(store.tagColors ?? {}) as Record<string, import('@/lib/tagPalette').TagColorKey>}
+          onTagColorsChange={(next) => {
+            // 乐观更新本地立刻反映；服务器保存走 single-flight 队列。
+            // 用 ref 队列保证：1) 同一时刻最多 1 个 PUT 在飞 2) 队列末尾永远是最新意图
+            // → 老请求即使成功也不会覆盖新意图（服务器最终一致到 latest）。
+            setStore(s => s ? { ...s, tagColors: next } : s);
+            tagColorPendingRef.current = next;
+            if (tagColorInFlightRef.current) return;
+            (async () => {
+              tagColorInFlightRef.current = true;
+              try {
+                while (tagColorPendingRef.current) {
+                  const payload = tagColorPendingRef.current;
+                  tagColorPendingRef.current = null;
+                  const res = await updateDocumentStore(storeId, { tagColors: payload });
+                  // 失败时仅当没有更新的 pending 时才提示，避免 toast 风暴
+                  if (!res.success && !tagColorPendingRef.current) {
+                    toast.error('保存 tag 颜色失败', res.error?.message);
+                    // 失败不主动 rollback UI：再次失败 + 没有 pending = 用户最后意图未落库，
+                    // 下次刷新会从服务器拉到真实状态自动纠正
+                  }
+                }
+              } finally {
+                tagColorInFlightRef.current = false;
+              }
+            })();
+          }}
           /* 验收报告库：最新在前（design.acceptance-kb.md §5.A）；时间默认显示由 DocBrowser 默认值兜底 */
           sortMode={store.templateKey === ACCEPTANCE_TEMPLATE_KEY ? 'created-desc' : 'default'}
           primaryEntryId={store.primaryEntryId}
           pinnedEntryIds={store.pinnedEntryIds ?? []}
           selectedEntryId={selectedEntryId}
           onSelectEntry={setSelectedEntryId}
+          onBackToList={() => setSelectedEntryId(undefined)}
           onSetPrimary={handleSetPrimary}
           onTogglePin={handleTogglePin}
           onDeleteEntry={handleDeleteEntry}
@@ -1009,18 +1106,12 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
           sharedEntryIds={sharedEntryIds}
           loading={loading}
           emptyState={
-            <div className="flex-1 flex flex-col items-center justify-center py-16">
-              <FolderOpen size={44} className="mb-5 text-token-muted opacity-30" />
-              <p className="mb-1 text-[14px] font-semibold text-token-primary">还没有文档</p>
-              <p className="mb-6 text-[12px] text-token-muted">新建一篇空白文档直接写，或上传 / 拖拽文件到页面</p>
-              <div className="flex items-center gap-2.5">
-                <Button variant="primary" size="md" onClick={handleCreateDocument}>
-                  <FileText size={15} /> 新建文档
-                </Button>
-                <Button variant="secondary" size="md" onClick={() => fileInputRef.current?.click()}>
-                  <Upload size={15} /> 上传文档
-                </Button>
-              </div>
+            <div className="flex-1 flex items-center justify-center">
+              <DocEmptyState
+                onCreateDocument={handleCreateDocument}
+                onUploadFile={() => fileInputRef.current?.click()}
+                onAddSubscription={() => setShowSubscribe(true)}
+              />
             </div>
           }
         />
@@ -1084,13 +1175,6 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
         )}
       </AnimatePresence>
 
-      {/* 文档再加工：无 UI 的 SSE 宿主（每个进行中任务一个，与抽屉解耦） */}
-      {storeRuns
-        .filter((r) => r.status === 'streaming')
-        .map((r) => (
-          <ReprocessRunHost key={r.runId} runId={r.runId} onCompleted={handleReprocessCompleted} />
-        ))}
-
       {/* 文档再加工：右下角常驻任务 pill —— 关抽屉后仍可见，点击重新展开 */}
       {storeRuns.length > 0 && (
         <div className="fixed bottom-5 right-5 z-40 flex flex-col gap-2" style={{ maxWidth: '300px' }}>
@@ -1141,14 +1225,15 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
         </div>
       )}
 
-      {/* 文档再加工抽屉 */}
+      {/* 文档再加工对话抽屉 */}
       <AnimatePresence>
         {reprocessTarget && (
-          <ReprocessDrawer
+          <ReprocessChatDrawer
             entryId={reprocessTarget.id}
             entryTitle={reprocessTarget.title}
             storeId={storeId}
             onClose={() => setReprocessTarget(null)}
+            onApplied={handleReprocessApplied}
           />
         )}
       </AnimatePresence>
@@ -1159,6 +1244,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary }: {
           storeId={storeId}
           storeName={store.name}
           onClose={() => setShowViewers(false)}
+          // 单库内点击文档排行/流水 → 直接在本库打开该文档
+          onOpenDocument={(_sid, entryId) => { setShowViewers(false); setSelectedEntryId(entryId); }}
         />
       )}
     </div>
@@ -1341,7 +1428,7 @@ function SubscribeDialog({ storeId, onClose, onCreated }: {
   );
 }
 
-type StoreTab = 'mine' | 'team' | 'favorites' | 'likes';
+type StoreTab = 'mine' | 'team' | 'favorites' | 'likes' | 'sync';
 
 type StoreSort = 'updated-desc' | 'created-desc' | 'name-asc' | 'docs-desc';
 const SORT_OPTIONS: { key: StoreSort; label: string }[] = [
@@ -1357,7 +1444,7 @@ export function DocumentStorePage() {
   const currentUserId = useAuthStore((s) => s.user?.userId ?? null);
   const [tab, setTab] = useState<StoreTab>(() => {
     const saved = sessionStorage.getItem('doc-store-tab') as StoreTab | null;
-    return saved === 'team' || saved === 'favorites' || saved === 'likes' ? saved : 'mine';
+    return saved === 'team' || saved === 'favorites' || saved === 'likes' || saved === 'sync' ? saved : 'mine';
   });
   const [stores, setStores] = useState<DocumentStoreWithPreview[]>([]);
   const [favorites, setFavorites] = useState<InteractionStoreCard[]>([]);
@@ -1372,6 +1459,19 @@ export function DocumentStorePage() {
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(() => {
     return sessionStorage.getItem('doc-store-selected-id');
   });
+
+  // 深链 ?tab=xxx（如「同步知识库教程」用 ?tab=sync 直达同步页签）：清空详情视图 + 切到该 tab，
+  // 这样从任意位置（含某个知识库详情内）打开教程都能落到目标页签，再把 query 抹掉避免重复触发。
+  const location = useLocation();
+  useEffect(() => {
+    const t = new URLSearchParams(location.search).get('tab');
+    const valid: StoreTab[] = ['mine', 'team', 'favorites', 'likes', 'sync'];
+    if (t && (valid as string[]).includes(t)) {
+      setSelectedStoreId(null);
+      setTab(t as StoreTab);
+      navigate(location.pathname, { replace: true });
+    }
+  }, [location.search, location.pathname, navigate]);
 
   // 第二排：搜索 + 排序（sessionStorage 持久化；CLAUDE.md no-localStorage 规则）
   const [search, setSearch] = useState<string>(() => sessionStorage.getItem('doc-store-search') ?? '');
@@ -1498,8 +1598,12 @@ export function DocumentStorePage() {
       }
     } else if (tab === 'favorites') {
       loadFavorites();
-    } else {
+    } else if (tab === 'likes') {
       loadLikes();
+    } else {
+      // sync 页签自管加载，页面级 loading 直接关闭
+      ++listFetchSeq.current;
+      setLoading(false);
     }
   }, [tab, teamScope.teamId, loadStores, loadFavorites, loadLikes]);
 
@@ -1516,11 +1620,39 @@ export function DocumentStorePage() {
     sessionStorage.setItem('doc-store-tab', tab);
   }, [tab]);
 
-  const tabs: { key: StoreTab; label: string; icon: typeof Library }[] = [
+  // 账号级访客总计（仅「我的空间」：访客/停留是「谁看了我的库」，只有 owner 才有意义）
+  const [accountSummary, setAccountSummary] = useState<DocumentStoreAccountSummary | null>(null);
+  useEffect(() => {
+    if (tab !== 'mine') return;
+    let cancelled = false;
+    (async () => {
+      const res = await getStoresAnalyticsSummary();
+      if (!cancelled && res.success) setAccountSummary(res.data);
+    })();
+    return () => { cancelled = true; };
+  }, [tab]);
+
+  // 列表页「统计」入口：打开账号级访客报表抽屉（聚合全部知识库）
+  const [showAccountViewers, setShowAccountViewers] = useState(false);
+  // 从账号统计点击文档跳转时，待打开的 entryId（store 切换后由 StoreDetailView 消费）
+  const [pendingEntryId, setPendingEntryId] = useState<string | null>(null);
+  const openDocument = useCallback((sid: string, entryId: string) => {
+    setShowAccountViewers(false);
+    setPendingEntryId(entryId);
+    setSelectedStoreId(sid);
+  }, []);
+  const openStore = useCallback((sid: string) => {
+    setShowAccountViewers(false);
+    setPendingEntryId(null);
+    setSelectedStoreId(sid);
+  }, []);
+
+  const tabs: { key: StoreTab; label: string; icon: typeof Library; dataTourId?: string }[] = [
     { key: 'mine', label: '我的空间', icon: Library },
     { key: 'team', label: '团队空间', icon: Users },
     { key: 'favorites', label: '我的收藏', icon: Bookmark },
     { key: 'likes', label: '我的点赞', icon: Heart },
+    { key: 'sync', label: '跨环境同步', icon: FolderSync, dataTourId: 'library-sync-tab' },
   ];
 
   const isStoreTab = tab === 'mine' || tab === 'team';
@@ -1572,8 +1704,9 @@ export function DocumentStorePage() {
 
   // 空间详情视图（仅 mine 标签下可进入编辑视图）—— 早返回必须放在所有 hook 之后
   if (selectedStoreId) {
-    return <StoreDetailView storeId={selectedStoreId} onBack={() => {
+    return <StoreDetailView storeId={selectedStoreId} key={selectedStoreId} initialEntryId={pendingEntryId ?? undefined} onBack={() => {
       setSelectedStoreId(null);
+      setPendingEntryId(null);
       // 按当前 tab 重新拉对应列表,避免从收藏/点赞返回时仍刷 stores
       if (tab === 'mine') loadStores('mine', null);
       else if (tab === 'team') {
@@ -1581,8 +1714,9 @@ export function DocumentStorePage() {
         else { ++listFetchSeq.current; setStores([]); setLoading(false); }
       }
       else if (tab === 'favorites') loadFavorites();
-      else loadLikes();
-    }} onOpenLibrary={(id) => navigate(`/library/${id}`)} />;
+      else if (tab === 'likes') loadLikes();
+    }} onOpenLibrary={(id) => navigate(`/library/${id}`)}
+      onManageSync={() => { setSelectedStoreId(null); setTab('sync'); }} />;
   }
 
   // 统计概览（基于未筛选的原始列表，反映"我拥有/我看到的"全量）
@@ -1605,6 +1739,7 @@ export function DocumentStorePage() {
       {/* 顶部 tab + 工具栏：滚动时整体悬浮（sticky）— 知识库多时菜单不消失
           -mb-5 + pb-5 用于"吃掉"父级 gap-5 间距，避免卡片从间隙缝隙里穿过 */}
       <div
+        data-tour-id="library-tabs"
         className="sticky top-0 z-20 flex flex-col gap-3 pb-5 -mb-5"
         style={{
           background: 'var(--bg-base)',
@@ -1618,6 +1753,7 @@ export function DocumentStorePage() {
             key: t.key,
             label: t.label,
             icon: <t.icon size={12} />,
+            dataTourId: t.dataTourId,
           }))}
           activeKey={tab}
           onChange={(k) => {
@@ -1631,6 +1767,8 @@ export function DocumentStorePage() {
             else if (next === 'favorites') setFavorites([]);
             else setLikes([]);
             setLoading(true);
+            // 切 tab 时退出详情视图：否则详情视图早返回会挡在前面，点「跨环境同步」永远进不去（Bugbot）。
+            setSelectedStoreId(null);
             setTab(next);
           }}
         />
@@ -1639,7 +1777,7 @@ export function DocumentStorePage() {
           - 我的空间 / 团队空间：统计 + 搜索 + 排序 + 新建知识库（团队空间多一个 TeamScopeBar）
           - 收藏 / 点赞：不显示 */}
       {isStoreTab && (
-        <div className="px-5 flex items-center gap-2 flex-wrap">
+        <div data-tour-id="library-toolbar" className="px-5 flex items-center gap-2 flex-wrap">
           {tab === 'team' && (
             <TeamScopeBar
               moduleKey="document-store"
@@ -1649,7 +1787,8 @@ export function DocumentStorePage() {
             />
           )}
           {/* 统计概览 */}
-          <span className="text-[12px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
+          {/* 功能区：库数 / 文章数（左侧） */}
+          <span data-tour-id="library-stats" className="text-[12px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
             共 <strong style={{ color: 'var(--text-primary)' }}>{totalStores}</strong> 个知识库
             <span className="opacity-50 mx-1.5">·</span>
             <strong style={{ color: 'var(--text-primary)' }}>{totalDocs}</strong> 篇文章
@@ -1659,6 +1798,7 @@ export function DocumentStorePage() {
           <div className="relative">
             <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--text-muted)' }} />
             <input
+              data-tour-id="library-search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="按名称或标签筛选…"
@@ -1682,6 +1822,7 @@ export function DocumentStorePage() {
           <div className="relative" ref={tagWrapRef}>
             <button
               type="button"
+              data-tour-id="library-tag-filter"
               onClick={() => setTagOpen(o => !o)}
               disabled={tagStats.length === 0}
               className="h-8 px-2.5 rounded-[8px] text-[12px] flex items-center gap-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
@@ -1784,6 +1925,7 @@ export function DocumentStorePage() {
           <div className="relative" ref={sortWrapRef}>
             <button
               type="button"
+              data-tour-id="library-sort"
               onClick={() => setSortOpen(o => !o)}
               className="h-8 px-2.5 rounded-[8px] text-[12px] flex items-center gap-1.5 transition-colors"
               style={{
@@ -1825,6 +1967,29 @@ export function DocumentStorePage() {
           </div>
 
           <span className="flex-1" />
+          {/* 统计区：账号级访客总计（右侧）。数字 count-up 缓动 + 整段淡入，避免突然蹦出。 */}
+          {tab === 'mine' && accountSummary && (
+            <FadeIn>
+              <span className="text-[12px] tabular-nums whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
+                <AnimatedStat value={accountSummary.totalViews} format={formatCountCompact} /> 次访问
+                <span className="opacity-50 mx-1.5">·</span>
+                <AnimatedStat value={accountSummary.uniqueVisitors} format={formatCountCompact} /> 访客
+                <span className="opacity-50 mx-1.5">·</span>
+                停留 <AnimatedStat value={accountSummary.totalDurationMs} format={formatDwellCompact} />
+              </span>
+            </FadeIn>
+          )}
+          {/* 统计按钮：再往右，打开全部知识库的访客统计报表（区别于知识库内的单库统计） */}
+          {tab === 'mine' && (
+            <Button
+              variant="secondary"
+              size="xs"
+              onClick={() => setShowAccountViewers(true)}
+              title="查看全部知识库的访客统计报表（趋势 / 时段 / 排行 / 停留）"
+            >
+              <BarChart3 size={13} /> 统计
+            </Button>
+          )}
           <Button
             variant="primary"
             size="xs"
@@ -1842,7 +2007,9 @@ export function DocumentStorePage() {
       </div>
 
       <div className="px-5 pb-6 w-full">
-        {loading ? (
+        {tab === 'sync' ? (
+          <SyncManagerPanel />
+        ) : loading ? (
           <MapSectionLoader text="加载中..." />
         ) : isFilteredOut ? (
           /* 筛选无结果 */
@@ -2130,6 +2297,16 @@ export function DocumentStorePage() {
           </div>
         )}
       </div>
+
+      {/* 账号级访客统计抽屉（列表页「统计」入口，聚合全部知识库） */}
+      {showAccountViewers && (
+        <ViewersDrawer
+          scope="account"
+          onClose={() => setShowAccountViewers(false)}
+          onOpenDocument={openDocument}
+          onOpenStore={openStore}
+        />
+      )}
 
       {showCreate && (
         <CreateStoreDialog

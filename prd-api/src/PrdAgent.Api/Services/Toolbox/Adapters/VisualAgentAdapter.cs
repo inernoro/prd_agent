@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Models.Toolbox;
+using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
 
 namespace PrdAgent.Api.Services.Toolbox.Adapters;
@@ -13,6 +14,7 @@ namespace PrdAgent.Api.Services.Toolbox.Adapters;
 public class VisualAgentAdapter : IAgentAdapter
 {
     private readonly ILlmGateway _gateway;
+    private readonly OpenAIImageClient _imageClient;
     private readonly ILogger<VisualAgentAdapter> _logger;
 
     public string AgentKey => "visual-agent";
@@ -26,9 +28,10 @@ public class VisualAgentAdapter : IAgentAdapter
         "compose"
     };
 
-    public VisualAgentAdapter(ILlmGateway gateway, ILogger<VisualAgentAdapter> logger)
+    public VisualAgentAdapter(ILlmGateway gateway, OpenAIImageClient imageClient, ILogger<VisualAgentAdapter> logger)
     {
         _gateway = gateway;
+        _imageClient = imageClient;
         _logger = logger;
     }
 
@@ -111,56 +114,27 @@ public class VisualAgentAdapter : IAgentAdapter
             yield return AgentStreamChunk.Text($"优化后的 prompt: {prompt}\n\n");
         }
 
-        // 调用图片生成
-        var request = new GatewayRawRequest
-        {
-            AppCallerCode = AppCallerRegistry.AiToolbox.Agents.VisualGeneration,
-            ModelType = ModelTypes.ImageGen,
-            EndpointPath = "/v1/images/generations",
-            RequestBody = new JsonObject
-            {
-                ["prompt"] = prompt,
-                ["n"] = 1,
-                ["size"] = "1024x1024",
-                ["quality"] = "standard"
-            },
-            TimeoutSeconds = 120
-        };
+        // 透传面板参数：尺寸 / 模型（缺省走真实客户端的模型默认 + 尺寸归一化）
+        var size = context.Input.TryGetValue("size", out var sizeVal) ? sizeVal?.ToString() : null;
+        var modelName = context.Input.TryGetValue("model", out var modelVal) ? modelVal?.ToString() : null;
 
-        var resolution = await _gateway.ResolveModelAsync(
-            AppCallerRegistry.AiToolbox.Agents.VisualGeneration, ModelTypes.ImageGen, null, ct);
-        if (!resolution.Success)
+        // 走真实生图客户端（与主视觉创作同一引擎 OpenAIImageClient）：它会按模型能力
+        // 构造请求（尺寸归一化、response_format 适配、quality 仅在模型支持时下发）。
+        // 不再手搓 raw body 硬塞 quality/size —— 那会被部分模型拒绝（"不支持quality"）。
+        var res = await _imageClient.GenerateUnifiedAsync(
+            prompt, n: 1, size: size, responseFormat: "url", ct: ct,
+            appCallerCode: AppCallerRegistry.AiToolbox.Agents.VisualGeneration,
+            modelName: modelName);
+
+        if (!res.Success || res.Data == null)
         {
-            yield return AgentStreamChunk.Error($"图片生成模型调度失败: {resolution.ErrorMessage}");
+            yield return AgentStreamChunk.Error($"图片生成失败: {res.Error?.Message ?? "未知错误"}");
             yield break;
         }
 
-        var response = await _gateway.SendRawWithResolutionAsync(request, resolution, ct);
-
-        if (!response.Success)
-        {
-            yield return AgentStreamChunk.Error($"图片生成失败: {response.ErrorMessage}");
-            yield break;
-        }
-
-        // 解析响应获取图片 URL
-        string? imageUrl = null;
-        string? revisedPrompt = null;
-
-        if (!string.IsNullOrEmpty(response.Content))
-        {
-            try
-            {
-                var json = JsonNode.Parse(response.Content);
-                var data = json?["data"]?.AsArray()?.FirstOrDefault();
-                imageUrl = data?["url"]?.GetValue<string>();
-                revisedPrompt = data?["revised_prompt"]?.GetValue<string>();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "解析图片生成响应失败");
-            }
-        }
+        var image = res.Data.Images.FirstOrDefault();
+        var imageUrl = image?.Url;
+        var revisedPrompt = image?.RevisedPrompt;
 
         if (string.IsNullOrEmpty(imageUrl))
         {
@@ -168,7 +142,7 @@ public class VisualAgentAdapter : IAgentAdapter
             yield break;
         }
 
-        yield return AgentStreamChunk.Text($"图片生成完成！\n");
+        yield return AgentStreamChunk.Text("图片生成完成！\n");
 
         if (!string.IsNullOrEmpty(revisedPrompt))
         {

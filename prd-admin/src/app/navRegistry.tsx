@@ -31,6 +31,9 @@ const LibraryLandingPage = lazy(() => import('@/pages/library/LibraryLandingPage
 const EmergenceExplorerPage = lazy(() => import('@/pages/emergence').then(m => ({ default: m.EmergenceExplorerPage })));
 const TaskTreePage = lazy(() => import('@/pages/task-tree').then(m => ({ default: m.TaskTreePage })));
 const PmAgentPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.PmAgentPage })));
+const OverviewShell = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.OverviewShell })));
+const SingleProductView = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.SingleProductView })));
+const ProductObjectDetailPage = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.ProductObjectDetailPage })));
 const ChangelogPage = lazy(() => import('@/pages/changelog/ChangelogPage'));
 const SkillAgentPage = lazy(() => import('@/pages/SkillAgentPage'));
 const ArenaPage = lazy(() => import('@/pages/arena/ArenaPage').then(m => ({ default: m.ArenaPage })));
@@ -48,6 +51,7 @@ const WebPagesPage = lazy(() => import('@/pages/WebPagesPage'));
 const MyAssetsPage = lazy(() => import('@/pages/MyAssetsPage'));
 const CdsAgentPage = lazy(() => import('@/pages/cds-agent').then(m => ({ default: m.CdsAgentPage })));
 const InfraServicesPage = lazy(() => import('@/pages/infra-services').then(m => ({ default: m.InfraServicesPage })));
+const OpenPlatformTabsPage = lazy(() => import('@/pages/OpenPlatformTabsPage'));
 
 // ── 类型定义 ──────────────────────────────────────────────
 //
@@ -338,6 +342,36 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
   {
+    // 单产品视图（进入某个具体产品看其全部信息），参数化子路由，全屏，不进导航
+    path: '/product-agent/p/:productId',
+    placement: 'fullscreen',
+    permission: 'product-agent.use',
+    element: fullscreenGuarded('product-agent.use', <SingleProductView />),
+  },
+  {
+    // 对象独立详情/新建页（需求/功能/缺陷，:id 为 new 时是新建），参数化子路由，全屏，不进导航
+    path: '/product-agent/p/:productId/:kind/:id',
+    placement: 'fullscreen',
+    permission: 'product-agent.use',
+    element: fullscreenGuarded('product-agent.use', <ProductObjectDetailPage />),
+  },
+  {
+    path: '/product-agent',
+    placement: 'fullscreen',
+    permission: 'product-agent.use',
+    element: fullscreenGuarded('product-agent.use', <OverviewShell />),
+    nav: {
+      label: '产品管理智能体',
+      shortLabel: '产品',
+      description: '产品-版本-需求-功能-缺陷-客户全链路串联，版本化管理、分级追溯与知识图谱',
+      icon: 'Boxes',
+      section: 'toolbox',
+      appKey: 'product-agent',
+      wip: true,
+      tags: ['产品管理', '版本', '需求', '功能', '缺陷追溯', '知识图谱', 'RTM'],
+    },
+  },
+  {
     path: '/project-route-agent',
     permission: 'project-route-agent.use',
     element: shellGuarded('project-route-agent.use', <ProjectRouteAgentPage />),
@@ -605,6 +639,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       icon: 'Server',
       section: 'infra',
       tags: ['sidecar', '基础设施', 'cds', '远程主机', 'shared-service'],
+    },
+  },
+  {
+    // 开放平台：对外开放接口 API 网关（OpenAI 兼容）+ 外部授权 / API 应用 / 调用日志的统一管理入口。
+    // 从 App.tsx 手写 Route 移入 SSOT，自动出现在首页、Cmd+K 搜索、设置「我的导航」可添加池。
+    path: '/open-platform',
+    permission: 'open-platform.manage',
+    element: shellGuarded('open-platform.manage', <OpenPlatformTabsPage />),
+    nav: {
+      label: '开放平台',
+      shortLabel: '开放',
+      description: '对外开放接口（OpenAI 兼容）API 网关、外部授权、API 应用与调用日志管理',
+      icon: 'Plug',
+      section: 'infra',
+      tags: ['开放平台', 'open-platform', 'open-api', 'API', '网关', '授权', '调用日志'],
     },
   },
 ];

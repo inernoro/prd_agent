@@ -84,13 +84,50 @@ public class DocumentStoreController : ControllerBase
     private static bool IsTeamShared(DocumentStore s, List<string> myTeamIds)
         => s.SharedTeamIds != null && s.SharedTeamIds.Any(myTeamIds.Contains);
 
-    /// <summary>可写：拥有者 或 团队成员（决策 10 全员可编辑；不含 public）</summary>
-    private static bool CanWriteStore(DocumentStore s, string userId, List<string> myTeamIds)
-        => s.OwnerId == userId || IsTeamShared(s, myTeamIds);
+    /// <summary>可写：拥有者 或 团队成员（决策 10 全员可编辑；不含 public）；项目库走项目成员判定</summary>
+    private async Task<bool> CanWriteStoreAsync(DocumentStore s, string userId, List<string> myTeamIds)
+        => s.OwnerId == userId || IsTeamShared(s, myTeamIds) || await IsPmProjectMemberAsync(s, userId, write: true)
+           || await IsProductKnowledgeMemberAsync(s, userId);
 
-    /// <summary>可读：拥有者 或 公开 或 团队成员</summary>
-    private static bool CanReadStore(DocumentStore s, string userId, List<string> myTeamIds)
-        => s.OwnerId == userId || s.IsPublic || IsTeamShared(s, myTeamIds);
+    /// <summary>可读：拥有者 或 公开 或 团队成员；项目库走项目成员判定（含观察者/干系人）；产品库走产品成员判定</summary>
+    private async Task<bool> CanReadStoreAsync(DocumentStore s, string userId, List<string> myTeamIds)
+        => s.OwnerId == userId || s.IsPublic || IsTeamShared(s, myTeamIds) || await IsPmProjectMemberAsync(s, userId, write: false)
+           || await IsProductKnowledgeMemberAsync(s, userId);
+
+    /// <summary>
+    /// 产品知识库访问判定：仅当 store.ProductKnowledgeRef 非空时生效（格式 product:{id} / version:{id}）。
+    /// 产品 owner 与成员均可读写（与 product-agent 的产品访问语义对齐）。
+    /// </summary>
+    private async Task<bool> IsProductKnowledgeMemberAsync(DocumentStore s, string userId)
+    {
+        if (string.IsNullOrEmpty(s.ProductKnowledgeRef)) return false;
+        var parts = s.ProductKnowledgeRef.Split(':', 2);
+        if (parts.Length != 2) return false;
+        string? productId = parts[0] switch
+        {
+            "product" => parts[1],
+            "version" => (await _db.ProductVersions.Find(x => x.Id == parts[1] && !x.IsDeleted).FirstOrDefaultAsync())?.ProductId,
+            _ => null,
+        };
+        if (string.IsNullOrEmpty(productId)) return false;
+        var p = await _db.Products.Find(x => x.Id == productId && !x.IsDeleted).FirstOrDefaultAsync();
+        if (p == null) return false;
+        return p.OwnerId == userId || p.MemberIds.Contains(userId);
+    }
+
+    /// <summary>
+    /// 项目知识库访问判定：仅当 store.PmProjectId 非空时生效。
+    /// write=true → owner/leader/成员；write=false（读）→ 额外放行观察者与干系人。
+    /// </summary>
+    private async Task<bool> IsPmProjectMemberAsync(DocumentStore s, string userId, bool write)
+    {
+        if (string.IsNullOrEmpty(s.PmProjectId)) return false;
+        var p = await _db.PmProjects.Find(x => x.Id == s.PmProjectId && !x.IsDeleted).FirstOrDefaultAsync();
+        if (p == null) return false;
+        if (p.OwnerId == userId || p.LeaderId == userId || p.MemberIds.Contains(userId)) return true;
+        if (write) return false;
+        return p.ObserverIds.Contains(userId) || (p.Stakeholders?.Any(st => st.UserId == userId) ?? false);
+    }
 
     /// <summary>
     /// 判定本次写入是否"机器归档"（带 kind=acceptance-report 标记）。
@@ -113,7 +150,7 @@ public class DocumentStoreController : ControllerBase
         if (store == null)
             return (null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在")));
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
-        if (!CanWriteStore(store, userId, myTeamIds))
+        if (!await CanWriteStoreAsync(store, userId, myTeamIds))
             return (null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在")));
         return (store, null);
     }
@@ -145,7 +182,7 @@ public class DocumentStoreController : ControllerBase
         if (store == null)
             return (null, null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在")));
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
-        if (!CanWriteStore(store, userId, myTeamIds))
+        if (!await CanWriteStoreAsync(store, userId, myTeamIds))
             return (null, null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在")));
         return (entry, store, null);
     }
@@ -160,7 +197,7 @@ public class DocumentStoreController : ControllerBase
         if (store == null)
             return (null, null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在")));
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
-        if (!CanReadStore(store, userId, myTeamIds))
+        if (!await CanReadStoreAsync(store, userId, myTeamIds))
             return (null, null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在")));
         return (entry, store, null);
     }
@@ -276,7 +313,11 @@ public class DocumentStoreController : ControllerBase
         }
         else
         {
-            filter = Builders<DocumentStore>.Filter.Eq(s => s.OwnerId, userId);
+            // 我的知识库：排除项目库 / 产品库（PmProjectId / ProductKnowledgeRef 非空的库只在对应 Agent 的「知识库」tab 内访问）
+            filter = Builders<DocumentStore>.Filter.And(
+                Builders<DocumentStore>.Filter.Eq(s => s.OwnerId, userId),
+                Builders<DocumentStore>.Filter.Eq(s => s.PmProjectId, (string?)null),
+                Builders<DocumentStore>.Filter.Eq(s => s.ProductKnowledgeRef, (string?)null));
         }
 
         var total = await _db.DocumentStores.CountDocumentsAsync(filter);
@@ -299,7 +340,7 @@ public class DocumentStoreController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
-        if (!CanReadStore(store, userId, myTeamIds))
+        if (!await CanReadStoreAsync(store, userId, myTeamIds))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
         return Ok(ApiResponse<DocumentStore>.Ok(store));
@@ -326,6 +367,15 @@ public class DocumentStoreController : ControllerBase
         if (request.TemplateKey != null)
             updates.Add(Builders<DocumentStore>.Update.Set(s => s.TemplateKey,
                 string.IsNullOrWhiteSpace(request.TemplateKey) ? null : request.TemplateKey.Trim()));
+        if (request.TagColors != null)
+        {
+            // 仅接受白名单调色板 key，其他值丢弃
+            var allowed = new HashSet<string> { "red", "orange", "yellow", "green", "teal", "blue", "purple", "gray" };
+            var sanitized = request.TagColors
+                .Where(kv => !string.IsNullOrWhiteSpace(kv.Key) && allowed.Contains(kv.Value))
+                .ToDictionary(kv => kv.Key.Trim(), kv => kv.Value);
+            updates.Add(Builders<DocumentStore>.Update.Set(s => s.TagColors, sanitized));
+        }
 
         updates.Add(Builders<DocumentStore>.Update.Set(s => s.UpdatedAt, DateTime.UtcNow));
 
@@ -393,6 +443,12 @@ public class DocumentStoreController : ControllerBase
         var viewEventsResult = await _db.DocumentStoreViewEvents.DeleteManyAsync(v => v.StoreId == storeId);
         var inlineCommentsResult = await _db.DocumentInlineComments.DeleteManyAsync(c => c.StoreId == storeId);
         var agentRunsResult = await _db.DocumentStoreAgentRuns.DeleteManyAsync(r => r.StoreId == storeId);
+        // 同步配对清理：本库作为本地侧(LocalStoreId)的记录无条件删。
+        // RemoteStoreId 匹配仅限【本地同环境配对】(LinkType=Local)——跨环境配对的 RemoteStoreId 是对端环境的库 Id，
+        // 本环境若恰好(克隆/导入后)有同 Id 的库，不能因为删它就误删那些本地侧仍在的跨环境配对（Codex P2）。
+        await _db.DocumentStoreSyncLinks.DeleteManyAsync(l =>
+            l.LocalStoreId == storeId
+            || (l.RemoteStoreId == storeId && l.LinkType == DocumentSyncLinkType.Local));
 
         // 正文：只有通过此 Store 关联的 ParsedPrd 才删（其他模块可能也引用 documents 集合，所以按 ID 列表删）
         long documentsDeleted = 0;
@@ -573,7 +629,7 @@ public class DocumentStoreController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
-        if (!CanReadStore(store, userId, myTeamIds))
+        if (!await CanReadStoreAsync(store, userId, myTeamIds))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
         pageSize = Math.Clamp(pageSize, 1, 500);
@@ -748,8 +804,22 @@ public class DocumentStoreController : ControllerBase
         long documentsDeleted = 0;
         if (documentIds.Count > 0)
         {
-            var r = await _db.Documents.DeleteManyAsync(d => documentIds.Contains(d.Id));
-            documentsDeleted = r.DeletedCount;
+            // 重要：DocumentId 是内容 SHA-256（content-addressable），多 entry 可能共享同一 Document
+            // （同内容文件被多处订阅 / 重命名 / 跨知识库订阅同一 URL）。
+            // 必须先确认本次删除范围之外没有其他 entry 还引用这个 DocumentId，才能删 Document。
+            // 否则会把别人共享的 Document 一并删掉，对方下次预览就空白（hash 短路又导致永久回不来）。
+            var safeToDeleteDocIds = new List<string>();
+            foreach (var docId in documentIds.Distinct())
+            {
+                var otherRefs = await _db.DocumentEntries.CountDocumentsAsync(
+                    e => e.DocumentId == docId && !idsToDelete.Contains(e.Id));
+                if (otherRefs == 0) safeToDeleteDocIds.Add(docId);
+            }
+            if (safeToDeleteDocIds.Count > 0)
+            {
+                var r = await _db.Documents.DeleteManyAsync(d => safeToDeleteDocIds.Contains(d.Id));
+                documentsDeleted = r.DeletedCount;
+            }
         }
         long attachmentsDeleted = 0;
         if (attachmentIds.Count > 0)
@@ -987,7 +1057,7 @@ public class DocumentStoreController : ControllerBase
 
         var store = await _db.DocumentStores.Find(s => s.Id == folder.StoreId).FirstOrDefaultAsync();
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
-        if (store == null || !CanWriteStore(store, userId, myTeamIds))
+        if (store == null || !await CanWriteStoreAsync(store, userId, myTeamIds))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文件夹不存在"));
 
         if (!string.IsNullOrEmpty(request.EntryId))
@@ -1083,7 +1153,7 @@ public class DocumentStoreController : ControllerBase
         var (userId, userName, avatarFileName) = await GetActorWithAvatarAsync();
         var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync(ct);
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
-        if (store == null || !CanWriteStore(store, userId, myTeamIds))
+        if (store == null || !await CanWriteStoreAsync(store, userId, myTeamIds))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
         if (file == null || file.Length == 0)
@@ -1212,7 +1282,7 @@ public class DocumentStoreController : ControllerBase
 
         var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId).FirstOrDefaultAsync(ct);
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
-        if (store == null || !CanWriteStore(store, userId, myTeamIds))
+        if (store == null || !await CanWriteStoreAsync(store, userId, myTeamIds))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档条目不存在"));
 
         if (file == null || file.Length == 0)
@@ -1478,6 +1548,7 @@ public class DocumentStoreController : ControllerBase
                 store.IsPublic,
                 store.TemplateKey,
                 store.CoverImageUrl,
+                store.TagColors,
             },
             entries = exported,
             stats = new { total = entries.Count, binarySkipped = skippedBinary },
@@ -1502,6 +1573,13 @@ public class DocumentStoreController : ControllerBase
             .Find(s => s.OwnerId == userId && s.Name == meta.Name).FirstOrDefaultAsync();
         if (store == null)
         {
+            // 仅接受白名单 8 色调色板 key，其他丢弃
+            var allowedColors = new HashSet<string> { "red", "orange", "yellow", "green", "teal", "blue", "purple", "gray" };
+            var importedColors = meta.TagColors == null
+                ? new Dictionary<string, string>()
+                : meta.TagColors
+                    .Where(kv => !string.IsNullOrWhiteSpace(kv.Key) && allowedColors.Contains(kv.Value))
+                    .ToDictionary(kv => kv.Key.Trim(), kv => kv.Value);
             store = new DocumentStore
             {
                 Name = meta.Name.Trim(),
@@ -1511,6 +1589,7 @@ public class DocumentStoreController : ControllerBase
                 IsPublic = meta.IsPublic,
                 TemplateKey = string.IsNullOrWhiteSpace(meta.TemplateKey) ? null : meta.TemplateKey.Trim(),
                 CoverImageUrl = meta.CoverImageUrl,
+                TagColors = importedColors,
             };
             await _db.DocumentStores.InsertOneAsync(store);
         }
@@ -1522,6 +1601,27 @@ public class DocumentStoreController : ControllerBase
             await _db.DocumentStores.UpdateOneAsync(s => s.Id == store.Id,
                 Builders<DocumentStore>.Update.Set(s => s.TemplateKey, tk).Set(s => s.UpdatedAt, DateTime.UtcNow));
             store.TemplateKey = tk;
+        }
+
+        // 同名库复用时也合并 bundle 的 TagColors（白名单 sanitize，merge 优先 bundle 值）。
+        // 不 merge 的话跨环境同步会丢失自定义颜色。
+        if (meta.TagColors != null && meta.TagColors.Count > 0)
+        {
+            var allowedColors = new HashSet<string> { "red", "orange", "yellow", "green", "teal", "blue", "purple", "gray" };
+            var merged = store.TagColors ?? new Dictionary<string, string>();
+            var dirty = false;
+            foreach (var kv in meta.TagColors)
+            {
+                if (string.IsNullOrWhiteSpace(kv.Key) || !allowedColors.Contains(kv.Value)) continue;
+                var k = kv.Key.Trim();
+                if (!merged.TryGetValue(k, out var cur) || cur != kv.Value) { merged[k] = kv.Value; dirty = true; }
+            }
+            if (dirty)
+            {
+                await _db.DocumentStores.UpdateOneAsync(s => s.Id == store.Id,
+                    Builders<DocumentStore>.Update.Set(s => s.TagColors, merged).Set(s => s.UpdatedAt, DateTime.UtcNow));
+                store.TagColors = merged;
+            }
         }
 
         var existing = await _db.DocumentEntries.Find(e => e.StoreId == store.Id).ToListAsync();
@@ -1862,7 +1962,11 @@ public class DocumentStoreController : ControllerBase
         }
         else
         {
-            filter = Builders<DocumentStore>.Filter.Eq(s => s.OwnerId, userId);
+            // 我的知识库：排除项目库 / 产品库（PmProjectId / ProductKnowledgeRef 非空的库只在对应 Agent 的「知识库」tab 内访问）
+            filter = Builders<DocumentStore>.Filter.And(
+                Builders<DocumentStore>.Filter.Eq(s => s.OwnerId, userId),
+                Builders<DocumentStore>.Filter.Eq(s => s.PmProjectId, (string?)null),
+                Builders<DocumentStore>.Filter.Eq(s => s.ProductKnowledgeRef, (string?)null));
         }
         var total = await _db.DocumentStores.CountDocumentsAsync(filter);
         var stores = await _db.DocumentStores.Find(filter)
@@ -2105,6 +2209,125 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
+    /// <summary>
+    /// 列出当前用户可调用的「再加工·智能体」：系统内置 + 自己创建的个人智能体。
+    /// 不包含其他用户的 personal 智能体。
+    /// </summary>
+    [HttpGet("reprocess-agents")]
+    public async Task<IActionResult> ListReprocessAgents()
+    {
+        var userId = GetUserId();
+        var filter = Builders<ReprocessAgent>.Filter.Or(
+            Builders<ReprocessAgent>.Filter.Eq(a => a.Visibility, ReprocessAgentVisibility.System),
+            Builders<ReprocessAgent>.Filter.And(
+                Builders<ReprocessAgent>.Filter.Eq(a => a.Visibility, ReprocessAgentVisibility.Personal),
+                Builders<ReprocessAgent>.Filter.Eq(a => a.OwnerUserId, userId)));
+
+        var list = await _db.ReprocessAgents.Find(filter)
+            .Sort(Builders<ReprocessAgent>.Sort
+                .Ascending(a => a.Visibility) // system 在前（"personal" 字典序在 "system" 前，反转: 见下）
+                .Ascending(a => a.SortOrder)
+                .Ascending(a => a.CreatedAt))
+            .ToListAsync();
+
+        // 手动稳定排序：system 在前，再按 SortOrder / CreatedAt
+        var items = list
+            .OrderBy(a => a.Visibility == ReprocessAgentVisibility.System ? 0 : 1)
+            .ThenBy(a => a.SortOrder)
+            .ThenBy(a => a.CreatedAt)
+            .Select(a => new
+            {
+                id = a.Id,
+                key = a.Key,
+                label = a.Label,
+                description = a.Description,
+                systemPrompt = a.SystemPrompt,
+                visibility = a.Visibility,
+                isOwn = a.OwnerUserId == userId,
+                createdAt = a.CreatedAt,
+            }).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>创建一个个人再加工智能体（Visibility=personal）</summary>
+    [HttpPost("reprocess-agents")]
+    public async Task<IActionResult> CreateReprocessAgent([FromBody] CreateReprocessAgentRequest request)
+    {
+        var label = (request.Label ?? "").Trim();
+        var systemPrompt = (request.SystemPrompt ?? "").Trim();
+        var description = (request.Description ?? "").Trim();
+        if (string.IsNullOrEmpty(label))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "label 不能为空"));
+        if (string.IsNullOrEmpty(systemPrompt))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "systemPrompt 不能为空"));
+        if (label.Length > 30)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "label 不超过 30 字"));
+        if (description.Length > 200)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "description 不超过 200 字"));
+        if (systemPrompt.Length > 8000)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "systemPrompt 不超过 8000 字"));
+
+        var userId = GetUserId();
+        // 个人智能体 Key 自动加用户前缀避免与 system 冲突
+        var rawSlug = SlugifyLabel(label);
+        var key = $"u-{userId[..Math.Min(6, userId.Length)]}-{rawSlug}-{Guid.NewGuid().ToString("N")[..6]}";
+
+        var agent = new ReprocessAgent
+        {
+            Key = key,
+            Label = label,
+            Description = description,
+            SystemPrompt = systemPrompt,
+            Visibility = ReprocessAgentVisibility.Personal,
+            OwnerUserId = userId,
+            SortOrder = 100,
+            CreatedAt = DateTime.UtcNow,
+        };
+        await _db.ReprocessAgents.InsertOneAsync(agent);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            id = agent.Id,
+            key = agent.Key,
+            label = agent.Label,
+            description = agent.Description,
+            systemPrompt = agent.SystemPrompt,
+            visibility = agent.Visibility,
+            isOwn = true,
+            createdAt = agent.CreatedAt,
+        }));
+    }
+
+    /// <summary>删除一个自己的个人再加工智能体（system 不允许删）</summary>
+    [HttpDelete("reprocess-agents/{id}")]
+    public async Task<IActionResult> DeleteReprocessAgent(string id)
+    {
+        var userId = GetUserId();
+        var agent = await _db.ReprocessAgents.Find(a => a.Id == id).FirstOrDefaultAsync();
+        if (agent == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "智能体不存在"));
+        if (agent.Visibility != ReprocessAgentVisibility.Personal || agent.OwnerUserId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "只能删除自己创建的智能体"));
+
+        await _db.ReprocessAgents.DeleteOneAsync(a => a.Id == id);
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    private static string SlugifyLabel(string label)
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var ch in label.ToLowerInvariant())
+        {
+            if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')) sb.Append(ch);
+            else if (sb.Length > 0 && sb[^1] != '-') sb.Append('-');
+        }
+        var s = sb.ToString().Trim('-');
+        if (string.IsNullOrEmpty(s)) s = "agent";
+        if (s.Length > 20) s = s[..20];
+        return s;
+    }
+
     /// <summary>发起字幕生成任务（音视频 → ASR，图片 → Vision）</summary>
     [HttpPost("entries/{entryId}/generate-subtitle")]
     public async Task<IActionResult> GenerateSubtitle(string entryId)
@@ -2143,47 +2366,461 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { runId = run.Id, status = run.Status, reused = false }));
     }
 
-    /// <summary>发起文档再加工任务（流式 LLM 改写）</summary>
+    /// <summary>发起文档再加工任务（保留旧接口，等价于一次性发送首条 chat 消息）</summary>
     [HttpPost("entries/{entryId}/reprocess")]
     public async Task<IActionResult> Reprocess(string entryId, [FromBody] ReprocessRequest request)
     {
-        var (entry, store, err) = await LoadOwnedEntryAsync(entryId);
-        if (err != null) return err;
-        if (entry!.IsFolder)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持再加工"));
-
         var templateKey = (request.TemplateKey ?? "").Trim();
         if (string.IsNullOrEmpty(templateKey))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "templateKey 不能为空"));
 
-        if (templateKey == "custom")
-        {
-            if (string.IsNullOrWhiteSpace(request.CustomPrompt))
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "自定义模板需要提供 customPrompt"));
-        }
-        else if (ReprocessTemplateRegistry.FindByKey(templateKey) == null)
-        {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"未知模板: {templateKey}"));
-        }
+        var content = (request.CustomPrompt ?? "").Trim();
+        if (templateKey == "custom" && string.IsNullOrEmpty(content))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "自定义模板需要提供 customPrompt"));
+
+        // 模板模式下若用户没填补充指令，给一句默认的 user 消息
+        if (string.IsNullOrEmpty(content))
+            content = "请按所选模板处理这篇文档。";
+
+        // 与 SendReprocessChat 同一校验：templateKey 必须存在于内置模板或可见智能体里，否则 400
+        // 否则 typo / 旧 key 会静默走 generic prompt（Codex P2）
+        var keyError = await ValidateReprocessTemplateKeyAsync(templateKey);
+        if (keyError != null) return keyError;
+
+        return await SendReprocessChatInternal(entryId, runId: null, content: content, templateKey: templateKey);
+    }
+
+    /// <summary>发送一条再加工对话消息（首次会自动建 Run；后续追加到同一 Run）</summary>
+    [HttpPost("entries/{entryId}/reprocess/chat")]
+    public async Task<IActionResult> SendReprocessChat(string entryId, [FromBody] ReprocessChatRequest request)
+    {
+        var content = (request.Content ?? "").Trim();
+        if (string.IsNullOrEmpty(content))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "content 不能为空"));
+
+        var templateKey = string.IsNullOrWhiteSpace(request.TemplateKey) ? null : request.TemplateKey!.Trim();
+        var keyError = await ValidateReprocessTemplateKeyAsync(templateKey);
+        if (keyError != null) return keyError;
+
+        return await SendReprocessChatInternal(entryId, request.RunId, content, templateKey);
+    }
+
+    /// <summary>校验 templateKey：内置模板 / custom / 当前用户可访问的智能体 → 通过；否则 400</summary>
+    private async Task<IActionResult?> ValidateReprocessTemplateKeyAsync(string? templateKey)
+    {
+        if (templateKey == null || templateKey == "custom") return null;
+        if (ReprocessTemplateRegistry.FindByKey(templateKey) != null) return null;
 
         var userId = GetUserId();
-        var run = new DocumentStoreAgentRun
+        var agentExists = await _db.ReprocessAgents.Find(a =>
+            a.Key == templateKey
+            && (a.Visibility == ReprocessAgentVisibility.System
+                || (a.Visibility == ReprocessAgentVisibility.Personal && a.OwnerUserId == userId)))
+            .AnyAsync();
+        if (agentExists) return null;
+
+        return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"未知模板/智能体: {templateKey}"));
+    }
+
+    private async Task<IActionResult> SendReprocessChatInternal(
+        string entryId, string? runId, string content, string? templateKey)
+    {
+        // 同 apply-content / active-run / agent-runs apply：team writable。否则团队成员能写回
+        // AI 输出却起不来对话 worker，反而 404（Bugbot 十三轮 Medium）
+        var userId = GetUserId();
+        var (entry, store, err) = await LoadWritableEntryAsync(entryId, userId);
+        if (err != null) return err;
+        if (entry!.IsFolder)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持再加工"));
+
+        DocumentStoreAgentRun? run = null;
+        if (!string.IsNullOrEmpty(runId))
         {
-            Kind = DocumentStoreAgentRunKind.Reprocess,
-            SourceEntryId = entryId,
-            StoreId = store!.Id,
-            UserId = userId,
+            run = await _db.DocumentStoreAgentRuns
+                .Find(r => r.Id == runId && r.UserId == userId && r.SourceEntryId == entryId)
+                .FirstOrDefaultAsync();
+            if (run == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "Run 不存在"));
+            if (run.Status == DocumentStoreRunStatus.Running || run.Status == DocumentStoreRunStatus.Queued)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "上一轮还未结束，请稍候"));
+        }
+
+        // 防御：BSON 里 older run 可能没有 Messages 字段 → 反序列化后是 null。
+        // run.Messages 的 default initializer 只在新建对象时跑，从 DB 读出来的 null 不会被填（Bugbot #1 四轮 High）
+        if (run != null && run.Messages == null) run.Messages = new List<ReprocessChatMessage>();
+        var nextSeq = run?.Messages.Count ?? 0;
+        var userMsg = new ReprocessChatMessage
+        {
+            Seq = nextSeq,
+            Role = "user",
+            Content = content,
             TemplateKey = templateKey,
-            CustomPrompt = request.CustomPrompt,
-            Status = DocumentStoreRunStatus.Queued,
-            Phase = "排队中",
+            CreatedAt = DateTime.UtcNow,
         };
-        await _db.DocumentStoreAgentRuns.InsertOneAsync(run);
+
+        if (run == null)
+        {
+            run = new DocumentStoreAgentRun
+            {
+                Kind = DocumentStoreAgentRunKind.Reprocess,
+                SourceEntryId = entryId,
+                StoreId = store!.Id,
+                UserId = userId,
+                TemplateKey = templateKey,
+                CustomPrompt = templateKey == "custom" ? content : null,
+                Status = DocumentStoreRunStatus.Queued,
+                Phase = "排队中",
+                Messages = new List<ReprocessChatMessage> { userMsg },
+            };
+            await _db.DocumentStoreAgentRuns.InsertOneAsync(run);
+        }
+        else
+        {
+            // 已 Done 的 Run：追加 user 消息 + 重置 status=queued 让 worker 再 pick 一次
+            // 加 status 终态作为 filter 条件做原子 CAS：两个客户端同时基于同一份"已 Done"
+            // 快照发追问时，第二个的 UpdateOne 会因为 run.Status 已被第一个改成 Queued 而
+            // ModifiedCount=0，从而拒绝它。否则两条 user 消息都会被 Push 进去但只 queue 一
+            // 次，processor 只处理最后一条 → 前一条永远没回复（Codex P2 八轮）
+            var prevSeq = run.Messages.Count;
+            var terminalStates = new[]
+            {
+                DocumentStoreRunStatus.Done,
+                DocumentStoreRunStatus.Failed,
+                DocumentStoreRunStatus.Cancelled,
+            };
+            // 先把 legacy BSON 里 null/missing 的 Messages 归一为 [] —— 否则下面 CAS 的
+            // r.Messages.Count == 0 永远不匹配，旧 Run 续 chat 会被 409 拒绝（Codex P2 十一轮）
+            if (prevSeq == 0)
+            {
+                await _db.DocumentStoreAgentRuns.UpdateOneAsync(
+                    Builders<DocumentStoreAgentRun>.Filter.And(
+                        Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Id, run.Id),
+                        Builders<DocumentStoreAgentRun>.Filter.Not(
+                            Builders<DocumentStoreAgentRun>.Filter.Type(r => r.Messages, MongoDB.Bson.BsonType.Array))),
+                    Builders<DocumentStoreAgentRun>.Update.Set(r => r.Messages, new List<ReprocessChatMessage>()),
+                    cancellationToken: CancellationToken.None);
+            }
+            var updateResult = await _db.DocumentStoreAgentRuns.UpdateOneAsync(
+                r => r.Id == run.Id
+                    && terminalStates.Contains(r.Status)
+                    && r.Messages.Count == prevSeq,
+                Builders<DocumentStoreAgentRun>.Update
+                    .Push(r => r.Messages, userMsg)
+                    .Set(r => r.Status, DocumentStoreRunStatus.Queued)
+                    .Set(r => r.Phase, "排队中")
+                    .Set(r => r.Progress, 0)
+                    .Set(r => r.GeneratedText, null)
+                    .Set(r => r.EndedAt, (DateTime?)null)
+                    .Set(r => r.ErrorMessage, null),
+                cancellationToken: CancellationToken.None);
+            if (updateResult.ModifiedCount == 0)
+            {
+                return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                    "上一轮还未结束或已被其他客户端接力，请稍候再试"));
+            }
+            // 同步内存里的 run.Status，否则下面 return 时仍然返回旧的 "done"，
+            // 客户端会误以为任务已经完成（Bugbot #1 三轮 Medium）
+            run.Status = DocumentStoreRunStatus.Queued;
+        }
+
+        // 给 SSE 端推一条 userMessage 事件方便前端镜像（不影响处理流程）
+        try
+        {
+            await _runEventStore.AppendEventAsync(
+                DocumentStoreRunKinds.Reprocess, run.Id, "userMessage",
+                new { messageSeq = userMsg.Seq, content = userMsg.Content, templateKey = userMsg.TemplateKey },
+                ct: CancellationToken.None);
+        }
+        catch { /* ignore */ }
 
         _logger.LogInformation(
-            "[doc-store-agent] Reprocess run queued: {RunId} entry={EntryId} template={Template}",
-            run.Id, entryId, templateKey);
-        return Ok(ApiResponse<object>.Ok(new { runId = run.Id, status = run.Status }));
+            "[doc-store-agent] Reprocess chat queued: run={RunId} entry={EntryId} seq={Seq}",
+            run.Id, entryId, userMsg.Seq);
+        return Ok(ApiResponse<object>.Ok(new { runId = run.Id, status = run.Status, messageSeq = userMsg.Seq }));
+    }
+
+    /// <summary>获取某文档的活跃再加工会话（按用户 + entry 取最近一条 Run，含完整 messages，用于打开抽屉恢复对话）</summary>
+    [HttpGet("entries/{entryId}/reprocess/active-run")]
+    public async Task<IActionResult> GetActiveReprocessRun(string entryId)
+    {
+        // 同 apply-content：team writable。owner-only 会让协作成员看不到自己跑过的会话历史
+        // —— UI 里能写 AI 输出回去，却查不到自己的 chat run（Bugbot 九轮 Medium）
+        var userId = GetUserId();
+        var (_, _, err) = await LoadWritableEntryAsync(entryId, userId);
+        if (err != null) return err;
+        var run = await _db.DocumentStoreAgentRuns
+            .Find(r => r.SourceEntryId == entryId
+                       && r.UserId == userId
+                       && r.Kind == DocumentStoreAgentRunKind.Reprocess)
+            .SortByDescending(r => r.CreatedAt)
+            .FirstOrDefaultAsync();
+        return Ok(ApiResponse<DocumentStoreAgentRun?>.Ok(run));
+    }
+
+    // ────────────────────────────────────────────────────────────────────
+    // 智能体抽屉 direct-chat 对话持久化（关浏览器标签页/换设备都不丢）。
+    // 按 (userId, entryId) 唯一一条、覆盖式 upsert —— 不走 Run，规避"旧 run 污染新会话"老 bug。
+    // 详见 DocumentStoreConversation.cs 设计说明。
+    // ────────────────────────────────────────────────────────────────────
+
+    /// <summary>读取某文档的智能体对话（含 messages / 暂存图 / 选中智能体），用于重开抽屉恢复。</summary>
+    [HttpGet("entries/{entryId}/reprocess/conversation")]
+    public async Task<IActionResult> GetReprocessConversation(string entryId)
+    {
+        // team writable 同 active-run：协作成员也能看到自己在该条目下的对话历史
+        var userId = GetUserId();
+        var (_, _, err) = await LoadWritableEntryAsync(entryId, userId);
+        if (err != null) return err;
+        var convo = await _db.DocumentStoreConversations
+            .Find(c => c.SourceEntryId == entryId && c.UserId == userId)
+            .FirstOrDefaultAsync();
+        return Ok(ApiResponse<DocumentStoreConversation?>.Ok(convo));
+    }
+
+    /// <summary>覆盖式保存某文档的智能体对话（前端去抖调用）。messages / pendingImages 为前端拥有形状的 JSON blob。</summary>
+    [HttpPut("entries/{entryId}/reprocess/conversation")]
+    public async Task<IActionResult> SaveReprocessConversation(string entryId, [FromBody] SaveConversationRequest request)
+    {
+        var userId = GetUserId();
+        var (entry, store, err) = await LoadWritableEntryAsync(entryId, userId);
+        if (err != null) return err;
+        if (entry!.IsFolder)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持对话持久化"));
+
+        var messagesJson = string.IsNullOrWhiteSpace(request.MessagesJson) ? "[]" : request.MessagesJson!;
+        var pendingJson = string.IsNullOrWhiteSpace(request.PendingImagesJson) ? "[]" : request.PendingImagesJson!;
+        // 体积护栏：避免客户端塞超大 blob 撑爆集合
+        if (messagesJson.Length > 256 * 1024)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "对话内容过大，无法保存"));
+        if (pendingJson.Length > 64 * 1024)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "暂存图片过多，无法保存"));
+
+        var now = DateTime.UtcNow;
+        // 原子 upsert（替代 find-then-insert/update）：单次 UpdateOne(IsUpsert) 把"查 + 插/改"合并为
+        // 一个操作，消除两标签页并发各自 read-miss 后各插一行的窗口（Codex P2）。彻底去重还需
+        // (UserId, SourceEntryId) 唯一索引（本仓库禁运行时建索引，见 doc/guide.mongodb-indexes.md，由 DBA 建）。
+        var filter = Builders<DocumentStoreConversation>.Filter.And(
+            Builders<DocumentStoreConversation>.Filter.Eq(c => c.SourceEntryId, entryId),
+            Builders<DocumentStoreConversation>.Filter.Eq(c => c.UserId, userId));
+        var update = Builders<DocumentStoreConversation>.Update
+            .Set(c => c.MessagesJson, messagesJson)
+            .Set(c => c.PendingImagesJson, pendingJson)
+            .Set(c => c.ActiveRefJson, request.ActiveRefJson)
+            .Set(c => c.StoreId, store!.Id)
+            .Set(c => c.UpdatedAt, now)
+            // _id 与 CreatedAt 仅首次插入写；UserId/SourceEntryId 由 filter 等值自动落到新文档（不可再 SetOnInsert，否则路径冲突）。
+            .SetOnInsert(c => c.Id, Guid.NewGuid().ToString("N"))
+            .SetOnInsert(c => c.CreatedAt, now);
+        await _db.DocumentStoreConversations.UpdateOneAsync(
+            filter, update, new UpdateOptions { IsUpsert = true }, CancellationToken.None);
+        return Ok(ApiResponse<object>.Ok(new { ok = true }));
+    }
+
+    /// <summary>清空某文档的智能体对话（"开启全新对话"）。</summary>
+    [HttpDelete("entries/{entryId}/reprocess/conversation")]
+    public async Task<IActionResult> ClearReprocessConversation(string entryId)
+    {
+        var userId = GetUserId();
+        var (_, _, err) = await LoadWritableEntryAsync(entryId, userId);
+        if (err != null) return err;
+        await _db.DocumentStoreConversations.DeleteManyAsync(
+            c => c.SourceEntryId == entryId && c.UserId == userId,
+            cancellationToken: CancellationToken.None);
+        return Ok(ApiResponse<object>.Ok(new { ok = true }));
+    }
+
+    /// <summary>
+    /// 写回任意一段内容到文档（replace / append / new），不依赖 reprocess Run。
+    /// 用于：抽屉直接通过 /ai-toolbox/direct-chat 拿到的回复内容，前端把字符串塞进来就能落库。
+    /// </summary>
+    [HttpPost("entries/{entryId}/reprocess/apply-content")]
+    public async Task<IActionResult> ApplyContent(
+        string entryId,
+        [FromBody] ApplyContentRequest request,
+        [FromServices] ContentReprocessApplyService applyService)
+    {
+        // 团队协作场景：team 成员能通过 UpdateEntryContent 编辑分享给团队的条目，
+        // 这里写回 AI 输出也是"修改内容"，得用同款 Writable 鉴权，否则非 owner 永远 404（Codex P2）
+        var userId = GetUserId();
+        var (entry, store, err) = await LoadWritableEntryAsync(entryId, userId);
+        if (err != null) return err;
+        if (entry!.IsFolder)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文件夹不支持写入"));
+
+        var mode = (request.Mode ?? "").Trim().ToLowerInvariant();
+        if (mode != "replace" && mode != "append" && mode != "new")
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "mode 必须是 replace/append/new"));
+        var content = (request.Content ?? "").Trim();
+        if (string.IsNullOrEmpty(content))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "content 不能为空"));
+
+        // 模板合规校验：store 命中模板时和 UpdateEntryContent 同款 —— 缺 section 且是
+        // machine-templated（如 acceptance-report）就硬卡 422，避免 AI 写回把验收报告搞残
+        // （Codex P2 四轮）。replace/append 在原 entry 上跑校验；new 创建新 entry 走 generated_kind=reprocess
+        // 不算 machine-templated，软提醒即可。
+        var template = AcceptanceTemplateRegistry.FindByKey(store?.TemplateKey);
+        if (template != null && (mode == "replace" || mode == "append"))
+        {
+            // 对 replace 直接验 content；对 append 验 existing+content 的合并结果
+            var bodyToValidate = mode == "replace" ? content : await ComputeAppendedBodyAsync(entry, content);
+            var problems = AcceptanceTemplateRegistry.ValidateContentSections(template, bodyToValidate);
+            if (problems.Count > 0 && IsMachineTemplatedWrite(entry.Metadata))
+                return TemplateValidationError(template, problems);
+        }
+
+        // 复用 ApplyService 内部逻辑：构造一个临时 Run+Message 喂给它，避免重复实现写盘细节
+        var tmpRun = new DocumentStoreAgentRun
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Kind = DocumentStoreAgentRunKind.Reprocess,
+            SourceEntryId = entryId,
+            StoreId = entry.StoreId,
+            UserId = userId,
+            Status = DocumentStoreRunStatus.Done,
+            Messages = new List<ReprocessChatMessage>
+            {
+                new() { Seq = 0, Role = "assistant", Content = content, CreatedAt = DateTime.UtcNow },
+            },
+        };
+        try
+        {
+            var result = await applyService.ApplyAsync(tmpRun, entry, messageSeq: 0, mode, request.Title, _db);
+
+            // 替换 / 追加修改了原 entry 的正文 —— 必须按 UpdateEntryContent 同款逻辑
+            // 重绑划词评论的 offset，否则旧评论高亮会指向新文本的错误位置（Codex P2 #2）。
+            // mode=new 是创建新 entry，源 entry 内容没动，无需重绑。
+            // 必须用 ApplyService 返回的 FinalBody 而不是再去 DB 读 —— 这时候 DB 已经是
+            // 后置状态，对 append 模式重读再拼会把 aiContent 多 append 一次，造成偏移
+            // （Codex P2 #3 反馈）。
+            int? rebound = null;
+            int? orphaned = null;
+            if ((mode == "replace" || mode == "append") && !string.IsNullOrEmpty(result.UpdatedEntryId))
+            {
+                try
+                {
+                    var stats = await RebindInlineCommentsAsync(result.UpdatedEntryId, result.FinalBody);
+                    rebound = stats.rebound;
+                    orphaned = stats.orphaned;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "[doc-store-agent] apply-content rebind inline comments failed (non-fatal) entry={EntryId}", result.UpdatedEntryId);
+                }
+            }
+
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                mode = result.Mode,
+                outputEntryId = result.OutputEntryId,
+                updatedEntryId = result.UpdatedEntryId,
+                reboundComments = rebound,
+                orphanedComments = orphaned,
+            }));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+    }
+
+    /// <summary>读源 entry 既有正文 + AI 输出拼成 append 后的最终 body。供模板校验用，不写盘。</summary>
+    private async Task<string> ComputeAppendedBodyAsync(DocumentEntry entry, string aiContent)
+    {
+        var existing = string.Empty;
+        if (!string.IsNullOrEmpty(entry.DocumentId))
+        {
+            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
+            existing = doc?.RawContent ?? string.Empty;
+        }
+        if (string.IsNullOrEmpty(existing))
+            existing = entry.ContentIndex ?? string.Empty;
+        return string.IsNullOrEmpty(existing) ? aiContent : existing.TrimEnd() + "\n\n" + aiContent;
+    }
+
+    /// <summary>把对话中某条 assistant 消息写回文档（replace / append / new）</summary>
+    [HttpPost("agent-runs/{runId}/apply")]
+    public async Task<IActionResult> ApplyReprocess(
+        string runId,
+        [FromBody] ReprocessApplyRequest request,
+        [FromServices] ContentReprocessApplyService applyService)
+    {
+        var userId = GetUserId();
+        var run = await _db.DocumentStoreAgentRuns
+            .Find(r => r.Id == runId && r.UserId == userId && r.Kind == DocumentStoreAgentRunKind.Reprocess)
+            .FirstOrDefaultAsync();
+        if (run == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "Run 不存在"));
+
+        // 同 apply-content：team writable，让协作成员也能用 AI 写回（Bugbot #4 三轮 Medium）
+        var (entry, store, err) = await LoadWritableEntryAsync(run.SourceEntryId, userId);
+        if (err != null) return err;
+
+        var mode = (request.Mode ?? "").Trim().ToLowerInvariant();
+        if (mode != "replace" && mode != "append" && mode != "new")
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "mode 必须是 replace/append/new"));
+
+        // 同 apply-content：模板合规校验（Codex P2 四轮）
+        var runApplyTemplate = AcceptanceTemplateRegistry.FindByKey(store?.TemplateKey);
+        if (runApplyTemplate != null && (mode == "replace" || mode == "append"))
+        {
+            run.Messages ??= new List<ReprocessChatMessage>();
+            if (request.MessageSeq >= 0 && request.MessageSeq < run.Messages.Count)
+            {
+                var msg = run.Messages[request.MessageSeq];
+                var aiContent = (msg.Content ?? "").Trim();
+                if (msg.Role == "assistant" && !string.IsNullOrEmpty(aiContent))
+                {
+                    var bodyToValidate = mode == "replace" ? aiContent : await ComputeAppendedBodyAsync(entry!, aiContent);
+                    var problems = AcceptanceTemplateRegistry.ValidateContentSections(runApplyTemplate, bodyToValidate);
+                    if (problems.Count > 0 && IsMachineTemplatedWrite(entry!.Metadata))
+                        return TemplateValidationError(runApplyTemplate, problems);
+                }
+            }
+        }
+
+        try
+        {
+            var result = await applyService.ApplyAsync(run, entry!, request.MessageSeq, mode, request.Title, _db);
+
+            // 若是新建 entry，把 outputEntryId 记到 run 里，方便后续展示
+            if (result.Mode == "new" && !string.IsNullOrEmpty(result.OutputEntryId))
+            {
+                await _db.DocumentStoreAgentRuns.UpdateOneAsync(
+                    r => r.Id == run.Id,
+                    Builders<DocumentStoreAgentRun>.Update.Set(r => r.OutputEntryId, result.OutputEntryId),
+                    cancellationToken: CancellationToken.None);
+            }
+
+            // 与 apply-content 同款重绑划词评论 offset（Codex P2）
+            int? rebound = null;
+            int? orphaned = null;
+            if ((result.Mode == "replace" || result.Mode == "append") && !string.IsNullOrEmpty(result.UpdatedEntryId))
+            {
+                try
+                {
+                    var stats = await RebindInlineCommentsAsync(result.UpdatedEntryId, result.FinalBody);
+                    rebound = stats.rebound;
+                    orphaned = stats.orphaned;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "[doc-store-agent] agent-runs apply rebind inline comments failed (non-fatal) entry={EntryId}", result.UpdatedEntryId);
+                }
+            }
+
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                mode = result.Mode,
+                outputEntryId = result.OutputEntryId,
+                updatedEntryId = result.UpdatedEntryId,
+                reboundComments = rebound,
+                orphanedComments = orphaned,
+            }));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
     }
 
     /// <summary>获取 Run 当前状态（用于 Drawer 打开时判断）</summary>
@@ -3080,28 +3717,36 @@ public class DocumentStoreController : ControllerBase
         var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
         if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+        return Ok(ApiResponse<object>.Ok(await BuildViewEventsPayloadAsync(new List<string> { storeId }, limit)));
+    }
 
+    /// <summary>账号级访客列表：聚合我名下所有知识库的最近访问（仅 owner）</summary>
+    [HttpGet("stores/view-events-all")]
+    public async Task<IActionResult> ListAllStoresViewEvents([FromQuery] int limit = 50)
+    {
+        var userId = GetUserId();
+        var storeIds = await _db.DocumentStores.Find(s => s.OwnerId == userId && s.PmProjectId == null).Project(s => s.Id).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(await BuildViewEventsPayloadAsync(storeIds, limit)));
+    }
+
+    /// <summary>访客列表 payload 构造：stats 聚合 + 最近事件 + entry 标题。storeIds 决定范围，为空时返回空结构。</summary>
+    private async Task<object> BuildViewEventsPayloadAsync(List<string> storeIds, int limit)
+    {
         limit = Math.Clamp(limit, 1, 200);
 
+        var matchFilter = Builders<DocumentStoreViewEvent>.Filter.In(e => e.StoreId, storeIds);
         var events = await _db.DocumentStoreViewEvents
-            .Find(e => e.StoreId == storeId)
+            .Find(matchFilter)
             .SortByDescending(e => e.EnteredAt)
             .Limit(limit)
             .ToListAsync();
 
-        // 聚合统计：总访问量、独立访客数、总停留时长
-        // 经 B8 去重改造后，每条 view event 已是"去重窗口内的一次访问"，
-        // 因此事件文档总数即为去重后的总访问量（不再因刷新虚高）。
-        // 独立访客 / 总时长必须基于全量事件聚合——用 MongoDB 聚合管道在服务端算，
-        // 不把该 store 的全量事件文档拉回应用层（store 访问量大时内存/延迟不可控）。
-        //
-        // BSON 元素名说明：本项目 MongoDB 没有 camelCase ConventionPack，
-        // 元素名即 C# 属性名原样 PascalCase（StoreId/ViewerUserId/AnonSessionToken/DurationMs），
-        // 仅 Id 属性映射为 _id（driver 默认）。
+        // 聚合统计：总访问量、独立访客数、总停留时长。基于全量事件用聚合管道在服务端算，
+        // 不把全量事件文档拉回应用层（访问量大时内存/延迟不可控）。
+        // BSON 元素名为 C# 属性名原样 PascalCase（StoreId/ViewerUserId/AnonSessionToken/DurationMs），仅 Id → _id。
         var statsPipeline = new[]
         {
-            new BsonDocument("$match", new BsonDocument("StoreId", storeId)),
-            // 访客分组键：ViewerUserId ?? AnonSessionToken ?? _id（与原 LINQ 语义一致）
+            new BsonDocument("$match", new BsonDocument("StoreId", new BsonDocument("$in", new BsonArray(storeIds)))),
             new BsonDocument("$project", new BsonDocument
             {
                 { "visitor", new BsonDocument("$ifNull", new BsonArray
@@ -3114,7 +3759,6 @@ public class DocumentStoreController : ControllerBase
             }),
             new BsonDocument("$facet", new BsonDocument
             {
-                // totals：总访问量 + 总停留时长
                 { "totals", new BsonArray
                     {
                         new BsonDocument("$group", new BsonDocument
@@ -3126,7 +3770,6 @@ public class DocumentStoreController : ControllerBase
                         })
                     }
                 },
-                // uniques：独立访客数（两段 group + $count，避免大基数 $addToSet 内存压力）
                 { "uniques", new BsonArray
                     {
                         new BsonDocument("$group", new BsonDocument("_id", "$visitor")),
@@ -3145,7 +3788,6 @@ public class DocumentStoreController : ControllerBase
         long totalDurationMs = 0;
         if (statsResult != null)
         {
-            // facet 分支无文档时为空数组，全部兜底 0
             if (statsResult.TryGetValue("totals", out var totalsVal)
                 && totalsVal is BsonArray totalsArr && totalsArr.Count > 0
                 && totalsArr[0] is BsonDocument totalsDoc)
@@ -3171,7 +3813,7 @@ public class DocumentStoreController : ControllerBase
             .ToListAsync();
         var entryTitles = entries.ToDictionary(e => e.Id, e => e.Title);
 
-        return Ok(ApiResponse<object>.Ok(new
+        return new
         {
             stats = new
             {
@@ -3183,6 +3825,7 @@ public class DocumentStoreController : ControllerBase
             {
                 e.Id,
                 e.EntryId,
+                e.StoreId,
                 entryTitle = e.EntryId != null && entryTitles.ContainsKey(e.EntryId) ? entryTitles[e.EntryId] : null,
                 e.ViewerUserId,
                 e.ViewerName,
@@ -3195,12 +3838,329 @@ public class DocumentStoreController : ControllerBase
                 e.UserAgent,
                 e.Referer,
             }),
-        }));
+        };
     }
 
-    // ─────────────────────────────────────────────
-    // 批次 D：文档划词评论
-    // ─────────────────────────────────────────────
+    /// <summary>知识库访客聚合报表（仅 owner）：趋势 / 时段分布 / 文档排行 / 停留分布 / KPI。</summary>
+    [HttpGet("stores/{storeId}/analytics")]
+    public async Task<IActionResult> GetStoreAnalytics(
+        string storeId,
+        [FromQuery] int days = 30,
+        [FromQuery] string? tz = null)
+    {
+        var userId = GetUserId();
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+        return Ok(ApiResponse<object>.Ok(await BuildAnalyticsPayloadAsync(new List<string> { storeId }, days, tz)));
+    }
+
+    /// <summary>账号级访客聚合报表（我名下所有知识库聚合，仅 owner）：与单库报表同结构。</summary>
+    [HttpGet("stores/analytics-all")]
+    public async Task<IActionResult> GetAllStoresAnalytics(
+        [FromQuery] int days = 30,
+        [FromQuery] string? tz = null)
+    {
+        var userId = GetUserId();
+        var storeIds = await _db.DocumentStores.Find(s => s.OwnerId == userId && s.PmProjectId == null).Project(s => s.Id).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(await BuildAnalyticsPayloadAsync(storeIds, days, tz)));
+    }
+
+    /// <summary>访客聚合报表 payload 构造：storeIds 决定范围（单库或账号全量），为空时返回零填充结构。</summary>
+    private async Task<object> BuildAnalyticsPayloadAsync(List<string> storeIds, int days, string? tz)
+    {
+        days = Math.Clamp(days, 1, 365);
+        // tz 仅接受 "+08:00" / "-05:30" 形式的 UTC 偏移，非法则按 UTC 聚合（日界/小时按 UTC 划分）。
+        var tzValid = !string.IsNullOrEmpty(tz) && System.Text.RegularExpressions.Regex.IsMatch(tz, @"^[+-]\d{2}:\d{2}$");
+        var tzInfo = TimeSpan.Zero;
+        if (tzValid)
+        {
+            var tzs = tz!;
+            var sign = tzs[0] == '-' ? -1 : 1;
+            tzInfo = new TimeSpan(sign * int.Parse(tzs.Substring(1, 2)), sign * int.Parse(tzs.Substring(4, 2)), 0);
+        }
+        var localToday = (DateTime.UtcNow + tzInfo).Date;
+        // 匹配下界对齐 trend 首日的本地零点：trend 渲染 [localToday-(days-1) .. localToday] 共 days 个本地日；
+        // 若用 UtcNow.AddDays(-days) 会多纳入一个不在 trend 里的部分日，导致 KPI/排行 之和 > 趋势之和（Codex P2）。
+        var since = localToday.AddDays(-(days - 1)) - tzInfo;
+
+        // 日期/小时分桶带时区参数，保证日界与用户本地时区一致
+        BsonDocument DayExpr() => tzValid
+            ? new BsonDocument("$dateToString", new BsonDocument { { "format", "%Y-%m-%d" }, { "date", "$EnteredAt" }, { "timezone", tz! } })
+            : new BsonDocument("$dateToString", new BsonDocument { { "format", "%Y-%m-%d" }, { "date", "$EnteredAt" } });
+        BsonDocument HourExpr() => tzValid
+            ? new BsonDocument("$hour", new BsonDocument { { "date", "$EnteredAt" }, { "timezone", tz! } })
+            : new BsonDocument("$hour", "$EnteredAt");
+
+        BsonDocument Cond(BsonValue test, int t, int f) => new("$cond", new BsonArray { test, t, f });
+
+        var pipeline = new[]
+        {
+            new BsonDocument("$match", new BsonDocument
+            {
+                { "StoreId", new BsonDocument("$in", new BsonArray(storeIds)) },
+                { "EnteredAt", new BsonDocument("$gte", since) },
+            }),
+            // 统一预处理：访客键 + 停留毫秒（null→0）
+            new BsonDocument("$project", new BsonDocument
+            {
+                { "visitor", new BsonDocument("$ifNull", new BsonArray
+                    { "$ViewerUserId", new BsonDocument("$ifNull", new BsonArray { "$AnonSessionToken", "$_id" }) }) },
+                { "D", new BsonDocument("$ifNull", new BsonArray { "$DurationMs", 0 }) },
+                { "EnteredAt", 1 },
+                { "EntryId", 1 },
+                { "StoreId", 1 },
+            }),
+            new BsonDocument("$facet", new BsonDocument
+            {
+                // 总计 + 停留分桶（停留仅统计已测得 D>0 的事件）
+                { "totals", new BsonArray { new BsonDocument("$group", new BsonDocument
+                    {
+                        { "_id", BsonNull.Value },
+                        { "count", new BsonDocument("$sum", 1) },
+                        { "duration", new BsonDocument("$sum", "$D") },
+                        { "measured", new BsonDocument("$sum", Cond(new BsonDocument("$gt", new BsonArray { "$D", 0 }), 1, 0)) },
+                        { "bLt5", new BsonDocument("$sum", Cond(new BsonDocument("$and", new BsonArray
+                            { new BsonDocument("$gt", new BsonArray { "$D", 0 }), new BsonDocument("$lt", new BsonArray { "$D", 5000 }) }), 1, 0)) },
+                        { "b5_30", new BsonDocument("$sum", Cond(new BsonDocument("$and", new BsonArray
+                            { new BsonDocument("$gte", new BsonArray { "$D", 5000 }), new BsonDocument("$lt", new BsonArray { "$D", 30000 }) }), 1, 0)) },
+                        { "b30_2m", new BsonDocument("$sum", Cond(new BsonDocument("$and", new BsonArray
+                            { new BsonDocument("$gte", new BsonArray { "$D", 30000 }), new BsonDocument("$lt", new BsonArray { "$D", 120000 }) }), 1, 0)) },
+                        { "bGt2m", new BsonDocument("$sum", Cond(new BsonDocument("$gte", new BsonArray { "$D", 120000 }), 1, 0)) },
+                    }) } },
+                // 独立访客 + 回访访客（同一访客出现 >1 次）
+                { "visitors", new BsonArray
+                    {
+                        new BsonDocument("$group", new BsonDocument { { "_id", "$visitor" }, { "c", new BsonDocument("$sum", 1) } }),
+                        new BsonDocument("$group", new BsonDocument
+                        {
+                            { "_id", BsonNull.Value },
+                            { "unique", new BsonDocument("$sum", 1) },
+                            { "returning", new BsonDocument("$sum", Cond(new BsonDocument("$gt", new BsonArray { "$c", 1 }), 1, 0)) },
+                        }),
+                    } },
+                // 按天趋势
+                { "trend", new BsonArray
+                    {
+                        new BsonDocument("$group", new BsonDocument { { "_id", DayExpr() }, { "v", new BsonDocument("$sum", 1) } }),
+                    } },
+                // 24 小时分布
+                { "hourly", new BsonArray
+                    {
+                        new BsonDocument("$group", new BsonDocument { { "_id", HourExpr() }, { "v", new BsonDocument("$sum", 1) } }),
+                    } },
+                // 文档排行 Top 8（带 storeId 供前端点击跳转）
+                { "topEntries", new BsonArray
+                    {
+                        new BsonDocument("$group", new BsonDocument
+                        {
+                            { "_id", "$EntryId" },
+                            { "v", new BsonDocument("$sum", 1) },
+                            { "d", new BsonDocument("$sum", "$D") },
+                            { "storeId", new BsonDocument("$first", "$StoreId") },
+                        }),
+                        new BsonDocument("$sort", new BsonDocument("v", -1)),
+                        new BsonDocument("$limit", 8),
+                    } },
+                // 知识库排行 Top 8（账号级聚合下才有多个库；单库场景前端隐藏）
+                { "topStores", new BsonArray
+                    {
+                        new BsonDocument("$group", new BsonDocument
+                            { { "_id", "$StoreId" }, { "v", new BsonDocument("$sum", 1) }, { "d", new BsonDocument("$sum", "$D") } }),
+                        new BsonDocument("$sort", new BsonDocument("v", -1)),
+                        new BsonDocument("$limit", 8),
+                    } },
+                // 标签统计 Top 12：按文档聚合访问量 → lookup 文档标签 → 展开 → 按标签汇总
+                { "tagStats", new BsonArray
+                    {
+                        new BsonDocument("$group", new BsonDocument { { "_id", "$EntryId" }, { "v", new BsonDocument("$sum", 1) } }),
+                        new BsonDocument("$lookup", new BsonDocument
+                        {
+                            { "from", "document_entries" },
+                            { "localField", "_id" },
+                            { "foreignField", "_id" },
+                            { "as", "e" },
+                        }),
+                        new BsonDocument("$unwind", "$e"),
+                        new BsonDocument("$unwind", "$e.Tags"),
+                        new BsonDocument("$group", new BsonDocument { { "_id", "$e.Tags" }, { "v", new BsonDocument("$sum", "$v") } }),
+                        new BsonDocument("$sort", new BsonDocument("v", -1)),
+                        new BsonDocument("$limit", 12),
+                    } },
+            }),
+        };
+
+        var facet = await _db.DocumentStoreViewEvents.Aggregate<BsonDocument>(pipeline).FirstOrDefaultAsync();
+
+        long totalViews = 0, totalDurationMs = 0, measured = 0, bLt5 = 0, b5_30 = 0, b30_2m = 0, bGt2m = 0;
+        int unique = 0, returning = 0;
+        var trendMap = new Dictionary<string, long>();
+        var hourlyMap = new Dictionary<int, long>();
+        var topRaw = new List<(string? entryId, long v, long d, string? storeId)>();
+        var topStoresRaw = new List<(string? storeId, long v, long d)>();
+        var tagStats = new List<object>();
+
+        if (facet != null)
+        {
+            BsonDocument? First(string key) =>
+                facet.TryGetValue(key, out var v) && v is BsonArray a && a.Count > 0 && a[0] is BsonDocument d ? d : null;
+
+            var t = First("totals");
+            if (t != null)
+            {
+                totalViews = t.GetValue("count", 0).ToInt64();
+                totalDurationMs = t.GetValue("duration", 0).ToInt64();
+                measured = t.GetValue("measured", 0).ToInt64();
+                bLt5 = t.GetValue("bLt5", 0).ToInt64();
+                b5_30 = t.GetValue("b5_30", 0).ToInt64();
+                b30_2m = t.GetValue("b30_2m", 0).ToInt64();
+                bGt2m = t.GetValue("bGt2m", 0).ToInt64();
+            }
+            var vis = First("visitors");
+            if (vis != null)
+            {
+                unique = vis.GetValue("unique", 0).ToInt32();
+                returning = vis.GetValue("returning", 0).ToInt32();
+            }
+            if (facet.TryGetValue("trend", out var tv) && tv is BsonArray ta)
+                foreach (var d in ta.OfType<BsonDocument>())
+                    if (!d["_id"].IsBsonNull) trendMap[d["_id"].AsString] = d.GetValue("v", 0).ToInt64();
+            if (facet.TryGetValue("hourly", out var hv) && hv is BsonArray ha)
+                foreach (var d in ha.OfType<BsonDocument>())
+                    if (!d["_id"].IsBsonNull) hourlyMap[d["_id"].ToInt32()] = d.GetValue("v", 0).ToInt64();
+            if (facet.TryGetValue("topEntries", out var ev) && ev is BsonArray ea)
+                foreach (var d in ea.OfType<BsonDocument>())
+                    topRaw.Add((d["_id"].IsBsonNull ? null : d["_id"].AsString, d.GetValue("v", 0).ToInt64(), d.GetValue("d", 0).ToInt64(),
+                        d.TryGetValue("storeId", out var sid) && !sid.IsBsonNull ? sid.AsString : null));
+            if (facet.TryGetValue("topStores", out var sv) && sv is BsonArray sa)
+                foreach (var d in sa.OfType<BsonDocument>())
+                    topStoresRaw.Add((d["_id"].IsBsonNull ? null : d["_id"].AsString, d.GetValue("v", 0).ToInt64(), d.GetValue("d", 0).ToInt64()));
+            if (facet.TryGetValue("tagStats", out var gv) && gv is BsonArray ga)
+                foreach (var d in ga.OfType<BsonDocument>())
+                    if (!d["_id"].IsBsonNull)
+                        tagStats.Add(new { tag = d["_id"].AsString, views = d.GetValue("v", 0).ToInt64() });
+        }
+
+        // 趋势补零：按本地时区生成连续日期序列（缺失天 = 0），避免折线断裂。
+        // tzInfo / localToday 已在方法开头计算（与 since 同源，保证匹配范围与趋势桶对齐）。
+        var trend = new List<object>();
+        for (var i = days - 1; i >= 0; i--)
+        {
+            var day = localToday.AddDays(-i).ToString("yyyy-MM-dd");
+            trend.Add(new { date = day, views = trendMap.TryGetValue(day, out var c) ? c : 0 });
+        }
+
+        // 24 小时补零
+        var hourly = new List<object>();
+        for (var h = 0; h < 24; h++)
+            hourly.Add(new { hour = h, views = hourlyMap.TryGetValue(h, out var c) ? c : 0 });
+
+        // 文档标题补充（带 storeId 供点击跳转）
+        var entryIds = topRaw.Where(x => x.entryId != null).Select(x => x.entryId!).Distinct().ToList();
+        var entryDocs = await _db.DocumentEntries.Find(e => entryIds.Contains(e.Id)).ToListAsync();
+        var titles = entryDocs.ToDictionary(e => e.Id, e => e.Title);
+        var topEntries = topRaw.Select(x => new
+        {
+            entryId = x.entryId,
+            storeId = x.storeId,
+            title = x.entryId != null && titles.TryGetValue(x.entryId, out var ti) ? ti : null,
+            views = x.v,
+            totalDurationMs = x.d,
+        }).ToList();
+
+        // 知识库名称补充（topStores 点击跳转用）
+        var topStoreIds = topStoresRaw.Where(x => x.storeId != null).Select(x => x.storeId!).Distinct().ToList();
+        var storeDocs = await _db.DocumentStores.Find(s => topStoreIds.Contains(s.Id)).ToListAsync();
+        var storeNames = storeDocs.ToDictionary(s => s.Id, s => s.Name);
+        var topStores = topStoresRaw.Select(x => new
+        {
+            storeId = x.storeId,
+            storeName = x.storeId != null && storeNames.TryGetValue(x.storeId, out var sn) ? sn : null,
+            views = x.v,
+            totalDurationMs = x.d,
+        }).ToList();
+
+        var avgDurationMs = measured > 0 ? (double)totalDurationMs / measured : 0;
+        var returningRate = unique > 0 ? (double)returning / unique : 0;
+        var bounceRate = measured > 0 ? (double)bLt5 / measured : 0;
+
+        return new
+        {
+            rangeDays = days,
+            kpi = new
+            {
+                totalViews,
+                uniqueVisitors = unique,
+                totalDurationMs,
+                avgDurationMs,
+                returningRate,
+                bounceRate,
+            },
+            trend,
+            hourly,
+            topEntries,
+            topStores,
+            tagStats,
+            dwellBuckets = new { lt5s = bLt5, s5_30 = b5_30, s30_2m = b30_2m, gt2m = bGt2m, measured },
+        };
+    }
+
+    /// <summary>账号级访客总计（我名下所有知识库聚合）：总访问 / 独立访客 / 总停留。</summary>
+    [HttpGet("stores/analytics-summary")]
+    public async Task<IActionResult> GetStoresAnalyticsSummary()
+    {
+        var userId = GetUserId();
+        // 与「我的空间」列表口径一致：排除项目库（PmProjectId 非空），避免总计纳入该 tab 看不到的库
+        var storeIds = await _db.DocumentStores
+            .Find(s => s.OwnerId == userId && s.PmProjectId == null)
+            .Project(s => s.Id)
+            .ToListAsync();
+
+        if (storeIds.Count == 0)
+            return Ok(ApiResponse<object>.Ok(new { totalViews = 0L, uniqueVisitors = 0, totalDurationMs = 0L }));
+
+        var pipeline = new[]
+        {
+            new BsonDocument("$match", new BsonDocument("StoreId", new BsonDocument("$in", new BsonArray(storeIds)))),
+            new BsonDocument("$project", new BsonDocument
+            {
+                { "visitor", new BsonDocument("$ifNull", new BsonArray
+                    { "$ViewerUserId", new BsonDocument("$ifNull", new BsonArray { "$AnonSessionToken", "$_id" }) }) },
+                { "D", new BsonDocument("$ifNull", new BsonArray { "$DurationMs", 0 }) },
+            }),
+            new BsonDocument("$facet", new BsonDocument
+            {
+                { "totals", new BsonArray { new BsonDocument("$group", new BsonDocument
+                    {
+                        { "_id", BsonNull.Value },
+                        { "count", new BsonDocument("$sum", 1) },
+                        { "duration", new BsonDocument("$sum", "$D") },
+                    }) } },
+                { "visitors", new BsonArray
+                    {
+                        new BsonDocument("$group", new BsonDocument("_id", "$visitor")),
+                        new BsonDocument("$count", "c"),
+                    } },
+            }),
+        };
+
+        var facet = await _db.DocumentStoreViewEvents.Aggregate<BsonDocument>(pipeline).FirstOrDefaultAsync();
+
+        long totalViews = 0, totalDurationMs = 0;
+        int uniqueVisitors = 0;
+        if (facet != null)
+        {
+            if (facet.TryGetValue("totals", out var tv) && tv is BsonArray ta && ta.Count > 0 && ta[0] is BsonDocument td)
+            {
+                totalViews = td.GetValue("count", 0).ToInt64();
+                totalDurationMs = td.GetValue("duration", 0).ToInt64();
+            }
+            if (facet.TryGetValue("visitors", out var vv) && vv is BsonArray va && va.Count > 0 && va[0] is BsonDocument vd)
+                uniqueVisitors = vd.GetValue("c", 0).ToInt32();
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { totalViews, uniqueVisitors, totalDurationMs }));
+    }
 
     /// <summary>创建划词评论</summary>
     [HttpPost("entries/{entryId}/inline-comments")]
@@ -3377,6 +4337,8 @@ public class UpdateDocumentStoreRequest
     public bool? IsPublic { get; set; }
     /// <summary>知识库模板键（传空字符串可清除约束）。</summary>
     public string? TemplateKey { get; set; }
+    /// <summary>用户自定义 tag 颜色映射（null=不变；空字典=清空）</summary>
+    public Dictionary<string, string>? TagColors { get; set; }
 }
 
 public class SetStoreTeamsRequest
@@ -3422,6 +4384,7 @@ public class ImportStoreMeta
     public bool IsPublic { get; set; }
     public string? TemplateKey { get; set; }
     public string? CoverImageUrl { get; set; }
+    public Dictionary<string, string>? TagColors { get; set; }
 }
 
 public class ImportEntry
@@ -3483,6 +4446,67 @@ public class ReprocessRequest
 
     /// <summary>自定义提示词（templateKey == custom 时必填）</summary>
     public string? CustomPrompt { get; set; }
+}
+
+public class ReprocessChatRequest
+{
+    /// <summary>已有 Run id；空表示新建会话</summary>
+    public string? RunId { get; set; }
+
+    /// <summary>user 消息内容（非空）</summary>
+    public string Content { get; set; } = string.Empty;
+
+    /// <summary>若由模板 chip 触发，记录所选模板 key（仅首条消息生效，决定 system prompt）</summary>
+    public string? TemplateKey { get; set; }
+}
+
+/// <summary>覆盖式保存智能体抽屉对话。三个字段都是前端拥有形状的 JSON，后端不解析。</summary>
+public class SaveConversationRequest
+{
+    /// <summary>sanitized ChatMessage[] 的 JSON 字符串</summary>
+    public string? MessagesJson { get; set; }
+
+    /// <summary>mini 面板「已生成未插入」图片数组的 JSON 字符串</summary>
+    public string? PendingImagesJson { get; set; }
+
+    /// <summary>当前选中智能体引用的 JSON 字符串（可空）</summary>
+    public string? ActiveRefJson { get; set; }
+}
+
+public class ReprocessApplyRequest
+{
+    /// <summary>要写回的 assistant 消息序号</summary>
+    public int MessageSeq { get; set; }
+
+    /// <summary>replace / append / new</summary>
+    public string Mode { get; set; } = string.Empty;
+
+    /// <summary>mode=new 时的标题（可选，默认 "{源标题}-AI 再加工.md"）</summary>
+    public string? Title { get; set; }
+}
+
+public class ApplyContentRequest
+{
+    /// <summary>replace / append / new</summary>
+    public string Mode { get; set; } = string.Empty;
+
+    /// <summary>要写回的正文（必填）</summary>
+    public string Content { get; set; } = string.Empty;
+
+    /// <summary>mode=new 时的标题（可选）</summary>
+    public string? Title { get; set; }
+}
+
+public class CreateReprocessAgentRequest
+{
+    /// <summary>智能体展示名（必填，≤30 字）</summary>
+    public string Label { get; set; } = string.Empty;
+
+    /// <summary>简短描述（可选，≤200 字）</summary>
+    public string? Description { get; set; }
+
+    /// <summary>system prompt（必填，≤8000 字）</summary>
+    public string SystemPrompt { get; set; } = string.Empty;
 }
 
 public class SetPrimaryEntryRequest

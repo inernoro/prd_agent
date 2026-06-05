@@ -94,6 +94,8 @@ export const api = {
       list: () => '/api/mds/model-groups',
       byId: (id: string) => `/api/mds/model-groups/${id}`,
       forApp: () => '/api/mds/model-groups/for-app',
+      usage: (id: string) => `/api/mds/model-groups/${id}/usage`,
+      unbind: (id: string) => `/api/mds/model-groups/${id}/unbind`,
       predict: (id: string) => `/api/mds/model-groups/${id}/predict`,
       resetModelHealth: (groupId: string, modelId: string) =>
         `/api/mds/model-groups/${groupId}/reset-model-health?modelId=${encodeURIComponent(modelId)}`,
@@ -914,6 +916,13 @@ export const api = {
     stream: (runId: string) => `/api/ai-toolbox/runs/${runId}/stream`,
   },
 
+  // ============ Agent Universe 智能体宇宙（统一能力契约 + 调用信封）============
+  agentUniverse: {
+    capabilities: () => '/api/agent-universe/capabilities',
+    invoke: () => '/api/agent-universe/invoke',
+    parameters: (agentKey: string) => `/api/agent-universe/agents/${agentKey}/parameters`,
+  },
+
   // ============ Transcript Agent 音视频转录 ============
   transcriptAgent: {
     workspaces: () => '/api/transcript-agent/workspaces',
@@ -1167,6 +1176,9 @@ export const api = {
       shareLinkDetail: (linkId: string) => `/api/document-store/share-links/${linkId}`,
       // 知识库 Agent：再加工模板列表
       reprocessTemplates: () => `/api/document-store/reprocess-templates`,
+      // 知识库 Agent：可调用智能体（内置 + 用户自建）
+      reprocessAgents: () => `/api/document-store/reprocess-agents`,
+      reprocessAgentDetail: (id: string) => `/api/document-store/reprocess-agents/${id}`,
       // 知识库 Agent：Run 状态查询与 SSE 流
       agentRun: (runId: string) => `/api/document-store/agent-runs/${runId}`,
       agentRunStream: (runId: string) => `/api/document-store/agent-runs/${runId}/stream`,
@@ -1188,16 +1200,37 @@ export const api = {
       subscriptionUpdate: (entryId: string) => `/api/document-store/entries/${entryId}/subscription`,
       generateSubtitle: (entryId: string) => `/api/document-store/entries/${entryId}/generate-subtitle`,
       reprocess: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess`,
+      reprocessChat: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess/chat`,
+      reprocessActiveRun: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess/active-run`,
+      reprocessApply: (runId: string) => `/api/document-store/agent-runs/${runId}/apply`,
+      reprocessApplyContent: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess/apply-content`,
+      reprocessConversation: (entryId: string) => `/api/document-store/entries/${entryId}/reprocess/conversation`,
       latestAgentRun: (entryId: string) => `/api/document-store/entries/${entryId}/agent-runs/latest`,
       // 批次 C：浏览事件埋点
       logView: (entryId: string) => `/api/document-store/entries/${entryId}/view`,
       leaveView: (viewEventId: string) => `/api/document-store/view-events/${viewEventId}/leave`,
       storeViewEvents: (storeId: string) => `/api/document-store/stores/${storeId}/view-events`,
+      storeAnalytics: (storeId: string) => `/api/document-store/stores/${storeId}/analytics`,
+      storesAnalyticsSummary: () => '/api/document-store/stores/analytics-summary',
+      storesAnalyticsAll: () => '/api/document-store/stores/analytics-all',
+      storesViewEventsAll: () => '/api/document-store/stores/view-events-all',
       // 批次 D：划词评论
       inlineComments: (entryId: string) => `/api/document-store/entries/${entryId}/inline-comments`,
       inlineCommentDetail: (commentId: string) => `/api/document-store/inline-comments/${commentId}`,
       update: (entryId: string) => `/api/document-store/entries/${entryId}`,
       delete: (entryId: string) => `/api/document-store/entries/${entryId}`,
+    },
+    // 跨环境 / 本地库↔库 同步
+    sync: {
+      listAll: () => '/api/document-store/sync/links',
+      listForStore: (storeId: string) => `/api/document-store/stores/${storeId}/sync`,
+      createLocal: (storeId: string) => `/api/document-store/stores/${storeId}/sync/local`,
+      generateLink: (storeId: string) => `/api/document-store/stores/${storeId}/sync/generate-link`,
+      connect: (storeId: string) => `/api/document-store/stores/${storeId}/sync/connect`,
+      revokeToken: (storeId: string) => `/api/document-store/stores/${storeId}/sync/revoke-token`,
+      run: (linkId: string) => `/api/document-store/sync/${linkId}/run`,
+      update: (linkId: string) => `/api/document-store/sync/${linkId}`,
+      delete: (linkId: string) => `/api/document-store/sync/${linkId}`,
     },
   },
   // ============ 波2 高级权限：全部网页审计视图 ============
@@ -1246,6 +1279,8 @@ export const api = {
     },
     /** AI 总结（走 ILlmGateway + prd-admin.changelog.aiSummary::chat） */
     aiSummary: () => '/api/changelog/ai-summary',
+    /** SSE 实时推送：后台刷新有更新时服务器主动推 update 事件 */
+    stream: () => '/api/changelog/stream',
     sources: {
       list: () => '/api/changelog/sources',
       create: () => '/api/changelog/sources',
@@ -1326,13 +1361,22 @@ export const api = {
       observers: (projectId: string) => `/api/pm/projects/${projectId}/observers`,
       knowledgeFiles: (projectId: string) => `/api/pm/projects/${projectId}/knowledge/files`,
       memberSites: (projectId: string) => `/api/pm/projects/${projectId}/member-sites`,
+      knowledgeStore: (projectId: string) => `/api/pm/projects/${projectId}/knowledge/store`,
       decisions: (projectId: string) => `/api/pm/projects/${projectId}/decisions`,
       weeklyReports: (projectId: string) => `/api/pm/projects/${projectId}/weekly-reports`,
       weeklyReportImage: (projectId: string) => `/api/pm/projects/${projectId}/weekly-reports/image`,
+      weeklyReportImport: (projectId: string) => `/api/pm/projects/${projectId}/weekly-reports/import`,
       meetings: (projectId: string) => `/api/pm/projects/${projectId}/meetings`,
       goals: (projectId: string) => `/api/pm/projects/${projectId}/goals`,
-      goalsDecompose: (projectId: string) => `/api/pm/projects/${projectId}/goals/decompose`,
+      goalCycles: (projectId: string) => `/api/pm/projects/${projectId}/goal-cycles`,
+      goalsDecompose: (projectId: string, parentGoalId?: string) =>
+        `/api/pm/projects/${projectId}/goals/decompose${parentGoalId ? `?parentGoalId=${encodeURIComponent(parentGoalId)}` : ''}`,
       milestones: (projectId: string) => `/api/pm/projects/${projectId}/milestones`,
+      milestonesSuggest: (projectId: string) => `/api/pm/projects/${projectId}/milestones/suggest`,
+      risks: (projectId: string) => `/api/pm/projects/${projectId}/risks`,
+      burndown: (projectId: string) => `/api/pm/projects/${projectId}/burndown`,
+      closureReport: (projectId: string) => `/api/pm/projects/${projectId}/closure-report`,
+      healthDiagnosis: (projectId: string) => `/api/pm/projects/${projectId}/health-diagnosis`,
       stakeholders: (projectId: string) => `/api/pm/projects/${projectId}/stakeholders`,
       evaluationStart: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/start`,
       evaluationScore: (projectId: string) => `/api/pm/projects/${projectId}/evaluation/score`,
@@ -1348,6 +1392,13 @@ export const api = {
     knowledge: {
       file: (fileId: string) => `/api/pm/knowledge/files/${fileId}`,
     },
+    weeklyReportsImportable: (params?: { weekYear?: number; weekNumber?: number }) => {
+      const q = new URLSearchParams();
+      if (params?.weekYear) q.set('weekYear', String(params.weekYear));
+      if (params?.weekNumber) q.set('weekNumber', String(params.weekNumber));
+      const s = q.toString();
+      return `/api/pm/weekly-reports/importable${s ? `?${s}` : ''}`;
+    },
     decisions: {
       item: (decisionId: string) => `/api/pm/decisions/${decisionId}`,
     },
@@ -1359,9 +1410,17 @@ export const api = {
     },
     goals: {
       item: (goalId: string) => `/api/pm/goals/${goalId}`,
+      checkins: (goalId: string) => `/api/pm/goals/${goalId}/checkins`,
+      score: (goalId: string) => `/api/pm/goals/${goalId}/score`,
+    },
+    goalCycles: {
+      item: (cycleId: string) => `/api/pm/goal-cycles/${cycleId}`,
     },
     milestones: {
       item: (milestoneId: string) => `/api/pm/milestones/${milestoneId}`,
+    },
+    risks: {
+      item: (riskId: string) => `/api/pm/risks/${riskId}`,
     },
     dashboard: () => '/api/pm/dashboard',
     auditLogs: () => '/api/pm/audit-logs',

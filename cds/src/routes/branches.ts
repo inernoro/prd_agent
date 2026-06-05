@@ -22,6 +22,7 @@ import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
 import { combinedOutput } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
 import { detectStack } from '../services/stack-detector.js';
+import { getInfraCatalogPublic } from '../services/infra-catalog.js';
 import { assertProjectAccess } from './projects.js';
 import { CheckRunRunner } from '../services/check-run-runner.js';
 import { branchEvents, nowIso } from '../services/branch-events.js';
@@ -1117,6 +1118,125 @@ function reconcileBranchStatus(entry: BranchEntry): void {
 function isPortConflictError(err: unknown): boolean {
   const text = err instanceof Error ? err.message : String(err);
   return /port is already allocated|bind: address already in use|address already in use|EADDRINUSE/i.test(text);
+}
+
+/**
+ * 从容器日志里抽取"真正的根因"——构建/编译失败、依赖缺失、进程崩溃等。
+ *
+ * 背景:就绪探测超时(容器起了但端口不响应)往往只是**症状**,容器日志里早已写明
+ * 真实**根因**(如 C# 编译错误 `error CS0101`)。历史实现把顶层 errorMessage 钉死成
+ * "就绪探测超时:容器已启动但端口未在超时时间内响应",既没点出代码编译失败,也让前端
+ * 归类器把它落到"未分类错误/未识别",用户误以为是 CDS 自身的问题。本函数把根因从日志
+ * 里捞出来,供 errorMessage 丰富 + failure-diagnosis 归类共用(单一数据源)。
+ */
+export type ContainerFatalSide = 'code' | 'config' | 'cds';
+export interface ContainerFatalCause {
+  /** 给用户看的一句话根因(已去掉 docker --timestamps 注入的时间戳前缀) */
+  summary: string;
+  side: ContainerFatalSide;
+  /** 与 failure-diagnosis 的 Category 对齐 */
+  category: string;
+}
+
+export function detectContainerFatalCause(logText: string): ContainerFatalCause | null {
+  if (!logText || !logText.trim()) return null;
+  const lines = logText
+    .split('\n')
+    .map((l) => l.trim())
+    // 去掉 `docker logs --timestamps` 注入的 ISO 时间戳前缀,只留正文
+    .map((l) => l.replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s+/, ''))
+    .filter(Boolean);
+  if (lines.length === 0) return null;
+  const PATTERNS: Array<{ re: RegExp; side: ContainerFatalSide; category: string; label: string }> = [
+    { re: /\berror\s+CS\d{3,5}\b/i, side: 'code', category: 'build-failed', label: '构建失败 · C# 编译错误' },
+    { re: /\berror\s+TS\d{3,5}\b/i, side: 'code', category: 'build-failed', label: '构建失败 · TypeScript 编译错误' },
+    { re: /:\s*error\s+MSB\d{3,5}\b|Build FAILED|构建失败/i, side: 'code', category: 'build-failed', label: '构建失败 · MSBuild/编译' },
+    { re: /Cannot find module|MODULE_NOT_FOUND|Cannot find package/i, side: 'code', category: 'missing-deps', label: '依赖缺失 · 模块未找到' },
+    { re: /ModuleNotFoundError|ImportError\b/i, side: 'code', category: 'missing-deps', label: '依赖缺失 · Python 模块未找到' },
+    { re: /\bpanic:/i, side: 'code', category: 'crashed', label: '进程崩溃 · panic' },
+    { re: /Unhandled exception|未经处理的异常|Traceback \(most recent call last\)/i, side: 'code', category: 'crashed', label: '进程崩溃 · 未处理异常' },
+    { re: /address already in use|EADDRINUSE|port is already allocated/i, side: 'config', category: 'port-conflict', label: '端口被占用' },
+  ];
+  for (const p of PATTERNS) {
+    const hit = lines.find((l) => p.re.test(l));
+    if (hit) {
+      const trimmed = hit.length > 220 ? `${hit.slice(0, 220)}…` : hit;
+      return { summary: `${p.label}：${trimmed}`, side: p.side, category: p.category };
+    }
+  }
+  return null;
+}
+
+/**
+ * 就绪探测超时时,优先去容器日志里找真实根因。找到就把根因点名到 errorMessage,
+ * 找不到才降级到通用文案。最多拉 80 行,拉取失败静默降级。
+ */
+async function buildReadinessTimeoutMessage(
+  containerService: ContainerService,
+  containerName: string,
+): Promise<string> {
+  const fallback = '就绪探测超时：容器已启动但端口未在超时时间内响应';
+  try {
+    const logs = await containerService.getLogs(containerName, 80);
+    const cause = detectContainerFatalCause(logs);
+    if (cause) {
+      const sideLabel = cause.side === 'code' ? '代码侧' : cause.side === 'config' ? '配置侧' : 'CDS 侧';
+      return `容器进程未监听端口（${sideLabel}根因）：${cause.summary}。修复后需重新部署。`;
+    }
+  } catch {
+    // 容器名不存在 / docker 拉不到日志 — 静默降级到通用文案
+  }
+  return fallback;
+}
+
+/**
+ * 给 GitHub check-run 的失败 output 生成"根因 + 容器日志尾部"markdown。
+ *
+ * 为什么:agent 跑在沙箱里(无 CDS 网络白名单 / 无 AI_ACCESS_KEY)时根本拉不到
+ * 容器日志,只能跪求用户手动贴。但 CDS 本来就把构建状态推回 GitHub PR Check,
+ * 而 agent 通过 GitHub 是够得着的。把真实根因(如 error CS0101)+ 容器日志尾部
+ * 写进 check-run 的 output.text,agent 不需要任何 CDS 凭据/网络就能读到根因。
+ *
+ * 无 error 服务时返回空串(调用方据此决定是否传 failureDetail)。
+ */
+export async function buildCheckRunFailurePostmortem(
+  entry: Pick<BranchEntry, 'services'>,
+  containerService: Pick<ContainerService, 'getLogs'>,
+  // 只对「本次 startup-plan 里的活跃服务」做诊断。传入 activeProfileIds 时,过滤掉
+  // 已被删/改名残留的 zombie 服务(deploy 主路径用 activeServices 算 hasError,这里
+  // 必须同口径),否则 check-run 会把旧 profile 的日志当成本次失败的根因误导 agent。
+  activeProfileIds?: ReadonlySet<string>,
+): Promise<string> {
+  const errorServices = Object.entries(entry.services || {}).filter(
+    ([sid, svc]) => svc.status === 'error' && (!activeProfileIds || activeProfileIds.has(sid)),
+  );
+  if (errorServices.length === 0) return '';
+  const sections: string[] = [];
+  for (const [profileId, svc] of errorServices) {
+    let logs = '';
+    try {
+      logs = await containerService.getLogs(svc.containerName, 60);
+    } catch {
+      // 容器名不存在 / docker 拉不到 — 仍用 errorMessage 作为根因兜底
+    }
+    const cause = logs ? detectContainerFatalCause(logs) : null;
+    const sideLabel = cause
+      ? (cause.side === 'code' ? '代码侧' : cause.side === 'config' ? '配置侧' : 'CDS 侧')
+      : '未识别';
+    const rootCause = cause?.summary || svc.errorMessage || '启动失败';
+    const lines = [`- **${profileId}**（${sideLabel}）：${rootCause}`];
+    const tail = logs
+      .split('\n')
+      .map((l) => l.replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s+/, ''))
+      .filter((l) => l.trim())
+      .slice(-25)
+      .join('\n');
+    if (tail) {
+      lines.push('', `<details><summary>${profileId} 容器日志尾部</summary>`, '', '```', tail, '```', '</details>');
+    }
+    sections.push(lines.join('\n'));
+  }
+  return ['### 失败根因（CDS 自动诊断）', '', ...sections].join('\n');
 }
 
 function parseListenPorts(output: string): Set<number> {
@@ -2934,6 +3054,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
     }
 
+    // 每个分支带上预览地址(SSOT slug + previewHost),前端在 running 时显示"应用已上线 · 打开预览"。
+    const previewHost = (config.previewDomain || config.rootDomains?.[0] || '').replace(/^https?:\/\//, '').replace(/\/+$/, '');
+    for (const b of branchesWithSubject as Array<{ previewSlug?: string; previewUrl?: string }>) {
+      b.previewUrl = previewHost && b.previewSlug ? `https://${b.previewSlug}.${previewHost}` : '';
+    }
+
     res.json({
       branches: branchesWithSubject,
       defaultBranch: state.defaultBranch,
@@ -4087,14 +4213,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     // 错误模式归类:reg pattern → category + 中文 hint + 责任归属
-    type Category = 'port-conflict' | 'oom' | 'missing-deps' | 'crashed' | 'health-timeout' | 'image-pull' | 'unknown';
+    type Category = 'port-conflict' | 'oom' | 'missing-deps' | 'build-failed' | 'crashed' | 'health-timeout' | 'image-pull' | 'unknown';
     type Side = 'code' | 'config' | 'cds' | 'unknown';
     const PATTERNS: Array<{ re: RegExp; category: Category; hint: string; side: Side }> = [
+      // 构建/编译失败优先级最高:这是最常见也最容易被误判成"未分类/CDS 侧"的根因。
+      // 容器内 dotnet build / tsc 失败 → 进程没起来 → 就绪探测超时(症状),根因其实在编译错误。
+      { re: /\berror\s+CS\d{3,5}\b/i, category: 'build-failed', hint: 'C# 编译失败 — 容器内 dotnet build 报错,进程无法启动。修复编译错误后重新部署', side: 'code' },
+      { re: /\berror\s+TS\d{3,5}\b/i, category: 'build-failed', hint: 'TypeScript 编译失败 — 修复类型错误后重新部署', side: 'code' },
+      { re: /:\s*error\s+MSB\d{3,5}\b|Build FAILED/i, category: 'build-failed', hint: '构建失败(MSBuild/编译) — 检查日志里的首个 error 行后重新部署', side: 'code' },
       { re: /EADDRINUSE|address already in use|port.+(in use|occupied)/i, category: 'port-conflict', hint: '端口被占用 — 可能其他分支占了同一端口,可在容量面板停掉旧分支再重试', side: 'config' },
       { re: /OOMKilled|out of memory|cannot allocate memory/i, category: 'oom', hint: '内存超限 — 调大 service 资源配额或减少并发', side: 'config' },
       { re: /Cannot find module|Module not found|MODULE_NOT_FOUND/i, category: 'missing-deps', hint: '依赖缺失 — 检查 build 阶段 pnpm/npm install 是否成功', side: 'code' },
       { re: /image.+(not found|pull access denied)|manifest unknown|repository does not exist/i, category: 'image-pull', hint: 'Docker 镜像拉取失败 — 检查镜像名 / registry 访问', side: 'cds' },
-      { re: /health.*check.*timeout|readiness probe failed|healthz.+(timeout|unreachable)/i, category: 'health-timeout', hint: '健康检查超时 — 应用启动慢或健康端点未就绪', side: 'code' },
+      { re: /health.*check.*timeout|readiness probe failed|healthz.+(timeout|unreachable)|就绪探测超时|容器进程未监听端口/i, category: 'health-timeout', hint: '就绪探测超时 — 容器起了但端口没响应,多半是应用启动崩溃或编译失败,翻日志看首个 error 行', side: 'code' },
       { re: /exit(\s+code|ed with code)?\s*[:=]?\s*(1[35][7-9]|139)/i, category: 'crashed', hint: '进程被强制终止(可能段错误 / 资源限制)', side: 'code' },
     ];
     const classify = (text: string): { category: Category; hint: string; side: Side } => {
@@ -5150,7 +5281,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               });
             } else {
               svc.status = 'error';
-              svc.errorMessage = '就绪探测超时：容器已启动但端口未在超时时间内响应';
+              svc.errorMessage = await buildReadinessTimeoutMessage(containerService, svc.containerName);
               logDeploy(id, `${profile.name} 就绪探测超时`);
               logEvent({
                 step: `build-${profile.id}`,
@@ -5364,10 +5495,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         : completeMsg;
       // 2026-04-27: 同上，把 finalize 的 throw 落到 opLog.events 里。
       try {
+        const failureDetail = finalConclusion === 'failure'
+          ? await buildCheckRunFailurePostmortem(entry, containerService, activeProfileIds)
+          : undefined;
         await checkRunRunner.finalize(entry, {
           conclusion: finalConclusion,
           summary,
           previewUrl: checkRunRunner.derivePreviewUrl(entry),
+          failureDetail,
           logTail: opLog.events.slice(-80).map((ev) => {
             const st = ev.status || '?';
             const ttl = ev.title || ev.step;
@@ -5434,10 +5569,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
       logDeploy(id, `部署失败: ${errMsg}`);
       sendSSE(res, 'error', { message: errMsg });
       try {
+        // catch 路径同样按本次 startup-plan 过滤 zombie 服务(profiles 在外层 4724
+        // 声明,异常路径仍可见),与成功/失败 finalize 同口径,不让旧 profile 背锅。
+        const failureDetail = await buildCheckRunFailurePostmortem(
+          entry, containerService, new Set(profiles.map((p) => p.id)),
+        );
         await checkRunRunner.finalize(entry, {
           conclusion: 'failure',
           summary: errMsg || '部署失败',
           previewUrl: checkRunRunner.derivePreviewUrl(entry),
+          failureDetail,
           logTail: opLog.events.slice(-80).map((ev) => {
             const st = ev.status || '?';
             const ttl = ev.title || ev.step;
@@ -5651,7 +5792,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           logDeploy(id, `${profile.name} 启动成功 ✓`);
         } else {
           svc.status = 'error';
-          svc.errorMessage = '就绪探测超时：容器已启动但端口未在超时时间内响应';
+          svc.errorMessage = await buildReadinessTimeoutMessage(containerService, svc.containerName);
           logDeploy(id, `${profile.name} 就绪探测超时`);
         }
         stateService.save();
@@ -9425,6 +9566,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.json({ services });
   });
 
+  // Infra catalog (SSOT: services/infra-catalog.ts) — secret-free preset list for the
+  // visual picker. The frontend reads this instead of hard-coding images/ports/env names,
+  // so adding a new infra type to the catalog auto-surfaces it in the UI.
+  router.get('/infra/catalog', (_req, res) => {
+    res.json({ catalog: getInfraCatalogPublic() });
+  });
+
   // Discover infrastructure services from compose files in the project repo
   router.get('/infra/discover', (req, res) => {
     try {
@@ -12656,13 +12804,24 @@ cdscli project list --human
       // 由 webhook/UI auto-reconnect 兜底;重启后 reconcile 用 docker ps 核对。
       // 仍保留 server-event-log 审计("self-update.restart.deferred" 这条
       // event 在 restart-drain.ts 里仍会写),但不再阻塞 restart。
+      // 2026-06-03(Bugbot #716):排空等待前把 step 切到 'drain',让进行中 UI
+      // 高亮"排空+重启"段,而不是停在 web-build 干等(可达 180s)。'drain' 不在
+      // SELF_UPDATE_TIMING_KEYS 表里,计时仅走下面的显式 merge,避免与 restartMs 双计。
+      send('drain', 'running', '等待 in-flight 分支操作排空(最多 180s)…');
+      const drainStartedAt = Date.now();
       const restartDrain = await waitForRestartSafeBranchOperationsForRoute('api.self-update');
+      // 把排空等待计入 timings(可达 180s)。此前不记导致进度条各 step 之和远小于
+      // totalMs,UI 大片留白且"总计"对不上。
+      const drainMs = Date.now() - drainStartedAt;
+      timingRecorder.merge({ drainMs });
       if (!restartDrain.ok) {
         send(
-          'restart',
+          'drain',
           'warning',
           `优雅窗口超时,仍有 ${restartDrain.active.length} 个分支写操作在跑——直接 restart,在跑的 op 会被 webhook 重试`,
         );
+      } else {
+        send('drain', 'done', `分支操作已排空 (${Math.floor(drainMs / 1000)}s)`);
       }
 
       // 流水成功记录(2026-05-04):预检通过 + 重启即将发起 = 我们记录的"成功"。
@@ -13459,13 +13618,21 @@ cdscli project list --human
       timingRecorder.merge(await runInProcessWebBuild(newHead, send, res));
 
       // 同 self-update:5s 优雅窗口 + 不阻塞 restart。详见上一处注释。
+      // 2026-06-03(Bugbot #716):同 self-update,排空等待前把 step 切到 'drain'
+      // 让 UI 高亮排空段;'drain' 不在 timing key 表,计时仅走显式 merge。
+      send('drain', 'running', '等待 in-flight 分支操作排空(最多 180s)…');
+      const drainStartedAt = Date.now();
       const restartDrain = await waitForRestartSafeBranchOperationsForRoute('api.self-force-sync');
+      const drainMs = Date.now() - drainStartedAt;
+      timingRecorder.merge({ drainMs });
       if (!restartDrain.ok) {
         send(
-          'restart',
+          'drain',
           'warning',
           `优雅窗口超时,仍有 ${restartDrain.active.length} 个分支写操作在跑——直接 restart,在跑的 op 会被 webhook 重试`,
         );
+      } else {
+        send('drain', 'done', `分支操作已排空 (${Math.floor(drainMs / 1000)}s)`);
       }
 
       // 流水成功记录 — 同 self-update 的逻辑,记录"管理流程层面成功"。

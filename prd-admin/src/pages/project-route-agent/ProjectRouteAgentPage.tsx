@@ -20,6 +20,7 @@ import {
   type ProjectRouteGitHubStatus,
 } from '@/services/real/projectRouteAgent';
 import { useSseStream } from '@/lib/useSseStream';
+import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 
 type Tab = 'analyze' | 'admin';
 
@@ -51,6 +52,9 @@ export function ProjectRouteAgentPage() {
             <p className="text-xs text-white/50 mt-0.5">
               上传方案 md，AI 自动识别涉及的应用 / 业务模块，对照公共站点说明定位仓库 routemap 中的项目路径。
             </p>
+          </div>
+          <div className="ml-auto shrink-0">
+            <TipsEntryButton compact />
           </div>
         </div>
         <div className="flex items-center gap-1 mt-4">

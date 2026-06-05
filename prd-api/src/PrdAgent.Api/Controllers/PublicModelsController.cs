@@ -27,15 +27,8 @@ public class PublicModelsController : ControllerBase
         return GetModelsInternal();
     }
 
-    /// <summary>
-    /// 获取可用模型列表（公开接口，兼容 OpenAI 格式）
-    /// 路径: GET /api/v1/models (备用路径)
-    /// </summary>
-    [HttpGet("api/v1/models")]
-    public IActionResult GetModels()
-    {
-        return GetModelsInternal();
-    }
+    // 注：GET /api/v1/models 已移交 OpenApiController（返回按 Key 解析的真实模型列表，
+    // 贴近 OpenApi）。此处仅保留 /api/v1/config/models 作为历史兼容别名。
 
     /// <summary>
     /// 内部实现：返回模型列表

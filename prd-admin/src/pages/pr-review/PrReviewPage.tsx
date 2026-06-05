@@ -5,6 +5,7 @@ import { GitHubConnectCard } from './GitHubConnectCard';
 import { AddPrForm } from './AddPrForm';
 import { PrItemList } from './PrItemList';
 import { usePrReviewStore } from './usePrReviewStore';
+import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 
 /**
  * PR Review V2 主页面 —— 单文件不超过 200 行。
@@ -116,7 +117,7 @@ export function PrReviewPage() {
     <div className="min-h-full bg-[#0d0b16] text-white">
       <div className="max-w-6xl mx-auto px-6 py-8">
         {/* Header */}
-        <div className="flex items-center gap-4 mb-6">
+        <div data-tour-id="pr-review-page-title" className="flex items-center gap-4 mb-6">
           <button
             type="button"
             onClick={() => navigate('/admin')}
@@ -135,6 +136,9 @@ export function PrReviewPage() {
                 用你自己的 GitHub 账号审查任意有权访问的 PR
               </div>
             </div>
+          </div>
+          <div className="ml-auto">
+            <TipsEntryButton />
           </div>
         </div>
 
@@ -171,11 +175,11 @@ export function PrReviewPage() {
 
         {/* Body */}
         <div className="grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-5">
-          <div className="space-y-4">
+          <div data-tour-id="pr-review-sidebar" className="space-y-4">
             <GitHubConnectCard />
             <AddPrForm />
           </div>
-          <div>
+          <div data-tour-id="pr-review-list-container">
             <PrItemList />
           </div>
         </div>

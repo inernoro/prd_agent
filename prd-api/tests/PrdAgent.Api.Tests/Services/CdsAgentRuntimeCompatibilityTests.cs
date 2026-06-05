@@ -112,7 +112,9 @@ public class CdsAgentRuntimeCompatibilityTests
             result.Artifacts.Single().Name.ShouldBe(expectedArtifactName);
         }
 
-        var visual = new VisualAgentAdapter(gateway, NullLogger<VisualAgentAdapter>.Instance);
+        // compose 走 VisualAgentAdapter 的 default 分支（占位文本，不生图），不触碰 OpenAIImageClient，
+        // 故此处 imageClient 传 null! 即可满足构造签名；本 smoke 用例只验"无 CDS 运行时也能跑最小业务路径"。
+        var visual = new VisualAgentAdapter(gateway, null!, NullLogger<VisualAgentAdapter>.Instance);
         visual.CanHandle("compose").ShouldBeTrue();
         var visualResult = await visual.ExecuteAsync(new AgentExecutionContext
         {

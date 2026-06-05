@@ -87,6 +87,8 @@
 - [验收报告知识库设计](design.acceptance-kb) `design.acceptance-kb`
   > 业界对标(IEEE 829 / ISO·IEC·IEEE 29119-3 / 29148 / ISTQB / BDD)的标准化验收：为何而写、踩过的坑、v2 落地与 v3 演进、涌现与未来
 
+- [智能体宇宙设计](design.agent-universe) `design.agent-universe`
+  > 能力契约 SSOT + 统一调用信封；选了不自动发、视觉创作真出图、漫威宇宙式互通
 - [服务器权威性设计](design.server-authority) `design.server-authority`
   > 客户端断开不取消服务器任务的架构设计
 
@@ -123,6 +125,10 @@
 - [总裁面板与周报 Agent 设计文档](design.executive-dashboard) `design.executive-dashboard`
   > 高管视角的数据面板与周报 Agent 的设计
 
+- [产品管理 Agent 设计](design.product-agent) `design.product-agent`
+  > 产品-版本-需求-功能-缺陷-客户全链路串联、版本化管理、分级追溯与知识图谱（参考 TAPD / RTM）
+- [产品管理 Agent 债务台账](debt.product-agent) `debt.product-agent`
+  > 产品管理智能体已知边界与后续波次债务
 - [缺陷管理 Agent 功能设计](design.defect-agent) `design.defect-agent`
   > 缺陷提交、跟踪与升级流程的功能设计
 
@@ -220,6 +226,7 @@
   > CONFIG_TYPE_REGISTRY + IForkable 白名单复制的市场架构
 
 - [海鲜市场技能开放接口](design.skill-marketplace-open-api) `design.skill-marketplace-open-api`
+- [开放接口（OpenAI 兼容对外网关）技术设计](design.open-api) `design.open-api`
   > AgentApiKey 长效 M2M 鉴权 + scope 白名单 + findmapskills 官方技能同步到海鲜市场 + P3 Agent 开放接口铺路
 
 - [RBAC 权限系统设计](design.rbac-permission) `design.rbac-permission`
@@ -239,6 +246,9 @@
 
 - [文档空间设计](design.document-store) `design.document-store`
   > 文档空间多文档上传、内容预览与订阅源定期同步设计
+
+- [知识库跨环境同步设计](design.document-store-sync) `design.document-store-sync`
+  > 任一知识库与另一处库（跨环境/本环境两库）永久令牌配对、单/双向手动同步、血缘 ID 幂等 upsert、签名快照改动检测；含组件架构/数据流/双向决策架构图
 
 - [涌现探索器设计](design.emergence-explorer) `design.emergence-explorer`
   > 种子→探索→涌现三维度 + SSE 流式 + ReactFlow 画布的架构设计
@@ -289,6 +299,8 @@
   > 小服务器负载均衡到分布式集群的容量预算与故障隔离设计
 
 - [CDS Railway 式部署向导设计](design.cds-railway-onboarding-flow) `design.cds-railway-onboarding-flow`
+- [CDS 绝对可视化一键部署设计（含架构图）](design.cds-visual-deploy) `design.cds-visual-deploy`
+- [CDS AI 生成 compose 草稿设计](design.cds-ai-compose) `design.cds-ai-compose`
   > 从 Railway 首次部署路径抽象 CDS 一键部署、运行环境选择、基础设施创建和可观察性闭环
 
 - [缺陷分享与 Agent 技能修复架构](design.defect-agent-share-skill-architecture) `design.defect-agent-share-skill-architecture`
@@ -396,6 +408,8 @@
   > 从 cds-compose.yml、CDS 技能扫描、从 0 创建三条路径完成部署的步骤和验收标准
 
 - [从零开始的 CDS 教程 · 指南](guide.cds-tutorial) `guide.cds-tutorial`
+- [CDS 可视化部署与验收指南](guide.cds-deploy-acceptance) `guide.cds-deploy-acceptance`
+- [CDS 一键可视化部署使用教程](guide.cds-one-click-deploy) `guide.cds-one-click-deploy`
   > 4 个横向场景（静态/网页+后台/+MongoDB/+redis+mysql+rabbitmq）× 2 条纵向路径（直配/compose 导入）+ compose 评分/自愈 + 每场景独立知识库
 
 - [CDS 全栈基础设施冒烟样例指南](guide.cds-fullstack-infra-smoke) `guide.cds-fullstack-infra-smoke`
@@ -417,6 +431,7 @@
   > 多图组合生成功能的测试用例与验证记录
 
 - [豆包 ASR 模型中继接入指南](guide.doubao-asr-relay) `guide.doubao-asr-relay`
+- [开放接口（OpenAI 兼容对外网关）接入指南](guide.open-api) `guide.open-api`
   > 豆包流式 ASR WebSocket 中继的接入与配置指南
 
 - [CDS 集群扩容指南](guide.cds-cluster-setup) `guide.cds-cluster-setup`
@@ -615,6 +630,7 @@
   > CDS Agent Runtime 架构纠偏的有限范围实施计划
 
 - [CDS 产品路线图](plan.cds-roadmap) `plan.cds-roadmap`
+- [CDS 绝对可视化部署计划](plan.cds-visual-deploy) `plan.cds-visual-deploy`
   > Phase 0-3 长期路线图
 
 - [CDS 部署规划](plan.cds-deployment) `plan.cds-deployment`
@@ -657,6 +673,10 @@
 
 > 模块级未还工程债（已知边界 / 后续可补 / 留尾风险）。命名规范见 `rule.doc-naming.md` 「debt.* 专项约定」。
 
+- [智能体宇宙 · 债务台账](debt.agent-universe) `debt.agent-universe`
+  > MVP 边界：仅视觉创作走真实生图、文学图文一体待补、信封仅再加工接入、img2img 占位
+- [更新中心（终身存储 + SSE 推送）债务台账](debt.changelog-center) `debt.changelog-center`
+  > 3 条 open：推送中枢进程内单例（多实例需 Redis/change stream）/ 刷新周期不分视图冷热 / GitHub 日志前端 35s 轮询与 SSE 并存
 - [项目管理智能体 · 债务台账](debt.pm-agent) `debt.pm-agent`
   > Phase 1 MVP 仅交付执行层；治理层（干系人/NPSS/奖金/盘点）待 Phase 2-3；Leader 职级强校验待 User 加字段
 - [视频生成 Agent · 债务台账](debt.video-agent) `debt.video-agent`
@@ -681,13 +701,20 @@
   > 2 条 open：x-cds-env TODO secrets 致全量 import 必被拒 / admin static 每次冷 vite build 就绪窗口紧绷
 
 - [CDS 教程（示例工程 + 隔离知识库 + 评分/自愈）· 债务台账](debt.cds-tutorial) `debt.cds-tutorial`
+- [CDS 绝对可视化一键部署 · 债务台账](debt.cds-visual-deploy) `debt.cds-visual-deploy`
   > 5 条 open：--write 重序列化丢注释 / 自愈覆盖面有限 / 占位值需人工 / 真机冒烟依赖 CDS / 发布脚本需真实 owner
 
 - [知识库（AI Toolbox attachment + 文档空间）债务台账](debt.knowledge-base) `debt.knowledge-base`
   > 8 条 open：两套并存模型 / RAG embedding 未做 / wip 标签 CI 守卫 / 上传 API 不互通 / 等
 
+- [网页托管 · 债务台账](debt.web-hosting) `debt.web-hosting`
+  > 3 条 open：reveal 纵向子页 remap / 合成事件 isTrusted=false 长尾 / 未覆盖工作流生成内容
+
 - [功能验收体系 · 债务台账](debt.acceptance-system) `debt.acceptance-system`
   > 标准创建/执行/结果三方经知识库打通的未来架构：分阶段还债（先 schema 化+版本绑定，后拆 Agent），含触发条件与 YAGNI 边界
+
+- [知识库跨环境同步 · 债务台账](debt.document-store-sync) `debt.document-store-sync`
+  > 库↔库/跨环境同步首版已知边界：不传播删除、只搬文本、双向冲突本地优先、库级变更检测、令牌永久、需网络互通
 
 - [分享链接安全债务台账](debt.share-link-security) `debt.share-link-security`
   > 分享链接系统的已知安全边界与待补项
@@ -705,9 +732,15 @@
   > LibraryDocReader 720 行刻意做了米黄+圆体字+暖色调差异化品牌，融合需先做 DocBrowser 皮肤系统；记录重启评估的 4 个触发条件，避免下次重复调研
 - [周报详情页（异构数据）保留独立实现的债务台账](debt.report-detail) `debt.report-detail`
   > ReportDetailPage 900 行业务实体（成员×周次矩阵 + 多 tabs + 计划对比 + 右栏面板），不是文档库语义；融合需先给 DocBrowser 加 leftSidebar/rightPanel/entryBadges 三 slot 系统
+- [开放接口对外网关债务台账](debt.open-api) `debt.open-api`
+  > Phase 1 落地网关 + 按 Key 绑定 + 默认回落 + 导航修复；伞形 appCallerCode 静态注册不变量（守卫测试）；限流按 Key 桶 / 降级预警 / 配额 / embeddings 分到 Phase 2
 
 ### 七、周报
 
+- [智能体宇宙 · 完备度看板](report.agent-universe-completeness) `report.agent-universe-completeness`
+  > 各智能体完备度看板：终极目标、当前进度、TodoList、目前情况、风险点（当前加权进度约 55%）
+
+- [CDS 绝对可视化一键部署 · 完整报告](report.cds-visual-deploy) `report.cds-visual-deploy`
 - [CDS Agent 商业级可用闭环目标审计报告](report.cds-agent-goal-completion-audit-2026-05-19) `report.cds-agent-goal-completion-audit-2026-05-19`
   > CDS Agent 商业级可用闭环目标的完成度审计报告（2026-05-19）
 
@@ -846,6 +879,9 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-06-02 | 新增 | `design.agent-universe` `debt.agent-universe` | 智能体宇宙设计（能力契约 + 调用信封）与债务台账 |
+| 2026-06-02 | 新增 | `design.cds-visual-deploy` `guide.cds-one-click-deploy` `report.cds-visual-deploy` `debt.cds-visual-deploy` | CDS 绝对可视化一键部署收尾:设计(含架构图)+使用教程+完整报告+债务台账;`plan.cds-visual-deploy` 状态更新为核心收尾 |
+| 2026-06-01 | 新增 | `design.cds-ai-compose` `plan.cds-visual-deploy` `guide.cds-deploy-acceptance` | CDS AI 生成 compose 草稿设计、绝对可视化部署计划看板、可视化部署与验收指南（已发布到 KB） |
 | 2026-05-30 | 新增 | `debt.cds-agent` | CDS Agent 工作台债务台账（R1 商业级 / Lite 只读边界 / 文档熵减 / 无 profile 直跑） |
 | 2026-05-22 | 新增 | `design.defect-agent-share-skill-architecture` `debt.share-link-security` `report.cds-mongo-log-split-incident-2026-05-23` | 缺陷分享架构设计、分享链接安全债务台账、CDS Mongo 事故复盘 |
 | 2026-05-15 | 新增 | `design.cds-agent-runtime-architecture` | CDS Agent 运行时架构设计 |

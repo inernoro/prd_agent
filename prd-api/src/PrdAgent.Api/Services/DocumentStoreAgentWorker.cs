@@ -208,12 +208,18 @@ public class DocumentStoreAgentWorker : BackgroundService
         }
     }
 
+    /// <summary>
+    /// 推 SSE 事件 —— 套 3 秒硬超时，杜绝 Redis 抖动让 AppendEventAsync 永久挂起
+    /// 进而拖死整个 Worker 主循环（实测：当 Redis 连接 multiplexer 处于半失活时，
+    /// StringIncrementAsync 不会按 SyncTimeout 抛异常而是直接 hang）。
+    /// </summary>
     private static async Task EmitEventAsync(
         IRunEventStore runStore, string kind, string runId, string eventName, object payload)
     {
         try
         {
-            await runStore.AppendEventAsync(kind, runId, eventName, payload, ct: CancellationToken.None);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            await runStore.AppendEventAsync(kind, runId, eventName, payload, ct: cts.Token);
         }
         catch { /* 事件失败不阻塞主流程 */ }
     }

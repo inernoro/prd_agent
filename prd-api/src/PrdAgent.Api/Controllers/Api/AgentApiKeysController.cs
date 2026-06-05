@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Api.Controllers; // OpenApiController.ScopeCall（位于父命名空间，显式 using 让跨命名空间引用更清晰）
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
@@ -28,6 +29,7 @@ public class AgentApiKeysController : ControllerBase
         DefectAgentController.AgentFixScope,
         DocumentStoreController.ScopeRead,
         DocumentStoreController.ScopeWrite,
+        OpenApiController.ScopeCall,
     };
 
     // 默认 TTL：365 天（符合需求"授权时间尽可能长"）

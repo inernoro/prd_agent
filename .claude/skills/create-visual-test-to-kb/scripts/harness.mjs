@@ -16,15 +16,32 @@ export function loadConfig(path) {
   return JSON.parse(require('fs').readFileSync(path, 'utf8'));
 }
 
-export async function launch(cfg) {
+export async function launch(cfg, opts = {}) {
+  // 每次新会话清空模块级累积：同一 Node 进程内多次 launch（批量验收 / 自测）若不清空，会把上一轮的
+  // shots / autoFindings 串进本轮 → result.json 混入历史 P0/P1、stale blocker 误折叠进新 manifest，
+  // 造成误拒收或机读输出失真（Bugbot #4，2026-06-04）。launch 是文档化入口，在此重置最稳妥。
+  shots.length = 0;
+  autoFindings.length = 0;
+  const session = _bumpCaptureSession(); // 令旧会话残留监听器失效（Bugbot #6）
   const sc = cfg.screenshot || {};
   const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
-  const ctx = await browser.newContext({
+  const ctxOpts = {
     viewport: { width: sc.width || 1440, height: sc.height || 900 },
     deviceScaleFactor: sc.deviceScaleFactor || 2,
     ignoreHTTPSErrors: true, // 出口代理证书
-  });
+  };
+  // v1.0（issue #605 二.1）：可选过程视频。比 N 张静态图更能让人 3 秒看懂"它怎么走的"。
+  // 开法：launch(cfg, { recordVideoDir: outDir }) 或 cfg.screenshot.recordVideoDir。归档作可选附件。
+  const videoDir = opts.recordVideoDir || sc.recordVideoDir;
+  if (videoDir) {
+    require('fs').mkdirSync(videoDir, { recursive: true });
+    ctxOpts.recordVideo = { dir: videoDir, size: { width: sc.width || 1440, height: sc.height || 900 } };
+  }
+  const ctx = await browser.newContext(ctxOpts);
   const page = await ctx.newPage();
+  // v1.0（issue #605 二.2 / 楼上一致共识）：默认挂上 console/network/pageerror 自动捕获——
+  // 这是"人眼扫静态图永远漏的维度"，最该让机器补。driver 无需手动开，launch 即装。
+  attachAutoCapture(page, { ...(opts.autoCapture || {}), _session: session });
   return { browser, ctx, page };
 }
 
@@ -34,6 +51,9 @@ export async function login(page, baseUrl, cfg) {
   const user = process.env[b.userEnv];
   const pass = process.env[b.passEnv];
   if (!user || !pass) throw new Error(`缺少登录凭据：请设置 env ${b.userEnv} 和 ${b.passEnv}`);
+  // 归一化 baseUrl：cdscli --human preview-url 带结尾 '/'，baseUrl + '/login' 会变成 '//login'
+  // 命中 SPA 兜底，登录框永不出现（实测坑：登录 20s 超时 + API 拿到 HTML）。统一去掉结尾斜杠。
+  baseUrl = String(baseUrl).replace(/\/+$/, '');
   await page.goto(baseUrl + b.loginPath, { waitUntil: 'domcontentloaded', timeout: 45000 });
   await page.waitForSelector(b.userSelector, { timeout: 20000 });
   await page.waitForTimeout(1000);
@@ -55,8 +75,20 @@ export async function gotoByClick(page, navText, { timeout = 8000 } = {}) {
     await loc.click({ timeout });
     await page.waitForTimeout(2000);
     return { found: true, navText };
-  } catch (e) {
-    return { found: false, navText, error: e.message };
+  } catch {
+    // 兜底：很多可点目标是 div/卡片（无 a/button/role 语义），上面的选择器点不到（实测坑：
+    // 知识库空间卡片就是可点 div）。改按可见文本点击——点中文本节点，click 冒泡到卡片 onClick。
+    // 先精确匹配，再退子串匹配。
+    for (const opt of [{ exact: true }, { exact: false }]) {
+      try {
+        const byText = page.getByText(navText, opt).first();
+        await byText.waitFor({ state: 'visible', timeout: Math.min(timeout, 4000) });
+        await byText.click({ timeout });
+        await page.waitForTimeout(2000);
+        return { found: true, navText, via: `getByText(${opt.exact ? 'exact' : 'loose'})` };
+      } catch { /* 试下一种匹配 */ }
+    }
+    return { found: false, navText };
   }
 }
 
@@ -91,6 +123,157 @@ export async function assertText(page, text) {
 // 截图 + caption。返回 {name, caption, path} 供归档脚本消费。
 // v2.2: 自动 waitForReady() 等页面真就绪，截后再 validate；不达标 retry 1 次后仍记录但打 warning。
 const shots = [];
+
+// ── v1.0：console / network / pageerror 自动捕获（issue #605 二.2，机器最该补的维度）──
+// 每条 finding: { kind, severity, message, url?, status?, ts, shotIndexAtCapture }
+// 自动判级（保守，避免误杀）：
+//   - pageerror（未捕获 JS 异常）          → P0（页面真崩了）
+//   - 5xx 响应（同源 app 自己的接口）       → P0（后端炸了）
+//   - console.error                        → P1（前端报错，多半 bug，但可能第三方噪声）
+//   - 4xx 响应（同源，排除 401/403/404 探测）→ P1
+// blockSeverity（默认 'P0'）：≥ 此级别的 finding 会自动 attach 成"截图 warning"，
+//   从而被 archive_report.py 准入校验拒收（把"机器抓到的严重错误"变成硬门禁）。
+//   P1/P2 仍记进 result.json 供报告引用，但不硬阻断（避免一条第三方 console 噪声卡死整轮）。
+const autoFindings = [];
+let _autoCaptureCfg = { blockSeverity: 'P0', ignore: [], appHostHint: null };
+// 会话令牌（Bugbot #6）：launch() 每次自增。旧 page 的监听器闭包记下它注册时的 session，
+// 一旦发生新 launch（session 变了），旧监听器 push 全部失效——无需 detach/关旧浏览器即可
+// 杜绝"上一轮还开着的页面把事件灌进本轮 autoFindings"的串扰。
+let _captureSession = 0;
+export function _bumpCaptureSession() { return ++_captureSession; }
+
+const SEV_RANK = { P0: 0, P1: 1, P2: 2, P3: 3 };
+function _sevGte(a, b) { return SEV_RANK[a] <= SEV_RANK[b]; } // P0 ≥ P1 ⇒ rank 更小
+
+// 解析"本源 host"：appHostHint 优先，否则取当前 page host。解析不出返回 null（调用方据此保守跳过）。
+function _resolveAppHost(page) {
+  if (_autoCaptureCfg.appHostHint) return _autoCaptureCfg.appHostHint;
+  try { const h = new URL(page.url()).host; return h || null; } catch { return null; }
+}
+
+export function attachAutoCapture(page, opts = {}) {
+  _autoCaptureCfg = {
+    blockSeverity: opts.blockSeverity || 'P0',
+    ignore: (opts.ignore || []).map((p) => (p instanceof RegExp ? p : new RegExp(p))),
+    appHostHint: opts.appHostHint || null,
+  };
+  const mySession = opts._session != null ? opts._session : _captureSession;
+  const ignored = (s) => _autoCaptureCfg.ignore.some((re) => re.test(s || ''));
+
+  const push = (f) => {
+    if (mySession !== _captureSession) return; // 旧会话的残留监听器失效（Bugbot #6）
+    if (ignored(f.message) || ignored(f.url || '')) return;
+    autoFindings.push({ ...f, ts: Date.now(), shotIndexAtCapture: shots.length });
+  };
+
+  // 1) 未捕获 JS 异常 → P0
+  page.on('pageerror', (err) => {
+    push({ kind: 'pageerror', severity: 'P0', message: String(err && err.message || err).slice(0, 300) });
+  });
+
+  // 2) console.error → P1（只收 error，不收 warning，减少噪声）
+  page.on('console', (msg) => {
+    if (msg.type() !== 'error') return;
+    const text = msg.text();
+    // 浏览器对 4xx/5xx 自带的 "Failed to load resource" 噪声留给 response 处理器统一判级
+    if (/Failed to load resource/i.test(text)) return;
+    push({ kind: 'console.error', severity: 'P1', message: text.slice(0, 300) });
+  });
+
+  // 3) 网络 4xx/5xx（仅同源 app 自己的接口；第三方/静态 CDN 不计）
+  page.on('response', (resp) => {
+    const status = resp.status();
+    if (status < 400) return;
+    const url = resp.url();
+    let host = '';
+    try { host = new URL(url).host; } catch { return; }
+    const appHost = _resolveAppHost(page);
+    // 无法确定本源（about:blank / 无效 URL / 还没导航）→ 保守不记网络类 finding，
+    // 否则会把第三方/CDN 的 4xx-5xx 当成本源错误，制造假 P0/P1 blocker（Bugbot #5）。
+    if (!appHost) return;
+    if (host !== appHost) return; // 跨域第三方资源不计
+    // 401/403/404 常是探测/鉴权预检，降噪：4xx 里只有这三类不直接判级（除非 5xx）
+    let severity;
+    if (status >= 500) severity = 'P0';
+    else if ([401, 403, 404].includes(status)) return; // 高噪声，跳过
+    else severity = 'P1';
+    push({ kind: 'network', severity, status, url: url.slice(0, 200), message: `HTTP ${status} ${url.slice(0, 160)}` });
+  });
+
+  // 4) 请求彻底失败（DNS / 连接 reset 等）→ P1
+  page.on('requestfailed', (req) => {
+    const url = req.url();
+    let host = '';
+    try { host = new URL(url).host; } catch { return; }
+    const appHost = _resolveAppHost(page);
+    if (!appHost) return;        // 无法确定本源 → 保守不记（Bugbot #5）
+    if (host !== appHost) return;
+    // 忽略主动 abort（SPA 取消的 fetch 很常见）
+    const failure = req.failure();
+    if (failure && /aborted|ERR_ABORTED/i.test(failure.errorText || '')) return;
+    push({ kind: 'requestfailed', severity: 'P1', url: url.slice(0, 200), message: `请求失败 ${failure && failure.errorText} ${url.slice(0, 140)}` });
+  });
+}
+
+// 取出"自某次截图后新产生的 findings"，并按 blockSeverity 折叠成截图 warning 文案。
+function drainFindingsForShot(shotIndex) {
+  const blockers = autoFindings.filter(
+    (f) => f.shotIndexAtCapture === shotIndex && _sevGte(f.severity, _autoCaptureCfg.blockSeverity) && !f._attached,
+  );
+  blockers.forEach((f) => { f._attached = true; });
+  return blockers.map((f) => `自动捕获(${f.severity},${f.kind}): ${f.message}`);
+}
+
+export function findings() { return autoFindings; }
+
+// ── v1.0：主题能力探测（issue #605 二.2 楼上：dark-only 页"双主题强制"是伪命令）──
+// 设 light 后采样 body 背景亮度；若与 dark 几乎无差，则该页 light-only/dark-only，
+// driver 据此单图取证 + 注明，不被逼交两张一模一样的图、也不计 fail。
+export async function detectThemeSupport(page, cfg) {
+  const attr = (cfg && cfg.screenshot && cfg.screenshot.themeAttr) || 'data-theme';
+  // 记录探测前的主题；探测结束必须恢复，否则页面被遗留在 light（最后一次 setAttribute）——
+  // driver 探测后若未显式 setTheme 就截图会截到错主题，违反 §5.4（Bugbot #2，2026-06-04）。
+  const original = await page.evaluate(([a]) => document.documentElement.getAttribute(a), [attr]);
+  const lum = async () => page.evaluate(() => {
+    const bg = getComputedStyle(document.body).backgroundColor || 'rgb(0,0,0)';
+    const m = bg.match(/\d+/g) || [0, 0, 0];
+    const [r, g, b] = m.map(Number);
+    return 0.299 * r + 0.587 * g + 0.114 * b; // 0(黑)~255(白)
+  });
+  await page.evaluate(([a]) => document.documentElement.setAttribute(a, 'dark'), [attr]);
+  await page.waitForTimeout(400);
+  const darkLum = await lum();
+  await page.evaluate(([a]) => document.documentElement.setAttribute(a, 'light'), [attr]);
+  await page.waitForTimeout(400);
+  const lightLum = await lum();
+  const delta = Math.abs(lightLum - darkLum);
+  // 亮度差 < 24 视为"切了主题但没变"——该页不真支持双主题
+  const supportsLight = delta >= 24;
+  // 忠实恢复探测前状态：原本就没有该属性的页面（如 report-agent 把"无属性"当 dark，prd-admin 同理）
+  // 必须 removeAttribute 还原，而非写死 'dark'——写 'dark' 会给"无属性=dark"的页面凭空加上属性，
+  // 让后续截图主题与真实默认态偏离（Bugbot #3，2026-06-04）。
+  await page.evaluate(([a, m]) => {
+    if (m === null) document.documentElement.removeAttribute(a);
+    else document.documentElement.setAttribute(a, m);
+  }, [attr, original]);
+  await page.waitForTimeout(200);
+  return { supportsLight, darkLum: Math.round(darkLum), lightLum: Math.round(lightLum), delta: Math.round(delta), restoredTheme: original === null ? '(removed)' : original };
+}
+
+// ── v1.0：导航 timing（issue #605 二.5，呼应 CLAUDE §6 禁止空白等待）──
+export async function captureTiming(page) {
+  try {
+    return await page.evaluate(() => {
+      const nav = performance.getEntriesByType('navigation')[0];
+      if (!nav) return null;
+      return {
+        domContentLoaded: Math.round(nav.domContentLoadedEventEnd),
+        load: Math.round(nav.loadEventEnd),
+        firstByte: Math.round(nav.responseStart),
+      };
+    });
+  } catch { return null; }
+}
 
 /**
  * 截图前主动等"页面真就绪"，截图后做内容校验。
@@ -191,6 +374,38 @@ async function validateShot(page, path, expectText) {
     if (!ok) warnings.push(`expectText 未命中: ${expectText}`);
   }
 
+  // 版式健康自动护栏（2026-06-02 反哺）：检测开启的 modal/弹窗是否「撑破」视口。
+  // 根因：一次 CDS「一键部署项目」弹窗内容飞出视口顶部、主操作按钮够不到，验收却被判 PASS——
+  // 因为旧 validateShot 只查"功能在不在"，不查"版式正不正"。frontend-modal.md / issues-system §5.2
+  // 明确 Modal 撑破 = P0。这里把它变成每张图都跑的自动检查，杜绝靠人眼漏判。
+  try {
+    const layout = await page.evaluate(() => {
+      const vh = window.innerHeight;
+      const sels = ['[role="dialog"]', '[aria-modal="true"]', '.modal', '.cds-modal', '.ReactModal__Content'];
+      const seen = new Set();
+      for (const s of sels) {
+        for (const el of Array.from(document.querySelectorAll(s))) {
+          if (seen.has(el)) continue; seen.add(el);
+          const r = el.getBoundingClientRect();
+          if (r.width < 60 || r.height < 60) continue;     // 跳过隐藏/极小
+          // 该容器或其子层是否提供了内部滚动？(cap 高度 + overflow 滚动 = 正确做法)
+          const st = getComputedStyle(el);
+          const selfScroll = /(auto|scroll)/.test(st.overflowY) && el.scrollHeight > el.clientHeight + 4;
+          const innerScroll = !!el.querySelector(
+            '[style*="overflow"], .overflow-auto, .overflow-y-auto, [class*="overflow-y-auto"]'
+          );
+          const cutTop = r.top < -8;                         // 顶部被切（"天上去了"）
+          const cutBottom = r.bottom > vh + 8;               // 底部超出视口（主操作够不到）
+          if ((cutTop || cutBottom) && !selfScroll && !innerScroll) {
+            return `modal 高 ${Math.round(r.height)}px 超出视口 ${vh}px（top=${Math.round(r.top)} bottom=${Math.round(r.bottom)}），且无内部滚动 → 疑似撑破/内容飞出，主操作可能够不到`;
+          }
+        }
+      }
+      return null;
+    });
+    if (layout) warnings.push(`版式撑破(P0,frontend-modal.md): ${layout}`);
+  } catch { /* 评估失败不阻塞 */ }
+
   return warnings;
 }
 
@@ -227,6 +442,12 @@ export async function shot(page, outDir, name, caption, opts = {}) {
     warnings = await validateShot(page, path, expectText);
   }
 
+  // 5) v1.0：把"截这张图之前自动捕获到的 ≥blockSeverity 错误"折叠进本图 warnings。
+  //    这样一条 P0 console/network 错误会让该截图带 warning → archive_report.py 准入直接拒收，
+  //    把"机器抓到的严重运行时错误"变成硬门禁（issue #605 二.2 / 楼上一致诉求）。
+  const autoWarns = drainFindingsForShot(shots.length);
+  if (autoWarns.length) warnings = warnings.concat(autoWarns);
+
   const rec = { name, caption, path, warnings: warnings.length ? warnings : undefined };
   shots.push(rec);
   if (warnings.length > 0) {
@@ -238,10 +459,68 @@ export async function shot(page, outDir, name, caption, opts = {}) {
 }
 
 export function manifest() { return shots; }
-// 把截图清单写出，供 archive_report.py 读取（name/caption/path）
-export function writeManifest(outDir) {
-  require('fs').writeFileSync(`${outDir}/manifest.json`, JSON.stringify(shots, null, 2));
+// 把截图清单写出，供 archive_report.py 读取（name/caption/path/warnings）。
+// v1.0：同时写一份机读 result.json（issue #605 二.3），供下游 Agent（issues-visual-run / autofix）
+//   直接消费，不必解析 markdown。manifest.json 契约不变（仍是 shots 数组，向后兼容 archive_report.py）。
+// extra 可带 { verdict, target, themeSupport, timing, branch, commit }。
+export function writeManifest(outDir, extra = {}) {
+  const fs = require('fs');
+  // 闭合"晚到 P0"漏洞（Bugbot #1，2026-06-04）：drainFindingsForShot 只把 finding 折叠进"之后某次
+  // shot() 调用"的 warnings。最后一张截图之后才抛的 ≥blockSeverity finding（典型：收尾时的未捕获
+  // 异常 / 5xx）没有后续 shot 来 drain，会只躺在 result.json 里、不进 manifest.json，而 archive_report.py
+  // 只按 manifest warnings 拒收 → 这轮可能照样 archive 成 pass。收尾时把这些"孤儿 blocker"挂到最后一张
+  // 截图的 warnings 上，确保它进 manifest → 准入照样拒收。零截图的情况由档位截图下限(L0≥1)兜底拒收。
+  const orphanBlockers = autoFindings.filter(
+    (f) => !f._attached && _sevGte(f.severity, _autoCaptureCfg.blockSeverity),
+  );
+  if (orphanBlockers.length && shots.length) {
+    const last = shots[shots.length - 1];
+    last.warnings = (last.warnings || []).concat(
+      orphanBlockers.map((f) => `自动捕获(${f.severity},${f.kind},末次截图后/未挂载): ${f.message}`),
+    );
+    orphanBlockers.forEach((f) => { f._attached = true; });
+  }
+  fs.writeFileSync(`${outDir}/manifest.json`, JSON.stringify(shots, null, 2));
+  const p0 = autoFindings.filter((f) => f.severity === 'P0').length;
+  const p1 = autoFindings.filter((f) => f.severity === 'P1').length;
+  const unattachedBlockers = autoFindings.filter((f) => !f._attached && _sevGte(f.severity, _autoCaptureCfg.blockSeverity)).length;
+  const result = {
+    generatedAt: new Date().toISOString(),
+    verdict: extra.verdict || null,
+    target: extra.target || null,
+    branch: extra.branch || null,
+    commit: extra.commit || null,
+    themeSupport: extra.themeSupport || null,
+    timing: extra.timing || null,
+    shots: shots.map((s) => ({ name: s.name, caption: s.caption, warnings: s.warnings || [] })),
+    autoFindings: autoFindings.map(({ _attached, ...f }) => f),
+    autoFindingsSummary: { P0: p0, P1: p1, total: autoFindings.length, unattachedBlockers },
+  };
+  fs.writeFileSync(`${outDir}/result.json`, JSON.stringify(result, null, 2));
+  if (p0 || p1) {
+    console.log(`  [自动捕获] P0=${p0} P1=${p1}（详见 result.json autoFindings；P0 已折叠进截图 warnings → 准入会拒收）`);
+  }
   return `${outDir}/manifest.json`;
+}
+
+// v1.0：收尾保存过程视频。必须在 ctx.close() 后取 path（Playwright 关闭上下文才落盘）。
+// 用法：const v = await finalizeVideo(page, ctx, outDir, 'walkthrough'); // 返回 mp4/webm 路径或 null
+export async function finalizeVideo(page, ctx, outDir, name = 'walkthrough') {
+  const video = page.video && page.video();
+  if (!video) return null;
+  try {
+    await ctx.close(); // 触发落盘
+    const raw = await video.path();
+    const fs = require('fs');
+    const ext = raw.split('.').pop();
+    const dest = `${outDir}/${name}.${ext}`;
+    if (raw !== dest) { try { fs.renameSync(raw, dest); } catch { fs.copyFileSync(raw, dest); } }
+    console.log(`  过程视频已保存: ${dest}`);
+    return dest;
+  } catch (e) {
+    console.log('  finalizeVideo 失败:', e.message);
+    return null;
+  }
 }
 
 // ── ZZ 照做：画框 + 步骤序号（核心：让"点哪到哪"一目了然）──

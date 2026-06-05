@@ -90,7 +90,22 @@ public class GitHubDirectorySyncService
             {
                 // 已存在 → 比较 SHA 决定是否需要更新（GitHub SHA 即版本号，O(1) 命中判定）
                 var existingSha = existing.Metadata.GetValueOrDefault("github_sha", "");
-                if (existingSha == file.Sha)
+
+                // 自愈：SHA 相同但 Document 已是空壳（受 SHA 缓存 bug 历史影响），强制重拉一次
+                var contentMissing = false;
+                if (existingSha == file.Sha && !string.IsNullOrEmpty(existing.DocumentId))
+                {
+                    var existingDoc = await documentService.GetByIdAsync(existing.DocumentId);
+                    if (existingDoc == null || string.IsNullOrWhiteSpace(existingDoc.RawContent))
+                    {
+                        _logger.LogWarning(
+                            "[GitHubSync] Entry {EntryId} has matching SHA but empty Document {DocumentId}; forcing re-fetch",
+                            existing.Id, existing.DocumentId);
+                        contentMissing = true;
+                    }
+                }
+
+                if (existingSha == file.Sha && !contentMissing)
                 {
                     diff.SkippedCount++;
                     // 回填 github_last_commit_at：历史条目没有这个字段，无需重新拉内容，只补时间戳
@@ -207,7 +222,16 @@ public class GitHubDirectorySyncService
             if (cachedEntry != null && cachedEntry.DocumentId != null)
             {
                 var cachedDoc = await documentService.GetByIdAsync(cachedEntry.DocumentId);
-                if (cachedDoc != null)
+                // 关键：必须验证 RawContent 非空，否则会把"空壳 Document"传染给所有 SHA 相同的同步条目
+                // （历史 bug：用户看到「11h 前同步过」但右侧空白，根因即此处只查 != null 没查内容）
+                var cacheUsable = cachedDoc != null && !string.IsNullOrWhiteSpace(cachedDoc.RawContent);
+                if (!cacheUsable && cachedEntry != null)
+                {
+                    _logger.LogWarning(
+                        "[GitHubSync] Cached entry {EntryId} (DocumentId={DocumentId}) has empty content; falling back to live fetch for SHA {Sha}",
+                        cachedEntry.Id, cachedEntry.DocumentId, file.Sha);
+                }
+                if (cacheUsable)
                 {
                     _logger.LogInformation("[GitHubSync] Reusing cached content for SHA {Sha} from Entry {EntryId}", file.Sha, cachedEntry.Id);
 

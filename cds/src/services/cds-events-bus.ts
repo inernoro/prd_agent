@@ -37,6 +37,10 @@ export type CdsEventType =
   | 'pending-import.created'
   | 'pending-import.decided'
   | 'pending-import.count'
+  // 2026-06-04:被动授权 — agent 免密发起的授权申请事件(右下角审批盒订阅)
+  | 'access-request.created'
+  | 'access-request.decided'
+  | 'access-request.count'
   // 2026-05-29:项目虚拟 cds-compose.yml 变更(approve/手动编辑/repo 同步)
   | 'project.config.changed'
   // 2026-05-28:infra flap 熔断告警(watchdog 自动停掉烂配置容器)

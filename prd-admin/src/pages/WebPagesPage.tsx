@@ -3,7 +3,6 @@ import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
 import { PageHeader } from '@/components/design/PageHeader';
-import { Select } from '@/components/design/Select';
 import { toast } from '@/lib/toast';
 import { SitePreview } from '@/components/SitePreview';
 import { PdfThumbnail, isPdfSite } from '@/components/PdfThumbnail';
@@ -158,6 +157,31 @@ async function resolveVisitUrl(site: HostedSite): Promise<string> {
 
 type GroupMode = 'time' | 'folder';
 
+// ─── 列表偏好持久化（排序/视图/分组）───
+// 用 localStorage：纯 UI 偏好（非敏感、设备本地、发版后用旧值无害），
+// 关浏览器重开也要记住用户的排序/视图选择。符合 .claude/rules/no-localstorage.md 的例外清单。
+const PREF_KEYS = {
+  sort: 'webpages.pref.sort',
+  viewMode: 'webpages.pref.viewMode',
+  groupMode: 'webpages.pref.groupMode',
+} as const;
+
+function readPref(key: string, fallback: string): string {
+  try {
+    return localStorage.getItem(key) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writePref(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* 隐私模式 / 存储已满时静默降级 */
+  }
+}
+
 /** 把日期格式化成分组标题：今天 / 昨天 / M月D日 / YYYY年M月D日 */
 function toDateBucketLabel(iso: string): string {
   const d = new Date(iso);
@@ -212,6 +236,67 @@ function buildSiteGroups(items: HostedSite[], mode: GroupMode): SiteGroup[] {
   return groups;
 }
 
+// ─── 排序循环：单击在 5 个选项之间下一步 ───
+
+const SORT_OPTIONS: { value: string; label: string }[] = [
+  { value: 'newest', label: '最新' },
+  { value: 'oldest', label: '最早' },
+  { value: 'title', label: '标题' },
+  { value: 'most-viewed', label: '浏览' },
+  { value: 'largest', label: '体积' },
+];
+
+// ─── 分段 pill 组件：当前项 pill 高亮 + 平铺所有选项，单击即切 ───
+function SegmentPills({
+  options,
+  value,
+  onChange,
+}: {
+  options: { value: string; label: string }[];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div
+      className="inline-flex items-center gap-1 p-1 rounded-lg shrink-0"
+      style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border-default)' }}
+    >
+      {options.map((opt) => {
+        const active = opt.value === value;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => onChange(opt.value)}
+            className="h-7 px-3 rounded-md text-[13px] transition-colors"
+            style={
+              active
+                ? {
+                    background: 'rgba(99,102,241,0.22)',
+                    color: '#c7d2fe',
+                    fontWeight: 500,
+                    boxShadow: 'inset 0 0 0 1px rgba(99,102,241,0.45)',
+                  }
+                : {
+                    background: 'transparent',
+                    color: 'var(--text-muted)',
+                  }
+            }
+            onMouseEnter={(e) => {
+              if (!active) e.currentTarget.style.color = 'var(--text-primary)';
+            }}
+            onMouseLeave={(e) => {
+              if (!active) e.currentTarget.style.color = 'var(--text-muted)';
+            }}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─── Main Page ───
 
 /** 单站点在当前作用域下的操作能力（团队作用域按角色 + 是否站点创建者解析；个人作用域全开） */
@@ -238,8 +323,10 @@ export default function WebPagesPage() {
   const [myWebHostingRole, setMyWebHostingRole] = useState<WebHostingRole | null>(null);
   const [keyword, setKeyword] = useState('');
   const [activeTag, setActiveTag] = useState<string | null>(null);
-  const [sort, setSort] = useState('newest');
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [sort, setSort] = useState(() => readPref(PREF_KEYS.sort, 'newest'));
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>(
+    () => readPref(PREF_KEYS.viewMode, 'grid') as 'grid' | 'list',
+  );
 
   // 空间 → 作用域（个人空间走 mine 再客户端剔除已进团队的；团队空间走 team）。下游隔离/角色门控不变
   const teamScope = useMemo(
@@ -248,7 +335,15 @@ export default function WebPagesPage() {
       : { scope: 'mine' as const, teamId: null }),
     [currentSpace],
   );
-  const groupMode: GroupMode = 'time';
+  const [groupMode, setGroupMode] = useState<GroupMode>(
+    () => readPref(PREF_KEYS.groupMode, 'time') as GroupMode,
+  );
+
+  // 排序/视图/分组偏好变化即写回 localStorage，刷新/重开浏览器后自动恢复
+  useEffect(() => { writePref(PREF_KEYS.sort, sort); }, [sort]);
+  useEffect(() => { writePref(PREF_KEYS.viewMode, viewMode); }, [viewMode]);
+  useEffect(() => { writePref(PREF_KEYS.groupMode, groupMode); }, [groupMode]);
+
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   // 已分享站点集合（单站点分享）：驱动卡片「已分享」标记 + 分享按钮转「取消分享」 + 投放槽读心
   const [sharedSiteIds, setSharedSiteIds] = useState<Set<string>>(new Set());
@@ -550,7 +645,7 @@ export default function WebPagesPage() {
         ))}
       </div>
     ) : (
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col">
         {items.map(site => (
           <SiteListItem
             key={site.id}
@@ -571,7 +666,14 @@ export default function WebPagesPage() {
     );
 
   return (
-    <div className="h-full flex flex-col gap-4 p-4 overflow-auto" style={{ background: 'var(--bg-base)' }}>
+    <div
+      data-tour-id="webpages-root"
+      className="h-full flex flex-col gap-4 p-4 overflow-auto"
+      style={{
+        background:
+          'radial-gradient(ellipse 70% 40% at 50% -10%, rgba(99,102,241,0.14) 0%, transparent 55%), linear-gradient(180deg, #20212a 0%, #181a22 480px, #16181f 100%)',
+      }}
+    >
       {/* 右侧投放面板：可拖动 + 可收起，拖站点卡片到槽位即可公开/分享/删除 */}
       <ShareDock
         mime={WEB_PAGE_MIME}
@@ -694,17 +796,33 @@ export default function WebPagesPage() {
       />
       <PageHeader
         title="网页托管"
-        description="上传 HTML/ZIP、Markdown、PDF 或视频，自动托管并生成可分享的访问链接"
         actions={
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="ghost" onClick={() => setShowAnalytics(true)} title="查看分享统计（PV/IP/时间线）">
-              <BarChart3 size={14} className="mr-1" /> 分享统计
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => { setShareTargetId(null); setShowSharesPanel(true); }}>
-              <Link2 size={14} className="mr-1" /> 分享管理
-            </Button>
+          <div data-tour-id="webpages-header-actions" className="flex items-center gap-1.5">
+            <button
+              type="button"
+              data-tour-id="webpages-stats-btn"
+              onClick={() => setShowAnalytics(true)}
+              title="分享统计（PV/IP/时间线）"
+              aria-label="分享统计"
+              className="h-8 w-8 inline-flex items-center justify-center rounded-md transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.06))]"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              <BarChart3 size={15} />
+            </button>
+            <button
+              type="button"
+              data-tour-id="webpages-share-mgmt-btn"
+              onClick={() => { setShareTargetId(null); setShowSharesPanel(true); }}
+              title="分享管理"
+              aria-label="分享管理"
+              className="h-8 w-8 inline-flex items-center justify-center rounded-md transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.06))]"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              <Link2 size={15} />
+            </button>
+            <span className="mx-1 h-5 w-px" style={{ background: 'var(--border-default)' }} />
             {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
-              <Button size="sm" variant="primary" onClick={openCreateUploadDialog}>
+              <Button data-tour-id="webpages-upload-primary" size="sm" variant="primary" onClick={openCreateUploadDialog}>
                 <Upload size={14} className="mr-1" /> 上传站点
               </Button>
             )}
@@ -736,23 +854,29 @@ export default function WebPagesPage() {
             />
           </div>
 
-          {/* Sort */}
-          <div className="w-[130px] shrink-0">
-            <Select
-              uiSize="sm"
+          {/* 排序 segment pill group：当前项 pill 高亮，点击任意切到那个 */}
+          <div data-tour-id="webpages-sort-pills">
+            <SegmentPills
+              options={SORT_OPTIONS}
               value={sort}
-              onChange={e => setSort(e.target.value)}
-            >
-              <option value="newest">最新创建</option>
-              <option value="oldest">最早创建</option>
-              <option value="title">按标题</option>
-              <option value="most-viewed">最多浏览</option>
-              <option value="largest">最大体积</option>
-            </Select>
+              onChange={setSort}
+            />
+          </div>
+
+          {/* 分组 segment pill group：二选一 */}
+          <div data-tour-id="webpages-group-pills">
+            <SegmentPills
+              options={[
+                { value: 'time', label: '日期' },
+                { value: 'folder', label: '文件夹' },
+              ]}
+              value={groupMode}
+              onChange={(v) => setGroupMode(v as GroupMode)}
+            />
           </div>
 
           {/* View mode */}
-          <div className="flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid var(--border-default)' }}>
+          <div data-tour-id="webpages-view-toggle" className="flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid var(--border-default)' }}>
             <button
               onClick={() => setViewMode('grid')}
               className="p-2 transition-colors"
@@ -770,21 +894,29 @@ export default function WebPagesPage() {
           </div>
         </div>
 
-        {/* 空间内文件夹（内容派生）：全部 + 各文件夹 —— 放搜索行下方，切换空间不顶动搜索框 */}
-        {spaceFolders.length > 0 && (
-          <div className="flex items-center gap-1.5 mt-3 overflow-x-auto pb-0.5" style={{ overscrollBehavior: 'contain' }}>
-            <button type="button" onClick={() => setActiveFolder(null)} className="h-7 px-2.5 rounded-full text-[12px] shrink-0"
-              style={activeFolder === null ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' } : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}>
-              全部
-            </button>
-            {spaceFolders.map((f) => (
-              <button key={f} type="button" onClick={() => setActiveFolder(f)} className="h-7 px-2.5 rounded-full text-[12px] shrink-0 flex items-center gap-1"
-                style={activeFolder === f ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' } : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}>
-                <Folder size={11} /> {f}
+        {/* 空间内文件夹（内容派生）：锚点容器永远渲染（教程引导依赖该 selector）；
+            有文件夹时显示全部 + 各文件夹按钮，无文件夹时显示一句空态引导。 */}
+        <div data-tour-id="webpages-folders" className="mt-3">
+          {spaceFolders.length > 0 ? (
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5" style={{ overscrollBehavior: 'contain' }}>
+              <button type="button" onClick={() => setActiveFolder(null)} className="h-7 px-2.5 rounded-full text-[12px] shrink-0"
+                style={activeFolder === null ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' } : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}>
+                全部
               </button>
-            ))}
-          </div>
-        )}
+              {spaceFolders.map((f) => (
+                <button key={f} type="button" onClick={() => setActiveFolder(f)} className="h-7 px-2.5 rounded-full text-[12px] shrink-0 flex items-center gap-1"
+                  style={activeFolder === f ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' } : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}>
+                  <Folder size={11} /> {f}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full text-[11px]"
+              style={{ background: 'var(--bg-input)', border: '1px dashed rgba(255,255,255,0.12)', color: 'var(--text-muted)' }}>
+              <Folder size={11} /> 文件夹（上传站点时填写「文件夹」字段即可在此分类）
+            </div>
+          )}
+        </div>
 
         {/* 团队空间协作头部：放最下方，出现/消失不顶动上方搜索框（切换统一性） */}
         {currentSpace.kind === 'team' && (
@@ -858,6 +990,18 @@ export default function WebPagesPage() {
               <Upload size={14} className="mr-1" /> 上传第一个站点
             </Button>
           )}
+          {/* 教程引导锚点占位：空态下也让「网页托管 3 步」教程能找到 webpages-card / webpages-viewcount 目标，
+              避免「没找到目标元素」报错。占位卡是一张轻量预览卡，告诉新用户站点卡长什么样。 */}
+          <div
+            data-tour-id="webpages-card"
+            className="mt-2 inline-flex items-center gap-2 px-3 py-2 rounded-lg text-[11px]"
+            style={{ background: 'var(--bg-input)', border: '1px dashed rgba(255,255,255,0.12)', color: 'var(--text-muted)' }}
+          >
+            示例卡片预览：标题 · 描述
+            <span data-tour-id="webpages-viewcount" className="inline-flex items-center gap-0.5">
+              <Eye size={11} /> 0
+            </span>
+          </div>
         </div>
       ) : (
         <div className="flex flex-col gap-5">
@@ -865,10 +1009,13 @@ export default function WebPagesPage() {
             <div key={group.key} className="flex flex-col gap-2">
               {/* 分节标题：时间桶（今天/昨天/M月D日）或文件夹名 */}
               <div className="flex items-center gap-2 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
-                <Clock size={12} style={{ color: 'var(--accent-primary)' }} />
+                {groupMode === 'folder' ? (
+                  <Folder size={12} style={{ color: 'var(--accent-primary)' }} />
+                ) : (
+                  <Clock size={12} style={{ color: 'var(--accent-primary)' }} />
+                )}
                 <span>{group.label}</span>
                 <span style={{ color: 'var(--text-faint, var(--text-muted))' }}>· {group.items.length}</span>
-                <div className="flex-1 h-px" style={{ background: 'var(--border-default)' }} />
               </div>
               {renderGroupItems(group.items)}
             </div>
@@ -1637,9 +1784,11 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
     resolveVisitUrl(site).then(url => { if (w) w.location.href = url; });
   };
   return (
-    <GlassCard
-      className="group flex items-center gap-4 p-3 cursor-grab active:cursor-grabbing touch-none"
-      style={{ border: selected ? '2px solid var(--accent-primary)' : undefined }}
+    <div
+      className="group flex items-center gap-4 px-3 py-2 rounded-md cursor-grab active:cursor-grabbing touch-none transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.04))]"
+      style={{
+        background: selected ? 'rgba(99,102,241,0.10)' : 'transparent',
+      }}
       onPointerDown={onPointerDown}
     >
       <input
@@ -1738,7 +1887,7 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
           </button>
         )}
       </div>
-    </GlassCard>
+    </div>
   );
 }
 
@@ -2113,6 +2262,54 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
     border: '1px solid var(--border-default)',
   };
 
+  // 「仅我自己」卡片放当前用户头像，其余可见性放语义图标
+  const currentUser = useAuthStore(s => s.user);
+  const myAvatar = currentUser
+    ? resolveAvatarUrl({
+        username: currentUser.username,
+        userType: currentUser.userType,
+        botKind: currentUser.botKind,
+        avatarFileName: currentUser.avatarFileName ?? null,
+        avatarUrl: currentUser.avatarUrl ?? null,
+      })
+    : '';
+
+  // 分段卡通用样式：默认蓝色高亮，danger 项（公开/短链）选中走橙色
+  const segCardStyle = (active: boolean, danger?: boolean): React.CSSProperties => ({
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 6,
+    padding: '10px 6px',
+    borderRadius: 10,
+    cursor: 'pointer',
+    textAlign: 'center',
+    transition: 'border-color 120ms, background 120ms',
+    border: active
+      ? `1.5px solid ${danger ? '#f97316' : '#3b82f6'}`
+      : '1px solid var(--border-default)',
+    background: active
+      ? danger
+        ? 'rgba(249,115,22,0.10)'
+        : 'rgba(59,130,246,0.10)'
+      : 'var(--bg-sunken)',
+  });
+
+  // 当前可见性选中项的一句话说明（仅展示选中项，非选中项零文字）
+  const VISIBILITY_DESC: Record<typeof visibility, string> = {
+    'owner-only': '链接被复制也无法被外人访问，最安全',
+    'logged-in': '需登录平台才能查看，未登录拒绝',
+    public: '任何拿到链接的人都可访问，建议同时设置密码',
+  };
+  const EXPIRY_OPTS = [
+    { v: 1, label: '1 天' },
+    { v: 7, label: '7 天' },
+    { v: 30, label: '30 天' },
+    { v: 90, label: '90 天' },
+    { v: 0, label: '永久' },
+  ];
+
   return (
     <Dialog
       open={true}
@@ -2175,105 +2372,101 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
               </p>
             )}
             <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-              点击下方按钮即可一键生成分享链接，标题会自动生成。
+              选择访问范围即可一键生成链接，标题自动生成。
             </p>
 
             {/* 分享选项 */}
-            <div className="flex flex-col gap-3">
-              <label className="flex items-center gap-2 cursor-pointer text-sm" title={isShort ? '短链场景密码不可关闭' : ''}>
-                <input
-                  type="checkbox"
-                  checked={usePassword}
-                  onChange={e => handleTogglePassword(e.target.checked)}
-                />
-                <Lock size={12} style={{ color: 'var(--text-muted)' }} />
-                <span style={{ color: 'var(--text-secondary)' }}>
-                  密码保护{isShort && <span style={{ color: '#f97316' }}>（短链必须）</span>}
-                </span>
-              </label>
-              {usePassword && (
-                <div className="flex flex-col gap-1.5">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={password}
-                      onChange={e => setPassword(e.target.value)}
-                      placeholder={isShort ? '≥12 位，含大小写+数字+符号' : '输入密码'}
-                      className="flex-1 px-3 py-1.5 rounded-lg text-sm outline-none"
-                      style={{
-                        ...inputStyle,
-                        border: pwdInvalid ? '1px solid #ef4444' : inputStyle.border,
-                      }}
-                    />
-                    <Button size="xs" variant="ghost" onClick={() => setPassword(isShort ? genStrongPassword() : genPassword())} title="随机生成密码">
-                      <RefreshCw size={12} />
-                    </Button>
-                  </div>
-                  <span className="text-xs" style={{ color: pwdInvalid ? '#ef4444' : 'var(--text-muted)' }}>
-                    {pwdInvalid
-                      ? '短链场景密码强度不足：需 ≥12 位，含大小写字母、数字、符号'
-                      : isShort
-                        ? '短链可被遍历枚举，密码是唯一防线，建议直接用随机生成的强密码'
-                        : '可修改密码或点击右侧按钮重新生成'}
-                  </span>
+            <div className="flex flex-col gap-4">
+              {/* 谁能访问 — 防盗核心控件（PR 2026-05-28）：头像/图标 + 短标题分段卡，
+                  说明仅展示选中项一行（公开项走橙色风险色） */}
+              <div className="flex flex-col gap-1.5">
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>谁能访问</span>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setVisibility('owner-only')} style={segCardStyle(visibility === 'owner-only')}>
+                    {myAvatar
+                      ? <UserAvatar src={myAvatar} alt="我" className="rounded-full" style={{ width: 26, height: 26 }} />
+                      : <User size={22} style={{ color: visibility === 'owner-only' ? '#3b82f6' : 'var(--text-secondary)' }} />}
+                    <span className="text-xs" style={{ color: visibility === 'owner-only' ? '#3b82f6' : 'var(--text-secondary)' }}>仅我 / 团队</span>
+                  </button>
+                  <button type="button" onClick={() => setVisibility('logged-in')} style={segCardStyle(visibility === 'logged-in')}>
+                    <Users size={22} style={{ color: visibility === 'logged-in' ? '#3b82f6' : 'var(--text-secondary)' }} />
+                    <span className="text-xs" style={{ color: visibility === 'logged-in' ? '#3b82f6' : 'var(--text-secondary)' }}>登录可见</span>
+                  </button>
+                  <button type="button" onClick={() => setVisibility('public')} style={segCardStyle(visibility === 'public', true)}>
+                    <Globe size={22} style={{ color: visibility === 'public' ? '#f97316' : 'var(--text-secondary)' }} />
+                    <span className="text-xs" style={{ color: visibility === 'public' ? '#f97316' : 'var(--text-secondary)' }}>公开</span>
+                  </button>
                 </div>
-              )}
-
-              <label className="flex flex-col gap-1">
-                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                  <Clock size={12} className="inline mr-1" />过期时间
+                <span className="text-xs" style={{ color: visibility === 'public' ? '#f97316' : 'var(--text-muted)' }}>
+                  {VISIBILITY_DESC[visibility]}
                 </span>
-                <select
-                  value={expiresInDays}
-                  onChange={e => setExpiresInDays(Number(e.target.value))}
-                  className="px-3 py-1.5 rounded-lg text-sm outline-none cursor-pointer"
-                  style={inputStyle}
-                >
-                  <option value={0}>永不过期</option>
-                  <option value={1}>1 天</option>
-                  <option value={7}>7 天</option>
-                  <option value={30}>30 天</option>
-                  <option value={90}>90 天</option>
-                </select>
-              </label>
+              </div>
 
-              {/* 访问可见性 — 防盗核心控件（PR 2026-05-28） */}
+              {/* 密码保护 */}
+              <div className="flex flex-col gap-1.5">
+                <label className="flex items-center gap-2 cursor-pointer text-sm" title={isShort ? '短链场景密码不可关闭' : ''}>
+                  <input type="checkbox" checked={usePassword} onChange={e => handleTogglePassword(e.target.checked)} />
+                  <Lock size={13} style={{ color: 'var(--text-muted)' }} />
+                  <span style={{ color: 'var(--text-secondary)' }}>
+                    密码保护{isShort && <span style={{ color: '#f97316' }}>（短链必须）</span>}
+                  </span>
+                </label>
+                {usePassword && (
+                  <>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={password}
+                        onChange={e => setPassword(e.target.value)}
+                        placeholder={isShort ? '≥12 位，含大小写+数字+符号' : '输入密码'}
+                        className="flex-1 px-3 py-1.5 rounded-lg text-sm outline-none"
+                        style={{ ...inputStyle, border: pwdInvalid ? '1px solid #ef4444' : inputStyle.border }}
+                      />
+                      <Button size="xs" variant="ghost" onClick={() => setPassword(isShort ? genStrongPassword() : genPassword())} title="随机生成密码">
+                        <RefreshCw size={12} />
+                      </Button>
+                    </div>
+                    {(pwdInvalid || isShort) && (
+                      <span className="text-xs" style={{ color: pwdInvalid ? '#ef4444' : 'var(--text-muted)' }}>
+                        {pwdInvalid
+                          ? '密码强度不足：需 ≥12 位，含大小写、数字、符号'
+                          : '短链可被遍历枚举，建议用随机生成的强密码'}
+                      </span>
+                    )}
+                  </>
+                )}
+              </div>
+
+              {/* 有效期 — 胶囊代替下拉 */}
               <div className="flex flex-col gap-1.5">
                 <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                  <Lock size={12} className="inline mr-1" />谁能访问
+                  <Clock size={12} className="inline mr-1" />有效期
                 </span>
-                <div className="flex flex-col gap-1.5">
-                  <label className="flex items-start gap-2 cursor-pointer text-sm">
-                    <input type="radio" checked={visibility === 'owner-only'} onChange={() => setVisibility('owner-only')} className="mt-1" />
-                    <div className="flex flex-col">
-                      <span style={{ color: 'var(--text-secondary)' }}>仅我自己 / 团队成员（默认 · 推荐）</span>
-                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>链接被复制也无法被外人访问，最安全</span>
-                    </div>
-                  </label>
-                  <label className="flex items-start gap-2 cursor-pointer text-sm">
-                    <input type="radio" checked={visibility === 'logged-in'} onChange={() => setVisibility('logged-in')} className="mt-1" />
-                    <div className="flex flex-col">
-                      <span style={{ color: 'var(--text-secondary)' }}>任何登录用户</span>
-                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>需登录平台才能查看，未登录拒绝</span>
-                    </div>
-                  </label>
-                  <label className="flex items-start gap-2 cursor-pointer text-sm">
-                    <input type="radio" checked={visibility === 'public'} onChange={() => setVisibility('public')} className="mt-1" />
-                    <div className="flex flex-col">
-                      <span style={{ color: visibility === 'public' ? '#f97316' : 'var(--text-secondary)' }}>
-                        任何人（公开链接）
-                      </span>
-                      <span className="text-xs" style={{ color: visibility === 'public' ? '#f97316' : 'var(--text-muted)' }}>
-                        {visibility === 'public'
-                          ? '任何拿到链接的人都可访问，建议同时设置密码'
-                          : '链接可被任何人访问'}
-                      </span>
-                    </div>
-                  </label>
+                <div className="flex gap-2 flex-wrap">
+                  {EXPIRY_OPTS.map(opt => {
+                    const active = expiresInDays === opt.v;
+                    return (
+                      <button
+                        key={opt.v}
+                        type="button"
+                        onClick={() => setExpiresInDays(opt.v)}
+                        className="px-3 py-1 rounded-lg text-xs"
+                        style={{
+                          cursor: 'pointer',
+                          transition: 'border-color 120ms, background 120ms',
+                          border: active ? '1.5px solid #3b82f6' : '1px solid var(--border-default)',
+                          background: active ? 'rgba(59,130,246,0.10)' : 'var(--bg-sunken)',
+                          color: active ? '#3b82f6' : 'var(--text-secondary)',
+                        }}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
-              {/* 高级选项 — 链接类型 */}
+              {/* 高级选项 — 链接形式（收起时只显示当前值） */}
               <button
                 type="button"
                 onClick={() => setShowAdvanced(v => !v)}
@@ -2281,25 +2474,26 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
                 style={{ color: 'var(--text-muted)' }}
               >
                 <span style={{ display: 'inline-block', transform: showAdvanced ? 'rotate(90deg)' : 'none', transition: 'transform 120ms' }}>›</span>
-                高级选项
+                高级选项{!showAdvanced && <span> · 链接形式：{linkType === 'long' ? '长链（推荐）' : '数字短链'}</span>}
               </button>
               {showAdvanced && (
-                <div className="flex flex-col gap-1.5 pl-4" style={{ borderLeft: '2px solid var(--border-default)' }}>
+                <div className="flex flex-col gap-1.5">
                   <span className="text-xs" style={{ color: 'var(--text-muted)' }}>链接形式</span>
-                  <label className="flex items-start gap-2 cursor-pointer text-sm">
-                    <input type="radio" checked={linkType === 'long'} onChange={() => setLinkType('long')} className="mt-1" />
-                    <div className="flex flex-col">
-                      <span style={{ color: 'var(--text-secondary)' }}>字母长链 /s/wp/xxxxxxxxxxx（推荐）</span>
-                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>72 bits 随机 token，不可枚举猜测；密码可选</span>
-                    </div>
-                  </label>
-                  <label className="flex items-start gap-2 cursor-pointer text-sm">
-                    <input type="radio" checked={linkType === 'short'} onChange={() => setLinkType('short')} className="mt-1" />
-                    <div className="flex flex-col">
-                      <span style={{ color: 'var(--text-secondary)' }}>超短数字链 /s/123（自用便捷）</span>
-                      <span className="text-xs" style={{ color: '#f97316' }}>可被遍历猜测，必须配强密码使用</span>
-                    </div>
-                  </label>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setLinkType('long')} style={segCardStyle(linkType === 'long')}>
+                      <Link2 size={20} style={{ color: linkType === 'long' ? '#3b82f6' : 'var(--text-secondary)' }} />
+                      <span className="text-xs" style={{ color: linkType === 'long' ? '#3b82f6' : 'var(--text-secondary)' }}>字母长链 · 推荐</span>
+                    </button>
+                    <button type="button" onClick={() => setLinkType('short')} style={segCardStyle(linkType === 'short', true)}>
+                      <Link2 size={20} style={{ color: linkType === 'short' ? '#f97316' : 'var(--text-secondary)' }} />
+                      <span className="text-xs" style={{ color: linkType === 'short' ? '#f97316' : 'var(--text-secondary)' }}>数字短链 · 自用</span>
+                    </button>
+                  </div>
+                  <span className="text-xs" style={{ color: linkType === 'short' ? '#f97316' : 'var(--text-muted)' }}>
+                    {linkType === 'long'
+                      ? '/s/wp/xxx · 72 bits 随机 token，不可枚举'
+                      : '/s/123 · 可被遍历猜测，必须配强密码'}
+                  </span>
                 </div>
               )}
             </div>

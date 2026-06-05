@@ -1,0 +1,16 @@
+| feat | prd-api | 新增「智能体宇宙」能力契约 SSOT（AgentCapability + AgentCapabilityRegistry）与统一调用信封 AgentUniverseController（capabilities + invoke SSE），按 invokeMode 路由到适配器生图或网关聊天 |
+| feat | prd-admin | 新增 agentUniverse 服务（拉契约 + 统一 invoke SSE，支持图片 artifact） |
+| fix | prd-admin | 修复文档再加工「选中智能体即自动发送」，改为选中只聚焦输入框、用户输入后才触发 |
+| feat | prd-admin | 文档再加工抽屉改为契约驱动：视觉创作走真实生图并可一键插入文档，各智能体按 invokeMode 渲染对应交互 |
+| refactor | prd-api | 智能体宇宙改为「绝不仿冒」：invoke 一律路由到真实 IAgentAdapter，删除硬编码提示词的假聊天路径；注册表只登记有真实组件的 4 个智能体（视觉/文学/缺陷/PRD），找不到真实适配器明确报错 NO_REAL_AGENT |
+| fix | prd-api | VisualAgentAdapter 改走真实生图客户端 OpenAIImageClient.GenerateUnifiedAsync（与主视觉创作同一引擎），修复手搓 raw body 硬塞 quality 被模型拒绝（"不支持quality"）导致生图失败；并支持透传 size/model 参数 |
+| feat | prd-api | 智能体宇宙新增 GET agents/{key}/parameters：按智能体自己原有的池下发真实可选参数（视觉=尺寸/模型，仅有多个可选项时才给选择器），invoke 已支持 parameters 透传到真实适配器 |
+| feat | prd-admin | 文档再加工面板：生成型智能体显示尺寸/模型选择器（选项来自后端真实池，无可选项则不显示），所选参数随 invoke 透传 |
+| feat | prd-api | 智能体宇宙 invoke 支持百宝箱自定义智能体（custom:{id}）：实时读库 systemPrompt + 知识库跑真实网关，新建任意自定义智能体零代码接入统一管道 |
+| feat | prd-admin | 文档再加工：自定义百宝箱智能体改走统一 invoke 信封（与内置智能体同一管道），不再走独立 direct-chat |
+| fix | prd-admin | 修复文档再加工抽屉真人体验:① 抽屉 z-index 提到铃铛 FAB 之上(发送按钮不再被遮)+ 发送按钮与输入框等高 ② 输入区显示「引用：《文档名》」+ 空状态说明预期(自动带文档/关闭保留/新对话/多轮) + 新增「新对话」按钮 ③ 思考态显示已用秒数+>15s 慢模型提示(分清卡死 vs 生成中) |
+| feat | prd-api | 智能体宇宙能力契约新增 outboundActions(智能体专属出站动作):缺陷智能体声明「创建缺陷」,把产出送回原生系统而非只写回文档 |
+| feat | prd-admin | 文档再加工巧思:① 选中智能体显示「智能涌现」提示(这个智能体能做什么特别的)② 缺陷智能体产出旁「创建缺陷」一键建入缺陷库(复用 POST defects,标题自动归一)③ 文学/PRD 产出仍可替换/追加/另存(插入当前文档) |
+| feat | prd-api | 文学智能体声明 outboundActions「为这段配图」(illustrate),驱动文学→视觉接力 |
+| feat | prd-admin | 智能体接力(E9):文学产出旁「为这段配图」一键编排 literary generate_illustration(构思插画描述)→ visual text2img(生图)→ 图片可插文档,全程分阶段进度 |
+| feat | prd-admin | 视觉创作 mini 面板:再加工选视觉创作=真实视觉创作的缩小可交互版(提示词/用原文/参考图/真实水印 WatermarkSettingsPanel/尺寸模型/真实 generate 端点出图/插入文档/插入原文+配图);文学「为这段配图」改为打开 mini 面板并预填(交互式,不再默认值自动跑) |

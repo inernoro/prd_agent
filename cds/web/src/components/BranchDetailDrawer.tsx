@@ -41,6 +41,8 @@ interface BranchDetailData {
   projectId: string;
   branch: string;
   status: string;
+  previewSlug?: string;
+  previewUrl?: string;
   services: Record<string, ServiceState>;
   createdAt?: string;
   commitSha?: string;
@@ -1609,6 +1611,30 @@ export function BranchDetailDrawer({
           {error ? <div className="p-5"><ErrorBlock message={error} /></div> : null}
           {branch ? (
             <>
+              {branch.status === 'running' && branch.previewUrl ? (
+                <div className="mx-5 mt-4 flex flex-col gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+                      <Rocket className="h-4 w-4" />
+                      应用已上线
+                    </div>
+                    <a
+                      href={branch.previewUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-0.5 block min-w-0 truncate font-mono text-xs text-emerald-700/90 hover:underline dark:text-emerald-300"
+                    >
+                      {branch.previewUrl}
+                    </a>
+                  </div>
+                  <Button asChild size="sm" className="shrink-0 bg-emerald-600 text-white hover:bg-emerald-700">
+                    <a href={branch.previewUrl} target="_blank" rel="noreferrer">
+                      <ExternalLink />
+                      打开预览
+                    </a>
+                  </Button>
+                </div>
+              ) : null}
               <section className="border-b border-[hsl(var(--hairline))] px-5 py-4">
                 {(() => {
                   const origin = branchOriginInsight(branch);

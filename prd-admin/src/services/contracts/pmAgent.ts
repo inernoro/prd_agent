@@ -170,6 +170,31 @@ export type PmDashboard = {
   quarters: PmQuarterStats[];
   excellentProjects: PmProjectBonus[];
   costMetrics: PmCostMetrics;
+  portfolioHealth?: PmPortfolioHealth;
+};
+
+export type PmProjectHealthRow = {
+  id: string;
+  projectNo: string;
+  title: string;
+  projectType: PmProjectType;
+  health: 'red' | 'yellow' | 'green';
+  reason: string;
+  progress: number;
+  taskCount: number;
+  doneTaskCount: number;
+  overdueCount: number;
+  highRiskCount: number;
+  budgetUtil: number; // -1=未设预算
+  leaderName?: string | null;
+};
+export type PmPortfolioHealth = {
+  activeCount: number;
+  redCount: number;
+  yellowCount: number;
+  greenCount: number;
+  avgProgress: number;
+  projects: PmProjectHealthRow[];
 };
 
 export type PmTask = {
@@ -179,6 +204,7 @@ export type PmTask = {
   description?: string;
   parentTaskId?: string | null;
   milestoneId?: string | null;
+  goalId?: string | null;
   status: PmTaskStatus;
   priority: PmTaskPriority;
   assigneeId?: string | null;
@@ -270,6 +296,7 @@ export type UpdatePmTaskInput = Partial<{
   labels: string[];
   orderKey: number;
   milestoneId: string;
+  goalId: string;
 }>;
 
 export type BatchCreatePmTasksInput = {
@@ -312,12 +339,26 @@ export type PmKnowledgeFile = {
   createdAt: string;
   updatedAt: string;
 };
-export type PmMemberSite = { userId: string; userName: string; siteId: string; title: string; url: string };
+export type PmMemberSite = {
+  userId: string;
+  userName: string;
+  siteId: string;
+  title: string;
+  url: string;
+  /** public | private —— private 仅表示未在公开页列出，项目内仍可访问 */
+  visibility?: string;
+  coverImageUrl?: string | null;
+  viewCount?: number;
+  tags?: string[];
+  updatedAt?: string;
+};
 
 export type ListPmKnowledgeFilesContract = (projectId: string, category?: string) => Promise<ApiResponse<{ files: PmKnowledgeFile[]; categories: string[] }>>;
 export type UpdatePmKnowledgeFileContract = (fileId: string, input: { fileName?: string; category?: string }) => Promise<ApiResponse<{ updated: boolean }>>;
 export type DeletePmKnowledgeFileContract = (fileId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
 export type GetPmMemberSitesContract = (projectId: string) => Promise<ApiResponse<{ sites: PmMemberSite[] }>>;
+/** 解析项目知识库绑定的 DocumentStore（find-or-create），前端据此渲染 DocBrowser */
+export type GetPmKnowledgeStoreContract = (projectId: string) => Promise<ApiResponse<{ storeId: string; canWrite: boolean }>>;
 
 // ── 决策事项 ──
 export type PmDecisionType = 'pending' | 'decided' | 'memo';
@@ -330,14 +371,18 @@ export type PmDecision = {
   decidedBy?: string | null;
   decidedByName?: string | null;
   decidedAt?: string | null;
+  /** 关联目标 ID 列表 */
+  relatedGoalIds?: string[];
+  /** 关联任务 ID 列表 */
+  relatedTaskIds?: string[];
   createdBy: string;
   createdByName?: string | null;
   orderKey: number;
   createdAt: string;
   updatedAt: string;
 };
-export type CreatePmDecisionInput = { title: string; content?: string; type?: PmDecisionType };
-export type UpdatePmDecisionInput = Partial<{ title: string; content: string; type: PmDecisionType; orderKey: number }>;
+export type CreatePmDecisionInput = { title: string; content?: string; type?: PmDecisionType; relatedGoalIds?: string[]; relatedTaskIds?: string[] };
+export type UpdatePmDecisionInput = Partial<{ title: string; content: string; type: PmDecisionType; orderKey: number; relatedGoalIds: string[]; relatedTaskIds: string[] }>;
 export type ListPmDecisionsContract = (projectId: string) => Promise<ApiResponse<{ items: PmDecision[] }>>;
 export type CreatePmDecisionContract = (projectId: string, input: CreatePmDecisionInput) => Promise<ApiResponse<PmDecision>>;
 export type UpdatePmDecisionContract = (decisionId: string, input: UpdatePmDecisionInput) => Promise<ApiResponse<{ updated: boolean }>>;
@@ -352,14 +397,36 @@ export type PmWeeklyReport = {
   content: string;
   authorId: string;
   authorName?: string | null;
+  relatedGoalIds?: string[];
+  relatedTaskIds?: string[];
+  sourceType?: string | null;
+  sourceReportId?: string | null;
   createdAt: string;
   updatedAt: string;
 };
-export type SavePmWeeklyReportInput = { title?: string; content?: string; weekStart?: string };
+export type SavePmWeeklyReportInput = { title?: string; content?: string; weekStart?: string; relatedGoalIds?: string[]; relatedTaskIds?: string[] };
 export type ListPmWeeklyReportsContract = (projectId: string) => Promise<ApiResponse<{ items: PmWeeklyReport[] }>>;
 export type CreatePmWeeklyReportContract = (projectId: string, input: SavePmWeeklyReportInput) => Promise<ApiResponse<PmWeeklyReport>>;
 export type UpdatePmWeeklyReportContract = (reportId: string, input: SavePmWeeklyReportInput) => Promise<ApiResponse<{ updated: boolean }>>;
 export type DeletePmWeeklyReportContract = (reportId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
+
+/** 可导入的个人周报（report-agent，当前用户可见范围内） */
+export type ImportableWeeklyReport = {
+  id: string;
+  userId: string;
+  userName?: string | null;
+  teamId: string;
+  teamName?: string | null;
+  weekYear: number;
+  weekNumber: number;
+  status: string;
+  periodStart: string;
+  periodEnd: string;
+  isMine: boolean;
+  sectionCount: number;
+};
+export type ListImportableWeeklyReportsContract = (params?: { weekYear?: number; weekNumber?: number }) => Promise<ApiResponse<{ items: ImportableWeeklyReport[] }>>;
+export type ImportWeeklyReportContract = (projectId: string, input: { sourceReportId: string; relatedGoalIds?: string[]; relatedTaskIds?: string[] }) => Promise<ApiResponse<PmWeeklyReport>>;
 
 // ── 会议纪要 ──
 export type PmMeeting = {
@@ -384,15 +451,39 @@ export type DeletePmMeetingContract = (meetingId: string) => Promise<ApiResponse
 // ── 目标 / 计划 ──
 export type PmGoalScope = 'team' | 'personal';
 export type PmGoalStatus = 'on_track' | 'at_risk' | 'done' | 'abandoned';
+export type PmGoalConfidence = 'high' | 'medium' | 'low';
+export type PmKeyResultType = 'percent' | 'number' | 'currency' | 'binary';
+export type PmKeyResult = { id: string; title: string; type: PmKeyResultType; startValue: number; targetValue: number; currentValue: number; unit?: string | null };
 export type PmGoal = {
   id: string;
   projectId: string;
   scope: PmGoalScope;
+  /** 父目标 id；null/缺省=顶层目标 */
+  parentId?: string | null;
+  /** 层级深度，顶层=0 */
+  depth?: number;
+  /** 直接子目标数量 */
+  childCount?: number;
   ownerId: string;
   title: string;
   description?: string | null;
   metric?: string | null;
+  /** 结构化关键结果 KR */
+  keyResults?: PmKeyResult[];
+  keyResultCount?: number;
+  /** 负责人（可指派） */
+  leadId?: string | null;
+  leadName?: string | null;
+  /** 信心指数（最近一次 check-in） */
+  confidence?: PmGoalConfidence | null;
+  /** 期末评分 0.0-1.0（OKR 复盘） */
+  score?: number | null;
+  scoreNote?: string | null;
+  scoredAt?: string | null;
+  scoredByName?: string | null;
   period?: string | null;
+  /** 所属 OKR 周期 Id */
+  cycleId?: string | null;
   progress: number;
   progressMode: 'auto' | 'manual';
   linkedMilestoneCount?: number;
@@ -403,7 +494,26 @@ export type PmGoal = {
   createdAt: string;
   updatedAt: string;
 };
-export type SavePmGoalInput = Partial<{ scope: PmGoalScope; title: string; description: string; metric: string; period: string; progress: number; progressMode: 'auto' | 'manual'; status: PmGoalStatus; orderKey: number }>;
+export type SavePmGoalInput = Partial<{
+  scope: PmGoalScope; parentId: string; title: string; description: string; metric: string; period: string; cycleId: string;
+  progress: number; progressMode: 'auto' | 'manual'; status: PmGoalStatus;
+  leadId: string;
+  keyResults: { id?: string; title: string; type: PmKeyResultType; startValue: number; targetValue: number; currentValue: number; unit?: string }[];
+  orderKey: number;
+}>;
+export type PmGoalCheckIn = { id: string; goalId: string; projectId: string; authorId: string; authorName?: string | null; progress?: number | null; confidence?: PmGoalConfidence | null; note: string; createdAt: string };
+export type ListPmGoalCheckInsContract = (goalId: string) => Promise<ApiResponse<{ items: PmGoalCheckIn[] }>>;
+export type AddPmGoalCheckInContract = (goalId: string, input: { progress?: number; confidence?: PmGoalConfidence; note?: string }) => Promise<ApiResponse<PmGoalCheckIn>>;
+export type ScorePmGoalContract = (goalId: string, input: { score?: number; note?: string; clear?: boolean }) => Promise<ApiResponse<{ updated: boolean }>>;
+
+// ── OKR 周期 ──
+export type PmGoalCycleStatus = 'active' | 'closed';
+export type PmGoalCycle = { id: string; projectId: string; name: string; startAt?: string | null; endAt?: string | null; status: PmGoalCycleStatus; orderKey: number; createdAt: string; updatedAt: string };
+export type SavePmGoalCycleInput = Partial<{ name: string; startAt: string; endAt: string; status: PmGoalCycleStatus; orderKey: number }>;
+export type ListPmGoalCyclesContract = (projectId: string) => Promise<ApiResponse<{ items: PmGoalCycle[] }>>;
+export type CreatePmGoalCycleContract = (projectId: string, input: SavePmGoalCycleInput) => Promise<ApiResponse<PmGoalCycle>>;
+export type UpdatePmGoalCycleContract = (cycleId: string, input: SavePmGoalCycleInput) => Promise<ApiResponse<{ updated: boolean }>>;
+export type DeletePmGoalCycleContract = (cycleId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
 /** AI 拆解出的目标草稿（SSE 返回，未落库） */
 export type PmGoalDraft = { title: string; description?: string | null; metric?: string | null; period?: string | null };
 export type ListPmGoalsContract = (projectId: string) => Promise<ApiResponse<{ items: PmGoal[] }>>;
@@ -431,28 +541,118 @@ export type ListPmAuditLogsContract = (opts?: { projectId?: string; page?: numbe
 // ── 里程碑 ──
 export type PmMilestoneStatus = 'planned' | 'reached' | 'cancelled';
 export type PmMilestoneHealth = 'on_track' | 'at_risk' | 'overdue' | 'reached' | 'cancelled';
+export type PmMilestoneCriterion = { id: string; text: string; done: boolean };
+export type PmDeliverableType = 'weekly' | 'decision' | 'link';
+export type PmDeliverableRef = { type: PmDeliverableType; refId?: string | null; title: string; url?: string | null };
 export type PmMilestone = {
   id: string;
   projectId: string;
   title: string;
   description?: string | null;
   dueAt?: string | null;
+  /** 基线计划日（首次/重设的计划快照） */
+  baselineDueAt?: string | null;
+  /** 当前计划日 - 基线（天）：正=较初始计划推迟 */
+  driftDays?: number | null;
   reachedAt?: string | null;
   goalId?: string | null;
+  ownerId?: string | null;
+  ownerName?: string | null;
+  acceptanceCriteria?: PmMilestoneCriterion[];
+  criteriaTotal?: number;
+  criteriaDone?: number;
+  /** 前置里程碑 Id */
+  dependsOn?: string[];
+  deliverables?: PmDeliverableRef[];
+  /** 前置未达成 → 受阻 */
+  blocked?: boolean;
+  blockedBy?: string[];
   status: PmMilestoneStatus;
   orderKey: number;
   taskTotal: number;
   taskDone: number;
   progress: number;
+  /** 达成日 - 计划截止日（天）：正=延期，负=提前 */
+  slippageDays?: number | null;
   health: PmMilestoneHealth;
   createdAt: string;
   updatedAt: string;
 };
-export type SavePmMilestoneInput = Partial<{ title: string; description: string; dueAt: string; goalId: string; status: PmMilestoneStatus; orderKey: number }>;
+export type SavePmMilestoneInput = Partial<{
+  title: string; description: string; dueAt: string; goalId: string; ownerId: string;
+  acceptanceCriteria: { id?: string; text: string; done: boolean }[];
+  dependsOn: string[];
+  deliverables: { type: PmDeliverableType; refId?: string; title: string; url?: string }[];
+  resetBaseline: boolean;
+  status: PmMilestoneStatus; orderKey: number;
+}>;
+/** AI 建议的里程碑草稿 */
+export type PmMilestoneDraft = { title: string; description?: string; acceptanceCriteria?: string[]; dueDate?: string };
 export type ListPmMilestonesContract = (projectId: string) => Promise<ApiResponse<{ items: PmMilestone[] }>>;
 export type CreatePmMilestoneContract = (projectId: string, input: SavePmMilestoneInput) => Promise<ApiResponse<PmMilestone>>;
 export type UpdatePmMilestoneContract = (milestoneId: string, input: SavePmMilestoneInput) => Promise<ApiResponse<{ updated: boolean }>>;
 export type DeletePmMilestoneContract = (milestoneId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
+
+// ── 风险登记册 ──
+export type PmRiskLevel = 'high' | 'medium' | 'low';
+export type PmRiskResponse = 'open' | 'avoid' | 'transfer' | 'mitigate' | 'accept';
+export type PmRiskStatus = 'open' | 'mitigating' | 'closed';
+export type PmRisk = {
+  id: string;
+  projectId: string;
+  title: string;
+  description?: string | null;
+  probability: PmRiskLevel;
+  impact: PmRiskLevel;
+  response: PmRiskResponse;
+  status: PmRiskStatus;
+  ownerId?: string | null;
+  ownerName?: string | null;
+  relatedGoalId?: string | null;
+  relatedTaskId?: string | null;
+  /** 来源决策 ID —— 本风险由哪条决策衍生 */
+  relatedDecisionId?: string | null;
+  /** 关联里程碑 ID —— 本风险威胁哪个阶段节点 */
+  relatedMilestoneId?: string | null;
+  orderKey: number;
+  createdBy: string;
+  createdByName?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+export type SavePmRiskInput = Partial<{ title: string; description: string; probability: PmRiskLevel; impact: PmRiskLevel; response: PmRiskResponse; status: PmRiskStatus; ownerId: string; relatedGoalId: string; relatedTaskId: string; relatedDecisionId: string; relatedMilestoneId: string; orderKey: number }>;
+export type ListPmRisksContract = (projectId: string) => Promise<ApiResponse<{ items: PmRisk[] }>>;
+export type CreatePmRiskContract = (projectId: string, input: SavePmRiskInput) => Promise<ApiResponse<PmRisk>>;
+export type UpdatePmRiskContract = (riskId: string, input: SavePmRiskInput) => Promise<ApiResponse<{ updated: boolean }>>;
+export type DeletePmRiskContract = (riskId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
+
+// ── 项目级燃尽 / 预算挣值报表 ──
+export type PmBurndownPoint = {
+  date: string;
+  scope: number;
+  done: number | null;
+  remaining: number | null;
+  ideal: number;
+  pv: number | null;
+  ev: number | null;
+};
+export type PmBurndown = {
+  start: string;
+  plannedEnd: string;
+  today: string;
+  totalScope: number;
+  doneCount: number;
+  remaining: number;
+  completionRate: number;
+  overdue: boolean;
+  spi: number | null;
+  budget: number | null;
+  actualCost: number | null;
+  earnedValue: number | null;
+  plannedValue: number | null;
+  points: PmBurndownPoint[];
+};
+export type GetPmBurndownContract = (projectId: string) => Promise<ApiResponse<PmBurndown>>;
 export type GetPmProjectContract = (projectId: string) => Promise<ApiResponse<{ project: PmProject; tasks: PmTask[] }>>;
 export type UpdatePmProjectContract = (projectId: string, input: UpdatePmProjectInput) => Promise<ApiResponse<{ updated: boolean }>>;
 export type DeletePmProjectContract = (projectId: string) => Promise<ApiResponse<{ deleted: boolean }>>;

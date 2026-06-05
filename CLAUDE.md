@@ -286,10 +286,21 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 ```
 
 ```
-【预览】<cdscli 输出原文>{可选-具体页面路径}
+【预览】<cdscli 输出原文>{本次改动的具体功能页路径，必填}
 ```
 
-这条 CLI 是预览 URL 唯一的可执行 SSOT。它做三件事：
+#### 必须给「最终地址」，不给「中间地址」（2026-06-04 用户强制）
+
+**预览行必须是能直接落到本次改动功能页的最终深链**（cdscli 给的根域名 + 该功能的路由 + 必要的 query/tab），让用户点一下就到位，**禁止只给根域名**让用户自己 登录 → 搜索 → 进菜单 → 切 tab 走一圈。
+
+- ❌ 反例（只给根/中间地址）：`【预览】https://xxx.miduo.org/`
+- ✅ 正例（最终地址，带路由 + tab）：`【预览】https://xxx.miduo.org/open-platform?tab=open-api`
+- 规则：cdscli 输出是**根域名 SSOT**（不许自己 slugify 域名部分）；功能页路径由你**按本次改动的真实路由 + query 追加**（这部分不经 cdscli，是页面路由不是域名）。
+- 深链要落到「用户验收这次改动会看的那一屏」：有 tab 的带 `?tab=`，有 id 的给一个真实可达的 `:id`（或列表页 + 一句话指明点哪条），有锚点的带 `#anchor`。
+- 多个功能页改动 → 给多条【预览】，每条都是最终地址。
+- 历史背景：用户反馈"每次预览给根地址，导致我每次都要走一圈"。最终地址是默认，不是可选。
+
+这条 CLI 是预览 URL **域名部分**唯一的可执行 SSOT。它做三件事：
 
 1. 有 `CDS_HOST` + `AI_ACCESS_KEY` → `GET /api/branches` 拿后端 `previewSlug` 字段（与 `cds/src/services/preview-slug.ts:computePreviewSlug` 永不漂移）
 2. 没 CDS 凭据 → 用 cdscli 内嵌的 `_compute_preview_slug()` 推算（同 SSOT 公式，依赖目录名 ≈ CDS 项目 slug）
@@ -345,6 +356,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | `codebase-snapshot.md` | 无 glob (手动维护) | 项目快照：架构模式、功能注册表、118 个 MongoDB 集合 |
 | `zero-friction-input.md` | `**/*.{ts,tsx}` | 能上传不手输，不确定就两个都给，禁止空白发呆 |
 | `guided-exploration.md` | `**/*.{ts,tsx}` | 陌生页面 3 秒内知道做什么，空状态必须有引导 |
+| `chief-designer-usability.md` | `prd-admin/src/**/*.tsx`, `prd-desktop/src/**/*.tsx` | 好用四原则（首席设计师视角）：快启动无等待 / 奥卡姆剃刀剃掉不需人类处 / 不遮挡可视化够明显 / 短途减步不杜撰长链；交付前四条自审，两条不及格即返工 |
 | `no-rootless-tree.md` | `**/*.{cs,ts,tsx}` | 无根之木禁令 + 借用法则：不假定不存在的能力，缺什么借什么 |
 | `bridge-ops.md` | `cds/src/**/*.ts` | Bridge 操作规范：鼠标轨迹 + spa-navigate + description 必填 |
 | `navigation-registry.md` | 新 Agent / 新功能入口 | SSOT 模型：路由信息写到 launcherCatalog/agentSwitcherStore/toolboxStore，「设置→导航顺序」+ Cmd+K 自动同步；CI 跑 `navCoverage` 测试，未登记或 phantom 路由直接 fail |

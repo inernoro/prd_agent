@@ -4,6 +4,7 @@ import { TranscriptSidebar } from '@/components/transcript/TranscriptSidebar';
 import { TranscriptEditor } from '@/components/transcript/TranscriptEditor';
 import { GenerateDialog } from '@/components/transcript/GenerateDialog';
 import { GlassCard } from '@/components/design/GlassCard';
+import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import type { TranscriptItem } from '@/services/contracts/transcriptAgent';
 
 export default function TranscriptAgentPage() {
@@ -35,6 +36,11 @@ export default function TranscriptAgentPage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
+      <div className="shrink-0 flex items-center">
+        <div className="ml-auto">
+          <TipsEntryButton compact />
+        </div>
+      </div>
       <div className="grid gap-4 flex-1 min-h-0 lg:grid-cols-[280px_1fr]">
         {/* 左侧：工作区+素材列表 */}
         <GlassCard animated glow className="flex flex-col min-h-0 p-0 overflow-hidden">

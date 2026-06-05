@@ -1,0 +1,49 @@
+services:
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -lc "npx --yes serve -s . -l $$PORT"
+    ports:
+      - "4173:4173"
+    volumes:
+      - ./frontend:/app
+    environment:
+      PORT: "4173"
+    labels:
+      cds.path-prefix: /
+      cds.readiness-path: /
+
+  backend:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -lc "npm install --no-audit --no-fund && node server.js"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - nats
+    environment:
+      PORT: "3000"
+      NATS_URL: ${NATS_URL}
+    labels:
+      cds.path-prefix: /api/
+      cds.readiness-path: /api/health
+
+  # NATS server (no auth in this demo). Internal clients reach it at nats:4222.
+  nats:
+    image: nats:2-alpine
+    ports:
+      - "4222:4222"
+
+x-cds-project:
+  name: 发布订阅 Demo (NATS)
+  description: 前端发布消息到 NATS 主题，后端订阅者实时接收并回显。纯 image + command + bind-mount 一键部署。
+
+x-cds-env:
+  NATS_URL: nats://nats:4222
+
+x-cds-env-meta:
+  NATS_URL:
+    kind: infra-derived
+    hint: 后端连接的 NATS 地址（容器网络内通过服务名 nats 访问，无密码）。

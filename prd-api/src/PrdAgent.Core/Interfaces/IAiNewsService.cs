@@ -11,6 +11,12 @@ public interface IAiNewsService
     Task<AiNewsFeed> GetLatestAsync(CancellationToken ct = default);
 
     /// <summary>
+    /// 强制拉取上游并刷新新鲜/陈旧两层缓存（供启动预热器与定时刷新调用）。
+    /// 让缓存常驻新鲜，用户访问路径永不同步等外网。
+    /// </summary>
+    Task<AiNewsFeed> RefreshAndCacheAsync(CancellationToken ct = default);
+
+    /// <summary>
     /// 为指定资讯 id 生成 / 读取「一句话 AI 解读」。命中缓存直接返回，未命中批量调 LLM 生成并落库。
     /// 返回 id -> commentary 的映射（仅含成功生成或已缓存的条目）。
     /// </summary>

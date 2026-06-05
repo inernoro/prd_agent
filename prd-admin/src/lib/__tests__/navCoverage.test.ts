@@ -43,7 +43,6 @@ const ALLOW_LIST: Record<string, string> = {
 
   // ── 后端 menuCatalog 注册的入口（admin 类，由 backend 注入「其他菜单」分组）──
   '/executive': '总裁面板',
-  '/open-platform': '开放平台 admin',
   '/assets': '素材管理 admin',
   '/skills': '技能管理 admin',
   '/data-transfers': '数据迁移 admin',
