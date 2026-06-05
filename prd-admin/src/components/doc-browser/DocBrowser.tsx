@@ -2555,8 +2555,8 @@ export function DocBrowser({
       >
         {selectedEntryId ? (
           <>
-            {/* 面包屑导航 header（移动端缩小左右内边距，给「目录」按钮 + 标题让位） */}
-            <div className={`flex items-center gap-2 py-2.5 ${isMobile ? 'px-3' : 'px-5'}`} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+            {/* 面包屑导航 header（移动端缩小左右内边距 + 允许换行，避免徽章/标签挤出右边缘相互重叠） */}
+            <div className={`flex items-center gap-2 py-2.5 ${isMobile ? 'px-3 flex-wrap' : 'px-5'}`} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
               {/* 移动端「返回目录」：单栏布局下从正文回到文件列表（桌面端 isMobile=false 不渲染） */}
               {isMobile && (
                 <button
@@ -2633,7 +2633,8 @@ export function DocBrowser({
               })()}
               {(() => {
                 const sel = entries.find(e => e.id === selectedEntryId);
-                if (!sel || sel.isFolder) return null;
+                // 移动端：隐藏「更新于/更新者」（其 ml-auto 会把自己顶出窄屏右边缘、与标签重叠裁切）。
+                if (!sel || sel.isFolder || isMobile) return null;
                 // 「更新于」用 updatedAt（所有本地变更都会刷新它）；lastChangedAt 仅供 new 徽标，
                 // 避免浏览器内保存只 patch updatedAt 而 lastChangedAt 滞后导致显示陈旧
                 return (
@@ -2660,7 +2661,7 @@ export function DocBrowser({
               {/* 当前文件最近更新徽标 + 订阅来源版本信息（git 类订阅独有） */}
               {(() => {
                 const sel = entries.find(e => e.id === selectedEntryId);
-                if (!sel || sel.isFolder) return null;
+                if (!sel || sel.isFolder || isMobile) return null; // 移动端隐藏 new/订阅徽标，给标题+标签让位
                 const recentlyChanged = isRecentlyChanged(sel.lastChangedAt);
                 const isSubscription = sel.sourceType === 'subscription';
                 const githubSha = sel.metadata?.github_sha;
