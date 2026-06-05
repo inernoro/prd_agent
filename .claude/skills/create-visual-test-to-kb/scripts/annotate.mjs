@@ -11,7 +11,8 @@
 //     [--mobile] [--login] [--wait 5000] [--click "button:has-text(\"证据图\")"]
 //
 // boxes 每项：{sel | x,y,w,h}（sel 优先，取首个匹配的 boundingBox）+ label + color(red/orange/blue/green/purple 或 #hex)
-//   + n(可选序号) + labelPos(above 默认 / below / inside)。
+//   + n(可选序号) + labelPos(above 默认 / below / inside) + shape(box 默认方框 / circle 圈圈，圈更友好地指向单个元素)。
+//   指向"单个具体元素/按钮/输入框"用 shape:"circle"；框一片"区域/差异"用方框。
 // --login 用 env MAP_AI_USER / MAP_ACCEPT_PASS 表单登录；--mobile 用 iPhone 13 视口；--click 截图前先点开某元素。
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
@@ -68,20 +69,24 @@ try {
     for (const box of boxes) {
       if (box.x == null) continue;
       const color = COLORS[box.color] || box.color || '#ff3b30';
+      const isCircle = box.shape === 'circle' || box.shape === 'ellipse';
+      // 圈：在元素外多留一圈，用椭圆（border-radius 50%）把目标"圈"起来，比方框更像人手画的圈、更友好
+      const pad = isCircle ? 14 : 5;
       const frame = document.createElement('div');
       Object.assign(frame.style, {
-        position: 'fixed', left: (box.x - 5) + 'px', top: (box.y - 5) + 'px',
-        width: (box.w + 10) + 'px', height: (box.h + 10) + 'px',
-        border: `3px solid ${color}`, borderRadius: '10px', zIndex: '2147483647',
+        position: 'fixed', left: (box.x - pad) + 'px', top: (box.y - pad) + 'px',
+        width: (box.w + pad * 2) + 'px', height: (box.h + pad * 2) + 'px',
+        border: `${isCircle ? 4 : 3}px solid ${color}`, borderRadius: isCircle ? '50%' : '10px', zIndex: '2147483647',
         pointerEvents: 'none', boxShadow: `0 0 0 3px ${color}33`,
       });
       document.body.appendChild(frame);
       if (box.label) {
         const tag = document.createElement('div');
-        const top = box.labelPos === 'below' ? (box.y + box.h + 8)
-          : box.labelPos === 'inside' ? (box.y + 4) : (box.y - 32);
+        const lift = isCircle ? pad : 0;
+        const top = box.labelPos === 'below' ? (box.y + box.h + 8 + lift)
+          : box.labelPos === 'inside' ? (box.y + 4) : (box.y - 32 - lift);
         Object.assign(tag.style, {
-          position: 'fixed', left: (box.x - 5) + 'px', top: top + 'px', maxWidth: '560px',
+          position: 'fixed', left: (box.x - pad) + 'px', top: top + 'px', maxWidth: '560px',
           background: color, color: '#fff', font: '700 14px -apple-system,BlinkMacSystemFont,sans-serif',
           padding: '4px 9px', borderRadius: '7px', zIndex: '2147483647', pointerEvents: 'none', whiteSpace: 'nowrap',
         });
