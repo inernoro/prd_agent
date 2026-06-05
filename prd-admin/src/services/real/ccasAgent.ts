@@ -165,6 +165,56 @@ export async function deleteCcasFlowDiagram(id: string): Promise<ApiResponse<{ d
 export const CCAS_PRD_STREAM_URL = '/api/ccas-agent/prd/stream';
 export const CCAS_FLOW_PARSE_STREAM_URL = '/api/ccas-agent/flow/parse-stream';
 export const CCAS_QA_STREAM_URL = '/api/ccas-agent/qa/stream';
+export const CCAS_SQL_AI_STREAM_URL = '/api/ccas-agent/sql-ai/stream';
+
+// ──────────────────────────────────────────────
+// SQL 助手 AI 子能力（与后端 CcasSqlAiPrompts.cs 常量保持一致）
+// 后端容错：发未识别值会走"AI 在回复里先确认"兜底，不会 500。
+// ──────────────────────────────────────────────
+
+export type CcasSqlAiDialect = 'chenzhi-mssql' | 'miduo-mysql' | 'miduo-mssql';
+
+export type CcasSqlAiAssociationMode =
+  | 'bottle-pack'
+  | 'bottle-pack-box'
+  | 'bottle-pack-box-stack'
+  | 'unspecified';
+
+export interface CcasSqlAiRequest {
+  /** 数据库方言；未传 = AI 在回复里先确认 */
+  dialect?: CcasSqlAiDialect;
+  /** 关联模式（陈智版有效）；未传 = AI 在回复里先确认 */
+  associationMode?: CcasSqlAiAssociationMode;
+  /** 用户问题（必填） */
+  question: string;
+  /** 会话 ID（用于日志关联） */
+  sessionId?: string;
+}
+
+export interface CcasSqlAiDialectOption {
+  value: CcasSqlAiDialect;
+  label: string;
+  hint: string;
+}
+
+export const CCAS_SQL_AI_DIALECTS: CcasSqlAiDialectOption[] = [
+  { value: 'chenzhi-mssql', label: '陈智版 · SQL Server', hint: 'BagCode/BoxCode 嵌套，T-SQL' },
+  { value: 'miduo-mysql', label: '米多版 · MySQL', hint: '层级拍平，石湾 2 号机' },
+  { value: 'miduo-mssql', label: '米多版 · SQL Server', hint: '层级拍平，致美斋' },
+];
+
+export interface CcasSqlAiAssociationOption {
+  value: CcasSqlAiAssociationMode;
+  label: string;
+  hint: string;
+}
+
+export const CCAS_SQL_AI_ASSOCIATION_MODES: CcasSqlAiAssociationOption[] = [
+  { value: 'bottle-pack', label: '瓶盒（2 级）', hint: 'BagCode=瓶, BoxCode=盒' },
+  { value: 'bottle-pack-box', label: '瓶盒箱（3 级）', hint: '两层递归' },
+  { value: 'bottle-pack-box-stack', label: '瓶盒箱垛（4 级）', hint: '三层递归' },
+  { value: 'unspecified', label: '不指定 — 让 AI 先确认', hint: '同一句 SQL 在不同关联模式下含义不同' },
+];
 
 // ──────────────────────────────────────────────
 // 智能客服请求 / SSE 事件类型（前端 fetch + ReadableStream 自行消费）

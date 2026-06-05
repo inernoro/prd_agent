@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Factory, FileText, Image as ImageIcon, GitBranch, AlertCircle, MessageSquare, HelpCircle, X } from 'lucide-react';
+import { Factory, FileText, Image as ImageIcon, GitBranch, AlertCircle, MessageSquare, HelpCircle, X, Database } from 'lucide-react';
 import { getCcasMeta } from '@/services';
 import type { CcasMeta } from '@/services';
 import { TabBar } from '@/components/design/TabBar';
@@ -9,14 +9,16 @@ import { CcasPrdTab } from './CcasPrdTab';
 import { CcasEquipmentTab } from './CcasEquipmentTab';
 import { CcasFlowTab } from './CcasFlowTab';
 import { CcasQaTab } from './CcasQaTab';
+import { CcasSqlTab } from './CcasSqlTab';
 
-type Tab = 'prd' | 'equipment' | 'flow' | 'qa';
+type Tab = 'prd' | 'equipment' | 'flow' | 'qa' | 'sql';
 
 const TABS: { key: Tab; label: string; icon: React.ReactNode; desc: string }[] = [
   { key: 'prd', label: 'PRD 文档生成', icon: <FileText className="w-4 h-4" />, desc: '按米多 product-document-generator 模板生成 / 优化产品文档（工程版 / 敏捷版）' },
   { key: 'equipment', label: '设备素材库', icon: <ImageIcon className="w-4 h-4" />, desc: '按预设风格生成产线设备图，攒一份属于你的素材库，给流程图节点用' },
   { key: 'flow', label: '流程示意图', icon: <GitBranch className="w-4 h-4" />, desc: 'AI 解析输入 → 节点 + 边 JSON → ReactFlow 拼装素材图，可拖动微调 + 导出' },
   { key: 'qa', label: '智能客服', icon: <MessageSquare className="w-4 h-4" />, desc: '基于知识库的严格 RAG 问答，知识库没有就明说不杜撰；可开联网开关补充模型公开知识' },
+  { key: 'sql', label: 'SQL助手', icon: <Database className="w-4 h-4" />, desc: '服务 CCAS 业务的数据库 SQL 辅助工具集：IN 子句转换、列表去重等批量字符串处理；后续会继续扩展' },
 ];
 
 export function CcasAgentPage() {
@@ -99,6 +101,7 @@ export function CcasAgentPage() {
             {tab === 'equipment' && <CcasEquipmentTab meta={meta} />}
             {tab === 'flow' && <CcasFlowTab meta={meta} />}
             {tab === 'qa' && <CcasQaTab meta={meta} />}
+            {tab === 'sql' && <CcasSqlTab />}
           </>
         ) : null}
       </div>
@@ -156,25 +159,16 @@ function CcasHelpDrawer({ open, onClose }: { open: boolean; onClose: () => void 
           </section>
 
           <section className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
-            <h3 className="text-sm font-medium text-white mb-2">四个功能区怎么用</h3>
+            <h3 className="text-sm font-medium text-white mb-2">五个功能区怎么用</h3>
             <div className="space-y-2 text-white/65">
               <p><span className="text-amber-200/90">PRD 文档生成：</span>把产品背景、产线设备、关联模式写清楚，AI 会按工程版或敏捷版模板输出。</p>
               <p><span className="text-amber-200/90">设备素材库：</span>生成裹包机、工业相机、龙门架等设备图，后续可复用到流程图节点。</p>
               <p><span className="text-amber-200/90">流程示意图：</span>输入流程描述后解析为 ReactFlow 节点和边，可拖动调整并保存。</p>
               <p><span className="text-amber-200/90">智能客服：</span>默认严格基于知识库回答，知识库没有就说明没有；打开联网后允许补充模型公开知识。</p>
+              <p><span className="text-amber-200/90">SQL 助手：</span>处理 CCAS 业务里反复出现的 SQL 片段——IN 子句拼接、列表去重，后续会继续加常用工具，全程纯前端不会回传数据。</p>
             </div>
           </section>
 
-          <section className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
-            <h3 className="text-sm font-medium text-white mb-2">封面图在哪加</h3>
-            <p className="text-white/65 leading-relaxed">
-              入口在「资源管理」的「首页资源」Tab，找到「智能体封面（图片 + 动态视频）」分区，
-              给「赋码采集关联智能体」上传封面图即可。底层资源 slot 是
-              <code className="mx-1 px-1.5 py-0.5 rounded bg-black/35 text-amber-200">agent.ccas-agent.image</code>。
-              如果还要 hover 动态视频，对应 slot 是
-              <code className="mx-1 px-1.5 py-0.5 rounded bg-black/35 text-amber-200">agent.ccas-agent.video</code>。
-            </p>
-          </section>
         </div>
       </aside>
     </div>
