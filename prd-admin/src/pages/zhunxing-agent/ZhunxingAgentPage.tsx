@@ -22,7 +22,27 @@ import {
   type ZhunxingTopicSubscriptionResult,
   type ZhunxingTopicUpdateFeed,
 } from '@/services/real/zhunxing';
-import { AlertCircle, BarChart3, BellRing, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Flame, RefreshCw, Search, ShieldAlert, ShieldCheck } from 'lucide-react';
+import {
+  AlertCircle,
+  ArrowRight,
+  BarChart3,
+  BellRing,
+  Bot,
+  BrainCircuit,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  Clock3,
+  Flame,
+  Network,
+  RefreshCw,
+  Rocket,
+  Search,
+  ShieldAlert,
+  ShieldCheck,
+  Workflow,
+} from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 
 const STARTERS = [
@@ -56,6 +76,44 @@ const TOPIC_LABELS: Record<string, string> = {
 };
 
 const TOPIC_OPTIONS = Object.entries(TOPIC_LABELS).map(([value, label]) => ({ value, label }));
+
+const CORE_CAPABILITIES = [
+  {
+    title: '角色化回答',
+    description: '同一问题支持员工/主管/HR三种执行口径，减少“答对但不好用”。',
+  },
+  {
+    title: '流程决策树',
+    description: '自动生成 IF/THEN 步骤，适配请假、考勤、交接等执行场景。',
+  },
+  {
+    title: '冲突治理',
+    description: '多条款口径冲突时自动报警并列出依据，防止误执行。',
+  },
+  {
+    title: '运营闭环',
+    description: '从反馈工单到回放验证、回访通知，持续优化知识命中率。',
+  },
+];
+
+const FUTURE_PORTALS = [
+  {
+    title: '知识图谱导航',
+    description: '跨制度关系图与影响路径追踪，定位“条款-流程-角色”全链路。',
+  },
+  {
+    title: '主动预警中心',
+    description: '基于岗位与订阅主题推送制度变更、风险项和待确认冲突。',
+  },
+  {
+    title: '协同执行编排',
+    description: '把问答结果直接转换为跨部门任务流，自动拉齐责任人与SLA。',
+  },
+  {
+    title: '多模态知识接入',
+    description: '支持文档、会议纪要、流程图、录音等统一索引与可追溯问答。',
+  },
+];
 
 export default function ZhunxingAgentPage() {
   const permissions = useAuthStore((s) => s.permissions);
@@ -337,6 +395,49 @@ export default function ZhunxingAgentPage() {
   const askPanel = (
     <>
       <GlassCard variant="subtle" animated className="p-4">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 flex-1">
+            <div className="inline-flex items-center gap-2 rounded-md px-2 py-1 text-[11px]" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', color: '#22C55E' }}>
+              <Rocket size={12} />
+              Zhunxing Knowledge OS · Beta
+            </div>
+            <div className="mt-2 text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
+              准星不是“规章 FAQ”，而是企业 AI + 知识库的执行中枢
+            </div>
+            <div className="mt-1 text-xs leading-5" style={{ color: 'var(--text-muted)' }}>
+              当前阶段聚焦“问答可用、流程可执行、风险可治理”，后续将演进为知识图谱、主动预警、自动编排的一体化平台。
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <span className="px-2 py-0.5 rounded-md text-[11px]" style={{ background: 'rgba(96,165,250,0.14)', border: '1px solid rgba(96,165,250,0.32)', color: '#60A5FA' }}>P1 问答执行化</span>
+              <span className="px-2 py-0.5 rounded-md text-[11px]" style={{ background: 'rgba(52,211,153,0.14)', border: '1px solid rgba(52,211,153,0.32)', color: '#34D399' }}>P2 反馈运营化</span>
+              <span className="px-2 py-0.5 rounded-md text-[11px]" style={{ background: 'rgba(251,191,36,0.14)', border: '1px solid rgba(251,191,36,0.32)', color: '#FBBF24' }}>P3 知识网络化</span>
+              <span className="px-2 py-0.5 rounded-md text-[11px]" style={{ background: 'rgba(251,113,133,0.14)', border: '1px solid rgba(251,113,133,0.32)', color: '#FB7185' }}>P4 智能自治化</span>
+            </div>
+          </div>
+          <div className="w-full lg:max-w-[340px] rounded-lg p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <div className="text-xs font-semibold mb-2 flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
+              <Workflow size={13} />
+              能力演进路径
+            </div>
+            <div className="flex flex-col gap-2">
+              <div className="text-xs flex items-center justify-between" style={{ color: 'var(--text-primary)' }}>
+                <span>问答与条款引用</span><span style={{ color: '#34D399' }}>已上线</span>
+              </div>
+              <div className="text-xs flex items-center justify-between" style={{ color: 'var(--text-primary)' }}>
+                <span>决策树与冲突治理</span><span style={{ color: '#34D399' }}>已上线</span>
+              </div>
+              <div className="text-xs flex items-center justify-between" style={{ color: 'var(--text-primary)' }}>
+                <span>主题订阅与热力运营</span><span style={{ color: '#34D399' }}>已上线</span>
+              </div>
+              <div className="text-xs flex items-center justify-between" style={{ color: 'var(--text-primary)' }}>
+                <span>知识图谱与主动预警</span><span style={{ color: '#FBBF24' }}>规划中</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </GlassCard>
+
+      <GlassCard variant="subtle" animated className="p-4">
         <div className="flex items-start gap-3">
           <div
             className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
@@ -349,10 +450,10 @@ export default function ZhunxingAgentPage() {
           </div>
           <div className="min-w-0 flex-1">
             <div className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
-              准星智能体
+              即时问答入口
             </div>
             <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
-              面向公司制度、产研规范、跨部门协作流程的问答入口
+              面向制度、流程、交接与协作规范的问题求解台（支持角色化输出）
             </div>
           </div>
         </div>
@@ -662,6 +763,76 @@ export default function ZhunxingAgentPage() {
           </div>
         </GlassCard>
       )}
+
+      <GlassCard variant="subtle" animated className="p-4">
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <div className="text-sm font-semibold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+            <Bot size={15} />
+            已上线能力矩阵
+          </div>
+          <span className="text-[11px] px-2 py-0.5 rounded-md" style={{ background: 'rgba(52,211,153,0.12)', border: '1px solid rgba(52,211,153,0.3)', color: '#34D399' }}>
+            Online
+          </span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          {CORE_CAPABILITIES.map((item) => (
+            <div key={item.title} className="rounded-lg p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                {item.title}
+              </div>
+              <div className="mt-1 text-xs leading-5" style={{ color: 'var(--text-muted)' }}>
+                {item.description}
+              </div>
+            </div>
+          ))}
+        </div>
+      </GlassCard>
+
+      <GlassCard variant="subtle" animated className="p-4">
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <div className="text-sm font-semibold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+            <BrainCircuit size={15} />
+            未来能力预告（预留功能口子）
+          </div>
+          <span className="text-[11px] px-2 py-0.5 rounded-md" style={{ background: 'rgba(251,191,36,0.12)', border: '1px solid rgba(251,191,36,0.3)', color: '#FBBF24' }}>
+            Coming Soon
+          </span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          {FUTURE_PORTALS.map((item) => (
+            <div key={item.title} className="rounded-lg p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  {item.title}
+                </div>
+                <span className="text-[11px]" style={{ color: '#FBBF24' }}>
+                  预研中
+                </span>
+              </div>
+              <div className="mt-1 text-xs leading-5" style={{ color: 'var(--text-muted)' }}>
+                {item.description}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 rounded-lg p-2.5 flex flex-wrap items-center justify-between gap-2" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+          <div className="text-xs flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
+            <Network size={13} />
+            {'未来将支持“提问 -> 生成流程 -> 自动分派 -> 执行回执”的全链路闭环。'}
+          </div>
+          <Button variant="secondary" size="sm" disabled className="whitespace-nowrap">
+            申请内测资格
+            <ArrowRight size={13} />
+          </Button>
+        </div>
+      </GlassCard>
+
+      <GlassCard variant="subtle" animated className="p-3">
+        <div className="text-xs flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
+          <Clock3 size={13} />
+          提示：当前展示为“产品化骨架”，后续功能会按阶段逐步上线，避免页面结构反复重做。
+        </div>
+      </GlassCard>
     </>
   );
 
@@ -1073,13 +1244,18 @@ export default function ZhunxingAgentPage() {
   );
 
   return (
-    <div className="h-full min-h-0 overflow-auto px-4 py-4">
-      <div className="max-w-5xl mx-auto flex flex-col gap-4">
+    <div className="h-full min-h-0 overflow-auto px-3 py-4 sm:px-4 md:px-6">
+      <div className="max-w-6xl mx-auto flex flex-col gap-4">
         <GlassCard variant="subtle" className="p-3">
           <div className="flex items-center justify-between gap-2">
-            <div className="text-sm font-semibold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
-              <BarChart3 size={15} />
-              准星工作台
+            <div className="min-w-0">
+              <div className="text-sm font-semibold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+                <BarChart3 size={15} />
+                准星工作台
+              </div>
+              <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                企业级 AI + 知识库中枢（Knowledge OS）
+              </div>
             </div>
             <div className="flex items-center gap-2">
               <Button variant={viewMode === 'ask' ? 'primary' : 'secondary'} size="sm" onClick={() => setViewMode('ask')} className="whitespace-nowrap">
