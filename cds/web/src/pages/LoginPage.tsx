@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ArrowRight, Github, Loader2, LockKeyhole, Shield } from 'lucide-react';
 import { CdsMetallicLogo } from '@/components/brand/CdsMetallicLogo';
 import { Button } from '@/components/ui/button';
@@ -14,6 +15,7 @@ function redirectTarget(): string {
 }
 
 export function LoginPage(): JSX.Element {
+  const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -37,7 +39,12 @@ export function LoginPage(): JSX.Element {
         const message = typeof body?.error === 'string' ? body.error : 'Access denied';
         throw new Error(message);
       }
-      window.location.href = target;
+      // SPA navigation — the auth cookie is already set by the response above,
+      // so there is no need to hard-reload (which would re-download + re-parse
+      // the whole JS bundle). `target` is validated to be an internal path in
+      // redirectTarget(), so client-side routing is safe. `replace` keeps the
+      // login page out of history.
+      navigate(target, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

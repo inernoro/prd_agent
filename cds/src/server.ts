@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { createBranchRouter } from './routes/branches.js';
 import { createCdsEventsRouter } from './routes/cds-events.js';
@@ -3217,13 +3218,84 @@ export function installSpaFallback(
   // explicit redirects below. There is no legacy static-page fallback.
   const reactIndex = path.join(reactDist, 'index.html');
   if (fs.existsSync(reactIndex)) {
-    app.use(
-      '/assets',
-      express.static(path.join(reactDist, 'assets'), {
-        immutable: true,
-        maxAge: '1y',
-      })
-    );
+    // ── Static assets (content-hashed, immutable) ──
+    // Vite emits content-hashed filenames under /assets, so every file is
+    // immutable and safe to cache for a year. We also compress text assets
+    // (JS/CSS/SVG/JSON) on the fly with the built-in zlib — no extra npm
+    // dependency (which would break the host's `pnpm install --frozen-lockfile`)
+    // — and memoize the compressed buffer: these files never change, so each is
+    // compressed exactly once. This cuts the dashboard bundle transfer from
+    // ~199KB to ~60KB. SSE / streaming routes are never served from here, so
+    // there is no streaming-compat risk. Fonts/images fall through to sendFile
+    // verbatim (already compressed). Cache-Control here is `immutable` without
+    // `no-cache`; note the host nginx still appends `no-cache` via add_header
+    // until exec_cds.sh's template fix is reloaded (see render_nginx()).
+    const assetsDir = path.join(reactDist, 'assets');
+    const ASSET_COMPRESS_CACHE = new Map<string, Buffer>();
+    const ASSET_TEXT_MIME: Record<string, string> = {
+      '.js': 'application/javascript; charset=utf-8',
+      '.mjs': 'application/javascript; charset=utf-8',
+      '.css': 'text/css; charset=utf-8',
+      '.svg': 'image/svg+xml',
+      '.json': 'application/json; charset=utf-8',
+      '.map': 'application/json; charset=utf-8',
+    };
+    app.get('/assets/*', (req, res, next) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+      let rel: string;
+      try {
+        rel = decodeURIComponent(req.path.slice('/assets/'.length));
+      } catch {
+        return next();
+      }
+      const filePath = path.join(assetsDir, rel);
+      // Path-traversal guard: resolved path must stay inside assetsDir.
+      if (!filePath.startsWith(assetsDir + path.sep)) return next();
+      let isFile = false;
+      try {
+        isFile = fs.statSync(filePath).isFile();
+      } catch {
+        return next();
+      }
+      if (!isFile) return next();
+
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      res.setHeader('Vary', 'Accept-Encoding');
+
+      const ext = path.extname(filePath).toLowerCase();
+      const mime = ASSET_TEXT_MIME[ext];
+      // Non-text (fonts/images): already compressed, serve verbatim.
+      if (!mime) {
+        return res.sendFile(filePath, { maxAge: '1y', immutable: true });
+      }
+
+      const accept = String(req.headers['accept-encoding'] || '');
+      const encoding = /\bbr\b/.test(accept) ? 'br' : /\bgzip\b/.test(accept) ? 'gzip' : 'identity';
+      res.setHeader('Content-Type', mime);
+
+      if (encoding === 'identity') {
+        return res.sendFile(filePath, { maxAge: '1y', immutable: true });
+      }
+
+      const cacheKey = `${filePath}:${encoding}`;
+      let body = ASSET_COMPRESS_CACHE.get(cacheKey);
+      if (!body) {
+        try {
+          const raw = fs.readFileSync(filePath);
+          body =
+            encoding === 'br'
+              ? zlib.brotliCompressSync(raw, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 5 } })
+              : zlib.gzipSync(raw, { level: 6 });
+          ASSET_COMPRESS_CACHE.set(cacheKey, body);
+        } catch {
+          return res.sendFile(filePath, { maxAge: '1y', immutable: true });
+        }
+      }
+      res.setHeader('Content-Encoding', encoding);
+      res.setHeader('Content-Length', String(body.length));
+      if (req.method === 'HEAD') return res.end();
+      res.end(body);
+    });
     // favicon and any other root-level files that Vite emits next to index.html
     app.use(
       express.static(reactDist, {
