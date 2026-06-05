@@ -4,7 +4,7 @@ import { motion } from 'motion/react';
 import { X, Replace, FileDown, FilePlus2, AlertTriangle, Check } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { buildApplyPreview, applyModeMeta, type ApplyMode } from './docApplyPreview';
+import { buildApplyPreview, applyModeMeta, buildFolderOptions, type ApplyMode, type FolderNode } from './docApplyPreview';
 
 // AI 文档对话「写回前确认」弹窗 —— diff 预览闸。
 //
@@ -24,7 +24,9 @@ export interface DocApplyDiffModalProps {
   docTruncated?: boolean;
   /** 写回进行中（确认按钮转圈 + 禁止重复点击） */
   applying: boolean;
-  onConfirm: (opts: { title?: string }) => void;
+  /** Phase 2：当前知识库的文件夹列表（mode=new 时渲染「落到哪个目录」选择器） */
+  folders?: FolderNode[];
+  onConfirm: (opts: { title?: string; parentId?: string }) => void;
   onCancel: () => void;
 }
 
@@ -41,6 +43,7 @@ export function DocApplyDiffModal({
   aiContent,
   docTruncated,
   applying,
+  folders,
   onConfirm,
   onCancel,
 }: DocApplyDiffModalProps) {
@@ -50,6 +53,9 @@ export function DocApplyDiffModal({
   );
   const meta = applyModeMeta(mode);
   const [title, setTitle] = useState(preview.defaultTitle ?? '');
+  // mode=new 的目标目录：空 = 与原文同目录（后端默认）
+  const [parentId, setParentId] = useState('');
+  const folderOptions = useMemo(() => buildFolderOptions(folders ?? []), [folders]);
 
   // ESC 关闭（写回中不允许关，避免误判已取消）
   useEffect(() => {
@@ -69,7 +75,7 @@ export function DocApplyDiffModal({
   const handleConfirm = () => {
     if (applying) return;
     if (mode === 'new') {
-      onConfirm({ title: title.trim() || preview.defaultTitle });
+      onConfirm({ title: title.trim() || preview.defaultTitle, parentId: parentId || undefined });
       return;
     }
     onConfirm({});
@@ -160,8 +166,28 @@ export function DocApplyDiffModal({
                 className="prd-field w-full rounded-[8px] px-3 py-2 text-[12px] outline-none disabled:opacity-60"
               />
             </div>
+            {folderOptions.length > 0 && (
+              <div>
+                <label className="block mb-1 text-[11px] font-semibold text-token-muted">落到哪个目录</label>
+                <select
+                  value={parentId}
+                  onChange={(e) => setParentId(e.target.value)}
+                  disabled={applying}
+                  className="prd-field w-full rounded-[8px] px-3 py-2 text-[12px] outline-none disabled:opacity-60"
+                >
+                  <option value="">（与原文同目录）</option>
+                  {folderOptions.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {`${'　'.repeat(f.depth)}${f.label}`}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <p className="text-[10px] text-token-muted">
-              将与《{entryTitle}》落在同一目录，原文不会被修改。
+              {folderOptions.length > 0
+                ? '可选择落到知识库的某个目录；不选则与原文同目录。原文不会被修改。'
+                : '将与《' + entryTitle + '》落在同一目录，原文不会被修改。'}
             </p>
           </div>
         )}

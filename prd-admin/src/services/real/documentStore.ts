@@ -518,10 +518,25 @@ export async function applyReprocessContent(entryId: string, input: {
   mode: 'replace' | 'append' | 'new';
   content: string;
   title?: string;
+  /** Phase 2：mode=new 时的目标目录（文件夹条目 id）；为空落在源文档同目录 */
+  parentId?: string;
 }) {
   return await apiRequest<{ mode: string; outputEntryId?: string; updatedEntryId?: string }>(
     api.documentStore.entries.reprocessApplyContent(entryId),
     { method: 'POST', body: input },
+  );
+}
+
+/** Phase 2：知识库目录（文件夹）列表，供「另存到指定目录」选择器用 */
+export interface DocStoreFolder {
+  id: string;
+  title: string;
+  parentId?: string | null;
+}
+export async function getDocumentStoreFolders(storeId: string) {
+  return await apiRequest<{ folders: DocStoreFolder[] }>(
+    api.documentStore.entries.folders(storeId),
+    { method: 'GET' },
   );
 }
 

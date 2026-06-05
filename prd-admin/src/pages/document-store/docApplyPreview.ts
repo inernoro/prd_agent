@@ -60,3 +60,47 @@ const MODE_META: Record<ApplyMode, { title: string; confirmLabel: string; danger
 export function applyModeMeta(mode: ApplyMode) {
   return MODE_META[mode];
 }
+
+// ── Phase 2：目录选择器 ──
+// 把扁平 folders（id/title/parentId）拼成「按层级缩进」的有序选项，供「另存到指定目录」下拉用。
+export interface FolderNode {
+  id: string;
+  title: string;
+  parentId?: string | null;
+}
+export interface FolderOption {
+  id: string;
+  label: string;
+  depth: number;
+}
+
+export function buildFolderOptions(folders: FolderNode[]): FolderOption[] {
+  const byParent = new Map<string | null, FolderNode[]>();
+  for (const f of folders) {
+    const key = f.parentId ?? null;
+    if (!byParent.has(key)) byParent.set(key, []);
+    byParent.get(key)!.push(f);
+  }
+  for (const arr of byParent.values()) arr.sort((a, b) => a.title.localeCompare(b.title));
+
+  const out: FolderOption[] = [];
+  const seen = new Set<string>();
+  const walk = (parentKey: string | null, depth: number) => {
+    for (const node of byParent.get(parentKey) ?? []) {
+      if (seen.has(node.id)) continue; // 防环
+      seen.add(node.id);
+      out.push({ id: node.id, label: node.title, depth });
+      walk(node.id, depth + 1);
+    }
+  };
+  walk(null, 0);
+
+  // 父目录不在列表里的「孤儿」文件夹（数据残缺）兜底挂到根，避免选不到
+  for (const f of folders) {
+    if (!seen.has(f.id)) {
+      seen.add(f.id);
+      out.push({ id: f.id, label: f.title, depth: 0 });
+    }
+  }
+  return out;
+}

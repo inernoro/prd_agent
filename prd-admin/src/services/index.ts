@@ -1908,6 +1908,7 @@ export {
   getDocStoreShareView,
   listDocStoreShareEntries,
   getDocStoreShareEntryContent,
+  getDocumentStoreFolders,
 } from '@/services/real/documentStore';
 export type {
   DocumentStore,

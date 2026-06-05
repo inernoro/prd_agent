@@ -700,6 +700,30 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize, sharedEntryIds }));
     }
 
+    /// <summary>
+    /// Phase 2：获取知识库的目录（文件夹）列表，供「另存到指定目录」选择器 + 智能体感知目录结构用。
+    /// 只返回文件夹（轻量投影 id/title/parentId），前端据 parentId 自行拼成树。
+    /// </summary>
+    [HttpGet("stores/{storeId}/folders")]
+    public async Task<IActionResult> ListFolders(string storeId)
+    {
+        var userId = GetUserId();
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
+        if (!await CanReadStoreAsync(store, userId, myTeamIds))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
+        var folders = await _db.DocumentEntries
+            .Find(e => e.StoreId == storeId && e.IsFolder)
+            .Project(e => new { e.Id, e.Title, e.ParentId })
+            .ToListAsync();
+
+        return Ok(ApiResponse<object>.Ok(new { folders }));
+    }
+
     /// <summary>获取文档条目详情</summary>
     [HttpGet("entries/{entryId}")]
     public async Task<IActionResult> GetEntry(string entryId)
@@ -2668,6 +2692,20 @@ public class DocumentStoreController : ControllerBase
                 return TemplateValidationError(template, problems);
         }
 
+        // Phase 2：mode=new 可指定目标目录。校验 parentId 是同库的文件夹，避免把新文档塞到别人库 / 非文件夹下。
+        string? targetParentId = null;
+        if (mode == "new" && !string.IsNullOrWhiteSpace(request.ParentId))
+        {
+            var parent = await _db.DocumentEntries
+                .Find(e => e.Id == request.ParentId && e.StoreId == entry.StoreId)
+                .FirstOrDefaultAsync();
+            if (parent == null)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "目标目录不存在或不属于当前知识库"));
+            if (!parent.IsFolder)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "目标必须是文件夹"));
+            targetParentId = parent.Id;
+        }
+
         // 复用 ApplyService 内部逻辑：构造一个临时 Run+Message 喂给它，避免重复实现写盘细节
         var tmpRun = new DocumentStoreAgentRun
         {
@@ -2684,7 +2722,7 @@ public class DocumentStoreController : ControllerBase
         };
         try
         {
-            var result = await applyService.ApplyAsync(tmpRun, entry, messageSeq: 0, mode, request.Title, _db);
+            var result = await applyService.ApplyAsync(tmpRun, entry, messageSeq: 0, mode, request.Title, _db, targetParentId);
 
             // 替换 / 追加修改了原 entry 的正文 —— 必须按 UpdateEntryContent 同款逻辑
             // 重绑划词评论的 offset，否则旧评论高亮会指向新文本的错误位置（Codex P2 #2）。
@@ -4495,6 +4533,9 @@ public class ApplyContentRequest
 
     /// <summary>mode=new 时的标题（可选）</summary>
     public string? Title { get; set; }
+
+    /// <summary>mode=new 时的目标目录（可选）。为空则落在源文档同目录。必须是同库的文件夹条目。</summary>
+    public string? ParentId { get; set; }
 }
 
 public class CreateReprocessAgentRequest

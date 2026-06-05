@@ -19,6 +19,7 @@ import {
   deleteReprocessAgent,
   applyReprocessContent,
   getDocumentContent,
+  getDocumentStoreFolders,
   getActiveReprocessRun,
   getReprocessConversation,
   saveReprocessConversation,
@@ -31,7 +32,7 @@ import type { AgentCapability, AgentArtifact, AgentParameter, AgentOutboundActio
 import { BUILTIN_TOOLS } from '@/stores/toolboxStore';
 import type { ReprocessAgent, DocumentStoreConversation } from '@/services/contracts/documentStore';
 import { DocApplyDiffModal } from './DocApplyDiffModal';
-import type { ApplyMode } from './docApplyPreview';
+import type { ApplyMode, FolderNode } from './docApplyPreview';
 import { toast } from '@/lib/toast';
 
 export type ReprocessChatDrawerProps = {
@@ -202,7 +203,7 @@ const FOCUSED_TOOLBOX_IDS = [
 export function ReprocessChatDrawer({
   entryId,
   entryTitle,
-  storeId: _storeId,
+  storeId,
   onClose,
   onApplied,
 }: ReprocessChatDrawerProps) {
@@ -237,6 +238,8 @@ export function ReprocessChatDrawer({
   // 可观测性：当前流式调用解析到的模型 / 平台（onStart 透出），面板顶部低饱和展示
   // （.claude/rules/ai-model-visibility.md：中大型 AI 功能必须让用户看见在调哪个模型）
   const [streamModel, setStreamModel] = useState<{ model?: string; platform?: string } | null>(null);
+  // Phase 2：本知识库的目录（文件夹）列表，供「另存为新文档」选择落点目录
+  const [folders, setFolders] = useState<FolderNode[]>([]);
 
   const cancelStreamRef = useRef<(() => void) | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -484,6 +487,17 @@ export function ReprocessChatDrawer({
 
   // 关闭浮层时也走统一 abort，确保 streamingId 被清掉
   useEffect(() => () => abortCurrentStream(), [abortCurrentStream]);
+
+  // Phase 2：拉本知识库目录，供「另存为新文档」选择落点（storeId 变更时刷新）
+  useEffect(() => {
+    if (!storeId) { setFolders([]); return; }
+    let cancelled = false;
+    (async () => {
+      const res = await getDocumentStoreFolders(storeId);
+      if (!cancelled && res.success) setFolders(res.data.folders ?? []);
+    })();
+    return () => { cancelled = true; };
+  }, [storeId]);
 
   // 把对话持久化到 sessionStorage：direct-chat 不存后端，关掉抽屉后再开必须能恢复
   // （Bugbot 九轮 Medium）。
@@ -844,7 +858,7 @@ export function ReprocessChatDrawer({
 
   // 第二步：用户在确认窗点「确认」后才真正落库（保留原有全部并发/切档防护）。
   const performApply = useCallback(async (
-    msgId: string, mode: 'replace' | 'append' | 'new', title?: string,
+    msgId: string, mode: 'replace' | 'append' | 'new', title?: string, parentId?: string,
   ) => {
     const msg = messages.find((m) => m.id === msgId);
     if (!msg || msg.role !== 'assistant' || !msg.content) return;
@@ -867,6 +881,7 @@ export function ReprocessChatDrawer({
         mode,
         content: msg.content,
         ...(mode === 'new' && title ? { title } : {}),
+        ...(mode === 'new' && parentId ? { parentId } : {}),
       });
     } catch (e) {
       // 即使 entry 切走也得清 applying，不然新 doc 的写回按钮永远 disabled（Bugbot #3 三轮 Low）
@@ -913,10 +928,10 @@ export function ReprocessChatDrawer({
   }, [messages, applying, entryId, onApplied]);
 
   // 确认窗点「确认」：执行真正写回，完成后关窗。失败/切档由 performApply 自行处理 toast。
-  const confirmPendingApply = useCallback(async (opts: { title?: string }) => {
+  const confirmPendingApply = useCallback(async (opts: { title?: string; parentId?: string }) => {
     if (!pendingApply) return;
     const { msgId, mode } = pendingApply;
-    await performApply(msgId, mode, opts.title);
+    await performApply(msgId, mode, opts.title, opts.parentId);
     setPendingApply(null);
   }, [pendingApply, performApply]);
 
@@ -1322,6 +1337,7 @@ export function ReprocessChatDrawer({
                 aiContent={targetMsg.content}
                 docTruncated={docTruncated}
                 applying={inFlight}
+                folders={folders}
                 onConfirm={(opts) => void confirmPendingApply(opts)}
                 onCancel={() => { if (!inFlight) setPendingApply(null); }}
               />
