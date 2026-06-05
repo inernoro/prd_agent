@@ -33,25 +33,31 @@
    highlight + side vignette = the waiting page's .shade) render. */
 .cdsh-bg { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; background: var(--cdsh-bg); }
 
-/* Drifting grid — the signature moving element (waiting page's .grid). */
+/* Drifting grid — the signature moving element (waiting page's .grid).
+   Lines are brightened (0.11) and the drift sped up (38px / 7s, clearly
+   perceptible) vs the waiting page's faint 0.055 / 18s: the landing page has
+   far denser foreground content, so the source values rendered invisible and
+   motionless here. Verified against a Chromium screenshot harness. */
 .cdsh-hex {
   position: absolute; inset: -8%;
-  opacity: 0.72;
+  opacity: 1;
   background-image:
-    linear-gradient(rgba(255,255,255,0.055) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,0.055) 1px, transparent 1px);
-  background-size: 34px 34px;
+    linear-gradient(rgba(255,255,255,0.11) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.11) 1px, transparent 1px);
+  background-size: 38px 38px;
   transform: rotate(-2deg);
-  animation: cdsh-grid 18s linear infinite;
+  animation: cdsh-grid 7s linear infinite;
 }
-@keyframes cdsh-grid { to { transform: rotate(-2deg) translate3d(-34px, -34px, 0); } }
+@keyframes cdsh-grid { to { transform: rotate(-2deg) translate3d(-38px, -38px, 0); } }
 
-/* Radial highlight + horizontal vignette over the grid (waiting page's .shade). */
+/* Radial highlight + side vignette over the grid (waiting page's .shade), but
+   with a transparent middle band so the grid stays visible across the page
+   instead of being crushed by the dark overlay. */
 .cdsh-vignette {
   position: absolute; inset: 0;
   background:
-    radial-gradient(880px 640px at 66% 42%, rgba(255,255,255,0.12), transparent 55%),
-    linear-gradient(90deg, rgba(8,7,13,0.94), rgba(8,7,13,0.58) 52%, rgba(8,7,13,0.9));
+    radial-gradient(1000px 740px at 66% 42%, rgba(255,255,255,0.11), transparent 60%),
+    linear-gradient(90deg, rgba(8,7,13,0.80), rgba(8,7,13,0.08) 42%, rgba(8,7,13,0.08) 58%, rgba(8,7,13,0.84));
 }
 
 /* Unused in the waiting-page look — no-op so the shared markup stays valid. */
