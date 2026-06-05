@@ -1,12 +1,11 @@
 /* CDS landing background.
-   Ported 1:1 from the CDS "构建等待页" (src/forwarder/waiting-page.ts) so the
-   landing/login surface matches the build-waiting page exactly: a slowly
-   drifting, slightly-rotated grid plus a radial highlight + side vignette over
-   #08070d. Scoped with the cdsh- prefix so it never collides with app/theme
-   styles. */
+   Uses the real ReactBits ShapeGrid (canvas hexagon honeycomb) — the same
+   component the CDS build-waiting page uses (ShapeGridWaitingPreview) — over a
+   #120f17 base with a radial highlight + side vignette. Scoped with the cdsh-
+   prefix so it never collides with app/theme styles. */
 
 .cdsh-root {
-  --cdsh-bg: #08070d;
+  --cdsh-bg: #120f17;
   --cdsh-panel: rgba(255, 255, 255, 0.026);
   --cdsh-panel-2: rgba(255, 255, 255, 0.05);
   --cdsh-line: rgba(255, 255, 255, 0.09);
@@ -26,42 +25,25 @@
 }
 .cdsh-mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
 
-/* ---------- ambient background (matches src/forwarder/waiting-page.ts) ----------
-   The 6 DOM layers (.cdsh-aurora / .cdsh-hex / .cdsh-stars / .cdsh-glow /
-   .cdsh-glow-2 / .cdsh-vignette) are kept so HomePage + LoginPage need no
-   markup change; only .cdsh-hex (drifting grid) and .cdsh-vignette (radial
-   highlight + side vignette = the waiting page's .shade) render. */
-.cdsh-bg { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; background: var(--cdsh-bg); }
+/* ---------- ambient background ----------
+   The real ReactBits ShapeGrid (canvas hexagon honeycomb), the same component
+   used by the CDS build-waiting page (ShapeGridWaitingPreview). HomePage and
+   LoginPage render <ShapeGrid> into .cdsh-bg with a vignette overlay on top.
+   Params live in the TSX (shape=hexagon, speed=0.49, hoverTrailAmount=15). */
+.cdsh-bg { position: absolute; inset: 0; z-index: 0; overflow: hidden; background: var(--cdsh-bg); }
 
-/* Drifting grid — the signature moving element (waiting page's .grid).
-   Lines are brightened (0.11) and the drift sped up (38px / 7s, clearly
-   perceptible) vs the waiting page's faint 0.055 / 18s: the landing page has
-   far denser foreground content, so the source values rendered invisible and
-   motionless here. Verified against a Chromium screenshot harness. */
-.cdsh-hex {
-  position: absolute; inset: -8%;
-  opacity: 1;
-  background-image:
-    linear-gradient(rgba(255,255,255,0.11) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,0.11) 1px, transparent 1px);
-  background-size: 38px 38px;
-  transform: rotate(-2deg);
-  animation: cdsh-grid 7s linear infinite;
-}
-@keyframes cdsh-grid { to { transform: rotate(-2deg) translate3d(-38px, -38px, 0); } }
+/* Canvas fills the background. pointer-events: auto so the hover trail works
+   when the cursor crosses empty background (page content sits above at z-1). */
+.cdsh-shapegrid { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: auto; }
 
-/* Radial highlight + side vignette over the grid (waiting page's .shade), but
-   with a transparent middle band so the grid stays visible across the page
-   instead of being crushed by the dark overlay. */
+/* Radial highlight + side vignette over the honeycomb (waiting page's .shade):
+   brightens the centre, darkens the edges for headline readability. */
 .cdsh-vignette {
-  position: absolute; inset: 0;
+  position: absolute; inset: 0; pointer-events: none;
   background:
-    radial-gradient(1000px 740px at 66% 42%, rgba(255,255,255,0.11), transparent 60%),
-    linear-gradient(90deg, rgba(8,7,13,0.80), rgba(8,7,13,0.08) 42%, rgba(8,7,13,0.08) 58%, rgba(8,7,13,0.84));
+    radial-gradient(900px 620px at 52% 46%, rgba(255,255,255,0.08), transparent 36%, rgba(18,15,23,0.82) 100%),
+    linear-gradient(90deg, rgba(18,15,23,0.9), rgba(18,15,23,0.22) 48%, rgba(18,15,23,0.84));
 }
-
-/* Unused in the waiting-page look — no-op so the shared markup stays valid. */
-.cdsh-aurora, .cdsh-stars, .cdsh-glow, .cdsh-glow-2 { display: none; }
 
 .cdsh-wrap { position: relative; z-index: 1; max-width: 1240px; margin: 0 auto; padding: 0 28px; }
 
@@ -195,12 +177,9 @@
 }
 @media (prefers-reduced-motion: reduce) {
   /* Reduced-motion users: settle the one-shot ENTRANCE animations instantly
-     (rise-in, headline line reveal, node/preview pop) so nothing slides in.
-     We intentionally KEEP the drifting background grid (.cdsh-hex) and the
-     small status loops running — they are purely decorative, low-amplitude and
-     slow, and without them the homepage reads as frozen/broken (reported by the
-     user). LoginPage reuses .cdsh-bg on a <main> without .cdsh-root, so the grid
-     there keeps moving too. */
+     (rise-in, headline line reveal, node/preview pop) so nothing slides in. The
+     ShapeGrid honeycomb handles reduced-motion itself (it freezes its drift),
+     so we don't touch it here. */
   .cdsh-rise,
   .cdsh-line > span,
   .cdsh-node,

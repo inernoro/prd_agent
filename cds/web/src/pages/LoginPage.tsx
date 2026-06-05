@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowRight, Github, Loader2, LockKeyhole, Shield } from 'lucide-react';
+import ShapeGrid from '@/components/effects/ShapeGrid';
 import { CdsMetallicLogo } from '@/components/brand/CdsMetallicLogo';
 import { Button } from '@/components/ui/button';
 import { apiUrl } from '@/lib/api';
@@ -53,13 +54,18 @@ export function LoginPage(): JSX.Element {
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#08070d] text-[#f6f6f8]">
+    <main className="relative min-h-screen overflow-hidden bg-[#120f17] text-[#f6f6f8]">
       <div className="cdsh-bg">
-        <div className="cdsh-aurora" />
-        <div className="cdsh-hex" />
-        <div className="cdsh-stars" />
-        <div className="cdsh-glow" />
-        <div className="cdsh-glow-2" />
+        <ShapeGrid
+          className="cdsh-shapegrid"
+          shape="hexagon"
+          direction="diagonal"
+          speed={0.49}
+          squareSize={34}
+          hoverTrailAmount={15}
+          borderColor="rgba(255,255,255,0.09)"
+          hoverFillColor="rgba(255,255,255,0.05)"
+        />
         <div className="cdsh-vignette" />
       </div>
 

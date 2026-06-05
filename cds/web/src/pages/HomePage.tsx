@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import ShapeGrid from '@/components/effects/ShapeGrid';
 import './HomePage.css';
 
 const FEED_LINES = [
@@ -39,11 +40,16 @@ export function HomePage(): JSX.Element {
   return (
     <main className="cdsh-root">
       <div className="cdsh-bg">
-        <div className="cdsh-aurora" />
-        <div className="cdsh-hex" />
-        <div className="cdsh-stars" />
-        <div className="cdsh-glow" />
-        <div className="cdsh-glow-2" />
+        <ShapeGrid
+          className="cdsh-shapegrid"
+          shape="hexagon"
+          direction="diagonal"
+          speed={0.49}
+          squareSize={34}
+          hoverTrailAmount={15}
+          borderColor="rgba(255,255,255,0.09)"
+          hoverFillColor="rgba(255,255,255,0.05)"
+        />
         <div className="cdsh-vignette" />
       </div>
 
