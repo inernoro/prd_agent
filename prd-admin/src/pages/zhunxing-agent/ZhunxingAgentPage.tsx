@@ -115,6 +115,14 @@ const FUTURE_PORTALS = [
   },
 ];
 
+type VisualStyleMode = 'aurora' | 'cosmic' | 'slate';
+
+const STYLE_MODE_OPTIONS: Array<{ value: VisualStyleMode; label: string }> = [
+  { value: 'aurora', label: '曙光蓝' },
+  { value: 'slate', label: '雾银灰' },
+  { value: 'cosmic', label: '深空黑' },
+];
+
 export default function ZhunxingAgentPage() {
   const permissions = useAuthStore((s) => s.permissions);
   const hasWritePermission = useMemo(
@@ -123,6 +131,7 @@ export default function ZhunxingAgentPage() {
   );
 
   const [viewMode, setViewMode] = useState<'ask' | 'dashboard'>('ask');
+  const [visualStyle, setVisualStyle] = useState<VisualStyleMode>('aurora');
 
   // Q&A state
   const [question, setQuestion] = useState('');
@@ -153,6 +162,38 @@ export default function ZhunxingAgentPage() {
   const [savingTopics, setSavingTopics] = useState(false);
   const [topicUpdates, setTopicUpdates] = useState<ZhunxingTopicUpdateFeed | null>(null);
   const [heatmap, setHeatmap] = useState<ZhunxingKnowledgeHeatmap | null>(null);
+
+  const visualStyleTokens = useMemo(() => {
+    if (visualStyle === 'cosmic') {
+      return {
+        pageBackground: 'radial-gradient(1200px 520px at 50% -10%, rgba(59,130,246,0.14), transparent 65%), #020617',
+        cardBackground: 'rgba(2,6,23,0.38)',
+        cardBorder: '1px solid rgba(148,163,184,0.22)',
+        surfaceBackground: 'rgba(255,255,255,0.03)',
+        surfaceBorder: '1px solid rgba(255,255,255,0.08)',
+      };
+    }
+
+    if (visualStyle === 'slate') {
+      return {
+        pageBackground:
+          'radial-gradient(1200px 520px at 50% -10%, rgba(148,163,184,0.22), transparent 70%), linear-gradient(180deg, #0f172a 0%, #1e293b 100%)',
+        cardBackground: 'rgba(15,23,42,0.28)',
+        cardBorder: '1px solid rgba(148,163,184,0.28)',
+        surfaceBackground: 'rgba(255,255,255,0.08)',
+        surfaceBorder: '1px solid rgba(148,163,184,0.28)',
+      };
+    }
+
+    return {
+      pageBackground:
+        'radial-gradient(1200px 560px at 45% -20%, rgba(56,189,248,0.28), transparent 70%), radial-gradient(900px 420px at 80% 0%, rgba(129,140,248,0.22), transparent 70%), linear-gradient(180deg, #0b1220 0%, #111827 100%)',
+      cardBackground: 'rgba(15,23,42,0.22)',
+      cardBorder: '1px solid rgba(125,211,252,0.25)',
+      surfaceBackground: 'rgba(255,255,255,0.09)',
+      surfaceBorder: '1px solid rgba(125,211,252,0.26)',
+    };
+  }, [visualStyle]);
 
   const confidencePercent = useMemo(() => Math.round((result?.confidence ?? 0) * 100), [result?.confidence]);
 
@@ -394,7 +435,7 @@ export default function ZhunxingAgentPage() {
 
   const askPanel = (
     <>
-      <GlassCard variant="subtle" animated className="p-4">
+      <GlassCard variant="subtle" animated className="p-4" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0 flex-1">
             <div className="inline-flex items-center gap-2 rounded-md px-2 py-1 text-[11px]" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', color: '#22C55E' }}>
@@ -402,7 +443,7 @@ export default function ZhunxingAgentPage() {
               Zhunxing Knowledge OS · Beta
             </div>
             <div className="mt-2 text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
-              准星不是“规章 FAQ”，而是企业 AI + 知识库的执行中枢
+              企业AI知识中枢，覆盖问答、流程决策与风险预警。
             </div>
             <div className="mt-1 text-xs leading-5" style={{ color: 'var(--text-muted)' }}>
               当前阶段聚焦“问答可用、流程可执行、风险可治理”，后续将演进为知识图谱、主动预警、自动编排的一体化平台。
@@ -414,7 +455,7 @@ export default function ZhunxingAgentPage() {
               <span className="px-2 py-0.5 rounded-md text-[11px]" style={{ background: 'rgba(251,113,133,0.14)', border: '1px solid rgba(251,113,133,0.32)', color: '#FB7185' }}>P4 智能自治化</span>
             </div>
           </div>
-          <div className="w-full lg:max-w-[340px] rounded-lg p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+          <div className="w-full lg:max-w-[340px] rounded-lg p-3" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
             <div className="text-xs font-semibold mb-2 flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
               <Workflow size={13} />
               能力演进路径
@@ -437,7 +478,7 @@ export default function ZhunxingAgentPage() {
         </div>
       </GlassCard>
 
-      <GlassCard variant="subtle" animated className="p-4">
+      <GlassCard variant="subtle" animated className="p-4" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
         <div className="flex items-start gap-3">
           <div
             className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
@@ -532,7 +573,7 @@ export default function ZhunxingAgentPage() {
       </GlassCard>
 
       {error && (
-        <GlassCard variant="subtle" animated className="p-3 flex items-center gap-2">
+        <GlassCard variant="subtle" animated className="p-3 flex items-center gap-2" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
           <AlertCircle size={16} style={{ color: '#FB923C' }} />
           <span className="text-sm" style={{ color: 'var(--text-primary)' }}>
             {error}
@@ -541,7 +582,7 @@ export default function ZhunxingAgentPage() {
       )}
 
       {result && (
-        <GlassCard variant="subtle" animated className="p-4">
+        <GlassCard variant="subtle" animated className="p-4" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <span
               className="px-2 py-0.5 rounded-md text-xs"
@@ -646,8 +687,8 @@ export default function ZhunxingAgentPage() {
                     key={`${step.stepNo}-${step.clauseId || step.condition}`}
                     className="rounded-lg p-2.5"
                     style={{
-                      background: 'rgba(255,255,255,0.03)',
-                      border: '1px solid rgba(255,255,255,0.06)',
+                      background: visualStyleTokens.surfaceBackground,
+                      border: visualStyleTokens.surfaceBorder,
                     }}
                   >
                     <div className="text-xs mb-1" style={{ color: '#60A5FA' }}>
@@ -711,8 +752,8 @@ export default function ZhunxingAgentPage() {
                   key={c.clauseId || `${c.documentId}-${c.chapter}-${idx}`}
                   className="rounded-lg p-2.5"
                   style={{
-                    background: 'rgba(255,255,255,0.03)',
-                    border: '1px solid rgba(255,255,255,0.06)',
+                    background: visualStyleTokens.surfaceBackground,
+                    border: visualStyleTokens.surfaceBorder,
                   }}
                 >
                   <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
@@ -755,7 +796,7 @@ export default function ZhunxingAgentPage() {
                 </div>
               ))}
               {result.citations.length === 0 && (
-                <div className="rounded-lg p-2.5 text-xs" style={{ background: 'rgba(255,255,255,0.03)', color: 'var(--text-muted)' }}>
+                <div className="rounded-lg p-2.5 text-xs" style={{ background: visualStyleTokens.surfaceBackground, color: 'var(--text-muted)' }}>
                   当前没有可展示的依据条款。
                 </div>
               )}
@@ -764,7 +805,7 @@ export default function ZhunxingAgentPage() {
         </GlassCard>
       )}
 
-      <GlassCard variant="subtle" animated className="p-4">
+      <GlassCard variant="subtle" animated className="p-4" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
         <div className="flex items-center justify-between gap-2 mb-3">
           <div className="text-sm font-semibold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
             <Bot size={15} />
@@ -776,7 +817,7 @@ export default function ZhunxingAgentPage() {
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
           {CORE_CAPABILITIES.map((item) => (
-            <div key={item.title} className="rounded-lg p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <div key={item.title} className="rounded-lg p-3" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
               <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                 {item.title}
               </div>
@@ -788,7 +829,7 @@ export default function ZhunxingAgentPage() {
         </div>
       </GlassCard>
 
-      <GlassCard variant="subtle" animated className="p-4">
+      <GlassCard variant="subtle" animated className="p-4" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
         <div className="flex items-center justify-between gap-2 mb-3">
           <div className="text-sm font-semibold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
             <BrainCircuit size={15} />
@@ -800,7 +841,7 @@ export default function ZhunxingAgentPage() {
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
           {FUTURE_PORTALS.map((item) => (
-            <div key={item.title} className="rounded-lg p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <div key={item.title} className="rounded-lg p-3" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
               <div className="flex items-center justify-between gap-2">
                 <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                   {item.title}
@@ -815,7 +856,7 @@ export default function ZhunxingAgentPage() {
             </div>
           ))}
         </div>
-        <div className="mt-3 rounded-lg p-2.5 flex flex-wrap items-center justify-between gap-2" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
+        <div className="mt-3 rounded-lg p-2.5 flex flex-wrap items-center justify-between gap-2" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
           <div className="text-xs flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
             <Network size={13} />
             {'未来将支持“提问 -> 生成流程 -> 自动分派 -> 执行回执”的全链路闭环。'}
@@ -827,7 +868,7 @@ export default function ZhunxingAgentPage() {
         </div>
       </GlassCard>
 
-      <GlassCard variant="subtle" animated className="p-3">
+      <GlassCard variant="subtle" animated className="p-3" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
         <div className="text-xs flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
           <Clock3 size={13} />
           提示：当前展示为“产品化骨架”，后续功能会按阶段逐步上线，避免页面结构反复重做。
@@ -837,7 +878,7 @@ export default function ZhunxingAgentPage() {
   );
 
   const dashboardPanel = (
-    <GlassCard variant="subtle" animated className="p-4">
+    <GlassCard variant="subtle" animated className="p-4" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
       <div className="flex items-center justify-between gap-2 mb-3">
         <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
           准星反馈看板
@@ -860,39 +901,39 @@ export default function ZhunxingAgentPage() {
       )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-2 mb-3">
-        <div className="rounded-lg p-2.5" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="rounded-lg p-2.5" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
           <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>总反馈</div>
           <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{feedbackSummary?.totalCount ?? '-'}</div>
         </div>
-        <div className="rounded-lg p-2.5" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="rounded-lg p-2.5" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
           <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>未命中</div>
           <div className="text-sm font-semibold" style={{ color: '#FB923C' }}>{feedbackSummary?.noMatchCount ?? '-'}</div>
         </div>
-        <div className="rounded-lg p-2.5" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="rounded-lg p-2.5" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
           <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>答案不准确</div>
           <div className="text-sm font-semibold" style={{ color: '#FBBF24' }}>{feedbackSummary?.answerInaccurateCount ?? '-'}</div>
         </div>
-        <div className="rounded-lg p-2.5" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="rounded-lg p-2.5" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
           <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>待处理工单</div>
           <div className="text-sm font-semibold" style={{ color: '#FB923C' }}>{feedbackSummary?.pendingCount ?? '-'}</div>
         </div>
-        <div className="rounded-lg p-2.5" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="rounded-lg p-2.5" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
           <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>已回访</div>
           <div className="text-sm font-semibold" style={{ color: '#34D399' }}>{feedbackSummary?.followUpNotifiedCount ?? '-'}</div>
         </div>
-        <div className="rounded-lg p-2.5" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="rounded-lg p-2.5" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
           <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>回放通过</div>
           <div className="text-sm font-semibold" style={{ color: '#60A5FA' }}>
             {feedbackSummary?.replayMatchedCount ?? '-'} / {feedbackSummary?.replayVerifiedCount ?? '-'}
           </div>
         </div>
-        <div className="rounded-lg p-2.5" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="rounded-lg p-2.5" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
           <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>缺少上下文</div>
           <div className="text-sm font-semibold" style={{ color: '#60A5FA' }}>{feedbackSummary?.missingContextCount ?? '-'}</div>
         </div>
       </div>
 
-      <div className="rounded-lg p-3 mb-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+      <div className="rounded-lg p-3 mb-3" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
         <div className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>
           高频未命中问题（聚类）
         </div>
@@ -915,7 +956,7 @@ export default function ZhunxingAgentPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-3">
-        <div className="rounded-lg p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="rounded-lg p-3" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
           <div className="flex items-center justify-between gap-2 mb-2">
             <div className="text-xs font-semibold flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
               <BellRing size={13} />
@@ -983,7 +1024,7 @@ export default function ZhunxingAgentPage() {
           )}
         </div>
 
-        <div className="rounded-lg p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="rounded-lg p-3" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
           <div className="text-xs font-semibold mb-2 flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
             <Flame size={13} />
             知识热力图（近 {heatmap?.days ?? 30} 天）
@@ -1019,7 +1060,7 @@ export default function ZhunxingAgentPage() {
         </div>
       </div>
 
-      <div className="rounded-lg p-3" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+      <div className="rounded-lg p-3" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
         <div className="flex flex-wrap items-center gap-2 mb-3">
           <select
             value={feedbackTypeFilter}
@@ -1097,7 +1138,7 @@ export default function ZhunxingAgentPage() {
         ) : feedbackList?.items?.length ? (
           <div className="flex flex-col gap-2">
             {feedbackList.items.map((item) => (
-              <div key={item.id} className="rounded-lg p-2.5" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div key={item.id} className="rounded-lg p-2.5" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
                 <div className="flex flex-wrap items-center gap-2 mb-1">
                   <span className="text-[11px] px-2 py-0.5 rounded-md" style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)' }}>
                     {item.feedbackType}
@@ -1244,26 +1285,51 @@ export default function ZhunxingAgentPage() {
   );
 
   return (
-    <div className="h-full min-h-0 overflow-auto px-3 py-4 sm:px-4 md:px-6">
+    <div
+      className="h-full min-h-0 overflow-auto px-3 py-4 sm:px-4 md:px-6"
+      style={{
+        background: visualStyleTokens.pageBackground,
+        transition: 'background 220ms ease',
+      }}
+    >
       <div className="max-w-6xl mx-auto flex flex-col gap-4">
-        <GlassCard variant="subtle" className="p-3">
-          <div className="flex items-center justify-between gap-2">
+        <GlassCard variant="subtle" className="p-3" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
               <div className="text-sm font-semibold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
                 <BarChart3 size={15} />
                 准星工作台
               </div>
               <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                企业级 AI + 知识库中枢（Knowledge OS）
+                企业AI知识中枢，覆盖问答、流程决策与风险预警。
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <Button variant={viewMode === 'ask' ? 'primary' : 'secondary'} size="sm" onClick={() => setViewMode('ask')} className="whitespace-nowrap">
-                问答
-              </Button>
-              <Button variant={viewMode === 'dashboard' ? 'primary' : 'secondary'} size="sm" onClick={() => setViewMode('dashboard')} className="whitespace-nowrap">
-                反馈看板
-              </Button>
+            <div className="flex flex-col gap-2 lg:items-end">
+              <div className="flex items-center gap-2">
+                {STYLE_MODE_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setVisualStyle(option.value)}
+                    className="px-2 py-1 rounded-md text-[11px] whitespace-nowrap transition-opacity hover:opacity-90"
+                    style={{
+                      background: visualStyle === option.value ? 'rgba(96,165,250,0.2)' : 'rgba(255,255,255,0.06)',
+                      border: visualStyle === option.value ? '1px solid rgba(96,165,250,0.5)' : '1px solid rgba(255,255,255,0.14)',
+                      color: visualStyle === option.value ? '#60A5FA' : 'var(--text-muted)',
+                    }}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant={viewMode === 'ask' ? 'primary' : 'secondary'} size="sm" onClick={() => setViewMode('ask')} className="whitespace-nowrap">
+                  问答
+                </Button>
+                <Button variant={viewMode === 'dashboard' ? 'primary' : 'secondary'} size="sm" onClick={() => setViewMode('dashboard')} className="whitespace-nowrap">
+                  反馈看板
+                </Button>
+              </div>
             </div>
           </div>
         </GlassCard>
