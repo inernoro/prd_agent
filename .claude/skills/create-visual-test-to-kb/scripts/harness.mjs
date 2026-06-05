@@ -420,7 +420,7 @@ async function validateShot(page, path, expectText) {
  *   - customLoaderSelectors: 项目特有的 loader 选择器
  */
 export async function shot(page, outDir, name, caption, opts = {}) {
-  const { fullPage = false, expectText, skipReady = false, customLoaderSelectors = [] } = opts;
+  const { fullPage = false, expectText, skipReady = false, customLoaderSelectors = [], overview = false } = opts;
   require('fs').mkdirSync(outDir, { recursive: true });
   const path = `${outDir}/${name}.png`;
 
@@ -448,12 +448,21 @@ export async function shot(page, outDir, name, caption, opts = {}) {
   const autoWarns = drainFindingsForShot(shots.length);
   if (autoWarns.length) warnings = warnings.concat(autoWarns);
 
-  const rec = { name, caption, path, warnings: warnings.length ? warnings : undefined };
+  // 6) §B2 标注硬门禁（2026-06-05）：截图瞬间页面上有没有标记(box/circle = .__acc_box)?
+  //    指向具体元素/差异的证据图没标记 → 读者"看到一个单独页面就懵逼"。这里自动探测并落进 manifest，
+  //    archive_report.py 准入据此拒收，把"必须画框/圈"从 §B2 的纸面规则变成跑不过的硬门禁。
+  //    整体观感/全局布局图无单一重点 → 调用方显式传 opts.overview=true 豁免。
+  const annotated = await page.evaluate(() => document.querySelectorAll('.__acc_box').length > 0).catch(() => false);
+  if (!annotated && !overview) {
+    console.log(`  ⚠ ${name} 未画框/圈：指向性证据必须标注(stepClick/stepShot(highlight)/box)，整体图请传 {overview:true}`);
+  }
+
+  const rec = { name, caption, path, annotated, overview, warnings: warnings.length ? warnings : undefined };
   shots.push(rec);
   if (warnings.length > 0) {
     console.log(`  ⚠ 截图 ${name} | ${caption} | 仍有警告: ${warnings.join(' | ')}`);
   } else {
-    console.log(`  截图 ${name} | ${caption}`);
+    console.log(`  截图 ${name} | ${caption}${annotated ? '' : overview ? ' (overview 豁免标注)' : ' (未标注!)'}`);
   }
   return rec;
 }

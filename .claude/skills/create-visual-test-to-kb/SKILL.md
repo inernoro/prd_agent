@@ -64,6 +64,10 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
 - **本规则不限于全流程验收 driver**——**任何发给用户的截图都适用**,包括:临时诊断、方案评估、critique、改造前后对比。哪怕只是一次性 `page.screenshot()`,也要**先注入带标签的红框再截**。**最省事的做法:直接用 `scripts/annotate.mjs`** —— 一条命令对任意页面按 selector/坐标画框 + 标签再截图,不用写整个 driver(支持 `--login` 表单登录、`--mobile` 手机视口、`--click` 截图前先点开某元素)。也可 `import { box, clearBoxes } from harness.mjs` 脱离 driver 单独用。
 - **多个重点画多个框 + 编号**(①②③),标签用不同颜色区分维度(如 红=错误/问题、橙=冗余、蓝=缺失)。框要框在"我这句话说的那个东西"上,不能泛框一大片。
 - 判定:**把这张图单独发给一个没听我解释的人,他能不能 3 秒看出"重点在哪、这框说的是什么"?** 不能 → 没框/框错,返工。
+- **这是硬门禁,不是自觉(2026-06-05 起,治"技能这么多次给没标注的截图")**:`harness.shot()` 在截图瞬间自动探测页面有没有标记(`.__acc_box`),把 `annotated` 落进 `manifest.json`;`archive_report.py` 准入对 `annotated:false && !overview` 的图**直接拒收**——**没画框/圈的指向性证据图,报告归档不进去**。所以:
+  - 用 `stepClick` / `stepShot(...,highlight)` / 截图前先 `box(page,loc,label,{shape})` —— 它们都会留下 `.__acc_box`,自动算"已标注"。
+  - **唯一豁免**:纯整体观感/全局布局图,`shot(page,out,name,cap,{overview:true})` 显式标 overview,门禁放行(对应"当然没必要的除外")。
+  - 直接 `page.screenshot()` 不进 manifest、不受门禁保护,**禁止**用它出证据图;一次性发图也走 `annotate.mjs`(它本就带框/圈)。
 
 ### C. 报告里图文对应,不留疑问
 
