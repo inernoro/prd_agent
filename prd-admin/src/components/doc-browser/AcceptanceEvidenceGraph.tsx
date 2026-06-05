@@ -129,14 +129,16 @@ const EV_GAP = 250;
 const COL_X_EV = 520;
 
 function ClaimNode({ data }: NodeProps) {
-  const d = data as unknown as { kind: string; idx: string; text: string; status: StatusKey };
+  const d = data as unknown as { kind: string; idx: string; text: string; status: StatusKey; dim?: boolean; sel?: boolean };
   const s = STATUS[d.status];
   return (
     <div
       style={{
         width: CLAIM_W, background: 'var(--bg-card, #1E1F20)', borderRadius: 12,
-        border: `1px solid var(--border-subtle, rgba(255,255,255,0.14))`,
-        borderLeft: `4px solid ${s.border}`, boxShadow: '0 6px 22px rgba(0,0,0,0.35)', padding: '10px 12px',
+        border: d.sel ? `2px solid ${s.color}` : `1px solid var(--border-subtle, rgba(255,255,255,0.14))`,
+        borderLeft: `4px solid ${s.border}`,
+        boxShadow: d.sel ? `0 0 0 3px ${s.color}44, 0 8px 26px rgba(0,0,0,0.45)` : '0 6px 22px rgba(0,0,0,0.35)',
+        padding: '10px 12px', opacity: d.dim ? 0.22 : 1, transition: 'opacity .18s, box-shadow .18s', cursor: 'pointer',
       }}
     >
       <Handle type="source" position={Position.Right} style={{ opacity: 0 }} isConnectable={false} />
@@ -156,10 +158,16 @@ function ClaimNode({ data }: NodeProps) {
 }
 
 function EvidenceNode({ data }: NodeProps) {
-  const d = data as unknown as { step: number; title: string; thumb?: string; onEnlarge?: (s: string, c: string) => void };
+  const d = data as unknown as { step: number; title: string; thumb?: string; dim?: boolean; sel?: boolean; onEnlarge?: (s: string, c: string) => void };
   const label = `步骤 ${d.step} · ${d.title}`;
   return (
-    <div style={{ width: EV_W, background: 'var(--bg-card, #1E1F20)', border: '1px solid var(--border-subtle, rgba(255,255,255,0.14))', borderRadius: 12, overflow: 'hidden', boxShadow: '0 8px 28px rgba(0,0,0,0.4)' }}>
+    <div style={{
+      width: EV_W, background: 'var(--bg-card, #1E1F20)',
+      border: d.sel ? '2px solid rgba(129,140,248,0.95)' : '1px solid var(--border-subtle, rgba(255,255,255,0.14))',
+      borderRadius: 12, overflow: 'hidden',
+      boxShadow: d.sel ? '0 0 0 3px rgba(129,140,248,0.4), 0 8px 28px rgba(0,0,0,0.5)' : '0 8px 28px rgba(0,0,0,0.4)',
+      opacity: d.dim ? 0.22 : 1, transition: 'opacity .18s, box-shadow .18s', cursor: 'pointer',
+    }}>
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} isConnectable={false} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 11px' }}>
         <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 7, fontSize: 12, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(99,102,241,0.22)', color: 'rgba(165,180,252,0.98)' }}>
@@ -181,65 +189,116 @@ function EvidenceNode({ data }: NodeProps) {
 
 const nodeTypes = { claim: ClaimNode, evidence: EvidenceNode };
 
-function GraphInner({ claims, evidence, onEnlarge }: { claims: Claim[]; evidence: Evidence[]; onEnlarge: (s: string, c: string) => void }) {
+function GraphInner({ claims, evidence, onEnlarge, onlyUnfinished }: { claims: Claim[]; evidence: Evidence[]; onEnlarge: (s: string, c: string) => void; onlyUnfinished: boolean }) {
+  // 点击某节点 → 进入「聚焦」：只高亮它的连线 + 直接相连的节点，其余淡出。解决线条错综复杂看不清。
+  const [selId, setSelId] = useState<string | null>(null);
+
+  // 「只看未完成」：折叠 已落地 的 claim，证据只保留被剩余 claim 引用到的，让 部分/未做 一眼跳出。
+  const shownClaims = useMemo(() => (onlyUnfinished ? claims.filter((c) => c.status !== 'pass') : claims), [claims, onlyUnfinished]);
+  const shownEvidence = useMemo(() => {
+    if (!onlyUnfinished) return evidence;
+    const refset = new Set(shownClaims.flatMap((c) => c.refs));
+    return evidence.filter((e) => refset.has(e.step));
+  }, [evidence, shownClaims, onlyUnfinished]);
+
+  // 邻接表：claimId → [ev-step...]，ev-step → [claimId...]
+  const adj = useMemo(() => {
+    const evSteps = new Set(shownEvidence.map((e) => e.step));
+    const claimToEv = new Map<string, string[]>();
+    const evToClaim = new Map<string, string[]>();
+    shownClaims.forEach((c) => {
+      const evs = c.refs.filter((s) => evSteps.has(s)).map((s) => `ev-${s}`);
+      claimToEv.set(c.id, evs);
+      evs.forEach((ev) => { if (!evToClaim.has(ev)) evToClaim.set(ev, []); evToClaim.get(ev)!.push(c.id); });
+    });
+    return { claimToEv, evToClaim };
+  }, [shownClaims, shownEvidence]);
+
+  // 选中后高亮哪些节点（自己 + 直接相连）
+  const focusSet = useMemo(() => {
+    if (!selId) return null;
+    const conn = selId.startsWith('ev-') ? adj.evToClaim.get(selId) : adj.claimToEv.get(selId);
+    return new Set([selId, ...(conn || [])]);
+  }, [selId, adj]);
+
   const { nodes, edges } = useMemo(() => {
-    const evByStep = new Map(evidence.map((e) => [e.step, e]));
-    // 右列只渲染「被任意 claim 引用到」+ 没被引用但存在的证据也展示（保证证据不丢）
-    const evNodes: Node[] = evidence.map((e, j) => ({
-      id: `ev-${e.step}`,
-      type: 'evidence',
-      position: { x: COL_X_EV, y: j * EV_GAP },
-      data: { ...e, onEnlarge } as unknown as Record<string, unknown>,
+    const claimNodes: Node[] = shownClaims.map((c, i) => ({
+      id: c.id, type: 'claim', position: { x: 0, y: i * CLAIM_GAP },
+      data: { ...c, dim: focusSet ? !focusSet.has(c.id) : false, sel: c.id === selId } as unknown as Record<string, unknown>,
       draggable: true,
     }));
-    const claimNodes: Node[] = claims.map((c, i) => ({
-      id: c.id,
-      type: 'claim',
-      position: { x: 0, y: i * CLAIM_GAP },
-      data: c as unknown as Record<string, unknown>,
+    const evNodes: Node[] = shownEvidence.map((e, j) => ({
+      id: `ev-${e.step}`, type: 'evidence', position: { x: COL_X_EV, y: j * EV_GAP },
+      data: { ...e, onEnlarge, dim: focusSet ? !focusSet.has(`ev-${e.step}`) : false, sel: `ev-${e.step}` === selId } as unknown as Record<string, unknown>,
       draggable: true,
     }));
+    const evByStep = new Set(shownEvidence.map((e) => e.step));
     const es: Edge[] = [];
-    claims.forEach((c) => {
+    shownClaims.forEach((c) => {
       c.refs.forEach((step) => {
         if (!evByStep.has(step)) return;
         const s = STATUS[c.status];
+        const touches = !!selId && (c.id === selId || `ev-${step}` === selId);
+        const faded = !!selId && !touches;
         es.push({
-          id: `${c.id}->ev-${step}`,
-          source: c.id,
-          target: `ev-${step}`,
-          animated: c.status !== 'fail',
+          id: `${c.id}->ev-${step}`, source: c.id, target: `ev-${step}`,
+          animated: touches || (!selId && c.status !== 'fail'),
           markerEnd: { type: MarkerType.ArrowClosed, color: s.color, width: 18, height: 18 },
-          style: { stroke: s.color, strokeWidth: 2, opacity: 0.85 },
+          style: { stroke: s.color, strokeWidth: touches ? 3.5 : 2, opacity: faded ? 0.05 : (touches ? 1 : 0.8) },
         });
       });
     });
     return { nodes: [...claimNodes, ...evNodes], edges: es };
-  }, [claims, evidence, onEnlarge]);
+  }, [shownClaims, shownEvidence, onEnlarge, selId, focusSet]);
+
+  // 选中项的文字说明：直接回答「这张证据指向什么 / 这条诉求由什么证明」
+  const info = useMemo(() => {
+    if (!selId) return null;
+    if (selId.startsWith('ev-')) {
+      const step = parseInt(selId.slice(3), 10);
+      const e = evidence.find((x) => x.step === step);
+      const cs = claims.filter((c) => c.refs.includes(step));
+      return { head: `步骤 ${step} · ${e?.title ?? ''}`, sub: `这张证据证明了 ${cs.length} 条诉求/用例：`, chips: cs.map((c) => ({ t: `${c.kind}${c.idx} ${c.text.slice(0, 14)}`, k: c.status })) };
+    }
+    const c = claims.find((x) => x.id === selId);
+    if (!c) return null;
+    const steps = c.refs.filter((s) => evidence.some((e) => e.step === s));
+    return { head: `${c.kind} ${c.idx} · ${STATUS[c.status].label}`, sub: `「${c.text.slice(0, 22)}」由 ${steps.length} 张证据证明：`, chips: steps.map((s) => ({ t: `步骤${s} ${evidence.find((e) => e.step === s)?.title.slice(0, 12) ?? ''}`, k: 'unknown' as StatusKey })) };
+  }, [selId, claims, evidence]);
 
   return (
-    <ReactFlow
-      nodes={nodes}
-      edges={edges}
-      nodeTypes={nodeTypes}
-      fitView
-      fitViewOptions={{ padding: 0.18, maxZoom: 1 }}
-      minZoom={0.3}
-      maxZoom={2.5}
-      proOptions={{ hideAttribution: true }}
-      panOnScroll
-      panOnScrollSpeed={0.8}
-      panOnDrag
-      zoomOnScroll={false}
-      zoomOnPinch
-      zoomOnDoubleClick={false}
-      zoomActivationKeyCode={['Meta', 'Control']}
-      panActivationKeyCode="Space"
-      selectionOnDrag={false}
-    >
-      <Background variant={BackgroundVariant.Dots} gap={22} size={1.4} color="rgba(255,255,255,0.06)" />
-      <Controls position="bottom-left" showInteractive={false} />
-    </ReactFlow>
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <ReactFlow
+        nodes={nodes} edges={edges} nodeTypes={nodeTypes}
+        onNodeClick={(_, n) => setSelId(n.id)} onPaneClick={() => setSelId(null)}
+        fitView fitViewOptions={{ padding: 0.18, maxZoom: 1 }} minZoom={0.3} maxZoom={2.5}
+        proOptions={{ hideAttribution: true }}
+        panOnScroll panOnScrollSpeed={0.8} panOnDrag zoomOnScroll={false} zoomOnPinch
+        zoomOnDoubleClick={false} zoomActivationKeyCode={['Meta', 'Control']} panActivationKeyCode="Space" selectionOnDrag={false}
+      >
+        <Background variant={BackgroundVariant.Dots} gap={22} size={1.4} color="rgba(255,255,255,0.06)" />
+        <Controls position="top-left" showInteractive={false} />
+      </ReactFlow>
+      {info ? (
+        <div style={{ position: 'absolute', left: 12, right: 12, bottom: 12, maxWidth: 600, background: 'var(--bg-elevated, #282A2C)', border: '1px solid var(--border-subtle, rgba(255,255,255,0.18))', borderRadius: 12, padding: '11px 13px', boxShadow: '0 12px 32px rgba(0,0,0,0.55)', zIndex: 5 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{info.head}</span>
+            <button onClick={() => setSelId(null)} style={{ fontSize: 11, color: 'var(--text-muted)', background: 'transparent', border: 'none', cursor: 'pointer', flexShrink: 0 }}>取消选中</button>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 5, marginBottom: 6 }}>{info.sub}</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {info.chips.length === 0 ? <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>（无连线）</span>
+              : info.chips.map((ch, i) => (
+                <span key={i} style={{ fontSize: 11.5, fontWeight: 600, padding: '2px 8px', borderRadius: 999, background: STATUS[ch.k].bg, color: STATUS[ch.k].color, border: `1px solid ${STATUS[ch.k].border}` }}>{ch.t}</span>
+              ))}
+          </div>
+        </div>
+      ) : (
+        <div style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', bottom: 12, fontSize: 11, color: 'var(--text-muted)', background: 'rgba(0,0,0,0.5)', padding: '5px 11px', borderRadius: 999, pointerEvents: 'none', zIndex: 5, whiteSpace: 'nowrap' }}>
+          点任意 诉求/证据 节点 → 高亮它的连线、其余淡出 + 下方列出它连了谁
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -272,6 +331,8 @@ export function AcceptanceEvidenceGraph({ content, title, onClose }: { content: 
   const hasBoard = claims.length > 0 && evidence.length > 0;
   const [enlarged, setEnlarged] = useState<{ src: string; caption: string } | null>(null);
   const onEnlarge = useCallback((src: string, caption: string) => setEnlarged({ src, caption }), []);
+  const [onlyUnfinished, setOnlyUnfinished] = useState(false);
+  const unfinished = useMemo(() => claims.filter((c) => c.status !== 'pass').length, [claims]);
   const handleBackdrop = useCallback((e: React.MouseEvent) => { if (e.target === e.currentTarget) onClose(); }, [onClose]);
 
   const modal = (
@@ -289,6 +350,18 @@ export function AcceptanceEvidenceGraph({ content, title, onClose }: { content: 
               <LegendChip k="pass" /><LegendChip k="partial" /><LegendChip k="fail" />
             </div>
           )}
+          {hasBoard && unfinished > 0 && (
+            <button
+              onClick={() => setOnlyUnfinished((v) => !v)}
+              className="shrink-0 text-[11px] font-semibold px-2.5 rounded-[8px] cursor-pointer transition-colors"
+              style={onlyUnfinished
+                ? { height: 28, background: 'rgba(248,113,113,0.16)', color: '#fca5a5', border: '1px solid rgba(248,113,113,0.5)' }
+                : { height: 28, background: 'var(--bg-input)', color: 'var(--text-secondary)', border: '1px solid var(--border-faint)' }}
+              title="只显示 部分/未做 的诉求 + 它们的证据，已落地的折叠起来"
+            >
+              {onlyUnfinished ? '显示全部' : `只看未完成 (${unfinished})`}
+            </button>
+          )}
           <button onClick={onClose} className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer shrink-0" style={{ color: 'var(--text-muted)' }} title="关闭（Esc）">
             <X size={15} />
           </button>
@@ -302,7 +375,7 @@ export function AcceptanceEvidenceGraph({ content, title, onClose }: { content: 
             </div>
           ) : (
             <ReactFlowProvider>
-              {hasBoard ? <GraphInner claims={claims} evidence={evidence} onEnlarge={onEnlarge} /> : <EvidenceOnly evidence={evidence} onEnlarge={onEnlarge} />}
+              {hasBoard ? <GraphInner claims={claims} evidence={evidence} onEnlarge={onEnlarge} onlyUnfinished={onlyUnfinished} /> : <EvidenceOnly evidence={evidence} onEnlarge={onEnlarge} />}
             </ReactFlowProvider>
           )}
         </div>
