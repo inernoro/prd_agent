@@ -53,7 +53,7 @@ export function LoginPage(): JSX.Element {
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#08080a] text-[#f6f6f8]">
+    <main className="relative min-h-screen overflow-hidden bg-[#08070d] text-[#f6f6f8]">
       <div className="cdsh-bg">
         <div className="cdsh-aurora" />
         <div className="cdsh-hex" />

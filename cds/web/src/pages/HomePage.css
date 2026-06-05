@@ -1,10 +1,12 @@
-/* CDS landing — Railway-style animated hero. Monochrome (black/white/grey).
-   Scoped with the cdsh- prefix so it never collides with app/theme styles.
-   Background intentionally uses a single hexagon motif (CDS identity) plus
-   soft glows + drifting particles — no stray diagonal beams. */
+/* CDS landing background.
+   Ported 1:1 from the CDS "构建等待页" (src/forwarder/waiting-page.ts) so the
+   landing/login surface matches the build-waiting page exactly: a slowly
+   drifting, slightly-rotated grid plus a radial highlight + side vignette over
+   #08070d. Scoped with the cdsh- prefix so it never collides with app/theme
+   styles. */
 
 .cdsh-root {
-  --cdsh-bg: #08080a;
+  --cdsh-bg: #08070d;
   --cdsh-panel: rgba(255, 255, 255, 0.026);
   --cdsh-panel-2: rgba(255, 255, 255, 0.05);
   --cdsh-line: rgba(255, 255, 255, 0.09);
@@ -24,57 +26,36 @@
 }
 .cdsh-mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
 
-/* ---------- ambient background ---------- */
-.cdsh-bg { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+/* ---------- ambient background (matches src/forwarder/waiting-page.ts) ----------
+   The 6 DOM layers (.cdsh-aurora / .cdsh-hex / .cdsh-stars / .cdsh-glow /
+   .cdsh-glow-2 / .cdsh-vignette) are kept so HomePage + LoginPage need no
+   markup change; only .cdsh-hex (drifting grid) and .cdsh-vignette (radial
+   highlight + side vignette = the waiting page's .shade) render. */
+.cdsh-bg { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; background: var(--cdsh-bg); }
 
-.cdsh-aurora {
-  position: absolute; top: 50%; left: 50%; width: 160vmax; height: 160vmax;
-  transform: translate(-50%, -50%);
-  background: conic-gradient(from 0deg at 50% 50%,
-    rgba(255,255,255,0.09), transparent 16%, rgba(255,255,255,0.055) 34%,
-    transparent 52%, rgba(255,255,255,0.08) 70%, transparent 88%, rgba(255,255,255,0.09));
-  filter: blur(34px); opacity: 0.8; animation: cdsh-spin 36s linear infinite;
-}
-@keyframes cdsh-spin { to { transform: translate(-50%, -50%) rotate(360deg); } }
-
+/* Drifting grid — the signature moving element (waiting page's .grid). */
 .cdsh-hex {
-  position: absolute; inset: -40px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='96' viewBox='0 0 56 96'%3E%3Cg fill='none' stroke='%23ffffff' stroke-opacity='0.10' stroke-width='1'%3E%3Cpath d='M28 0 L56 16 L56 48 L28 64 L0 48 L0 16 Z'/%3E%3Cpath d='M28 64 L56 80 L56 112 M28 64 L0 80 L0 112'/%3E%3C/g%3E%3C/svg%3E");
-  background-size: 56px 96px;
-  mask-image: radial-gradient(1500px 1000px at 60% 30%, #000 0%, #000 38%, transparent 86%);
-  -webkit-mask-image: radial-gradient(1500px 1000px at 60% 30%, #000 0%, #000 38%, transparent 86%);
-  animation: cdsh-hexdrift 26s linear infinite;
-}
-@keyframes cdsh-hexdrift { to { background-position: 56px 96px; } }
-
-.cdsh-stars {
-  position: absolute; inset: 0;
+  position: absolute; inset: -8%;
+  opacity: 0.72;
   background-image:
-    radial-gradient(1.8px 1.8px at 12% 22%, rgba(255,255,255,0.85), transparent),
-    radial-gradient(1.6px 1.6px at 32% 68%, rgba(255,255,255,0.65), transparent),
-    radial-gradient(2px 2px at 58% 14%, rgba(255,255,255,0.8), transparent),
-    radial-gradient(1.6px 1.6px at 74% 52%, rgba(255,255,255,0.55), transparent),
-    radial-gradient(2px 2px at 88% 78%, rgba(255,255,255,0.7), transparent),
-    radial-gradient(1.5px 1.5px at 46% 88%, rgba(255,255,255,0.5), transparent),
-    radial-gradient(1.7px 1.7px at 20% 84%, rgba(255,255,255,0.55), transparent),
-    radial-gradient(1.6px 1.6px at 64% 34%, rgba(255,255,255,0.55), transparent),
-    radial-gradient(1.5px 1.5px at 84% 26%, rgba(255,255,255,0.45), transparent);
-  animation: cdsh-stardrift 26s ease-in-out infinite alternate;
+    linear-gradient(rgba(255,255,255,0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.055) 1px, transparent 1px);
+  background-size: 34px 34px;
+  transform: rotate(-2deg);
+  animation: cdsh-grid 18s linear infinite;
 }
-@keyframes cdsh-stardrift { from { transform: translateY(0); } to { transform: translateY(-24px); } }
+@keyframes cdsh-grid { to { transform: rotate(-2deg) translate3d(-34px, -34px, 0); } }
 
-.cdsh-glow {
-  position: absolute; top: -360px; right: -160px; width: 1100px; height: 940px;
-  background: radial-gradient(closest-side, rgba(255,255,255,0.16), rgba(255,255,255,0.04) 46%, transparent 72%);
-  animation: cdsh-float 14s ease-in-out infinite alternate;
+/* Radial highlight + horizontal vignette over the grid (waiting page's .shade). */
+.cdsh-vignette {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(880px 640px at 66% 42%, rgba(255,255,255,0.12), transparent 55%),
+    linear-gradient(90deg, rgba(8,7,13,0.94), rgba(8,7,13,0.58) 52%, rgba(8,7,13,0.9));
 }
-@keyframes cdsh-float { from { transform: translate(0,0) scale(1); } to { transform: translate(-60px,40px) scale(1.08); } }
-.cdsh-glow-2 {
-  position: absolute; bottom: -420px; left: -220px; width: 860px; height: 720px;
-  background: radial-gradient(closest-side, rgba(255,255,255,0.08), transparent 70%);
-  animation: cdsh-float 18s ease-in-out infinite alternate-reverse;
-}
-.cdsh-vignette { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(8,8,10,0) 60%, rgba(8,8,10,0.9) 100%); }
+
+/* Unused in the waiting-page look — no-op so the shared markup stays valid. */
+.cdsh-aurora, .cdsh-stars, .cdsh-glow, .cdsh-glow-2 { display: none; }
 
 .cdsh-wrap { position: relative; z-index: 1; max-width: 1240px; margin: 0 auto; padding: 0 28px; }
 
@@ -209,11 +190,11 @@
 @media (prefers-reduced-motion: reduce) {
   /* Reduced-motion users: settle the one-shot ENTRANCE animations instantly
      (rise-in, headline line reveal, node/preview pop) so nothing slides in.
-     We intentionally KEEP the ambient background drift (aurora / hex / stars /
-     glow) and the small status loops running — they are purely decorative,
-     low-amplitude and slow, and without them the homepage reads as frozen/
-     broken (reported by the user). LoginPage reuses .cdsh-bg on a <main>
-     without .cdsh-root, so the ambient layers there keep moving too. */
+     We intentionally KEEP the drifting background grid (.cdsh-hex) and the
+     small status loops running — they are purely decorative, low-amplitude and
+     slow, and without them the homepage reads as frozen/broken (reported by the
+     user). LoginPage reuses .cdsh-bg on a <main> without .cdsh-root, so the grid
+     there keeps moving too. */
   .cdsh-rise,
   .cdsh-line > span,
   .cdsh-node,
