@@ -30,6 +30,8 @@ import { invokeAgent, listAgentCapabilities, getAgentParameters, createDefectFro
 import type { AgentCapability, AgentArtifact, AgentParameter, AgentOutboundAction } from '@/services/real/agentUniverse';
 import { BUILTIN_TOOLS } from '@/stores/toolboxStore';
 import type { ReprocessAgent, DocumentStoreConversation } from '@/services/contracts/documentStore';
+import { DocApplyDiffModal } from './DocApplyDiffModal';
+import type { ApplyMode } from './docApplyPreview';
 import { toast } from '@/lib/toast';
 
 export type ReprocessChatDrawerProps = {
@@ -229,6 +231,12 @@ export function ReprocessChatDrawer({
   const [visualInitialPrompt, setVisualInitialPrompt] = useState('');
   // mini 面板「已生成未插入」的图（后端持久化，关浏览器标签页也不丢）
   const [pendingVisualUrl, setPendingVisualUrl] = useState<string | null>(null);
+  // 写回前确认闸：handleApply 不再直接写库，先把意图存这里弹 diff 预览窗，确认才落库
+  // （CLAUDE.md「让用户感知改动」—— 破坏性 replace / 改原文件的 append 都过闸）
+  const [pendingApply, setPendingApply] = useState<{ msgId: string; mode: ApplyMode } | null>(null);
+  // 可观测性：当前流式调用解析到的模型 / 平台（onStart 透出），面板顶部低饱和展示
+  // （.claude/rules/ai-model-visibility.md：中大型 AI 功能必须让用户看见在调哪个模型）
+  const [streamModel, setStreamModel] = useState<{ model?: string; platform?: string } | null>(null);
 
   const cancelStreamRef = useRef<(() => void) | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -296,6 +304,9 @@ export function ReprocessChatDrawer({
     // 切文档必须把上一篇「已生成未插入」的暂存图也清掉：否则新文档若无暂存图，
     // 旧 URL 会残留并被持久化进新文档的 pendingImagesJson（Codex P2：pending image 串档）
     setPendingVisualUrl(null);
+    // 切文档必须关掉上一篇挂起的写回确认窗 + 清掉模型徽标，否则会把旧 diff/旧模型名带到新文档
+    setPendingApply(null);
+    setStreamModel(null);
     setDocContent('');
     setDocTruncated(false);
     setDocLoadError(null);
@@ -676,6 +687,11 @@ export function ReprocessChatDrawer({
       setStreamingId(null);
       sendLockRef.current = false;
     };
+    // 可观测性：流开始时上游解析到的模型 / 平台，落到顶部徽标（禁止前端硬编码模型名）
+    const onStart = (info: { model?: string; platform?: string }) => {
+      if (!isOwnedByCurrentEntry()) return;
+      if (info.model || info.platform) setStreamModel({ model: info.model, platform: info.platform });
+    };
 
     // ── 路由：统一「智能体宇宙」信封 ──
     // builtin（有契约）→ 后端路由到真实适配器（生成型出图 / chat 文本）
@@ -692,6 +708,7 @@ export function ReprocessChatDrawer({
         // 面板选择的尺寸/模型透传给真实适配器（仅生成型、且确有选择时）
         parameters: isGeneration && Object.keys(selectedParams).length > 0 ? selectedParams : undefined,
         history: isGeneration ? undefined : (history.length > 0 ? history : undefined),
+        onStart,
         onText,
         onArtifact: (art) => {
           if (!isOwnedByCurrentEntry()) return;
@@ -728,6 +745,7 @@ export function ReprocessChatDrawer({
       agentKey,
       itemId,
       history: history.length > 0 ? history : undefined,
+      onStart,
       onText,
       onError,
       onDone,
@@ -762,6 +780,8 @@ export function ReprocessChatDrawer({
     setError(null);
     setInput('');
     setPendingVisualUrl(null);
+    setPendingApply(null);
+    setStreamModel(null);
     try { sessionStorage.removeItem(`${CHAT_HISTORY_STORAGE_KEY}:${entryId}`); } catch { /* 配额/隐私模式忽略 */ }
     void clearReprocessConversation(entryId);  // 同步清后端，否则重开又把旧对话拉回来
     requestAnimationFrame(() => inputRef.current?.focus());
@@ -810,8 +830,21 @@ export function ReprocessChatDrawer({
     if (active?.kind === 'kbAgent' && active.agent.id === agent.id) setActive(null);
   }, [active]);
 
-  const handleApply = useCallback(async (
+  // 第一步：点写回按钮 = 打开 diff 预览确认窗，绝不直接写库。
+  // 让用户在 AI 覆盖/追加/另存之前看清改动（CLAUDE.md「让用户感知改动」）。
+  const handleApply = useCallback((
     msgId: string, mode: 'replace' | 'append' | 'new',
+  ) => {
+    const msg = messages.find((m) => m.id === msgId);
+    if (!msg || msg.role !== 'assistant' || !msg.content) return;
+    if (msg.applied) return;          // 已写回的不再开窗
+    if (applying) return;             // 有写回在飞行中先等它
+    setPendingApply({ msgId, mode });
+  }, [messages, applying]);
+
+  // 第二步：用户在确认窗点「确认」后才真正落库（保留原有全部并发/切档防护）。
+  const performApply = useCallback(async (
+    msgId: string, mode: 'replace' | 'append' | 'new', title?: string,
   ) => {
     const msg = messages.find((m) => m.id === msgId);
     if (!msg || msg.role !== 'assistant' || !msg.content) return;
@@ -830,7 +863,11 @@ export function ReprocessChatDrawer({
     setApplying(key);
     let res;
     try {
-      res = await applyReprocessContent(requestedEntryId, { mode, content: msg.content });
+      res = await applyReprocessContent(requestedEntryId, {
+        mode,
+        content: msg.content,
+        ...(mode === 'new' && title ? { title } : {}),
+      });
     } catch (e) {
       // 即使 entry 切走也得清 applying，不然新 doc 的写回按钮永远 disabled（Bugbot #3 三轮 Low）
       setApplying(null);
@@ -874,6 +911,14 @@ export function ReprocessChatDrawer({
 
     if (target && onApplied) onApplied(mode, target);
   }, [messages, applying, entryId, onApplied]);
+
+  // 确认窗点「确认」：执行真正写回，完成后关窗。失败/切档由 performApply 自行处理 toast。
+  const confirmPendingApply = useCallback(async (opts: { title?: string }) => {
+    if (!pendingApply) return;
+    const { msgId, mode } = pendingApply;
+    await performApply(msgId, mode, opts.title);
+    setPendingApply(null);
+  }, [pendingApply, performApply]);
 
   // 智能体专属出站动作：把产出送回它自己的原生系统（巧思）
   const handleOutbound = useCallback(async (actionKey: string, content: string) => {
@@ -1213,6 +1258,18 @@ export function ReprocessChatDrawer({
           </AnimatePresence>
         </div>
 
+        {/* 可观测性：当前调用的模型 · 平台（onStart 透出，禁止前端硬编码） */}
+        {streamModel?.model && !docLoadError && (
+          <div className="px-5 pb-2 shrink-0">
+            <div className="inline-flex items-center gap-1.5 text-[10px] font-mono text-token-muted">
+              <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: 'rgba(110,231,158,0.85)' }} />
+              <span className="truncate">
+                {streamModel.model}{streamModel.platform ? ` · ${streamModel.platform}` : ''}
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* 智能涌现提示：选中智能体后，告诉用户这个智能体能做什么特别的（专属出站动作） */}
         {activeCapability && !docLoadError && (
           <div className="px-5 pb-2 shrink-0">
@@ -1248,6 +1305,28 @@ export function ReprocessChatDrawer({
               }}
             />
           )}
+        </AnimatePresence>
+
+        {/* 写回前确认窗（diff 预览闸）：确认才落库，写入前原文不动 */}
+        <AnimatePresence>
+          {pendingApply && (() => {
+            const targetMsg = messages.find((m) => m.id === pendingApply.msgId);
+            if (!targetMsg) return null;
+            const applyKey = `${pendingApply.msgId}:${pendingApply.mode}`;
+            const inFlight = applying === applyKey;
+            return (
+              <DocApplyDiffModal
+                mode={pendingApply.mode}
+                entryTitle={entryTitle}
+                docContent={docContent}
+                aiContent={targetMsg.content}
+                docTruncated={docTruncated}
+                applying={inFlight}
+                onConfirm={(opts) => void confirmPendingApply(opts)}
+                onCancel={() => { if (!inFlight) setPendingApply(null); }}
+              />
+            );
+          })()}
         </AnimatePresence>
 
         {/* 消息流 */}
