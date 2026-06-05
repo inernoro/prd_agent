@@ -176,9 +176,13 @@ function EvidenceNode({ data }: NodeProps) {
         <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.3 }}>{d.title}</span>
       </div>
       {d.thumb && (
-        <div onClick={(e) => { e.stopPropagation(); d.onEnlarge?.(d.thumb!, label); }} title="点击查看大图" style={{ position: 'relative', cursor: 'zoom-in', borderTop: '1px solid var(--border-faint)' }} className="nodrag">
+        // 点节点(含缩略图)= 选中聚焦(看它证明了哪些诉求);只有「看大图」徽标 stopPropagation 才放大截图。
+        <div title="点本卡看它证明了哪些诉求;点「看大图」放大截图" style={{ position: 'relative', cursor: 'pointer', borderTop: '1px solid var(--border-faint)' }} className="nodrag">
           <img src={d.thumb} alt={label} style={{ width: '100%', height: 170, objectFit: 'cover', display: 'block' }} />
-          <span style={{ position: 'absolute', right: 8, bottom: 8, display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 7px', borderRadius: 7, fontSize: 11, fontWeight: 600, background: 'rgba(0,0,0,0.62)', color: '#fff' }}>
+          <span
+            onClick={(e) => { e.stopPropagation(); d.onEnlarge?.(d.thumb!, label); }}
+            style={{ position: 'absolute', right: 8, bottom: 8, cursor: 'zoom-in', display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 7px', borderRadius: 7, fontSize: 11, fontWeight: 600, background: 'rgba(0,0,0,0.62)', color: '#fff' }}
+          >
             <ZoomIn size={12} /> 看大图
           </span>
         </div>
