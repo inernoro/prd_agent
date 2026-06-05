@@ -93,14 +93,14 @@
 
 /* ---------- board ---------- */
 .cdsh-board {
-  position: relative; border: 1px solid var(--cdsh-line); border-radius: 20px; overflow: hidden;
-  background: linear-gradient(180deg, rgba(255,255,255,0.032), rgba(255,255,255,0.01));
-  box-shadow: 0 40px 120px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05);
-  backdrop-filter: blur(6px);
+  position: relative;
+  /* Railway-style: frameless. No card border / radius / shadow / blur — the
+     diagram dissolves into the honeycomb behind it (edge mask lives on
+     .cdsh-canvas) instead of reading as a pasted-on box. */
 }
-/* soft glow lifting the board off the void */
-.cdsh-board::before { content: ''; position: absolute; inset: -1px; border-radius: 20px; background: radial-gradient(120% 120% at 80% 0%, rgba(255,255,255,0.08), transparent 50%); pointer-events: none; }
-.cdsh-board-head { position: relative; display: flex; align-items: center; justify-content: space-between; padding: 15px 18px; border-bottom: 1px solid var(--cdsh-line-soft); }
+/* card glow removed — frameless board */
+.cdsh-board::before { display: none; }
+.cdsh-board-head { position: relative; display: flex; align-items: center; justify-content: space-between; padding: 15px 18px 12px; }
 .cdsh-board-head .cdsh-left { display: flex; align-items: center; gap: 10px; }
 .cdsh-branch { font-size: 13px; font-weight: 600; }
 .cdsh-tag { font-size: 11px; color: var(--cdsh-faint); border: 1px solid var(--cdsh-line); border-radius: 6px; padding: 3px 7px; }
@@ -109,7 +109,19 @@
 .cdsh-pulse::after { content: ''; position: absolute; inset: -4px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.7); animation: cdsh-ping 1.8s ease-out infinite; }
 @keyframes cdsh-ping { 0% { transform: scale(0.5); opacity: .9; } 100% { transform: scale(1.9); opacity: 0; } }
 
-.cdsh-canvas { position: relative; width: 100%; aspect-ratio: 1000 / 640; }
+.cdsh-canvas {
+  position: relative; width: 100%; aspect-ratio: 1000 / 640;
+  /* Edge-fade the diagram into the background on all four sides so nodes/wires
+     emerge from and dissolve into the honeycomb (no hard rectangular edge). */
+  -webkit-mask-image:
+    linear-gradient(to right, transparent 0, #000 9%, #000 91%, transparent 100%),
+    linear-gradient(to bottom, transparent 0, #000 8%, #000 92%, transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-image:
+    linear-gradient(to right, transparent 0, #000 9%, #000 91%, transparent 100%),
+    linear-gradient(to bottom, transparent 0, #000 8%, #000 92%, transparent 100%);
+  mask-composite: intersect;
+}
 .cdsh-canvas::after { content: ''; position: absolute; top: 0; bottom: 0; width: 40%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent); transform: translateX(-60%); animation: cdsh-sweep 6s ease-in-out infinite; pointer-events: none; }
 @keyframes cdsh-sweep { 0% { transform: translateX(-60%); } 55%,100% { transform: translateX(260%); } }
 
@@ -151,7 +163,7 @@
 .cdsh-url { font-size: 12px; color: var(--cdsh-text); }
 .cdsh-lbl { font-size: 10.5px; color: var(--cdsh-faint); }
 
-.cdsh-ticker { position: relative; margin: 0; padding: 12px 18px; border-top: 1px solid var(--cdsh-line-soft); font-size: 12px; color: var(--cdsh-muted); display: flex; align-items: center; gap: 9px; min-height: 42px; }
+.cdsh-ticker { position: relative; margin: 0; padding: 14px 18px 0; font-size: 12px; color: var(--cdsh-muted); display: flex; align-items: center; gap: 9px; min-height: 42px; }
 .cdsh-ticker .cdsh-k { color: var(--cdsh-text); }
 .cdsh-feed { transition: opacity .35s; }
 .cdsh-feed.cdsh-off { opacity: 0; }
