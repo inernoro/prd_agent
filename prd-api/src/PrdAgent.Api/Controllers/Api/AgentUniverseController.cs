@@ -263,6 +263,11 @@ public class AgentUniverseController : ControllerBase
             {
                 switch (chunk.Type)
                 {
+                    case AgentChunkType.Model:
+                        // 真实解析到的模型 / 平台，单独发 model 事件给前端做「当前模型」可观测性展示
+                        await WriteSseEventAsync("model", new { model = chunk.Model, platform = chunk.Platform });
+                        break;
+
                     case AgentChunkType.Text:
                         if (!string.IsNullOrEmpty(chunk.Content))
                             await WriteSseEventAsync("text", new { content = chunk.Content });
