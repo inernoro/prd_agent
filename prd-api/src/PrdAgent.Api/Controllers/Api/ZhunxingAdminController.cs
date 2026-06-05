@@ -334,7 +334,7 @@ public class ZhunxingAdminController : ControllerBase
             {
                 AppId = "zhunxing-agent",
                 AppName = "准星",
-                Description = "公司规范与流程问答中枢",
+                Description = "企业AI知识中枢，覆盖问答、流程决策与风险预警。",
                 Version = "1.0.0",
                 Endpoint = "/zhunxing/ask",
                 SupportsStreaming = false,

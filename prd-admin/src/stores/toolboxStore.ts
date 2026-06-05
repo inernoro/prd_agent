@@ -252,7 +252,7 @@ const BUILTIN_TOOLS: ToolboxItem[] = [
   {
     id: 'builtin-zhunxing-agent',
     name: '准星',
-    description: '企业制度与流程问答中枢，快速定位规范条款与执行口径',
+    description: '企业AI知识中枢，覆盖问答、流程决策与风险预警。',
     icon: 'FileSearch',
     category: 'builtin',
     type: 'builtin',
