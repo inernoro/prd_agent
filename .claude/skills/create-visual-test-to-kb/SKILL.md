@@ -59,7 +59,7 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
 
 - **任何"指向具体元素/区域/差异/问题"的截图,必须在图上画框 + 一句标签**(harness `box(page,locator,label)` / `stepShot(...,highlight)` / `stepClick(...)`)。红框 + 序号/短标签直接压在目标上,读者一眼定位。
 - **唯一豁免**:纯"整体观感/全局布局"的 overview 图(就是要看整体,无单一重点)可不画框,但 caption 要写明"看整体布局,无单点"。
-- **本规则不限于全流程验收 driver**——**任何发给用户的截图都适用**,包括:临时诊断、方案评估、critique、改造前后对比。哪怕只是一次性 `page.screenshot()`,也要**先注入带标签的红框再截**(harness 的 `box/clearBoxes` 可脱离全 driver 单独 import 用;或在 `page.evaluate` 里画一个 `position:fixed` 的红框 + label div)。
+- **本规则不限于全流程验收 driver**——**任何发给用户的截图都适用**,包括:临时诊断、方案评估、critique、改造前后对比。哪怕只是一次性 `page.screenshot()`,也要**先注入带标签的红框再截**。**最省事的做法:直接用 `scripts/annotate.mjs`** —— 一条命令对任意页面按 selector/坐标画框 + 标签再截图,不用写整个 driver(支持 `--login` 表单登录、`--mobile` 手机视口、`--click` 截图前先点开某元素)。也可 `import { box, clearBoxes } from harness.mjs` 脱离 driver 单独用。
 - **多个重点画多个框 + 编号**(①②③),标签用不同颜色区分维度(如 红=错误/问题、橙=冗余、蓝=缺失)。框要框在"我这句话说的那个东西"上,不能泛框一大片。
 - 判定:**把这张图单独发给一个没听我解释的人,他能不能 3 秒看出"重点在哪、这框说的是什么"?** 不能 → 没框/框错,返工。
 
@@ -149,6 +149,7 @@ python3 $SKILL/scripts/archive_report.py --config $SKILL/acceptance.config.json 
 | `templates/zz-report.md` | **默认** ZZ 照做风骨架(全大标题 + 一句话一步 + `{{IMG:}}` 逐步配图) | 写报告时(首选) |
 | `templates/report-template.md` | 旧版九段骨架(速览卡 + 九段 + 用例表 + `{{EVIDENCE}}` 集中证据) | 要集中证据段时 |
 | `scripts/harness.mjs` | 模拟人类浏览器 helper(点击导航/截图/主题 + ZZ 画框 stepClick/stepShot/box) | 写 driver 时 |
+| `scripts/annotate.mjs` | 通用「框选重点」工具:一条命令对任意页面按 selector/坐标画框+标签再截图(--login/--mobile/--click) | 发任何指向性截图前(§B2 硬要求) |
 | `scripts/archive_report.py` | 配置驱动归档(上传/删图保URL/建条目/写正文校验/分享链/必给地址/可见性防漂移) | 归档时 |
 | `scripts/verify-open.mjs` | 归档后自查:headless 打开分享链断言报告渲染(标题+正文+截图);空/打不开 exit 2 | 归档后(强制) |
 | `acceptance.config.json` | 项目配置(预览域名/登录/文档空间API/库名/截图);跨仓库改这个 | 接新仓库时 |
