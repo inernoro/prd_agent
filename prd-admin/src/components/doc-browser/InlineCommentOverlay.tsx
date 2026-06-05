@@ -1,21 +1,26 @@
-import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { MessageSquare } from 'lucide-react';
 import type { DocumentInlineComment } from '@/services/contracts/documentStore';
+import { CommentLine, ReplyBox, groupKey } from './inlineCommentShared';
 
-// 行内评论高亮 + 气泡浮层。
-// 把每条评论的 selectedText 锚回「已渲染的 markdown DOM」，在原文上画高亮条，
-// 并在锚点末尾放一颗可点的评论气泡（点击 → 打开评论抽屉）。
+// 行内评论高亮 + 气泡/内联卡片浮层。
+// 把每条评论的 selectedText 锚回「已渲染的 markdown DOM」，在原文上画高亮条。
+// 两种布局（由 mode 控制）：
+//   - inline：高亮末尾放可点气泡，点击就地展开评论卡片（GitHub 评论代码风），边读边可展开看。
+//   - margin：不画气泡，只留高亮；评论卡片在右侧「批注栏」常驻（InlineCommentMargin），
+//             hover 批注栏某条 → hoveredKey 命中 → 本层把对应高亮加亮（双向联动）。
 //
 // 坐标系巧思：本层是 contentAreaRef（滚动容器，position:relative）的 absolute 子元素，
-// top:0/left:0、尺寸 0，作为子元素的包含块原点。高亮子元素位置 = 文本 rect 减去本层 rect，
+// top:0/left:0、尺寸 0，作为子元素的包含块原点。子元素位置 = 文本 rect 减去本层 rect，
 // 得到「相对本层原点」的偏移——本层与正文同在滚动内容里一起滚，故滚动时无需重算，天然对齐。
 
 interface AnchorMark {
   key: string;
   rects: Array<{ top: number; left: number; width: number; height: number }>;
   bubble: { top: number; left: number };
-  count: number;
-  preview: string;
+  /** 内联展开卡片的锚点（高亮末行左下角，相对本层原点） */
+  card: { top: number; left: number };
+  comments: DocumentInlineComment[];
   orphaned: boolean;
 }
 
@@ -97,17 +102,35 @@ export function InlineCommentOverlay({
   containerRef,
   comments,
   reflowKey,
-  onOpenComment,
+  mode = 'inline',
+  hoveredKey = null,
+  canCreate = false,
+  onCreate,
+  onDelete,
 }: {
   containerRef: RefObject<HTMLDivElement>;
   comments: DocumentInlineComment[];
   /** 变化即重算（切文档 / 正文内容变化） */
   reflowKey: string | number;
-  onOpenComment: () => void;
+  mode?: 'inline' | 'margin';
+  /** margin 模式下，批注栏 hover 命中的分组 key（高亮加亮） */
+  hoveredKey?: string | null;
+  canCreate?: boolean;
+  onCreate?: (input: {
+    selectedText: string;
+    contextBefore?: string;
+    contextAfter?: string;
+    startOffset: number;
+    endOffset: number;
+    content: string;
+  }) => Promise<boolean>;
+  onDelete?: (comment: DocumentInlineComment) => void;
 }) {
   const overlayRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
   const [marks, setMarks] = useState<AnchorMark[]>([]);
+  // inline 模式：当前展开的分组（点气泡就地展开卡片）
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
 
   const recompute = useCallback(() => {
     const container = containerRef.current;
@@ -116,14 +139,11 @@ export function InlineCommentOverlay({
       setMarks([]);
       return;
     }
-    // 同一短语的多条评论合并成一颗气泡（显示条数）；全文评论不参与行内锚定。
-    // 低风险版（用户定）：分组仍按 selectedText、不按出现位置拆分（key=text 唯一，无重复 React key）；
-    // 但锚定时用首条评论的 contextBefore 选「哪一次出现」，多处出现不再一律锚到首次（Bugbot/Codex）。
-    // 已知边界：同一短语在不同位置的多条评论仍合并到一颗气泡（留待完整版按出现位置拆分）。
+    // 同一短语的多条评论合并成一颗气泡/一张卡（显示条数）；全文评论不参与行内锚定。
     const groups = new Map<string, DocumentInlineComment[]>();
     for (const c of comments) {
       if (c.isWholeDocument || !c.selectedText) continue;
-      const text = c.selectedText.replace(/\s+/g, ' ').trim();
+      const text = groupKey(c.selectedText);
       if (!text) continue;
       let g = groups.get(text);
       if (!g) { g = []; groups.set(text, g); }
@@ -134,6 +154,7 @@ export function InlineCommentOverlay({
       return;
     }
     const oRect = overlay.getBoundingClientRect();
+    const maxLeft = Math.max(0, container.clientWidth - 348);
     const next: AnchorMark[] = [];
     groups.forEach((list, text) => {
       const range = findTextRange(container, text, list[0].contextBefore ?? undefined);
@@ -147,13 +168,17 @@ export function InlineCommentOverlay({
         width: r.width,
         height: r.height,
       }));
+      const first = rectList[0];
       const last = rectList[rectList.length - 1];
       next.push({
         key: text,
         rects,
         bubble: { top: last.top - oRect.top, left: last.right - oRect.left },
-        count: list.length,
-        preview: list.map((c) => `${c.authorDisplayName}：${c.content}`).join('\n').slice(0, 240),
+        card: {
+          top: last.bottom - oRect.top + 6,
+          left: Math.min(Math.max(0, first.left - oRect.left), maxLeft),
+        },
+        comments: list,
         orphaned,
       });
     });
@@ -184,55 +209,127 @@ export function InlineCommentOverlay({
     };
   }, [recompute, schedule, reflowKey, containerRef]);
 
+  // 切文档 / 切布局时收起展开的内联卡片
+  useEffect(() => { setExpandedKey(null); }, [reflowKey, mode]);
+
   return (
     <div ref={overlayRef} aria-hidden style={{ position: 'absolute', top: 0, left: 0, width: 0, height: 0 }}>
-      {marks.map((m) => (
-        <div key={m.key}>
-          {/* 高亮条：不挡正文点击/划词 */}
-          {m.rects.map((r, i) => (
-            <div
-              key={i}
-              style={{
-                position: 'absolute',
-                top: r.top,
-                left: r.left,
-                width: r.width,
-                height: r.height,
-                background: m.orphaned ? 'rgba(148,163,184,0.16)' : 'rgba(250,204,21,0.18)',
-                borderBottom: `2px solid ${m.orphaned ? 'rgba(148,163,184,0.5)' : 'rgba(234,179,8,0.7)'}`,
-                borderRadius: 2,
-                pointerEvents: 'none',
-              }}
-            />
-          ))}
-          {/* 气泡：可点击，打开评论抽屉；hover 显示作者+内容预览 */}
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); onOpenComment(); }}
-            title={m.preview}
-            className="inline-flex items-center gap-0.5 cursor-pointer"
-            style={{
-              position: 'absolute',
-              top: m.bubble.top - 7,
-              left: m.bubble.left + 2,
-              height: 17,
-              padding: '0 5px',
-              borderRadius: 9,
-              pointerEvents: 'auto',
-              background: m.orphaned ? 'rgba(100,116,139,0.95)' : 'rgba(234,179,8,0.96)',
-              color: m.orphaned ? '#e2e8f0' : '#3a2d05',
-              fontSize: 10,
-              fontWeight: 700,
-              lineHeight: '17px',
-              boxShadow: '0 2px 6px rgba(0,0,0,0.28)',
-              zIndex: 6,
-            }}
-          >
-            <MessageSquare size={10} />
-            {m.count > 1 ? m.count : ''}
-          </button>
-        </div>
-      ))}
+      {marks.map((m) => {
+        const active = hoveredKey === m.key || expandedKey === m.key;
+        const expanded = mode === 'inline' && expandedKey === m.key;
+        return (
+          <div key={m.key}>
+            {/* 高亮条：不挡正文点击/划词；active 时加亮（批注栏 hover / 内联展开联动） */}
+            {m.rects.map((r, i) => (
+              <div
+                key={i}
+                style={{
+                  position: 'absolute',
+                  top: r.top,
+                  left: r.left,
+                  width: r.width,
+                  height: r.height,
+                  background: m.orphaned
+                    ? (active ? 'rgba(148,163,184,0.30)' : 'rgba(148,163,184,0.16)')
+                    : (active ? 'rgba(250,204,21,0.34)' : 'rgba(250,204,21,0.18)'),
+                  borderBottom: `2px solid ${m.orphaned ? 'rgba(148,163,184,0.5)' : 'rgba(234,179,8,0.7)'}`,
+                  borderRadius: 2,
+                  pointerEvents: 'none',
+                  transition: 'background 0.12s',
+                }}
+              />
+            ))}
+
+            {/* inline 模式：可点气泡，就地展开/收起卡片 */}
+            {mode === 'inline' && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setExpandedKey((k) => (k === m.key ? null : m.key)); }}
+                title={m.comments.map((c) => `${c.authorDisplayName}：${c.content}`).join('\n').slice(0, 240)}
+                className="inline-flex items-center gap-0.5 cursor-pointer"
+                style={{
+                  position: 'absolute',
+                  top: m.bubble.top - 7,
+                  left: m.bubble.left + 2,
+                  height: 17,
+                  padding: '0 5px',
+                  borderRadius: 9,
+                  pointerEvents: 'auto',
+                  background: m.orphaned ? 'rgba(100,116,139,0.95)' : 'rgba(234,179,8,0.96)',
+                  color: m.orphaned ? '#e2e8f0' : '#3a2d05',
+                  fontSize: 10,
+                  fontWeight: 700,
+                  lineHeight: '17px',
+                  boxShadow: expanded ? '0 0 0 2px rgba(234,179,8,0.4)' : '0 2px 6px rgba(0,0,0,0.28)',
+                  zIndex: 6,
+                }}
+              >
+                <MessageSquare size={10} />
+                {m.comments.length > 1 ? m.comments.length : ''}
+              </button>
+            )}
+
+            {/* inline 展开卡片：就地（GitHub 评论代码风），可读可回复可删 */}
+            {expanded && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: m.card.top,
+                  left: m.card.left,
+                  width: 338,
+                  maxHeight: 360,
+                  overflowY: 'auto',
+                  overscrollBehavior: 'contain',
+                  pointerEvents: 'auto',
+                  zIndex: 8,
+                  borderRadius: 12,
+                  padding: '12px 13px',
+                  background: 'linear-gradient(180deg, rgba(30,28,46,0.97), rgba(20,19,28,0.98))',
+                  border: '1px solid rgba(168,85,247,0.3)',
+                  boxShadow: '0 18px 44px -10px rgba(0,0,0,0.6)',
+                  backdropFilter: 'blur(40px)',
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-semibold truncate" style={{ color: 'var(--text-muted)' }}>
+                    {m.comments.length} 条批注
+                  </span>
+                  <button
+                    onClick={() => setExpandedKey(null)}
+                    className="text-[10px] cursor-pointer hover:underline flex-none"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    收起
+                  </button>
+                </div>
+                <div className="space-y-2.5">
+                  {m.comments.map((c) => (
+                    <CommentLine key={c.id} comment={c} canDelete={canCreate} onDelete={onDelete} />
+                  ))}
+                </div>
+                {canCreate && onCreate && (
+                  <div className="mt-3">
+                    <ReplyBox
+                      onSubmit={async (text) => {
+                        const base = m.comments[0];
+                        return onCreate({
+                          selectedText: base.selectedText,
+                          contextBefore: base.contextBefore,
+                          contextAfter: base.contextAfter,
+                          startOffset: base.startOffset,
+                          endOffset: base.endOffset,
+                          content: text,
+                        });
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
