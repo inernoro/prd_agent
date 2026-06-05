@@ -2755,9 +2755,9 @@ export function DocBrowser({
                       border: '1px solid rgba(99,102,241,0.22)',
                       color: 'rgba(165,180,252,0.95)',
                     }}
-                    title="证据关系图 — 把报告里的步骤连成页面跳转关系图（探案证据板）"
+                    title="证据板 — 把「需求/用例 → 证据截图 → 结论」连成关系图，按通过/未做上色"
                   >
-                    <Workflow size={11} /> 证据图
+                    <Workflow size={11} /> 证据板
                   </button>
                 );
               })()}
