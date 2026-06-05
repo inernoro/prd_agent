@@ -164,7 +164,7 @@ export default function LearningCenterPage() {
               );
             })}
 
-            {(progress.items?.length ?? 0) === 0 && (
+            {(progress?.items?.length ?? 0) === 0 && (
               <div className="text-center py-16" style={{ color: 'var(--text-muted)' }}>
                 <BookOpen size={28} className="mx-auto mb-3 opacity-50" />
                 <div className="text-[13px]">暂无官方教程</div>
