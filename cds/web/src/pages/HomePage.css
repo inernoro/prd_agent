@@ -33,7 +33,7 @@
   background: conic-gradient(from 0deg at 50% 50%,
     rgba(255,255,255,0.09), transparent 16%, rgba(255,255,255,0.055) 34%,
     transparent 52%, rgba(255,255,255,0.08) 70%, transparent 88%, rgba(255,255,255,0.09));
-  filter: blur(34px); opacity: 0.8; animation: cdsh-spin 60s linear infinite;
+  filter: blur(34px); opacity: 0.8; animation: cdsh-spin 36s linear infinite;
 }
 @keyframes cdsh-spin { to { transform: translate(-50%, -50%) rotate(360deg); } }
 
@@ -43,7 +43,7 @@
   background-size: 56px 96px;
   mask-image: radial-gradient(1500px 1000px at 60% 30%, #000 0%, #000 38%, transparent 86%);
   -webkit-mask-image: radial-gradient(1500px 1000px at 60% 30%, #000 0%, #000 38%, transparent 86%);
-  animation: cdsh-hexdrift 60s linear infinite;
+  animation: cdsh-hexdrift 26s linear infinite;
 }
 @keyframes cdsh-hexdrift { to { background-position: 56px 96px; } }
 
@@ -207,12 +207,15 @@
   .cdsh-wrap { padding: 0 18px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  /* Also target .cdsh-bg children: LoginPage reuses these background layers on
-     a <main> without .cdsh-root, so the scope must cover both mount points. */
-  .cdsh-root *,
-  .cdsh-bg,
-  .cdsh-bg * { animation-duration: .001ms !important; animation-iteration-count: 1 !important; }
-  /* SVG <animateMotion> is SMIL, not CSS — animation-duration can't stop it,
-     so hide the traveling packets entirely under reduced motion. */
-  .cdsh-packet { display: none !important; }
+  /* Reduced-motion users: settle the one-shot ENTRANCE animations instantly
+     (rise-in, headline line reveal, node/preview pop) so nothing slides in.
+     We intentionally KEEP the ambient background drift (aurora / hex / stars /
+     glow) and the small status loops running — they are purely decorative,
+     low-amplitude and slow, and without them the homepage reads as frozen/
+     broken (reported by the user). LoginPage reuses .cdsh-bg on a <main>
+     without .cdsh-root, so the ambient layers there keep moving too. */
+  .cdsh-rise,
+  .cdsh-line > span,
+  .cdsh-node,
+  .cdsh-preview { animation-duration: .001ms !important; animation-iteration-count: 1 !important; }
 }
