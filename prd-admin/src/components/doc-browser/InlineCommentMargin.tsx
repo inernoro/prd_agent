@@ -38,7 +38,7 @@ export function InlineCommentMargin({
     startOffset: number;
     endOffset: number;
     content: string;
-  }) => Promise<boolean>;
+  }, entryId?: string) => Promise<boolean>;
   onDelete: (comment: DocumentInlineComment) => void;
   onClose?: () => void;
   width?: number;
@@ -109,7 +109,8 @@ export function InlineCommentMargin({
           <div className="mt-2.5" onClick={(e) => e.stopPropagation()}>
             <ReplyBox onSubmit={async (text) => {
               const base = g.comments[0];
-              return onCreate({ selectedText: base.selectedText, contextBefore: base.contextBefore, contextAfter: base.contextAfter, startOffset: base.startOffset, endOffset: base.endOffset, content: text });
+              // 回复落到该线程所属条目（base.entryId），防切档后写到别的文档（Bugbot Medium）
+              return onCreate({ selectedText: base.selectedText, contextBefore: base.contextBefore, contextAfter: base.contextAfter, startOffset: base.startOffset, endOffset: base.endOffset, content: text }, base.entryId);
             }} />
           </div>
         )}
@@ -169,7 +170,7 @@ export function InlineCommentMargin({
                 <div className="p-3 rounded-[11px] space-y-2.5" style={{ background: 'rgba(96,165,250,0.05)', border: '1px solid rgba(96,165,250,0.16)' }}>
                   {wholeDoc.map((c) => <CommentLine key={c.id} comment={c} canDelete={canCreate} onDelete={onDelete} />)}
                   {canCreate && (
-                    <ReplyBox placeholder="写对整篇文档的评论…" onSubmit={async (text) => onCreate({ selectedText: '', startOffset: 0, endOffset: 0, content: text })} />
+                    <ReplyBox placeholder="写对整篇文档的评论…" onSubmit={async (text) => onCreate({ selectedText: '', startOffset: 0, endOffset: 0, content: text }, wholeDoc[0]?.entryId)} />
                   )}
                 </div>
               </div>

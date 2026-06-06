@@ -120,7 +120,7 @@ export function InlineCommentOverlay({
     startOffset: number;
     endOffset: number;
     content: string;
-  }) => Promise<boolean>;
+  }, entryId?: string) => Promise<boolean>;
   onDelete?: (comment: DocumentInlineComment) => void;
 }) {
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -252,7 +252,8 @@ export function InlineCommentOverlay({
                   <div className="mt-3">
                     <ReplyBox onSubmit={async (text) => {
                       const base = m.comments[0];
-                      return onCreate({ selectedText: base.selectedText, contextBefore: base.contextBefore, contextAfter: base.contextAfter, startOffset: base.startOffset, endOffset: base.endOffset, content: text });
+                      // 回复落到该线程所属条目（base.entryId），防切档后写到别的文档（Bugbot Medium）
+                      return onCreate({ selectedText: base.selectedText, contextBefore: base.contextBefore, contextAfter: base.contextAfter, startOffset: base.startOffset, endOffset: base.endOffset, content: text }, base.entryId);
                     }} />
                   </div>
                 )}
