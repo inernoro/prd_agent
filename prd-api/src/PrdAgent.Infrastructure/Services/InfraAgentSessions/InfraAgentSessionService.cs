@@ -404,11 +404,6 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         var token = await GetLongTokenAsync(connection.Id, ct);
         var cdsItem = await PostMessageToCdsAsync(connection, token, session, request.Content.Trim(), ct);
         var cdsStatus = MapCdsStatus(GetString(cdsItem, "status"));
-        var importResult = await ImportCdsStreamEventsAsync(connection, token, session, 0, ct);
-        if (!string.IsNullOrWhiteSpace(importResult.SessionStatus))
-        {
-            cdsStatus = importResult.SessionStatus;
-        }
 
         session.UpdatedAt = DateTime.UtcNow;
         await _db.InfraAgentSessions.UpdateOneAsync(
@@ -416,11 +411,15 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             Builders<InfraAgentSession>.Update.Set(x => x.UpdatedAt, session.UpdatedAt).Set(x => x.Status, cdsStatus),
             cancellationToken: ct);
         session.Status = cdsStatus;
-        // 传输内幕（走 CDS session transport / 跳过 MAP 直跑）对用户零价值，且每条消息都触发，
-        // 会刷屏用户的事件时间线。降级为服务端 debug 日志，不再写进用户可见的事件流。
+        // 关键修复：不再内联阻塞导入。旧实现 await ImportCdsStreamEventsAsync 把整段 CDS 流读完才返回，
+        // 表现为「发送卡 2 秒 → 一直等 → 死掉」。改为消息 POST 到 CDS 后立即入队，由
+        // InfraAgentRuntimeWorker 后台拉流落库（与 HTTP 请求生命周期解耦，server-authority），
+        // 前端 GET {id}/stream 的长连 SSE 实时呈现逐字。POST 毫秒级返回。
+        await _runtimeJobs.EnqueueAsync(
+            new InfraAgentRuntimeJob(userId, session.Id, request.Content.Trim(), DateTime.UtcNow), ct);
         _logger.LogDebug(
-            "[infra-agent] message dispatched via CDS session transport (session={SessionId}, directRuntimeFallback={Fallback})",
-            session.Id, IsMapDirectRuntimeFallbackEnabled());
+            "[infra-agent] message posted to CDS, stream import dispatched to background worker (session={SessionId})",
+            session.Id);
         return ToView(session);
 
         async Task<JsonElement> PostMessageToCdsAsync(
@@ -495,10 +494,32 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
         if (!IsMapDirectRuntimeFallbackEnabled())
         {
-            // 同上：MAP 直跑被禁用、由 CDS 接管，是内部编排细节，不该出现在用户事件流里。
-            _logger.LogDebug(
-                "[infra-agent] MAP direct runtime job skipped; CDS session transport owns execution (session={SessionId})",
-                session.Id);
+            // CDS session transport（默认路径）：在后台 worker 里拉取 CDS 流式事件落库，
+            // 与 HTTP 请求解耦。消息已由 SendMessageAsync 同步 POST 到 CDS，这里只负责导入。
+            if (string.IsNullOrWhiteSpace(session.CdsSessionId))
+            {
+                return;
+            }
+            try
+            {
+                var connection = await GetActiveConnectionAsync(session, CancellationToken.None);
+                var token = await GetLongTokenAsync(connection.Id, CancellationToken.None);
+                // server-authority：用 CancellationToken.None，客户端断开 / worker 调度不打断 agent 运行。
+                var importResult = await ImportCdsStreamEventsAsync(connection, token, session, 0, CancellationToken.None);
+                if (!string.IsNullOrWhiteSpace(importResult.SessionStatus))
+                {
+                    await _db.InfraAgentSessions.UpdateOneAsync(
+                        x => x.Id == session.Id,
+                        Builders<InfraAgentSession>.Update
+                            .Set(x => x.Status, importResult.SessionStatus)
+                            .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                        cancellationToken: CancellationToken.None);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[infra-agent] background CDS stream import failed session={SessionId}", session.Id);
+            }
             return;
         }
 
