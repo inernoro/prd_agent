@@ -416,22 +416,11 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             Builders<InfraAgentSession>.Update.Set(x => x.UpdatedAt, session.UpdatedAt).Set(x => x.Status, cdsStatus),
             cancellationToken: ct);
         session.Status = cdsStatus;
-        await AppendRawEventAsync(
-            session.Id,
-            await NextEventSeqAsync(session.Id, ct),
-            InfraAgentEventTypes.Log,
-            JsonSerializer.Serialize(new
-            {
-                level = "info",
-                source = "cds-session-transport",
-                message = "message dispatched through CDS session transport; MAP direct runtime queue skipped",
-                mapRole = "control-plane-client",
-                cdsRole = "runtime-container-sandbox-manager",
-                fallbackScope = "operator-debug-only",
-                directRuntimeFallbackEnabled = IsMapDirectRuntimeFallbackEnabled(),
-                dispatchedAt = DateTime.UtcNow
-            }),
-            ct);
+        // 传输内幕（走 CDS session transport / 跳过 MAP 直跑）对用户零价值，且每条消息都触发，
+        // 会刷屏用户的事件时间线。降级为服务端 debug 日志，不再写进用户可见的事件流。
+        _logger.LogDebug(
+            "[infra-agent] message dispatched via CDS session transport (session={SessionId}, directRuntimeFallback={Fallback})",
+            session.Id, IsMapDirectRuntimeFallbackEnabled());
         return ToView(session);
 
         async Task<JsonElement> PostMessageToCdsAsync(
@@ -506,20 +495,10 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
         if (!IsMapDirectRuntimeFallbackEnabled())
         {
-            await AppendRawEventAsync(
-                session.Id,
-                await NextEventSeqAsync(session.Id, ct),
-                InfraAgentEventTypes.Log,
-                JsonSerializer.Serialize(new
-                {
-                    level = "info",
-                    source = "runtime-dispatcher",
-                    message = "MAP direct runtime job skipped; CDS session transport owns execution",
-                    mapRole = "control-plane-client",
-                    cdsRole = "runtime-container-sandbox-manager",
-                    fallbackScope = "operator-debug-only"
-                }),
-                ct);
+            // 同上：MAP 直跑被禁用、由 CDS 接管，是内部编排细节，不该出现在用户事件流里。
+            _logger.LogDebug(
+                "[infra-agent] MAP direct runtime job skipped; CDS session transport owns execution (session={SessionId})",
+                session.Id);
             return;
         }
 

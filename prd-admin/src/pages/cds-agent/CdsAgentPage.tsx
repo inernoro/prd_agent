@@ -2260,10 +2260,11 @@ export default function CdsAgentPage() {
                 type="button"
                 onClick={() => void importDefaultProfile()}
                 disabled={busy}
+                title="当前还没有配置可用的运行模型，所以无法创建会话。点此用系统默认主模型一键生成一个运行配置，之后即可正常使用。"
                 className="inline-flex min-h-8 items-center justify-center gap-2 rounded-md px-2 text-xs font-semibold disabled:opacity-45"
                 style={{ background: 'rgba(245,158,11,0.14)', border: '1px solid rgba(245,158,11,0.32)', color: 'rgba(253,230,138,0.95)' }}
               >
-                <KeyRound size={12} /> 同步系统主模型
+                <KeyRound size={12} /> 一键启用默认模型
               </button>
             )}
           </div>
@@ -3433,13 +3434,13 @@ export default function CdsAgentPage() {
     const res = await importDefaultInfraAgentRuntimeProfile();
     setBusy(false);
     if (!res.success || !res.data?.item) {
-      toast.error('同步系统模型失败', res.error?.message ?? '请先在模型设置中配置可用主模型');
+      toast.error('启用默认模型失败', res.error?.message ?? '请先在模型设置中配置可用主模型');
       return;
     }
     setProfiles((prev) => [res.data!.item, ...prev.filter((item) => item.id !== res.data!.item.id)]);
     setDraft((prev) => ({ ...prev, runtimeProfileId: res.data!.item.id }));
     setProfileTest('');
-    toast.success('已同步系统主模型', '可以直接测试并用于新的远程会话');
+    toast.success('已启用默认模型', '现在可以创建并运行远程会话了');
   }
 
   async function approveTool(approvalId: string, decision: 'allow' | 'deny') {
