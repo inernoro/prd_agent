@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Check, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Search, Settings, Sun, X } from 'lucide-react';
@@ -37,6 +37,29 @@ export type AppNavKey = 'projects' | 'cds-settings' | string;
  * drawer that AppShell owns. Desktop never uses it (rail is always visible).
  */
 const MobileNavContext = createContext<{ openNav: () => void }>({ openNav: () => {} });
+
+/*
+ * useMediaQuery — tiny matchMedia hook. Used by TopBar to decide whether the
+ * `center` slot (branch search / git-url quick-create) renders inline (desktop)
+ * or as a full-width second row (phone). Conditional render keeps `center`
+ * single-mounted — important because BranchListPage's center owns a ref + the
+ * search dropdown state, which a CSS-duplicate (two copies) would corrupt.
+ */
+function useMediaQuery(query: string): boolean {
+  const get = () => (typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia(query).matches
+    : false);
+  const [matches, setMatches] = useState(get);
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
+    const mql = window.matchMedia(query);
+    const onChange = () => setMatches(mql.matches);
+    onChange();
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, [query]);
+  return matches;
+}
 
 export interface AppShellProps {
   /** Which left-rail item is active. */
@@ -408,6 +431,7 @@ function MobileNavDrawer({
   onClose,
   ...nav
 }: RailNavProps & { open: boolean; onClose: () => void }): JSX.Element {
+  const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -415,8 +439,19 @@ function MobileNavDrawer({
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
+  // 关闭态:除了 aria-hidden + translateX 移出屏幕,还要把整个抽屉设为 inert,
+  // 否则里面的链接/关闭/登出按钮仍在键盘 Tab 序里,用户能 tab 进一个不可见的导航
+  // (Codex #741 P2)。inert 同时移除交互 + 焦点 + a11y 树;用属性方式设置以兼容
+  // React 18 类型(JSX 尚无 inert 声明)。保留 CSS slide-out 退场动画。
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    if (open) el.removeAttribute('inert');
+    else el.setAttribute('inert', '');
+  }, [open]);
+
   return (
-    <div className={cn('cds-mobile-drawer md:hidden', open ? 'is-open' : null)} aria-hidden={!open}>
+    <div ref={rootRef} className={cn('cds-mobile-drawer md:hidden', open ? 'is-open' : null)} aria-hidden={!open}>
       <div className="cds-mobile-drawer-backdrop" onClick={onClose} />
       <nav className="cds-mobile-drawer-panel" aria-label="主导航">
         <div className="cds-mobile-drawer-head">
@@ -466,6 +501,10 @@ export interface TopBarProps {
 export function TopBar({ left, center, right, centerWide = false }: TopBarProps): JSX.Element {
   const { openNav } = useContext(MobileNavContext);
   const [actionsOpen, setActionsOpen] = useState(false);
+  // 手机端把 center(分支搜索 / Git URL 快建)从行内挪到 app-bar 第二行整宽显示,
+  // 否则窄屏会丢失这些主流程入口(Bugbot #741 High)。条件渲染 = 单次挂载,
+  // 避免 BranchList 的搜索 ref/dropdown 状态被双份 DOM 破坏。
+  const isMobile = useMediaQuery('(max-width: 767px)');
   return (
     <header className="cds-topbar">
       {/* Hamburger — phone only. Opens the slide-in nav drawer. */}
@@ -480,8 +519,8 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
       <div className="cds-topbar-lead flex min-w-0 flex-1 items-center gap-3">
         {/* 桌面端 left 槽不收缩;手机端允许收缩 + 截断,作为单行 app-bar 标题。 */}
         <div className="cds-topbar-left flex min-w-0 shrink items-center gap-3 md:shrink-0">{left}</div>
-        {center ? (
-          <div className={`min-w-0 flex-1 ${centerWide ? 'max-w-none' : 'max-w-[640px]'} hidden md:block`}>
+        {center && !isMobile ? (
+          <div className={`min-w-0 flex-1 ${centerWide ? 'max-w-none' : 'max-w-[640px]'}`}>
             {center}
           </div>
         ) : null}
@@ -515,6 +554,11 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
         </div>
       ) : null}
       <SiteNoticeInbox />
+      {/* 手机端 center 第二行:整宽显示分支搜索 / Git URL 快建,header flex-wrap
+          后它落到第二行,避免窄屏丢失主流程入口(Bugbot #741 High)。 */}
+      {center && isMobile ? (
+        <div className="cds-topbar-center-mobile">{center}</div>
+      ) : null}
     </header>
   );
 }

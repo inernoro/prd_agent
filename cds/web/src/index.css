@@ -934,6 +934,19 @@
       gap: 0.5rem;
       padding-left: 0.5rem;
       padding-right: 0.5rem;
+      /* 允许 center 落到第二行:行高自适应,首行 app-bar + 可选第二行搜索/快建。 */
+      flex-wrap: wrap;
+      height: auto;
+      min-height: 3.5rem;
+      row-gap: 0.45rem;
+      padding-top: 0.4rem;
+      padding-bottom: 0.5rem;
+    }
+
+    /* center 第二行:整宽,flex-wrap 后自然换行到 app-bar 下方。 */
+    .cds-topbar-center-mobile {
+      width: 100%;
+      min-width: 0;
     }
 
     .cds-topbar-left {
