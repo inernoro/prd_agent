@@ -182,3 +182,44 @@
 
 - 接缝的工作目录暴露方式(挂载 vs 同步)未定,留待实现期选型。
 - cds-agent 当前集成的 pairing/流式/日志问题待修,详见本分支与 `design.cds-agent-runtime-architecture.md` 欠账段。
+
+---
+
+## 9. 接缝实测结论:文件如何进 cds-agent 工作区(2026-06-06)
+
+为了让"知识库文件 → cds-agent 处理"(md→ppt 案例)落地,实测追踪了"文件怎么进 agent 工作区",结论如下,供有平台权限时一次做对。
+
+### 9.1 agent 实际执行拓扑(实测)
+
+- cds-agent 会话不在 CDS 主进程跑;消息 `POST /agent-sessions/:id/messages` 经 `runCdsManagedOfficialSdkTransport` 转发到一个**边车容器**的 `POST {baseUrl}/v1/agent/run`(`cds/src/routes/remote-hosts.ts:1759+`)。
+- `/v1/agent/run` 的 payload 只带 `messages` + `workspaceRoot/gitRepository/gitRef`,**没有 files 字段**;边车自己 git clone。
+- shared-service 池项目(如 `shared-sidecar-pool-*`)**没有 git worktree**,所以复用 `POST /projects/:id/files`(写分支 worktree)对它直接 **502**(已实测)。
+- **边车在远端主机**(用户确认),CDS 与边车不同机。
+
+### 9.2 由此排除的方案
+
+| 方案 | 为何不行 |
+|---|---|
+| 复用 `POST /projects/:id/files` | 池项目无 worktree → 502 |
+| 把文件内容塞进消息 | 单文档可用,多文档必爆上下文(用户明确否决) |
+| CDS 本地 `docker cp` 进边车 | 边车在远端,本地 docker 够不到 |
+
+### 9.3 唯一可行的 CDS-only 正解(不改边车镜像)
+
+**CDS 经已有的 `sshExec(host, cmd)`(`cds/src/services/sidecar/sidecar-deployer.ts:283`)SSH 到边车所在远端主机,在那台机器 `docker exec/cp` 把文件写进边车容器,并让 agent 用绝对路径读。**
+
+落地需补的实现 + 未决点:
+1. **会话 → 远端主机 → 容器 的解析**:从 agent 会话定位它边车所在的 `RemoteHost` + 容器名(shared-service 经 transport 解析的是运行中分支服务,需把 host/container 暴露出来)。
+2. **新增端点** `POST /api/projects/:id/agent-sessions/:sessionId/files`:解析上面的 host/container → `sshExec` 远端 `docker exec -i <container> sh -c 'mkdir -p <dir> && cat > <dir>/<file>'`(或先写远端临时文件再 `docker cp`)。
+3. **MAP 侧** `InjectWorkspaceFilesAsync` 改调这个新端点(当前临时调的 `POST /projects/:id/files` 对池项目不可用)。
+4. **读取约定**:注入到固定绝对路径(如 `/workspace/`),指令里给 agent 绝对路径,避免依赖边车 cwd。
+
+### 9.4 验证闸(为什么没在沙箱里做完)
+
+上述改动是 **CDS 平台代码**。分支预览的 CDS 平台**不按分支重建**,验证要把改过的 CDS 自更新到**共享平台** + 真实远端边车主机上跑。在共享平台盲写盲试 SSH 远端注入、反复重启,胜算低、blast radius 全员——违反 `blocked-state-circuit-breaker`。故本项**代码可写、但验证依赖可控的真实平台部署**,需有平台权限时一次做对,不在一次性沙箱内闭环。
+
+### 9.5 已就绪的下游(接缝建好即通)
+
+- 写回/落库:复用 P1 `apply-content` + P2 目录落点 + diff 闸。
+- 产物回收:agent 把网页 ppt(reveal.js 单文件 HTML)以消息流 `text_delta` 回传即可,或注入后让 agent 生成到工作区再经同一注入通道反向取回。
+- 转换:不依赖边车装 marp——让 agent 直接生成 reveal.js HTML(纯 LLM),零额外镜像依赖。
