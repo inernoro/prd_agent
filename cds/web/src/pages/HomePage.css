@@ -209,4 +209,25 @@
   .cdsh-line > span,
   .cdsh-node,
   .cdsh-preview { animation-duration: .001ms !important; animation-iteration-count: 1 !important; }
+
+  /* Continuous/looping motion must also stop for reduced-motion users
+     (not just entrances). SVG <animateMotion> packets can't be disabled via
+     CSS, so hide the moving dots outright. */
+  .cdsh-packet { display: none; }
+
+  /* Dashed wire: kill the infinite dash flow but keep the line visible
+     (its only entrance is the opacity fade-in `cdsh-wirein`, so re-pin opacity). */
+  .cdsh-wire-dash {
+    animation: cdsh-wirein .001ms ease forwards !important;
+    opacity: 1 !important;
+  }
+
+  /* Other ambient loops: stop in place (all stay visible without their loop). */
+  .cdsh-logo svg,
+  .cdsh-pv-ico svg,
+  .cdsh-eyebrow .cdsh-dot,
+  .cdsh-sheen,
+  .cdsh-pulse::after,
+  .cdsh-canvas::after,
+  .cdsh-sdot { animation: none !important; }
 }
