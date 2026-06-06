@@ -3290,8 +3290,26 @@ export function installSpaFallback(
         return res.sendFile(filePath, { maxAge: '1y', immutable: true });
       }
 
-      const accept = String(req.headers['accept-encoding'] || '');
-      const encoding = /\bbr\b/.test(accept) ? 'br' : /\bgzip\b/.test(accept) ? 'gzip' : 'identity';
+      // 解析 Accept-Encoding 的 q 值,尊重显式禁用(如 `br;q=0` / `gzip;q=0`),
+      // 不能只看 token 是否出现就发对应压缩(Codex #741 P2)。`*` 作为兜底权重。
+      const accept = String(req.headers['accept-encoding'] || '').toLowerCase();
+      const encQ = new Map<string, number>();
+      for (const part of accept.split(',')) {
+        const seg = part.trim();
+        if (!seg) continue;
+        const [tokRaw, ...params] = seg.split(';');
+        const tok = tokRaw.trim();
+        if (!tok) continue;
+        let q = 1;
+        for (const p of params) {
+          const m = p.trim().match(/^q=([0-9.]+)$/);
+          if (m) q = Number.parseFloat(m[1]);
+        }
+        encQ.set(tok, Number.isFinite(q) ? q : 0);
+      }
+      const starQ = encQ.has('*') ? encQ.get('*')! : undefined;
+      const qOf = (t: string): number => (encQ.has(t) ? encQ.get(t)! : (starQ ?? 0));
+      const encoding = qOf('br') > 0 ? 'br' : qOf('gzip') > 0 ? 'gzip' : 'identity';
       res.setHeader('Content-Type', mime);
 
       if (encoding === 'identity') {

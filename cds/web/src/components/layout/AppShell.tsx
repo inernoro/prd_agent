@@ -514,6 +514,14 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
   // 否则窄屏会丢失这些主流程入口(Bugbot #741 High)。条件渲染 = 单次挂载,
   // 避免 BranchList 的搜索 ref/dropdown 状态被双份 DOM 破坏。
   const isMobile = useMediaQuery('(max-width: 767px)');
+  // ⋮ 动作 sheet 打开时同样锁背景滚动(与导航抽屉一致),否则触屏下背景工作区
+  // 仍能滚动(Bugbot #741 Medium「Action sheet scroll not locked」)。
+  useEffect(() => {
+    if (!actionsOpen) return undefined;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, [actionsOpen]);
   return (
     <header className="cds-topbar">
       {/* Hamburger — phone only. Opens the slide-in nav drawer. */}
