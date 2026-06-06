@@ -7,11 +7,13 @@
  * 自定义模板里与系统字段重名的项(标题/描述)自动去重，避免「重复填两遍」。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Save, Unlink, ExternalLink, ListChecks, Puzzle, Bug, Link2, FileText, GitBranch, BookOpen } from 'lucide-react';
+import { ArrowLeft, Save, Unlink, ExternalLink, ListChecks, Puzzle, Bug, Link2, FileText, GitBranch, BookOpen, Share2, X } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { RequirementRelationModal, DefectLinkerModal, KnowledgeStoreModal } from './ProductRelationModals';
+import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { FormFieldsRenderer, RichTextField, useEffectiveTemplate, useEffectiveWorkflow } from './DynamicForm';
 import { WorkflowBar } from './WorkflowBar';
 import { ActivityTimeline } from './ActivityTimeline';
@@ -176,6 +178,7 @@ export function ProductObjectDetailPage() {
             />
           ) : kind === 'defect' ? (
             <DefectDetail
+              productId={productId}
               defect={tracedDefects.find((d) => d.id === id)}
               versionName={versionName}
               requirementName={requirementName}
@@ -221,6 +224,7 @@ function DetailScaffold({
   dirty,
   saving,
   onSave,
+  headerActions,
   workflow,
   main,
   sidebar,
@@ -236,6 +240,7 @@ function DetailScaffold({
   dirty?: boolean;
   saving?: boolean;
   onSave?: () => void;
+  headerActions?: React.ReactNode;
   workflow?: React.ReactNode;
   main: React.ReactNode;
   sidebar: React.ReactNode;
@@ -248,16 +253,19 @@ function DetailScaffold({
         <div className="flex items-center gap-2 px-4 pt-3">
           <span className="text-[11px] font-mono text-white/40">{no}</span>
           <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ color: kindColor, background: `${kindColor}1a` }}>{kindLabel}</span>
-          {onSave && (
+          {(onSave || headerActions) && (
             <div className="ml-auto flex items-center gap-2.5">
-              {dirty && <span className="text-[11px] text-amber-300/80 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-amber-400" /> 未保存</span>}
-              <button
-                onClick={onSave}
-                disabled={saving || !title.trim() || !dirty}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm hover:bg-cyan-500/30 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {saving ? <MapSpinner size={14} /> : <Save size={14} />} 保存
-              </button>
+              {headerActions}
+              {onSave && dirty && <span className="text-[11px] text-amber-300/80 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-amber-400" /> 未保存</span>}
+              {onSave && (
+                <button
+                  onClick={onSave}
+                  disabled={saving || !title.trim() || !dirty}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm hover:bg-cyan-500/30 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {saving ? <MapSpinner size={14} /> : <Save size={14} />} 保存
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -344,6 +352,53 @@ function ParentSelect({ value, onChange, options, placeholder }: { value: string
 /** 描述字段：富文本（排版工具栏 + 截图粘贴/拖拽上传），对齐 Jira / TAPD / Linear。 */
 function DescriptionField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return <RichTextField value={value} onChange={onChange} minHeight={420} placeholder="补充背景、目标、验收标准…（支持排版与截图粘贴 / 点右上角套用模板）" />;
+}
+
+/** 详情页头部「追溯关系路径」触发按钮。 */
+function TraceButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-white/70 hover:bg-white/5 hover:text-cyan-200 text-sm"
+      title="在图谱中查看本对象的全部关联（动态高亮）"
+    >
+      <Share2 size={14} /> 追溯关系路径
+    </button>
+  );
+}
+
+/**
+ * 追溯关系路径抽屉：从右侧滑出（占 70% 宽），内嵌复用图谱画布并自动锚定当前对象，
+ * 高亮其在图谱中的全部关联（动态）。复用 ProductGraphCanvas 的 focusNodeId 能力。
+ */
+function TraceRelationDrawer({ productId, nodeId, title, onClose }: { productId: string; nodeId: string; title: string; onClose: () => void }) {
+  const [shown, setShown] = useState(false);
+  useEffect(() => { setShown(true); }, []);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex">
+      <div className="flex-1 bg-black/40" style={{ opacity: shown ? 1 : 0, transition: 'opacity .25s ease' }} onClick={onClose} />
+      <div
+        className="h-full bg-[#0f1014] border-l border-white/10 flex flex-col shadow-2xl"
+        style={{ width: '70%', transform: shown ? 'translateX(0)' : 'translateX(100%)', transition: 'transform .25s ease' }}
+      >
+        <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-white/8">
+          <span className="flex items-center gap-2 text-sm font-semibold text-white">
+            <Share2 size={15} className="text-cyan-400" /> 追溯关系路径 · {title}
+          </span>
+          <button onClick={onClose} className="text-white/40 hover:text-white" title="关闭"><X size={16} /></button>
+        </div>
+        <div className="flex-1 min-h-0">
+          <ProductGraphCanvas productId={productId} focusNodeId={nodeId} />
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
 }
 
 /** 内容非空时追加模板，空时直接套用。 */
@@ -567,6 +622,7 @@ function RequirementDetail({
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [showRel, setShowRel] = useState(false);
+  const [showTrace, setShowTrace] = useState(false);
   const { template } = useEffectiveTemplate('requirement', productId);
   const { workflow } = useEffectiveWorkflow('requirement', productId);
   const split = useMemo(() => splitFields(template?.fields), [template]);
@@ -614,6 +670,7 @@ function RequirementDetail({
       dirty={dirty}
       saving={saving}
       onSave={save}
+      headerActions={<TraceButton onClick={() => setShowTrace(true)} />}
       workflow={
         workflow ? (
           <WorkflowBar workflow={workflow} entityType="requirement" entityId={requirement.id} currentState={requirement.currentState} onChanged={onReload} />
@@ -718,6 +775,9 @@ function RequirementDetail({
       {showRel && (
         <RequirementRelationModal productId={productId} requirement={requirement} onClose={() => setShowRel(false)} onSaved={onReload} />
       )}
+      {showTrace && (
+        <TraceRelationDrawer productId={productId} nodeId={`requirement:${requirement.id}`} title={requirement.title} onClose={() => setShowTrace(false)} />
+      )}
     </DetailScaffold>
   );
 }
@@ -774,6 +834,7 @@ function FeatureDetail({
 
   const [tracedDefects, setTracedDefects] = useState<TracedDefect[]>([]);
   const [showDefectLinker, setShowDefectLinker] = useState(false);
+  const [showTrace, setShowTrace] = useState(false);
   const reloadDefects = useCallback(async () => {
     if (!feature) return;
     const res = await listTracedDefects(feature.productId, { featureId: feature.id });
@@ -840,6 +901,7 @@ function FeatureDetail({
       dirty={dirty}
       saving={saving}
       onSave={save}
+      headerActions={<TraceButton onClick={() => setShowTrace(true)} />}
       workflow={
         workflow ? (
           <WorkflowBar workflow={workflow} entityType="feature" entityId={feature.id} currentState={feature.currentState} onChanged={onReload} />
@@ -938,6 +1000,9 @@ function FeatureDetail({
       {showDefectLinker && (
         <DefectLinkerModal productId={feature.productId} featureId={feature.id} onClose={() => setShowDefectLinker(false)} onLinked={reloadDefects} />
       )}
+      {showTrace && (
+        <TraceRelationDrawer productId={feature.productId} nodeId={`feature:${feature.id}`} title={feature.title} onClose={() => setShowTrace(false)} />
+      )}
     </DetailScaffold>
   );
 }
@@ -967,6 +1032,7 @@ function VersionDetail({
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [showKnowledge, setShowKnowledge] = useState(false);
+  const [showTrace, setShowTrace] = useState(false);
   const { template } = useEffectiveTemplate('version', productId);
   const { workflow } = useEffectiveWorkflow('version', productId);
   const split = useMemo(() => splitFields(template?.fields), [template]);
@@ -1051,6 +1117,7 @@ function VersionDetail({
       dirty={dirty}
       saving={saving}
       onSave={save}
+      headerActions={<TraceButton onClick={() => setShowTrace(true)} />}
       workflow={
         workflow ? (
           <WorkflowBar workflow={workflow} entityType="version" entityId={version.id} currentState={version.currentState} onChanged={onReload} />
@@ -1172,18 +1239,23 @@ function VersionDetail({
           onClose={() => setShowKnowledge(false)}
         />
       )}
+      {showTrace && (
+        <TraceRelationDrawer productId={productId} nodeId={`version:${version.id}`} title={version.versionName} onClose={() => setShowTrace(false)} />
+      )}
     </DetailScaffold>
   );
 }
 
 // ════════════════════════ 缺陷详情（来自缺陷管理，详情只读）════════════════════════
 function DefectDetail({
+  productId,
   defect,
   versionName,
   requirementName,
   onReload,
   gotoRequirement,
 }: {
+  productId: string;
   defect?: TracedDefect;
   versionName: Map<string, string>;
   requirementName: Map<string, string>;
@@ -1193,6 +1265,7 @@ function DefectDetail({
   const navigate = useNavigate();
   const [converting, setConverting] = useState(false);
   const [convertErr, setConvertErr] = useState<string | null>(null);
+  const [showTrace, setShowTrace] = useState(false);
   if (!defect) return <NotFound />;
 
   const convert = async () => {
@@ -1211,6 +1284,7 @@ function DefectDetail({
       kindColor="#F87171"
       title={defect.title || '(无标题)'}
       readOnlyTitle
+      headerActions={<TraceButton onClick={() => setShowTrace(true)} />}
       main={
         <>
           <Card title="追溯指向">
@@ -1261,6 +1335,10 @@ function DefectDetail({
           </div>
         </Card>
       }
-    />
+    >
+      {showTrace && (
+        <TraceRelationDrawer productId={productId} nodeId={`defect:${defect.id}`} title={defect.title || defect.defectNo} onClose={() => setShowTrace(false)} />
+      )}
+    </DetailScaffold>
   );
 }

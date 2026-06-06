@@ -97,7 +97,7 @@ function idType(id: string): NodeType {
   return id.split(':', 1)[0] as NodeType;
 }
 
-function ProductGraphInner({ productId, overview }: { productId?: string; overview?: boolean }) {
+function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: string; overview?: boolean; focusNodeId?: string }) {
   const [raw, setRaw] = useState<{ nodes: GraphNode[]; edges: GraphEdge[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -131,6 +131,18 @@ function ProductGraphInner({ productId, overview }: { productId?: string; overvi
       alive = false;
     };
   }, [productId, overview]);
+
+  // 聚焦节点（追溯抽屉调用）：图谱加载后自动进入追溯模式并锚定该节点，高亮其关系网
+  const focusAppliedRef = useRef(false);
+  useEffect(() => {
+    if (!raw || !focusNodeId || focusAppliedRef.current) return;
+    const target = raw.nodes.find((n) => n.id === focusNodeId);
+    if (!target) return;
+    focusAppliedRef.current = true;
+    setMode('trace');
+    setTraceAnchor(focusNodeId);
+    setSelected(target);
+  }, [raw, focusNodeId]);
 
   // ── 派生：邻接表、生成树父子、后代计数 ──
   const derived = useMemo(() => {
@@ -792,10 +804,10 @@ function baseStyle(color: string): CSSProperties {
   };
 }
 
-export function ProductGraphCanvas({ productId, overview }: { productId?: string; overview?: boolean }) {
+export function ProductGraphCanvas({ productId, overview, focusNodeId }: { productId?: string; overview?: boolean; focusNodeId?: string }) {
   return (
     <ReactFlowProvider>
-      <ProductGraphInner productId={productId} overview={overview} />
+      <ProductGraphInner productId={productId} overview={overview} focusNodeId={focusNodeId} />
     </ReactFlowProvider>
   );
 }
