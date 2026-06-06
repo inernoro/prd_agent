@@ -42,6 +42,10 @@ export type InlineCommentDrawerProps = {
   entryTitle: string;
   /** 分享视图传入分享 token，用于私有库读取评论气泡（PR #685 Codex P1） */
   shareToken?: string;
+  /** 父级（批注栏/内联/composer）增删评论后自增，抽屉据此重拉，避免与正文数据脱节（Bugbot Medium） */
+  syncTick?: number;
+  /** 抽屉内增删后回调父级刷新，让 margin/overlay/计数同步（Bugbot Medium：反向同步） */
+  onChanged?: () => void;
   pendingSelection: PendingSelection | null;
   onClearPending: () => void;
   /** 点击某条评论时：尝试 scroll 到其 selectedText 在 DOM 中的位置 */
@@ -53,6 +57,8 @@ export function InlineCommentDrawer({
   entryId,
   entryTitle,
   shareToken,
+  syncTick,
+  onChanged,
   pendingSelection,
   onClearPending,
   onLocate,
@@ -61,16 +67,25 @@ export function InlineCommentDrawer({
   const [loading, setLoading] = useState(true);
   const [comments, setComments] = useState<DocumentInlineComment[]>([]);
   const [canCreate, setCanCreate] = useState(false);
+  // 删除按库主/作者逐条判定：公开库 canCreate 对任意登录者为 true，但删除仅作者/库主（Bugbot Medium）
+  const [isOwner, setIsOwner] = useState(false);
+  const [viewerId, setViewerId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // load 的 stale-response 守卫：entryId/syncTick 变化会触发重叠 fetch，慢的旧响应不得覆盖新结果（Bugbot Medium）
+  const loadIdRef = useRef(0);
 
   const load = useCallback(async () => {
+    const myId = ++loadIdRef.current;
     setLoading(true);
     const res = await listInlineComments(entryId, shareToken);
+    if (myId !== loadIdRef.current) return; // 有更新的 load 已发起，丢弃本次旧响应
     if (res.success) {
       setComments(res.data.items);
       setCanCreate(res.data.canCreate);
+      setIsOwner(!!res.data.isOwner);
+      setViewerId(res.data.viewerUserId ?? null);
     } else {
       toast.error('加载评论失败', res.error?.message);
     }
@@ -79,7 +94,8 @@ export function InlineCommentDrawer({
 
   useEffect(() => {
     load();
-  }, [load]);
+    // syncTick 变化（其它面板增删）时重拉，保持抽屉与正文数据一致（Bugbot Medium）
+  }, [load, syncTick]);
 
   // 选中新内容时自动聚焦 textarea
   useEffect(() => {
@@ -110,10 +126,11 @@ export function InlineCommentDrawer({
       setDraft('');
       onClearPending();
       await load();
+      onChanged?.(); // 通知父级刷新 margin/overlay/计数（反向同步）
     } else {
       toast.error('添加失败', res.error?.message);
     }
-  }, [pendingSelection, draft, entryId, onClearPending, load]);
+  }, [pendingSelection, draft, entryId, onClearPending, load, onChanged]);
 
   const handleDelete = useCallback(async (comment: DocumentInlineComment) => {
     const ok = await systemDialog.confirm({
@@ -128,10 +145,11 @@ export function InlineCommentDrawer({
     if (res.success) {
       toast.success('已删除');
       setComments(prev => prev.filter(c => c.id !== comment.id));
+      onChanged?.(); // 通知父级刷新 margin/overlay/计数（反向同步）
     } else {
       toast.error('删除失败', res.error?.message);
     }
-  }, []);
+  }, [onChanged]);
 
   const activeComments = comments.filter(c => c.status === 'active');
   const orphanedComments = comments.filter(c => c.status === 'orphaned');
@@ -272,7 +290,7 @@ export function InlineCommentDrawer({
                   <CommentCard
                     key={c.id}
                     comment={c}
-                    canDelete={canCreate}
+                    canDelete={isOwner || c.authorUserId === viewerId}
                     onDelete={() => handleDelete(c)}
                     onLocate={onLocate}
                   />
@@ -293,7 +311,7 @@ export function InlineCommentDrawer({
                       <CommentCard
                         key={c.id}
                         comment={c}
-                        canDelete={canCreate}
+                        canDelete={isOwner || c.authorUserId === viewerId}
                         onDelete={() => handleDelete(c)}
                         orphaned
                       />

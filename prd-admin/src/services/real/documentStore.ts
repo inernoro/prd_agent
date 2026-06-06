@@ -637,6 +637,10 @@ export async function listInlineComments(entryId: string, shareToken?: string) {
   return await apiRequest<{
     items: import('@/services/contracts/documentStore').DocumentInlineComment[];
     canCreate: boolean;
+    /** 当前查看者是否为库主（库主可删任意评论） */
+    isOwner?: boolean;
+    /** 当前查看者 userId（用于「作者可删自己评论」逐条判定）；匿名为 null */
+    viewerUserId?: string | null;
   }>(
     url,
     { method: 'GET' },
