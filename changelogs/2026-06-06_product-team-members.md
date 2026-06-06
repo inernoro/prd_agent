@@ -9,3 +9,4 @@
 | feat | prd-admin | 需求/功能/版本/缺陷详情页新增「追溯关系路径」抽屉(右展开70%,内嵌图谱自动锚定当前对象高亮全部关联) |
 | feat | prd-admin | 知识库分类升级为一等维度：DocumentStoreBrowser 从 store.categories 读分类、按 entry.category 筛选、快速新建、右键改分类、分类管理与标签管理面板、常驻新建文件夹按钮 |
 | feat | prd-admin | 客户改为产品管理全局：总览新增「客户」入口(全局客户表+增改删)，单产品移除客户 tab，需求关联客户改用全局客户列表 |
+| feat | prd-admin | 新建需求支持 AI 智能填充：粘贴文本→SSE 流式按模板回填标题/描述/分级/自定义字段→用户修改确认 |

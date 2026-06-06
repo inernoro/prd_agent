@@ -9,9 +9,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Save, Unlink, ExternalLink, ListChecks, Puzzle, Bug, Link2, FileText, GitBranch, BookOpen, Share2, X } from 'lucide-react';
+import { ArrowLeft, Save, Unlink, ExternalLink, ListChecks, Puzzle, Bug, Link2, FileText, GitBranch, BookOpen, Share2, X, Sparkles } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
+import { useSseStream } from '@/lib/useSseStream';
 import { RequirementRelationModal, DefectLinkerModal, KnowledgeStoreModal } from './ProductRelationModals';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { FormFieldsRenderer, RichTextField, useEffectiveTemplate, useEffectiveWorkflow } from './DynamicForm';
@@ -498,6 +499,52 @@ function NotFound() {
   return <div className="text-white/40 text-sm text-center py-10">对象不存在或已删除</div>;
 }
 
+// ════════════════════════ AI 智能填充（输入文本 → 按模板回填）════════════════════════
+interface AiFillResult { title?: string; description?: string; grade?: string; formData?: Record<string, string> }
+
+function AiFillCard({ productId, templateId, onFill }: { productId: string; templateId?: string; onFill: (r: AiFillResult) => void }) {
+  const [text, setText] = useState('');
+  const { phase, phaseMessage, typing, isStreaming, start, abort } = useSseStream<AiFillResult>({
+    url: `/api/product/products/${productId}/requirements/ai-fill/stream`,
+    method: 'POST',
+    itemEvent: 'result',
+    onItem: (r) => onFill(r),
+  });
+  const run = () => { if (text.trim()) void start({ body: { text: text.trim(), templateId } }); };
+
+  return (
+    <Card title="AI 智能填充">
+      <div className="flex flex-col gap-2">
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={4}
+          placeholder="粘贴一段需求原始描述（背景、痛点、期望…），AI 自动拆解为标题 / 描述 / 分级 / 模板字段，回填后你再修改确认。"
+          className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/40 resize-none placeholder:text-white/25"
+          style={{ overscrollBehavior: 'contain' }}
+        />
+        <div className="flex items-center gap-2">
+          {isStreaming ? (
+            <button onClick={abort} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/15 text-white/70 hover:bg-white/5 text-sm">
+              <MapSpinner size={14} /> 停止
+            </button>
+          ) : (
+            <button onClick={run} disabled={!text.trim()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm hover:bg-cyan-500/30 disabled:opacity-40">
+              <Sparkles size={14} /> 智能填充
+            </button>
+          )}
+          {phase !== 'idle' && <span className={`text-[11px] ${phase === 'error' ? 'text-red-300/80' : 'text-white/45'}`}>{phaseMessage}</span>}
+        </div>
+        {isStreaming && typing && (
+          <div className="text-[11px] text-white/40 font-mono max-h-24 overflow-y-auto bg-white/[0.03] border border-white/5 rounded p-2 whitespace-pre-wrap" style={{ overscrollBehavior: 'contain' }}>
+            {typing}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 // ════════════════════════ 新建对象（需求 / 功能）════════════════════════
 function CreateObjectForm({
   productId,
@@ -538,6 +585,14 @@ function CreateObjectForm({
 
   const setField = (k: string, v: string) => setFormData((d) => ({ ...d, [k]: v }));
 
+  // AI 智能填充回填：标题/描述/分级/自定义字段
+  const onAiFill = (r: AiFillResult) => {
+    if (r.title) setTitle(r.title);
+    if (r.description) { descAutoFilledRef.current = true; setDescription(r.description); }
+    if (r.grade && ITEM_GRADES.includes(r.grade as ItemGrade)) setGrade(r.grade as ItemGrade);
+    if (r.formData) setFormData((prev) => ({ ...prev, ...r.formData }));
+  };
+
   const create = async () => {
     if (!title.trim()) return;
     setSaving(true);
@@ -560,6 +615,9 @@ function CreateObjectForm({
       onSave={create}
       main={
         <>
+          {entityType === 'requirement' && (
+            <AiFillCard productId={productId} templateId={template?.id} onFill={onAiFill} />
+          )}
           <Card title="描述" action={<DescTemplatePicker entityType={entityType} onApply={(c) => setDescription((p) => mergeDesc(p, c))} />}>
             <DescriptionField value={description} onChange={setDescription} />
           </Card>
