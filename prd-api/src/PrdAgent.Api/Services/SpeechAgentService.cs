@@ -144,25 +144,25 @@ public class SpeechAgentService
 
 输出严格遵循以下 JSON 结构（不要加 markdown fence，不要加任何额外说明文字，只输出 JSON）：
 
-{{
-  "root": {{ "title": "<演讲主题，不超过 24 字>", "bulletPoints": ["<开场金句 1>", "<开场金句 2>"] }},
+{
+  "root": { "title": "<演讲主题，不超过 24 字>", "bulletPoints": ["<开场金句 1>", "<开场金句 2>"] },
   "children": [
-    {{
+    {
       "title": "<一级章节标题，不超过 18 字>",
       "bulletPoints": ["<要点 1>", "<要点 2>", "<要点 3>"],
       "children": [
-        {{ "title": "<二级要点标题>", "bulletPoints": ["<细分要点>"] }}
+        { "title": "<二级要点标题>", "bulletPoints": ["<细分要点>"] }
       ]
-    }}
+    }
   ]
-}}
+}
 
 规则：
 - 演讲风格：{deck.Style}；目标受众：{deck.Audience}；目标层级深度：{deck.Depth}（不要超）
 - 一级章节 4-7 个；每节点 bulletPoints 2-5 条，每条不超过 30 字
 - 节点之间逻辑递进，标题简短可上屏
 - 不要照抄原文，要提炼+口语化改写
-- 严格只输出 JSON，开头第一个字符必须是 `{{`
+- 严格只输出 JSON，开头第一个字符必须是左花括号
 """;
     }
 
