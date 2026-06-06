@@ -40,9 +40,10 @@
    brightens the centre, darkens the edges for headline readability. */
 .cdsh-vignette {
   position: absolute; inset: 0; pointer-events: none;
-  background:
-    radial-gradient(900px 620px at 52% 46%, rgba(255,255,255,0.08), transparent 36%, rgba(18,15,23,0.82) 100%),
-    linear-gradient(90deg, rgba(18,15,23,0.9), rgba(18,15,23,0.22) 48%, rgba(18,15,23,0.84));
+  /* Gentle EDGE vignette only — keep the honeycomb sharp across the whole
+     centre. No central white haze and no heavy dark film (those read as a
+     blurry frosted "front panel" over the grid). */
+  background: radial-gradient(1280px 860px at 50% 40%, transparent 56%, rgba(18,15,23,0.5) 100%);
 }
 
 .cdsh-wrap { position: relative; z-index: 1; max-width: 1240px; margin: 0 auto; padding: 0 28px; }
@@ -177,15 +178,33 @@
 .cdsh-chip b { color: var(--cdsh-text); font-weight: 600; }
 
 @media (max-width: 940px) {
-  .cdsh-hero { grid-template-columns: 1fr; gap: 40px; padding-bottom: 56px; }
+  .cdsh-hero { grid-template-columns: 1fr; gap: 36px; padding: 30px 0 56px; }
   .cdsh-navlinks { display: none; }
-  .cdsh-board { max-width: 560px; }
+  .cdsh-board { max-width: 560px; margin: 0 auto; width: 100%; }
 }
-/* On phones the brand + two nav CTAs overflow the clipped nav; drop the
+/* Phone (<=640): the absolute-positioned board diagram is desktop decoration
+   and gets crushed below ~480px — drop it for a clean text hero over the
+   honeycomb. Both entry CTAs stay in the hero. Headline scales down so it
+   never overflows a 360px screen; CTAs become full-width tap targets. */
+@media (max-width: 640px) {
+  .cdsh-board { display: none; }
+  .cdsh-nav { height: 64px; }
+  .cdsh-h1 { font-size: clamp(30px, 11vw, 52px); margin-top: 20px; }
+  .cdsh-sub { font-size: 16px; margin-top: 22px; line-height: 1.6; }
+  .cdsh-cta { margin-top: 26px; gap: 12px; }
+  .cdsh-cta .cdsh-btn-lg { flex: 1 1 auto; justify-content: center; }
+  .cdsh-meta-row { margin-top: 24px; gap: 14px 22px; }
+  .cdsh-strip { padding: 26px 0 56px; }
+}
+/* On narrow phones the brand + two nav CTAs overflow the clipped nav; drop the
    secondary "Log in" button (the hero still exposes both entry points). */
 @media (max-width: 560px) {
   .cdsh-navcta .cdsh-btn-ghost { display: none; }
   .cdsh-wrap { padding: 0 18px; }
+}
+@media (max-width: 420px) {
+  .cdsh-brand b { display: none; }
+  .cdsh-btn-primary { padding: 9px 14px; }
 }
 @media (prefers-reduced-motion: reduce) {
   /* Reduced-motion users: settle the one-shot ENTRANCE animations instantly
