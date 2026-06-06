@@ -126,6 +126,14 @@ public static class Product
         Category = "Analysis"
     )]
     public const string GraphSummary = "product-agent.graph-summary::chat";
+
+    [AppCallerMetadata(
+        "产品管理-需求智能填充",
+        "新建需求时，根据用户输入文本按表单模板结构化填充标题/描述/分级/自定义字段（SSE 流式）",
+        ModelTypes = new[] { ModelTypes.Chat },
+        Category = "Analysis"
+    )]
+    public const string RequirementAiFill = "product-agent.requirement-ai-fill::chat";
 }
 
 /// <summary>
@@ -1307,6 +1315,17 @@ public static class CcasAgent
             Category = "Chat"
         )]
         public const string Chat = "ccas-agent.qa::chat";
+    }
+
+    public static class SqlAi
+    {
+        [AppCallerMetadata(
+            "SQL 助手-自然语言写 SQL",
+            "把陈智版 / 米多版数据库 schema 内化进系统提示词，用户用自然语言提问 → AI 流式输出可执行 SQL + 中文业务说明",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Chat"
+        )]
+        public const string Chat = "ccas-agent.sql-ai::chat";
     }
 }
 

@@ -1,33 +1,49 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { FolderOpen, FileText, Upload } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { FolderOpen, FileText, Upload, FolderPlus, Tags, Layers, Plus, Pencil, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
+import { systemDialog } from '@/lib/systemDialog';
 import { DocBrowser, type DocBrowserEntry, type EntryPreview } from '@/components/doc-browser/DocBrowser';
-import type { DocumentEntry } from '@/services/contracts/documentStore';
+import type { DocumentEntry, DocumentStore } from '@/services/contracts/documentStore';
 import {
   listDocumentEntries, searchDocumentEntries, rebuildContentIndex, getDocumentContent, updateDocumentContent,
   uploadDocumentFile, replaceDocumentFile, deleteDocumentEntry, updateDocumentEntry,
-  moveDocumentEntry, createFolder, addDocumentEntry,
+  moveDocumentEntry, createFolder, addDocumentEntry, getDocumentStore, updateDocumentStore,
 } from '@/services';
 
 interface Props {
   storeId: string;
   /** 是否可写。false 时不传写回调，DocBrowser 自动只读 */
   canWrite: boolean;
+  /**
+   * 可选：启用「分类」一等维度（区别于自由标签）。开启后顶部渲染分类筛选 chips +
+   * 快速新建标准文档 + 分类/标签管理面板，右键可改条目分类。不传则维持原有无分类行为。
+   */
+  enableCategories?: boolean;
+  /** 首次进入（store 无分类）时种子化的预置分类名。仅 enableCategories+canWrite 时生效。 */
+  categoryPresets?: string[];
 }
+
+const NO_CAT = '__none__';
 
 /**
  * 文档库浏览器 —— 封装 DocBrowser + document-store 现有 service，按 storeId 渲染。
  * 复用文件夹/多格式上传/MD·HTML 预览/标签全套能力。供「项目知识库」等场景接入。
+ * enableCategories 时额外提供：分类筛选 + 快速新建 + 分类/标签集中管理 + 右键改分类。
  */
-export function DocumentStoreBrowser({ storeId, canWrite }: Props) {
+export function DocumentStoreBrowser({ storeId, canWrite, enableCategories, categoryPresets }: Props) {
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
+  const [store, setStore] = useState<DocumentStore | null>(null);
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>();
+  const [activeCat, setActiveCat] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [autoEditEntryId, setAutoEditEntryId] = useState<string | undefined>();
   const [dragging, setDragging] = useState(false);
+  const [managePanel, setManagePanel] = useState<'category' | 'tag' | null>(null);
   const dragCounter = useRef(0);
+  const seededRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const replaceInputRef = useRef<HTMLInputElement>(null);
   const replaceTargetRef = useRef<string | null>(null);
@@ -39,6 +55,25 @@ export function DocumentStoreBrowser({ storeId, canWrite }: Props) {
     setLoading(false);
   }, [storeId]);
   useEffect(() => { loadEntries(); }, [loadEntries]);
+
+  // 加载 store（取分类清单）；首次无分类时种子化预置分类
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      const res = await getDocumentStore(storeId);
+      if (!alive || !res.success) return;
+      let s = res.data;
+      if (enableCategories && canWrite && !seededRef.current && (s.categories?.length ?? 0) === 0 && (categoryPresets?.length ?? 0) > 0) {
+        seededRef.current = true;
+        const up = await updateDocumentStore(storeId, { categories: categoryPresets });
+        if (up.success) s = up.data;
+      }
+      if (alive) setStore(s);
+    })();
+    return () => { alive = false; };
+  }, [storeId, enableCategories, canWrite, categoryPresets]);
+
+  const categories = useMemo(() => store?.categories ?? [], [store]);
 
   const handleFiles = useCallback(async (files: File[]) => {
     setUploading(true);
@@ -130,17 +165,166 @@ export function DocumentStoreBrowser({ storeId, canWrite }: Props) {
     else toast.error('创建失败', res.error?.message);
   }, [storeId]);
 
+  // 顶部可见「新建文件夹」按钮（提升可发现性）
+  const promptCreateFolder = useCallback(async () => {
+    const name = await systemDialog.prompt({ title: '新建文件夹', message: '输入文件夹名称', defaultValue: '新建文件夹', confirmText: '创建' });
+    if (name && name.trim()) await handleCreateFolder(name.trim());
+  }, [handleCreateFolder]);
+
   const handleCreateDocument = useCallback(async () => {
     const res = await addDocumentEntry(storeId, { title: '新建文档', sourceType: 'upload', contentType: 'text/markdown', summary: '' });
     if (res.success) { setEntries((prev) => [res.data, ...prev]); setSelectedEntryId(res.data.id); setAutoEditEntryId(res.data.id); toast.success('已创建文档，开始写作吧'); }
     else toast.error('创建失败', res.error?.message);
   }, [storeId]);
 
+  // 按分类快速新建标准文档（分类为一等字段）
+  const handleCreateInCategory = useCallback(async (cat: string) => {
+    const res = await addDocumentEntry(storeId, { title: `${cat} 文档`, sourceType: 'upload', contentType: 'text/markdown', summary: '', category: cat });
+    if (res.success) {
+      const entry = { ...res.data, category: res.data.category ?? cat };
+      setEntries((prev) => [entry, ...prev]);
+      setSelectedEntryId(entry.id); setAutoEditEntryId(entry.id); setActiveCat(cat);
+      toast.success(`已创建 ${cat} 文档`);
+    } else toast.error('创建失败', res.error?.message);
+  }, [storeId]);
+
+  // 右键设置条目分类（null=清除）
+  const handleSetEntryCategory = useCallback(async (entryId: string, cat: string | null) => {
+    const res = await updateDocumentEntry(entryId, { category: cat ?? '' });
+    if (!res.success) { toast.error('设置分类失败', res.error?.message); return; }
+    setEntries((prev) => prev.map((e) => (e.id === entryId ? { ...e, category: cat ?? undefined } : e)));
+    toast.success(cat ? `已归入「${cat}」` : '已移出分类');
+  }, []);
+
   const handleSearch = useCallback(async (keyword: string, contentSearch: boolean): Promise<DocBrowserEntry[] | null> => {
     if (contentSearch) await rebuildContentIndex(storeId);
     const res = await searchDocumentEntries(storeId, keyword, contentSearch);
     return res.success ? res.data.items : null;
   }, [storeId]);
+
+  // ── 分类管理（写 store.categories；改名/删除同步条目）──
+  const persistCategories = useCallback(async (next: string[]) => {
+    const res = await updateDocumentStore(storeId, { categories: next });
+    if (res.success) setStore(res.data);
+    else { toast.error('保存分类失败', res.error?.message); throw new Error('保存分类失败'); }
+  }, [storeId]);
+
+  const addCategory = useCallback(async (name: string) => {
+    const n = name.trim();
+    if (!n || categories.includes(n)) return;
+    await persistCategories([...categories, n]);
+    toast.success(`已新增分类「${n}」`);
+  }, [categories, persistCategories]);
+
+  const renameCategory = useCallback(async (oldName: string, newName: string) => {
+    const n = newName.trim();
+    if (!n || n === oldName || categories.includes(n)) return;
+    await persistCategories(categories.map((c) => (c === oldName ? n : c)));
+    // 同步条目
+    const affected = entries.filter((e) => e.category === oldName);
+    for (const e of affected) await updateDocumentEntry(e.id, { category: n });
+    setEntries((prev) => prev.map((e) => (e.category === oldName ? { ...e, category: n } : e)));
+    if (activeCat === oldName) setActiveCat(n);
+    toast.success('分类已改名');
+  }, [categories, entries, persistCategories, activeCat]);
+
+  const deleteCategory = useCallback(async (name: string) => {
+    const ok = await systemDialog.confirm({ title: '删除分类', message: `删除分类「${name}」？该分类下的文档将变为未分类（文档本身不删除）。`, tone: 'danger', confirmText: '删除', cancelText: '取消' });
+    if (!ok) return;
+    await persistCategories(categories.filter((c) => c !== name));
+    const affected = entries.filter((e) => e.category === name);
+    for (const e of affected) await updateDocumentEntry(e.id, { category: '' });
+    setEntries((prev) => prev.map((e) => (e.category === name ? { ...e, category: undefined } : e)));
+    if (activeCat === name) setActiveCat(null);
+    toast.success('分类已删除');
+  }, [categories, entries, persistCategories, activeCat]);
+
+  // ── 标签管理（批量改写条目 tags）──
+  const allTags = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const e of entries) for (const t of e.tags ?? []) m.set(t, (m.get(t) ?? 0) + 1);
+    return Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0], 'zh'));
+  }, [entries]);
+
+  const renameTag = useCallback(async (oldName: string, newName: string) => {
+    const n = newName.trim();
+    if (!n || n === oldName) return;
+    const affected = entries.filter((e) => (e.tags ?? []).includes(oldName));
+    for (const e of affected) {
+      const next = Array.from(new Set((e.tags ?? []).map((t) => (t === oldName ? n : t))));
+      await updateDocumentEntry(e.id, { tags: next });
+    }
+    setEntries((prev) => prev.map((e) => ((e.tags ?? []).includes(oldName) ? { ...e, tags: Array.from(new Set((e.tags ?? []).map((t) => (t === oldName ? n : t)))) } : e)));
+    toast.success('标签已改名');
+  }, [entries]);
+
+  const deleteTag = useCallback(async (name: string) => {
+    const ok = await systemDialog.confirm({ title: '删除标签', message: `从所有文档移除标签「${name}」？`, tone: 'danger', confirmText: '删除', cancelText: '取消' });
+    if (!ok) return;
+    const affected = entries.filter((e) => (e.tags ?? []).includes(name));
+    for (const e of affected) await updateDocumentEntry(e.id, { tags: (e.tags ?? []).filter((t) => t !== name) });
+    setEntries((prev) => prev.map((e) => ((e.tags ?? []).includes(name) ? { ...e, tags: (e.tags ?? []).filter((t) => t !== name) } : e)));
+    toast.success('标签已删除');
+  }, [entries]);
+
+  // ── 分类筛选（按 entry.category；文件夹始终保留以维持树结构）──
+  const docCount = (value: string | null): number => {
+    const docs = entries.filter((e) => !e.isFolder);
+    if (value === null) return docs.length;
+    if (value === NO_CAT) return docs.filter((e) => !e.category).length;
+    return docs.filter((e) => e.category === value).length;
+  };
+  const displayEntries = !enableCategories || activeCat === null
+    ? entries
+    : entries.filter((e) => {
+        if (e.isFolder) return true;
+        if (activeCat === NO_CAT) return !e.category;
+        return e.category === activeCat;
+      });
+
+  const catChip = (value: string | null, label: string) => {
+    const on = activeCat === value;
+    return (
+      <button
+        key={value ?? '__all__'}
+        onClick={() => setActiveCat(value)}
+        className={`px-2 py-0.5 rounded-md text-[11px] border ${on ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30' : 'text-white/45 border-white/10 hover:bg-white/5'}`}
+      >
+        {label} <span className="opacity-60">{docCount(value)}</span>
+      </button>
+    );
+  };
+
+  const categoryHeader = enableCategories ? (
+    <div className="flex flex-col gap-2 px-1 pb-2">
+      <div className="flex flex-wrap gap-1">
+        {catChip(null, '全部')}
+        {categories.map((c) => catChip(c, c))}
+        {catChip(NO_CAT, '未分类')}
+      </div>
+      {canWrite && (
+        <div className="flex flex-wrap items-center gap-1">
+          {categories.map((c) => (
+            <button
+              key={c}
+              onClick={() => handleCreateInCategory(c)}
+              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[11px] text-white/50 border border-dashed border-white/15 hover:bg-white/5 hover:text-cyan-300"
+              title={`快速新建 ${c} 文档`}
+            >
+              <FileText size={11} /> {c}
+            </button>
+          ))}
+        </div>
+      )}
+      {canWrite && (
+        <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+          <button onClick={promptCreateFolder} className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-white/55 border border-white/10 hover:bg-white/5"><FolderPlus size={12} /> 新建文件夹</button>
+          <button onClick={() => setManagePanel('category')} className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-white/55 border border-white/10 hover:bg-white/5"><Layers size={12} /> 分类管理</button>
+          <button onClick={() => setManagePanel('tag')} className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-white/55 border border-white/10 hover:bg-white/5"><Tags size={12} /> 标签管理</button>
+        </div>
+      )}
+    </div>
+  ) : undefined;
 
   const writeProps = canWrite ? {
     onDeleteEntry: handleDeleteEntry,
@@ -170,7 +354,7 @@ export function DocumentStoreBrowser({ storeId, canWrite }: Props) {
       )}
 
       <DocBrowser
-        entries={entries}
+        entries={displayEntries}
         selectedEntryId={selectedEntryId}
         onSelectEntry={setSelectedEntryId}
         loadContent={loadContent}
@@ -178,6 +362,10 @@ export function DocumentStoreBrowser({ storeId, canWrite }: Props) {
         loading={loading}
         autoEditEntryId={autoEditEntryId}
         onAutoEditConsumed={() => setAutoEditEntryId(undefined)}
+        sidebarHeader={categoryHeader}
+        defaultUseContentTitle={enableCategories ? false : undefined}
+        categories={enableCategories ? categories : undefined}
+        onSetEntryCategory={enableCategories && canWrite ? handleSetEntryCategory : undefined}
         {...writeProps}
         emptyState={
           <div className="flex-1 flex flex-col items-center justify-center py-16">
@@ -195,6 +383,104 @@ export function DocumentStoreBrowser({ storeId, canWrite }: Props) {
           </div>
         }
       />
+
+      {managePanel === 'category' && (
+        <ListManagerDialog
+          title="分类管理"
+          items={categories.map((c) => ({ name: c, count: docCount(c) }))}
+          countLabel="篇"
+          addPlaceholder="新分类名称"
+          onAdd={addCategory}
+          onRename={renameCategory}
+          onDelete={deleteCategory}
+          onClose={() => setManagePanel(null)}
+        />
+      )}
+      {managePanel === 'tag' && (
+        <ListManagerDialog
+          title="标签管理"
+          items={allTags.map(([name, count]) => ({ name, count }))}
+          countLabel="处"
+          addPlaceholder=""
+          onRename={renameTag}
+          onDelete={deleteTag}
+          onClose={() => setManagePanel(null)}
+        />
+      )}
     </div>
+  );
+}
+
+/** 通用清单管理对话框：用于分类/标签的新增/改名/删除。onAdd 不传则不显示新增框。 */
+function ListManagerDialog({
+  title, items, countLabel, addPlaceholder, onAdd, onRename, onDelete, onClose,
+}: {
+  title: string;
+  items: { name: string; count: number }[];
+  countLabel: string;
+  addPlaceholder: string;
+  onAdd?: (name: string) => Promise<void>;
+  onRename: (oldName: string, newName: string) => Promise<void>;
+  onDelete: (name: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [adding, setAdding] = useState('');
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
+  return createPortal(
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div className="rounded-xl border border-white/10 bg-[#16181d] flex flex-col" style={{ width: 440, maxWidth: '92vw', maxHeight: '80vh' }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
+          <h2 className="text-sm font-semibold text-white">{title}</h2>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={16} /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-1.5" style={{ minHeight: 0, overscrollBehavior: 'contain' }}>
+          {items.length === 0 && <div className="text-[12px] text-white/35 text-center py-6">暂无{title.replace('管理', '')}</div>}
+          {items.map((it) => (
+            <div key={it.name} className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-white/[0.03] border border-white/5">
+              {editing === it.name ? (
+                <>
+                  <input
+                    autoFocus
+                    value={editValue}
+                    onChange={(e) => setEditValue(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { void onRename(it.name, editValue).then(() => setEditing(null)); } if (e.key === 'Escape') setEditing(null); }}
+                    className="flex-1 bg-white/5 border border-white/10 rounded px-2 py-1 text-sm text-white outline-none focus:border-cyan-500/40"
+                  />
+                  <button onClick={() => void onRename(it.name, editValue).then(() => setEditing(null))} className="text-[12px] text-cyan-300 hover:text-cyan-200 px-1.5">保存</button>
+                  <button onClick={() => setEditing(null)} className="text-[12px] text-white/40 hover:text-white px-1">取消</button>
+                </>
+              ) : (
+                <>
+                  <span className="flex-1 text-sm text-white/85 truncate">{it.name}</span>
+                  <span className="text-[11px] text-white/35 shrink-0">{it.count} {countLabel}</span>
+                  <button onClick={() => { setEditing(it.name); setEditValue(it.name); }} className="text-white/40 hover:text-cyan-300 shrink-0" title="改名"><Pencil size={13} /></button>
+                  <button onClick={() => void onDelete(it.name)} className="text-white/40 hover:text-red-300 shrink-0" title="删除"><Trash2 size={13} /></button>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+        {onAdd && (
+          <div className="flex items-center gap-2 px-3 py-3 border-t border-white/10 shrink-0">
+            <input
+              value={adding}
+              onChange={(e) => setAdding(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && adding.trim()) { void onAdd(adding.trim()).then(() => setAdding('')); } }}
+              placeholder={addPlaceholder}
+              className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white outline-none focus:border-cyan-500/40 placeholder:text-white/25"
+            />
+            <button
+              onClick={() => { if (adding.trim()) void onAdd(adding.trim()).then(() => setAdding('')); }}
+              disabled={!adding.trim()}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 disabled:opacity-40 text-sm"
+            >
+              <Plus size={14} /> 新增
+            </button>
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body,
   );
 }

@@ -30,7 +30,7 @@ export function FilePreview({ entry, preview }: { entry?: DocBrowserEntry; previ
   // 图片预览
   if (kind === 'image' && fileUrl) {
     return (
-      <div className="flex items-center justify-center py-4">
+      <div className="flex items-center justify-center py-4 w-full">
         <img
           src={fileUrl}
           alt={entry.title}
@@ -44,7 +44,7 @@ export function FilePreview({ entry, preview }: { entry?: DocBrowserEntry; previ
   // 视频预览
   if (kind === 'video' && fileUrl) {
     return (
-      <div className="flex items-center justify-center py-4">
+      <div className="flex items-center justify-center py-4 w-full">
         <video
           src={fileUrl}
           controls
@@ -79,7 +79,7 @@ export function FilePreview({ entry, preview }: { entry?: DocBrowserEntry; previ
         src={fileUrl}
         title={entry.title}
         className="w-full rounded-lg"
-        style={{ height: 'calc(100vh - 220px)', border: '1px solid rgba(255,255,255,0.06)' }}
+        style={{ height: '100%', minHeight: 420, border: '1px solid rgba(255,255,255,0.06)' }}
       />
     );
   }
@@ -94,7 +94,7 @@ export function FilePreview({ entry, preview }: { entry?: DocBrowserEntry; previ
         title={entry.title}
         sandbox=""
         className="w-full rounded-lg"
-        style={{ height: 'calc(100vh - 220px)', border: '1px solid rgba(255,255,255,0.06)', background: '#fff' }}
+        style={{ height: '100%', minHeight: 420, border: '1px solid rgba(255,255,255,0.06)', background: '#fff' }}
       />
     );
   }

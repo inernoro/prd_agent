@@ -23,6 +23,9 @@ public class DocumentStore
     /// <summary>标签</summary>
     public List<string> Tags { get; set; } = new();
 
+    /// <summary>可管理的分类清单（知识库一等维度；条目的 Category 取自此列表。空=未启用分类）</summary>
+    public List<string> Categories { get; set; } = new();
+
     /// <summary>是否公开（其他用户可浏览）</summary>
     public bool IsPublic { get; set; }
 

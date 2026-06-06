@@ -681,6 +681,8 @@
   > Phase 1 MVP 仅交付执行层；治理层（干系人/NPSS/奖金/盘点）待 Phase 2-3；Leader 职级强校验待 User 加字段
 - [视频生成 Agent · 债务台账](debt.video-agent) `debt.video-agent`
   > 4 条 open：OpenRouter CDN 7 天过期、混合渲染 ffmpeg normalize、直出心跳文案分级、成本预估 tooltip
+- [知识库划词评论（批注栏/内联 + 就地输入 + 回读闭环）· 债务台账](debt.kb-inline-comment) `debt.kb-inline-comment`
+  > 6 条边界：图片批注未做、inline 卡片定位 MVP、批注栏按时间非锚点排序、批注栏/TOC 互斥、回读为轮询、偏好走 localStorage
 
 - [工作流 Agent · 债务台账](debt.workflow-agent) `debt.workflow-agent`
   > 7 条 open：video-to-text asr 模式 ASR 池绑定 / maxItems 硬编码 / LlmRequestContext / 转写失败兜底 / ffmpeg 检测 / Play 后无返回 / count 与 maxItems 联动

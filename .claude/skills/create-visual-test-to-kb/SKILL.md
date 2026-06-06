@@ -158,7 +158,22 @@ python3 $SKILL/scripts/archive_report.py --config $SKILL/acceptance.config.json 
 | `scripts/annotate.mjs` | 通用「框选重点」工具:一条命令对任意页面按 selector/坐标画框+标签再截图(--login/--mobile/--click) | 发任何指向性截图前(§B2 硬要求) |
 | `scripts/archive_report.py` | 配置驱动归档(上传/删图保URL/建条目/写正文校验/分享链/必给地址/可见性防漂移) | 归档时 |
 | `scripts/verify-open.mjs` | 归档后自查:headless 打开分享链断言报告渲染(标题+正文+截图);空/打不开 exit 2 | 归档后(强制) |
+| `scripts/read_comments.py` | 回读闭环:拉知识库最近批注(用户在验收文档上的划词/全文批注),按时间倒序,供复测 | 复测/收集反馈时 |
 | `acceptance.config.json` | 项目配置(预览域名/登录/文档空间API/库名/截图);跨仓库改这个 | 接新仓库时 |
+
+## 回读批注闭环(用户批注 → 智能体复测)
+
+知识库与本技能是双向的:技能把验收报告**写**进知识库;用户在那篇报告里**划词/框选文字批注**(或对整篇评论)留下反馈,验收智能体再把这些批注**读**回来做下一轮复测。最简实现是按需轮询(不是监听):
+
+```bash
+# 归档后,归档脚本会输出 storeId/entryId;隔段时间或被要求复测时拉一次最近批注
+python3 $SKILL/scripts/read_comments.py --config $SKILL/acceptance.config.json \
+  --store "验收报告" --entry <报告条目 entryId> --since <上次拉取时间ISO>
+```
+
+- 鉴权复用归档同一把 `MAP_DOC_STORE_KEY`(`document-store:write` 写蕴含读,可调读接口);后端 `GET /stores/{storeId}/recent-comments` 已做读权限校验,只返回该 key 可读库的批注。
+- 输出末尾 `COMMENTS_JSON: {...}` 供智能体解析:每条含 `entryTitle / selectedText(被批注原文) / content / authorDisplayName / createdAt / isWholeDocument / status`。智能体据此定位"用户对哪段不满意",针对性复测/修复,再走第 4 步重新归档(新 report_id)。
+- `--since` 做增量:只取上次拉取后的新批注,避免重复处理。监听式(webhook/SSE 主动推送)是后续增强,先用这条拉取路径跑通。
 
 ## 跨仓库复用
 

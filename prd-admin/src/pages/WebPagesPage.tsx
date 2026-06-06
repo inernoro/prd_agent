@@ -82,6 +82,7 @@ import {
   BarChart3,
   MessageSquare,
   Plus,
+  Settings2,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -634,7 +635,6 @@ export default function WebPagesPage() {
             onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
             onDelete={() => handleDelete(site.id)}
             onShare={() => handleShare(site.id)}
-            onCancelShare={() => cancelShareForSite(site.id)}
             onQrCode={() => setQrSite(site)}
             onTransferToLibrary={() => setLibraryTargetSite(site)}
             onReplaceFile={(file) => setReplaceTarget({ site, file })}
@@ -657,7 +657,6 @@ export default function WebPagesPage() {
             onEdit={() => { setEditItem(site); setShowUploadDialog(true); }}
             onDelete={() => handleDelete(site.id)}
             onShare={() => handleShare(site.id)}
-            onCancelShare={() => cancelShareForSite(site.id)}
             onQrCode={() => setQrSite(site)}
             onComments={() => setCommentSite(site)}
           />
@@ -1436,7 +1435,7 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
   );
 }
 
-function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSelect, onTogglePublic, onEdit, onDelete, onShare, onCancelShare, onQrCode, onTransferToLibrary, onReplaceFile, onViewers, onMove, onComments }: {
+function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSelect, onTogglePublic, onEdit, onDelete, onShare, onQrCode, onTransferToLibrary, onReplaceFile, onViewers, onMove, onComments }: {
   site: HostedSite;
   selected: boolean;
   fresh?: boolean;
@@ -1449,7 +1448,6 @@ function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSelect, on
   onEdit: () => void;
   onDelete: () => void;
   onShare: () => void;
-  onCancelShare: () => void;
   onQrCode: () => void;
   onTransferToLibrary: () => void;
   onReplaceFile: (file: File) => void;
@@ -1459,8 +1457,6 @@ function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSelect, on
   const c = caps ?? { canEdit: true, canDelete: true, canShare: true, canSetVisibility: true };
   const isPublic = site.visibility === 'public';
   const [fileDragOver, setFileDragOver] = useState(false);
-  // 取消分享 inline 轻确认：点一下转「确认 / 保留」两个小按钮，避免误触
-  const [confirmCancel, setConfirmCancel] = useState(false);
   const { onPointerDown } = useDockDrag({
     mime: WEB_PAGE_MIME,
     id: site.id,
@@ -1623,14 +1619,8 @@ function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSelect, on
           <div className="absolute bottom-3 left-3 z-20 flex items-center gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
             {c.canShare && (
               shared ? (
-                confirmCancel ? (
-                  <>
-                    <IconAction icon={<Check size={12} />} label="确认取消分享" color="#6ee7b7" onClick={() => { setConfirmCancel(false); onCancelShare(); }} />
-                    <IconAction icon={<X size={12} />} label="保留分享" onClick={() => setConfirmCancel(false)} />
-                  </>
-                ) : (
-                  <IconAction icon={<Link2Off size={12} />} label="取消分享" color="#fcd34d" onClick={() => setConfirmCancel(true)} />
-                )
+                // 已分享：单按钮打开 scope 到本站点的分享管理面板（看链接/复制/单条取消/续期/新建都在里面）
+                <IconAction icon={<Settings2 size={12} />} label="分享管理" color="#fcd34d" onClick={onShare} />
               ) : (
                 <IconAction icon={<Share2 size={12} />} label="分享" onClick={onShare} />
               )
@@ -1755,7 +1745,7 @@ function IconAction({
 
 // ─── List View ───
 
-function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete, onShare, onCancelShare, onQrCode, onComments }: {
+function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete, onShare, onQrCode, onComments }: {
   site: HostedSite;
   selected: boolean;
   shared?: boolean;
@@ -1764,7 +1754,6 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
   onEdit: () => void;
   onDelete: () => void;
   onShare: () => void;
-  onCancelShare: () => void;
   onQrCode: () => void;
   onComments?: () => void;
 }) {
@@ -1859,8 +1848,8 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
         </button>
         {c.canShare && (
           shared ? (
-            <button onClick={onCancelShare} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="取消分享">
-              <Link2Off size={14} style={{ color: '#fcd34d' }} />
+            <button onClick={onShare} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="分享管理">
+              <Settings2 size={14} style={{ color: '#fcd34d' }} />
             </button>
           ) : (
             <button onClick={onShare} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="分享">

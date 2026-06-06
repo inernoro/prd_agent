@@ -51,6 +51,9 @@ public class Product
     /// <summary>产品成员 UserId 列表</summary>
     public List<string> MemberIds { get; set; } = new();
 
+    /// <summary>产品管理员 UserId 列表（产品级分权：可增删本产品成员）。不变量：AdminIds ⊆ MemberIds。</summary>
+    public List<string> AdminIds { get; set; } = new();
+
     // ── 反规范化计数（列表卡片展示用，写操作时维护）──
     public int VersionCount { get; set; }
     public int RequirementCount { get; set; }

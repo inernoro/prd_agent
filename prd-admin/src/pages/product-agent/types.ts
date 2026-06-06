@@ -58,12 +58,27 @@ export interface Product {
   ownerId: string;
   ownerName?: string | null;
   memberIds: string[];
+  adminIds: string[];
   versionCount: number;
   requirementCount: number;
   featureCount: number;
   defectCount: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export type ProductMemberRole = 'owner' | 'admin' | 'member';
+
+export interface ProductMember {
+  userId: string;
+  displayName: string;
+  role: ProductMemberRole;
+}
+
+export interface ProductMembersResult {
+  members: ProductMember[];
+  canManageMembers: boolean;
+  canManageAdmins: boolean;
 }
 
 export interface ProductVersion {
@@ -145,7 +160,8 @@ export interface FeatureVersion {
 
 export interface Customer {
   id: string;
-  productId: string;
+  /** 遗留字段：客户已全局化，新建客户为空 */
+  productId?: string | null;
   name: string;
   code?: string | null;
   company?: string | null;
@@ -262,6 +278,9 @@ export const PRODUCT_GRADE_LABEL: Record<ProductGrade, string> = {
   normal: '普通',
   experimental: '实验',
 };
+
+/** 产品/版本知识库首次进入时种子化的预置分类名（分类为后端一等字段 DocumentStore.Categories，后续可在「分类管理」里增删改）。 */
+export const KNOWLEDGE_CATEGORY_NAMES: string[] = ['MRD', 'SRS', 'PRD', '设计稿', '会议纪要', '测试用例'];
 
 export const VERSION_LIFECYCLE_LABEL: Record<VersionLifecycle, string> = {
   planning: '规划',

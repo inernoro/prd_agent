@@ -376,6 +376,16 @@ public class DocumentStoreController : ControllerBase
                 .ToDictionary(kv => kv.Key.Trim(), kv => kv.Value);
             updates.Add(Builders<DocumentStore>.Update.Set(s => s.TagColors, sanitized));
         }
+        if (request.Categories != null)
+        {
+            // 去空、去重、保序
+            var cats = request.Categories
+                .Select(c => (c ?? "").Trim())
+                .Where(c => c.Length > 0)
+                .Distinct()
+                .ToList();
+            updates.Add(Builders<DocumentStore>.Update.Set(s => s.Categories, cats));
+        }
 
         updates.Add(Builders<DocumentStore>.Update.Set(s => s.UpdatedAt, DateTime.UtcNow));
 
@@ -535,6 +545,7 @@ public class DocumentStoreController : ControllerBase
             ContentType = request.ContentType ?? string.Empty,
             FileSize = request.FileSize,
             Tags = request.Tags ?? new List<string>(),
+            Category = string.IsNullOrWhiteSpace(request.Category) ? null : request.Category.Trim(),
             Metadata = metadata,
             CreatedBy = userId,
             CreatedByName = userName,
@@ -727,6 +738,9 @@ public class DocumentStoreController : ControllerBase
             updates.Add(Builders<DocumentEntry>.Update.Set(e => e.Summary, request.Summary.Trim()));
         if (request.Tags != null)
             updates.Add(Builders<DocumentEntry>.Update.Set(e => e.Tags, request.Tags));
+        if (request.Category != null)
+            updates.Add(Builders<DocumentEntry>.Update.Set(e => e.Category,
+                string.IsNullOrWhiteSpace(request.Category) ? null : request.Category.Trim()));
         if (request.Metadata != null)
             updates.Add(Builders<DocumentEntry>.Update.Set(e => e.Metadata, request.Metadata));
 
@@ -4282,7 +4296,9 @@ public class DocumentStoreController : ControllerBase
             .SortBy(c => c.CreatedAt)
             .ToListAsync();
 
-        return Ok(ApiResponse<object>.Ok(new { items = comments, canCreate }));
+        // isOwner + viewerUserId 供前端按「作者或库主」逐条判定删除权限：
+        // 公开库里 canCreate 对任意登录用户为 true，但删除只允许作者/库主，前端不能拿 canCreate 当 canDelete（Codex P2）
+        return Ok(ApiResponse<object>.Ok(new { items = comments, canCreate, isOwner, viewerUserId = currentUser }));
     }
 
     /// <summary>删除划词评论</summary>
@@ -4304,6 +4320,79 @@ public class DocumentStoreController : ControllerBase
 
         await _db.DocumentInlineComments.DeleteOneAsync(c => c.Id == commentId);
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    /// <summary>
+    /// 读取知识库最近的划词/全文评论（按时间倒序聚合整库），供验收智能体回读用户在验收文档上的批注。
+    /// 鉴权走类级 [Authorize] + [AdminController(document-store.read)]；AgentApiKey 持
+    /// document-store:read（或 write，write ⊇ read）即可调用。仅返回调用方可读的库
+    /// （owner / 公开 / 团队 / 项目 / 产品成员）的评论，避免越权枚举。
+    /// </summary>
+    /// <param name="storeId">知识库 ID</param>
+    /// <param name="since">仅返回此 ISO-8601 时间之后创建的评论（可选，用于增量轮询）</param>
+    /// <param name="limit">返回上限（1-200，默认 50）</param>
+    [HttpGet("stores/{storeId}/recent-comments")]
+    public async Task<IActionResult> ListRecentStoreComments(string storeId, [FromQuery] string? since = null, [FromQuery] int limit = 50)
+    {
+        var userId = GetUserId();
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库不存在"));
+
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
+        if (!await CanReadStoreAsync(store, userId, myTeamIds))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库不存在"));
+
+        limit = Math.Clamp(limit, 1, 200);
+
+        var filter = Builders<DocumentInlineComment>.Filter.Eq(c => c.StoreId, storeId);
+        if (!string.IsNullOrWhiteSpace(since)
+            && DateTime.TryParse(since, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.RoundtripKind, out var sinceUtc))
+        {
+            filter = Builders<DocumentInlineComment>.Filter.And(
+                filter,
+                Builders<DocumentInlineComment>.Filter.Gt(c => c.CreatedAt, sinceUtc.ToUniversalTime()));
+        }
+
+        var comments = await _db.DocumentInlineComments
+            .Find(filter)
+            .SortByDescending(c => c.CreatedAt)
+            .Limit(limit)
+            .ToListAsync();
+
+        // 一次性查出涉及的 entry 标题，避免 N+1
+        var entryIds = comments.Select(c => c.EntryId).Distinct().ToList();
+        var entries = entryIds.Count == 0
+            ? new List<DocumentEntry>()
+            : await _db.DocumentEntries.Find(e => entryIds.Contains(e.Id)).ToListAsync();
+        var titleMap = entries.ToDictionary(e => e.Id, e => e.Title);
+
+        var items = comments.Select(c => new
+        {
+            id = c.Id,
+            entryId = c.EntryId,
+            entryTitle = titleMap.TryGetValue(c.EntryId, out var t) ? t : null,
+            isWholeDocument = c.IsWholeDocument,
+            // 锚点原文（被批注的那段文字）；全文评论为空
+            selectedText = c.SelectedText,
+            content = c.Content,
+            authorUserId = c.AuthorUserId,
+            authorDisplayName = c.AuthorDisplayName,
+            // 头像文件名快照：与 per-entry inline-comments 返回的完整实体对齐，
+            // 让 read_comments.py 等 store 级轮询也能拿到头像（Bugbot Medium）
+            authorAvatar = c.AuthorAvatar,
+            status = c.Status,
+            createdAt = c.CreatedAt,
+        }).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            storeId,
+            storeName = store.Name,
+            count = items.Count,
+            items,
+        }));
     }
 
     private static string ComputeSha256(string content)
@@ -4339,6 +4428,8 @@ public class UpdateDocumentStoreRequest
     public string? TemplateKey { get; set; }
     /// <summary>用户自定义 tag 颜色映射（null=不变；空字典=清空）</summary>
     public Dictionary<string, string>? TagColors { get; set; }
+    /// <summary>可管理的分类清单（null=不变；空列表=清空）</summary>
+    public List<string>? Categories { get; set; }
 }
 
 public class SetStoreTeamsRequest
@@ -4358,6 +4449,7 @@ public class AddDocumentEntryRequest
     public string? ContentType { get; set; }
     public long FileSize { get; set; }
     public List<string>? Tags { get; set; }
+    public string? Category { get; set; }
     public Dictionary<string, string>? Metadata { get; set; }
 }
 
@@ -4409,6 +4501,8 @@ public class UpdateDocumentEntryRequest
     public string? Title { get; set; }
     public string? Summary { get; set; }
     public List<string>? Tags { get; set; }
+    /// <summary>分类（传空字符串=清除分类；null=不变）</summary>
+    public string? Category { get; set; }
     public Dictionary<string, string>? Metadata { get; set; }
 }
 
