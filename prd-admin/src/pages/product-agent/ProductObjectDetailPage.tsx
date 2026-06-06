@@ -8,10 +8,10 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Save, Unlink, ExternalLink, ListChecks, Puzzle, Bug, Link2, FileText, GitBranch } from 'lucide-react';
+import { ArrowLeft, Save, Unlink, ExternalLink, ListChecks, Puzzle, Bug, Link2, FileText, GitBranch, BookOpen } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
-import { RequirementRelationModal, DefectLinkerModal } from './ProductRelationModals';
+import { RequirementRelationModal, DefectLinkerModal, KnowledgeStoreModal } from './ProductRelationModals';
 import { FormFieldsRenderer, RichTextField, useEffectiveTemplate, useEffectiveWorkflow } from './DynamicForm';
 import { WorkflowBar } from './WorkflowBar';
 import { ActivityTimeline } from './ActivityTimeline';
@@ -24,6 +24,10 @@ import {
   createFeature,
   updateFeature,
   listVersions,
+  updateVersion,
+  createFeatureVersion,
+  deleteFeatureVersion,
+  getVersionKnowledgeStore,
   listCustomers,
   listFeatureVersions,
   listTracedDefects,
@@ -32,8 +36,8 @@ import {
   listDescTemplates,
   type TracedDefect,
 } from '@/services/real/productAgent';
-import type { Requirement, Feature, ProductVersion, Customer, FeatureVersion, ItemGrade, FormField, ProductEntityType, DescTemplate } from './types';
-import { ITEM_GRADE_LABEL } from './types';
+import type { Requirement, Feature, ProductVersion, Customer, FeatureVersion, ItemGrade, FormField, ProductEntityType, DescTemplate, VersionLifecycle } from './types';
+import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL } from './types';
 
 const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
 
@@ -161,6 +165,15 @@ export function ProductObjectDetailPage() {
               versionName={versionName}
               onReload={reload}
             />
+          ) : kind === 'version' ? (
+            <VersionDetail
+              productId={productId}
+              version={versions.find((v) => v.id === id)}
+              allVersions={versions}
+              requirements={requirements}
+              features={features}
+              onReload={reload}
+            />
           ) : kind === 'defect' ? (
             <DefectDetail
               defect={tracedDefects.find((d) => d.id === id)}
@@ -182,6 +195,7 @@ function KindBadge({ kind, isNew }: { kind: string; isNew?: boolean }) {
   const meta: Record<string, { label: string; icon: typeof ListChecks; color: string }> = {
     requirement: { label: '需求', icon: ListChecks, color: '#FBBF24' },
     feature: { label: '功能', icon: Puzzle, color: '#A78BFA' },
+    version: { label: '版本', icon: GitBranch, color: '#34D399' },
     defect: { label: '缺陷', icon: Bug, color: '#F87171' },
   };
   const m = meta[kind] ?? { label: '对象', icon: ListChecks, color: '#888' };
@@ -923,6 +937,240 @@ function FeatureDetail({
     >
       {showDefectLinker && (
         <DefectLinkerModal productId={feature.productId} featureId={feature.id} onClose={() => setShowDefectLinker(false)} onLinked={reloadDefects} />
+      )}
+    </DetailScaffold>
+  );
+}
+
+// ════════════════════════ 版本详情 ════════════════════════
+function VersionDetail({
+  productId,
+  version,
+  allVersions,
+  requirements,
+  features,
+  onReload,
+}: {
+  productId: string;
+  version?: ProductVersion;
+  allVersions: ProductVersion[];
+  requirements: Requirement[];
+  features: Feature[];
+  onReload: () => void;
+}) {
+  const [versionName, setVersionName] = useState('');
+  const [description, setDescription] = useState('');
+  const [lifecycle, setLifecycle] = useState<VersionLifecycle>('planning');
+  const [isMajor, setIsMajor] = useState(false);
+  const [parentVersionId, setParentVersionId] = useState('');
+  const [selReqs, setSelReqs] = useState<Set<string>>(new Set());
+  const [formData, setFormData] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [showKnowledge, setShowKnowledge] = useState(false);
+  const { template } = useEffectiveTemplate('version', productId);
+  const { workflow } = useEffectiveWorkflow('version', productId);
+  const split = useMemo(() => splitFields(template?.fields), [template]);
+
+  // 纳入功能：本地管理 featureVersions（即勾即存，走 create/deleteFeatureVersion）
+  const [featureVersions, setFeatureVersions] = useState<FeatureVersion[]>([]);
+  const reloadFv = useCallback(async () => {
+    if (!version) return;
+    const res = await listFeatureVersions(productId, { versionId: version.id });
+    if (res.success) setFeatureVersions(res.data.items);
+  }, [productId, version]);
+  useEffect(() => { void reloadFv(); }, [reloadFv]);
+
+  useEffect(() => {
+    if (version) {
+      setVersionName(version.versionName);
+      setDescription(version.description ?? '');
+      setLifecycle(version.lifecycle);
+      setIsMajor(version.isMajor);
+      setParentVersionId(version.parentVersionId ?? '');
+      setSelReqs(new Set(version.requirementIds));
+      setFormData(version.formData ?? {});
+    }
+  }, [version]);
+
+  const reqSetEqual = (a: Set<string>, b: string[]) => a.size === b.length && b.every((x) => a.has(x));
+  const dirty = useMemo(() => {
+    if (!version) return false;
+    return (
+      versionName !== version.versionName ||
+      description !== (version.description ?? '') ||
+      lifecycle !== version.lifecycle ||
+      isMajor !== version.isMajor ||
+      parentVersionId !== (version.parentVersionId ?? '') ||
+      !reqSetEqual(selReqs, version.requirementIds) ||
+      !recordEqual(formData, version.formData ?? {})
+    );
+  }, [version, versionName, description, lifecycle, isMajor, parentVersionId, selReqs, formData]);
+
+  if (!version) return <NotFound />;
+  const setField = (k: string, v: string) => setFormData((d) => ({ ...d, [k]: v }));
+
+  const save = async () => {
+    setSaving(true);
+    await updateVersion(version.id, {
+      versionName: versionName.trim(),
+      description,
+      lifecycle,
+      isMajor,
+      parentVersionId,
+      requirementIds: Array.from(selReqs),
+      formData,
+    });
+    setSaving(false);
+    onReload();
+  };
+
+  const toggleReq = (rid: string) => {
+    setSelReqs((prev) => {
+      const next = new Set(prev);
+      if (next.has(rid)) next.delete(rid);
+      else next.add(rid);
+      return next;
+    });
+  };
+  const featureIncluded = (featureId: string) => featureVersions.find((fv) => fv.featureId === featureId);
+  const toggleFeature = async (featureId: string) => {
+    const existing = featureIncluded(featureId);
+    if (existing) await deleteFeatureVersion(existing.id);
+    else await createFeatureVersion(productId, { featureId, versionId: version.id });
+    await reloadFv();
+  };
+
+  return (
+    <DetailScaffold
+      no={VERSION_LIFECYCLE_LABEL[version.lifecycle]}
+      kindLabel="版本"
+      kindColor="#34D399"
+      title={versionName}
+      onTitleChange={setVersionName}
+      titlePlaceholder="版本名，如 v2.0"
+      dirty={dirty}
+      saving={saving}
+      onSave={save}
+      workflow={
+        workflow ? (
+          <WorkflowBar workflow={workflow} entityType="version" entityId={version.id} currentState={version.currentState} onChanged={onReload} />
+        ) : undefined
+      }
+      main={
+        <>
+          <Card title="版本描述" action={<DescTemplatePicker entityType="version" onApply={(c) => setDescription((p) => mergeDesc(p, c))} />}>
+            <DescriptionField value={description} onChange={setDescription} />
+          </Card>
+          {split.files.length > 0 && (
+            <Card title={template?.name || '附件'}>
+              <FormFieldsRenderer fields={split.files} values={formData} onChange={setField} productId={productId} />
+            </Card>
+          )}
+          <Card title="动态">
+            <ActivityTimeline entityType="version" entityId={version.id} />
+          </Card>
+        </>
+      }
+      sidebar={
+        <>
+          <Card title="属性">
+            <div className="flex flex-col gap-3.5">
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel>生命周期</FieldLabel>
+                <div className="flex flex-wrap gap-1.5">
+                  {(Object.keys(VERSION_LIFECYCLE_LABEL) as VersionLifecycle[]).map((lc) => (
+                    <button
+                      key={lc}
+                      onClick={() => setLifecycle(lc)}
+                      className={`px-2 py-1 rounded-md text-xs border ${lifecycle === lc ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40' : 'text-white/40 border-white/10 hover:bg-white/5'}`}
+                    >
+                      {VERSION_LIFECYCLE_LABEL[lc]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={isMajor} onChange={(e) => setIsMajor(e.target.checked)} className="accent-cyan-500" />
+                <span className="text-sm text-white/70">标记为大版本</span>
+              </label>
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel>父版本</FieldLabel>
+                <ParentSelect
+                  value={parentVersionId}
+                  onChange={setParentVersionId}
+                  options={allVersions.filter((v) => v.id !== version.id).map((v) => ({ id: v.id, label: v.versionName }))}
+                  placeholder="无（顶层版本）"
+                />
+              </div>
+              {version.currentState && (
+                <div className="flex flex-col gap-1.5">
+                  <FieldLabel>状态</FieldLabel>
+                  <span className="text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10 self-start">
+                    {workflow?.states.find((s) => s.key === version.currentState)?.label ?? version.currentState}
+                  </span>
+                </div>
+              )}
+              {split.others.length > 0 && (
+                <div className="pt-1 border-t border-white/5">
+                  <FormFieldsRenderer fields={split.others} values={formData} onChange={setField} productId={productId} />
+                </div>
+              )}
+            </div>
+          </Card>
+          <Card
+            title="版本知识库"
+            action={
+              <button onClick={() => setShowKnowledge(true)} className="flex items-center gap-1 text-[11px] text-cyan-300 hover:text-cyan-200">
+                <BookOpen size={12} /> 打开
+              </button>
+            }
+          >
+            <div className="text-[11px] text-white/40">MRD / SRS / PRD 等版本文档，支持分类筛选与快速新建。</div>
+          </Card>
+          <Card title="关联需求（本版本要做哪些需求）">
+            {requirements.length === 0 ? (
+              <div className="text-[11px] text-white/30">该产品还没有需求</div>
+            ) : (
+              <div className="flex flex-col gap-0.5 max-h-64 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+                {requirements.map((r) => (
+                  <label key={r.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5 cursor-pointer">
+                    <input type="checkbox" checked={selReqs.has(r.id)} onChange={() => toggleReq(r.id)} className="accent-cyan-500" />
+                    <span className="text-sm text-white/80 truncate">{r.title}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </Card>
+          <Card title="纳入功能（功能版本化，即勾即存）">
+            {features.length === 0 ? (
+              <div className="text-[11px] text-white/30">该产品还没有功能</div>
+            ) : (
+              <div className="flex flex-col gap-0.5 max-h-64 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+                {features.map((f) => (
+                  <label key={f.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5 cursor-pointer">
+                    <input type="checkbox" checked={!!featureIncluded(f.id)} onChange={() => void toggleFeature(f.id)} className="accent-cyan-500" />
+                    <span className="text-sm text-white/80 truncate">{f.title}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </Card>
+          <Card title="信息">
+            <div className="flex flex-col gap-2">
+              <InfoRow label="计划发布" value={fmtDate(version.plannedReleaseAt)} />
+              <InfoRow label="创建时间" value={fmtDate(version.createdAt)} />
+              <InfoRow label="更新时间" value={fmtDate(version.updatedAt)} />
+            </div>
+          </Card>
+        </>
+      }
+    >
+      {showKnowledge && (
+        <KnowledgeStoreModal
+          title={`${version.versionName} · 版本知识库`}
+          fetcher={() => getVersionKnowledgeStore(version.id)}
+          onClose={() => setShowKnowledge(false)}
+        />
       )}
     </DetailScaffold>
   );

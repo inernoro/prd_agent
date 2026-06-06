@@ -13,7 +13,7 @@ import { Plus, Trash2, GitBranch, ListChecks, Puzzle, Users, UserCog, BookOpen, 
 import { EChart } from '@/components/charts/EChart';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
-import { VersionRelationModal, ProductKnowledgePanel, DefectLinkerModal } from './ProductRelationModals';
+import { ProductKnowledgePanel, DefectLinkerModal } from './ProductRelationModals';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { KanbanBoard } from './KanbanBoard';
 import { RtmMatrix } from './RtmMatrix';
@@ -302,11 +302,11 @@ function DashChart({ title, option, empty }: { title: string; option: EChartsOpt
 
 // ── 版本 tab（含大版本升级申请）──
 function VersionsTab({ productId }: { productId: string }) {
+  const navigate = useNavigate();
   const [items, setItems] = useState<ProductVersion[]>([]);
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
-  const [relVersion, setRelVersion] = useState<ProductVersion | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -346,8 +346,8 @@ function VersionsTab({ productId }: { productId: string }) {
                 key={v.id}
                 title={v.versionName}
                 sub={`${VERSION_LIFECYCLE_LABEL[v.lifecycle]} · 需求 ${v.requirementIds.length} · 功能 ${v.featureVersionIds.length}${v.isMajor ? ' · 大版本' : ''}`}
-                onClick={() => setRelVersion(v)}
-                actionLabel="关联需求/功能 · 知识库"
+                onClick={() => navigate(`/product-agent/p/${productId}/version/${v.id}`)}
+                actionLabel="查看版本详情"
                 onDelete={async () => {
                   await deleteVersion(v.id);
                   await reload();
@@ -362,15 +362,6 @@ function VersionsTab({ productId }: { productId: string }) {
         <div className="text-xs font-medium text-white/50 mb-2">大版本升级申请</div>
         <UpgradeRequestsTab productId={productId} />
       </div>
-
-      {relVersion && (
-        <VersionRelationModal
-          productId={productId}
-          version={relVersion}
-          onClose={() => setRelVersion(null)}
-          onSaved={() => void reload()}
-        />
-      )}
     </div>
   );
 }
