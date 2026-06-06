@@ -19,6 +19,7 @@ import {
   Lightbulb,
   Loader2,
   Clock3,
+  Container,
   MoreHorizontal,
   Network,
   Play,
@@ -4373,7 +4374,7 @@ function BranchCard({
               className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 font-mono text-xs ${chipClass}`}
               title={`${service.profileId}${service.hostPort ? ` :${service.hostPort}` : ''}`}
             >
-              <Server className={`h-3 w-3 ${chipRailClass.replace('bg-', 'text-')}`} aria-hidden />
+              <Container className={`h-3 w-3 ${chipRailClass.replace('bg-', 'text-')}`} aria-hidden />
               <span>{compactServiceLabel(service.profileId)}</span>
             </span>
           );
@@ -4445,7 +4446,7 @@ function BranchCard({
                 className={`group/tag inline-flex h-6 items-center gap-1 rounded-md border px-2 text-[11px] font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] transition-colors ${
                   isActive
                     ? 'border-primary/45 bg-primary/15 text-primary'
-                    : 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300 hover:border-primary/40 hover:bg-primary/10 hover:text-primary'
+                    : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-foreground/75 hover:border-primary/40 hover:bg-primary/10 hover:text-primary'
                 }`}
                 title={`标签: ${tag}`}
               >
@@ -4476,7 +4477,7 @@ function BranchCard({
                 event.stopPropagation();
                 onEditTags();
               }}
-              className="inline-flex h-6 items-center rounded-md border border-dashed border-emerald-400/30 bg-emerald-400/5 px-2 text-[11px] text-emerald-300/80 transition-colors hover:border-primary/40 hover:text-primary"
+              className="inline-flex h-6 items-center rounded-md border border-dashed border-[hsl(var(--hairline))] bg-transparent px-2 text-[11px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
               title="编辑全部标签"
             >
               +{(branch.tags || []).length - 3}
@@ -4491,7 +4492,7 @@ function BranchCard({
                 setTagDeleteTarget(null);
                 setTagDraftError('');
               }}
-              className="inline-flex h-6 items-center gap-1 rounded-md border border-dashed border-emerald-400/35 bg-emerald-400/5 px-2 text-[11px] font-medium text-emerald-300/85 transition-colors hover:border-primary/45 hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+              className="inline-flex h-6 items-center gap-1 rounded-md border border-dashed border-[hsl(var(--hairline))] bg-transparent px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:border-primary/45 hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
               title="添加标签"
               aria-expanded={tagEditorOpen}
             >
