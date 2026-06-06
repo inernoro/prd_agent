@@ -1567,13 +1567,39 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(session.CdsSessionId!)}/stream?afterSeq={afterSeq}",
             null,
             ct);
-        var stream = await response.Content.ReadAsStringAsync(ct);
+        using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(ct));
         string? sessionStatus = null;
         string? sessionError = null;
-        foreach (var block in stream.Split("\n\n", StringSplitOptions.RemoveEmptyEntries))
+        // 增量读取：CDS 的 SSE 块以空行分隔，逐块到达即解析落库，前端 /stream SSE 立即转发，
+        // 实现真流式。旧实现 ReadAsStringAsync 会阻塞到整段流读完、事件全堆到结尾，
+        // 表现为「不流式 + 很久不返回」。SendCdsJsonAsync 已用 ResponseHeadersRead，可增量读。
+        var blockBuilder = new System.Text.StringBuilder();
+        string? line;
+        while ((line = await reader.ReadLineAsync(ct)) != null)
         {
-            var dataLine = block.Split('\n').FirstOrDefault(line => line.StartsWith("data: ", StringComparison.Ordinal));
-            if (dataLine == null || block.Contains("event: keepalive", StringComparison.Ordinal)) continue;
+            if (line.Length != 0)
+            {
+                blockBuilder.Append(line).Append('\n');
+                continue;
+            }
+            if (blockBuilder.Length > 0)
+            {
+                await ProcessBlockAsync(blockBuilder.ToString());
+                blockBuilder.Clear();
+            }
+        }
+        if (blockBuilder.Length > 0)
+        {
+            await ProcessBlockAsync(blockBuilder.ToString());
+        }
+
+        return new CdsStreamImportResult(sessionStatus, sessionError);
+
+        // 单个 SSE 块的解析与落库（逻辑与旧 foreach 体一致，仅改为逐块即时处理）。
+        async Task ProcessBlockAsync(string block)
+        {
+            var dataLine = block.Split('\n').FirstOrDefault(l => l.StartsWith("data: ", StringComparison.Ordinal));
+            if (dataLine == null || block.Contains("event: keepalive", StringComparison.Ordinal)) return;
             using var doc = JsonDocument.Parse(dataLine["data: ".Length..]);
             var root = doc.RootElement;
             var type = GetString(root, "type") ?? InfraAgentEventTypes.Log;
@@ -1582,7 +1608,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 : "{}";
             if (await HasImportedEventAsync(session.Id, type, payload, ct))
             {
-                continue;
+                return;
             }
 
             await AppendRawEventAsync(session.Id, await NextEventSeqAsync(session.Id, ct), type, payload, ct);
@@ -1614,8 +1640,6 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 sessionError = errorStatus.SessionError;
             }
         }
-
-        return new CdsStreamImportResult(sessionStatus, sessionError);
     }
 
     private async Task<bool> RunSidecarRuntimeIfAvailableAsync(
