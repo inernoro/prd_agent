@@ -143,8 +143,8 @@ public class AdminPeerNodesController : ControllerBase
                 string? innerMsg = null;
                 try
                 {
-                    using var doc = JsonDocument.Parse(json);
-                    if (doc.RootElement.TryGetProperty("error", out var err)
+                    using var errDoc = JsonDocument.Parse(json);
+                    if (errDoc.RootElement.TryGetProperty("error", out var err)
                         && err.ValueKind == JsonValueKind.Object
                         && err.TryGetProperty("message", out var msg))
                         innerMsg = msg.GetString();
