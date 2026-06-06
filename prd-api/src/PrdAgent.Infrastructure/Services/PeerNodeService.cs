@@ -26,6 +26,12 @@ public class PeerNodeService : IPeerNodeService
 
     public async Task<string> GetSelfNodeIdAsync(CancellationToken ct = default)
     {
+        // 优先环境变量覆盖：允许同 DB 部署的不同分支（如 CDS 灰度环境共享 MongoDB）用 env
+        // 强制不同 nodeId 以测试互传；也用于运维需要重置节点身份的场景。
+        var envOverride = Environment.GetEnvironmentVariable("PEER_NODE_ID_OVERRIDE");
+        if (!string.IsNullOrWhiteSpace(envOverride))
+            return envOverride.Trim();
+
         var existing = await _db.AppSettings.Find(s => s.Id == "global").FirstOrDefaultAsync(ct);
         if (existing != null && !string.IsNullOrWhiteSpace(existing.MapInstanceId))
             return existing.MapInstanceId!;

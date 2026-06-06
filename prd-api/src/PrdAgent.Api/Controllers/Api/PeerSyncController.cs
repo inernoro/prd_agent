@@ -238,6 +238,11 @@ public class PeerSyncController : ControllerBase
             .FirstOrDefaultAsync(ct);
         if (node == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "对端节点不存在或未连接"));
 
+        // 防自指：对端 RemoteNodeId 等于本节点 selfNodeId（共享 DB 误配等）→ 拒绝，避免同 DB 自互传。
+        var selfNodeId = await _peer.GetSelfNodeIdAsync(ct);
+        if (node.RemoteNodeId == selfNodeId)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该对端实际指向本节点自己（同 nodeId / 共享数据库），不能互传"));
+
         var resource = _registry.Resolve(request.ResourceType);
         if (resource == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "资源类型未注册"));
 
@@ -346,6 +351,12 @@ public class PeerSyncController : ControllerBase
             return (null, body, Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "缺少节点签名头")));
 
         var remoteNodeId = nodeIdVals.ToString();
+        // 防自指（shared-DB / 配置错误兜底）：发起方 nodeId 等于本节点 selfNodeId 时直接拒绝，
+        // 避免在共享数据库部署下发生「自己签自己」的伪互传。
+        var selfNodeId = await _peer.GetSelfNodeIdAsync(ct);
+        if (remoteNodeId == selfNodeId)
+            return (null, body, Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "不能与本节点自己同步（同 nodeId）")));
+
         var node = await _db.PeerNodes.Find(n => n.RemoteNodeId == remoteNodeId).FirstOrDefaultAsync(ct);
         if (node == null || string.IsNullOrEmpty(node.SharedSecret))
             return (null, body, Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "未知或未配对的节点")));

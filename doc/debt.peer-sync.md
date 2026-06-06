@@ -25,6 +25,19 @@
 - 幂等：沿用 metadata.syncLineageId 血缘键，与旧 skblink token 路径数据互通；重复同步按血缘 upsert，内容未变跳过。
 - 向下兼容：bundle / record 带 schemaVersion + Extras 字典，未知字段原样保留。
 
+## 防自指（共享 DB / 配置错误兜底）
+
+CDS 灰度环境下两个分支共用同一 MongoDB，导致 `appsettings.global.MapInstanceId` 在两个分支看是同一个值，
+两个分支的 `selfNodeId` 因此相同。已加三层防护：
+
+1. **握手层**：`AddPeerNode` / `Handshake` 收到 `InitiatorNodeId == selfNodeId` 直接拒绝（早期发现）。
+2. **验签层**：`VerifyPeerAsync` 收到 `X-Peer-Node == selfNodeId` 即返回 401「不能与本节点自己同步（同 nodeId）」，
+   即便配对记录被旁路写入也无效。
+3. **用户 transfer 层**：发起 push/pull/双向时若所选节点的 `RemoteNodeId == selfNodeId` → 拒绝。
+
+测试时可用 `PEER_NODE_ID_OVERRIDE` 环境变量强制覆盖 selfNodeId（不写回 DB），让共享 DB 部署的不同分支
+互相看到对方为「不同节点」，从而走通真实握手 + HMAC + bundle 传输路径。运维场景下也可用此 env 重置节点身份。
+
 ## 验证状态（截至落地）
 
 - 本地无 .NET SDK，后端编译走 CDS（见交付消息预览链接 / CDS check）。
