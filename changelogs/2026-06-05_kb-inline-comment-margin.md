@@ -5,3 +5,5 @@
 | fix | prd-admin | 修复批注牵引连线两个边界：高亮/卡片滚出正文可视区时不再画线（避免飞到窗口角/越过顶栏）；连线改连续 rAF 直接改 DOM，跟手不再延迟抖动 |
 | fix | prd-admin | 修复批注评审 5 项：composer 提交落到选区所属条目（切档不串档）、删除/激活滚动加 stale 守卫、激活用真实锚点滚动且取消激活不跳视口 |
 | fix | prd-agent | read_comments.py：--entry 改用 per-entry 接口拿全量（避免被 store 级 limit 挤出页）、since 查询 URL 编码 |
+| fix | prd-admin | 批注评审二轮：创建后乐观插入防 UI 滞留、删光分组清激活态防幽灵连线、只读访客不弹写入 composer、收起批注栏时点气泡自动重开 |
+| fix | prd-api | recent-comments 返回补 authorAvatar 字段，与 per-entry 接口对齐供 store 级轮询取头像 |

@@ -4363,6 +4363,9 @@ public class DocumentStoreController : ControllerBase
             content = c.Content,
             authorUserId = c.AuthorUserId,
             authorDisplayName = c.AuthorDisplayName,
+            // 头像文件名快照：与 per-entry inline-comments 返回的完整实体对齐，
+            // 让 read_comments.py 等 store 级轮询也能拿到头像（Bugbot Medium）
+            authorAvatar = c.AuthorAvatar,
             status = c.Status,
             createdAt = c.CreatedAt,
         }).ToList();

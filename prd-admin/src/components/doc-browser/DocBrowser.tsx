@@ -319,7 +319,7 @@ import { InlineCommentOverlay } from './InlineCommentOverlay';
 import { InlineCommentMargin } from './InlineCommentMargin';
 import { InlineCommentComposer } from './InlineCommentComposer';
 import { InlineCommentConnector } from './InlineCommentConnector';
-import { threadColor } from './inlineCommentShared';
+import { threadColor, groupKey } from './inlineCommentShared';
 import { useDocReaderPrefs } from '@/stores/docReaderPrefsStore';
 import { BulkActionBar } from './BulkActionBar';
 
@@ -1686,8 +1686,15 @@ export function DocBrowser({
     if (!targetId) return false;
     const res = await createInlineComment(targetId, input);
     if (res.success) {
-      // 仅当目标条目仍是当前正在看的条目才刷新列表，避免改到别的文档状态
-      if (targetId === trackedEntryForComments?.id) await refreshComments();
+      // 仅当目标条目仍是当前正在看的条目才更新本地状态，避免改到别的文档
+      if (targetId === trackedEntryForComments?.id) {
+        // 乐观插入：即使随后 refresh 拿到 success:false，新评论也立即可见，
+        // 不会出现“提交成功但列表/计数仍旧、要手动刷新才出现”（Bugbot Medium）
+        const created = res.data;
+        setInlineCommentItems((prev) => (prev.some((c) => c.id === created.id) ? prev : [...prev, created]));
+        setCommentCount((c) => c + 1);
+        await refreshComments(); // 与服务器对账：成功则覆盖为真值，失败则保留乐观结果
+      }
       return true;
     }
     toast.error('添加失败', res.error?.message);
@@ -1710,7 +1717,10 @@ export function DocBrowser({
   // 激活某条批注（点正文气泡或点批注卡）：仅 toggle 状态。滚动定位由下面的 effect 按真实锚点处理。
   const handleActivateComment = useCallback((key: string) => {
     setActiveCommentKey((prev) => (prev === key ? null : key));
-  }, []);
+    // margin 布局下若批注栏被收起（marginCollapsed），点气泡只 toggle 看不到内容；
+    // 重新展开批注栏，让激活的卡片可见（Codex P2：collapsed 时气泡要能露出可读评论面）
+    if (inlineCommentLayout === 'margin') setMarginCollapsed(false);
+  }, [inlineCommentLayout]);
 
   // 激活后把正文锚点滚到眼前：用 overlay 已按 findTextRange（去空白 + contextBefore 消歧）放置的
   // data-active-hl 元素，而非 raw indexOf（会被空白归一化/重复短语坑，Bugbot Medium）。
@@ -1723,6 +1733,19 @@ export function DocBrowser({
     });
     return () => cancelAnimationFrame(raf);
   }, [activeCommentKey]);
+
+  // 激活的分组若已不存在于当前评论列表（删光该处批注 / 刷新后消失）→ 清掉激活/hover，
+  // 避免连线层、hover 联动指向幽灵分组（Bugbot Low：active key survives deletion）
+  useEffect(() => {
+    if (!activeCommentKey) return;
+    const stillThere = inlineCommentItems.some(
+      (c) => !c.isWholeDocument && c.selectedText && groupKey(c.selectedText) === activeCommentKey,
+    );
+    if (!stillThere) {
+      setActiveCommentKey(null);
+      setHoveredCommentKey(null);
+    }
+  }, [inlineCommentItems, activeCommentKey]);
 
   // F1：仅当当前预览是文本类（Markdown/提取文本）时，给右侧 TOC 提供正文
   const tocContent = useMemo(() => {
@@ -2945,8 +2968,9 @@ export function DocBrowser({
                     <p className="text-[13px]">{selectedEntryData?.isFolder ? '这是一个目录' : '无法预览该文件'}</p>
                   </div>
                 )}
-                {/* 划词选中时的浮层"添加评论"按钮 */}
-                {liveSelection && !editMode && (
+                {/* 划词选中时的浮层"添加评论"按钮——仅有写权限时出现；只读访客（私有分享/匿名公开）不弹，
+                    避免写了提交才 403（Codex P2：read-only viewers 不该拿到写入框） */}
+                {liveSelection && !editMode && commentsCanCreate && (
                   <SelectionActionPopover
                     selection={liveSelection}
                     onAddComment={() => {
