@@ -139,7 +139,7 @@ public class SpeechAgentService
 
     private static string BuildMindmapSystemPrompt(SpeechDeck deck)
     {
-        return $"""
+        return $$"""
 你是一位资深演讲教练。任务：把一段原始文本拆成一棵"演讲用"思维导图。
 
 输出严格遵循以下 JSON 结构（不要加 markdown fence，不要加任何额外说明文字，只输出 JSON）：
@@ -158,7 +158,7 @@ public class SpeechAgentService
 }
 
 规则：
-- 演讲风格：{deck.Style}；目标受众：{deck.Audience}；目标层级深度：{deck.Depth}（不要超）
+- 演讲风格：{{deck.Style}}；目标受众：{{deck.Audience}}；目标层级深度：{{deck.Depth}}（不要超）
 - 一级章节 4-7 个；每节点 bulletPoints 2-5 条，每条不超过 30 字
 - 节点之间逻辑递进，标题简短可上屏
 - 不要照抄原文，要提炼+口语化改写
