@@ -436,6 +436,12 @@ export type DocBrowserProps = {
    */
   sidebarHeader?: React.ReactNode;
   /**
+   * 列表标题默认显示模式：true=正文第一行(默认)，false=文件名/entry.title。
+   * 结构化知识库（用户会主动重命名条目）应传 false，否则重命名被正文首行覆盖、看起来"不生效"。
+   * 用户仍可用顶部「正文标题/文件名」开关切换。
+   */
+  defaultUseContentTitle?: boolean;
+  /**
    * 用户自定义 tag 颜色映射（tagName → 调色板 key）。
    * 不传时回退到 sessionStorage（仅本 tab）；传入时持久化由调用方负责（onTagColorsChange）。
    */
@@ -1421,6 +1427,7 @@ export function DocBrowser({
   appearance = 'inset',
   isEntryFresh,
   sidebarHeader,
+  defaultUseContentTitle,
   tagColors: tagColorsProp,
   onTagColorsChange,
   inlineCommentShareToken,
@@ -1435,7 +1442,7 @@ export function DocBrowser({
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
-  const [useContentTitle, setUseContentTitle] = useState(true);
+  const [useContentTitle, setUseContentTitle] = useState(defaultUseContentTitle ?? true);
   const [showUpdatedTime, setShowUpdatedTime] = useState<boolean>(() => {
     const saved = sessionStorage.getItem('doc-browser-show-updated-time');
     if (saved === '1') return true;

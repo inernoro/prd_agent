@@ -251,6 +251,7 @@ export function DocumentStoreBrowser({ storeId, canWrite, categories }: Props) {
         autoEditEntryId={autoEditEntryId}
         onAutoEditConsumed={() => setAutoEditEntryId(undefined)}
         sidebarHeader={categoryHeader}
+        defaultUseContentTitle={cats.length ? false : undefined}
         {...writeProps}
         emptyState={
           <div className="flex-1 flex flex-col items-center justify-center py-16">
