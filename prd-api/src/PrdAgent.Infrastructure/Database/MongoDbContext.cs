@@ -311,6 +311,10 @@ public class MongoDbContext
     public IMongoCollection<EmergenceTree> EmergenceTrees => _database.GetCollection<EmergenceTree>("emergence_trees");
     public IMongoCollection<EmergenceNode> EmergenceNodes => _database.GetCollection<EmergenceNode>("emergence_nodes");
 
+    // Speech Agent 演讲智能体（首期 mode=mindmap：思维导图演讲）
+    public IMongoCollection<PrdAgent.Core.Models.SpeechAgent.SpeechDeck> SpeechDecks => _database.GetCollection<PrdAgent.Core.Models.SpeechAgent.SpeechDeck>("speech_decks");
+    public IMongoCollection<PrdAgent.Core.Models.SpeechAgent.SpeechNode> SpeechNodes => _database.GetCollection<PrdAgent.Core.Models.SpeechAgent.SpeechNode>("speech_nodes");
+
     // 个人任务树
     public IMongoCollection<TaskTree> TaskTrees => _database.GetCollection<TaskTree>("task_trees");
     public IMongoCollection<TaskNode> TaskNodes => _database.GetCollection<TaskNode>("task_nodes");

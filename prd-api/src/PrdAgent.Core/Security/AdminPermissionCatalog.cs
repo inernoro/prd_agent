@@ -242,6 +242,11 @@ public static class AdminPermissionCatalog
     public const string EmergenceAgentUse = "emergence-agent.use";
 
     /// <summary>
+    /// 演讲智能体权限：把长文本转成思维导图演讲（创建/生成/编辑/发布）。
+    /// </summary>
+    public const string SpeechAgentUse = "speech-agent.use";
+
+    /// <summary>
     /// 个人任务树智能体权限：创建/编辑任务树、对话摘取任务、查看卡点上报（普通用户级 Agent 权限）
     /// </summary>
     public const string TaskTreeUse = "task-tree.use";
@@ -396,6 +401,8 @@ public static class AdminPermissionCatalog
         new(DocumentStoreWrite, "文档空间-写", "创建/编辑/删除文档空间与文档"),
 
         new(EmergenceAgentUse, "涌现探索智能体", "可视化功能涌现与创意探索（创建/探索/涌现）"),
+
+        new(SpeechAgentUse, "演讲智能体", "把长文本/文档转成思维导图风格的可演讲 PPT（首期 mindmap 模式）"),
 
         new(TaskTreeUse, "个人任务树智能体", "分层任务管理、对话摘取任务、卡点上报（创建/编辑/查看）"),
         new(TaskTreeViewAll, "个人任务树-全员卡点", "卡点墙聚合查看所有人的卡点（管理层/上级；普通成员只看自己）"),

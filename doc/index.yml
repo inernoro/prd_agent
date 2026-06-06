@@ -44,6 +44,7 @@ docs:
   spec.cds-map-pairing-protocol: CDS MAP 配对协议规格
   spec.cds-project-model: CDS 多项目数据字典
   spec.short-links: 统一短链系统规格
+  spec.speech-agent: 演讲智能体（长文本 → 思维导图演讲）产品规格
 
   # ── 二、设计文档 ──
   # 先看核心架构，再看各模块设计
@@ -125,6 +126,7 @@ docs:
   design.cds-resilience: CDS 容量预算与故障隔离设计
   design.cds-railway-onboarding-flow: CDS Railway 式部署向导设计
   design.cds-visual-deploy: CDS 绝对可视化一键部署设计（检测回填+把握度+试运行沙箱+多DB实例+env粘贴+应用已上线，含架构图）
+  design.speech-agent: 演讲智能体技术设计（数据模型 / Controller / Service / SSE 协议）
 
   # ── 三、指南 ──
   # 先看全貌索引，再看部署/开发，然后是 Agent 使用教程，最后是专题指南
@@ -272,6 +274,7 @@ docs:
   debt.changelog-center: 更新中心（终身存储 + SSE 推送）债务台账
   debt.cds-tutorial: CDS 教程（示例工程 + 隔离知识库 + 评分/自愈）债务台账
   debt.cds-visual-deploy: CDS 绝对可视化一键部署 · 债务台账（已知边界 + 低边际 backlog + 独立 fixture demo 阻塞）
+  debt.speech-agent: 演讲智能体 · 债务台账（MVP 已知边界 + Phase 2 backlog）
   debt.knowledge-base: 知识库（AI Toolbox attachment + 文档空间）债务台账
   debt.kb-inline-comment: 知识库划词评论（批注栏/内联布局 + 就地输入 + 回读闭环）债务台账
   debt.web-hosting: 网页托管 · 债务台账（幻灯片翻页方向兼容垫片边界）
