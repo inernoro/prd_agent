@@ -13,6 +13,7 @@ import { AccountSettings } from '@/pages/settings/AccountSettings';
 import { DailyTipsEditor } from '@/pages/settings/DailyTipsEditor';
 import { NavLayoutEditor } from '@/pages/settings/NavLayoutEditor';
 import { ShortLinksAdminSettings } from '@/pages/settings/ShortLinksAdminSettings';
+import { PeerNodesSettings } from '@/pages/settings/PeerNodesSettings';
 import { InfraServicesPage } from '@/pages/infra-services';
 import { useNavOrderStore } from '@/stores/navOrderStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -33,6 +34,7 @@ import {
   Users,
   Link2,
   Server,
+  Globe,
 } from 'lucide-react';
 
 function SkinSettings() {
@@ -304,6 +306,7 @@ export default function SettingsPage() {
     if (hasPerm('settings.write')) list.push({ key: 'update-accel', label: '更新加速', icon: <Zap size={14} /> });
     if (hasPerm('daily-tips.read')) list.push({ key: 'daily-tips', label: '小技巧', icon: <Sparkles size={14} /> });
     if (hasPerm('short-links.manage')) list.push({ key: 'short-links', label: '分享短链', icon: <Link2 size={14} /> });
+    if (hasPerm('peer-sync.manage')) list.push({ key: 'peer-sync', label: '系统互联', icon: <Globe size={14} /> });
     return list;
   }, [isRoot, perms]);
 
@@ -338,6 +341,7 @@ export default function SettingsPage() {
         {activeTab === 'update-accel' && <UpdateAccelerationSettings />}
         {activeTab === 'daily-tips' && <DailyTipsEditor />}
         {activeTab === 'short-links' && <ShortLinksAdminSettings />}
+        {activeTab === 'peer-sync' && <PeerNodesSettings />}
       </div>
     </div>
   );

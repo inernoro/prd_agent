@@ -307,6 +307,11 @@ public static class AdminPermissionCatalog
     public const string PaAgentUse = "pa-agent.use";
 
     /// <summary>
+    /// 系统互联管理权限：配置跨节点互传的对端节点（测试↔正式环境配对），管理员级。
+    /// </summary>
+    public const string PeerSyncManage = "peer-sync.manage";
+
+    /// <summary>
     /// 超级权限（当路由未配置映射时，用于兜底放行；同时也可用于 root 破窗全权限）。
     /// </summary>
     public const string Super = "super";
@@ -415,6 +420,8 @@ public static class AdminPermissionCatalog
 
         new(CcasAgentUse, "赋码采集关联系统智能体", "产线赋码业务的 PRD 生成 + 设备素材库 + 流程示意图绘制"),
         new(PaAgentUse, "私人助理 Agent", "任务拆解、四象限排序、任务清单管理"),
+
+        new(PeerSyncManage, "系统互联-管理", "配置跨节点互传的对端节点（测试↔正式环境配对）"),
 
         new(DailyTipsRead, "小技巧-读", "查看小技巧列表（管理视图）"),
         new(DailyTipsWrite, "小技巧-写", "新建/编辑/删除首页小技巧与引导卡片"),

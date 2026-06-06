@@ -297,6 +297,10 @@ public class MongoDbContext
     public IMongoCollection<KnowledgeBaseDraft> KnowledgeBaseDrafts => _database.GetCollection<KnowledgeBaseDraft>("knowledge_base_drafts");
     public IMongoCollection<DocumentStoreSyncLink> DocumentStoreSyncLinks => _database.GetCollection<DocumentStoreSyncLink>("document_store_sync_links");
 
+    // 系统级跨节点互传（Peer Sync）
+    public IMongoCollection<PeerNode> PeerNodes => _database.GetCollection<PeerNode>("peer_nodes");
+    public IMongoCollection<PeerPairingCode> PeerPairingCodes => _database.GetCollection<PeerPairingCode>("peer_pairing_codes");
+
     // Team 团队（跨应用协作单位：网页托管 + 知识库共用）
     public IMongoCollection<Team> Teams => _database.GetCollection<Team>("teams");
     public IMongoCollection<TeamMember> TeamMembers => _database.GetCollection<TeamMember>("team_members");

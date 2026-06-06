@@ -1233,6 +1233,19 @@ export const api = {
       delete: (linkId: string) => `/api/document-store/sync/${linkId}`,
     },
   },
+  // ============ 系统级跨节点互传（Peer Sync） ============
+  peerSync: {
+    // 用户侧
+    nodes: () => '/api/peer-sync/nodes',
+    items: (type: string) => `/api/peer-sync/resources/${type}/items`,
+    transfer: () => '/api/peer-sync/transfer',
+    // 管理侧（设置 → 系统互联）
+    adminList: () => '/api/admin/peer-nodes',
+    adminPairingCode: () => '/api/admin/peer-nodes/pairing-code',
+    adminAdd: () => '/api/admin/peer-nodes',
+    adminTest: (id: string) => `/api/admin/peer-nodes/${id}/test`,
+    adminDelete: (id: string) => `/api/admin/peer-nodes/${id}`,
+  },
   // ============ 波2 高级权限：全部网页审计视图 ============
   adminWebPages: {
     list: () => '/api/admin-web-pages',
