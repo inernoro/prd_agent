@@ -888,9 +888,10 @@ export default function AgentLauncherPage() {
                   </Reveal>
                 </div>
 
-                {/* Search (top-right) */}
+                {/* 右栏：搜索框 + 教程中心承接卡(compact 竖版，置于搜索下方，不再占顶部整条宽 banner) */}
+                <div className="flex flex-col gap-3 shrink-0" style={{ width: isMobile ? '100%' : 260 }}>
                 <Reveal delay={REVEAL.heroSearch} duration={REVEAL_DURATION}>
-                  <div className="relative shrink-0" style={{ width: isMobile ? '100%' : 260 }}>
+                  <div className="relative w-full">
                     <Search
                       size={15}
                       className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
@@ -921,16 +922,16 @@ export default function AgentLauncherPage() {
                     />
                   </div>
                 </Reveal>
+                {/* 教程中心承接卡：紧凑竖版，紧跟搜索下方 */}
+                {!searchQuery.trim() && (
+                  <Reveal delay={REVEAL.heroSearch} duration={REVEAL_DURATION}>
+                    <LearningCenterTeaser compact />
+                  </Reveal>
+                )}
+                </div>
               </div>
             </div>
             {/* end hero content */}
-
-            {/* ── 教程中心承接卡(首页顶部,承接到独立的 /learning-center) ── */}
-            {!searchQuery.trim() && (
-              <div className={`relative z-10 ${isMobile ? 'px-5 pb-2' : 'px-8 pb-3'}`}>
-                <LearningCenterTeaser />
-              </div>
-            )}
 
             {/* ── Quick Links — Extended Hero Background Area ── */}
             {!searchQuery.trim() && (
