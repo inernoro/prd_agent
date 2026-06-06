@@ -1604,7 +1604,7 @@ export function DocBrowser({
   // 用户点「收起批注栏」后本条目临时切回 TOC（切文档复位）
   const [marginCollapsed, setMarginCollapsed] = useState(false);
   // 划词后就地输入浮层（取代甩到右侧抽屉）
-  const [composer, setComposer] = useState<{ sel: PendingSelection; rect: { top: number; left: number; width: number; height: number } } | null>(null);
+  const [composer, setComposer] = useState<{ entryId: string; sel: PendingSelection; rect: { top: number; left: number; width: number; height: number } } | null>(null);
   // 选区 offset 必须基于"实际渲染的正文"解析：文本类预览渲染的是
   // parseFrontmatter(text).body（已剥 frontmatter），若把含 frontmatter 的
   // 原文喂给 useContentSelection，选中同时出现在 frontmatter 的文字（如标题）
@@ -1679,10 +1679,17 @@ export function DocBrowser({
     startOffset: number;
     endOffset: number;
     content: string;
-  }): Promise<boolean> => {
-    if (!trackedEntryForComments) return false;
-    const res = await createInlineComment(trackedEntryForComments.id, input);
-    if (res.success) { await refreshComments(); return true; }
+  }, entryIdOverride?: string): Promise<boolean> => {
+    // 评论必须落到“产生这段选区的那个条目”。composer 打开时已捕获 entryId，
+    // 用它而非提交时的当前条目，避免切档后把旧选区/偏移写到新文档（Bugbot High）。
+    const targetId = entryIdOverride ?? trackedEntryForComments?.id;
+    if (!targetId) return false;
+    const res = await createInlineComment(targetId, input);
+    if (res.success) {
+      // 仅当目标条目仍是当前正在看的条目才刷新列表，避免改到别的文档状态
+      if (targetId === trackedEntryForComments?.id) await refreshComments();
+      return true;
+    }
     toast.error('添加失败', res.error?.message);
     return false;
   }, [trackedEntryForComments, refreshComments]);
@@ -1690,18 +1697,32 @@ export function DocBrowser({
   const handleDeleteComment = useCallback(async (comment: DocumentInlineComment) => {
     const res = await deleteInlineComment(comment.id);
     if (res.success) {
-      setInlineCommentItems((prev) => prev.filter((c) => c.id !== comment.id));
-      setCommentCount((c) => Math.max(0, c - 1));
+      // 慢删除可能在切档后才返回：仅当该评论属于当前条目才动列表/计数（Bugbot Medium）
+      if (comment.entryId === trackedEntryForComments?.id) {
+        setInlineCommentItems((prev) => prev.filter((c) => c.id !== comment.id));
+        setCommentCount((c) => Math.max(0, c - 1));
+      }
     } else {
       toast.error('删除失败', res.error?.message);
     }
+  }, [trackedEntryForComments]);
+
+  // 激活某条批注（点正文气泡或点批注卡）：仅 toggle 状态。滚动定位由下面的 effect 按真实锚点处理。
+  const handleActivateComment = useCallback((key: string) => {
+    setActiveCommentKey((prev) => (prev === key ? null : key));
   }, []);
 
-  // 激活某条批注（点正文气泡或点批注卡）：toggle；激活时把正文锚点滚到眼前，连线层据 data 属性画线
-  const handleActivateComment = useCallback((key: string, selectedText: string) => {
-    setActiveCommentKey((prev) => (prev === key ? null : key));
-    if (selectedText) scrollToTextInContainer(contentAreaRef.current, selectedText);
-  }, []);
+  // 激活后把正文锚点滚到眼前：用 overlay 已按 findTextRange（去空白 + contextBefore 消歧）放置的
+  // data-active-hl 元素，而非 raw indexOf（会被空白归一化/重复短语坑，Bugbot Medium）。
+  // 仅在激活（非置空）时滚，取消激活不跳视口（Bugbot Low）。下一帧 data 属性才就绪，故走 rAF。
+  useEffect(() => {
+    if (!activeCommentKey) return;
+    const raf = requestAnimationFrame(() => {
+      (document.querySelector('[data-active-hl="1"]') as HTMLElement | null)
+        ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [activeCommentKey]);
 
   // F1：仅当当前预览是文本类（Markdown/提取文本）时，给右侧 TOC 提供正文
   const tocContent = useMemo(() => {
@@ -2930,8 +2951,10 @@ export function DocBrowser({
                     selection={liveSelection}
                     onAddComment={() => {
                       // 就地输入：在选区旁展开 composer，不再甩到右侧抽屉
+                      if (!trackedEntryForComments) return;
                       const r = liveSelection.rect;
                       setComposer({
+                        entryId: trackedEntryForComments.id,
                         sel: {
                           selectedText: liveSelection.selectedText,
                           contextBefore: liveSelection.contextBefore,
@@ -2973,7 +2996,7 @@ export function DocBrowser({
                       startOffset: composer.sel.startOffset,
                       endOffset: composer.sel.endOffset,
                       content,
-                    })}
+                    }, composer.entryId)}
                     onClose={() => setComposer(null)}
                   />
                 )}

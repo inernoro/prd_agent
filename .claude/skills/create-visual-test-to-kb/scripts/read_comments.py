@@ -18,7 +18,7 @@
 
 输出：先打印人类可读的批注清单，最后打印一行 `COMMENTS_JSON: {...}` 供智能体解析。
 """
-import argparse, json, os, subprocess, time, sys
+import argparse, json, os, subprocess, time, sys, urllib.parse
 
 
 def curl(args, retries=5):
@@ -90,18 +90,31 @@ def main():
     H = build_auth(cfg)
 
     store_id, store_name = resolve_store_id(H, base, a.store, cfg["report"].get("storeName"))
+    limit = max(1, min(200, a.limit))
+    since = a.since.strip()
 
-    qs = [f"limit={max(1, min(200, a.limit))}"]
-    if a.since.strip():
-        qs.append("since=" + a.since.strip())
-    url = f"{base}/stores/{store_id}/recent-comments?" + "&".join(qs)
-    res = curl(H + [url])
-    if not (isinstance(res, dict) and res.get("success")):
-        raise SystemExit(f"读取批注失败：{json.dumps(res, ensure_ascii=False)[:200]}")
-
-    items = res["data"].get("items", [])
     if a.entry.strip():
-        items = [c for c in items if c.get("entryId") == a.entry.strip()]
+        # 「只看某篇报告」：直接用 per-entry 接口拿该条目全量评论，再客户端按 since/limit 截取。
+        # 不能走 store 级 recent-comments 再客户端过滤——store 很忙时前 N 条可能全是别的报告，
+        # 目标条目被挤出页就会“明明有评论却读不到”（Codex P2）。
+        r = curl(H + [f"{base}/entries/{a.entry.strip()}/inline-comments"])
+        if not (isinstance(r, dict) and r.get("success")):
+            raise SystemExit(f"读取条目批注失败：{json.dumps(r, ensure_ascii=False)[:200]}")
+        items = r["data"].get("items", [])
+        if since:
+            items = [c for c in items if (c.get("createdAt") or "") > since]
+        items.sort(key=lambda c: c.get("createdAt") or "", reverse=True)
+        items = items[:limit]
+    else:
+        qs = [f"limit={limit}"]
+        if since:
+            # since 含 ':' '+' 等字符，必须 URL 编码，否则网关/后端可能解析错（Bugbot Low）
+            qs.append("since=" + urllib.parse.quote(since, safe=""))
+        url = f"{base}/stores/{store_id}/recent-comments?" + "&".join(qs)
+        res = curl(H + [url])
+        if not (isinstance(res, dict) and res.get("success")):
+            raise SystemExit(f"读取批注失败：{json.dumps(res, ensure_ascii=False)[:200]}")
+        items = res["data"].get("items", [])
 
     # 人类可读清单
     print(f"知识库「{store_name}」最近批注（{len(items)} 条）")

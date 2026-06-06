@@ -212,7 +212,7 @@ export function InlineCommentOverlay({
                 激活的气泡带 data-active-hl，供连线层 InlineCommentConnector 取锚点。 */}
             <button
               type="button"
-              data-active-hl={active && mode === 'margin' ? '1' : undefined}
+              data-active-hl={active ? '1' : undefined}
               onClick={(e) => { e.stopPropagation(); onActivate?.(m.key, m.comments[0].selectedText); }}
               title={m.comments.map((c) => `${c.authorDisplayName}：${c.content}`).join('\n').slice(0, 240)}
               className="inline-flex items-center gap-0.5 cursor-pointer"
