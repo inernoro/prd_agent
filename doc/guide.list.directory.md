@@ -89,6 +89,8 @@
 
 - [智能体宇宙设计](design.agent-universe) `design.agent-universe`
   > 能力契约 SSOT + 统一调用信封；选了不自动发、视觉创作真出图、漫威宇宙式互通
+- [知识库智能体架构设计](design.knowledge-agent-architecture) `design.knowledge-agent-architecture`
+  > 三层模型(脑/技能/沙箱) + map-agent·cds-agent 命名 + 借运行时不重建 + 唯一接缝(KB 当工作目录进、改动经 diff 闸出)；md→ppt 避坑
 - [服务器权威性设计](design.server-authority) `design.server-authority`
   > 客户端断开不取消服务器任务的架构设计
 
