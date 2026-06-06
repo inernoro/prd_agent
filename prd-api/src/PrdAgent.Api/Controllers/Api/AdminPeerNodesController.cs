@@ -53,9 +53,18 @@ public class AdminPeerNodesController : ControllerBase
     private string GetUserId() => this.GetRequiredUserId();
 
     private string SelfBaseUrl(string? overrideUrl)
-        => !string.IsNullOrWhiteSpace(overrideUrl)
-            ? overrideUrl!.TrimEnd('/')
-            : $"{Request.Scheme}://{Request.Host}{Request.PathBase}".TrimEnd('/');
+    {
+        if (!string.IsNullOrWhiteSpace(overrideUrl)) return overrideUrl!.TrimEnd('/');
+        // CDS 等反向代理后 Request.Host 是容器内部地址（127.0.0.1:30707），SSRF 校验会拒。
+        // 优先环境变量 PEER_SELF_BASE_URL（运维显式指定）→ X-Forwarded-* 头 → Request.Host 兜底。
+        var envBase = Environment.GetEnvironmentVariable("PEER_SELF_BASE_URL");
+        if (!string.IsNullOrWhiteSpace(envBase)) return envBase.Trim().TrimEnd('/');
+        var fwdProto = Request.Headers["X-Forwarded-Proto"].ToString();
+        var fwdHost = Request.Headers["X-Forwarded-Host"].ToString();
+        var scheme = !string.IsNullOrWhiteSpace(fwdProto) ? fwdProto.Split(',')[0].Trim() : Request.Scheme;
+        var host = !string.IsNullOrWhiteSpace(fwdHost) ? fwdHost.Split(',')[0].Trim() : Request.Host.Value;
+        return $"{scheme}://{host}{Request.PathBase}".TrimEnd('/');
+    }
 
     /// <summary>列出已配对节点 + 本节点标识（不返回 SharedSecret）。</summary>
     [HttpGet]
@@ -129,8 +138,23 @@ public class AdminPeerNodesController : ControllerBase
             if (!resp.IsSuccessStatusCode)
             {
                 _logger.LogWarning("[peer-sync] handshake failed {Status}: {Body}", resp.StatusCode, json);
+                // 解析对端的 ApiResponse.error.message 让用户看到真正失败原因（如「不能与本节点自己配对」、
+                // 「发起方地址不合法」），而不是"配对码可能已过期"这种万能搪塞。
+                string? innerMsg = null;
+                try
+                {
+                    using var doc = JsonDocument.Parse(json);
+                    if (doc.RootElement.TryGetProperty("error", out var err)
+                        && err.ValueKind == JsonValueKind.Object
+                        && err.TryGetProperty("message", out var msg))
+                        innerMsg = msg.GetString();
+                }
+                catch { /* 对端可能不是标准 ApiResponse 包装 */ }
+                var detail = !string.IsNullOrWhiteSpace(innerMsg)
+                    ? innerMsg!
+                    : "配对码可能已过期或对端不可达";
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
-                    $"对端握手失败（HTTP {(int)resp.StatusCode}）：配对码可能已过期或对端不可达"));
+                    $"对端握手失败（HTTP {(int)resp.StatusCode}）：{detail}"));
             }
             using var doc = JsonDocument.Parse(json);
             if (!doc.RootElement.TryGetProperty("data", out var data))
