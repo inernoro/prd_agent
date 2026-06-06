@@ -1,7 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { X, ChevronRight, Sparkles, Check, Circle, CircleDot } from 'lucide-react';
+import { X, ChevronRight, Sparkles, Check, Circle, CircleDot, GraduationCap } from 'lucide-react';
 import {
   SPOTLIGHT_ACTION_KEY,
   SPOTLIGHT_TARGET_KEY,
@@ -11,6 +11,82 @@ import {
 import type { DailyTipAutoAction } from '@/services/real/dailyTips';
 import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { fireConfetti } from './fireConfetti';
+
+/** 安全 querySelector:逗号兜底选择器 / 非法选择器都不抛错。 */
+function safeQuery(sel: string | null | undefined): Element | null {
+  if (!sel) return null;
+  try {
+    return document.querySelector(sel);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 「飞回教程入口」完成动画(诉求 6):教程走完后,一枚毕业帽徽章从最后高亮的光圈中心
+ * 飞向右上角「本页教程」pill(data-tour-entry),提醒用户"以后从这里再看",避免学完即忘。
+ * 用 Web Animations API 走任意两点曲线,结束后回调清理。
+ */
+function FlyingToken({
+  from,
+  to,
+  onDone,
+}: {
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+  onDone: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) {
+      onDone();
+      return;
+    }
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const anim = el.animate(
+      [
+        { transform: 'translate(-50%,-50%) scale(1)', opacity: 0.95 },
+        {
+          transform: `translate(-50%,-50%) translate(${dx * 0.5}px, ${dy * 0.5 - 36}px) scale(0.85)`,
+          opacity: 1,
+          offset: 0.55,
+        },
+        { transform: `translate(-50%,-50%) translate(${dx}px, ${dy}px) scale(0.3)`, opacity: 0 },
+      ],
+      { duration: 720, easing: 'cubic-bezier(.4,0,.2,1)' },
+    );
+    anim.onfinish = onDone;
+    return () => {
+      anim.onfinish = null;
+      anim.cancel();
+    };
+  }, [from, to, onDone]);
+  return (
+    <div
+      ref={ref}
+      style={{
+        position: 'fixed',
+        left: from.x,
+        top: from.y,
+        zIndex: 10001,
+        pointerEvents: 'none',
+        width: 30,
+        height: 30,
+        borderRadius: 999,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'linear-gradient(135deg,#a78bfa,#818cf8)',
+        boxShadow: '0 8px 24px -6px rgba(129,140,248,0.7)',
+        color: '#fff',
+      }}
+    >
+      <GraduationCap size={16} strokeWidth={2.4} />
+    </div>
+  );
+}
 
 /**
  * JetBrains-style 功能高亮 + 自动引导。
@@ -45,6 +121,9 @@ export function SpotlightOverlay() {
    *  （高光目标是右侧很高的投放面板时尤其明显 —— 用户点不到「完成」就永远走不完、存不上）。 */
   const bubbleRef = useRef<HTMLDivElement | null>(null);
   const [bubbleHeight, setBubbleHeight] = useState<number | null>(null);
+  /** 完成飞回动画的起止坐标(诉求 6),null=不播放 */
+  const [flyBack, setFlyBack] = useState<{ from: { x: number; y: number }; to: { x: number; y: number } } | null>(null);
+  const clearFlyBack = useCallback(() => setFlyBack(null), []);
 
   // ---- 启动 + 同路由事件:读 sessionStorage 解析 payload ----
   // 初次 mount 读一次;TipsRotator 写完 payload 会广播 SPOTLIGHT_PAYLOAD_UPDATED_EVENT,
@@ -99,6 +178,82 @@ export function SpotlightOverlay() {
   const steps = payload?.autoAction?.steps ?? null;
   const currentSelector =
     steps && steps[stepIndex] ? steps[stepIndex].selector : payload?.selector ?? null;
+
+  // ---- 推进到下一步(下一步按钮 / 用户亲手点高亮目标 共用)----
+  // fromUserClick=true:用户已经亲手点了高亮目标(镂空可点),不再自动 click 揭示。
+  const goNext = useCallback(
+    (fromUserClick?: boolean) => {
+      const all = payload?.autoAction?.steps;
+      if (!all || stepIndex >= all.length - 1) return;
+      const nextStep = all[stepIndex + 1];
+      // 下一步元素当前不在 DOM 且无 navigateTo → 需要点当前元素来揭示它(仅非用户点场景)。
+      const nextNeedsReveal =
+        !nextStep?.navigateTo && (!nextStep?.selector || !safeQuery(nextStep.selector));
+      if (!fromUserClick && currentSelector && nextNeedsReveal) {
+        const el = safeQuery(currentSelector);
+        if (
+          el instanceof HTMLButtonElement ||
+          el instanceof HTMLAnchorElement ||
+          (el instanceof HTMLElement && el.getAttribute('role') === 'button')
+        ) {
+          try {
+            el.click();
+          } catch {
+            /* noop */
+          }
+        }
+      }
+      if (nextStep?.navigateTo) navigate(nextStep.navigateTo);
+      setStepIndex((i) => i + 1);
+    },
+    [payload, stepIndex, currentSelector, navigate],
+  );
+
+  // ---- 完成教程:撒花 + markLearned + 飞回 pill 动画 ----
+  const completeTour = useCallback(
+    (originX?: number, originY?: number) => {
+      const all = payload?.autoAction?.steps;
+      if (all && all.length > 0) {
+        if (originX != null && originY != null) fireConfetti({ originX, originY });
+        if (payload?.id) void useDailyTipsStore.getState().markLearned(payload.id);
+      }
+      // 飞回右上角「本页教程」入口,提醒以后从这里重看(诉求 6)
+      const entry = document.querySelector('[data-tour-entry]');
+      const ringEl = safeQuery(currentSelector);
+      if (entry && ringEl) {
+        const er = entry.getBoundingClientRect();
+        const rr = ringEl.getBoundingClientRect();
+        setFlyBack({
+          from: { x: rr.left + rr.width / 2, y: rr.top + rr.height / 2 },
+          to: { x: er.left + er.width / 2, y: er.top + er.height / 2 },
+        });
+      }
+      setDismissed(true);
+    },
+    [payload, currentSelector],
+  );
+
+  // ---- 镂空可点:用户亲手点高亮目标即推进/完成(诉求 8「跟我做」)----
+  // 让元素自身的 onClick 先跑(60ms),再推进;单步教程不挂(无"下一步"语义)。
+  useEffect(() => {
+    if (!rect || dismissed) return;
+    const all = payload?.autoAction?.steps ?? null;
+    if (!all || all.length === 0 || !currentSelector) return;
+    const el = safeQuery(currentSelector);
+    if (!el) return;
+    const onClick = () => {
+      window.setTimeout(() => {
+        if (stepIndex >= all.length - 1) {
+          const r = el.getBoundingClientRect();
+          completeTour(r.left + r.width / 2, r.top + r.height / 2);
+        } else {
+          goNext(true);
+        }
+      }, 80);
+    };
+    el.addEventListener('click', onClick, { once: true });
+    return () => el.removeEventListener('click', onClick);
+  }, [rect, currentSelector, dismissed, stepIndex, payload, goNext, completeTour]);
 
   // ---- expand / prefill 一次性 setup:只在 payload 初次设置时执行 ----
   // ★ 不能放在下面依赖 stepIndex 的 effect 里,否则每次「下一步」都会:
@@ -273,7 +428,12 @@ export function SpotlightOverlay() {
     }
   }, [rect, stepIndex, payload, seekTimedOut, dismissed, bubbleHeight]);
 
-  if (dismissed || !payload) return null;
+  // 完成飞回动画即使在 dismissed 后也要继续播放(completeTour 同帧设了 flyBack + dismissed)。
+  const flyBackNode = flyBack
+    ? createPortal(<FlyingToken from={flyBack.from} to={flyBack.to} onDone={clearFlyBack} />, document.body)
+    : null;
+
+  if (dismissed || !payload) return flyBackNode;
 
   // 「等待中」阶段:payload 有但 rect 还没到 & 未超时 → 显示蓝色「正在定位…」小卡片
   // 避免用户点跳转后 6s 内啥都看不到,以为没反应
@@ -430,17 +590,29 @@ export function SpotlightOverlay() {
 
   const overlay = (
     <>
-      <div
-        aria-label="关闭高亮引导"
-        onClick={() => setDismissed(true)}
-        style={{
-          position: 'fixed',
-          inset: 0,
-          zIndex: 9997,
-          cursor: 'pointer',
-          background: 'transparent',
-        }}
-      />
+      {/* 镂空可点(诉求 8):四块透明遮罩围住光圈、中间留洞 → 高亮元素可被用户真实点击「跟我做」。
+          点洞外(四块)= 关闭引导;点洞内 = 命中真实元素(由 target-click effect 推进/完成)。
+          替代了旧的整屏点击拦截层(那会让用户点哪都是关闭、永远点不到高亮目标)。 */}
+      {(() => {
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const holeBottom = ringBox.top + ringBox.height;
+        const holeRight = ringBox.left + ringBox.width;
+        const panels = [
+          { left: 0, top: 0, width: vw, height: Math.max(0, ringBox.top) },
+          { left: 0, top: holeBottom, width: vw, height: Math.max(0, vh - holeBottom) },
+          { left: 0, top: ringBox.top, width: Math.max(0, ringBox.left), height: ringBox.height },
+          { left: holeRight, top: ringBox.top, width: Math.max(0, vw - holeRight), height: ringBox.height },
+        ];
+        return panels.map((p, i) => (
+          <div
+            key={i}
+            aria-label="关闭高亮引导"
+            onClick={() => setDismissed(true)}
+            style={{ position: 'fixed', zIndex: 9997, cursor: 'pointer', background: 'transparent', ...p }}
+          />
+        ));
+      })()}
       <div style={ringStyle} />
       {bubbleTitle && (
         <div
@@ -563,42 +735,7 @@ export function SpotlightOverlay() {
             {steps && !isLastStep && (
               <button
                 type="button"
-                onClick={() => {
-                  // 下一步如果配置了 navigateTo,先切路由,新页面元素会在 poll 里被找到
-                  const nextStep = payload.autoAction?.steps?.[stepIndex + 1];
-                  // 先把当前 step 的元素「点」一下,再前进:解决「下一步后面板消失」的 bug
-                  // —— 很多步骤的下一个 selector 依赖当前这步被点击后才出现
-                  // (如 defect-full-flow:点「+ 提交缺陷」后 description 才存在)。
-                  // 但只在「下一步元素当前还不存在」时才自动点(说明确实需要这次点击来揭示它);
-                  // 若下一步元素已在 DOM(如网页托管下一步是同排的另一个按钮),就别点——
-                  // 否则点了像「分享统计」这种按钮会弹出 z-10000 抽屉挡住整个引导(Codex P2)。
-                  //
-                  // 关于逗号兜底选择器(如 "[data-tour-id=a], [data-tour-id=b]"):querySelector 取「任一」命中,
-                  // 这正是想要的语义 —— 只有「一个候选都不在 DOM」时才算需要揭示去点当前元素;只要常驻兜底在场
-                  // (权限/tab/视图门控下 primary 不在、但兜底在),就说明下一步「可展示」,不该强点当前元素
-                  // (那些 primary 由 app 状态门控,点当前按钮也揭示不出来,反而可能误开抽屉)。
-                  // 约束:别给「靠点击当前步才揭示」的揭示步配逗号兜底的 next selector,否则兜底在场会跳过该点击。
-                  const nextNeedsReveal = !nextStep?.navigateTo
-                    && (!nextStep?.selector || !document.querySelector(nextStep.selector));
-                  try {
-                    if (currentSelector && nextNeedsReveal) {
-                      const el = document.querySelector(currentSelector);
-                      if (
-                        el instanceof HTMLButtonElement ||
-                        el instanceof HTMLAnchorElement ||
-                        (el instanceof HTMLElement && el.getAttribute('role') === 'button')
-                      ) {
-                        el.click();
-                      }
-                    }
-                  } catch {
-                    /* noop */
-                  }
-                  if (nextStep?.navigateTo) navigate(nextStep.navigateTo);
-                  // 不清 rect,保留旧光圈直到下一步元素找到再更新位置,
-                  // 避免「点下一步面板消失、等 3s 再出现」的闪烁
-                  setStepIndex((i) => i + 1);
-                }}
+                onClick={() => goNext()}
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -621,23 +758,10 @@ export function SpotlightOverlay() {
               <button
                 type="button"
                 onClick={(e) => {
-                  // 多步 Tour 走到最后:撒花庆祝 + 标记「已学会」(写 LearnedTips 含 Version)
-                  // 与 dismiss-forever 不同 — 管理员升级 tip.Version 后用户会再次看到。
-                  // 单步模式也走同样逻辑,但效果只是"关闭引导"
-                  if (steps && steps.length > 0) {
-                    // 从按钮 DOM 取中心坐标,让撒花从用户刚点的按钮位置喷出
-                    const btn = e.currentTarget.getBoundingClientRect();
-                    fireConfetti({
-                      originX: btn.left + btn.width / 2,
-                      originY: btn.top + btn.height / 2,
-                    });
-                    if (payload.id) {
-                      // 走 store action:服务端写 LearnedTips + 本地立即移除,
-                      // 抽屉里马上不再显示这条;seed-* 后端也支持(查 BuildDefaultTips)
-                      void useDailyTipsStore.getState().markLearned(payload.id);
-                    }
-                  }
-                  setDismissed(true);
+                  // 多步 Tour 走到最后:撒花 + markLearned + 飞回 pill 动画(completeTour 统一处理)。
+                  // 单步/零步教程没有 steps,completeTour 内部跳过 markLearned,只关闭引导。
+                  const btn = e.currentTarget.getBoundingClientRect();
+                  completeTour(btn.left + btn.width / 2, btn.top + btn.height / 2);
                 }}
                 style={{
                   fontSize: 12,

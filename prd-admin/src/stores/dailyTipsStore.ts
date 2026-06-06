@@ -1,6 +1,6 @@
 import { create } from 'zustand';
-import type { DailyTip } from '@/services/real/dailyTips';
-import { listVisibleTips, markTipAsLearned } from '@/services/real/dailyTips';
+import type { DailyTip, TutorialProgress } from '@/services/real/dailyTips';
+import { listVisibleTips, markTipAsLearned, getTutorialProgress } from '@/services/real/dailyTips';
 import { registerLogoutReset } from '@/stores/authStore';
 
 const DISMISSED_KEY = 'dailyTipDismissedIds';
@@ -55,8 +55,12 @@ interface DailyTipsState {
   loaded: boolean;
   loading: boolean;
   dismissed: Set<string>;
+  /** 学习进度(头像进度环 + 学习中心页),null=未加载 */
+  progress: TutorialProgress | null;
   /** 首次加载。已加载时默认不重复;force=true 时强制重拉(用于轮询 / 可见性变化)。 */
   load: (opts?: { force?: boolean }) => Promise<void>;
+  /** 拉取学习进度(头像环 / 学习中心)。force=true 强制重拉。 */
+  loadProgress: (opts?: { force?: boolean }) => Promise<void>;
   dismiss: (id: string) => void;
   /** 标记某条 tip 为「已学会」:服务端写 (SourceId, Version) + 本地立即移除。 */
   markLearned: (id: string) => Promise<void>;
@@ -71,6 +75,7 @@ export const useDailyTipsStore = create<DailyTipsState>((set, get) => ({
   loaded: false,
   loading: false,
   dismissed: readDismissed(),
+  progress: null,
 
   async load(opts) {
     const { loading, loaded } = get();
@@ -89,6 +94,16 @@ export const useDailyTipsStore = create<DailyTipsState>((set, get) => ({
       set({ loaded: true });
     } finally {
       set({ loading: false });
+    }
+  },
+
+  async loadProgress(opts) {
+    if (get().progress && !opts?.force) return;
+    try {
+      const res = await getTutorialProgress();
+      if (res.success && res.data) set({ progress: res.data });
+    } catch {
+      /* 进度拉取失败不阻塞 UI(头像环只是不显示) */
     }
   },
 
@@ -111,8 +126,31 @@ export const useDailyTipsStore = create<DailyTipsState>((set, get) => ({
     } else {
       set({ items: get().items.filter((t) => t.id !== id) });
     }
+    // 乐观更新进度环:把这条 sourceId 标 learned,onboarding 计数 +1(避免等服务端 round-trip 才填环)
+    const sid = tip?.sourceId;
+    if (sid) {
+      const prog = get().progress;
+      if (prog) {
+        let changed = false;
+        const items = prog.items.map((it) => {
+          if (it.sourceId === sid && !it.learned) { changed = true; return { ...it, learned: true }; }
+          return it;
+        });
+        const wasOnboardingUnlearned =
+          changed && prog.items.some((it) => it.sourceId === sid && it.category === 'onboarding');
+        set({
+          progress: {
+            ...prog,
+            items,
+            learned: prog.learned + (wasOnboardingUnlearned ? 1 : 0),
+          },
+        });
+      }
+    }
     try {
       await markTipAsLearned(id);
+      // 服务端落库后用权威值校正(避免乐观计数与真实值漂移)
+      void get().loadProgress({ force: true });
     } catch {
       /* 失败静默,不阻塞 UI */
     }
@@ -136,7 +174,7 @@ export const useDailyTipsStore = create<DailyTipsState>((set, get) => ({
 // 同时复位 items/loaded/dismissed,避免残留上个用户的 tip(sessionStorage 在 logout 时也会被 clear)。
 registerLogoutReset(() => {
   locallyLearnedVersions.clear();
-  useDailyTipsStore.setState({ items: [], loaded: false, loading: false, dismissed: new Set() });
+  useDailyTipsStore.setState({ items: [], loaded: false, loading: false, dismissed: new Set(), progress: null });
 });
 
 // ── 自动轮询:60s 刷新一次;标签页从隐藏变可见时立即刷新 ──

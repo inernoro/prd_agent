@@ -1292,19 +1292,11 @@ export const api = {
   // ============ Daily Tips 每日小贴士 ============
   dailyTips: {
     visible: () => '/api/daily-tips/visible',
+    progress: () => '/api/daily-tips/progress',
     track: (id: string) => `/api/daily-tips/${id}/track`,
     dismissForever: (id: string) => `/api/daily-tips/${id}/dismiss-forever`,
     markLearned: (id: string) => `/api/daily-tips/${id}/mark-learned`,
-    admin: {
-      list: () => '/api/admin/daily-tips',
-      create: () => '/api/admin/daily-tips',
-      update: (id: string) => `/api/admin/daily-tips/${id}`,
-      delete: (id: string) => `/api/admin/daily-tips/${id}`,
-      push: (id: string) => `/api/admin/daily-tips/${id}/push`,
-      stats: (id: string) => `/api/admin/daily-tips/${id}/stats`,
-      seed: () => '/api/admin/daily-tips/seed',
-      reset: () => '/api/admin/daily-tips/reset',
-    },
+    // 「小技巧管理」后台(create/update/delete/push/seed/reset)已于 2026-06-04 下线,教程统一为代码内置 seed。
   },
 
   // ============ Emergence Explorer 涌现探索器 ============

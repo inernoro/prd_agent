@@ -53,6 +53,22 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
 - ❌ 错误:`首页截图` / `AI 大事` / `截图1`(只说在哪/是什么,不说验证了什么——读者只能靠猜)
 - **harness 的 `shot/stepShot/stepClick` 的 caption 参数即此用途**;`writeManifest` 落进 manifest 的 `caption` 字段会原样进报告图注。**caption 为空或只有功能名 → 视为证据不合格**(准入校验 §3.5 已对空 caption 拒收,本节进一步要求"必须含验证点")。
 
+### B2. 框选重点是硬要求（caption 文字在图外,读者不知道看哪——必须在图上画框）
+
+> 历史教训(2026-06-04):给用户发"证据图"、"手机端改造前后"等截图,只配了文字 caption、**没在图上框出重点**,用户反馈「我甚至都不知道你指的是哪些」。caption 在图的外面,读者的眼睛在图里面——**文字说不清"看这里"**。
+
+- **任何"指向具体元素/区域/差异/问题"的截图,必须在图上画标记 + 一句标签**(harness `box(page,locator,label,{shape})` / `stepShot(...,highlight,{shape})` / `stepClick(...)`)。标记 + 序号/短标签直接压在目标上,读者一眼定位。
+- **形状选择(2026-06-05 起)**:指向**单个**按钮/输入框/图标/pill → 用**圈圈** `shape:'circle'`(更友好、更像人手画的指向,治"看到一个单独页面就懵逼");框**一片区域/差异/列表** → 用**方框**(默认)。`annotate.mjs` 的 box 项加 `"shape":"circle"`,harness `box(page,loc,label,{shape:'circle'})`,`stepClick` 默认已是圈圈。
+- **标签必须答"看这里:是什么"**:caption/标签写成「看这里:右上角『本页教程』入口」这种**指路 + 命名**句式,而不是只写功能名。读者顺着圈 + 这句话就懂这张图在证明什么,不用猜。
+- **唯一豁免**:纯"整体观感/全局布局"的 overview 图(就是要看整体,无单一重点)可不画标记,但 caption 要写明"看整体布局,无单点"。
+- **本规则不限于全流程验收 driver**——**任何发给用户的截图都适用**,包括:临时诊断、方案评估、critique、改造前后对比。哪怕只是一次性 `page.screenshot()`,也要**先注入带标签的红框再截**。**最省事的做法:直接用 `scripts/annotate.mjs`** —— 一条命令对任意页面按 selector/坐标画框 + 标签再截图,不用写整个 driver(支持 `--login` 表单登录、`--mobile` 手机视口、`--click` 截图前先点开某元素)。也可 `import { box, clearBoxes } from harness.mjs` 脱离 driver 单独用。
+- **多个重点画多个框 + 编号**(①②③),标签用不同颜色区分维度(如 红=错误/问题、橙=冗余、蓝=缺失)。框要框在"我这句话说的那个东西"上,不能泛框一大片。
+- 判定:**把这张图单独发给一个没听我解释的人,他能不能 3 秒看出"重点在哪、这框说的是什么"?** 不能 → 没框/框错,返工。
+- **这是硬门禁,不是自觉(2026-06-05 起,治"技能这么多次给没标注的截图")**:`harness.shot()` 在截图瞬间自动探测页面有没有标记(`.__acc_box`),把 `annotated` 落进 `manifest.json`;`archive_report.py` 准入对 `annotated:false && !overview` 的图**直接拒收**——**没画框/圈的指向性证据图,报告归档不进去**。所以:
+  - 用 `stepClick` / `stepShot(...,highlight)` / 截图前先 `box(page,loc,label,{shape})` —— 它们都会留下 `.__acc_box`,自动算"已标注"。
+  - **唯一豁免**:纯整体观感/全局布局图,`shot(page,out,name,cap,{overview:true})` 显式标 overview,门禁放行(对应"当然没必要的除外")。
+  - 直接 `page.screenshot()` 不进 manifest、不受门禁保护,**禁止**用它出证据图;一次性发图也走 `annotate.mjs`(它本就带框/圈)。
+
 ### C. 报告里图文对应,不留疑问
 
 - 每张图在正文里**紧跟它所验证的那段文字**(ZZ 照做风:文字在上、图在下、`{{IMG:<name>}}` 占位)。
@@ -139,6 +155,7 @@ python3 $SKILL/scripts/archive_report.py --config $SKILL/acceptance.config.json 
 | `templates/zz-report.md` | **默认** ZZ 照做风骨架(全大标题 + 一句话一步 + `{{IMG:}}` 逐步配图) | 写报告时(首选) |
 | `templates/report-template.md` | 旧版九段骨架(速览卡 + 九段 + 用例表 + `{{EVIDENCE}}` 集中证据) | 要集中证据段时 |
 | `scripts/harness.mjs` | 模拟人类浏览器 helper(点击导航/截图/主题 + ZZ 画框 stepClick/stepShot/box) | 写 driver 时 |
+| `scripts/annotate.mjs` | 通用「框选重点」工具:一条命令对任意页面按 selector/坐标画框+标签再截图(--login/--mobile/--click) | 发任何指向性截图前(§B2 硬要求) |
 | `scripts/archive_report.py` | 配置驱动归档(上传/删图保URL/建条目/写正文校验/分享链/必给地址/可见性防漂移) | 归档时 |
 | `scripts/verify-open.mjs` | 归档后自查:headless 打开分享链断言报告渲染(标题+正文+截图);空/打不开 exit 2 | 归档后(强制) |
 | `scripts/read_comments.py` | 回读闭环:拉知识库最近批注(用户在验收文档上的划词/全文批注),按时间倒序,供复测 | 复测/收集反馈时 |

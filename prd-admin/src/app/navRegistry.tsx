@@ -52,6 +52,7 @@ const MyAssetsPage = lazy(() => import('@/pages/MyAssetsPage'));
 const CdsAgentPage = lazy(() => import('@/pages/cds-agent').then(m => ({ default: m.CdsAgentPage })));
 const InfraServicesPage = lazy(() => import('@/pages/infra-services').then(m => ({ default: m.InfraServicesPage })));
 const OpenPlatformTabsPage = lazy(() => import('@/pages/OpenPlatformTabsPage'));
+const LearningCenterPage = lazy(() => import('@/pages/learning-center/LearningCenterPage'));
 
 // ── 类型定义 ──────────────────────────────────────────────
 //
@@ -281,6 +282,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'toolbox',
       appKey: 'review-agent',
       tags: ['评审', '产品', 'PRD'],
+    },
+  },
+  {
+    path: '/learning-center',
+    permission: 'access',
+    element: shellGuarded('access', <LearningCenterPage />),
+    nav: {
+      label: '学习中心',
+      shortLabel: '学习',
+      description: '所有官方教程与你的掌握进度,随时点「跟我做」走一遍',
+      icon: 'GraduationCap',
+      // 普通用户导航中单独存在(用户 2026-06-04):从百宝箱(toolbox)升为基础设施(infra)一级入口,去 wip。
+      section: 'infra',
+      appKey: 'learning-center',
+      tags: ['教程', '新手引导', '学习进度', '帮助'],
     },
   },
   {

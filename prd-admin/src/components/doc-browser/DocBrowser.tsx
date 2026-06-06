@@ -307,6 +307,7 @@ import { systemDialog } from '@/lib/systemDialog';
 import { useViewTracking } from '@/lib/useViewTracking';
 import { useContentSelection, type ContentSelectionInfo } from '@/lib/useContentSelection';
 import { MessageSquareText, MessageSquarePlus, Check, ChevronLeft, PanelRight, MessageSquare } from 'lucide-react';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { InlineCommentDrawer, type PendingSelection } from '@/pages/document-store/InlineCommentDrawer';
 import type { DocumentInlineComment } from '@/services/contracts/documentStore';
 import { AcceptanceEvidenceGraph } from './AcceptanceEvidenceGraph';
@@ -1561,6 +1562,25 @@ export function DocBrowser({
   const resizeBaseLeftRef = useRef(0);
   const sidebarWidthRef = useRef(sidebarWidth);
   sidebarWidthRef.current = sidebarWidth;
+
+  // ── 移动端「主从单栏」（手机端友好，桌面端 isMobile=false 时完全不改动原布局）──
+  // 窄屏下列表与正文不再并排挤成两条细栏，而是一次只显示一个：选中文档进正文、点「目录」回列表。
+  const { isMobile } = useBreakpoint();
+  const [mobileDetail, setMobileDetail] = useState(false);
+  const prevSelForMobileRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!isMobile) return;
+    // 选中新文档（含分享深链 ?entry= 初次带值）→ 自动进正文。
+    // 「返回目录」只把 mobileDetail 置 false、不改 selectedEntryId，故 deps 不变、本 effect 不会把它拉回正文。
+    if (selectedEntryId && selectedEntryId !== prevSelForMobileRef.current) setMobileDetail(true);
+    prevSelForMobileRef.current = selectedEntryId;
+  }, [isMobile, selectedEntryId]);
+  // 覆盖「返回目录后再点同一篇」：selectedEntryId 没变、上面的 effect 不触发，靠点击处显式进正文。
+  const handleSelectEntry = useCallback((id: string) => {
+    onSelectEntry(id);
+    if (isMobile) setMobileDetail(true);
+  }, [onSelectEntry, isMobile]);
+
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 搜索请求序号：异步响应回来时只有仍是最新一次搜索才采纳，丢弃陈旧响应
   const searchSeqRef = useRef(0);
@@ -2302,11 +2322,12 @@ export function DocBrowser({
     <TagColorsContext.Provider value={tagColorsCtxValue}>
     <div className={rootClass} style={{ minHeight: 0 }}>
 
-      {/* 左侧：文件树（液态玻璃效果 + 可拖拽调整宽度） */}
+      {/* 左侧：文件树（液态玻璃效果 + 可拖拽调整宽度）。移动端：占满整宽，进正文时隐藏。 */}
       <div ref={sidebarRef} className={sidebarClass}
         style={{
-          width: `${sidebarWidth}px`,
+          width: isMobile ? '100%' : `${sidebarWidth}px`,
           minHeight: 0,
+          display: isMobile && mobileDetail ? 'none' : undefined,
         }}>
 
         {/* 批量操作条：选中条目后浮在侧栏底部，支持批量删除（取消即清空选择） */}
@@ -2632,7 +2653,7 @@ export function DocBrowser({
               reprocessingMap={reprocessingMap}
               sharedEntryIds={sharedEntryIds}
               onToggleFolder={toggleFolder}
-              onSelectEntry={onSelectEntry}
+              onSelectEntry={handleSelectEntry}
               onContextMenu={handleContextMenu}
               onShareEntry={onShareEntry}
               onMoveEntry={onMoveEntry}
@@ -2674,8 +2695,9 @@ export function DocBrowser({
 
         {/* 拖拽调整宽度的把手（仅 inset 模式）。cards 模式下双卡片有 12px gap，
             把手挂在 sidebar 内部右边缘会被 overflow-hidden + rounded-xl 剪成孤立小方块，
-            视觉怪异。cards 场景以阅读为主，固定宽度足够，故 cards 模式下不渲染。 */}
-        {!isCards && (
+            视觉怪异。cards 场景以阅读为主，固定宽度足够，故 cards 模式下不渲染。
+            移动端单栏布局无需拖拽调宽，故 isMobile 时也不渲染。 */}
+        {!isCards && !isMobile && (
           <div
             className="absolute top-0 right-0 h-full w-1 cursor-col-resize group/resize"
             onMouseDown={(e) => {
@@ -2699,8 +2721,9 @@ export function DocBrowser({
 
       {/* cards 模式：两卡片之间的可拖拽分隔条（宽 12px，兼作视觉间距）。
           与 inset 模式的 sidebar 内嵌把手共用同一套 resize 逻辑（resizeBaseLeftRef + setResizing）。
-          不挂在 sidebar 内部（会被其 overflow-hidden+rounded 裁切），改作独立 flex 兄弟。 */}
-      {isCards && (
+          不挂在 sidebar 内部（会被其 overflow-hidden+rounded 裁切），改作独立 flex 兄弟。
+          移动端单栏布局无需拖拽分隔条，isMobile 时不渲染。 */}
+      {isCards && !isMobile && (
         <div
           className="relative flex-shrink-0 self-stretch group/resize"
           style={{ width: 12, cursor: 'col-resize' }}
@@ -2721,15 +2744,26 @@ export function DocBrowser({
         </div>
       )}
 
-      {/* 右侧：文档预览 */}
+      {/* 右侧：文档预览。移动端：占满整宽，仅在「进正文(mobileDetail)」时显示，否则让列表占满。 */}
       <div
         className={`flex-1 min-w-0 flex flex-col overflow-hidden${isCards ? ' surface-reading rounded-xl' : ''}`}
-        style={{ minHeight: 0 }}
+        style={{ minHeight: 0, display: isMobile && !mobileDetail ? 'none' : undefined }}
       >
         {selectedEntryId ? (
           <>
-            {/* 面包屑导航 header */}
-            <div className="flex items-center gap-2 px-5 py-2.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+            {/* 面包屑导航 header（移动端缩小左右内边距 + 允许换行，避免徽章/标签挤出右边缘相互重叠） */}
+            <div className={`flex items-center gap-2 py-2.5 ${isMobile ? 'px-3 flex-wrap' : 'px-5'}`} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+              {/* 移动端「返回目录」：单栏布局下从正文回到文件列表（桌面端 isMobile=false 不渲染） */}
+              {isMobile && (
+                <button
+                  onClick={() => setMobileDetail(false)}
+                  className="flex-shrink-0 inline-flex items-center gap-1 h-7 px-2.5 rounded-[8px] text-[12px] cursor-pointer transition-colors hover:opacity-80"
+                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)' }}
+                  title="返回目录"
+                >
+                  <ChevronLeft size={14} /> 目录
+                </button>
+              )}
               {/* 阅读区返回按钮：返回当前空间的文档列表（上一层），仅调用方传 onBackToList 才显示 */}
               {onBackToList && (
                 <button
@@ -2795,7 +2829,8 @@ export function DocBrowser({
               })()}
               {(() => {
                 const sel = entries.find(e => e.id === selectedEntryId);
-                if (!sel || sel.isFolder) return null;
+                // 移动端：隐藏「更新于/更新者」（其 ml-auto 会把自己顶出窄屏右边缘、与标签重叠裁切）。
+                if (!sel || sel.isFolder || isMobile) return null;
                 // 「更新于」用 updatedAt（所有本地变更都会刷新它）；lastChangedAt 仅供 new 徽标，
                 // 避免浏览器内保存只 patch updatedAt 而 lastChangedAt 滞后导致显示陈旧
                 return (
@@ -2822,7 +2857,7 @@ export function DocBrowser({
               {/* 当前文件最近更新徽标 + 订阅来源版本信息（git 类订阅独有） */}
               {(() => {
                 const sel = entries.find(e => e.id === selectedEntryId);
-                if (!sel || sel.isFolder) return null;
+                if (!sel || sel.isFolder || isMobile) return null; // 移动端隐藏 new/订阅徽标，给标题+标签让位
                 const recentlyChanged = isRecentlyChanged(sel.lastChangedAt);
                 const isSubscription = sel.sourceType === 'subscription';
                 const githubSha = sel.metadata?.github_sha;
@@ -2916,9 +2951,9 @@ export function DocBrowser({
                       border: '1px solid rgba(99,102,241,0.22)',
                       color: 'rgba(165,180,252,0.95)',
                     }}
-                    title="证据关系图 — 把报告里的步骤连成页面跳转关系图（探案证据板）"
+                    title="证据板 — 把「需求/用例 → 证据截图 → 结论」连成关系图，按通过/未做上色"
                   >
-                    <Workflow size={11} /> 证据图
+                    <Workflow size={11} /> 证据板
                   </button>
                 );
               })()}
@@ -3018,7 +3053,7 @@ export function DocBrowser({
               )}
               <div
                 ref={contentAreaRef}
-                className="flex-1 min-w-0 px-6 py-4 relative"
+                className={`flex-1 min-w-0 ${isMobile ? 'px-4' : 'px-6'} py-4 relative`}
                 style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
               >
                 {contentLoading ? (
@@ -3111,7 +3146,8 @@ export function DocBrowser({
                 )}
               </div>
               </div>
-              {/* 右侧栏：margin 布局且有评论 → 批注栏常驻（取代 TOC）；否则 → 本页章节导航 */}
+              {/* 右侧栏：margin 布局且有评论 → 批注栏常驻（取代 TOC）；否则 → 本页章节导航。
+                  移动端单栏阅读不挂右侧 TOC（否则又把正文挤窄），isMobile 时隐藏 DocToc。 */}
               {(() => {
                 const showMargin = inlineCommentLayout === 'margin' && !contentLoading && !editMode
                   && !!tocContent && inlineCommentItems.length > 0 && !marginCollapsed;
@@ -3131,7 +3167,7 @@ export function DocBrowser({
                     />
                   );
                 }
-                return (!contentLoading && !editMode && tocContent) ? (
+                return (!contentLoading && !editMode && tocContent && !isMobile) ? (
                   <DocToc content={tocContent} scrollContainerRef={contentAreaRef} />
                 ) : null;
               })()}
