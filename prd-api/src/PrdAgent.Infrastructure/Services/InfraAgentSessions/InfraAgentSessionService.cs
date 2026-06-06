@@ -487,6 +487,38 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         }
     }
 
+    public async Task<bool> InjectWorkspaceFilesAsync(
+        string userId, string id, IReadOnlyList<InfraAgentWorkspaceFileInput> files, CancellationToken ct)
+    {
+        var session = await FindOwnedSessionAsync(userId, id, ct);
+        if (session == null)
+        {
+            throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.SessionNotFound, "会话不存在", StatusCodes.Status404NotFound);
+        }
+        if (files == null || files.Count == 0) return false;
+
+        var connection = await GetActiveConnectionAsync(session, ct);
+        var token = await GetLongTokenAsync(connection.Id, ct);
+        // v1：复用 CDS 现成的 POST /projects/:id/files（写进项目分支 worktree，不改边车镜像）。
+        // 探针目的：实测 agent 会话能否读到注入的文件。
+        using var response = await SendCdsJsonAsync(
+            HttpMethod.Post,
+            connection,
+            token,
+            $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/files",
+            new
+            {
+                files = files.Select(f => new { relativePath = f.Path, content = f.Content }).ToArray()
+            },
+            ct);
+        response.EnsureSuccessStatusCode();
+        _logger.LogInformation(
+            "[infra-agent] injected {Count} file(s) into workspace project={ProjectId} session={SessionId}",
+            files.Count, session.CdsProjectId, session.Id);
+        return true;
+    }
+
     public async Task RunRuntimeJobAsync(string userId, string id, string content, CancellationToken ct)
     {
         var session = await FindOwnedSessionAsync(userId, id, ct);
