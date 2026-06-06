@@ -39,26 +39,51 @@ export type AppNavKey = 'projects' | 'cds-settings' | string;
 const MobileNavContext = createContext<{ openNav: () => void }>({ openNav: () => {} });
 
 /*
- * useMediaQuery — tiny matchMedia hook. Used by TopBar to decide whether the
- * `center` slot (branch search / git-url quick-create) renders inline (desktop)
- * or as a full-width second row (phone). Conditional render keeps `center`
- * single-mounted — important because BranchListPage's center owns a ref + the
- * search dropdown state, which a CSS-duplicate (two copies) would corrupt.
+ * useFocusTrap — keep keyboard focus inside an open overlay (mobile nav drawer /
+ * ⋮ action sheet), so Tab can't reach the obscured workspace behind the backdrop
+ * (Bugbot #741「Modal overlays lack focus trap」). On open it moves focus into
+ * the panel; on close it restores focus to the previously-focused trigger.
+ *
+ * Boundary-wrap only (wrap at first/last; never yank focus that is already
+ * OUTSIDE the container). This is deliberately portal-safe: the sheet may host a
+ * nested Radix dropdown (project list「一键部署」) whose content portals to
+ * <body> — an aggressive trap would fight it. Normal tabbing still wraps inside.
  */
-function useMediaQuery(query: string): boolean {
-  const get = () => (typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-    ? window.matchMedia(query).matches
-    : false);
-  const [matches, setMatches] = useState(get);
+const FOCUSABLE_SELECTOR =
+  'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+
+function useFocusTrap(active: boolean, ref: React.RefObject<HTMLElement>): void {
   useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
-    const mql = window.matchMedia(query);
-    const onChange = () => setMatches(mql.matches);
-    onChange();
-    mql.addEventListener('change', onChange);
-    return () => mql.removeEventListener('change', onChange);
-  }, [query]);
-  return matches;
+    if (!active) return undefined;
+    const container = ref.current;
+    if (!container) return undefined;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const focusables = (): HTMLElement[] =>
+      Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter((el) => el.offsetParent !== null);
+    const initial = window.setTimeout(() => focusables()[0]?.focus(), 0);
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key !== 'Tab') return;
+      const items = focusables();
+      if (items.length === 0) return;
+      const active = document.activeElement as HTMLElement | null;
+      if (!active || !container.contains(active)) return; // focus is elsewhere (e.g. nested portal) — leave it
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      window.clearTimeout(initial);
+      document.removeEventListener('keydown', onKeyDown, true);
+      previouslyFocused?.focus?.();
+    };
+  }, [active, ref]);
 }
 
 export interface AppShellProps {
@@ -448,6 +473,10 @@ function MobileNavDrawer({
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
+  // 打开时把键盘焦点困在抽屉内,Tab 不会跑到背后被遮挡的工作区
+  // (Bugbot #741「Modal overlays lack focus trap」)。
+  useFocusTrap(open, rootRef);
+
   // 关闭态:除了 aria-hidden + translateX 移出屏幕,还要把整个抽屉设为 inert,
   // 否则里面的链接/关闭/登出按钮仍在键盘 Tab 序里,用户能 tab 进一个不可见的导航
   // (Codex #741 P2)。inert 同时移除交互 + 焦点 + a11y 树;用属性方式设置以兼容
@@ -510,18 +539,15 @@ export interface TopBarProps {
 export function TopBar({ left, center, right, centerWide = false }: TopBarProps): JSX.Element {
   const { openNav } = useContext(MobileNavContext);
   const [actionsOpen, setActionsOpen] = useState(false);
-  // 手机端把 center(分支搜索 / Git URL 快建)从行内挪到 app-bar 第二行整宽显示,
-  // 否则窄屏会丢失这些主流程入口(Bugbot #741 High)。条件渲染 = 单次挂载,
-  // 避免 BranchList 的搜索 ref/dropdown 状态被双份 DOM 破坏。
-  const isMobile = useMediaQuery('(max-width: 767px)');
-  // ⋮ 动作 sheet 打开时同样锁背景滚动(与导航抽屉一致),否则触屏下背景工作区
-  // 仍能滚动(Bugbot #741 Medium「Action sheet scroll not locked」)。
+  const sheetRef = useRef<HTMLDivElement>(null);
+  // ⋮ 动作 sheet 打开:锁背景滚动(否则触屏下背景仍可滚)+ 焦点陷阱(下方 useFocusTrap)。
   useEffect(() => {
     if (!actionsOpen) return undefined;
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = prev; };
   }, [actionsOpen]);
+  useFocusTrap(actionsOpen, sheetRef);
   return (
     <header className="cds-topbar">
       {/* Hamburger — phone only. Opens the slide-in nav drawer. */}
@@ -533,15 +559,19 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
       >
         <Menu />
       </button>
-      <div className="cds-topbar-lead flex min-w-0 flex-1 items-center gap-3">
+      <div className="cds-topbar-lead flex min-w-0 flex-1 items-center gap-3 md:flex-none">
         {/* 桌面端 left 槽不收缩;手机端允许收缩 + 截断,作为单行 app-bar 标题。 */}
         <div className="cds-topbar-left flex min-w-0 shrink items-center gap-3 md:shrink-0">{left}</div>
-        {center && !isMobile ? (
-          <div className={`min-w-0 flex-1 ${centerWide ? 'max-w-none' : 'max-w-[640px]'}`}>
-            {center}
-          </div>
-        ) : null}
       </div>
+      {/* center(分支搜索 / Git URL 快建)单实例 + 纯 CSS 重定位:桌面行内居中扩展,
+          手机端 order 靠后 + w-full,配合 header flex-wrap 落到 app-bar 第二行整宽。
+          单 DOM 节点跨断点不卸载重挂(Bugbot #741 Low「Resize remounts」),
+          也不双份挂载(避免分支搜索 ref/dropdown 状态被破坏)。 */}
+      {center ? (
+        <div className={`cds-topbar-center order-1 w-full min-w-0 md:order-none md:w-auto md:flex-1 ${centerWide ? 'md:max-w-none' : 'md:max-w-[640px]'}`}>
+          {center}
+        </div>
+      ) : null}
       {/* 桌面端:动作按钮平铺。 */}
       {right ? <div className="cds-topbar-actions hidden shrink-0 items-center gap-2 md:flex">{right}</div> : null}
       {/* 手机端:动作收进 ⋮ 溢出菜单,点开是竖向 action sheet —— 真正的移动端形态,
@@ -563,7 +593,7 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
               {/* 不在容器上 auto-close:right 槽里可能含嵌套 Radix 菜单(如项目列表的
                   「一键部署」),点一下就收起会破坏二级菜单。改为点 backdrop 关闭;
                   导航类按钮点完页面自换,触发类按钮点完留着等 backdrop 收。 */}
-              <div className="cds-topbar-sheet" role="menu">
+              <div ref={sheetRef} className="cds-topbar-sheet" role="menu">
                 {right}
               </div>
             </>
@@ -571,11 +601,6 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
         </div>
       ) : null}
       <SiteNoticeInbox />
-      {/* 手机端 center 第二行:整宽显示分支搜索 / Git URL 快建,header flex-wrap
-          后它落到第二行,避免窄屏丢失主流程入口(Bugbot #741 High)。 */}
-      {center && isMobile ? (
-        <div className="cds-topbar-center-mobile">{center}</div>
-      ) : null}
     </header>
   );
 }

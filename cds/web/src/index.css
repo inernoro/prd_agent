@@ -943,12 +943,6 @@
       padding-bottom: 0.5rem;
     }
 
-    /* center 第二行:整宽,flex-wrap 后自然换行到 app-bar 下方。 */
-    .cds-topbar-center-mobile {
-      width: 100%;
-      min-width: 0;
-    }
-
     .cds-topbar-left {
       min-width: 0;
       overflow: hidden;
