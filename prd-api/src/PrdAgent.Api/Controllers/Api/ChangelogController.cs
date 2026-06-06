@@ -67,12 +67,12 @@ public class ChangelogController : ControllerBase
     /// <summary>
     /// 历史发布（从 CHANGELOG.md 读取，按版本倒序）
     /// </summary>
-    /// <param name="limit">最多返回的版本数量（1..100，默认 20）</param>
+    /// <param name="limit">最多返回的版本数量（1..100，默认 8 — 与前端首屏 visible=4 对齐，留 buffer）</param>
     /// <param name="force">true 时绕过服务端缓存，重新从源拉取</param>
     [HttpGet("releases")]
-    public async Task<IActionResult> GetReleases([FromQuery] int limit = 20, [FromQuery] bool force = false)
+    public async Task<IActionResult> GetReleases([FromQuery] int limit = 8, [FromQuery] bool force = false)
     {
-        if (limit <= 0 || limit > 100) limit = 20;
+        if (limit <= 0 || limit > 100) limit = 8;
         var view = await _reader.GetReleasesAsync(limit, force).ConfigureAwait(false);
         if (!force) SetClientCacheHeaders();
         return Ok(ApiResponse<ReleasesDto>.Ok(MapReleases(view)));

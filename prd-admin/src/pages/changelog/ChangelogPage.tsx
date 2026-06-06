@@ -281,12 +281,28 @@ export default function ChangelogPage() {
 
   // 进入页面：拉取数据 + 标记已读
   // 「本周更新」section 已下线；但仍拉 currentWeek 以驱动已读计数 & 顶部的数据源徽标
+  // releases 首屏只拉 8 个版本（与 RELEASES_INITIAL_VISIBLE=4 + step=3 对齐留 buffer），
+  // 1.5s 后空闲背景补到 50 个（见下方 backfill effect），消除大 payload 阻塞首屏渲染
   useEffect(() => {
     void loadCurrentWeek();
-    void loadReleases(20);
+    void loadReleases(8);
     markAsSeen();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 首屏 8 个版本到位后，1.5s 空闲背景补全到 50 个，用户向下滚动时已经备好
+  // 走 stale-while-revalidate：force=false 命中后端 5 分钟缓存，绝大多数情况不真发起远端拉取
+  const [didBackfillReleases, setDidBackfillReleases] = useState(false);
+  useEffect(() => {
+    if (didBackfillReleases) return;
+    if (!releases || releases.releases.length === 0) return;
+    if (releases.releases.length >= 20) return; // 已经够多
+    const id = window.setTimeout(() => {
+      setDidBackfillReleases(true);
+      void loadReleases(50, false);
+    }, 1500);
+    return () => window.clearTimeout(id);
+  }, [releases, didBackfillReleases, loadReleases]);
 
   useEffect(() => {
     githubLogsRef.current = githubLogs;
@@ -374,16 +390,20 @@ export default function ChangelogPage() {
     refreshGitHubLogsRef.current = refreshGitHubLogs;
   }, [refreshGitHubLogs]);
 
+  // 只在用户进入「实时日志」子 tab 时才启动 35s 轮询；
+  // 默认子 tab 是「已发布」，否则首屏 mount 时 requestIdleCallback 会与初始渲染抢主线程
+  // 实时性兜底：handleServerUpdate (SSE push) 仍在常驻，后端有更新会主动推。
   useEffect(() => {
     if (activeTab !== 'update_center') return;
+    if (historySubtab !== 'github_logs') return;
     let stopped = false;
 
     const run = () => {
       if (stopped || document.visibilityState !== 'visible') return;
       void refreshGitHubLogs({
         force: true,
-        foreground: historySubtab === 'github_logs' && !githubLogsRef.current,
-        showError: historySubtab === 'github_logs',
+        foreground: !githubLogsRef.current,
+        showError: true,
       });
     };
 
@@ -902,11 +922,15 @@ export default function ChangelogPage() {
             ] as const).map((tab) => {
               const active = historySubtab === tab.key;
               const count = counts[tab.key];
+              const tabTitle = tab.key === 'fragments' && currentWeek
+                ? `${currentWeek.fragments.length} 个碎片文件 · ${count} 条改动\n来源：changelogs/*.md\n清空方式：跑 scripts/assemble-changelog.sh && 发布版本`
+                : undefined;
               return (
                 <button
                   key={tab.key}
                   type="button"
                   onClick={() => setHistorySubtab(tab.key)}
+                  title={tabTitle}
                   className="h-8 px-3 rounded-lg inline-flex items-center gap-1.5 text-[12px] font-medium transition-all"
                   style={{
                     background: active ? 'rgba(99, 102, 241, 0.14)' : 'rgba(255, 255, 255, 0.04)',
