@@ -77,8 +77,8 @@ const REVEAL = {
   agentsHeader: 250,
   agentsCardBase: 280,
   agentsCardStep: 20,
-  utilitiesHeader: 400,
-  utilitiesCardBase: 420,
+  utilitiesHeader: 200,   // 首次出现延迟加速 2x(原 400)，让"实用工具"更快露出；step/duration 不变
+  utilitiesCardBase: 210, // 同步减半(原 420)
   utilitiesCardStep: 15,
   infraHeader: 560,
   infraCardBase: 580,
@@ -886,49 +886,49 @@ export default function AgentLauncherPage() {
                       <TipsRotator fallback="选一个智能体开始创作，或在下方的实用工具里探索平台能力" />
                     </div>
                   </Reveal>
+                  {/* 搜索框：靠左，紧跟问候/副标题下方（与右侧教程卡分列左右，不再堆叠在右上角） */}
+                  <Reveal delay={REVEAL.heroSearch} duration={REVEAL_DURATION}>
+                    <div className="relative mt-4" style={{ maxWidth: isMobile ? '100%' : 360 }}>
+                      <Search
+                        size={15}
+                        className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}
+                      />
+                      <input
+                        data-tour-id="home-search"
+                        type="text"
+                        placeholder="搜索 Agent..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="w-full h-9 pl-9 pr-4 rounded-lg text-[13px] outline-none transition-colors duration-150"
+                        style={{
+                          background: 'rgba(255,255,255,0.06)',
+                          border: '1px solid rgba(255,255,255,0.1)',
+                          color: 'var(--text-primary, #fff)',
+                          backdropFilter: 'blur(12px)',
+                          WebkitBackdropFilter: 'blur(12px)',
+                        }}
+                        onFocus={(e) => {
+                          e.currentTarget.style.borderColor = 'var(--accent-primary, #818CF8)';
+                          e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
+                        }}
+                        onBlur={(e) => {
+                          e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)';
+                          e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
+                        }}
+                      />
+                    </div>
+                  </Reveal>
                 </div>
 
-                {/* 右栏：搜索框 + 教程中心承接卡(compact 竖版，置于搜索下方，不再占顶部整条宽 banner) */}
-                <div className="flex flex-col gap-3 shrink-0" style={{ width: isMobile ? '100%' : 260 }}>
-                <Reveal delay={REVEAL.heroSearch} duration={REVEAL_DURATION}>
-                  <div className="relative w-full">
-                    <Search
-                      size={15}
-                      className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
-                      style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}
-                    />
-                    <input
-                      data-tour-id="home-search"
-                      type="text"
-                      placeholder="搜索 Agent..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full h-9 pl-9 pr-4 rounded-lg text-[13px] outline-none transition-colors duration-150"
-                      style={{
-                        background: 'rgba(255,255,255,0.06)',
-                        border: '1px solid rgba(255,255,255,0.1)',
-                        color: 'var(--text-primary, #fff)',
-                        backdropFilter: 'blur(12px)',
-                        WebkitBackdropFilter: 'blur(12px)',
-                      }}
-                      onFocus={(e) => {
-                        e.currentTarget.style.borderColor = 'var(--accent-primary, #818CF8)';
-                        e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
-                      }}
-                      onBlur={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)';
-                        e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
-                      }}
-                    />
-                  </div>
-                </Reveal>
-                {/* 教程中心承接卡：紧凑竖版，紧跟搜索下方 */}
+                {/* 右栏：仅教程中心承接卡（靠右，与左侧搜索分列左右，不再堆叠） */}
                 {!searchQuery.trim() && (
                   <Reveal delay={REVEAL.heroSearch} duration={REVEAL_DURATION}>
-                    <LearningCenterTeaser compact />
+                    <div className="shrink-0" style={{ width: isMobile ? '100%' : 260 }}>
+                      <LearningCenterTeaser compact />
+                    </div>
                   </Reveal>
                 )}
-                </div>
               </div>
             </div>
             {/* end hero content */}
