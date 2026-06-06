@@ -14,15 +14,21 @@ interface Props {
   storeId: string;
   /** 是否可写。false 时不传写回调，DocBrowser 自动只读 */
   canWrite: boolean;
+  /**
+   * 可选：预置文档分类（以文档标签实现）。传入后在左侧顶部渲染分类筛选 chips
+   * + 快速新建标准文档按钮。不传则维持原有无分类行为（pm-agent 等不受影响）。
+   */
+  categories?: { key: string; label: string }[];
 }
 
 /**
  * 文档库浏览器 —— 封装 DocBrowser + document-store 现有 service，按 storeId 渲染。
  * 复用文件夹/多格式上传/MD·HTML 预览/标签全套能力。供「项目知识库」等场景接入。
  */
-export function DocumentStoreBrowser({ storeId, canWrite }: Props) {
+export function DocumentStoreBrowser({ storeId, canWrite, categories }: Props) {
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>();
+  const [activeCat, setActiveCat] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [autoEditEntryId, setAutoEditEntryId] = useState<string | undefined>();
@@ -136,11 +142,77 @@ export function DocumentStoreBrowser({ storeId, canWrite }: Props) {
     else toast.error('创建失败', res.error?.message);
   }, [storeId]);
 
+  // 按分类快速新建标准文档（分类即文档标签）
+  const handleCreateInCategory = useCallback(async (label: string) => {
+    const res = await addDocumentEntry(storeId, { title: `${label} 文档`, sourceType: 'upload', contentType: 'text/markdown', summary: '', tags: [label] });
+    if (res.success) {
+      const entry = { ...res.data, tags: res.data.tags?.length ? res.data.tags : [label] };
+      setEntries((prev) => [entry, ...prev]);
+      setSelectedEntryId(entry.id); setAutoEditEntryId(entry.id); setActiveCat(label);
+      toast.success(`已创建 ${label} 文档`);
+    } else toast.error('创建失败', res.error?.message);
+  }, [storeId]);
+
   const handleSearch = useCallback(async (keyword: string, contentSearch: boolean): Promise<DocBrowserEntry[] | null> => {
     if (contentSearch) await rebuildContentIndex(storeId);
     const res = await searchDocumentEntries(storeId, keyword, contentSearch);
     return res.success ? res.data.items : null;
   }, [storeId]);
+
+  // 分类筛选（仅当传入 categories）：分类=文档标签，文件夹始终保留以维持树结构
+  const cats = categories ?? [];
+  const catLabels = cats.map((c) => c.label);
+  const docCount = (label: string | null): number => {
+    const docs = entries.filter((e) => !e.isFolder);
+    if (label === null) return docs.length;
+    if (label === '__other__') return docs.filter((e) => !catLabels.some((l) => (e.tags ?? []).includes(l))).length;
+    return docs.filter((e) => (e.tags ?? []).includes(label)).length;
+  };
+  const displayEntries = !cats.length || activeCat === null
+    ? entries
+    : entries.filter((e) => {
+        if (e.isFolder) return true;
+        const tags = e.tags ?? [];
+        if (activeCat === '__other__') return !catLabels.some((l) => tags.includes(l));
+        return tags.includes(activeCat);
+      });
+
+  const catChip = (value: string | null, label: string) => {
+    const on = activeCat === value;
+    return (
+      <button
+        key={value ?? '__all__'}
+        onClick={() => setActiveCat(value)}
+        className={`px-2 py-0.5 rounded-md text-[11px] border ${on ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30' : 'text-white/45 border-white/10 hover:bg-white/5'}`}
+      >
+        {label} <span className="opacity-60">{docCount(value)}</span>
+      </button>
+    );
+  };
+
+  const categoryHeader = cats.length ? (
+    <div className="flex flex-col gap-2 px-1 pb-2">
+      <div className="flex flex-wrap gap-1">
+        {catChip(null, '全部')}
+        {cats.map((c) => catChip(c.label, c.label))}
+        {catChip('__other__', '其他')}
+      </div>
+      {canWrite && (
+        <div className="flex flex-wrap gap-1">
+          {cats.map((c) => (
+            <button
+              key={c.key}
+              onClick={() => handleCreateInCategory(c.label)}
+              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[11px] text-white/50 border border-dashed border-white/15 hover:bg-white/5 hover:text-cyan-300"
+              title={`快速新建 ${c.label} 文档`}
+            >
+              <FileText size={11} /> {c.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  ) : undefined;
 
   const writeProps = canWrite ? {
     onDeleteEntry: handleDeleteEntry,
@@ -170,7 +242,7 @@ export function DocumentStoreBrowser({ storeId, canWrite }: Props) {
       )}
 
       <DocBrowser
-        entries={entries}
+        entries={displayEntries}
         selectedEntryId={selectedEntryId}
         onSelectEntry={setSelectedEntryId}
         loadContent={loadContent}
@@ -178,6 +250,7 @@ export function DocumentStoreBrowser({ storeId, canWrite }: Props) {
         loading={loading}
         autoEditEntryId={autoEditEntryId}
         onAutoEditConsumed={() => setAutoEditEntryId(undefined)}
+        sidebarHeader={categoryHeader}
         {...writeProps}
         emptyState={
           <div className="flex-1 flex flex-col items-center justify-center py-16">
