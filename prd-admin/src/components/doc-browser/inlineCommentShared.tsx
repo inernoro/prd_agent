@@ -89,7 +89,7 @@ export function CommentLine({
           </span>
           {canDelete && onDelete && (
             <button
-              onClick={() => onDelete(comment)}
+              onClick={(e) => { e.stopPropagation(); onDelete(comment); }}
               className="ml-auto text-[9.5px] cursor-pointer opacity-50 hover:opacity-100 transition-opacity flex-none"
               style={{ color: 'rgba(239,68,68,0.85)' }}
               title="删除评论"

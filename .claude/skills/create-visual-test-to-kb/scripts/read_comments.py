@@ -18,7 +18,21 @@
 
 输出：先打印人类可读的批注清单，最后打印一行 `COMMENTS_JSON: {...}` 供智能体解析。
 """
-import argparse, json, os, subprocess, time, sys, urllib.parse
+import argparse, json, os, subprocess, time, sys, urllib.parse, datetime
+
+
+def parse_iso(s):
+    """ISO-8601 → 统一为 UTC aware datetime；失败返回 None。容忍 'Z' 与带时区偏移。"""
+    if not s:
+        return None
+    s = s.strip().replace("Z", "+00:00")
+    try:
+        d = datetime.datetime.fromisoformat(s)
+    except Exception:
+        return None
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=datetime.timezone.utc)
+    return d.astimezone(datetime.timezone.utc)
 
 
 def curl(args, retries=5):
@@ -102,7 +116,14 @@ def main():
             raise SystemExit(f"读取条目批注失败：{json.dumps(r, ensure_ascii=False)[:200]}")
         items = r["data"].get("items", [])
         if since:
-            items = [c for c in items if (c.get("createdAt") or "") > since]
+            # 解析为 datetime 再比较：since 可能带非 UTC 偏移（如 +08:00），与 API 的 UTC createdAt
+            # 直接做字符串字典序比较会误判（Codex P2）。解析失败才退回字符串比较，避免静默全丢。
+            since_dt = parse_iso(since)
+            if since_dt is not None:
+                items = [c for c in items
+                         if (parse_iso(c.get("createdAt")) or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)) > since_dt]
+            else:
+                items = [c for c in items if (c.get("createdAt") or "") > since]
         items.sort(key=lambda c: c.get("createdAt") or "", reverse=True)
         items = items[:limit]
     else:
