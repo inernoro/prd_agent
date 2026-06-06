@@ -1666,6 +1666,149 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { summary = summaryText, generatedByName = actorName, generatedAt = now, cached = false }));
     }
 
+    // ════════════════════════ 需求 AI 智能填充（SSE 流式）════════════════════════
+
+    /// <summary>
+    /// 输入一段需求文本，LLM 按表单模板结构化输出，回填标题/描述/分级/自定义字段。
+    /// SSE 流式：phase（阶段）+ typing（逐字）+ result（解析后字段）+ done。规则 #6 可视化。
+    /// </summary>
+    [HttpPost("products/{productId}/requirements/ai-fill/stream")]
+    public async Task AiFillRequirement(string productId, [FromBody] AiFillRequirementRequest request)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers["X-Accel-Buffering"] = "no";
+
+        async Task Sse(string evt, object data)
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(data);
+            await Response.WriteAsync($"event: {evt}\ndata: {json}\n\n");
+            await Response.Body.FlushAsync();
+        }
+
+        var userId = GetUserId();
+        if (await FindAccessibleProductAsync(productId, userId) == null) { await Sse("error", new { message = "产品不存在或无权访问" }); return; }
+        var text = (request.Text ?? "").Trim();
+        if (text.Length == 0) { await Sse("error", new { message = "请输入需求文本" }); return; }
+        if (text.Length > 8000) text = text[..8000];
+
+        var template = !string.IsNullOrEmpty(request.TemplateId)
+            ? await _db.ProductFormTemplates.Find(t => t.Id == request.TemplateId && !t.IsDeleted).FirstOrDefaultAsync()
+            : null;
+        var fields = (template?.Fields ?? new List<ProductFormField>())
+            .Where(f => f.Type != ProductFormFieldType.File).ToList();
+
+        var fieldSpec = string.Join("\n", fields.Select(f =>
+        {
+            var opts = (f.Options != null && f.Options.Count > 0) ? $"，可选值: {string.Join(" / ", f.Options.Select(o => o.Value))}" : "";
+            return $"- {f.Key}（{f.Label}，类型 {f.Type}{(f.Required ? "，必填" : "")}{opts}）";
+        }));
+
+        var systemPrompt =
+            "你是产品需求结构化助手。用户会给一段需求原始文本，请抽取并整理为一条规范需求。\n" +
+            "严格只输出一个 JSON 对象（不要任何解释、不要 markdown 代码块），结构：\n" +
+            "{\"title\": 简洁标题, \"description\": 需求描述(可含背景/目标/验收标准，纯文本), \"grade\": 分级(p0/p1/p2/p3，按紧急重要程度推断，默认 p2), \"formData\": {模板字段key: 值}}\n" +
+            (fields.Count > 0
+                ? $"formData 仅可包含以下字段的 key（无法从文本判断的可省略）：\n{fieldSpec}\n"
+                : "没有自定义模板字段时 formData 返回空对象 {}。\n") +
+            "select/radio 类字段的值必须取给定可选值之一。";
+
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"), GroupId: null, SessionId: null, UserId: userId,
+            ViewRole: null, DocumentChars: text.Length, DocumentHash: null,
+            SystemPromptRedacted: "product-requirement-ai-fill", RequestType: "chat",
+            AppCallerCode: AppCallerRegistry.Product.RequirementAiFill));
+
+        var body = new JsonObject
+        {
+            ["messages"] = new JsonArray
+            {
+                new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                new JsonObject { ["role"] = "user", ["content"] = $"需求原始文本：\n{text}" },
+            },
+            ["temperature"] = 0.2,
+            ["max_tokens"] = 1200,
+        };
+
+        await Sse("phase", new { message = "AI 正在分析需求文本…" });
+
+        var sb = new System.Text.StringBuilder();
+        try
+        {
+            await foreach (var chunk in _gateway.StreamAsync(new GatewayRequest
+            {
+                AppCallerCode = AppCallerRegistry.Product.RequirementAiFill,
+                ModelType = ModelTypes.Chat,
+                Stream = true,
+                RequestBody = body,
+            }, CancellationToken.None))
+            {
+                if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    sb.Append(chunk.Content);
+                    await Sse("typing", new { text = chunk.Content });
+                }
+                else if (chunk.Type == GatewayChunkType.Error)
+                {
+                    await Sse("error", new { message = chunk.Error ?? "AI 调用失败" });
+                    return;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[product-agent] requirement ai-fill stream error");
+            await Sse("error", new { message = "AI 调用异常，请重试" });
+            return;
+        }
+
+        var parsed = ExtractFillJson(sb.ToString(), fields);
+        if (parsed == null) { await Sse("error", new { message = "AI 返回无法解析，请重试或精简文本" }); return; }
+        await Sse("result", parsed);
+        await Sse("done", new { });
+    }
+
+    /// <summary>从 LLM 原始输出里抽取并规范化填充 JSON（容错 markdown 代码块/前后缀文本）。</summary>
+    private static object? ExtractFillJson(string raw, List<ProductFormField> fields)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var start = raw.IndexOf('{');
+        var end = raw.LastIndexOf('}');
+        if (start < 0 || end <= start) return null;
+        var s = raw.Substring(start, end - start + 1);
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(s);
+            var root = doc.RootElement;
+            string GetStr(string k) => root.TryGetProperty(k, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String ? (v.GetString() ?? "") : "";
+            var title = GetStr("title").Trim();
+            var description = GetStr("description").Trim();
+            var grade = GetStr("grade").Trim().ToLowerInvariant();
+            if (grade != "p0" && grade != "p1" && grade != "p2" && grade != "p3") grade = "p2";
+            var formData = new Dictionary<string, string>();
+            var allowed = fields.Select(f => f.Key).ToHashSet();
+            if (root.TryGetProperty("formData", out var fd) && fd.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+                foreach (var p in fd.EnumerateObject())
+                {
+                    if (allowed.Count > 0 && !allowed.Contains(p.Name)) continue;
+                    var val = p.Value.ValueKind switch
+                    {
+                        System.Text.Json.JsonValueKind.String => p.Value.GetString() ?? "",
+                        System.Text.Json.JsonValueKind.Number => p.Value.ToString(),
+                        System.Text.Json.JsonValueKind.True => "true",
+                        System.Text.Json.JsonValueKind.False => "false",
+                        _ => "",
+                    };
+                    if (!string.IsNullOrEmpty(val)) formData[p.Name] = val;
+                }
+            }
+            if (string.IsNullOrEmpty(title) && string.IsNullOrEmpty(description) && formData.Count == 0) return null;
+            return new { title, description, grade, formData };
+        }
+        catch { return null; }
+    }
+
     // ════════════════════════ 批量导入 ════════════════════════
 
     /// <summary>批量导入需求（来自 CSV 解析后的行）：每行 title 必填，自动绑定默认流程 + 初始状态。</summary>
@@ -2385,6 +2528,14 @@ public class UpsertCustomerRequest
     public List<string>? Tags { get; set; }
     public string? TemplateId { get; set; }
     public Dictionary<string, string>? FormData { get; set; }
+}
+
+public class AiFillRequirementRequest
+{
+    /// <summary>用户输入的需求原始文本</summary>
+    public string? Text { get; set; }
+    /// <summary>生效的需求表单模板 ID（决定要填哪些自定义字段；可空）</summary>
+    public string? TemplateId { get; set; }
 }
 
 public class UpsertFormTemplateRequest
