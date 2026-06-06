@@ -43,6 +43,7 @@ import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL } from './types';
 import { toCSV, downloadCSV, parseCSV } from '@/lib/csv';
 import { useProductCategories, categoryLabel } from './productCategories';
 import { useEffectiveWorkflow } from './DynamicForm';
+import { useAuthStore } from '@/stores/authStore';
 
 type Section = 'overview' | 'versions' | 'requirements' | 'features' | 'board' | 'rtm' | 'reports' | 'defects' | 'team' | 'knowledge' | 'graph';
 
@@ -68,13 +69,13 @@ function orderByHierarchy<T extends { id: string; parentId?: string | null }>(it
 }
 
 const NAV: NavItem<Section>[] = [
-  { key: 'overview', label: '概览', icon: LayoutDashboard },
+  { key: 'overview', label: '工作台', icon: LayoutDashboard },
+  { key: 'reports', label: '报表', icon: BarChart3 },
+  { key: 'board', label: '看板', icon: LayoutGrid },
   { key: 'versions', label: '版本', icon: GitBranch },
   { key: 'requirements', label: '需求', icon: ListChecks },
-  { key: 'features', label: '功能', icon: Puzzle },
-  { key: 'board', label: '看板', icon: LayoutGrid },
   { key: 'rtm', label: '追溯矩阵', icon: Table2 },
-  { key: 'reports', label: '报表', icon: BarChart3 },
+  { key: 'features', label: '功能', icon: Puzzle },
   { key: 'defects', label: '缺陷', icon: Bug },
   { key: 'team', label: '团队', icon: UserCog },
   { key: 'knowledge', label: '知识库', icon: BookOpen },
@@ -119,7 +120,7 @@ export function SingleProductView() {
   }
 
   const SECTION_TITLE: Record<Section, string> = {
-    overview: '概览', versions: '版本（含升级申请）', requirements: '需求', features: '功能', board: '看板', rtm: '追溯矩阵', reports: '报表',
+    overview: '工作台', versions: '版本（含升级申请）', requirements: '需求', features: '功能', board: '看板', rtm: '追溯矩阵', reports: '报表',
     defects: '缺陷', team: '团队', knowledge: '知识库', graph: '图谱',
   };
 
@@ -159,7 +160,12 @@ export function SingleProductView() {
         </div>
       ) : (
         <SectionShell title={SECTION_TITLE[active]}>
-          {active === 'overview' && <ProductDashboard product={product} />}
+          {active === 'overview' && (
+            <div className="flex flex-col gap-5">
+              <MyTodos product={product} />
+              <ProductDashboard product={product} />
+            </div>
+          )}
           {active === 'versions' && <VersionsTab productId={product.id} />}
           {active === 'requirements' && <RequirementsTab productId={product.id} />}
           {active === 'features' && <FeaturesTab productId={product.id} />}
@@ -193,6 +199,83 @@ function BoardTab({ productId }: { productId: string }) {
 }
 
 // ── 产品概览仪表盘 ──
+// ── 工作台「我的待办」：需要当前用户处理的需求/功能（指派或负责）+ 本产品未关闭缺陷 ──
+const DEFECT_CLOSED_STATES = new Set(['已解决', '已关闭', '已修复', '已完成', '关闭', 'resolved', 'closed', 'done', 'fixed', 'completed']);
+
+function MyTodos({ product }: { product: Product }) {
+  const navigate = useNavigate();
+  const myId = useAuthStore((s) => s.user?.userId) ?? '';
+  const [reqs, setReqs] = useState<Requirement[]>([]);
+  const [feats, setFeats] = useState<Feature[]>([]);
+  const [defects, setDefects] = useState<TracedDefect[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      const [r, f, d] = await Promise.all([
+        listRequirements(product.id),
+        listFeatures(product.id),
+        listTracedDefects(product.id),
+      ]);
+      if (!alive) return;
+      if (r.success) setReqs(r.data.items);
+      if (f.success) setFeats(f.data.items);
+      if (d.success) setDefects(d.data.items);
+      setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [product.id]);
+
+  const mine = (o: { assigneeId?: string | null; ownerId: string }) => !!myId && (o.assigneeId === myId || o.ownerId === myId);
+  const todoReqs = reqs.filter(mine);
+  const todoFeats = feats.filter(mine);
+  const todoDefects = defects.filter((d) => !DEFECT_CLOSED_STATES.has((d.status ?? '').trim()) && !DEFECT_CLOSED_STATES.has((d.status ?? '').trim().toLowerCase()));
+  const total = todoReqs.length + todoFeats.length + todoDefects.length;
+
+  if (loading) return <MapSectionLoader text="正在汇总待办…" />;
+
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <ListChecks size={15} className="text-cyan-400" />
+        <span className="text-sm font-semibold text-white/80">我的待办</span>
+        <span className="text-[11px] text-white/40">需要我处理的需求 / 功能（指派或负责）+ 本产品未关闭缺陷</span>
+        <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">{total}</span>
+      </div>
+      {total === 0 ? (
+        <div className="text-[12px] text-white/35 py-6 text-center">暂无待办，保持清爽。</div>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {todoReqs.map((r) => (
+            <TodoRow key={`r-${r.id}`} kind="需求" color="#FBBF24" no={r.requirementNo} title={r.title} state={r.currentState}
+              onClick={() => navigate(`/product-agent/p/${product.id}/requirement/${r.id}`)} />
+          ))}
+          {todoFeats.map((f) => (
+            <TodoRow key={`f-${f.id}`} kind="功能" color="#A78BFA" no={f.featureNo} title={f.title} state={f.currentState}
+              onClick={() => navigate(`/product-agent/p/${product.id}/feature/${f.id}`)} />
+          ))}
+          {todoDefects.map((d) => (
+            <TodoRow key={`d-${d.id}`} kind="缺陷" color="#F87171" no={d.defectNo} title={d.title || '(无标题)'} state={d.status}
+              onClick={() => navigate(`/product-agent/p/${product.id}/defect/${d.id}`)} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TodoRow({ kind, color, no, title, state, onClick }: { kind: string; color: string; no: string; title: string; state?: string | null; onClick: () => void }) {
+  return (
+    <button onClick={onClick} className="text-left flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-white/5 border border-white/5">
+      <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0" style={{ color, background: `${color}1a` }}>{kind}</span>
+      <span className="text-[11px] font-mono text-white/35 shrink-0">{no}</span>
+      <span className="text-sm text-white/85 truncate flex-1">{title}</span>
+      {state && <span className="text-[11px] px-1.5 py-0.5 rounded bg-white/8 text-white/55 border border-white/10 shrink-0">{state}</span>}
+    </button>
+  );
+}
+
 function ProductDashboard({ product }: { product: Product }) {
   const [reqs, setReqs] = useState<Requirement[]>([]);
   const [defects, setDefects] = useState<TracedDefect[]>([]);
