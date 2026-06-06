@@ -67,6 +67,9 @@ export function InlineCommentDrawer({
   const [loading, setLoading] = useState(true);
   const [comments, setComments] = useState<DocumentInlineComment[]>([]);
   const [canCreate, setCanCreate] = useState(false);
+  // 删除按库主/作者逐条判定：公开库 canCreate 对任意登录者为 true，但删除仅作者/库主（Bugbot Medium）
+  const [isOwner, setIsOwner] = useState(false);
+  const [viewerId, setViewerId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -81,6 +84,8 @@ export function InlineCommentDrawer({
     if (res.success) {
       setComments(res.data.items);
       setCanCreate(res.data.canCreate);
+      setIsOwner(!!res.data.isOwner);
+      setViewerId(res.data.viewerUserId ?? null);
     } else {
       toast.error('加载评论失败', res.error?.message);
     }
@@ -285,7 +290,7 @@ export function InlineCommentDrawer({
                   <CommentCard
                     key={c.id}
                     comment={c}
-                    canDelete={canCreate}
+                    canDelete={isOwner || c.authorUserId === viewerId}
                     onDelete={() => handleDelete(c)}
                     onLocate={onLocate}
                   />
@@ -306,7 +311,7 @@ export function InlineCommentDrawer({
                       <CommentCard
                         key={c.id}
                         comment={c}
-                        canDelete={canCreate}
+                        canDelete={isOwner || c.authorUserId === viewerId}
                         onDelete={() => handleDelete(c)}
                         orphaned
                       />

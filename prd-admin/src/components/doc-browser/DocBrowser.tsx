@@ -1751,13 +1751,18 @@ export function DocBrowser({
     }
   }, [trackedEntryForComments]);
 
-  // 激活某条批注（点正文气泡或点批注卡）：仅 toggle 状态。滚动定位由下面的 effect 按真实锚点处理。
+  // 激活某条批注（点正文气泡或点批注卡）：默认 toggle。滚动定位由下面的 effect 按真实锚点处理。
   const handleActivateComment = useCallback((key: string) => {
+    // margin 收起态下点气泡：重开批注栏并「强制激活」该条（不 toggle off）。
+    // 否则同一条仍 active 时点它会被 toggle 关掉，>3 条时目标卡片仍折叠、点了看不到内容（Codex P2）。
+    if (inlineCommentLayout === 'margin' && marginCollapsed) {
+      setMarginCollapsed(false);
+      setActiveCommentKey(key);
+      return;
+    }
     setActiveCommentKey((prev) => (prev === key ? null : key));
-    // margin 布局下若批注栏被收起（marginCollapsed），点气泡只 toggle 看不到内容；
-    // 重新展开批注栏，让激活的卡片可见（Codex P2：collapsed 时气泡要能露出可读评论面）
     if (inlineCommentLayout === 'margin') setMarginCollapsed(false);
-  }, [inlineCommentLayout]);
+  }, [inlineCommentLayout, marginCollapsed]);
 
   // 激活后把正文锚点滚到眼前：用 overlay 已按 findTextRange（去空白 + contextBefore 消歧）放置的
   // data-active-hl 元素，而非 raw indexOf（会被空白归一化/重复短语坑，Bugbot Medium）。
