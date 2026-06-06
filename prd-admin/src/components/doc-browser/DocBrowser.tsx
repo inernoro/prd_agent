@@ -337,6 +337,8 @@ export type DocBrowserEntry = {
   contentType: string;
   fileSize: number;
   tags?: string[];
+  /** 分类（知识库一等维度，单值） */
+  category?: string;
   createdAt?: string;
   updatedAt?: string;
   updatedByName?: string;
@@ -435,6 +437,19 @@ export type DocBrowserProps = {
    * 不传则不渲染。
    */
   sidebarHeader?: React.ReactNode;
+  /**
+   * 列表标题默认显示模式：true=正文第一行(默认)，false=文件名/entry.title。
+   * 结构化知识库（用户会主动重命名条目）应传 false，否则重命名被正文首行覆盖、看起来"不生效"。
+   * 用户仍可用顶部「正文标题/文件名」开关切换。
+   */
+  defaultUseContentTitle?: boolean;
+  /**
+   * 可选：知识库分类清单（一等维度，区别于自由标签）。传入后右键菜单出现「分类」选择。
+   * 仅 product-agent 等结构化知识库使用；其他调用方不传则无分类概念。
+   */
+  categories?: string[];
+  /** 设置条目分类（category=null 清除）。需配合 categories 才在右键菜单出现。 */
+  onSetEntryCategory?: (entryId: string, category: string | null) => void;
   /**
    * 用户自定义 tag 颜色映射（tagName → 调色板 key）。
    * 不传时回退到 sessionStorage（仅本 tab）；传入时持久化由调用方负责（onTagColorsChange）。
@@ -576,6 +591,7 @@ function ContextMenu({
   x, y, entry, isPrimary, isPinned,
   onSetPrimary, onTogglePin, onDelete, onEditTags, onRename,
   onGenerateSubtitle, onReprocess, onShareEntry, onReplaceFile,
+  categories, onSetCategory,
   onClose,
 }: {
   x: number;
@@ -592,6 +608,8 @@ function ContextMenu({
   onReprocess?: (entryId: string) => void;
   onShareEntry?: (entryId: string) => void;
   onReplaceFile?: (entryId: string) => void;
+  categories?: string[];
+  onSetCategory?: (entryId: string, category: string | null) => void;
   onClose: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -683,6 +701,26 @@ function ContextMenu({
           <Pencil size={12} />
           重命名
         </button>
+      )}
+      {!entry.isFolder && onSetCategory && categories && categories.length > 0 && (
+        <div className="px-3 py-1.5">
+          <div className="text-[11px] text-token-muted mb-1">分类</div>
+          <div className="flex flex-wrap gap-1">
+            <button
+              onClick={() => { onSetCategory(entry.id, null); onClose(); }}
+              className={`px-1.5 py-0.5 rounded text-[11px] border ${!entry.category ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30' : 'text-token-secondary border-token-subtle hover:bg-white/6'}`}>
+              无分类
+            </button>
+            {categories.map((c) => (
+              <button
+                key={c}
+                onClick={() => { onSetCategory(entry.id, c); onClose(); }}
+                className={`px-1.5 py-0.5 rounded text-[11px] border ${entry.category === c ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30' : 'text-token-secondary border-token-subtle hover:bg-white/6'}`}>
+                {c}
+              </button>
+            ))}
+          </div>
+        </div>
       )}
       {!entry.isFolder && onTogglePin && (
         <button
@@ -1421,6 +1459,9 @@ export function DocBrowser({
   appearance = 'inset',
   isEntryFresh,
   sidebarHeader,
+  defaultUseContentTitle,
+  categories: docCategories,
+  onSetEntryCategory,
   tagColors: tagColorsProp,
   onTagColorsChange,
   inlineCommentShareToken,
@@ -1435,7 +1476,7 @@ export function DocBrowser({
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
-  const [useContentTitle, setUseContentTitle] = useState(true);
+  const [useContentTitle, setUseContentTitle] = useState(defaultUseContentTitle ?? true);
   const [showUpdatedTime, setShowUpdatedTime] = useState<boolean>(() => {
     const saved = sessionStorage.getItem('doc-browser-show-updated-time');
     if (saved === '1') return true;
@@ -2929,6 +2970,8 @@ export function DocBrowser({
           onReprocess={onReprocess}
           onShareEntry={onShareEntry}
           onReplaceFile={onReplaceFile}
+          categories={docCategories}
+          onSetCategory={onSetEntryCategory}
           onClose={() => setContextMenu(null)}
         />
       )}

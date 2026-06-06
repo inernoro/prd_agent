@@ -7,6 +7,7 @@
  * 数据按可访问范围（admin 看全部），后端 /api/product/overview/*。
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import type { EChartsOption } from 'echarts';
 import {
@@ -15,14 +16,21 @@ import {
   ListChecks,
   Puzzle,
   Bug,
+  Users,
   BookOpen,
   Share2,
   Settings,
   ArrowLeft,
   Search,
+  Plus,
+  Pencil,
+  Trash2,
+  X,
 } from 'lucide-react';
 import { EChart } from '@/components/charts/EChart';
-import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+import { toast } from '@/lib/toast';
+import { systemDialog } from '@/lib/systemDialog';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
 import { GlobalSearch } from './GlobalSearch';
 import { ProductsSection } from './ProductsSection';
@@ -34,15 +42,20 @@ import {
   getOverviewFeatures,
   getOverviewDefects,
   getOverviewKnowledge,
+  listCustomers,
+  createCustomer,
+  updateCustomer,
+  deleteCustomer,
   type OverviewStats,
   type OverviewRequirementRow,
   type OverviewFeatureRow,
   type OverviewDefectRow,
   type OverviewKnowledgeRow,
 } from '@/services/real/productAgent';
+import type { Customer } from './types';
 import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL } from './types';
 
-type Section = 'dashboard' | 'products' | 'requirements' | 'features' | 'defects' | 'knowledge' | 'graph' | 'settings';
+type Section = 'dashboard' | 'products' | 'requirements' | 'features' | 'defects' | 'customers' | 'knowledge' | 'graph' | 'settings';
 
 const CHART_COLORS = ['#22D3EE', '#FBBF24', '#A78BFA', '#4ADE80', '#F87171', '#60A5FA'];
 
@@ -71,6 +84,7 @@ export function OverviewShell() {
     { key: 'requirements', label: '需求', icon: ListChecks },
     { key: 'features', label: '功能', icon: Puzzle },
     { key: 'defects', label: '缺陷', icon: Bug },
+    { key: 'customers', label: '客户', icon: Users },
     { key: 'knowledge', label: '知识库', icon: BookOpen },
     { key: 'graph', label: '图谱', icon: Share2 },
     { key: 'settings', label: '设置', icon: Settings, hidden: !isAdmin, dividerBefore: true },
@@ -118,6 +132,11 @@ export function OverviewShell() {
       {active === 'defects' && (
         <SectionShell title="缺陷（跨产品）" desc="追溯到产品的缺陷汇总，点击进入缺陷详情">
           <DefectsTable />
+        </SectionShell>
+      )}
+      {active === 'customers' && (
+        <SectionShell title="客户" desc="产品管理全局客户库，需求可关联客户（增/改任意使用者，删除限管理员）">
+          <CustomersSection isAdmin={isAdmin} />
         </SectionShell>
       )}
       {active === 'knowledge' && (
@@ -196,7 +215,7 @@ function DashboardSection({ stats, loading, onGoto }: { stats: OverviewStats | n
     { label: '功能', value: stats.counts.features, color: '#A78BFA', section: 'features' },
     { label: '缺陷', value: stats.counts.defects, color: '#F87171', section: 'defects' },
     { label: '版本', value: stats.counts.versions, color: '#60A5FA', section: 'products' },
-    { label: '客户', value: stats.counts.customers, color: '#4ADE80', section: 'products' },
+    { label: '客户', value: stats.counts.customers, color: '#4ADE80', section: 'customers' },
   ];
 
   return (
@@ -553,6 +572,144 @@ function KnowledgeSection() {
         </button>
       ))}
     </div>
+  );
+}
+
+// ════════════════════════ 全局客户 ════════════════════════
+
+function CustomersSection({ isAdmin }: { isAdmin: boolean }) {
+  const [rows, setRows] = useState<Customer[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [keyword, setKeyword] = useState('');
+  const [editing, setEditing] = useState<Customer | 'new' | null>(null);
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    const res = await listCustomers({ keyword: keyword.trim() || undefined });
+    if (res.success) setRows(res.data.items);
+    setLoading(false);
+  }, [keyword]);
+  useEffect(() => { void reload(); }, [reload]);
+
+  const onDelete = async (c: Customer) => {
+    const ok = await systemDialog.confirm({ title: '删除客户', message: `删除客户「${c.name}」？已关联的需求不受影响（仅解除显示）。`, tone: 'danger', confirmText: '删除', cancelText: '取消' });
+    if (!ok) return;
+    const res = await deleteCustomer(c.id);
+    if (res.success) { toast.success('已删除'); void reload(); }
+    else toast.error('删除失败', res.error?.message);
+  };
+
+  return (
+    <div>
+      <TableToolbar
+        keyword={keyword}
+        setKeyword={setKeyword}
+        extra={
+          <button onClick={() => setEditing('new')} className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25">
+            <Plus size={13} /> 新增客户
+          </button>
+        }
+      />
+      {loading ? (
+        <MapSectionLoader text="正在加载客户…" />
+      ) : rows.length === 0 ? (
+        <div className="text-center text-white/40 text-sm py-12">还没有客户。点击右上角「新增客户」录入，需求里即可关联。</div>
+      ) : (
+        <DataTable
+          rows={rows}
+          columns={[
+            { header: '名称', render: (c) => <span className="text-white/90">{c.name}</span> },
+            { header: '公司', render: (c) => <span className="text-white/55 text-xs">{c.company || '-'}</span> },
+            { header: '联系方式', render: (c) => <span className="text-white/55 text-xs">{c.contact || '-'}</span> },
+            { header: '标签', render: (c) => <span className="text-white/45 text-xs">{(c.tags ?? []).join(' / ') || '-'}</span> },
+            { header: '更新', render: (c) => <span className="text-white/35 text-xs">{relTime(c.updatedAt)}</span> },
+            {
+              header: '操作',
+              className: 'w-24',
+              render: (c) => (
+                <div className="flex items-center gap-1.5">
+                  <button onClick={() => setEditing(c)} className="text-white/40 hover:text-cyan-300" title="编辑"><Pencil size={13} /></button>
+                  {isAdmin && <button onClick={() => onDelete(c)} className="text-white/40 hover:text-red-300" title="删除"><Trash2 size={13} /></button>}
+                </div>
+              ),
+            },
+          ]}
+        />
+      )}
+      {editing && (
+        <CustomerEditDialog
+          customer={editing === 'new' ? null : editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); void reload(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function CustomerEditDialog({ customer, onClose, onSaved }: { customer: Customer | null; onClose: () => void; onSaved: () => void }) {
+  const [name, setName] = useState(customer?.name ?? '');
+  const [company, setCompany] = useState(customer?.company ?? '');
+  const [contact, setContact] = useState(customer?.contact ?? '');
+  const [description, setDescription] = useState(customer?.description ?? '');
+  const [tagsText, setTagsText] = useState((customer?.tags ?? []).join(', '));
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    if (!name.trim()) return;
+    setSaving(true);
+    const body = {
+      name: name.trim(),
+      company: company.trim() || null,
+      contact: contact.trim() || null,
+      description: description.trim() || null,
+      tags: tagsText.split(/[,，]/).map((t) => t.trim()).filter(Boolean),
+    };
+    const res = customer ? await updateCustomer(customer.id, body) : await createCustomer(body);
+    setSaving(false);
+    if (res.success) { toast.success(customer ? '已保存' : '已创建'); onSaved(); }
+    else toast.error('保存失败', res.error?.message);
+  };
+
+  const inputCls = 'bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/40 placeholder:text-white/25';
+  return createPortal(
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div className="rounded-xl border border-white/10 bg-[#16181d] flex flex-col" style={{ width: 460, maxWidth: '92vw' }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
+          <h2 className="text-sm font-semibold text-white">{customer ? '编辑客户' : '新增客户'}</h2>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={16} /></button>
+        </div>
+        <div className="p-4 flex flex-col gap-3">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs text-white/55">名称 *</label>
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="客户名称" className={inputCls} />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs text-white/55">公司</label>
+            <input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="所属公司 / 组织" className={inputCls} />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs text-white/55">联系方式</label>
+            <input value={contact} onChange={(e) => setContact(e.target.value)} placeholder="电话 / 邮箱 / 微信" className={inputCls} />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs text-white/55">标签</label>
+            <input value={tagsText} onChange={(e) => setTagsText(e.target.value)} placeholder="逗号分隔，如：核心, 金融, 华南" className={inputCls} />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs text-white/55">备注</label>
+            <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/40 resize-none placeholder:text-white/25" placeholder="客户描述 / 备注" />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 px-4 py-3 border-t border-white/10">
+          <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-sm text-white/60 hover:bg-white/5">取消</button>
+          <button onClick={save} disabled={saving || !name.trim()} className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm hover:bg-cyan-500/30 disabled:opacity-40">
+            {saving ? <MapSpinner size={14} /> : null} 保存
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 

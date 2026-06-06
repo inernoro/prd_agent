@@ -2,7 +2,7 @@
 type: debt
 title: 产品管理智能体工程债务台账
 status: active
-updated: 2026-06-02
+updated: 2026-06-06
 ---
 
 # 产品管理智能体（product-agent）债务台账
@@ -70,7 +70,7 @@ P0/P1/P2/P3 四阶段研发全生命周期能力已交付（流转/处理人/缺
 
 | 能力 | 优先级 | 说明 / 未做原因 |
 |------|--------|----------------|
-| 知识库 MRD/SRS/PRD 分型 | P1(暂缓) | 版本/产品知识库复用共享组件 `DocumentStoreBrowser`，文档空间无简洁「建文本条目」API（条目走文件上传 + updateDocumentContent 编辑），深改共享组件风险高且本环境无法 CDS 验证。当前用户已可在版本库自建并命名 MRD/SRS/PRD 文档，分型仅为约定便利。**未来最干净路径**：在 DocumentStore 实体加可选 `docType`(mrd/srs/prd) + DocumentStoreBrowser 增「按类型分组/快速新建标准文档」开关（避免污染非 product-agent 用法），或在 product-agent 侧加一个 find-or-create 三类条目的封装端点（依赖文档空间补 create-text-entry API）。 |
+| ~~知识库 MRD/SRS/PRD 分型~~ | 已解决(2026-06-06) | DocumentStoreBrowser 加可选 `categories` prop：分类以**文档标签**实现，左侧顶部分类筛选 chips(含计数) + 快速新建标准文档按钮(MRD/SRS/PRD/设计稿/会议纪要/测试用例)。`addDocumentEntry` 已支持 title/tags/content（旧记载"无建条目 API"已过时）。不传 categories 时行为不变，未污染共享组件/后端 schema。后续若要更强的"类型即一等公民"(跨库统计/强约束)，仍可演进为 DocumentStore.docType 字段。 |
 | 报表深度(燃尽图/迭代速度/版本进度) | P2 | 总览现为计数+饼图/柱图/漏斗；需基于状态流转历史(已有 product_item_activities 时间线可作数据源)算 burndown/velocity。 |
 | 看板 WIP 限制 + 泳道 | P2 | 每列在制上限告警 + 按处理人/分级分泳道。 |
 | 导入导出(Excel/CSV) | P2 | 需求批量导入 + 导出归档。 |
@@ -86,3 +86,40 @@ P0/P1/P2/P3 四阶段研发全生命周期能力已交付（流转/处理人/缺
 | 25 | 需求 CSV 导入/导出 | P2 已交付 |
 
 剩余仅 P3 锦上添花：@ 内联弹层、图谱 dagre 自动布局（功能 CSV 导入未做，需要时仿需求 import 端点即可）。
+
+## 版本独立详情页 + 知识库分类（2026-06-06）
+
+版本详情从弹窗改为独立详情页（route `/product-agent/p/:productId/version/:id`，复用 ProductObjectDetailPage 的 DetailScaffold）：版本描述(富文本+默认模板)、内联勾选关联需求/纳入功能(即勾即存)、生命周期/大版本/父版本编辑、工作流流转、动态时间线、版本知识库入口。后端 ProductVersion 字段与 UpdateVersion 端点原已齐备，纯前端改造。知识库优化见上方"知识库 MRD/SRS/PRD 分型已解决"行。
+
+### 已知边界
+
+| # | 边界 | 说明 | 状态 |
+|---|------|------|------|
+| 29 | VersionRelationModal 成为死代码 | 版本改详情页后 `ProductRelationModals.VersionRelationModal` 不再被引用（仍导出）。为控本次改动范围未删除，后续 `/hygiene` 可清理 | 后续(小) |
+| 30 | 分类筛选与文件夹/搜索叠加 | 知识库分类按标签过滤，文件夹始终保留；选中被过滤掉的条目时内容区可能空白(切分类即可)。搜索走 DocBrowser 独立结果，不受分类过滤影响 | 设计如此 |
+
+## 团队成员管理（2026-06-06）
+
+单产品视图新增「团队」tab：成员列表（负责人/产品管理员/成员三级角色）、增删成员、指派/撤销产品管理员。后端 `Product.AdminIds` 字段 + 4 个成员端点（list/add/remove/role）。分权：仅 MAP 管理员/负责人可指派产品管理员；产品管理员可增删普通成员。MAP 管理员（系统 admin 默认含全部权限）进任意产品即可指派该产品的产品管理员，入口统一。
+
+### 已知边界
+
+| # | 边界 | 说明 | 状态 |
+|---|------|------|------|
+| 26 | 成员档案为扁平 id 列表 | `Product.MemberIds/AdminIds` 仅存 UserId，无职位/加入时间/备注；如需更丰富成员档案（仿 ReportTeamMember），后续可升级为独立集合 `product_team_members`，但需迁移现有 MemberIds + 改全部 60+ 访问点，按需再做 | 后续(中) |
+| 27 | 选人未过滤已有成员 | 添加成员的 UserSearchSelect 未排除已在列表的用户；重复添加后端 `$addToSet` 幂等无害，仅 UX 小瑕 | 后续(小) |
+| 28 | AdminIds 无索引 | 登记给 DBA：`products` 可加 `{ AdminIds:1 }`（按 no-auto-index 规则不自动建） | DBA |
+
+## 客户全局化 + 需求AI填充 + 工作台（2026-06-06）
+
+四块交付：客户全局化、需求 AI 智能填充(SSE)、单产品工作台(我的待办)、导航重排。
+
+### 已知边界
+
+| # | 边界 | 说明 | 状态 |
+|---|------|------|------|
+| 31 | Customer.ProductId 遗留 | 客户已全局化，旧数据仍带 ProductId(不再使用)；未做数据回填脚本(无害,字段忽略) | 后续(小) |
+| 32 | 旧 products/{id}/customers 端点已移除 | 客户 CRUD 全改全局 /customers；如有外部脚本调旧路由需改 | 已切换 |
+| 33 | AI 填充为整段结果回填 | LLM 输出完整 JSON 后一次性回填(typing 仅作可视化)，非逐字段增量落位；字段多时等待较久但有流式动效 | 设计如此 |
+| 34 | 工作台待办无 SLA 高亮 | slaHours 在工作流状态上，前端列表未拉工作流，故未做超时置顶；后续可加 | 后续(小) |
+| 35 | 工作台缺陷待办为产品级 | TracedDefect 无处理人字段，按"未关闭状态"纳入(团队级,非严格我个人) | 数据所限 |

@@ -126,6 +126,14 @@ public static class Product
         Category = "Analysis"
     )]
     public const string GraphSummary = "product-agent.graph-summary::chat";
+
+    [AppCallerMetadata(
+        "产品管理-需求智能填充",
+        "新建需求时，根据用户输入文本按表单模板结构化填充标题/描述/分级/自定义字段（SSE 流式）",
+        ModelTypes = new[] { ModelTypes.Chat },
+        Category = "Analysis"
+    )]
+    public const string RequirementAiFill = "product-agent.requirement-ai-fill::chat";
 }
 
 /// <summary>

@@ -168,6 +168,111 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
+    // ──────────────────────── 产品团队成员 ────────────────────────
+
+    /// <summary>团队成员列表（含角色：负责人/产品管理员/成员）+ 当前用户的管理能力标志。</summary>
+    [HttpGet("products/{productId}/members")]
+    public async Task<IActionResult> ListProductMembers(string productId)
+    {
+        var userId = GetUserId();
+        var product = await FindAccessibleProductAsync(productId, userId);
+        if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+
+        // 成员全集：负责人 + 成员列表，去重去空
+        var allIds = new List<string> { product.OwnerId };
+        allIds.AddRange(product.MemberIds);
+        var ids = allIds.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
+
+        var users = await _db.Users.Find(u => ids.Contains(u.UserId)).ToListAsync();
+        var nameById = users.ToDictionary(u => u.UserId, u => u.DisplayName);
+        var adminSet = product.AdminIds.ToHashSet();
+
+        var members = ids.Select(id => new
+        {
+            userId = id,
+            displayName = nameById.GetValueOrDefault(id, id),
+            role = id == product.OwnerId ? "owner" : (adminSet.Contains(id) ? "admin" : "member"),
+        })
+        .OrderBy(m => m.role == "owner" ? 0 : m.role == "admin" ? 1 : 2)
+        .ThenBy(m => m.displayName)
+        .ToList();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            members,
+            canManageMembers = CanManageProductMembers(product, userId),
+            canManageAdmins = CanManageProductAdmins(product, userId),
+        }));
+    }
+
+    /// <summary>添加团队成员（批量）。需产品成员管理权限。</summary>
+    [HttpPost("products/{productId}/members")]
+    public async Task<IActionResult> AddProductMembers(string productId, [FromBody] AddProductMembersRequest request)
+    {
+        var userId = GetUserId();
+        var product = await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).FirstOrDefaultAsync();
+        if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在"));
+        if (!CanManageProductMembers(product, userId))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权管理该产品成员"));
+
+        var toAdd = (request.UserIds ?? new()).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
+        if (toAdd.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "未指定要添加的用户"));
+
+        await _db.Products.UpdateOneAsync(p => p.Id == productId,
+            Builders<Product>.Update.AddToSetEach(p => p.MemberIds, toAdd).Set(p => p.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { added = toAdd.Count }));
+    }
+
+    /// <summary>移除团队成员（同步清除其产品管理员身份）。不可移除负责人；移除管理员需指派权限。</summary>
+    [HttpDelete("products/{productId}/members/{memberUserId}")]
+    public async Task<IActionResult> RemoveProductMember(string productId, string memberUserId)
+    {
+        var userId = GetUserId();
+        var product = await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).FirstOrDefaultAsync();
+        if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在"));
+        if (memberUserId == product.OwnerId)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不能移除产品负责人"));
+
+        var isAdminTarget = product.AdminIds.Contains(memberUserId);
+        var allowed = isAdminTarget ? CanManageProductAdmins(product, userId) : CanManageProductMembers(product, userId);
+        if (!allowed)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权移除该成员"));
+
+        await _db.Products.UpdateOneAsync(p => p.Id == productId,
+            Builders<Product>.Update
+                .Pull(p => p.MemberIds, memberUserId)
+                .Pull(p => p.AdminIds, memberUserId)
+                .Set(p => p.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { removed = true }));
+    }
+
+    /// <summary>设置成员角色（admin=指派产品管理员 / member=撤销）。需指派权限，不可改负责人。</summary>
+    [HttpPut("products/{productId}/members/{memberUserId}/role")]
+    public async Task<IActionResult> SetProductMemberRole(string productId, string memberUserId, [FromBody] SetProductMemberRoleRequest request)
+    {
+        var userId = GetUserId();
+        var product = await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).FirstOrDefaultAsync();
+        if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在"));
+        if (!CanManageProductAdmins(product, userId))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅负责人或管理员可指派产品管理员"));
+        if (memberUserId == product.OwnerId)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "负责人角色不可更改"));
+
+        var role = (request.Role ?? "").Trim().ToLowerInvariant();
+        UpdateDefinition<Product> update;
+        if (role == "admin")
+            // 指派为产品管理员：并入 AdminIds，同时确保在 MemberIds（维持 AdminIds ⊆ MemberIds 不变量）
+            update = Builders<Product>.Update.AddToSet(p => p.AdminIds, memberUserId).AddToSet(p => p.MemberIds, memberUserId);
+        else if (role == "member")
+            update = Builders<Product>.Update.Pull(p => p.AdminIds, memberUserId);
+        else
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的角色（仅 admin / member）"));
+
+        await _db.Products.UpdateOneAsync(p => p.Id == productId, update.Set(p => p.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { role }));
+    }
+
     // ════════════════════════ 版本 Version ════════════════════════
 
     /// <summary>版本列表（按产品）</summary>
@@ -511,16 +616,14 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
-    // ════════════════════════ 客户 Customer ════════════════════════
+    // ════════════════════════ 客户 Customer（全局，跨产品共享）════════════════════════
 
-    /// <summary>客户列表（按产品）</summary>
-    [HttpGet("products/{productId}/customers")]
-    public async Task<IActionResult> ListCustomers(string productId, [FromQuery] string? keyword = null)
+    /// <summary>客户列表（全局，不再按产品过滤；支持关键词搜索名称/公司）</summary>
+    [HttpGet("customers")]
+    public async Task<IActionResult> ListCustomers([FromQuery] string? keyword = null)
     {
-        if (await FindAccessibleProductAsync(productId, GetUserId()) == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
         var b = Builders<Customer>.Filter;
-        var conds = new List<FilterDefinition<Customer>> { b.Eq(c => c.ProductId, productId), b.Eq(c => c.IsDeleted, false) };
+        var conds = new List<FilterDefinition<Customer>> { b.Eq(c => c.IsDeleted, false) };
         if (!string.IsNullOrWhiteSpace(keyword))
             conds.Add(b.Or(
                 b.Regex(c => c.Name, new MongoDB.Bson.BsonRegularExpression(keyword, "i")),
@@ -529,19 +632,16 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
-    /// <summary>创建客户</summary>
-    [HttpPost("products/{productId}/customers")]
-    public async Task<IActionResult> CreateCustomer(string productId, [FromBody] UpsertCustomerRequest request)
+    /// <summary>创建客户（全局，任意 product-agent 使用者可创建）</summary>
+    [HttpPost("customers")]
+    public async Task<IActionResult> CreateCustomer([FromBody] UpsertCustomerRequest request)
     {
         var userId = GetUserId();
-        if (await FindAccessibleProductAsync(productId, userId) == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
         if (string.IsNullOrWhiteSpace(request.Name))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "客户名称不能为空"));
 
         var customer = new Customer
         {
-            ProductId = productId,
             Name = request.Name.Trim(),
             Code = request.Code?.Trim(),
             Company = request.Company?.Trim(),
@@ -556,13 +656,13 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(customer));
     }
 
-    /// <summary>更新客户</summary>
+    /// <summary>更新客户（全局，任意使用者可编辑）</summary>
     [HttpPut("customers/{customerId}")]
     public async Task<IActionResult> UpdateCustomer(string customerId, [FromBody] UpsertCustomerRequest request)
     {
         var customer = await _db.Customers.Find(c => c.Id == customerId && !c.IsDeleted).FirstOrDefaultAsync();
-        if (customer == null || await FindAccessibleProductAsync(customer.ProductId, GetUserId()) == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "客户不存在或无权访问"));
+        if (customer == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "客户不存在"));
         var u = Builders<Customer>.Update.Set(c => c.UpdatedAt, DateTime.UtcNow);
         if (!string.IsNullOrWhiteSpace(request.Name)) u = u.Set(c => c.Name, request.Name.Trim());
         u = u.Set(c => c.Code, request.Code?.Trim());
@@ -576,13 +676,15 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(updated));
     }
 
-    /// <summary>删除客户（软删除）</summary>
+    /// <summary>删除客户（软删除，需创建者或管理权限）</summary>
     [HttpDelete("customers/{customerId}")]
     public async Task<IActionResult> DeleteCustomer(string customerId)
     {
         var customer = await _db.Customers.Find(c => c.Id == customerId && !c.IsDeleted).FirstOrDefaultAsync();
-        if (customer == null || await FindAccessibleProductAsync(customer.ProductId, GetUserId()) == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "客户不存在或无权访问"));
+        if (customer == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "客户不存在"));
+        if (customer.OwnerId != GetUserId() && !CanManage())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅客户创建者或管理员可删除"));
         await _db.Customers.UpdateOneAsync(c => c.Id == customerId,
             Builders<Customer>.Update.Set(c => c.IsDeleted, true).Set(c => c.UpdatedAt, DateTime.UtcNow));
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
@@ -1037,7 +1139,9 @@ public class ProductAgentController : ControllerBase
         var versions = await _db.ProductVersions.Find(v => v.ProductId == productId && !v.IsDeleted).ToListAsync();
         var requirements = await _db.Requirements.Find(r => r.ProductId == productId && !r.IsDeleted).ToListAsync();
         var features = await _db.Features.Find(f => f.ProductId == productId && !f.IsDeleted).ToListAsync();
-        var customers = await _db.Customers.Find(c => c.ProductId == productId && !c.IsDeleted).ToListAsync();
+        // 客户已全局化：取本产品需求引用到的客户（不再按 ProductId）
+        var graphCustIds = requirements.SelectMany(r => r.CustomerIds).Distinct().ToList();
+        var customers = graphCustIds.Count == 0 ? new List<Customer>() : await _db.Customers.Find(c => graphCustIds.Contains(c.Id) && !c.IsDeleted).ToListAsync();
         var featureVersions = await _db.FeatureVersions.Find(fv => fv.ProductId == productId && !fv.IsDeleted).ToListAsync();
         var defects = await _db.DefectReports.Find(d => d.TracedProductId == productId && !d.IsDeleted).Limit(200).ToListAsync();
 
@@ -1562,6 +1666,149 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { summary = summaryText, generatedByName = actorName, generatedAt = now, cached = false }));
     }
 
+    // ════════════════════════ 需求 AI 智能填充（SSE 流式）════════════════════════
+
+    /// <summary>
+    /// 输入一段需求文本，LLM 按表单模板结构化输出，回填标题/描述/分级/自定义字段。
+    /// SSE 流式：phase（阶段）+ typing（逐字）+ result（解析后字段）+ done。规则 #6 可视化。
+    /// </summary>
+    [HttpPost("products/{productId}/requirements/ai-fill/stream")]
+    public async Task AiFillRequirement(string productId, [FromBody] AiFillRequirementRequest request)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers["X-Accel-Buffering"] = "no";
+
+        async Task Sse(string evt, object data)
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(data);
+            await Response.WriteAsync($"event: {evt}\ndata: {json}\n\n");
+            await Response.Body.FlushAsync();
+        }
+
+        var userId = GetUserId();
+        if (await FindAccessibleProductAsync(productId, userId) == null) { await Sse("error", new { message = "产品不存在或无权访问" }); return; }
+        var text = (request.Text ?? "").Trim();
+        if (text.Length == 0) { await Sse("error", new { message = "请输入需求文本" }); return; }
+        if (text.Length > 8000) text = text[..8000];
+
+        var template = !string.IsNullOrEmpty(request.TemplateId)
+            ? await _db.ProductFormTemplates.Find(t => t.Id == request.TemplateId && !t.IsDeleted).FirstOrDefaultAsync()
+            : null;
+        var fields = (template?.Fields ?? new List<ProductFormField>())
+            .Where(f => f.Type != ProductFormFieldType.File).ToList();
+
+        var fieldSpec = string.Join("\n", fields.Select(f =>
+        {
+            var opts = (f.Options != null && f.Options.Count > 0) ? $"，可选值: {string.Join(" / ", f.Options.Select(o => o.Value))}" : "";
+            return $"- {f.Key}（{f.Label}，类型 {f.Type}{(f.Required ? "，必填" : "")}{opts}）";
+        }));
+
+        var systemPrompt =
+            "你是产品需求结构化助手。用户会给一段需求原始文本，请抽取并整理为一条规范需求。\n" +
+            "严格只输出一个 JSON 对象（不要任何解释、不要 markdown 代码块），结构：\n" +
+            "{\"title\": 简洁标题, \"description\": 需求描述(可含背景/目标/验收标准，纯文本), \"grade\": 分级(p0/p1/p2/p3，按紧急重要程度推断，默认 p2), \"formData\": {模板字段key: 值}}\n" +
+            (fields.Count > 0
+                ? $"formData 仅可包含以下字段的 key（无法从文本判断的可省略）：\n{fieldSpec}\n"
+                : "没有自定义模板字段时 formData 返回空对象 {}。\n") +
+            "select/radio 类字段的值必须取给定可选值之一。";
+
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"), GroupId: null, SessionId: null, UserId: userId,
+            ViewRole: null, DocumentChars: text.Length, DocumentHash: null,
+            SystemPromptRedacted: "product-requirement-ai-fill", RequestType: "chat",
+            AppCallerCode: AppCallerRegistry.Product.RequirementAiFill));
+
+        var body = new JsonObject
+        {
+            ["messages"] = new JsonArray
+            {
+                new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                new JsonObject { ["role"] = "user", ["content"] = $"需求原始文本：\n{text}" },
+            },
+            ["temperature"] = 0.2,
+            ["max_tokens"] = 1200,
+        };
+
+        await Sse("phase", new { message = "AI 正在分析需求文本…" });
+
+        var sb = new System.Text.StringBuilder();
+        try
+        {
+            await foreach (var chunk in _gateway.StreamAsync(new GatewayRequest
+            {
+                AppCallerCode = AppCallerRegistry.Product.RequirementAiFill,
+                ModelType = ModelTypes.Chat,
+                Stream = true,
+                RequestBody = body,
+            }, CancellationToken.None))
+            {
+                if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    sb.Append(chunk.Content);
+                    await Sse("typing", new { text = chunk.Content });
+                }
+                else if (chunk.Type == GatewayChunkType.Error)
+                {
+                    await Sse("error", new { message = chunk.Error ?? "AI 调用失败" });
+                    return;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[product-agent] requirement ai-fill stream error");
+            await Sse("error", new { message = "AI 调用异常，请重试" });
+            return;
+        }
+
+        var parsed = ExtractFillJson(sb.ToString(), fields);
+        if (parsed == null) { await Sse("error", new { message = "AI 返回无法解析，请重试或精简文本" }); return; }
+        await Sse("result", parsed);
+        await Sse("done", new { });
+    }
+
+    /// <summary>从 LLM 原始输出里抽取并规范化填充 JSON（容错 markdown 代码块/前后缀文本）。</summary>
+    private static object? ExtractFillJson(string raw, List<ProductFormField> fields)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var start = raw.IndexOf('{');
+        var end = raw.LastIndexOf('}');
+        if (start < 0 || end <= start) return null;
+        var s = raw.Substring(start, end - start + 1);
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(s);
+            var root = doc.RootElement;
+            string GetStr(string k) => root.TryGetProperty(k, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String ? (v.GetString() ?? "") : "";
+            var title = GetStr("title").Trim();
+            var description = GetStr("description").Trim();
+            var grade = GetStr("grade").Trim().ToLowerInvariant();
+            if (grade != "p0" && grade != "p1" && grade != "p2" && grade != "p3") grade = "p2";
+            var formData = new Dictionary<string, string>();
+            var allowed = fields.Select(f => f.Key).ToHashSet();
+            if (root.TryGetProperty("formData", out var fd) && fd.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+                foreach (var p in fd.EnumerateObject())
+                {
+                    if (allowed.Count > 0 && !allowed.Contains(p.Name)) continue;
+                    var val = p.Value.ValueKind switch
+                    {
+                        System.Text.Json.JsonValueKind.String => p.Value.GetString() ?? "",
+                        System.Text.Json.JsonValueKind.Number => p.Value.ToString(),
+                        System.Text.Json.JsonValueKind.True => "true",
+                        System.Text.Json.JsonValueKind.False => "false",
+                        _ => "",
+                    };
+                    if (!string.IsNullOrEmpty(val)) formData[p.Name] = val;
+                }
+            }
+            if (string.IsNullOrEmpty(title) && string.IsNullOrEmpty(description) && formData.Count == 0) return null;
+            return new { title, description, grade, formData };
+        }
+        catch { return null; }
+    }
+
     // ════════════════════════ 批量导入 ════════════════════════
 
     /// <summary>批量导入需求（来自 CSV 解析后的行）：每行 title 必填，自动绑定默认流程 + 初始状态。</summary>
@@ -1753,7 +2000,8 @@ public class ProductAgentController : ControllerBase
             .Where(f => (f.Title?.Contains(kw, oic) ?? false) || f.FeatureNo.Contains(kw, oic))
             .Take(limit).Select(f => new { f.Id, f.ProductId, no = f.FeatureNo, title = f.Title }).ToList();
 
-        var custs = (await FindInScopeAsync<Customer>(scope, c => c.ProductId, c => c.IsDeleted))
+        // 客户已全局化：搜全部客户（不按产品 scope 过滤）
+        var custs = (await _db.Customers.Find(c => !c.IsDeleted).ToListAsync())
             .Where(c => c.Name.Contains(kw, oic) || (c.Company?.Contains(kw, oic) ?? false))
             .Take(limit).Select(c => new { c.Id, c.ProductId, c.Name }).ToList();
 
@@ -1780,7 +2028,9 @@ public class ProductAgentController : ControllerBase
         var reqs = await _db.Requirements.Find(r => r.ProductId == productId && !r.IsDeleted).SortByDescending(r => r.CreatedAt).ToListAsync();
         var feats = await _db.Features.Find(f => f.ProductId == productId && !f.IsDeleted).ToListAsync();
         var versions = await _db.ProductVersions.Find(v => v.ProductId == productId && !v.IsDeleted).ToListAsync();
-        var customers = await _db.Customers.Find(c => c.ProductId == productId && !c.IsDeleted).ToListAsync();
+        // 客户已全局化：取本产品需求引用到的客户
+        var rtmCustIds = reqs.SelectMany(r => r.CustomerIds).Distinct().ToList();
+        var customers = rtmCustIds.Count == 0 ? new List<Customer>() : await _db.Customers.Find(c => rtmCustIds.Contains(c.Id) && !c.IsDeleted).ToListAsync();
         var defects = await _db.DefectReports.Find(d => d.TracedProductId == productId && !d.IsDeleted).ToListAsync();
 
         var versionName = versions.ToDictionary(v => v.Id, v => v.VersionName);
@@ -1823,6 +2073,14 @@ public class ProductAgentController : ControllerBase
     /// <summary>能否管理/查看全部产品：管理员(ProductAgentAdmin)是管理(ProductAgentManage)的超集；Super 已含在 HasPermission 内。</summary>
     private bool CanManage() => IsProductAdmin() || HasPermission(AdminPermissionCatalog.ProductAgentManage);
 
+    /// <summary>能否管理本产品成员（增删普通成员）：全局管理 | 产品负责人 | 产品管理员。</summary>
+    private bool CanManageProductMembers(Product p, string uid)
+        => CanManage() || p.OwnerId == uid || p.AdminIds.Contains(uid);
+
+    /// <summary>能否指派/撤销产品管理员：全局管理 | 产品负责人（产品管理员不可指派同级）。</summary>
+    private bool CanManageProductAdmins(Product p, string uid)
+        => CanManage() || p.OwnerId == uid;
+
     /// <summary>可访问的产品 Id 集合；返回 null 表示"全部"（管理层/管理权限）。</summary>
     private async Task<HashSet<string>?> GetAccessibleProductIdsAsync(string userId)
     {
@@ -1850,7 +2108,7 @@ public class ProductAgentController : ControllerBase
         var versions = await FindInScopeAsync<ProductVersion>(scope, v => v.ProductId, v => v.IsDeleted);
         var requirements = await FindInScopeAsync<Requirement>(scope, r => r.ProductId, r => r.IsDeleted);
         var features = await FindInScopeAsync<Feature>(scope, f => f.ProductId, f => f.IsDeleted);
-        var customers = await FindInScopeAsync<Customer>(scope, c => c.ProductId, c => c.IsDeleted);
+        var customers = await _db.Customers.Find(c => !c.IsDeleted).ToListAsync(); // 客户已全局化
         var defects = await _db.DefectReports.Find(Builders<DefectReport>.Filter.And(
                 Builders<DefectReport>.Filter.Eq(d => d.IsDeleted, false),
                 Builders<DefectReport>.Filter.Ne(d => d.TracedProductId, (string?)null),
@@ -1972,7 +2230,7 @@ public class ProductAgentController : ControllerBase
         var versions = await FindInScopeAsync<ProductVersion>(scope, v => v.ProductId, v => v.IsDeleted);
         var requirements = await FindInScopeAsync<Requirement>(scope, r => r.ProductId, r => r.IsDeleted);
         var features = await FindInScopeAsync<Feature>(scope, f => f.ProductId, f => f.IsDeleted);
-        var customers = await FindInScopeAsync<Customer>(scope, c => c.ProductId, c => c.IsDeleted);
+        var customers = await _db.Customers.Find(c => !c.IsDeleted).ToListAsync(); // 客户已全局化
         var featureVersions = await FindInScopeAsync<FeatureVersion>(scope, fv => fv.ProductId, fv => fv.IsDeleted);
         var defects = await _db.DefectReports.Find(Builders<DefectReport>.Filter.And(
                 Builders<DefectReport>.Filter.Eq(d => d.IsDeleted, false),
@@ -2199,6 +2457,16 @@ public class UpsertProductRequest
     public List<string>? MemberIds { get; set; }
 }
 
+public class AddProductMembersRequest
+{
+    public List<string>? UserIds { get; set; }
+}
+
+public class SetProductMemberRoleRequest
+{
+    public string? Role { get; set; }
+}
+
 public class UpsertVersionRequest
 {
     public string VersionName { get; set; } = string.Empty;
@@ -2260,6 +2528,14 @@ public class UpsertCustomerRequest
     public List<string>? Tags { get; set; }
     public string? TemplateId { get; set; }
     public Dictionary<string, string>? FormData { get; set; }
+}
+
+public class AiFillRequirementRequest
+{
+    /// <summary>用户输入的需求原始文本</summary>
+    public string? Text { get; set; }
+    /// <summary>生效的需求表单模板 ID（决定要填哪些自定义字段；可空）</summary>
+    public string? TemplateId { get; set; }
 }
 
 public class UpsertFormTemplateRequest

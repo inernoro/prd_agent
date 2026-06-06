@@ -23,6 +23,8 @@ export type DocumentStore = {
   templateKey?: string;
   /** 用户自定义 tag 颜色映射（tagName → 调色板 key：red/orange/yellow/green/teal/blue/purple/gray） */
   tagColors?: Record<string, string>;
+  /** 可管理的分类清单（知识库一等维度；空=未启用分类） */
+  categories?: string[];
   createdAt: string;
   updatedAt: string;
 };
@@ -106,6 +108,8 @@ export type DocumentEntry = {
   contentType: string;
   fileSize: number;
   tags: string[];
+  /** 分类（取自所属知识库 categories；未分类为空） */
+  category?: string;
   metadata: Record<string, string>;
   createdBy: string;
   updatedBy?: string;
@@ -265,6 +269,8 @@ export type UpdateDocumentStoreInput = {
   templateKey?: string;
   /** 用户自定义 tag 颜色映射（tagName → 调色板 key） */
   tagColors?: Record<string, string>;
+  /** 可管理的分类清单（null/不传=不变） */
+  categories?: string[];
 };
 
 export type AddDocumentEntryInput = {
@@ -276,6 +282,7 @@ export type AddDocumentEntryInput = {
   contentType?: string;
   fileSize?: number;
   tags?: string[];
+  category?: string;
   metadata?: Record<string, string>;
 };
 
@@ -283,6 +290,8 @@ export type UpdateDocumentEntryInput = {
   title?: string;
   summary?: string;
   tags?: string[];
+  /** 分类（空字符串=清除；不传=不变） */
+  category?: string;
   metadata?: Record<string, string>;
 };
 
