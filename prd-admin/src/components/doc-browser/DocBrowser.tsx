@@ -1597,6 +1597,9 @@ export function DocBrowser({
   const inlineCommentLayout = useDocReaderPrefs((s) => s.inlineCommentLayout);
   const setInlineCommentLayout = useDocReaderPrefs((s) => s.setInlineCommentLayout);
   const [commentsCanCreate, setCommentsCanCreate] = useState(false);
+  // 删除权限逐条判定用（公开库 canCreate 对任意登录者为 true，但删除仅作者/库主，Codex P2）
+  const [commentsIsOwner, setCommentsIsOwner] = useState(false);
+  const [commentsViewerId, setCommentsViewerId] = useState<string | null>(null);
   // 批注栏 ↔ 正文高亮联动：hover 某条批注卡 → 命中分组 key → 对应高亮微亮
   const [hoveredCommentKey, setHoveredCommentKey] = useState<string | null>(null);
   // 激活态（点正文气泡或点批注卡）：高亮加亮 + 批注卡升起 + 画连线，一次只激活一条
@@ -1640,6 +1643,8 @@ export function DocBrowser({
       setCommentCount(0);
       setInlineCommentItems([]);
       setCommentsCanCreate(false);
+      setCommentsIsOwner(false);
+      setCommentsViewerId(null);
       return;
     }
     const myId = ++commentCountFetchIdRef.current;
@@ -1648,6 +1653,8 @@ export function DocBrowser({
     setCommentCount(0);
     setInlineCommentItems([]);
     setCommentsCanCreate(false);
+    setCommentsIsOwner(false);
+    setCommentsViewerId(null);
     (async () => {
       try {
         const res = await listInlineComments(trackedEntryForComments.id, inlineCommentShareToken);
@@ -1655,6 +1662,8 @@ export function DocBrowser({
           setCommentCount(res.data.items.length);
           setInlineCommentItems(res.data.items);
           setCommentsCanCreate(res.data.canCreate);
+          setCommentsIsOwner(!!res.data.isOwner);
+          setCommentsViewerId(res.data.viewerUserId ?? null);
         }
       } catch { /* 私有库 + 无分享 + 非 owner 会 404，正常 */ }
     })();
@@ -1669,8 +1678,16 @@ export function DocBrowser({
       setCommentCount(res.data.items.length);
       setInlineCommentItems(res.data.items);
       setCommentsCanCreate(res.data.canCreate);
+      setCommentsIsOwner(!!res.data.isOwner);
+      setCommentsViewerId(res.data.viewerUserId ?? null);
     }
   }, [trackedEntryForComments, inlineCommentShareToken]);
+
+  // 逐条删除权限：库主可删任意；作者可删自己。公开库 canCreate 对任意登录者为 true，不能当 canDelete（Codex P2）
+  const canDeleteComment = useCallback(
+    (c: DocumentInlineComment) => commentsIsOwner || (!!commentsViewerId && c.authorUserId === commentsViewerId),
+    [commentsIsOwner, commentsViewerId],
+  );
 
   const handleCreateComment = useCallback(async (input: {
     selectedText: string;
@@ -3016,6 +3033,7 @@ export function DocBrowser({
                     activeKey={activeCommentKey}
                     onActivate={handleActivateComment}
                     canCreate={commentsCanCreate}
+                    canDelete={canDeleteComment}
                     onCreate={handleCreateComment}
                     onDelete={handleDeleteComment}
                   />
@@ -3047,6 +3065,7 @@ export function DocBrowser({
                     <InlineCommentMargin
                       comments={inlineCommentItems}
                       canCreate={commentsCanCreate}
+                      canDelete={canDeleteComment}
                       hoveredKey={hoveredCommentKey}
                       activeKey={activeCommentKey}
                       onHoverKey={setHoveredCommentKey}

@@ -15,6 +15,7 @@ type Group = { key: string; comments: DocumentInlineComment[]; orphaned: boolean
 export function InlineCommentMargin({
   comments,
   canCreate,
+  canDelete,
   hoveredKey,
   activeKey,
   onHoverKey,
@@ -26,6 +27,8 @@ export function InlineCommentMargin({
 }: {
   comments: DocumentInlineComment[];
   canCreate: boolean;
+  /** 逐条删除权限（库主 / 作者）；缺省不可删 */
+  canDelete?: (comment: DocumentInlineComment) => boolean;
   hoveredKey: string | null;
   activeKey: string | null;
   onHoverKey: (key: string | null) => void;
@@ -103,7 +106,7 @@ export function InlineCommentMargin({
           {g.comments[0].selectedText.length > 120 ? g.comments[0].selectedText.slice(0, 120) + '…' : g.comments[0].selectedText}
         </div>
         <div className="space-y-2.5">
-          {g.comments.map((c) => <CommentLine key={c.id} comment={c} canDelete={canCreate} onDelete={onDelete} />)}
+          {g.comments.map((c) => <CommentLine key={c.id} comment={c} canDelete={canDelete?.(c)} onDelete={onDelete} />)}
         </div>
         {canCreate && !dim && (
           <div className="mt-2.5" onClick={(e) => e.stopPropagation()}>
@@ -168,7 +171,7 @@ export function InlineCommentMargin({
               <div className="pt-1">
                 <div className="text-[10px] font-semibold mb-2 px-0.5" style={{ color: 'rgba(147,197,253,0.9)' }}>全文评论</div>
                 <div className="p-3 rounded-[11px] space-y-2.5" style={{ background: 'rgba(96,165,250,0.05)', border: '1px solid rgba(96,165,250,0.16)' }}>
-                  {wholeDoc.map((c) => <CommentLine key={c.id} comment={c} canDelete={canCreate} onDelete={onDelete} />)}
+                  {wholeDoc.map((c) => <CommentLine key={c.id} comment={c} canDelete={canDelete?.(c)} onDelete={onDelete} />)}
                   {canCreate && (
                     <ReplyBox placeholder="写对整篇文档的评论…" onSubmit={async (text) => onCreate({ selectedText: '', startOffset: 0, endOffset: 0, content: text }, wholeDoc[0]?.entryId)} />
                   )}

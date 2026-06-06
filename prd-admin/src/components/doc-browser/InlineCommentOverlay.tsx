@@ -99,6 +99,7 @@ export function InlineCommentOverlay({
   activeKey = null,
   onActivate,
   canCreate = false,
+  canDelete,
   onCreate,
   onDelete,
 }: {
@@ -113,6 +114,8 @@ export function InlineCommentOverlay({
   /** 点气泡 → 激活该分组（margin 联动右侧卡 / inline 展开） */
   onActivate?: (key: string, selectedText: string) => void;
   canCreate?: boolean;
+  /** 逐条删除权限（库主 / 作者）；缺省不可删 */
+  canDelete?: (comment: DocumentInlineComment) => boolean;
   onCreate?: (input: {
     selectedText: string;
     contextBefore?: string;
@@ -246,7 +249,7 @@ export function InlineCommentOverlay({
                   <button onClick={() => onActivate?.(m.key, m.comments[0].selectedText)} className="text-[10px] cursor-pointer hover:underline flex-none" style={{ color: 'var(--text-muted)' }}>收起</button>
                 </div>
                 <div className="space-y-2.5">
-                  {m.comments.map((c) => <CommentLine key={c.id} comment={c} canDelete={canCreate} onDelete={onDelete} />)}
+                  {m.comments.map((c) => <CommentLine key={c.id} comment={c} canDelete={canDelete?.(c)} onDelete={onDelete} />)}
                 </div>
                 {canCreate && onCreate && (
                   <div className="mt-3">

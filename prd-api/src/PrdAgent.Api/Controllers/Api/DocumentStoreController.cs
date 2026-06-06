@@ -4282,7 +4282,9 @@ public class DocumentStoreController : ControllerBase
             .SortBy(c => c.CreatedAt)
             .ToListAsync();
 
-        return Ok(ApiResponse<object>.Ok(new { items = comments, canCreate }));
+        // isOwner + viewerUserId 供前端按「作者或库主」逐条判定删除权限：
+        // 公开库里 canCreate 对任意登录用户为 true，但删除只允许作者/库主，前端不能拿 canCreate 当 canDelete（Codex P2）
+        return Ok(ApiResponse<object>.Ok(new { items = comments, canCreate, isOwner, viewerUserId = currentUser }));
     }
 
     /// <summary>删除划词评论</summary>
