@@ -6,7 +6,7 @@
  * + 右属性栏(分级/状态/属性型自定义字段/信息)。系统字段与自定义字段同一套视觉语言、必填带星号。
  * 自定义模板里与系统字段重名的项(标题/描述)自动去重，避免「重复填两遍」。
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Save, Unlink, ExternalLink, ListChecks, Puzzle, Bug, Link2, FileText, GitBranch } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
@@ -338,6 +338,21 @@ function mergeDesc(prev: string, tpl: string): string {
   return stripped ? `${prev}${tpl}` : tpl;
 }
 
+/** 取默认描述模板内容（列表按 SortOrder 升序，首个即默认），用于新建时自动预填。 */
+function useDefaultDescTemplateContent(entityType: ProductEntityType) {
+  const [content, setContent] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      const res = await listDescTemplates(entityType);
+      if (!alive || !res.success) return;
+      setContent(res.data.items[0]?.content ?? null);
+    })();
+    return () => { alive = false; };
+  }, [entityType]);
+  return content;
+}
+
 /** 描述模板选择器：列出该对象类型的描述模板，一键套用。无模板时不显示。 */
 function DescTemplatePicker({ entityType, onApply }: { entityType: ProductEntityType; onApply: (content: string) => void }) {
   const [templates, setTemplates] = useState<DescTemplate[]>([]);
@@ -434,6 +449,17 @@ function CreateObjectForm({
   const { template } = useEffectiveTemplate(entityType, productId);
   const { workflow } = useEffectiveWorkflow(entityType, productId);
   const split = useMemo(() => splitFields(template?.fields), [template]);
+
+  // 新建时默认套用「默认描述模板」，无需用户再点「套用模板」；用户已输入则不覆盖
+  const defaultDescContent = useDefaultDescTemplateContent(entityType);
+  const descAutoFilledRef = useRef(false);
+  useEffect(() => {
+    if (descAutoFilledRef.current || !defaultDescContent) return;
+    if (description.trim() === '') {
+      descAutoFilledRef.current = true;
+      setDescription(defaultDescContent);
+    }
+  }, [defaultDescContent, description]);
   const kindLabel = kind === 'feature' ? '功能' : '需求';
   const kindColor = kind === 'feature' ? '#A78BFA' : '#FBBF24';
 
