@@ -502,7 +502,7 @@ export function KnowledgeStoreModal({
             <X size={16} />
           </button>
         </div>
-        <div className="flex-1" style={{ minHeight: 0 }}>
+        <div className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
           {loading ? (
             <MapSectionLoader text="正在准备知识库…" />
           ) : storeId ? (
@@ -537,7 +537,7 @@ export function ProductKnowledgePanel({ productId }: { productId: string }) {
   if (loading) return <MapSectionLoader text="正在准备整体知识库…" />;
   if (!storeId) return <div className="text-sm text-white/40 text-center py-10">知识库加载失败</div>;
   return (
-    <div className="h-full min-h-0">
+    <div className="h-full min-h-0 flex flex-col">
       <DocumentStoreBrowser storeId={storeId} canWrite categories={KNOWLEDGE_CATEGORIES} />
     </div>
   );
