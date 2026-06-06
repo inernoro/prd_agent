@@ -616,16 +616,14 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
-    // ════════════════════════ 客户 Customer ════════════════════════
+    // ════════════════════════ 客户 Customer（全局，跨产品共享）════════════════════════
 
-    /// <summary>客户列表（按产品）</summary>
-    [HttpGet("products/{productId}/customers")]
-    public async Task<IActionResult> ListCustomers(string productId, [FromQuery] string? keyword = null)
+    /// <summary>客户列表（全局，不再按产品过滤；支持关键词搜索名称/公司）</summary>
+    [HttpGet("customers")]
+    public async Task<IActionResult> ListCustomers([FromQuery] string? keyword = null)
     {
-        if (await FindAccessibleProductAsync(productId, GetUserId()) == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
         var b = Builders<Customer>.Filter;
-        var conds = new List<FilterDefinition<Customer>> { b.Eq(c => c.ProductId, productId), b.Eq(c => c.IsDeleted, false) };
+        var conds = new List<FilterDefinition<Customer>> { b.Eq(c => c.IsDeleted, false) };
         if (!string.IsNullOrWhiteSpace(keyword))
             conds.Add(b.Or(
                 b.Regex(c => c.Name, new MongoDB.Bson.BsonRegularExpression(keyword, "i")),
@@ -634,19 +632,16 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
-    /// <summary>创建客户</summary>
-    [HttpPost("products/{productId}/customers")]
-    public async Task<IActionResult> CreateCustomer(string productId, [FromBody] UpsertCustomerRequest request)
+    /// <summary>创建客户（全局，任意 product-agent 使用者可创建）</summary>
+    [HttpPost("customers")]
+    public async Task<IActionResult> CreateCustomer([FromBody] UpsertCustomerRequest request)
     {
         var userId = GetUserId();
-        if (await FindAccessibleProductAsync(productId, userId) == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
         if (string.IsNullOrWhiteSpace(request.Name))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "客户名称不能为空"));
 
         var customer = new Customer
         {
-            ProductId = productId,
             Name = request.Name.Trim(),
             Code = request.Code?.Trim(),
             Company = request.Company?.Trim(),
@@ -661,13 +656,13 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(customer));
     }
 
-    /// <summary>更新客户</summary>
+    /// <summary>更新客户（全局，任意使用者可编辑）</summary>
     [HttpPut("customers/{customerId}")]
     public async Task<IActionResult> UpdateCustomer(string customerId, [FromBody] UpsertCustomerRequest request)
     {
         var customer = await _db.Customers.Find(c => c.Id == customerId && !c.IsDeleted).FirstOrDefaultAsync();
-        if (customer == null || await FindAccessibleProductAsync(customer.ProductId, GetUserId()) == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "客户不存在或无权访问"));
+        if (customer == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "客户不存在"));
         var u = Builders<Customer>.Update.Set(c => c.UpdatedAt, DateTime.UtcNow);
         if (!string.IsNullOrWhiteSpace(request.Name)) u = u.Set(c => c.Name, request.Name.Trim());
         u = u.Set(c => c.Code, request.Code?.Trim());
@@ -681,13 +676,15 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(updated));
     }
 
-    /// <summary>删除客户（软删除）</summary>
+    /// <summary>删除客户（软删除，需创建者或管理权限）</summary>
     [HttpDelete("customers/{customerId}")]
     public async Task<IActionResult> DeleteCustomer(string customerId)
     {
         var customer = await _db.Customers.Find(c => c.Id == customerId && !c.IsDeleted).FirstOrDefaultAsync();
-        if (customer == null || await FindAccessibleProductAsync(customer.ProductId, GetUserId()) == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "客户不存在或无权访问"));
+        if (customer == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "客户不存在"));
+        if (customer.OwnerId != GetUserId() && !CanManage())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅客户创建者或管理员可删除"));
         await _db.Customers.UpdateOneAsync(c => c.Id == customerId,
             Builders<Customer>.Update.Set(c => c.IsDeleted, true).Set(c => c.UpdatedAt, DateTime.UtcNow));
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
@@ -1142,7 +1139,9 @@ public class ProductAgentController : ControllerBase
         var versions = await _db.ProductVersions.Find(v => v.ProductId == productId && !v.IsDeleted).ToListAsync();
         var requirements = await _db.Requirements.Find(r => r.ProductId == productId && !r.IsDeleted).ToListAsync();
         var features = await _db.Features.Find(f => f.ProductId == productId && !f.IsDeleted).ToListAsync();
-        var customers = await _db.Customers.Find(c => c.ProductId == productId && !c.IsDeleted).ToListAsync();
+        // 客户已全局化：取本产品需求引用到的客户（不再按 ProductId）
+        var graphCustIds = requirements.SelectMany(r => r.CustomerIds).Distinct().ToList();
+        var customers = graphCustIds.Count == 0 ? new List<Customer>() : await _db.Customers.Find(c => graphCustIds.Contains(c.Id) && !c.IsDeleted).ToListAsync();
         var featureVersions = await _db.FeatureVersions.Find(fv => fv.ProductId == productId && !fv.IsDeleted).ToListAsync();
         var defects = await _db.DefectReports.Find(d => d.TracedProductId == productId && !d.IsDeleted).Limit(200).ToListAsync();
 
@@ -1858,7 +1857,8 @@ public class ProductAgentController : ControllerBase
             .Where(f => (f.Title?.Contains(kw, oic) ?? false) || f.FeatureNo.Contains(kw, oic))
             .Take(limit).Select(f => new { f.Id, f.ProductId, no = f.FeatureNo, title = f.Title }).ToList();
 
-        var custs = (await FindInScopeAsync<Customer>(scope, c => c.ProductId, c => c.IsDeleted))
+        // 客户已全局化：搜全部客户（不按产品 scope 过滤）
+        var custs = (await _db.Customers.Find(c => !c.IsDeleted).ToListAsync())
             .Where(c => c.Name.Contains(kw, oic) || (c.Company?.Contains(kw, oic) ?? false))
             .Take(limit).Select(c => new { c.Id, c.ProductId, c.Name }).ToList();
 
@@ -1885,7 +1885,9 @@ public class ProductAgentController : ControllerBase
         var reqs = await _db.Requirements.Find(r => r.ProductId == productId && !r.IsDeleted).SortByDescending(r => r.CreatedAt).ToListAsync();
         var feats = await _db.Features.Find(f => f.ProductId == productId && !f.IsDeleted).ToListAsync();
         var versions = await _db.ProductVersions.Find(v => v.ProductId == productId && !v.IsDeleted).ToListAsync();
-        var customers = await _db.Customers.Find(c => c.ProductId == productId && !c.IsDeleted).ToListAsync();
+        // 客户已全局化：取本产品需求引用到的客户
+        var rtmCustIds = reqs.SelectMany(r => r.CustomerIds).Distinct().ToList();
+        var customers = rtmCustIds.Count == 0 ? new List<Customer>() : await _db.Customers.Find(c => rtmCustIds.Contains(c.Id) && !c.IsDeleted).ToListAsync();
         var defects = await _db.DefectReports.Find(d => d.TracedProductId == productId && !d.IsDeleted).ToListAsync();
 
         var versionName = versions.ToDictionary(v => v.Id, v => v.VersionName);
@@ -1963,7 +1965,7 @@ public class ProductAgentController : ControllerBase
         var versions = await FindInScopeAsync<ProductVersion>(scope, v => v.ProductId, v => v.IsDeleted);
         var requirements = await FindInScopeAsync<Requirement>(scope, r => r.ProductId, r => r.IsDeleted);
         var features = await FindInScopeAsync<Feature>(scope, f => f.ProductId, f => f.IsDeleted);
-        var customers = await FindInScopeAsync<Customer>(scope, c => c.ProductId, c => c.IsDeleted);
+        var customers = await _db.Customers.Find(c => !c.IsDeleted).ToListAsync(); // 客户已全局化
         var defects = await _db.DefectReports.Find(Builders<DefectReport>.Filter.And(
                 Builders<DefectReport>.Filter.Eq(d => d.IsDeleted, false),
                 Builders<DefectReport>.Filter.Ne(d => d.TracedProductId, (string?)null),
@@ -2085,7 +2087,7 @@ public class ProductAgentController : ControllerBase
         var versions = await FindInScopeAsync<ProductVersion>(scope, v => v.ProductId, v => v.IsDeleted);
         var requirements = await FindInScopeAsync<Requirement>(scope, r => r.ProductId, r => r.IsDeleted);
         var features = await FindInScopeAsync<Feature>(scope, f => f.ProductId, f => f.IsDeleted);
-        var customers = await FindInScopeAsync<Customer>(scope, c => c.ProductId, c => c.IsDeleted);
+        var customers = await _db.Customers.Find(c => !c.IsDeleted).ToListAsync(); // 客户已全局化
         var featureVersions = await FindInScopeAsync<FeatureVersion>(scope, fv => fv.ProductId, fv => fv.IsDeleted);
         var defects = await _db.DefectReports.Find(Builders<DefectReport>.Filter.And(
                 Builders<DefectReport>.Filter.Eq(d => d.IsDeleted, false),

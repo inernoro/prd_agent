@@ -12,7 +12,7 @@ public class Customer
     /// <summary>主键（Guid）</summary>
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
-    /// <summary>所属产品 ID</summary>
+    /// <summary>遗留字段：旧版客户按产品绑定；客户已改为全局共享，新建客户此字段为空。</summary>
     public string ProductId { get; set; } = string.Empty;
 
     /// <summary>客户名称</summary>
