@@ -12,3 +12,4 @@
 | fix | prd-admin | 批注栏/内联的回复改为落到该线程所属条目（base.entryId），防切档后回复写到别的文档 |
 | fix | prd-admin,prd-api | 批注删除按钮按「库主/作者」逐条判定权限（recent list 返回 isOwner+viewerUserId），公开库非作者读者不再看到删不掉的删除按钮 |
 | fix | prd-admin | 划词就地输入浮层跟随正文滚动平移，不再因滚动停在错误位置挡错内容 |
+| fix | prd-admin | 评论加载 effect 改以 entryId 为依赖，后台列表刷新（同一条目新数组引用）不再清掉正在写的就地浮层/草稿 |

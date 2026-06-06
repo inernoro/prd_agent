@@ -1631,15 +1631,19 @@ export function DocBrowser({
     const e = selectedEntryData;
     return e && !e.isFolder ? e : null;
   }, [selectedEntryData]);
+  // 仅用稳定的 entryId 作为「切条目」信号：trackedEntryForComments 对象会因 entries/searchResults
+  // 后台刷新拿到新数组引用而重算（同一 entryId 也变），不能用对象做 effect 依赖，否则后台刷新会
+  // 误触发下面的复位、把正在写的就地浮层/草稿清掉（Bugbot Medium）
+  const entryIdForComments = trackedEntryForComments?.id ?? null;
 
-  // 进入条目时预拉评论计数，让正文上方常驻入口（共享视图也能看到他人评论的存在）
+  // 进入条目时预拉评论 + 复位上一条目的临时 UI 态。只在 entryId / shareToken 真正变化时跑。
   useEffect(() => {
     // 切文档复位：收起批注栏的临时态、未发完的就地输入浮层、激活/hover 态
     setMarginCollapsed(false);
     setComposer(null);
     setActiveCommentKey(null);
     setHoveredCommentKey(null);
-    if (!trackedEntryForComments) {
+    if (!entryIdForComments) {
       setCommentCount(0);
       setInlineCommentItems([]);
       setCommentsCanCreate(false);
@@ -1657,7 +1661,7 @@ export function DocBrowser({
     setCommentsViewerId(null);
     (async () => {
       try {
-        const res = await listInlineComments(trackedEntryForComments.id, inlineCommentShareToken);
+        const res = await listInlineComments(entryIdForComments, inlineCommentShareToken);
         if (myId === commentCountFetchIdRef.current && res.success) {
           setCommentCount(res.data.items.length);
           setInlineCommentItems(res.data.items);
@@ -1667,7 +1671,7 @@ export function DocBrowser({
         }
       } catch { /* 私有库 + 无分享 + 非 owner 会 404，正常 */ }
     })();
-  }, [trackedEntryForComments, inlineCommentShareToken]);
+  }, [entryIdForComments, inlineCommentShareToken]);
 
   // 评论的增/删后重拉（margin/inline/composer 共用一条刷新路径），带 fetchIdRef 守卫防串档
   const refreshComments = useCallback(async () => {
