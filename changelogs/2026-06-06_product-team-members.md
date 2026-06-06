@@ -7,3 +7,4 @@
 | fix | prd-admin | 修复产品/版本知识库面板未撑满高度(flex 父容器缺失导致塌成内容高度) |
 | feat | prd-admin | 需求/功能/版本/缺陷详情页新增「追溯关系路径」抽屉(右展开70| fix | prd-admin | 修复产品/版本知识库面板未撑满高度(flex 父容器缺失导致塌成内容高度) |
 | feat | prd-admin | 需求/功能/版本/缺陷详情页新增「追溯关系路径」抽屉(右展开70%,内嵌图谱自动锚定当前对象高亮全部关联) |
+| feat | prd-admin | 知识库分类升级为一等维度：DocumentStoreBrowser 从 store.categories 读分类、按 entry.category 筛选、快速新建、右键改分类、分类管理与标签管理面板、常驻新建文件夹按钮 |

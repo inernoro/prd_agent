@@ -278,15 +278,8 @@ export const PRODUCT_GRADE_LABEL: Record<ProductGrade, string> = {
   experimental: '实验',
 };
 
-/** 产品/版本知识库的预置文档分类（以文档标签实现，无需后端 schema 改动）。 */
-export const KNOWLEDGE_CATEGORIES: { key: string; label: string }[] = [
-  { key: 'mrd', label: 'MRD' },
-  { key: 'srs', label: 'SRS' },
-  { key: 'prd', label: 'PRD' },
-  { key: 'design', label: '设计稿' },
-  { key: 'meeting', label: '会议纪要' },
-  { key: 'testcase', label: '测试用例' },
-];
+/** 产品/版本知识库首次进入时种子化的预置分类名（分类为后端一等字段 DocumentStore.Categories，后续可在「分类管理」里增删改）。 */
+export const KNOWLEDGE_CATEGORY_NAMES: string[] = ['MRD', 'SRS', 'PRD', '设计稿', '会议纪要', '测试用例'];
 
 export const VERSION_LIFECYCLE_LABEL: Record<VersionLifecycle, string> = {
   planning: '规划',

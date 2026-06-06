@@ -33,7 +33,7 @@ import {
   type TracedDefect,
 } from '@/services/real/productAgent';
 import type { ProductVersion, Requirement, Feature, FeatureVersion, Customer } from './types';
-import { ITEM_GRADE_LABEL, KNOWLEDGE_CATEGORIES } from './types';
+import { ITEM_GRADE_LABEL, KNOWLEDGE_CATEGORY_NAMES } from './types';
 
 // ── 通用弹层壳 ──
 function ModalShell({ title, onClose, children, width = 560 }: { title: string; onClose: () => void; children: React.ReactNode; width?: number }) {
@@ -506,7 +506,7 @@ export function KnowledgeStoreModal({
           {loading ? (
             <MapSectionLoader text="正在准备知识库…" />
           ) : storeId ? (
-            <DocumentStoreBrowser storeId={storeId} canWrite categories={KNOWLEDGE_CATEGORIES} />
+            <DocumentStoreBrowser storeId={storeId} canWrite enableCategories categoryPresets={KNOWLEDGE_CATEGORY_NAMES} />
           ) : (
             <div className="text-sm text-white/40 text-center py-10">知识库加载失败</div>
           )}
@@ -538,7 +538,7 @@ export function ProductKnowledgePanel({ productId }: { productId: string }) {
   if (!storeId) return <div className="text-sm text-white/40 text-center py-10">知识库加载失败</div>;
   return (
     <div className="h-full min-h-0 flex flex-col">
-      <DocumentStoreBrowser storeId={storeId} canWrite categories={KNOWLEDGE_CATEGORIES} />
+      <DocumentStoreBrowser storeId={storeId} canWrite enableCategories categoryPresets={KNOWLEDGE_CATEGORY_NAMES} />
     </div>
   );
 }
