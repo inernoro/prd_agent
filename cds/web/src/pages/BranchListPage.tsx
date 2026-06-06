@@ -2843,11 +2843,13 @@ export function BranchListPage(): JSX.Element {
               <Button asChild variant="ghost" size="sm" title="项目设置">
                 <Link to={`/settings/${encodeURIComponent(projectId)}`}>
                   <Settings />
+                  <span className="md:hidden">项目设置</span>
                 </Link>
               </Button>
               <Button asChild variant="ghost" size="sm" title="服务拓扑">
                 <Link to={`/branch-topology?project=${encodeURIComponent(projectId)}`}>
                   <Network />
+                  <span className="md:hidden">服务拓扑</span>
                 </Link>
               </Button>
               <Button
@@ -2889,6 +2891,7 @@ export function BranchListPage(): JSX.Element {
                   className="text-amber-500 hover:text-amber-600"
                 >
                   <RefreshCw />
+                  <span className="md:hidden">手动刷新</span>
                 </Button>
               ) : null}
             </>

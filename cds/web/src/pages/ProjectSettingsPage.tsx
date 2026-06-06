@@ -441,6 +441,7 @@ export function ProjectSettingsPage(): JSX.Element {
               <Button asChild variant="ghost" size="sm" title="分支控制台">
                 <Link to={`/branches/${encodeURIComponent(projectId || '')}`}>
                   <GitBranch />
+                  <span className="md:hidden">分支控制台</span>
                 </Link>
               </Button>
               <Button
@@ -451,6 +452,7 @@ export function ProjectSettingsPage(): JSX.Element {
                 title="刷新"
               >
                 <RefreshCw />
+                <span className="md:hidden">刷新</span>
               </Button>
             </>
           }
@@ -1118,7 +1120,7 @@ function RecentAutoDeploys({ projectId }: { projectId: string }): JSX.Element | 
             <div className="min-w-0 flex-1">
               <a
                 href={`/branches/${encodeURIComponent(projectId)}#${encodeURIComponent(it.branchId)}`}
-                className="truncate font-mono text-foreground hover:underline"
+                className="block truncate font-mono text-foreground hover:underline"
                 title={it.branch}
               >
                 {it.branch}

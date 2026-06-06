@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, LayoutGrid, LogOut, Monitor, Moon, Search, Settings, Sun } from 'lucide-react';
+import { Check, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Search, Settings, Sun, X } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { CommitInbox } from '@/components/CommitInbox';
 import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
@@ -30,6 +30,13 @@ import { cn } from '@/lib/utils';
  */
 
 export type AppNavKey = 'projects' | 'cds-settings' | string;
+
+/*
+ * MobileNavContext — lets the TopBar's hamburger (rendered from the page's
+ * `topbar` prop, which lives inside AppShell's tree) open the slide-in nav
+ * drawer that AppShell owns. Desktop never uses it (rail is always visible).
+ */
+const MobileNavContext = createContext<{ openNav: () => void }>({ openNav: () => {} });
 
 export interface AppShellProps {
   /** Which left-rail item is active. */
@@ -65,6 +72,7 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
    * page gets the palette for free, regardless of which page added the rail.
    */
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
   const [authStatus, setAuthStatus] = useState<ShellAuthStatus | null>(null);
   const [logoutState, setLogoutState] = useState<'idle' | 'running' | 'error'>('idle');
   useEffect(() => {
@@ -119,8 +127,19 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
   };
 
   return (
+    <MobileNavContext.Provider value={{ openNav: () => setNavOpen(true) }}>
     <div className="cds-app-shell">
+      {/* Desktop rail — always visible ≥768px, CSS-hidden on phones. */}
       <AppRail
+        active={active}
+        canLogout={Boolean(authStatus?.logoutEndpoint)}
+        logoutState={logoutState}
+        onLogout={() => { void logout(); }}
+      />
+      {/* Mobile slide-in drawer — replaces the rail on phones. */}
+      <MobileNavDrawer
+        open={navOpen}
+        onClose={() => setNavOpen(false)}
         active={active}
         canLogout={Boolean(authStatus?.logoutEndpoint)}
         logoutState={logoutState}
@@ -152,6 +171,7 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
           right slot,所有页面共享。 */}
       <FloatingThemeToggle />
     </div>
+    </MobileNavContext.Provider>
   );
 }
 
@@ -297,53 +317,47 @@ export function PaletteHint(): JSX.Element {
   );
 }
 
-function AppRail({
-  active,
-  canLogout,
-  logoutState,
-  onLogout,
-}: {
+interface RailNavProps {
   active: AppNavKey;
   canLogout: boolean;
   logoutState: 'idle' | 'running' | 'error';
   onLogout: () => void;
-}): JSX.Element {
-  return (
-    <nav className="cds-rail" aria-label="主导航">
-      <div className="cds-rail-brand">
-        <div className="cds-rail-avatar" aria-label="CDS">
-          <CdsMetallicLogo className="cds-rail-avatar-icon" aria-hidden />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="cds-rail-brand-title truncate">Cloud Dev Suite</div>
-        </div>
-      </div>
+}
 
+/*
+ * RailNav — the nav body shared by the desktop rail and the mobile drawer.
+ * `onNavigate` lets the mobile drawer close itself when a link is tapped.
+ */
+function RailNav({ active, canLogout, logoutState, onLogout, onNavigate }: RailNavProps & { onNavigate?: () => void }): JSX.Element {
+  return (
+    <>
       <div className="cds-rail-section">
-      <Link
-        to="/project-list"
-        className="cds-rail-item"
-        data-active={active === 'projects' ? 'true' : 'false'}
-        aria-label="项目列表"
-        title="项目列表"
-        onMouseEnter={preloadProjectListPage}
-        onFocus={preloadProjectListPage}
-      >
-        <LayoutGrid />
-        <span>Projects</span>
-      </Link>
-      <Link
-        to="/cds-settings"
-        className="cds-rail-item"
-        data-active={active === 'cds-settings' ? 'true' : 'false'}
-        aria-label="CDS 系统设置"
-        title="CDS 系统设置（更新 / 存储 / 集群 / 全局变量）"
-        onMouseEnter={preloadCdsSettingsPage}
-        onFocus={preloadCdsSettingsPage}
-      >
-        <Settings />
-        <span>Settings</span>
-      </Link>
+        <Link
+          to="/project-list"
+          className="cds-rail-item"
+          data-active={active === 'projects' ? 'true' : 'false'}
+          aria-label="项目列表"
+          title="项目列表"
+          onClick={onNavigate}
+          onMouseEnter={preloadProjectListPage}
+          onFocus={preloadProjectListPage}
+        >
+          <LayoutGrid />
+          <span>Projects</span>
+        </Link>
+        <Link
+          to="/cds-settings"
+          className="cds-rail-item"
+          data-active={active === 'cds-settings' ? 'true' : 'false'}
+          aria-label="CDS 系统设置"
+          title="CDS 系统设置（更新 / 存储 / 集群 / 全局变量）"
+          onClick={onNavigate}
+          onMouseEnter={preloadCdsSettingsPage}
+          onFocus={preloadCdsSettingsPage}
+        >
+          <Settings />
+          <span>Settings</span>
+        </Link>
       </div>
       <div className="flex-1" />
       {canLogout ? (
@@ -361,10 +375,71 @@ function AppRail({
           </span>
         </button>
       ) : null}
+    </>
+  );
+}
+
+function AppRail(props: RailNavProps): JSX.Element {
+  return (
+    <nav className="cds-rail" aria-label="主导航">
+      <div className="cds-rail-brand">
+        <div className="cds-rail-avatar" aria-label="CDS">
+          <CdsMetallicLogo className="cds-rail-avatar-icon" aria-hidden />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="cds-rail-brand-title truncate">Cloud Dev Suite</div>
+        </div>
+      </div>
+      <RailNav {...props} />
       {/* 2026-05-04 主题切换从这里挪到 AppShell 顶层右上(FloatingThemeToggle),
           原因:左下与 GlobalUpdateBadge 浮动徽章在某些状态下视觉重叠;industry
           标准位置(Vercel / Linear / Notion / Stripe)都在右上。 */}
     </nav>
+  );
+}
+
+/*
+ * MobileNavDrawer — phone-only slide-in navigation (≤767px). Replaces the
+ * persistent desktop rail so the workspace gets the full screen width.
+ * Opens from the TopBar hamburger; closes on backdrop tap, ESC, or nav.
+ */
+function MobileNavDrawer({
+  open,
+  onClose,
+  ...nav
+}: RailNavProps & { open: boolean; onClose: () => void }): JSX.Element {
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  return (
+    <div className={cn('cds-mobile-drawer md:hidden', open ? 'is-open' : null)} aria-hidden={!open}>
+      <div className="cds-mobile-drawer-backdrop" onClick={onClose} />
+      <nav className="cds-mobile-drawer-panel" aria-label="主导航">
+        <div className="cds-mobile-drawer-head">
+          <div className="cds-rail-brand !pb-0">
+            <div className="cds-rail-avatar" aria-label="CDS">
+              <CdsMetallicLogo className="cds-rail-avatar-icon" aria-hidden />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="cds-rail-brand-title truncate">Cloud Dev Suite</div>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="cds-icon-button"
+            onClick={onClose}
+            aria-label="关闭导航"
+          >
+            <X />
+          </button>
+        </div>
+        <RailNav {...nav} onNavigate={onClose} />
+      </nav>
+    </div>
   );
 }
 
@@ -389,17 +464,56 @@ export interface TopBarProps {
  *   right  = action buttons.
  */
 export function TopBar({ left, center, right, centerWide = false }: TopBarProps): JSX.Element {
+  const { openNav } = useContext(MobileNavContext);
+  const [actionsOpen, setActionsOpen] = useState(false);
   return (
     <header className="cds-topbar">
-      <div className="flex min-w-0 flex-1 items-center gap-3">
-        <div className="flex shrink-0 items-center gap-3">{left}</div>
+      {/* Hamburger — phone only. Opens the slide-in nav drawer. */}
+      <button
+        type="button"
+        className="cds-topbar-burger cds-icon-button md:hidden"
+        onClick={openNav}
+        aria-label="打开导航菜单"
+      >
+        <Menu />
+      </button>
+      <div className="cds-topbar-lead flex min-w-0 flex-1 items-center gap-3">
+        {/* 桌面端 left 槽不收缩;手机端允许收缩 + 截断,作为单行 app-bar 标题。 */}
+        <div className="cds-topbar-left flex min-w-0 shrink items-center gap-3 md:shrink-0">{left}</div>
         {center ? (
           <div className={`min-w-0 flex-1 ${centerWide ? 'max-w-none' : 'max-w-[640px]'} hidden md:block`}>
             {center}
           </div>
         ) : null}
       </div>
-      {right ? <div className="flex shrink-0 items-center gap-2">{right}</div> : null}
+      {/* 桌面端:动作按钮平铺。 */}
+      {right ? <div className="cds-topbar-actions hidden shrink-0 items-center gap-2 md:flex">{right}</div> : null}
+      {/* 手机端:动作收进 ⋮ 溢出菜单,点开是竖向 action sheet —— 真正的移动端形态,
+          而非把一排 PC 工具栏按钮硬塞进窄屏。 */}
+      {right ? (
+        <div className="relative md:hidden">
+          <button
+            type="button"
+            className="cds-icon-button"
+            onClick={() => setActionsOpen((v) => !v)}
+            aria-label="更多操作"
+            aria-expanded={actionsOpen}
+          >
+            <MoreVertical />
+          </button>
+          {actionsOpen ? (
+            <>
+              <div className="cds-topbar-sheet-backdrop" onClick={() => setActionsOpen(false)} />
+              {/* 不在容器上 auto-close:right 槽里可能含嵌套 Radix 菜单(如项目列表的
+                  「一键部署」),点一下就收起会破坏二级菜单。改为点 backdrop 关闭;
+                  导航类按钮点完页面自换,触发类按钮点完留着等 backdrop 收。 */}
+              <div className="cds-topbar-sheet" role="menu">
+                {right}
+              </div>
+            </>
+          ) : null}
+        </div>
+      ) : null}
       <SiteNoticeInbox />
     </header>
   );
