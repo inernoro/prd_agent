@@ -289,12 +289,12 @@ function ProductGraphInner({ productId, overview }: { productId?: string; overvi
         source: e.source,
         target: e.target,
         label: EDGE_LABEL[e.type] ?? e.type,
-        labelStyle: { fill: 'rgba(255,255,255,0.55)', fontSize: 10 },
-        labelBgStyle: { fill: '#0f1014', fillOpacity: 0.85 },
+        labelStyle: { fill: 'rgba(255,255,255,0.42)', fontSize: 9.5 },
+        labelBgStyle: { fill: '#0f1014', fillOpacity: 0.7 },
         labelBgPadding: [4, 2] as [number, number],
         labelBgBorderRadius: 4,
-        markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: 'rgba(255,255,255,0.45)' },
-        style: { stroke: 'rgba(255,255,255,0.18)' },
+        markerEnd: { type: MarkerType.ArrowClosed, width: 11, height: 11, color: 'rgba(255,255,255,0.25)' },
+        style: { stroke: 'rgba(255,255,255,0.10)', strokeWidth: 0.8 },
       }));
     setNodes(rfNodes);
     setEdges(rfEdges);
@@ -321,11 +321,14 @@ function ProductGraphInner({ productId, overview }: { productId?: string; overvi
         }
         // 选中：白色高亮（卡片描边；圆点交给 DotNode 画圆环）
         if (isSel && view !== 'dot') ring = '#FFFFFF';
+        // 激活态（选中 / 搜索命中 / 追溯路径上）的节点微微浮动，模拟"活的"知识图谱
+        const isActive = !dim && (isSel || (!!kw && matchIds.has(node.id)) || (!!traceIds && traceIds.has(node.id)));
+        const fxClass = isActive ? 'pa-graph-active' : undefined;
         if (view === 'dot') {
-          return { ...node, data: { ...(node.data as object), selected: isSel }, style: { opacity: dim ? 0.16 : 1 } };
+          return { ...node, data: { ...(node.data as object), selected: isSel }, className: fxClass, style: { opacity: dim ? 0.16 : 1 } };
         }
         const baseS = baseStyle(color);
-        return { ...node, style: { ...baseS, opacity: dim ? 0.16 : 1, ...(ring ? { boxShadow: `0 0 0 ${isSel ? 3 : 2}px ${ring}` } : {}) } };
+        return { ...node, className: fxClass, style: { ...baseS, opacity: dim ? 0.16 : 1, ...(ring ? { boxShadow: `0 0 0 ${isSel ? 3 : 2}px ${ring}` } : {}) } };
       }),
     );
     setEdges((es) =>
@@ -337,12 +340,12 @@ function ProductGraphInner({ productId, overview }: { productId?: string; overvi
           ...e,
           animated: !!inTrace,
           markerEnd: inTrace
-            ? { type: MarkerType.ArrowClosed, width: 16, height: 16, color: edgeColor }
+            ? { type: MarkerType.ArrowClosed, width: 13, height: 13, color: edgeColor }
             : e.markerEnd,
           style: {
-            stroke: inTrace ? edgeColor : 'rgba(255,255,255,0.16)',
-            strokeWidth: inTrace ? 2 : 1,
-            opacity: traceIds && !inTrace ? 0.1 : 1,
+            stroke: inTrace ? edgeColor : 'rgba(255,255,255,0.09)',
+            strokeWidth: inTrace ? 1.4 : 0.8,
+            opacity: traceIds && !inTrace ? 0.08 : inTrace ? 0.92 : 1,
           },
         };
       }),
@@ -379,6 +382,7 @@ function ProductGraphInner({ productId, overview }: { productId?: string; overvi
 
   return (
     <div className="h-full min-h-0 flex flex-col px-4 pt-3">
+      <style>{GRAPH_FX_CSS}</style>
       {/* 控制栏 */}
       <div className="shrink-0 flex flex-wrap items-center gap-2 px-1 pb-3">
         {/* 类型过滤 */}
@@ -748,6 +752,7 @@ function DotNode({ data }: NodeProps) {
           background: d.color,
           boxShadow: d.selected ? `0 0 0 3px #fff, 0 0 14px ${d.color}` : `0 0 10px ${d.color}66`,
           border: d.selected ? '2px solid #fff' : '2px solid rgba(255,255,255,0.25)',
+          animation: d.selected ? 'paGraphDotPulse 2s ease-in-out infinite' : undefined,
         }}
       />
       <div style={{ marginTop: 6, fontSize: 10, color: d.selected ? '#fff' : 'rgba(255,255,255,0.78)', textAlign: 'center', whiteSpace: 'pre-line', lineHeight: 1.25 }}>
@@ -759,6 +764,19 @@ function DotNode({ data }: NodeProps) {
 }
 
 const NODE_TYPES = { dot: DotNode };
+
+/**
+ * 图谱激活态动效。用 CSS `translate` 属性（与 ReactFlow 的 transform: translate 叠加，不抢定位）
+ * 让激活节点微微浮动；圆点内圈用 transform scale 呼吸（内层 div，安全）。尊重 reduce-motion。
+ */
+const GRAPH_FX_CSS = `
+@keyframes paGraphFloat { 0%, 100% { translate: 0 0; } 50% { translate: 0 -3px; } }
+@keyframes paGraphDotPulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.13); } }
+.pa-graph-active { animation: paGraphFloat 2.6s ease-in-out infinite; will-change: translate; }
+@media (prefers-reduced-motion: reduce) {
+  .pa-graph-active { animation: none; }
+}
+`;
 
 function baseStyle(color: string): CSSProperties {
   return {
