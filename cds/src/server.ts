@@ -3232,6 +3232,27 @@ export function installSpaFallback(
     // until exec_cds.sh's template fix is reloaded (see render_nginx()).
     const assetsDir = path.join(reactDist, 'assets');
     const ASSET_COMPRESS_CACHE = new Map<string, Buffer>();
+    // Bound the in-memory compressed-asset cache. Each zero-downtime web rebuild
+    // emits new content-hashed filenames while the daemon does NOT restart, so
+    // without eviction old entries would accumulate forever across deploys.
+    // Cap by entry count AND total bytes; evict oldest (Map keeps insertion order).
+    const ASSET_COMPRESS_CACHE_MAX_ENTRIES = 256;
+    const ASSET_COMPRESS_CACHE_MAX_BYTES = 64 * 1024 * 1024; // 64 MB
+    let assetCompressCacheBytes = 0;
+    const rememberCompressed = (key: string, buf: Buffer): void => {
+      ASSET_COMPRESS_CACHE.set(key, buf);
+      assetCompressCacheBytes += buf.length;
+      while (
+        ASSET_COMPRESS_CACHE.size > ASSET_COMPRESS_CACHE_MAX_ENTRIES ||
+        assetCompressCacheBytes > ASSET_COMPRESS_CACHE_MAX_BYTES
+      ) {
+        const oldest = ASSET_COMPRESS_CACHE.keys().next().value as string | undefined;
+        if (oldest === undefined) break;
+        const evicted = ASSET_COMPRESS_CACHE.get(oldest);
+        ASSET_COMPRESS_CACHE.delete(oldest);
+        if (evicted) assetCompressCacheBytes -= evicted.length;
+      }
+    };
     const ASSET_TEXT_MIME: Record<string, string> = {
       '.js': 'application/javascript; charset=utf-8',
       '.mjs': 'application/javascript; charset=utf-8',
@@ -3286,7 +3307,7 @@ export function installSpaFallback(
             encoding === 'br'
               ? zlib.brotliCompressSync(raw, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 5 } })
               : zlib.gzipSync(raw, { level: 6 });
-          ASSET_COMPRESS_CACHE.set(cacheKey, body);
+          rememberCompressed(cacheKey, body);
         } catch {
           return res.sendFile(filePath, { maxAge: '1y', immutable: true });
         }

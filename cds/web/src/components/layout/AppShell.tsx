@@ -131,6 +131,15 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
     return () => ctrl.abort();
   }, []);
 
+  // 抽屉打开时锁住页面滚动,否则触屏下背景工作区仍能滚动,与模态行为冲突
+  // (Bugbot #741 Medium「Drawer open background scrolls」)。关闭时还原原值。
+  useEffect(() => {
+    if (!navOpen) return undefined;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, [navOpen]);
+
   const logout = async (): Promise<void> => {
     const endpoint = authStatus?.logoutEndpoint;
     if (!endpoint) return;
