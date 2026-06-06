@@ -4174,7 +4174,14 @@ export default function CdsAgentPage() {
                               const stepOpen = simpleExpandedEventId === event.id;
                               const label = processEventLabel(event);
                               // 任何事件都能展开看细节（错误码/traceId、状态原因、工具入参/结果），不再只有工具调用可展开。
-                              const canExpand = event.type !== 'log' || Boolean(String(parsePayload(event).message ?? '').trim());
+                              // 只在「展开后确实有内容」时才显示「详情」。否则空 payload 事件
+                              // 会展开成空/「{}」（用户反馈：展开折叠的没有内容）。tool_call/tool_result
+                              // 有富渲染（工具名/文件树/diff/输出）始终可展开；其它类型要求 renderPayload 有真实文本。
+                              const canExpand = (() => {
+                                if (event.type === 'tool_call' || event.type === 'tool_result') return true;
+                                const txt = renderPayload(event).trim();
+                                return txt.length > 0 && txt !== '{}';
+                              })();
                               return (
                                 <div key={event.id} className="rounded-md px-2 py-1.5 text-xs" style={{ background: 'rgba(0,0,0,0.2)' }}>
                                   <button
