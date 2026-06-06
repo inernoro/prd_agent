@@ -3043,6 +3043,7 @@ export function DocBrowser({
                   <InlineCommentComposer
                     selectedText={composer.sel.selectedText}
                     anchorRect={composer.rect}
+                    scrollRef={contentAreaRef}
                     onSubmit={(content) => handleCreateComment({
                       selectedText: composer.sel.selectedText,
                       contextBefore: composer.sel.contextBefore,

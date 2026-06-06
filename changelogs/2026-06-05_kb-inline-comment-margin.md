@@ -11,3 +11,4 @@
 | fix | prd-admin | 批注删除后 bump fetchId 作废在途刷新，防止删除前的服务器快照晚到把已删评论复活 |
 | fix | prd-admin | 批注栏/内联的回复改为落到该线程所属条目（base.entryId），防切档后回复写到别的文档 |
 | fix | prd-admin,prd-api | 批注删除按钮按「库主/作者」逐条判定权限（recent list 返回 isOwner+viewerUserId），公开库非作者读者不再看到删不掉的删除按钮 |
+| fix | prd-admin | 划词就地输入浮层跟随正文滚动平移，不再因滚动停在错误位置挡错内容 |

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Send, X, CornerDownLeft } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -9,22 +9,40 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 export function InlineCommentComposer({
   selectedText,
   anchorRect,
+  scrollRef,
   onSubmit,
   onClose,
 }: {
   selectedText: string;
   /** 选区的视口坐标（getBoundingClientRect），用于定位浮层 */
   anchorRect: { top: number; left: number; width: number; height: number };
+  /** 正文滚动容器：浮层跟随其滚动平移，避免滚动后浮层留在错误位置（Bugbot Medium） */
+  scrollRef?: RefObject<HTMLElement>;
   onSubmit: (content: string) => Promise<boolean>;
   onClose: () => void;
 }) {
   const [draft, setDraft] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  // 打开时清了选区、坐标是当时快照；滚动后按「累计滚动位移」把浮层平移回锚点处
+  const [scrollDy, setScrollDy] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     textareaRef.current?.focus();
   }, []);
+
+  useEffect(() => {
+    const read = () => (scrollRef?.current?.scrollTop ?? 0) + window.scrollY;
+    const start = read();
+    const onScroll = () => setScrollDy(read() - start);
+    // capture=true 捕获正文内层滚动容器；resize 兜底
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onScroll);
+    return () => {
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onScroll);
+    };
+  }, [scrollRef]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -55,6 +73,8 @@ export function InlineCommentComposer({
         top,
         left,
         width,
+        // 正文滚动 dy 后锚点上移 dy，浮层同步上移，保持贴着选区
+        transform: `translateY(${-scrollDy}px)`,
         borderRadius: 14,
         padding: 12,
         background: 'linear-gradient(180deg, rgba(30,28,46,0.97), rgba(20,19,28,0.98))',
