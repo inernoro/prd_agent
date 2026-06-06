@@ -168,6 +168,111 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
+    // ──────────────────────── 产品团队成员 ────────────────────────
+
+    /// <summary>团队成员列表（含角色：负责人/产品管理员/成员）+ 当前用户的管理能力标志。</summary>
+    [HttpGet("products/{productId}/members")]
+    public async Task<IActionResult> ListProductMembers(string productId)
+    {
+        var userId = GetUserId();
+        var product = await FindAccessibleProductAsync(productId, userId);
+        if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+
+        // 成员全集：负责人 + 成员列表，去重去空
+        var allIds = new List<string> { product.OwnerId };
+        allIds.AddRange(product.MemberIds);
+        var ids = allIds.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
+
+        var users = await _db.Users.Find(u => ids.Contains(u.UserId)).ToListAsync();
+        var nameById = users.ToDictionary(u => u.UserId, u => u.DisplayName);
+        var adminSet = product.AdminIds.ToHashSet();
+
+        var members = ids.Select(id => new
+        {
+            userId = id,
+            displayName = nameById.GetValueOrDefault(id, id),
+            role = id == product.OwnerId ? "owner" : (adminSet.Contains(id) ? "admin" : "member"),
+        })
+        .OrderBy(m => m.role == "owner" ? 0 : m.role == "admin" ? 1 : 2)
+        .ThenBy(m => m.displayName)
+        .ToList();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            members,
+            canManageMembers = CanManageProductMembers(product, userId),
+            canManageAdmins = CanManageProductAdmins(product, userId),
+        }));
+    }
+
+    /// <summary>添加团队成员（批量）。需产品成员管理权限。</summary>
+    [HttpPost("products/{productId}/members")]
+    public async Task<IActionResult> AddProductMembers(string productId, [FromBody] AddMembersRequest request)
+    {
+        var userId = GetUserId();
+        var product = await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).FirstOrDefaultAsync();
+        if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在"));
+        if (!CanManageProductMembers(product, userId))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权管理该产品成员"));
+
+        var toAdd = (request.UserIds ?? new()).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
+        if (toAdd.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "未指定要添加的用户"));
+
+        await _db.Products.UpdateOneAsync(p => p.Id == productId,
+            Builders<Product>.Update.AddToSetEach(p => p.MemberIds, toAdd).Set(p => p.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { added = toAdd.Count }));
+    }
+
+    /// <summary>移除团队成员（同步清除其产品管理员身份）。不可移除负责人；移除管理员需指派权限。</summary>
+    [HttpDelete("products/{productId}/members/{memberUserId}")]
+    public async Task<IActionResult> RemoveProductMember(string productId, string memberUserId)
+    {
+        var userId = GetUserId();
+        var product = await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).FirstOrDefaultAsync();
+        if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在"));
+        if (memberUserId == product.OwnerId)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不能移除产品负责人"));
+
+        var isAdminTarget = product.AdminIds.Contains(memberUserId);
+        var allowed = isAdminTarget ? CanManageProductAdmins(product, userId) : CanManageProductMembers(product, userId);
+        if (!allowed)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权移除该成员"));
+
+        await _db.Products.UpdateOneAsync(p => p.Id == productId,
+            Builders<Product>.Update
+                .Pull(p => p.MemberIds, memberUserId)
+                .Pull(p => p.AdminIds, memberUserId)
+                .Set(p => p.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { removed = true }));
+    }
+
+    /// <summary>设置成员角色（admin=指派产品管理员 / member=撤销）。需指派权限，不可改负责人。</summary>
+    [HttpPut("products/{productId}/members/{memberUserId}/role")]
+    public async Task<IActionResult> SetProductMemberRole(string productId, string memberUserId, [FromBody] SetMemberRoleRequest request)
+    {
+        var userId = GetUserId();
+        var product = await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).FirstOrDefaultAsync();
+        if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在"));
+        if (!CanManageProductAdmins(product, userId))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅负责人或管理员可指派产品管理员"));
+        if (memberUserId == product.OwnerId)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "负责人角色不可更改"));
+
+        var role = (request.Role ?? "").Trim().ToLowerInvariant();
+        UpdateDefinition<Product> update;
+        if (role == "admin")
+            // 指派为产品管理员：并入 AdminIds，同时确保在 MemberIds（维持 AdminIds ⊆ MemberIds 不变量）
+            update = Builders<Product>.Update.AddToSet(p => p.AdminIds, memberUserId).AddToSet(p => p.MemberIds, memberUserId);
+        else if (role == "member")
+            update = Builders<Product>.Update.Pull(p => p.AdminIds, memberUserId);
+        else
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无效的角色（仅 admin / member）"));
+
+        await _db.Products.UpdateOneAsync(p => p.Id == productId, update.Set(p => p.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { role }));
+    }
+
     // ════════════════════════ 版本 Version ════════════════════════
 
     /// <summary>版本列表（按产品）</summary>
@@ -1823,6 +1928,14 @@ public class ProductAgentController : ControllerBase
     /// <summary>能否管理/查看全部产品：管理员(ProductAgentAdmin)是管理(ProductAgentManage)的超集；Super 已含在 HasPermission 内。</summary>
     private bool CanManage() => IsProductAdmin() || HasPermission(AdminPermissionCatalog.ProductAgentManage);
 
+    /// <summary>能否管理本产品成员（增删普通成员）：全局管理 | 产品负责人 | 产品管理员。</summary>
+    private bool CanManageProductMembers(Product p, string uid)
+        => CanManage() || p.OwnerId == uid || p.AdminIds.Contains(uid);
+
+    /// <summary>能否指派/撤销产品管理员：全局管理 | 产品负责人（产品管理员不可指派同级）。</summary>
+    private bool CanManageProductAdmins(Product p, string uid)
+        => CanManage() || p.OwnerId == uid;
+
     /// <summary>可访问的产品 Id 集合；返回 null 表示"全部"（管理层/管理权限）。</summary>
     private async Task<HashSet<string>?> GetAccessibleProductIdsAsync(string userId)
     {
@@ -2197,6 +2310,16 @@ public class UpsertProductRequest
     public string? WorkflowDefId { get; set; }
     public Dictionary<string, string>? FormData { get; set; }
     public List<string>? MemberIds { get; set; }
+}
+
+public class AddMembersRequest
+{
+    public List<string>? UserIds { get; set; }
+}
+
+public class SetMemberRoleRequest
+{
+    public string? Role { get; set; }
 }
 
 public class UpsertVersionRequest
