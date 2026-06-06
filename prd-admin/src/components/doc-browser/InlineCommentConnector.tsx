@@ -39,11 +39,10 @@ export function InlineCommentConnector({
         const b = card.getBoundingClientRect();
         const bounds = boundsRef.current?.getBoundingClientRect();
         const ay = a.top + a.height / 2;
-        const bCenter = b.top + b.height / 2;
-        // 两端都要在正文可视区内才画（看得见两头才连线，Docs 同理）
-        const offscreen = bounds
-          ? (ay < bounds.top + 4 || ay > bounds.bottom - 4 || bCenter < bounds.top + 4 || bCenter > bounds.bottom - 4)
-          : false;
+        // 只用「正文可视区」判定高亮锚点是否滚出（高亮在 contentAreaRef 里，会随正文滚动消失）。
+        // 不拿正文 bounds 去判定卡片：卡片在右侧批注栏「兄弟列」里，顶部常高于正文滚动区顶，
+        // 用正文 bounds 判会把「两端其实都看得见」的连线误隐藏（Bugbot Medium）。卡片端点下面再 clamp。
+        const offscreen = bounds ? (ay < bounds.top + 4 || ay > bounds.bottom - 4) : false;
         if (offscreen) {
           hide();
         } else {

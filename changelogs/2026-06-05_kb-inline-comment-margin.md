@@ -7,3 +7,4 @@
 | fix | prd-agent | read_comments.py：--entry 改用 per-entry 接口拿全量（避免被 store 级 limit 挤出页）、since 查询 URL 编码 |
 | fix | prd-admin | 批注评审二轮：创建后乐观插入防 UI 滞留、删光分组清激活态防幽灵连线、只读访客不弹写入 composer、收起批注栏时点气泡自动重开 |
 | fix | prd-api | recent-comments 返回补 authorAvatar 字段，与 per-entry 接口对齐供 store 级轮询取头像 |
+| fix | prd-admin | 批注评审三轮：连线不再用正文 bounds 误判右栏卡片致误隐藏、抽屉关闭同步 commentsCanCreate、margin/inline 删除按钮加二次确认 |

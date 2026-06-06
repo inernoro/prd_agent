@@ -1702,6 +1702,15 @@ export function DocBrowser({
   }, [trackedEntryForComments, refreshComments]);
 
   const handleDeleteComment = useCallback(async (comment: DocumentInlineComment) => {
+    // 删除前确认：margin/inline 的「删除」按钮小、易误点，与抽屉路径保持同样的二次确认（Codex P2）
+    const ok = await systemDialog.confirm({
+      title: '删除评论',
+      message: `确认删除这条评论吗？\n\n"${comment.content.slice(0, 80)}"`,
+      tone: 'danger',
+      confirmText: '删除',
+      cancelText: '取消',
+    });
+    if (!ok) return;
     const res = await deleteInlineComment(comment.id);
     if (res.success) {
       // 慢删除可能在切档后才返回：仅当该评论属于当前条目才动列表/计数（Bugbot Medium）
@@ -3165,18 +3174,10 @@ export function DocBrowser({
           onClose={() => {
             setInlineCommentsOpen(false);
             setPendingSelection(null);
-            // 关闭时刷新评论计数（新建/删除/无变化都通用）；带 fetchIdRef 守卫，
-            // 关闭后立刻切换条目时旧响应不覆盖新计数（PR #685 Bugbot Low）
-            if (trackedEntryForComments) {
-              const entryId = trackedEntryForComments.id;
-              const myId = ++commentCountFetchIdRef.current;
-              listInlineComments(entryId, inlineCommentShareToken).then((res) => {
-                if (myId === commentCountFetchIdRef.current && res.success) {
-                  setCommentCount(res.data.items.length);
-                  setInlineCommentItems(res.data.items);
-                }
-              }).catch(() => {});
-            }
+            // 关闭时刷新评论（新建/删除/无变化都通用）。走 refreshComments 统一路径：
+            // 它同时更新 count / items / commentsCanCreate（之前漏同步 canCreate，导致抽屉里
+            // 能评论、关掉后 margin/composer/overlay 仍按只读禁写，Bugbot Medium），并带 fetchIdRef 守卫。
+            void refreshComments();
           }}
         />
       )}
