@@ -23,6 +23,24 @@ export function groupKey(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
 }
 
+// 每条批注线程的稳定配色：正文高亮下划线与右侧卡片色条用同一色，眼睛自动把"这段文字"和"这条评论"连起来
+// （同色锚定，业界做法：Figma/Linear 同色 tether）。按 groupKey 哈希取色，保证同一线程跨重渲染颜色不变。
+const THREAD_COLORS = ['#f5b301', '#a855f7', '#22d3ee', '#34d399', '#f472b6', '#60a5fa', '#fb923c', '#a3e635'];
+
+export function threadColor(key: string): string {
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+  return THREAD_COLORS[h % THREAD_COLORS.length];
+}
+
+/** 把 #rrggbb + alpha 转成 rgba()，用于按线程色生成不同透明度的底色/描边 */
+export function withAlpha(hex: string, alpha: number): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
+
 /** 用户头像：走可配置 CDN 前缀，加载失败回退内联 SVG，永不裂图。 */
 export function CommentAvatar({
   name,
