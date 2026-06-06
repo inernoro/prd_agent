@@ -134,15 +134,15 @@ export function deleteFeatureVersion(featureVersionId: string) {
   return apiRequest<{ deleted: boolean }>(`/api/product/feature-versions/${featureVersionId}`, { method: 'DELETE' });
 }
 
-// ── 客户 ──
-export function listCustomers(productId: string, params?: { keyword?: string }) {
+// ── 客户（全局，跨产品共享）──
+export function listCustomers(params?: { keyword?: string }) {
   const q = new URLSearchParams();
   if (params?.keyword) q.set('keyword', params.keyword);
   const qs = q.toString();
-  return apiRequest<ListWrap<Customer>>(`/api/product/products/${productId}/customers${qs ? `?${qs}` : ''}`);
+  return apiRequest<ListWrap<Customer>>(`/api/product/customers${qs ? `?${qs}` : ''}`);
 }
-export function createCustomer(productId: string, body: Partial<Customer>) {
-  return apiRequest<Customer>(`/api/product/products/${productId}/customers`, { method: 'POST', body });
+export function createCustomer(body: Partial<Customer>) {
+  return apiRequest<Customer>('/api/product/customers', { method: 'POST', body });
 }
 export function updateCustomer(customerId: string, body: Partial<Customer>) {
   return apiRequest<Customer>(`/api/product/customers/${customerId}`, { method: 'PUT', body });

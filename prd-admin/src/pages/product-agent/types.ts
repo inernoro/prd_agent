@@ -160,7 +160,8 @@ export interface FeatureVersion {
 
 export interface Customer {
   id: string;
-  productId: string;
+  /** 遗留字段：客户已全局化，新建客户为空 */
+  productId?: string | null;
   name: string;
   code?: string | null;
   company?: string | null;

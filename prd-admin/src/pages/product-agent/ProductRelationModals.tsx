@@ -267,7 +267,7 @@ export function RequirementRelationModal({
 
   const reload = useCallback(async () => {
     setLoading(true);
-    const [c, v] = await Promise.all([listCustomers(productId), listVersions(productId)]);
+    const [c, v] = await Promise.all([listCustomers(), listVersions(productId)]);
     if (c.success) setCustomers(c.data.items);
     if (v.success) setVersions(v.data.items);
     await reloadTraced();

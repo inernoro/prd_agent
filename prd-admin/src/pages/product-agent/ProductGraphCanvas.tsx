@@ -621,7 +621,7 @@ function NodeDrawer({
       const r: { label: string; value: string }[] = [];
       let d = '';
       if (type === 'requirement') {
-        const [res, cRes, vRes] = await Promise.all([listRequirements(productId), listCustomers(productId), listVersions(productId)]);
+        const [res, cRes, vRes] = await Promise.all([listRequirements(productId), listCustomers(), listVersions(productId)]);
         const o = res.success ? res.data.items.find((x) => x.id === rawId) : undefined;
         if (o) {
           const cName = new Map((cRes.success ? cRes.data.items : []).map((c) => [c.id, c.name] as [string, string]));
@@ -644,7 +644,7 @@ function NodeDrawer({
         const o = res.success ? res.data.items.find((x) => x.id === rawId) : undefined;
         if (o) { r.push({ label: '生命周期', value: o.lifecycle }, { label: '大版本', value: o.isMajor ? '是' : '否' }, { label: '关联需求', value: String(o.requirementIds.length) }, { label: '纳入功能', value: String(o.featureVersionIds.length) }); d = o.description ?? ''; }
       } else if (type === 'customer') {
-        const res = await listCustomers(productId);
+        const res = await listCustomers();
         const o = res.success ? res.data.items.find((x) => x.id === rawId) : undefined;
         if (o) { r.push({ label: '公司', value: o.company || '-' }, { label: '联系方式', value: o.contact || '-' }); d = o.description ?? ''; }
       } else if (type === 'defect') {

@@ -96,7 +96,7 @@ export function ProductObjectDetailPage() {
       listRequirements(productId),
       listFeatures(productId),
       listVersions(productId),
-      listCustomers(productId),
+      listCustomers(),
       listTracedDefects(productId),
     ]);
     if (r.success) setRequirements(r.data.items);
