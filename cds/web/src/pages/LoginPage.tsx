@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { ArrowRight, Github, Loader2, LockKeyhole, Shield } from 'lucide-react';
 import ShapeGrid from '@/components/effects/ShapeGrid';
 import { CdsMetallicLogo } from '@/components/brand/CdsMetallicLogo';
@@ -24,6 +24,13 @@ export function LoginPage(): JSX.Element {
   const target = useMemo(() => redirectTarget(), []);
   const githubLoginHref = useMemo(() => apiUrl(`/api/auth/github/login?redirect=${encodeURIComponent(target)}`), [target]);
 
+  // 登录成功后要跳的内容页(默认控制台)是 lazy chunk:登录页一挂载就预取,
+  // 提交成功 navigate 时不会触发 Suspense 白屏,配合 viewTransition 丝滑进内容页。
+  useEffect(() => {
+    void import('@/pages/ProjectListPage');
+    void import('@/pages/HomePage');
+  }, []);
+
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError('');
@@ -45,7 +52,7 @@ export function LoginPage(): JSX.Element {
       // the whole JS bundle). `target` is validated to be an internal path in
       // redirectTarget(), so client-side routing is safe. `replace` keeps the
       // login page out of history.
-      navigate(target, { replace: true });
+      navigate(target, { replace: true, viewTransition: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -71,7 +78,7 @@ export function LoginPage(): JSX.Element {
 
       <section className="relative z-10 flex min-h-screen items-center justify-center px-5 py-10">
         <div className="grid w-full max-w-5xl items-center gap-10 lg:grid-cols-[minmax(0,1fr)_396px]">
-          <div className="hidden lg:block [text-shadow:0_2px_30px_rgba(0,0,0,0.72)]">
+          <div className="cdsh-rise hidden lg:block [text-shadow:0_2px_30px_rgba(0,0,0,0.72)]" style={{ animationDelay: '.05s' }}>
             <div className="inline-flex items-center gap-3 rounded-full border border-white/12 bg-white/[0.035] px-4 py-2 text-xs uppercase tracking-normal text-white/70 backdrop-blur-xl">
               <span className="h-1.5 w-1.5 rounded-full bg-[#dbe4ee] shadow-[0_0_14px_#dbe4ee]" />
               Operator gate
@@ -87,7 +94,7 @@ export function LoginPage(): JSX.Element {
             </p>
           </div>
 
-          <div className="rounded-[1.35rem] border border-white/12 bg-white/[0.035] p-1.5 shadow-[0_32px_120px_rgba(0,0,0,0.46)] backdrop-blur-xl">
+          <div className="cdsh-rise rounded-[1.35rem] border border-white/12 bg-white/[0.035] p-1.5 shadow-[0_32px_120px_rgba(0,0,0,0.46)] backdrop-blur-xl" style={{ animationDelay: '.18s' }}>
             <form onSubmit={submit} className="rounded-[1.05rem] border border-white/12 bg-white/[0.025] px-5 py-5">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
@@ -149,7 +156,7 @@ export function LoginPage(): JSX.Element {
                   </a>
                 </Button>
                 <Button asChild type="button" variant="outline" className="h-10 rounded-lg border-white/12 bg-white/[0.035] text-white hover:bg-white/10 hover:text-white">
-                  <a href="/">Home</a>
+                  <Link to="/" viewTransition>Home</Link>
                 </Button>
               </div>
 

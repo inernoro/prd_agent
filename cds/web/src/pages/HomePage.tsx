@@ -23,6 +23,19 @@ export function HomePage(): JSX.Element {
   const [feedOff, setFeedOff] = useState(false);
 
   useEffect(() => {
+    // 预取登录页 + 控制台首页的 lazy chunk:用户还在首页停留时就把下一跳的代码
+    // 拉进内存,点击时 React 不会触发 Suspense fallback(那个全屏 loader 就是
+    // "白屏跳一下"的根因)。配合 Link 的 viewTransition,实现首页→登录的丝滑溶解。
+    const preload = () => {
+      void import('@/pages/LoginPage');
+      void import('@/pages/ProjectListPage');
+    };
+    const ric = (window as unknown as { requestIdleCallback?: (cb: () => void) => number }).requestIdleCallback;
+    if (typeof ric === 'function') ric(preload);
+    else window.setTimeout(preload, 200);
+  }, []);
+
+  useEffect(() => {
     let fadeTimer: number | undefined;
     const timer = window.setInterval(() => {
       setFeedOff(true);
@@ -65,14 +78,14 @@ export function HomePage(): JSX.Element {
             <b>Cloud Dev Suite</b>
           </Link>
           <div className="cdsh-navlinks">
-            <Link to="/project-list">Console</Link>
-            <Link to="/project-list">Branches</Link>
-            <Link to="/cds-settings">Settings</Link>
-            <Link to="/login">Access</Link>
+            <Link to="/project-list" viewTransition>Console</Link>
+            <Link to="/project-list" viewTransition>Branches</Link>
+            <Link to="/cds-settings" viewTransition>Settings</Link>
+            <Link to="/login" viewTransition>Access</Link>
           </div>
           <div className="cdsh-navcta">
-            <Link className="cdsh-btn cdsh-btn-ghost" to="/login">Log in</Link>
-            <Link className="cdsh-btn cdsh-btn-primary" to="/login?redirect=%2Fproject-list">
+            <Link className="cdsh-btn cdsh-btn-ghost" to="/login" viewTransition>Log in</Link>
+            <Link className="cdsh-btn cdsh-btn-primary" to="/login?redirect=%2Fproject-list" viewTransition>
               Enter Console
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
             </Link>
@@ -94,11 +107,11 @@ export function HomePage(): JSX.Element {
               webhooks and a preview URL — without ever breaking the control plane.
             </p>
             <div className="cdsh-cta cdsh-rise" style={{ animationDelay: '.45s' }}>
-              <Link className="cdsh-btn cdsh-btn-primary cdsh-btn-lg" to="/login?redirect=%2Fproject-list">
+              <Link className="cdsh-btn cdsh-btn-primary cdsh-btn-lg" to="/login?redirect=%2Fproject-list" viewTransition>
                 Enter Console
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
               </Link>
-              <Link className="cdsh-btn cdsh-btn-ghost cdsh-btn-lg" to="/login">System Access</Link>
+              <Link className="cdsh-btn cdsh-btn-ghost cdsh-btn-lg" to="/login" viewTransition>System Access</Link>
             </div>
             <div className="cdsh-meta-row cdsh-rise" style={{ animationDelay: '.55s' }}>
               <span className="cdsh-meta">
