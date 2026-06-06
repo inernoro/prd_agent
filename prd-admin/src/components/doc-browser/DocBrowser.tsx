@@ -1600,6 +1600,8 @@ export function DocBrowser({
   // 删除权限逐条判定用（公开库 canCreate 对任意登录者为 true，但删除仅作者/库主，Codex P2）
   const [commentsIsOwner, setCommentsIsOwner] = useState(false);
   const [commentsViewerId, setCommentsViewerId] = useState<string | null>(null);
+  // 其它面板（批注栏/内联/composer）增删评论后自增，驱动已打开的抽屉重拉，避免抽屉与正文数据脱节（Bugbot Medium）
+  const [commentsSyncTick, setCommentsSyncTick] = useState(0);
   // 批注栏 ↔ 正文高亮联动：hover 某条批注卡 → 命中分组 key → 对应高亮微亮
   const [hoveredCommentKey, setHoveredCommentKey] = useState<string | null>(null);
   // 激活态（点正文气泡或点批注卡）：高亮加亮 + 批注卡升起 + 画连线，一次只激活一条
@@ -1684,6 +1686,7 @@ export function DocBrowser({
       setCommentsCanCreate(res.data.canCreate);
       setCommentsIsOwner(!!res.data.isOwner);
       setCommentsViewerId(res.data.viewerUserId ?? null);
+      setCommentsSyncTick((t) => t + 1);
     }
   }, [trackedEntryForComments, inlineCommentShareToken]);
 
@@ -1741,6 +1744,7 @@ export function DocBrowser({
         commentCountFetchIdRef.current += 1;
         setInlineCommentItems((prev) => prev.filter((c) => c.id !== comment.id));
         setCommentCount((c) => Math.max(0, c - 1));
+        setCommentsSyncTick((t) => t + 1);
       }
     } else {
       toast.error('删除失败', res.error?.message);
@@ -3192,6 +3196,7 @@ export function DocBrowser({
           entryId={trackedEntryForComments.id}
           entryTitle={trackedEntryForComments.title}
           shareToken={inlineCommentShareToken}
+          syncTick={commentsSyncTick}
           pendingSelection={pendingSelection}
           onClearPending={() => setPendingSelection(null)}
           onLocate={(text) => {

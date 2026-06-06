@@ -18,7 +18,7 @@
 
 输出：先打印人类可读的批注清单，最后打印一行 `COMMENTS_JSON: {...}` 供智能体解析。
 """
-import argparse, json, os, subprocess, time, sys, urllib.parse, datetime
+import argparse, json, os, subprocess, time, sys, urllib.parse, datetime, re
 
 
 def parse_iso(s):
@@ -74,11 +74,14 @@ def resolve_store_id(H, base, store_arg, default_name):
     want = (store_arg or default_name or "").strip()
     if not want:
         raise SystemExit("未指定 --store，且 config.report.storeName 为空")
-    # 先按 id 直查（命中即返回）
-    direct = curl(H + [f"{base}/stores/{want}"])
-    if isinstance(direct, dict) and direct.get("success") and direct.get("data", {}).get("id"):
-        return direct["data"]["id"], direct["data"].get("name", want)
-    # 否则按名字在列表里找
+    # 仅当看起来像 store id（32 位十六进制 Guid）才按 id 直查；否则直接按名字查。
+    # 库名常含空格/中文（如「验收报告」「Acceptance Reports」），拼进 /stores/{want} 会是非法 URL，
+    # curl() 拿不到 JSON 会在回退到名字查找前就抛错（Codex P2）。
+    if re.fullmatch(r"[0-9a-fA-F]{32}", want):
+        direct = curl(H + [f"{base}/stores/{want}"])
+        if isinstance(direct, dict) and direct.get("success") and (direct.get("data") or {}).get("id"):
+            return direct["data"]["id"], direct["data"].get("name", want)
+    # 按名字在列表里找
     listed = curl(H + [f"{base}/stores?pageSize=100"])
     items = (listed.get("data") or {}).get("items") or []
     match = [s for s in items if s.get("name") == want]

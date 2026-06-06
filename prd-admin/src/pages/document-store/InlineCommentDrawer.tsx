@@ -42,6 +42,8 @@ export type InlineCommentDrawerProps = {
   entryTitle: string;
   /** 分享视图传入分享 token，用于私有库读取评论气泡（PR #685 Codex P1） */
   shareToken?: string;
+  /** 父级（批注栏/内联/composer）增删评论后自增，抽屉据此重拉，避免与正文数据脱节（Bugbot Medium） */
+  syncTick?: number;
   pendingSelection: PendingSelection | null;
   onClearPending: () => void;
   /** 点击某条评论时：尝试 scroll 到其 selectedText 在 DOM 中的位置 */
@@ -53,6 +55,7 @@ export function InlineCommentDrawer({
   entryId,
   entryTitle,
   shareToken,
+  syncTick,
   pendingSelection,
   onClearPending,
   onLocate,
@@ -79,7 +82,8 @@ export function InlineCommentDrawer({
 
   useEffect(() => {
     load();
-  }, [load]);
+    // syncTick 变化（其它面板增删）时重拉，保持抽屉与正文数据一致（Bugbot Medium）
+  }, [load, syncTick]);
 
   // 选中新内容时自动聚焦 textarea
   useEffect(() => {

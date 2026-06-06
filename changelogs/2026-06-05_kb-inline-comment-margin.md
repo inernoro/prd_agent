@@ -15,3 +15,5 @@
 | fix | prd-admin | 评论加载 effect 改以 entryId 为依赖，后台列表刷新（同一条目新数组引用）不再清掉正在写的就地浮层/草稿 |
 | fix | prd-admin | 评论删除按钮 stopPropagation，避免点删除冒泡到批注卡 root 误切换激活态 |
 | fix | prd-agent | read_comments.py --entry --since 改为解析 datetime 再比较，兼容带时区偏移的 ISO 时间 |
+| fix | prd-admin | 其它面板增删评论后自增 syncTick 驱动已打开的抽屉重拉，抽屉不再与正文数据脱节 |
+| fix | prd-agent | read_comments.py 仅对疑似 storeId（32位hex）做直查，含空格/中文的库名直接走名称查找，不再因非法URL报错 |
