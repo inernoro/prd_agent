@@ -207,7 +207,7 @@ public class ProductAgentController : ControllerBase
 
     /// <summary>添加团队成员（批量）。需产品成员管理权限。</summary>
     [HttpPost("products/{productId}/members")]
-    public async Task<IActionResult> AddProductMembers(string productId, [FromBody] AddMembersRequest request)
+    public async Task<IActionResult> AddProductMembers(string productId, [FromBody] AddProductMembersRequest request)
     {
         var userId = GetUserId();
         var product = await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).FirstOrDefaultAsync();
@@ -249,7 +249,7 @@ public class ProductAgentController : ControllerBase
 
     /// <summary>设置成员角色（admin=指派产品管理员 / member=撤销）。需指派权限，不可改负责人。</summary>
     [HttpPut("products/{productId}/members/{memberUserId}/role")]
-    public async Task<IActionResult> SetProductMemberRole(string productId, string memberUserId, [FromBody] SetMemberRoleRequest request)
+    public async Task<IActionResult> SetProductMemberRole(string productId, string memberUserId, [FromBody] SetProductMemberRoleRequest request)
     {
         var userId = GetUserId();
         var product = await _db.Products.Find(p => p.Id == productId && !p.IsDeleted).FirstOrDefaultAsync();
@@ -2312,12 +2312,12 @@ public class UpsertProductRequest
     public List<string>? MemberIds { get; set; }
 }
 
-public class AddMembersRequest
+public class AddProductMembersRequest
 {
     public List<string>? UserIds { get; set; }
 }
 
-public class SetMemberRoleRequest
+public class SetProductMemberRoleRequest
 {
     public string? Role { get; set; }
 }
