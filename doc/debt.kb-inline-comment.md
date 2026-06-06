@@ -22,6 +22,7 @@
 | 4 | 批注栏 ↔ TOC | 有评论时默认批注栏取代 TOC，「收起」临时切回；未做并存 | 评估窄屏并存 / 可拖拽分栏 |
 | 5 | 回读闭环 | read_comments.py 为按需轮询（GET recent-comments） | 监听式 webhook/SSE 主动推送 |
 | 6 | 布局偏好存储 | localStorage（设备本地，符合 no-localstorage 例外清单） | 如需跨设备同步，迁移到 user_preferences |
+| 7 | 同一短语多处分别评论 | 完全相同的选中文字在文档不同位置被分别评论时，按归一化文本合并为一张卡（两处的评论混在一起），正文只高亮其中一处，回复用首处偏移。**产品决定保持现状**（2026-06-06 用户拍板，低频场景）。group key = 归一化文本 是 overlay 高亮解析/连线/激活态共享的身份，按出现位置拆分属较大重构 | 如需精确区分：group key 带 contextBefore/offset，overlay 改为逐出现位置解析锚点 |
 
 ## 相关
 
