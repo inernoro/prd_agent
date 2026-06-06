@@ -1715,6 +1715,9 @@ export function DocBrowser({
     if (res.success) {
       // 慢删除可能在切档后才返回：仅当该评论属于当前条目才动列表/计数（Bugbot Medium）
       if (comment.entryId === trackedEntryForComments?.id) {
+        // 先 bump fetchId：作废所有在途的 refreshComments（抽屉关闭/创建后刷新）响应，
+        // 否则它们带着删除前的服务器快照晚到，会把已删评论“复活”回列表/计数（Bugbot Medium）
+        commentCountFetchIdRef.current += 1;
         setInlineCommentItems((prev) => prev.filter((c) => c.id !== comment.id));
         setCommentCount((c) => Math.max(0, c - 1));
       }
