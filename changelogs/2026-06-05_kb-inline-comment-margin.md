@@ -17,3 +17,4 @@
 | fix | prd-agent | read_comments.py --entry --since 改为解析 datetime 再比较，兼容带时区偏移的 ISO 时间 |
 | fix | prd-admin | 其它面板增删评论后自增 syncTick 驱动已打开的抽屉重拉，抽屉不再与正文数据脱节 |
 | fix | prd-agent | read_comments.py 仅对疑似 storeId（32位hex）做直查，含空格/中文的库名直接走名称查找，不再因非法URL报错 |
+| fix | prd-admin | 抽屉内增删评论回调父级刷新（margin/overlay/计数反向同步）；抽屉 load 加 stale-response 守卫防旧响应覆盖 |

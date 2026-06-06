@@ -44,6 +44,8 @@ export type InlineCommentDrawerProps = {
   shareToken?: string;
   /** 父级（批注栏/内联/composer）增删评论后自增，抽屉据此重拉，避免与正文数据脱节（Bugbot Medium） */
   syncTick?: number;
+  /** 抽屉内增删后回调父级刷新，让 margin/overlay/计数同步（Bugbot Medium：反向同步） */
+  onChanged?: () => void;
   pendingSelection: PendingSelection | null;
   onClearPending: () => void;
   /** 点击某条评论时：尝试 scroll 到其 selectedText 在 DOM 中的位置 */
@@ -56,6 +58,7 @@ export function InlineCommentDrawer({
   entryTitle,
   shareToken,
   syncTick,
+  onChanged,
   pendingSelection,
   onClearPending,
   onLocate,
@@ -67,10 +70,14 @@ export function InlineCommentDrawer({
   const [draft, setDraft] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // load 的 stale-response 守卫：entryId/syncTick 变化会触发重叠 fetch，慢的旧响应不得覆盖新结果（Bugbot Medium）
+  const loadIdRef = useRef(0);
 
   const load = useCallback(async () => {
+    const myId = ++loadIdRef.current;
     setLoading(true);
     const res = await listInlineComments(entryId, shareToken);
+    if (myId !== loadIdRef.current) return; // 有更新的 load 已发起，丢弃本次旧响应
     if (res.success) {
       setComments(res.data.items);
       setCanCreate(res.data.canCreate);
@@ -114,10 +121,11 @@ export function InlineCommentDrawer({
       setDraft('');
       onClearPending();
       await load();
+      onChanged?.(); // 通知父级刷新 margin/overlay/计数（反向同步）
     } else {
       toast.error('添加失败', res.error?.message);
     }
-  }, [pendingSelection, draft, entryId, onClearPending, load]);
+  }, [pendingSelection, draft, entryId, onClearPending, load, onChanged]);
 
   const handleDelete = useCallback(async (comment: DocumentInlineComment) => {
     const ok = await systemDialog.confirm({
@@ -132,10 +140,11 @@ export function InlineCommentDrawer({
     if (res.success) {
       toast.success('已删除');
       setComments(prev => prev.filter(c => c.id !== comment.id));
+      onChanged?.(); // 通知父级刷新 margin/overlay/计数（反向同步）
     } else {
       toast.error('删除失败', res.error?.message);
     }
-  }, []);
+  }, [onChanged]);
 
   const activeComments = comments.filter(c => c.status === 'active');
   const orphanedComments = comments.filter(c => c.status === 'orphaned');

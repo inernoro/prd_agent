@@ -3197,6 +3197,7 @@ export function DocBrowser({
           entryTitle={trackedEntryForComments.title}
           shareToken={inlineCommentShareToken}
           syncTick={commentsSyncTick}
+          onChanged={() => { void refreshComments(); }}
           pendingSelection={pendingSelection}
           onClearPending={() => setPendingSelection(null)}
           onLocate={(text) => {
