@@ -205,7 +205,7 @@ public class SpeechAgentController : ControllerBase
 
         await WriteSseAsync("phase", new { phase = "preparing", message = "准备中..." });
 
-        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+        using var llmCtx = _llmRequestContext.BeginScope(new LlmRequestContext(
             RequestId: Guid.NewGuid().ToString("N"),
             GroupId: null,
             SessionId: null,
