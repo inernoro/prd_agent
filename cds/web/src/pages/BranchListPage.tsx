@@ -4140,9 +4140,9 @@ function BranchCard({
             aria-hidden
           />
           <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <div className="flex min-w-0 items-center gap-1.5">
               <h3
-                className="min-w-0 flex-[0_1_auto] break-all text-[17px] font-semibold leading-7 tracking-tight"
+                className="min-w-0 flex-1 truncate text-[17px] font-semibold leading-7 tracking-tight"
                 title={branch.branch}
               >
                 {branch.branch}
