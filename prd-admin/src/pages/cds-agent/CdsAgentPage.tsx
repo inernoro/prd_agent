@@ -969,7 +969,7 @@ export default function CdsAgentPage() {
   const [browserTargetIndex, setBrowserTargetIndex] = useState('0');
   const [browserActionText, setBrowserActionText] = useState('/cds-agent');
   const [draft, setDraft] = useState({
-    title: '远程巡检任务',
+    title: '',
     connectionId: '',
     runtimeProfileId: '',
     toolPolicy: 'readonly-auto',
@@ -2678,7 +2678,7 @@ export default function CdsAgentPage() {
         runtime: activeProfile?.runtime ?? 'claude-sdk',
         model: activeProfile?.model,
         runtimeProfileId: activeProfile?.id,
-        title: draft.title,
+        title: draft.title.trim() || prompt.trim().slice(0, 28) || '新会话',
         toolPolicy: draft.toolPolicy,
         gitRepository: draft.gitRepository.trim() || undefined,
         gitRef: draft.gitRef.trim() || undefined,
@@ -3819,10 +3819,11 @@ export default function CdsAgentPage() {
 	          value={prompt}
 	          onChange={(e) => setPrompt(e.target.value)}
 	          rows={2}
+	          autoFocus
 	          placeholder={simpleTaskMode === 'code'
-	            ? '告诉 Agent 要巡检什么，例如：找出当前仓库最值得修复的一个小问题，并说明如何提交 PR'
-	            : '直接告诉 Agent 你想问什么，不需要先填写仓库'}
-	          className="min-h-[72px] w-full resize-none rounded-xl bg-transparent px-2 py-2 text-base leading-relaxed text-white outline-none placeholder:text-white/34"
+	            ? '在此输入：告诉 Agent 要巡检什么，例如「找出当前仓库最值得修复的一个小问题，并说明如何提交 PR」'
+	            : '在此输入你的问题，回车发送（无需先填仓库）'}
+	          className="min-h-[80px] w-full resize-none rounded-xl border border-white/15 bg-white/5 px-3.5 py-3 text-base leading-relaxed text-white outline-none transition placeholder:text-white/40 focus:border-sky-400/60 focus:bg-white/[0.07] focus:ring-2 focus:ring-sky-400/25"
 	        />
           {simpleRunState && (
             <div
@@ -3883,7 +3884,7 @@ export default function CdsAgentPage() {
                 />
               </>
             ) : (
-              <div className="min-w-[220px] flex-1 truncate rounded-lg px-3 py-2 text-xs text-white/42" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.07)' }}>
+              <div className="min-w-[200px] flex-1 truncate text-[11px] text-white/35">
                 对话模式不要求仓库；需要代码上下文时切到 Code 巡检
               </div>
             )}
@@ -5022,7 +5023,8 @@ export default function CdsAgentPage() {
               <input
                 value={draft.title}
                 onChange={(e) => setDraft((prev) => ({ ...prev, title: e.target.value }))}
-                className="w-full rounded-md px-3 py-2 text-sm text-white outline-none"
+                placeholder="会话名称（留空自动从首条消息命名）"
+                className="w-full rounded-md px-3 py-2 text-sm text-white outline-none placeholder:text-white/30"
                 style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.12)' }}
               />
               <button
