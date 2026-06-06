@@ -1,0 +1,2 @@
+| feat | prd-api | 产品管理智能体新增产品团队成员管理与产品管理员指派（Product.AdminIds + 成员 list/add/remove/role 端点，分权：MAP管理员/负责人指派产品管理员，产品管理员增删成员） |
+| feat | prd-admin | 产品管理智能体单产品视图新增「团队」tab：成员角色徽章、添加/移除、指派/撤销产品管理员（复用 UserSearchSelect） |

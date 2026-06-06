@@ -2,7 +2,7 @@
 type: debt
 title: 产品管理智能体工程债务台账
 status: active
-updated: 2026-06-02
+updated: 2026-06-06
 ---
 
 # 产品管理智能体（product-agent）债务台账
@@ -86,3 +86,15 @@ P0/P1/P2/P3 四阶段研发全生命周期能力已交付（流转/处理人/缺
 | 25 | 需求 CSV 导入/导出 | P2 已交付 |
 
 剩余仅 P3 锦上添花：@ 内联弹层、图谱 dagre 自动布局（功能 CSV 导入未做，需要时仿需求 import 端点即可）。
+
+## 团队成员管理（2026-06-06）
+
+单产品视图新增「团队」tab：成员列表（负责人/产品管理员/成员三级角色）、增删成员、指派/撤销产品管理员。后端 `Product.AdminIds` 字段 + 4 个成员端点（list/add/remove/role）。分权：仅 MAP 管理员/负责人可指派产品管理员；产品管理员可增删普通成员。MAP 管理员（系统 admin 默认含全部权限）进任意产品即可指派该产品的产品管理员，入口统一。
+
+### 已知边界
+
+| # | 边界 | 说明 | 状态 |
+|---|------|------|------|
+| 26 | 成员档案为扁平 id 列表 | `Product.MemberIds/AdminIds` 仅存 UserId，无职位/加入时间/备注；如需更丰富成员档案（仿 ReportTeamMember），后续可升级为独立集合 `product_team_members`，但需迁移现有 MemberIds + 改全部 60+ 访问点，按需再做 | 后续(中) |
+| 27 | 选人未过滤已有成员 | 添加成员的 UserSearchSelect 未排除已在列表的用户；重复添加后端 `$addToSet` 幂等无害，仅 UX 小瑕 | 后续(小) |
+| 28 | AdminIds 无索引 | 登记给 DBA：`products` 可加 `{ AdminIds:1 }`（按 no-auto-index 规则不自动建） | DBA |
