@@ -3005,8 +3005,7 @@ export function DocBrowser({
               {/* 激活批注的牵引连线（active-only，业界 Word/Figma 做法）：仅 margin 布局且有激活项时出现 */}
               {inlineCommentLayout === 'margin' && !marginCollapsed && !editMode && !contentLoading
                 && tocContent && inlineCommentItems.length > 0 && activeCommentKey && (
-                <InlineCommentConnector activeKey={activeCommentKey} color={threadColor(activeCommentKey)} />
-              )}
+                <InlineCommentConnector activeKey={activeCommentKey} color={threadColor(activeCommentKey)} boundsRef={contentAreaRef} />)}
             </div>
           </>
         ) : (

@@ -2,3 +2,4 @@
 | feat | prd-admin | 划词评论支持「批注栏 / 内联」布局切换（右上角，个人偏好持久化），并改为选区就地输入（取代右侧抽屉） |
 | feat | prd-api | 新增知识库最近批注聚合接口 GET /api/document-store/stores/{storeId}/recent-comments（按时间倒序，供验收智能体回读用户在验收文档上的批注） |
 | feat | prd-admin | 知识库批注强关联：同色锚定（高亮下划线=卡片色条同色）+ 点气泡/卡片激活联动 + active-only 牵引连线 + 批注密集时折叠成一行 |
+| fix | prd-admin | 修复批注牵引连线两个边界：高亮/卡片滚出正文可视区时不再画线（避免飞到窗口角/越过顶栏）；连线改连续 rAF 直接改 DOM，跟手不再延迟抖动 |
