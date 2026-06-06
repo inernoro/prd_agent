@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { EChartsOption } from 'echarts';
-import { Plus, Trash2, GitBranch, ListChecks, Puzzle, Users, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard, Table2, BarChart3, Download, Upload } from 'lucide-react';
+import { Plus, Trash2, GitBranch, ListChecks, Puzzle, Users, UserCog, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard, Table2, BarChart3, Download, Upload } from 'lucide-react';
 import { EChart } from '@/components/charts/EChart';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
@@ -17,6 +17,7 @@ import { VersionRelationModal, ProductKnowledgePanel, DefectLinkerModal } from '
 import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { KanbanBoard } from './KanbanBoard';
 import { RtmMatrix } from './RtmMatrix';
+import { ProductTeamTab } from './ProductTeamSection';
 import { ReportsTab } from './ReportsTab';
 import { BatchBar } from './BatchBar';
 import { UpgradeRequestsTab } from './UpgradeRequestsTab';
@@ -46,7 +47,7 @@ import { toCSV, downloadCSV, parseCSV } from '@/lib/csv';
 import { useProductCategories, categoryLabel } from './productCategories';
 import { useEffectiveWorkflow } from './DynamicForm';
 
-type Section = 'overview' | 'versions' | 'requirements' | 'features' | 'board' | 'rtm' | 'reports' | 'defects' | 'customers' | 'knowledge' | 'graph';
+type Section = 'overview' | 'versions' | 'requirements' | 'features' | 'board' | 'rtm' | 'reports' | 'defects' | 'customers' | 'team' | 'knowledge' | 'graph';
 
 const CHART_COLORS = ['#22D3EE', '#FBBF24', '#A78BFA', '#4ADE80', '#F87171', '#60A5FA'];
 
@@ -79,6 +80,7 @@ const NAV: NavItem<Section>[] = [
   { key: 'reports', label: '报表', icon: BarChart3 },
   { key: 'defects', label: '缺陷', icon: Bug },
   { key: 'customers', label: '客户', icon: Users },
+  { key: 'team', label: '团队', icon: UserCog },
   { key: 'knowledge', label: '知识库', icon: BookOpen },
   { key: 'graph', label: '图谱', icon: Share2 },
 ];
@@ -122,7 +124,7 @@ export function SingleProductView() {
 
   const SECTION_TITLE: Record<Section, string> = {
     overview: '概览', versions: '版本（含升级申请）', requirements: '需求', features: '功能', board: '看板', rtm: '追溯矩阵', reports: '报表',
-    defects: '缺陷', customers: '客户', knowledge: '知识库', graph: '图谱',
+    defects: '缺陷', customers: '客户', team: '团队', knowledge: '知识库', graph: '图谱',
   };
 
   return (
@@ -168,6 +170,7 @@ export function SingleProductView() {
           {active === 'reports' && <ReportsTab productId={product.id} />}
           {active === 'defects' && <DefectsTab productId={product.id} />}
           {active === 'customers' && <CustomersTab productId={product.id} />}
+          {active === 'team' && <ProductTeamTab productId={product.id} />}
         </SectionShell>
       )}
     </ProductAgentLayout>

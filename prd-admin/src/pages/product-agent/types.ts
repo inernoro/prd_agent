@@ -58,12 +58,27 @@ export interface Product {
   ownerId: string;
   ownerName?: string | null;
   memberIds: string[];
+  adminIds: string[];
   versionCount: number;
   requirementCount: number;
   featureCount: number;
   defectCount: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export type ProductMemberRole = 'owner' | 'admin' | 'member';
+
+export interface ProductMember {
+  userId: string;
+  displayName: string;
+  role: ProductMemberRole;
+}
+
+export interface ProductMembersResult {
+  members: ProductMember[];
+  canManageMembers: boolean;
+  canManageAdmins: boolean;
 }
 
 export interface ProductVersion {

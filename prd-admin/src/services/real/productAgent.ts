@@ -19,6 +19,7 @@ import type {
   ProductEntityType,
   ProductCategory,
   DescTemplate,
+  ProductMembersResult,
 } from '@/pages/product-agent/types';
 
 interface ListWrap<T> {
@@ -52,6 +53,20 @@ export function updateProduct(id: string, body: Partial<Product>): Promise<ApiRe
 }
 export function deleteProduct(id: string) {
   return apiRequest<{ deleted: boolean }>(`/api/product/products/${id}`, { method: 'DELETE' });
+}
+
+// ── 产品团队成员 ──
+export function listProductMembers(productId: string): Promise<ApiResponse<ProductMembersResult>> {
+  return apiRequest<ProductMembersResult>(`/api/product/products/${productId}/members`);
+}
+export function addProductMembers(productId: string, userIds: string[]) {
+  return apiRequest<{ added: number }>(`/api/product/products/${productId}/members`, { method: 'POST', body: { userIds } });
+}
+export function removeProductMember(productId: string, userId: string) {
+  return apiRequest<{ removed: boolean }>(`/api/product/products/${productId}/members/${userId}`, { method: 'DELETE' });
+}
+export function setProductMemberRole(productId: string, userId: string, role: 'admin' | 'member') {
+  return apiRequest<{ role: string }>(`/api/product/products/${productId}/members/${userId}/role`, { method: 'PUT', body: { role } });
 }
 
 // ── 版本 ──
