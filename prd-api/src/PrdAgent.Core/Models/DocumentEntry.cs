@@ -41,6 +41,9 @@ public class DocumentEntry
     /// <summary>标签</summary>
     public List<string> Tags { get; set; } = new();
 
+    /// <summary>分类（知识库一等维度，单值，取自所属 DocumentStore.Categories；null=未分类）</summary>
+    public string? Category { get; set; }
+
     /// <summary>扩展元数据（键值对，便于不同来源携带额外信息）</summary>
     public Dictionary<string, string> Metadata { get; set; } = new();
 

@@ -376,6 +376,16 @@ public class DocumentStoreController : ControllerBase
                 .ToDictionary(kv => kv.Key.Trim(), kv => kv.Value);
             updates.Add(Builders<DocumentStore>.Update.Set(s => s.TagColors, sanitized));
         }
+        if (request.Categories != null)
+        {
+            // 去空、去重、保序
+            var cats = request.Categories
+                .Select(c => (c ?? "").Trim())
+                .Where(c => c.Length > 0)
+                .Distinct()
+                .ToList();
+            updates.Add(Builders<DocumentStore>.Update.Set(s => s.Categories, cats));
+        }
 
         updates.Add(Builders<DocumentStore>.Update.Set(s => s.UpdatedAt, DateTime.UtcNow));
 
@@ -535,6 +545,7 @@ public class DocumentStoreController : ControllerBase
             ContentType = request.ContentType ?? string.Empty,
             FileSize = request.FileSize,
             Tags = request.Tags ?? new List<string>(),
+            Category = string.IsNullOrWhiteSpace(request.Category) ? null : request.Category.Trim(),
             Metadata = metadata,
             CreatedBy = userId,
             CreatedByName = userName,
@@ -727,6 +738,9 @@ public class DocumentStoreController : ControllerBase
             updates.Add(Builders<DocumentEntry>.Update.Set(e => e.Summary, request.Summary.Trim()));
         if (request.Tags != null)
             updates.Add(Builders<DocumentEntry>.Update.Set(e => e.Tags, request.Tags));
+        if (request.Category != null)
+            updates.Add(Builders<DocumentEntry>.Update.Set(e => e.Category,
+                string.IsNullOrWhiteSpace(request.Category) ? null : request.Category.Trim()));
         if (request.Metadata != null)
             updates.Add(Builders<DocumentEntry>.Update.Set(e => e.Metadata, request.Metadata));
 
@@ -4339,6 +4353,8 @@ public class UpdateDocumentStoreRequest
     public string? TemplateKey { get; set; }
     /// <summary>用户自定义 tag 颜色映射（null=不变；空字典=清空）</summary>
     public Dictionary<string, string>? TagColors { get; set; }
+    /// <summary>可管理的分类清单（null=不变；空列表=清空）</summary>
+    public List<string>? Categories { get; set; }
 }
 
 public class SetStoreTeamsRequest
@@ -4358,6 +4374,7 @@ public class AddDocumentEntryRequest
     public string? ContentType { get; set; }
     public long FileSize { get; set; }
     public List<string>? Tags { get; set; }
+    public string? Category { get; set; }
     public Dictionary<string, string>? Metadata { get; set; }
 }
 
@@ -4409,6 +4426,8 @@ public class UpdateDocumentEntryRequest
     public string? Title { get; set; }
     public string? Summary { get; set; }
     public List<string>? Tags { get; set; }
+    /// <summary>分类（传空字符串=清除分类；null=不变）</summary>
+    public string? Category { get; set; }
     public Dictionary<string, string>? Metadata { get; set; }
 }
 
