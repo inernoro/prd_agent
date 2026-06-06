@@ -745,6 +745,8 @@
 - [CDS 绝对可视化一键部署 · 完整报告](report.cds-visual-deploy) `report.cds-visual-deploy`
 - [CDS Agent 商业级可用闭环目标审计报告](report.cds-agent-goal-completion-audit-2026-05-19) `report.cds-agent-goal-completion-audit-2026-05-19`
   > CDS Agent 商业级可用闭环目标的完成度审计报告（2026-05-19）
+- [CDS Agent 体验修复验收报告](report.cds-agent-ux-acceptance-2026-06-06) `report.cds-agent-ux-acceptance-2026-06-06`
+  > 用户 9 问逐条验收：发送卡死/不流式/噪声/展开空已修并取证；工具循环/线程不停在借来的 runtime（缓解）；工作区文件注入是需新建的接缝（gates md→ppt 案例）
 
 - [CDS Agent P4-1 远端发布前验收与试用入口报告](report.cds-agent-p4-1-remote-preflight-2026-05-19) `report.cds-agent-p4-1-remote-preflight-2026-05-19`
   > CDS Agent P4-1 远端发布前验收与试用入口的验收报告
