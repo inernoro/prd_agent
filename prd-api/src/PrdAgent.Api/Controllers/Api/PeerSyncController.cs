@@ -199,12 +199,15 @@ public class PeerSyncController : ControllerBase
     // 用户发起（需登录）
     // ═══════════════════════════════════════════════════════════════
 
-    /// <summary>列出可发送的对端节点（已连接，不含 secret）+ 本节点支持的资源能力。</summary>
+    /// <summary>列出可发送的对端节点（已连接，不含 secret）+ 本节点支持的资源能力。
+    /// 过滤掉 RemoteNodeId == selfNodeId 的影子记录（CDS 共享 DB 部署的产物，生产环境不会有）。</summary>
     [Authorize]
     [HttpGet("nodes")]
     public async Task<IActionResult> ListNodes(CancellationToken ct)
     {
-        var nodes = await _db.PeerNodes.Find(n => n.Status == PeerNodeStatus.Connected)
+        var selfNodeId = await _peer.GetSelfNodeIdAsync(ct);
+        var nodes = await _db.PeerNodes
+            .Find(n => n.Status == PeerNodeStatus.Connected && n.RemoteNodeId != selfNodeId)
             .SortBy(n => n.DisplayName).ToListAsync(ct);
         return Ok(ApiResponse<object>.Ok(new
         {

@@ -66,12 +66,16 @@ public class AdminPeerNodesController : ControllerBase
         return $"{scheme}://{host}{Request.PathBase}".TrimEnd('/');
     }
 
-    /// <summary>列出已配对节点 + 本节点标识（不返回 SharedSecret）。</summary>
+    /// <summary>列出已配对节点 + 本节点标识（不返回 SharedSecret）。
+    /// 过滤掉 RemoteNodeId == selfNodeId 的记录：这些是「对端创建过来指向我自己」的影子记录，
+    /// 生产环境分库部署根本不会有；CDS 共享 DB 部署下会同时看到两条，导致本端点击「测试」走自指
+    /// 防护被拦 401，UX 极差。过滤后视图一致。</summary>
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct)
     {
         var selfNodeId = await _peer.GetSelfNodeIdAsync(ct);
-        var nodes = await _db.PeerNodes.Find(_ => true).SortByDescending(n => n.UpdatedAt).ToListAsync(ct);
+        var nodes = await _db.PeerNodes.Find(n => n.RemoteNodeId != selfNodeId)
+            .SortByDescending(n => n.UpdatedAt).ToListAsync(ct);
         return Ok(ApiResponse<object>.Ok(new
         {
             selfNodeId,

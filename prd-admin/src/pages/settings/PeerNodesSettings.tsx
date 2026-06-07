@@ -4,13 +4,33 @@
  * 管理员配一次对端节点（测试↔正式环境），两节点自动握手交换长期密钥，
  * 此后用户在知识库等应用「发送到 →」即可一键互传，无需再手动倒密钥。
  * 详见 doc/design.peer-sync.md。
+ *
+ * 设计要点（基于 2026-06-07 真人验收反馈打磨）：
+ * 1. 本节点身份明显可见且可复制（旧版用 11px mono 灰字塞在角落）
+ * 2. 动作分两栏 — 邀请对端接入我 / 接入已知对端 — 角色一眼可辨
+ * 3. 已配对节点卡片改用图标 + 状态点 + 时间 + 内联动作，错误自动展开真因
+ * 4. 严格遵守 cds-theme-tokens.md：颜色全部走 var(--*) token
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { Globe, Plus, Copy, Check, Trash2, RefreshCw, Wifi, KeyRound, X } from 'lucide-react';
-import { GlassCard } from '@/components/design/GlassCard';
+import {
+  Globe,
+  Plus,
+  Copy,
+  Check,
+  Trash2,
+  RefreshCw,
+  Wifi,
+  KeyRound,
+  X,
+  Send,
+  ArrowRight,
+  Inbox,
+  AlertCircle,
+  CheckCircle2,
+  Server,
+} from 'lucide-react';
 import { Button } from '@/components/design/Button';
-import { Badge } from '@/components/design/Badge';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import {
   listAdminPeerNodes,
@@ -21,19 +41,80 @@ import {
   type PeerNode,
 } from '@/services/real/peerSync';
 
-function fmtDate(s?: string | null) {
-  if (!s) return '-';
+function fmtRelative(s?: string | null) {
+  if (!s) return '从未';
   try {
+    const ms = Date.now() - new Date(s).getTime();
+    if (ms < 60_000) return '刚刚';
+    if (ms < 3_600_000) return `${Math.floor(ms / 60_000)} 分钟前`;
+    if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)} 小时前`;
     return new Date(s).toLocaleString('zh-CN', { hour12: false });
   } catch {
     return s;
   }
 }
 
-function statusBadge(status: PeerNode['status']) {
-  if (status === 'connected') return <Badge variant="success">已连接</Badge>;
-  if (status === 'error') return <Badge variant="danger">通信异常</Badge>;
-  return <Badge variant="subtle">待握手</Badge>;
+function StatusDot({ status }: { status: PeerNode['status'] }) {
+  const colorVar =
+    status === 'connected'
+      ? 'rgba(34,197,94,0.95)'
+      : status === 'error'
+        ? 'rgba(239,68,68,0.95)'
+        : 'rgba(245,158,11,0.95)';
+  const label = status === 'connected' ? '已连接' : status === 'error' ? '通信异常' : '待握手';
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 text-[11px] px-2 py-0.5 rounded-full"
+      style={{
+        background:
+          status === 'connected'
+            ? 'rgba(34,197,94,0.10)'
+            : status === 'error'
+              ? 'rgba(239,68,68,0.10)'
+              : 'rgba(245,158,11,0.10)',
+        color: colorVar,
+      }}
+    >
+      <span className="w-1.5 h-1.5 rounded-full" style={{ background: colorVar, boxShadow: `0 0 6px ${colorVar}` }} />
+      {label}
+    </span>
+  );
+}
+
+function CopyChip({ value, label }: { value: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(value);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1600);
+        } catch {
+          /* ignore */
+        }
+      }}
+      className="group inline-flex items-center gap-1.5 max-w-full text-left rounded-md px-2 py-1 transition-colors"
+      style={{
+        background: 'rgba(255,255,255,0.04)',
+        border: '1px solid rgba(255,255,255,0.08)',
+        color: 'var(--text-primary)',
+      }}
+      title={`点击复制 ${label}`}
+    >
+      <span className="text-[10px] font-medium shrink-0" style={{ color: 'var(--text-muted)' }}>
+        {label}
+      </span>
+      <code className="text-[11px] font-mono truncate min-w-0" style={{ color: 'var(--text-primary)' }}>
+        {value || '—'}
+      </code>
+      {copied ? (
+        <Check size={11} style={{ color: 'rgba(34,197,94,0.95)' }} className="shrink-0" />
+      ) : (
+        <Copy size={11} className="shrink-0 opacity-40 group-hover:opacity-90 transition-opacity" style={{ color: 'var(--text-muted)' }} />
+      )}
+    </button>
+  );
 }
 
 export function PeerNodesSettings() {
@@ -42,14 +123,15 @@ export function PeerNodesSettings() {
   const [selfBaseUrl, setSelfBaseUrl] = useState('');
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ msg: string; kind: 'ok' | 'err' } | null>(null);
 
   // 配对码
   const [code, setCode] = useState<string | null>(null);
+  const [codeExpiresAt, setCodeExpiresAt] = useState<number | null>(null);
   const [genBusy, setGenBusy] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copiedCode, setCopiedCode] = useState(false);
 
-  // 添加对端表单
+  // 添加对端
   const [showAdd, setShowAdd] = useState(false);
   const [addBaseUrl, setAddBaseUrl] = useState('');
   const [addCode, setAddCode] = useState('');
@@ -58,9 +140,9 @@ export function PeerNodesSettings() {
   const [addBusy, setAddBusy] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
 
-  const flash = (m: string) => {
-    setToast(m);
-    setTimeout(() => setToast(null), 2600);
+  const flash = (msg: string, kind: 'ok' | 'err' = 'ok') => {
+    setToast({ msg, kind });
+    setTimeout(() => setToast(null), 2800);
   };
 
   const load = useCallback(async () => {
@@ -71,7 +153,7 @@ export function PeerNodesSettings() {
       setSelfNodeId(res.data.selfNodeId);
       setSelfBaseUrl(res.data.selfBaseUrl);
     } else {
-      flash(res.error?.message || '加载失败');
+      flash(res.error?.message || '加载失败', 'err');
     }
     setLoading(false);
   }, []);
@@ -86,9 +168,10 @@ export function PeerNodesSettings() {
     setGenBusy(false);
     if (res.success && res.data) {
       setCode(res.data.pairingCode);
-      setCopied(false);
+      setCodeExpiresAt(Date.now() + (res.data.expiresInSeconds || 300) * 1000);
+      setCopiedCode(false);
     } else {
-      flash(res.error?.message || '生成失败');
+      flash(res.error?.message || '生成失败', 'err');
     }
   };
 
@@ -96,10 +179,10 @@ export function PeerNodesSettings() {
     if (!code) return;
     try {
       await navigator.clipboard.writeText(code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      setCopiedCode(true);
+      setTimeout(() => setCopiedCode(false), 2000);
     } catch {
-      flash('复制失败，请手动选择复制');
+      flash('复制失败，请手动选择复制', 'err');
     }
   };
 
@@ -135,7 +218,7 @@ export function PeerNodesSettings() {
     const res = await testPeerNode(id);
     setBusyId(null);
     if (res.success && res.data?.ok) flash('连通正常');
-    else flash(res.data?.error || '连通失败，请检查对端地址与配对状态');
+    else flash(res.data?.error || '连通失败，请稍后重试或检查对端配对状态', 'err');
     void load();
   };
 
@@ -148,173 +231,404 @@ export function PeerNodesSettings() {
       flash('已解除配对');
       void load();
     } else {
-      flash(res.error?.message || '删除失败');
+      flash(res.error?.message || '删除失败', 'err');
     }
   };
 
+  const codeSecondsLeft = codeExpiresAt ? Math.max(0, Math.ceil((codeExpiresAt - Date.now()) / 1000)) : 0;
+
   return (
-    <div className="h-full min-h-0 flex flex-col gap-4 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-      {/* 说明 + 本节点身份 */}
-      <GlassCard className="p-4">
-        <div className="flex items-start gap-3">
-          <Globe size={18} className="text-white/60 mt-0.5 shrink-0" />
-          <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium">系统互联（跨节点互传）</div>
-            <div className="text-xs text-white/50 mt-1 leading-relaxed">
-              配置对端 MAP 节点（如测试环境 ↔ 正式环境）。配对一次后，用户在知识库等应用右上角「发送到」即可一键互传，
-              无需在两个环境之间手动复制密钥。配对走一次性配对码 + HMAC 签名，密钥永不在前端 / 链接中暴露。
+    <div
+      className="h-full min-h-0 flex flex-col gap-5 overflow-y-auto pb-6"
+      style={{ overscrollBehavior: 'contain' }}
+    >
+      {/* ── 本节点身份卡（hero） ── */}
+      <section
+        className="relative rounded-2xl overflow-hidden p-5"
+        style={{
+          background:
+            'linear-gradient(135deg, rgba(99,102,241,0.10) 0%, rgba(59,130,246,0.06) 50%, rgba(236,72,153,0.06) 100%)',
+          border: '1px solid rgba(255,255,255,0.08)',
+        }}
+      >
+        <div className="flex items-start gap-4 flex-wrap">
+          <div
+            className="shrink-0 w-11 h-11 rounded-xl flex items-center justify-center"
+            style={{ background: 'rgba(99,102,241,0.18)', border: '1px solid rgba(99,102,241,0.30)' }}
+          >
+            <Server size={20} style={{ color: 'rgba(165,180,252,0.95)' }} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                本节点
+              </span>
+              <span
+                className="text-[10px] px-1.5 py-0.5 rounded"
+                style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+              >
+                {nodes.length} 个对端已配对
+              </span>
             </div>
-            <div className="mt-2 text-[11px] text-white/40 font-mono break-all">
-              本节点标识：{selfNodeId || '...'} | 对外地址：{selfBaseUrl || '...'}
+            <p className="text-[12px] mb-3 leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+              管理员一次配置对端节点（测试 ↔ 正式环境），用户即可在知识库等应用右上角「发送到」一键互传。
+              配对走一次性码 + HMAC 签名，共享密钥永不在前端 / 链接中暴露。
+            </p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <CopyChip value={selfNodeId} label="节点标识" />
+              <CopyChip value={selfBaseUrl} label="对外地址" />
             </div>
           </div>
         </div>
-      </GlassCard>
+      </section>
 
-      {/* 配对码生成 */}
-      <GlassCard className="p-4">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-2">
-            <KeyRound size={15} className="text-white/60" />
-            <span className="text-sm">让对端连接本节点</span>
+      {/* ── 双动作：邀请对端 vs 接入对端 ── */}
+      <section className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {/* 邀请对端接入我 */}
+        <div
+          className="rounded-xl p-4"
+          style={{
+            background: 'var(--bg-card, rgba(255,255,255,0.03))',
+            border: '1px solid rgba(255,255,255,0.08)',
+          }}
+        >
+          <div className="flex items-start gap-3 mb-2">
+            <div
+              className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center"
+              style={{ background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.20)' }}
+            >
+              <Send size={15} style={{ color: 'rgba(96,165,250,0.95)' }} />
+            </div>
+            <div className="min-w-0">
+              <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                邀请对端接入我
+              </div>
+              <div className="text-[11px] mt-0.5 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                生成一次性配对码，配上本节点对外地址发给对端管理员
+              </div>
+            </div>
           </div>
-          <Button size="sm" variant="secondary" onClick={handleGenCode} disabled={genBusy}>
-            {genBusy ? <MapSpinner size={14} /> : <KeyRound size={14} />}
-            生成配对码
+          {code ? (
+            <div
+              className="mt-3 rounded-lg p-3 space-y-2"
+              style={{ background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.16)' }}
+            >
+              <div className="flex items-center gap-2">
+                <code
+                  className="flex-1 text-[12px] font-mono break-all px-2 py-1.5 rounded"
+                  style={{ background: 'rgba(0,0,0,0.20)', color: 'var(--text-primary)' }}
+                >
+                  {code}
+                </code>
+                <Button size="xs" variant="secondary" onClick={handleCopyCode}>
+                  {copiedCode ? <Check size={12} /> : <Copy size={12} />}
+                  {copiedCode ? '已复制' : '复制'}
+                </Button>
+              </div>
+              <div className="flex items-center justify-between text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                <span>剩余有效时间 {codeSecondsLeft}s · 仅可用一次</span>
+                <button
+                  onClick={handleGenCode}
+                  className="hover:underline"
+                  style={{ color: 'rgba(96,165,250,0.95)' }}
+                  disabled={genBusy}
+                >
+                  重新生成
+                </button>
+              </div>
+            </div>
+          ) : (
+            <Button size="sm" variant="secondary" onClick={handleGenCode} disabled={genBusy} className="mt-2 w-full">
+              {genBusy ? <MapSpinner size={13} /> : <KeyRound size={13} />}
+              生成配对码
+            </Button>
+          )}
+        </div>
+
+        {/* 接入已知对端 */}
+        <div
+          className="rounded-xl p-4"
+          style={{
+            background: 'var(--bg-card, rgba(255,255,255,0.03))',
+            border: '1px solid rgba(255,255,255,0.08)',
+          }}
+        >
+          <div className="flex items-start gap-3 mb-2">
+            <div
+              className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center"
+              style={{ background: 'rgba(168,85,247,0.12)', border: '1px solid rgba(168,85,247,0.20)' }}
+            >
+              <Inbox size={15} style={{ color: 'rgba(192,132,252,0.95)' }} />
+            </div>
+            <div className="min-w-0">
+              <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                接入已知对端
+              </div>
+              <div className="text-[11px] mt-0.5 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                拿到对端管理员发来的配对码后，在这里录入对端地址
+              </div>
+            </div>
+          </div>
+          <Button size="sm" onClick={() => setShowAdd((v) => !v)} className="mt-2 w-full">
+            <Plus size={13} /> {showAdd ? '收起表单' : '添加对端节点'}
           </Button>
         </div>
-        {code && (
-          <div className="mt-3 rounded-lg border border-white/10 bg-white/5 p-3">
-            <div className="text-[11px] text-white/45 mb-1.5">
-              把下面这串配对码 + 本节点对外地址发给对端管理员，让对端在「系统互联 → 添加对端节点」里粘贴（5 分钟内有效，仅用一次）：
-            </div>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 text-xs font-mono break-all bg-black/20 rounded px-2 py-1.5">{code}</code>
-              <Button size="sm" variant="ghost" onClick={handleCopyCode}>
-                {copied ? <Check size={14} /> : <Copy size={14} />}
-              </Button>
-            </div>
-            <div className="mt-1.5 text-[11px] text-white/40 font-mono break-all">对外地址：{selfBaseUrl}</div>
-          </div>
-        )}
-      </GlassCard>
+      </section>
 
-      {/* 对端节点列表 */}
-      <div className="flex items-center justify-between">
-        <div className="text-sm text-white/70">已配对节点</div>
-        <div className="flex items-center gap-2">
-          <Button size="sm" variant="ghost" onClick={() => void load()} disabled={loading}>
-            <RefreshCw size={14} />
-          </Button>
-          <Button size="sm" onClick={() => setShowAdd((v) => !v)}>
-            <Plus size={14} /> 添加对端节点
-          </Button>
-        </div>
-      </div>
-
+      {/* ── 添加对端表单（展开式） ── */}
       {showAdd && (
-        <GlassCard className="p-4">
-          <div className="text-sm font-medium mb-3">添加对端节点</div>
-          <div className="grid gap-3">
-            <label className="grid gap-1">
-              <span className="text-xs text-white/50">对端地址（baseUrl）</span>
-              <input
-                className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none focus:border-white/30"
-                placeholder="https://prod-xxx.miduo.org"
-                value={addBaseUrl}
-                onChange={(e) => setAddBaseUrl(e.target.value)}
-              />
-            </label>
-            <label className="grid gap-1">
-              <span className="text-xs text-white/50">对端生成的配对码</span>
-              <input
-                className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none focus:border-white/30 font-mono"
-                placeholder="粘贴对端管理员发来的配对码"
-                value={addCode}
-                onChange={(e) => setAddCode(e.target.value)}
-              />
-            </label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <label className="grid gap-1">
-                <span className="text-xs text-white/50">我方称呼对端（可选）</span>
-                <input
-                  className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none focus:border-white/30"
-                  placeholder="如：正式环境"
-                  value={addName}
-                  onChange={(e) => setAddName(e.target.value)}
-                />
-              </label>
-              <label className="grid gap-1">
-                <span className="text-xs text-white/50">对端称呼本节点（可选）</span>
-                <input
-                  className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none focus:border-white/30"
-                  placeholder="如：测试环境"
-                  value={addSelfName}
-                  onChange={(e) => setAddSelfName(e.target.value)}
-                />
-              </label>
-            </div>
-            {addError && <div className="text-xs text-red-400">{addError}</div>}
-            <div className="flex items-center gap-2 justify-end">
-              <Button size="sm" variant="ghost" onClick={() => setShowAdd(false)}>
-                取消
-              </Button>
-              <Button size="sm" onClick={handleAdd} disabled={addBusy}>
-                {addBusy ? <MapSpinner size={14} /> : <Wifi size={14} />}
-                配对
-              </Button>
-            </div>
+        <section
+          className="rounded-xl p-4 space-y-3"
+          style={{
+            background: 'var(--bg-card, rgba(255,255,255,0.03))',
+            border: '1px solid rgba(168,85,247,0.20)',
+          }}
+        >
+          <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
+            添加对端节点
           </div>
-        </GlassCard>
+          <label className="grid gap-1.5">
+            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              对端地址 baseUrl
+            </span>
+            <input
+              className="w-full rounded-lg px-3 py-2 text-[13px] outline-none"
+              style={{
+                background: 'var(--bg-input, rgba(255,255,255,0.04))',
+                border: '1px solid rgba(255,255,255,0.10)',
+                color: 'var(--text-primary)',
+              }}
+              placeholder="https://prod-xxx.miduo.org"
+              value={addBaseUrl}
+              onChange={(e) => setAddBaseUrl(e.target.value)}
+            />
+          </label>
+          <label className="grid gap-1.5">
+            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              对端生成的配对码
+            </span>
+            <input
+              className="w-full rounded-lg px-3 py-2 text-[13px] outline-none font-mono"
+              style={{
+                background: 'var(--bg-input, rgba(255,255,255,0.04))',
+                border: '1px solid rgba(255,255,255,0.10)',
+                color: 'var(--text-primary)',
+              }}
+              placeholder="粘贴对端管理员发来的配对码"
+              value={addCode}
+              onChange={(e) => setAddCode(e.target.value)}
+            />
+          </label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label className="grid gap-1.5">
+              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                我方称呼对端（可选）
+              </span>
+              <input
+                className="w-full rounded-lg px-3 py-2 text-[13px] outline-none"
+                style={{
+                  background: 'var(--bg-input, rgba(255,255,255,0.04))',
+                  border: '1px solid rgba(255,255,255,0.10)',
+                  color: 'var(--text-primary)',
+                }}
+                placeholder="如：正式环境"
+                value={addName}
+                onChange={(e) => setAddName(e.target.value)}
+              />
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                对端称呼本节点（可选）
+              </span>
+              <input
+                className="w-full rounded-lg px-3 py-2 text-[13px] outline-none"
+                style={{
+                  background: 'var(--bg-input, rgba(255,255,255,0.04))',
+                  border: '1px solid rgba(255,255,255,0.10)',
+                  color: 'var(--text-primary)',
+                }}
+                placeholder="如：测试环境"
+                value={addSelfName}
+                onChange={(e) => setAddSelfName(e.target.value)}
+              />
+            </label>
+          </div>
+          {addError && (
+            <div
+              className="flex items-start gap-2 text-[12px] rounded-lg px-3 py-2"
+              style={{
+                background: 'rgba(239,68,68,0.08)',
+                border: '1px solid rgba(239,68,68,0.20)',
+                color: 'rgba(252,165,165,0.95)',
+              }}
+            >
+              <AlertCircle size={14} className="shrink-0 mt-0.5" />
+              <span className="min-w-0 break-words">{addError}</span>
+            </div>
+          )}
+          <div className="flex items-center gap-2 justify-end pt-1">
+            <Button size="sm" variant="ghost" onClick={() => setShowAdd(false)}>
+              取消
+            </Button>
+            <Button size="sm" onClick={handleAdd} disabled={addBusy}>
+              {addBusy ? <MapSpinner size={13} /> : <Wifi size={13} />}
+              配对
+            </Button>
+          </div>
+        </section>
       )}
 
-      {loading ? (
-        <MapSectionLoader text="正在加载对端节点…" />
-      ) : nodes.length === 0 ? (
-        <GlassCard className="p-8 text-center">
-          <Globe size={28} className="mx-auto text-white/25" />
-          <div className="mt-3 text-sm text-white/60">还没有配对任何对端节点</div>
-          <div className="mt-1 text-xs text-white/40">
-            点「生成配对码」发给对端，或拿到对端配对码后点「添加对端节点」即可打通两个环境。
+      {/* ── 已配对节点 ── */}
+      <section className="space-y-2.5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
+              已配对节点
+            </span>
+            {!loading && (
+              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                {nodes.length} 个
+              </span>
+            )}
           </div>
-        </GlassCard>
-      ) : (
-        <div className="grid gap-2">
-          {nodes.map((n) => (
-            <GlassCard key={n.id} className="p-3.5">
-              <div className="flex items-center justify-between gap-3 flex-wrap">
-                <div className="flex items-center gap-3 min-w-0">
-                  <Globe size={16} className="text-white/50 shrink-0" />
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium truncate">{n.displayName}</span>
-                      {statusBadge(n.status)}
+          <Button size="xs" variant="ghost" onClick={() => void load()} disabled={loading}>
+            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+          </Button>
+        </div>
+
+        {loading ? (
+          <MapSectionLoader text="正在加载对端节点…" />
+        ) : nodes.length === 0 ? (
+          <div
+            className="rounded-xl p-10 text-center"
+            style={{
+              background: 'var(--bg-card, rgba(255,255,255,0.02))',
+              border: '1px dashed rgba(255,255,255,0.10)',
+            }}
+          >
+            <div
+              className="mx-auto w-12 h-12 rounded-2xl flex items-center justify-center mb-3"
+              style={{ background: 'rgba(255,255,255,0.04)' }}
+            >
+              <Globe size={22} style={{ color: 'var(--text-muted)' }} />
+            </div>
+            <div className="text-[13px] mb-1" style={{ color: 'var(--text-primary)' }}>
+              还没有配对任何对端节点
+            </div>
+            <div className="text-[12px] max-w-md mx-auto leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+              从上面「邀请对端接入我」生成配对码发给对端，
+              <br />
+              或拿到对端配对码后点「添加对端节点」打通两个环境。
+            </div>
+          </div>
+        ) : (
+          <div className="grid gap-2">
+            {nodes.map((n) => (
+              <article
+                key={n.id}
+                className="rounded-xl p-3.5 transition-colors"
+                style={{
+                  background: 'var(--bg-card, rgba(255,255,255,0.03))',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                }}
+              >
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div className="flex items-start gap-3 min-w-0 flex-1">
+                    <div
+                      className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center mt-0.5"
+                      style={{
+                        background:
+                          n.status === 'connected'
+                            ? 'rgba(34,197,94,0.10)'
+                            : n.status === 'error'
+                              ? 'rgba(239,68,68,0.10)'
+                              : 'rgba(255,255,255,0.04)',
+                        border: `1px solid ${
+                          n.status === 'connected'
+                            ? 'rgba(34,197,94,0.20)'
+                            : n.status === 'error'
+                              ? 'rgba(239,68,68,0.20)'
+                              : 'rgba(255,255,255,0.08)'
+                        }`,
+                      }}
+                    >
+                      {n.status === 'connected' ? (
+                        <CheckCircle2 size={16} style={{ color: 'rgba(34,197,94,0.95)' }} />
+                      ) : n.status === 'error' ? (
+                        <AlertCircle size={16} style={{ color: 'rgba(239,68,68,0.95)' }} />
+                      ) : (
+                        <Globe size={16} style={{ color: 'var(--text-muted)' }} />
+                      )}
                     </div>
-                    <div className="text-[11px] text-white/40 font-mono truncate">{n.baseUrl}</div>
-                    {n.lastError && <div className="text-[11px] text-red-400/80 mt-0.5 truncate">{n.lastError}</div>}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                          {n.displayName}
+                        </span>
+                        <StatusDot status={n.status} />
+                      </div>
+                      <div
+                        className="text-[11px] font-mono truncate mt-0.5"
+                        style={{ color: 'var(--text-muted)' }}
+                        title={n.baseUrl}
+                      >
+                        <ArrowRight size={9} className="inline mr-1" />
+                        {n.baseUrl}
+                      </div>
+                      <div className="flex items-center gap-2 mt-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        <span>最近通信 {fmtRelative(n.lastContactAt)}</span>
+                      </div>
+                      {n.lastError && (
+                        <div
+                          className="mt-2 flex items-start gap-1.5 text-[11px] rounded-md px-2 py-1.5"
+                          style={{
+                            background: 'rgba(239,68,68,0.06)',
+                            border: '1px solid rgba(239,68,68,0.16)',
+                            color: 'rgba(252,165,165,0.95)',
+                          }}
+                        >
+                          <AlertCircle size={11} className="shrink-0 mt-0.5" />
+                          <span className="min-w-0 break-words">{n.lastError}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <Button size="xs" variant="ghost" onClick={() => handleTest(n.id)} disabled={busyId === n.id}>
+                      {busyId === n.id ? <MapSpinner size={12} /> : <Wifi size={12} />}
+                      测试
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      onClick={() => handleDelete(n.id, n.displayName)}
+                      disabled={busyId === n.id}
+                      title="解除配对"
+                    >
+                      <Trash2 size={12} />
+                    </Button>
                   </div>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] text-white/35 mr-1">最近通信 {fmtDate(n.lastContactAt)}</span>
-                  <Button size="sm" variant="ghost" onClick={() => handleTest(n.id)} disabled={busyId === n.id}>
-                    {busyId === n.id ? <MapSpinner size={14} /> : <Wifi size={14} />}
-                    测试
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => handleDelete(n.id, n.displayName)} disabled={busyId === n.id}>
-                    <Trash2 size={14} />
-                  </Button>
-                </div>
-              </div>
-            </GlassCard>
-          ))}
-        </div>
-      )}
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
 
+      {/* ── Toast ── */}
       {toast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] rounded-lg bg-black/80 px-4 py-2 text-sm text-white shadow-lg flex items-center gap-2">
-          <span>{toast}</span>
-          <button onClick={() => setToast(null)} className="text-white/50 hover:text-white">
-            <X size={13} />
+        <div
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] rounded-lg px-4 py-2 text-[13px] shadow-lg flex items-center gap-2"
+          style={{
+            background: toast.kind === 'err' ? 'rgba(127,29,29,0.92)' : 'rgba(20,83,45,0.92)',
+            color: '#fff',
+            border: `1px solid ${toast.kind === 'err' ? 'rgba(239,68,68,0.40)' : 'rgba(34,197,94,0.40)'}`,
+          }}
+        >
+          {toast.kind === 'err' ? <AlertCircle size={14} /> : <CheckCircle2 size={14} />}
+          <span>{toast.msg}</span>
+          <button onClick={() => setToast(null)} className="opacity-60 hover:opacity-100 ml-1">
+            <X size={12} />
           </button>
         </div>
       )}
