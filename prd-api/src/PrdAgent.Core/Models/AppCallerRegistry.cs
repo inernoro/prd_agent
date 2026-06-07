@@ -1178,6 +1178,22 @@ public static class SpeechAgent
             Category = "Generation"
         )]
         public const string SpeakerNotes = "speech-agent.mindmap.speaker-notes::chat";
+
+        [AppCallerMetadata(
+            "节点 AI 重写",
+            "对单个节点的标题+要点重写（可指定风格：精简/故事化/数字化/反问开场/雷军风/TED 风等）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Generation"
+        )]
+        public const string NodeRewrite = "speech-agent.node-rewrite::chat";
+
+        [AppCallerMetadata(
+            "节点配图生成",
+            "为单个节点生成 AI 插画（取代 SVG 简笔）",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Generation"
+        )]
+        public const string NodeImage = "speech-agent.node-image::generation";
     }
 }
 

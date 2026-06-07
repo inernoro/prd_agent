@@ -1,9 +1,10 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  ChevronLeft, Sparkles, Loader2, Upload, ClipboardPaste, FileText, X, Settings2, ChevronDown, ChevronUp,
+  ChevronLeft, Sparkles, Loader2, Upload, ClipboardPaste, FileText, X, Settings2, ChevronDown, ChevronUp, BookOpen,
 } from 'lucide-react';
 import { speechAgentApi } from '@/services/real/speechAgent';
+import { apiRequest } from '@/services/real/apiClient';
 
 const AUDIENCES = ['通识', '产品经理', '工程师', '管理层', '客户'];
 const STYLES = ['专业', '故事化', '简洁', '幽默'];
@@ -38,6 +39,12 @@ export default function SpeechAgentCreatePage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [kbPickerOpen, setKbPickerOpen] = useState(false);
+  const [kbStores, setKbStores] = useState<Array<{ id: string; name: string; description?: string }>>([]);
+  const [kbActiveStoreId, setKbActiveStoreId] = useState<string | null>(null);
+  const [kbEntries, setKbEntries] = useState<Array<{ id: string; title: string; summary?: string; sourceType?: string }>>([]);
+  const [kbLoading, setKbLoading] = useState(false);
+  const [kbFetchingEntry, setKbFetchingEntry] = useState(false);
 
   const charCount = sourceText.trim().length;
   const canSubmit = useMemo(() => charCount >= 30 && !submitting, [charCount, submitting]);
@@ -82,6 +89,55 @@ export default function SpeechAgentCreatePage() {
     setSourceFileName(null);
     setSourceText('');
   }, []);
+
+  // E7 知识库选文档
+  const openKbPicker = useCallback(async () => {
+    setKbPickerOpen(true);
+    if (kbStores.length === 0) {
+      setKbLoading(true);
+      try {
+        const res = await apiRequest<{ items: Array<{ id: string; name: string; description?: string }> }>(
+          '/api/document-store/stores?page=1&pageSize=50');
+        if (res.success && res.data) setKbStores(res.data.items);
+      } finally { setKbLoading(false); }
+    }
+  }, [kbStores.length]);
+
+  const loadKbEntries = useCallback(async (storeId: string) => {
+    setKbActiveStoreId(storeId);
+    setKbLoading(true);
+    try {
+      const res = await apiRequest<{ items: Array<{ id: string; title: string; summary?: string; sourceType?: string; isFolder?: boolean }> }>(
+        `/api/document-store/stores/${encodeURIComponent(storeId)}/entries?page=1&pageSize=200&all=true`);
+      if (res.success && res.data) {
+        setKbEntries(res.data.items.filter((e) => !e.isFolder));
+      }
+    } finally { setKbLoading(false); }
+  }, []);
+
+  const pickKbEntry = useCallback(async (entryId: string, entryTitle: string) => {
+    setKbFetchingEntry(true);
+    try {
+      const res = await apiRequest<{ content: string; title: string }>(
+        `/api/document-store/entries/${encodeURIComponent(entryId)}/content`);
+      if (res.success && res.data) {
+        const content = (res.data.content || '').trim();
+        if (content.length < 30) { alert('该文档内容过短（< 30 字）'); return; }
+        setSourceText(content);
+        setSourceFileName(null);
+        if (!title) setTitle(entryTitle);
+        setKbPickerOpen(false);
+      }
+    } finally { setKbFetchingEntry(false); }
+  }, [title]);
+
+  // ESC 关弹窗
+  useEffect(() => {
+    if (!kbPickerOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setKbPickerOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [kbPickerOpen]);
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
@@ -166,6 +222,24 @@ export default function SpeechAgentCreatePage() {
               </div>
             </div>
           </label>
+
+          <div className="flex items-center gap-3 text-xs text-white/40">
+            <span className="flex-1 h-px bg-white/10" />
+            <span>或从知识库选</span>
+            <span className="flex-1 h-px bg-white/10" />
+          </div>
+
+          <button
+            type="button"
+            onClick={openKbPicker}
+            className="w-full px-4 py-3 rounded-xl border border-white/15 bg-white/[0.02] hover:bg-white/[0.05] hover:border-white/25 transition-all flex items-center gap-3"
+          >
+            <BookOpen size={20} className="text-emerald-300/80" />
+            <div className="flex-1 text-left">
+              <div className="text-sm text-white/85 font-medium">从知识库选文档</div>
+              <div className="text-xs text-white/45">浏览你的知识库 → 选一篇文档作为输入</div>
+            </div>
+          </button>
 
           <div className="flex items-center gap-3 text-xs text-white/40">
             <span className="flex-1 h-px bg-white/10" />
@@ -259,6 +333,101 @@ export default function SpeechAgentCreatePage() {
           </div>
         </div>
       </main>
+
+      {/* E7 知识库选文档弹窗 */}
+      {kbPickerOpen && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center px-4"
+          onClick={() => setKbPickerOpen(false)}
+        >
+          <div
+            className="w-full max-w-3xl rounded-2xl border border-white/10 bg-[#13121a] shadow-2xl flex flex-col"
+            style={{ height: '70vh', maxHeight: '70vh' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="shrink-0 px-5 py-4 border-b border-white/10 flex items-center gap-3">
+              <BookOpen size={16} className="text-emerald-300" />
+              <h2 className="text-base font-medium text-white/95">从知识库选文档</h2>
+              <button
+                type="button"
+                onClick={() => setKbPickerOpen(false)}
+                className="ml-auto p-1.5 rounded-md hover:bg-white/10 text-white/65"
+                aria-label="关闭"
+              >
+                <X size={16} />
+              </button>
+            </header>
+            <div className="flex-1 min-h-0 flex">
+              {/* 左：知识库列表 */}
+              <div className="shrink-0 w-[200px] border-r border-white/10 flex flex-col" style={{ minHeight: 0 }}>
+                <div className="px-3 py-2 text-[10px] uppercase tracking-wider text-white/40">知识库</div>
+                <div className="flex-1 min-h-0 overflow-y-auto px-2 pb-2" style={{ overscrollBehavior: 'contain' }}>
+                  {kbLoading && kbStores.length === 0 && (
+                    <div className="text-xs text-white/45 px-2 py-3">
+                      <Loader2 size={12} className="animate-spin inline mr-1.5" /> 加载中…
+                    </div>
+                  )}
+                  {kbStores.length === 0 && !kbLoading && (
+                    <div className="text-xs text-white/45 px-2 py-3">还没有知识库</div>
+                  )}
+                  {kbStores.map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => loadKbEntries(s.id)}
+                      className={`w-full px-2.5 py-2 rounded-md text-left text-sm transition-all ${
+                        kbActiveStoreId === s.id
+                          ? 'bg-emerald-500/20 text-emerald-100'
+                          : 'text-white/75 hover:bg-white/[0.05]'
+                      }`}
+                    >
+                      <div className="truncate">{s.name}</div>
+                      {s.description && (
+                        <div className="text-[10px] text-white/45 truncate mt-0.5">{s.description}</div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 右：文档列表 */}
+              <div className="flex-1 min-w-0 min-h-0 flex flex-col">
+                <div className="px-3 py-2 text-[10px] uppercase tracking-wider text-white/40">
+                  文档 {kbEntries.length > 0 && `(${kbEntries.length})`}
+                </div>
+                <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-3" style={{ overscrollBehavior: 'contain' }}>
+                  {!kbActiveStoreId && (
+                    <div className="text-xs text-white/45 py-6 text-center">先在左侧选一个知识库</div>
+                  )}
+                  {kbActiveStoreId && kbLoading && (
+                    <div className="text-xs text-white/45 py-6 text-center">
+                      <Loader2 size={14} className="animate-spin inline mr-1.5" />
+                      加载文档…
+                    </div>
+                  )}
+                  {kbActiveStoreId && !kbLoading && kbEntries.length === 0 && (
+                    <div className="text-xs text-white/45 py-6 text-center">该知识库没有文档</div>
+                  )}
+                  {kbEntries.map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onClick={() => pickKbEntry(e.id, e.title)}
+                      disabled={kbFetchingEntry}
+                      className="w-full px-3 py-2.5 rounded-lg text-left mb-1.5 border border-white/10 bg-white/[0.02] hover:bg-white/[0.05] hover:border-white/20 disabled:opacity-50"
+                    >
+                      <div className="text-sm text-white/90 font-medium truncate">{e.title}</div>
+                      {e.summary && (
+                        <div className="text-xs text-white/55 truncate mt-1 leading-relaxed">{e.summary}</div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

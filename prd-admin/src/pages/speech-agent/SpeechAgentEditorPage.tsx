@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ChevronLeft, Sparkles, Loader2, Save, Play, AlertTriangle, RotateCcw, Brain } from 'lucide-react';
+import { ChevronLeft, Sparkles, Loader2, Save, Play, AlertTriangle, RotateCcw, Brain, Share2, Image as ImageIcon, ScrollText, Wand2, Copy, Check } from 'lucide-react';
 import { speechAgentApi } from '@/services/real/speechAgent';
 import type { SpeechDeck, SpeechNode } from '@/services/contracts/speechAgent';
 import { useSseStream } from '@/lib/useSseStream';
@@ -24,6 +24,11 @@ export default function SpeechAgentEditorPage() {
   const [saving, setSaving] = useState(false);
   const [thinking, setThinking] = useState('');
   const [typing, setTyping] = useState('');
+  const [aiNodeBusy, setAiNodeBusy] = useState<{ action: 'image' | 'notes' | 'rewrite'; nodeId: string } | null>(null);
+  const [rewriteStyleOpen, setRewriteStyleOpen] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [shareInfo, setShareInfo] = useState<{ url: string; token: string } | null>(null);
+  const [shareCopied, setShareCopied] = useState(false);
 
   const autoStarted = useRef(false);
   const shouldAutoStart = searchParams.get('autoStart') === '1';
@@ -132,6 +137,67 @@ export default function SpeechAgentEditorPage() {
     }
   }, [selectedNode, draftTitle, draftBullets, deckId]);
 
+  // E1 节点 AI 配图
+  const handleGenImage = useCallback(async () => {
+    if (!selectedNode) return;
+    setAiNodeBusy({ action: 'image', nodeId: selectedNode.id });
+    try {
+      const res = await speechAgentApi.generateNodeImage(deckId, selectedNode.id);
+      if (res.success && res.data) {
+        setNodes((prev) => prev.map((n) => n.id === selectedNode.id ? { ...n, imageAssetId: res.data!.imageAssetId, imageUrl: res.data!.url } : n));
+      } else {
+        alert('配图生成失败: ' + (res.error?.message ?? '未知错误'));
+      }
+    } finally { setAiNodeBusy(null); }
+  }, [selectedNode, deckId]);
+
+  // E3 节点 AI 备注（单节点）
+  const handleGenNotes = useCallback(async () => {
+    if (!selectedNode) return;
+    setAiNodeBusy({ action: 'notes', nodeId: selectedNode.id });
+    try {
+      const res = await speechAgentApi.generateNodeNotes(deckId, selectedNode.id);
+      if (res.success && res.data) {
+        const notes = res.data.speakerNotes;
+        setNodes((prev) => prev.map((n) => n.id === selectedNode.id ? { ...n, speakerNotes: notes } : n));
+      } else {
+        alert('备注生成失败: ' + (res.error?.message ?? '未知错误'));
+      }
+    } finally { setAiNodeBusy(null); }
+  }, [selectedNode, deckId]);
+
+  // E10/E11 节点 AI 重写
+  const handleRewrite = useCallback(async (style: string) => {
+    if (!selectedNode) return;
+    setRewriteStyleOpen(false);
+    setAiNodeBusy({ action: 'rewrite', nodeId: selectedNode.id });
+    try {
+      const res = await speechAgentApi.rewriteNode(deckId, selectedNode.id, style);
+      if (res.success && res.data) {
+        const { title, bulletPoints } = res.data;
+        setNodes((prev) => prev.map((n) => n.id === selectedNode.id ? { ...n, title, bulletPoints } : n));
+        setDraftTitle(title);
+        setDraftBullets(bulletPoints.join('\n'));
+      } else {
+        alert('重写失败: ' + (res.error?.message ?? '未知错误'));
+      }
+    } finally { setAiNodeBusy(null); }
+  }, [selectedNode, deckId]);
+
+  // E2 一键发布
+  const handlePublish = useCallback(async () => {
+    setPublishing(true);
+    try {
+      const res = await speechAgentApi.publishDeck(deckId);
+      if (res.success && res.data) {
+        const url = window.location.origin + res.data.shareUrl;
+        setShareInfo({ url, token: res.data.shareToken });
+      } else {
+        alert('发布失败: ' + (res.error?.message ?? '未知错误'));
+      }
+    } finally { setPublishing(false); }
+  }, [deckId]);
+
   if (loading) {
     return <div className="h-full"><MapSectionLoader text="加载中…" /></div>;
   }
@@ -201,7 +267,63 @@ export default function SpeechAgentEditorPage() {
           <Play size={13} />
           播放
         </button>
+        <button
+          type="button"
+          onClick={handlePublish}
+          disabled={nodes.length === 0 || publishing || isGenerating}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/90 hover:bg-emerald-400 disabled:bg-white/10 disabled:text-white/40 text-white text-xs font-medium"
+          aria-label="发布为可分享 HTML 站点"
+        >
+          {publishing ? <Loader2 size={13} className="animate-spin" /> : <Share2 size={13} />}
+          {publishing ? '发布中…' : '一键发布'}
+        </button>
       </header>
+
+      {/* 发布成功 toast */}
+      {shareInfo && (
+        <div
+          className="fixed top-16 right-6 z-50 max-w-md rounded-xl border border-emerald-400/40 bg-emerald-500/10 backdrop-blur-xl shadow-2xl p-4 flex flex-col gap-3 animate-in slide-in-from-top-2"
+          role="status"
+        >
+          <div className="flex items-center gap-2">
+            <Check size={16} className="text-emerald-300" />
+            <span className="text-sm font-medium text-emerald-100">发布成功</span>
+            <button
+              type="button"
+              onClick={() => setShareInfo(null)}
+              className="ml-auto text-white/55 hover:text-white/90 text-xs"
+            >
+              关闭
+            </button>
+          </div>
+          <div className="text-xs text-white/65 leading-relaxed">
+            演讲已渲染为静态 HTML 并发布到网页托管。任何人凭分享链可直接观看。
+          </div>
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-black/30 border border-white/10">
+            <code className="flex-1 text-xs text-emerald-200 truncate font-mono">{shareInfo.url}</code>
+            <button
+              type="button"
+              onClick={() => {
+                navigator.clipboard.writeText(shareInfo.url);
+                setShareCopied(true);
+                setTimeout(() => setShareCopied(false), 2000);
+              }}
+              className="shrink-0 p-1.5 rounded-md hover:bg-white/10 text-white/75"
+              aria-label="复制分享链"
+            >
+              {shareCopied ? <Check size={13} className="text-emerald-300" /> : <Copy size={13} />}
+            </button>
+            <a
+              href={shareInfo.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 px-2.5 py-1 rounded-md bg-emerald-500/90 hover:bg-emerald-400 text-white text-xs"
+            >
+              打开
+            </a>
+          </div>
+        </div>
+      )}
 
       {isGenerating && (
         <div className="shrink-0 px-5 py-2 border-b border-white/10 bg-violet-500/[0.06] flex items-center gap-2">
@@ -284,6 +406,66 @@ export default function SpeechAgentEditorPage() {
                 </div>
               </div>
               <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 flex flex-col gap-3" style={{ overscrollBehavior: 'contain' }}>
+                {/* AI 工具栏 */}
+                <div className="rounded-lg border border-white/10 bg-white/[0.03] p-2 flex flex-col gap-2">
+                  <div className="text-[10px] uppercase tracking-wider text-white/40 px-1">AI 工具</div>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={handleGenImage}
+                      disabled={!!aiNodeBusy}
+                      className="inline-flex flex-col items-center gap-1 px-2 py-2 rounded-md bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-40 text-white/75 text-[10px]"
+                      title="生成 AI 配图"
+                    >
+                      {aiNodeBusy?.action === 'image' && aiNodeBusy?.nodeId === selectedNode.id ? <Loader2 size={14} className="animate-spin" /> : <ImageIcon size={14} className="text-amber-300" />}
+                      AI 配图
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleGenNotes}
+                      disabled={!!aiNodeBusy}
+                      className="inline-flex flex-col items-center gap-1 px-2 py-2 rounded-md bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-40 text-white/75 text-[10px]"
+                      title="生成口播稿"
+                    >
+                      {aiNodeBusy?.action === 'notes' && aiNodeBusy?.nodeId === selectedNode.id ? <Loader2 size={14} className="animate-spin" /> : <ScrollText size={14} className="text-emerald-300" />}
+                      AI 备注
+                    </button>
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setRewriteStyleOpen((v) => !v)}
+                        disabled={!!aiNodeBusy}
+                        className="w-full inline-flex flex-col items-center gap-1 px-2 py-2 rounded-md bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-40 text-white/75 text-[10px]"
+                        title="按风格 AI 重写"
+                      >
+                        {aiNodeBusy?.action === 'rewrite' && aiNodeBusy?.nodeId === selectedNode.id ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} className="text-violet-300" />}
+                        AI 重写
+                      </button>
+                      {rewriteStyleOpen && (
+                        <div className="absolute right-0 top-full mt-1 z-30 min-w-[140px] rounded-lg border border-white/15 bg-[#13121a] shadow-2xl py-1">
+                          {[
+                            { id: 'concise', label: '精简' },
+                            { id: 'story', label: '故事化' },
+                            { id: 'data', label: '数据化' },
+                            { id: 'question', label: '反问开场' },
+                            { id: 'leijun', label: '雷军风' },
+                            { id: 'ted', label: 'TED 风' },
+                          ].map((s) => (
+                            <button
+                              key={s.id}
+                              type="button"
+                              onClick={() => handleRewrite(s.id)}
+                              className="w-full px-3 py-1.5 text-left text-xs text-white/85 hover:bg-white/[0.08]"
+                            >
+                              {s.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
                 <div>
                   <label className="block text-xs text-white/60 mb-1.5">标题</label>
                   <input
@@ -298,10 +480,30 @@ export default function SpeechAgentEditorPage() {
                   <textarea
                     value={draftBullets}
                     onChange={(e) => setDraftBullets(e.target.value)}
-                    rows={10}
+                    rows={6}
                     className="w-full px-2.5 py-2 rounded-md bg-white/[0.04] border border-white/10 text-sm text-white/85 focus:outline-none focus:border-violet-400/60 leading-relaxed"
                   />
                 </div>
+
+                {/* 节点配图预览 */}
+                {selectedNode.imageUrl && (
+                  <div>
+                    <label className="block text-xs text-white/60 mb-1.5">节点配图</label>
+                    <div className="rounded-lg overflow-hidden border border-white/10 bg-white/[0.02]">
+                      <img src={selectedNode.imageUrl} alt={selectedNode.title} className="w-full h-auto object-cover" />
+                    </div>
+                  </div>
+                )}
+
+                {/* 演讲备注 */}
+                {selectedNode.speakerNotes && (
+                  <div>
+                    <label className="block text-xs text-white/60 mb-1.5">口播稿（演讲备注）</label>
+                    <div className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2.5 text-[13px] text-white/85 leading-relaxed whitespace-pre-wrap max-h-[200px] overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+                      {selectedNode.speakerNotes}
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="shrink-0 px-4 py-3 border-t border-white/10 flex items-center justify-end gap-2">
                 <button

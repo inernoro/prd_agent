@@ -53,8 +53,17 @@ public class SpeechDeck
     /// <summary>节点数（冗余，列表卡片展示）。</summary>
     public int NodeCount { get; set; }
 
-    /// <summary>已发布的 HostedSite Id（Phase 2 接入）。</summary>
+    /// <summary>已发布的 HostedSite Id。</summary>
     public string? PublishedSiteId { get; set; }
+
+    /// <summary>已发布的 share token（/s/wp/{token}）。</summary>
+    public string? PublishedShareToken { get; set; }
+
+    /// <summary>发布时间。</summary>
+    public DateTime? PublishedAt { get; set; }
+
+    /// <summary>配图风格：flat / watercolor / 3d / pixel / sketch / tech，整 deck 统一。</summary>
+    public string IllustrationStyle { get; set; } = "flat";
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

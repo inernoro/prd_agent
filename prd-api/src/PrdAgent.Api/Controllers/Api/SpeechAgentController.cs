@@ -26,6 +26,7 @@ public class SpeechAgentController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly SpeechAgentService _service;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
+    private readonly IHostedSiteService _hostedSites;
     private readonly ILogger<SpeechAgentController> _logger;
 
     private static readonly JsonSerializerOptions SseJson = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
@@ -34,11 +35,13 @@ public class SpeechAgentController : ControllerBase
         MongoDbContext db,
         SpeechAgentService service,
         ILLMRequestContextAccessor llmRequestContext,
+        IHostedSiteService hostedSites,
         ILogger<SpeechAgentController> logger)
     {
         _db = db;
         _service = service;
         _llmRequestContext = llmRequestContext;
+        _hostedSites = hostedSites;
         _logger = logger;
     }
 
@@ -109,7 +112,20 @@ public class SpeechAgentController : ControllerBase
         var nodes = await _db.SpeechNodes.Find(n => n.DeckId == deckId)
             .SortBy(n => n.Depth).ThenBy(n => n.Order)
             .ToListAsync();
-        return Ok(ApiResponse<object>.Ok(new { deck, nodes }));
+
+        // 关联读节点配图 URL（不让前端二次查询）
+        var assetIds = nodes.Where(n => !string.IsNullOrEmpty(n.ImageAssetId)).Select(n => n.ImageAssetId!).Distinct().ToList();
+        var urlByAssetId = assetIds.Count > 0
+            ? (await _db.ImageAssets.Find(a => assetIds.Contains(a.Id)).ToListAsync()).ToDictionary(a => a.Id, a => a.Url)
+            : new Dictionary<string, string>();
+
+        var enriched = nodes.Select(n => new
+        {
+            n.Id, n.DeckId, n.ParentId, n.Order, n.Depth, n.Title, n.BulletPoints,
+            n.SpeakerNotes, n.ImageAssetId, n.Status, n.CreatedAt, n.UpdatedAt,
+            ImageUrl = !string.IsNullOrEmpty(n.ImageAssetId) && urlByAssetId.TryGetValue(n.ImageAssetId, out var u) ? u : null,
+        });
+        return Ok(ApiResponse<object>.Ok(new { deck, nodes = enriched }));
     }
 
     [HttpDelete("decks/{deckId}")]
@@ -129,6 +145,7 @@ public class SpeechAgentController : ControllerBase
         public string? Style { get; set; }
         public int? Depth { get; set; }
         public string? Theme { get; set; }
+        public string? IllustrationStyle { get; set; }
     }
 
     [HttpPatch("decks/{deckId}")]
@@ -144,8 +161,225 @@ public class SpeechAgentController : ControllerBase
         if (!string.IsNullOrWhiteSpace(req.Style)) update = update.Set(d => d.Style, req.Style.Trim());
         if (req.Depth.HasValue) update = update.Set(d => d.Depth, Math.Clamp(req.Depth.Value, 2, 4));
         if (!string.IsNullOrWhiteSpace(req.Theme)) update = update.Set(d => d.Theme, req.Theme.Trim());
+        if (!string.IsNullOrWhiteSpace(req.IllustrationStyle)) update = update.Set(d => d.IllustrationStyle, req.IllustrationStyle.Trim());
         await _db.SpeechDecks.UpdateOneAsync(d => d.Id == deckId, update);
         return Ok(ApiResponse<object>.Ok(new { updated = true }));
+    }
+
+    // ── E1 节点配图 ───────────────────────────────
+
+    [HttpPost("decks/{deckId}/nodes/{nodeId}/generate-image")]
+    public async Task<IActionResult> GenerateNodeImage(string deckId, string nodeId)
+    {
+        var userId = this.GetRequiredUserId();
+        var deck = await _db.SpeechDecks.Find(d => d.Id == deckId && d.OwnerUserId == userId).FirstOrDefaultAsync();
+        if (deck == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "演讲不存在"));
+        var node = await _db.SpeechNodes.Find(n => n.Id == nodeId && n.DeckId == deckId).FirstOrDefaultAsync();
+        if (node == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "节点不存在"));
+
+        using var llmCtx = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null, SessionId: null, UserId: userId, ViewRole: null,
+            DocumentChars: null, DocumentHash: null,
+            SystemPromptRedacted: "[SPEECH_NODE_IMAGE]",
+            RequestType: "imageGen",
+            AppCallerCode: AppCallerRegistry.SpeechAgent.Mindmap.NodeImage));
+
+        var assetId = await _service.GenerateNodeImageAsync(deck, node);
+        if (assetId == null) return StatusCode(502, ApiResponse<object>.Fail("IMAGE_GEN_FAILED", "配图生成失败"));
+
+        var asset = await _db.ImageAssets.Find(a => a.Id == assetId).FirstOrDefaultAsync();
+        return Ok(ApiResponse<object>.Ok(new { imageAssetId = assetId, url = asset?.Url }));
+    }
+
+    // ── E3 演讲备注 ───────────────────────────────
+
+    [HttpPost("decks/{deckId}/nodes/{nodeId}/generate-notes")]
+    public async Task<IActionResult> GenerateNodeNotes(string deckId, string nodeId)
+    {
+        var userId = this.GetRequiredUserId();
+        var deck = await _db.SpeechDecks.Find(d => d.Id == deckId && d.OwnerUserId == userId).FirstOrDefaultAsync();
+        if (deck == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "演讲不存在"));
+        var node = await _db.SpeechNodes.Find(n => n.Id == nodeId && n.DeckId == deckId).FirstOrDefaultAsync();
+        if (node == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "节点不存在"));
+
+        using var llmCtx = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null, SessionId: null, UserId: userId, ViewRole: null,
+            DocumentChars: null, DocumentHash: null,
+            SystemPromptRedacted: "[SPEECH_NOTES]",
+            RequestType: "chat",
+            AppCallerCode: AppCallerRegistry.SpeechAgent.Mindmap.SpeakerNotes));
+
+        var notes = await _service.GenerateSpeakerNotesAsync(node, deck.Title);
+        if (notes == null) return StatusCode(502, ApiResponse<object>.Fail("NOTES_GEN_FAILED", "备注生成失败"));
+        return Ok(ApiResponse<object>.Ok(new { speakerNotes = notes }));
+    }
+
+    [HttpPost("decks/{deckId}/generate-notes-batch")]
+    public async Task<IActionResult> GenerateNotesBatch(string deckId)
+    {
+        var userId = this.GetRequiredUserId();
+        var deck = await _db.SpeechDecks.Find(d => d.Id == deckId && d.OwnerUserId == userId).FirstOrDefaultAsync();
+        if (deck == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "演讲不存在"));
+        var nodes = await _db.SpeechNodes.Find(n => n.DeckId == deckId).ToListAsync();
+
+        using var llmCtx = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null, SessionId: null, UserId: userId, ViewRole: null,
+            DocumentChars: null, DocumentHash: null,
+            SystemPromptRedacted: "[SPEECH_NOTES_BATCH]",
+            RequestType: "chat",
+            AppCallerCode: AppCallerRegistry.SpeechAgent.Mindmap.SpeakerNotes));
+
+        int ok = 0;
+        foreach (var n in nodes)
+        {
+            if (!string.IsNullOrWhiteSpace(n.SpeakerNotes)) continue;
+            var notes = await _service.GenerateSpeakerNotesAsync(n, deck.Title);
+            if (notes != null) ok++;
+        }
+        return Ok(ApiResponse<object>.Ok(new { generated = ok, total = nodes.Count }));
+    }
+
+    // ── E10/E11 节点 AI 重写 ──────────────────────
+
+    public class RewriteNodeRequest { public string? Style { get; set; } }
+
+    [HttpPost("decks/{deckId}/nodes/{nodeId}/rewrite")]
+    public async Task<IActionResult> RewriteNode(string deckId, string nodeId, [FromBody] RewriteNodeRequest req)
+    {
+        var userId = this.GetRequiredUserId();
+        var deck = await _db.SpeechDecks.Find(d => d.Id == deckId && d.OwnerUserId == userId).FirstOrDefaultAsync();
+        if (deck == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "演讲不存在"));
+        var node = await _db.SpeechNodes.Find(n => n.Id == nodeId && n.DeckId == deckId).FirstOrDefaultAsync();
+        if (node == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "节点不存在"));
+
+        using var llmCtx = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null, SessionId: null, UserId: userId, ViewRole: null,
+            DocumentChars: null, DocumentHash: null,
+            SystemPromptRedacted: "[SPEECH_NODE_REWRITE]",
+            RequestType: "chat",
+            AppCallerCode: AppCallerRegistry.SpeechAgent.Mindmap.NodeRewrite));
+
+        var result = await _service.RewriteNodeAsync(node, req.Style ?? "concise", deck.Title);
+        if (result == null) return StatusCode(502, ApiResponse<object>.Fail("REWRITE_FAILED", "重写失败"));
+        await _db.SpeechNodes.UpdateOneAsync(
+            n => n.Id == nodeId,
+            Builders<SpeechNode>.Update
+                .Set(n => n.Title, result.Value.title)
+                .Set(n => n.BulletPoints, result.Value.bullets)
+                .Set(n => n.UpdatedAt, DateTime.UtcNow));
+        return Ok(ApiResponse<object>.Ok(new { title = result.Value.title, bulletPoints = result.Value.bullets }));
+    }
+
+    // ── E2 一键发布 HTML 演讲站 ───────────────────
+
+    [HttpPost("decks/{deckId}/publish")]
+    public async Task<IActionResult> Publish(string deckId)
+    {
+        var userId = this.GetRequiredUserId();
+        var deck = await _db.SpeechDecks.Find(d => d.Id == deckId && d.OwnerUserId == userId).FirstOrDefaultAsync();
+        if (deck == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "演讲不存在"));
+        var nodes = await _db.SpeechNodes.Find(n => n.DeckId == deckId).ToListAsync();
+        if (nodes.Count == 0) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "演讲没有节点"));
+
+        // 拉每个节点的配图 URL
+        var assetIds = nodes.Where(n => !string.IsNullOrEmpty(n.ImageAssetId)).Select(n => n.ImageAssetId!).ToList();
+        var assets = assetIds.Count > 0
+            ? await _db.ImageAssets.Find(a => assetIds.Contains(a.Id)).ToListAsync()
+            : new List<ImageAsset>();
+        var urlByAssetId = assets.ToDictionary(a => a.Id, a => (string?)a.Url);
+        var urlByNodeId = nodes.ToDictionary(
+            n => n.Id,
+            n => !string.IsNullOrEmpty(n.ImageAssetId) && urlByAssetId.TryGetValue(n.ImageAssetId!, out var u) ? u : null);
+
+        var html = _service.RenderDeckHtml(deck, nodes, urlByNodeId);
+
+        // 复用 IHostedSiteService.CreateFromContentAsync(已有 COS 上传逻辑)
+        var site = await _hostedSites.CreateFromContentAsync(
+            userId, html,
+            title: deck.Title,
+            description: $"演讲 · {deck.Audience} · {deck.Style}",
+            sourceType: "speech-agent",
+            sourceRef: deckId,
+            tags: null, folder: null);
+
+        // 创建 public 分享链（owner 可重新发布会覆盖）
+        var share = new WebPageShareLink
+        {
+            CreatedBy = userId,
+            SiteId = site.Id,
+            ShareType = "single",
+            Purpose = "share",
+            Title = deck.Title,
+            AccessLevel = "public",
+        };
+        await _db.WebPageShareLinks.InsertOneAsync(share);
+
+        await _db.SpeechDecks.UpdateOneAsync(
+            d => d.Id == deckId,
+            Builders<SpeechDeck>.Update
+                .Set(d => d.PublishedSiteId, site.Id)
+                .Set(d => d.PublishedShareToken, share.Token)
+                .Set(d => d.PublishedAt, DateTime.UtcNow)
+                .Set(d => d.UpdatedAt, DateTime.UtcNow));
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            siteId = site.Id,
+            shareToken = share.Token,
+            shareUrl = $"/s/wp/{share.Token}",
+        }));
+    }
+
+    // ── E7 从知识库选文档作为输入 ──────────────────
+
+    public class CreateFromDocumentRequest
+    {
+        public string EntryId { get; set; } = string.Empty;
+        public string? Audience { get; set; }
+        public string? Style { get; set; }
+        public int? Depth { get; set; }
+        public string? IllustrationStyle { get; set; }
+    }
+
+    [HttpPost("decks/from-document")]
+    public async Task<IActionResult> CreateFromDocument([FromBody] CreateFromDocumentRequest req)
+    {
+        if (string.IsNullOrWhiteSpace(req.EntryId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺少 entryId"));
+        var userId = this.GetRequiredUserId();
+
+        // 直接读知识库 entry 内容（鉴权由 DocumentStore 层控制；这里再校验所属库读权限）
+        var entry = await _db.DocumentEntries.Find(e => e.Id == req.EntryId).FirstOrDefaultAsync();
+        if (entry == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档不存在"));
+        var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId).FirstOrDefaultAsync();
+        if (store == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库不存在"));
+        if (store.OwnerId != userId && !store.IsPublic)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限读该文档"));
+
+        var src = (entry.RawContent ?? "").Trim();
+        if (src.Length < 30)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文档内容过短（不足 30 字）"));
+
+        var deck = new SpeechDeck
+        {
+            OwnerUserId = userId,
+            Title = entry.Title.Trim(),
+            Mode = SpeechDeckMode.Mindmap,
+            SourceType = SpeechDeckSourceType.Document,
+            SourceRefId = entry.Id,
+            SourceText = src,
+            Audience = string.IsNullOrWhiteSpace(req.Audience) ? "通识" : req.Audience.Trim(),
+            Style = string.IsNullOrWhiteSpace(req.Style) ? "专业" : req.Style.Trim(),
+            Depth = Math.Clamp(req.Depth ?? 3, 2, 4),
+            IllustrationStyle = string.IsNullOrWhiteSpace(req.IllustrationStyle) ? "flat" : req.IllustrationStyle.Trim(),
+            Status = SpeechDeckStatus.Draft,
+        };
+        await _db.SpeechDecks.InsertOneAsync(deck);
+        return Ok(ApiResponse<object>.Ok(new { deck }));
     }
 
     public class UpdateNodeRequest
