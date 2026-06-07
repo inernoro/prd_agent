@@ -297,18 +297,46 @@ export default function ChangelogPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // releases summary 到位后：自动并发拉取所有版本详情（每版本~50kB，4个版本 = 4 个独立小请求，
-  // 浏览器并发，远比单次 274kB 大请求体验好；首屏先有 chip 计数和 highlights，详情陆续就位）
+  // releases summary 到位后：只对【第一个版本】立刻拉详情；
+  // 其余 release 走 IntersectionObserver — 滚动到可视区才拉，避免一次性 700kB 详情压栈
   const releaseDetailTriggeredRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (!releases) return;
-    for (const r of releases.releases) {
-      if (!r.entriesOmitted) continue;
-      if (releaseDetailTriggeredRef.current.has(r.version)) continue;
-      releaseDetailTriggeredRef.current.add(r.version);
-      void loadReleaseDetail(r.version);
-    }
+    if (!releases || releases.releases.length === 0) return;
+    const first = releases.releases[0];
+    if (!first.entriesOmitted) return;
+    if (releaseDetailTriggeredRef.current.has(first.version)) return;
+    releaseDetailTriggeredRef.current.add(first.version);
+    void loadReleaseDetail(first.version);
   }, [releases, loadReleaseDetail]);
+
+  // 其他 release：IntersectionObserver 监视 data-release-version 元素，进视口才拉
+  useEffect(() => {
+    if (activeTab !== 'update_center' || historySubtab !== 'releases') return;
+    if (!releases) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const v = (entry.target as HTMLElement).dataset.releaseVersion;
+          if (!v) continue;
+          if (releaseDetailTriggeredRef.current.has(v)) continue;
+          releaseDetailTriggeredRef.current.add(v);
+          void loadReleaseDetail(v);
+        }
+      },
+      { rootMargin: '300px 0px', threshold: 0.01 },
+    );
+    const nodes = document.querySelectorAll<HTMLElement>('[data-release-version]');
+    nodes.forEach((n) => observer.observe(n));
+    return () => observer.disconnect();
+  }, [activeTab, historySubtab, releases, loadReleaseDetail]);
+
+  // GitHub logs：首屏拉一次 80 条让 chip 计数准确（不是 0），不进入轮询
+  useEffect(() => {
+    if (githubLogsRef.current) return; // sessionStorage cache 已有，跳过
+    void refreshGitHubLogs({ force: false, foreground: false, showError: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     githubLogsRef.current = githubLogs;
@@ -636,7 +664,9 @@ export default function ChangelogPage() {
           }))
           .filter((d) => d.entries.length > 0);
         const totalCount = visibleDays.reduce((s, d) => s + d.entries.length, 0);
-        if (totalCount === 0 && release.highlights.length === 0) {
+        // summary 模式（entriesOmitted=true）下 days 故意为空——仍然要渲染卡片，让 IntersectionObserver
+        // 能挂到 dom 上触发详情拉取。只有当 release 真的「无 entries + 无 highlights + 非 summary」时才隐藏。
+        if (totalCount === 0 && release.highlights.length === 0 && !release.entriesOmitted) {
           return null;
         }
         const entryCount = release.entryCount ?? release.days.reduce((sum, day) => sum + day.entries.length, 0);
@@ -1215,6 +1245,7 @@ export default function ChangelogPage() {
                   return (
                     <div
                       key={`${release.version}-${release.releaseDate ?? ''}`}
+                      data-release-version={release.version}
                       {...(isFirstVisible ? { 'data-tour-id': 'changelog-latest' } : {})}
                     >
                         <div className="flex items-center gap-2 mb-3">

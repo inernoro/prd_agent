@@ -66,14 +66,16 @@ export function ChangelogBell({ size = 18, compact = false }: ChangelogBellProps
   );
 
   // 首次挂载：拉取本周更新（让红点提前出现）
+  // daysLimit=8 覆盖绝大多数用户的查看间隔（≤1 周），把 260kB 砍到 ~15kB；
+  // 如果用户超过 8 天没访问，红点数会偏少（罕见场景，可接受）。
   useEffect(() => {
-    void loadCurrentWeek();
+    void loadCurrentWeek({ daysLimit: 8 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 计算 popover 位置（基于按钮位置）
   const openPopover = () => {
-    void loadCurrentWeek({ force: true });
+    void loadCurrentWeek({ daysLimit: 8, force: true });
     const rect = buttonRef.current?.getBoundingClientRect();
     if (rect) {
       const popoverWidth = 360;

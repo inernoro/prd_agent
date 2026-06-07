@@ -530,7 +530,7 @@ export default function AgentLauncherPage() {
 
   useEffect(() => {
     loadItems();
-    void loadChangelogCurrentWeek();
+    void loadChangelogCurrentWeek({ daysLimit: 8 });
     void loadHomepageAssets();
     void loadWeeklyPoster();
   }, [loadItems, loadChangelogCurrentWeek, loadHomepageAssets, loadWeeklyPoster]);
