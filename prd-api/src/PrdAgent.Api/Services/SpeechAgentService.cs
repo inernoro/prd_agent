@@ -562,12 +562,41 @@ public class SpeechAgentService
         }
 
         var nodes = FlattenMindmap(parsed, deck.Id);
-        // 旧节点仅在新节点解析成功后才删除,避免 LLM/解析失败抹掉上一轮 mindmap
-        // (Bugbot/Codex P2 "Defer deleting old nodes until regeneration succeeds" / "Failed regen shows ghost nodes")
-        await _db.SpeechNodes.DeleteManyAsync(n => n.DeckId == deck.Id, CancellationToken.None);
+        // 两阶段交换,尽量做到"新节点全部就位才动旧节点",避免 InsertOne 中段失败留下半棵树
+        // (Bugbot High "Node replace not atomic" / Bugbot+Codex P2 "Defer deleting old nodes"):
+        //   1. 快照旧节点 Id(本次回滚/删除的精确范围,避免误伤并发新生成的节点)
+        //   2. 单次 InsertMany 新节点 — 失败时按新 Id 精确回滚,旧节点保持原样
+        //   3. 单次 DeleteMany 旧节点(by 快照 Id)— 至此完成切换
+        var oldIds = await _db.SpeechNodes
+            .Find(n => n.DeckId == deck.Id)
+            .Project(n => n.Id)
+            .ToListAsync(CancellationToken.None);
+        if (nodes.Count > 0)
+        {
+            try
+            {
+                await _db.SpeechNodes.InsertManyAsync(
+                    nodes,
+                    new InsertManyOptions { IsOrdered = true },
+                    CancellationToken.None);
+            }
+            catch
+            {
+                var newIds = nodes.Select(n => n.Id).ToList();
+                await _db.SpeechNodes.DeleteManyAsync(
+                    n => newIds.Contains(n.Id),
+                    CancellationToken.None);
+                throw;
+            }
+        }
+        if (oldIds.Count > 0)
+        {
+            await _db.SpeechNodes.DeleteManyAsync(
+                n => oldIds.Contains(n.Id),
+                CancellationToken.None);
+        }
         foreach (var n in nodes)
         {
-            await _db.SpeechNodes.InsertOneAsync(n, cancellationToken: CancellationToken.None);
             yield return SpeechGenerateEvent.NodeUpserted(n);
         }
 

@@ -121,6 +121,10 @@ export default function SpeechAgentEditorPage() {
     setSelectedNodeId(null);
     setThinking('');
     setTyping('');
+    // 同时清掉本地 errorMessage,后端 claim 时也会清,但本地 react state 不会自动跟,
+    // 否则上一轮失败的红条会和"生成中"并排显示让用户误以为又失败了
+    // (Bugbot Medium "Stale error banner during regen")
+    setDeck((prev) => (prev ? { ...prev, errorMessage: null } : prev));
     await stream.start();
   }, [stream]);
 

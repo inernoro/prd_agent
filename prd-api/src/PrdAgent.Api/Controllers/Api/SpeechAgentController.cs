@@ -343,6 +343,20 @@ public class SpeechAgentController : ControllerBase
             sourceRef: deckId,
             tags: null, folder: null);
 
+        // 重新发布前先吊销该 deck 之前所有 speech-agent 来源的分享链,
+        // 否则旧 token 的 /s/wp/{token} 仍能访问已撤回/修正的内容
+        // (Codex P2 "Revoke the previous speech share on republish")
+        var staleSiteIds = await _db.HostedSites
+            .Find(s => s.SourceType == "speech-agent" && s.SourceRef == deckId)
+            .Project(s => s.Id)
+            .ToListAsync();
+        if (staleSiteIds.Count > 0)
+        {
+            await _db.WebPageShareLinks.UpdateManyAsync(
+                l => staleSiteIds.Contains(l.SiteId!) && !l.IsRevoked,
+                Builders<WebPageShareLink>.Update.Set(l => l.IsRevoked, true));
+        }
+
         // 创建 public 分享链（owner 可重新发布会覆盖）
         var share = new WebPageShareLink
         {
@@ -495,12 +509,13 @@ public class SpeechAgentController : ControllerBase
             Builders<SpeechDeck>.Filter.Or(
                 Builders<SpeechDeck>.Filter.Ne(d => d.Status, SpeechDeckStatus.Generating),
                 Builders<SpeechDeck>.Filter.Lt(d => d.UpdatedAt, staleCutoff)));
+        // NodeCount 不归零:旧节点要解析成功后才被删,失败路径让 NodeCount 保持原值,
+        // 列表卡片继续显示旧 mindmap 的真实节点数 (Bugbot Medium "NodeCount zeroed on failed regen")
         var claimResult = await _db.SpeechDecks.UpdateOneAsync(
             claimFilter,
             Builders<SpeechDeck>.Update
                 .Set(d => d.Status, SpeechDeckStatus.Generating)
                 .Set(d => d.ErrorMessage, null)
-                .Set(d => d.NodeCount, 0)
                 .Set(d => d.UpdatedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
         if (claimResult.MatchedCount == 0)
