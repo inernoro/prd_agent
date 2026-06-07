@@ -268,10 +268,6 @@ export default function ZhunxingAgentPage() {
       0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
       50% { transform: translate3d(14px, 16px, 0) scale(1.05); }
     }
-    @keyframes zhunxingCardBreath {
-      0%, 100% { box-shadow: 0 10px 22px rgba(59,130,246,0.07); transform: translateY(0); }
-      50% { box-shadow: 0 16px 32px rgba(59,130,246,0.11); transform: translateY(-2px); }
-    }
     .zhunxing-workbench .zhunxing-orb {
       position: absolute;
       border-radius: 9999px;
@@ -302,11 +298,9 @@ export default function ZhunxingAgentPage() {
       animation: zhunxingOrbFloatC 18s ease-in-out infinite;
     }
     .zhunxing-workbench .zhunxing-breath-card {
-      animation: zhunxingCardBreath 9s ease-in-out infinite;
-      will-change: transform, box-shadow;
-    }
-    .zhunxing-workbench .zhunxing-breath-card:nth-of-type(2n) {
-      animation-delay: 1.4s;
+      animation: none !important;
+      transform: none !important;
+      will-change: auto;
     }
     @media (prefers-reduced-motion: reduce) {
       .zhunxing-workbench .zhunxing-orb,
