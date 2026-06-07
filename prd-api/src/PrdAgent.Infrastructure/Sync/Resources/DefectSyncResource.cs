@@ -354,6 +354,33 @@ public class DefectSyncResource : ISyncableResource
                     var newResolution = Resolved("resolution", existing.Resolution);
                     var newAssignee = Resolved("assigneeName", existing.AssigneeName);
                     var newResolvedAt = ResolvedTs("resolvedAt", existing.ResolvedAt);
+                    // PR #742 review Medium fix：update 路径也要按 username/email 重新对齐 reporter
+                    // 和 assignee，否则显示名变了但 ReporterId/AssigneeId 永远保留首次 insert 时的兜底
+                    // 旧值（项目 owner），破坏 reporter/assignee 过滤与工作流。
+                    string? newReporterId = existing.ReporterId;
+                    string? newReporterName = existing.ReporterName;
+                    if (!string.IsNullOrWhiteSpace(Get("reporterUserName")) || !string.IsNullOrWhiteSpace(Get("reporterEmail")))
+                    {
+                        var (rId, rName) = await ResolveUserAsync(
+                            Get("reporterUserName"), Get("reporterEmail"), Get("reporterName"),
+                            existing.ReporterId, existing.ReporterName, ct);
+                        newReporterId = rId;
+                        newReporterName = rName;
+                    }
+                    else if (!string.IsNullOrWhiteSpace(Get("reporterName")))
+                    {
+                        newReporterName = Get("reporterName");
+                    }
+                    string? newAssigneeId = existing.AssigneeId;
+                    string? newAssigneeName = newAssignee; // 同 Resolved("assigneeName") 行为
+                    if (!string.IsNullOrWhiteSpace(Get("assigneeUserName")) || !string.IsNullOrWhiteSpace(Get("assigneeEmail")))
+                    {
+                        var (aId, aName) = await ResolveUserAsync(
+                            Get("assigneeUserName"), Get("assigneeEmail"), Get("assigneeName"),
+                            existing.AssigneeId, existing.AssigneeName, ct);
+                        newAssigneeId = aId;
+                        if (!string.IsNullOrWhiteSpace(aName)) newAssigneeName = aName;
+                    }
                     // no-op 比对同时纳入 IsDeleted —— 本地软删的条目即便其他字段未变也要走 update 路径
                     // 恢复 IsDeleted=false（PR #742 review fix 同条）。
                     if (!existing.IsDeleted
@@ -363,7 +390,10 @@ public class DefectSyncResource : ISyncableResource
                         && existing.Severity == newSeverity
                         && existing.Priority == newPriority
                         && existing.Resolution == newResolution
-                        && existing.AssigneeName == newAssignee
+                        && existing.AssigneeName == newAssigneeName
+                        && existing.AssigneeId == newAssigneeId
+                        && existing.ReporterId == newReporterId
+                        && existing.ReporterName == newReporterName
                         && existing.ResolvedAt == newResolvedAt
                         && existingAttSig == newAttSig
                         && existingStructSig == newStructSig)
@@ -378,7 +408,10 @@ public class DefectSyncResource : ISyncableResource
                         .Set(x => x.Severity, newSeverity)
                         .Set(x => x.Priority, newPriority)
                         .Set(x => x.Resolution, newResolution)
-                        .Set(x => x.AssigneeName, newAssignee)
+                        .Set(x => x.AssigneeId, newAssigneeId)
+                        .Set(x => x.AssigneeName, newAssigneeName)
+                        .Set(x => x.ReporterId, newReporterId ?? existing.ReporterId)
+                        .Set(x => x.ReporterName, newReporterName)
                         .Set(x => x.ResolvedAt, newResolvedAt)
                         // PR #742 review Medium fix：清掉本地软删标记。Export 只会发非删除的条目，
                         // 源端再次推送此条目 = 它在源端是活的；若本地此前被软删，应"复活"，否则
