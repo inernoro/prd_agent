@@ -22,7 +22,9 @@ public class SpeechAgentService
     private readonly MongoDbContext _db;
     private readonly ILogger<SpeechAgentService> _logger;
 
-    private const int SourceTextMaxChars = 16000;
+    // 公开常量供 Controller 在落库前截断,避免 DB 存了 1MB 但 LLM 只看了 16K,
+    // 让用户误以为全文都参与了大纲 (Bugbot Medium "Source text not truncated")
+    public const int SourceTextMaxChars = 16000;
 
     public SpeechAgentService(
         ILlmGateway gateway,
@@ -338,7 +340,12 @@ public class SpeechAgentService
     }
     for (const arr of childrenOf.values()) arr.sort((a,b)=>a.order-b.order);
     const preorder = [];
-    (function walk(n,d){ n._d=d; n._idx=preorder.length; preorder.push(n); (childrenOf.get(n.id)||[]).forEach(c=>walk(c,d+1)); })(root, 0);
+    // 无根兜底:数据异常时不直接 throw 把页面整屏白屏 (Bugbot Low "Published player crashes without root")
+    if (!root) {
+      document.getElementById('map').innerHTML = '<div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:#172033;font-size:14px;">演讲数据缺少根节点,无法播放。</div>';
+    } else {
+      (function walk(n,d){ n._d=d; n._idx=preorder.length; preorder.push(n); (childrenOf.get(n.id)||[]).forEach(c=>walk(c,d+1)); })(root, 0);
+    }
     const total = preorder.length;
     let activeIndex = 0;
     function pathToRoot(n){ const p=[]; let c=n; while(c){ p.unshift(c); c=byId.get(c.parentId); } return p; }
@@ -453,7 +460,8 @@ public class SpeechAgentService
       while (wb <= -72) { wb += 72; go(-1); }
     }, { passive: false });
     window.addEventListener('resize', () => build(activeIndex));
-    build(0);
+    // 仅在有根节点时启动渲染,无根时上方已挂错误提示 (Bugbot Low "Published player crashes without root")
+    if (root) build(0);
   </script>
 </body>
 </html>

@@ -366,10 +366,16 @@ export default function SpeechAgentEditorPage() {
         </div>
       )}
 
-      {deck.status === 'failed' && deck.errorMessage && (
+      {deck.errorMessage && (
+        // 只要 errorMessage 存在就展示 banner,涵盖三种情况(Bugbot Medium "SSE errors hidden from users"):
+        //   ① deck.status === 'failed'(LLM 最终失败,已落库)
+        //   ② concurrencyRejected(并发拒绝,status 仍是 generating)
+        //   ③ SSE 网络/解析错(临时错,status 可能还是 draft/generating)
         <div className="shrink-0 px-5 py-2 border-b border-white/10 bg-rose-500/[0.08] flex items-center gap-2">
           <AlertTriangle size={12} className="text-rose-300" />
-          <span className="text-xs text-rose-100">生成失败：{deck.errorMessage}</span>
+          <span className="text-xs text-rose-100">
+            {deck.status === 'failed' ? '生成失败:' : '提示:'}{deck.errorMessage}
+          </span>
         </div>
       )}
 

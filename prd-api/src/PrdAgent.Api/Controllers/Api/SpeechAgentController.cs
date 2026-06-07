@@ -117,6 +117,10 @@ public class SpeechAgentController : ControllerBase
 
         var userId = this.GetRequiredUserId();
         var src = req.SourceText.Trim();
+        // 截断到与 LLM 实际使用相同的上限,避免 DB 存 1MB 但模型只看 16K 的认知错位
+        // (Bugbot Medium "Source text not truncated")
+        if (src.Length > SpeechAgentService.SourceTextMaxChars)
+            src = src[..SpeechAgentService.SourceTextMaxChars];
         var deck = new SpeechDeck
         {
             OwnerUserId = userId,
@@ -412,6 +416,9 @@ public class SpeechAgentController : ControllerBase
         src = (src ?? "").Trim();
         if (src.Length < 30)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文档内容过短（不足 30 字）"));
+        // 截断到 LLM 实际使用的上限 (Bugbot Medium "Source text not truncated")
+        if (src.Length > SpeechAgentService.SourceTextMaxChars)
+            src = src[..SpeechAgentService.SourceTextMaxChars];
 
         // 用户自填标题优先,空时回落到 entry.Title (Bugbot Medium "KB flow ignores custom title")
         var title = string.IsNullOrWhiteSpace(req.Title) ? entry.Title.Trim() : req.Title.Trim();
