@@ -255,6 +255,11 @@ export function InlineCommentOverlay({
                           if (t.src !== DEFAULT_AVATAR_FALLBACK) t.src = DEFAULT_AVATAR_FALLBACK;
                         }}
                         style={{
+                          // Tailwind base layer 默认给 img 加 height: auto，会把 HTML
+                          // width/height 属性覆盖成 0（src 未加载时塌缩成边框那一圈）。
+                          // inline style 显式指定 width/height 强制吃住 18×18。
+                          width: AV,
+                          height: AV,
                           borderRadius: '50%',
                           marginLeft: i === 0 ? 0 : -6,
                           border: isRightmost
@@ -268,6 +273,8 @@ export function InlineCommentOverlay({
                           objectFit: 'cover',
                           background: 'var(--bg-card, #1e1f20)',
                           display: 'block',
+                          boxSizing: 'content-box',
+                          flexShrink: 0,
                         }}
                       />
                     );
