@@ -68,3 +68,43 @@
   Agent 真实回复成功（如「我可以读取分析代码/搜索理解文件/协助解决问题」）
   自动捕获 P0=0
 ```
+
+---
+
+## 6. 增补（2026-06-07）：思考过程透出 + #3 慢首字根治 + 重要更正
+
+### 6.1 更正 §4 的错误结论：sidecar 运行时就在本仓库
+
+上一轮 §4 写「#7/#8/sidecar 不在本仓库、只能 MAP 侧缓解」是**错的**。边车运行时源码就在 `claude-sdk-sidecar/`（Python FastAPI + 官方 `claude-agent-sdk` + `anthropic`），镜像由 `.github/workflows/cds-sidecar-image.yml` 构建。我们能改它，只是它**不随分支预览自动部署**（需 CI 构镜像 + 共享边车池重部署），这是「部署门槛」不是「不可改」。
+
+### 6.2 #3 慢首字（等 40s 才出字 / 思考不显示）根因与修法
+
+根因（对照 `.claude/rules/llm-gateway.md` §2/§3）：用户用 OpenRouter 跑 deepseek-v3.2，OpenRouter 默认**不转发 reasoning**，把推理 hold 到结束才 flush content → 表现为「等 40 秒空白」。且边车两条上游链路都把思考增量丢弃。
+
+四层打通 thinking（commit 718a719 + 326892d）：
+- **边车** `agent_loop.py`：raw-anthropic 识别 `thinking_delta`；openai-compatible(OpenRouter) 请求体加 `include_reasoning:true` + `reasoning.exclude:false`，解析 delta 的 `reasoning`/`reasoning_content` → emit `thinking` 事件。`sdk_events.py`（官方 SDK 路径）映射 thinking 块。
+- **CDS 平台** `remote-hosts.ts`：透传 `thinking` 事件给 MAP。
+- **MAP** prd-api：`SidecarEventType`/`InfraAgentRuntimeEventType`/`InfraAgentEventTypes` 三处枚举补 `Thinking`；`ClaudeSidecarRouter.MapType` 识别字符串；`SidecarRuntimeAdapter` 映射；direct-sidecar 路径 switch 落 thinking 事件（不计入 finalText）；CDS-managed 路径本就按 type 透传。
+- **前端** `CdsAgentPage.tsx`：聚合 `thinking` 事件在「Agent 思考中」气泡逐字展示。
+
+### 6.3 本轮可验证层的视觉证据（预览域名真人路径，Playwright）
+
+预览：`https://cds-agent-integration-x6rck-claude-prd-agent.miduo.org/cds-agent`
+
+PROBE（DOM 取证）：
+```
+hasTextarea=true  placeholder="在此输入你的问题，回车发送（无需先填仓库）"
+hasModelPicker=true   hasNoiseBubble=false   自动捕获 P0=0
+```
+截图佐证：
+- 落地页：引导空状态「想让 Agent 做什么？」+ 干净真输入框 + 模型选择器(deepseek/deepseek-v3.2 可下拉改) + 简洁右栏「运行进展」。证 #1/#2/#9/#10/#12/#13。
+- 真实对话：发「请用三句话介绍你能做什么」→ Agent 8s 内 markdown 渲染回复并**干净收尾**（无工具循环/日志刷屏）。证 #5/#11，本轮观测 #7/#8 未复现。
+
+### 6.4 部署门槛（thinking 上线的唯一未完成步骤，需有人值守）
+
+可验证层（prd-admin + prd-api，随分支预览自动部署）：**已上线已验**。
+边车层（thinking 真正产生 reasoning 事件）需共享基础设施重部署，属有 blast radius 的操作，按 `blocked-state-circuit-breaker.md` 不在无人值守时执行：
+1. 边车镜像：**已构建成功**（CI run 27090697560，SHA 326892d，已推 ghcr）。
+2. 待执行（值守）：共享边车池重部署到新镜像 + CDS 平台 `cdscli update --branch` 自更新。回滚：重部署回上一镜像 tag。
+
+> 结论：thinking 代码四层全部写完并推送、镜像已构建；剩一步「共享边车池重部署」需有人值守执行（误则影响所有人的 CDS Agent），不在熟睡时擅自动共享设施。
