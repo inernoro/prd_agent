@@ -445,6 +445,19 @@ public class DefectSyncResource : ISyncableResource
                     DateTime parsedCreated = DateTime.UtcNow;
                     if (Get("createdAt") is string c && DateTime.TryParse(c, out var dt)) parsedCreated = dt.ToUniversalTime();
 
+                    // PR #742 review P2 fix：DefectNo 有唯一索引 uniq_defect_reports_no。
+                    // test/prod 各自独立生成的同 DefectNo（如 DEF-2026-0001）冲突时直接 InsertOne 会
+                    // DuplicateKey 报错，整条 import 算 failed。改为：保留源端编号优先；同号被占即加
+                    // -peer-{shortLineage} 后缀；竞态时再用 GUID 后缀兜底。
+                    var srcDefectNo = Get("defectNo") ?? string.Empty;
+                    string finalDefectNo = srcDefectNo;
+                    if (!string.IsNullOrWhiteSpace(srcDefectNo))
+                    {
+                        var noTaken = await _db.DefectReports.Find(d => d.DefectNo == srcDefectNo).AnyAsync(ct);
+                        if (noTaken)
+                            finalDefectNo = $"{srcDefectNo}-peer-{lineageId[..Math.Min(8, lineageId.Length)]}";
+                    }
+
                     // PR #742 review Medium fix：按 reporterUserName / reporterEmail 对齐到本地用户；
                     // 未命中才退回项目 owner（同 doc-store 的兜底逻辑），避免所有 import 全部归项目 owner。
                     var (reporterId, reporterName) = await ResolveUserAsync(
@@ -462,7 +475,7 @@ public class DefectSyncResource : ISyncableResource
                     var defect = new DefectReport
                     {
                         Id = lineageId,
-                        DefectNo = Get("defectNo") ?? string.Empty,
+                        DefectNo = finalDefectNo,
                         Title = r.Title,
                         RawContent = r.Content ?? string.Empty,
                         Status = Resolved("status", "submitted") ?? "submitted",
@@ -481,7 +494,22 @@ public class DefectSyncResource : ISyncableResource
                         Attachments = attachments ?? new List<DefectAttachment>(),
                         StructuredData = structured ?? new Dictionary<string, string>(),
                     };
-                    await _db.DefectReports.InsertOneAsync(defect, cancellationToken: ct);
+                    try
+                    {
+                        await _db.DefectReports.InsertOneAsync(defect, cancellationToken: ct);
+                    }
+                    catch (MongoWriteException dupEx) when (dupEx.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+                    {
+                        // 竞态：DefectNo / lineage 同号正好被另一并发 import 抢插。retry 一次：DefectNo 加 GUID 后缀。
+                        defect.DefectNo = $"{srcDefectNo}-peer-{Guid.NewGuid().ToString("N")[..12]}";
+                        try { await _db.DefectReports.InsertOneAsync(defect, cancellationToken: ct); }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "[peer-sync] insert defect 二次竞态失败 lineage={LineageId} no={No}", lineageId, defect.DefectNo);
+                            failed++;
+                            continue;
+                        }
+                    }
                     created++;
                 }
             }
