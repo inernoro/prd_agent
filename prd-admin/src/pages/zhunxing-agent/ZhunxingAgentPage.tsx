@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -118,7 +118,7 @@ const FUTURE_PORTALS = [
 type VisualStyleMode = 'aurora' | 'cosmic' | 'slate';
 
 const STYLE_MODE_OPTIONS: Array<{ value: VisualStyleMode; label: string }> = [
-  { value: 'aurora', label: '曙光蓝' },
+  { value: 'aurora', label: '晨曦白' },
   { value: 'slate', label: '雾银灰' },
   { value: 'cosmic', label: '深空黑' },
 ];
@@ -171,6 +171,13 @@ export default function ZhunxingAgentPage() {
         cardBorder: '1px solid rgba(148,163,184,0.22)',
         surfaceBackground: 'rgba(255,255,255,0.03)',
         surfaceBorder: '1px solid rgba(255,255,255,0.08)',
+        controlBackground: 'rgba(255,255,255,0.04)',
+        controlBorder: '1px solid rgba(255,255,255,0.1)',
+        textPrimary: '#e5e7eb',
+        textMuted: '#94a3b8',
+        orbA: 'rgba(96,165,250,0.35)',
+        orbB: 'rgba(129,140,248,0.3)',
+        orbC: 'rgba(56,189,248,0.25)',
       };
     }
 
@@ -182,18 +189,102 @@ export default function ZhunxingAgentPage() {
         cardBorder: '1px solid rgba(148,163,184,0.28)',
         surfaceBackground: 'rgba(255,255,255,0.08)',
         surfaceBorder: '1px solid rgba(148,163,184,0.28)',
+        controlBackground: 'rgba(255,255,255,0.08)',
+        controlBorder: '1px solid rgba(148,163,184,0.28)',
+        textPrimary: '#f8fafc',
+        textMuted: '#cbd5e1',
+        orbA: 'rgba(148,163,184,0.35)',
+        orbB: 'rgba(125,211,252,0.28)',
+        orbC: 'rgba(191,219,254,0.24)',
       };
     }
 
     return {
       pageBackground:
-        'radial-gradient(1200px 560px at 45% -20%, rgba(56,189,248,0.28), transparent 70%), radial-gradient(900px 420px at 80% 0%, rgba(129,140,248,0.22), transparent 70%), linear-gradient(180deg, #0b1220 0%, #111827 100%)',
-      cardBackground: 'rgba(15,23,42,0.22)',
-      cardBorder: '1px solid rgba(125,211,252,0.25)',
-      surfaceBackground: 'rgba(255,255,255,0.09)',
-      surfaceBorder: '1px solid rgba(125,211,252,0.26)',
+        'radial-gradient(1200px 620px at 25% -10%, rgba(191,219,254,0.85), transparent 70%), radial-gradient(900px 520px at 85% 0%, rgba(167,243,208,0.55), transparent 70%), linear-gradient(180deg, #f7fbff 0%, #e8f3ff 100%)',
+      cardBackground: 'rgba(255,255,255,0.78)',
+      cardBorder: '1px solid rgba(148,163,184,0.24)',
+      surfaceBackground: 'rgba(255,255,255,0.7)',
+      surfaceBorder: '1px solid rgba(148,163,184,0.2)',
+      controlBackground: 'rgba(255,255,255,0.92)',
+      controlBorder: '1px solid rgba(148,163,184,0.32)',
+      textPrimary: '#0f172a',
+      textMuted: '#475569',
+      orbA: 'rgba(125,211,252,0.45)',
+      orbB: 'rgba(167,243,208,0.4)',
+      orbC: 'rgba(191,219,254,0.35)',
     };
   }, [visualStyle]);
+
+  const pageStyle = useMemo(() => {
+    return {
+      background: visualStyleTokens.pageBackground,
+      transition: 'background 320ms ease',
+      ['--text-primary' as string]: visualStyleTokens.textPrimary,
+      ['--text-muted' as string]: visualStyleTokens.textMuted,
+    } as CSSProperties;
+  }, [visualStyleTokens]);
+
+  const breathingStyleSheet = `
+    @keyframes zhunxingOrbFloatA {
+      0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+      50% { transform: translate3d(20px, -30px, 0) scale(1.06); }
+    }
+    @keyframes zhunxingOrbFloatB {
+      0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+      50% { transform: translate3d(-22px, 24px, 0) scale(1.08); }
+    }
+    @keyframes zhunxingOrbFloatC {
+      0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+      50% { transform: translate3d(14px, 16px, 0) scale(1.05); }
+    }
+    @keyframes zhunxingCardBreath {
+      0%, 100% { box-shadow: 0 10px 22px rgba(59,130,246,0.07); transform: translateY(0); }
+      50% { box-shadow: 0 16px 32px rgba(59,130,246,0.11); transform: translateY(-2px); }
+    }
+    .zhunxing-workbench .zhunxing-orb {
+      position: absolute;
+      border-radius: 9999px;
+      filter: blur(48px);
+      pointer-events: none;
+      opacity: 0.55;
+      will-change: transform;
+    }
+    .zhunxing-workbench .zhunxing-orb-a {
+      width: 360px;
+      height: 360px;
+      top: -120px;
+      left: -80px;
+      animation: zhunxingOrbFloatA 16s ease-in-out infinite;
+    }
+    .zhunxing-workbench .zhunxing-orb-b {
+      width: 300px;
+      height: 300px;
+      top: 18%;
+      right: -90px;
+      animation: zhunxingOrbFloatB 20s ease-in-out infinite;
+    }
+    .zhunxing-workbench .zhunxing-orb-c {
+      width: 260px;
+      height: 260px;
+      bottom: 8%;
+      left: 40%;
+      animation: zhunxingOrbFloatC 18s ease-in-out infinite;
+    }
+    .zhunxing-workbench .zhunxing-breath-card {
+      animation: zhunxingCardBreath 9s ease-in-out infinite;
+      will-change: transform, box-shadow;
+    }
+    .zhunxing-workbench .zhunxing-breath-card:nth-of-type(2n) {
+      animation-delay: 1.4s;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .zhunxing-workbench .zhunxing-orb,
+      .zhunxing-workbench .zhunxing-breath-card {
+        animation: none !important;
+      }
+    }
+  `;
 
   const confidencePercent = useMemo(() => Math.round((result?.confidence ?? 0) * 100), [result?.confidence]);
 
@@ -435,7 +526,7 @@ export default function ZhunxingAgentPage() {
 
   const askPanel = (
     <>
-      <GlassCard variant="subtle" animated className="p-4" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
+      <GlassCard variant="subtle" animated className="p-4 zhunxing-breath-card" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0 flex-1">
             <div className="inline-flex items-center gap-2 rounded-md px-2 py-1 text-[11px]" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', color: '#22C55E' }}>
@@ -478,7 +569,7 @@ export default function ZhunxingAgentPage() {
         </div>
       </GlassCard>
 
-      <GlassCard variant="subtle" animated className="p-4" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
+      <GlassCard variant="subtle" animated className="p-4 zhunxing-breath-card" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
         <div className="flex items-start gap-3">
           <div
             className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
@@ -504,7 +595,7 @@ export default function ZhunxingAgentPage() {
             <Search
               size={14}
               className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
-              style={{ color: 'rgba(255,255,255,0.4)' }}
+              style={{ color: 'var(--text-muted)' }}
             />
             <input
               type="text"
@@ -519,8 +610,8 @@ export default function ZhunxingAgentPage() {
               placeholder="输入你的问题，例如：考勤、请假、交接流程..."
               className="w-full pl-9 pr-3 py-2.5 rounded-lg text-sm outline-none"
               style={{
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.08)',
+                background: visualStyleTokens.controlBackground,
+                border: visualStyleTokens.controlBorder,
                 color: 'var(--text-primary)',
               }}
             />
@@ -534,8 +625,8 @@ export default function ZhunxingAgentPage() {
                 onClick={() => void runAsk(s)}
                 className="px-2.5 py-1 rounded-md text-xs transition-colors"
                 style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.08)',
+                  background: visualStyleTokens.controlBackground,
+                  border: visualStyleTokens.controlBorder,
                   color: 'var(--text-muted)',
                 }}
               >
@@ -554,8 +645,8 @@ export default function ZhunxingAgentPage() {
                 onChange={(e) => setAnswerRole(e.target.value as 'employee' | 'supervisor' | 'hr')}
                 className="rounded-md px-2 py-1.5 text-xs outline-none"
                 style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.08)',
+                  background: visualStyleTokens.controlBackground,
+                  border: visualStyleTokens.controlBorder,
                   color: 'var(--text-primary)',
                 }}
               >
@@ -573,7 +664,7 @@ export default function ZhunxingAgentPage() {
       </GlassCard>
 
       {error && (
-        <GlassCard variant="subtle" animated className="p-3 flex items-center gap-2" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
+        <GlassCard variant="subtle" animated className="p-3 flex items-center gap-2 zhunxing-breath-card" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
           <AlertCircle size={16} style={{ color: '#FB923C' }} />
           <span className="text-sm" style={{ color: 'var(--text-primary)' }}>
             {error}
@@ -582,7 +673,7 @@ export default function ZhunxingAgentPage() {
       )}
 
       {result && (
-        <GlassCard variant="subtle" animated className="p-4" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
+        <GlassCard variant="subtle" animated className="p-4 zhunxing-breath-card" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <span
               className="px-2 py-0.5 rounded-md text-xs"
@@ -650,7 +741,7 @@ export default function ZhunxingAgentPage() {
               <div className="text-xs font-semibold" style={{ color: '#FB7185' }}>
                 口径冲突提示
               </div>
-              <div className="text-xs mt-1" style={{ color: 'rgba(255,255,255,0.85)' }}>
+              <div className="text-xs mt-1" style={{ color: 'var(--text-primary)' }}>
                 {result.conflictMessage || '命中条款存在潜在冲突，请先人工确认后再执行。'}
               </div>
               {result.conflictClauses?.length ? (
@@ -796,7 +887,7 @@ export default function ZhunxingAgentPage() {
                 </div>
               ))}
               {result.citations.length === 0 && (
-                <div className="rounded-lg p-2.5 text-xs" style={{ background: visualStyleTokens.surfaceBackground, color: 'var(--text-muted)' }}>
+                <div className="rounded-lg p-2.5 text-xs" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder, color: 'var(--text-muted)' }}>
                   当前没有可展示的依据条款。
                 </div>
               )}
@@ -805,7 +896,7 @@ export default function ZhunxingAgentPage() {
         </GlassCard>
       )}
 
-      <GlassCard variant="subtle" animated className="p-4" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
+      <GlassCard variant="subtle" animated className="p-4 zhunxing-breath-card" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
         <div className="flex items-center justify-between gap-2 mb-3">
           <div className="text-sm font-semibold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
             <Bot size={15} />
@@ -829,7 +920,7 @@ export default function ZhunxingAgentPage() {
         </div>
       </GlassCard>
 
-      <GlassCard variant="subtle" animated className="p-4" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
+      <GlassCard variant="subtle" animated className="p-4 zhunxing-breath-card" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
         <div className="flex items-center justify-between gap-2 mb-3">
           <div className="text-sm font-semibold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
             <BrainCircuit size={15} />
@@ -868,7 +959,7 @@ export default function ZhunxingAgentPage() {
         </div>
       </GlassCard>
 
-      <GlassCard variant="subtle" animated className="p-3" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
+      <GlassCard variant="subtle" animated className="p-3 zhunxing-breath-card" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
         <div className="text-xs flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
           <Clock3 size={13} />
           提示：当前展示为“产品化骨架”，后续功能会按阶段逐步上线，避免页面结构反复重做。
@@ -878,7 +969,7 @@ export default function ZhunxingAgentPage() {
   );
 
   const dashboardPanel = (
-    <GlassCard variant="subtle" animated className="p-4" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
+    <GlassCard variant="subtle" animated className="p-4 zhunxing-breath-card" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
       <div className="flex items-center justify-between gap-2 mb-3">
         <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
           准星反馈看板
@@ -1286,14 +1377,18 @@ export default function ZhunxingAgentPage() {
 
   return (
     <div
-      className="h-full min-h-0 overflow-auto px-3 py-4 sm:px-4 md:px-6"
-      style={{
-        background: visualStyleTokens.pageBackground,
-        transition: 'background 220ms ease',
-      }}
+      className="zhunxing-workbench relative h-full min-h-0 overflow-auto px-3 py-4 sm:px-4 md:px-6"
+      style={pageStyle}
     >
-      <div className="max-w-6xl mx-auto flex flex-col gap-4">
-        <GlassCard variant="subtle" className="p-3" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
+      <style>{breathingStyleSheet}</style>
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="zhunxing-orb zhunxing-orb-a" style={{ background: visualStyleTokens.orbA }} />
+        <div className="zhunxing-orb zhunxing-orb-b" style={{ background: visualStyleTokens.orbB }} />
+        <div className="zhunxing-orb zhunxing-orb-c" style={{ background: visualStyleTokens.orbC }} />
+      </div>
+
+      <div className="relative z-10 max-w-6xl mx-auto flex flex-col gap-4">
+        <GlassCard variant="subtle" className="p-3 zhunxing-breath-card" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
               <div className="text-sm font-semibold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
@@ -1313,8 +1408,8 @@ export default function ZhunxingAgentPage() {
                     onClick={() => setVisualStyle(option.value)}
                     className="px-2 py-1 rounded-md text-[11px] whitespace-nowrap transition-opacity hover:opacity-90"
                     style={{
-                      background: visualStyle === option.value ? 'rgba(96,165,250,0.2)' : 'rgba(255,255,255,0.06)',
-                      border: visualStyle === option.value ? '1px solid rgba(96,165,250,0.5)' : '1px solid rgba(255,255,255,0.14)',
+                      background: visualStyle === option.value ? 'rgba(96,165,250,0.2)' : visualStyleTokens.controlBackground,
+                      border: visualStyle === option.value ? '1px solid rgba(96,165,250,0.5)' : visualStyleTokens.controlBorder,
                       color: visualStyle === option.value ? '#60A5FA' : 'var(--text-muted)',
                     }}
                   >
