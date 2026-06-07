@@ -212,6 +212,13 @@ public class PeerSyncController : ControllerBase
         if (req == null || req.Bundle == null)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺少 bundle"));
 
+        // PR #742 review Medium fix：URL 段 {type} 决定走哪个 handler，但 bundle 自带 ResourceType。
+        // 不校验匹配，配对节点可以把知识库 bundle POST 到 /defect-agent/apply，导致 defect resource
+        // 拿着文档记录硬塞 DefectReport，数据形状错位污染。要求两者一致才放行。
+        if (!string.Equals(req.Bundle.ResourceType, resource.ResourceType, StringComparison.Ordinal))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                $"bundle.resourceType={req.Bundle.ResourceType} 与端点 {resource.ResourceType} 不匹配"));
+
         var actor = await BuildActorAsync(node!.CreatedBy, ct);
         var mode = req.Mode == "add-only" ? SyncApplyMode.AddOnly : SyncApplyMode.Overwrite;
         var outcome = await resource.ApplyAsync(req.Bundle, actor, mode, req.TargetKey, ct);

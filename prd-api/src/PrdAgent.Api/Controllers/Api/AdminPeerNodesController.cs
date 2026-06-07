@@ -199,8 +199,21 @@ public class AdminPeerNodesController : ControllerBase
                 .Set(n => n.CreatedBy, GetUserId())
                 .Set(n => n.UpdatedAt, DateTime.UtcNow),
             new UpdateOptions { IsUpsert = true }, ct);
+        // PR #742 review Medium fix：upsert 后回读可能因极端时序 / 副本集读不到，不可直接 ! 解引用。
+        // 命中 null 时 500 已配对成功用户却看 NRE，体验糟；显式回报"已配对但读取失败"，配对码已用过、
+        // SharedSecret 已落库，让用户刷新即能看到。
         var reloaded = await _db.PeerNodes.Find(n => n.RemoteNodeId == result.NodeId).FirstOrDefaultAsync(ct);
-        return Ok(ApiResponse<object>.Ok(ToDto(reloaded!)));
+        if (reloaded == null)
+        {
+            _logger.LogWarning("[peer-sync] upsert 后回读 PeerNode 为空 remoteNodeId={RemoteNodeId}", result.NodeId);
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                pending = true,
+                remoteNodeId = result.NodeId,
+                message = "配对成功，但本端回读延迟。请稍后刷新列表查看。",
+            }));
+        }
+        return Ok(ApiResponse<object>.Ok(ToDto(reloaded)));
     }
 
     /// <summary>测试连通性（HMAC 签名 ping 对端）。</summary>
