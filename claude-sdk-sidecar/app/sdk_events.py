@@ -30,7 +30,13 @@ def handle_sdk_message(message: Any, result_message_type: type, state: SdkEventA
     events: list[SidecarEvent] = []
     for block in getattr(message, "content", []) or []:
         btype = block_type(block)
-        if btype in ("text", "textblock"):
+        if btype in ("thinking", "thinkingblock", "redacted_thinking", "reasoning", "reasoningblock"):
+            # 推理模型的思考块。官方 SDK 会给出 thinking 内容；过去这里没映射，导致用户在
+            # 推理期间(可能数十秒)看到空白("首字太慢/思考不显示")。透出为 thinking 事件。
+            thinking = block_thinking(block)
+            if thinking:
+                events.append(SidecarEvent(type="thinking", text=thinking))
+        elif btype in ("text", "textblock"):
             text = block_text(block)
             if text:
                 state.final_text += text
@@ -71,6 +77,20 @@ def block_text(block: Any) -> str:
     if isinstance(block, dict):
         text = block.get("text")
         return text if isinstance(text, str) else ""
+    return ""
+
+
+def block_thinking(block: Any) -> str:
+    # 思考块的内容在 .thinking（Anthropic thinking block）；redacted 的退回 .text。
+    for attr in ("thinking", "text"):
+        value = getattr(block, attr, None)
+        if isinstance(value, str) and value:
+            return value
+    if isinstance(block, dict):
+        for key in ("thinking", "text"):
+            value = block.get(key)
+            if isinstance(value, str) and value:
+                return value
     return ""
 
 

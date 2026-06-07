@@ -3550,6 +3550,11 @@ export default function CdsAgentPage() {
       !item.sessionId || !activeSession?.id || item.sessionId === activeSession.id
     ));
     const assistantStreamText = assistantTextFromEvents(displayedEvents);
+    // 推理模型的思考原文（边车 thinking 事件透出）。在等待气泡里流式展示，消除"思考期间空白"。
+    const thinkingText = displayedEvents
+      .filter((e) => e.type === 'thinking')
+      .map((e) => (typeof parsePayload(e).text === 'string' ? (parsePayload(e).text as string) : ''))
+      .join('');
     const shouldShowAssistantStream = Boolean(
       assistantStreamText.trim()
       && !messages.some((message) => message.role === 'assistant' && message.content.trim() === assistantStreamText.trim()),
@@ -4235,9 +4240,16 @@ export default function CdsAgentPage() {
 	              )}
 	              {awaitingAgent && (
 	                <div className="flex justify-start">
-	                  <div className="inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-white/55" style={{ background: 'rgba(96,165,250,0.08)', border: '1px solid rgba(96,165,250,0.2)' }}>
-	                    <MapSpinner size={13} />
-	                    <span>Agent 思考中… 已等待 {formatHumanDuration(waitedSec)}（推理模型首字可能较慢，仍在处理）</span>
+	                  <div className="max-w-[88%] rounded-xl px-3 py-2 text-xs text-white/55" style={{ background: 'rgba(96,165,250,0.08)', border: '1px solid rgba(96,165,250,0.2)' }}>
+	                    <div className="inline-flex items-center gap-2">
+	                      <MapSpinner size={13} />
+	                      <span>Agent 思考中… 已等待 {formatHumanDuration(waitedSec)}（推理模型首字可能较慢）</span>
+	                    </div>
+	                    {thinkingText.trim() && (
+	                      <div className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-lg px-2 py-1.5 text-[11px] leading-relaxed text-white/50" style={{ background: 'rgba(0,0,0,0.22)', overscrollBehavior: 'contain' }}>
+	                        {thinkingText}
+	                      </div>
+	                    )}
 	                  </div>
                 </div>
               )}

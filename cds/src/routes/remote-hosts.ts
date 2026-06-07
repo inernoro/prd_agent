@@ -1487,7 +1487,7 @@ function buildCdsManagedRuntimeCapacity(
 }
 
 type CdsAgentSessionStatus = 'creating' | 'running' | 'idle' | 'stopping' | 'stopped' | 'failed';
-type CdsAgentEventType = 'status' | 'runtime_init' | 'text_delta' | 'tool_call' | 'tool_result' | 'log' | 'error' | 'done' | 'hook' | 'usage';
+type CdsAgentEventType = 'status' | 'runtime_init' | 'text_delta' | 'thinking' | 'tool_call' | 'tool_result' | 'log' | 'error' | 'done' | 'hook' | 'usage';
 
 interface CdsAgentResourcePolicy {
   cpuCores: number;
@@ -1976,6 +1976,12 @@ function ingestOfficialSdkSseFrame(
       runtimeOwnedBy: 'cds-managed-runtime',
       transport: toCdsManagedRuntimeTransportView(transport),
     });
+    return null;
+  }
+  if (sidecarType === 'thinking') {
+    // 推理模型的思考内容：透传给 MAP/前端展示，消除"首字慢/思考期间空白"。
+    const text = normalizeOptionalString(payload.text) || '';
+    if (text) pushCdsAgentEvent(session, 'thinking', { text });
     return null;
   }
   if (sidecarType === 'text_delta') {

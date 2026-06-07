@@ -11,3 +11,5 @@
 | fix | prd-admin | CDS Agent 回复按 markdown 渲染：本轮收到 done 即渲染（不再因会话持续 live 而一直纯文本展示 ##/**/反引号） |
 | fix | prd-admin | CDS Agent 输入区按 Codex 极简：去掉「官方 SDK」徽标+「不要求仓库…」说明+冗余提示，Code 巡检改名「代码」，思考指示改「Agent 思考中…」 |
 | feat | prd-admin | CDS Agent 输入栏加模型选择器（参照 Codex）：新会话可直接选模型（解决配了 v4 却跑 v3.2 → 选对的那个），运行中显示当前模型 |
+| feat | prd-admin | CDS Agent 展示思考过程：推理模型 thinking 内容流式显示在「Agent 思考中」气泡，消除推理期间空白 |
+| feat | cds | CDS Agent 边车 sdk_events 映射 thinking 块 + remote-hosts 透传 thinking 事件给 MAP（原先只透 text_delta/tool_use/tool_result，思考被丢弃） |
