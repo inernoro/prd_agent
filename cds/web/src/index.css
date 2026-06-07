@@ -966,16 +966,21 @@
    * 手机端动作 sheet —— ⋮ 点开的竖向操作面板。把页面传入 right 槽的那组按钮
    * 竖直铺成全宽菜单行(按钮本就是 Button,竖排即菜单形态)。双主题走 token。
    */
-  /* backdrop + sheet 都 portal 到 <body>:fixed 相对视口,盖满全屏。 */
+  /* backdrop + sheet 都 portal 到 <body>:fixed 相对视口,盖满全屏。
+     z-index 必须低于全局 Radix Dialog(z-50)—— 否则从 sheet 内动作打开的对话框
+     (如项目列表「一键部署」→ 创建)会被 sheet 盖住、看似打不开
+     (Bugbot #741 Medium「Sheet layer hides modal dialogs」)。
+     仍高于页面/顶栏(portal 到 body 后天然在 #root 之上);项目自定义
+     DropdownMenu 是 z-10100,本就在 sheet 之上,嵌套二级菜单不受影响。 */
   .cds-topbar-sheet-backdrop {
     position: fixed;
     inset: 0;
-    z-index: 1000;
+    z-index: 40;
   }
 
   .cds-topbar-sheet {
     position: fixed;
-    z-index: 1001;
+    z-index: 45;
     min-width: 200px;
     max-width: 78vw;
     max-height: 70vh;
