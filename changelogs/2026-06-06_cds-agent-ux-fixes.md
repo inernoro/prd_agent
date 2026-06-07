@@ -19,3 +19,4 @@
 | fix | prd-admin | CDS Agent 流式回复 markdown 不再「结束啪一下变样」:同一个 StreamingText 贯穿流式→完成两阶段(blur 过渡),不再换组件硬切 |
 | fix | prd-admin | CDS Agent 右栏「结果可复盘」不再显示原始事件序号(一句闲聊刷几十个事件的噪音),改为「回复已生成」/真实产物数 |
 | fix | prd-admin | CDS Agent 等待文案收敛:有思考显示「正在思考」,否则「正在生成回复」,「推理较慢」提示仅在等待≥15s 才出,不再一上来吓唬人 |
+| fix | prd-admin | CDS Agent 右栏不再把「运行日志」当产物:纯聊天不再误报「1个产物」,真实文件/diff/命令/快照才计入产物数 |

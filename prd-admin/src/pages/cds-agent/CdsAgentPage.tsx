@@ -3721,6 +3721,9 @@ export default function CdsAgentPage() {
 	        state: activeSession ? 'pass' : 'pending',
 	      },
 	    ] as const;
+	    // 「运行日志」不是用户视角的可复盘产物(纯聊天也会有日志)，从产物计数里剔除，
+	    // 避免一句闲聊在右栏报「1个产物」。真实文件/diff/命令/快照仍计入。
+	    const reviewableArtifactCount = artifacts.filter((a) => a.id !== 'session-log').length;
 	    const runProgressChecklist = [
         {
           label: '执行有效性',
@@ -3728,11 +3731,11 @@ export default function CdsAgentPage() {
           state: emptyExecution || staleExecution || activeSessionTimedOut ? 'warn' : hasRuntimeRun || hasAssistantOutput ? 'pass' : activeSession ? 'pending' : 'idle',
         },
 	      {
-	        label: lastAssistant || artifacts.length > 0 ? '结果可复盘' : '等待 Agent 输出',
-	        detail: artifacts.length > 0
-	          ? `${artifacts.length} 个产物可复盘`
+	        label: lastAssistant || reviewableArtifactCount > 0 ? '结果可复盘' : '等待 Agent 输出',
+	        detail: reviewableArtifactCount > 0
+	          ? `${reviewableArtifactCount} 个产物可复盘`
 	          : lastAssistant ? "回复已生成，可在上方查看" : "等待 Agent 首个输出",
-	        state: lastAssistant || artifacts.length > 0 ? 'pass' : activeSession ? 'pending' : 'idle',
+	        state: lastAssistant || reviewableArtifactCount > 0 ? 'pass' : activeSession ? 'pending' : 'idle',
 	      },
 	    ] as const;
     const readinessDone = readinessChecklist.filter((item) => item.state === 'pass').length;
