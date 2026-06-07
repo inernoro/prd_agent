@@ -247,7 +247,13 @@ public class SpeechAgentService
                 ["image"] = imageUrls.TryGetValue(n.Id, out var u) ? u : null,
             });
         }
-        var nodesJson = nodesPayload.ToJsonString();
+        // 防 <script> 上下文逃逸：节点标题/要点里如果含 "</script>" 或 "<!--" 会破坏 inline <script>。
+        // 标准做法把序列化后的 / 与 < 转义成 \/ 和 < —— JSON 仍合法,JS 解析后等价,但不会再"看到"
+        // 闭合标签 (Bugbot Medium "Published HTML script breakout")。
+        var nodesJson = nodesPayload.ToJsonString()
+            .Replace("</", "<\\/")
+            .Replace("<!--", "<\\u0021--")
+            .Replace("<script", "<\\u0073cript");
         var titleSafe = System.Web.HttpUtility.HtmlEncode(deck.Title);
 
         return $$$"""

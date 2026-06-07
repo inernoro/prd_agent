@@ -45,6 +45,9 @@ export default function SpeechAgentCreatePage() {
   const [kbEntries, setKbEntries] = useState<Array<{ id: string; title: string; summary?: string; sourceType?: string }>>([]);
   const [kbLoading, setKbLoading] = useState(false);
   const [kbFetchingEntry, setKbFetchingEntry] = useState(false);
+  // 选中的知识库 entry — submit 走 createFromDocument 保留 sourceType=document + sourceRefId
+  // (Bugbot Medium: KB deck saved as paste — 之前 submit 永远走 createDeck，丢了来源)
+  const [kbSelectedEntryId, setKbSelectedEntryId] = useState<string | null>(null);
 
   const charCount = sourceText.trim().length;
   const canSubmit = useMemo(() => charCount >= 30 && !submitting, [charCount, submitting]);
@@ -65,6 +68,7 @@ export default function SpeechAgentCreatePage() {
       const text = await file.text();
       setSourceText(text);
       setSourceFileName(file.name);
+      setKbSelectedEntryId(null);
       const inferred = file.name.replace(/\.(md|markdown|txt|text)$/i, '').trim();
       if (!title && inferred) setTitle(inferred);
     } catch (e) {
@@ -88,6 +92,7 @@ export default function SpeechAgentCreatePage() {
   const handleClearFile = useCallback(() => {
     setSourceFileName(null);
     setSourceText('');
+    setKbSelectedEntryId(null);
   }, []);
 
   // E7 知识库选文档
@@ -133,6 +138,7 @@ export default function SpeechAgentCreatePage() {
         if (content.length < 30) { alert('该文档内容过短（< 30 字）'); return; }
         setSourceText(content);
         setSourceFileName(null);
+        setKbSelectedEntryId(entryId);
         if (!title) setTitle(entryTitle);
         setKbPickerOpen(false);
       }
@@ -152,14 +158,26 @@ export default function SpeechAgentCreatePage() {
     setError(null);
     setSubmitting(true);
     try {
-      const res = await speechAgentApi.createDeck({
-        title: title.trim() || undefined,
-        sourceType: sourceFileName ? 'upload' : 'paste',
-        sourceText: sourceText.trim(),
-        audience,
-        style,
-        depth,
-      });
+      // 三通道分支：知识库选了文档 → 走 createFromDocument 保留 sourceType=document + sourceRefId
+      // (Bugbot Medium "KB deck saved as paste":之前 KB 选了文档但 submit 永远走 createDeck,
+      //  丢掉来源信息且绕过 createFromDocument 端点的权限链)
+      // 仅当文本与来源未被用户改动时才相信 kbSelectedEntryId(文本被改/清空则当作粘贴新内容)
+      const useKb = !!kbSelectedEntryId && !sourceFileName && sourceText.trim().length >= 30;
+      const res = useKb
+        ? await speechAgentApi.createFromDocument({
+            entryId: kbSelectedEntryId!,
+            audience,
+            style,
+            depth,
+          })
+        : await speechAgentApi.createDeck({
+            title: title.trim() || undefined,
+            sourceType: sourceFileName ? 'upload' : 'paste',
+            sourceText: sourceText.trim(),
+            audience,
+            style,
+            depth,
+          });
       if (res.success && res.data) {
         navigate(`/speech-agent/${res.data.deck.id}?autoStart=1`);
       } else {
@@ -258,7 +276,12 @@ export default function SpeechAgentCreatePage() {
           <div className="relative">
             <textarea
               value={sourceText}
-              onChange={(e) => { setSourceText(e.target.value); if (sourceFileName) setSourceFileName(null); }}
+              onChange={(e) => {
+                setSourceText(e.target.value);
+                if (sourceFileName) setSourceFileName(null);
+                // 用户手动编辑文本 → 解绑 KB 来源,避免 stale 的 entryId 被当成"还是同一篇 KB 文档"提交
+                if (kbSelectedEntryId) setKbSelectedEntryId(null);
+              }}
               placeholder="粘贴文章 / 报告 / 会议纪要 / 课程笔记…"
               rows={10}
               className="w-full px-3 py-2.5 rounded-lg bg-white/[0.04] border border-white/10 text-white/90 placeholder:text-white/30 focus:outline-none focus:border-violet-400/60 font-mono text-[13px] leading-relaxed resize-y"

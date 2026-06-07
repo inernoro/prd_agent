@@ -82,8 +82,17 @@ export default function SpeechAgentEditorPage() {
         load();
       },
       error: (data) => {
-        const d = data as { message?: string };
-        setDeck((prev) => (prev ? { ...prev, status: 'failed', errorMessage: d.message } : prev));
+        // SSE error 不能盲目本地置 status='failed' (Bugbot Medium "SSE error marks failed wrongly"):
+        //   - 并发拒绝 (concurrencyRejected) 时后端仍在 generating,本地标失败 + 刷新后又跳回 generating
+        //   - 临时网络错误也不应永久污染状态
+        // 改成:① 展示 errorMessage(banner 给用户看)② 拉一次 deck 让 status 跟后端保持一致
+        const d = data as { message?: string; concurrencyRejected?: boolean };
+        setDeck((prev) => (prev ? { ...prev, errorMessage: d.message ?? null } : prev));
+        // 并发拒绝时不动 status；其他错误让 backend 写入终态后 load 回来覆盖
+        if (!d.concurrencyRejected) {
+          // 给 backend 一点时间写入 failed status 再 refetch
+          window.setTimeout(() => load(), 500);
+        }
       },
     },
   });

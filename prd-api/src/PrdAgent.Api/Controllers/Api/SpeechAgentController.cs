@@ -355,18 +355,14 @@ public class SpeechAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺少 entryId"));
         var userId = this.GetRequiredUserId();
 
-        // 直接读知识库 entry 内容（与 DocumentStoreController.CanReadStoreAsync 同口径：
-        // owner / public / team-shared 三类都放行。之前只查 owner+public 会拒掉团队成员，
-        // 与 GET /api/document-store/entries/{id}/content 行为不一致 — Bugbot Medium。）
+        // 与 DocumentStoreController.CanReadStoreAsync 全口径对齐：
+        //   owner / public / team-shared / pm-project member / product-knowledge member 五类都放行
+        //   (Bugbot Medium "From-document auth too narrow" + Codex P2 "Preserve document-store read rules")
         var entry = await _db.DocumentEntries.Find(e => e.Id == req.EntryId).FirstOrDefaultAsync();
         if (entry == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档不存在"));
         var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId).FirstOrDefaultAsync();
         if (store == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库不存在"));
-        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
-        var canRead = store.OwnerId == userId
-            || store.IsPublic
-            || (store.SharedTeamIds != null && store.SharedTeamIds.Any(myTeamIds.Contains));
-        if (!canRead)
+        if (!await CanReadDocumentStoreAsync(store, userId))
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限读该文档"));
 
         // 同 DocumentStoreController 的内容提取链：优先 ParsedPrd.RawContent，兜底 Attachment.ExtractedText
@@ -448,11 +444,15 @@ public class SpeechAgentController : ControllerBase
             return;
         }
 
-        // 并发互斥：compare-and-swap deck.Status draft|ready|failed → generating。
-        // 已经在 generating 的 deck 第二个请求被拒，防止两个 LLM 任务交错清节点+写库导致脏数据 (Bugbot Medium)。
+        // 并发互斥：CAS deck.Status → generating。第二个并发请求被拒，防止两个 LLM 任务交错写库。
+        // 同时容忍 stale generating（前一次 SSE 进程崩了没写终态）：UpdatedAt 早于 staleCutoff
+        // 也可被新请求重新认领，避免死锁 deck 直到 DB 手工干预（Bugbot High）。
+        var staleCutoff = DateTime.UtcNow.AddMinutes(-5);
         var claimFilter = Builders<SpeechDeck>.Filter.And(
             Builders<SpeechDeck>.Filter.Eq(d => d.Id, deckId),
-            Builders<SpeechDeck>.Filter.Ne(d => d.Status, SpeechDeckStatus.Generating));
+            Builders<SpeechDeck>.Filter.Or(
+                Builders<SpeechDeck>.Filter.Ne(d => d.Status, SpeechDeckStatus.Generating),
+                Builders<SpeechDeck>.Filter.Lt(d => d.UpdatedAt, staleCutoff)));
         var claimResult = await _db.SpeechDecks.UpdateOneAsync(
             claimFilter,
             Builders<SpeechDeck>.Update
@@ -463,7 +463,7 @@ public class SpeechAgentController : ControllerBase
             cancellationToken: CancellationToken.None);
         if (claimResult.MatchedCount == 0)
         {
-            await WriteSseAsync("error", new { message = "已有一个生成任务在进行中，请等待完成或刷新后重试" });
+            await WriteSseAsync("error", new { message = "已有一个生成任务在进行中（5 分钟内）；如确认上一次任务已死，请等满 5 分钟自动失效后重试", concurrencyRejected = true });
             return;
         }
 
@@ -562,5 +562,51 @@ public class SpeechAgentController : ControllerBase
         }
         catch (ObjectDisposedException) { }
         catch (OperationCanceledException) { }
+        // 客户端中途断开:写入失败抛 IOException / ConnectionAbortedException 等 (Codex P2 disconnect-as-failed)。
+        // 与 ObjectDisposedException 同语义吞掉,服务端任务继续走完,不要被冒充成"生成失败"。
+        catch (System.IO.IOException) { }
+        catch (Microsoft.AspNetCore.Connections.ConnectionResetException) { }
+    }
+
+    /// <summary>
+    /// 与 DocumentStoreController.CanReadStoreAsync 完全对齐的读权限判定（同口径,五类都放行）。
+    /// owner / public / team-shared / pm-project member (含 observer/stakeholder) / product-knowledge member
+    /// </summary>
+    private async Task<bool> CanReadDocumentStoreAsync(DocumentStore s, string userId)
+    {
+        if (s.OwnerId == userId || s.IsPublic) return true;
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
+        if (s.SharedTeamIds != null && s.SharedTeamIds.Any(myTeamIds.Contains)) return true;
+        // PM Project 成员判定
+        if (!string.IsNullOrEmpty(s.PmProjectId))
+        {
+            var p = await _db.PmProjects.Find(x => x.Id == s.PmProjectId && !x.IsDeleted).FirstOrDefaultAsync();
+            if (p != null)
+            {
+                if (p.OwnerId == userId || p.LeaderId == userId || p.MemberIds.Contains(userId)) return true;
+                if (p.ObserverIds.Contains(userId)) return true;
+                if (p.Stakeholders?.Any(st => st.UserId == userId) ?? false) return true;
+            }
+        }
+        // Product Knowledge 成员判定（store.ProductKnowledgeRef 格式 product:{id} / version:{id}）
+        if (!string.IsNullOrEmpty(s.ProductKnowledgeRef))
+        {
+            var parts = s.ProductKnowledgeRef.Split(':', 2);
+            if (parts.Length == 2)
+            {
+                string? productId = parts[0] switch
+                {
+                    "product" => parts[1],
+                    "version" => (await _db.ProductVersions.Find(x => x.Id == parts[1] && !x.IsDeleted).FirstOrDefaultAsync())?.ProductId,
+                    _ => null,
+                };
+                if (!string.IsNullOrEmpty(productId))
+                {
+                    var prod = await _db.Products.Find(x => x.Id == productId && !x.IsDeleted).FirstOrDefaultAsync();
+                    if (prod != null && (prod.OwnerId == userId || prod.MemberIds.Contains(userId))) return true;
+                }
+            }
+        }
+        return false;
     }
 }
