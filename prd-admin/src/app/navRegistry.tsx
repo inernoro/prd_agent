@@ -402,6 +402,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
   {
+    path: '/md-to-ppt-agent',
+    permission: 'access',
+    element: shellGuarded('access', <MdToPptAgentPage />),
+    nav: {
+      label: 'MD 转网页 PPT',
+      shortLabel: 'PPT',
+      description: '将 Markdown 或文档内容 AI 直出 reveal.js 网页 PPT，支持局部修改与一键发布',
+      icon: 'FileText',
+      section: 'toolbox',
+      appKey: 'md-to-ppt-agent',
+      tags: ['PPT', 'Markdown', '演示', '网页', 'reveal.js'],
+      wip: true,
+    },
+  },
+  {
     path: '/shortcuts-agent',
     permission: 'access',
     element: shellGuarded('access', <ShortcutsPage />),
@@ -413,21 +428,6 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'toolbox',
       appKey: 'shortcuts-agent',
       tags: ['快捷', '效率', '指令'],
-    },
-  },
-  {
-    path: '/md-to-ppt-agent',
-    permission: 'ai-toolbox.use',
-    element: shellGuarded('ai-toolbox.use', <MdToPptAgentPage />),
-    nav: {
-      label: 'Markdown 转网页 PPT',
-      shortLabel: 'PPT',
-      description: '将 Markdown / 文件内容通过 AI 生成可分享的 reveal.js 网页演示',
-      icon: 'Presentation',
-      section: 'toolbox',
-      appKey: 'md-to-ppt-agent',
-      wip: true,
-      tags: ['PPT', '演示', 'Markdown', '幻灯片', '网页托管'],
     },
   },
 

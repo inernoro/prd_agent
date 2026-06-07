@@ -1473,7 +1473,7 @@ public static class InfraAgent
 }
 
 /// <summary>
-/// MD 转 PPT 智能体 — 将 Markdown/文件内容转换为网页版 PPT
+/// Markdown 转 PPT Agent — 直接生成富设计 reveal.js HTML 网页 PPT
 /// </summary>
 public static class MdToPptAgent
 {
@@ -1488,9 +1488,25 @@ public static class MdToPptAgent
             Category = "Document"
         )]
         public const string Convert = "md-to-ppt-agent.generation::chat";
+
+        [AppCallerMetadata(
+            "MD转PPT-富设计HTML直出",
+            "将 Markdown/文本内容直接生成完整 reveal.js HTML 网页 PPT，多样版式、富视觉设计，无需大纲中转",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Document"
+        )]
+        public const string HtmlGenerate = "md-to-ppt-agent.html-generate::chat";
+
+        [AppCallerMetadata(
+            "MD转PPT-局部修改",
+            "对已有网页 PPT 的指定页面进行局部修改和重新生成",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Document"
+        )]
+        public const string Patch = "md-to-ppt-agent.patch::chat";
     }
 }
-} // AppCallerRegistry
+}
 
 /// <summary>
 /// 应用调用者元数据标记
