@@ -217,6 +217,41 @@ public class DefectSyncResource : ISyncableResource
                 var meta = r.Metadata ?? new Dictionary<string, string>();
                 string? Get(string k) => meta.TryGetValue(k, out var v) && !string.IsNullOrEmpty(v) ? v : null;
 
+                // PR #742 review fix：消化 export 写入 Extras 的 attachments / structuredData，
+                // 否则附件元数据和结构化字段在对端被静默丢弃。
+                List<DefectAttachment>? attachments = null;
+                if (r.Extras.TryGetValue("attachments", out var attEl) && attEl.ValueKind == JsonValueKind.Array)
+                {
+                    try
+                    {
+                        attachments = new List<DefectAttachment>();
+                        foreach (var item in attEl.EnumerateArray())
+                        {
+                            attachments.Add(new DefectAttachment
+                            {
+                                FileName = item.TryGetProperty("fileName", out var fn) ? fn.GetString() ?? string.Empty : string.Empty,
+                                MimeType = item.TryGetProperty("mimeType", out var mt) ? mt.GetString() ?? string.Empty : string.Empty,
+                                FileSize = item.TryGetProperty("size", out var sz) && sz.TryGetInt64(out var lz) ? lz : 0,
+                                Url = item.TryGetProperty("url", out var u) ? u.GetString() ?? string.Empty : string.Empty,
+                                Type = item.TryGetProperty("type", out var tt) ? tt.GetString() ?? "file" : "file",
+                                Description = "（由对端互传带入，URL 在本节点环境可能不可达，需手动重传）",
+                            });
+                        }
+                    }
+                    catch { attachments = null; }
+                }
+                Dictionary<string, string>? structured = null;
+                if (r.Extras.TryGetValue("structuredData", out var sdEl) && sdEl.ValueKind == JsonValueKind.Object)
+                {
+                    try
+                    {
+                        structured = new Dictionary<string, string>();
+                        foreach (var prop in sdEl.EnumerateObject())
+                            structured[prop.Name] = prop.Value.ValueKind == JsonValueKind.String ? prop.Value.GetString() ?? string.Empty : prop.Value.ToString();
+                    }
+                    catch { structured = null; }
+                }
+
                 if (existing != null)
                 {
                     if (addOnly) { skipped++; continue; }
@@ -237,6 +272,8 @@ public class DefectSyncResource : ISyncableResource
                         .Set(x => x.Priority, Get("priority") ?? existing.Priority)
                         .Set(x => x.Resolution, Get("resolution") ?? existing.Resolution)
                         .Set(x => x.UpdatedAt, DateTime.UtcNow);
+                    if (attachments != null) u = u.Set(x => x.Attachments, attachments);
+                    if (structured != null) u = u.Set(x => x.StructuredData, structured);
                     await _db.DefectReports.UpdateOneAsync(d => d.Id == lineageId, u, cancellationToken: ct);
                     updated++;
                 }
@@ -262,6 +299,8 @@ public class DefectSyncResource : ISyncableResource
                         ProjectName = project.Name,
                         CreatedAt = parsedCreated,
                         UpdatedAt = DateTime.UtcNow,
+                        Attachments = attachments ?? new List<DefectAttachment>(),
+                        StructuredData = structured ?? new Dictionary<string, string>(),
                     };
                     await _db.DefectReports.InsertOneAsync(defect, cancellationToken: ct);
                     created++;

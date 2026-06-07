@@ -156,6 +156,17 @@ public class DocumentStoreSyncResource : ISyncableResource
         var target = string.IsNullOrWhiteSpace(key)
             ? null
             : await _db.DocumentStores.Find(s => s.Id == key).FirstOrDefaultAsync(ct);
+        // PR #742 review P2：apply 路径不许写入项目知识库 / 产品知识库 —— 这些走专属访问轴
+        // （PmProject 成员 / Product owner），peer-sync 不在该轴上，否则配对方可越权改它们。
+        // ListItems / Export 已排除这类库，此处兜底；命中即返回错误，不静默创建新库或写入。
+        if (target != null && (!string.IsNullOrEmpty(target.PmProjectId) || !string.IsNullOrEmpty(target.ProductKnowledgeRef)))
+        {
+            return new SyncApplyOutcome
+            {
+                Failed = bundle.Records?.Count ?? 0,
+                Message = "目标库属于项目库 / 产品库，受专属访问轴保护，peer-sync 不能写入",
+            };
+        }
         if (target == null)
         {
             target = new DocumentStore

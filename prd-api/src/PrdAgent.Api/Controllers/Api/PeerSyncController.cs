@@ -266,8 +266,10 @@ public class PeerSyncController : ControllerBase
         var direction = (request.Direction ?? "push").Trim().ToLowerInvariant();
         if (direction is not ("push" or "pull" or "both"))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "方向无效（push/pull/both）"));
-        if (direction == "both" && !resource.SupportsBidirectional)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"{resource.DisplayName}不支持双向同步"));
+        // PR #742 review P2：非双向资源拒绝 pull/both，否则 push-only 的 DefectSyncResource 等会被绕过状态机
+        // 反向 import 对端数据（例如把对端的 resolved 缺陷拉回本地覆盖本地未结的状态）。
+        if (!resource.SupportsBidirectional && direction != "push")
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"{resource.DisplayName}是单向（push-only）资源，不支持 {direction}"));
 
         var mode = request.Mode == "add-only" ? SyncApplyMode.AddOnly : SyncApplyMode.Overwrite;
         var actor = await BuildActorAsync(this.GetRequiredUserId(), ct);
