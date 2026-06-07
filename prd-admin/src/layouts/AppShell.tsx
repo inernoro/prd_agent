@@ -227,7 +227,7 @@ export default function AppShell() {
   const changelogUnread = useChangelogStore(selectUnreadCount);
   const loadChangelogCurrentWeek = useChangelogStore((s) => s.loadCurrentWeek);
   useEffect(() => {
-    void loadChangelogCurrentWeek();
+    void loadChangelogCurrentWeek({ daysLimit: 8 });
   }, [loadChangelogCurrentWeek]);
   // 本会话已关闭的 toast id 黑名单：持久化到 sessionStorage，避免 polling/刷新后重复弹出
   const [dismissedToastIds, setDismissedToastIds] = useState<Set<string>>(() => {

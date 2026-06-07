@@ -1276,18 +1276,27 @@ export const api = {
 
   // ============ Changelog 更新中心（代码级周报） ============
   changelog: {
-    currentWeek: (force?: boolean) =>
-      `/api/changelog/current-week${force ? '?force=true' : ''}`,
-    releases: (limit?: number, force?: boolean) => {
+    currentWeek: (opts?: { daysLimit?: number; daysOffset?: number; force?: boolean }) => {
       const params: string[] = [];
-      if (limit) params.push(`limit=${limit}`);
-      if (force) params.push('force=true');
+      if (opts?.daysLimit != null) params.push(`daysLimit=${opts.daysLimit}`);
+      if (opts?.daysOffset != null && opts.daysOffset > 0) params.push(`daysOffset=${opts.daysOffset}`);
+      if (opts?.force) params.push('force=true');
+      return `/api/changelog/current-week${params.length ? `?${params.join('&')}` : ''}`;
+    },
+    releases: (opts?: { limit?: number; summary?: boolean; force?: boolean }) => {
+      const params: string[] = [];
+      if (opts?.limit != null) params.push(`limit=${opts.limit}`);
+      if (opts?.summary) params.push('summary=true');
+      if (opts?.force) params.push('force=true');
       return `/api/changelog/releases${params.length ? `?${params.join('&')}` : ''}`;
     },
-    githubLogs: (limit?: number, force?: boolean) => {
+    releaseByVersion: (version: string, force?: boolean) =>
+      `/api/changelog/releases/by-version/${encodeURIComponent(version)}${force ? '?force=true' : ''}`,
+    githubLogs: (opts?: { limit?: number; before?: string; force?: boolean }) => {
       const params: string[] = [];
-      if (limit) params.push(`limit=${limit}`);
-      if (force) params.push('force=true');
+      if (opts?.limit != null) params.push(`limit=${opts.limit}`);
+      if (opts?.before) params.push(`before=${encodeURIComponent(opts.before)}`);
+      if (opts?.force) params.push('force=true');
       return `/api/changelog/github-logs${params.length ? `?${params.join('&')}` : ''}`;
     },
     /** AI 总结（走 ILlmGateway + prd-admin.changelog.aiSummary::chat） */
