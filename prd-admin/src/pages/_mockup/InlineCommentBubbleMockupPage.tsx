@@ -157,59 +157,36 @@ const HTML = `
 
 const SCRIPT = `
 window.__icMockupRun = function() {
-  function getRelPos(el, container) {
-    const a = el.getBoundingClientRect();
-    const b = container.getBoundingClientRect();
-    return { x: a.left - b.left, y: a.top - b.top, w: a.width, h: a.height };
+  function removeConnector() {
+    var old = document.getElementById('ic-connector-fixed');
+    if (old) old.remove();
   }
-  document.getElementById('ic-hl-new').style.opacity = 0;
-  document.getElementById('ic-av-new').style.opacity = 0;
-  document.getElementById('ic-card-new').style.opacity = 0;
-  document.getElementById('ic-card-new').style.transform = 'translateY(-8px)';
-  document.getElementById('ic-card-new').classList.remove('active');
-  var old = document.getElementById('ic-connector-fixed');
-  if (old) old.remove();
-  var icConnector = document.getElementById('ic-connector');
-  if (icConnector) icConnector.innerHTML = '';
-  document.getElementById('ic-toast').classList.remove('show');
-
-  setTimeout(function(){ document.getElementById('ic-toast').classList.add('show'); }, 100);
-  setTimeout(function(){ document.getElementById('ic-toast').classList.remove('show'); }, 2200);
-
-  setTimeout(function(){
-    document.getElementById('ic-hl-new').style.opacity = 1;
-    document.getElementById('ic-av-new').style.opacity = 1;
-  }, 300);
-
-  setTimeout(function(){
-    var card = document.getElementById('ic-card-new');
-    card.style.opacity = 1;
-    card.style.transform = 'translateY(0)';
-  }, 500);
-
-  setTimeout(function(){
+  function drawConnector() {
     var av = document.getElementById('ic-av-new');
     var card = document.getElementById('ic-card-new');
     if (!av || !card) return;
-    // 用视口坐标，把 SVG 挂在 body 顶层，避开 .doc 背景对中段连线的遮挡
+    // 文档坐标（视口坐标 + 当前 scroll 偏移）—— SVG absolute 挂到 body，
+    // 跟着内容滚动，用户滚动不会让线漂走
     var aRect = av.getBoundingClientRect();
     var bRect = card.getBoundingClientRect();
-    var x1 = aRect.right;
-    var y1 = aRect.top + aRect.height / 2;
-    var x2 = bRect.left;
-    var y2 = bRect.top + 16;
+    var sx = window.scrollX || window.pageXOffset || 0;
+    var sy = window.scrollY || window.pageYOffset || 0;
+    var x1 = aRect.right + sx;
+    var y1 = aRect.top + aRect.height / 2 + sy;
+    var x2 = bRect.left + sx;
+    var y2 = bRect.top + 16 + sy;
     var dx = Math.max(40, (x2 - x1) * 0.5);
     var path = 'M ' + x1 + ' ' + y1 + ' C ' + (x1 + dx) + ' ' + y1 + ', ' + (x2 - dx) + ' ' + y2 + ', ' + x2 + ' ' + y2;
-    // 移除上一次的 SVG（若有）
-    var old = document.getElementById('ic-connector-fixed');
-    if (old) old.remove();
+    removeConnector();
     var ns = 'http://www.w3.org/2000/svg';
+    var docW = document.documentElement.scrollWidth;
+    var docH = document.documentElement.scrollHeight;
     var svg = document.createElementNS(ns, 'svg');
     svg.setAttribute('id', 'ic-connector-fixed');
-    svg.setAttribute('width', String(window.innerWidth));
-    svg.setAttribute('height', String(window.innerHeight));
-    svg.setAttribute('viewBox', '0 0 ' + window.innerWidth + ' ' + window.innerHeight);
-    svg.style.position = 'fixed';
+    svg.setAttribute('width', String(docW));
+    svg.setAttribute('height', String(docH));
+    svg.setAttribute('viewBox', '0 0 ' + docW + ' ' + docH);
+    svg.style.position = 'absolute';
     svg.style.top = '0';
     svg.style.left = '0';
     svg.style.pointerEvents = 'none';
@@ -234,9 +211,44 @@ window.__icMockupRun = function() {
     svg.appendChild(c2);
     document.body.appendChild(svg);
     card.classList.add('active');
+  }
+
+  // 1) 重置状态
+  removeConnector();
+  var icConnector = document.getElementById('ic-connector');
+  if (icConnector) icConnector.innerHTML = '';
+  var toast = document.getElementById('ic-toast');
+  if (toast) toast.classList.remove('show');
+  document.getElementById('ic-hl-new').style.opacity = 0;
+  document.getElementById('ic-av-new').style.opacity = 0;
+  document.getElementById('ic-card-new').style.opacity = 0;
+  document.getElementById('ic-card-new').style.transform = 'translateY(-8px)';
+  document.getElementById('ic-card-new').classList.remove('active');
+
+  // 2) 把 demo 区滚到视口中间，确保动画在用户眼前发生
+  var layout = document.getElementById('ic-layout');
+  if (layout) layout.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+  // 3) 滚动落定后（500ms）再开演
+  setTimeout(function(){
+    document.getElementById('ic-hl-new').style.opacity = 1;
+    document.getElementById('ic-av-new').style.opacity = 1;
+  }, 500);
+
+  setTimeout(function(){
+    var card = document.getElementById('ic-card-new');
+    card.style.opacity = 1;
+    card.style.transform = 'translateY(0)';
   }, 700);
 
-  setTimeout(function(){ document.getElementById('ic-card-new').classList.remove('active'); }, 2600);
+  // 4) 等卡片渐入 0.4s 跑完（700+400=1100，留点余量到 1200）再测、再画线
+  setTimeout(drawConnector, 1200);
+
+  // 5) 卡片高亮 1.5s 后回归
+  setTimeout(function(){
+    var c = document.getElementById('ic-card-new');
+    if (c) c.classList.remove('active');
+  }, 3000);
 };
 `;
 
