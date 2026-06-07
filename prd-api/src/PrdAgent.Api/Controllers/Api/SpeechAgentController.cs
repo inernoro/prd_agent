@@ -509,8 +509,8 @@ public class SpeechAgentController : ControllerBase
             return;
         }
 
-        await _db.SpeechNodes.DeleteManyAsync(n => n.DeckId == deckId, CancellationToken.None);
-
+        // 旧节点不在 claim 时删除,改到 service 内"解析成功后才删 + 插入"
+        // (Bugbot/Codex P2 "Defer deleting old nodes until regeneration succeeds")
         await WriteSseAsync("phase", new { phase = "preparing", message = "准备中..." });
 
         using var llmCtx = _llmRequestContext.BeginScope(new LlmRequestContext(

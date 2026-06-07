@@ -94,15 +94,23 @@ export default function SpeechAgentEditorPage() {
         // SSE error 不能盲目本地置 status='failed' (Bugbot Medium "SSE error marks failed wrongly"):
         //   - 并发拒绝 (concurrencyRejected) 时后端仍在 generating,本地标失败 + 刷新后又跳回 generating
         //   - 临时网络错误也不应永久污染状态
-        // 改成:① 展示 errorMessage(banner 给用户看)② 拉一次 deck 让 status 跟后端保持一致
+        // 后端已改为"解析成功后才删旧节点",失败路径旧节点仍在 → 前端保留旧 mindmap,
+        // 仅清除 pendingClearRef 标志即可 (Codex P2 "Defer deleting old nodes")
         const d = data as { message?: string; concurrencyRejected?: boolean };
         setDeck((prev) => (prev ? { ...prev, errorMessage: d.message ?? null } : prev));
-        // 并发拒绝时不动 status；其他错误让 backend 写入终态后 load 回来覆盖
+        pendingClearRef.current = false;
         if (!d.concurrencyRejected) {
           // 给 backend 一点时间写入 failed status 再 refetch
           window.setTimeout(() => load(), 500);
         }
       },
+    },
+    // useSseStream 的 onError 处理非 200 / fetch 失败 / 解析异常等顶层错,
+    // 此前未挂导致 HTTP 4xx/5xx 网络失败时用户看不到任何提示 (Bugbot Medium "Editor omits SSE hook onError")
+    onError: (message) => {
+      setDeck((prev) => (prev ? { ...prev, errorMessage: message } : prev));
+      pendingClearRef.current = false;
+      window.setTimeout(() => load(), 500);
     },
   });
 
@@ -115,6 +123,10 @@ export default function SpeechAgentEditorPage() {
     setTyping('');
     await stream.start();
   }, [stream]);
+
+  // 切到另一个 deck 时重置 autoStart 旗,允许新 deck 的 ?autoStart=1 再次生效
+  // (Bugbot Low "autoStart skipped on deck switch")
+  useEffect(() => { autoStarted.current = false; }, [deckId]);
 
   useEffect(() => {
     if (!loading && deck && shouldAutoStart && !autoStarted.current) {

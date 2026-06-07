@@ -109,6 +109,7 @@ export default function SpeechAgentCreatePage() {
   }, [kbStores.length]);
 
   const kbEntriesFetchIdRef = useRef(0);
+  const kbPickEntryFetchIdRef = useRef(0);
   const loadKbEntries = useCallback(async (storeId: string) => {
     setKbActiveStoreId(storeId);
     setKbEntries([]);
@@ -129,10 +130,14 @@ export default function SpeechAgentCreatePage() {
   }, []);
 
   const pickKbEntry = useCallback(async (entryId: string, entryTitle: string) => {
+    // fetchIdRef stale guard:快速连续点不同文档时,慢响应不能覆盖后选的
+    // (Bugbot Medium "KB pick lacks stale guard")
+    const fetchId = ++kbPickEntryFetchIdRef.current;
     setKbFetchingEntry(true);
     try {
       const res = await apiRequest<{ content: string; title: string }>(
         `/api/document-store/entries/${encodeURIComponent(entryId)}/content`);
+      if (fetchId !== kbPickEntryFetchIdRef.current) return;
       if (res.success && res.data) {
         const content = (res.data.content || '').trim();
         if (content.length < 30) { alert('该文档内容过短（< 30 字）'); return; }
@@ -142,7 +147,9 @@ export default function SpeechAgentCreatePage() {
         if (!title) setTitle(entryTitle);
         setKbPickerOpen(false);
       }
-    } finally { setKbFetchingEntry(false); }
+    } finally {
+      if (fetchId === kbPickEntryFetchIdRef.current) setKbFetchingEntry(false);
+    }
   }, [title]);
 
   // ESC 关弹窗
