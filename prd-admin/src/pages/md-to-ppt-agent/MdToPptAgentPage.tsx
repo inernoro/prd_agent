@@ -7,9 +7,13 @@ import {
   ChevronDown,
   Upload,
   Wand2,
+  Zap,
+  Bot,
 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import {
+  type MdToPptDiagEvent,
+  type MdToPptEngine,
   streamMdToPptConvert,
   streamMdToPptPatch,
   publishMdToPpt,
@@ -38,12 +42,18 @@ export function MdToPptAgentPage() {
   const [theme, setTheme] = useState('dark-glass');
   const [slideCount, setSlideCount] = useState<number | undefined>(undefined);
 
+  // Engine toggle
+  const [engine, setEngine] = useState<MdToPptEngine>('map');
+
   // Generation state
   const [phase, setPhase] = useState<GenPhase>('idle');
   const [streamBuffer, setStreamBuffer] = useState('');
   const [generatedHtml, setGeneratedHtml] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [modelInfo, setModelInfo] = useState<{ model: string; platform: string } | null>(null);
+
+  // Diag log (agent engine only)
+  const [diagLines, setDiagLines] = useState<MdToPptDiagEvent[]>([]);
 
   // Patch state
   const [patchRequest, setPatchRequest] = useState('');
@@ -57,6 +67,7 @@ export function MdToPptAgentPage() {
   // Refs
   const cleanupRef = useRef<(() => void) | null>(null);
   const streamDivRef = useRef<HTMLDivElement>(null);
+  const diagDivRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Auto-scroll streaming area
@@ -65,6 +76,13 @@ export function MdToPptAgentPage() {
       streamDivRef.current.scrollTop = streamDivRef.current.scrollHeight;
     }
   }, [streamBuffer, phase]);
+
+  // Auto-scroll diag area
+  useEffect(() => {
+    if (diagDivRef.current && diagLines.length > 0) {
+      diagDivRef.current.scrollTop = diagDivRef.current.scrollHeight;
+    }
+  }, [diagLines]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -90,13 +108,13 @@ export function MdToPptAgentPage() {
     const content = textContent.trim();
     if (!content) return;
 
-    // Abort any previous stream
     cleanupRef.current?.();
     setPhase('streaming');
     setStreamBuffer('');
     setGeneratedHtml('');
     setErrorMsg('');
     setModelInfo(null);
+    setDiagLines([]);
     setPublishedUrl('');
     setIsPatchPanelOpen(false);
 
@@ -104,11 +122,15 @@ export function MdToPptAgentPage() {
       content,
       theme,
       slideCount,
+      engine,
       onStart: () => {
         // Phase already set to streaming above
       },
       onModel: (info) => {
         setModelInfo(info);
+      },
+      onDiag: (data) => {
+        setDiagLines((prev) => [...prev, data]);
       },
       onDelta: (text) => {
         setStreamBuffer((prev) => prev + text);
@@ -124,7 +146,7 @@ export function MdToPptAgentPage() {
     });
 
     cleanupRef.current = cleanup;
-  }, [textContent, theme, slideCount]);
+  }, [textContent, theme, slideCount, engine]);
 
   const handleAbort = useCallback(() => {
     cleanupRef.current?.();
@@ -138,16 +160,21 @@ export function MdToPptAgentPage() {
     cleanupRef.current?.();
     setPhase('patching');
     setModelInfo(null);
+    setDiagLines([]);
 
     const cleanup = streamMdToPptPatch({
       currentHtml: generatedHtml,
       slideRequest: patchRequest.trim(),
       slideIndex: patchSlideIndex,
+      engine,
       onStart: () => {
         setStreamBuffer('');
       },
       onModel: (info) => {
         setModelInfo(info);
+      },
+      onDiag: (data) => {
+        setDiagLines((prev) => [...prev, data]);
       },
       onDelta: (text) => {
         setStreamBuffer((prev) => prev + text);
@@ -164,7 +191,7 @@ export function MdToPptAgentPage() {
     });
 
     cleanupRef.current = cleanup;
-  }, [patchRequest, patchSlideIndex, generatedHtml]);
+  }, [patchRequest, patchSlideIndex, generatedHtml, engine]);
 
   const handlePublish = useCallback(async () => {
     if (!generatedHtml) return;
@@ -186,6 +213,8 @@ export function MdToPptAgentPage() {
   const isStreaming = phase === 'streaming' || phase === 'patching';
   const hasDone = phase === 'done';
   const hasContent = textContent.trim().length > 0;
+  // 是否有诊断事件需要显示（agent 路径）
+  const hasDiag = engine === 'agent' && diagLines.length > 0;
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
@@ -207,6 +236,36 @@ export function MdToPptAgentPage() {
           )}
         </div>
         <div className="flex items-center gap-2">
+          {/* 引擎切换开关 */}
+          <div className="flex items-center rounded-md border border-white/10 overflow-hidden text-[11px]">
+            <button
+              onClick={() => setEngine('map')}
+              className={[
+                'flex items-center gap-1 px-2.5 py-1 transition-colors',
+                engine === 'map'
+                  ? 'bg-purple-500/20 text-purple-300'
+                  : 'text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]',
+              ].join(' ')}
+              title="MAP 直调：速度快、稳定，适合日常使用"
+            >
+              <Zap size={10} />
+              MAP 直调
+            </button>
+            <button
+              onClick={() => setEngine('agent')}
+              className={[
+                'flex items-center gap-1 px-2.5 py-1 border-l border-white/10 transition-colors',
+                engine === 'agent'
+                  ? 'bg-blue-500/20 text-blue-300'
+                  : 'text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]',
+              ].join(' ')}
+              title="CDS Agent：可观测诊断，显示实时 diag 事件"
+            >
+              <Bot size={10} />
+              CDS Agent
+            </button>
+          </div>
+
           {isStreaming && (
             <button
               onClick={handleAbort}
@@ -406,28 +465,90 @@ export function MdToPptAgentPage() {
                 <p className="text-xs mt-1">
                   AI 将直接生成完整 reveal.js 网页 PPT，支持多种版式和富视觉设计
                 </p>
+                <p className="text-[10px] mt-2 text-[var(--text-tertiary)]">
+                  当前引擎：{engine === 'map' ? 'MAP 直调（快速）' : 'CDS Agent（可观测，右上角可切换）'}
+                </p>
               </div>
             </div>
           )}
 
           {/* Streaming view */}
           {(phase === 'streaming' || phase === 'patching') && (
-            <div
-              ref={streamDivRef}
-              className="flex-1 p-4 font-mono text-[11px] leading-relaxed text-green-300/80 bg-[var(--bg-base)]"
-              style={{
-                minHeight: 0,
-                overflowY: 'auto',
-                overscrollBehavior: 'contain',
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-all',
-              }}
-            >
-              <div className="text-[10px] text-[var(--text-tertiary)] mb-2 font-sans">
-                {phase === 'patching' ? '正在修改指定页面…' : '正在生成 HTML PPT…'}
+            <div className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
+              {/* Diag panel — agent 路径显示 */}
+              {hasDiag && (
+                <div
+                  ref={diagDivRef}
+                  className="shrink-0 border-b border-white/8 bg-[var(--bg-elevated)]"
+                  style={{
+                    maxHeight: '180px',
+                    overflowY: 'auto',
+                    overscrollBehavior: 'contain',
+                  }}
+                >
+                  <div className="px-3 py-1.5 text-[10px] text-[var(--text-tertiary)] font-semibold border-b border-white/5 flex items-center gap-1">
+                    <Bot size={10} />
+                    Agent 实时诊断
+                  </div>
+                  {diagLines.map((d, i) => (
+                    <div
+                      key={i}
+                      className={[
+                        'px-3 py-1 text-[10px] font-mono border-b border-white/4',
+                        d.stage === 'tool_call' || d.stage === 'tool_loop_alarm'
+                          ? 'text-orange-400 bg-orange-500/5'
+                          : d.stage === 'first_text_delta'
+                          ? 'text-green-400'
+                          : d.stage === 'done'
+                          ? 'text-blue-400'
+                          : d.stage === 'timeout'
+                          ? 'text-red-400'
+                          : 'text-[var(--text-secondary)]',
+                      ].join(' ')}
+                    >
+                      <span className="text-[var(--text-tertiary)] mr-1.5">[{d.stage}]</span>
+                      {d.elapsedMs !== undefined && (
+                        <span className="text-[var(--text-tertiary)] mr-1.5">
+                          +{d.elapsedMs}ms
+                        </span>
+                      )}
+                      {d.warning
+                        ? String(d.warning)
+                        : d.message
+                        ? String(d.message)
+                        : d.tool
+                        ? `tool=${d.tool} totalCalls=${d.totalToolCalls}`
+                        : d.status
+                        ? String(d.status)
+                        : d.model
+                        ? `${d.model}`
+                        : ''}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Stream output */}
+              <div
+                ref={streamDivRef}
+                className="flex-1 p-4 font-mono text-[11px] leading-relaxed text-green-300/80 bg-[var(--bg-base)]"
+                style={{
+                  minHeight: 0,
+                  overflowY: 'auto',
+                  overscrollBehavior: 'contain',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-all',
+                }}
+              >
+                <div className="text-[10px] text-[var(--text-tertiary)] mb-2 font-sans">
+                  {phase === 'patching' ? '正在修改指定页面…' : '正在生成 HTML PPT…'}
+                  {engine === 'agent' && (
+                    <span className="ml-2 text-blue-400/70">（CDS Agent 路径）</span>
+                  )}
+                </div>
+                {streamBuffer}
+                <span className="inline-block w-1 h-3 bg-green-400 animate-pulse ml-0.5" />
               </div>
-              {streamBuffer}
-              <span className="inline-block w-1 h-3 bg-green-400 animate-pulse ml-0.5" />
             </div>
           )}
 
@@ -438,6 +559,34 @@ export function MdToPptAgentPage() {
               <div className="text-xs text-[var(--text-tertiary)] text-center max-w-xs">
                 {errorMsg}
               </div>
+              {/* 错误时显示诊断 */}
+              {diagLines.length > 0 && (
+                <div className="w-full max-w-sm mt-2 rounded-md bg-white/3 border border-white/8 overflow-hidden">
+                  <div className="px-3 py-1.5 text-[10px] text-[var(--text-tertiary)] font-semibold border-b border-white/5">
+                    诊断日志
+                  </div>
+                  <div
+                    style={{ maxHeight: '120px', overflowY: 'auto', overscrollBehavior: 'contain' }}
+                  >
+                    {diagLines.map((d, i) => (
+                      <div
+                        key={i}
+                        className={[
+                          'px-3 py-0.5 text-[10px] font-mono',
+                          d.stage === 'tool_call' || d.stage === 'tool_loop_alarm'
+                            ? 'text-orange-400'
+                            : d.stage === 'timeout'
+                            ? 'text-red-400'
+                            : 'text-[var(--text-secondary)]',
+                        ].join(' ')}
+                      >
+                        [{d.stage}]{' '}
+                        {d.message ? String(d.message) : d.warning ? String(d.warning) : ''}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               <button
                 onClick={handleGenerate}
                 disabled={!hasContent}

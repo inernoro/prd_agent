@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
@@ -7,17 +8,24 @@ using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
 
 /// <summary>
-/// MD 转网页 PPT — 调用 CDS Agent 生成 reveal.js HTML 幻灯片。
+/// MD 转网页 PPT。
 ///
-/// SSE 事件协议（前端不变）：
+/// SSE 事件协议（两条路径共用）：
 ///   event: start  — 会话开始
+///   event: model  — data: {"model":"...","platform":"..."}  模型信息
+///   event: diag   — data: {...}  诊断事件（agent 路径专有）
 ///   event: delta  — data: {"text":"..."}  增量 HTML 片段
 ///   event: done   — data: {"html":"..."}  完整 HTML
 ///   event: error  — data: {"message":"..."}
+///
+/// 生成引擎：
+///   engine=map    — MAP 直调（ILlmGateway.StreamAsync，快速可靠）
+///   engine=agent  — CDS Agent（可观测工具调用路径，toolPolicy=deny-all 避免工具循环）
 /// </summary>
 [ApiController]
 [Route("api/md-to-ppt")]
@@ -26,45 +34,52 @@ public class MdToPptController : ControllerBase
 {
     private readonly IInfraAgentSessionService _sessions;
     private readonly MongoDbContext _db;
+    private readonly ILlmGateway _gateway;
+    private readonly ILLMRequestContextAccessor _llmRequestContext;
+    private readonly ILogger<MdToPptController> _logger;
 
-    // PPT Agent 系统提示词：要求 reveal.js@4 CDN、深色主题、多样化版式、纯 HTML 输出
-    private const string PptSystemPrompt = @"你是一名专业网页 PPT 设计师。请把用户提供的 Markdown 内容转换成一份完整的 reveal.js 幻灯片 HTML 文件，遵循以下要求：
-
-## 技术规范
-- 使用 reveal.js 4.x CDN（https://cdn.jsdelivr.net/npm/reveal.js@4/）
-- 必须设置 hash: false（因为会嵌入 iframe srcdoc，hash 路由会报错）
-- 所有样式内联在 <head> 里，不依赖外部自定义文件
-- 输出完整的 <!DOCTYPE html>…</html> 文件，不要任何代码块标记
-
-## 视觉风格
-- 使用深色系主题（如深蓝/深紫/深灰作为背景）
-- 文字对比度高（白色或浅色系）
-- 标题字体比正文大 1.5-2 倍，使用 font-weight: 700
-- 每张幻灯片有清晰的视觉层次
-
-## 版式多样化（必须混用以下类型，不允许全部单栏）
-1. 封面页：大标题 + 副标题 + 装饰元素（渐变色块/圆形/线条）
-2. 两栏对比：左右各占 50%，用于比较/对照内容
-3. 数据统计：大号数字 + 说明文字，适合关键指标
-4. 深色反转：浅色文字/图标在深色纯色背景上
-5. 内容配图：左侧文字 + 右侧装饰色块模拟图片区
-6. 结语页：居中大字 + 联系方式/总结
-
-## 装饰元素
-- 用 CSS 绘制几何形状（圆形、矩形、斜线）作为装饰，不依赖图片
-- 渐变色块作为视觉重点
-- 适当使用 border-left 竖线强调引用或要点
-
-## 输出要求
-- 仅输出完整 HTML，不要任何解释、标注或代码块标记
-- reveal.js 初始化配置必须包含：hash: false, transition: 'fade', slideNumber: true";
+    // PPT 系统提示词（两条路径共用），强调直接输出 HTML，禁止工具调用
+    private const string PptSystemPrompt =
+        "你是一名专业网页 PPT 设计师。" +
+        "你的唯一任务是直接输出完整的 reveal.js HTML 文件，禁止调用任何工具或执行任何命令。\n\n" +
+        "## 技术规范\n" +
+        "- 使用 reveal.js 4.x CDN（https://cdn.jsdelivr.net/npm/reveal.js@4/）\n" +
+        "- 必须设置 hash: false（因为会嵌入 iframe srcdoc，hash 路由会报错）\n" +
+        "- 所有样式内联在 <head> 里，不依赖外部自定义文件\n" +
+        "- 输出完整的 <!DOCTYPE html>…</html> 文件，不要任何代码块标记\n\n" +
+        "## 视觉风格\n" +
+        "- 使用深色系主题（如深蓝/深紫/深灰作为背景）\n" +
+        "- 文字对比度高（白色或浅色系）\n" +
+        "- 标题字体比正文大 1.5-2 倍，使用 font-weight: 700\n" +
+        "- 每张幻灯片有清晰的视觉层次\n\n" +
+        "## 版式多样化（必须混用以下类型，不允许全部单栏）\n" +
+        "1. 封面页：大标题 + 副标题 + 装饰元素（渐变色块/圆形/线条）\n" +
+        "2. 两栏对比：左右各占 50%，用于比较/对照内容\n" +
+        "3. 数据统计：大号数字 + 说明文字，适合关键指标\n" +
+        "4. 深色反转：浅色文字/图标在深色纯色背景上\n" +
+        "5. 内容配图：左侧文字 + 右侧装饰色块模拟图片区\n" +
+        "6. 结语页：居中大字 + 联系方式/总结\n\n" +
+        "## 装饰元素\n" +
+        "- 用 CSS 绘制几何形状（圆形、矩形、斜线）作为装饰，不依赖图片\n" +
+        "- 渐变色块作为视觉重点\n" +
+        "- 适当使用 border-left 竖线强调引用或要点\n\n" +
+        "## 输出要求（最高优先级）\n" +
+        "- 仅输出完整 HTML，不要任何解释、标注或代码块标记\n" +
+        "- reveal.js 初始化配置必须包含：hash: false, transition: 'fade', slideNumber: true\n" +
+        "- 禁止使用工具调用，禁止执行命令，直接以文本形式输出 HTML 文件内容";
 
     public MdToPptController(
         IInfraAgentSessionService sessions,
-        MongoDbContext db)
+        MongoDbContext db,
+        ILlmGateway gateway,
+        ILLMRequestContextAccessor llmRequestContext,
+        ILogger<MdToPptController> logger)
     {
         _sessions = sessions;
         _db = db;
+        _gateway = gateway;
+        _llmRequestContext = llmRequestContext;
+        _logger = logger;
     }
 
     // ─────────────────────────────────────────────
@@ -77,12 +92,16 @@ public class MdToPptController : ControllerBase
     {
         var userId = this.GetRequiredUserId();
         SetSseHeaders();
-
         await WriteEventAsync("start", null);
 
         var styleHint = $"目标页数约 {req.SlideCount ?? 8} 页；主题风格：{(string.IsNullOrWhiteSpace(req.Theme) ? "深色现代" : req.Theme)}。";
-        var prompt = $"{PptSystemPrompt}\n\n{styleHint}\n\n---\n\n# 用户内容\n\n{req.Content?.Trim()}";
-        await RunAgentStreamAsync(userId, prompt, "PPT");
+        var userContent = $"{styleHint}\n\n---\n\n# 用户内容\n\n{req.Content?.Trim()}";
+
+        var engine = (req.Engine ?? "map").Trim().ToLowerInvariant();
+        if (engine == "agent")
+            await RunAgentStreamAsync(userId, userContent, "PPT");
+        else
+            await RunMapStreamAsync(userId, PptSystemPrompt, userContent, AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate, "convert");
     }
 
     // ─────────────────────────────────────────────
@@ -95,11 +114,15 @@ public class MdToPptController : ControllerBase
     {
         var userId = this.GetRequiredUserId();
         SetSseHeaders();
-
         await WriteEventAsync("start", null);
 
-        var prompt = $"{PptSystemPrompt}\n\n---\n\n# 已有 HTML\n\n```html\n{req.CurrentHtml?.Trim()}\n```\n\n# 修改要求（第 {(req.SlideIndex.HasValue ? req.SlideIndex.Value + 1 : 0)} 页）\n\n{req.SlideRequest?.Trim()}";
-        await RunAgentStreamAsync(userId, prompt, "PPT 修改");
+        var userContent = $"---\n\n# 已有 HTML\n\n```html\n{req.CurrentHtml?.Trim()}\n```\n\n# 修改要求（第 {(req.SlideIndex.HasValue ? req.SlideIndex.Value + 1 : 0)} 页）\n\n{req.SlideRequest?.Trim()}";
+
+        var engine = (req.Engine ?? "map").Trim().ToLowerInvariant();
+        if (engine == "agent")
+            await RunAgentStreamAsync(userId, userContent, "PPT 修改");
+        else
+            await RunMapStreamAsync(userId, PptSystemPrompt, userContent, AppCallerRegistry.MdToPptAgent.Generation.Patch, "patch");
     }
 
     // ─────────────────────────────────────────────
@@ -118,7 +141,6 @@ public class MdToPptController : ControllerBase
         var title = string.IsNullOrWhiteSpace(req.Title) ? "PPT 幻灯片" : req.Title.Trim();
         var htmlBytes = Encoding.UTF8.GetBytes(req.HtmlContent);
 
-        // 上传为托管站点
         var siteService = HttpContext.RequestServices.GetRequiredService<IHostedSiteService>();
         var site = await siteService.CreateFromHtmlAsync(
             userId,
@@ -144,44 +166,166 @@ public class MdToPptController : ControllerBase
     }
 
     // ─────────────────────────────────────────────
-    // 内部：CDS Agent 流式执行
+    // MAP 直调路径（快速可靠）
     // ─────────────────────────────────────────────
 
-    private async Task RunAgentStreamAsync(string userId, string prompt, string title)
+    private async Task RunMapStreamAsync(
+        string userId,
+        string systemPrompt,
+        string userContent,
+        string appCallerCode,
+        string opLabel)
     {
+        var startedAt = DateTime.UtcNow;
+        _logger.LogInformation(
+            "[MdToPpt-MAP] userId={UserId} op={Op} appCaller={AppCaller} started",
+            userId, opLabel, appCallerCode);
+
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null,
+            SessionId: null,
+            UserId: userId,
+            ViewRole: null,
+            DocumentChars: userContent.Length,
+            DocumentHash: null,
+            SystemPromptRedacted: "[MdToPpt]",
+            RequestType: "chat",
+            AppCallerCode: appCallerCode));
+
+        var gatewayRequest = new GatewayRequest
+        {
+            AppCallerCode = appCallerCode,
+            ModelType = ModelTypes.Chat,
+            Stream = true,
+            TimeoutSeconds = 180,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                    new JsonObject { ["role"] = "user",   ["content"] = userContent },
+                },
+                ["temperature"] = 0.4,
+                ["max_tokens"] = 16384,
+            },
+        };
+
+        var fullText = new StringBuilder();
+        var sentModel = false;
+
+        try
+        {
+            await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
+            {
+                if (chunk.Type == GatewayChunkType.Start && !sentModel && chunk.Resolution != null)
+                {
+                    sentModel = true;
+                    var elapsedMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+                    _logger.LogInformation(
+                        "[MdToPpt-MAP] model resolved elapsedMs={Elapsed} model={Model} platform={Platform}",
+                        elapsedMs, chunk.Resolution.ActualModel, chunk.Resolution.ActualPlatformName);
+                    try
+                    {
+                        await WriteEventAsync("model", new
+                        {
+                            model = chunk.Resolution.ActualModel,
+                            platform = chunk.Resolution.ActualPlatformName,
+                        });
+                    }
+                    catch (ObjectDisposedException) { return; }
+                }
+                else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    fullText.Append(chunk.Content);
+                    try { await WriteEventAsync("delta", new { text = chunk.Content }); }
+                    catch (ObjectDisposedException) { return; }
+                }
+                else if (chunk.Type == GatewayChunkType.Error)
+                {
+                    var err = chunk.Error ?? chunk.Content ?? "LLM 网关返回未知错误";
+                    _logger.LogError("[MdToPpt-MAP] gateway error userId={UserId}: {Error}", userId, err);
+                    try { await WriteEventAsync("error", new { message = err }); } catch { }
+                    return;
+                }
+            }
+
+            var html = StripCodeFences(fullText.ToString());
+            var totalMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+            _logger.LogInformation(
+                "[MdToPpt-MAP] done userId={UserId} totalMs={TotalMs} htmlLen={HtmlLen}",
+                userId, totalMs, html.Length);
+            try { await WriteEventAsync("done", new { html }); }
+            catch (ObjectDisposedException) { }
+        }
+        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[MdToPpt-MAP] unexpected error userId={UserId}", userId);
+            try { await WriteEventAsync("error", new { message = ex.Message }); } catch { }
+        }
+    }
+
+    // ─────────────────────────────────────────────
+    // CDS Agent 路径（可观测，诊断插桩）
+    // ─────────────────────────────────────────────
+
+    private async Task RunAgentStreamAsync(string userId, string userPrompt, string title)
+    {
+        var overallStart = DateTime.UtcNow;
         InfraConnection? connection = null;
         InfraAgentRuntimeProfile? runtimeProfile = null;
         InfraAgentSessionView? session = null;
 
+        // 诊断计数器
+        var totalEvents = 0;
+        var textDeltaCount = 0;
+        var toolCallCount = 0;
+        var toolResultCount = 0;
+        var statusCount = 0;
+        var logCount = 0;
+        var errorCount = 0;
+
         try
         {
             // 1. 解析 CDS 连接
+            var t0 = DateTime.UtcNow;
             connection = await ResolveCdsConnectionAsync(CancellationToken.None);
             if (connection == null)
             {
                 await WriteEventAsync("error", new { message = "没有可用的 active CDS 连接，请先完成系统级 CDS 授权" });
                 return;
             }
+            var connMs = (int)(DateTime.UtcNow - t0).TotalMilliseconds;
+            _logger.LogInformation("[MdToPpt-Agent] connection resolved elapsedMs={Ms}", connMs);
+            await WriteDiagAsync(new { stage = "connection", elapsedMs = connMs, connectionId = connection.Id });
 
-            // 2. 解析运行配置（同 CapsuleExecutor 的四级优先级）
+            // 2. 解析运行配置
+            var t1 = DateTime.UtcNow;
             runtimeProfile = await ResolveRuntimeProfileAsync(userId, CancellationToken.None);
             if (runtimeProfile == null)
             {
                 await WriteEventAsync("error", new { message = "没有可用的模型运行配置，请先配置 baseUrl、model 和 API key" });
                 return;
             }
+            var profileMs = (int)(DateTime.UtcNow - t1).TotalMilliseconds;
+            _logger.LogInformation("[MdToPpt-Agent] profile resolved elapsedMs={Ms} runtime={Runtime} model={Model}",
+                profileMs, runtimeProfile.Runtime, runtimeProfile.Model);
+            await WriteDiagAsync(new { stage = "profile", elapsedMs = profileMs, runtime = runtimeProfile.Runtime, model = runtimeProfile.Model });
 
             var runtime = runtimeProfile.Runtime;
             var model = runtimeProfile.Model;
 
-            // 3. 创建会话
+            // 3. 创建会话 — toolPolicy=deny-all 禁止暴露任何工具，避免 agent 进入工具循环
+            var t2 = DateTime.UtcNow;
             session = await _sessions.CreateAsync(userId,
                 new CreateInfraAgentSessionRequest(
                     connection.Id,
                     runtime,
                     model,
                     title,
-                    "readonly-auto",
+                    InfraAgentToolPolicies.DenyAll,   // 核心修复：不暴露任何工具
                     null,
                     runtimeProfile.Id,
                     null,
@@ -189,30 +333,48 @@ public class MdToPptController : ControllerBase
                     null,
                     null),
                 CancellationToken.None);
+            var createMs = (int)(DateTime.UtcNow - t2).TotalMilliseconds;
+            _logger.LogInformation("[MdToPpt-Agent] session created elapsedMs={Ms} sessionId={Id} toolPolicy={Policy}",
+                createMs, session.Id, InfraAgentToolPolicies.DenyAll);
+            await WriteDiagAsync(new { stage = "create", elapsedMs = createMs, sessionId = session.Id, toolPolicy = InfraAgentToolPolicies.DenyAll });
 
             // 4. 启动会话
+            var t3 = DateTime.UtcNow;
             if (!string.Equals(session.Status, "running", StringComparison.OrdinalIgnoreCase))
             {
                 session = await _sessions.StartAsync(userId, session.Id,
                     new StartInfraAgentSessionRequest(runtime, model),
                     CancellationToken.None) ?? session;
             }
+            var startMs = (int)(DateTime.UtcNow - t3).TotalMilliseconds;
+            _logger.LogInformation("[MdToPpt-Agent] session started elapsedMs={Ms} status={Status}", startMs, session.Status);
+            await WriteDiagAsync(new { stage = "start", elapsedMs = startMs, status = session.Status });
 
-            // 5. 发送消息
+            // 5. 发送消息（系统提示词 + 用户内容合并）
+            var fullPrompt = $"{PptSystemPrompt}\n\n---\n\n{userPrompt}";
+            var t4 = DateTime.UtcNow;
             session = await _sessions.SendMessageAsync(userId, session.Id,
-                new SendInfraAgentMessageRequest(prompt),
+                new SendInfraAgentMessageRequest(fullPrompt),
                 CancellationToken.None) ?? session;
+            var sendMs = (int)(DateTime.UtcNow - t4).TotalMilliseconds;
+            _logger.LogInformation("[MdToPpt-Agent] message sent elapsedMs={Ms}", sendMs);
+            await WriteDiagAsync(new { stage = "send", elapsedMs = sendMs });
 
             // 6. 轮询事件，流式推送 delta
             var afterSeq = 0L;
             var fullText = new StringBuilder();
             string? finalHtml = null;
             const int maxPollingRounds = 600; // 最多 ~8 分钟 (600 * 800ms)
+            var firstEventAt = (DateTime?)null;
+            var firstTextDeltaAt = (DateTime?)null;
 
             for (var round = 0; round < maxPollingRounds; round++)
             {
                 var batch = await _sessions.ListEventsAsync(userId, session.Id, afterSeq, 50, CancellationToken.None);
 
+                var newEventsThisRound = 0;
+                var toolCallsThisRound = 0;
+                var textDeltasThisRound = 0;
                 var gotDone = false;
                 string? errorMessage = null;
 
@@ -220,44 +382,128 @@ public class MdToPptController : ControllerBase
                 {
                     if (evt.Seq <= afterSeq) continue;
                     afterSeq = evt.Seq;
+                    totalEvents++;
+                    newEventsThisRound++;
+
+                    if (firstEventAt == null)
+                    {
+                        firstEventAt = DateTime.UtcNow;
+                        var firstMs = (int)(firstEventAt.Value - overallStart).TotalMilliseconds;
+                        _logger.LogInformation("[MdToPpt-Agent] first event arrived elapsedMs={Ms} type={Type}", firstMs, evt.Type);
+                        await WriteDiagAsync(new { stage = "first_event", elapsedMs = firstMs, eventType = evt.Type });
+                    }
 
                     try
                     {
                         using var doc = JsonDocument.Parse(evt.PayloadJson ?? "{}");
                         var root = doc.RootElement;
 
-                        if (evt.Type == InfraAgentEventTypes.TextDelta
-                            && root.TryGetProperty("text", out var textProp))
+                        switch (evt.Type)
                         {
-                            var fragment = textProp.GetString() ?? "";
-                            if (!string.IsNullOrEmpty(fragment))
-                            {
-                                fullText.Append(fragment);
-                                await WriteEventAsync("delta", new { text = fragment });
-                            }
-                        }
-                        else if (evt.Type == InfraAgentEventTypes.Done
-                            && root.TryGetProperty("finalText", out var finalProp))
-                        {
-                            var rawFinal = finalProp.GetString() ?? "";
-                            // finalText 可能补充最后一段内容
-                            if (!string.IsNullOrEmpty(rawFinal) && rawFinal != fullText.ToString())
-                                finalHtml = StripCodeFences(rawFinal);
-                            else
-                                finalHtml = StripCodeFences(fullText.ToString());
-                            gotDone = true;
-                            break;
-                        }
-                        else if (evt.Type == InfraAgentEventTypes.Error
-                            && root.TryGetProperty("message", out var msgProp))
-                        {
-                            errorMessage = msgProp.GetString() ?? "CDS Agent 发生错误";
-                            break;
+                            case InfraAgentEventTypes.TextDelta:
+                                textDeltaCount++;
+                                textDeltasThisRound++;
+                                if (firstTextDeltaAt == null)
+                                {
+                                    firstTextDeltaAt = DateTime.UtcNow;
+                                    var tdMs = (int)(firstTextDeltaAt.Value - overallStart).TotalMilliseconds;
+                                    _logger.LogInformation("[MdToPpt-Agent] FIRST text_delta elapsedMs={Ms}", tdMs);
+                                    await WriteDiagAsync(new { stage = "first_text_delta", elapsedMs = tdMs });
+                                }
+                                if (root.TryGetProperty("text", out var textProp))
+                                {
+                                    var fragment = textProp.GetString() ?? "";
+                                    if (!string.IsNullOrEmpty(fragment))
+                                    {
+                                        fullText.Append(fragment);
+                                        await WriteEventAsync("delta", new { text = fragment });
+                                    }
+                                }
+                                break;
+
+                            case InfraAgentEventTypes.ToolCall:
+                                toolCallCount++;
+                                toolCallsThisRound++;
+                                var toolName = root.TryGetProperty("toolName", out var tn) ? tn.GetString() : "?";
+                                _logger.LogWarning(
+                                    "[MdToPpt-Agent] TOOL_CALL detected tool={Tool} totalToolCalls={Count} textDeltasSoFar={Text}",
+                                    toolName, toolCallCount, textDeltaCount);
+                                await WriteDiagAsync(new
+                                {
+                                    stage = "tool_call",
+                                    tool = toolName,
+                                    totalToolCalls = toolCallCount,
+                                    textDeltasSoFar = textDeltaCount,
+                                    warning = "agent 正在调用工具而非直接输出 HTML",
+                                });
+                                break;
+
+                            case InfraAgentEventTypes.ToolResult:
+                                toolResultCount++;
+                                break;
+
+                            case InfraAgentEventTypes.Status:
+                                statusCount++;
+                                break;
+
+                            case InfraAgentEventTypes.Log:
+                                logCount++;
+                                break;
+
+                            case InfraAgentEventTypes.Done:
+                                if (root.TryGetProperty("finalText", out var finalProp))
+                                {
+                                    var rawFinal = finalProp.GetString() ?? "";
+                                    finalHtml = !string.IsNullOrEmpty(rawFinal) && rawFinal != fullText.ToString()
+                                        ? StripCodeFences(rawFinal)
+                                        : StripCodeFences(fullText.ToString());
+                                }
+                                else
+                                {
+                                    finalHtml = StripCodeFences(fullText.ToString());
+                                }
+                                gotDone = true;
+                                break;
+
+                            case InfraAgentEventTypes.Error:
+                                errorCount++;
+                                if (root.TryGetProperty("message", out var msgProp))
+                                    errorMessage = msgProp.GetString() ?? "CDS Agent 发生错误";
+                                break;
                         }
                     }
                     catch
                     {
-                        // 解析单个事件失败不终止流，继续
+                        // 解析单个事件失败不终止流
+                    }
+
+                    if (gotDone || errorMessage != null)
+                        break;
+                }
+
+                // 每轮新事件时打印诊断
+                if (newEventsThisRound > 0)
+                {
+                    var roundElapsed = (int)(DateTime.UtcNow - overallStart).TotalMilliseconds;
+                    _logger.LogInformation(
+                        "[MdToPpt-Agent] round={Round} newEvents={New} textDeltas={TD} toolCalls={TC} total={Total} elapsedMs={Ms}",
+                        round, newEventsThisRound, textDeltasThisRound, toolCallsThisRound, totalEvents, roundElapsed);
+
+                    // 工具循环警报
+                    if (toolCallCount > 3 && textDeltaCount == 0)
+                    {
+                        var loopMs = (int)(DateTime.UtcNow - overallStart).TotalMilliseconds;
+                        _logger.LogError(
+                            "[MdToPpt-Agent] AGENT TOOL-LOOPING, no text output toolCalls={TC} elapsedMs={Ms}",
+                            toolCallCount, loopMs);
+                        await WriteDiagAsync(new
+                        {
+                            stage = "tool_loop_alarm",
+                            toolCalls = toolCallCount,
+                            textDeltas = textDeltaCount,
+                            elapsedMs = loopMs,
+                            message = "AGENT TOOL-LOOPING: agent 反复调用工具但没有输出任何 HTML 文本，疑似工具循环",
+                        });
                     }
                 }
 
@@ -270,12 +516,27 @@ public class MdToPptController : ControllerBase
                 if (gotDone)
                 {
                     var html = finalHtml ?? StripCodeFences(fullText.ToString());
+                    var doneMs = (int)(DateTime.UtcNow - overallStart).TotalMilliseconds;
+                    _logger.LogInformation(
+                        "[MdToPpt-Agent] DONE elapsedMs={Ms} htmlLen={Len} textDeltas={TD} toolCalls={TC}",
+                        doneMs, html.Length, textDeltaCount, toolCallCount);
+                    await WriteDiagAsync(new
+                    {
+                        stage = "done",
+                        elapsedMs = doneMs,
+                        htmlLen = html.Length,
+                        textDeltaCount,
+                        toolCallCount,
+                        toolResultCount,
+                        statusCount,
+                        logCount,
+                        errorCount,
+                    });
                     await WriteEventAsync("done", new { html });
                     return;
                 }
 
-                // SSE 心跳：agent 慢/思考期间没有 text_delta 时，每 ~10s 发一次 keepalive，
-                // 防止 Cloudflare ~100s 无数据超时(HTTP 524)。server-authority 规则 #4。
+                // SSE 心跳：防止 Cloudflare ~100s 无数据超时（HTTP 524），每 ~10s 一次
                 if (round % 12 == 11)
                 {
                     try
@@ -287,55 +548,52 @@ public class MdToPptController : ControllerBase
                     catch (ObjectDisposedException) { break; }
                 }
 
-                // 未完成：等待后继续轮询
                 await Task.Delay(800);
             }
 
-            // 超时兜底：把已收到的内容作为最终结果
+            // 超时兜底
             var timeoutHtml = StripCodeFences(fullText.ToString());
+            var timeoutMs = (int)(DateTime.UtcNow - overallStart).TotalMilliseconds;
+            _logger.LogWarning(
+                "[MdToPpt-Agent] TIMEOUT elapsedMs={Ms} htmlLen={Len} textDeltas={TD} toolCalls={TC}",
+                timeoutMs, timeoutHtml.Length, textDeltaCount, toolCallCount);
+            await WriteDiagAsync(new
+            {
+                stage = "timeout",
+                elapsedMs = timeoutMs,
+                htmlLen = timeoutHtml.Length,
+                textDeltaCount,
+                toolCallCount,
+                message = textDeltaCount == 0 && toolCallCount > 0
+                    ? "TIMEOUT: 超时时零 text_delta 但有 tool_call，确认为工具循环"
+                    : "TIMEOUT: 超时，agent 未发送 done 事件",
+            });
+
             if (!string.IsNullOrWhiteSpace(timeoutHtml))
                 await WriteEventAsync("done", new { html = timeoutHtml });
             else
-                await WriteEventAsync("error", new { message = "CDS Agent 响应超时，请稍后重试" });
+                await WriteEventAsync("error", new { message = "CDS Agent 响应超时，请稍后重试或切换到 MAP 直调引擎" });
         }
-        catch (OperationCanceledException)
-        {
-            // 客户端断开，按 server-authority 规则继续后台但停止写 SSE
-        }
-        catch (ObjectDisposedException)
-        {
-            // 同上
-        }
+        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
         catch (Exception ex)
         {
-            try
-            {
-                await WriteEventAsync("error", new { message = ex.Message });
-            }
-            catch
-            {
-                // 写 SSE 失败则忽略
-            }
+            _logger.LogError(ex, "[MdToPpt-Agent] unexpected error userId={UserId}", userId);
+            try { await WriteEventAsync("error", new { message = ex.Message }); } catch { }
         }
         finally
         {
-            // 7. 结束后停止会话（server-authority：用 CancellationToken.None）
+            // 结束后停止会话（server-authority：用 CancellationToken.None）
             if (session != null)
             {
-                try
-                {
-                    await _sessions.StopAsync(userId, session.Id, CancellationToken.None);
-                }
-                catch
-                {
-                    // 停止失败不影响主流程
-                }
+                try { await _sessions.StopAsync(userId, session.Id, CancellationToken.None); }
+                catch { }
             }
         }
     }
 
     // ─────────────────────────────────────────────
-    // 解析 CDS 连接（同 CapsuleExecutor.ResolveCdsConnectionForWorkflowAsync 无 connectionId 分支）
+    // 解析 CDS 连接
     // ─────────────────────────────────────────────
 
     private async Task<InfraConnection?> ResolveCdsConnectionAsync(CancellationToken ct)
@@ -351,7 +609,7 @@ public class MdToPptController : ControllerBase
     }
 
     // ─────────────────────────────────────────────
-    // 解析运行配置（同 CapsuleExecutor 四级优先级：owned default → shared default → owned any → shared any）
+    // 解析运行配置（四级优先级）
     // ─────────────────────────────────────────────
 
     private async Task<InfraAgentRuntimeProfile?> ResolveRuntimeProfileAsync(string userId, CancellationToken ct)
@@ -377,27 +635,23 @@ public class MdToPptController : ControllerBase
             ? fb.Where(_ => false)
             : fb.AnyIn(x => x.SharedTeamIds, visibleTeamIds);
 
-        // 优先级 1：用户自己的默认配置
         var profile = await _db.InfraAgentRuntimeProfiles
             .Find(ownedFilter & fb.Eq(x => x.IsDefault, true))
             .FirstOrDefaultAsync(ct);
         if (profile != null) return profile;
 
-        // 优先级 2：共享的默认配置
         profile = await _db.InfraAgentRuntimeProfiles
             .Find(sharedFilter & fb.Eq(x => x.IsDefault, true))
             .SortByDescending(x => x.UpdatedAt)
             .FirstOrDefaultAsync(ct);
         if (profile != null) return profile;
 
-        // 优先级 3：用户自己的任意配置
         profile = await _db.InfraAgentRuntimeProfiles
             .Find(ownedFilter)
             .SortByDescending(x => x.UpdatedAt)
             .FirstOrDefaultAsync(ct);
         if (profile != null) return profile;
 
-        // 优先级 4：共享的任意配置
         return await _db.InfraAgentRuntimeProfiles
             .Find(sharedFilter)
             .SortByDescending(x => x.UpdatedAt)
@@ -431,8 +685,13 @@ public class MdToPptController : ControllerBase
         catch (ObjectDisposedException) { }
     }
 
+    private async Task WriteDiagAsync(object data)
+    {
+        await WriteEventAsync("diag", data);
+    }
+
     // ─────────────────────────────────────────────
-    // 去除代码围栏（CDS Agent 偶尔会在 HTML 外包 ```html ... ```）
+    // 去除代码围栏
     // ─────────────────────────────────────────────
 
     private static string StripCodeFences(string text)
@@ -441,7 +700,6 @@ public class MdToPptController : ControllerBase
 
         var s = text.Trim();
 
-        // 去除开头的 ```html 或 ``` 行
         if (s.StartsWith("```", StringComparison.Ordinal))
         {
             var firstNewline = s.IndexOf('\n');
@@ -449,7 +707,6 @@ public class MdToPptController : ControllerBase
                 s = s[(firstNewline + 1)..];
         }
 
-        // 去除结尾的 ``` 行
         if (s.EndsWith("```", StringComparison.Ordinal))
         {
             var lastFence = s.LastIndexOf("```", StringComparison.Ordinal);
@@ -467,7 +724,7 @@ public class MdToPptController : ControllerBase
 
 public class MdToPptConvertRequest
 {
-    /// <summary>要转换的内容（Markdown / 纯文本），与前端 content 对齐</summary>
+    /// <summary>要转换的内容（Markdown / 纯文本）</summary>
     public string? Content { get; set; }
 
     /// <summary>期望页数（可选）</summary>
@@ -475,23 +732,29 @@ public class MdToPptConvertRequest
 
     /// <summary>主题（可选）</summary>
     public string? Theme { get; set; }
+
+    /// <summary>生成引擎："map"（默认，MAP 直调）或 "agent"（CDS Agent）</summary>
+    public string? Engine { get; set; }
 }
 
 public class MdToPptPatchRequest
 {
-    /// <summary>当前 HTML 内容，与前端 currentHtml 对齐</summary>
+    /// <summary>当前 HTML 内容</summary>
     public string? CurrentHtml { get; set; }
 
-    /// <summary>修改要求，与前端 slideRequest 对齐</summary>
+    /// <summary>修改要求</summary>
     public string? SlideRequest { get; set; }
 
     /// <summary>目标页索引（可选）</summary>
     public int? SlideIndex { get; set; }
+
+    /// <summary>生成引擎："map"（默认）或 "agent"</summary>
+    public string? Engine { get; set; }
 }
 
 public class MdToPptPublishRequest
 {
-    /// <summary>要发布的 HTML 内容，与前端 htmlContent 对齐</summary>
+    /// <summary>要发布的 HTML 内容</summary>
     public string? HtmlContent { get; set; }
 
     /// <summary>发布标题</summary>

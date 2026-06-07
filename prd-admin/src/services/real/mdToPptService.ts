@@ -3,16 +3,20 @@ import { useAuthStore } from '@/stores/authStore';
 
 // ============ Types ============
 
+export type MdToPptEngine = 'map' | 'agent';
+
 export interface MdToPptConvertRequest {
   content: string;
   slideCount?: number;
   theme?: string;
+  engine?: MdToPptEngine;
 }
 
 export interface MdToPptPatchRequest {
   currentHtml: string;
   slideRequest: string;
   slideIndex?: number;
+  engine?: MdToPptEngine;
 }
 
 export interface MdToPptPublishRequest {
@@ -26,6 +30,13 @@ export interface MdToPptPublishRequest {
 export interface MdToPptPublishResult {
   siteId: string;
   siteUrl: string;
+}
+
+/** 诊断事件 payload（agent 路径专有） */
+export interface MdToPptDiagEvent {
+  stage: string;
+  elapsedMs?: number;
+  [key: string]: unknown;
 }
 
 // ============ SSE helpers ============
@@ -47,6 +58,7 @@ async function readSseStream(
   handlers: {
     onStart?: (data: Record<string, unknown>) => void;
     onModel?: (info: { model: string; platform: string }) => void;
+    onDiag?: (data: MdToPptDiagEvent) => void;
     onDelta?: (text: string) => void;
     onDone?: (data: Record<string, unknown>) => void;
     onError?: (message: string) => void;
@@ -86,6 +98,8 @@ async function readSseStream(
               model: (data.model as string) ?? '',
               platform: (data.platform as string) ?? '',
             });
+          } else if (currentEvent === 'diag') {
+            handlers.onDiag?.(data as MdToPptDiagEvent);
           } else if (currentEvent === 'delta') {
             handlers.onDelta?.((data.text as string) ?? '');
           } else if (currentEvent === 'done') {
@@ -111,8 +125,10 @@ export interface MdToPptConvertSseOptions {
   content: string;
   slideCount?: number;
   theme?: string;
+  engine?: MdToPptEngine;
   onStart?: (info: { slideCount?: number; theme?: string }) => void;
   onModel?: (info: { model: string; platform: string }) => void;
+  onDiag?: (data: MdToPptDiagEvent) => void;
   onDelta?: (text: string) => void;
   onDone?: (result: { html: string }) => void;
   onError?: (message: string) => void;
@@ -134,6 +150,7 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
           content: options.content,
           slideCount: options.slideCount,
           theme: options.theme,
+          engine: options.engine ?? 'map',
         }),
         signal: abortController.signal,
       });
@@ -151,6 +168,7 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
           });
         },
         onModel: options.onModel,
+        onDiag: options.onDiag,
         onDelta: options.onDelta,
         onDone: (data) => {
           options.onDone?.({ html: (data.html as string) ?? '' });
@@ -176,8 +194,10 @@ export interface MdToPptPatchSseOptions {
   currentHtml: string;
   slideRequest: string;
   slideIndex?: number;
+  engine?: MdToPptEngine;
   onStart?: () => void;
   onModel?: (info: { model: string; platform: string }) => void;
+  onDiag?: (data: MdToPptDiagEvent) => void;
   onDelta?: (text: string) => void;
   onDone?: (result: { html: string }) => void;
   onError?: (message: string) => void;
@@ -199,6 +219,7 @@ export function streamMdToPptPatch(options: MdToPptPatchSseOptions): () => void 
           currentHtml: options.currentHtml,
           slideRequest: options.slideRequest,
           slideIndex: options.slideIndex,
+          engine: options.engine ?? 'map',
         }),
         signal: abortController.signal,
       });
@@ -211,6 +232,7 @@ export function streamMdToPptPatch(options: MdToPptPatchSseOptions): () => void 
       await readSseStream(response, {
         onStart: () => options.onStart?.(),
         onModel: options.onModel,
+        onDiag: options.onDiag,
         onDelta: options.onDelta,
         onDone: (data) => {
           options.onDone?.({ html: (data.html as string) ?? '' });
