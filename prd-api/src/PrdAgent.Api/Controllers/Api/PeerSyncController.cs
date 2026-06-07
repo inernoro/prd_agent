@@ -27,6 +27,7 @@ public class PeerSyncController : ControllerBase
     private readonly ISyncResourceRegistry _registry;
     private readonly ISafeOutboundUrlValidator _urlValidator;
     private readonly IHttpClientFactory _httpFactory;
+    private readonly IAdminPermissionService _permissionService;
     private readonly ILogger<PeerSyncController> _logger;
 
     private static readonly JsonSerializerOptions JsonOpts = new()
@@ -41,6 +42,7 @@ public class PeerSyncController : ControllerBase
         ISyncResourceRegistry registry,
         ISafeOutboundUrlValidator urlValidator,
         IHttpClientFactory httpFactory,
+        IAdminPermissionService permissionService,
         ILogger<PeerSyncController> logger)
     {
         _db = db;
@@ -48,6 +50,7 @@ public class PeerSyncController : ControllerBase
         _registry = registry;
         _urlValidator = urlValidator;
         _httpFactory = httpFactory;
+        _permissionService = permissionService;
         _logger = logger;
     }
 
@@ -454,13 +457,26 @@ public class PeerSyncController : ControllerBase
         var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
         var name = user != null && !string.IsNullOrWhiteSpace(user.DisplayName) ? user.DisplayName
             : (user?.Username ?? "同步");
-        // 从 HttpContext 取出权限位（与 AdminPermissionMiddleware / 各 controller 的判定保持一致）。
-        // - IsAdmin = super / AI 超级访问 → 跨资源放行全域
-        // - Permissions = 完整权限位列表 → 资源按模块权限自决（如 defect-agent.manage / document-store.write）
-        // PR #742 review fix：之前 IsAdmin 仅看 super，defect-agent.manage 持有者看不到/推不动他们管理的项目。
-        var perms = User.FindAll("permissions").Select(c => c.Value).ToHashSet(StringComparer.Ordinal);
-        var isSuper = perms.Contains(AdminPermissionCatalog.Super)
+
+        // PR #742 review P2 fix：AdminPermissionMiddleware 只对 [AdminController] 路由注入 permissions claim。
+        // PeerSyncController 不是 admin controller，于是用户端点的 HttpContext.User 里 permissions 多半为空 —
+        // 之前的实现把 root/super/defect-agent.manage 用户全当作普通用户。
+        // 改成在这里主动调 IAdminPermissionService.GetEffectivePermissionsAsync（中间件同款数据源），
+        // 取得 system role + allow - deny 的有效权限集，保证资源层得到的 actor 视角准确。
+        var isRoot = string.Equals(User.FindFirst("isRoot")?.Value, "1", StringComparison.Ordinal)
             || string.Equals(User.FindFirst("isAiSuperAccess")?.Value, "1", StringComparison.Ordinal);
+        IReadOnlyCollection<string> perms;
+        try
+        {
+            var list = await _permissionService.GetEffectivePermissionsAsync(userId, isRoot, ct);
+            perms = list.ToHashSet(StringComparer.Ordinal);
+        }
+        catch
+        {
+            // 兜底：极端故障下退回 claims（不至于直接拒绝服务）
+            perms = User.FindAll("permissions").Select(c => c.Value).ToHashSet(StringComparer.Ordinal);
+        }
+        var isSuper = isRoot || perms.Contains(AdminPermissionCatalog.Super);
         return new SyncActor(userId, name, user?.Email, IsAdmin: isSuper, Permissions: perms);
     }
 
