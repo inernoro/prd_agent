@@ -3365,10 +3365,23 @@ function PendingSelectionHighlight({
   scrollRef?: React.RefObject<HTMLElement>;
 }) {
   const [scrollDy, setScrollDy] = useState(0);
+  // 滚动容器在视口里的 bounding rect —— 用来把高亮裁剪在正文区域内，
+  // 避免选区滚出正文后还在 toolbar/sidebar 上面继续画（Codex P2）。
+  const [clip, setClip] = useState<{ top: number; left: number; right: number; bottom: number } | null>(null);
   useEffect(() => {
     const read = () => (scrollRef?.current?.scrollTop ?? 0) + window.scrollY;
     const start = read();
-    const onScroll = () => setScrollDy(read() - start);
+    const onScroll = () => {
+      setScrollDy(read() - start);
+      const el = scrollRef?.current;
+      if (el) {
+        const r = el.getBoundingClientRect();
+        setClip({ top: r.top, left: r.left, right: r.right, bottom: r.bottom });
+      } else {
+        setClip(null);
+      }
+    };
+    onScroll(); // 初始化一次拿到当前裁剪框
     window.addEventListener('scroll', onScroll, true);
     window.addEventListener('resize', onScroll);
     return () => {
@@ -3379,21 +3392,47 @@ function PendingSelectionHighlight({
   if (rects.length === 0) return null;
   return createPortal(
     <div aria-hidden style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 115 }}>
-      {rects.map((r, i) => (
-        <div
-          key={i}
-          style={{
-            position: 'absolute',
-            top: r.top - scrollDy,
-            left: r.left,
-            width: r.width,
-            height: r.height,
-            background: 'rgba(168,85,247,0.28)',
-            borderBottom: '2px solid rgba(168,85,247,0.85)',
-            borderRadius: 2,
-          }}
-        />
-      ))}
+      {rects.map((r, i) => {
+        // 视口坐标：rect 原始 top - 累计滚动位移
+        const top = r.top - scrollDy;
+        const left = r.left;
+        const right = left + r.width;
+        const bottom = top + r.height;
+        // 完全滚出滚动容器 → 不渲染（节流 DOM）；部分相交 → 用 clipPath 裁掉容器外的部分
+        if (clip) {
+          if (bottom <= clip.top || top >= clip.bottom || right <= clip.left || left >= clip.right) {
+            return null;
+          }
+        }
+        // 用 inset(top right bottom left) clip-path 把超出 clip 的部分切掉；
+        // 数值相对于元素自身左上角（top/right/bottom/left = 各边收进多少 px）
+        let clipPath: string | undefined;
+        if (clip) {
+          const cTop = Math.max(0, clip.top - top);
+          const cLeft = Math.max(0, clip.left - left);
+          const cRight = Math.max(0, right - clip.right);
+          const cBottom = Math.max(0, bottom - clip.bottom);
+          if (cTop || cLeft || cRight || cBottom) {
+            clipPath = `inset(${cTop}px ${cRight}px ${cBottom}px ${cLeft}px)`;
+          }
+        }
+        return (
+          <div
+            key={i}
+            style={{
+              position: 'absolute',
+              top,
+              left,
+              width: r.width,
+              height: r.height,
+              background: 'rgba(168,85,247,0.28)',
+              borderBottom: '2px solid rgba(168,85,247,0.85)',
+              borderRadius: 2,
+              clipPath,
+            }}
+          />
+        );
+      })}
     </div>,
     document.body,
   );
