@@ -152,6 +152,7 @@ public sealed class DailyTipsController : ControllerBase
             .Select(x =>
             {
                 var mine = x.Deliveries?.FirstOrDefault(d => d.UserId == userId);
+                var difficulty = EffectiveDifficulty(x);
                 return new
                 {
                     x.Id,
@@ -173,6 +174,8 @@ public sealed class DailyTipsController : ControllerBase
                     // learned:该 (SourceId, Version) 是否已在用户 LearnedTips 里。*-page-guide 学会后
                     // 仍返回(供重看),前端按此字段停止自动开讲 / 入口脉冲;非 page-guide 学会即被上面过滤掉。
                     learned = IsLearned(x, learnedMap),
+                    difficulty,
+                    xpReward = XpForDifficulty(difficulty),
                     x.CreatedAt,
                     // 若用户有投递记录,附带 delivery 状态便于前端轻量展示
                     deliveryStatus = mine?.Status,
@@ -374,16 +377,135 @@ public sealed class DailyTipsController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { learned = new { sourceId, version = learnedVersion, tier } }));
     }
 
+    /// <summary>
+    /// 学习进度:返回当前用户对全部「官方教程」(code seed 里带多步 Steps 的引导)的完成情况,
+    /// 供头像进度环 + 学习中心页消费。onboarding(*-page-guide)计入掌握度分母;
+    /// task(其它带步骤的快捷教程)与 update(*-update-*)一并返回但不计入掌握度。
+    /// </summary>
+    [HttpGet("progress")]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> Progress(CancellationToken ct = default)
+    {
+        var userId = this.GetRequiredUserId();
+        var now = DateTime.UtcNow;
+        var me = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
+        var learnedMap = me?.LearnedTips?.ToDictionary(l => l.SourceId, l => l.Version)
+                         ?? new Dictionary<string, int>();
+
+        // SSOT:官方教程目录 = BuildDefaultTips 里带多步 Steps 的 seed(单步/纯公告不计)。
+        var catalog = BuildDefaultTips(now)
+            .Where(s => !string.IsNullOrEmpty(s.SourceId)
+                        && s.AutoAction?.Steps is { Count: > 0 })
+            .ToList();
+
+        var items = catalog.Select(s =>
+        {
+            var difficulty = EffectiveDifficulty(s);
+            return new
+            {
+                sourceId = s.SourceId,
+                // tipId = visible 端点里这条 seed 的 id(seed-{sourceId});供学习中心直接开讲(markLearned 认 seed- 前缀)。
+                tipId = s.Id,
+                title = s.Title,
+                body = s.Body,
+                actionUrl = s.ActionUrl,
+                ctaText = s.CtaText,
+                targetSelector = s.TargetSelector,
+                autoAction = s.AutoAction,
+                steps = s.AutoAction!.Steps!.Count,
+                category = CategoryOf(s),
+                version = s.Version,
+                learned = IsLearned(s, learnedMap),
+                difficulty,
+                xpReward = XpForDifficulty(difficulty),
+            };
+        }).ToList();
+
+        // 掌握度只看 onboarding(*-page-guide):用户完整走完的本页教程占官方本页教程总数的比例。
+        var onboarding = items.Where(i => i.category == "onboarding").ToList();
+        // 累计经验:所有已完成教程(不限分类,onboarding/task/update 都算)的 xpReward 之和 —— 完成越多越高。
+        var xp = items.Where(i => i.learned).Sum(i => i.xpReward);
+        var (level, levelName, levelFloorXp, nextLevelXp) = ComputeLevel(xp);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            total = onboarding.Count,
+            learned = onboarding.Count(i => i.learned),
+            xp,
+            level,
+            levelName,
+            levelFloorXp,
+            nextLevelXp,
+            xpToNext = Math.Max(0, nextLevelXp - xp),
+            items,
+        }));
+    }
+
     private static bool IsLearned(DailyTip t, Dictionary<string, int> learnedMap)
     {
         var key = t.SourceId ?? t.Id;
         return learnedMap.TryGetValue(key, out var learnedVer) && learnedVer >= t.Version;
     }
 
+    /// <summary>官方教程分类:onboarding(*-page-guide,计入掌握度) / update(*-update-*,本周更新提醒) / task(其它带步骤的快捷教程)。</summary>
+    private static string CategoryOf(DailyTip t)
+    {
+        if (IsPageGuide(t)) return "onboarding";
+        if (t.SourceId != null && t.SourceId.Contains("-update-", StringComparison.Ordinal)) return "update";
+        return "task";
+    }
+
     /// <summary>是否为「本页完整教程」seed(*-page-guide)。这类教程学会后仍保留(供用户重看),
     /// 仅靠前端 learned 标记抑制自动开讲 / 入口脉冲;其余 tip 学会即隐藏。</summary>
     private static bool IsPageGuide(DailyTip t)
         => t.SourceId != null && t.SourceId.EndsWith("-page-guide", StringComparison.Ordinal);
+
+    /// <summary>教程难度:显式 Difficulty 优先,否则按步数推断(≤4 步=初 / 5-8 步=中 / ≥9 步=高)。</summary>
+    private static string EffectiveDifficulty(DailyTip t)
+    {
+        if (!string.IsNullOrWhiteSpace(t.Difficulty))
+        {
+            var d = t.Difficulty!.Trim().ToLowerInvariant();
+            if (d is "beginner" or "intermediate" or "advanced") return d;
+        }
+        var steps = t.AutoAction?.Steps?.Count ?? 0;
+        if (steps >= 9) return "advanced";
+        if (steps >= 5) return "intermediate";
+        return "beginner";
+    }
+
+    /// <summary>完成对应难度教程获得的经验值:初 10 / 中 20 / 高 40。</summary>
+    private static int XpForDifficulty(string difficulty) => difficulty switch
+    {
+        "advanced" => 40,
+        "intermediate" => 20,
+        _ => 10,
+    };
+
+    /// <summary>等级阈值表(累计经验 Floor → 等级名)。index 0 = 1 级。</summary>
+    private static readonly (int Floor, string Name)[] LevelTable =
+    {
+        (0, "新手"),
+        (50, "入门"),
+        (120, "进阶"),
+        (250, "熟手"),
+        (450, "高手"),
+        (700, "大师"),
+        (1000, "宗师"),
+    };
+
+    /// <summary>按累计经验算等级:返回 (等级序号 从1起, 等级名, 当前级经验下限, 下一级经验阈值)。满级时 next=floor。</summary>
+    private static (int Level, string Name, int FloorXp, int NextXp) ComputeLevel(int xp)
+    {
+        var idx = 0;
+        for (var i = 0; i < LevelTable.Length; i++)
+        {
+            if (xp >= LevelTable[i].Floor) idx = i;
+            else break;
+        }
+        var floor = LevelTable[idx].Floor;
+        var next = idx + 1 < LevelTable.Length ? LevelTable[idx + 1].Floor : floor;
+        return (idx + 1, LevelTable[idx].Name, floor, next);
+    }
 
     private static List<DailyTip> FilterLearned(List<DailyTip> items, Dictionary<string, int> learnedMap)
     {
@@ -400,9 +522,9 @@ public sealed class DailyTipsController : ControllerBase
     }
 
     /// <summary>
-    /// 内置默认 tip 集合。新环境 / 清空数据库后兜底展示,管理员创建首条 tip 后即不再返回。
-    /// 全部为「text / card」类,带 ActionUrl 可跳转。DisplayOrder 预留 10-90,方便管理员插入。
-    /// AdminDailyTipsController 的 /seed 端点复用此列表批量写库。
+    /// 内置默认 tip 集合(教程 SSOT)。Visible / Progress 端点在 DB 缺失对应 SourceId 时自动并入,
+    /// 无需任何手动 seed —— 「小技巧管理」后台已于 2026-06-04 下线,教程统一走代码内置 seed。
+    /// 全部为「text / card」类,带 ActionUrl 可跳转。DisplayOrder 预留 10-90。
     /// </summary>
     // 2026-W20/W21 新功能公告的固定下线时间。必须锚定发布日，不能用 now.AddDays(7)——
     // 否则 /visible 兜底路径每次请求重建 BuildDefaultTips(now) 时会刷新 EndAt，导致空环境永不过期
@@ -413,8 +535,7 @@ public sealed class DailyTipsController : ControllerBase
     /// <summary>
     /// 已退役的 seed SourceId：被新版各页 *-page-guide 完整教程取代的旧版精简短教程。
     /// 老环境若曾跑过 /seed 把它们落了库，新旧 SourceId 不冲突会导致新旧并存（Codex P2）。
-    /// SSOT：Visible() 主动过滤掉这些 DB 行（用户无需等管理员手动重置即不再看到），
-    /// AdminDailyTipsController.Seed() 重新植入时也按此清单删除残留。
+    /// SSOT：Visible() 主动过滤掉这些 DB 行（用户无需等管理员手动重置即不再看到）。
     /// </summary>
     internal static readonly string[] RetiredSeedSourceIds =
     {

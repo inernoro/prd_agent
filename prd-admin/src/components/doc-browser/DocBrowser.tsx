@@ -307,6 +307,7 @@ import { systemDialog } from '@/lib/systemDialog';
 import { useViewTracking } from '@/lib/useViewTracking';
 import { useContentSelection, type ContentSelectionInfo } from '@/lib/useContentSelection';
 import { MessageSquareText, MessageSquarePlus, Check, ChevronLeft, PanelRight, MessageSquare } from 'lucide-react';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { InlineCommentDrawer, type PendingSelection } from '@/pages/document-store/InlineCommentDrawer';
 import type { DocumentInlineComment } from '@/services/contracts/documentStore';
 import { AcceptanceEvidenceGraph } from './AcceptanceEvidenceGraph';
@@ -1561,6 +1562,25 @@ export function DocBrowser({
   const resizeBaseLeftRef = useRef(0);
   const sidebarWidthRef = useRef(sidebarWidth);
   sidebarWidthRef.current = sidebarWidth;
+
+  // ── 移动端「主从单栏」（手机端友好，桌面端 isMobile=false 时完全不改动原布局）──
+  // 窄屏下列表与正文不再并排挤成两条细栏，而是一次只显示一个：选中文档进正文、点「目录」回列表。
+  const { isMobile } = useBreakpoint();
+  const [mobileDetail, setMobileDetail] = useState(false);
+  const prevSelForMobileRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!isMobile) return;
+    // 选中新文档（含分享深链 ?entry= 初次带值）→ 自动进正文。
+    // 「返回目录」只把 mobileDetail 置 false、不改 selectedEntryId，故 deps 不变、本 effect 不会把它拉回正文。
+    if (selectedEntryId && selectedEntryId !== prevSelForMobileRef.current) setMobileDetail(true);
+    prevSelForMobileRef.current = selectedEntryId;
+  }, [isMobile, selectedEntryId]);
+  // 覆盖「返回目录后再点同一篇」：selectedEntryId 没变、上面的 effect 不触发，靠点击处显式进正文。
+  const handleSelectEntry = useCallback((id: string) => {
+    onSelectEntry(id);
+    if (isMobile) setMobileDetail(true);
+  }, [onSelectEntry, isMobile]);
+
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 搜索请求序号：异步响应回来时只有仍是最新一次搜索才采纳，丢弃陈旧响应
   const searchSeqRef = useRef(0);
@@ -1650,7 +1670,22 @@ export function DocBrowser({
   // 用户点「收起批注栏」后本条目临时切回 TOC（切文档复位）
   const [marginCollapsed, setMarginCollapsed] = useState(false);
   // 划词后就地输入浮层（取代甩到右侧抽屉）
-  const [composer, setComposer] = useState<{ entryId: string; sel: PendingSelection; rect: { top: number; left: number; width: number; height: number } } | null>(null);
+  // rects: 选区在打开浮层瞬间的所有 client rect（多行选区需要多个矩形），用于保留正文里的高亮覆盖层
+  const [composer, setComposer] = useState<{
+    entryId: string;
+    sel: PendingSelection;
+    rect: { top: number; left: number; width: number; height: number };
+    rects: Array<{ top: number; left: number; width: number; height: number }>;
+  } | null>(null);
+  // 进入编辑模式 / 切到别的条目时强制收掉 composer 状态，避免 rect 与已经被 textarea
+  // 替换 / 已经卸载的正文不同步（Bugbot Medium）。只渲染守卫不够：退出 editMode 时
+  // composer 状态还在会让覆盖层"复活"在过时位置。
+  useEffect(() => {
+    if (editMode) setComposer(null);
+  }, [editMode]);
+  useEffect(() => {
+    setComposer(null);
+  }, [selectedEntryId]);
   // 选区 offset 必须基于"实际渲染的正文"解析：文本类预览渲染的是
   // parseFrontmatter(text).body（已剥 frontmatter），若把含 frontmatter 的
   // 原文喂给 useContentSelection，选中同时出现在 frontmatter 的文字（如标题）
@@ -1758,13 +1793,24 @@ export function DocBrowser({
         const created = res.data;
         setInlineCommentItems((prev) => (prev.some((c) => c.id === created.id) ? prev : [...prev, created]));
         setCommentCount((c) => c + 1);
+        // 自动激活新评论的线程 → 触发 InlineCommentConnector 入场动画（从正文气泡画连线到右侧卡），
+        // 用户不用再手动点气泡才看到联系。groupKey 必须和 Overlay/Margin 同一函数，否则 activeKey 对不上。
+        if (input.selectedText) {
+          // margin 模式下若用户手动收起了批注栏（marginCollapsed=true），Margin 与 Connector 都
+          // 没挂载（条件 !marginCollapsed），仅设 activeKey 谁也画不出来。与 handleActivateComment
+          // 保持同样的兜底：先重开批注栏再激活，确保连线必然显现（Bugbot Medium）。
+          if (inlineCommentLayout === 'margin' && marginCollapsed) {
+            setMarginCollapsed(false);
+          }
+          setActiveCommentKey(groupKey(input.selectedText));
+        }
         await refreshComments(); // 与服务器对账：成功则覆盖为真值，失败则保留乐观结果
       }
       return true;
     }
     toast.error('添加失败', res.error?.message);
     return false;
-  }, [trackedEntryForComments, refreshComments]);
+  }, [trackedEntryForComments, refreshComments, inlineCommentLayout, marginCollapsed]);
 
   const handleDeleteComment = useCallback(async (comment: DocumentInlineComment) => {
     // 删除前确认：margin/inline 的「删除」按钮小、易误点，与抽屉路径保持同样的二次确认（Codex P2）
@@ -2302,11 +2348,12 @@ export function DocBrowser({
     <TagColorsContext.Provider value={tagColorsCtxValue}>
     <div className={rootClass} style={{ minHeight: 0 }}>
 
-      {/* 左侧：文件树（液态玻璃效果 + 可拖拽调整宽度） */}
+      {/* 左侧：文件树（液态玻璃效果 + 可拖拽调整宽度）。移动端：占满整宽，进正文时隐藏。 */}
       <div ref={sidebarRef} className={sidebarClass}
         style={{
-          width: `${sidebarWidth}px`,
+          width: isMobile ? '100%' : `${sidebarWidth}px`,
           minHeight: 0,
+          display: isMobile && mobileDetail ? 'none' : undefined,
         }}>
 
         {/* 批量操作条：选中条目后浮在侧栏底部，支持批量删除（取消即清空选择） */}
@@ -2632,7 +2679,7 @@ export function DocBrowser({
               reprocessingMap={reprocessingMap}
               sharedEntryIds={sharedEntryIds}
               onToggleFolder={toggleFolder}
-              onSelectEntry={onSelectEntry}
+              onSelectEntry={handleSelectEntry}
               onContextMenu={handleContextMenu}
               onShareEntry={onShareEntry}
               onMoveEntry={onMoveEntry}
@@ -2674,8 +2721,9 @@ export function DocBrowser({
 
         {/* 拖拽调整宽度的把手（仅 inset 模式）。cards 模式下双卡片有 12px gap，
             把手挂在 sidebar 内部右边缘会被 overflow-hidden + rounded-xl 剪成孤立小方块，
-            视觉怪异。cards 场景以阅读为主，固定宽度足够，故 cards 模式下不渲染。 */}
-        {!isCards && (
+            视觉怪异。cards 场景以阅读为主，固定宽度足够，故 cards 模式下不渲染。
+            移动端单栏布局无需拖拽调宽，故 isMobile 时也不渲染。 */}
+        {!isCards && !isMobile && (
           <div
             className="absolute top-0 right-0 h-full w-1 cursor-col-resize group/resize"
             onMouseDown={(e) => {
@@ -2699,8 +2747,9 @@ export function DocBrowser({
 
       {/* cards 模式：两卡片之间的可拖拽分隔条（宽 12px，兼作视觉间距）。
           与 inset 模式的 sidebar 内嵌把手共用同一套 resize 逻辑（resizeBaseLeftRef + setResizing）。
-          不挂在 sidebar 内部（会被其 overflow-hidden+rounded 裁切），改作独立 flex 兄弟。 */}
-      {isCards && (
+          不挂在 sidebar 内部（会被其 overflow-hidden+rounded 裁切），改作独立 flex 兄弟。
+          移动端单栏布局无需拖拽分隔条，isMobile 时不渲染。 */}
+      {isCards && !isMobile && (
         <div
           className="relative flex-shrink-0 self-stretch group/resize"
           style={{ width: 12, cursor: 'col-resize' }}
@@ -2721,15 +2770,26 @@ export function DocBrowser({
         </div>
       )}
 
-      {/* 右侧：文档预览 */}
+      {/* 右侧：文档预览。移动端：占满整宽，仅在「进正文(mobileDetail)」时显示，否则让列表占满。 */}
       <div
         className={`flex-1 min-w-0 flex flex-col overflow-hidden${isCards ? ' surface-reading rounded-xl' : ''}`}
-        style={{ minHeight: 0 }}
+        style={{ minHeight: 0, display: isMobile && !mobileDetail ? 'none' : undefined }}
       >
         {selectedEntryId ? (
           <>
-            {/* 面包屑导航 header */}
-            <div className="flex items-center gap-2 px-5 py-2.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+            {/* 面包屑导航 header（移动端缩小左右内边距 + 允许换行，避免徽章/标签挤出右边缘相互重叠） */}
+            <div className={`flex items-center gap-2 py-2.5 ${isMobile ? 'px-3 flex-wrap' : 'px-5'}`} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+              {/* 移动端「返回目录」：单栏布局下从正文回到文件列表（桌面端 isMobile=false 不渲染） */}
+              {isMobile && (
+                <button
+                  onClick={() => setMobileDetail(false)}
+                  className="flex-shrink-0 inline-flex items-center gap-1 h-7 px-2.5 rounded-[8px] text-[12px] cursor-pointer transition-colors hover:opacity-80"
+                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)' }}
+                  title="返回目录"
+                >
+                  <ChevronLeft size={14} /> 目录
+                </button>
+              )}
               {/* 阅读区返回按钮：返回当前空间的文档列表（上一层），仅调用方传 onBackToList 才显示 */}
               {onBackToList && (
                 <button
@@ -2795,7 +2855,8 @@ export function DocBrowser({
               })()}
               {(() => {
                 const sel = entries.find(e => e.id === selectedEntryId);
-                if (!sel || sel.isFolder) return null;
+                // 移动端：隐藏「更新于/更新者」（其 ml-auto 会把自己顶出窄屏右边缘、与标签重叠裁切）。
+                if (!sel || sel.isFolder || isMobile) return null;
                 // 「更新于」用 updatedAt（所有本地变更都会刷新它）；lastChangedAt 仅供 new 徽标，
                 // 避免浏览器内保存只 patch updatedAt 而 lastChangedAt 滞后导致显示陈旧
                 return (
@@ -2822,7 +2883,7 @@ export function DocBrowser({
               {/* 当前文件最近更新徽标 + 订阅来源版本信息（git 类订阅独有） */}
               {(() => {
                 const sel = entries.find(e => e.id === selectedEntryId);
-                if (!sel || sel.isFolder) return null;
+                if (!sel || sel.isFolder || isMobile) return null; // 移动端隐藏 new/订阅徽标，给标题+标签让位
                 const recentlyChanged = isRecentlyChanged(sel.lastChangedAt);
                 const isSubscription = sel.sourceType === 'subscription';
                 const githubSha = sel.metadata?.github_sha;
@@ -2916,9 +2977,9 @@ export function DocBrowser({
                       border: '1px solid rgba(99,102,241,0.22)',
                       color: 'rgba(165,180,252,0.95)',
                     }}
-                    title="证据关系图 — 把报告里的步骤连成页面跳转关系图（探案证据板）"
+                    title="证据板 — 把「需求/用例 → 证据截图 → 结论」连成关系图，按通过/未做上色"
                   >
-                    <Workflow size={11} /> 证据图
+                    <Workflow size={11} /> 证据板
                   </button>
                 );
               })()}
@@ -3018,7 +3079,7 @@ export function DocBrowser({
               )}
               <div
                 ref={contentAreaRef}
-                className="flex-1 min-w-0 px-6 py-4 relative"
+                className={`flex-1 min-w-0 ${isMobile ? 'px-4' : 'px-6'} py-4 relative`}
                 style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
               >
                 {contentLoading ? (
@@ -3053,13 +3114,28 @@ export function DocBrowser({
                 )}
                 {/* 划词选中时的浮层"添加评论"按钮——仅有写权限时出现；只读访客（私有分享/匿名公开）不弹，
                     避免写了提交才 403（Codex P2：read-only viewers 不该拿到写入框） */}
-                {liveSelection && !editMode && commentsCanCreate && (
+                {liveSelection && !composer && !editMode && commentsCanCreate && (
                   <SelectionActionPopover
                     selection={liveSelection}
                     onAddComment={() => {
                       // 就地输入：在选区旁展开 composer，不再甩到右侧抽屉
                       if (!trackedEntryForComments) return;
                       const r = liveSelection.rect;
+                      // 捕获选区所有 client rect（多行选区需要多个矩形）用于保留高亮覆盖层
+                      // 用户反馈：打开浮层后正文选区被清掉，写到一半就忘了自己选了哪段
+                      const sel = window.getSelection();
+                      const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
+                      // range 存在但 getClientRects() 空（折叠 / 不可见行 / 被 display:none 包裹）也要回退到
+                      // liveSelection.rect 的 bounding box，否则 PendingSelectionHighlight 渲染不出来（Bugbot Low）
+                      const clientRects = range ? Array.from(range.getClientRects()) : [];
+                      const rects = clientRects.length > 0
+                        ? clientRects.map((cr) => ({
+                            top: cr.top,
+                            left: cr.left,
+                            width: cr.width,
+                            height: cr.height,
+                          }))
+                        : [{ top: r.top, left: r.left, width: r.width, height: r.height }];
                       setComposer({
                         entryId: trackedEntryForComments.id,
                         sel: {
@@ -3070,9 +3146,11 @@ export function DocBrowser({
                           endOffset: liveSelection.endOffset,
                         },
                         rect: { top: r.top, left: r.left, width: r.width, height: r.height },
+                        rects,
                       });
+                      // 不主动清浏览器选区——textarea 拿到 focus 时浏览器自己会清，
+                      // 我们用 PendingSelectionHighlight 覆盖层兜底，保证正文高亮不消失
                       clearLiveSelection();
-                      window.getSelection()?.removeAllRanges();
                     }}
                   />
                 )}
@@ -3092,26 +3170,34 @@ export function DocBrowser({
                     onDelete={handleDeleteComment}
                   />
                 )}
-                {/* 划词后就地输入浮层（createPortal 到 body） */}
-                {composer && (
-                  <InlineCommentComposer
-                    selectedText={composer.sel.selectedText}
-                    anchorRect={composer.rect}
-                    scrollRef={contentAreaRef}
-                    onSubmit={(content) => handleCreateComment({
-                      selectedText: composer.sel.selectedText,
-                      contextBefore: composer.sel.contextBefore,
-                      contextAfter: composer.sel.contextAfter,
-                      startOffset: composer.sel.startOffset,
-                      endOffset: composer.sel.endOffset,
-                      content,
-                    }, composer.entryId)}
-                    onClose={() => setComposer(null)}
-                  />
+                {/* 划词后就地输入浮层（createPortal 到 body）。!editMode 守卫：进入编辑模式
+                    后正文被 textarea 替换，原选区 rect 与现内容已经对不上，浮层和高亮覆盖层
+                    必须同时收掉，否则旧覆盖层会飘在 textarea 上（Bugbot Medium） */}
+                {composer && !editMode && (
+                  <>
+                    {/* 保留正文里的选区高亮：textarea 拿 focus 后浏览器选区会消失，
+                        用 fixed 覆盖层模拟选区颜色，跟随滚动；用户写到一半依然能看到选了哪段 */}
+                    <PendingSelectionHighlight rects={composer.rects} scrollRef={contentAreaRef} />
+                    <InlineCommentComposer
+                      selectedText={composer.sel.selectedText}
+                      anchorRect={composer.rect}
+                      scrollRef={contentAreaRef}
+                      onSubmit={(content) => handleCreateComment({
+                        selectedText: composer.sel.selectedText,
+                        contextBefore: composer.sel.contextBefore,
+                        contextAfter: composer.sel.contextAfter,
+                        startOffset: composer.sel.startOffset,
+                        endOffset: composer.sel.endOffset,
+                        content,
+                      }, composer.entryId)}
+                      onClose={() => setComposer(null)}
+                    />
+                  </>
                 )}
               </div>
               </div>
-              {/* 右侧栏：margin 布局且有评论 → 批注栏常驻（取代 TOC）；否则 → 本页章节导航 */}
+              {/* 右侧栏：margin 布局且有评论 → 批注栏常驻（取代 TOC）；否则 → 本页章节导航。
+                  移动端单栏阅读不挂右侧 TOC（否则又把正文挤窄），isMobile 时隐藏 DocToc。 */}
               {(() => {
                 const showMargin = inlineCommentLayout === 'margin' && !contentLoading && !editMode
                   && !!tocContent && inlineCommentItems.length > 0 && !marginCollapsed;
@@ -3131,7 +3217,7 @@ export function DocBrowser({
                     />
                   );
                 }
-                return (!contentLoading && !editMode && tocContent) ? (
+                return (!contentLoading && !editMode && tocContent && !isMobile) ? (
                   <DocToc content={tocContent} scrollContainerRef={contentAreaRef} />
                 ) : null;
               })()}
@@ -3264,6 +3350,91 @@ export function DocBrowser({
       )}
     </div>
     </TagColorsContext.Provider>
+  );
+}
+
+// 打开就地输入浮层期间，正文里的待评论选区高亮覆盖层。
+// 浏览器原生 selection 在 textarea 拿到 focus 后会被清掉，写到一半就忘了选了哪段——
+// 用 fixed 定位、createPortal 到 body，按打开浮层瞬间捕获的 client rect 画选区色块，
+// 跟随正文滚动平移（与 InlineCommentComposer 同一套 scrollDy 逻辑）。
+function PendingSelectionHighlight({
+  rects,
+  scrollRef,
+}: {
+  rects: Array<{ top: number; left: number; width: number; height: number }>;
+  scrollRef?: React.RefObject<HTMLElement>;
+}) {
+  const [scrollDy, setScrollDy] = useState(0);
+  // 滚动容器在视口里的 bounding rect —— 用来把高亮裁剪在正文区域内，
+  // 避免选区滚出正文后还在 toolbar/sidebar 上面继续画（Codex P2）。
+  const [clip, setClip] = useState<{ top: number; left: number; right: number; bottom: number } | null>(null);
+  useEffect(() => {
+    const read = () => (scrollRef?.current?.scrollTop ?? 0) + window.scrollY;
+    const start = read();
+    const onScroll = () => {
+      setScrollDy(read() - start);
+      const el = scrollRef?.current;
+      if (el) {
+        const r = el.getBoundingClientRect();
+        setClip({ top: r.top, left: r.left, right: r.right, bottom: r.bottom });
+      } else {
+        setClip(null);
+      }
+    };
+    onScroll(); // 初始化一次拿到当前裁剪框
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onScroll);
+    return () => {
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onScroll);
+    };
+  }, [scrollRef]);
+  if (rects.length === 0) return null;
+  return createPortal(
+    <div aria-hidden style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 115 }}>
+      {rects.map((r, i) => {
+        // 视口坐标：rect 原始 top - 累计滚动位移
+        const top = r.top - scrollDy;
+        const left = r.left;
+        const right = left + r.width;
+        const bottom = top + r.height;
+        // 完全滚出滚动容器 → 不渲染（节流 DOM）；部分相交 → 用 clipPath 裁掉容器外的部分
+        if (clip) {
+          if (bottom <= clip.top || top >= clip.bottom || right <= clip.left || left >= clip.right) {
+            return null;
+          }
+        }
+        // 用 inset(top right bottom left) clip-path 把超出 clip 的部分切掉；
+        // 数值相对于元素自身左上角（top/right/bottom/left = 各边收进多少 px）
+        let clipPath: string | undefined;
+        if (clip) {
+          const cTop = Math.max(0, clip.top - top);
+          const cLeft = Math.max(0, clip.left - left);
+          const cRight = Math.max(0, right - clip.right);
+          const cBottom = Math.max(0, bottom - clip.bottom);
+          if (cTop || cLeft || cRight || cBottom) {
+            clipPath = `inset(${cTop}px ${cRight}px ${cBottom}px ${cLeft}px)`;
+          }
+        }
+        return (
+          <div
+            key={i}
+            style={{
+              position: 'absolute',
+              top,
+              left,
+              width: r.width,
+              height: r.height,
+              background: 'rgba(168,85,247,0.28)',
+              borderBottom: '2px solid rgba(168,85,247,0.85)',
+              borderRadius: 2,
+              clipPath,
+            }}
+          />
+        );
+      })}
+    </div>,
+    document.body,
   );
 }
 

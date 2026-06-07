@@ -1223,6 +1223,7 @@ export function BranchDetailPage(): JSX.Element {
                 <Button asChild variant="ghost" size="sm" title="项目设置">
                   <a href={`/settings/${encodeURIComponent(state.branch.projectId)}`}>
                     <Settings />
+                    <span className="md:hidden">项目设置</span>
                   </a>
                 </Button>
               ) : null}
@@ -1230,6 +1231,7 @@ export function BranchDetailPage(): JSX.Element {
                 <Button asChild variant="ghost" size="sm" title="服务拓扑">
                   <a href={`/branch-topology?project=${encodeURIComponent(state.branch.projectId)}`}>
                     <Network />
+                    <span className="md:hidden">服务拓扑</span>
                   </a>
                 </Button>
               ) : null}
@@ -1241,6 +1243,7 @@ export function BranchDetailPage(): JSX.Element {
                 title="刷新"
               >
                 <RefreshCw />
+                <span className="md:hidden">刷新</span>
               </Button>
             </>
           }

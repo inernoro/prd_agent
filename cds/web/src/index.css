@@ -829,32 +829,89 @@
   }
 
   @media (max-width: 767px) {
+    /* 手机端:不再保留 64px 常驻图标栏(那是"压缩 PC"观感的根源)。
+       工作区吃满整屏宽,导航收进 TopBar 汉堡触发的 slide-in 抽屉。 */
     .cds-app-shell {
-      grid-template-columns: 64px minmax(0, 1fr);
+      grid-template-columns: minmax(0, 1fr);
     }
 
     .cds-rail {
-      @apply items-center px-2;
-    }
-
-    .cds-rail-brand {
-      @apply justify-center pb-2;
-    }
-
-    .cds-rail-brand > :not(.cds-rail-avatar) {
       display: none;
     }
+  }
 
-    .cds-rail-section {
-      @apply w-full items-center;
-    }
+  /* 通用 36px 图标按钮(汉堡 / ⋮ 溢出 / 抽屉关闭),双主题走 token。 */
+  .cds-icon-button {
+    @apply inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors;
+    border: 1px solid transparent;
+  }
 
-    .cds-rail-item {
-      @apply h-10 w-10 justify-center px-0;
-    }
+  .cds-icon-button:hover {
+    background-color: hsl(var(--surface-sunken));
+    color: hsl(var(--foreground));
+  }
 
-    .cds-rail-item span {
-      display: none;
+  .cds-icon-button svg {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+
+  /*
+   * 手机端导航抽屉 —— 从左滑入,backdrop 点击/ESC 关闭。≥768px 不渲染(md:hidden)。
+   */
+  .cds-mobile-drawer {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    pointer-events: none;
+  }
+
+  .cds-mobile-drawer.is-open {
+    pointer-events: auto;
+  }
+
+  .cds-mobile-drawer-backdrop {
+    position: absolute;
+    inset: 0;
+    background-color: hsl(var(--foreground) / 0.32);
+    opacity: 0;
+    transition: opacity 220ms ease;
+  }
+
+  .cds-mobile-drawer.is-open .cds-mobile-drawer-backdrop {
+    opacity: 1;
+  }
+
+  .cds-mobile-drawer-panel {
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(82vw, 300px);
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 1.25rem 1rem;
+    background-color: hsl(var(--surface-sunken));
+    border-right: 1px solid hsl(var(--hairline));
+    box-shadow: 0 12px 40px hsl(var(--foreground) / 0.18);
+    transform: translateX(-100%);
+    transition: transform 240ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .cds-mobile-drawer.is-open .cds-mobile-drawer-panel {
+    transform: translateX(0);
+  }
+
+  .cds-mobile-drawer-head {
+    @apply flex items-center justify-between gap-2 pb-3;
+    border-bottom: 1px solid hsl(var(--hairline));
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cds-mobile-drawer-backdrop,
+    .cds-mobile-drawer-panel {
+      transition: none;
     }
   }
 
@@ -865,8 +922,105 @@
     border-bottom: 1px solid hsl(var(--hairline));
   }
 
+  /*
+   * 手机端 topbar 变成真正的移动 app-bar:
+   *   [汉堡] [单行标题/面包屑,可截断] ……空白…… [⋮ 溢出菜单] [通知铃]
+   * 动作不再平铺,而是收进 ⋮ 点开的竖向 action sheet(下面 .cds-topbar-sheet)。
+   * 2026-06-06 用户反馈:之前是"把一排 PC 工具栏按钮压进窄屏",观感是压缩的电脑,
+   * 不是手机设计。本次改成原生移动形态。
+   */
+  @media (max-width: 767px) {
+    .cds-topbar {
+      gap: 0.5rem;
+      padding-left: 0.5rem;
+      padding-right: 0.5rem;
+      /* 允许 center 落到第二行:行高自适应,首行 app-bar + 可选第二行搜索/快建。 */
+      flex-wrap: wrap;
+      height: auto;
+      min-height: 3.5rem;
+      row-gap: 0.45rem;
+      padding-top: 0.4rem;
+      padding-bottom: 0.5rem;
+    }
+
+    .cds-topbar-left {
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .cds-topbar-left .cds-crumb {
+      min-width: 0;
+      flex-wrap: nowrap;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* 面包屑首段(通常是 "CDS" 根)在手机端冗余,隐去,留出标题空间。 */
+    .cds-topbar-left .cds-crumb > span:first-child {
+      display: none;
+    }
+  }
+
+  /*
+   * 手机端动作 sheet —— ⋮ 点开的竖向操作面板。把页面传入 right 槽的那组按钮
+   * 竖直铺成全宽菜单行(按钮本就是 Button,竖排即菜单形态)。双主题走 token。
+   */
+  /* backdrop + sheet 都 portal 到 <body>:fixed 相对视口,盖满全屏。
+     z-index 必须低于全局 Radix Dialog(z-50)—— 否则从 sheet 内动作打开的对话框
+     (如项目列表「一键部署」→ 创建)会被 sheet 盖住、看似打不开
+     (Bugbot #741 Medium「Sheet layer hides modal dialogs」)。
+     仍高于页面/顶栏(portal 到 body 后天然在 #root 之上);项目自定义
+     DropdownMenu 是 z-10100,本就在 sheet 之上,嵌套二级菜单不受影响。 */
+  .cds-topbar-sheet-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+  }
+
+  .cds-topbar-sheet {
+    position: fixed;
+    z-index: 45;
+    min-width: 200px;
+    max-width: 78vw;
+    max-height: 70vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.25rem;
+    padding: 0.5rem;
+    border-radius: 0.625rem;
+    border: 1px solid hsl(var(--hairline));
+    background-color: hsl(var(--surface-raised));
+    box-shadow: 0 12px 40px hsl(var(--foreground) / 0.2);
+  }
+
+  /* sheet 内按钮全宽、左对齐,呈菜单行;尺寸放大到舒适可点。
+     !important 用于压过 Button 组件自带的 justify-center / h-* 工具类
+     (utilities layer 默认晚于 components layer 生效)。 */
+  .cds-topbar-sheet > * {
+    width: 100% !important;
+    justify-content: flex-start !important;
+    height: 2.5rem !important;
+    padding-left: 0.625rem !important;
+    padding-right: 0.625rem !important;
+    gap: 0.625rem !important;
+  }
+
+  /* 隐藏 sheet 里只在桌面才有意义的元素(如 PaletteHint 已 hidden,这里兜底) */
+  .cds-topbar-sheet > .hidden {
+    display: none !important;
+  }
+
   .cds-main {
     @apply min-w-0 px-8 pb-12 pt-6;
+  }
+
+  @media (max-width: 767px) {
+    .cds-main {
+      @apply px-4 pt-4;
+    }
   }
 
   .cds-workspace {

@@ -297,6 +297,10 @@ public class MongoDbContext
     public IMongoCollection<KnowledgeBaseDraft> KnowledgeBaseDrafts => _database.GetCollection<KnowledgeBaseDraft>("knowledge_base_drafts");
     public IMongoCollection<DocumentStoreSyncLink> DocumentStoreSyncLinks => _database.GetCollection<DocumentStoreSyncLink>("document_store_sync_links");
 
+    // 系统级跨节点互传（Peer Sync）
+    public IMongoCollection<PeerNode> PeerNodes => _database.GetCollection<PeerNode>("peer_nodes");
+    public IMongoCollection<PeerPairingCode> PeerPairingCodes => _database.GetCollection<PeerPairingCode>("peer_pairing_codes");
+
     // Team 团队（跨应用协作单位：网页托管 + 知识库共用）
     public IMongoCollection<Team> Teams => _database.GetCollection<Team>("teams");
     public IMongoCollection<TeamMember> TeamMembers => _database.GetCollection<TeamMember>("team_members");
@@ -1669,6 +1673,20 @@ public class MongoDbContext
             ChangelogSnapshots.Indexes.CreateOne(new CreateIndexModel<ChangelogSnapshot>(
                 Builders<ChangelogSnapshot>.IndexKeys.Ascending(x => x.Key),
                 new CreateIndexOptions { Name = "uniq_changelog_snapshots_key", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+
+        // PeerNodes：按 RemoteNodeId 唯一 — 防并发握手/重配对产生两行同 RemoteNodeId 但不同 SharedSecret
+        // 的脏数据（VerifyPeerAsync 的 FirstOrDefault 会随机选一行致 HMAC 校验失败）。
+        // PR #742 review P2 配套：上游用 IsUpsert 原子 upsert，索引在 DB 层兜底。
+        try
+        {
+            PeerNodes.Indexes.CreateOne(new CreateIndexModel<PeerNode>(
+                Builders<PeerNode>.IndexKeys.Ascending(x => x.RemoteNodeId),
+                new CreateIndexOptions { Name = "uniq_peer_nodes_remote_node_id", Unique = true }));
         }
         catch (MongoCommandException ex) when (IsIndexConflict(ex))
         {

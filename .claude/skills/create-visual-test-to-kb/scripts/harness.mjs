@@ -420,7 +420,7 @@ async function validateShot(page, path, expectText) {
  *   - customLoaderSelectors: 项目特有的 loader 选择器
  */
 export async function shot(page, outDir, name, caption, opts = {}) {
-  const { fullPage = false, expectText, skipReady = false, customLoaderSelectors = [] } = opts;
+  const { fullPage = false, expectText, skipReady = false, customLoaderSelectors = [], overview = false } = opts;
   require('fs').mkdirSync(outDir, { recursive: true });
   const path = `${outDir}/${name}.png`;
 
@@ -448,12 +448,21 @@ export async function shot(page, outDir, name, caption, opts = {}) {
   const autoWarns = drainFindingsForShot(shots.length);
   if (autoWarns.length) warnings = warnings.concat(autoWarns);
 
-  const rec = { name, caption, path, warnings: warnings.length ? warnings : undefined };
+  // 6) §B2 标注硬门禁（2026-06-05）：截图瞬间页面上有没有标记(box/circle = .__acc_box)?
+  //    指向具体元素/差异的证据图没标记 → 读者"看到一个单独页面就懵逼"。这里自动探测并落进 manifest，
+  //    archive_report.py 准入据此拒收，把"必须画框/圈"从 §B2 的纸面规则变成跑不过的硬门禁。
+  //    整体观感/全局布局图无单一重点 → 调用方显式传 opts.overview=true 豁免。
+  const annotated = await page.evaluate(() => document.querySelectorAll('.__acc_box').length > 0).catch(() => false);
+  if (!annotated && !overview) {
+    console.log(`  ⚠ ${name} 未画框/圈：指向性证据必须标注(stepClick/stepShot(highlight)/box)，整体图请传 {overview:true}`);
+  }
+
+  const rec = { name, caption, path, annotated, overview, warnings: warnings.length ? warnings : undefined };
   shots.push(rec);
   if (warnings.length > 0) {
     console.log(`  ⚠ 截图 ${name} | ${caption} | 仍有警告: ${warnings.join(' | ')}`);
   } else {
-    console.log(`  截图 ${name} | ${caption}`);
+    console.log(`  截图 ${name} | ${caption}${annotated ? '' : overview ? ' (overview 豁免标注)' : ' (未标注!)'}`);
   }
   return rec;
 }
@@ -525,12 +534,16 @@ export async function finalizeVideo(page, ctx, outDir, name = 'walkthrough') {
 
 // ── ZZ 照做：画框 + 步骤序号（核心：让"点哪到哪"一目了然）──
 // 在目标元素上注入红框 + 序号角标，截图前调用；截完用 clearBoxes 清掉。
-export async function box(page, locator, label) {
+// opts.shape: 'box'(默认方框,框一片区域/差异) | 'circle'(圈圈,友好地指向单个按钮/输入框/图标)
+// opts.color: 十六进制色,默认红 #ff3b30
+export async function box(page, locator, label, { shape = 'box', color = '#ff3b30' } = {}) {
   const el = await locator.first().elementHandle().catch(() => null);
   if (!el) return false;
   const rect = await el.boundingBox().catch(() => null);
   if (!rect) return false;
-  await page.evaluate(({ r, label }) => {
+  await page.evaluate(({ r, label, shape, color }) => {
+    const isCircle = shape === 'circle' || shape === 'ellipse';
+    const pad = isCircle ? 13 : 4;
     const mk = (style) => {
       const d = document.createElement('div');
       d.className = '__acc_box';
@@ -538,15 +551,15 @@ export async function box(page, locator, label) {
       document.body.appendChild(d);
       return d;
     };
-    mk({ left: (r.x - 4) + 'px', top: (r.y - 4) + 'px', width: (r.width + 8) + 'px', height: (r.height + 8) + 'px',
-         border: '3px solid #ff3b30', borderRadius: '8px', boxShadow: '0 0 0 3px rgba(255,59,48,.25)' });
+    mk({ left: (r.x - pad) + 'px', top: (r.y - pad) + 'px', width: (r.width + pad * 2) + 'px', height: (r.height + pad * 2) + 'px',
+         border: `${isCircle ? 4 : 3}px solid ${color}`, borderRadius: isCircle ? '50%' : '8px', boxShadow: `0 0 0 3px ${color}40` });
     if (label) {
-      const b = mk({ left: (r.x - 13) + 'px', top: (r.y - 13) + 'px', minWidth: '22px', height: '22px',
-        background: '#ff3b30', color: '#fff', borderRadius: '11px', textAlign: 'center', padding: '0 5px',
+      const b = mk({ left: (r.x - 13) + 'px', top: (r.y - 13 - (isCircle ? pad : 0)) + 'px', minWidth: '22px', height: '22px',
+        background: color, color: '#fff', borderRadius: '11px', textAlign: 'center', padding: '0 5px',
         font: '700 13px/22px -apple-system,BlinkMacSystemFont,sans-serif' });
       b.textContent = label;
     }
-  }, { r: rect, label: String(label ?? '') });
+  }, { r: rect, label: String(label ?? ''), shape, color });
   return true;
 }
 
@@ -557,9 +570,10 @@ export async function clearBoxes(page) {
 // 一步「点击导航/按钮」：框住目标 + 标序号 → 截「点这里」图 → 清框 → 真点击。
 // locator 由调用方构造（getByRole/getByText/...），caption 写"点这里去哪"。
 // v2.2: 支持 opts.expectText 透传给 shot()，让"点这里"图也能断言页面已就绪
-export async function stepClick(page, outDir, stepNo, locator, name, caption, { timeout = 10000, expectText } = {}) {
+// opts.shape='circle' 让"点这里"标记画成圈圈（指向单个按钮更友好）
+export async function stepClick(page, outDir, stepNo, locator, name, caption, { timeout = 10000, expectText, shape = 'circle' } = {}) {
   await locator.first().waitFor({ state: 'visible', timeout }).catch(() => {});
-  await box(page, locator, stepNo);
+  await box(page, locator, stepNo, { shape });
   await shot(page, outDir, name, `步骤 ${stepNo} · ${caption}`, { expectText });
   await clearBoxes(page);
   await locator.first().click({ timeout }).catch((e) => console.log('  stepClick 点击失败', name, e.message));
@@ -568,8 +582,9 @@ export async function stepClick(page, outDir, stepNo, locator, name, caption, { 
 
 // 结果/验证截图：可选框住"变化处"(toast/卡片/激活态)，序号入 caption。
 // v2.2: 支持 expectText 锁定结果断言（强烈推荐：结果图就是要证明 X 文本出现了）
-export async function stepShot(page, outDir, stepNo, name, caption, highlight, { expectText } = {}) {
-  if (highlight) await box(page, highlight, stepNo);
+// opts.shape: 默认方框框住一片变化区域；指向单个元素时传 'circle'
+export async function stepShot(page, outDir, stepNo, name, caption, highlight, { expectText, shape = 'box' } = {}) {
+  if (highlight) await box(page, highlight, stepNo, { shape });
   await shot(page, outDir, name, `步骤 ${stepNo} · ${caption}`, { expectText });
   if (highlight) await clearBoxes(page);
 }

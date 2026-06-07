@@ -1,20 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Link as LinkIcon, Copy, CheckCircle2, AlertCircle, RefreshCw,
+  Link as LinkIcon, CheckCircle2, AlertCircle, RefreshCw,
   Trash2, X, ArrowLeftRight, ArrowRight, ArrowLeft, Globe, FolderSync, Clock,
 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import {
-  listAllSyncLinks, listStoreSyncLinks, createLocalSyncLink, generateSyncLink, connectSyncLink,
-  runSyncLink, updateSyncLinkDirection, deleteSyncLink, revokeSyncToken,
+  listAllSyncLinks, listStoreSyncLinks, createLocalSyncLink,
+  runSyncLink, updateSyncLinkDirection, deleteSyncLink,
   type DocumentSyncLink, type SyncDirection, type SyncLinkStatus,
 } from '@/services/real/documentStoreSync';
 import { listDocumentStoresWithPreview } from '@/services/real/documentStore';
 import type { DocumentStoreWithPreview } from '@/services/contracts/documentStore';
 import { useTeamStore } from '@/stores/teamStore';
-import { useAuthStore } from '@/stores/authStore';
 
 const DIRECTIONS: { key: SyncDirection; label: string; icon: typeof ArrowRight }[] = [
   { key: 'both', label: '双向同步', icon: ArrowLeftRight },
@@ -91,35 +90,48 @@ export function SyncManagerPanel() {
   const [loading, setLoading] = useState(true);
   const [runningId, setRunningId] = useState<string | null>(null);
   const [showStart, setShowStart] = useState(false);
-  const [showGenerate, setShowGenerate] = useState(false);
+  // showGenerate / GenerateLinkDialog 已在 PR #742 v2 下架（skblink_ 跨环境路径），改走系统互联
+  const loadSeq = useRef(0);
 
   // 防 stale 响应：快速点刷新 / 切走再回来时，旧请求回填会覆盖新数据。
   // 单调递增序号锁住"只有最新一次请求才能 setState"（与 DocumentStorePage 的 listFetchSeq 同款，
   // 满足 prd-admin learned rule: tab/filter 触发的 async fetch 必须有 fetchId stale-guard）。
-  const currentUserId = useAuthStore((s) => s.user?.userId ?? null);
-  const loadSeq = useRef(0);
+  // PR #742 review Medium 续修：用 in-flight 计数器决定何时清 loading。
+  // 之前两版方案都有问题：(a) 旧版 stale 时直接 return 不清 loading → handleRun 等 bump seq
+  // 让 in-flight load 早退 → spinner 卡死；(b) 上版 stale 也 setLoading(false) → 并发两次
+  // load() 旧的先回会把 loading 提前清掉露出过期数据。正解：每个 load 进来 ++inFlight，结束
+  // --inFlight；仅当 inFlight == 0 时才 setLoading(false)，handleRun 等不再依赖 load 自然清。
+  const inFlightRef = useRef(0);
   const load = useCallback(async () => {
     const mySeq = ++loadSeq.current;
+    inFlightRef.current++;
     setLoading(true);
-    // 选择器要列出"我能写的所有库"：自己拥有的(mine) + 各团队共享给我的(team)。
-    // 后端 LoadWritableStoreAsync 接受团队写者，UI 不补这些库的话团队共享库就配不了对（Codex P2）。
-    await useTeamStore.getState().loadTeams().catch(() => {});
-    const teams = useTeamStore.getState().teams;
-    const [linkRes, mineRes] = await Promise.all([
-      listAllSyncLinks(),
-      listDocumentStoresWithPreview(1, 500, { scope: 'mine' }),
-    ]);
-    const teamResults = await Promise.all(
-      teams.map(t => listDocumentStoresWithPreview(1, 500, { scope: 'team', teamId: t.team.id })),
-    );
-    if (mySeq !== loadSeq.current) return; // 已有更新的请求发出，丢弃本次回填
-    if (linkRes.success) setLinks(linkRes.data.items ?? []);
-    // 合并去重（按 store id）：mine 优先，团队共享库补充
-    const merged = new Map<string, DocumentStoreWithPreview>();
-    if (mineRes.success) for (const s of mineRes.data.items ?? []) merged.set(s.id, s);
-    for (const tr of teamResults) if (tr.success) for (const s of tr.data.items ?? []) if (!merged.has(s.id)) merged.set(s.id, s);
-    setMyStores([...merged.values()]);
-    setLoading(false);
+    try {
+      // 选择器要列出"我能写的所有库"：自己拥有的(mine) + 各团队共享给我的(team)。
+      // 后端 LoadWritableStoreAsync 接受团队写者，UI 不补这些库的话团队共享库就配不了对（Codex P2）。
+      await useTeamStore.getState().loadTeams().catch(() => {});
+      const teams = useTeamStore.getState().teams;
+      const [linkRes, mineRes] = await Promise.all([
+        listAllSyncLinks(),
+        listDocumentStoresWithPreview(1, 500, { scope: 'mine' }),
+      ]);
+      const teamResults = await Promise.all(
+        teams.map(t => listDocumentStoresWithPreview(1, 500, { scope: 'team', teamId: t.team.id })),
+      );
+      if (mySeq === loadSeq.current) {
+        if (linkRes.success) setLinks(linkRes.data.items ?? []);
+        // 合并去重（按 store id）：mine 优先，团队共享库补充
+        const merged = new Map<string, DocumentStoreWithPreview>();
+        if (mineRes.success) for (const s of mineRes.data.items ?? []) merged.set(s.id, s);
+        for (const tr of teamResults) if (tr.success) for (const s of tr.data.items ?? []) if (!merged.has(s.id)) merged.set(s.id, s);
+        setMyStores([...merged.values()]);
+      }
+    } finally {
+      // 计数到 0 才清 loading：避免并发两次 load() 时旧请求先回提前清 loading 露出过期数据；
+      // 也避免 handleRun/Delete bump seq 让本 load 早退后 spinner 卡死（计数器降到 0 触发清理）。
+      inFlightRef.current = Math.max(0, inFlightRef.current - 1);
+      if (inFlightRef.current === 0) setLoading(false);
+    }
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -168,13 +180,30 @@ export function SyncManagerPanel() {
 
   return (
     <div className="flex flex-col">
-      {/* 工具栏 */}
+      {/* 跨环境路径弃用横幅（保留本环境库↔库配对，跨环境改走系统互联）*/}
+      <div
+        className="mb-4 rounded-lg px-3.5 py-2.5 flex items-start gap-2.5"
+        style={{
+          background: 'rgba(245,158,11,0.08)',
+          border: '1px solid rgba(245,158,11,0.22)',
+        }}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 mt-0.5" style={{ color: 'rgba(251,191,36,0.95)' }}>
+          <path d="M12 9v4M12 17h.01" strokeLinecap="round"/>
+          <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+        </svg>
+        <div className="text-[12px] leading-relaxed min-w-0" style={{ color: 'var(--text-secondary)' }}>
+          <span className="font-medium" style={{ color: 'var(--text-primary)' }}>跨环境同步建议改走「系统互联」</span> ——
+          手粘 <code className="text-[11px] mx-0.5">skblink_</code> 链接的方式需用户手动倒密钥、永久令牌进 URL，已不推荐。
+          请管理员到「设置 → 系统互联」一次性配对两个 MAP 节点，之后回到知识库列表点右上角「发送到」即可一键互传。
+          本页保留同环境两个库之间的「本地配对」用法。
+        </div>
+      </div>
+
+      {/* 工具栏（只保留本地库↔库配对入口，跨环境 skblink_ 路径已下架）*/}
       <div data-tour-id="sync-toolbar" className="flex items-center gap-2 mb-4 flex-wrap">
         <Button data-tour-id="sync-start-link" variant="primary" size="sm" onClick={() => setShowStart(true)}>
-          <LinkIcon size={14} />启动链接
-        </Button>
-        <Button data-tour-id="sync-generate-link" variant="secondary" size="sm" onClick={() => setShowGenerate(true)}>
-          <Copy size={14} />生成连接链接
+          <LinkIcon size={14} />配对本环境另一个库
         </Button>
         <Button variant="ghost" size="sm" onClick={load} disabled={loading}>
           <RefreshCw size={14} />刷新
@@ -194,14 +223,12 @@ export function SyncManagerPanel() {
             </div>
             <p className="text-[15px] font-semibold text-token-primary mb-1.5">还没有同步配对</p>
             <p className="text-[13px] text-token-muted mb-5 max-w-[420px]">
-              把另一处知识库的「连接链接」粘贴进来，即可让两个知识库互相同步内容（支持跨环境，也支持本环境两个库）。
+              本页用于在同一环境的两个知识库之间互相同步。
+              跨环境（如测试↔正式）请走「设置 → 系统互联」配对节点后用右上角「发送到」。
             </p>
             <div className="flex gap-2">
               <Button variant="primary" size="sm" onClick={() => setShowStart(true)}>
-                <LinkIcon size={14} />启动链接
-              </Button>
-              <Button variant="secondary" size="sm" onClick={() => setShowGenerate(true)}>
-                <Copy size={14} />生成连接链接
+                <LinkIcon size={14} />配对本环境另一个库
               </Button>
             </div>
           </div>
@@ -288,13 +315,6 @@ export function SyncManagerPanel() {
           onDone={() => { setShowStart(false); load(); }}
         />
       )}
-      {showGenerate && (
-        <GenerateLinkDialog
-          // 生成连接链接只能用自己拥有的库（后端 GenerateLink 仅放行 owner，团队共享库会 403）
-          stores={myStores.filter(s => s.ownerId === currentUserId)}
-          onClose={() => setShowGenerate(false)}
-        />
-      )}
     </div>
   );
 }
@@ -306,10 +326,9 @@ function StartLinkDialog({ stores, onClose, onDone }: {
   onClose: () => void;
   onDone: () => void;
 }) {
-  const [mode, setMode] = useState<'remote' | 'local'>('remote');
+  // 跨环境 skblink_ 路径已下架（PR #742 v2），本对话框只保留同环境两库配对。
   const [localStoreId, setLocalStoreId] = useState(stores[0]?.id ?? '');
   const [targetStoreId, setTargetStoreId] = useState('');
-  const [link, setLink] = useState('');
   const [direction, setDirection] = useState<SyncDirection>('both');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -320,19 +339,12 @@ function StartLinkDialog({ stores, onClose, onDone }: {
   const submit = async () => {
     if (busy) return;
     if (!localStoreId) { setError('请选择本地知识库'); return; }
+    if (!targetStoreId) { setError('请选择对端知识库'); return; }
     setBusy(true);
     setError('');
-    if (mode === 'remote') {
-      if (!link.trim()) { setError('请粘贴对方的连接链接'); setBusy(false); return; }
-      const res = await connectSyncLink(localStoreId, link.trim(), direction);
-      if (res.success) { toast.success('已连接，可在列表点「立即同步」'); onDone(); }
-      else { setError(res.error?.message ?? '连接失败'); }
-    } else {
-      if (!targetStoreId) { setError('请选择对端知识库'); setBusy(false); return; }
-      const res = await createLocalSyncLink(localStoreId, targetStoreId, direction);
-      if (res.success) { toast.success('已配对，可在列表点「立即同步」'); onDone(); }
-      else { setError(res.error?.message ?? '配对失败'); }
-    }
+    const res = await createLocalSyncLink(localStoreId, targetStoreId, direction);
+    if (res.success) { toast.success('已配对，可在列表点「立即同步」'); onDone(); }
+    else { setError(res.error?.message ?? '配对失败'); }
     setBusy(false);
   };
 
@@ -345,25 +357,11 @@ function StartLinkDialog({ stores, onClose, onDone }: {
             <div className="surface-action-accent flex h-8 w-8 items-center justify-center rounded-[10px]">
               <LinkIcon size={15} />
             </div>
-            <span className="text-[15px] font-semibold text-token-primary">启动同步链接</span>
+            <span className="text-[15px] font-semibold text-token-primary">配对同环境两个库</span>
           </div>
           <button onClick={() => !busy && onClose()} disabled={busy}
             className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted hover:bg-white/6 disabled:opacity-40">
             <X size={15} />
-          </button>
-        </div>
-
-        {/* 模式切换 */}
-        <div className="flex gap-2 mb-4">
-          <button onClick={() => setMode('remote')}
-            className={`flex-1 inline-flex items-center justify-center gap-1.5 h-9 rounded-[10px] text-[13px] transition-colors ${
-              mode === 'remote' ? 'surface-action-accent text-token-primary' : 'text-token-muted hover:bg-white/6'}`}>
-            <Globe size={14} />跨环境（粘贴链接）
-          </button>
-          <button onClick={() => setMode('local')}
-            className={`flex-1 inline-flex items-center justify-center gap-1.5 h-9 rounded-[10px] text-[13px] transition-colors ${
-              mode === 'local' ? 'surface-action-accent text-token-primary' : 'text-token-muted hover:bg-white/6'}`}>
-            <FolderSync size={14} />本环境两个库
           </button>
         </div>
 
@@ -376,25 +374,14 @@ function StartLinkDialog({ stores, onClose, onDone }: {
           </select>
         </div>
 
-        {mode === 'remote' ? (
-          <div className="mb-4">
-            <label className="mb-1.5 block text-[12px] text-token-muted">对方的连接链接</label>
-            <textarea value={link} onChange={e => setLink(e.target.value)} disabled={busy}
-              placeholder="粘贴对方在「生成连接链接」里复制的 skblink_… 链接"
-              className="prd-field w-full rounded-[10px] px-3 py-2 text-[13px] outline-none disabled:opacity-60 resize-none"
-              rows={3}
-            />
-          </div>
-        ) : (
-          <div className="mb-4">
-            <label className="mb-1.5 block text-[12px] text-token-muted">对端知识库（同环境）</label>
-            <select value={targetStoreId} onChange={e => setTargetStoreId(e.target.value)} disabled={busy}
-              className="prd-field h-9 w-full rounded-[10px] px-3 text-[13px] outline-none disabled:opacity-60">
-              <option value="">请选择…</option>
-              {targetOptions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-          </div>
-        )}
+        <div className="mb-4">
+          <label className="mb-1.5 block text-[12px] text-token-muted">对端知识库（同环境）</label>
+          <select value={targetStoreId} onChange={e => setTargetStoreId(e.target.value)} disabled={busy}
+            className="prd-field h-9 w-full rounded-[10px] px-3 text-[13px] outline-none disabled:opacity-60">
+            <option value="">请选择…</option>
+            {targetOptions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </div>
 
         <div className="mb-4">
           <label className="mb-1.5 block text-[12px] text-token-muted">同步方向</label>
@@ -425,110 +412,3 @@ function StartLinkDialog({ stores, onClose, onDone }: {
   );
 }
 
-// ── 生成连接链接（把本库交给对端来连）──
-
-function GenerateLinkDialog({ stores, onClose }: {
-  stores: DocumentStoreWithPreview[];
-  onClose: () => void;
-}) {
-  const [storeId, setStoreId] = useState(stores[0]?.id ?? '');
-  // 默认带上部署路径前缀（如 /prod）：后端 CallRemoteAsync 会保留 base 的 path，
-  // 只给 origin 会丢前缀导致对端探测打到错误路径（Codex P2）。仍可编辑覆盖。
-  const [baseUrl, setBaseUrl] = useState(() =>
-    (window.location.origin + (import.meta.env.BASE_URL || '/')).replace(/\/+$/, ''));
-  const [link, setLink] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-
-  const generate = async () => {
-    if (busy || !storeId) { if (!storeId) setError('请选择知识库'); return; }
-    setBusy(true);
-    setError('');
-    const res = await generateSyncLink(storeId, baseUrl.trim() || undefined);
-    if (res.success) setLink(res.data.link);
-    else setError(res.error?.message ?? '生成失败');
-    setBusy(false);
-  };
-
-  const copy = async () => {
-    try { await navigator.clipboard.writeText(link); toast.success('已复制连接链接'); }
-    catch { toast.error('复制失败，请手动选择复制'); }
-  };
-
-  const revoke = async () => {
-    if (busy || !storeId) return;
-    if (!window.confirm('撤销后，所有用本库连接链接连入的对端将立即失效（已建立的配对无法再同步）。确定撤销？')) return;
-    setBusy(true);
-    setError('');
-    const res = await revokeSyncToken(storeId);
-    if (res.success) { setLink(''); toast.success('已撤销本库连接令牌，旧链接立即失效'); }
-    else setError(res.error?.message ?? '撤销失败');
-    setBusy(false);
-  };
-
-  return (
-    <div className="surface-backdrop fixed inset-0 z-50 flex items-center justify-center"
-      onClick={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}>
-      <div className="surface-popover w-[480px] max-w-[92vw] rounded-[16px] p-6">
-        <div className="flex items-center justify-between mb-5">
-          <div className="flex items-center gap-2.5">
-            <div className="surface-action-accent flex h-8 w-8 items-center justify-center rounded-[10px]">
-              <Copy size={15} />
-            </div>
-            <span className="text-[15px] font-semibold text-token-primary">生成连接链接</span>
-          </div>
-          <button onClick={onClose}
-            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted hover:bg-white/6">
-            <X size={15} />
-          </button>
-        </div>
-
-        <p className="mb-4 text-[12px] text-token-muted leading-relaxed">
-          把生成的链接发给对端环境，对端在「启动链接」里粘贴即可双向同步。令牌永久有效；不想再被连入时，点下方「撤销连接令牌」即刻失效所有旧链接。
-        </p>
-
-        <div className="mb-4">
-          <label className="mb-1.5 block text-[12px] text-token-muted">知识库</label>
-          <select value={storeId} onChange={e => { setStoreId(e.target.value); setLink(''); }} disabled={busy}
-            className="prd-field h-9 w-full rounded-[10px] px-3 text-[13px] outline-none disabled:opacity-60">
-            {stores.length === 0 && <option value="">（暂无知识库）</option>}
-            {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-        </div>
-
-        <div className="mb-4">
-          <label className="mb-1.5 block text-[12px] text-token-muted">本环境对外地址（对端需能访问）</label>
-          <input value={baseUrl} onChange={e => { setBaseUrl(e.target.value); setLink(''); }} disabled={busy}
-            placeholder="https://your-env.example.com"
-            className="prd-field h-9 w-full rounded-[10px] px-3 text-[13px] outline-none disabled:opacity-60" />
-          <p className="mt-1 text-[11px] text-token-muted">默认填当前访问地址，跨环境时请改成对端能访问到的地址。本环境两个库互同步不需要它。</p>
-        </div>
-
-        {link && (
-          <div className="mb-4">
-            <label className="mb-1.5 block text-[12px] text-token-muted">连接链接（发给对端）</label>
-            <div className="flex gap-2">
-              <textarea value={link} readOnly rows={2}
-                className="prd-field flex-1 rounded-[10px] px-3 py-2 text-[12px] outline-none resize-none break-all" />
-              <Button variant="secondary" size="xs" onClick={copy}><Copy size={13} />复制</Button>
-            </div>
-          </div>
-        )}
-
-        {error && <p className="mb-3 text-[12px] text-token-error">{error}</p>}
-
-        <div className="flex items-center justify-between gap-2">
-          <Button variant="danger" size="xs" onClick={revoke} disabled={busy || !storeId}>
-            <Trash2 size={13} />撤销连接令牌
-          </Button>
-          <div className="flex gap-2">
-            <Button variant="ghost" size="xs" onClick={onClose}>关闭</Button>
-            <Button variant="primary" size="xs" onClick={generate} disabled={busy}>
-              {busy ? '生成中…' : link ? '重新生成' : '生成链接'}
-            </Button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}

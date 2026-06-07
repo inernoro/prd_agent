@@ -41,7 +41,9 @@ export function withAlpha(hex: string, alpha: number): string {
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
 }
 
-/** 用户头像：走可配置 CDN 前缀，加载失败回退内联 SVG，永不裂图。 */
+/** 用户头像：走可配置 CDN 前缀，加载失败回退内联 SVG，永不裂图。
+    style 显式指定 width/height —— Tailwind base layer 给 img 加 height:auto 会覆盖
+    HTML 属性，src 未加载/失败时塌缩成 0（用户反馈：气泡只剩边框一圈，看不到头像）。 */
 export function CommentAvatar({
   name,
   avatar,
@@ -56,6 +58,7 @@ export function CommentAvatar({
       className="rounded-full object-cover flex-none"
       width={size}
       height={size}
+      style={{ width: size, height: size, flexShrink: 0 }}
       src={resolveAvatarUrl({ avatarFileName: avatar })}
       alt={name ?? ''}
       onError={(e) => {

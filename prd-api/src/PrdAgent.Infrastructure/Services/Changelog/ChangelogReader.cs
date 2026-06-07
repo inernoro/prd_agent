@@ -1329,29 +1329,6 @@ public sealed class ChangelogReader : IChangelogReader
         view.WeekEnd = range.end;
     }
 
-    private static void MergeChangelogMarkdownIntoCurrentWeek(
-        CurrentWeekView view,
-        string changelogText,
-        DateOnly weekStart,
-        DateOnly weekEnd)
-    {
-        var releases = ParseChangelogMarkdown(changelogText, 0);
-        foreach (var release in releases)
-        {
-            foreach (var day in release.Days)
-            {
-                if (day.Date < weekStart || day.Date > weekEnd || day.Entries.Count == 0)
-                    continue;
-
-                AddCurrentWeekEntries(
-                    view,
-                    $"CHANGELOG.md#{release.Version}",
-                    day.Date,
-                    day.Entries);
-            }
-        }
-    }
-
     private static void AddCurrentWeekEntries(
         CurrentWeekView view,
         string fileName,

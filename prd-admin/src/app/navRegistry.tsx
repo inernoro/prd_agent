@@ -56,6 +56,7 @@ const SpeechAgentListPage = lazy(() => import('@/pages/speech-agent').then(m => 
 const SpeechAgentCreatePage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentCreatePage })));
 const SpeechAgentEditorPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentEditorPage })));
 const SpeechAgentPlayPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentPlayPage })));
+const LearningCenterPage = lazy(() => import('@/pages/learning-center/LearningCenterPage'));
 
 // ── 类型定义 ──────────────────────────────────────────────
 //
@@ -316,6 +317,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'toolbox',
       appKey: 'review-agent',
       tags: ['评审', '产品', 'PRD'],
+    },
+  },
+  {
+    path: '/learning-center',
+    permission: 'access',
+    element: shellGuarded('access', <LearningCenterPage />),
+    nav: {
+      label: '学习中心',
+      shortLabel: '学习',
+      description: '所有官方教程与你的掌握进度,随时点「跟我做」走一遍',
+      icon: 'GraduationCap',
+      // 普通用户导航中单独存在(用户 2026-06-04):从百宝箱(toolbox)升为基础设施(infra)一级入口,去 wip。
+      section: 'infra',
+      appKey: 'learning-center',
+      tags: ['教程', '新手引导', '学习进度', '帮助'],
     },
   },
   {

@@ -1440,6 +1440,7 @@ export const channelService: IChannelService = new ChannelService();
 export {
   getCurrentWeekChangelog,
   getChangelogReleases,
+  getChangelogReleaseByVersion,
   getChangelogGitHubLogs,
   postChangelogAiSummary,
   listChangelogReportSources,

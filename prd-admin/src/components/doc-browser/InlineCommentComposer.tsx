@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
-import { Send, X, CornerDownLeft } from 'lucide-react';
+import { Send, X, CornerDownLeft, Quote } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 
 // 划词后「就地输入」批注的小浮层（取代甩到右侧抽屉）。
@@ -92,9 +92,27 @@ export function InlineCommentComposer({
           <X size={13} />
         </button>
       </div>
-      <div className="px-2.5 py-1.5 rounded-[8px] text-[11px] mb-2 max-h-16 overflow-y-auto"
-        style={{ background: 'rgba(168,85,247,0.10)', border: '1px solid rgba(168,85,247,0.22)', color: 'rgba(216,180,254,0.95)' }}>
-        {selectedText.length > 100 ? selectedText.slice(0, 100) + '…' : selectedText}
+      <div className="flex items-center gap-1 mb-1">
+        <Quote size={9} style={{ color: 'rgba(216,180,254,0.75)' }} />
+        <span className="text-[10px] font-semibold" style={{ color: 'rgba(216,180,254,0.85)' }}>你选中的内容</span>
+      </div>
+      <div
+        className="px-2.5 py-1.5 rounded-[8px] text-[12px] mb-2 max-h-24 overflow-y-auto"
+        style={{
+          background: 'rgba(168,85,247,0.12)',
+          // 顺序敏感：border shorthand 必须在 borderLeft 之前，否则 shorthand 会重置左侧
+          // 边的 color/style，只剩 3px 宽度但变成淡紫——失去引用块视觉强调（Bugbot Low）
+          border: '1px solid rgba(168,85,247,0.22)',
+          borderLeft: '3px solid rgba(168,85,247,0.7)',
+          color: 'rgba(232,210,255,0.98)',
+          fontStyle: 'italic',
+          lineHeight: 1.5,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+        }}
+        title={selectedText}
+      >
+        {selectedText.length > 200 ? selectedText.slice(0, 200) + '…' : selectedText}
       </div>
       <textarea
         ref={textareaRef}
