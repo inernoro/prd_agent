@@ -152,7 +152,7 @@ public class MdToPptController : ControllerBase
                         await WriteSseEventAsync("model", JsonSerializer.Serialize(new
                         {
                             model = chunk.Resolution.ActualModel,
-                            platform = chunk.Resolution.PlatformId,
+                            platform = chunk.Resolution.ActualPlatformId,
                         }, JsonOptions), ct);
                     }
                     catch (OperationCanceledException) { break; }
