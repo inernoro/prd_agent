@@ -178,41 +178,29 @@ public class AdminPeerNodesController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不能与本节点自己配对"));
 
         // 落本端 PeerNode（指向对端 B）
-        var existing = await _db.PeerNodes.Find(n => n.RemoteNodeId == result.NodeId).FirstOrDefaultAsync(ct);
+        // PR #742 review P2 fix：原子 upsert by RemoteNodeId，避免并发 Add（两个 admin 同时配同对端）
+        // 产生两行同 RemoteNodeId 但不同 SharedSecret 的脏数据。Last-writer-wins，可接受。
+        // 需配套 peer_nodes.RemoteNodeId 唯一索引（DBA 手建，见 doc/guide.mongodb-indexes.md）。
         var displayName = string.IsNullOrWhiteSpace(request.DisplayName)
             ? (string.IsNullOrWhiteSpace(result.DisplayName) ? "对端节点" : result.DisplayName!)
             : request.DisplayName!.Trim();
-        if (existing != null)
-        {
-            // PR #742 review P2 fix：重新配对必须刷新 CreatedBy 为本次操作管理员。
-            // 否则 PeerSyncController.RemoteApply 用 node.CreatedBy 兜底归属时会落到上次配对的
-            // 老管理员（可能已离职 / 删账号），新接手的 admin 看不到自己授信导入的数据。
-            await _db.PeerNodes.UpdateOneAsync(n => n.Id == existing.Id,
-                Builders<PeerNode>.Update
-                    .Set(n => n.DisplayName, displayName)
-                    .Set(n => n.BaseUrl, baseUrl)
-                    .Set(n => n.SharedSecret, result.SharedSecret)
-                    .Set(n => n.Status, PeerNodeStatus.Connected)
-                    .Set(n => n.LastError, (string?)null)
-                    .Set(n => n.LastContactAt, DateTime.UtcNow)
-                    .Set(n => n.CreatedBy, GetUserId())
-                    .Set(n => n.UpdatedAt, DateTime.UtcNow), cancellationToken: ct);
-            var reloaded = await _db.PeerNodes.Find(n => n.Id == existing.Id).FirstOrDefaultAsync(ct);
-            return Ok(ApiResponse<object>.Ok(ToDto(reloaded!)));
-        }
-
-        var node = new PeerNode
-        {
-            RemoteNodeId = result.NodeId,
-            DisplayName = displayName,
-            BaseUrl = baseUrl,
-            SharedSecret = result.SharedSecret,
-            Status = PeerNodeStatus.Connected,
-            LastContactAt = DateTime.UtcNow,
-            CreatedBy = GetUserId(),
-        };
-        await _db.PeerNodes.InsertOneAsync(node, cancellationToken: ct);
-        return Ok(ApiResponse<object>.Ok(ToDto(node)));
+        await _db.PeerNodes.UpdateOneAsync(
+            n => n.RemoteNodeId == result.NodeId,
+            Builders<PeerNode>.Update
+                .SetOnInsert(n => n.Id, Guid.NewGuid().ToString("N"))
+                .SetOnInsert(n => n.RemoteNodeId, result.NodeId)
+                .SetOnInsert(n => n.CreatedAt, DateTime.UtcNow)
+                .Set(n => n.DisplayName, displayName)
+                .Set(n => n.BaseUrl, baseUrl)
+                .Set(n => n.SharedSecret, result.SharedSecret)
+                .Set(n => n.Status, PeerNodeStatus.Connected)
+                .Set(n => n.LastError, (string?)null)
+                .Set(n => n.LastContactAt, DateTime.UtcNow)
+                .Set(n => n.CreatedBy, GetUserId())
+                .Set(n => n.UpdatedAt, DateTime.UtcNow),
+            new UpdateOptions { IsUpsert = true }, ct);
+        var reloaded = await _db.PeerNodes.Find(n => n.RemoteNodeId == result.NodeId).FirstOrDefaultAsync(ct);
+        return Ok(ApiResponse<object>.Ok(ToDto(reloaded!)));
     }
 
     /// <summary>测试连通性（HMAC 签名 ping 对端）。</summary>

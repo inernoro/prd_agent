@@ -101,37 +101,31 @@ public class PeerSyncController : ControllerBase
             return StatusCode(401, ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "配对码无效、已使用或已过期"));
 
         var secret = PrdAgent.Infrastructure.Services.PeerNodeService.GenerateSharedSecret();
+        // PR #742 review P2 fix：原子 upsert by RemoteNodeId，避免并发握手（两个 admin 同时配同一对端
+        // 各拿新配对码）产生两行同 RemoteNodeId 但不同 SharedSecret 的脏数据 — VerifyPeerAsync 的
+        // FirstOrDefault 会随机选一行 HMAC 校验失败。需配套在 peer_nodes 集合的 RemoteNodeId 上加唯一
+        // 索引（CLAUDE 项目禁自动建索引，DBA 手动创建：见 doc/guide.mongodb-indexes.md）。
         var existing = await _db.PeerNodes.Find(n => n.RemoteNodeId == payload.InitiatorNodeId).FirstOrDefaultAsync(ct);
         // 握手发起方/接受方都用配对管理员；接受方无登录上下文，用配对码创建者作为兜底归属操作者。
         var fallbackUser = code.CreatedBy;
-        if (existing != null)
-        {
-            // PR #742 review P2 fix：重新握手同样刷新 CreatedBy 为本次配对码的管理员。
-            // RemoteApply 用 node.CreatedBy 兜底归属，不刷新会落到上次握手的老管理员（可能已离职）。
-            await _db.PeerNodes.UpdateOneAsync(n => n.Id == existing.Id,
-                Builders<PeerNode>.Update
-                    .Set(n => n.DisplayName, string.IsNullOrWhiteSpace(payload.InitiatorDisplayName) ? existing.DisplayName : payload.InitiatorDisplayName)
-                    .Set(n => n.BaseUrl, initiatorBaseUrl)
-                    .Set(n => n.SharedSecret, secret)
-                    .Set(n => n.Status, PeerNodeStatus.Connected)
-                    .Set(n => n.LastError, (string?)null)
-                    .Set(n => n.LastContactAt, DateTime.UtcNow)
-                    .Set(n => n.CreatedBy, fallbackUser)
-                    .Set(n => n.UpdatedAt, DateTime.UtcNow), cancellationToken: ct);
-        }
-        else
-        {
-            await _db.PeerNodes.InsertOneAsync(new PeerNode
-            {
-                RemoteNodeId = payload.InitiatorNodeId,
-                DisplayName = string.IsNullOrWhiteSpace(payload.InitiatorDisplayName) ? "对端节点" : payload.InitiatorDisplayName,
-                BaseUrl = initiatorBaseUrl,
-                SharedSecret = secret,
-                Status = PeerNodeStatus.Connected,
-                LastContactAt = DateTime.UtcNow,
-                CreatedBy = fallbackUser,
-            }, cancellationToken: ct);
-        }
+        var displayNameToSet = string.IsNullOrWhiteSpace(payload.InitiatorDisplayName)
+            ? (existing?.DisplayName ?? "对端节点")
+            : payload.InitiatorDisplayName;
+        await _db.PeerNodes.UpdateOneAsync(
+            n => n.RemoteNodeId == payload.InitiatorNodeId,
+            Builders<PeerNode>.Update
+                .SetOnInsert(n => n.Id, Guid.NewGuid().ToString("N"))
+                .SetOnInsert(n => n.RemoteNodeId, payload.InitiatorNodeId)
+                .SetOnInsert(n => n.CreatedAt, DateTime.UtcNow)
+                .Set(n => n.DisplayName, displayNameToSet)
+                .Set(n => n.BaseUrl, initiatorBaseUrl)
+                .Set(n => n.SharedSecret, secret)
+                .Set(n => n.Status, PeerNodeStatus.Connected)
+                .Set(n => n.LastError, (string?)null)
+                .Set(n => n.LastContactAt, DateTime.UtcNow)
+                .Set(n => n.CreatedBy, fallbackUser)
+                .Set(n => n.UpdatedAt, DateTime.UtcNow),
+            new UpdateOptions { IsUpsert = true }, ct);
 
         // 配对码已在上面 FindOneAndUpdate 时原子 claim，不需要再 set Used。
         var settings = await _db.AppSettings.Find(s => s.Id == "global").FirstOrDefaultAsync(ct);
