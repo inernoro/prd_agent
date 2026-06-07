@@ -616,8 +616,10 @@ build_web() {
 
 # ══ nginx config rendering ═══════════════════════════════════════
 
-# Render one block of shared proxy directives (reused in every location).
-proxy_directives() {
+# Core proxy directives (no cache header). Reused by every location; the
+# Cache-Control policy is layered on top per-location so static immutable
+# assets can opt out of the dashboard's default no-cache.
+proxy_core() {
   cat <<'EOP'
         proxy_http_version 1.1;
         proxy_set_header Host              $host;
@@ -632,8 +634,17 @@ proxy_directives() {
         proxy_cache     off;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
-        add_header Cache-Control    "no-cache" always;
         add_header X-Accel-Buffering "no"      always;
+EOP
+}
+
+# Default proxy directives: core + no-cache. Used for HTML/API/preview where
+# responses must stay fresh (the CDS dashboard self-updates, so stale HTML must
+# never be served).
+proxy_directives() {
+  proxy_core
+  cat <<'EOP'
+        add_header Cache-Control    "no-cache" always;
 EOP
 }
 
@@ -662,6 +673,15 @@ emit_server_blocks() {
   echo "    location ^~ /.well-known/acme-challenge/ {"
   echo "        root /var/www/html;"
   echo "        allow all;"
+  echo "    }"
+  echo ""
+  echo "    # Content-hashed Vite assets are immutable — cache for a year and do"
+  echo "    # NOT inherit the dashboard's blanket no-cache (which forced a"
+  echo "    # revalidation round-trip on every load, defeating the hash)."
+  echo "    location ^~ /assets/ {"
+  echo "        proxy_pass http://cds_master;"
+  proxy_core
+  echo "        add_header Cache-Control \"public, max-age=31536000, immutable\" always;"
   echo "    }"
   echo ""
   echo "    location / {"
@@ -821,6 +841,18 @@ http {
     tcp_nopush      on;
     tcp_nodelay     on;
     keepalive_timeout 65;
+
+    # Compress text responses at the edge. /assets (JS/CSS) are already
+    # compressed by the CDS app (zlib); nginx detects the upstream
+    # Content-Encoding and skips re-compressing those — this mainly covers
+    # API JSON + HTML. text/event-stream is deliberately NOT listed so SSE
+    # streams are never buffered/compressed.
+    gzip              on;
+    gzip_proxied      any;
+    gzip_vary         on;
+    gzip_comp_level   6;
+    gzip_min_length   1024;
+    gzip_types        text/plain text/css application/javascript text/javascript application/json application/xml image/svg+xml application/wasm;
 
     access_log  /var/log/nginx/access.log;
     error_log   /var/log/nginx/error.log warn;
