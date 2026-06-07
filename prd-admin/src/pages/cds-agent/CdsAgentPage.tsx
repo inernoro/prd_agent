@@ -3832,7 +3832,7 @@ export default function CdsAgentPage() {
 	          placeholder={simpleTaskMode === 'code'
 	            ? '在此输入：告诉 Agent 要巡检什么，例如「找出当前仓库最值得修复的一个小问题，并说明如何提交 PR」'
 	            : '在此输入你的问题，回车发送（无需先填仓库）'}
-	          className="min-h-[60px] max-h-[200px] w-full resize-none bg-transparent px-1 pt-0.5 text-base leading-relaxed text-white outline-none focus:outline-none focus:ring-0 placeholder:text-white/40"
+	          className="no-focus-ring min-h-[60px] max-h-[200px] w-full resize-none bg-transparent px-1 pt-0.5 text-base leading-relaxed text-white outline-none placeholder:text-white/40"
 	        />
           {/* 只在失败时显示诊断卡(含 复制诊断/traceId)。正常发送/运行/完成阶段不再弹这张
               「正在发送任务…」开发者卡片——进度已由对话里的用户气泡(sending/sent)+「正在生成回复/思考」
