@@ -167,7 +167,10 @@ window.__icMockupRun = function() {
   document.getElementById('ic-card-new').style.opacity = 0;
   document.getElementById('ic-card-new').style.transform = 'translateY(-8px)';
   document.getElementById('ic-card-new').classList.remove('active');
-  document.getElementById('ic-connector').innerHTML = '';
+  var old = document.getElementById('ic-connector-fixed');
+  if (old) old.remove();
+  var icConnector = document.getElementById('ic-connector');
+  if (icConnector) icConnector.innerHTML = '';
   document.getElementById('ic-toast').classList.remove('show');
 
   setTimeout(function(){ document.getElementById('ic-toast').classList.add('show'); }, 100);
@@ -185,28 +188,51 @@ window.__icMockupRun = function() {
   }, 500);
 
   setTimeout(function(){
-    var layout = document.getElementById('ic-layout');
     var av = document.getElementById('ic-av-new');
     var card = document.getElementById('ic-card-new');
-    var lr = layout.getBoundingClientRect();
-    var a = getRelPos(av, layout);
-    var b = getRelPos(card, layout);
-    var x1 = a.x + a.w;
-    var y1 = a.y + a.h / 2;
-    var x2 = b.x;
-    var y2 = b.y + 16;
-    // 控制点：从 bubble 水平延伸 60% 距离再下落，避免 S 形过头甩到右边外
+    if (!av || !card) return;
+    // 用视口坐标，把 SVG 挂在 body 顶层，避开 .doc 背景对中段连线的遮挡
+    var aRect = av.getBoundingClientRect();
+    var bRect = card.getBoundingClientRect();
+    var x1 = aRect.right;
+    var y1 = aRect.top + aRect.height / 2;
+    var x2 = bRect.left;
+    var y2 = bRect.top + 16;
     var dx = Math.max(40, (x2 - x1) * 0.5);
     var path = 'M ' + x1 + ' ' + y1 + ' C ' + (x1 + dx) + ' ' + y1 + ', ' + (x2 - dx) + ' ' + y2 + ', ' + x2 + ' ' + y2;
-    var svg = document.getElementById('ic-connector');
-    // 显式同步 SVG 物理尺寸 + viewBox，避免默认 300x150 把曲线坐标系拉飞
-    svg.setAttribute('width', String(lr.width));
-    svg.setAttribute('height', String(lr.height));
-    svg.setAttribute('viewBox', '0 0 ' + lr.width + ' ' + lr.height);
-    svg.innerHTML =
-      '<path d="' + path + '" class="animate" stroke="#34d399" />' +
-      '<circle cx="' + x1 + '" cy="' + y1 + '" r="3" fill="#34d399" />' +
-      '<circle cx="' + x2 + '" cy="' + y2 + '" r="3" fill="#34d399" />';
+    // 移除上一次的 SVG（若有）
+    var old = document.getElementById('ic-connector-fixed');
+    if (old) old.remove();
+    var ns = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('id', 'ic-connector-fixed');
+    svg.setAttribute('width', String(window.innerWidth));
+    svg.setAttribute('height', String(window.innerHeight));
+    svg.setAttribute('viewBox', '0 0 ' + window.innerWidth + ' ' + window.innerHeight);
+    svg.style.position = 'fixed';
+    svg.style.top = '0';
+    svg.style.left = '0';
+    svg.style.pointerEvents = 'none';
+    svg.style.zIndex = '9999';
+    svg.style.overflow = 'visible';
+    var pEl = document.createElementNS(ns, 'path');
+    pEl.setAttribute('d', path);
+    pEl.setAttribute('fill', 'none');
+    pEl.setAttribute('stroke', '#34d399');
+    pEl.setAttribute('stroke-width', '1.8');
+    pEl.setAttribute('stroke-linecap', 'round');
+    pEl.setAttribute('opacity', '0.85');
+    pEl.setAttribute('class', 'animate');
+    svg.appendChild(pEl);
+    var c1 = document.createElementNS(ns, 'circle');
+    c1.setAttribute('cx', String(x1)); c1.setAttribute('cy', String(y1));
+    c1.setAttribute('r', '3'); c1.setAttribute('fill', '#34d399');
+    svg.appendChild(c1);
+    var c2 = document.createElementNS(ns, 'circle');
+    c2.setAttribute('cx', String(x2)); c2.setAttribute('cy', String(y2));
+    c2.setAttribute('r', '3'); c2.setAttribute('fill', '#34d399');
+    svg.appendChild(c2);
+    document.body.appendChild(svg);
     card.classList.add('active');
   }, 700);
 
