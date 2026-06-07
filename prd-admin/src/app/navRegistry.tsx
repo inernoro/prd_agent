@@ -55,6 +55,7 @@ const OpenPlatformTabsPage = lazy(() => import('@/pages/OpenPlatformTabsPage'));
 const SpeechAgentListPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentListPage })));
 const SpeechAgentCreatePage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentCreatePage })));
 const SpeechAgentEditorPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentEditorPage })));
+const SpeechAgentPlayPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentPlayPage })));
 
 // ── 类型定义 ──────────────────────────────────────────────
 //
@@ -246,6 +247,12 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     path: '/speech-agent/new',
     permission: 'speech-agent.use',
     element: shellGuarded('speech-agent.use', <SpeechAgentCreatePage />),
+  },
+  {
+    path: '/speech-agent/:deckId/play',
+    placement: 'fullscreen',
+    permission: 'speech-agent.use',
+    element: fullscreenGuarded('speech-agent.use', <SpeechAgentPlayPage />),
   },
   {
     path: '/speech-agent/:deckId',

@@ -183,9 +183,10 @@ export default function SpeechAgentEditorPage() {
         </button>
         <button
           type="button"
-          onClick={() => alert('播放态将在 Phase 2 接入（逐节点动画 + 配图）')}
+          onClick={() => navigate(`/speech-agent/${deckId}/play`)}
           disabled={nodes.length === 0}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] disabled:opacity-40 text-white/85 text-xs font-medium border border-white/10"
+          aria-label="播放演讲"
         >
           <Play size={13} />
           播放
