@@ -10,3 +10,4 @@
 | fix | prd-admin | CDS Agent 简洁模式右栏精简：Git/证据/运行摘要/调试 等运维遥测收起，只留「准备情况/运行进展」，让简洁模式回归纯净聊天（用户心智：这是聊天不是运维台）；专业模式不变 |
 | fix | prd-admin | CDS Agent 回复按 markdown 渲染：本轮收到 done 即渲染（不再因会话持续 live 而一直纯文本展示 ##/**/反引号） |
 | fix | prd-admin | CDS Agent 输入区按 Codex 极简：去掉「官方 SDK」徽标+「不要求仓库…」说明+冗余提示，Code 巡检改名「代码」，思考指示改「Agent 思考中…」 |
+| feat | prd-admin | CDS Agent 输入栏加模型选择器（参照 Codex）：新会话可直接选模型（解决配了 v4 却跑 v3.2 → 选对的那个），运行中显示当前模型 |

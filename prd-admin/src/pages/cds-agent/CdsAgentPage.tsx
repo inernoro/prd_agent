@@ -3875,6 +3875,29 @@ export default function CdsAgentPage() {
                 对话模式不要求仓库；需要代码上下文时切到「代码」模式
               </div>
             )}
+            {/* 模型可见 + 可改（参照 Codex 输入栏模型选择器）：运行中显示当前模型；新会话可在此切换（解决"配了 v4 却跑 v3.2"——直接选对的那个）。 */}
+            {activeSession && activeSessionRuntimeState.isLive ? (
+              <span
+                className="inline-flex h-9 max-w-[240px] items-center gap-1.5 truncate rounded-lg px-3 text-[11px] text-white/60"
+                style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.09)' }}
+                title="本会话运行中，模型已固定；新建会话可改"
+              >
+                <ShieldCheck size={12} className="shrink-0 text-emerald-300/70" />
+                模型 · {activeSessionProfile?.model || activeSession.model || '默认'}
+              </span>
+            ) : profiles.length > 0 ? (
+              <select
+                value={draft.runtimeProfileId}
+                onChange={(e) => setDraft((prev) => ({ ...prev, runtimeProfileId: e.target.value }))}
+                title="选择本次会话使用的模型"
+                className="h-9 max-w-[240px] rounded-lg px-2 text-xs text-white outline-none"
+                style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.09)' }}
+              >
+                {profiles.map((p) => (
+                  <option key={p.id} value={p.id}>{p.model || p.name}</option>
+                ))}
+              </select>
+            ) : null}
             {activeSessionRuntimeState.isLive && (
               <button
                 type="button"
