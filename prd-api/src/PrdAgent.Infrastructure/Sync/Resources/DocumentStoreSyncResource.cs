@@ -134,6 +134,10 @@ public class DocumentStoreSyncResource : ISyncableResource
     {
         var store = await _db.DocumentStores.Find(s => s.Id == itemId).FirstOrDefaultAsync(ct);
         if (store == null) return null;
+        // PR #742 review P2 fix：项目库 / 产品库走专属访问轴，peer-sync 不放行。
+        // RemoteSignature 端点对配对节点开放，若不在这里拦，对端能用 store id 探出该库存在性 + 漂移信号。
+        if (!string.IsNullOrEmpty(store.PmProjectId) || !string.IsNullOrEmpty(store.ProductKnowledgeRef))
+            return null;
         var entries = await _db.DocumentEntries.Find(e => e.StoreId == itemId).ToListAsync(ct);
         var parts = entries
             .Select(e => $"{LineageOf(e)}|{e.UpdatedAt.Ticks}|{e.Title}|{(e.IsFolder ? 1 : 0)}")
