@@ -118,6 +118,7 @@ export default function SpeechAgentPlayPage() {
   const [deck, setDeck] = useState<SpeechDeck | null>(null);
   const [rawNodes, setRawNodes] = useState<SpeechNode[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [activeIndex, setActiveIndex] = useState(0);
   const [cameraTargetIndex, setCameraTargetIndex] = useState<number | null>(null);
@@ -137,9 +138,21 @@ export default function SpeechAgentPlayPage() {
     if (!deckId) return;
     let cancel = false;
     setLoading(true);
+    setLoadError(null);
     speechAgentApi.getDeck(deckId).then((res) => {
       if (cancel) return;
-      if (res.success && res.data) { setDeck(res.data.deck); setRawNodes(res.data.nodes); }
+      if (res.success && res.data) {
+        setDeck(res.data.deck);
+        setRawNodes(res.data.nodes);
+      } else {
+        // 区分加载失败 / 无权限 / 不存在,避免回到「无节点」空状态误导用户
+        // (Bugbot Medium "Play load errors show empty")
+        setLoadError(res.error?.message ?? '加载演讲失败');
+      }
+      setLoading(false);
+    }).catch((err) => {
+      if (cancel) return;
+      setLoadError(err?.message ?? '加载演讲失败');
       setLoading(false);
     });
     return () => { cancel = true; };
@@ -236,7 +249,15 @@ export default function SpeechAgentPlayPage() {
   const onNodeDoubleClick = useCallback((node: ModelNode) => { jumpTo(node.preorderIndex); }, [jumpTo]);
 
   if (loading) return <div className="h-full" style={{ background: '#fcfcf8' }}><MapSectionLoader text="加载演讲…" /></div>;
-  if (!deck || preorder.length === 0) {
+  if (loadError || !deck) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center text-center" style={{ background: '#fcfcf8' }}>
+        <p style={{ color: '#172033' }}>{loadError ?? '演讲不存在或无权限访问'}</p>
+        <button onClick={goExit} className="mt-4 px-4 py-2 rounded-lg text-sm" style={{ background: '#183a4a', color: '#fff' }}>返回编辑器</button>
+      </div>
+    );
+  }
+  if (preorder.length === 0) {
     return (
       <div className="h-full flex flex-col items-center justify-center text-center" style={{ background: '#fcfcf8' }}>
         <p style={{ color: '#172033' }}>演讲没有节点，无法播放。</p>

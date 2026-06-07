@@ -395,7 +395,7 @@ public class SpeechAgentService
         if (!p) return;
         const cls = id === active?.id ? 'active' : (pathSet.has(id) ? 'path' : 'complete');
         const subtitle = n.depth === 0 ? '主题' : (n.depth === 1 ? '第 ' + (n.order+1) + ' 章' : '要点 ' + (n.order+1));
-        const img = n.image ? '<div class="img"><img src="' + n.image + '" alt=""/></div>' : '';
+        const img = n.image ? '<div class="img"><img src="' + escapeHtml(n.image) + '" alt=""/></div>' : '';
         nodesHtml.push('<div class="node ' + cls + '" style="left:' + (p.x - LAYOUT.minW/2) + 'px; top:' + (p.y - LAYOUT.minH/2) + 'px;"><div class="sub">' + subtitle + '</div><div class="ttl">' + escapeHtml(n.title) + '</div>' + img + '</div>');
         if (n.parentId && pos.has(n.parentId)){
           const pp = pos.get(n.parentId);

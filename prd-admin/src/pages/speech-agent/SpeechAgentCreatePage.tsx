@@ -291,7 +291,13 @@ export default function SpeechAgentCreatePage() {
             <div className="mt-1.5 flex items-center justify-between text-xs">
               <button
                 type="button"
-                onClick={() => setSourceText(SAMPLE_TEXT)}
+                onClick={() => {
+                  setSourceText(SAMPLE_TEXT);
+                  // 填入示例同时解除 KB 绑定,避免 submit 走 createFromDocument 但跑的是示例文本
+                  // (Bugbot Medium "Sample fill keeps KB binding")
+                  if (kbSelectedEntryId) setKbSelectedEntryId(null);
+                  if (sourceFileName) setSourceFileName(null);
+                }}
                 className="inline-flex items-center gap-1 text-violet-300/80 hover:text-violet-200"
               >
                 <ClipboardPaste size={12} /> 填入示例

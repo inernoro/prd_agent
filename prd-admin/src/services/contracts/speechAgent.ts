@@ -12,7 +12,8 @@ export interface SpeechDeck {
   mode: SpeechDeckMode;
   sourceType: SpeechDeckSourceType;
   sourceRefId?: string | null;
-  sourceText: string;
+  /** 列表接口不返回 sourceText（避免每页几十 MB 传输），仅 getDeck 详情返回完整字段。 */
+  sourceText?: string;
   audience: string;
   style: string;
   depth: number;

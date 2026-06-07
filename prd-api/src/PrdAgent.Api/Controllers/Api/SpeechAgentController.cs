@@ -62,10 +62,37 @@ public class SpeechAgentController : ControllerBase
 
         var filter = Builders<SpeechDeck>.Filter.Eq(d => d.OwnerUserId, userId);
         var total = await _db.SpeechDecks.CountDocumentsAsync(filter);
+        // 列表只渲染卡片元数据,不返回 SourceText(可达 1MB+)避免每页几十 MB 传输
+        // (Codex P2 "Exclude source text from deck lists")
         var items = await _db.SpeechDecks.Find(filter)
             .SortByDescending(d => d.UpdatedAt)
             .Skip((page - 1) * pageSize)
             .Limit(pageSize)
+            .Project(d => new
+            {
+                d.Id,
+                d.OwnerUserId,
+                d.Title,
+                d.Mode,
+                d.SourceType,
+                d.SourceRefId,
+                d.Audience,
+                d.Style,
+                d.Depth,
+                d.Theme,
+                d.Status,
+                d.ErrorMessage,
+                d.CoverImageAssetId,
+                d.Model,
+                d.Platform,
+                d.NodeCount,
+                d.PublishedSiteId,
+                d.PublishedShareToken,
+                d.PublishedAt,
+                d.IllustrationStyle,
+                d.CreatedAt,
+                d.UpdatedAt,
+            })
             .ToListAsync();
 
         return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
