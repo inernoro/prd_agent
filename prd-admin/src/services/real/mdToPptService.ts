@@ -19,10 +19,66 @@ export interface MdToPptRenderRequest {
 }
 
 export interface MdToPptPublishRequest {
-  slides: PptSlide[];
-  theme?: string;
+  htmlContent: string;
   title?: string;
+  description?: string;
+  tags?: string[];
   teamIds?: string[];
+}
+
+// ============ Client-side reveal.js HTML 渲染 ============
+// 纯确定性转换(slides → reveal.js HTML),不调后端,前端直接生成:
+// 预览(iframe srcDoc)与发布(htmlContent)共用同一份,免去 /render 网络往返(更快、无代理层 400)。
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+const REVEAL_THEMES = new Set(['black', 'white', 'league', 'beige', 'sky', 'night', 'serif', 'simple', 'solarized', 'blood', 'moon']);
+
+export function buildRevealHtml(slides: PptSlide[], theme?: string, title?: string): string {
+  const t = (theme || 'black').trim().toLowerCase();
+  const safeTheme = REVEAL_THEMES.has(t) ? t : 'black';
+  const sections = slides.map((s) => {
+    const bullets = (s.bullets || []).filter((b) => b && b.trim());
+    const ul = bullets.length > 0
+      ? `  <ul>\n${bullets.map((b) => `    <li>${escapeHtml(b)}</li>`).join('\n')}\n  </ul>`
+      : '';
+    return `<section>\n  <h2>${escapeHtml(s.title || '')}</h2>\n${ul}\n</section>`;
+  }).join('\n');
+  const pageTitle = escapeHtml((title && title.trim()) ? title : '网页 PPT');
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${pageTitle}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4/dist/reset.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4/dist/reveal.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4/dist/theme/${safeTheme}.css">
+  <style>
+    .reveal ul { list-style: disc; text-align: left; padding-left: 1.5em; }
+    .reveal li { margin: 0.4em 0; font-size: 0.85em; line-height: 1.5; }
+    .reveal h2 { font-size: 1.4em; margin-bottom: 0.6em; }
+  </style>
+</head>
+<body>
+  <div class="reveal">
+    <div class="slides">
+${sections}
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@4/dist/reveal.js"></script>
+  <script>
+    Reveal.initialize({ hash: true, controls: true, progress: true, slideNumber: true, transition: 'slide', plugins: [] });
+  </script>
+</body>
+</html>`;
 }
 
 export interface MdToPptConvertResult {

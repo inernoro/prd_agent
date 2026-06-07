@@ -3,10 +3,11 @@ import { FileText, Upload, BookOpen, Presentation, Globe, Plus, Trash2, ChevronD
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import {
   streamMdToPptConvert,
-  renderMdToPpt,
+  buildRevealHtml,
   publishMdToPpt,
   type PptSlide,
 } from '@/services/real/mdToPptService';
+import { listMyTeams, type TeamListItem } from '@/services/real/teams';
 // ============ Reveal.js themes ============
 const REVEAL_THEMES = [
   { value: 'black', label: '深色' },
@@ -131,9 +132,8 @@ export function MdToPptAgentPage() {
   const [selectedTheme, setSelectedTheme] = useState('black');
   const [pptTitle, setPptTitle] = useState('');
 
-  // Preview state
+  // Preview state（客户端即时渲染，无需 rendering loading 态）
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
-  const [rendering, setRendering] = useState(false);
   const [, setPreviewSlideIndex] = useState(0);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
@@ -141,6 +141,9 @@ export function MdToPptAgentPage() {
   const [publishing, setPublishing] = useState(false);
   const [publishedUrl, setPublishedUrl] = useState<string | null>(null);
   const [publishError, setPublishError] = useState<string | null>(null);
+  // 团队选择（发布到网页托管时可选择分享团队）
+  const [teams, setTeams] = useState<TeamListItem[]>([]);
+  const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
 
   // Error
   const [error, setError] = useState<string | null>(null);
@@ -233,30 +236,29 @@ export function MdToPptAgentPage() {
 
   // ── Render preview ────────────────────────────────────────
 
-  async function handleRenderPreview() {
+  function handleRenderPreview() {
     if (slides.length === 0) return;
-    setRendering(true);
-    const result = await renderMdToPpt({
-      slides,
-      theme: selectedTheme,
-      title: pptTitle || undefined,
-    });
-    setRendering(false);
-    if (result.success && result.html) {
-      setPreviewHtml(result.html);
-      setPreviewSlideIndex(0);
-    } else {
-      setError(result.error ?? '渲染失败');
-    }
+    // 客户端直接渲染 reveal.js HTML(纯确定性转换),不再走 /render 后端往返:
+    // 即时预览、随编辑实时更新、不受代理层/网络影响。
+    setPreviewHtml(buildRevealHtml(slides, selectedTheme, pptTitle || undefined));
+    setPreviewSlideIndex(0);
   }
 
-  // Auto-render when slides or theme change
+  // Auto-render when slides or theme change（客户端即时渲染）
   useEffect(() => {
     if (slides.length > 0 && !streaming) {
-      void handleRenderPreview();
+      handleRenderPreview();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slides, selectedTheme]);
+  }, [slides, selectedTheme, pptTitle]);
+
+  // 加载我的团队（发布时可选分享团队）
+  useEffect(() => {
+    void (async () => {
+      const res = await listMyTeams();
+      if (res.success && res.data?.items) setTeams(res.data.items);
+    })();
+  }, []);
 
   // ── Publish ───────────────────────────────────────────────
 
@@ -265,9 +267,9 @@ export function MdToPptAgentPage() {
     setPublishing(true);
     setPublishError(null);
     const result = await publishMdToPpt({
-      slides,
-      theme: selectedTheme,
+      htmlContent: buildRevealHtml(slides, selectedTheme, pptTitle || undefined),
       title: pptTitle || undefined,
+      teamIds: selectedTeamIds.length > 0 ? selectedTeamIds : undefined,
     });
     setPublishing(false);
     if (result.success && result.siteUrl) {
@@ -484,6 +486,30 @@ export function MdToPptAgentPage() {
                   </option>
                 ))}
               </select>
+              {/* 分享到团队（可选，转存网页托管时一并设置） */}
+              {teams.length > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-xs text-white/40">分享到团队（可选）</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {teams.map((t) => {
+                      const on = selectedTeamIds.includes(t.team.id);
+                      return (
+                        <button
+                          key={t.team.id}
+                          type="button"
+                          onClick={() => setSelectedTeamIds((prev) => (on ? prev.filter((x) => x !== t.team.id) : [...prev, t.team.id]))}
+                          className="px-2.5 py-1 rounded-md text-xs transition-colors"
+                          style={on
+                            ? { background: 'rgba(16,185,129,0.18)', color: 'rgba(167,243,208,0.95)', border: '1px solid rgba(16,185,129,0.4)' }
+                            : { background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.6)', border: '1px solid rgba(255,255,255,0.1)' }}
+                        >
+                          {t.team.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               {/* Publish button */}
               <button
                 className="flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium transition-colors
@@ -527,7 +553,6 @@ export function MdToPptAgentPage() {
           {hasSlides && (
             <div className="shrink-0 px-4 py-2 border-b border-white/8 flex items-center gap-2">
               <span className="text-xs text-white/40">预览</span>
-              {rendering && <MapSpinner size={12} />}
               {slides.length > 0 && (
                 <span className="text-xs text-white/25 ml-auto">
                   {slides.length} 页 · {REVEAL_THEMES.find((t) => t.value === selectedTheme)?.label ?? selectedTheme} 主题
