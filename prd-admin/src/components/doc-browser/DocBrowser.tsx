@@ -1670,7 +1670,13 @@ export function DocBrowser({
   // 用户点「收起批注栏」后本条目临时切回 TOC（切文档复位）
   const [marginCollapsed, setMarginCollapsed] = useState(false);
   // 划词后就地输入浮层（取代甩到右侧抽屉）
-  const [composer, setComposer] = useState<{ entryId: string; sel: PendingSelection; rect: { top: number; left: number; width: number; height: number } } | null>(null);
+  // rects: 选区在打开浮层瞬间的所有 client rect（多行选区需要多个矩形），用于保留正文里的高亮覆盖层
+  const [composer, setComposer] = useState<{
+    entryId: string;
+    sel: PendingSelection;
+    rect: { top: number; left: number; width: number; height: number };
+    rects: Array<{ top: number; left: number; width: number; height: number }>;
+  } | null>(null);
   // 选区 offset 必须基于"实际渲染的正文"解析：文本类预览渲染的是
   // parseFrontmatter(text).body（已剥 frontmatter），若把含 frontmatter 的
   // 原文喂给 useContentSelection，选中同时出现在 frontmatter 的文字（如标题）
@@ -3088,13 +3094,25 @@ export function DocBrowser({
                 )}
                 {/* 划词选中时的浮层"添加评论"按钮——仅有写权限时出现；只读访客（私有分享/匿名公开）不弹，
                     避免写了提交才 403（Codex P2：read-only viewers 不该拿到写入框） */}
-                {liveSelection && !editMode && commentsCanCreate && (
+                {liveSelection && !composer && !editMode && commentsCanCreate && (
                   <SelectionActionPopover
                     selection={liveSelection}
                     onAddComment={() => {
                       // 就地输入：在选区旁展开 composer，不再甩到右侧抽屉
                       if (!trackedEntryForComments) return;
                       const r = liveSelection.rect;
+                      // 捕获选区所有 client rect（多行选区需要多个矩形）用于保留高亮覆盖层
+                      // 用户反馈：打开浮层后正文选区被清掉，写到一半就忘了自己选了哪段
+                      const sel = window.getSelection();
+                      const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
+                      const rects = range
+                        ? Array.from(range.getClientRects()).map((cr) => ({
+                            top: cr.top,
+                            left: cr.left,
+                            width: cr.width,
+                            height: cr.height,
+                          }))
+                        : [{ top: r.top, left: r.left, width: r.width, height: r.height }];
                       setComposer({
                         entryId: trackedEntryForComments.id,
                         sel: {
@@ -3105,9 +3123,11 @@ export function DocBrowser({
                           endOffset: liveSelection.endOffset,
                         },
                         rect: { top: r.top, left: r.left, width: r.width, height: r.height },
+                        rects,
                       });
+                      // 不主动清浏览器选区——textarea 拿到 focus 时浏览器自己会清，
+                      // 我们用 PendingSelectionHighlight 覆盖层兜底，保证正文高亮不消失
                       clearLiveSelection();
-                      window.getSelection()?.removeAllRanges();
                     }}
                   />
                 )}
@@ -3129,20 +3149,25 @@ export function DocBrowser({
                 )}
                 {/* 划词后就地输入浮层（createPortal 到 body） */}
                 {composer && (
-                  <InlineCommentComposer
-                    selectedText={composer.sel.selectedText}
-                    anchorRect={composer.rect}
-                    scrollRef={contentAreaRef}
-                    onSubmit={(content) => handleCreateComment({
-                      selectedText: composer.sel.selectedText,
-                      contextBefore: composer.sel.contextBefore,
-                      contextAfter: composer.sel.contextAfter,
-                      startOffset: composer.sel.startOffset,
-                      endOffset: composer.sel.endOffset,
-                      content,
-                    }, composer.entryId)}
-                    onClose={() => setComposer(null)}
-                  />
+                  <>
+                    {/* 保留正文里的选区高亮：textarea 拿 focus 后浏览器选区会消失，
+                        用 fixed 覆盖层模拟选区颜色，跟随滚动；用户写到一半依然能看到选了哪段 */}
+                    <PendingSelectionHighlight rects={composer.rects} scrollRef={contentAreaRef} />
+                    <InlineCommentComposer
+                      selectedText={composer.sel.selectedText}
+                      anchorRect={composer.rect}
+                      scrollRef={contentAreaRef}
+                      onSubmit={(content) => handleCreateComment({
+                        selectedText: composer.sel.selectedText,
+                        contextBefore: composer.sel.contextBefore,
+                        contextAfter: composer.sel.contextAfter,
+                        startOffset: composer.sel.startOffset,
+                        endOffset: composer.sel.endOffset,
+                        content,
+                      }, composer.entryId)}
+                      onClose={() => setComposer(null)}
+                    />
+                  </>
                 )}
               </div>
               </div>
@@ -3300,6 +3325,52 @@ export function DocBrowser({
       )}
     </div>
     </TagColorsContext.Provider>
+  );
+}
+
+// 打开就地输入浮层期间，正文里的待评论选区高亮覆盖层。
+// 浏览器原生 selection 在 textarea 拿到 focus 后会被清掉，写到一半就忘了选了哪段——
+// 用 fixed 定位、createPortal 到 body，按打开浮层瞬间捕获的 client rect 画选区色块，
+// 跟随正文滚动平移（与 InlineCommentComposer 同一套 scrollDy 逻辑）。
+function PendingSelectionHighlight({
+  rects,
+  scrollRef,
+}: {
+  rects: Array<{ top: number; left: number; width: number; height: number }>;
+  scrollRef?: React.RefObject<HTMLElement>;
+}) {
+  const [scrollDy, setScrollDy] = useState(0);
+  useEffect(() => {
+    const read = () => (scrollRef?.current?.scrollTop ?? 0) + window.scrollY;
+    const start = read();
+    const onScroll = () => setScrollDy(read() - start);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onScroll);
+    return () => {
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onScroll);
+    };
+  }, [scrollRef]);
+  if (rects.length === 0) return null;
+  return createPortal(
+    <div aria-hidden style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 115 }}>
+      {rects.map((r, i) => (
+        <div
+          key={i}
+          style={{
+            position: 'absolute',
+            top: r.top - scrollDy,
+            left: r.left,
+            width: r.width,
+            height: r.height,
+            background: 'rgba(168,85,247,0.28)',
+            borderBottom: '2px solid rgba(168,85,247,0.85)',
+            borderRadius: 2,
+          }}
+        />
+      ))}
+    </div>,
+    document.body,
   );
 }
 
