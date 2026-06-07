@@ -274,6 +274,19 @@ public class MdToPptController : ControllerBase
                     return;
                 }
 
+                // SSE 心跳：agent 慢/思考期间没有 text_delta 时，每 ~10s 发一次 keepalive，
+                // 防止 Cloudflare ~100s 无数据超时(HTTP 524)。server-authority 规则 #4。
+                if (round % 12 == 11)
+                {
+                    try
+                    {
+                        await Response.WriteAsync(": keepalive\n\n", CancellationToken.None);
+                        await Response.Body.FlushAsync(CancellationToken.None);
+                    }
+                    catch (OperationCanceledException) { break; }
+                    catch (ObjectDisposedException) { break; }
+                }
+
                 // 未完成：等待后继续轮询
                 await Task.Delay(800);
             }
