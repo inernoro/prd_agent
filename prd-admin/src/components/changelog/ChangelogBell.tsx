@@ -73,7 +73,7 @@ export function ChangelogBell({ size = 18, compact = false }: ChangelogBellProps
 
   // 计算 popover 位置（基于按钮位置）
   const openPopover = () => {
-    void loadCurrentWeek(true);
+    void loadCurrentWeek({ force: true });
     const rect = buttonRef.current?.getBoundingClientRect();
     if (rect) {
       const popoverWidth = 360;

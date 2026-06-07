@@ -51,7 +51,7 @@ describe('changelogStore: stale-while-revalidate', () => {
     let resolveFn!: (v: unknown) => void;
     (getChangelogReleases as Mock).mockReturnValue(new Promise((r) => { resolveFn = r; }));
 
-    const p = useChangelogStore.getState().loadReleases(20);
+    const p = useChangelogStore.getState().loadReleases({ limit: 20 });
     // 无缓存：拉取过程中 loading 为 true
     expect(useChangelogStore.getState().loadingReleases).toBe(true);
 
@@ -68,7 +68,7 @@ describe('changelogStore: stale-while-revalidate', () => {
     let resolveFn!: (v: unknown) => void;
     (getChangelogReleases as Mock).mockReturnValue(new Promise((r) => { resolveFn = r; }));
 
-    const p = useChangelogStore.getState().loadReleases(20);
+    const p = useChangelogStore.getState().loadReleases({ limit: 20 });
     // 有缓存：刷新过程中 loading 始终为 false（页面不会闪「正在加载」）
     expect(useChangelogStore.getState().loadingReleases).toBe(false);
     // 仍展示旧数据
@@ -86,7 +86,7 @@ describe('changelogStore: stale-while-revalidate', () => {
     useChangelogStore.setState({ releases: makeReleases('local') });
     (getChangelogReleases as Mock).mockResolvedValue({ success: false, error: { message: '网络错误' } });
 
-    await useChangelogStore.getState().loadReleases(20);
+    await useChangelogStore.getState().loadReleases({ limit: 20 });
 
     expect(useChangelogStore.getState().releases?.source).toBe('local');
     expect(useChangelogStore.getState().error).toBeNull();
@@ -96,7 +96,7 @@ describe('changelogStore: stale-while-revalidate', () => {
   it('无缓存时 loadReleases 失败会写 error', async () => {
     (getChangelogReleases as Mock).mockResolvedValue({ success: false, error: { message: '网络错误' } });
 
-    await useChangelogStore.getState().loadReleases(20);
+    await useChangelogStore.getState().loadReleases({ limit: 20 });
 
     expect(useChangelogStore.getState().error).toBe('网络错误');
     expect(useChangelogStore.getState().releases).toBeNull();

@@ -3,9 +3,11 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import {
   getCurrentWeekChangelog,
   getChangelogReleases,
+  getChangelogReleaseByVersion,
   type CurrentWeekView,
   type ReleasesView,
   type ChangelogEntry,
+  type ChangelogFragment,
 } from '@/services';
 
 interface ChangelogState {
@@ -15,6 +17,10 @@ interface ChangelogState {
   // 加载状态
   loadingCurrent: boolean;
   loadingReleases: boolean;
+  /** 正在按需拉取详情的版本（避免并发重复） */
+  loadingReleaseVersions: Record<string, true>;
+  /** 正在加载更多碎片日期组（避免并发重复触发） */
+  loadingMoreFragments: boolean;
   // 错误
   error: string | null;
   // 用户上次查看时间戳（ISO 字符串，sessionStorage 持久化）
@@ -22,8 +28,19 @@ interface ChangelogState {
   lastSeenAt: string | null;
 
   // Actions
-  loadCurrentWeek: (force?: boolean) => Promise<void>;
-  loadReleases: (limit?: number, force?: boolean) => Promise<void>;
+  /**
+   * 首屏只拉 daysLimit 个日期组（默认 4），全量计数走 totalEntries/totalDays。
+   * 续接走 loadMoreFragments。
+   */
+  loadCurrentWeek: (opts?: { daysLimit?: number; force?: boolean }) => Promise<void>;
+  /** 续接更多碎片日期组，append 到现有 fragments 末尾 */
+  loadMoreFragments: () => Promise<void>;
+  /**
+   * 首屏 summary=true（只元数据 + 计数，体积 <5kB），详情按需补
+   */
+  loadReleases: (opts?: { limit?: number; summary?: boolean; force?: boolean }) => Promise<void>;
+  /** 按版本懒加载 entries 并 patch 进 releases 数组 */
+  loadReleaseDetail: (version: string) => Promise<void>;
   /** 用户已查看 → 标记当前时间为 lastSeenAt（清掉红点） */
   markAsSeen: () => void;
 }
@@ -99,16 +116,17 @@ export const useChangelogStore = create<ChangelogState>()(
       releases: null,
       loadingCurrent: false,
       loadingReleases: false,
+      loadingReleaseVersions: {},
+      loadingMoreFragments: false,
       error: null,
       lastSeenAt: null,
 
       // stale-while-revalidate：有 sessionStorage 缓存时立即渲染旧数据并后台静默刷新
       //（不翻 loadingCurrent，避免每次打开都闪 loading）；无缓存时才显示 loading。
-      loadCurrentWeek: async (force?: boolean) => {
+      loadCurrentWeek: async (opts) => {
+        const { daysLimit, force } = opts || {};
         const { loadingCurrent, currentWeek } = get();
         if (loadingCurrent) {
-          // 冷加载在途：不丢弃，记 pending，待结束补跑（拿到 SSE push 后的最新存量）。
-          // force 取或：保留在途期间任一次硬刷新意图。
           pendingCurrentWeekReload = true;
           pendingCurrentWeekForce = pendingCurrentWeekForce || force === true;
           return;
@@ -116,27 +134,52 @@ export const useChangelogStore = create<ChangelogState>()(
         const hasCache = currentWeek != null;
         if (!hasCache) set({ loadingCurrent: true, error: null });
         const mySeq = ++currentWeekFetchSeq;
-        // force 透传到后端：force=true 会绕过后端 IMemoryCache，从 local/GitHub 重新拉取
-        const res = await getCurrentWeekChangelog(force === true);
-        // 乱序保护：若本次响应已被更晚的请求取代，丢弃（不覆盖更新的数据、也不抢着收尾 loading）
+        const res = await getCurrentWeekChangelog({ daysLimit, force: force === true });
         if (mySeq !== currentWeekFetchSeq) return;
         if (res.success) {
           set({ currentWeek: res.data, loadingCurrent: false });
         } else if (!hasCache) {
           set({ loadingCurrent: false, error: res.error?.message || '加载待发布更新失败' });
         } else {
-          set({ loadingCurrent: false }); // 后台刷新失败：保留旧数据，不打扰
+          set({ loadingCurrent: false });
         }
-        // trailing-edge：在途期间被合并掉的重读补跑一次，保留 force 意图（避免硬刷新被降级）
         if (pendingCurrentWeekReload) {
           pendingCurrentWeekReload = false;
           const f = pendingCurrentWeekForce;
           pendingCurrentWeekForce = false;
-          void get().loadCurrentWeek(f);
+          void get().loadCurrentWeek({ daysLimit, force: f });
         }
       },
 
-      loadReleases: async (limit = 20, force?: boolean) => {
+      loadMoreFragments: async () => {
+        const { currentWeek, loadingMoreFragments } = get();
+        if (loadingMoreFragments) return;
+        if (!currentWeek) return;
+        if (!currentWeek.hasMore) return;
+        const nextOffset = currentWeek.fragments.length + (currentWeek.daysOffset ?? 0);
+        set({ loadingMoreFragments: true });
+        try {
+          const res = await getCurrentWeekChangelog({
+            daysLimit: 6,
+            daysOffset: nextOffset,
+          });
+          if (!res.success || !res.data) return;
+          // 增量追加：保留 totals/counts 以最新响应为准
+          const merged: CurrentWeekView = {
+            ...res.data,
+            fragments: [
+              ...(get().currentWeek?.fragments ?? []),
+              ...res.data.fragments,
+            ] as ChangelogFragment[],
+          };
+          set({ currentWeek: merged });
+        } finally {
+          set({ loadingMoreFragments: false });
+        }
+      },
+
+      loadReleases: async (opts) => {
+        const { limit = 8, summary = false, force } = opts || {};
         const { loadingReleases, releases } = get();
         if (loadingReleases) {
           pendingReleasesReload = true;
@@ -146,21 +189,55 @@ export const useChangelogStore = create<ChangelogState>()(
         const hasCache = releases != null;
         if (!hasCache) set({ loadingReleases: true, error: null });
         const mySeq = ++releasesFetchSeq;
-        const res = await getChangelogReleases(limit, force === true);
-        // 乱序保护：迟到的旧响应丢弃，不覆盖更新的数据
+        const res = await getChangelogReleases({ limit, summary, force: force === true });
         if (mySeq !== releasesFetchSeq) return;
         if (res.success) {
           set({ releases: res.data, loadingReleases: false });
         } else if (!hasCache) {
           set({ loadingReleases: false, error: res.error?.message || '加载历史发布失败' });
         } else {
-          set({ loadingReleases: false }); // 后台刷新失败：保留旧数据
+          set({ loadingReleases: false });
         }
         if (pendingReleasesReload) {
           pendingReleasesReload = false;
           const f = pendingReleasesForce;
           pendingReleasesForce = false;
-          void get().loadReleases(limit, f);
+          void get().loadReleases({ limit, summary, force: f });
+        }
+      },
+
+      loadReleaseDetail: async (version: string) => {
+        const { releases, loadingReleaseVersions } = get();
+        if (!releases) return;
+        if (loadingReleaseVersions[version]) return;
+        const target = releases.releases.find((r) => r.version === version);
+        if (!target || !target.entriesOmitted) return; // 已有详情
+
+        set({ loadingReleaseVersions: { ...loadingReleaseVersions, [version]: true } });
+        try {
+          const res = await getChangelogReleaseByVersion(version);
+          if (!res.success || !res.data) return;
+          const detail = res.data;
+          // patch 进现有 releases 数组（保持引用变化触发 react 重渲染）
+          set((state) => {
+            if (!state.releases) return state;
+            return {
+              releases: {
+                ...state.releases,
+                releases: state.releases.releases.map((r) =>
+                  r.version === version
+                    ? { ...r, days: detail.days, entriesOmitted: false }
+                    : r,
+                ),
+              },
+            };
+          });
+        } finally {
+          set((state) => {
+            const next = { ...state.loadingReleaseVersions };
+            delete next[version];
+            return { loadingReleaseVersions: next };
+          });
         }
       },
 

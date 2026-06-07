@@ -64,9 +64,12 @@ interface FlatEntry extends ChangelogEntry {
 type HistorySubtab = 'releases' | 'fragments' | 'github_logs';
 type HistorySummaryStatus = 'idle' | 'loading' | 'ready' | 'error';
 
-const GITHUB_LOGS_CACHE_KEY = 'changelog:github-logs:v1';
+const GITHUB_LOGS_CACHE_KEY = 'changelog:github-logs:v2';
 const GITHUB_LOGS_CACHE_TTL_MS = 5 * 60 * 1000;
-const GITHUB_LOGS_FETCH_LIMIT = 1000;
+/** 首屏只拉 80 条（与 visible=80 对齐），后续走 cursor 续接 */
+const GITHUB_LOGS_INITIAL_FETCH = 80;
+/** 续接每批拉 80 条 */
+const GITHUB_LOGS_PAGE_SIZE = 80;
 const GITHUB_LOGS_LIVE_POLL_MS = 35 * 1000;
 const GITHUB_LOGS_NEW_HIGHLIGHT_MS = 5200;
 const RELEASES_INITIAL_VISIBLE = 4;
@@ -178,8 +181,10 @@ function useIncrementalVisible(
   const [visibleCount, setVisibleCount] = useState(initial);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
+  // 关键：total 增长（瀑布加载新批次）时**保留**当前 visibleCount，不重置回 initial，
+  // 否则用户滚动到第 8 组后触发的 backend loadMore 会把视图缩回第 6 组。
   useEffect(() => {
-    setVisibleCount(Math.min(initial, total));
+    setVisibleCount((current) => Math.min(Math.max(current, initial), total));
   }, [enabled, initial, total]);
 
   useEffect(() => {
@@ -216,7 +221,9 @@ export default function ChangelogPage() {
   const loadingReleases = useChangelogStore((s) => s.loadingReleases);
   const error = useChangelogStore((s) => s.error);
   const loadCurrentWeek = useChangelogStore((s) => s.loadCurrentWeek);
+  const loadMoreFragments = useChangelogStore((s) => s.loadMoreFragments);
   const loadReleases = useChangelogStore((s) => s.loadReleases);
+  const loadReleaseDetail = useChangelogStore((s) => s.loadReleaseDetail);
   const markAsSeen = useChangelogStore((s) => s.markAsSeen);
 
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
@@ -279,30 +286,29 @@ export default function ChangelogPage() {
     return d.getTime();
   });
 
-  // 进入页面：拉取数据 + 标记已读
-  // 「本周更新」section 已下线；但仍拉 currentWeek 以驱动已读计数 & 顶部的数据源徽标
-  // releases 首屏只拉 8 个版本（与 RELEASES_INITIAL_VISIBLE=4 + step=3 对齐留 buffer），
-  // 1.5s 后空闲背景补到 50 个（见下方 backfill effect），消除大 payload 阻塞首屏渲染
+  // 进入页面：瀑布式首屏三件套
+  // - currentWeek 只拉 4 个日期组（daysLimit=4），更多走 loadMoreFragments 增量补
+  // - releases 走 summary 模式：只元数据 + 计数，体积 <5kB；每个版本详情靠 IntersectionObserver 进入视口时按需补
+  // - githubLogs 只拉首批 80 条，cursor 分页续接
   useEffect(() => {
-    void loadCurrentWeek();
-    void loadReleases(8);
+    void loadCurrentWeek({ daysLimit: 4 });
+    void loadReleases({ limit: 8, summary: true });
     markAsSeen();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 首屏 8 个版本到位后，1.5s 空闲背景补全到 50 个，用户向下滚动时已经备好
-  // 走 stale-while-revalidate：force=false 命中后端 5 分钟缓存，绝大多数情况不真发起远端拉取
-  const [didBackfillReleases, setDidBackfillReleases] = useState(false);
+  // releases summary 到位后：自动并发拉取所有版本详情（每版本~50kB，4个版本 = 4 个独立小请求，
+  // 浏览器并发，远比单次 274kB 大请求体验好；首屏先有 chip 计数和 highlights，详情陆续就位）
+  const releaseDetailTriggeredRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (didBackfillReleases) return;
-    if (!releases || releases.releases.length === 0) return;
-    if (releases.releases.length >= 20) return; // 已经够多
-    const id = window.setTimeout(() => {
-      setDidBackfillReleases(true);
-      void loadReleases(50, false);
-    }, 1500);
-    return () => window.clearTimeout(id);
-  }, [releases, didBackfillReleases, loadReleases]);
+    if (!releases) return;
+    for (const r of releases.releases) {
+      if (!r.entriesOmitted) continue;
+      if (releaseDetailTriggeredRef.current.has(r.version)) continue;
+      releaseDetailTriggeredRef.current.add(r.version);
+      void loadReleaseDetail(r.version);
+    }
+  }, [releases, loadReleaseDetail]);
 
   useEffect(() => {
     githubLogsRef.current = githubLogs;
@@ -339,7 +345,8 @@ export default function ChangelogPage() {
 
     try {
       const previous = githubLogsRef.current;
-      const res = await getChangelogGitHubLogs(GITHUB_LOGS_FETCH_LIMIT, force);
+      // 刷新永远只拉首批 80 条（最新的）。续接更老的走 loadMoreGitHubLogs（cursor）。
+      const res = await getChangelogGitHubLogs({ limit: GITHUB_LOGS_INITIAL_FETCH, force });
       if (res.success) {
         // 成功就清错误横幅（无论 foreground/trailing/SSE 触发）：否则前一次前台失败留下的
         // 红色「注意」横幅会在后台成功更新后仍挂着，与实际状态不符（Bugbot Medium）。
@@ -390,6 +397,31 @@ export default function ChangelogPage() {
     refreshGitHubLogsRef.current = refreshGitHubLogs;
   }, [refreshGitHubLogs]);
 
+  // cursor 分页续接 GitHub 日志（向更老的方向）
+  const loadingMoreLogsRef = useRef(false);
+  const loadMoreGitHubLogs = useCallback(async () => {
+    if (loadingMoreLogsRef.current) return;
+    const current = githubLogsRef.current;
+    if (!current || !current.hasMore || !current.nextCursor) return;
+    loadingMoreLogsRef.current = true;
+    try {
+      const res = await getChangelogGitHubLogs({
+        limit: GITHUB_LOGS_PAGE_SIZE,
+        before: current.nextCursor,
+      });
+      if (!res.success || !res.data) return;
+      const merged: GitHubLogsView = {
+        ...res.data,
+        // 累积保留头部已展示的（最新），追加新批次（更老）
+        logs: [...current.logs, ...res.data.logs],
+      };
+      setGitHubLogs(merged);
+      writeGitHubLogsCache(merged);
+    } finally {
+      loadingMoreLogsRef.current = false;
+    }
+  }, []);
+
   // 只在用户进入「实时日志」子 tab 时才启动 35s 轮询；
   // 默认子 tab 是「已发布」，否则首屏 mount 时 requestIdleCallback 会与初始渲染抢主线程
   // 实时性兜底：handleServerUpdate (SSE push) 仍在常驻，后端有更新会主动推。
@@ -433,8 +465,8 @@ export default function ChangelogPage() {
   }, []);
 
   const handleRefresh = () => {
-    void loadCurrentWeek(true);
-    void loadReleases(20, true);
+    void loadCurrentWeek({ daysLimit: 4, force: true });
+    void loadReleases({ limit: 8, summary: true, force: true });
     void refreshGitHubLogs({ force: true, foreground: historySubtab === 'github_logs', showError: historySubtab === 'github_logs' });
   };
 
@@ -450,8 +482,8 @@ export default function ChangelogPage() {
     lastBeatRef.current = Date.now();
     const viewType = (data as { viewType?: string })?.viewType;
     // 服务器已把新数据落库，这里只做 force=false 的后台静默重读（读存量，不打 GitHub、不闪 loading）
-    if (viewType === 'current-week') void loadCurrentWeek(false);
-    else if (viewType === 'releases') void loadReleases(20, false);
+    if (viewType === 'current-week') void loadCurrentWeek({ daysLimit: 4 });
+    else if (viewType === 'releases') void loadReleases({ limit: 8, summary: true });
     else if (viewType === 'github-logs') void refreshGitHubLogs({ force: false });
     setJustUpdatedAt(Date.now());
   }, [loadCurrentWeek, loadReleases, refreshGitHubLogs]);
@@ -553,11 +585,16 @@ export default function ChangelogPage() {
   };
 
   const counts = useMemo(() => {
-    const released = releases?.releases.reduce((sum, release) => (
-      sum + (release.entryCount ?? release.days.reduce((daySum, day) => daySum + day.entries.length, 0))
-    ), 0) ?? 0;
-    const unpublished = currentWeek?.fragments.reduce((sum, fragment) => sum + fragment.entries.length, 0) ?? 0;
-    const logs = githubLogs?.logs.length ?? 0;
+    // 优先取服务器给的全量计数（summary 模式下，本地 fragments/days 只是分页切片，sum 会偏低）
+    const released = releases?.totalEntries
+      ?? releases?.releases.reduce((sum, release) => (
+        sum + (release.entryCount ?? release.days.reduce((daySum, day) => daySum + day.entries.length, 0))
+      ), 0)
+      ?? 0;
+    const unpublished = currentWeek?.totalEntries
+      ?? currentWeek?.fragments.reduce((sum, fragment) => sum + fragment.entries.length, 0)
+      ?? 0;
+    const logs = githubLogs?.totalCount ?? githubLogs?.logs.length ?? 0;
     return { releases: released, fragments: unpublished, github_logs: logs };
   }, [currentWeek, githubLogs, releases]);
 
@@ -652,6 +689,24 @@ export default function ChangelogPage() {
     GITHUB_LOGS_VISIBLE_STEP,
     scrollRootRef
   );
+
+  // ── 瀑布式 backend loadMore 触发器 ──
+  // 当用户已渲染到本地数据末尾 1 组之内 且 backend 还有更多 → preemptive fetch 下一批
+  useEffect(() => {
+    if (activeTab !== 'update_center') return;
+    if (historySubtab !== 'fragments') return;
+    if (!currentWeek?.hasMore) return;
+    if (fragmentList.visibleCount < fragmentGroups.length - 1) return;
+    void loadMoreFragments();
+  }, [activeTab, historySubtab, currentWeek, fragmentList.visibleCount, fragmentGroups.length, loadMoreFragments]);
+
+  useEffect(() => {
+    if (activeTab !== 'update_center') return;
+    if (historySubtab !== 'github_logs') return;
+    if (!githubLogs?.hasMore) return;
+    if (githubLogList.visibleCount < githubLogRows.length - 10) return;
+    void loadMoreGitHubLogs();
+  }, [activeTab, historySubtab, githubLogs, githubLogList.visibleCount, githubLogRows.length, loadMoreGitHubLogs]);
 
   // 数据源标签 + 拉取时间显示（github / local / none）
   const sourceLabel = (() => {
@@ -923,7 +978,7 @@ export default function ChangelogPage() {
               const active = historySubtab === tab.key;
               const count = counts[tab.key];
               const tabTitle = tab.key === 'fragments' && currentWeek
-                ? `${currentWeek.fragments.length} 个碎片文件 · ${count} 条改动\n来源：changelogs/*.md\n清空方式：跑 scripts/assemble-changelog.sh && 发布版本`
+                ? `${currentWeek.totalDays ?? currentWeek.fragments.length} 个碎片文件 · ${count} 条改动\n来源：changelogs/*.md\n清空方式：跑 scripts/assemble-changelog.sh && 发布版本`
                 : undefined;
               return (
                 <button
@@ -1339,8 +1394,12 @@ export default function ChangelogPage() {
                   ))}
                 <IncrementalSentinel
                   refEl={fragmentList.sentinelRef}
-                  show={fragmentList.hasMore}
-                  text={`继续加载待发布日期 ${Math.min(FRAGMENT_GROUPS_VISIBLE_STEP, fragmentGroups.length - fragmentList.visibleCount)} 组…`}
+                  show={fragmentList.hasMore || (currentWeek.hasMore ?? false)}
+                  text={
+                    fragmentList.hasMore
+                      ? `继续加载待发布日期 ${Math.min(FRAGMENT_GROUPS_VISIBLE_STEP, fragmentGroups.length - fragmentList.visibleCount)} 组…`
+                      : `从服务器加载更多日期组…`
+                  }
                 />
               </div>
             )}
@@ -1391,8 +1450,12 @@ export default function ChangelogPage() {
                 </AnimatePresence>
                 <IncrementalSentinel
                   refEl={githubLogList.sentinelRef}
-                  show={githubLogList.hasMore}
-                  text={`继续加载实时日志 ${Math.min(GITHUB_LOGS_VISIBLE_STEP, githubLogRows.length - githubLogList.visibleCount)} 条…`}
+                  show={githubLogList.hasMore || (githubLogs.hasMore ?? false)}
+                  text={
+                    githubLogList.hasMore
+                      ? `继续加载实时日志 ${Math.min(GITHUB_LOGS_VISIBLE_STEP, githubLogRows.length - githubLogList.visibleCount)} 条…`
+                      : `从服务器加载更多日志…`
+                  }
                 />
               </div>
             )}
