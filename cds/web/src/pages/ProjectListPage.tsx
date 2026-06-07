@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 're
 import { Link, useNavigate } from 'react-router-dom';
 import { motion, useMotionValue, useSpring, useTransform, type MotionValue } from 'motion/react';
 import {
+  Activity,
   AlertTriangle,
   ArrowRight,
   Bell,
@@ -49,7 +50,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { apiRequest, ApiError } from '@/lib/api';
+import { apiRequest, ApiError, apiUrl } from '@/lib/api';
 import { useInfraCatalog } from '@/lib/infraCatalog';
 import { RuntimeValidateButton } from '@/components/deployment/RuntimeValidateButton';
 import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
@@ -425,6 +426,7 @@ export function ProjectListPage(): JSX.Element {
   // Phase 8 — clone 完成后的 env 配置弹窗:必填项强制让用户感知,配完跳分支页
   const [envSetupTarget, setEnvSetupTarget] = useState<ProjectSummary | null>(null);
   const [agentKeyProject, setAgentKeyProject] = useState<ProjectSummary | null>(null);
+  const [agentSessionProject, setAgentSessionProject] = useState<ProjectSummary | null>(null);
   const [globalAgentKeyOpen, setGlobalAgentKeyOpen] = useState(false);
   const [skillDownloadOpen, setSkillDownloadOpen] = useState(false);
   const [legacyDialogOpen, setLegacyDialogOpen] = useState(false);
@@ -717,6 +719,7 @@ export function ProjectListPage(): JSX.Element {
                   project={project}
                   onClone={() => setCloneTarget(project)}
                   onAgentKeys={() => setAgentKeyProject(project)}
+                  onAgentSessions={() => setAgentSessionProject(project)}
                   onDelete={() => setDeleteTarget(project)}
                 />
               ))}
@@ -782,6 +785,12 @@ export function ProjectListPage(): JSX.Element {
             if (!open) setAgentKeyProject(null);
           }}
           onToast={setToast}
+        />
+        <AgentSessionsDialog
+          project={agentSessionProject}
+          onOpenChange={(open) => {
+            if (!open) setAgentSessionProject(null);
+          }}
         />
         <GlobalAgentKeyManagerDialog
           open={globalAgentKeyOpen}
@@ -1682,11 +1691,13 @@ function ProjectCard({
   project,
   onClone,
   onAgentKeys,
+  onAgentSessions,
   onDelete,
 }: {
   project: ProjectSummary;
   onClone: () => void;
   onAgentKeys: () => void;
+  onAgentSessions: () => void;
   onDelete: () => void;
 }): JSX.Element {
   const title = displayName(project);
@@ -1849,6 +1860,19 @@ function ProjectCard({
           title="Agent Key"
         >
           <KeyRound />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="pointer-events-auto h-8 w-8 bg-[hsl(var(--surface-raised))]/90 shadow-sm backdrop-blur"
+          onClick={(event) => {
+            event.stopPropagation();
+            onAgentSessions();
+          }}
+          aria-label={`${title} Agent 会话`}
+          title="Agent 会话"
+        >
+          <Activity />
         </Button>
         <Button
           variant="ghost"
@@ -2194,6 +2218,322 @@ function AgentKeyManagerDialog({
         onToast={onToast}
       />
     </>
+  );
+}
+
+interface AgentSessionView {
+  id: string;
+  projectId: string;
+  runtime?: string;
+  model?: string;
+  status: string;
+  workerId?: string;
+  containerName?: string;
+  createdAt: string;
+  updatedAt?: string;
+  stoppedAt?: string;
+  eventCount?: number;
+}
+
+interface AgentSessionEvent {
+  seq: number;
+  type: string;
+  ts: string;
+  data?: unknown;
+}
+
+function AgentSessionsDialog({
+  project,
+  onOpenChange,
+}: {
+  project: ProjectSummary | null;
+  onOpenChange: (open: boolean) => void;
+}): JSX.Element {
+  const [listState, setListState] = useState<
+    | { status: 'idle' }
+    | { status: 'loading' }
+    | { status: 'error'; message: string }
+    | { status: 'ok'; sessions: AgentSessionView[] }
+  >({ status: 'idle' });
+  const [selectedSession, setSelectedSession] = useState<AgentSessionView | null>(null);
+  const [events, setEvents] = useState<AgentSessionEvent[]>([]);
+  const [streaming, setStreaming] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const eventsEndRef = useRef<HTMLDivElement | null>(null);
+
+  const loadSessions = useCallback(async () => {
+    if (!project) return;
+    setListState({ status: 'loading' });
+    try {
+      const data = await apiRequest<{ items: AgentSessionView[] }>(
+        `/api/projects/${encodeURIComponent(project.id)}/agent-sessions`,
+      );
+      setListState({ status: 'ok', sessions: data.items || [] });
+    } catch (err) {
+      setListState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+    }
+  }, [project]);
+
+  useEffect(() => {
+    if (project) {
+      void loadSessions();
+    } else {
+      setListState({ status: 'idle' });
+      setSelectedSession(null);
+      setEvents([]);
+    }
+  }, [loadSessions, project]);
+
+  // Auto-refresh list every 5s when open and on list view
+  useEffect(() => {
+    if (!project || selectedSession) return;
+    const timer = setInterval(() => {
+      void loadSessions();
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [loadSessions, project, selectedSession]);
+
+  // SSE stream for selected session
+  useEffect(() => {
+    if (!selectedSession || !project) {
+      abortRef.current?.abort();
+      setStreaming(false);
+      return;
+    }
+
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setEvents([]);
+    setStreaming(true);
+
+    let afterSeq = 0;
+    const url = apiUrl(
+      `/api/projects/${encodeURIComponent(project.id)}/agent-sessions/${encodeURIComponent(selectedSession.id)}/stream`,
+    );
+
+    async function readStream() {
+      try {
+        const response = await fetch(`${url}?afterSeq=${afterSeq}`, {
+          credentials: 'include',
+          signal: controller.signal,
+        });
+        if (!response.ok || !response.body) {
+          setStreaming(false);
+          return;
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+          for (const line of lines) {
+            if (line.startsWith('data:')) {
+              const raw = line.slice(5).trim();
+              if (!raw || raw === '[DONE]') continue;
+              try {
+                const evt = JSON.parse(raw) as AgentSessionEvent;
+                if (typeof evt.seq === 'number') afterSeq = evt.seq;
+                setEvents((prev) => [...prev, evt]);
+              } catch {
+                // ignore parse errors
+              }
+            }
+          }
+        }
+        setStreaming(false);
+      } catch (err) {
+        if (!(err instanceof DOMException && err.name === 'AbortError')) {
+          setStreaming(false);
+        }
+      }
+    }
+
+    void readStream();
+
+    return () => {
+      controller.abort();
+      setStreaming(false);
+    };
+  }, [selectedSession, project]);
+
+  // Scroll to bottom when new events arrive
+  useEffect(() => {
+    eventsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [events]);
+
+  function eventTypeLabel(type: string): string {
+    const map: Record<string, string> = {
+      text_delta: '文本输出',
+      tool_call: '调用工具',
+      tool_result: '工具结果',
+      status: '状态变更',
+      log: '日志',
+      done: '完成',
+      error: '错误',
+      runtime_init: '运行时初始化',
+      hook: '钩子',
+      usage: '用量',
+    };
+    return map[type] ?? type;
+  }
+
+  function sessionStatusLabel(status: string): string {
+    const map: Record<string, string> = {
+      pending: '等待中',
+      running: '运行中',
+      stopped: '已停止',
+      error: '出错',
+    };
+    return map[status] ?? status;
+  }
+
+  function eventSummary(evt: AgentSessionEvent): string {
+    if (!evt.data) return '';
+    if (evt.type === 'text_delta') {
+      const d = evt.data as { text?: string };
+      return typeof d.text === 'string' ? d.text.slice(0, 120) : '';
+    }
+    if (evt.type === 'tool_call') {
+      const d = evt.data as { tool?: string; name?: string };
+      return d.tool ?? d.name ?? '';
+    }
+    if (evt.type === 'tool_result') {
+      const d = evt.data as { tool?: string; name?: string };
+      return d.tool ?? d.name ?? '';
+    }
+    if (evt.type === 'status') {
+      const d = evt.data as { status?: string };
+      return d.status ?? '';
+    }
+    if (evt.type === 'error') {
+      const d = evt.data as { message?: string };
+      return d.message ?? '';
+    }
+    return '';
+  }
+
+  return (
+    <Dialog open={Boolean(project)} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl" style={{ maxHeight: '90vh' }}>
+        <DialogHeader>
+          <DialogTitle>{selectedSession ? 'Agent 会话详情' : 'Agent 会话列表'}</DialogTitle>
+          <DialogDescription>{project ? `${displayName(project)} · 实时可观测` : ''}</DialogDescription>
+        </DialogHeader>
+
+        {!selectedSession ? (
+          <div
+            className="flex flex-col gap-3"
+            style={{ minHeight: 0, overflowY: 'auto', maxHeight: '60vh', overscrollBehavior: 'contain' }}
+          >
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => void loadSessions()}>
+                <RefreshCw className="h-4 w-4" />
+                刷新
+              </Button>
+            </div>
+
+            {listState.status === 'loading' ? <LoadingBlock label="加载会话列表" /> : null}
+            {listState.status === 'error' ? <ErrorBlock message={listState.message} /> : null}
+            {listState.status === 'ok' && listState.sessions.length === 0 ? (
+              <div className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
+                当前无活动会话；MAP 端发起 CDS Agent 任务后会出现在这里
+              </div>
+            ) : null}
+            {listState.status === 'ok' && listState.sessions.length > 0 ? (
+              <div className="space-y-2">
+                {listState.sessions.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    className="cds-surface-raised cds-hairline w-full cursor-pointer rounded px-3 py-3 text-left hover:bg-accent"
+                    onClick={() => setSelectedSession(s)}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                          <span className="truncate font-mono">{s.id.slice(0, 8)}</span>
+                          <CodePill>{sessionStatusLabel(s.status)}</CodePill>
+                          {s.model ? <CodePill>{s.model}</CodePill> : null}
+                          {s.runtime ? <CodePill>{s.runtime}</CodePill> : null}
+                        </div>
+                        <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
+                          <span>创建：{formatDate(s.createdAt)}</span>
+                          {s.eventCount !== undefined ? <span>事件数：{s.eventCount}</span> : null}
+                          {s.workerId ? <span>Worker：{s.workerId.slice(0, 12)}</span> : null}
+                        </div>
+                      </div>
+                      <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3" style={{ minHeight: 0 }}>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setSelectedSession(null);
+                  setEvents([]);
+                }}
+              >
+                返回列表
+              </Button>
+              <CodePill>{sessionStatusLabel(selectedSession.status)}</CodePill>
+              {selectedSession.model ? <CodePill>{selectedSession.model}</CodePill> : null}
+              {selectedSession.runtime ? <CodePill>{selectedSession.runtime}</CodePill> : null}
+              {streaming ? <span className="text-xs text-muted-foreground">实时更新中...</span> : null}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              <span>创建：{formatDate(selectedSession.createdAt)}</span>
+              {selectedSession.workerId ? (
+                <span className="ml-4">Worker：{selectedSession.workerId}</span>
+              ) : null}
+            </div>
+            <div
+              className="rounded-md border border-border bg-[var(--bg-base)] p-2"
+              style={{ minHeight: 0, maxHeight: '50vh', overflowY: 'auto', overscrollBehavior: 'contain' }}
+            >
+              {events.length === 0 ? (
+                <div className="py-4 text-center text-xs text-muted-foreground">
+                  {streaming ? '等待事件...' : '暂无事件'}
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {events.map((evt) => (
+                    <div key={evt.seq} className="flex gap-2 text-xs">
+                      <span className="shrink-0 text-muted-foreground">
+                        {new Date(evt.ts).toLocaleTimeString()}
+                      </span>
+                      <span className="shrink-0 font-medium">{eventTypeLabel(evt.type)}</span>
+                      {eventSummary(evt) ? (
+                        <span className="min-w-0 truncate text-muted-foreground">{eventSummary(evt)}</span>
+                      ) : null}
+                    </div>
+                  ))}
+                  <div ref={eventsEndRef} />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            关闭
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

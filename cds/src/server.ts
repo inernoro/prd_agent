@@ -602,6 +602,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'PUT /projects/:id/preview-mode': '更新项目预览模式',
     'GET /projects/:id/comment-template': '获取项目评论模板',
     'PUT /projects/:id/comment-template': '更新项目评论模板',
+    'GET /projects/:id/agent-sessions': '列出项目 Agent 会话',
     // 调度 / 集群
     'GET /scheduler/state': '获取调度器状态',
     'PUT /scheduler/enabled': '启停调度器',
@@ -738,6 +739,13 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/projects\/(.+)\/agent-keys$/, '列出项目 Agent Keys'],
     [/^POST \/projects\/(.+)\/agent-keys$/, '创建项目 Agent Key'],
     [/^DELETE \/projects\/(.+)\/agent-keys\/(.+)$/, '删除项目 Agent Key'],
+    // 项目级 Agent 会话
+    [/^GET \/projects\/[^/]+\/agent-sessions\/[^/]+\/stream$/, '订阅 Agent 会话事件流'],
+    [/^GET \/projects\/[^/]+\/agent-sessions\/[^/]+\/logs$/, '查看 Agent 会话日志'],
+    [/^POST \/projects\/[^/]+\/agent-sessions\/[^/]+\/stop$/, '停止 Agent 会话'],
+    [/^POST \/projects\/[^/]+\/agent-sessions\/[^/]+\/messages$/, '发送 Agent 会话消息'],
+    [/^GET \/projects\/[^/]+\/agent-sessions\/[^/]+$/, '查看 Agent 会话详情'],
+    [/^POST \/projects\/[^/]+\/agent-sessions$/, '创建项目 Agent 会话'],
     [/^POST \/projects\/(.+)\/github\/link$/, '关联 GitHub 仓库'],
     [/^DELETE \/projects\/(.+)\/github\/link$/, '解除 GitHub 关联'],
     [/^POST \/projects\/(.+)\/clone$/, '克隆代码'],

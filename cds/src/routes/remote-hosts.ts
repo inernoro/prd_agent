@@ -672,6 +672,19 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     res.status(201).json({ item: toCdsAgentSessionView(session) });
   });
 
+  router.get('/projects/:id/agent-sessions', (req, res) => {
+    const auth = authenticateProjectRequest(req.headers.authorization, req.params.id, pairing, ['instance:read']);
+    if (!auth.ok) {
+      res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
+      return;
+    }
+    const sessions = Array.from(cdsAgentSessions.values())
+      .filter(s => s.projectId === req.params.id)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .map(toCdsAgentSessionView);
+    res.json({ items: sessions });
+  });
+
   router.get('/projects/:projectId/agent-sessions/:sessionId', (req, res) => {
     const auth = authenticateProjectRequest(req.headers.authorization, req.params.projectId, pairing, ['instance:read']);
     if (!auth.ok) {
