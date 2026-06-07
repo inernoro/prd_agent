@@ -41,13 +41,11 @@ import {
   Flame,
   FolderCog,
   RefreshCw,
-  Rocket,
   Search,
   ShieldAlert,
   ShieldCheck,
   Trash2,
   Upload,
-  Workflow,
 } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -196,7 +194,7 @@ export default function ZhunxingAgentPage() {
   const visualStyleTokens = useMemo(() => {
     if (visualStyle === 'cosmic') {
       return {
-        pageBackground: 'radial-gradient(1200px 520px at 50% -10%, rgba(59,130,246,0.14), transparent 65%), #020617',
+        pageBackground: 'radial-gradient(1200px 620px at 15% -20%, rgba(59,130,246,0.2), transparent 65%), radial-gradient(1000px 560px at 90% -10%, rgba(147,51,234,0.16), transparent 70%), #020617',
         cardBackground: 'rgba(2,6,23,0.38)',
         cardBorder: '1px solid rgba(148,163,184,0.22)',
         surfaceBackground: 'rgba(255,255,255,0.03)',
@@ -208,13 +206,16 @@ export default function ZhunxingAgentPage() {
         orbA: 'rgba(96,165,250,0.35)',
         orbB: 'rgba(129,140,248,0.3)',
         orbC: 'rgba(56,189,248,0.25)',
+        streamLine: 'rgba(129,140,248,0.14)',
+        streamGlow: 'rgba(99,102,241,0.2)',
+        streamPulse: 'rgba(56,189,248,0.28)',
       };
     }
 
     if (visualStyle === 'slate') {
       return {
         pageBackground:
-          'radial-gradient(1200px 520px at 50% -10%, rgba(148,163,184,0.22), transparent 70%), linear-gradient(180deg, #0f172a 0%, #1e293b 100%)',
+          'radial-gradient(1200px 520px at 50% -10%, rgba(125,211,252,0.24), transparent 70%), linear-gradient(180deg, #0f172a 0%, #1e293b 100%)',
         cardBackground: 'rgba(15,23,42,0.28)',
         cardBorder: '1px solid rgba(148,163,184,0.28)',
         surfaceBackground: 'rgba(255,255,255,0.08)',
@@ -226,23 +227,29 @@ export default function ZhunxingAgentPage() {
         orbA: 'rgba(148,163,184,0.35)',
         orbB: 'rgba(125,211,252,0.28)',
         orbC: 'rgba(191,219,254,0.24)',
+        streamLine: 'rgba(148,163,184,0.2)',
+        streamGlow: 'rgba(96,165,250,0.2)',
+        streamPulse: 'rgba(147,197,253,0.24)',
       };
     }
 
     return {
       pageBackground:
-        'radial-gradient(1200px 620px at 25% -10%, rgba(191,219,254,0.85), transparent 70%), radial-gradient(900px 520px at 85% 0%, rgba(167,243,208,0.55), transparent 70%), linear-gradient(180deg, #f7fbff 0%, #e8f3ff 100%)',
-      cardBackground: 'rgba(255,255,255,0.78)',
-      cardBorder: '1px solid rgba(148,163,184,0.24)',
-      surfaceBackground: 'rgba(255,255,255,0.7)',
+        'radial-gradient(1250px 700px at 8% -12%, rgba(186,230,253,0.86), transparent 72%), radial-gradient(1100px 620px at 100% -8%, rgba(216,180,254,0.62), transparent 70%), linear-gradient(180deg, #f4f7ff 0%, #edf2ff 55%, #f2edff 100%)',
+      cardBackground: 'rgba(255,255,255,0.82)',
+      cardBorder: '1px solid rgba(129,140,248,0.22)',
+      surfaceBackground: 'rgba(255,255,255,0.74)',
       surfaceBorder: '1px solid rgba(148,163,184,0.2)',
       controlBackground: 'rgba(255,255,255,0.92)',
-      controlBorder: '1px solid rgba(148,163,184,0.32)',
-      textPrimary: '#0f172a',
-      textMuted: '#475569',
-      orbA: 'rgba(125,211,252,0.45)',
-      orbB: 'rgba(167,243,208,0.4)',
-      orbC: 'rgba(191,219,254,0.35)',
+      controlBorder: '1px solid rgba(129,140,248,0.28)',
+      textPrimary: '#111827',
+      textMuted: '#5b6689',
+      orbA: 'rgba(147,197,253,0.42)',
+      orbB: 'rgba(196,181,253,0.38)',
+      orbC: 'rgba(186,230,253,0.34)',
+      streamLine: 'rgba(129,140,248,0.14)',
+      streamGlow: 'rgba(99,102,241,0.16)',
+      streamPulse: 'rgba(147,197,253,0.26)',
     };
   }, [visualStyle]);
 
@@ -252,6 +259,9 @@ export default function ZhunxingAgentPage() {
       transition: 'background 320ms ease',
       ['--text-primary' as string]: visualStyleTokens.textPrimary,
       ['--text-muted' as string]: visualStyleTokens.textMuted,
+      ['--zx-stream-line' as string]: visualStyleTokens.streamLine,
+      ['--zx-stream-glow' as string]: visualStyleTokens.streamGlow,
+      ['--zx-stream-pulse' as string]: visualStyleTokens.streamPulse,
     } as CSSProperties;
   }, [visualStyleTokens]);
 
@@ -267,6 +277,53 @@ export default function ZhunxingAgentPage() {
     @keyframes zhunxingOrbFloatC {
       0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
       50% { transform: translate3d(14px, 16px, 0) scale(1.05); }
+    }
+    @keyframes zhunxingDataGridMove {
+      0% { background-position: 0 0, 0 0; }
+      100% { background-position: 120px 0, 0 96px; }
+    }
+    @keyframes zhunxingDataBeamSweep {
+      0% { transform: translate3d(-35%, 0, 0) rotate(-6deg); opacity: 0.15; }
+      50% { transform: translate3d(10%, 0, 0) rotate(-6deg); opacity: 0.38; }
+      100% { transform: translate3d(55%, 0, 0) rotate(-6deg); opacity: 0.12; }
+    }
+    @keyframes zhunxingDataPulse {
+      0%, 100% { opacity: 0.2; }
+      50% { opacity: 0.46; }
+    }
+    .zhunxing-workbench .zhunxing-data-grid {
+      position: absolute;
+      inset: 0;
+      background-image:
+        repeating-linear-gradient(90deg, transparent 0 48px, var(--zx-stream-line) 48px 49px),
+        repeating-linear-gradient(0deg, transparent 0 44px, var(--zx-stream-line) 44px 45px);
+      opacity: 0.5;
+      mask-image: radial-gradient(circle at 55% 35%, #000 10%, rgba(0,0,0,0.55) 46%, transparent 78%);
+      animation: zhunxingDataGridMove 30s linear infinite;
+    }
+    .zhunxing-workbench .zhunxing-data-beam {
+      position: absolute;
+      inset: -20% -35%;
+      background: linear-gradient(110deg, transparent 30%, var(--zx-stream-glow) 48%, transparent 66%);
+      filter: blur(26px);
+      animation: zhunxingDataBeamSweep 18s ease-in-out infinite;
+      pointer-events: none;
+    }
+    .zhunxing-workbench .zhunxing-data-pulse {
+      position: absolute;
+      width: 34vw;
+      max-width: 520px;
+      min-width: 280px;
+      height: 34vw;
+      max-height: 520px;
+      min-height: 280px;
+      border-radius: 9999px;
+      right: -8%;
+      bottom: -14%;
+      background: radial-gradient(circle, var(--zx-stream-pulse) 0%, transparent 65%);
+      filter: blur(12px);
+      animation: zhunxingDataPulse 9.5s ease-in-out infinite;
+      pointer-events: none;
     }
     .zhunxing-workbench .zhunxing-orb {
       position: absolute;
@@ -704,66 +761,32 @@ export default function ZhunxingAgentPage() {
 
   const askPanel = (
     <>
-      <GlassCard variant="subtle" animated className="p-4 zhunxing-breath-card" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0 flex-1">
-            <div className="inline-flex items-center gap-2 rounded-md px-2 py-1 text-[11px]" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', color: '#22C55E' }}>
-              <Rocket size={12} />
-              Zhunxing Knowledge OS · Beta
-            </div>
-            <div className="mt-2 text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
-              企业AI知识中枢，覆盖问答、流程决策与风险预警。
-            </div>
-            <div className="mt-1 text-xs leading-5" style={{ color: 'var(--text-muted)' }}>
-              当前阶段聚焦“问答可用、流程可执行、风险可治理”，后续将演进为知识图谱、主动预警、自动编排的一体化平台。
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <span className="px-2 py-0.5 rounded-md text-[11px]" style={{ background: 'rgba(96,165,250,0.14)', border: '1px solid rgba(96,165,250,0.32)', color: '#60A5FA' }}>P1 问答执行化</span>
-              <span className="px-2 py-0.5 rounded-md text-[11px]" style={{ background: 'rgba(52,211,153,0.14)', border: '1px solid rgba(52,211,153,0.32)', color: '#34D399' }}>P2 反馈运营化</span>
-              <span className="px-2 py-0.5 rounded-md text-[11px]" style={{ background: 'rgba(251,191,36,0.14)', border: '1px solid rgba(251,191,36,0.32)', color: '#FBBF24' }}>P3 知识网络化</span>
-              <span className="px-2 py-0.5 rounded-md text-[11px]" style={{ background: 'rgba(251,113,133,0.14)', border: '1px solid rgba(251,113,133,0.32)', color: '#FB7185' }}>P4 智能自治化</span>
-            </div>
-          </div>
-          <div className="w-full lg:max-w-[340px] rounded-lg p-3" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
-            <div className="text-xs font-semibold mb-2 flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
-              <Workflow size={13} />
-              能力演进路径
-            </div>
-            <div className="flex flex-col gap-2">
-              <div className="text-xs flex items-center justify-between" style={{ color: 'var(--text-primary)' }}>
-                <span>问答与条款引用</span><span style={{ color: '#34D399' }}>已上线</span>
-              </div>
-              <div className="text-xs flex items-center justify-between" style={{ color: 'var(--text-primary)' }}>
-                <span>决策树与冲突治理</span><span style={{ color: '#34D399' }}>已上线</span>
-              </div>
-              <div className="text-xs flex items-center justify-between" style={{ color: 'var(--text-primary)' }}>
-                <span>主题订阅与热力运营</span><span style={{ color: '#34D399' }}>已上线</span>
-              </div>
-              <div className="text-xs flex items-center justify-between" style={{ color: 'var(--text-primary)' }}>
-                <span>知识图谱与主动预警</span><span style={{ color: '#FBBF24' }}>规划中</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </GlassCard>
-
-      <GlassCard variant="subtle" animated className="p-4 zhunxing-breath-card" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
+      <GlassCard
+        variant="subtle"
+        animated
+        className="p-5 zhunxing-breath-card"
+        style={{
+          background: `linear-gradient(135deg, ${visualStyleTokens.cardBackground} 0%, rgba(129,140,248,0.08) 100%)`,
+          border: visualStyleTokens.cardBorder,
+          boxShadow: '0 16px 38px -28px rgba(99,102,241,0.45)',
+        }}
+      >
         <div className="flex items-start gap-3">
           <div
             className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
             style={{
-              background: 'rgba(59, 130, 246, 0.15)',
-              border: '1px solid rgba(59, 130, 246, 0.35)',
+              background: 'rgba(99, 102, 241, 0.14)',
+              border: '1px solid rgba(129, 140, 248, 0.42)',
             }}
           >
-            <ShieldCheck size={20} style={{ color: '#60A5FA' }} />
+            <ShieldCheck size={20} style={{ color: '#6366F1' }} />
           </div>
           <div className="min-w-0 flex-1">
             <div className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>
               即时问答入口
             </div>
             <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
-              面向制度、流程、交接与协作规范的问题求解台（支持角色化输出）
+              聚焦主功能：输入问题后立即返回“结论 + 执行步骤 + 条款依据”。
             </div>
           </div>
         </div>
@@ -1725,6 +1748,9 @@ export default function ZhunxingAgentPage() {
     >
       <style>{breathingStyleSheet}</style>
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="zhunxing-data-grid" />
+        <div className="zhunxing-data-beam" />
+        <div className="zhunxing-data-pulse" />
         <div className="zhunxing-orb zhunxing-orb-a" style={{ background: visualStyleTokens.orbA }} />
         <div className="zhunxing-orb zhunxing-orb-b" style={{ background: visualStyleTokens.orbB }} />
         <div className="zhunxing-orb zhunxing-orb-c" style={{ background: visualStyleTokens.orbC }} />
@@ -1775,63 +1801,77 @@ export default function ZhunxingAgentPage() {
           </div>
         </GlassCard>
 
-        <GlassCard variant="subtle" className="p-4 zhunxing-breath-card" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
+        <GlassCard variant="subtle" className="p-3 zhunxing-breath-card" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
+          <div className="grid grid-cols-1 xl:grid-cols-[1.45fr_0.75fr] gap-3">
             <div className="rounded-lg p-3" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
-              <div className="text-xs font-semibold mb-2" style={{ color: '#34D399' }}>可立即使用</div>
-              <div className="flex flex-col gap-2">
-                {AVAILABLE_ENTRIES.map((entry) => {
+              <div className="text-xs font-semibold mb-2" style={{ color: '#6366F1' }}>主功能入口（立即使用）</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {AVAILABLE_ENTRIES.filter((x) => x.mode !== 'dashboard').map((entry) => {
                   const Icon = entry.icon;
                   return (
                     <button
                       key={entry.mode}
                       type="button"
                       onClick={() => setViewMode(entry.mode)}
-                      className="rounded-md p-2 text-left transition-opacity hover:opacity-90"
+                      className="rounded-lg p-3 text-left transition-opacity hover:opacity-90"
                       style={{
-                        background: viewMode === entry.mode ? 'rgba(96,165,250,0.18)' : visualStyleTokens.controlBackground,
-                        border: viewMode === entry.mode ? '1px solid rgba(96,165,250,0.45)' : visualStyleTokens.controlBorder,
+                        background: viewMode === entry.mode ? 'rgba(129,140,248,0.18)' : visualStyleTokens.controlBackground,
+                        border: viewMode === entry.mode ? '1px solid rgba(129,140,248,0.45)' : visualStyleTokens.controlBorder,
                       }}
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="text-sm font-semibold flex items-center gap-1.5" style={{ color: 'var(--text-primary)' }}>
-                          <Icon size={14} />
-                          {entry.title}
-                        </div>
-                        <span className="text-[11px]" style={{ color: '#34D399' }}>{entry.tag}</span>
+                      <div className="text-sm font-semibold flex items-center gap-1.5" style={{ color: 'var(--text-primary)' }}>
+                        <Icon size={15} />
+                        {entry.title}
                       </div>
-                      <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                      <div className="text-xs mt-1.5" style={{ color: 'var(--text-muted)' }}>
                         {entry.description}
                       </div>
                     </button>
                   );
                 })}
               </div>
-            </div>
-
-            <div className="rounded-lg p-3" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
-              <div className="text-xs font-semibold mb-2" style={{ color: '#FBBF24' }}>规划中功能</div>
-              <div className="flex flex-col gap-2">
-                {FUTURE_PORTALS.map((item) => (
-                  <div key={item.title} className="rounded-md p-2" style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder }}>
+              {AVAILABLE_ENTRIES.filter((x) => x.mode === 'dashboard').map((entry) => {
+                const Icon = entry.icon;
+                return (
+                  <button
+                    key={entry.mode}
+                    type="button"
+                    onClick={() => setViewMode(entry.mode)}
+                    className="mt-2 w-full rounded-md px-3 py-2 text-left transition-opacity hover:opacity-90"
+                    style={{
+                      background: viewMode === entry.mode ? 'rgba(129,140,248,0.18)' : visualStyleTokens.controlBackground,
+                      border: viewMode === entry.mode ? '1px solid rgba(129,140,248,0.45)' : visualStyleTokens.controlBorder,
+                    }}
+                  >
                     <div className="flex items-center justify-between gap-2">
-                      <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{item.title}</div>
-                      <span className="text-[11px]" style={{ color: '#FBBF24' }}>规划中</span>
+                      <div className="text-sm font-semibold flex items-center gap-1.5" style={{ color: 'var(--text-primary)' }}>
+                        <Icon size={14} />
+                        {entry.title}
+                      </div>
+                      <span className="text-[11px]" style={{ color: '#6366F1' }}>辅助入口</span>
                     </div>
-                    <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{item.description}</div>
-                  </div>
-                ))}
-              </div>
+                  </button>
+                );
+              })}
             </div>
 
-            <div className="rounded-lg p-3" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
-              <div className="text-xs font-semibold mb-2" style={{ color: '#60A5FA' }}>提示文案</div>
-              <div className="rounded-md p-2 text-xs leading-5" style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-muted)' }}>
-                你当前看到的三个区域定义如下：<br />
-                1）可立即使用：可直接点击进入并执行；<br />
-                2）规划中功能：当前不可操作，仅用于演进预告；<br />
-                3）提示文案：解释权限边界与使用方式，不是功能入口。<br />
-                文件库遵循部门权限隔离：只允许维护本部门资料，跨部门操作将被拒绝。
+            <div className="grid grid-cols-1 gap-2">
+              <div className="rounded-lg p-2.5" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
+                <div className="text-xs font-semibold mb-1.5" style={{ color: '#8B5CF6' }}>规划中功能</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {FUTURE_PORTALS.map((item) => (
+                    <span
+                      key={item.title}
+                      className="px-2 py-1 rounded-md text-[11px]"
+                      style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-muted)' }}
+                    >
+                      {item.title}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <div className="rounded-lg p-2.5 text-xs leading-5" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder, color: 'var(--text-muted)' }}>
+                说明：主功能入口可直接使用；规划中功能暂不可点击。文件库遵循部门隔离策略，跨部门写操作会被拦截。
               </div>
             </div>
           </div>
