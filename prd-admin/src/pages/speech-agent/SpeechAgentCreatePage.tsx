@@ -166,6 +166,8 @@ export default function SpeechAgentCreatePage() {
       const res = useKb
         ? await speechAgentApi.createFromDocument({
             entryId: kbSelectedEntryId!,
+            // 用户在标题框里手填的优先,空时后端回落 entry.Title (Bugbot Medium "KB flow ignores custom title")
+            title: title.trim() || undefined,
             audience,
             style,
             depth,

@@ -467,7 +467,7 @@ public class SpeechAgentService
         SpeechDeck deck,
         Func<string, Task>? onTyping = null,
         Func<string, Task>? onThinking = null,
-        Action<string, string>? onModel = null,
+        Func<string, string, Task>? onModel = null,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         var systemPrompt = BuildMindmapSystemPrompt(deck);
@@ -500,7 +500,13 @@ public class SpeechAgentService
         {
             if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null)
             {
-                onModel?.Invoke(chunk.Resolution.ActualModel ?? "", chunk.Resolution.ActualPlatformName ?? "");
+                if (onModel != null)
+                {
+                    // 必须 await,不能 fire-and-forget,否则 model 事件与紧随其后的 thinking/text 写入会
+                    // 在同一 Response.Body 上交错,产生损坏的 SSE 帧 (Codex P2 "Await model SSE writes")
+                    try { await onModel(chunk.Resolution.ActualModel ?? "", chunk.Resolution.ActualPlatformName ?? ""); }
+                    catch (Exception cbEx) { _logger.LogDebug(cbEx, "[speech] onModel ignored"); }
+                }
             }
             else if (chunk.Type == GatewayChunkType.Thinking && !string.IsNullOrEmpty(chunk.Content))
             {
@@ -609,13 +615,16 @@ public class SpeechAgentService
         {
             var root = json["root"]?.AsObject();
             if (root == null) return null;
+            // children 可在顶层(json.children)或嵌套在 root 内(json.root.children),按 LLM 输出兜底
+            // (Bugbot Medium "Mindmap parser drops root children")
+            var childrenNode = json["children"] ?? root["children"];
             return new MindmapJson
             {
                 Root = new MindmapNode
                 {
                     Title = root["title"]?.GetValue<string>() ?? "未命名",
                     BulletPoints = GetStringArray(root, "bulletPoints"),
-                    Children = ParseChildren(json["children"]),
+                    Children = ParseChildren(childrenNode),
                 },
             };
         }

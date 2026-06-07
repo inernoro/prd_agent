@@ -76,7 +76,7 @@ export interface SpeechAgentApi {
   listDecks: (page?: number, pageSize?: number) => Promise<ApiResponse<{ items: SpeechDeck[]; total: number; page: number; pageSize: number }>>;
   getDeck: (deckId: string) => Promise<ApiResponse<{ deck: SpeechDeck; nodes: SpeechNode[] }>>;
   createDeck: (input: CreateSpeechDeckInput) => Promise<ApiResponse<{ deck: SpeechDeck }>>;
-  createFromDocument: (input: { entryId: string; audience?: string; style?: string; depth?: number; illustrationStyle?: string }) => Promise<ApiResponse<{ deck: SpeechDeck }>>;
+  createFromDocument: (input: { entryId: string; title?: string; audience?: string; style?: string; depth?: number; illustrationStyle?: string }) => Promise<ApiResponse<{ deck: SpeechDeck }>>;
   updateDeck: (deckId: string, input: UpdateSpeechDeckInput) => Promise<ApiResponse<{ updated: true }>>;
   deleteDeck: (deckId: string) => Promise<ApiResponse<{ deleted: true }>>;
   updateNode: (deckId: string, nodeId: string, input: UpdateSpeechNodeInput) => Promise<ApiResponse<{ updated: true }>>;

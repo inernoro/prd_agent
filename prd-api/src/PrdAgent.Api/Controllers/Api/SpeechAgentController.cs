@@ -28,6 +28,7 @@ public class SpeechAgentController : ControllerBase
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IHostedSiteService _hostedSites;
     private readonly ITeamService _teams;
+    private readonly IDocumentService _documentService;
     private readonly ILogger<SpeechAgentController> _logger;
 
     private static readonly JsonSerializerOptions SseJson = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
@@ -38,6 +39,7 @@ public class SpeechAgentController : ControllerBase
         ILLMRequestContextAccessor llmRequestContext,
         IHostedSiteService hostedSites,
         ITeamService teams,
+        IDocumentService documentService,
         ILogger<SpeechAgentController> logger)
     {
         _db = db;
@@ -45,6 +47,7 @@ public class SpeechAgentController : ControllerBase
         _llmRequestContext = llmRequestContext;
         _hostedSites = hostedSites;
         _teams = teams;
+        _documentService = documentService;
         _logger = logger;
     }
 
@@ -342,6 +345,7 @@ public class SpeechAgentController : ControllerBase
     public class CreateFromDocumentRequest
     {
         public string EntryId { get; set; } = string.Empty;
+        public string? Title { get; set; }
         public string? Audience { get; set; }
         public string? Style { get; set; }
         public int? Depth { get; set; }
@@ -366,10 +370,11 @@ public class SpeechAgentController : ControllerBase
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限读该文档"));
 
         // 同 DocumentStoreController 的内容提取链：优先 ParsedPrd.RawContent，兜底 Attachment.ExtractedText
+        // 走 IDocumentService 而非直查 Mongo,保证与缓存/钩子链一致 (Bugbot Medium "KB create skips document service")
         string? src = null;
         if (!string.IsNullOrEmpty(entry.DocumentId))
         {
-            var doc = await _db.Documents.Find(d => d.Id == entry.DocumentId).FirstOrDefaultAsync();
+            var doc = await _documentService.GetByIdAsync(entry.DocumentId);
             if (doc != null) src = doc.RawContent;
         }
         if (string.IsNullOrEmpty(src) && !string.IsNullOrEmpty(entry.AttachmentId))
@@ -381,10 +386,13 @@ public class SpeechAgentController : ControllerBase
         if (src.Length < 30)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文档内容过短（不足 30 字）"));
 
+        // 用户自填标题优先,空时回落到 entry.Title (Bugbot Medium "KB flow ignores custom title")
+        var title = string.IsNullOrWhiteSpace(req.Title) ? entry.Title.Trim() : req.Title.Trim();
+
         var deck = new SpeechDeck
         {
             OwnerUserId = userId,
-            Title = entry.Title.Trim(),
+            Title = title,
             Mode = SpeechDeckMode.Mindmap,
             SourceType = SpeechDeckSourceType.Document,
             SourceRefId = entry.Id,
@@ -505,12 +513,13 @@ public class SpeechAgentController : ControllerBase
                 {
                     await WriteSseAsync("thinking", new { text });
                 },
-                onModel: (model, platform) =>
+                onModel: async (model, platform) =>
                 {
-                    _db.SpeechDecks.UpdateOne(
+                    // 落库与 SSE 写入串行,避免 model 事件与紧随其后的 thinking/text 写入交错 (Codex P2)
+                    await _db.SpeechDecks.UpdateOneAsync(
                         d => d.Id == deckId,
                         Builders<SpeechDeck>.Update.Set(d => d.Model, model).Set(d => d.Platform, platform));
-                    _ = WriteSseAsync("model", new { model, platform });
+                    await WriteSseAsync("model", new { model, platform });
                 }))
             {
                 if (ev.Kind == "node" && ev.Node != null)
@@ -562,10 +571,10 @@ public class SpeechAgentController : ControllerBase
         }
         catch (ObjectDisposedException) { }
         catch (OperationCanceledException) { }
-        // 客户端中途断开:写入失败抛 IOException / ConnectionAbortedException 等 (Codex P2 disconnect-as-failed)。
-        // 与 ObjectDisposedException 同语义吞掉,服务端任务继续走完,不要被冒充成"生成失败"。
+        // 客户端中途断开:写入失败抛 IOException 及其派生类 (ConnectionResetException 等)。
+        // 与 ObjectDisposedException 同语义吞掉,服务端任务继续走完。
+        // CS0160:ConnectionResetException 继承自 IOException,只 catch 父类即可。
         catch (System.IO.IOException) { }
-        catch (Microsoft.AspNetCore.Connections.ConnectionResetException) { }
     }
 
     /// <summary>
