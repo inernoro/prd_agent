@@ -3837,6 +3837,14 @@ export default function CdsAgentPage() {
 	        <textarea
 	          value={prompt}
 	          onChange={(e) => setPrompt(e.target.value)}
+	          onKeyDown={(e) => {
+	            // 兑现 placeholder 的「回车发送」承诺。此前没有任何 onKeyDown，回车只换行不发送。
+	            // Shift+Enter 换行；输入法组字中(isComposing)的回车是选词确认，绝不当发送。
+	            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+	              e.preventDefault();
+	              if (!sendDisabled) void runSimpleReadonlyReview();
+	            }
+	          }}
 	          rows={2}
 	          autoFocus
 	          placeholder={simpleTaskMode === 'code'

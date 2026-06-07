@@ -1,8 +1,9 @@
-// 高频取证：发送后每 100ms 采样 DOM，专门逮「消息闪一下消失/空状态回闪」的瞬时中间态。
+// 高频取证：发送后每 100ms 采样 DOM，专门逮「消息闪一下消失/空状态回闪/诊断卡」的瞬时中间态。
 import { loadConfig, launch, login, gotoByClick, shot, writeManifest } from './harness.mjs';
 const cfg = loadConfig(new URL('../acceptance.config.json', import.meta.url).pathname);
 const BASE = process.argv[2];
 const OUT = '/tmp/acc_shots4';
+const UNIQUE = `瞬时态验证-${Date.now()}`;
 const { browser, page } = await launch(cfg);
 try {
   await login(page, BASE, cfg);
@@ -10,50 +11,61 @@ try {
   await gotoByClick(page, 'CDS Agent');
   await page.waitForTimeout(1500);
 
-  // 图1 取证：刷新落地态(是否还卡「请先同步系统主模型」三连)
+  // 图1 取证：刷新落地态是否还卡「请先同步系统主模型」
   const landing = await page.evaluate(() => ({
     syncWarning: /请先同步系统主模型/.test(document.body.innerText),
-    modelPickerText: (Array.from(document.querySelectorAll('button,[role=button]'))
-      .map(e => e.textContent || '').find(t => /deepseek|claude|gpt|模型\s*·/i.test(t)) || '').trim().slice(0,40),
   }));
   console.log('LANDING', JSON.stringify(landing));
   await shot(page, OUT, '01-landing', '刷新落地：是否还卡「请先同步系统主模型」');
 
-  // 新建任务，走「新建会话」路径(最易触发发送闪屏)
-  const plusBtn = page.locator('button[title*="新"], button:has-text("新建"), [aria-label*="新"]').first();
-  // 直接在底部输入框打字
+  // 点「新建任务」(+) 拿一个干净会话(空状态)
+  const plus = page.locator('button[aria-label="新建任务"]').first();
+  if (await plus.count()) { await plus.click().catch(() => {}); await page.waitForTimeout(2500); }
+
+  // 填唯一文本并断言已填入，再回车发送(placeholder: 回车发送)
   const ta = page.locator('textarea').first();
   await ta.click();
-  await ta.fill('用一句话告诉我现在几点的概念');
+  await ta.fill(UNIQUE);
+  const filled = await ta.inputValue();
+  console.log('FILLED_OK', filled === UNIQUE, JSON.stringify(filled.slice(0, 40)));
 
-  // 点发送后立即高频采样 DOM 30 次 × 100ms = 3s
+  // 发送前快照(应为空状态 emptyHeading=true,或刚建会话的空对话)
+  const pre = await page.evaluate((u) => ({
+    emptyHeading: /想让 Agent 做什么|要在这个仓库里检查什么/.test(document.body.innerText),
+    userBubble: document.body.innerText.includes(u),
+  }), UNIQUE);
+  console.log('PRE_SEND', JSON.stringify(pre));
+
+  // 回车发送，随后高频采样 30 次 × 100ms
+  await ta.press('Enter');
   const samples = [];
-  await page.locator('button:has-text("发送"), button:has-text("运行")').first().click();
   for (let i = 0; i < 30; i++) {
-    const s = await page.evaluate(() => {
+    const s = await page.evaluate((u) => {
       const txt = document.body.innerText;
-      // 对话主区：是否显示空状态引导标题
-      const emptyHeading = /想让 Agent 做什么|要在这个仓库里检查什么/.test(txt);
-      // 用户气泡是否在场（我们刚发的内容）
-      const userBubble = txt.includes('用一句话告诉我现在几点的概念');
-      const sendingCard = /正在发送任务|等待 CDS runtime 接受 prompt/.test(txt);
-      return { emptyHeading, userBubble, sendingCard };
-    });
+      return {
+        emptyHeading: /想让 Agent 做什么|要在这个仓库里检查什么/.test(txt),
+        userBubble: txt.includes(u),
+        sendingCard: /正在发送任务|等待 CDS runtime 接受 prompt/.test(txt),
+      };
+    }, UNIQUE);
     samples.push({ t: i * 100, ...s });
     await page.waitForTimeout(100);
   }
-  // 分析：发送后是否出现「空状态回闪」或「用户气泡消失」
-  const flashEmpty = samples.filter(s => s.emptyHeading);
-  const lostBubble = samples.filter(s => !s.userBubble);
-  const sawSendingCard = samples.filter(s => s.sendingCard);
-  console.log('SAMPLES', JSON.stringify(samples));
+  // 第一次出现用户气泡的时刻；出现后是否曾经丢失(=闪屏)
+  const firstBubbleIdx = samples.findIndex((s) => s.userBubble);
+  const lostAfterAppear = firstBubbleIdx >= 0
+    ? samples.slice(firstBubbleIdx).filter((s) => !s.userBubble).length
+    : -1;
+  const flashedEmptyAfterBubble = firstBubbleIdx >= 0
+    ? samples.slice(firstBubbleIdx).filter((s) => s.emptyHeading).length
+    : samples.filter((s) => s.emptyHeading).length;
   console.log('VERDICT', JSON.stringify({
-    everFlashedEmptyAfterSend: flashEmpty.length,
-    everLostUserBubble: lostBubble.length,
-    everShowedSendingCard: sawSendingCard.length,
-    totalSamples: samples.length,
+    firstBubbleAt_ms: firstBubbleIdx >= 0 ? firstBubbleIdx * 100 : 'never',
+    lostBubbleAfterAppear: lostAfterAppear,        // 期望 0 = 出现后没再消失(无闪屏)
+    flashedEmptyAfterBubble,                        // 期望 0 = 气泡出现后无空状态回闪
+    everShowedSendingCard: samples.filter((s) => s.sendingCard).length, // 期望 0
   }));
-  await shot(page, OUT, '02-after-send-3s', '发送后约3s：用户气泡应全程在场，无空状态回闪');
+  await shot(page, OUT, '02-after-send-3s', '发送后约3s：用户气泡应全程在场，无空状态回闪/诊断卡');
   writeManifest(OUT);
 } catch (e) { console.error('ERR', e.message); try { await shot(page, OUT, '99-err', e.message); } catch {} }
 finally { await browser.close(); }
