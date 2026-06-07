@@ -94,7 +94,13 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
     } else {
       setError(nodesRes.error?.message || '加载对端节点失败');
     }
-    if (itemsRes.success && itemsRes.data) setItems(itemsRes.data.items || []);
+    if (itemsRes.success && itemsRes.data) {
+      setItems(itemsRes.data.items || []);
+    } else {
+      // PR #742 review Medium fix：之前只看 nodesRes，items 加载失败时静默走空状态，用户以为"没东西可发"。
+      // 用 || 累加错误（nodes 已报错时优先保留）。
+      setError((prev) => prev || itemsRes.error?.message || '加载可发送条目失败');
+    }
     setLoading(false);
   }, [resourceType, direction]);
 
@@ -147,7 +153,9 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
   };
 
   const availableDirections = useMemo(
-    () => DIRECTIONS.filter((d) => d.key !== 'both' || capability?.supportsBidirectional),
+    // PR #742 review P2 fix：之前只过滤掉 both，仍允许用户选 pull → 后端拒 → 验证失败提示。
+    // 单向资源（push-only）应该在 UI 就只露出 push。
+    () => DIRECTIONS.filter((d) => d.key === 'push' || capability?.supportsBidirectional),
     [capability],
   );
 

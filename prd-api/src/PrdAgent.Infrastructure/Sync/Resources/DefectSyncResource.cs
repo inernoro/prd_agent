@@ -190,36 +190,37 @@ public class DefectSyncResource : ISyncableResource
             : await _db.DefectProjects.Find(p => p.Id == key).FirstOrDefaultAsync(ct);
         if (project == null)
         {
-            // PR #742 review P2 fix：defect_projects.Key 有唯一索引（uniq_defect_projects_key），
-            // 若同 Key 已被其它项目占用 -> InsertOne 会 DuplicateKey 整个 apply 报错。
-            // 三段策略：(a) 若同 Key 存在 -> 直接复用既有项目（更符合用户语义：同名项目就是同一个）；
-            // (b) Key 为空时给 base+随机后缀；(c) 兜底用 -timestamp 后缀防漏网。
+            // PR #742 review P2/High 二次修订：之前为了规避 defect_projects.Key 唯一索引冲突而"同 Key 直接复用既有项目"
+            // 引入了新 High：跨环境 push 时 targetKey 是对端项目 Id，若本地不存在对应 Id，会落到一个仅 slug 同名的
+            // 无关项目里造成数据串号。正确语义是"用指定的 Id 创建新项目，Key 用后缀保证唯一不抢占他人的 slug"。
             var baseKey = (bundle.Item.Name ?? "imported").ToLowerInvariant().Trim().Replace(' ', '-');
             if (string.IsNullOrWhiteSpace(baseKey)) baseKey = "imported-" + DateTime.UtcNow.Ticks.ToString("x");
-            var existingByKey = await _db.DefectProjects
-                .Find(p => p.Key == baseKey)
-                .FirstOrDefaultAsync(ct);
-            if (existingByKey != null)
+
+            string newId = !string.IsNullOrWhiteSpace(key) ? key : Guid.NewGuid().ToString("N");
+            // 若 Key 已被占用 → 加 -peer-{shortid} 后缀使新项目独立存在，**不复用别人的项目**
+            var keyTaken = await _db.DefectProjects.Find(p => p.Key == baseKey).AnyAsync(ct);
+            string finalKey = keyTaken ? $"{baseKey}-peer-{newId[..Math.Min(8, newId.Length)]}" : baseKey;
+
+            project = new DefectProject
             {
-                project = existingByKey;
-            }
-            else
+                Id = newId,
+                Name = string.IsNullOrWhiteSpace(bundle.Item.Name) ? "（来自对端的缺陷项目）" : bundle.Item.Name,
+                Key = finalKey,
+                Description = bundle.Item.Description,
+                OwnerUserId = ownerUserId,
+                OwnerName = ownerName,
+            };
+            try { await _db.DefectProjects.InsertOneAsync(project, cancellationToken: ct); }
+            catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
             {
-                project = new DefectProject
-                {
-                    Id = !string.IsNullOrWhiteSpace(key) ? key : Guid.NewGuid().ToString("N"),
-                    Name = string.IsNullOrWhiteSpace(bundle.Item.Name) ? "（来自对端的缺陷项目）" : bundle.Item.Name,
-                    Key = baseKey,
-                    Description = bundle.Item.Description,
-                    OwnerUserId = ownerUserId,
-                    OwnerName = ownerName,
-                };
+                // 竞态 - 在 lookup 后他人插入了同 Key。改 Key 再试一次，使用 GUID 后缀，几乎不可能再冲突。
+                project.Key = $"{baseKey}-peer-{Guid.NewGuid().ToString("N")[..12]}";
                 try { await _db.DefectProjects.InsertOneAsync(project, cancellationToken: ct); }
-                catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+                catch (MongoWriteException ex2)
                 {
-                    // 极端竞态：刚 lookup 完别人就插了同 Key。重新读一次复用。
-                    project = await _db.DefectProjects.Find(p => p.Key == baseKey).FirstOrDefaultAsync(ct)
-                        ?? throw new InvalidOperationException("无法创建或复用缺陷项目（同 Key 冲突解决失败）");
+                    // 如果 Id 维度也撞了（极罕见，需要 newId 已经被占），抛出明确错误而非串号落库。
+                    throw new InvalidOperationException(
+                        $"无法创建缺陷项目（Id={newId}，Key={project.Key}）：{ex2.Message}");
                 }
             }
         }
@@ -241,6 +242,23 @@ public class DefectSyncResource : ISyncableResource
                     .FirstOrDefaultAsync(ct);
 
                 var meta = r.Metadata ?? new Dictionary<string, string>();
+                // PR #742 review P2 fix：必须区分 key 缺失 vs key 存在且空值 ——
+                //   - key 缺失 = 源端未携带该字段的信息（保留现状）
+                //   - key 存在但 v=空 = 源端【显式清空】（同步到 null/null-ts）
+                // 旧版 Get 把两者混为 null 导致清除操作无法跨节点传递。
+                string? Resolved(string k, string? current)
+                {
+                    if (!meta.TryGetValue(k, out var v)) return current; // 缺失 = 保留
+                    return string.IsNullOrEmpty(v) ? null : v;            // 存在但空 = 显式清
+                }
+                DateTime? ResolvedTs(string k, DateTime? current)
+                {
+                    if (!meta.TryGetValue(k, out var v)) return current;
+                    if (string.IsNullOrEmpty(v)) return null;
+                    return DateTime.TryParse(v, out var dt) ? dt.ToUniversalTime() : current;
+                }
+                // 保留 Get 给只读 metadata（如 defectNo / createdAt / reporterName / assigneeName）用——
+                // 这些字段空值就当不存在合理。下方业务字段都改走 Resolved 走"显式清"语义。
                 string? Get(string k) => meta.TryGetValue(k, out var v) && !string.IsNullOrEmpty(v) ? v : null;
 
                 // PR #742 review fix：消化 export 写入 Extras 的 attachments / structuredData，
@@ -281,10 +299,8 @@ public class DefectSyncResource : ISyncableResource
                     }
                     catch { structured = new Dictionary<string, string>(); }
                 }
-                // 解析 resolvedAt：源端解决/重新打开时 timestamp 必须搬过来，否则分析的"解决耗时"会断
-                DateTime? resolvedAt = null;
-                if (Get("resolvedAt") is string ra && DateTime.TryParse(ra, out var raDt))
-                    resolvedAt = raDt.ToUniversalTime();
+                // 解析 resolvedAt：源端解决/重新打开时 timestamp 必须搬过来，否则分析的"解决耗时"会断。
+                // 走 ResolvedTs 支持源端把"重开"传过来（resolvedAt = "" → 清回 null）。
 
                 if (existing != null)
                 {
@@ -299,14 +315,21 @@ public class DefectSyncResource : ISyncableResource
                         .OrderBy(kv => kv.Key, StringComparer.Ordinal));
                     var newStructSig = JsonSerializer.Serialize((structured ?? new Dictionary<string, string>())
                         .OrderBy(kv => kv.Key, StringComparer.Ordinal));
+                    // 用 Resolved 让 no-op 比对正确处理"源端显式清空"（用空字符串 vs 缺失 key 区分）。
+                    var newStatus = Resolved("status", existing.Status);
+                    var newSeverity = Resolved("severity", existing.Severity);
+                    var newPriority = Resolved("priority", existing.Priority);
+                    var newResolution = Resolved("resolution", existing.Resolution);
+                    var newAssignee = Resolved("assigneeName", existing.AssigneeName);
+                    var newResolvedAt = ResolvedTs("resolvedAt", existing.ResolvedAt);
                     if (existing.RawContent == r.Content
                         && existing.Title == r.Title
-                        && existing.Status == (Get("status") ?? existing.Status)
-                        && existing.Severity == (Get("severity") ?? existing.Severity)
-                        && existing.Priority == (Get("priority") ?? existing.Priority)
-                        && existing.Resolution == (Get("resolution") ?? existing.Resolution)
-                        && existing.AssigneeName == (Get("assigneeName") ?? existing.AssigneeName)
-                        && existing.ResolvedAt == (resolvedAt ?? existing.ResolvedAt)
+                        && existing.Status == newStatus
+                        && existing.Severity == newSeverity
+                        && existing.Priority == newPriority
+                        && existing.Resolution == newResolution
+                        && existing.AssigneeName == newAssignee
+                        && existing.ResolvedAt == newResolvedAt
                         && existingAttSig == newAttSig
                         && existingStructSig == newStructSig)
                     {
@@ -316,12 +339,12 @@ public class DefectSyncResource : ISyncableResource
                     var u = Builders<DefectReport>.Update
                         .Set(x => x.Title, r.Title)
                         .Set(x => x.RawContent, r.Content ?? string.Empty)
-                        .Set(x => x.Status, Get("status") ?? existing.Status)
-                        .Set(x => x.Severity, Get("severity") ?? existing.Severity)
-                        .Set(x => x.Priority, Get("priority") ?? existing.Priority)
-                        .Set(x => x.Resolution, Get("resolution") ?? existing.Resolution)
-                        .Set(x => x.AssigneeName, Get("assigneeName") ?? existing.AssigneeName)
-                        .Set(x => x.ResolvedAt, resolvedAt ?? existing.ResolvedAt)
+                        .Set(x => x.Status, newStatus ?? string.Empty)
+                        .Set(x => x.Severity, newSeverity)
+                        .Set(x => x.Priority, newPriority)
+                        .Set(x => x.Resolution, newResolution)
+                        .Set(x => x.AssigneeName, newAssignee)
+                        .Set(x => x.ResolvedAt, newResolvedAt)
                         .Set(x => x.ProjectId, project.Id)
                         .Set(x => x.ProjectName, project.Name)
                         .Set(x => x.UpdatedAt, DateTime.UtcNow);
@@ -354,18 +377,18 @@ public class DefectSyncResource : ISyncableResource
                         DefectNo = Get("defectNo") ?? string.Empty,
                         Title = r.Title,
                         RawContent = r.Content ?? string.Empty,
-                        Status = Get("status") ?? "submitted",
-                        Severity = Get("severity"),
-                        Priority = Get("priority"),
-                        Resolution = Get("resolution"),
+                        Status = Resolved("status", "submitted") ?? "submitted",
+                        Severity = Resolved("severity", null),
+                        Priority = Resolved("priority", null),
+                        Resolution = Resolved("resolution", null),
                         ReporterId = ownerUserId,
                         ReporterName = Get("reporterName") ?? ownerName,
-                        AssigneeName = Get("assigneeName"),
+                        AssigneeName = Resolved("assigneeName", null),
                         ProjectId = project.Id,
                         ProjectName = project.Name,
                         CreatedAt = parsedCreated,
                         UpdatedAt = DateTime.UtcNow,
-                        ResolvedAt = resolvedAt,
+                        ResolvedAt = ResolvedTs("resolvedAt", null),
                         Attachments = attachments ?? new List<DefectAttachment>(),
                         StructuredData = structured ?? new Dictionary<string, string>(),
                     };
