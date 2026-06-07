@@ -94,6 +94,7 @@ docs:
   design.cds-agent-official-sdk-adapter: CDS Agent 官方 SDK Adapter 设计
   design.cds-agent-commercial-architecture-and-roadmap: CDS Agent 商业级架构与路线图
   design.cds-agent-managed-runtime-fact-source: CDS Agent R0 · CDS-managed runtime fact source 设计
+  design.knowledge-agent-architecture: CDS Agent 工作区基础设施模型（文件夹/知识库为主，GitHub 降级为钩子）
   design.cds-onboarding: CDS 极简上手设计：一键配置 + 项目扫描技能
   design.cds-ai-compose: CDS AI 生成 compose 草稿设计（可选路径，借用 CDS Agent/OpenRouter，确定性检测器为兜底）
   design.ai-report-systems: AI 周报系统市场调研报告

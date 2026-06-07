@@ -209,6 +209,9 @@
 - [CDS Agent R0 · CDS-managed runtime fact source 设计](design.cds-agent-managed-runtime-fact-source) `design.cds-agent-managed-runtime-fact-source`
   > CDS-managed runtime 事实来源的设计文档
 
+- [CDS Agent 工作区基础设施模型](design.knowledge-agent-architecture) `design.knowledge-agent-architecture`
+  > 工作区来源从 GitHub 仓库迁移到文件夹/知识库（document_stores），GitHub 降级为可选钩子；含官方/自建边界表、数据模型、文件注入受阻说明
+
 - [CDS 极简上手设计](design.cds-onboarding) `design.cds-onboarding`
   > CDS 一键配置与项目扫描技能的上手设计
 

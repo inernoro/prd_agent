@@ -31,3 +31,4 @@
 | fix | prd-admin | CDS Agent 输入框选中高亮走外层容器(focus-within ring),不再高亮内层 textarea(符合 surface 选中规则) |
 | fix | prd-admin | CDS Agent 追问复用同一会话:已 provision 过(有 cdsSessionId)的会话不再 re-start,直接发消息(CDS 会话被回收时由 SendMessage 按同一 MAP 会话重建),根治「追问时上一轮历史丢失/新建会话」 |
 | fix | prd-admin | CDS Agent 输入框 textarea 加 .no-focus-ring 压掉全局 textarea:focus-visible 内框描边,选中高亮只落外层容器(此前外环加了但内框蓝还在) |
+| refactor | prd-admin | CDS Agent 代码模式工作区改为以文件夹/知识库为主，GitHub 降级为可选钩子 |

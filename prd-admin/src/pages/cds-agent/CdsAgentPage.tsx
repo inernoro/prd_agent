@@ -53,6 +53,8 @@ import {
   type InfraAgentSessionView,
   type InfraAgentSlaDashboardView,
 } from '@/services/real/infraAgentSessions';
+import { listDocumentStoresReal } from '@/services/real/documentStore';
+import type { DocumentStore } from '@/services/contracts/documentStore';
 import { resolveExecutionRunway, resolveProviderEvidenceState, resolveSessionRuntimeState } from './cdsAgentReadiness';
 
 const EVENT_PAGE_LIMIT = 500;
@@ -986,7 +988,10 @@ export default function CdsAgentPage() {
     gitRepository: '',
     gitRef: 'main',
     workspaceRoot: '',
+    workspaceKbId: '',
   });
+  const [documentStores, setDocumentStores] = useState<DocumentStore[]>([]);
+  const [documentStoresLoading, setDocumentStoresLoading] = useState(false);
   const [profileDraft, setProfileDraft] = useState({
     name: '',
     runtime: 'claude-sdk',
@@ -2306,6 +2311,23 @@ export default function CdsAgentPage() {
 
   useEffect(() => {
     void loadAll().finally(() => setBootLoading(false));
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchDocumentStores = async () => {
+      setDocumentStoresLoading(true);
+      try {
+        const res = await listDocumentStoresReal(1, 100);
+        if (!cancelled && res.success && res.data) {
+          setDocumentStores(res.data.items);
+        }
+      } finally {
+        if (!cancelled) setDocumentStoresLoading(false);
+      }
+    };
+    void fetchDocumentStores();
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -3877,7 +3899,7 @@ export default function CdsAgentPage() {
               )}
             </div>
           )}
-	        {/* Codex 风:控件融合一行(模式/模型/停止/发送),去掉顶部独立 tab 行、分隔线和提示文案,显得不臃肿 */}
+	        {/* Codex 风:控件融合一行(模式/工作区/模型/停止/发送),不臃肿。代码模式工作区以知识库/文件夹为主,GitHub 降为可选钩子。 */}
 	        <div className="mt-1.5 flex items-center gap-2">
 	          <div className="inline-flex shrink-0 rounded-lg p-0.5" style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.08)' }}>
 	            {([{ value: 'chat', label: '对话', icon: MessageSquare }, { value: 'code', label: '代码', icon: Terminal }] as const).map((mode) => {
@@ -3893,10 +3915,19 @@ export default function CdsAgentPage() {
 	            })}
 	          </div>
 	          {simpleTaskMode === 'code' && (
-	            <input value={draft.gitRepository} onChange={(e) => setDraft((prev) => ({ ...prev, gitRepository: e.target.value }))}
-	              placeholder="仓库 URL，可留空"
-	              className="h-7 min-w-[140px] flex-1 rounded-md px-2.5 text-xs text-white outline-none placeholder:text-white/30"
-	              style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.09)' }} />
+	            <>
+	              <select value={draft.workspaceKbId} onChange={(e) => setDraft((prev) => ({ ...prev, workspaceKbId: e.target.value }))}
+	                disabled={documentStoresLoading} title="工作区：知识库/文件夹（Agent 上下文来源）"
+	                className="h-7 min-w-[150px] flex-1 rounded-md px-2 text-xs text-white outline-none"
+	                style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.09)' }}>
+	                <option value="">{documentStoresLoading ? '加载知识库...' : '工作区：知识库/文件夹（可选）'}</option>
+	                {documentStores.map((store) => (<option key={store.id} value={store.id}>{store.name}</option>))}
+	              </select>
+	              <input value={draft.gitRepository} onChange={(e) => setDraft((prev) => ({ ...prev, gitRepository: e.target.value }))}
+	                placeholder="可选：GitHub（钩子）"
+	                className="h-7 min-w-[110px] flex-1 rounded-md px-2.5 text-xs text-white outline-none placeholder:text-white/30"
+	                style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.07)' }} />
+	            </>
 	          )}
 	          <div className="flex-1" />
 	          {activeSession && activeSessionRuntimeState.isLive ? (

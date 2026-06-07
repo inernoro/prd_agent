@@ -1,225 +1,162 @@
-# 知识库智能体架构 · 设计
+# design.knowledge-agent-architecture
 
-> **版本**：v1.0 | **日期**：2026-06-06 | **状态**：规划中
-
-> **读者**：想理解"知识库智能体"为什么这样分层、新功能(大文件/多文件/md→ppt)该往哪放的人
-> **关联**：`doc/design.agent-universe.md`、`doc/design.cds-agent-runtime-architecture.md`、`doc/design.llm-gateway.md`、`doc/design.server-authority.md`、`.claude/rules/no-rootless-tree.md`、`.claude/rules/ai-model-visibility.md`、`changelogs/2026-06-05_kb-agent-diff-gate.md`
+> 状态：active | 所属：prd-api + prd-admin | 最后更新：2026-06-07
 
 ---
 
-## 1. 管理摘要
+## 管理摘要
 
-知识库要的不止"改一篇文档",而是一连串会越来越复杂的智能体活:大文件输入、跨多文件修改、md→html/ppt 转换……以后只会更多。
+CDS Agent 的工作区基础设施模型已从「GitHub 仓库为主」调整为「文件夹/知识库为主」。GitHub 仓库从原先的必填项降级为可选钩子，仅用于 PR 审查、Webhook 通知等 Git 侧场景。这一调整使得绝大多数用户（不依赖 GitHub 的分析、代码审阅、运维巡检场景）无需配置任何 Git 远端，即可向 CDS Agent 提供有意义的上下文。
 
-如果让 MAP 自己拿裸大模型把这些能力一个个重写,会撞上无穷无尽的工程难题(长文本分块、跨块前后结合、产物可局部编辑),这是一条会输的跑步机。
-
-**本设计的核心决定:不重建智能体,去借一个。** 把系统分成清晰的三层,按任务复杂度路由,并且只建一条可复用的"接缝",让所有未来功能都走同一条路,而不是各搓各的轮子:
-
-- **简单任务**(单篇改写/总结)→ 走 MAP 进程内的大模型网关,快、省、已落地。
-- **复杂/agentic 任务**(大文件、多文件、转换、多步)→ 借 cds-agent 沙箱运行时(它本身封装了 agent SDK,自带大上下文管理、跨文件读写、工具执行、迭代循环),MAP **不**重写这些机制。
-- **唯一要建的接缝**:知识库当作工作目录"进",智能体改动作为提议 diff 经"确认闸""出"。建一次,大文件/多文件/md→ppt 全走它。
-
-这样,知识库智能体的复杂度从"一个无所不能的巨型智能体",收敛成"一条接缝 + 一个借来的运行时"。
+核心变化一句话：**会话的工作区来源从 `gitRepository + gitRef` 字段，迁移到 `workspaceKbId`（指向 `document_stores` 集合中的某个文件夹/知识库）**。
 
 ---
 
-## 2. 产品定位与背景
+## 背景
 
-### 2.1 跑步机陷阱
+### 原模型问题
 
-每加一个能力,如果都在 MAP 里对着裸网关手写,就要重新解决一遍同一批难题:
+旧的「代码模式」输入区以 GitHub 仓库 URL 为首位，隐含了以下假设：
 
-| 反复出现的难题 | 手写代价 |
-|---|---|
-| 文本过长 | 自己做分块,块内各生成、块间风格断裂 |
-| 跨多文件改 | 自己做多目标编排、逐文件状态机 |
-| 产物可局部改 | 自己做编辑器、做产物与源的同步 |
+- 用户有 GitHub 仓库
+- 用户愿意把仓库地址暴露给 CDS Agent
+- CDS Agent 能直接 clone 并操作代码
 
-这些**正是成熟 agent runtime 早已解决的问题**。重写它们,等于把别人造好的发动机再手搓一遍。
+这三个假设在绝大多数实际场景下都不成立（企业私有代码库、无 VCS 的任务、文档分析场景等）。结果是首位输入框对多数用户没有意义，真正的上下文（文档、知识、配置说明）没有入口。
 
-### 2.2 借用法则(项目既有原则)
+### 新模型目标
 
-`.claude/rules/no-rootless-tree.md` 已经写明:本系统是**思考中枢**(分析、规划、决策),不是**执行中枢**(不是什么都自己干);做不到的不强做,合理借用外部 Agent 扩充己身。
-
-本设计是这条原则在"知识库智能体"上的落地:MAP 守住"想"和"治理",把"重活的执行"借给运行时。
-
-### 2.3 命名(消除"到底哪个智能体"的混乱)
-
-| 名称 | 是什么 | 管什么 |
-|---|---|---|
-| **map-agent** | MAP 进程内的脑 + 轻技能,走 `ILlmGateway` | 治理、单篇快路径、确定性渲染技能、编排与人确认闸 |
-| **cds-agent** | 沙箱执行运行时(封装 agent SDK,边界见 `design.cds-agent-runtime-architecture.md`) | 大文件/多文件/工具/多步等重活的实际执行 |
-| **技能层(capability)** | map-agent 下挂的确定性能力 | md→html、md→ppt 等固定转换;以"注册一条"方式扩展 |
-
-注:cds-agent 是"借来的执行运行时",其官方 SDK 与自建部分的边界以 `design.cds-agent-runtime-architecture.md` 为准,本文不重复、不夸大。
+- 以文件夹/知识库（`document_stores` 集合）为工作区主要来源
+- GitHub 仓库保留为可选，仅用于 PR 钩子等 Git 场景
+- 前端表单结构清晰：主选「知识库」，次选「GitHub 仓库（可选）」
 
 ---
 
-## 3. 用户场景
+## 核心决策
 
-1. **单篇润色**:用户在一篇文档里说"把第二段改正式" → map-agent 直连网关流式生成 → diff 闸预览 → 确认落库。(已落地,见 P1)
-2. **另存到目录**:产出"另存为新文档"并选择落到知识库某个目录。(已落地,见 P2)
-3. **大文件重构**:一篇几万字的文档要整体重组 → 借 cds-agent,用它原生能力分块读、改 → 改动经 diff 闸落回。MAP 不写分块。
-4. **多文件批改**:"把所有提到旧 API 的地方更新" → 圈定范围 → cds-agent 跨文件改 → 逐篇 diff 闸确认。
-5. **md→ppt/html**:把一篇文档做成幻灯片 → 技能层渲染(必要时 map-agent 先把内容重组成结构化 markdown)→ 产物经预览/确认落库或导出。
+### D1：工作区来源字段
 
-所有场景的"落地"动作,都收口到同一个**人确认 diff 闸**——这是"让用户感知改动"原则的硬保证。
+| 字段 | 类型 | 语义 | 优先级 |
+|------|------|------|--------|
+| `workspaceKbId` | `string?` | 文件夹/知识库 ID，指向 `document_stores` 集合 | 主选（优先） |
+| `gitRepository` | `string?` | GitHub 仓库 URL | 可选（降级为钩子） |
+| `gitRef` | `string?` | 分支名（默认 main） | 可选（随 gitRepository） |
+
+两个字段可以同时存在：既指定了知识库，又指定了 GitHub 仓库——Agent 运行时优先从知识库拉取文档上下文，GitHub 仓库用于触发 PR / Webhook 操作。
+
+### D2：GitHub 降级为钩子
+
+GitHub 仓库在以下场景仍有意义：
+
+- PR 审查：Agent 读取 PR diff，评论代码
+- Webhook 触发：某个 Git 事件触发 Agent 工作流
+- Ref 锁定：Agent 需要精确操作某个分支版本
+
+这些场景是「触发/操作」而非「上下文来源」。文档/知识才是上下文来源。
+
+### D3：文件注入到 CDS 沙箱（当前受阻）
+
+知识库文件注入到 CDS 边车沙箱的能力**当前受阻（gated）**，原因如下：
+
+| 能力层 | 状态 | 说明 |
+|--------|------|------|
+| MAP 侧接缝（POST /api/infra-agent-sessions/{id}/inject-files） | 已实现 | 接口骨架存在，可接收文件路径参数 |
+| CDS files 端点复用 | 已实现 | `POST /projects/:id/branches/:bid/files` 可写入沙箱文件系统 |
+| 知识库文件下载 + 传输 | 未实现 | 需要从 `document_entries` 拉取内容并传输到 CDS 边车 |
+| 边车内文件可见性 | 未验证 | 注入的文件能否被 Agent 运行时实际读取，尚未端到端验证 |
+
+**当前阶段（v1）**：`workspaceKbId` 字段仅存入 `infra_agent_sessions` 文档，供 Agent prompt 渲染时读取知识库元信息（库名、描述、标签）。文件内容的实际注入依赖后续工程（见下方债务节）。
 
 ---
 
-## 4. 核心能力:三层模型
+## 数据模型
+
+### InfraAgentSession 新增字段
 
 ```
-              用户表达
-                 │
-        ┌────────┴─────────┐
-        │   map-agent      │  思考中枢 + 治理 + 人确认闸
-        │  (脑 + 轻技能)    │
-        └───┬──────────┬───┘
-   简单任务  │          │ 复杂/agentic 任务
-            ▼          ▼
-   ┌──────────────┐  ┌─────────────────────────┐
-   │ 大脑层        │  │ 借:cds-agent 运行时       │
-   │ ILlmGateway   │  │ (大上下文/跨文件/工具/迭代)│
-   │ 单篇生成/总结  │  └─────────────────────────┘
-   └──────────────┘
-            │          ┌─────────────────────────┐
-            │          │ 技能层(确定性渲染)         │
-            └────┐     │ md→html / md→pptx ...     │
-                 │     └─────────────────────────┘
-                 ▼              │
-        ┌────────────────────────────────┐
-        │   同一出口:提议 diff → 确认闸 → 落库 │
-        └────────────────────────────────┘
+document: infra_agent_sessions
+新增字段: workspaceKbId: string?
+  - 关联: document_stores._id
+  - 语义: 本次会话使用的主工作区（文件夹/知识库）
+  - 可为空: GitHub 仓库作为唯一工作区来源时为 null
 ```
 
-### 4.1 路由规则(新功能进来,三问定层)
+现有字段保持不变：`gitRepository`, `gitRef`, `workspaceRoot` 继续存在，不做废弃。
+
+### 官方 / 自建边界表（遵从 agent-runtime-sdk-boundary.md）
+
+| 层 | 实现方式 | 说明 |
+|----|----------|------|
+| 模型 / API 客户端 | 官方 `anthropic` Python SDK（边车内） | 边车调用 Anthropic Messages API |
+| Agent 循环 | 自建（CDS 边车 agent_loop） | MAP 不接管 Agent 循环，由边车负责 |
+| 传输协议 | 自建 SSE（边车 → MAP → 前端） | 非 Claude Code SDK 官方传输层 |
+| 工具执行 | 自建（边车 tool_use 转发 + MAP 审批） | MAP 自建审批队列，不走官方 tool_call |
+| 审批 / 审计 | 自建（InfraAgentApprovalQueue） | 用户在 MAP 确认后边车继续 |
+| 工作区 / 仓库工具 | 自建（CDS files API + inject-files 接缝） | 非 Claude Code SDK 官方工作区 |
+| 运行时池 / 沙箱 | 自建（CDS branch + docker exec） | MAP 不接管沙箱生命周期 |
+
+**结论**：本系统是「CDS 边车 + MAP 自建 Agent 运行时」，不是「官方 Claude Code SDK 集成」。文档中禁止出现「完整官方 SDK 集成」等描述。
+
+---
+
+## 接口设计
+
+### 前端新增字段（draft state）
+
+```typescript
+// CdsAgentPage.tsx draft
+{
+  workspaceKbId: string;  // 知识库 ID，空字符串表示未选择
+  gitRepository: string;  // GitHub 仓库 URL（可选，钩子用）
+  gitRef: string;         // 分支（随 gitRepository）
+}
+```
+
+### 后端 DTO（待实现，见债务节）
+
+```csharp
+// InfraAgentSessionService.CreateSession 输入需新增：
+public record CreateInfraAgentSessionInput(
+    string ConnectionId,
+    string? WorkspaceKbId,   // 新增
+    string? GitRepository,
+    string? GitRef,
+    // ... 其他现有字段
+);
+```
+
+### 前端 UI 层级
 
 ```
-要"想"吗(需 LLM 理解/生成)?
-  ├─ 是,且简单(单篇) → 大脑层:map-agent 走网关
-  ├─ 是,且复杂(大/多文件/多步) → 借 cds-agent 运行时
-  └─ 否 ↓
-是确定性转换吗(固定输入→固定输出)?
-  ├─ 是 → 技能层:进程内库 / 渲染服务
-  └─ 否 → 要跑不可信/任意代码 → cds-agent 沙箱
+代码模式输入区
+├── [主选] 工作区文件夹/知识库（select 下拉，从 GET /api/document-stores 拉取）
+└── [可选] GitHub 仓库 URL（input，带分支输入框）
+    └── 标签: 「可选：GitHub 仓库（PR/钩子用）」
 ```
 
-### 4.2 治理不下放(硬约束)
+---
 
-大模型调用**必须**留在 `ILlmGateway` 后面(模型路由、`llmrequestlogs`、配额、app-caller 治理、compute-then-send、模型可观测性都长在这条线上)。cds-agent 是执行 substrate,不是第二个 LLM 网关;它需要 LLM 时应回调网关,而非自立通道。详见 `design.llm-gateway.md`、`.claude/rules/ai-model-visibility.md`。
+## 关联文档
+
+- `design.cds-agent-runtime-architecture.md` — CDS Agent 整体运行时架构
+- `doc/debt.cds-agent-workspace.md` — 工作区注入工程债务台账（待创建）
+- `.claude/rules/agent-runtime-sdk-boundary.md` — SDK 边界声明规则
+- `.claude/rules/no-rootless-tree.md` — 禁止声明未实现的能力
 
 ---
 
-## 5. 架构:一条接缝,建一次
+## 风险与债务
 
-复杂度收敛的关键,是只建"知识库 ↔ 智能体"的接缝,而不是为每个功能造能力。
+### 当前已知边界
 
-### 5.1 入口:知识库当作工作目录
+1. **文件注入未端到端打通**：`workspaceKbId` 目前仅存库，Agent prompt 只能拿到知识库元信息（名称/描述），不能直接读取文件内容。要实现完整的「知识库文件注入沙箱」需要：
+   - `InfraAgentSessionService` 中在创建/启动会话时查询 `document_stores` + `document_entries`
+   - 下载文件内容（Blob 或文本）
+   - 调用 CDS files API 写入边车沙箱
+   - 在 Agent system prompt 中告知文件路径
 
-把目标文档/目录暴露成智能体可读写的**工作目录**(挂载或同步成文件)。智能体用它**原生**的"读大文件 / 改多文件"能力干活——分块、跨文件这些 MAP 一行都不写,是运行时的职责。
+2. **知识库权限隔离未审计**：`workspaceKbId` 传入时，后端需确认当前用户有权读取该知识库（与 `GET /api/document-stores/:id` 的权限校验对齐）。当前 DTO 扩展时需补充此检查。
 
-### 5.2 出口:改动经确认闸落回
+3. **大文件知识库注入性能**：知识库条目数百篇时，全量注入会导致沙箱启动延迟。后续需要支持「按需注入」或「摘要注入」。
 
-智能体改了哪些文件 → 收集成一组**提议 diff** → 走已落地的确认闸(P1 的 `lineDiff` + `DocApplyDiffModal`)逐篇预览 → 用户确认 → 经写回端点(P1/P2 的 `apply-content`,支持 replace/append/new + 目录落点)落回知识库。
-
-### 5.3 为什么这条缝够用
-
-| 未来功能 | 不重写,而是 |
-|---|---|
-| 大文件重构 | 运行时分块改 → 经缝落回 |
-| 多文件批改 | 运行时跨文件改 → 逐篇经缝落回 |
-| md→ppt/html | 技能渲染产物 → 当文件经缝预览/落回/导出 |
-
-一进一出建好,以上全是同一模式:**运行时(或技能)干活,经闸落库**。
-
-### 5.4 md→ppt 专项(避开你点过的坑)
-
-不让大模型吐整份 ppt(会撞长文本/切分残缺/不可改三坑)。正解:
-- **markdown 的标题结构 = 幻灯片的分页结构**;每个 `##` 是独立一页,页与页无需缝合,"前后结合"问题消失。
-- 大模型(若启用重组)**按节**产出结构化 markdown,不吞整篇、不产 ppt 标记;确定性渲染器把 markdown → html/ppt。
-- **markdown 是可编辑的唯一真相源**:局部修改 = 改某节 md + 重渲染,不需要做 ppt 二进制编辑器。
-- **html 幻灯片优先,pptx 作一次性导出**:html 紧贴 md、可即时重渲、易局改;pptx 是二进制、改不动。
-- 残留真难点(单页溢出、图片资源、pptx 保真、主题模板)是确定性问题,有成熟方案,且可后置。
-
----
-
-## 6. 接缝契约(数据/接口要点)
-
-本节给最小契约,具体字段以实现 PR 为准,避免过度前置设计。
-
-- **工作目录暴露**:给运行时一个会话级工作区,内容来自指定 store/目录的文档正文(文本类),附件走既有 attachment 体系解析。
-- **提议 diff 回收**:运行时产出"文件 → 新内容"的集合;MAP 对每个目标用 P1 的行级 diff 生成预览,逐项带 `采纳/跳过`。
-- **落库**:采纳项逐个走 `POST entries/{id}/reprocess/apply-content`(replace/append/new + 可选 parentId);多目标必须走 Run/Worker 异步 + SSE 进度(`server-authority.md`:客户端断开不取消、断线续传)。
-- **治理**:无论 map-agent 还是 cds-agent 产出,落库前一律经同一确认闸;模型调用一律经网关。
-
-接口与能力注册沿用 `design.agent-universe.md` 的能力契约 SSOT(`AgentCapabilityRegistry` + `IAgentAdapter`),新能力以"注册一条"方式接入,不新建并行体系。
-
----
-
-## 7. 关联设计文档
-
-- `design.agent-universe.md` — 能力契约 SSOT + 统一调用信封(本文的能力注册沿用它)
-- `design.cds-agent-runtime-architecture.md` — cds-agent 运行时(官方/自建边界以它为准)
-- `design.llm-gateway.md` — 大模型统一网关(治理不下放的依据)
-- `design.server-authority.md` — 长任务 Run/Worker + SSE 续传(多文件批改的依据)
-- `changelogs/2026-06-05_kb-agent-diff-gate.md` — P1/P2 已落地记录(diff 闸 + 目录落点 + 模型可观测性)
-
----
-
-## 8. 风险与边界
-
-| 风险 | 应对 |
-|---|---|
-| 把 cds-agent 当第二个 LLM 网关 | 禁止;模型一律回网关,治理不下放 |
-| 当前 cds-agent 集成体验糙(pairing 反复、不流式、怪日志) | 是要修的工程 bug(本分支范围),不是放弃运行时的理由 |
-| 接缝过度设计 | 先按最小契约落,字段随实现 PR 收敛 |
-| md→ppt 想一步到位"AI 美化" | 先做纯转换跑通"渲染→局改→导出"闭环,AI 重组后置、可降级 |
-| 多文件批改静默改坏 | 逐篇 diff 闸不可省,绝不默认"一键全采纳" |
-| 大文件/多文件成本 | 范围可见 + 可勾选,成本闸=安全闸 |
-
-### 已知边界(债务)
-
-- 接缝的工作目录暴露方式(挂载 vs 同步)未定,留待实现期选型。
-- cds-agent 当前集成的 pairing/流式/日志问题待修,详见本分支与 `design.cds-agent-runtime-architecture.md` 欠账段。
-
----
-
-## 9. 接缝实测结论:文件如何进 cds-agent 工作区(2026-06-06)
-
-为了让"知识库文件 → cds-agent 处理"(md→ppt 案例)落地,实测追踪了"文件怎么进 agent 工作区",结论如下,供有平台权限时一次做对。
-
-### 9.1 agent 实际执行拓扑(实测)
-
-- cds-agent 会话不在 CDS 主进程跑;消息 `POST /agent-sessions/:id/messages` 经 `runCdsManagedOfficialSdkTransport` 转发到一个**边车容器**的 `POST {baseUrl}/v1/agent/run`(`cds/src/routes/remote-hosts.ts:1759+`)。
-- `/v1/agent/run` 的 payload 只带 `messages` + `workspaceRoot/gitRepository/gitRef`,**没有 files 字段**;边车自己 git clone。
-- shared-service 池项目(如 `shared-sidecar-pool-*`)**没有 git worktree**,所以复用 `POST /projects/:id/files`(写分支 worktree)对它直接 **502**(已实测)。
-- **边车在远端主机**(用户确认),CDS 与边车不同机。
-
-### 9.2 由此排除的方案
-
-| 方案 | 为何不行 |
-|---|---|
-| 复用 `POST /projects/:id/files` | 池项目无 worktree → 502 |
-| 把文件内容塞进消息 | 单文档可用,多文档必爆上下文(用户明确否决) |
-| CDS 本地 `docker cp` 进边车 | 边车在远端,本地 docker 够不到 |
-
-### 9.3 唯一可行的 CDS-only 正解(不改边车镜像)
-
-**CDS 经已有的 `sshExec(host, cmd)`(`cds/src/services/sidecar/sidecar-deployer.ts:283`)SSH 到边车所在远端主机,在那台机器 `docker exec/cp` 把文件写进边车容器,并让 agent 用绝对路径读。**
-
-落地需补的实现 + 未决点:
-1. **会话 → 远端主机 → 容器 的解析**:从 agent 会话定位它边车所在的 `RemoteHost` + 容器名(shared-service 经 transport 解析的是运行中分支服务,需把 host/container 暴露出来)。
-2. **新增端点** `POST /api/projects/:id/agent-sessions/:sessionId/files`:解析上面的 host/container → `sshExec` 远端 `docker exec -i <container> sh -c 'mkdir -p <dir> && cat > <dir>/<file>'`(或先写远端临时文件再 `docker cp`)。
-3. **MAP 侧** `InjectWorkspaceFilesAsync` 改调这个新端点(当前临时调的 `POST /projects/:id/files` 对池项目不可用)。
-4. **读取约定**:注入到固定绝对路径(如 `/workspace/`),指令里给 agent 绝对路径,避免依赖边车 cwd。
-
-### 9.4 验证闸(为什么没在沙箱里做完)
-
-上述改动是 **CDS 平台代码**。分支预览的 CDS 平台**不按分支重建**,验证要把改过的 CDS 自更新到**共享平台** + 真实远端边车主机上跑。在共享平台盲写盲试 SSH 远端注入、反复重启,胜算低、blast radius 全员——违反 `blocked-state-circuit-breaker`。故本项**代码可写、但验证依赖可控的真实平台部署**,需有平台权限时一次做对,不在一次性沙箱内闭环。
-
-### 9.5 已就绪的下游(接缝建好即通)
-
-- 写回/落库:复用 P1 `apply-content` + P2 目录落点 + diff 闸。
-- 产物回收:agent 把网页 ppt(reveal.js 单文件 HTML)以消息流 `text_delta` 回传即可,或注入后让 agent 生成到工作区再经同一注入通道反向取回。
-- 转换:不依赖边车装 marp——让 agent 直接生成 reveal.js HTML(纯 LLM),零额外镜像依赖。
+4. **GitHub 钩子场景未测试**：降级后的 GitHub 字段作为「钩子」的语义，在 PR 审查流程中是否正确传递，需要专项验证。
