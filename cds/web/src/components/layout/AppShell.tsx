@@ -542,12 +542,14 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
   // 导致全屏 backdrop 只盖住顶栏(Bugbot #741 Medium「Sheet backdrop clipped」)。
   const [sheetPos, setSheetPos] = useState<{ top: number; right: number } | null>(null);
   const toggleSheet = (): void => {
-    setActionsOpen((open) => {
-      if (open) return false;
-      const r = kebabRef.current?.getBoundingClientRect();
-      if (r) setSheetPos({ top: Math.round(r.bottom + 6), right: Math.round(Math.max(8, window.innerWidth - r.right)) });
-      return true;
-    });
+    // 先算好定位再切状态:不把 setSheetPos 塞进 setActionsOpen 的 updater(reducer 里
+    // 做副作用是反模式),也保证 actionsOpen=true 时 sheetPos 必非空 —— 否则会出现
+    // 「锁了背景滚动却没渲染 sheet」(Bugbot #741 Medium「Sheet open locks background scroll」)。
+    const r = kebabRef.current?.getBoundingClientRect();
+    setSheetPos(r
+      ? { top: Math.round(r.bottom + 6), right: Math.round(Math.max(8, window.innerWidth - r.right)) }
+      : { top: 56, right: 8 });
+    setActionsOpen((o) => !o);
   };
   // ⋮ 动作 sheet 打开:锁背景滚动(否则触屏下背景仍可滚)+ 焦点陷阱(下方 useFocusTrap)。
   useEffect(() => {

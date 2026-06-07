@@ -47,12 +47,18 @@ export function LoginPage(): JSX.Element {
         const message = typeof body?.error === 'string' ? body.error : 'Access denied';
         throw new Error(message);
       }
-      // SPA navigation — the auth cookie is already set by the response above,
-      // so there is no need to hard-reload (which would re-download + re-parse
-      // the whole JS bundle). `target` is validated to be an internal path in
-      // redirectTarget(), so client-side routing is safe. `replace` keeps the
-      // login page out of history.
-      navigate(target, { replace: true, viewTransition: true });
+      // Auth cookie is already set by the response above.
+      // - Clean React route → SPA navigate (no bundle re-download) + view transition.
+      //   `target` is validated internal in redirectTarget(); `replace` drops /login from history.
+      // - Legacy server path (`/settings.html?project=…`, `/index.html?project=…` 等) →
+      //   hard-load so the Express legacy→React redirects rewrite it; SPA navigate would let
+      //   React Router treat `/settings.html` as unknown and fall through to `/project-list`
+      //   (Bugbot #741 Medium「Login SPA skips legacy redirects」).
+      if (/\.html(?:$|[?#])/i.test(target)) {
+        window.location.assign(target);
+      } else {
+        navigate(target, { replace: true, viewTransition: true });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

@@ -6,4 +6,4 @@
 
 | # | 严重度 | 位置 | 描述 | 处置 |
 |---|--------|------|------|------|
-| 1 | P2 (低) | `cds/web/src/pages/LoginPage.tsx` 登录提交 `navigate(target)` | basic-auth 用户若从 legacy 地址(如 `/settings.html?project=foo`)被重定向,登录后 SPA `navigate` 不经服务端 legacy→新路由重写,React Router 视 `/settings.html` 为未知路由 → 落到 `/project-list` 而非目标项目设置页。SPA 跳转早于本 PR(本 PR 仅加 viewTransition),且仅影响 legacy URL 登录回跳这一窄场景。 | 暂缓(PR#741 评审 Codex P2)。后续可补:`redirectTarget()` 归一化 legacy 路径(`/settings.html?project=X`→`/settings/X`、`/index.html?project=X`→`/branches/X`)后再 SPA 跳,或对未知 legacy 后缀走 `window.location.assign` 硬跳。 |
+| 1 | P2 (低) | `cds/web/src/components/layout/AppShell.tsx` TopBar ⋮ sheet | sheet/backdrop portal 到 body 后 z-index 1000/1001;手机端从 ⋮ 选中「会打开 Radix Dialog 的动作」(如项目列表「一键部署」→ 创建项目)时,Dialog(z-50)被 sheet 盖住,看似打不开,需先关 sheet。根因:sheet 抬到 1000+ 高于全局 Dialog。 | 暂缓(PR#741 评审 Codex P2,自引入回归)。修复需二选一:(a) sheet 内动作触发后关闭 `actionsOpen`(但嵌套 Radix dropdown 的 item portal 到 body,sheet onClick 捕获不到,需跨组件信号/context);(b) 全局 z-index 统一收敛(Dialog 50 / 主题切换 60 / 抽屉 80 / sheet 当前 1001 纠缠,需一次性重排,让 sheet 落在「高于页面、低于 Dialog」)。建议走 (a):TopBar 暴露 close 回调或用 context,页面打开 Dialog 前先关 sheet。 |
