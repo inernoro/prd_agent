@@ -52,6 +52,10 @@ const MyAssetsPage = lazy(() => import('@/pages/MyAssetsPage'));
 const CdsAgentPage = lazy(() => import('@/pages/cds-agent').then(m => ({ default: m.CdsAgentPage })));
 const InfraServicesPage = lazy(() => import('@/pages/infra-services').then(m => ({ default: m.InfraServicesPage })));
 const OpenPlatformTabsPage = lazy(() => import('@/pages/OpenPlatformTabsPage'));
+const SpeechAgentListPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentListPage })));
+const SpeechAgentCreatePage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentCreatePage })));
+const SpeechAgentEditorPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentEditorPage })));
+const SpeechAgentPlayPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentPlayPage })));
 const LearningCenterPage = lazy(() => import('@/pages/learning-center/LearningCenterPage'));
 
 // ── 类型定义 ──────────────────────────────────────────────
@@ -238,6 +242,37 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'agent',
       appKey: 'task-tree-agent',
       tags: ['任务', '任务树', '卡点', '进度', '智能体'],
+    },
+  },
+  {
+    path: '/speech-agent/new',
+    permission: 'speech-agent.use',
+    element: shellGuarded('speech-agent.use', <SpeechAgentCreatePage />),
+  },
+  {
+    path: '/speech-agent/:deckId/play',
+    placement: 'fullscreen',
+    permission: 'speech-agent.use',
+    element: fullscreenGuarded('speech-agent.use', <SpeechAgentPlayPage />),
+  },
+  {
+    path: '/speech-agent/:deckId',
+    permission: 'speech-agent.use',
+    element: shellGuarded('speech-agent.use', <SpeechAgentEditorPage />),
+  },
+  {
+    path: '/speech-agent',
+    permission: 'speech-agent.use',
+    element: shellGuarded('speech-agent.use', <SpeechAgentListPage />),
+    nav: {
+      label: '演讲智能体',
+      shortLabel: '演讲',
+      description: '把长文本/文档转成可上台讲的思维导图（首期 mindmap 模式）',
+      icon: 'Mic',
+      section: 'agent',
+      appKey: 'speech-agent',
+      wip: true,
+      tags: ['演讲', '导图', 'PPT', '思维导图', '智能体'],
     },
   },
 

@@ -1157,6 +1157,46 @@ public static class PrReview
     }
 }
 
+public static class SpeechAgent
+{
+    public const string AppName = "演讲智能体";
+
+    public static class Mindmap
+    {
+        [AppCallerMetadata(
+            "导图大纲生成",
+            "将长文本拆解为思维导图大纲（root → 章节 → 要点）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Generation"
+        )]
+        public const string Outline = "speech-agent.mindmap.outline::chat";
+
+        [AppCallerMetadata(
+            "演讲备注生成",
+            "为单个节点生成演讲备注（口播稿）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Generation"
+        )]
+        public const string SpeakerNotes = "speech-agent.mindmap.speaker-notes::chat";
+
+        [AppCallerMetadata(
+            "节点 AI 重写",
+            "对单个节点的标题+要点重写（可指定风格：精简/故事化/数字化/反问开场/雷军风/TED 风等）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Generation"
+        )]
+        public const string NodeRewrite = "speech-agent.node-rewrite::chat";
+
+        [AppCallerMetadata(
+            "节点配图生成",
+            "为单个节点生成 AI 插画（取代 SVG 简笔）",
+            ModelTypes = new[] { ModelTypes.ImageGen },
+            Category = "Generation"
+        )]
+        public const string NodeImage = "speech-agent.node-image::generation";
+    }
+}
+
 public static class EmergenceExplorer
 {
     public const string AppName = "Emergence Explorer";
