@@ -1291,3 +1291,19 @@ db.changelog_snapshots.createIndex(
   { name: "uniq_changelog_snapshots_key", unique: true }
 )
 ```
+
+
+### peer_nodes
+
+系统级跨节点互传的对端节点表 — 每个 `RemoteNodeId` 在本节点只能有一条配对记录。后端
+握手 / 重配对都改为原子 upsert（`UpdateOne` + `IsUpsert`），但彻底杜绝并发握手 / 两个
+admin 同时配同对端各拿新配对码各插一行（导致 `VerifyPeerAsync.FirstOrDefault` 随机选一行
+HMAC 校验失败），需 `RemoteNodeId` 唯一索引兜底（PR #742 review P2）。
+
+```js
+// RemoteNodeId 唯一 — 同一对端在本节点只能一条配对，并发 upsert 被 unique 索引拦截
+db.peer_nodes.createIndex(
+  { "RemoteNodeId": 1 },
+  { name: "uniq_peer_nodes_remote_node_id", unique: true }
+)
+```

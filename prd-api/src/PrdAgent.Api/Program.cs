@@ -131,6 +131,16 @@ builder.Services.AddSingleton<ISafeOutboundUrlValidator, PrdAgent.Infrastructure
 builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory,
     PrdAgent.Infrastructure.Services.SafeOutboundHttpHandlerFactory>();
 
+// 系统级跨节点互传（Peer Sync）—— 详见 doc/design.peer-sync.md
+builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IPeerNodeService,
+    PrdAgent.Infrastructure.Services.PeerNodeService>();
+builder.Services.AddScoped<PrdAgent.Core.Sync.ISyncableResource,
+    PrdAgent.Infrastructure.Sync.Resources.DocumentStoreSyncResource>();
+builder.Services.AddScoped<PrdAgent.Core.Sync.ISyncableResource,
+    PrdAgent.Infrastructure.Sync.Resources.DefectSyncResource>();
+builder.Services.AddScoped<PrdAgent.Core.Sync.ISyncResourceRegistry,
+    PrdAgent.Infrastructure.Sync.SyncResourceRegistry>();
+
 // LLM 请求上下文与日志（旁路写入，便于后台调试）
 builder.Services.AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAccessor>();
 builder.Services.AddSingleton<LlmRequestLogBackground>();
@@ -272,6 +282,13 @@ builder.Services.AddSingleton<PrdAgent.Core.Interfaces.ISkillAgentSessionStore, 
 
 // 文档订阅同步引擎。用户可控 URL 禁止自动重定向，避免首跳校验后跳入内网。
 builder.Services.AddHttpClient("DocumentSync")
+    .ConfigurePrimaryHttpMessageHandler(sp =>
+        sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
+
+// 系统级跨节点互传 HttpClient（PR #742 review fix）。
+// 对端 baseUrl 是管理员配置 + ISafeOutboundUrlValidator 把过的，但默认 HttpClientHandler 会自动跟随
+// 重定向 —— 恶意对端响应 3xx 跳内网即可绕过首跳校验。挂 SafeOutbound handler 禁自动跟随。
+builder.Services.AddHttpClient("PeerSync")
     .ConfigurePrimaryHttpMessageHandler(sp =>
         sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
 builder.Services.AddHostedService<PrdAgent.Api.Services.DocumentSyncWorker>();

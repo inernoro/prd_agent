@@ -12,6 +12,7 @@ import { UserSpaceSettings } from '@/pages/settings/UserSpaceSettings';
 import { AccountSettings } from '@/pages/settings/AccountSettings';
 import { NavLayoutEditor } from '@/pages/settings/NavLayoutEditor';
 import { ShortLinksAdminSettings } from '@/pages/settings/ShortLinksAdminSettings';
+import { PeerNodesSettings } from '@/pages/settings/PeerNodesSettings';
 import { InfraServicesPage } from '@/pages/infra-services';
 import { useNavOrderStore } from '@/stores/navOrderStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -32,6 +33,7 @@ import {
   Users,
   Link2,
   Server,
+  Globe,
 } from 'lucide-react';
 
 function SkinSettings() {
@@ -302,6 +304,7 @@ export default function SettingsPage() {
     list.push({ key: 'infra-services', label: '基础设施服务', icon: <Server size={14} /> });
     if (hasPerm('settings.write')) list.push({ key: 'update-accel', label: '更新加速', icon: <Zap size={14} /> });
     if (hasPerm('short-links.manage')) list.push({ key: 'short-links', label: '分享短链', icon: <Link2 size={14} /> });
+    if (hasPerm('peer-sync.manage')) list.push({ key: 'peer-sync', label: '系统互联', icon: <Globe size={14} /> });
     return list;
   }, [isRoot, perms]);
 
@@ -335,6 +338,7 @@ export default function SettingsPage() {
         {activeTab === 'infra-services' && <InfraServicesPage />}
         {activeTab === 'update-accel' && <UpdateAccelerationSettings />}
         {activeTab === 'short-links' && <ShortLinksAdminSettings />}
+        {activeTab === 'peer-sync' && <PeerNodesSettings />}
       </div>
     </div>
   );

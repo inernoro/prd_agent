@@ -31,6 +31,7 @@ import {
   Tag,
   FolderSync,
   BarChart3,
+  Send,
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -39,6 +40,7 @@ import { Button } from '@/components/design/Button';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { TeamScopeBar, type TeamScope } from '@/components/team/TeamScopeBar';
 import { SyncManagerPanel, StoreSyncBadge } from './SyncManagerPanel';
+import { SendToPeerDialog } from '@/components/sync/SendToPeerDialog';
 import { useTeamStore } from '@/stores/teamStore';
 import { useAuthStore } from '@/stores/authStore';
 import { AnimatePresence } from 'motion/react';
@@ -1453,6 +1455,7 @@ export function DocumentStorePage() {
   // 我的 / 团队 作用域（默认我的；仅 mine 标签生效）
   const [teamScope, setTeamScope] = useState<TeamScope>(() => useTeamStore.getState().getScope('document-store'));
   const [showCreate, setShowCreate] = useState(false);
+  const [showSendToPeer, setShowSendToPeer] = useState(false);
   const [editTarget, setEditTarget] = useState<{ id: string; name: string; tags: string[] } | null>(null);
   const [shareTeamTarget, setShareTeamTarget] = useState<{ id: string; name: string; teamIds: string[] } | null>(null);
   // 使用 storeId 而不是 store 对象，这样刷新后可以从 URL 或 sessionStorage 恢复
@@ -1990,6 +1993,16 @@ export function DocumentStorePage() {
               <BarChart3 size={13} /> 统计
             </Button>
           )}
+          {tab === 'mine' && (
+            <Button
+              variant="secondary"
+              size="xs"
+              onClick={() => setShowSendToPeer(true)}
+              title="把知识库发送到 / 双向同步到另一个 MAP 节点（如正式环境），由管理员预先在「设置 → 系统互联」配好"
+            >
+              <Send size={13} /> 发送到
+            </Button>
+          )}
           <Button
             variant="primary"
             size="xs"
@@ -2323,6 +2336,14 @@ export function DocumentStorePage() {
             setShowCreate(false);
             setSelectedStoreId(s.id);
           }}
+        />
+      )}
+
+      {showSendToPeer && (
+        <SendToPeerDialog
+          resourceType="document-store"
+          onClose={() => setShowSendToPeer(false)}
+          onDone={() => { if (tab === 'mine') loadStores('mine', null); }}
         />
       )}
 
