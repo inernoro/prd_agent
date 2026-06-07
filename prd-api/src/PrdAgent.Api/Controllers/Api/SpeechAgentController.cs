@@ -360,7 +360,19 @@ public class SpeechAgentController : ControllerBase
         if (store.OwnerId != userId && !store.IsPublic)
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限读该文档"));
 
-        var src = (entry.RawContent ?? "").Trim();
+        // 同 DocumentStoreController 的内容提取链：优先 ParsedPrd.RawContent，兜底 Attachment.ExtractedText
+        string? src = null;
+        if (!string.IsNullOrEmpty(entry.DocumentId))
+        {
+            var doc = await _db.Documents.Find(d => d.Id == entry.DocumentId).FirstOrDefaultAsync();
+            if (doc != null) src = doc.RawContent;
+        }
+        if (string.IsNullOrEmpty(src) && !string.IsNullOrEmpty(entry.AttachmentId))
+        {
+            var att = await _db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync();
+            if (att != null) src = att.ExtractedText;
+        }
+        src = (src ?? "").Trim();
         if (src.Length < 30)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文档内容过短（不足 30 字）"));
 
