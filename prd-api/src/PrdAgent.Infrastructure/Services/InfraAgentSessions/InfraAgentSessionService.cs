@@ -1790,15 +1790,18 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             }),
             ct);
 
+        // 多轮上下文窗口：加载此前对话历史，追问时 agent 不再从头开始。
+        // 当前用户消息已由 SendMessageAsync 写入 DB，LoadConversationHistoryAsync
+        // 直接拉取含当前消息的完整窗口并做窗口截断。首条消息时列表仅含该条，
+        // 行为与原来完全一致，不破坏单轮场景。
+        var conversationHistory = await LoadConversationHistoryAsync(session.Id, ct);
+
         var request = new InfraAgentRuntimeRunRequest
         {
             RunId = runId,
             Model = model,
             SystemPrompt = BuildAgentSystemPrompt(),
-            Messages = new List<InfraAgentRuntimeMessage>
-            {
-                new() { Role = "user", Content = content }
-            },
+            Messages = conversationHistory,
             Tools = BuildSidecarToolDefs(session),
             MaxTokens = 4096,
             MaxTurns = ResolveMaxTurns(content),
@@ -1974,6 +1977,51 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// 从 DB 加载本 session 最近的对话历史，用于 direct-sidecar 路径的多轮上下文。
+    /// 双重截断：条数上限（WindowMessageCount）+ 字符预算（MaxHistoryChars），
+    /// 防止历史无限增长撑爆 LLM context window。
+    /// 当前用户消息在 SendMessageAsync 里已写入 DB，会自然包含在返回列表中。
+    /// </summary>
+    private async Task<List<InfraAgentRuntimeMessage>> LoadConversationHistoryAsync(
+        string sessionId,
+        CancellationToken ct)
+    {
+        const int WindowMessageCount = 20;
+        const int MaxHistoryChars = 40_000;
+
+        // 取最近 WindowMessageCount 条已完成的 user/assistant 消息，降序排列。
+        var recent = await _db.InfraAgentMessages
+            .Find(x => x.SessionId == sessionId
+                && x.Status == InfraAgentMessageStatuses.Completed
+                && (x.Role == InfraAgentMessageRoles.User
+                    || x.Role == InfraAgentMessageRoles.Assistant))
+            .SortByDescending(x => x.CreatedAt)
+            .Limit(WindowMessageCount)
+            .ToListAsync(ct);
+
+        // 还原为时间升序（最旧在前，最新在后），与 LLM 期望的消息顺序一致。
+        recent.Reverse();
+
+        // 从最新消息向前累计字符数，超出预算则截断早期消息。
+        var charCount = 0;
+        var startIndex = recent.Count;
+        for (var i = recent.Count - 1; i >= 0; i--)
+        {
+            charCount += recent[i].Content.Length;
+            if (charCount > MaxHistoryChars)
+            {
+                break;
+            }
+            startIndex = i;
+        }
+
+        return recent
+            .Skip(startIndex)
+            .Select(m => new InfraAgentRuntimeMessage { Role = m.Role, Content = m.Content })
+            .ToList();
     }
 
     private static string BuildAgentSystemPrompt()
