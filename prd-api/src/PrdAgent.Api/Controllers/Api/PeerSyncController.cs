@@ -353,6 +353,14 @@ public class PeerSyncController : ControllerBase
                         anyFail = true;
                         continue;
                     }
+                    // PR #742 review P2 fix：对称 RemoteApply 的类型校验 — 旧版/定制的对端或路由错配
+                    // 可能回 bundle.ResourceType 与本地请求的不一致，直接 ApplyAsync 会用错 handler 污染数据。
+                    if (!string.Equals(bundle.ResourceType, resource.ResourceType, StringComparison.Ordinal))
+                    {
+                        results.Add(new { itemId, ok = false, message = string.Join("；", perItem.Append($"拉取 失败（对端 bundle.resourceType={bundle.ResourceType} 与请求 {resource.ResourceType} 不匹配）")) });
+                        anyFail = true;
+                        continue;
+                    }
                     anyPeerContact = true; // bundle != null = 对端 HTTP 200 应答 = 通信成功
                     var outcome = await resource.ApplyAsync(bundle, actor, mode, itemId, ct);
                     perItem.Add("拉取 " + (outcome.Message ?? "完成"));
