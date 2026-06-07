@@ -7,8 +7,9 @@ const UNIQUE = `瞬时态验证-${Date.now()}`;
 const { browser, page } = await launch(cfg);
 try {
   await login(page, BASE, cfg);
-  let nav = await gotoByClick(page, '百宝箱'); if (!nav.found) nav = await gotoByClick(page, '工具箱');
-  await gotoByClick(page, 'CDS Agent');
+  // 验证脚本直达 /cds-agent(百宝箱卡片是 div 非 a/button，gotoByClick 点不到;正式验收才走点击导航)。
+  await page.goto(BASE.replace(/\/+$/, '') + '/cds-agent', { waitUntil: 'domcontentloaded', timeout: 45000 });
+  await page.waitForSelector('textarea', { timeout: 20000 });
   await page.waitForTimeout(1500);
 
   // 图1 取证：刷新落地态是否还卡「请先同步系统主模型」
@@ -18,14 +19,9 @@ try {
   console.log('LANDING', JSON.stringify(landing));
   await shot(page, OUT, '01-landing', '刷新落地：是否还卡「请先同步系统主模型」');
 
-  // 点「新建任务」(+) 拿一个干净会话(空状态)
-  const plus = page.locator('button[aria-label="新建任务"]').first();
-  if (await plus.count()) { await plus.click().catch(() => {}); await page.waitForTimeout(2500); }
-
-  // 填唯一文本并断言已填入，再回车发送(placeholder: 回车发送)
+  // 不点「+」(易 disabled/触发新建态),直接用落地会话。fill 自动等待可见可编辑,无需单独 click。
   const ta = page.locator('textarea').first();
-  await ta.click();
-  await ta.fill(UNIQUE);
+  await ta.fill(UNIQUE, { timeout: 15000 });
   const filled = await ta.inputValue();
   console.log('FILLED_OK', filled === UNIQUE, JSON.stringify(filled.slice(0, 40)));
 
