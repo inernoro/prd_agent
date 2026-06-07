@@ -2194,8 +2194,10 @@ sequenceDiagram
 - 后台：`PUT /api/zhunxing/subscriptions/me` — 更新当前用户主题订阅
 - 后台：`GET /api/zhunxing/subscriptions/me/updates` — 获取订阅主题条款更新提醒
 - 后台：`GET /api/zhunxing/heatmap` — 获取知识热力图
+- 后台：`GET /api/zhunxing/access-scope` — 获取当前账号可维护部门范围
 - 后台：`GET /api/zhunxing/documents` — 文档列表
 - 后台：`POST /api/zhunxing/documents` — 新建知识文档
+- 后台：`DELETE /api/zhunxing/documents/{id}` — 下线知识文档（同时下线其条款）
 - 后台：`GET /api/zhunxing/clauses` — 条款列表
 - 后台：`POST /api/zhunxing/clauses` — 新建知识条款
 - 后台：`POST /api/zhunxing/bootstrap/attendance` — 初始化考勤样例条款
@@ -2214,6 +2216,12 @@ sequenceDiagram
 **权限定义**：
 - `zhunxing-agent.read` — 访问准星页面、问答、提交反馈、查看反馈看板
 - `zhunxing-agent.write` — 维护知识文档与条款、工单处置、回放验证、回访标记、执行初始化
+- `zhunxing-agent.department.all.manage` — 可维护全部部门文档
+- `zhunxing-agent.department.hr.manage` / `zhunxing-agent.department.rnd.manage` / `zhunxing-agent.department.sales.manage` / `zhunxing-agent.department.customer-success.manage` — 仅可维护对应部门文档
+
+**部门隔离约束**：
+- 文档写操作（新建文档、增补条款、下线文档）必须满足：`zhunxing-agent.write` + 对应 `ownerDepartment` 维护权限
+- 不满足部门权限时返回 `PERMISSION_DENIED`，禁止跨部门上传与删除
 
 ---
 

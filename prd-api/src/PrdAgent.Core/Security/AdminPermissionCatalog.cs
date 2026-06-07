@@ -169,6 +169,21 @@ public static class AdminPermissionCatalog
     /// </summary>
     public const string ZhunxingAgentWrite = "zhunxing-agent.write";
 
+    /// <summary>准星知识库跨部门维护权限（可维护所有部门文档）</summary>
+    public const string ZhunxingAgentDepartmentAllManage = "zhunxing-agent.department.all.manage";
+
+    /// <summary>准星知识库人事部维护权限</summary>
+    public const string ZhunxingAgentDepartmentHrManage = "zhunxing-agent.department.hr.manage";
+
+    /// <summary>准星知识库产研部维护权限</summary>
+    public const string ZhunxingAgentDepartmentRndManage = "zhunxing-agent.department.rnd.manage";
+
+    /// <summary>准星知识库市场销售部维护权限</summary>
+    public const string ZhunxingAgentDepartmentSalesManage = "zhunxing-agent.department.sales.manage";
+
+    /// <summary>准星知识库客成部维护权限</summary>
+    public const string ZhunxingAgentDepartmentCustomerSuccessManage = "zhunxing-agent.department.customer-success.manage";
+
     /// <summary>
     /// 产品评审员权限：提交方案 + 查看自己的评审结果
     /// </summary>
@@ -265,6 +280,11 @@ public static class AdminPermissionCatalog
 
         new(ZhunxingAgentRead, "准星智能体-读", "查看准星知识文档与条款"),
         new(ZhunxingAgentWrite, "准星智能体-写", "维护准星知识文档与条款、执行初始化"),
+        new(ZhunxingAgentDepartmentAllManage, "准星知识库-全部门维护", "可维护所有部门的知识文档与条款"),
+        new(ZhunxingAgentDepartmentHrManage, "准星知识库-人事部维护", "可维护 ownerDepartment=hr 的知识文档与条款"),
+        new(ZhunxingAgentDepartmentRndManage, "准星知识库-产研部维护", "可维护 ownerDepartment=rnd 的知识文档与条款"),
+        new(ZhunxingAgentDepartmentSalesManage, "准星知识库-市场销售部维护", "可维护 ownerDepartment=sales 的知识文档与条款"),
+        new(ZhunxingAgentDepartmentCustomerSuccessManage, "准星知识库-客成部维护", "可维护 ownerDepartment=customer-success 的知识文档与条款"),
 
         new(WorkflowAgentManage, "工作流引擎-管理", "管理所有工作流与执行记录"),
 

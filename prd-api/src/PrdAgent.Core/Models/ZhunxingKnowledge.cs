@@ -96,6 +96,36 @@ public static class ZhunxingAnswerRoles
     public const string Hr = "hr";
 }
 
+public static class ZhunxingDepartments
+{
+    public const string Hr = "hr";
+    public const string Rnd = "rnd";
+    public const string Sales = "sales";
+    public const string CustomerSuccess = "customer-success";
+    public const string Finance = "finance";
+    public const string Operation = "operation";
+
+    public static readonly IReadOnlyList<string> All = new[]
+    {
+        Hr,
+        Rnd,
+        Sales,
+        CustomerSuccess,
+        Finance,
+        Operation,
+    };
+
+    public static readonly IReadOnlyDictionary<string, string> Labels = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        [Hr] = "人事部",
+        [Rnd] = "产研部",
+        [Sales] = "市场销售部",
+        [CustomerSuccess] = "客成部",
+        [Finance] = "财务部",
+        [Operation] = "运营部",
+    };
+}
+
 public class CreateZhunxingDocumentRequest
 {
     public string Title { get; set; } = string.Empty;
@@ -103,6 +133,14 @@ public class CreateZhunxingDocumentRequest
     public DateTime EffectiveDate { get; set; } = DateTime.UtcNow;
     public List<string>? Scope { get; set; }
     public string? OwnerDepartment { get; set; }
+}
+
+public class ZhunxingAccessScopeResult
+{
+    public bool Writable { get; set; }
+    public bool CanManageAllDepartments { get; set; }
+    public List<string> ManageableDepartments { get; set; } = new();
+    public Dictionary<string, string> DepartmentLabels { get; set; } = new();
 }
 
 public class CreateZhunxingClauseRequest

@@ -197,6 +197,45 @@ export interface ZhunxingKnowledgeHeatmap {
   buckets: ZhunxingHeatmapBucket[];
 }
 
+export interface ZhunxingAccessScopeResult {
+  writable: boolean;
+  canManageAllDepartments: boolean;
+  manageableDepartments: string[];
+  departmentLabels: Record<string, string>;
+}
+
+export interface ZhunxingKnowledgeDocument {
+  id: string;
+  title: string;
+  version: string;
+  effectiveDate: string;
+  scope: string[];
+  ownerDepartment?: string;
+  isActive: boolean;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateZhunxingDocumentRequest {
+  title: string;
+  version?: string;
+  effectiveDate?: string;
+  scope?: string[];
+  ownerDepartment: string;
+}
+
+export interface CreateZhunxingClauseRequest {
+  documentId: string;
+  chapter: string;
+  title: string;
+  ruleText: string;
+  keywords?: string[];
+  riskLevel?: 'public' | 'internal' | 'sensitive';
+  sortOrder?: number;
+}
+
 export async function askZhunxing(
   question: string,
   topK = 3,
@@ -209,6 +248,45 @@ export async function askZhunxing(
       topK,
       answerRole,
     },
+  });
+}
+
+export async function getZhunxingAccessScope(): Promise<ApiResponse<ZhunxingAccessScopeResult>> {
+  return await apiRequest(api.zhunxing.accessScope(), {
+    method: 'GET',
+  });
+}
+
+export async function listZhunxingDocuments(includeInactive = false): Promise<ApiResponse<{ items: ZhunxingKnowledgeDocument[] }>> {
+  const query = includeInactive ? '?includeInactive=true' : '';
+  return await apiRequest(`${api.zhunxing.documents()}${query}`, {
+    method: 'GET',
+  });
+}
+
+export async function createZhunxingDocument(
+  request: CreateZhunxingDocumentRequest,
+): Promise<ApiResponse<ZhunxingKnowledgeDocument>> {
+  return await apiRequest(api.zhunxing.documents(), {
+    method: 'POST',
+    body: request,
+  });
+}
+
+export async function deactivateZhunxingDocument(
+  documentId: string,
+): Promise<ApiResponse<ZhunxingKnowledgeDocument>> {
+  return await apiRequest(api.zhunxing.document(documentId), {
+    method: 'DELETE',
+  });
+}
+
+export async function createZhunxingClause(
+  request: CreateZhunxingClauseRequest,
+): Promise<ApiResponse<unknown>> {
+  return await apiRequest(api.zhunxing.clauses(), {
+    method: 'POST',
+    body: request,
   });
 }
 

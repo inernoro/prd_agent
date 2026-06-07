@@ -64,12 +64,89 @@ public class ZhunxingAdminController : ControllerBase
         return permissions.Contains(perm) || permissions.Contains(AdminPermissionCatalog.Super);
     }
 
+    private HashSet<string> GetPermissionSet()
+    {
+        return User.FindAll("permissions").Select(c => c.Value).ToHashSet(StringComparer.Ordinal);
+    }
+
+    private static string? NormalizeDepartment(string? department)
+    {
+        if (string.IsNullOrWhiteSpace(department))
+            return null;
+
+        var normalized = department.Trim().ToLowerInvariant();
+        return ZhunxingDepartments.All.Contains(normalized, StringComparer.Ordinal)
+            ? normalized
+            : null;
+    }
+
+    private bool CanManageDepartment(HashSet<string> permissions, string department)
+    {
+        if (permissions.Contains(AdminPermissionCatalog.Super))
+            return true;
+        if (permissions.Contains(AdminPermissionCatalog.ZhunxingAgentDepartmentAllManage))
+            return true;
+
+        var scopedPerm = $"zhunxing-agent.department.{department}.manage";
+        return permissions.Contains(scopedPerm);
+    }
+
+    private static string GetDepartmentLabel(string department)
+    {
+        return ZhunxingDepartments.Labels.TryGetValue(department, out var label)
+            ? label
+            : department;
+    }
+
     private IActionResult? EnsureWritePermission()
     {
         if (HasPermission(AdminPermissionCatalog.ZhunxingAgentWrite))
             return null;
 
         return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "缺少准星写权限"));
+    }
+
+    private IActionResult? EnsureDepartmentPermission(string department, string actionLabel)
+    {
+        var normalizedDepartment = NormalizeDepartment(department);
+        if (string.IsNullOrWhiteSpace(normalizedDepartment))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "ownerDepartment 不合法或未配置"));
+
+        var denied = EnsureWritePermission();
+        if (denied != null)
+            return denied;
+
+        var permissions = GetPermissionSet();
+        if (CanManageDepartment(permissions, normalizedDepartment))
+            return null;
+
+        return StatusCode(
+            StatusCodes.Status403Forbidden,
+            ApiResponse<object>.Fail(
+                ErrorCodes.PERMISSION_DENIED,
+                $"缺少部门维护权限：当前无权{actionLabel} {GetDepartmentLabel(normalizedDepartment)}文档"));
+    }
+
+    [HttpGet("access-scope")]
+    public IActionResult GetAccessScope()
+    {
+        var permissions = GetPermissionSet();
+        var writable = permissions.Contains(AdminPermissionCatalog.Super)
+            || permissions.Contains(AdminPermissionCatalog.ZhunxingAgentWrite);
+        var canManageAll = permissions.Contains(AdminPermissionCatalog.Super)
+            || permissions.Contains(AdminPermissionCatalog.ZhunxingAgentDepartmentAllManage);
+
+        var manageableDepartments = ZhunxingDepartments.All
+            .Where(dept => canManageAll || CanManageDepartment(permissions, dept))
+            .ToList();
+
+        return Ok(ApiResponse<ZhunxingAccessScopeResult>.Ok(new ZhunxingAccessScopeResult
+        {
+            Writable = writable,
+            CanManageAllDepartments = canManageAll,
+            ManageableDepartments = manageableDepartments,
+            DepartmentLabels = ZhunxingDepartments.Labels.ToDictionary(x => x.Key, x => x.Value, StringComparer.Ordinal),
+        }));
     }
 
     [HttpPost("feedback")]
@@ -248,7 +325,12 @@ public class ZhunxingAdminController : ControllerBase
     [HttpPost("documents")]
     public async Task<IActionResult> CreateDocument([FromBody] CreateZhunxingDocumentRequest request, CancellationToken ct = default)
     {
-        var denied = EnsureWritePermission();
+        var normalizedDepartment = NormalizeDepartment(request.OwnerDepartment);
+        if (string.IsNullOrWhiteSpace(normalizedDepartment))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "ownerDepartment 不能为空，且必须是已定义部门"));
+
+        request.OwnerDepartment = normalizedDepartment;
+        var denied = EnsureDepartmentPermission(normalizedDepartment, "维护");
         if (denied != null)
             return denied;
 
@@ -285,6 +367,18 @@ public class ZhunxingAdminController : ControllerBase
         if (denied != null)
             return denied;
 
+        var doc = await _knowledgeService.GetDocumentByIdAsync(request.DocumentId, ct);
+        if (doc == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "关联文档不存在"));
+
+        var ownerDepartment = NormalizeDepartment(doc.OwnerDepartment);
+        if (string.IsNullOrWhiteSpace(ownerDepartment))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "关联文档未配置 ownerDepartment，暂不允许维护"));
+
+        denied = EnsureDepartmentPermission(ownerDepartment, "维护");
+        if (denied != null)
+            return denied;
+
         try
         {
             var userId = this.GetRequiredUserId();
@@ -299,6 +393,29 @@ public class ZhunxingAdminController : ControllerBase
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, ex.Message));
         }
+    }
+
+    [HttpDelete("documents/{documentId}")]
+    public async Task<IActionResult> DeactivateDocument([FromRoute] string documentId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(documentId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "documentId 不能为空"));
+
+        var doc = await _knowledgeService.GetDocumentByIdAsync(documentId, ct);
+        if (doc == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识文档不存在"));
+
+        var ownerDepartment = NormalizeDepartment(doc.OwnerDepartment);
+        if (string.IsNullOrWhiteSpace(ownerDepartment))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "文档未配置 ownerDepartment，暂不允许删除"));
+
+        var denied = EnsureDepartmentPermission(ownerDepartment, "删除");
+        if (denied != null)
+            return denied;
+
+        var userId = this.GetRequiredUserId();
+        var deactivated = await _knowledgeService.DeactivateDocumentAsync(documentId, userId, ct);
+        return Ok(ApiResponse<object>.Ok(deactivated));
     }
 
     /// <summary>

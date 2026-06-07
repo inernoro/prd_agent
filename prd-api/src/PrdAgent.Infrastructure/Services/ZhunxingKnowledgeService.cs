@@ -36,6 +36,9 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
         var now = DateTime.UtcNow;
         var normalizedTitle = request.Title.Trim();
         var normalizedVersion = string.IsNullOrWhiteSpace(request.Version) ? "v1.0" : request.Version.Trim();
+        var ownerDepartment = NormalizeDepartment(request.OwnerDepartment);
+        if (string.IsNullOrWhiteSpace(ownerDepartment))
+            throw new ArgumentException("ownerDepartment 不能为空，且必须是已定义部门", nameof(request));
         var normalizedScope = (request.Scope ?? new List<string>())
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Select(x => x.Trim())
@@ -54,7 +57,7 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
             Version = normalizedVersion,
             EffectiveDate = request.EffectiveDate == default ? now : request.EffectiveDate,
             Scope = normalizedScope,
-            OwnerDepartment = request.OwnerDepartment?.Trim(),
+            OwnerDepartment = ownerDepartment,
             CreatedBy = operatorUserId,
             UpdatedBy = operatorUserId,
             CreatedAt = now,
@@ -80,6 +83,59 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
             .ThenByDescending(x => x.UpdatedAt)
             .ToListAsync(ct);
         return list;
+    }
+
+    public async Task<ZhunxingKnowledgeDocument?> GetDocumentByIdAsync(
+        string documentId,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(documentId))
+            return null;
+
+        return await _db.ZhunxingKnowledgeDocuments
+            .Find(x => x.Id == documentId.Trim())
+            .FirstOrDefaultAsync(ct);
+    }
+
+    public async Task<ZhunxingKnowledgeDocument> DeactivateDocumentAsync(
+        string documentId,
+        string operatorUserId,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(documentId))
+            throw new ArgumentException("documentId 不能为空", nameof(documentId));
+
+        var existing = await _db.ZhunxingKnowledgeDocuments
+            .Find(x => x.Id == documentId.Trim())
+            .FirstOrDefaultAsync(ct);
+        if (existing == null)
+            throw new InvalidOperationException("知识文档不存在");
+        if (!existing.IsActive)
+            return existing;
+
+        var now = DateTime.UtcNow;
+        var documentUpdate = Builders<ZhunxingKnowledgeDocument>.Update
+            .Set(x => x.IsActive, false)
+            .Set(x => x.UpdatedBy, operatorUserId)
+            .Set(x => x.UpdatedAt, now);
+        await _db.ZhunxingKnowledgeDocuments.UpdateOneAsync(
+            Builders<ZhunxingKnowledgeDocument>.Filter.Eq(x => x.Id, existing.Id),
+            documentUpdate,
+            cancellationToken: ct);
+
+        var clauseUpdate = Builders<ZhunxingKnowledgeClause>.Update
+            .Set(x => x.IsActive, false)
+            .Set(x => x.UpdatedBy, operatorUserId)
+            .Set(x => x.UpdatedAt, now);
+        await _db.ZhunxingKnowledgeClauses.UpdateManyAsync(
+            Builders<ZhunxingKnowledgeClause>.Filter.Eq(x => x.DocumentId, existing.Id),
+            clauseUpdate,
+            cancellationToken: ct);
+
+        existing.IsActive = false;
+        existing.UpdatedBy = operatorUserId;
+        existing.UpdatedAt = now;
+        return existing;
     }
 
     public async Task<ZhunxingKnowledgeClause> CreateClauseAsync(
@@ -1048,6 +1104,17 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
         if (normalized is ZhunxingRiskLevels.Public or ZhunxingRiskLevels.Internal or ZhunxingRiskLevels.Sensitive)
             return normalized;
         return ZhunxingRiskLevels.Internal;
+    }
+
+    private static string? NormalizeDepartment(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        var normalized = value.Trim().ToLowerInvariant();
+        return ZhunxingDepartments.All.Contains(normalized, StringComparer.Ordinal)
+            ? normalized
+            : null;
     }
 
     private static string NormalizeAnswerRole(string? answerRole)

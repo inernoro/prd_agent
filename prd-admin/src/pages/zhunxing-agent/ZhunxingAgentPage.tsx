@@ -4,43 +4,49 @@ import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import {
   askZhunxing,
+  createZhunxingClause,
+  createZhunxingDocument,
+  deactivateZhunxingDocument,
+  getZhunxingAccessScope,
   getMyZhunxingTopicSubscription,
   getMyZhunxingTopicUpdates,
   getZhunxingKnowledgeHeatmap,
   getZhunxingFeedbackSummary,
+  listZhunxingDocuments,
   listZhunxingFeedbacks,
   markZhunxingFeedbackFollowUp,
   replayZhunxingFeedback,
   submitZhunxingFeedback,
   updateMyZhunxingTopicSubscription,
   updateZhunxingFeedbackWorkflow,
+  type ZhunxingAccessScopeResult,
   type ZhunxingAskResponse,
   type ZhunxingFeedbackListItem,
   type ZhunxingFeedbackListResult,
   type ZhunxingFeedbackSummary,
+  type ZhunxingKnowledgeDocument,
   type ZhunxingKnowledgeHeatmap,
   type ZhunxingTopicSubscriptionResult,
   type ZhunxingTopicUpdateFeed,
 } from '@/services/real/zhunxing';
 import {
   AlertCircle,
-  ArrowRight,
   BarChart3,
   BellRing,
-  Bot,
-  BrainCircuit,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   ChevronUp,
-  Clock3,
+  FileStack,
   Flame,
-  Network,
+  FolderCog,
   RefreshCw,
   Rocket,
   Search,
   ShieldAlert,
   ShieldCheck,
+  Trash2,
+  Upload,
   Workflow,
 } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
@@ -77,25 +83,6 @@ const TOPIC_LABELS: Record<string, string> = {
 
 const TOPIC_OPTIONS = Object.entries(TOPIC_LABELS).map(([value, label]) => ({ value, label }));
 
-const CORE_CAPABILITIES = [
-  {
-    title: '角色化回答',
-    description: '同一问题支持员工/主管/HR三种执行口径，减少“答对但不好用”。',
-  },
-  {
-    title: '流程决策树',
-    description: '自动生成 IF/THEN 步骤，适配请假、考勤、交接等执行场景。',
-  },
-  {
-    title: '冲突治理',
-    description: '多条款口径冲突时自动报警并列出依据，防止误执行。',
-  },
-  {
-    title: '运营闭环',
-    description: '从反馈工单到回放验证、回访通知，持续优化知识命中率。',
-  },
-];
-
 const FUTURE_PORTALS = [
   {
     title: '知识图谱导航',
@@ -115,6 +102,30 @@ const FUTURE_PORTALS = [
   },
 ];
 
+const AVAILABLE_ENTRIES = [
+  {
+    mode: 'ask' as const,
+    title: '智能问答',
+    description: '制度/流程问题即时回答，支持角色化输出与条款依据。',
+    tag: '立即使用',
+    icon: ShieldCheck,
+  },
+  {
+    mode: 'library' as const,
+    title: '文件库维护',
+    description: '按部门上传制度文档、补充条款，并执行部门隔离管控。',
+    tag: '立即使用',
+    icon: FolderCog,
+  },
+  {
+    mode: 'dashboard' as const,
+    title: '反馈看板',
+    description: '查看未命中聚类、工单流转、回放验证与回访闭环。',
+    tag: '立即使用',
+    icon: BarChart3,
+  },
+];
+
 type VisualStyleMode = 'aurora' | 'cosmic' | 'slate';
 
 const STYLE_MODE_OPTIONS: Array<{ value: VisualStyleMode; label: string }> = [
@@ -130,7 +141,7 @@ export default function ZhunxingAgentPage() {
     [permissions],
   );
 
-  const [viewMode, setViewMode] = useState<'ask' | 'dashboard'>('ask');
+  const [viewMode, setViewMode] = useState<'ask' | 'library' | 'dashboard'>('ask');
   const [visualStyle, setVisualStyle] = useState<VisualStyleMode>('aurora');
 
   // Q&A state
@@ -162,6 +173,25 @@ export default function ZhunxingAgentPage() {
   const [savingTopics, setSavingTopics] = useState(false);
   const [topicUpdates, setTopicUpdates] = useState<ZhunxingTopicUpdateFeed | null>(null);
   const [heatmap, setHeatmap] = useState<ZhunxingKnowledgeHeatmap | null>(null);
+  const [libraryLoading, setLibraryLoading] = useState(false);
+  const [libraryError, setLibraryError] = useState<string | null>(null);
+  const [libraryNotice, setLibraryNotice] = useState<string | null>(null);
+  const [accessScope, setAccessScope] = useState<ZhunxingAccessScopeResult | null>(null);
+  const [documents, setDocuments] = useState<ZhunxingKnowledgeDocument[]>([]);
+  const [newDocTitle, setNewDocTitle] = useState('');
+  const [newDocVersion, setNewDocVersion] = useState('v1.0');
+  const [newDocScopeInput, setNewDocScopeInput] = useState('all-departments');
+  const [newDocDepartment, setNewDocDepartment] = useState('');
+  const [creatingDocument, setCreatingDocument] = useState(false);
+  const [deactivatingDocId, setDeactivatingDocId] = useState<string | null>(null);
+  const [newClauseDocumentId, setNewClauseDocumentId] = useState('');
+  const [newClauseChapter, setNewClauseChapter] = useState('');
+  const [newClauseTitle, setNewClauseTitle] = useState('');
+  const [newClauseRiskLevel, setNewClauseRiskLevel] = useState<'public' | 'internal' | 'sensitive'>('internal');
+  const [newClauseKeywords, setNewClauseKeywords] = useState('');
+  const [newClauseText, setNewClauseText] = useState('');
+  const [newClauseSortOrder, setNewClauseSortOrder] = useState(10);
+  const [creatingClause, setCreatingClause] = useState(false);
 
   const visualStyleTokens = useMemo(() => {
     if (visualStyle === 'cosmic') {
@@ -301,6 +331,24 @@ export default function ZhunxingAgentPage() {
     return { label: '公开', color: '#60A5FA' };
   }, [result?.riskLevel]);
 
+  const manageableDepartments = useMemo(
+    () => accessScope?.manageableDepartments ?? [],
+    [accessScope?.manageableDepartments],
+  );
+
+  const departmentOptions = useMemo(() => {
+    const labels = accessScope?.departmentLabels ?? {};
+    return manageableDepartments.map((dept) => ({
+      value: dept,
+      label: labels[dept] ?? dept,
+    }));
+  }, [accessScope?.departmentLabels, manageableDepartments]);
+
+  const canManageDepartment = useCallback((department?: string | null) => {
+    if (!department) return false;
+    return manageableDepartments.includes(department);
+  }, [manageableDepartments]);
+
   const runAsk = async (q?: string) => {
     const text = (q ?? question).trim();
     if (!text || loading) return;
@@ -424,10 +472,146 @@ export default function ZhunxingAgentPage() {
     }
   }, [feedbackTypeFilter, keywordFilter, matchedFilter, page, statusFilter]);
 
+  const loadLibrary = useCallback(async () => {
+    setLibraryLoading(true);
+    setLibraryError(null);
+    try {
+      const [scopeRes, docsRes] = await Promise.all([
+        getZhunxingAccessScope(),
+        listZhunxingDocuments(),
+      ]);
+
+      if (!scopeRes.success || !scopeRes.data) {
+        throw new Error(scopeRes.error?.message || '权限范围加载失败');
+      }
+      if (!docsRes.success || !docsRes.data) {
+        throw new Error(docsRes.error?.message || '文件库加载失败');
+      }
+
+      setAccessScope(scopeRes.data);
+      setDocuments(docsRes.data.items || []);
+      if (scopeRes.data.manageableDepartments.length > 0) {
+        setNewDocDepartment((prev) => prev || scopeRes.data.manageableDepartments[0]);
+      }
+      if (docsRes.data.items?.length) {
+        setNewClauseDocumentId((prev) => prev || docsRes.data.items[0].id);
+      }
+    } catch (e) {
+      setLibraryError(e instanceof Error ? e.message : '文件库加载失败');
+      setAccessScope(null);
+      setDocuments([]);
+    } finally {
+      setLibraryLoading(false);
+    }
+  }, []);
+
+  const submitNewDocument = useCallback(async () => {
+    if (!newDocTitle.trim() || !newDocDepartment || creatingDocument) return;
+    setCreatingDocument(true);
+    setLibraryError(null);
+    setLibraryNotice(null);
+    try {
+      const scope = newDocScopeInput
+        .split(/[,\s，]+/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+      const res = await createZhunxingDocument({
+        title: newDocTitle.trim(),
+        version: newDocVersion.trim() || 'v1.0',
+        ownerDepartment: newDocDepartment,
+        scope,
+      });
+      if (!res.success || !res.data) {
+        setLibraryError(res.error?.message || '新建文档失败');
+        return;
+      }
+
+      setLibraryNotice('文档已入库，可继续录入条款。');
+      setNewDocTitle('');
+      setNewDocVersion('v1.0');
+      await loadLibrary();
+    } catch (e) {
+      setLibraryError(e instanceof Error ? e.message : '新建文档失败');
+    } finally {
+      setCreatingDocument(false);
+    }
+  }, [creatingDocument, loadLibrary, newDocDepartment, newDocScopeInput, newDocTitle, newDocVersion]);
+
+  const submitNewClause = useCallback(async () => {
+    if (!newClauseDocumentId || !newClauseChapter.trim() || !newClauseTitle.trim() || !newClauseText.trim() || creatingClause) {
+      return;
+    }
+    setCreatingClause(true);
+    setLibraryError(null);
+    setLibraryNotice(null);
+    try {
+      const keywords = newClauseKeywords
+        .split(/[,\s，]+/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+      const res = await createZhunxingClause({
+        documentId: newClauseDocumentId,
+        chapter: newClauseChapter.trim(),
+        title: newClauseTitle.trim(),
+        ruleText: newClauseText.trim(),
+        keywords,
+        riskLevel: newClauseRiskLevel,
+        sortOrder: newClauseSortOrder,
+      });
+      if (!res.success) {
+        setLibraryError(res.error?.message || '新增条款失败');
+        return;
+      }
+      setLibraryNotice('条款已新增。');
+      setNewClauseChapter('');
+      setNewClauseTitle('');
+      setNewClauseText('');
+      setNewClauseKeywords('');
+    } catch (e) {
+      setLibraryError(e instanceof Error ? e.message : '新增条款失败');
+    } finally {
+      setCreatingClause(false);
+    }
+  }, [
+    creatingClause,
+    newClauseChapter,
+    newClauseDocumentId,
+    newClauseKeywords,
+    newClauseRiskLevel,
+    newClauseSortOrder,
+    newClauseText,
+    newClauseTitle,
+  ]);
+
+  const handleDeactivateDocument = useCallback(async (doc: ZhunxingKnowledgeDocument) => {
+    if (deactivatingDocId) return;
+    setDeactivatingDocId(doc.id);
+    setLibraryError(null);
+    setLibraryNotice(null);
+    try {
+      const res = await deactivateZhunxingDocument(doc.id);
+      if (!res.success) {
+        setLibraryError(res.error?.message || '文档下线失败');
+        return;
+      }
+      setLibraryNotice(`文档「${doc.title}」已下线。`);
+      await loadLibrary();
+    } catch (e) {
+      setLibraryError(e instanceof Error ? e.message : '文档下线失败');
+    } finally {
+      setDeactivatingDocId(null);
+    }
+  }, [deactivatingDocId, loadLibrary]);
+
   useEffect(() => {
     if (viewMode !== 'dashboard') return;
     void loadDashboard();
   }, [viewMode, loadDashboard]);
+
+  useEffect(() => {
+    if (viewMode !== 'library') return;
+    void loadLibrary();
+  }, [viewMode, loadLibrary]);
 
   const updateFeedbackStatus = useCallback(async (item: ZhunxingFeedbackListItem, status: 'triaged' | 'in_progress' | 'resolved' | 'closed') => {
     if (!hasWritePermission || actingFeedbackId) return;
@@ -896,76 +1080,241 @@ export default function ZhunxingAgentPage() {
         </GlassCard>
       )}
 
-      <GlassCard variant="subtle" animated className="p-4 zhunxing-breath-card" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
-        <div className="flex items-center justify-between gap-2 mb-3">
-          <div className="text-sm font-semibold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
-            <Bot size={15} />
-            已上线能力矩阵
-          </div>
-          <span className="text-[11px] px-2 py-0.5 rounded-md" style={{ background: 'rgba(52,211,153,0.12)', border: '1px solid rgba(52,211,153,0.3)', color: '#34D399' }}>
-            Online
-          </span>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-          {CORE_CAPABILITIES.map((item) => (
-            <div key={item.title} className="rounded-lg p-3" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
-              <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                {item.title}
-              </div>
-              <div className="mt-1 text-xs leading-5" style={{ color: 'var(--text-muted)' }}>
-                {item.description}
-              </div>
-            </div>
-          ))}
-        </div>
-      </GlassCard>
-
-      <GlassCard variant="subtle" animated className="p-4 zhunxing-breath-card" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
-        <div className="flex items-center justify-between gap-2 mb-3">
-          <div className="text-sm font-semibold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
-            <BrainCircuit size={15} />
-            未来能力预告（预留功能口子）
-          </div>
-          <span className="text-[11px] px-2 py-0.5 rounded-md" style={{ background: 'rgba(251,191,36,0.12)', border: '1px solid rgba(251,191,36,0.3)', color: '#FBBF24' }}>
-            Coming Soon
-          </span>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-          {FUTURE_PORTALS.map((item) => (
-            <div key={item.title} className="rounded-lg p-3" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
-              <div className="flex items-center justify-between gap-2">
-                <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  {item.title}
-                </div>
-                <span className="text-[11px]" style={{ color: '#FBBF24' }}>
-                  预研中
-                </span>
-              </div>
-              <div className="mt-1 text-xs leading-5" style={{ color: 'var(--text-muted)' }}>
-                {item.description}
-              </div>
-            </div>
-          ))}
-        </div>
-        <div className="mt-3 rounded-lg p-2.5 flex flex-wrap items-center justify-between gap-2" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
-          <div className="text-xs flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
-            <Network size={13} />
-            {'未来将支持“提问 -> 生成流程 -> 自动分派 -> 执行回执”的全链路闭环。'}
-          </div>
-          <Button variant="secondary" size="sm" disabled className="whitespace-nowrap">
-            申请内测资格
-            <ArrowRight size={13} />
-          </Button>
-        </div>
-      </GlassCard>
-
-      <GlassCard variant="subtle" animated className="p-3 zhunxing-breath-card" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
-        <div className="text-xs flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
-          <Clock3 size={13} />
-          提示：当前展示为“产品化骨架”，后续功能会按阶段逐步上线，避免页面结构反复重做。
-        </div>
-      </GlassCard>
     </>
+  );
+
+  const libraryPanel = (
+    <GlassCard variant="subtle" animated className="p-4 zhunxing-breath-card" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
+      <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+        <div>
+          <div className="text-base font-semibold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+            <FileStack size={16} />
+            知识文件库维护
+          </div>
+          <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+            入口说明：这里负责文档入库、条款维护和下线。系统会按部门权限隔离写操作。
+          </div>
+        </div>
+        <Button variant="secondary" size="sm" onClick={() => void loadLibrary()} disabled={libraryLoading} className="whitespace-nowrap">
+          {libraryLoading ? <MapSpinner size={14} color="var(--text-primary)" /> : <RefreshCw size={14} />}
+          刷新文件库
+        </Button>
+      </div>
+
+      {libraryError && (
+        <div className="mb-3 rounded-lg p-2.5 text-xs" style={{ background: 'rgba(251,146,60,0.08)', border: '1px solid rgba(251,146,60,0.25)', color: '#FB923C' }}>
+          {libraryError}
+        </div>
+      )}
+      {libraryNotice && (
+        <div className="mb-3 rounded-lg p-2.5 text-xs" style={{ background: 'rgba(52,211,153,0.08)', border: '1px solid rgba(52,211,153,0.25)', color: '#34D399' }}>
+          {libraryNotice}
+        </div>
+      )}
+
+      <div className="rounded-lg p-3 mb-3" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
+        <div className="text-xs font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
+          当前账号可维护范围
+        </div>
+        <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+          写权限：{accessScope?.writable ? '已开通' : '未开通'}；全部门维护：{accessScope?.canManageAllDepartments ? '是' : '否'}。
+          {!accessScope?.canManageAllDepartments && accessScope?.manageableDepartments?.length
+            ? ` 可维护部门：${accessScope.manageableDepartments.map((d) => accessScope.departmentLabels?.[d] ?? d).join('、')}`
+            : ''}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-3">
+        <div className="rounded-lg p-3" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
+          <div className="text-sm font-semibold mb-2 flex items-center gap-1.5" style={{ color: 'var(--text-primary)' }}>
+            <Upload size={14} />
+            上传新文档
+          </div>
+          <div className="flex flex-col gap-2">
+            <input
+              value={newDocTitle}
+              onChange={(e) => setNewDocTitle(e.target.value)}
+              placeholder="文档标题（如：产研交接规范）"
+              className="rounded-md px-2 py-1.5 text-xs outline-none"
+              style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-primary)' }}
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                value={newDocVersion}
+                onChange={(e) => setNewDocVersion(e.target.value)}
+                placeholder="版本（v1.0）"
+                className="rounded-md px-2 py-1.5 text-xs outline-none"
+                style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-primary)' }}
+              />
+              <select
+                value={newDocDepartment}
+                onChange={(e) => setNewDocDepartment(e.target.value)}
+                className="rounded-md px-2 py-1.5 text-xs outline-none"
+                style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-primary)' }}
+              >
+                {!departmentOptions.length && <option value="">暂无可维护部门</option>}
+                {departmentOptions.map((dept) => (
+                  <option key={dept.value} value={dept.value}>{dept.label}</option>
+                ))}
+              </select>
+            </div>
+            <input
+              value={newDocScopeInput}
+              onChange={(e) => setNewDocScopeInput(e.target.value)}
+              placeholder="适用范围（逗号分隔，如 all-departments,rnd）"
+              className="rounded-md px-2 py-1.5 text-xs outline-none"
+              style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-primary)' }}
+            />
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => void submitNewDocument()}
+              disabled={!newDocTitle.trim() || !newDocDepartment || creatingDocument}
+              className="whitespace-nowrap"
+            >
+              {creatingDocument ? <MapSpinner size={14} color="var(--text-primary)" /> : null}
+              提交文档入库
+            </Button>
+          </div>
+        </div>
+
+        <div className="rounded-lg p-3" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
+          <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
+            新增条款
+          </div>
+          <div className="flex flex-col gap-2">
+            <select
+              value={newClauseDocumentId}
+              onChange={(e) => setNewClauseDocumentId(e.target.value)}
+              className="rounded-md px-2 py-1.5 text-xs outline-none"
+              style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-primary)' }}
+            >
+              {!documents.length && <option value="">暂无文档</option>}
+              {documents.map((doc) => (
+                <option key={doc.id} value={doc.id}>
+                  {doc.title}（{accessScope?.departmentLabels?.[doc.ownerDepartment || ''] ?? doc.ownerDepartment ?? '未分配'}）
+                </option>
+              ))}
+            </select>
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                value={newClauseChapter}
+                onChange={(e) => setNewClauseChapter(e.target.value)}
+                placeholder="章节（如 3.2）"
+                className="rounded-md px-2 py-1.5 text-xs outline-none"
+                style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-primary)' }}
+              />
+              <select
+                value={newClauseRiskLevel}
+                onChange={(e) => setNewClauseRiskLevel(e.target.value as 'public' | 'internal' | 'sensitive')}
+                className="rounded-md px-2 py-1.5 text-xs outline-none"
+                style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-primary)' }}
+              >
+                <option value="public">公开</option>
+                <option value="internal">内部</option>
+                <option value="sensitive">高风险</option>
+              </select>
+            </div>
+            <input
+              value={newClauseTitle}
+              onChange={(e) => setNewClauseTitle(e.target.value)}
+              placeholder="条款标题"
+              className="rounded-md px-2 py-1.5 text-xs outline-none"
+              style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-primary)' }}
+            />
+            <input
+              value={newClauseKeywords}
+              onChange={(e) => setNewClauseKeywords(e.target.value)}
+              placeholder="关键词（逗号分隔）"
+              className="rounded-md px-2 py-1.5 text-xs outline-none"
+              style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-primary)' }}
+            />
+            <textarea
+              value={newClauseText}
+              onChange={(e) => setNewClauseText(e.target.value)}
+              placeholder="条款正文"
+              className="rounded-md px-2 py-1.5 text-xs outline-none min-h-[84px]"
+              style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-primary)' }}
+            />
+            <input
+              type="number"
+              value={newClauseSortOrder}
+              onChange={(e) => setNewClauseSortOrder(Number(e.target.value || 0))}
+              placeholder="排序值"
+              className="rounded-md px-2 py-1.5 text-xs outline-none"
+              style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-primary)' }}
+            />
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void submitNewClause()}
+              disabled={!newClauseDocumentId || !newClauseChapter.trim() || !newClauseTitle.trim() || !newClauseText.trim() || creatingClause}
+              className="whitespace-nowrap"
+            >
+              {creatingClause ? <MapSpinner size={14} color="var(--text-primary)" /> : null}
+              提交条款
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-lg p-3" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
+        <div className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>
+          已入库文档
+        </div>
+        {libraryLoading ? (
+          <div className="py-6 flex items-center justify-center">
+            <MapSpinner size={16} color="var(--text-primary)" />
+          </div>
+        ) : documents.length ? (
+          <div className="flex flex-col gap-2">
+            {documents.map((doc) => {
+              const ownerDepartment = doc.ownerDepartment || '';
+              const canManage = canManageDepartment(ownerDepartment);
+              return (
+                <div key={doc.id} className="rounded-md p-2.5" style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder }}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                        {doc.title}
+                      </div>
+                      <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                        版本 {doc.version} · 部门 {(accessScope?.departmentLabels?.[ownerDepartment] ?? ownerDepartment) || '未分配'} · 生效于 {new Date(doc.effectiveDate).toLocaleDateString('zh-CN')}
+                      </div>
+                      <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                        scope: {(doc.scope || []).join(', ') || '-'}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] px-2 py-0.5 rounded-md" style={{
+                        background: canManage ? 'rgba(52,211,153,0.12)' : 'rgba(251,191,36,0.12)',
+                        color: canManage ? '#34D399' : '#FBBF24',
+                      }}>
+                        {canManage ? '可维护' : '只读'}
+                      </span>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => void handleDeactivateDocument(doc)}
+                        disabled={!canManage || deactivatingDocId === doc.id}
+                        className="whitespace-nowrap"
+                      >
+                        {deactivatingDocId === doc.id ? <MapSpinner size={12} color="var(--text-primary)" /> : <Trash2 size={12} />}
+                        下线文档
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+            当前暂无已入库文档。
+          </div>
+        )}
+      </div>
+    </GlassCard>
   );
 
   const dashboardPanel = (
@@ -1421,6 +1770,9 @@ export default function ZhunxingAgentPage() {
                 <Button variant={viewMode === 'ask' ? 'primary' : 'secondary'} size="sm" onClick={() => setViewMode('ask')} className="whitespace-nowrap">
                   问答
                 </Button>
+                <Button variant={viewMode === 'library' ? 'primary' : 'secondary'} size="sm" onClick={() => setViewMode('library')} className="whitespace-nowrap">
+                  文件库
+                </Button>
                 <Button variant={viewMode === 'dashboard' ? 'primary' : 'secondary'} size="sm" onClick={() => setViewMode('dashboard')} className="whitespace-nowrap">
                   反馈看板
                 </Button>
@@ -1429,7 +1781,69 @@ export default function ZhunxingAgentPage() {
           </div>
         </GlassCard>
 
-        {viewMode === 'ask' ? askPanel : dashboardPanel}
+        <GlassCard variant="subtle" className="p-4 zhunxing-breath-card" style={{ background: visualStyleTokens.cardBackground, border: visualStyleTokens.cardBorder }}>
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
+            <div className="rounded-lg p-3" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
+              <div className="text-xs font-semibold mb-2" style={{ color: '#34D399' }}>可立即使用</div>
+              <div className="flex flex-col gap-2">
+                {AVAILABLE_ENTRIES.map((entry) => {
+                  const Icon = entry.icon;
+                  return (
+                    <button
+                      key={entry.mode}
+                      type="button"
+                      onClick={() => setViewMode(entry.mode)}
+                      className="rounded-md p-2 text-left transition-opacity hover:opacity-90"
+                      style={{
+                        background: viewMode === entry.mode ? 'rgba(96,165,250,0.18)' : visualStyleTokens.controlBackground,
+                        border: viewMode === entry.mode ? '1px solid rgba(96,165,250,0.45)' : visualStyleTokens.controlBorder,
+                      }}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-sm font-semibold flex items-center gap-1.5" style={{ color: 'var(--text-primary)' }}>
+                          <Icon size={14} />
+                          {entry.title}
+                        </div>
+                        <span className="text-[11px]" style={{ color: '#34D399' }}>{entry.tag}</span>
+                      </div>
+                      <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                        {entry.description}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="rounded-lg p-3" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
+              <div className="text-xs font-semibold mb-2" style={{ color: '#FBBF24' }}>规划中功能</div>
+              <div className="flex flex-col gap-2">
+                {FUTURE_PORTALS.map((item) => (
+                  <div key={item.title} className="rounded-md p-2" style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{item.title}</div>
+                      <span className="text-[11px]" style={{ color: '#FBBF24' }}>规划中</span>
+                    </div>
+                    <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>{item.description}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-lg p-3" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
+              <div className="text-xs font-semibold mb-2" style={{ color: '#60A5FA' }}>提示文案</div>
+              <div className="rounded-md p-2 text-xs leading-5" style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-muted)' }}>
+                你当前看到的三个区域定义如下：<br />
+                1）可立即使用：可直接点击进入并执行；<br />
+                2）规划中功能：当前不可操作，仅用于演进预告；<br />
+                3）提示文案：解释权限边界与使用方式，不是功能入口。<br />
+                文件库遵循部门权限隔离：只允许维护本部门资料，跨部门操作将被拒绝。
+              </div>
+            </div>
+          </div>
+        </GlassCard>
+
+        {viewMode === 'ask' ? askPanel : viewMode === 'library' ? libraryPanel : dashboardPanel}
       </div>
     </div>
   );

@@ -720,7 +720,11 @@ export const api = {
   // ============ 准星智能体 ============
   zhunxing: {
     health: () => '/api/zhunxing/health',
+    accessScope: () => '/api/zhunxing/access-scope',
     ask: () => '/api/zhunxing/ask',
+    documents: () => '/api/zhunxing/documents',
+    document: (documentId: string) => `/api/zhunxing/documents/${documentId}`,
+    clauses: () => '/api/zhunxing/clauses',
     feedback: () => '/api/zhunxing/feedback',
     feedbacks: () => '/api/zhunxing/feedbacks',
     feedbackSummary: () => '/api/zhunxing/feedbacks/summary',

@@ -36,6 +36,7 @@ public static class BuiltInSystemRoles
                 AdminPermissionCatalog.ReviewAgentUse,
                 AdminPermissionCatalog.ZhunxingAgentRead,
                 AdminPermissionCatalog.ZhunxingAgentWrite,
+                AdminPermissionCatalog.ZhunxingAgentDepartmentAllManage,
                 // 管理权限
                 AdminPermissionCatalog.ModelsRead,
                 AdminPermissionCatalog.ModelsWrite,

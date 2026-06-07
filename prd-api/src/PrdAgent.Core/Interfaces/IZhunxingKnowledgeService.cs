@@ -16,6 +16,15 @@ public interface IZhunxingKnowledgeService
         bool includeInactive = false,
         CancellationToken ct = default);
 
+    Task<ZhunxingKnowledgeDocument?> GetDocumentByIdAsync(
+        string documentId,
+        CancellationToken ct = default);
+
+    Task<ZhunxingKnowledgeDocument> DeactivateDocumentAsync(
+        string documentId,
+        string operatorUserId,
+        CancellationToken ct = default);
+
     Task<ZhunxingKnowledgeClause> CreateClauseAsync(
         CreateZhunxingClauseRequest request,
         string operatorUserId,
