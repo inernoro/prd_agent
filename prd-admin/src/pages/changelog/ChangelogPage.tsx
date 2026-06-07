@@ -655,7 +655,14 @@ export default function ChangelogPage() {
 
   const releaseRenderItems = useMemo(() => {
     if (!releases) return [];
+    // 去重：CHANGELOG.md 文末有第二个 `## [未发布]` 模板锚点，parser 会重复匹配
+    const seenVersions = new Set<string>();
     return releases.releases
+      .filter((r) => {
+        if (seenVersions.has(r.version)) return false;
+        seenVersions.add(r.version);
+        return true;
+      })
       .map((release) => {
         const visibleDays = release.days
           .map((d) => ({
