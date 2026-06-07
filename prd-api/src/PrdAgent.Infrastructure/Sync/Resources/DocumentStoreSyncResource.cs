@@ -138,21 +138,29 @@ public class DocumentStoreSyncResource : ISyncableResource
         // RemoteSignature 端点对配对节点开放，若不在这里拦，对端能用 store id 探出该库存在性 + 漂移信号。
         if (!string.IsNullOrEmpty(store.PmProjectId) || !string.IsNullOrEmpty(store.ProductKnowledgeRef))
             return null;
-        // PR #742 review P2 fix：之前签名带 UpdatedAt.Ticks，apply 写入时用 DateTime.UtcNow 覆盖，
-        // 两节点同步后内容完全一致但签名永远不同 → 双向漂移检测永远报"不同步"。
-        // 改为完全基于内容稳定字段：lineageId + title + isFolder + parent + tags + ContentIndex
-        // (ContentIndex 是正文前 2000 字符，由内容派生，两节点同步后完全相同)。
+        // PR #742 review P2 fix（两轮闭环）：
+        // - 一轮：之前签名带 UpdatedAt.Ticks，apply 写入时用 DateTime.UtcNow 覆盖 → 两节点同步后内容
+        //   完全一致但签名永远不同 → 双向漂移检测永久报"不同步"。改用内容稳定字段。
+        // - 二轮：只 hash ContentIndex（前 2000 字符）会漏掉文档后段 drift。改用 ParsedPrd.RawContent
+        //   全文 sha256，确保任何内容变化都触发签名差异。代价是加载所有文档 — signature 不是高频
+        //   路径（漂移检测调用），可接受；apply 路径本来就要全量传输 RawContent，带宽匹配。
         var entries = await _db.DocumentEntries.Find(e => e.StoreId == itemId).ToListAsync(ct);
         var byId = entries.ToDictionary(e => e.Id, e => e);
         string? ParentLineage(string? parentId)
             => string.IsNullOrEmpty(parentId) || !byId.TryGetValue(parentId!, out var p) ? null : LineageOf(p);
-        var parts = entries
-            .Select(e =>
+        var parts = new List<string>(entries.Count);
+        foreach (var e in entries)
+        {
+            string contentHash = string.Empty;
+            if (!e.IsFolder && !string.IsNullOrEmpty(e.DocumentId))
             {
-                var tags = string.Join(",", (e.Tags ?? new List<string>()).OrderBy(t => t, StringComparer.Ordinal));
-                return $"{LineageOf(e)}|{(e.IsFolder ? 1 : 0)}|{e.Title}|{ParentLineage(e.ParentId) ?? string.Empty}|{tags}|{e.ContentIndex ?? string.Empty}";
-            })
-            .OrderBy(x => x, StringComparer.Ordinal);
+                var doc = await _documentService.GetByIdAsync(e.DocumentId);
+                contentHash = Sha256Hex(doc?.RawContent ?? string.Empty);
+            }
+            var tags = string.Join(",", (e.Tags ?? new List<string>()).OrderBy(t => t, StringComparer.Ordinal));
+            parts.Add($"{LineageOf(e)}|{(e.IsFolder ? 1 : 0)}|{e.Title}|{ParentLineage(e.ParentId) ?? string.Empty}|{tags}|{contentHash}");
+        }
+        parts.Sort(StringComparer.Ordinal);
         return Sha256Hex(string.Join("\n", parts));
     }
 
