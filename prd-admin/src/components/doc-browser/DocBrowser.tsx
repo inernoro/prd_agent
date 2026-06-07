@@ -1784,6 +1784,11 @@ export function DocBrowser({
         const created = res.data;
         setInlineCommentItems((prev) => (prev.some((c) => c.id === created.id) ? prev : [...prev, created]));
         setCommentCount((c) => c + 1);
+        // 自动激活新评论的线程 → 触发 InlineCommentConnector 入场动画（从正文气泡画连线到右侧卡），
+        // 用户不用再手动点气泡才看到联系。groupKey 必须和 Overlay/Margin 同一函数，否则 activeKey 对不上。
+        if (input.selectedText) {
+          setActiveCommentKey(groupKey(input.selectedText));
+        }
         await refreshComments(); // 与服务器对账：成功则覆盖为真值，失败则保留乐观结果
       }
       return true;
