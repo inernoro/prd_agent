@@ -937,6 +937,9 @@ export default function CdsAgentPage() {
   const [runtimeDiscoveryRefreshed, setRuntimeDiscoveryRefreshed] = useState<boolean | null>(null);
   const [runtimeStatusLoadedAt, setRuntimeStatusLoadedAt] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'simple' | 'pro'>(readInitialViewMode);
+  // 简洁模式保持「聊天纯净」：Git/证据/运行摘要/调试 等运维遥测默认收起（用户心智：这是聊天，不是运维台）。
+  // 用 state 而非常量，既不触发 ESLint no-constant-binary，又让块内变量保持被引用、避免误删级联。
+  const [showOpsPanels] = useState(false);
   const [simpleTaskMode, setSimpleTaskMode] = useState<'chat' | 'code'>('chat');
   const [simpleExpandedEventId, setSimpleExpandedEventId] = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
@@ -4305,6 +4308,7 @@ export default function CdsAgentPage() {
 	              </div>
 	            </div>
 
+	            {showOpsPanels && (<>
 	            <div className="border-b border-white/10 px-4 py-4">
 	              <div className="mb-3 flex items-center justify-between gap-2">
 	                <div className="inline-flex items-center gap-2 text-sm font-semibold text-white/76"><GitPullRequest size={14} /> Git</div>
@@ -4398,6 +4402,7 @@ export default function CdsAgentPage() {
 	                )}
 	              </details>
 	            </div>
+	            </>)}
 	          </aside>
 	        </div>
 	      </div>
