@@ -4123,6 +4123,11 @@ export default function CdsAgentPage() {
                   const durationSec = Math.max(0, Math.round((lastAt - firstAt) / 1000));
                   const lastLabel = processEventLabel(events[events.length - 1]);
                   const hasError = events.some((e) => e.type === 'error');
+                  // 纯内部状态/日志分组（无工具调用/结果、无错误、无待审批）对普通对话零价值，
+                  // 「后台状态 running / dispatching run to CDS-managed... / 用时10小时2分钟」这种会污染聊天流
+                  // （用户反馈：我消息发出去了，怎么冒出奇怪的对话框日志）。从对话里隐去；
+                  // 运行状态看右侧「运行进展/摘要」，完整内部日志看右侧「运行日志」。
+                  if (summary.usefulCount === 0 && !hasError && !pendingApproval) return null;
                   const processTitle = pendingApproval
                     ? '等待审批'
                     : hasError

@@ -6,3 +6,4 @@
 | feat | prd-api | CDS Agent 新增工作区文件注入接口 POST /api/infra-agent-sessions/{id}/inject-files（path 1 接缝 v1，复用 CDS files 端点，不改边车镜像），用于把知识库文件喂给 agent 处理 |
 | fix | prd-admin | CDS Agent 输入区重做：真输入框做成醒目带边框可输入+自动聚焦，去掉看着像输入框的提示框，修复"框选错半天无法输入" |
 | fix | prd-admin | CDS Agent 新建会话不再起怪名「远程巡检任务」，默认从首条消息自动命名（留空→「新会话」） |
+| fix | prd-admin | CDS Agent 对话流隐去纯内部状态/日志气泡（后台状态 running/dispatching run/陈旧用时），只保留用户/Agent消息+工具/错误/审批；运行状态看右侧面板 |
