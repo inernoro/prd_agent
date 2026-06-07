@@ -395,8 +395,16 @@ export default function ChangelogPage() {
         // 否则 35s 轮询 / 手动刷新 / SSE 会用 first-page 80 条覆盖整个列表，
         // 用户正在看的更老内容直接消失（Bugbot #3 + Codex P2）。
         const preservedTail = (previous?.logs ?? []).filter((log) => !newShas.has(log.sha));
-        const merged: GitHubLogsView = preservedTail.length > 0
-          ? { ...res.data, logs: [...res.data.logs, ...preservedTail] }
+        // ⚠️ 关键：合并 tail 时也要保留 previous 的 hasMore / nextCursor。
+        // 否则用 res.data 的 nextCursor（first-page 最后一条 sha）去续接，
+        // 会拉回已经在 preservedTail 里的同一批，产生重复（Bugbot High #1 + Codex P2）
+        const merged: GitHubLogsView = preservedTail.length > 0 && previous
+          ? {
+              ...res.data,
+              logs: [...res.data.logs, ...preservedTail],
+              hasMore: previous.hasMore,
+              nextCursor: previous.nextCursor,
+            }
           : res.data;
 
         setGitHubLogs(merged);
@@ -444,19 +452,27 @@ export default function ChangelogPage() {
   const loadingMoreLogsRef = useRef(false);
   const loadMoreGitHubLogs = useCallback(async () => {
     if (loadingMoreLogsRef.current) return;
-    const current = githubLogsRef.current;
-    if (!current || !current.hasMore || !current.nextCursor) return;
+    const startSnapshot = githubLogsRef.current;
+    if (!startSnapshot || !startSnapshot.hasMore || !startSnapshot.nextCursor) return;
     loadingMoreLogsRef.current = true;
+    const requestedCursor = startSnapshot.nextCursor;
     try {
       const res = await getChangelogGitHubLogs({
         limit: GITHUB_LOGS_PAGE_SIZE,
-        before: current.nextCursor,
+        before: requestedCursor,
       });
       if (!res.success || !res.data) return;
+      // ⚠️ 关键：读最新 ref，而不是用 startSnapshot —— refresh 可能在我们等待期间到达。
+      // 若 latest 已不包含 requestedCursor（=refresh 已用新数据完全覆盖），
+      // 本次返回的旧 cursor 数据是过时的，直接丢弃，避免用 stale 数据覆盖新列表（Bugbot #2）。
+      const latest = githubLogsRef.current;
+      if (!latest) return;
+      const latestHasCursor = latest.logs.some((l) => l.sha === requestedCursor);
+      if (!latestHasCursor) return;
       const merged: GitHubLogsView = {
         ...res.data,
         // 累积保留头部已展示的（最新），追加新批次（更老）
-        logs: [...current.logs, ...res.data.logs],
+        logs: [...latest.logs, ...res.data.logs],
       };
       setGitHubLogs(merged);
       writeGitHubLogsCache(merged);

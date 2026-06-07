@@ -139,10 +139,11 @@ export const useChangelogStore = create<ChangelogState>()(
         if (res.success) {
           // 保留瀑布已加载的更老日期组（用户已通过 loadMoreFragments 累积到 > daysLimit 个）。
           // 否则 SSE / 后台刷新会把 fragments 缩回 daysLimit 大小，丢掉用户已滚到的位置（Bugbot #4）。
+          // 例外：force=true 是用户明确「刷新」，期望全量重载，不再保留旧 tail（Bugbot #3 第二轮）。
           set((state) => {
             const incoming = res.data;
             const cur = state.currentWeek;
-            if (cur && cur.fragments.length > incoming.fragments.length) {
+            if (!force && cur && cur.fragments.length > incoming.fragments.length) {
               const incomingDates = new Set(incoming.fragments.map((f) => f.date));
               const tail = cur.fragments.filter((f) => !incomingDates.has(f.date));
               return {
