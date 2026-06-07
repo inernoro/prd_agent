@@ -42,14 +42,16 @@ public class DefectSyncResource : ISyncableResource
     // ─── 列出可发送的缺陷项目 ───
     public async Task<IReadOnlyList<SyncItemSummary>> ListItemsAsync(SyncActor actor, CancellationToken ct)
     {
-        // PR #742 review P1 fix：必须按 actor 视角过滤，否则任意登录用户可越权拉所有缺陷项目。
+        // PR #742 review P1 fix + Medium 续修：必须按 actor 视角过滤。
         // - 受信对端节点（IsPeerSystem，来自 HMAC 验签通过的 export 请求）：全域
-        // - 本节点管理员（IsAdmin = Super / AI 超级访问）：全域
+        // - 本节点 super / AI 超级访问 → 全域
+        // - 本节点 defect-agent.manage 持有者 → 全域（与 DefectAgentController.HasManagePermission 对齐）
         // - 普通用户：仅放行自己作为 OwnerUserId 的项目（不暴露其他人项目里的缺陷）
-        //
         // 个人散列缺陷（无 ProjectId）不可通过本接口互传，避免一次拷一整个用户名下零散缺陷。
+        var canSeeAll = actor.IsPeerSystem
+            || actor.HasPermission("defect-agent.manage");
         var baseFilter = Builders<DefectProject>.Filter.Eq(p => p.IsArchived, false);
-        var visibleFilter = (actor.IsPeerSystem || actor.IsAdmin)
+        var visibleFilter = canSeeAll
             ? baseFilter
             : Builders<DefectProject>.Filter.And(
                 baseFilter,
@@ -82,7 +84,11 @@ public class DefectSyncResource : ISyncableResource
         if (project == null) return null;
         // 双闸门：即便上层 transfer 已用 ListItemsAsync 做了集合判定，本方法仍独立校验 actor 是否可读，
         // 避免对端 export 端点或未来旁路调用绕过授权。
-        if (!actor.IsPeerSystem && !actor.IsAdmin && project.OwnerUserId != actor.UserId) return null;
+        // 与 ListItemsAsync 的可见集合保持一致：PeerSystem / defect-agent.manage / 项目 OwnerUserId。
+        var canRead = actor.IsPeerSystem
+            || actor.HasPermission("defect-agent.manage")
+            || project.OwnerUserId == actor.UserId;
+        if (!canRead) return null;
 
         var defects = await _db.DefectReports
             .Find(d => d.ProjectId == project.Id && !d.IsDeleted)

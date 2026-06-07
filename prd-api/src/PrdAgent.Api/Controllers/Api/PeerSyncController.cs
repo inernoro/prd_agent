@@ -445,10 +445,13 @@ public class PeerSyncController : ControllerBase
         var name = user != null && !string.IsNullOrWhiteSpace(user.DisplayName) ? user.DisplayName
             : (user?.Username ?? "同步");
         // 从 HttpContext 取出权限位（与 AdminPermissionMiddleware / 各 controller 的判定保持一致）。
-        // SuperUser / isAiSuperAccess 视为管理员；具体资源可以再用更细的权限位收敛（如 defect-agent.manage）。
-        var isSuper = User.FindAll("permissions").Any(c => c.Value == AdminPermissionCatalog.Super)
+        // - IsAdmin = super / AI 超级访问 → 跨资源放行全域
+        // - Permissions = 完整权限位列表 → 资源按模块权限自决（如 defect-agent.manage / document-store.write）
+        // PR #742 review fix：之前 IsAdmin 仅看 super，defect-agent.manage 持有者看不到/推不动他们管理的项目。
+        var perms = User.FindAll("permissions").Select(c => c.Value).ToHashSet(StringComparer.Ordinal);
+        var isSuper = perms.Contains(AdminPermissionCatalog.Super)
             || string.Equals(User.FindFirst("isAiSuperAccess")?.Value, "1", StringComparison.Ordinal);
-        return new SyncActor(userId, name, user?.Email, IsAdmin: isSuper);
+        return new SyncActor(userId, name, user?.Email, IsAdmin: isSuper, Permissions: perms);
     }
 
     private static T? Deserialize<T>(string body) where T : class

@@ -18,8 +18,12 @@ public sealed record SyncActor(
     string UserId,        // 本节点操作者 userId（接收侧用于兜底归属）
     string UserName,      // 本节点操作者用户名
     string? Email,        // 本节点操作者邮箱（可空）
-    bool IsAdmin = false) // 是否持有超级 / 管理权限（资源 ListItemsAsync 据此放行全域 vs. 仅自己）
+    bool IsAdmin = false, // 是否持有 super / AI 超级访问（资源据此放行全域）
+    IReadOnlyCollection<string>? Permissions = null) // 完整权限位（资源可按需检查 defect-agent.manage 等模块权限）
 {
+    /// <summary>检查是否持有某个具体权限位（如 "defect-agent.manage"），IsAdmin 自动放行。</summary>
+    public bool HasPermission(string permission)
+        => IsAdmin || (Permissions != null && Permissions.Contains(permission));
     /// <summary>
     /// 受信对端节点身份（node-to-node 导出时使用）。该路径已被 HMAC 验签门禁，
     /// 只有已配对的可信节点能到达，故导出绕过「按登录用户」的访问校验。
