@@ -90,9 +90,13 @@ public class PeerNodeService : IPeerNodeService
         if (Math.Abs(now - tsMs) > MaxSkewMs) return false;
 
         var expected = Compute(sharedSecret, method, path, ts, body);
+        var expectedBytes = Encoding.UTF8.GetBytes(expected);
+        var signBytes = Encoding.UTF8.GetBytes(sign);
+        // PR #742 review Medium fix：FixedTimeEquals 在两数组长度不同时会抛 ArgumentException，
+        // 让恶意/畸形 X-Peer-Sign 头把 [AllowAnonymous] 端点打成 500 而不是 401。先比长度。
+        if (expectedBytes.Length != signBytes.Length) return false;
         // 常量时间比较，防时序侧信道
-        return CryptographicOperations.FixedTimeEquals(
-            Encoding.UTF8.GetBytes(expected), Encoding.UTF8.GetBytes(sign));
+        return CryptographicOperations.FixedTimeEquals(expectedBytes, signBytes);
     }
 
     private static string Compute(string sharedSecret, string method, string path, string ts, string body)

@@ -158,12 +158,15 @@ export function PeerNodesSettings() {
   // PR #742 review fix: 工具栏刷新 / test/delete/add 后续 load 可能并发，旧响应若回填会
   // 覆盖较新的节点状态或错误。用单调序号守卫：只有"最新一次"调用允许 setState。
   // 沿用 prd-admin learned rule: 由用户动作触发的 async fetch 必须有 fetchIdRef stale 保护。
+  // PR #742 review Low fix：补 isMountedRef 卸载守卫（用户切到别的 settings tab）。
   const loadSeqRef = useRef(0);
+  const isMountedRef = useRef(true);
+  useEffect(() => () => { isMountedRef.current = false; }, []);
   const load = useCallback(async () => {
     const mySeq = ++loadSeqRef.current;
     setLoading(true);
     const res = await listAdminPeerNodes();
-    if (mySeq !== loadSeqRef.current) return; // 已有更新的 load 发出，丢弃本次回填
+    if (mySeq !== loadSeqRef.current || !isMountedRef.current) return;
     if (res.success && res.data) {
       setNodes(res.data.items || []);
       setSelfNodeId(res.data.selfNodeId);
@@ -222,6 +225,7 @@ export function PeerNodesSettings() {
       selfDisplayName: addSelfName.trim() || undefined,
     });
     clearTimeout(t1); clearTimeout(t2); clearTimeout(t3);
+    if (!isMountedRef.current) return; // PR #742 review Low fix
     setAddBusy(false);
     setAddProgress(null);
     if (res.success) {
@@ -247,6 +251,7 @@ export function PeerNodesSettings() {
     const startedAt = Date.now();
     setTestProgress({ id, startedAt });
     const res = await testPeerNode(id);
+    if (!isMountedRef.current) return; // PR #742 review Low fix
     setBusyId(null);
     setTestProgress(null);
     const elapsed = Math.round((Date.now() - startedAt) / 100) / 10;
