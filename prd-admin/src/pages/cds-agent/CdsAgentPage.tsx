@@ -3566,7 +3566,8 @@ export default function CdsAgentPage() {
           id: 'assistant-stream',
           role: 'assistant',
           content: assistantStreamText,
-          status: isLiveStatus ? 'streaming' : 'completed',
+          // 本轮回复收到 done 即视为完成（即便会话仍 live），让回复立刻按 markdown 渲染，而不是一直纯文本
+          status: (isLiveStatus && latestAssistantEvent?.type !== 'done') ? 'streaming' : 'completed',
           createdAt: latestAssistantEvent?.createdAt ?? new Date().toISOString(),
           sessionId: activeSession?.id ?? null,
         },
@@ -3769,17 +3770,6 @@ export default function CdsAgentPage() {
 	    );
 	    const officialPoolReady = Boolean(runtimeStatus && runtimeStatus.instanceCount > 0 && runtimeStatus.healthyCount > 0);
 	    const liteModeActive = Boolean(runtimeStatus?.liteReviewAvailable && !officialPoolReady);
-	    const modeBadge = (
-	      <span
-	        className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-semibold"
-	        style={liteModeActive
-	          ? { background: 'rgba(96,165,250,0.16)', border: '1px solid rgba(96,165,250,0.32)', color: 'rgba(191,219,254,0.95)' }
-	          : { background: 'rgba(52,211,153,0.14)', border: '1px solid rgba(52,211,153,0.3)', color: 'rgba(167,243,208,0.95)' }}
-	      >
-	        {liteModeActive ? <FileSearch size={12} /> : <ShieldCheck size={12} />}
-	        {liteModeActive ? 'Lite 预览 · 只读' : '官方 SDK'}
-	      </span>
-	    );
 	    const simpleComposer = (
 	      <div className="mx-auto w-full max-w-[820px] rounded-2xl p-3" style={{ background: 'rgba(38,38,38,0.96)', border: '1px solid rgba(255,255,255,0.12)', boxShadow: '0 18px 60px rgba(0,0,0,0.34)' }}>
 	        {liteModeActive && (
@@ -3791,7 +3781,7 @@ export default function CdsAgentPage() {
             <div className="inline-flex rounded-lg p-1" style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.08)' }}>
               {([
                 { value: 'chat', label: '对话', icon: MessageSquare },
-                { value: 'code', label: 'Code 巡检', icon: Terminal },
+                { value: 'code', label: '代码', icon: Terminal },
               ] as const).map((mode) => {
                 const Icon = mode.icon;
                 const active = simpleTaskMode === mode.value;
@@ -3810,12 +3800,6 @@ export default function CdsAgentPage() {
                   </button>
                 );
               })}
-            </div>
-            <div className="flex items-center gap-2">
-              {modeBadge}
-              <span className="text-xs text-white/36">
-                {simpleTaskMode === 'code' ? '面向代码、测试、构建和 PR 建议' : '不要求仓库，先按普通 Agent 对话处理'}
-              </span>
             </div>
           </div>
 	        <textarea
@@ -3888,7 +3872,7 @@ export default function CdsAgentPage() {
               </>
             ) : (
               <div className="min-w-[200px] flex-1 truncate text-[11px] text-white/35">
-                对话模式不要求仓库；需要代码上下文时切到 Code 巡检
+                对话模式不要求仓库；需要代码上下文时切到「代码」模式
               </div>
             )}
             {activeSessionRuntimeState.isLive && (
@@ -4072,7 +4056,7 @@ export default function CdsAgentPage() {
 	                    <div className="mt-2 text-sm text-white/42">
                         {simpleTaskMode === 'code'
                           ? '输入代码巡检任务后，CDS 会创建只读 Agent 会话并沉淀过程、结果和产物。'
-                          : '可以先直接对话；需要仓库、测试或 PR 建议时再切到 Code 巡检。'}
+                          : '可以先直接对话；需要仓库、测试或 PR 建议时再切到「代码」模式。'}
                       </div>
 	                  </div>
 	                  {simpleComposer}
@@ -4093,7 +4077,7 @@ export default function CdsAgentPage() {
 	                        >
 	                          <div className="mb-1 text-[11px] text-white/42">{messageRoleLabel(block.msg.role)} · {new Date(block.msg.createdAt).toLocaleTimeString()}</div>
                           {block.msg.role === 'assistant' ? (
-                            block.msg.id === 'assistant-stream' && isLiveStatus ? (
+                            block.msg.id === 'assistant-stream' && block.msg.status === 'streaming' ? (
                               <div className="text-sm leading-relaxed text-white/78">
                                 <StreamingText text={block.msg.content} streaming mode="blur" />
                               </div>
@@ -4230,7 +4214,7 @@ export default function CdsAgentPage() {
 	                <div className="flex justify-start">
 	                  <div className="inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-white/55" style={{ background: 'rgba(96,165,250,0.08)', border: '1px solid rgba(96,165,250,0.2)' }}>
 	                    <MapSpinner size={13} />
-	                    <span>Agent 正在执行… 已等待 {formatHumanDuration(waitedSec)}</span>
+	                    <span>Agent 思考中… 已等待 {formatHumanDuration(waitedSec)}（推理模型首字可能较慢，仍在处理）</span>
 	                  </div>
                 </div>
               )}
