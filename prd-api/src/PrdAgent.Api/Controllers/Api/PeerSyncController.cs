@@ -68,9 +68,20 @@ public class PeerSyncController : ControllerBase
             || string.IsNullOrWhiteSpace(payload.InitiatorNodeId) || string.IsNullOrWhiteSpace(payload.InitiatorBaseUrl))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "握手请求缺少必要信息"));
 
+        // PR #742 review fix：软校验前置 — 自指 / SSRF 这类配置错误不消费一次性配对码，
+        // 否则管理员每次填错都要重发码。先做不需要 DB 状态的校验，再原子 claim。
+        var selfNodeId = await _peer.GetSelfNodeIdAsync(ct);
+        if (payload.InitiatorNodeId == selfNodeId)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不能与本节点自己配对"));
+
+        // SSRF 校验发起方回连地址
+        var initiatorBaseUrl = payload.InitiatorBaseUrl.Trim().TrimEnd('/');
+        try { await _urlValidator.EnsureSafeHttpUrlAsync(initiatorBaseUrl, "peer-sync", ct); }
+        catch (Exception ex) { return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"发起方地址不合法：{ex.Message}")); }
+
         // 原子 claim 配对码（PR #742 review fix）：FindOneAndUpdate 以「未使用 + 未过期」为条件，
         // 命中即刻把 Used 设为 true 并落 UsedByNodeId。并发 handshake 同一码只有一方拿得到，
-        // 失败方拿到 null，直接 401。避免「先读后写」窗口里两个发起方各拿到不同 secret 的紫绳。
+        // 失败方拿到 null，直接 401。避免「先读后写」窗口里两个发起方各拿到不同 secret。
         var nowUtc = DateTime.UtcNow;
         var claimFilter = Builders<PeerPairingCode>.Filter.And(
             Builders<PeerPairingCode>.Filter.Eq(c => c.Id, payload.PairingCode),
@@ -85,15 +96,6 @@ public class PeerSyncController : ControllerBase
             ct);
         if (code == null)
             return StatusCode(401, ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "配对码无效、已使用或已过期"));
-
-        var selfNodeId = await _peer.GetSelfNodeIdAsync(ct);
-        if (payload.InitiatorNodeId == selfNodeId)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不能与本节点自己配对"));
-
-        // SSRF 校验发起方回连地址
-        var initiatorBaseUrl = payload.InitiatorBaseUrl.Trim().TrimEnd('/');
-        try { await _urlValidator.EnsureSafeHttpUrlAsync(initiatorBaseUrl, "peer-sync", ct); }
-        catch (Exception ex) { return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"发起方地址不合法：{ex.Message}")); }
 
         var secret = PrdAgent.Infrastructure.Services.PeerNodeService.GenerateSharedSecret();
         var existing = await _db.PeerNodes.Find(n => n.RemoteNodeId == payload.InitiatorNodeId).FirstOrDefaultAsync(ct);
@@ -292,6 +294,7 @@ public class PeerSyncController : ControllerBase
                 // outcome 为 null（对端返回无效）、bundle 为 null 都判失败，前端可正确标红、不再误显示"成功"。
                 var perItem = new List<string>();
                 var itemOk = true;
+                var pushOk = true;
                 if (direction is "push" or "both")
                 {
                     var bundle = await resource.ExportAsync(itemId, actor, ct);
@@ -306,15 +309,18 @@ public class PeerSyncController : ControllerBase
                     {
                         perItem.Add("发送 失败（对端返回无效）");
                         itemOk = false;
+                        pushOk = false;
                         anyFail = true;
                     }
                     else
                     {
                         perItem.Add("发送 " + (outcome.Message ?? "完成"));
-                        if (outcome.Failed > 0) { itemOk = false; anyFail = true; }
+                        if (outcome.Failed > 0) { itemOk = false; pushOk = false; anyFail = true; }
                     }
                 }
-                if (direction is "pull" or "both")
+                // PR #742 review High：both 模式下若 push 失败仍跑 pull 会用对端覆盖本地未推上去的改动 ——
+                // 用户的本地编辑可能被丢。语义应为「先推后拉，推不通就不拉」，避免静默数据丢失。
+                if (direction == "pull" || (direction == "both" && pushOk))
                 {
                     var bundle = await PullFromPeerAsync(node, resource.ResourceType, itemId, ct);
                     if (bundle == null)
@@ -326,6 +332,10 @@ public class PeerSyncController : ControllerBase
                     var outcome = await resource.ApplyAsync(bundle, actor, mode, itemId, ct);
                     perItem.Add("拉取 " + (outcome.Message ?? "完成"));
                     if (outcome.Failed > 0) { itemOk = false; anyFail = true; }
+                }
+                else if (direction == "both" && !pushOk)
+                {
+                    perItem.Add("拉取 已跳过（push 未成功，避免对端覆盖本地未推上去的改动）");
                 }
                 results.Add(new { itemId, ok = itemOk, message = string.Join("；", perItem) });
             }

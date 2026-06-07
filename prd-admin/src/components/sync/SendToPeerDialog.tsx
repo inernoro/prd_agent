@@ -7,7 +7,7 @@
  * 遵守 .claude/rules/frontend-modal.md：createPortal 到 body、inline 高度、min-h-0 滚动、ESC + 蒙版关闭。
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Globe, X, Check, Send, ArrowRightLeft, ArrowLeft, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/design/Button';
@@ -67,10 +67,17 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  // PR #742 review fix: 慢响应回填可能在 modal 关闭后 / 新一轮 load 启动后才到，
+  // 导致弹窗状态被旧数据短暂覆盖。沿用 prd-admin learned rule: fetchIdRef stale guard。
+  const loadSeqRef = useRef(0);
+  const isMountedRef = useRef(true);
+  useEffect(() => () => { isMountedRef.current = false; }, []);
   const load = useCallback(async () => {
+    const mySeq = ++loadSeqRef.current;
     setLoading(true);
     setError(null);
     const [nodesRes, itemsRes] = await Promise.all([listPeerNodes(), listPeerItems(resourceType)]);
+    if (mySeq !== loadSeqRef.current || !isMountedRef.current) return; // 旧响应或 modal 已关闭 → 丢弃
     if (nodesRes.success && nodesRes.data) {
       setNodes(nodesRes.data.items || []);
       const cap = (nodesRes.data.capabilities || []).find((c) => c.resourceType === resourceType) || null;
