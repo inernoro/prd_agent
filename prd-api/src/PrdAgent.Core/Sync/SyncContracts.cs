@@ -17,7 +17,8 @@ namespace PrdAgent.Core.Sync;
 public sealed record SyncActor(
     string UserId,        // 本节点操作者 userId（接收侧用于兜底归属）
     string UserName,      // 本节点操作者用户名
-    string? Email)        // 本节点操作者邮箱（可空）
+    string? Email,        // 本节点操作者邮箱（可空）
+    bool IsAdmin = false) // 是否持有超级 / 管理权限（资源 ListItemsAsync 据此放行全域 vs. 仅自己）
 {
     /// <summary>
     /// 受信对端节点身份（node-to-node 导出时使用）。该路径已被 HMAC 验签门禁，
@@ -26,7 +27,7 @@ public sealed record SyncActor(
     /// </summary>
     public const string PeerSystemUserId = "__peer_node__";
 
-    public static SyncActor PeerSystem => new(PeerSystemUserId, "对端节点", null);
+    public static SyncActor PeerSystem => new(PeerSystemUserId, "对端节点", null, IsAdmin: true);
 
     public bool IsPeerSystem => UserId == PeerSystemUserId;
 }

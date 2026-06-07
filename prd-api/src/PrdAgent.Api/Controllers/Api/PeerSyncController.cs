@@ -8,6 +8,7 @@ using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Security;
 using PrdAgent.Core.Sync;
 using PrdAgent.Infrastructure.Database;
 
@@ -269,10 +270,22 @@ public class PeerSyncController : ControllerBase
         var mode = request.Mode == "add-only" ? SyncApplyMode.AddOnly : SyncApplyMode.Overwrite;
         var actor = await BuildActorAsync(this.GetRequiredUserId(), ct);
 
+        // PR #742 Review High：授权门——每个 itemId 必须出现在 actor 自己的 ListItemsAsync 结果里。
+        // 这一道门同时拦：(a) 越权 push 自己看不到的条目；(b) pull 到不存在/不可写的目标 store/project。
+        // ListItemsAsync 已经按 actor 视角做了访问过滤，此处用集合判定，资源层不必再各自重复鉴权。
+        var allowedItems = await resource.ListItemsAsync(actor, ct);
+        var allowedSet = allowedItems.Select(i => i.ItemId).ToHashSet(StringComparer.Ordinal);
+
         var results = new List<object>();
         var anyFail = false;
         foreach (var itemId in request.ItemIds.Distinct())
         {
+            if (!allowedSet.Contains(itemId))
+            {
+                results.Add(new { itemId, ok = false, message = "无权访问该条目（不在你的可访问范围内）" });
+                anyFail = true;
+                continue;
+            }
             try
             {
                 // PR #742 review fix：每条目独立 ok 标记。Push 或 Pull 任一阶段 outcome.Failed>0、
@@ -419,7 +432,11 @@ public class PeerSyncController : ControllerBase
         var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
         var name = user != null && !string.IsNullOrWhiteSpace(user.DisplayName) ? user.DisplayName
             : (user?.Username ?? "同步");
-        return new SyncActor(userId, name, user?.Email);
+        // 从 HttpContext 取出权限位（与 AdminPermissionMiddleware / 各 controller 的判定保持一致）。
+        // SuperUser / isAiSuperAccess 视为管理员；具体资源可以再用更细的权限位收敛（如 defect-agent.manage）。
+        var isSuper = User.FindAll("permissions").Any(c => c.Value == AdminPermissionCatalog.Super)
+            || string.Equals(User.FindFirst("isAiSuperAccess")?.Value, "1", StringComparison.Ordinal);
+        return new SyncActor(userId, name, user?.Email, IsAdmin: isSuper);
     }
 
     private static T? Deserialize<T>(string body) where T : class

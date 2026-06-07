@@ -401,6 +401,12 @@ public class DocumentStoreSyncResource : ISyncableResource
     {
         var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync(ct);
         if (store == null) return null;
+        // PR #742 review High：项目知识库 / 产品知识库走专属访问轴，本接口不放行，避免跨轴泄漏。
+        if (!string.IsNullOrEmpty(store.PmProjectId) || !string.IsNullOrEmpty(store.ProductKnowledgeRef))
+        {
+            // 项目/产品库不通过 peer-sync 导出（v1 已在 ListItemsAsync 排除，此处兜底）
+            return null;
+        }
         // 受信对端节点（node-to-node 导出，已 HMAC 验签）绕过按登录用户的访问校验。
         if (userId == SyncActor.PeerSystemUserId) return store;
         if (store.OwnerId == userId) return store;

@@ -12,7 +12,7 @@
  * 4. 严格遵守 cds-theme-tokens.md：颜色全部走 var(--*) token
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Globe,
   Plus,
@@ -154,9 +154,15 @@ export function PeerNodesSettings() {
     setTimeout(() => setToast(null), 2800);
   };
 
+  // PR #742 review fix: 工具栏刷新 / test/delete/add 后续 load 可能并发，旧响应若回填会
+  // 覆盖较新的节点状态或错误。用单调序号守卫：只有"最新一次"调用允许 setState。
+  // 沿用 prd-admin learned rule: 由用户动作触发的 async fetch 必须有 fetchIdRef stale 保护。
+  const loadSeqRef = useRef(0);
   const load = useCallback(async () => {
+    const mySeq = ++loadSeqRef.current;
     setLoading(true);
     const res = await listAdminPeerNodes();
+    if (mySeq !== loadSeqRef.current) return; // 已有更新的 load 发出，丢弃本次回填
     if (res.success && res.data) {
       setNodes(res.data.items || []);
       setSelfNodeId(res.data.selfNodeId);

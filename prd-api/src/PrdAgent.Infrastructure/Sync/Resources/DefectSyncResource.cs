@@ -40,10 +40,20 @@ public class DefectSyncResource : ISyncableResource
     // ─── 列出可发送的缺陷项目 ───
     public async Task<IReadOnlyList<SyncItemSummary>> ListItemsAsync(SyncActor actor, CancellationToken ct)
     {
-        // 列出所有非归档项目（用户能看到 / 管理员能看到由调用方的鉴权层决定，此处不限）。
+        // PR #742 review P1 fix：必须按 actor 视角过滤，否则任意登录用户可越权拉所有缺陷项目。
+        // - 受信对端节点（IsPeerSystem，来自 HMAC 验签通过的 export 请求）：全域
+        // - 本节点管理员（IsAdmin = Super / AI 超级访问）：全域
+        // - 普通用户：仅放行自己作为 OwnerUserId 的项目（不暴露其他人项目里的缺陷）
+        //
         // 个人散列缺陷（无 ProjectId）不可通过本接口互传，避免一次拷一整个用户名下零散缺陷。
+        var baseFilter = Builders<DefectProject>.Filter.Eq(p => p.IsArchived, false);
+        var visibleFilter = (actor.IsPeerSystem || actor.IsAdmin)
+            ? baseFilter
+            : Builders<DefectProject>.Filter.And(
+                baseFilter,
+                Builders<DefectProject>.Filter.Eq(p => p.OwnerUserId, actor.UserId));
         var projects = await _db.DefectProjects
-            .Find(p => !p.IsArchived)
+            .Find(visibleFilter)
             .SortBy(p => p.Name)
             .ToListAsync(ct);
         var ids = projects.Select(p => p.Id).ToList();
@@ -68,6 +78,9 @@ public class DefectSyncResource : ISyncableResource
     {
         var project = await _db.DefectProjects.Find(p => p.Id == itemId).FirstOrDefaultAsync(ct);
         if (project == null) return null;
+        // 双闸门：即便上层 transfer 已用 ListItemsAsync 做了集合判定，本方法仍独立校验 actor 是否可读，
+        // 避免对端 export 端点或未来旁路调用绕过授权。
+        if (!actor.IsPeerSystem && !actor.IsAdmin && project.OwnerUserId != actor.UserId) return null;
 
         var defects = await _db.DefectReports
             .Find(d => d.ProjectId == project.Id && !d.IsDeleted)
