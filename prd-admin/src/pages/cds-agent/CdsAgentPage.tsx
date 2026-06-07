@@ -3807,7 +3807,7 @@ export default function CdsAgentPage() {
 	    const officialPoolReady = Boolean(runtimeStatus && runtimeStatus.instanceCount > 0 && runtimeStatus.healthyCount > 0);
 	    const liteModeActive = Boolean(runtimeStatus?.liteReviewAvailable && !officialPoolReady);
 	    const simpleComposer = (
-	      <div className="mx-auto w-full max-w-[820px] rounded-2xl p-3" style={{ background: 'rgba(38,38,38,0.96)', border: '1px solid rgba(255,255,255,0.12)', boxShadow: '0 18px 60px rgba(0,0,0,0.34)' }}>
+	      <div className="mx-auto w-full max-w-[820px] rounded-2xl p-3 transition focus-within:ring-2 focus-within:ring-sky-400/45" style={{ background: 'rgba(38,38,38,0.96)', border: '1px solid rgba(255,255,255,0.12)', boxShadow: '0 18px 60px rgba(0,0,0,0.34)' }}>
 	        {liteModeActive && (
 	          <div className="mb-2 rounded-lg px-3 py-2 text-[11px] leading-relaxed text-blue-100/82" style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.22)' }}>
 	            当前为 <strong>Lite 预览模式</strong>：尚未配置 Claude/Anthropic provider，系统改用现有模型做<strong>只读</strong>代码审查（不修改文件、不执行命令、无需审批）。结果为预览级，配置官方 provider 后自动升级为商业级审查。
@@ -3829,7 +3829,7 @@ export default function CdsAgentPage() {
 	          placeholder={simpleTaskMode === 'code'
 	            ? '在此输入：告诉 Agent 要巡检什么，例如「找出当前仓库最值得修复的一个小问题，并说明如何提交 PR」'
 	            : '在此输入你的问题，回车发送（无需先填仓库）'}
-	          className="min-h-[60px] max-h-[200px] w-full resize-none bg-transparent px-1 pt-0.5 text-base leading-relaxed text-white outline-none placeholder:text-white/40"
+	          className="min-h-[60px] max-h-[200px] w-full resize-none bg-transparent px-1 pt-0.5 text-base leading-relaxed text-white outline-none focus:outline-none focus:ring-0 placeholder:text-white/40"
 	        />
           {/* 只在失败时显示诊断卡(含 复制诊断/traceId)。正常发送/运行/完成阶段不再弹这张
               「正在发送任务…」开发者卡片——进度已由对话里的用户气泡(sending/sent)+「正在生成回复/思考」

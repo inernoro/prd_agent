@@ -27,3 +27,5 @@
 | fix | prd-admin | CDS Agent 输入区抄 Codex 融合一体:模式/模型/停止/发送合并到输入框底栏一行,textarea 无边框透明融入容器,去掉顶部独立 tab 行+分隔线+提示文案,发送改圆形箭头,不再臃肿拆分 |
 | fix | prd-admin | CDS Agent 右栏「准备情况/运行进展」可折叠(顶栏按钮):折叠后聊天主区占满宽度,借鉴 Codex 右侧不占固定栏 |
 | fix | prd-admin | CDS Agent 刷新后不再 10 秒空白:首屏 loadAll 期间主区显示加载动画(MapSectionLoader),不再空等 |
+| fix | prd-api | CDS Agent 会话一轮回复结束(done)即转 idle(可复用、不计时超时),不再停留 running 直到超时:根治「历史消失(每次发送新建会话)」+「任务列表全是新会话已超时尸体」;CDS-managed 与 direct-sidecar 两条路径都修;done 后停止拉流释放 worker |
+| fix | prd-admin | CDS Agent 输入框选中高亮走外层容器(focus-within ring),不再高亮内层 textarea(符合 surface 选中规则) |

@@ -1623,12 +1623,13 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(ct));
         string? sessionStatus = null;
         string? sessionError = null;
+        var turnDone = false;
         // 增量读取：CDS 的 SSE 块以空行分隔，逐块到达即解析落库，前端 /stream SSE 立即转发，
         // 实现真流式。旧实现 ReadAsStringAsync 会阻塞到整段流读完、事件全堆到结尾，
         // 表现为「不流式 + 很久不返回」。SendCdsJsonAsync 已用 ResponseHeadersRead，可增量读。
         var blockBuilder = new System.Text.StringBuilder();
         string? line;
-        while ((line = await reader.ReadLineAsync(ct)) != null)
+        while (!turnDone && (line = await reader.ReadLineAsync(ct)) != null)
         {
             if (line.Length != 0)
             {
@@ -1666,6 +1667,13 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
             await AppendRawEventAsync(session.Id, await NextEventSeqAsync(session.Id, ct), type, payload, ct);
 
+            if (type == InfraAgentEventTypes.Done)
+            {
+                // 一轮回复结束 → 会话回到 idle(可复用、不再计时超时),而不是停留在 running 直到超时。
+                // 后续追问复用同一会话(历史保留),任务列表不再堆「新会话 已超时」尸体(用户:历史消失+全是超时)。
+                sessionStatus = InfraAgentSessionStatuses.Idle;
+                turnDone = true;
+            }
             if (type == InfraAgentEventTypes.Done && root.TryGetProperty("payload", out var donePayload))
             {
                 var finalText = GetString(donePayload, "finalText");
@@ -1926,9 +1934,13 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                         x => x.Id == session.Id,
                         Builders<InfraAgentSession>.Update
                             .Set(x => x.CurrentRuntimeRunId, null)
+                            // 一轮结束 → idle(可复用、不计时超时),否则停留 running 直到超时,
+                            // 导致后续追问新建会话(历史丢失)+ 列表堆超时尸体。
+                            .Set(x => x.Status, InfraAgentSessionStatuses.Idle)
                             .Set(x => x.UpdatedAt, DateTime.UtcNow),
                         cancellationToken: ct);
                     session.CurrentRuntimeRunId = null;
+                    session.Status = InfraAgentSessionStatuses.Idle;
                     if (!string.IsNullOrWhiteSpace(doneText))
                     {
                         await _db.InfraAgentMessages.InsertOneAsync(new InfraAgentMessage
