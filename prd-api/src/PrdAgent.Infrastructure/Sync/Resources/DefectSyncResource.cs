@@ -322,7 +322,10 @@ public class DefectSyncResource : ISyncableResource
                     var newResolution = Resolved("resolution", existing.Resolution);
                     var newAssignee = Resolved("assigneeName", existing.AssigneeName);
                     var newResolvedAt = ResolvedTs("resolvedAt", existing.ResolvedAt);
-                    if (existing.RawContent == r.Content
+                    // no-op 比对同时纳入 IsDeleted —— 本地软删的条目即便其他字段未变也要走 update 路径
+                    // 恢复 IsDeleted=false（PR #742 review fix 同条）。
+                    if (!existing.IsDeleted
+                        && existing.RawContent == r.Content
                         && existing.Title == r.Title
                         && existing.Status == newStatus
                         && existing.Severity == newSeverity
@@ -345,6 +348,12 @@ public class DefectSyncResource : ISyncableResource
                         .Set(x => x.Resolution, newResolution)
                         .Set(x => x.AssigneeName, newAssignee)
                         .Set(x => x.ResolvedAt, newResolvedAt)
+                        // PR #742 review Medium fix：清掉本地软删标记。Export 只会发非删除的条目，
+                        // 源端再次推送此条目 = 它在源端是活的；若本地此前被软删，应"复活"，否则
+                        // 同步看似成功但 UI 仍隐藏该缺陷。
+                        .Set(x => x.IsDeleted, false)
+                        .Set(x => x.DeletedAt, (DateTime?)null)
+                        .Set(x => x.DeletedBy, (string?)null)
                         .Set(x => x.ProjectId, project.Id)
                         .Set(x => x.ProjectName, project.Name)
                         .Set(x => x.UpdatedAt, DateTime.UtcNow);
