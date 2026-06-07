@@ -953,6 +953,9 @@ export default function CdsAgentPage() {
   // 杜绝「跑完之后还在循环请求」——不依赖 session.status 在列表里的滞后翻转。
   const runFinishedRef = useRef(false);
   const pollTickRef = useRef(0);
+  // 仅自动启用一次默认模型：没有任何模型配置时静默走「一键启用默认模型」，
+  // 让用户无需先点「同步系统主模型」就能直接发消息（修复:配置半天不出效果/刷新后诡异空配置态）。
+  const autoImportDefaultTriedRef = useRef(false);
   const [eventStreamHealthy, setEventStreamHealthy] = useState(false);
   const [sessionQuery, setSessionQuery] = useState('');
   const [eventReplayMode, setEventReplayMode] = useState(false);
@@ -2513,6 +2516,17 @@ export default function CdsAgentPage() {
       setProfiles(items);
       const preferred = items.find((item) => item.isDefault) ?? items[0];
       if (preferred) setDraft((prev) => ({ ...prev, runtimeProfileId: prev.runtimeProfileId || preferred.id }));
+      // 零摩擦：没有任何模型配置时，静默用系统默认主模型一键生成一个运行配置。
+      // 成功 → 用户进来就能直接发消息，不再看到「请先同步系统主模型」三连警告（图1 诡异态）。
+      // 失败(系统未配默认主模型) → 静默忽略，仍保留手动「同步系统主模型」按钮兜底。
+      if (items.length === 0 && !autoImportDefaultTriedRef.current) {
+        autoImportDefaultTriedRef.current = true;
+        const auto = await importDefaultInfraAgentRuntimeProfile();
+        if (auto.success && auto.data?.item) {
+          setProfiles([auto.data.item]);
+          setDraft((prev) => ({ ...prev, runtimeProfileId: prev.runtimeProfileId || auto.data!.item.id }));
+        }
+      }
     }
     if (profileTemplateRes.success) {
       setProfileTemplates(profileTemplateRes.data?.items ?? []);
@@ -2589,7 +2603,11 @@ export default function CdsAgentPage() {
       content,
       status: 'sending',
       createdAt: new Date().toISOString(),
-      sessionId: sessionId ?? activeSession?.id ?? null,
+      // 关键：未显式传 sessionId 时保持 null（in-flight 未绑定），不要回退到 activeSession?.id。
+      // 旧实现回退到 activeSession 会把「从超时会话发送」的乐观消息绑到旧会话；随后新建会话切走，
+      // 这条消息被 visibleLocalMessages 过滤掉 → 中间闪一帧空状态（用户：发出去→消失→又出现）。
+      // null 绑定让它在任意当前会话都显示，由下方「服务端已回显同内容」的去重逻辑收尾。
+      sessionId: sessionId ?? null,
     };
     setLocalMessages((prev) => [...prev, item]);
     setAutoScrollPaused(false);
@@ -2601,15 +2619,6 @@ export default function CdsAgentPage() {
     setLocalMessages((prev) => prev.map((item) => (
       item.id === id ? { ...item, status } : item
     )));
-  }
-
-  function clearLocalUserMessages(content: string, sessionId?: string | null) {
-    const normalized = content.trim();
-    setLocalMessages((prev) => prev.filter((item) => {
-      if (item.role !== 'user') return true;
-      if (sessionId && item.sessionId && item.sessionId !== sessionId) return true;
-      return item.content.trim() !== normalized;
-    }));
   }
 
   function setSimplePhase(
@@ -2928,7 +2937,9 @@ export default function CdsAgentPage() {
             await refreshDetail(session.id);
             return;
           }
-          clearLocalUserMessages(normalizedPrompt, retryMessageRes.data.item.id);
+          // 不立刻清除乐观消息(否则在 refreshDetail 把服务端消息拉回来之前会闪一帧空窗)。
+          // 标为已发送，保留显示；待 refreshDetail 后由 visibleLocalMessages 的内容去重无缝隐去。
+          updateLocalMessageStatus(optimisticMessageId, 'sent');
           upsertSession(retryMessageRes.data.item);
           await refreshDetail(retryMessageRes.data.item.id);
           setSimplePhase('completed', '请求已进入运行队列', 'Agent 已接收任务，后续结果会在当前会话流式出现', retryMessageRes.data.item);
@@ -2941,7 +2952,7 @@ export default function CdsAgentPage() {
         await refreshDetail(session.id);
         return;
       }
-      clearLocalUserMessages(normalizedPrompt, messageRes.data.item.id);
+      updateLocalMessageStatus(optimisticMessageId, 'sent');
       upsertSession(messageRes.data.item);
       await refreshDetail(messageRes.data.item.id);
       setSimplePhase('completed', '请求已进入运行队列', 'Agent 已接收任务，后续结果会在当前会话流式出现', messageRes.data.item);
@@ -3546,9 +3557,20 @@ export default function CdsAgentPage() {
       | { kind: 'msg'; at: number; key: string; msg: InfraAgentMessageView }
       | { kind: 'local-msg'; at: number; key: string; msg: LocalTimelineMessage }
       | { kind: 'evt'; at: number; seq: number; key: string; ev: InfraAgentEventView };
-    const visibleLocalMessages = localMessages.filter((item) => (
-      !item.sessionId || !activeSession?.id || item.sessionId === activeSession.id
-    ));
+    // 服务端已落库的用户消息内容集合，用于给乐观副本去重。
+    // 注意：服务端存的是带「【对话模式】…」前缀的原文，displayMessageContent 会剥前缀，
+    // 必须用剥后的内容比对，才能和乐观副本(干净 prompt)对上，否则去重失效→重复气泡。
+    const serverUserContents = new Set(
+      messages.filter((m) => m.role === 'user').map((m) => displayMessageContent(m).trim()),
+    );
+    const visibleLocalMessages = localMessages.filter((item) => {
+      const sameSession = !item.sessionId || !activeSession?.id || item.sessionId === activeSession.id;
+      if (!sameSession) return false;
+      // 服务端已回显同内容的用户消息 → 隐去乐观副本：既避免重复，又把「乐观显示 → 服务端到达」
+      // 衔接成无缝（不再先 clear 出现空窗、再等服务端消息冒出来）。
+      if (item.role === 'user' && serverUserContents.has(item.content.trim())) return false;
+      return true;
+    });
     const assistantStreamText = assistantTextFromEvents(displayedEvents);
     // 推理模型的思考原文（边车 thinking 事件透出）。在等待气泡里流式展示，消除"思考期间空白"。
     const thinkingText = displayedEvents
@@ -3822,12 +3844,15 @@ export default function CdsAgentPage() {
 	            : '在此输入你的问题，回车发送（无需先填仓库）'}
 	          className="min-h-[80px] w-full resize-none rounded-xl border border-white/15 bg-white/5 px-3.5 py-3 text-base leading-relaxed text-white outline-none transition placeholder:text-white/40 focus:border-sky-400/60 focus:bg-white/[0.07] focus:ring-2 focus:ring-sky-400/25"
 	        />
-          {simpleRunState && (
+          {/* 只在失败时显示诊断卡(含 复制诊断/traceId)。正常发送/运行/完成阶段不再弹这张
+              「正在发送任务…」开发者卡片——进度已由对话里的用户气泡(sending/sent)+「正在生成回复/思考」
+              气泡 + 右栏运行进展承载。修复用户反馈:发出去后冒出奇怪的诊断对话框。 */}
+          {simpleRunState && simpleRunState.phase === 'failed' && (
             <div
               className="mt-2 rounded-xl px-3 py-2 text-xs"
               style={{
-                background: simpleRunState.phase === 'failed' ? 'rgba(239,68,68,0.1)' : 'rgba(96,165,250,0.08)',
-                border: simpleRunState.phase === 'failed' ? '1px solid rgba(239,68,68,0.28)' : '1px solid rgba(96,165,250,0.18)',
+                background: 'rgba(239,68,68,0.1)',
+                border: '1px solid rgba(239,68,68,0.28)',
               }}
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
