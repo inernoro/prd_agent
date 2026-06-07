@@ -182,6 +182,20 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
 
         {/* body */}
         <div className="flex-1 px-5 py-4 space-y-4" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+          {/* PR #742 review Medium fix：error 之前只在 nodes.length>0 分支渲染，
+              listPeerNodes 失败时 nodes=[] 走"还没有可用的对端节点"空状态，真实错误被吞掉。
+              改为顶层渲染 error，让 API 失败时用户能看到真因。 */}
+          {!loading && error && (
+            <div className="flex items-start gap-2 text-[12px] rounded-lg px-3 py-2"
+              style={{
+                background: 'rgba(239,68,68,0.08)',
+                border: '1px solid rgba(239,68,68,0.20)',
+                color: 'rgba(252,165,165,0.95)',
+              }}>
+              <span className="font-medium shrink-0">加载失败：</span>
+              <span className="min-w-0 break-words">{error}</span>
+            </div>
+          )}
           {loading ? (
             <MapSectionLoader text="正在加载…" />
           ) : nodes.length === 0 ? (
@@ -312,7 +326,7 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
                 </div>
               )}
 
-              {error && <div className="text-xs text-red-400">{error}</div>}
+              {/* error 顶层渲染，见 body 顶部空状态前的渲染块 */}
             </>
           )}
         </div>

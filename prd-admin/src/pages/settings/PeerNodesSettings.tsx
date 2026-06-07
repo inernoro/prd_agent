@@ -234,7 +234,11 @@ export function PeerNodesSettings() {
       setAddSelfName('');
       void load();
     } else {
-      setAddError(res.error?.message || '配对失败');
+      // PR #742 review Medium fix：若用户在 in-flight 时点过"收起表单"（被本提交的 disabled 兜底拦下时尤其要兜底），
+      // addError 渲染在 showAdd 块里看不到，再 flash 一条 toast 确保失败原因可见。
+      const msg = res.error?.message || '配对失败';
+      setAddError(msg);
+      flash(msg, 'err');
     }
   };
 
@@ -398,8 +402,9 @@ export function PeerNodesSettings() {
               </div>
             </div>
           </div>
-          <Button size="sm" onClick={() => setShowAdd((v) => !v)} className="mt-2 w-full">
-            <Plus size={13} /> {showAdd ? '收起表单' : '添加对端节点'}
+          {/* PR #742 review Medium fix：握手 in-flight 时禁掉收起，否则收起会把进度 + addError 全藏起来 */}
+          <Button size="sm" onClick={() => { if (!addBusy) setShowAdd((v) => !v); }} disabled={addBusy} className="mt-2 w-full">
+            <Plus size={13} /> {showAdd ? (addBusy ? '握手中…（请勿关闭）' : '收起表单') : '添加对端节点'}
           </Button>
         </div>
       </section>

@@ -316,14 +316,21 @@ public class DefectSyncResource : ISyncableResource
                     if (addOnly) { skipped++; continue; }
                     // PR #742 review P2：no-op 比对必须覆盖所有可更新字段，否则只改 priority / resolution /
                     // assigneeName / attachments / structuredData 的工作流更新会被错误地判为「无变化」而静默跳过。
+                    // PR #742 review P2 fix：旧版 bundle 不带 attachments/structuredData key 时
+                    // (hasAttachmentsKey/hasStructuredKey 为 false)，update 路径会保留旧值；no-op 比对
+                    // 也必须按"保留"对待，否则把本地非空字段当成"对端清空"，每次同步都 false drift。
                     var existingAttSig = JsonSerializer.Serialize((existing.Attachments ?? new List<DefectAttachment>())
                         .Select(a => new { a.FileName, a.Url, a.FileSize }).OrderBy(a => a.FileName + a.Url));
-                    var newAttSig = JsonSerializer.Serialize((attachments ?? new List<DefectAttachment>())
-                        .Select(a => new { a.FileName, a.Url, a.FileSize }).OrderBy(a => a.FileName + a.Url));
+                    var newAttSig = hasAttachmentsKey
+                        ? JsonSerializer.Serialize((attachments ?? new List<DefectAttachment>())
+                            .Select(a => new { a.FileName, a.Url, a.FileSize }).OrderBy(a => a.FileName + a.Url))
+                        : existingAttSig;
                     var existingStructSig = JsonSerializer.Serialize((existing.StructuredData ?? new Dictionary<string, string>())
                         .OrderBy(kv => kv.Key, StringComparer.Ordinal));
-                    var newStructSig = JsonSerializer.Serialize((structured ?? new Dictionary<string, string>())
-                        .OrderBy(kv => kv.Key, StringComparer.Ordinal));
+                    var newStructSig = hasStructuredKey
+                        ? JsonSerializer.Serialize((structured ?? new Dictionary<string, string>())
+                            .OrderBy(kv => kv.Key, StringComparer.Ordinal))
+                        : existingStructSig;
                     // 用 Resolved 让 no-op 比对正确处理"源端显式清空"（用空字符串 vs 缺失 key 区分）。
                     var newStatus = Resolved("status", existing.Status);
                     var newSeverity = Resolved("severity", existing.Severity);
