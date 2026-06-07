@@ -184,6 +184,9 @@ public class AdminPeerNodesController : ControllerBase
             : request.DisplayName!.Trim();
         if (existing != null)
         {
+            // PR #742 review P2 fix：重新配对必须刷新 CreatedBy 为本次操作管理员。
+            // 否则 PeerSyncController.RemoteApply 用 node.CreatedBy 兜底归属时会落到上次配对的
+            // 老管理员（可能已离职 / 删账号），新接手的 admin 看不到自己授信导入的数据。
             await _db.PeerNodes.UpdateOneAsync(n => n.Id == existing.Id,
                 Builders<PeerNode>.Update
                     .Set(n => n.DisplayName, displayName)
@@ -192,6 +195,7 @@ public class AdminPeerNodesController : ControllerBase
                     .Set(n => n.Status, PeerNodeStatus.Connected)
                     .Set(n => n.LastError, (string?)null)
                     .Set(n => n.LastContactAt, DateTime.UtcNow)
+                    .Set(n => n.CreatedBy, GetUserId())
                     .Set(n => n.UpdatedAt, DateTime.UtcNow), cancellationToken: ct);
             var reloaded = await _db.PeerNodes.Find(n => n.Id == existing.Id).FirstOrDefaultAsync(ct);
             return Ok(ApiResponse<object>.Ok(ToDto(reloaded!)));

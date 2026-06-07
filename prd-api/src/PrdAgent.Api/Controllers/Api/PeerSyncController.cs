@@ -106,6 +106,8 @@ public class PeerSyncController : ControllerBase
         var fallbackUser = code.CreatedBy;
         if (existing != null)
         {
+            // PR #742 review P2 fix：重新握手同样刷新 CreatedBy 为本次配对码的管理员。
+            // RemoteApply 用 node.CreatedBy 兜底归属，不刷新会落到上次握手的老管理员（可能已离职）。
             await _db.PeerNodes.UpdateOneAsync(n => n.Id == existing.Id,
                 Builders<PeerNode>.Update
                     .Set(n => n.DisplayName, string.IsNullOrWhiteSpace(payload.InitiatorDisplayName) ? existing.DisplayName : payload.InitiatorDisplayName)
@@ -114,6 +116,7 @@ public class PeerSyncController : ControllerBase
                     .Set(n => n.Status, PeerNodeStatus.Connected)
                     .Set(n => n.LastError, (string?)null)
                     .Set(n => n.LastContactAt, DateTime.UtcNow)
+                    .Set(n => n.CreatedBy, fallbackUser)
                     .Set(n => n.UpdatedAt, DateTime.UtcNow), cancellationToken: ct);
         }
         else
@@ -160,7 +163,8 @@ public class PeerSyncController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items = _registry.Capabilities }));
     }
 
-    /// <summary>取条目签名（对端变更检测）。</summary>
+    /// <summary>取条目签名（对端变更检测）。
+    /// 单向资源同样拒绝，避免对端旁路本接口拿到漂移信号反推数据存在性。</summary>
     [AllowAnonymous]
     [HttpPost("resources/{type}/signature")]
     public async Task<IActionResult> RemoteSignature(string type, CancellationToken ct)
@@ -169,6 +173,9 @@ public class PeerSyncController : ControllerBase
         if (error != null) return error;
         var resource = _registry.Resolve(type);
         if (resource == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "资源类型未注册"));
+        if (!resource.SupportsBidirectional)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                $"{resource.DisplayName}是单向（push-only）资源，对端不能查询本端签名"));
         var req = Deserialize<ItemRequest>(body);
         if (req == null || string.IsNullOrWhiteSpace(req.ItemId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺少 itemId"));
@@ -176,7 +183,9 @@ public class PeerSyncController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { signature = sig }));
     }
 
-    /// <summary>导出条目 bundle（对端 pull 用，受信节点绕过按用户访问校验）。</summary>
+    /// <summary>导出条目 bundle（对端 pull 用，受信节点绕过按用户访问校验）。
+    /// PR #742 review P2 fix：单向资源（SupportsBidirectional=false）禁止 export ——
+    /// 用户层 transfer 已拒 pull/both，但若对端旁路直接调本端点仍可强行拉取数据。</summary>
     [AllowAnonymous]
     [HttpPost("resources/{type}/export")]
     public async Task<IActionResult> RemoteExport(string type, CancellationToken ct)
@@ -185,6 +194,9 @@ public class PeerSyncController : ControllerBase
         if (error != null) return error;
         var resource = _registry.Resolve(type);
         if (resource == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "资源类型未注册"));
+        if (!resource.SupportsBidirectional)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                $"{resource.DisplayName}是单向（push-only）资源，对端不能从本节点拉取"));
         var req = Deserialize<ItemRequest>(body);
         if (req == null || string.IsNullOrWhiteSpace(req.ItemId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺少 itemId"));
