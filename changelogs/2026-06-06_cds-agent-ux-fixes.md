@@ -15,3 +15,7 @@
 | feat | cds | CDS Agent 边车 sdk_events 映射 thinking 块 + remote-hosts 透传 thinking 事件给 MAP（原先只透 text_delta/tool_use/tool_result，思考被丢弃） |
 | feat | cds | CDS Agent 边车 agent_loop 两条上游链路都透出思考：raw-anthropic 识别 thinking_delta；openai-compatible(OpenRouter) 请求体加 include_reasoning/reasoning + 解析 reasoning/reasoning_content，根治「等 40 秒才出第一个字」 |
 | feat | prd-api | CDS Agent MAP 端打通 thinking 事件：SidecarEventType/InfraAgentRuntimeEventType/InfraAgentEventTypes 三处枚举补 Thinking，direct-sidecar 路径 switch 落 thinking 事件（不计入 finalText），CDS-managed 路径本就透传 |
+| fix | prd-admin | CDS Agent 输入框不再发送后从中间跳到底部:输入区永远停底部(空状态也在底部),中间只放引导;根治布局跳变 |
+| fix | prd-admin | CDS Agent 流式回复 markdown 不再「结束啪一下变样」:同一个 StreamingText 贯穿流式→完成两阶段(blur 过渡),不再换组件硬切 |
+| fix | prd-admin | CDS Agent 右栏「结果可复盘」不再显示原始事件序号(一句闲聊刷几十个事件的噪音),改为「回复已生成」/真实产物数 |
+| fix | prd-admin | CDS Agent 等待文案收敛:有思考显示「正在思考」,否则「正在生成回复」,「推理较慢」提示仅在等待≥15s 才出,不再一上来吓唬人 |

@@ -3729,7 +3729,9 @@ export default function CdsAgentPage() {
         },
 	      {
 	        label: lastAssistant || artifacts.length > 0 ? '结果可复盘' : '等待 Agent 输出',
-	        detail: artifacts.length > 0 ? `${artifacts.length} 个产物 / ${lastSeq} 个事件` : `${lastSeq} 个事件 / ${messages.length} 条消息`,
+	        detail: artifacts.length > 0
+	          ? `${artifacts.length} 个产物可复盘`
+	          : lastAssistant ? "回复已生成，可在上方查看" : "等待 Agent 首个输出",
 	        state: lastAssistant || artifacts.length > 0 ? 'pass' : activeSession ? 'pending' : 'idle',
 	      },
 	    ] as const;
@@ -4087,7 +4089,6 @@ export default function CdsAgentPage() {
                           : '可以先直接对话；需要仓库、测试或 PR 建议时再切到「代码」模式。'}
                       </div>
 	                  </div>
-	                  {simpleComposer}
 	                  {simplePromptPresetRow}
 	                </div>
 	              ) : (
@@ -4105,10 +4106,20 @@ export default function CdsAgentPage() {
 	                        >
 	                          <div className="mb-1 text-[11px] text-white/42">{messageRoleLabel(block.msg.role)} · {new Date(block.msg.createdAt).toLocaleTimeString()}</div>
                           {block.msg.role === 'assistant' ? (
-                            block.msg.id === 'assistant-stream' && block.msg.status === 'streaming' ? (
-                              <div className="text-sm leading-relaxed text-white/78">
-                                <StreamingText text={block.msg.content} streaming mode="blur" />
-                              </div>
+                            block.msg.id === 'assistant-stream' ? (
+                              // 同一个 StreamingText 贯穿「流式中→已完成」两阶段：流式时词级动画(纯文本,
+                              // 避免每 chunk 全量 markdown reflow)，done 时由它自身用 blur 过渡切到 markdown 渲染。
+                              // 修复点：旧实现在两阶段间「换组件」(StreamingText↔MarkdownContent)，导致结束瞬间
+                              // 从裸 ** 啪一下跳成粗体。统一成一个组件后是平滑过渡，不再硬切。
+                              <StreamingText
+                                text={block.msg.content}
+                                streaming={block.msg.status === 'streaming'}
+                                mode="blur"
+                                markdown
+                                renderMarkdown={(c) => (
+                                  <MarkdownContent content={c} className="text-sm leading-relaxed text-white/78" />
+                                )}
+                              />
                             ) : (
                               <MarkdownContent content={displayMessageContent(block.msg)} className="text-sm leading-relaxed text-white/78" />
                             )
@@ -4243,7 +4254,12 @@ export default function CdsAgentPage() {
 	                  <div className="max-w-[88%] rounded-xl px-3 py-2 text-xs text-white/55" style={{ background: 'rgba(96,165,250,0.08)', border: '1px solid rgba(96,165,250,0.2)' }}>
 	                    <div className="inline-flex items-center gap-2">
 	                      <MapSpinner size={13} />
-	                      <span>Agent 思考中… 已等待 {formatHumanDuration(waitedSec)}（推理模型首字可能较慢）</span>
+	                      <span>
+		                        {thinkingText.trim()
+		                          ? '正在思考…'
+		                          : `正在生成回复… 已等待 ${formatHumanDuration(waitedSec)}`}
+		                        {!thinkingText.trim() && waitedSec >= 15 ? '（推理模型可能在思考，稍候）' : ''}
+		                      </span>
 	                    </div>
 	                    {thinkingText.trim() && (
 	                      <div className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-lg px-2 py-1.5 text-[11px] leading-relaxed text-white/50" style={{ background: 'rgba(0,0,0,0.22)', overscrollBehavior: 'contain' }}>
@@ -4265,12 +4281,12 @@ export default function CdsAgentPage() {
                 </button>
               )}
 
-	            {hasConversation && (
-	              <div className="shrink-0 px-5 pb-5 pt-3" style={{ background: 'linear-gradient(180deg, rgba(18,18,18,0) 0%, rgba(18,18,18,0.96) 18%)' }}>
-	                <div className="mb-3">{simplePromptPresetRow}</div>
-	                {simpleComposer}
-	              </div>
-	            )}
+	            {/* 输入区永远停在底部：空状态也在底部，发送后不再从中间跳到底部（修复输入框位置跳变）。
+	                预设提示仅在已有对话时贴在输入框上方；空状态的预设由中间引导区承载，避免重复。 */}
+	            <div className="shrink-0 px-5 pb-5 pt-3" style={{ background: 'linear-gradient(180deg, rgba(18,18,18,0) 0%, rgba(18,18,18,0.96) 18%)' }}>
+	              {hasConversation && <div className="mb-3">{simplePromptPresetRow}</div>}
+	              {simpleComposer}
+	            </div>
 	          </main>
 
 	          <aside className="min-h-0 overflow-y-auto rounded-2xl" style={{ background: 'rgba(255,255,255,0.055)', border: '1px solid rgba(255,255,255,0.08)', overscrollBehavior: 'contain' }}>
