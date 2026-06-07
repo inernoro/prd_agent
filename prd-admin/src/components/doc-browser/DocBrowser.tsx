@@ -1787,6 +1787,12 @@ export function DocBrowser({
         // 自动激活新评论的线程 → 触发 InlineCommentConnector 入场动画（从正文气泡画连线到右侧卡），
         // 用户不用再手动点气泡才看到联系。groupKey 必须和 Overlay/Margin 同一函数，否则 activeKey 对不上。
         if (input.selectedText) {
+          // margin 模式下若用户手动收起了批注栏（marginCollapsed=true），Margin 与 Connector 都
+          // 没挂载（条件 !marginCollapsed），仅设 activeKey 谁也画不出来。与 handleActivateComment
+          // 保持同样的兜底：先重开批注栏再激活，确保连线必然显现（Bugbot Medium）。
+          if (inlineCommentLayout === 'margin' && marginCollapsed) {
+            setMarginCollapsed(false);
+          }
           setActiveCommentKey(groupKey(input.selectedText));
         }
         await refreshComments(); // 与服务器对账：成功则覆盖为真值，失败则保留乐观结果
@@ -1795,7 +1801,7 @@ export function DocBrowser({
     }
     toast.error('添加失败', res.error?.message);
     return false;
-  }, [trackedEntryForComments, refreshComments]);
+  }, [trackedEntryForComments, refreshComments, inlineCommentLayout, marginCollapsed]);
 
   const handleDeleteComment = useCallback(async (comment: DocumentInlineComment) => {
     // 删除前确认：margin/inline 的「删除」按钮小、易误点，与抽屉路径保持同样的二次确认（Codex P2）
