@@ -33,6 +33,9 @@ export default function SpeechAgentEditorPage() {
   const autoStarted = useRef(false);
   const shouldAutoStart = searchParams.get('autoStart') === '1';
   const loadFetchIdRef = useRef(0);
+  // 重新生成时延迟清节点:首个 node 事件到达时 true → 清空 + 写入第一条;
+  // 若并发拒绝/HTTP 失败/SSE 早炸,该 ref 一直为 true 但永远不触发,保留上一轮 mindmap
+  const pendingClearRef = useRef(false);
 
   const load = useCallback(async () => {
     const fetchId = ++loadFetchIdRef.current;
@@ -74,6 +77,12 @@ export default function SpeechAgentEditorPage() {
       node: (data) => {
         const d = data as { node: SpeechNode };
         setNodes((prev) => {
+          // 首个 node 事件到达时才清理旧节点(Bugbot Medium "Regenerate clears nodes without restore"):
+          // 并发拒绝/HTTP 失败/SSE 早炸 → 没有 node 事件 → 本地保留上一轮 mindmap 直到 load() 拿到权威态
+          if (pendingClearRef.current) {
+            pendingClearRef.current = false;
+            return [d.node];
+          }
           if (prev.some((n) => n.id === d.node.id)) return prev;
           return [...prev, d.node];
         });
@@ -98,7 +107,9 @@ export default function SpeechAgentEditorPage() {
   });
 
   const handleStart = useCallback(async () => {
-    setNodes([]);
+    // 不立刻清节点,等首个 node 事件到才清,避免并发拒绝/HTTP 错误时
+    // 上一轮 mindmap 被永久抹掉 (Bugbot Medium "Regenerate clears nodes without restore")
+    pendingClearRef.current = true;
     setSelectedNodeId(null);
     setThinking('');
     setTyping('');
