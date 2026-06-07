@@ -191,16 +191,38 @@ public class DefectSyncResource : ISyncableResource
             : await _db.DefectProjects.Find(p => p.Id == key).FirstOrDefaultAsync(ct);
         if (project == null)
         {
-            project = new DefectProject
+            // PR #742 review P2 fix：defect_projects.Key 有唯一索引（uniq_defect_projects_key），
+            // 若同 Key 已被其它项目占用 -> InsertOne 会 DuplicateKey 整个 apply 报错。
+            // 三段策略：(a) 若同 Key 存在 -> 直接复用既有项目（更符合用户语义：同名项目就是同一个）；
+            // (b) Key 为空时给 base+随机后缀；(c) 兜底用 -timestamp 后缀防漏网。
+            var baseKey = (bundle.Item.Name ?? "imported").ToLowerInvariant().Trim().Replace(' ', '-');
+            if (string.IsNullOrWhiteSpace(baseKey)) baseKey = "imported-" + DateTime.UtcNow.Ticks.ToString("x");
+            var existingByKey = await _db.DefectProjects
+                .Find(p => p.Key == baseKey)
+                .FirstOrDefaultAsync(ct);
+            if (existingByKey != null)
             {
-                Id = !string.IsNullOrWhiteSpace(key) ? key : Guid.NewGuid().ToString("N"),
-                Name = string.IsNullOrWhiteSpace(bundle.Item.Name) ? "（来自对端的缺陷项目）" : bundle.Item.Name,
-                Key = (bundle.Item.Name ?? "imported").ToLowerInvariant().Replace(' ', '-'),
-                Description = bundle.Item.Description,
-                OwnerUserId = ownerUserId,
-                OwnerName = ownerName,
-            };
-            await _db.DefectProjects.InsertOneAsync(project, cancellationToken: ct);
+                project = existingByKey;
+            }
+            else
+            {
+                project = new DefectProject
+                {
+                    Id = !string.IsNullOrWhiteSpace(key) ? key : Guid.NewGuid().ToString("N"),
+                    Name = string.IsNullOrWhiteSpace(bundle.Item.Name) ? "（来自对端的缺陷项目）" : bundle.Item.Name,
+                    Key = baseKey,
+                    Description = bundle.Item.Description,
+                    OwnerUserId = ownerUserId,
+                    OwnerName = ownerName,
+                };
+                try { await _db.DefectProjects.InsertOneAsync(project, cancellationToken: ct); }
+                catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+                {
+                    // 极端竞态：刚 lookup 完别人就插了同 Key。重新读一次复用。
+                    project = await _db.DefectProjects.Find(p => p.Key == baseKey).FirstOrDefaultAsync(ct)
+                        ?? throw new InvalidOperationException("无法创建或复用缺陷项目（同 Key 冲突解决失败）");
+                }
+            }
         }
 
         int created = 0, updated = 0, skipped = 0, failed = 0;

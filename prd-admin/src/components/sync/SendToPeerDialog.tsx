@@ -59,13 +59,20 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
     return () => clearInterval(t);
   }, [submitting]);
 
+  // PR #742 review Medium：transfer 进行中拦住所有关闭路径（ESC / 蒙版 / 关闭按钮），
+  // 否则 HTTP 还在跑、结果没回前 modal 被关掉，用户以为"啥都没发生"，
+  // onDone 也不触发，知识库列表不刷新。
+  const safeClose = useCallback(() => {
+    if (submitting) return;
+    onClose();
+  }, [submitting, onClose]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') safeClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [safeClose]);
 
   // PR #742 review fix: 慢响应回填可能在 modal 关闭后 / 新一轮 load 启动后才到，
   // 导致弹窗状态被旧数据短暂覆盖。沿用 prd-admin learned rule: fetchIdRef stale guard。
@@ -144,7 +151,7 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
   const modal = (
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4"
-      onClick={onClose}
+      onClick={safeClose}
     >
       <div
         className="w-full max-w-lg rounded-xl border border-white/10 bg-[#16171b] flex flex-col shadow-2xl"
@@ -157,7 +164,7 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
             <Send size={16} className="text-white/70" />
             <span className="text-sm font-medium">发送到对端节点</span>
           </div>
-          <button onClick={onClose} className="text-white/40 hover:text-white">
+          <button onClick={safeClose} className="text-white/40 hover:text-white">
             <X size={16} />
           </button>
         </div>
@@ -301,7 +308,7 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
 
         {/* footer */}
         <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-white/10 shrink-0">
-          <Button size="sm" variant="ghost" onClick={onClose}>
+          <Button size="sm" variant="ghost" onClick={safeClose}>
             关闭
           </Button>
           <Button size="sm" onClick={handleSubmit} disabled={!canSubmit}>

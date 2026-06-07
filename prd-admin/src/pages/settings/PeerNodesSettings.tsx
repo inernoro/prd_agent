@@ -142,12 +142,13 @@ export function PeerNodesSettings() {
   const [addProgress, setAddProgress] = useState<{ stage: string; startedAt: number } | null>(null);
   const [testProgress, setTestProgress] = useState<{ id: string; startedAt: number } | null>(null);
   const [, setNow] = useState(0);
-  // 1s 节拍器：handshake/test 进行中时驱动「已用 Xs」自增显示，避免空白等待（CLAUDE.md §6）
+  // 1s 节拍器：handshake/test 进行中 或 配对码倒计时显示时驱动「已用 Xs / 剩余 Xs」自增显示
+  // （CLAUDE.md §6 + PR #742 review fix：之前配对码倒计时只在首渲染那一刻定格，永不更新）
   useEffect(() => {
-    if (!addBusy && !testProgress) return;
+    if (!addBusy && !testProgress && !code) return;
     const t = setInterval(() => setNow((n) => n + 1), 1000);
     return () => clearInterval(t);
-  }, [addBusy, testProgress]);
+  }, [addBusy, testProgress, code]);
 
   const flash = (msg: string, kind: 'ok' | 'err' = 'ok') => {
     setToast({ msg, kind });
