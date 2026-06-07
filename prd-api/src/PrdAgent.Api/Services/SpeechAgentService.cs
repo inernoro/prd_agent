@@ -620,13 +620,22 @@ public class SpeechAgentService
 
         // Ready 终态更新仅在 deck.GenerationRunId 仍等于本批时才写,
         // 避免和已抢占的新 run 互相覆盖 Status / NodeCount
-        await _db.SpeechDecks.UpdateOneAsync(
+        var readyResult = await _db.SpeechDecks.UpdateOneAsync(
             d => d.Id == deck.Id && d.GenerationRunId == generationRunId,
             Builders<SpeechDeck>.Update
                 .Set(d => d.Status, SpeechDeckStatus.Ready)
                 .Set(d => d.NodeCount, nodes.Count)
                 .Set(d => d.UpdatedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
+
+        // Ready update 没匹配(slow SSE 期间被新 run 抢占)→ 不能向客户端发 done
+        // 否则前端把这一批当作功成,refetch 拿到的是别人的状态
+        // (Bugbot High "Done without Ready confirmation")
+        if (readyResult.MatchedCount == 0)
+        {
+            yield return SpeechGenerateEvent.Error("本次生成已被新一轮请求取代,放弃覆盖。");
+            yield break;
+        }
 
         yield return SpeechGenerateEvent.Done(nodes.Count);
     }

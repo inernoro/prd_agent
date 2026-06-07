@@ -584,8 +584,10 @@ public class SpeechAgentController : ControllerBase
                 onModel: async (model, platform) =>
                 {
                     // 落库与 SSE 写入串行,避免 model 事件与紧随其后的 thinking/text 写入交错 (Codex P2)
+                    // 同时带 GenerationRunId 守卫,避免 stale-timeout 抢占场景里慢的旧 run 覆盖新 run 的模型元信息
+                    // (Bugbot Medium "Model update ignores run guard")
                     await _db.SpeechDecks.UpdateOneAsync(
-                        d => d.Id == deckId,
+                        d => d.Id == deckId && d.GenerationRunId == generationRunId,
                         Builders<SpeechDeck>.Update.Set(d => d.Model, model).Set(d => d.Platform, platform));
                     await WriteSseAsync("model", new { model, platform });
                 }))
