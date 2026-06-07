@@ -97,6 +97,8 @@ public class DefectSyncResource : ISyncableResource
         {
             // 业务字段塞进 metadata（避免 v2 加字段时破坏 schema）。已知字段值用 String 表达，
             // 未知字段或对端不识别由 Extras 兜底向下兼容。
+            // PR #742 review fix：attachments / structuredData 即使为空也必须在 extras 里显式 emit
+            // 空数组 / 空对象 —— 否则源端清空后接收方收到的是缺 key，永远当成「没变」无法清。
             var meta = new Dictionary<string, string>
             {
                 [LineageKey] = d.Id,
@@ -111,26 +113,23 @@ public class DefectSyncResource : ISyncableResource
                 ["resolution"] = d.Resolution ?? string.Empty,
             };
 
-            // 附件只传引用元数据（URL），不内联二进制。
+            // 附件只传引用元数据（URL），不内联二进制；空数组也要 emit 让对端能识别"源端已清空"。
             var extras = new Dictionary<string, JsonElement>();
-            if (d.Attachments != null && d.Attachments.Count > 0)
+            var attRefs = (d.Attachments ?? new List<DefectAttachment>()).Select(a => new
             {
-                var attRefs = d.Attachments.Select(a => new
-                {
-                    fileName = a.FileName,
-                    mimeType = a.MimeType,
-                    size = a.FileSize,
-                    url = a.Url,
-                    type = a.Type,
-                }).ToList();
-                extras["attachments"] = JsonSerializer.SerializeToElement(attRefs);
+                fileName = a.FileName,
+                mimeType = a.MimeType,
+                size = a.FileSize,
+                url = a.Url,
+                type = a.Type,
+            }).ToList();
+            extras["attachments"] = JsonSerializer.SerializeToElement(attRefs);
+            if (attRefs.Count > 0)
                 extras["attachmentsNote"] = JsonSerializer.SerializeToElement(
                     "附件保留为引用 URL；对端环境网络不可达时需手动重新上传");
-            }
 
-            // structuredData 也传过去（保留原始结构）
-            if (d.StructuredData != null && d.StructuredData.Count > 0)
-                extras["structuredData"] = JsonSerializer.SerializeToElement(d.StructuredData);
+            // structuredData 也传过去（保留原始结构），空对象也要 emit
+            extras["structuredData"] = JsonSerializer.SerializeToElement(d.StructuredData ?? new Dictionary<string, string>());
 
             records.Add(new SyncRecord
             {
@@ -246,12 +245,15 @@ public class DefectSyncResource : ISyncableResource
 
                 // PR #742 review fix：消化 export 写入 Extras 的 attachments / structuredData，
                 // 否则附件元数据和结构化字段在对端被静默丢弃。
+                // 现在 export 必 emit 这两 key（即便空），此处只要 key 存在就 set（含空清空语义）；
+                // key 不存在则不动（向下兼容旧 bundle）。
                 List<DefectAttachment>? attachments = null;
-                if (r.Extras.TryGetValue("attachments", out var attEl) && attEl.ValueKind == JsonValueKind.Array)
+                bool hasAttachmentsKey = r.Extras.TryGetValue("attachments", out var attEl) && attEl.ValueKind == JsonValueKind.Array;
+                if (hasAttachmentsKey)
                 {
+                    attachments = new List<DefectAttachment>();
                     try
                     {
-                        attachments = new List<DefectAttachment>();
                         foreach (var item in attEl.EnumerateArray())
                         {
                             attachments.Add(new DefectAttachment
@@ -265,19 +267,24 @@ public class DefectSyncResource : ISyncableResource
                             });
                         }
                     }
-                    catch { attachments = null; }
+                    catch { attachments = new List<DefectAttachment>(); }
                 }
                 Dictionary<string, string>? structured = null;
-                if (r.Extras.TryGetValue("structuredData", out var sdEl) && sdEl.ValueKind == JsonValueKind.Object)
+                bool hasStructuredKey = r.Extras.TryGetValue("structuredData", out var sdEl) && sdEl.ValueKind == JsonValueKind.Object;
+                if (hasStructuredKey)
                 {
+                    structured = new Dictionary<string, string>();
                     try
                     {
-                        structured = new Dictionary<string, string>();
                         foreach (var prop in sdEl.EnumerateObject())
                             structured[prop.Name] = prop.Value.ValueKind == JsonValueKind.String ? prop.Value.GetString() ?? string.Empty : prop.Value.ToString();
                     }
-                    catch { structured = null; }
+                    catch { structured = new Dictionary<string, string>(); }
                 }
+                // 解析 resolvedAt：源端解决/重新打开时 timestamp 必须搬过来，否则分析的"解决耗时"会断
+                DateTime? resolvedAt = null;
+                if (Get("resolvedAt") is string ra && DateTime.TryParse(ra, out var raDt))
+                    resolvedAt = raDt.ToUniversalTime();
 
                 if (existing != null)
                 {
@@ -299,6 +306,7 @@ public class DefectSyncResource : ISyncableResource
                         && existing.Priority == (Get("priority") ?? existing.Priority)
                         && existing.Resolution == (Get("resolution") ?? existing.Resolution)
                         && existing.AssigneeName == (Get("assigneeName") ?? existing.AssigneeName)
+                        && existing.ResolvedAt == (resolvedAt ?? existing.ResolvedAt)
                         && existingAttSig == newAttSig
                         && existingStructSig == newStructSig)
                     {
@@ -313,11 +321,14 @@ public class DefectSyncResource : ISyncableResource
                         .Set(x => x.Priority, Get("priority") ?? existing.Priority)
                         .Set(x => x.Resolution, Get("resolution") ?? existing.Resolution)
                         .Set(x => x.AssigneeName, Get("assigneeName") ?? existing.AssigneeName)
+                        .Set(x => x.ResolvedAt, resolvedAt ?? existing.ResolvedAt)
                         .Set(x => x.ProjectId, project.Id)
                         .Set(x => x.ProjectName, project.Name)
                         .Set(x => x.UpdatedAt, DateTime.UtcNow);
-                    if (attachments != null) u = u.Set(x => x.Attachments, attachments);
-                    if (structured != null) u = u.Set(x => x.StructuredData, structured);
+                    // hasAttachmentsKey/hasStructuredKey 表示 export 端 emit 了该 key（含清空语义）→
+                    // 即便集合为空也要 .Set 让对端清掉；key 缺失（旧 bundle）才保留旧值。
+                    if (hasAttachmentsKey) u = u.Set(x => x.Attachments, attachments ?? new List<DefectAttachment>());
+                    if (hasStructuredKey) u = u.Set(x => x.StructuredData, structured ?? new Dictionary<string, string>());
                     await _db.DefectReports.UpdateOneAsync(d => d.Id == lineageId, u, cancellationToken: ct);
                     updated++;
                 }
@@ -354,6 +365,7 @@ public class DefectSyncResource : ISyncableResource
                         ProjectName = project.Name,
                         CreatedAt = parsedCreated,
                         UpdatedAt = DateTime.UtcNow,
+                        ResolvedAt = resolvedAt,
                         Attachments = attachments ?? new List<DefectAttachment>(),
                         StructuredData = structured ?? new Dictionary<string, string>(),
                     };

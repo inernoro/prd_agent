@@ -136,8 +136,11 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
     setSubmitting(false);
     setProgress(null);
     if (res.success && res.data) {
-      setResults(res.data.results || []);
-      if (!res.data.anyFail) onDone?.();
+      const items = res.data.results || [];
+      setResults(items);
+      // PR #742 review Medium fix：之前只有 anyFail=false 才回调 onDone，部分成功部分失败时知识库列表不刷新
+      // 用户看到弹窗里某些条目「成功」但列表没变化，以为啥都没发生。只要至少一条 ok=true 就触发刷新。
+      if (items.some((r) => r.ok)) onDone?.();
     } else {
       setError(res.error?.message || '互传失败');
     }
