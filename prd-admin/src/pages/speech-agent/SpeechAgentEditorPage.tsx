@@ -36,6 +36,9 @@ export default function SpeechAgentEditorPage() {
   // 重新生成时延迟清节点:首个 node 事件到达时 true → 清空 + 写入第一条;
   // 若并发拒绝/HTTP 失败/SSE 早炸,该 ref 一直为 true 但永远不触发,保留上一轮 mindmap
   const pendingClearRef = useRef(false);
+  // useSseStream 在 SSE 'error' 事件上会先调顶层 onError,再调 onEvent.error。
+  // 顶层 onError 用 setTimeout 调度 load(),自定义 handler 同帧内同步运行,可决定是否取消
+  const pendingLoadTimerRef = useRef<number | null>(null);
 
   const load = useCallback(async () => {
     const fetchId = ++loadFetchIdRef.current;
@@ -99,18 +102,25 @@ export default function SpeechAgentEditorPage() {
         const d = data as { message?: string; concurrencyRejected?: boolean };
         setDeck((prev) => (prev ? { ...prev, errorMessage: d.message ?? null } : prev));
         pendingClearRef.current = false;
-        if (!d.concurrencyRejected) {
-          // 给 backend 一点时间写入 failed status 再 refetch
-          window.setTimeout(() => load(), 500);
+        // 取消顶层 onError 刚调度的 load() — 顶层会在 SSE 'error' 事件上先于本回调被调
+        // (Bugbot Medium "Concurrency error banner cleared")
+        if (d.concurrencyRejected && pendingLoadTimerRef.current != null) {
+          window.clearTimeout(pendingLoadTimerRef.current);
+          pendingLoadTimerRef.current = null;
         }
       },
     },
-    // useSseStream 的 onError 处理非 200 / fetch 失败 / 解析异常等顶层错,
-    // 此前未挂导致 HTTP 4xx/5xx 网络失败时用户看不到任何提示 (Bugbot Medium "Editor omits SSE hook onError")
+    // useSseStream 的 onError 处理非 200 / fetch 失败 / 解析异常 / SSE 'error' 事件
+    // (Bugbot Medium "Editor omits SSE hook onError")
+    // 用 setTimeout 调度 load(),给 onEvent.error 同步取消的机会(并发拒绝场景)
     onError: (message) => {
       setDeck((prev) => (prev ? { ...prev, errorMessage: message } : prev));
       pendingClearRef.current = false;
-      window.setTimeout(() => load(), 500);
+      if (pendingLoadTimerRef.current != null) window.clearTimeout(pendingLoadTimerRef.current);
+      pendingLoadTimerRef.current = window.setTimeout(() => {
+        pendingLoadTimerRef.current = null;
+        load();
+      }, 500);
     },
   });
 

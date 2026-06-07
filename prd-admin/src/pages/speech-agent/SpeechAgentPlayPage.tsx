@@ -139,6 +139,12 @@ export default function SpeechAgentPlayPage() {
     let cancel = false;
     setLoading(true);
     setLoadError(null);
+    // 切 deck 时重置播放状态,避免从上一个 deck 的中间页/进度开始
+    // (Bugbot Medium "Play state persists across decks")
+    setActiveIndex(0);
+    setCameraTargetIndex(null);
+    setRawNodes([]);
+    setDeck(null);
     speechAgentApi.getDeck(deckId).then((res) => {
       if (cancel) return;
       if (res.success && res.data) {

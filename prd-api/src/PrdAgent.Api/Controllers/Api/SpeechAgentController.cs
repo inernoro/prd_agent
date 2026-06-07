@@ -356,21 +356,14 @@ public class SpeechAgentController : ControllerBase
             sourceRef: deckId,
             tags: null, folder: null);
 
-        // 重新发布前先吊销该 deck 之前所有 speech-agent 来源的分享链,
-        // 否则旧 token 的 /s/wp/{token} 仍能访问已撤回/修正的内容
-        // (Codex P2 "Revoke the previous speech share on republish")
+        // 先扫旧 site,确定要吊销的范围(收集但不立即写)
         var staleSiteIds = await _db.HostedSites
             .Find(s => s.SourceType == "speech-agent" && s.SourceRef == deckId)
             .Project(s => s.Id)
             .ToListAsync();
-        if (staleSiteIds.Count > 0)
-        {
-            await _db.WebPageShareLinks.UpdateManyAsync(
-                l => staleSiteIds.Contains(l.SiteId!) && !l.IsRevoked,
-                Builders<WebPageShareLink>.Update.Set(l => l.IsRevoked, true));
-        }
 
-        // 创建 public 分享链（owner 可重新发布会覆盖）
+        // 先插入新分享链:失败也不会让旧链接已被吊销变成"没新链"的死局
+        // (Bugbot Medium "Republish revokes before new link")
         var share = new WebPageShareLink
         {
             CreatedBy = userId,
@@ -381,6 +374,15 @@ public class SpeechAgentController : ControllerBase
             AccessLevel = "public",
         };
         await _db.WebPageShareLinks.InsertOneAsync(share);
+
+        // 新链就位后再吊销旧链
+        // (Codex P2 "Revoke the previous speech share on republish")
+        if (staleSiteIds.Count > 0)
+        {
+            await _db.WebPageShareLinks.UpdateManyAsync(
+                l => staleSiteIds.Contains(l.SiteId!) && !l.IsRevoked && l.Id != share.Id,
+                Builders<WebPageShareLink>.Update.Set(l => l.IsRevoked, true));
+        }
 
         await _db.SpeechDecks.UpdateOneAsync(
             d => d.Id == deckId,
