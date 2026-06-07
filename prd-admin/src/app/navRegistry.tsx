@@ -52,6 +52,7 @@ const MyAssetsPage = lazy(() => import('@/pages/MyAssetsPage'));
 const CdsAgentPage = lazy(() => import('@/pages/cds-agent').then(m => ({ default: m.CdsAgentPage })));
 const InfraServicesPage = lazy(() => import('@/pages/infra-services').then(m => ({ default: m.InfraServicesPage })));
 const OpenPlatformTabsPage = lazy(() => import('@/pages/OpenPlatformTabsPage'));
+const MdToPptAgentPage = lazy(() => import('@/pages/md-to-ppt-agent/MdToPptAgentPage').then(m => ({ default: m.MdToPptAgentPage })));
 
 // ── 类型定义 ──────────────────────────────────────────────
 //
@@ -412,6 +413,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'toolbox',
       appKey: 'shortcuts-agent',
       tags: ['快捷', '效率', '指令'],
+    },
+  },
+  {
+    path: '/md-to-ppt-agent',
+    permission: 'ai-toolbox.use',
+    element: shellGuarded('ai-toolbox.use', <MdToPptAgentPage />),
+    nav: {
+      label: 'Markdown 转网页 PPT',
+      shortLabel: 'PPT',
+      description: '将 Markdown / 文件内容通过 AI 生成可分享的 reveal.js 网页演示',
+      icon: 'Presentation',
+      section: 'toolbox',
+      appKey: 'md-to-ppt-agent',
+      wip: true,
+      tags: ['PPT', '演示', 'Markdown', '幻灯片', '网页托管'],
     },
   },
 

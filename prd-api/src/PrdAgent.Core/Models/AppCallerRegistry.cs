@@ -1471,7 +1471,26 @@ public static class InfraAgent
         public const string Chat = "infra-agent.review-lite::chat";
     }
 }
+
+/// <summary>
+/// MD 转 PPT 智能体 — 将 Markdown/文件内容转换为网页版 PPT
+/// </summary>
+public static class MdToPptAgent
+{
+    public const string AppName = "MD 转 PPT 智能体";
+
+    public static class Generation
+    {
+        [AppCallerMetadata(
+            "MD转PPT-大纲生成",
+            "将 Markdown/文本内容通过 LLM 流式生成 PPT 大纲结构，每页含标题和要点",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Document"
+        )]
+        public const string Convert = "md-to-ppt-agent.generation::chat";
+    }
 }
+} // AppCallerRegistry
 
 /// <summary>
 /// 应用调用者元数据标记
