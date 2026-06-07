@@ -29,3 +29,4 @@
 | fix | prd-admin | CDS Agent 刷新后不再 10 秒空白:首屏 loadAll 期间主区显示加载动画(MapSectionLoader),不再空等 |
 | fix | prd-api | CDS Agent 会话一轮回复结束(done)即转 idle(可复用、不计时超时),不再停留 running 直到超时:根治「历史消失(每次发送新建会话)」+「任务列表全是新会话已超时尸体」;CDS-managed 与 direct-sidecar 两条路径都修;done 后停止拉流释放 worker |
 | fix | prd-admin | CDS Agent 输入框选中高亮走外层容器(focus-within ring),不再高亮内层 textarea(符合 surface 选中规则) |
+| fix | prd-admin | CDS Agent 追问复用同一会话:已 provision 过(有 cdsSessionId)的会话不再 re-start,直接发消息(CDS 会话被回收时由 SendMessage 按同一 MAP 会话重建),根治「追问时上一轮历史丢失/新建会话」 |

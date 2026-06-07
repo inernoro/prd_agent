@@ -2865,7 +2865,10 @@ export default function CdsAgentPage() {
         if (!session) return;
       }
 
-      if (canStartFromStatus(session.status)) {
+      // 仅「从未启动过」(无 cdsSessionId)才走启动；已провизион过的会话(含一轮回复后转 idle 的)
+      // 直接发消息——SendMessage 内部会在 CDS 会话被回收时按同一个 MAP 会话重建,历史保留。
+      // 旧实现对 idle 会话也 re-start,CDS 会话被回收时 start 报 not-found → 兜底新建会话 → 上一轮历史丢失。
+      if (canStartFromStatus(session.status) && !session.cdsSessionId) {
         setSimplePhase('starting', '正在启动远程 runtime', 'CDS 正在准备容器、workspace 和 runtime transport', session);
         setSimpleSubmitStatus('正在启动远程 runtime…');
         const startRes = await startInfraAgentSession(session.id);

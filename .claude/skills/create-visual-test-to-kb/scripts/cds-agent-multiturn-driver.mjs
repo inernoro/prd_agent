@@ -49,10 +49,10 @@ try {
   await page.waitForTimeout(1500);
   await shot(page, OUT, '02-turn2-reply', '第二轮回复完成:两轮历史都应在场');
 
-  const afterT2 = await page.evaluate((u1, u2) => ({
+  const afterT2 = await page.evaluate(([u1, u2]) => ({
     user1StillVisible: document.body.innerText.includes(u1), // 关键:第一轮历史是否还在(修复前会消失)
     user2Visible: document.body.innerText.includes(u2),
-  }), U1, U2);
+  }), [U1, U2]);
 
   console.log('VERDICT6', JSON.stringify({
     turn1Replied: r1, turn2Replied: r2,
