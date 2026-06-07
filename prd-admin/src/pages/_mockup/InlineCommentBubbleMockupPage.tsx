@@ -64,7 +64,7 @@ const HTML = `
   .ic-mockup .margin-body { font-size: 12px; color: var(--text); line-height: 1.5; }
   .ic-mockup .margin-quote { font-size: 10px; color: var(--muted); border-left: 2px solid rgba(255,255,255,0.15); padding-left: 6px; margin-bottom: 6px; font-style: italic; }
 
-  .ic-mockup .connector { position: absolute; inset: 0; pointer-events: none; overflow: visible; z-index: 1; }
+  .ic-mockup .connector { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; z-index: 1; }
   .ic-mockup .connector path { fill: none; stroke-width: 1.5; stroke-linecap: round; opacity: 0.7; }
   .ic-mockup .connector path.animate { stroke-dasharray: 400; stroke-dashoffset: 400; animation: ic-draw 0.7s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
   @keyframes ic-draw { to { stroke-dashoffset: 0; } }
@@ -188,15 +188,21 @@ window.__icMockupRun = function() {
     var layout = document.getElementById('ic-layout');
     var av = document.getElementById('ic-av-new');
     var card = document.getElementById('ic-card-new');
+    var lr = layout.getBoundingClientRect();
     var a = getRelPos(av, layout);
     var b = getRelPos(card, layout);
     var x1 = a.x + a.w;
     var y1 = a.y + a.h / 2;
     var x2 = b.x;
     var y2 = b.y + 16;
-    var cx = (x1 + x2) / 2;
-    var path = 'M ' + x1 + ' ' + y1 + ' C ' + cx + ' ' + y1 + ', ' + cx + ' ' + y2 + ', ' + x2 + ' ' + y2;
+    // 控制点：从 bubble 水平延伸 60% 距离再下落，避免 S 形过头甩到右边外
+    var dx = Math.max(40, (x2 - x1) * 0.5);
+    var path = 'M ' + x1 + ' ' + y1 + ' C ' + (x1 + dx) + ' ' + y1 + ', ' + (x2 - dx) + ' ' + y2 + ', ' + x2 + ' ' + y2;
     var svg = document.getElementById('ic-connector');
+    // 显式同步 SVG 物理尺寸 + viewBox，避免默认 300x150 把曲线坐标系拉飞
+    svg.setAttribute('width', String(lr.width));
+    svg.setAttribute('height', String(lr.height));
+    svg.setAttribute('viewBox', '0 0 ' + lr.width + ' ' + lr.height);
     svg.innerHTML =
       '<path d="' + path + '" class="animate" stroke="#34d399" />' +
       '<circle cx="' + x1 + '" cy="' + y1 + '" r="3" fill="#34d399" />' +
