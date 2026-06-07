@@ -966,17 +966,16 @@
    * 手机端动作 sheet —— ⋮ 点开的竖向操作面板。把页面传入 right 槽的那组按钮
    * 竖直铺成全宽菜单行(按钮本就是 Button,竖排即菜单形态)。双主题走 token。
    */
+  /* backdrop + sheet 都 portal 到 <body>:fixed 相对视口,盖满全屏。 */
   .cds-topbar-sheet-backdrop {
     position: fixed;
     inset: 0;
-    z-index: 40;
+    z-index: 1000;
   }
 
   .cds-topbar-sheet {
-    position: absolute;
-    top: calc(100% + 6px);
-    right: 0;
-    z-index: 50;
+    position: fixed;
+    z-index: 1001;
     min-width: 200px;
     max-width: 78vw;
     max-height: 70vh;

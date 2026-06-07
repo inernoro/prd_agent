@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Check, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Search, Settings, Sun, X } from 'lucide-react';
@@ -477,19 +478,14 @@ function MobileNavDrawer({
   // (Bugbot #741「Modal overlays lack focus trap」)。
   useFocusTrap(open, rootRef);
 
-  // 关闭态:除了 aria-hidden + translateX 移出屏幕,还要把整个抽屉设为 inert,
-  // 否则里面的链接/关闭/登出按钮仍在键盘 Tab 序里,用户能 tab 进一个不可见的导航
-  // (Codex #741 P2)。inert 同时移除交互 + 焦点 + a11y 树;用属性方式设置以兼容
-  // React 18 类型(JSX 尚无 inert 声明)。保留 CSS slide-out 退场动画。
-  useEffect(() => {
-    const el = rootRef.current;
-    if (!el) return;
-    if (open) el.removeAttribute('inert');
-    else el.setAttribute('inert', '');
-  }, [open]);
+  // 关闭态:除了 aria-hidden + translateX 移出屏幕,还把整个抽屉设为 inert ——
+  // 同步写在 JSX 上(不走 useEffect),避免「渲染后到 effect 执行之间」那一帧里
+  // 关闭的抽屉链接/按钮仍在 Tab 序中(Bugbot #741 Medium「inert applied too late」)。
+  // inert 同时移除交互 + 焦点 + a11y 树;React 18 类型无 inert 声明,用 spread 兼容。
+  const inertProps = open ? {} : ({ inert: '' } as Record<string, string>);
 
   return (
-    <div ref={rootRef} className={cn('cds-mobile-drawer md:hidden', open ? 'is-open' : null)} aria-hidden={!open}>
+    <div ref={rootRef} {...inertProps} className={cn('cds-mobile-drawer md:hidden', open ? 'is-open' : null)} aria-hidden={!open}>
       <div className="cds-mobile-drawer-backdrop" onClick={onClose} />
       <nav className="cds-mobile-drawer-panel" aria-label="主导航">
         <div className="cds-mobile-drawer-head">
@@ -540,6 +536,19 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
   const { openNav } = useContext(MobileNavContext);
   const [actionsOpen, setActionsOpen] = useState(false);
   const sheetRef = useRef<HTMLDivElement>(null);
+  const kebabRef = useRef<HTMLButtonElement>(null);
+  // sheet 通过 portal 挂到 <body>(见下),所以用固定坐标定位到 ⋮ 按钮下方。
+  // 不能留在 .cds-topbar 内:topbar 有 backdrop-filter,会成为 fixed 的包含块,
+  // 导致全屏 backdrop 只盖住顶栏(Bugbot #741 Medium「Sheet backdrop clipped」)。
+  const [sheetPos, setSheetPos] = useState<{ top: number; right: number } | null>(null);
+  const toggleSheet = (): void => {
+    setActionsOpen((open) => {
+      if (open) return false;
+      const r = kebabRef.current?.getBoundingClientRect();
+      if (r) setSheetPos({ top: Math.round(r.bottom + 6), right: Math.round(Math.max(8, window.innerWidth - r.right)) });
+      return true;
+    });
+  };
   // ⋮ 动作 sheet 打开:锁背景滚动(否则触屏下背景仍可滚)+ 焦点陷阱(下方 useFocusTrap)。
   useEffect(() => {
     if (!actionsOpen) return undefined;
@@ -585,27 +594,37 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
       {/* 手机端:动作收进 ⋮ 溢出菜单,点开是竖向 action sheet —— 真正的移动端形态,
           而非把一排 PC 工具栏按钮硬塞进窄屏。 */}
       {right ? (
-        <div className="relative md:hidden">
+        <div className="md:hidden">
           <button
+            ref={kebabRef}
             type="button"
             className="cds-icon-button"
-            onClick={() => setActionsOpen((v) => !v)}
+            onClick={toggleSheet}
             aria-label="更多操作"
             aria-expanded={actionsOpen}
           >
             <MoreVertical />
           </button>
-          {actionsOpen ? (
-            <>
-              <div className="cds-topbar-sheet-backdrop" onClick={() => setActionsOpen(false)} />
-              {/* 不在容器上 auto-close:right 槽里可能含嵌套 Radix 菜单(如项目列表的
-                  「一键部署」),点一下就收起会破坏二级菜单。改为点 backdrop 关闭;
-                  导航类按钮点完页面自换,触发类按钮点完留着等 backdrop 收。 */}
-              <div ref={sheetRef} className="cds-topbar-sheet" role="menu">
-                {right}
-              </div>
-            </>
-          ) : null}
+          {/* backdrop + sheet 通过 portal 挂到 <body>,逃离 .cds-topbar 的
+              backdrop-filter 包含块,fixed backdrop 才能盖满整个视口(Bugbot #741)。
+              不在容器上 auto-close:right 槽可能含嵌套 Radix 菜单(项目列表「一键部署」),
+              点一下就收起会破坏二级菜单 —— 改为点 backdrop / Esc 关闭。 */}
+          {actionsOpen && sheetPos
+            ? createPortal(
+                <>
+                  <div className="cds-topbar-sheet-backdrop" onClick={() => setActionsOpen(false)} />
+                  <div
+                    ref={sheetRef}
+                    className="cds-topbar-sheet"
+                    role="menu"
+                    style={{ top: sheetPos.top, right: sheetPos.right }}
+                  >
+                    {right}
+                  </div>
+                </>,
+                document.body,
+              )
+            : null}
         </div>
       ) : null}
       <SiteNoticeInbox />
