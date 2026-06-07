@@ -548,6 +548,14 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
     return () => { document.body.style.overflow = prev; };
   }, [actionsOpen]);
   useFocusTrap(actionsOpen, sheetRef);
+  // ⋮ sheet 的键盘可关闭:焦点被困在 sheet 内时,必须能用 Esc 退出(与抽屉一致),
+  // 否则键盘用户只能在菜单里打转(Bugbot #741 Medium「Sheet lacks keyboard dismiss」)。
+  useEffect(() => {
+    if (!actionsOpen) return undefined;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setActionsOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [actionsOpen]);
   return (
     <header className="cds-topbar">
       {/* Hamburger — phone only. Opens the slide-in nav drawer. */}
