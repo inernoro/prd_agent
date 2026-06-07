@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
@@ -173,7 +175,11 @@ public class DefectSyncResource : ISyncableResource
         var parts = defects
             .Select(d => $"{d.Id}|{d.UpdatedAt.Ticks}|{d.Status}")
             .OrderBy(x => x, StringComparer.Ordinal);
-        return string.Join("\n", parts).GetHashCode().ToString("x");
+        // PR #742 review P2 fix：string.GetHashCode() 每个 .NET 进程随机化，跨节点 / 重启永不一致
+        // → 漂移检测永远报"不同步"。改用 SHA-256，与 DocumentStoreSyncResource 同款稳定算法。
+        using var sha = SHA256.Create();
+        var hash = sha.ComputeHash(Encoding.UTF8.GetBytes(string.Join("\n", parts)));
+        return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
     // ─── 应用（接收阶段：单向 push 接收方） ───
