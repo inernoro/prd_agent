@@ -32,11 +32,15 @@ export default function SpeechAgentEditorPage() {
 
   const autoStarted = useRef(false);
   const shouldAutoStart = searchParams.get('autoStart') === '1';
+  const loadFetchIdRef = useRef(0);
 
   const load = useCallback(async () => {
+    const fetchId = ++loadFetchIdRef.current;
     setLoading(true);
     try {
       const res = await speechAgentApi.getDeck(deckId);
+      // stale-response guard: 路由切换或快速重复 load 时,旧请求不能覆盖新数据 (Bugbot Low)
+      if (fetchId !== loadFetchIdRef.current) return;
       if (res.success && res.data) {
         setDeck(res.data.deck);
         setNodes(res.data.nodes);
@@ -44,7 +48,7 @@ export default function SpeechAgentEditorPage() {
         setPlatform(res.data.deck.platform ?? null);
       }
     } finally {
-      setLoading(false);
+      if (fetchId === loadFetchIdRef.current) setLoading(false);
     }
   }, [deckId]);
 
@@ -217,7 +221,10 @@ export default function SpeechAgentEditorPage() {
     );
   }
 
-  const isGenerating = stream.isStreaming || stream.phase === 'connecting' || deck.status === 'generating';
+  // 仅看本会话的 SSE 流状态。后端 deck.status === 'generating' 是持久化字段，
+  // 刷新或返回页面时若上一次 SSE 已断而后端还没写回终态，会让 UI 永远卡在「生成中」
+  // 锁住「重新生成 / 发布」(Bugbot High)。所以只信 stream 状态。
+  const isGenerating = stream.isStreaming || stream.phase === 'connecting';
 
   return (
     <div className="h-full min-h-0 flex flex-col">

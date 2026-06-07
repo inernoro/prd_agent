@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ChevronLeft, Sparkles, Loader2, Upload, ClipboardPaste, FileText, X, Settings2, ChevronDown, ChevronUp, BookOpen,
@@ -103,16 +103,24 @@ export default function SpeechAgentCreatePage() {
     }
   }, [kbStores.length]);
 
+  const kbEntriesFetchIdRef = useRef(0);
   const loadKbEntries = useCallback(async (storeId: string) => {
     setKbActiveStoreId(storeId);
+    setKbEntries([]);
     setKbLoading(true);
+    const fetchId = ++kbEntriesFetchIdRef.current;
     try {
       const res = await apiRequest<{ items: Array<{ id: string; title: string; summary?: string; sourceType?: string; isFolder?: boolean }> }>(
         `/api/document-store/stores/${encodeURIComponent(storeId)}/entries?page=1&pageSize=200&all=true`);
+      // stale-response guard (Bugbot Medium, prd-admin learned rule:
+      // async fetches triggered by tab/filter changes must use fetchIdRef stale-response guard)
+      if (fetchId !== kbEntriesFetchIdRef.current) return;
       if (res.success && res.data) {
         setKbEntries(res.data.items.filter((e) => !e.isFolder));
       }
-    } finally { setKbLoading(false); }
+    } finally {
+      if (fetchId === kbEntriesFetchIdRef.current) setKbLoading(false);
+    }
   }, []);
 
   const pickKbEntry = useCallback(async (entryId: string, entryTitle: string) => {

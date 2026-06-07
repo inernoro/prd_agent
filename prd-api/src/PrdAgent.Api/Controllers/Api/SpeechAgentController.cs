@@ -27,6 +27,7 @@ public class SpeechAgentController : ControllerBase
     private readonly SpeechAgentService _service;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IHostedSiteService _hostedSites;
+    private readonly ITeamService _teams;
     private readonly ILogger<SpeechAgentController> _logger;
 
     private static readonly JsonSerializerOptions SseJson = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
@@ -36,12 +37,14 @@ public class SpeechAgentController : ControllerBase
         SpeechAgentService service,
         ILLMRequestContextAccessor llmRequestContext,
         IHostedSiteService hostedSites,
+        ITeamService teams,
         ILogger<SpeechAgentController> logger)
     {
         _db = db;
         _service = service;
         _llmRequestContext = llmRequestContext;
         _hostedSites = hostedSites;
+        _teams = teams;
         _logger = logger;
     }
 
@@ -352,12 +355,18 @@ public class SpeechAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺少 entryId"));
         var userId = this.GetRequiredUserId();
 
-        // 直接读知识库 entry 内容（鉴权由 DocumentStore 层控制；这里再校验所属库读权限）
+        // 直接读知识库 entry 内容（与 DocumentStoreController.CanReadStoreAsync 同口径：
+        // owner / public / team-shared 三类都放行。之前只查 owner+public 会拒掉团队成员，
+        // 与 GET /api/document-store/entries/{id}/content 行为不一致 — Bugbot Medium。）
         var entry = await _db.DocumentEntries.Find(e => e.Id == req.EntryId).FirstOrDefaultAsync();
         if (entry == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档不存在"));
         var store = await _db.DocumentStores.Find(s => s.Id == entry.StoreId).FirstOrDefaultAsync();
         if (store == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "知识库不存在"));
-        if (store.OwnerId != userId && !store.IsPublic)
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
+        var canRead = store.OwnerId == userId
+            || store.IsPublic
+            || (store.SharedTeamIds != null && store.SharedTeamIds.Any(myTeamIds.Contains));
+        if (!canRead)
             return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限读该文档"));
 
         // 同 DocumentStoreController 的内容提取链：优先 ParsedPrd.RawContent，兜底 Attachment.ExtractedText
@@ -439,15 +448,26 @@ public class SpeechAgentController : ControllerBase
             return;
         }
 
-        await _db.SpeechNodes.DeleteManyAsync(n => n.DeckId == deckId, CancellationToken.None);
-        await _db.SpeechDecks.UpdateOneAsync(
-            d => d.Id == deckId,
+        // 并发互斥：compare-and-swap deck.Status draft|ready|failed → generating。
+        // 已经在 generating 的 deck 第二个请求被拒，防止两个 LLM 任务交错清节点+写库导致脏数据 (Bugbot Medium)。
+        var claimFilter = Builders<SpeechDeck>.Filter.And(
+            Builders<SpeechDeck>.Filter.Eq(d => d.Id, deckId),
+            Builders<SpeechDeck>.Filter.Ne(d => d.Status, SpeechDeckStatus.Generating));
+        var claimResult = await _db.SpeechDecks.UpdateOneAsync(
+            claimFilter,
             Builders<SpeechDeck>.Update
                 .Set(d => d.Status, SpeechDeckStatus.Generating)
                 .Set(d => d.ErrorMessage, null)
                 .Set(d => d.NodeCount, 0)
                 .Set(d => d.UpdatedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
+        if (claimResult.MatchedCount == 0)
+        {
+            await WriteSseAsync("error", new { message = "已有一个生成任务在进行中，请等待完成或刷新后重试" });
+            return;
+        }
+
+        await _db.SpeechNodes.DeleteManyAsync(n => n.DeckId == deckId, CancellationToken.None);
 
         await WriteSseAsync("phase", new { phase = "preparing", message = "准备中..." });
 

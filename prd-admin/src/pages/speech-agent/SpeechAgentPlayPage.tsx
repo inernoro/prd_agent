@@ -126,7 +126,7 @@ export default function SpeechAgentPlayPage() {
   const [controlsCollapsed, setControlsCollapsed] = useState(false);
   const [stageSize, setStageSize] = useState({ width: 1440, height: 900 });
   const [metrics, setMetrics] = useState<Map<string, Metric>>(new Map());
-  const [imageViewer, setImageViewer] = useState<{ svg: string; title: string } | null>(null);
+  const [imageViewer, setImageViewer] = useState<{ svg?: string; imageUrl?: string; title: string } | null>(null);
 
   const stageRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
@@ -305,8 +305,12 @@ export default function SpeechAgentPlayPage() {
                   onClick={() => onNodeClick(n)}
                   onDoubleClick={() => onNodeDoubleClick(n)}
                   onImageClick={() => {
-                    const ill = nodeIllustration(n.id);
-                    setImageViewer({ svg: ill.svg, title: n.raw.title });
+                    if (n.raw.imageUrl) {
+                      setImageViewer({ imageUrl: n.raw.imageUrl, title: n.raw.title });
+                    } else {
+                      const ill = nodeIllustration(n.id);
+                      setImageViewer({ svg: ill.svg, title: n.raw.title });
+                    }
                   }}
                 />
               ))}
@@ -412,9 +416,19 @@ export default function SpeechAgentPlayPage() {
           onClick={() => setImageViewer(null)}
         >
           <div className="relative max-w-[80vw] max-h-[80vh] flex flex-col items-center gap-6" onClick={(e) => e.stopPropagation()}>
-            <div className="bg-white rounded-2xl shadow-2xl p-8" style={{ width: 'min(70vw, 600px)', border: '1px solid rgba(26,42,49,0.14)' }}
-              dangerouslySetInnerHTML={{ __html: imageViewer.svg.replace('viewBox="0 0 161 84"', 'viewBox="0 0 161 84" style="width:100%;height:auto"') }}
-            />
+            {imageViewer.imageUrl ? (
+              <div className="bg-white rounded-2xl shadow-2xl overflow-hidden flex items-center justify-center" style={{ maxWidth: 'min(70vw, 800px)', maxHeight: '70vh', border: '1px solid rgba(26,42,49,0.14)' }}>
+                <img
+                  src={imageViewer.imageUrl}
+                  alt={imageViewer.title}
+                  style={{ width: '100%', height: 'auto', maxHeight: '70vh', objectFit: 'contain', display: 'block' }}
+                />
+              </div>
+            ) : (
+              <div className="bg-white rounded-2xl shadow-2xl p-8" style={{ width: 'min(70vw, 600px)', border: '1px solid rgba(26,42,49,0.14)' }}
+                dangerouslySetInnerHTML={{ __html: (imageViewer.svg ?? '').replace('viewBox="0 0 161 84"', 'viewBox="0 0 161 84" style="width:100%;height:auto"') }}
+              />
+            )}
             <div className="text-[16px]" style={{ color: '#172033', fontWeight: 700 }}>{imageViewer.title}</div>
             <button type="button" onClick={() => setImageViewer(null)}
               className="absolute -top-3 -right-3 w-10 h-10 rounded-full flex items-center justify-center shadow-lg"
@@ -572,7 +586,7 @@ function MindCard({
       <div style={{ fontSize: 13, lineHeight: 1.1, fontWeight: 850, color: isActive ? 'rgba(255,255,255,0.72)' : '#6b745d', marginBottom: 3 }}>{subtitle}</div>
       <div style={{ fontSize: 19, lineHeight: 1.25, fontWeight: 800, color, marginBottom: 6 }}>{node.raw.title}</div>
 
-      {/* 节点配图 — 缩略图，active 时由 activeScale 自动放大 */}
+      {/* 节点配图 — 已 AI 生成走 imageUrl <img>，否则降级到 hash 选的 inline SVG 简笔 */}
       <div
         onClick={(e) => { e.stopPropagation(); onImageClick(); }}
         onDoubleClick={(e) => e.stopPropagation()}
@@ -587,8 +601,18 @@ function MindCard({
         }}
         role="button"
         aria-label="点击查看大图"
-        dangerouslySetInnerHTML={{ __html: illustration.svg.replace('width="161" height="84"', 'width="100%" height="100%"').replace('viewBox="0 0 161 84"', 'viewBox="0 0 161 84" preserveAspectRatio="xMidYMid meet"') }}
-      />
+        {...(node.raw.imageUrl
+          ? {}
+          : { dangerouslySetInnerHTML: { __html: illustration.svg.replace('width="161" height="84"', 'width="100%" height="100%"').replace('viewBox="0 0 161 84"', 'viewBox="0 0 161 84" preserveAspectRatio="xMidYMid meet"') } })}
+      >
+        {node.raw.imageUrl && (
+          <img
+            src={node.raw.imageUrl}
+            alt={node.raw.title}
+            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+          />
+        )}
+      </div>
     </button>
   );
 }
