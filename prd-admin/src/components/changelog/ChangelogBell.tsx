@@ -74,8 +74,11 @@ export function ChangelogBell({ size = 18, compact = false }: ChangelogBellProps
   }, []);
 
   // 计算 popover 位置（基于按钮位置）
+  // 注意：不再用 force=true 刷新——铃铛是「看一眼最新」的辅助入口，
+  // SWR 5min 新鲜度足够；force=true 会清空更新中心页 loadMoreFragments 累积到的
+  // 更老日期组 tail，让正打开页面的用户瞬间「列表变短」（Bugbot #1 第三轮）。
   const openPopover = () => {
-    void loadCurrentWeek({ daysLimit: 8, force: true });
+    void loadCurrentWeek({ daysLimit: 8 });
     const rect = buttonRef.current?.getBoundingClientRect();
     if (rect) {
       const popoverWidth = 360;

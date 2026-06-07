@@ -20,8 +20,10 @@ public sealed class ChangelogRefreshWorker : BackgroundService
     private readonly IChangelogReader _reader;
     private readonly ILogger<ChangelogRefreshWorker> _logger;
 
-    // 与前端请求的 limit 对齐，保证预热/刷新的快照 key 正是前端会读取的那几个。
-    private const int ReleasesLimit = 20;
+    // 与 ChangelogController.GetReleases 一致（永远拉满 100，单一 cache key）：
+    // controller 总是读 releases:100 切片输出，worker 也只刷 releases:100，避免缓存键漂移
+    // 导致 worker 预热的快照永远命中不到前端读取的 key（Codex P2 align cache key）
+    private const int ReleasesLimit = 100;
     private const int GitHubLogsLimit = 1000;
 
     // 启动后首次 force 刷新的延迟：先让启动流程跑顺、用户先吃到存量，再后台对齐远端。

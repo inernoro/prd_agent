@@ -296,7 +296,7 @@ export default function ChangelogPage() {
   // - githubLogs 只拉首批 80 条，cursor 分页续接
   useEffect(() => {
     void loadCurrentWeek({ daysLimit: 4 });
-    void loadReleases({ limit: 8, summary: true });
+    void loadReleases({ limit: 100, summary: true });
     markAsSeen();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -525,7 +525,7 @@ export default function ChangelogPage() {
 
   const handleRefresh = () => {
     void loadCurrentWeek({ daysLimit: 4, force: true });
-    void loadReleases({ limit: 8, summary: true, force: true });
+    void loadReleases({ limit: 100, summary: true, force: true });
     void refreshGitHubLogs({ force: true, foreground: historySubtab === 'github_logs', showError: historySubtab === 'github_logs' });
   };
 
@@ -542,7 +542,7 @@ export default function ChangelogPage() {
     const viewType = (data as { viewType?: string })?.viewType;
     // 服务器已把新数据落库，这里只做 force=false 的后台静默重读（读存量，不打 GitHub、不闪 loading）
     if (viewType === 'current-week') void loadCurrentWeek({ daysLimit: 4 });
-    else if (viewType === 'releases') void loadReleases({ limit: 8, summary: true });
+    else if (viewType === 'releases') void loadReleases({ limit: 100, summary: true });
     else if (viewType === 'github-logs') void refreshGitHubLogs({ force: false });
     setJustUpdatedAt(Date.now());
   }, [loadCurrentWeek, loadReleases, refreshGitHubLogs]);
