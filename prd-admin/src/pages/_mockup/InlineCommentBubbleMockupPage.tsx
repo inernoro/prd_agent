@@ -261,6 +261,10 @@ export default function InlineCommentBubbleMockupPage() {
     return () => {
       const el = document.getElementById('ic-mockup-script');
       if (el) el.remove();
+      // 跑过 demo 后 body 上挂着一个 z-index 9999 的 SVG，离开本路由也要拆掉，
+      // 否则会在其他页面留一根孤儿连线（Bugbot Low）
+      const orphanSvg = document.getElementById('ic-connector-fixed');
+      if (orphanSvg) orphanSvg.remove();
       delete (window as unknown as { __icMockupRun?: () => void }).__icMockupRun;
     };
   }, []);

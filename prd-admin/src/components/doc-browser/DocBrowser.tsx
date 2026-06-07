@@ -3105,8 +3105,11 @@ export function DocBrowser({
                       // 用户反馈：打开浮层后正文选区被清掉，写到一半就忘了自己选了哪段
                       const sel = window.getSelection();
                       const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
-                      const rects = range
-                        ? Array.from(range.getClientRects()).map((cr) => ({
+                      // range 存在但 getClientRects() 空（折叠 / 不可见行 / 被 display:none 包裹）也要回退到
+                      // liveSelection.rect 的 bounding box，否则 PendingSelectionHighlight 渲染不出来（Bugbot Low）
+                      const clientRects = range ? Array.from(range.getClientRects()) : [];
+                      const rects = clientRects.length > 0
+                        ? clientRects.map((cr) => ({
                             top: cr.top,
                             left: cr.left,
                             width: cr.width,
