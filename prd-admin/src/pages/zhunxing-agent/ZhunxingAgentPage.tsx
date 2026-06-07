@@ -4,15 +4,22 @@ import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import {
   askZhunxing,
+  createZhunxingCategory,
   createZhunxingClause,
   createZhunxingDocument,
+  createZhunxingTag,
   deactivateZhunxingDocument,
+  expireZhunxingDocumentsNow,
+  getZhunxingDocumentDiff,
+  getZhunxingDocumentTimeline,
   getZhunxingAccessScope,
   getMyZhunxingTopicSubscription,
   getMyZhunxingTopicUpdates,
   getZhunxingKnowledgeHeatmap,
   getZhunxingFeedbackSummary,
+  listZhunxingCategories,
   listZhunxingDocuments,
+  listZhunxingTags,
   listZhunxingFeedbacks,
   markZhunxingFeedbackFollowUp,
   replayZhunxingFeedback,
@@ -21,11 +28,15 @@ import {
   updateZhunxingFeedbackWorkflow,
   type ZhunxingAccessScopeResult,
   type ZhunxingAskResponse,
+  type ZhunxingDocumentDiffResult,
+  type ZhunxingDocumentVersionTimelineResult,
   type ZhunxingFeedbackListItem,
   type ZhunxingFeedbackListResult,
   type ZhunxingFeedbackSummary,
+  type ZhunxingKnowledgeCategory,
   type ZhunxingKnowledgeDocument,
   type ZhunxingKnowledgeHeatmap,
+  type ZhunxingKnowledgeTag,
   type ZhunxingTopicSubscriptionResult,
   type ZhunxingTopicUpdateFeed,
 } from '@/services/real/zhunxing';
@@ -33,17 +44,20 @@ import {
   AlertCircle,
   BarChart3,
   BellRing,
+  Clock3,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   ChevronUp,
   FileStack,
   Flame,
+  GitBranch,
   FolderCog,
   RefreshCw,
   Search,
   ShieldAlert,
   ShieldCheck,
+  Tag,
   Trash2,
   Upload,
 } from 'lucide-react';
@@ -176,12 +190,19 @@ export default function ZhunxingAgentPage() {
   const [libraryNotice, setLibraryNotice] = useState<string | null>(null);
   const [accessScope, setAccessScope] = useState<ZhunxingAccessScopeResult | null>(null);
   const [documents, setDocuments] = useState<ZhunxingKnowledgeDocument[]>([]);
+  const [categories, setCategories] = useState<ZhunxingKnowledgeCategory[]>([]);
+  const [tags, setTags] = useState<ZhunxingKnowledgeTag[]>([]);
   const [newDocTitle, setNewDocTitle] = useState('');
   const [newDocVersion, setNewDocVersion] = useState('v1.0');
   const [newDocScopeInput, setNewDocScopeInput] = useState('all-departments');
   const [newDocDepartment, setNewDocDepartment] = useState('');
+  const [newDocCategoryId, setNewDocCategoryId] = useState('');
+  const [newDocTagInput, setNewDocTagInput] = useState('');
+  const [newDocPreviousVersionDocumentId, setNewDocPreviousVersionDocumentId] = useState('');
+  const [newDocExpiresAt, setNewDocExpiresAt] = useState('');
   const [creatingDocument, setCreatingDocument] = useState(false);
   const [deactivatingDocId, setDeactivatingDocId] = useState<string | null>(null);
+  const [expiringDocuments, setExpiringDocuments] = useState(false);
   const [newClauseDocumentId, setNewClauseDocumentId] = useState('');
   const [newClauseChapter, setNewClauseChapter] = useState('');
   const [newClauseTitle, setNewClauseTitle] = useState('');
@@ -190,6 +211,22 @@ export default function ZhunxingAgentPage() {
   const [newClauseText, setNewClauseText] = useState('');
   const [newClauseSortOrder, setNewClauseSortOrder] = useState(10);
   const [creatingClause, setCreatingClause] = useState(false);
+  const [newCategoryKey, setNewCategoryKey] = useState('');
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [newCategoryParentId, setNewCategoryParentId] = useState('');
+  const [newCategorySortOrder, setNewCategorySortOrder] = useState(10);
+  const [creatingCategory, setCreatingCategory] = useState(false);
+  const [newTagKey, setNewTagKey] = useState('');
+  const [newTagLabel, setNewTagLabel] = useState('');
+  const [newTagAliases, setNewTagAliases] = useState('');
+  const [creatingTag, setCreatingTag] = useState(false);
+  const [timelineDocumentId, setTimelineDocumentId] = useState('');
+  const [timelineResult, setTimelineResult] = useState<ZhunxingDocumentVersionTimelineResult | null>(null);
+  const [diffSourceDocumentId, setDiffSourceDocumentId] = useState('');
+  const [diffTargetDocumentId, setDiffTargetDocumentId] = useState('');
+  const [diffResult, setDiffResult] = useState<ZhunxingDocumentDiffResult | null>(null);
+  const [loadingTimeline, setLoadingTimeline] = useState(false);
+  const [loadingDiff, setLoadingDiff] = useState(false);
 
   const visualStyleTokens = useMemo(() => {
     if (visualStyle === 'cosmic') {
@@ -400,6 +437,16 @@ export default function ZhunxingAgentPage() {
     return manageableDepartments.includes(department);
   }, [manageableDepartments]);
 
+  const categoryNameMap = useMemo(
+    () => Object.fromEntries(categories.map((item) => [item.id, item.name])) as Record<string, string>,
+    [categories],
+  );
+
+  const tagLabelMap = useMemo(
+    () => Object.fromEntries(tags.map((item) => [item.key, item.label])) as Record<string, string>,
+    [tags],
+  );
+
   const runAsk = async (q?: string) => {
     const text = (q ?? question).trim();
     if (!text || loading) return;
@@ -527,9 +574,11 @@ export default function ZhunxingAgentPage() {
     setLibraryLoading(true);
     setLibraryError(null);
     try {
-      const [scopeRes, docsRes] = await Promise.all([
+      const [scopeRes, docsRes, categoriesRes, tagsRes] = await Promise.all([
         getZhunxingAccessScope(),
         listZhunxingDocuments(),
+        listZhunxingCategories(),
+        listZhunxingTags(),
       ]);
 
       if (!scopeRes.success || !scopeRes.data) {
@@ -538,19 +587,39 @@ export default function ZhunxingAgentPage() {
       if (!docsRes.success || !docsRes.data) {
         throw new Error(docsRes.error?.message || '文件库加载失败');
       }
+      if (!categoriesRes.success || !categoriesRes.data) {
+        throw new Error(categoriesRes.error?.message || '分类字典加载失败');
+      }
+      if (!tagsRes.success || !tagsRes.data) {
+        throw new Error(tagsRes.error?.message || '标签字典加载失败');
+      }
 
       setAccessScope(scopeRes.data);
       setDocuments(docsRes.data.items || []);
+      setCategories(categoriesRes.data.items || []);
+      setTags(tagsRes.data.items || []);
       if (scopeRes.data.manageableDepartments.length > 0) {
         setNewDocDepartment((prev) => prev || scopeRes.data.manageableDepartments[0]);
       }
       if (docsRes.data.items?.length) {
         setNewClauseDocumentId((prev) => prev || docsRes.data.items[0].id);
+        setTimelineDocumentId((prev) => prev || docsRes.data.items[0].id);
+        setDiffSourceDocumentId((prev) => prev || docsRes.data.items[0].id);
+        if (docsRes.data.items.length > 1) {
+          setDiffTargetDocumentId((prev) => prev || docsRes.data.items[1].id);
+        } else {
+          setDiffTargetDocumentId((prev) => prev || docsRes.data.items[0].id);
+        }
+      }
+      if (categoriesRes.data.items?.length) {
+        setNewDocCategoryId((prev) => prev || categoriesRes.data.items[0].id);
       }
     } catch (e) {
       setLibraryError(e instanceof Error ? e.message : '文件库加载失败');
       setAccessScope(null);
       setDocuments([]);
+      setCategories([]);
+      setTags([]);
     } finally {
       setLibraryLoading(false);
     }
@@ -566,11 +635,19 @@ export default function ZhunxingAgentPage() {
         .split(/[,\s，]+/)
         .map((item) => item.trim())
         .filter(Boolean);
+      const tagKeys = newDocTagInput
+        .split(/[,\s，]+/)
+        .map((item) => item.trim())
+        .filter(Boolean);
       const res = await createZhunxingDocument({
         title: newDocTitle.trim(),
         version: newDocVersion.trim() || 'v1.0',
         ownerDepartment: newDocDepartment,
         scope,
+        categoryId: newDocCategoryId || undefined,
+        tagKeys,
+        previousVersionDocumentId: newDocPreviousVersionDocumentId || undefined,
+        expiresAt: newDocExpiresAt || undefined,
       });
       if (!res.success || !res.data) {
         setLibraryError(res.error?.message || '新建文档失败');
@@ -580,13 +657,27 @@ export default function ZhunxingAgentPage() {
       setLibraryNotice('文档已入库，可继续录入条款。');
       setNewDocTitle('');
       setNewDocVersion('v1.0');
+      setNewDocTagInput('');
+      setNewDocPreviousVersionDocumentId('');
+      setNewDocExpiresAt('');
       await loadLibrary();
     } catch (e) {
       setLibraryError(e instanceof Error ? e.message : '新建文档失败');
     } finally {
       setCreatingDocument(false);
     }
-  }, [creatingDocument, loadLibrary, newDocDepartment, newDocScopeInput, newDocTitle, newDocVersion]);
+  }, [
+    creatingDocument,
+    loadLibrary,
+    newDocCategoryId,
+    newDocDepartment,
+    newDocExpiresAt,
+    newDocPreviousVersionDocumentId,
+    newDocScopeInput,
+    newDocTagInput,
+    newDocTitle,
+    newDocVersion,
+  ]);
 
   const submitNewClause = useCallback(async () => {
     if (!newClauseDocumentId || !newClauseChapter.trim() || !newClauseTitle.trim() || !newClauseText.trim() || creatingClause) {
@@ -634,6 +725,127 @@ export default function ZhunxingAgentPage() {
     newClauseTitle,
   ]);
 
+  const submitNewCategory = useCallback(async () => {
+    if (!newCategoryKey.trim() || !newCategoryName.trim() || creatingCategory) return;
+    setCreatingCategory(true);
+    setLibraryError(null);
+    setLibraryNotice(null);
+    try {
+      const res = await createZhunxingCategory({
+        key: newCategoryKey.trim(),
+        name: newCategoryName.trim(),
+        parentId: newCategoryParentId || undefined,
+        sortOrder: newCategorySortOrder,
+      });
+      if (!res.success || !res.data) {
+        setLibraryError(res.error?.message || '新增分类失败');
+        return;
+      }
+      setLibraryNotice(`分类「${res.data.name}」已新增。`);
+      setNewCategoryKey('');
+      setNewCategoryName('');
+      setNewCategoryParentId('');
+      setNewCategorySortOrder(10);
+      await loadLibrary();
+    } catch (e) {
+      setLibraryError(e instanceof Error ? e.message : '新增分类失败');
+    } finally {
+      setCreatingCategory(false);
+    }
+  }, [creatingCategory, loadLibrary, newCategoryKey, newCategoryName, newCategoryParentId, newCategorySortOrder]);
+
+  const submitNewTag = useCallback(async () => {
+    if (!newTagKey.trim() || !newTagLabel.trim() || creatingTag) return;
+    setCreatingTag(true);
+    setLibraryError(null);
+    setLibraryNotice(null);
+    try {
+      const aliases = newTagAliases
+        .split(/[,\s，]+/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+      const res = await createZhunxingTag({
+        key: newTagKey.trim(),
+        label: newTagLabel.trim(),
+        aliases,
+      });
+      if (!res.success || !res.data) {
+        setLibraryError(res.error?.message || '新增标签失败');
+        return;
+      }
+      setLibraryNotice(`标签「${res.data.label}」已新增。`);
+      setNewTagKey('');
+      setNewTagLabel('');
+      setNewTagAliases('');
+      await loadLibrary();
+    } catch (e) {
+      setLibraryError(e instanceof Error ? e.message : '新增标签失败');
+    } finally {
+      setCreatingTag(false);
+    }
+  }, [creatingTag, loadLibrary, newTagAliases, newTagKey, newTagLabel]);
+
+  const expireDocumentsNow = useCallback(async () => {
+    if (expiringDocuments) return;
+    setExpiringDocuments(true);
+    setLibraryError(null);
+    setLibraryNotice(null);
+    try {
+      const res = await expireZhunxingDocumentsNow();
+      if (!res.success || !res.data) {
+        setLibraryError(res.error?.message || '执行到期巡检失败');
+        return;
+      }
+      setLibraryNotice(`到期巡检完成：本次自动失效 ${res.data.expiredCount} 份文档。`);
+      await loadLibrary();
+    } catch (e) {
+      setLibraryError(e instanceof Error ? e.message : '执行到期巡检失败');
+    } finally {
+      setExpiringDocuments(false);
+    }
+  }, [expiringDocuments, loadLibrary]);
+
+  const loadDocumentTimeline = useCallback(async (documentId?: string) => {
+    const targetId = (documentId ?? timelineDocumentId).trim();
+    if (!targetId) return;
+    setLoadingTimeline(true);
+    setLibraryError(null);
+    try {
+      const res = await getZhunxingDocumentTimeline(targetId);
+      if (!res.success || !res.data) {
+        setLibraryError(res.error?.message || '版本链路加载失败');
+        setTimelineResult(null);
+        return;
+      }
+      setTimelineResult(res.data);
+    } catch (e) {
+      setLibraryError(e instanceof Error ? e.message : '版本链路加载失败');
+      setTimelineResult(null);
+    } finally {
+      setLoadingTimeline(false);
+    }
+  }, [timelineDocumentId]);
+
+  const runDocumentDiff = useCallback(async () => {
+    if (!diffSourceDocumentId || !diffTargetDocumentId) return;
+    setLoadingDiff(true);
+    setLibraryError(null);
+    try {
+      const res = await getZhunxingDocumentDiff(diffSourceDocumentId, diffTargetDocumentId);
+      if (!res.success || !res.data) {
+        setLibraryError(res.error?.message || '版本Diff加载失败');
+        setDiffResult(null);
+        return;
+      }
+      setDiffResult(res.data);
+    } catch (e) {
+      setLibraryError(e instanceof Error ? e.message : '版本Diff加载失败');
+      setDiffResult(null);
+    } finally {
+      setLoadingDiff(false);
+    }
+  }, [diffSourceDocumentId, diffTargetDocumentId]);
+
   const handleDeactivateDocument = useCallback(async (doc: ZhunxingKnowledgeDocument) => {
     if (deactivatingDocId) return;
     setDeactivatingDocId(doc.id);
@@ -663,6 +875,12 @@ export default function ZhunxingAgentPage() {
     if (viewMode !== 'library') return;
     void loadLibrary();
   }, [viewMode, loadLibrary]);
+
+  useEffect(() => {
+    if (viewMode !== 'library') return;
+    if (!timelineDocumentId) return;
+    void loadDocumentTimeline(timelineDocumentId);
+  }, [viewMode, timelineDocumentId, loadDocumentTimeline]);
 
   const updateFeedbackStatus = useCallback(async (item: ZhunxingFeedbackListItem, status: 'triaged' | 'in_progress' | 'resolved' | 'closed') => {
     if (!hasWritePermission || actingFeedbackId) return;
@@ -1112,10 +1330,22 @@ export default function ZhunxingAgentPage() {
             入口说明：这里负责文档入库、条款维护和下线。系统会按部门权限隔离写操作。
           </div>
         </div>
-        <Button variant="secondary" size="sm" onClick={() => void loadLibrary()} disabled={libraryLoading} className="whitespace-nowrap">
-          {libraryLoading ? <MapSpinner size={14} color="var(--text-primary)" /> : <RefreshCw size={14} />}
-          刷新文件库
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void expireDocumentsNow()}
+            disabled={expiringDocuments || libraryLoading}
+            className="whitespace-nowrap"
+          >
+            {expiringDocuments ? <MapSpinner size={14} color="var(--text-primary)" /> : <Clock3 size={14} />}
+            到期巡检
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => void loadLibrary()} disabled={libraryLoading} className="whitespace-nowrap">
+            {libraryLoading ? <MapSpinner size={14} color="var(--text-primary)" /> : <RefreshCw size={14} />}
+            刷新文件库
+          </Button>
+        </div>
       </div>
 
       {libraryError && (
@@ -1137,6 +1367,11 @@ export default function ZhunxingAgentPage() {
           写权限：{accessScope?.writable ? '已开通' : '未开通'}；全部门维护：{accessScope?.canManageAllDepartments ? '是' : '否'}。
           {!accessScope?.canManageAllDepartments && accessScope?.manageableDepartments?.length
             ? ` 可维护部门：${accessScope.manageableDepartments.map((d) => accessScope.departmentLabels?.[d] ?? d).join('、')}`
+            : ''}
+          {accessScope?.inheritedDepartments && Object.keys(accessScope.inheritedDepartments).length
+            ? `；继承范围：${Object.entries(accessScope.inheritedDepartments)
+              .map(([dept, parent]) => `${accessScope.departmentLabels?.[parent] ?? parent}→${accessScope.departmentLabels?.[dept] ?? dept}`)
+              .join('、')}`
             : ''}
         </div>
       </div>
@@ -1175,10 +1410,52 @@ export default function ZhunxingAgentPage() {
                 ))}
               </select>
             </div>
+            <div className="grid grid-cols-2 gap-2">
+              <select
+                value={newDocCategoryId}
+                onChange={(e) => setNewDocCategoryId(e.target.value)}
+                className="rounded-md px-2 py-1.5 text-xs outline-none"
+                style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-primary)' }}
+              >
+                <option value="">未分类</option>
+                {categories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={newDocPreviousVersionDocumentId}
+                onChange={(e) => setNewDocPreviousVersionDocumentId(e.target.value)}
+                className="rounded-md px-2 py-1.5 text-xs outline-none"
+                style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-primary)' }}
+              >
+                <option value="">不挂接版本链</option>
+                {documents.map((doc) => (
+                  <option key={doc.id} value={doc.id}>
+                    {doc.title} · {doc.version}
+                  </option>
+                ))}
+              </select>
+            </div>
             <input
               value={newDocScopeInput}
               onChange={(e) => setNewDocScopeInput(e.target.value)}
               placeholder="适用范围（逗号分隔，如 all-departments,rnd）"
+              className="rounded-md px-2 py-1.5 text-xs outline-none"
+              style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-primary)' }}
+            />
+            <input
+              value={newDocTagInput}
+              onChange={(e) => setNewDocTagInput(e.target.value)}
+              placeholder="标签 key（逗号分隔，如 attendance,policy）"
+              className="rounded-md px-2 py-1.5 text-xs outline-none"
+              style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-primary)' }}
+            />
+            <input
+              type="datetime-local"
+              value={newDocExpiresAt}
+              onChange={(e) => setNewDocExpiresAt(e.target.value)}
               className="rounded-md px-2 py-1.5 text-xs outline-none"
               style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-primary)' }}
             />
@@ -1275,6 +1552,119 @@ export default function ZhunxingAgentPage() {
         </div>
       </div>
 
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-3">
+        <div className="rounded-lg p-3" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
+          <div className="text-sm font-semibold mb-2 flex items-center gap-1.5" style={{ color: 'var(--text-primary)' }}>
+            <FolderCog size={14} />
+            分类树字典
+          </div>
+          <div className="flex flex-col gap-2">
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                value={newCategoryKey}
+                onChange={(e) => setNewCategoryKey(e.target.value)}
+                placeholder="分类 key（如 policy-rules）"
+                className="rounded-md px-2 py-1.5 text-xs outline-none"
+                style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-primary)' }}
+              />
+              <input
+                value={newCategoryName}
+                onChange={(e) => setNewCategoryName(e.target.value)}
+                placeholder="分类名称"
+                className="rounded-md px-2 py-1.5 text-xs outline-none"
+                style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-primary)' }}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <select
+                value={newCategoryParentId}
+                onChange={(e) => setNewCategoryParentId(e.target.value)}
+                className="rounded-md px-2 py-1.5 text-xs outline-none"
+                style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-primary)' }}
+              >
+                <option value="">根节点</option>
+                {categories.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="number"
+                value={newCategorySortOrder}
+                onChange={(e) => setNewCategorySortOrder(Number(e.target.value || 0))}
+                className="rounded-md px-2 py-1.5 text-xs outline-none"
+                style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-primary)' }}
+              />
+            </div>
+            <Button variant="secondary" size="sm" onClick={() => void submitNewCategory()} disabled={creatingCategory || !newCategoryKey.trim() || !newCategoryName.trim()}>
+              {creatingCategory ? <MapSpinner size={12} color="var(--text-primary)" /> : null}
+              新增分类
+            </Button>
+            <div className="flex flex-wrap gap-1.5">
+              {categories.map((item) => (
+                <span key={item.id} className="px-2 py-0.5 rounded-md text-[11px]" style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-muted)' }}>
+                  {item.name}
+                </span>
+              ))}
+              {!categories.length && (
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  暂无分类
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-lg p-3" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
+          <div className="text-sm font-semibold mb-2 flex items-center gap-1.5" style={{ color: 'var(--text-primary)' }}>
+            <Tag size={14} />
+            标签字典
+          </div>
+          <div className="flex flex-col gap-2">
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                value={newTagKey}
+                onChange={(e) => setNewTagKey(e.target.value)}
+                placeholder="标签 key（如 handover）"
+                className="rounded-md px-2 py-1.5 text-xs outline-none"
+                style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-primary)' }}
+              />
+              <input
+                value={newTagLabel}
+                onChange={(e) => setNewTagLabel(e.target.value)}
+                placeholder="标签名称"
+                className="rounded-md px-2 py-1.5 text-xs outline-none"
+                style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-primary)' }}
+              />
+            </div>
+            <input
+              value={newTagAliases}
+              onChange={(e) => setNewTagAliases(e.target.value)}
+              placeholder="别名（逗号分隔）"
+              className="rounded-md px-2 py-1.5 text-xs outline-none"
+              style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-primary)' }}
+            />
+            <Button variant="secondary" size="sm" onClick={() => void submitNewTag()} disabled={creatingTag || !newTagKey.trim() || !newTagLabel.trim()}>
+              {creatingTag ? <MapSpinner size={12} color="var(--text-primary)" /> : null}
+              新增标签
+            </Button>
+            <div className="flex flex-wrap gap-1.5">
+              {tags.map((item) => (
+                <span key={item.id} className="px-2 py-0.5 rounded-md text-[11px]" style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-muted)' }}>
+                  {item.label}
+                </span>
+              ))}
+              {!tags.length && (
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  暂无标签
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div className="rounded-lg p-3" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
         <div className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>
           已入库文档
@@ -1300,6 +1690,12 @@ export default function ZhunxingAgentPage() {
                       </div>
                       <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
                         scope: {(doc.scope || []).join(', ') || '-'}
+                      </div>
+                      <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                        分类：{(doc.categoryId && categoryNameMap[doc.categoryId]) || '未分类'} · 标签：{(doc.tagKeys || []).map((key) => tagLabelMap[key] ?? key).join('、') || '-'}
+                      </div>
+                      <div className="text-[11px] mt-0.5" style={{ color: doc.expiresAt ? '#FBBF24' : 'var(--text-muted)' }}>
+                        到期：{doc.expiresAt ? new Date(doc.expiresAt).toLocaleString('zh-CN') : '未设置'}
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -1330,6 +1726,114 @@ export default function ZhunxingAgentPage() {
             当前暂无已入库文档。
           </div>
         )}
+      </div>
+
+      <div className="rounded-lg p-3 mt-3" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder }}>
+        <div className="text-sm font-semibold mb-2 flex items-center gap-1.5" style={{ color: 'var(--text-primary)' }}>
+          <GitBranch size={14} />
+          版本链路与 Diff
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+          <div className="rounded-md p-2.5" style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder }}>
+            <div className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>
+              版本链路
+            </div>
+            <div className="flex items-center gap-2 mb-2">
+              <select
+                value={timelineDocumentId}
+                onChange={(e) => setTimelineDocumentId(e.target.value)}
+                className="flex-1 rounded-md px-2 py-1.5 text-xs outline-none"
+                style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-primary)' }}
+              >
+                {!documents.length && <option value="">暂无文档</option>}
+                {documents.map((doc) => (
+                  <option key={doc.id} value={doc.id}>
+                    {doc.title} · {doc.version}
+                  </option>
+                ))}
+              </select>
+              <Button variant="secondary" size="sm" onClick={() => void loadDocumentTimeline()} disabled={!timelineDocumentId || loadingTimeline}>
+                {loadingTimeline ? <MapSpinner size={12} color="var(--text-primary)" /> : <RefreshCw size={12} />}
+                刷新
+              </Button>
+            </div>
+            {timelineResult?.nodes?.length ? (
+              <div className="flex flex-col gap-1.5">
+                {timelineResult.nodes.map((node) => (
+                  <div key={node.documentId} className="text-xs rounded-md px-2 py-1.5" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder, color: 'var(--text-muted)' }}>
+                    <span style={{ color: 'var(--text-primary)' }}>{node.version}</span>
+                    {' · '}
+                    {new Date(node.effectiveDate).toLocaleDateString('zh-CN')}
+                    {' · '}
+                    {node.isActive ? '启用' : '停用'}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                暂无版本链路数据。
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-md p-2.5" style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder }}>
+            <div className="text-xs font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>
+              版本 Diff 对比
+            </div>
+            <div className="grid grid-cols-2 gap-2 mb-2">
+              <select
+                value={diffSourceDocumentId}
+                onChange={(e) => setDiffSourceDocumentId(e.target.value)}
+                className="rounded-md px-2 py-1.5 text-xs outline-none"
+                style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-primary)' }}
+              >
+                {!documents.length && <option value="">源版本</option>}
+                {documents.map((doc) => (
+                  <option key={doc.id} value={doc.id}>
+                    源：{doc.version}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={diffTargetDocumentId}
+                onChange={(e) => setDiffTargetDocumentId(e.target.value)}
+                className="rounded-md px-2 py-1.5 text-xs outline-none"
+                style={{ background: visualStyleTokens.controlBackground, border: visualStyleTokens.controlBorder, color: 'var(--text-primary)' }}
+              >
+                {!documents.length && <option value="">目标版本</option>}
+                {documents.map((doc) => (
+                  <option key={doc.id} value={doc.id}>
+                    目标：{doc.version}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <Button variant="secondary" size="sm" onClick={() => void runDocumentDiff()} disabled={!diffSourceDocumentId || !diffTargetDocumentId || loadingDiff}>
+              {loadingDiff ? <MapSpinner size={12} color="var(--text-primary)" /> : null}
+              生成 Diff
+            </Button>
+            {diffResult ? (
+              <div className="mt-2 flex flex-col gap-1.5">
+                <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  结果：新增 {diffResult.addedCount}，删除 {diffResult.removedCount}，变更 {diffResult.changedCount}
+                </div>
+                <div className="max-h-36 overflow-auto flex flex-col gap-1">
+                  {diffResult.items.slice(0, 20).map((item, idx) => (
+                    <div key={`${item.changeType}-${item.chapter}-${item.title}-${idx}`} className="text-[11px] rounded-md px-2 py-1" style={{ background: visualStyleTokens.surfaceBackground, border: visualStyleTokens.surfaceBorder, color: 'var(--text-muted)' }}>
+                      <span style={{ color: '#60A5FA' }}>{item.changeType.toUpperCase()}</span> · {item.chapter} · {item.title}
+                    </div>
+                  ))}
+                  {!diffResult.items.length && (
+                    <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                      两个版本无差异。
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
       </div>
     </GlassCard>
   );

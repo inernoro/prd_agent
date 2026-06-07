@@ -44,12 +44,59 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
             .Select(x => x.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+        var normalizedCategoryId = string.IsNullOrWhiteSpace(request.CategoryId)
+            ? null
+            : request.CategoryId.Trim();
+        var normalizedTagKeys = (request.TagKeys ?? new List<string>())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(NormalizeDictionaryKey)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var normalizedPreviousVersionDocumentId = string.IsNullOrWhiteSpace(request.PreviousVersionDocumentId)
+            ? null
+            : request.PreviousVersionDocumentId.Trim();
+        var expiresAt = request.ExpiresAt?.ToUniversalTime();
 
         var existing = await _db.ZhunxingKnowledgeDocuments
             .Find(x => x.Title == normalizedTitle && x.Version == normalizedVersion)
             .FirstOrDefaultAsync(ct);
         if (existing != null)
             throw new InvalidOperationException("同标题同版本的知识文档已存在");
+
+        if (!string.IsNullOrWhiteSpace(normalizedCategoryId))
+        {
+            var categoryExists = await _db.ZhunxingKnowledgeCategories
+                .Find(x => x.Id == normalizedCategoryId && x.IsActive)
+                .AnyAsync(ct);
+            if (!categoryExists)
+                throw new ArgumentException("categoryId 不存在或已停用", nameof(request));
+        }
+
+        if (normalizedTagKeys.Count > 0)
+        {
+            var availableTagKeys = await _db.ZhunxingKnowledgeTags
+                .Find(x => x.IsActive && normalizedTagKeys.Contains(x.Key))
+                .Project(x => x.Key)
+                .ToListAsync(ct);
+            if (availableTagKeys.Count != normalizedTagKeys.Count)
+                throw new ArgumentException("tagKeys 包含不存在或已停用的标签", nameof(request));
+        }
+
+        if (!string.IsNullOrWhiteSpace(normalizedPreviousVersionDocumentId))
+        {
+            var previousVersion = await _db.ZhunxingKnowledgeDocuments
+                .Find(x => x.Id == normalizedPreviousVersionDocumentId)
+                .FirstOrDefaultAsync(ct);
+            if (previousVersion == null)
+                throw new ArgumentException("previousVersionDocumentId 不存在", nameof(request));
+            if (!string.Equals(previousVersion.Title, normalizedTitle, StringComparison.Ordinal))
+                throw new ArgumentException("previousVersionDocumentId 必须与当前文档标题一致", nameof(request));
+            if (!string.IsNullOrWhiteSpace(previousVersion.NextVersionDocumentId))
+                throw new InvalidOperationException("上一版本文档已绑定后续版本，不能重复挂链");
+        }
+
+        if (expiresAt.HasValue && expiresAt <= now)
+            throw new ArgumentException("expiresAt 必须晚于当前时间", nameof(request));
 
         var doc = new ZhunxingKnowledgeDocument
         {
@@ -58,6 +105,10 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
             EffectiveDate = request.EffectiveDate == default ? now : request.EffectiveDate,
             Scope = normalizedScope,
             OwnerDepartment = ownerDepartment,
+            CategoryId = normalizedCategoryId,
+            TagKeys = normalizedTagKeys,
+            PreviousVersionDocumentId = normalizedPreviousVersionDocumentId,
+            ExpiresAt = expiresAt,
             CreatedBy = operatorUserId,
             UpdatedBy = operatorUserId,
             CreatedAt = now,
@@ -66,6 +117,18 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
         };
 
         await _db.ZhunxingKnowledgeDocuments.InsertOneAsync(doc, cancellationToken: ct);
+
+        if (!string.IsNullOrWhiteSpace(normalizedPreviousVersionDocumentId))
+        {
+            await _db.ZhunxingKnowledgeDocuments.UpdateOneAsync(
+                Builders<ZhunxingKnowledgeDocument>.Filter.Eq(x => x.Id, normalizedPreviousVersionDocumentId),
+                Builders<ZhunxingKnowledgeDocument>.Update
+                    .Set(x => x.NextVersionDocumentId, doc.Id)
+                    .Set(x => x.UpdatedBy, operatorUserId)
+                    .Set(x => x.UpdatedAt, now),
+                cancellationToken: ct);
+        }
+
         return doc;
     }
 
@@ -73,6 +136,8 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
         bool includeInactive = false,
         CancellationToken ct = default)
     {
+        await AutoExpireDocumentsIfNeededAsync(ct);
+
         var filter = includeInactive
             ? Builders<ZhunxingKnowledgeDocument>.Filter.Empty
             : Builders<ZhunxingKnowledgeDocument>.Filter.Eq(x => x.IsActive, true);
@@ -97,6 +162,123 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
             .FirstOrDefaultAsync(ct);
     }
 
+    public async Task<IReadOnlyList<ZhunxingKnowledgeCategory>> ListCategoriesAsync(
+        bool includeInactive = false,
+        CancellationToken ct = default)
+    {
+        var filter = includeInactive
+            ? Builders<ZhunxingKnowledgeCategory>.Filter.Empty
+            : Builders<ZhunxingKnowledgeCategory>.Filter.Eq(x => x.IsActive, true);
+        return await _db.ZhunxingKnowledgeCategories
+            .Find(filter)
+            .SortBy(x => x.Path)
+            .ThenBy(x => x.SortOrder)
+            .ThenBy(x => x.Name)
+            .ToListAsync(ct);
+    }
+
+    public async Task<ZhunxingKnowledgeCategory> CreateCategoryAsync(
+        CreateZhunxingCategoryRequest request,
+        string operatorUserId,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.Name))
+            throw new ArgumentException("分类名称不能为空", nameof(request));
+
+        var key = NormalizeDictionaryKey(request.Key);
+        if (string.IsNullOrWhiteSpace(key))
+            throw new ArgumentException("分类 key 不能为空", nameof(request));
+
+        var existing = await _db.ZhunxingKnowledgeCategories
+            .Find(x => x.Key == key)
+            .FirstOrDefaultAsync(ct);
+        if (existing != null)
+            throw new InvalidOperationException("分类 key 已存在");
+
+        var now = DateTime.UtcNow;
+        var parentId = string.IsNullOrWhiteSpace(request.ParentId) ? null : request.ParentId.Trim();
+        var path = new List<string>();
+        if (!string.IsNullOrWhiteSpace(parentId))
+        {
+            var parent = await _db.ZhunxingKnowledgeCategories
+                .Find(x => x.Id == parentId && x.IsActive)
+                .FirstOrDefaultAsync(ct);
+            if (parent == null)
+                throw new ArgumentException("parentId 不存在或已停用", nameof(request));
+            path.AddRange(parent.Path);
+            path.Add(parent.Id);
+        }
+
+        var category = new ZhunxingKnowledgeCategory
+        {
+            Key = key,
+            Name = request.Name.Trim(),
+            ParentId = parentId,
+            Path = path,
+            SortOrder = request.SortOrder,
+            CreatedBy = operatorUserId,
+            UpdatedBy = operatorUserId,
+            CreatedAt = now,
+            UpdatedAt = now,
+            IsActive = true,
+        };
+        await _db.ZhunxingKnowledgeCategories.InsertOneAsync(category, cancellationToken: ct);
+        return category;
+    }
+
+    public async Task<IReadOnlyList<ZhunxingKnowledgeTag>> ListTagsAsync(
+        bool includeInactive = false,
+        CancellationToken ct = default)
+    {
+        var filter = includeInactive
+            ? Builders<ZhunxingKnowledgeTag>.Filter.Empty
+            : Builders<ZhunxingKnowledgeTag>.Filter.Eq(x => x.IsActive, true);
+        return await _db.ZhunxingKnowledgeTags
+            .Find(filter)
+            .SortBy(x => x.Label)
+            .ToListAsync(ct);
+    }
+
+    public async Task<ZhunxingKnowledgeTag> CreateTagAsync(
+        CreateZhunxingTagRequest request,
+        string operatorUserId,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.Label))
+            throw new ArgumentException("标签名称不能为空", nameof(request));
+
+        var key = NormalizeDictionaryKey(request.Key);
+        if (string.IsNullOrWhiteSpace(key))
+            throw new ArgumentException("标签 key 不能为空", nameof(request));
+
+        var existing = await _db.ZhunxingKnowledgeTags
+            .Find(x => x.Key == key)
+            .FirstOrDefaultAsync(ct);
+        if (existing != null)
+            throw new InvalidOperationException("标签 key 已存在");
+
+        var now = DateTime.UtcNow;
+        var tag = new ZhunxingKnowledgeTag
+        {
+            Key = key,
+            Label = request.Label.Trim(),
+            Aliases = (request.Aliases ?? new List<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(),
+            Color = string.IsNullOrWhiteSpace(request.Color) ? null : request.Color.Trim(),
+            IsActive = true,
+            CreatedBy = operatorUserId,
+            UpdatedBy = operatorUserId,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        await _db.ZhunxingKnowledgeTags.InsertOneAsync(tag, cancellationToken: ct);
+        return tag;
+    }
+
     public async Task<ZhunxingKnowledgeDocument> DeactivateDocumentAsync(
         string documentId,
         string operatorUserId,
@@ -116,6 +298,9 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
         var now = DateTime.UtcNow;
         var documentUpdate = Builders<ZhunxingKnowledgeDocument>.Update
             .Set(x => x.IsActive, false)
+            .Set(x => x.InvalidatedAt, now)
+            .Set(x => x.InvalidatedBy, operatorUserId)
+            .Set(x => x.InvalidationReason, ZhunxingInvalidationReasons.Manual)
             .Set(x => x.UpdatedBy, operatorUserId)
             .Set(x => x.UpdatedAt, now);
         await _db.ZhunxingKnowledgeDocuments.UpdateOneAsync(
@@ -133,9 +318,199 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
             cancellationToken: ct);
 
         existing.IsActive = false;
+        existing.InvalidatedAt = now;
+        existing.InvalidatedBy = operatorUserId;
+        existing.InvalidationReason = ZhunxingInvalidationReasons.Manual;
         existing.UpdatedBy = operatorUserId;
         existing.UpdatedAt = now;
         return existing;
+    }
+
+    public async Task<ZhunxingDocumentVersionTimelineResult> GetDocumentVersionTimelineAsync(
+        string documentId,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(documentId))
+            throw new ArgumentException("documentId 不能为空", nameof(documentId));
+
+        var current = await _db.ZhunxingKnowledgeDocuments
+            .Find(x => x.Id == documentId.Trim())
+            .FirstOrDefaultAsync(ct);
+        if (current == null)
+            throw new InvalidOperationException("知识文档不存在");
+
+        var sameTitleDocs = await _db.ZhunxingKnowledgeDocuments
+            .Find(x => x.Title == current.Title)
+            .SortBy(x => x.EffectiveDate)
+            .ThenBy(x => x.UpdatedAt)
+            .ToListAsync(ct);
+
+        var docMap = sameTitleDocs.ToDictionary(x => x.Id, x => x, StringComparer.Ordinal);
+        var rootId = current.Id;
+        var guard = new HashSet<string>(StringComparer.Ordinal);
+        var cursor = current;
+        while (!string.IsNullOrWhiteSpace(cursor.PreviousVersionDocumentId)
+            && docMap.TryGetValue(cursor.PreviousVersionDocumentId, out var previous)
+            && guard.Add(previous.Id))
+        {
+            rootId = previous.Id;
+            cursor = previous;
+        }
+
+        var nodes = sameTitleDocs
+            .Select(x => new ZhunxingDocumentVersionNode
+            {
+                DocumentId = x.Id,
+                Title = x.Title,
+                Version = x.Version,
+                EffectiveDate = x.EffectiveDate,
+                IsActive = x.IsActive,
+                PreviousVersionDocumentId = x.PreviousVersionDocumentId,
+                NextVersionDocumentId = x.NextVersionDocumentId,
+                UpdatedAt = x.UpdatedAt,
+            })
+            .ToList();
+
+        return new ZhunxingDocumentVersionTimelineResult
+        {
+            DocumentId = current.Id,
+            RootDocumentId = rootId,
+            Nodes = nodes,
+        };
+    }
+
+    public async Task<ZhunxingDocumentDiffResult> GetDocumentDiffAsync(
+        string sourceDocumentId,
+        string targetDocumentId,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(sourceDocumentId) || string.IsNullOrWhiteSpace(targetDocumentId))
+            throw new ArgumentException("sourceDocumentId 和 targetDocumentId 不能为空");
+
+        var source = await _db.ZhunxingKnowledgeDocuments
+            .Find(x => x.Id == sourceDocumentId.Trim())
+            .FirstOrDefaultAsync(ct);
+        var target = await _db.ZhunxingKnowledgeDocuments
+            .Find(x => x.Id == targetDocumentId.Trim())
+            .FirstOrDefaultAsync(ct);
+        if (source == null || target == null)
+            throw new InvalidOperationException("对比文档不存在");
+
+        var clauses = await _db.ZhunxingKnowledgeClauses
+            .Find(x => x.DocumentId == source.Id || x.DocumentId == target.Id)
+            .ToListAsync(ct);
+
+        static string BuildClauseKey(ZhunxingKnowledgeClause clause)
+        {
+            return $"{clause.Chapter.Trim().ToLowerInvariant()}::{clause.Title.Trim().ToLowerInvariant()}";
+        }
+
+        var sourceMap = clauses
+            .Where(x => x.DocumentId == source.Id)
+            .GroupBy(BuildClauseKey, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.UpdatedAt).First(), StringComparer.Ordinal);
+        var targetMap = clauses
+            .Where(x => x.DocumentId == target.Id)
+            .GroupBy(BuildClauseKey, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.UpdatedAt).First(), StringComparer.Ordinal);
+
+        var allKeys = sourceMap.Keys
+            .Concat(targetMap.Keys)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        var items = new List<ZhunxingClauseDiffItem>();
+        var addedCount = 0;
+        var removedCount = 0;
+        var changedCount = 0;
+        foreach (var key in allKeys)
+        {
+            var hasSource = sourceMap.TryGetValue(key, out var left);
+            var hasTarget = targetMap.TryGetValue(key, out var right);
+            if (!hasSource && right != null)
+            {
+                addedCount++;
+                items.Add(new ZhunxingClauseDiffItem
+                {
+                    ChangeType = ZhunxingDiffChangeTypes.Added,
+                    TargetClauseId = right.Id,
+                    Chapter = right.Chapter,
+                    Title = right.Title,
+                    TargetRuleText = right.RuleText,
+                    TargetRiskLevel = right.RiskLevel,
+                });
+                continue;
+            }
+
+            if (!hasTarget && left != null)
+            {
+                removedCount++;
+                items.Add(new ZhunxingClauseDiffItem
+                {
+                    ChangeType = ZhunxingDiffChangeTypes.Removed,
+                    SourceClauseId = left.Id,
+                    Chapter = left.Chapter,
+                    Title = left.Title,
+                    SourceRuleText = left.RuleText,
+                    SourceRiskLevel = left.RiskLevel,
+                });
+                continue;
+            }
+
+            if (left == null || right == null)
+                continue;
+
+            if (string.Equals(left.RuleText, right.RuleText, StringComparison.Ordinal)
+                && string.Equals(NormalizeRiskLevel(left.RiskLevel), NormalizeRiskLevel(right.RiskLevel), StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            changedCount++;
+            items.Add(new ZhunxingClauseDiffItem
+            {
+                ChangeType = ZhunxingDiffChangeTypes.Changed,
+                SourceClauseId = left.Id,
+                TargetClauseId = right.Id,
+                Chapter = right.Chapter,
+                Title = right.Title,
+                SourceRuleText = left.RuleText,
+                TargetRuleText = right.RuleText,
+                SourceRiskLevel = left.RiskLevel,
+                TargetRiskLevel = right.RiskLevel,
+            });
+        }
+
+        return new ZhunxingDocumentDiffResult
+        {
+            SourceDocumentId = source.Id,
+            TargetDocumentId = target.Id,
+            SourceVersion = source.Version,
+            TargetVersion = target.Version,
+            AddedCount = addedCount,
+            RemovedCount = removedCount,
+            ChangedCount = changedCount,
+            Items = items
+                .OrderBy(x => x.Chapter, StringComparer.Ordinal)
+                .ThenBy(x => x.Title, StringComparer.Ordinal)
+                .ThenBy(x => x.ChangeType, StringComparer.Ordinal)
+                .ToList(),
+        };
+    }
+
+    public async Task<ZhunxingExpireDocumentsResult> ExpireDocumentsAsync(
+        string operatorUserId,
+        CancellationToken ct = default)
+    {
+        var expiredIds = await ExpireDocumentsCoreAsync(
+            string.IsNullOrWhiteSpace(operatorUserId) ? "system" : operatorUserId.Trim(),
+            ct);
+        return new ZhunxingExpireDocumentsResult
+        {
+            ExpiredCount = expiredIds.Count,
+            AffectedDocumentIds = expiredIds,
+            ExecutedAt = DateTime.UtcNow,
+        };
     }
 
     public async Task<ZhunxingKnowledgeClause> CreateClauseAsync(
@@ -193,6 +568,8 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
         bool includeInactive = false,
         CancellationToken ct = default)
     {
+        await AutoExpireDocumentsIfNeededAsync(ct);
+
         var builder = Builders<ZhunxingKnowledgeClause>.Filter;
         var filters = new List<FilterDefinition<ZhunxingKnowledgeClause>>();
         if (!includeInactive)
@@ -219,6 +596,8 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
         ZhunxingAskRequest request,
         CancellationToken ct = default)
     {
+        await AutoExpireDocumentsIfNeededAsync(ct);
+
         if (string.IsNullOrWhiteSpace(request.Question))
             throw new ArgumentException("question 不能为空", nameof(request));
 
@@ -775,6 +1154,8 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
         int top = 20,
         CancellationToken ct = default)
     {
+        await AutoExpireDocumentsIfNeededAsync(ct);
+
         if (string.IsNullOrWhiteSpace(userId))
             throw new ArgumentException("userId 不能为空", nameof(userId));
 
@@ -1044,6 +1425,65 @@ public class ZhunxingKnowledgeService : IZhunxingKnowledgeService
         }
 
         return matched;
+    }
+
+    private static string NormalizeDictionaryKey(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var normalized = value.Trim().ToLowerInvariant();
+        normalized = Regex.Replace(normalized, @"[^a-z0-9\-_.]+", "-");
+        normalized = Regex.Replace(normalized, @"-+", "-");
+        return normalized.Trim('-');
+    }
+
+    private async Task AutoExpireDocumentsIfNeededAsync(CancellationToken ct)
+    {
+        await ExpireDocumentsCoreAsync("system", ct);
+    }
+
+    private async Task<List<string>> ExpireDocumentsCoreAsync(string operatorUserId, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var expireFilter = Builders<ZhunxingKnowledgeDocument>.Filter.And(
+            Builders<ZhunxingKnowledgeDocument>.Filter.Eq(x => x.IsActive, true),
+            Builders<ZhunxingKnowledgeDocument>.Filter.Ne(x => x.ExpiresAt, null),
+            Builders<ZhunxingKnowledgeDocument>.Filter.Lte(x => x.ExpiresAt, now));
+        var expiredIds = await _db.ZhunxingKnowledgeDocuments
+            .Find(expireFilter)
+            .Project(x => x.Id)
+            .ToListAsync(ct);
+
+        if (expiredIds.Count == 0)
+            return expiredIds;
+
+        var updateDoc = Builders<ZhunxingKnowledgeDocument>.Update
+            .Set(x => x.IsActive, false)
+            .Set(x => x.InvalidatedAt, now)
+            .Set(x => x.InvalidatedBy, operatorUserId)
+            .Set(x => x.InvalidationReason, ZhunxingInvalidationReasons.Expired)
+            .Set(x => x.UpdatedBy, operatorUserId)
+            .Set(x => x.UpdatedAt, now);
+        await _db.ZhunxingKnowledgeDocuments.UpdateManyAsync(
+            Builders<ZhunxingKnowledgeDocument>.Filter.In(x => x.Id, expiredIds),
+            updateDoc,
+            cancellationToken: ct);
+
+        var updateClause = Builders<ZhunxingKnowledgeClause>.Update
+            .Set(x => x.IsActive, false)
+            .Set(x => x.UpdatedBy, operatorUserId)
+            .Set(x => x.UpdatedAt, now);
+        await _db.ZhunxingKnowledgeClauses.UpdateManyAsync(
+            Builders<ZhunxingKnowledgeClause>.Filter.In(x => x.DocumentId, expiredIds),
+            updateClause,
+            cancellationToken: ct);
+
+        _logger.LogInformation(
+            "[Zhunxing] Auto expired documents. count={Count}",
+            expiredIds.Count);
+
+        return expiredIds;
     }
 
     private static List<string> ExtractTokens(string question)

@@ -2179,6 +2179,11 @@ sequenceDiagram
 11. 命中条款存在阈值或口径差异时，返回冲突提示与冲突条款清单，要求人工确认
 12. 支持用户主题订阅（如考勤、请假、交接），按订阅主题聚合最近条款更新并返回提醒列表
 13. 新增知识热力图，基于反馈问题聚合主题热度（提问量、未命中量、待处理量、热度分）
+14. 新增治理增强包 v2：分类树（Category）+ 标签字典（Tag）支持文档结构化治理
+15. 文档新增版本链字段（`previousVersionDocumentId`/`nextVersionDocumentId`），支持版本链路追踪
+16. 新增版本 Diff 对比能力，输出新增/删除/变更条款明细（章节/标题/正文/风险等级）
+17. 新增到期失效策略：文档支持 `expiresAt`，到期自动失效并级联停用条款
+18. 部门权限升级为组织树继承：父部门权限可继承子部门维护范围（可观测继承来源）
 
 **核心接口（新增）**：
 - 前台：`POST /zhunxing/ask` — 规范问答（JWT）
@@ -2197,9 +2202,14 @@ sequenceDiagram
 - 后台：`GET /api/zhunxing/access-scope` — 获取当前账号可维护部门范围
 - 后台：`GET /api/zhunxing/documents` — 文档列表
 - 后台：`POST /api/zhunxing/documents` — 新建知识文档
+- 后台：`POST /api/zhunxing/documents/expire-now` — 立即执行到期失效巡检
+- 后台：`GET /api/zhunxing/documents/{id}/timeline` — 获取文档版本链路
+- 后台：`GET /api/zhunxing/documents/diff?sourceDocumentId=...&targetDocumentId=...` — 获取两个版本文档的条款 Diff
 - 后台：`DELETE /api/zhunxing/documents/{id}` — 下线知识文档（同时下线其条款）
 - 后台：`GET /api/zhunxing/clauses` — 条款列表
 - 后台：`POST /api/zhunxing/clauses` — 新建知识条款
+- 后台：`GET /api/zhunxing/categories` / `POST /api/zhunxing/categories` — 分类树字典管理
+- 后台：`GET /api/zhunxing/tags` / `POST /api/zhunxing/tags` — 标签字典管理
 - 后台：`POST /api/zhunxing/bootstrap/attendance` — 初始化考勤样例条款
 - 后台：`POST /api/zhunxing/bootstrap/app-registry` — 一键注册 App Registry 与路由规则
 
@@ -2212,16 +2222,21 @@ sequenceDiagram
 - `PUT /api/zhunxing/subscriptions/me` 请求体：`topics: string[]`（支持 `attendance|leave|handover|approval|discipline|rnd|sales`）
 - `GET /api/zhunxing/subscriptions/me/updates` 响应新增 `items[]`（含 topic/document/clause/summary/riskLevel/updatedAt）
 - `GET /api/zhunxing/heatmap` 响应返回 `buckets[]`（`topicLabel/questionCount/noMatchCount/pendingCount/avgConfidence/heatScore`）
+- `POST /api/zhunxing/documents` 请求体支持治理字段：`categoryId`、`tagKeys[]`、`previousVersionDocumentId`、`expiresAt`
+- `GET /api/zhunxing/access-scope` 响应新增 `inheritedDepartments`（记录“子部门 -> 继承来源父部门”）
+- `GET /api/zhunxing/documents/diff` 响应：`addedCount/removedCount/changedCount/items[]`
 
 **权限定义**：
 - `zhunxing-agent.read` — 访问准星页面、问答、提交反馈、查看反馈看板
 - `zhunxing-agent.write` — 维护知识文档与条款、工单处置、回放验证、回访标记、执行初始化
 - `zhunxing-agent.department.all.manage` — 可维护全部部门文档
 - `zhunxing-agent.department.hr.manage` / `zhunxing-agent.department.rnd.manage` / `zhunxing-agent.department.sales.manage` / `zhunxing-agent.department.customer-success.manage` — 仅可维护对应部门文档
+- `zhunxing-agent.department.finance.manage` / `zhunxing-agent.department.operation.manage` — 财务/运营部门维护权限
 
 **部门隔离约束**：
 - 文档写操作（新建文档、增补条款、下线文档）必须满足：`zhunxing-agent.write` + 对应 `ownerDepartment` 维护权限
 - 不满足部门权限时返回 `PERMISSION_DENIED`，禁止跨部门上传与删除
+- 组织树继承规则：当部门 A 为部门 B 的上级时，A 的维护权限可继承覆盖 B（接口 `access-scope` 可见继承来源）
 
 ---
 

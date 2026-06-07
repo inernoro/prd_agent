@@ -202,6 +202,7 @@ export interface ZhunxingAccessScopeResult {
   canManageAllDepartments: boolean;
   manageableDepartments: string[];
   departmentLabels: Record<string, string>;
+  inheritedDepartments: Record<string, string>;
 }
 
 export interface ZhunxingKnowledgeDocument {
@@ -211,6 +212,14 @@ export interface ZhunxingKnowledgeDocument {
   effectiveDate: string;
   scope: string[];
   ownerDepartment?: string;
+  categoryId?: string;
+  tagKeys: string[];
+  previousVersionDocumentId?: string;
+  nextVersionDocumentId?: string;
+  expiresAt?: string;
+  invalidatedAt?: string;
+  invalidatedBy?: string;
+  invalidationReason?: string;
   isActive: boolean;
   createdBy: string;
   updatedBy: string;
@@ -224,6 +233,99 @@ export interface CreateZhunxingDocumentRequest {
   effectiveDate?: string;
   scope?: string[];
   ownerDepartment: string;
+  categoryId?: string;
+  tagKeys?: string[];
+  previousVersionDocumentId?: string;
+  expiresAt?: string;
+}
+
+export interface ZhunxingKnowledgeCategory {
+  id: string;
+  key: string;
+  name: string;
+  parentId?: string;
+  path: string[];
+  sortOrder: number;
+  isActive: boolean;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ZhunxingKnowledgeTag {
+  id: string;
+  key: string;
+  label: string;
+  aliases: string[];
+  description?: string;
+  color?: string;
+  isActive: boolean;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateZhunxingCategoryRequest {
+  key: string;
+  name: string;
+  parentId?: string;
+  sortOrder?: number;
+}
+
+export interface CreateZhunxingTagRequest {
+  key: string;
+  label: string;
+  aliases?: string[];
+  description?: string;
+  color?: string;
+}
+
+export interface ZhunxingDocumentVersionNode {
+  documentId: string;
+  title: string;
+  version: string;
+  effectiveDate: string;
+  isActive: boolean;
+  previousVersionDocumentId?: string;
+  nextVersionDocumentId?: string;
+  updatedAt: string;
+}
+
+export interface ZhunxingDocumentVersionTimelineResult {
+  documentId: string;
+  rootDocumentId: string;
+  nodes: ZhunxingDocumentVersionNode[];
+}
+
+export interface ZhunxingClauseDiffItem {
+  changeType: 'added' | 'removed' | 'changed';
+  sourceClauseId?: string;
+  targetClauseId?: string;
+  chapter: string;
+  title: string;
+  sourceRuleText?: string;
+  targetRuleText?: string;
+  sourceRiskLevel?: string;
+  targetRiskLevel?: string;
+}
+
+export interface ZhunxingDocumentDiffResult {
+  sourceDocumentId: string;
+  targetDocumentId: string;
+  sourceVersion: string;
+  targetVersion: string;
+  addedCount: number;
+  removedCount: number;
+  changedCount: number;
+  items: ZhunxingClauseDiffItem[];
+}
+
+export interface ZhunxingExpireDocumentsResult {
+  expiredCount: number;
+  affectedDocumentIds: string[];
+  executedAt: string;
 }
 
 export interface CreateZhunxingClauseRequest {
@@ -278,6 +380,65 @@ export async function deactivateZhunxingDocument(
 ): Promise<ApiResponse<ZhunxingKnowledgeDocument>> {
   return await apiRequest(api.zhunxing.document(documentId), {
     method: 'DELETE',
+  });
+}
+
+export async function expireZhunxingDocumentsNow(): Promise<ApiResponse<ZhunxingExpireDocumentsResult>> {
+  return await apiRequest(api.zhunxing.documentsExpireNow(), {
+    method: 'POST',
+  });
+}
+
+export async function listZhunxingCategories(includeInactive = false): Promise<ApiResponse<{ items: ZhunxingKnowledgeCategory[] }>> {
+  const query = includeInactive ? '?includeInactive=true' : '';
+  return await apiRequest(`${api.zhunxing.categories()}${query}`, {
+    method: 'GET',
+  });
+}
+
+export async function createZhunxingCategory(
+  request: CreateZhunxingCategoryRequest,
+): Promise<ApiResponse<ZhunxingKnowledgeCategory>> {
+  return await apiRequest(api.zhunxing.categories(), {
+    method: 'POST',
+    body: request,
+  });
+}
+
+export async function listZhunxingTags(includeInactive = false): Promise<ApiResponse<{ items: ZhunxingKnowledgeTag[] }>> {
+  const query = includeInactive ? '?includeInactive=true' : '';
+  return await apiRequest(`${api.zhunxing.tags()}${query}`, {
+    method: 'GET',
+  });
+}
+
+export async function createZhunxingTag(
+  request: CreateZhunxingTagRequest,
+): Promise<ApiResponse<ZhunxingKnowledgeTag>> {
+  return await apiRequest(api.zhunxing.tags(), {
+    method: 'POST',
+    body: request,
+  });
+}
+
+export async function getZhunxingDocumentTimeline(
+  documentId: string,
+): Promise<ApiResponse<ZhunxingDocumentVersionTimelineResult>> {
+  return await apiRequest(api.zhunxing.documentTimeline(documentId), {
+    method: 'GET',
+  });
+}
+
+export async function getZhunxingDocumentDiff(
+  sourceDocumentId: string,
+  targetDocumentId: string,
+): Promise<ApiResponse<ZhunxingDocumentDiffResult>> {
+  const query = new URLSearchParams({
+    sourceDocumentId,
+    targetDocumentId,
+  });
+  return await apiRequest(`${api.zhunxing.documentDiff()}?${query.toString()}`, {
+    method: 'GET',
   });
 }
 

@@ -82,13 +82,50 @@ public class ZhunxingAdminController : ControllerBase
 
     private bool CanManageDepartment(HashSet<string> permissions, string department)
     {
-        if (permissions.Contains(AdminPermissionCatalog.Super))
-            return true;
-        if (permissions.Contains(AdminPermissionCatalog.ZhunxingAgentDepartmentAllManage))
-            return true;
+        if (string.IsNullOrWhiteSpace(department))
+            return false;
+        return GetManageableDepartments(permissions).ContainsKey(department);
+    }
 
-        var scopedPerm = $"zhunxing-agent.department.{department}.manage";
-        return permissions.Contains(scopedPerm);
+    private Dictionary<string, string> GetManageableDepartments(HashSet<string> permissions)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (permissions.Contains(AdminPermissionCatalog.Super)
+            || permissions.Contains(AdminPermissionCatalog.ZhunxingAgentDepartmentAllManage))
+        {
+            foreach (var dept in ZhunxingDepartments.All)
+            {
+                result[dept] = dept;
+            }
+            return result;
+        }
+
+        foreach (var dept in ZhunxingDepartments.All)
+        {
+            var scopedPerm = $"zhunxing-agent.department.{dept}.manage";
+            if (permissions.Contains(scopedPerm))
+            {
+                result[dept] = dept;
+            }
+        }
+
+        var queue = new Queue<string>(result.Keys);
+        while (queue.Count > 0)
+        {
+            var parent = queue.Dequeue();
+            if (!ZhunxingDepartmentHierarchy.Children.TryGetValue(parent, out var children))
+                continue;
+
+            foreach (var child in children)
+            {
+                if (result.ContainsKey(child))
+                    continue;
+                result[child] = parent;
+                queue.Enqueue(child);
+            }
+        }
+
+        return result;
     }
 
     private static string GetDepartmentLabel(string department)
@@ -135,10 +172,11 @@ public class ZhunxingAdminController : ControllerBase
             || permissions.Contains(AdminPermissionCatalog.ZhunxingAgentWrite);
         var canManageAll = permissions.Contains(AdminPermissionCatalog.Super)
             || permissions.Contains(AdminPermissionCatalog.ZhunxingAgentDepartmentAllManage);
-
-        var manageableDepartments = ZhunxingDepartments.All
-            .Where(dept => canManageAll || CanManageDepartment(permissions, dept))
-            .ToList();
+        var manageableDepartmentMap = GetManageableDepartments(permissions);
+        var manageableDepartments = manageableDepartmentMap.Keys.ToList();
+        var inheritedDepartments = manageableDepartmentMap
+            .Where(x => !string.Equals(x.Key, x.Value, StringComparison.Ordinal))
+            .ToDictionary(x => x.Key, x => x.Value, StringComparer.Ordinal);
 
         return Ok(ApiResponse<ZhunxingAccessScopeResult>.Ok(new ZhunxingAccessScopeResult
         {
@@ -146,6 +184,7 @@ public class ZhunxingAdminController : ControllerBase
             CanManageAllDepartments = canManageAll,
             ManageableDepartments = manageableDepartments,
             DepartmentLabels = ZhunxingDepartments.Labels.ToDictionary(x => x.Key, x => x.Value, StringComparer.Ordinal),
+            InheritedDepartments = inheritedDepartments,
         }));
     }
 
@@ -322,6 +361,117 @@ public class ZhunxingAdminController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items = docs }));
     }
 
+    [HttpGet("categories")]
+    public async Task<IActionResult> ListCategories([FromQuery] bool includeInactive = false, CancellationToken ct = default)
+    {
+        var items = await _knowledgeService.ListCategoriesAsync(includeInactive, ct);
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    [HttpPost("categories")]
+    public async Task<IActionResult> CreateCategory([FromBody] CreateZhunxingCategoryRequest request, CancellationToken ct = default)
+    {
+        var denied = EnsureWritePermission();
+        if (denied != null)
+            return denied;
+
+        try
+        {
+            var userId = this.GetRequiredUserId();
+            var category = await _knowledgeService.CreateCategoryAsync(request, userId, ct);
+            return Ok(ApiResponse<object>.Ok(category));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.DUPLICATE, ex.Message));
+        }
+    }
+
+    [HttpGet("tags")]
+    public async Task<IActionResult> ListTags([FromQuery] bool includeInactive = false, CancellationToken ct = default)
+    {
+        var items = await _knowledgeService.ListTagsAsync(includeInactive, ct);
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    [HttpPost("tags")]
+    public async Task<IActionResult> CreateTag([FromBody] CreateZhunxingTagRequest request, CancellationToken ct = default)
+    {
+        var denied = EnsureWritePermission();
+        if (denied != null)
+            return denied;
+
+        try
+        {
+            var userId = this.GetRequiredUserId();
+            var tag = await _knowledgeService.CreateTagAsync(request, userId, ct);
+            return Ok(ApiResponse<object>.Ok(tag));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.DUPLICATE, ex.Message));
+        }
+    }
+
+    [HttpGet("documents/{documentId}/timeline")]
+    public async Task<IActionResult> GetDocumentTimeline([FromRoute] string documentId, CancellationToken ct = default)
+    {
+        try
+        {
+            var result = await _knowledgeService.GetDocumentVersionTimelineAsync(documentId, ct);
+            return Ok(ApiResponse<ZhunxingDocumentVersionTimelineResult>.Ok(result));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, ex.Message));
+        }
+    }
+
+    [HttpGet("documents/diff")]
+    public async Task<IActionResult> GetDocumentDiff(
+        [FromQuery] string sourceDocumentId,
+        [FromQuery] string targetDocumentId,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            var result = await _knowledgeService.GetDocumentDiffAsync(sourceDocumentId, targetDocumentId, ct);
+            return Ok(ApiResponse<ZhunxingDocumentDiffResult>.Ok(result));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, ex.Message));
+        }
+    }
+
+    [HttpPost("documents/expire-now")]
+    public async Task<IActionResult> ExpireDocuments(CancellationToken ct = default)
+    {
+        var denied = EnsureWritePermission();
+        if (denied != null)
+            return denied;
+
+        var userId = this.GetRequiredUserId();
+        var result = await _knowledgeService.ExpireDocumentsAsync(userId, ct);
+        return Ok(ApiResponse<ZhunxingExpireDocumentsResult>.Ok(result));
+    }
+
     [HttpPost("documents")]
     public async Task<IActionResult> CreateDocument([FromBody] CreateZhunxingDocumentRequest request, CancellationToken ct = default)
     {
@@ -336,6 +486,21 @@ public class ZhunxingAdminController : ControllerBase
 
         try
         {
+            if (!string.IsNullOrWhiteSpace(request.PreviousVersionDocumentId))
+            {
+                var previous = await _knowledgeService.GetDocumentByIdAsync(request.PreviousVersionDocumentId, ct);
+                if (previous == null)
+                    return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "上一版本文档不存在"));
+
+                var previousDepartment = NormalizeDepartment(previous.OwnerDepartment);
+                if (!string.IsNullOrWhiteSpace(previousDepartment))
+                {
+                    var previousDenied = EnsureDepartmentPermission(previousDepartment, "关联版本");
+                    if (previousDenied != null)
+                        return previousDenied;
+                }
+            }
+
             var userId = this.GetRequiredUserId();
             var doc = await _knowledgeService.CreateDocumentAsync(request, userId, ct);
             return Ok(ApiResponse<object>.Ok(doc));

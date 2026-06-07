@@ -20,8 +20,39 @@ public interface IZhunxingKnowledgeService
         string documentId,
         CancellationToken ct = default);
 
+    Task<IReadOnlyList<ZhunxingKnowledgeCategory>> ListCategoriesAsync(
+        bool includeInactive = false,
+        CancellationToken ct = default);
+
+    Task<ZhunxingKnowledgeCategory> CreateCategoryAsync(
+        CreateZhunxingCategoryRequest request,
+        string operatorUserId,
+        CancellationToken ct = default);
+
+    Task<IReadOnlyList<ZhunxingKnowledgeTag>> ListTagsAsync(
+        bool includeInactive = false,
+        CancellationToken ct = default);
+
+    Task<ZhunxingKnowledgeTag> CreateTagAsync(
+        CreateZhunxingTagRequest request,
+        string operatorUserId,
+        CancellationToken ct = default);
+
     Task<ZhunxingKnowledgeDocument> DeactivateDocumentAsync(
         string documentId,
+        string operatorUserId,
+        CancellationToken ct = default);
+
+    Task<ZhunxingDocumentVersionTimelineResult> GetDocumentVersionTimelineAsync(
+        string documentId,
+        CancellationToken ct = default);
+
+    Task<ZhunxingDocumentDiffResult> GetDocumentDiffAsync(
+        string sourceDocumentId,
+        string targetDocumentId,
+        CancellationToken ct = default);
+
+    Task<ZhunxingExpireDocumentsResult> ExpireDocumentsAsync(
         string operatorUserId,
         CancellationToken ct = default);
 

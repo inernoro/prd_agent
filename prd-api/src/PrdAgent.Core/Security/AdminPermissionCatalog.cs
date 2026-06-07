@@ -184,6 +184,12 @@ public static class AdminPermissionCatalog
     /// <summary>准星知识库客成部维护权限</summary>
     public const string ZhunxingAgentDepartmentCustomerSuccessManage = "zhunxing-agent.department.customer-success.manage";
 
+    /// <summary>准星知识库财务部维护权限</summary>
+    public const string ZhunxingAgentDepartmentFinanceManage = "zhunxing-agent.department.finance.manage";
+
+    /// <summary>准星知识库运营部维护权限</summary>
+    public const string ZhunxingAgentDepartmentOperationManage = "zhunxing-agent.department.operation.manage";
+
     /// <summary>
     /// 产品评审员权限：提交方案 + 查看自己的评审结果
     /// </summary>
@@ -285,6 +291,8 @@ public static class AdminPermissionCatalog
         new(ZhunxingAgentDepartmentRndManage, "准星知识库-产研部维护", "可维护 ownerDepartment=rnd 的知识文档与条款"),
         new(ZhunxingAgentDepartmentSalesManage, "准星知识库-市场销售部维护", "可维护 ownerDepartment=sales 的知识文档与条款"),
         new(ZhunxingAgentDepartmentCustomerSuccessManage, "准星知识库-客成部维护", "可维护 ownerDepartment=customer-success 的知识文档与条款"),
+        new(ZhunxingAgentDepartmentFinanceManage, "准星知识库-财务部维护", "可维护 ownerDepartment=finance 的知识文档与条款"),
+        new(ZhunxingAgentDepartmentOperationManage, "准星知识库-运营部维护", "可维护 ownerDepartment=operation 的知识文档与条款"),
 
         new(WorkflowAgentManage, "工作流引擎-管理", "管理所有工作流与执行记录"),
 

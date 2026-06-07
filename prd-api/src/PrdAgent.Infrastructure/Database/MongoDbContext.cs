@@ -148,6 +148,8 @@ public class MongoDbContext
     public IMongoCollection<ZhunxingKnowledgeClause> ZhunxingKnowledgeClauses => _database.GetCollection<ZhunxingKnowledgeClause>("zhunxing_knowledge_clauses");
     public IMongoCollection<ZhunxingAskFeedback> ZhunxingAskFeedbacks => _database.GetCollection<ZhunxingAskFeedback>("zhunxing_ask_feedbacks");
     public IMongoCollection<ZhunxingTopicSubscription> ZhunxingTopicSubscriptions => _database.GetCollection<ZhunxingTopicSubscription>("zhunxing_topic_subscriptions");
+    public IMongoCollection<ZhunxingKnowledgeCategory> ZhunxingKnowledgeCategories => _database.GetCollection<ZhunxingKnowledgeCategory>("zhunxing_knowledge_categories");
+    public IMongoCollection<ZhunxingKnowledgeTag> ZhunxingKnowledgeTags => _database.GetCollection<ZhunxingKnowledgeTag>("zhunxing_knowledge_tags");
     // AI Toolbox 百宝箱
     public IMongoCollection<ToolboxRun> ToolboxRuns => _database.GetCollection<ToolboxRun>("toolbox_runs");
     public IMongoCollection<ToolboxItem> ToolboxItems => _database.GetCollection<ToolboxItem>("toolbox_items");
@@ -802,6 +804,24 @@ public class MongoDbContext
         ZhunxingKnowledgeDocuments.Indexes.CreateOne(new CreateIndexModel<ZhunxingKnowledgeDocument>(
             Builders<ZhunxingKnowledgeDocument>.IndexKeys.Descending(x => x.EffectiveDate),
             new CreateIndexOptions { Name = "idx_zhunxing_docs_effective" }));
+        ZhunxingKnowledgeDocuments.Indexes.CreateOne(new CreateIndexModel<ZhunxingKnowledgeDocument>(
+            Builders<ZhunxingKnowledgeDocument>.IndexKeys.Ascending(x => x.OwnerDepartment).Ascending(x => x.IsActive).Descending(x => x.UpdatedAt),
+            new CreateIndexOptions { Name = "idx_zhunxing_docs_dept_active_updated" }));
+        ZhunxingKnowledgeDocuments.Indexes.CreateOne(new CreateIndexModel<ZhunxingKnowledgeDocument>(
+            Builders<ZhunxingKnowledgeDocument>.IndexKeys.Ascending(x => x.ExpiresAt),
+            new CreateIndexOptions { Name = "idx_zhunxing_docs_expires_at" }));
+        ZhunxingKnowledgeDocuments.Indexes.CreateOne(new CreateIndexModel<ZhunxingKnowledgeDocument>(
+            Builders<ZhunxingKnowledgeDocument>.IndexKeys.Ascending(x => x.CategoryId),
+            new CreateIndexOptions { Name = "idx_zhunxing_docs_category" }));
+        ZhunxingKnowledgeDocuments.Indexes.CreateOne(new CreateIndexModel<ZhunxingKnowledgeDocument>(
+            Builders<ZhunxingKnowledgeDocument>.IndexKeys.Ascending(x => x.TagKeys),
+            new CreateIndexOptions { Name = "idx_zhunxing_docs_tag_keys" }));
+        ZhunxingKnowledgeDocuments.Indexes.CreateOne(new CreateIndexModel<ZhunxingKnowledgeDocument>(
+            Builders<ZhunxingKnowledgeDocument>.IndexKeys.Ascending(x => x.PreviousVersionDocumentId),
+            new CreateIndexOptions { Name = "idx_zhunxing_docs_prev_version" }));
+        ZhunxingKnowledgeDocuments.Indexes.CreateOne(new CreateIndexModel<ZhunxingKnowledgeDocument>(
+            Builders<ZhunxingKnowledgeDocument>.IndexKeys.Ascending(x => x.NextVersionDocumentId),
+            new CreateIndexOptions { Name = "idx_zhunxing_docs_next_version" }));
 
         // ZhunxingKnowledgeClauses：按文档内排序查询；关键词多值索引
         ZhunxingKnowledgeClauses.Indexes.CreateOne(new CreateIndexModel<ZhunxingKnowledgeClause>(
@@ -838,6 +858,36 @@ public class MongoDbContext
         ZhunxingTopicSubscriptions.Indexes.CreateOne(new CreateIndexModel<ZhunxingTopicSubscription>(
             Builders<ZhunxingTopicSubscription>.IndexKeys.Descending(x => x.UpdatedAt),
             new CreateIndexOptions { Name = "idx_zhunxing_topic_subscriptions_updated" }));
+        try
+        {
+            ZhunxingKnowledgeCategories.Indexes.CreateOne(new CreateIndexModel<ZhunxingKnowledgeCategory>(
+                Builders<ZhunxingKnowledgeCategory>.IndexKeys.Ascending(x => x.Key),
+                new CreateIndexOptions { Name = "uniq_zhunxing_categories_key", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        ZhunxingKnowledgeCategories.Indexes.CreateOne(new CreateIndexModel<ZhunxingKnowledgeCategory>(
+            Builders<ZhunxingKnowledgeCategory>.IndexKeys.Ascending(x => x.ParentId).Ascending(x => x.SortOrder),
+            new CreateIndexOptions { Name = "idx_zhunxing_categories_parent_sort" }));
+        ZhunxingKnowledgeCategories.Indexes.CreateOne(new CreateIndexModel<ZhunxingKnowledgeCategory>(
+            Builders<ZhunxingKnowledgeCategory>.IndexKeys.Ascending(x => x.Path),
+            new CreateIndexOptions { Name = "idx_zhunxing_categories_path" }));
+
+        try
+        {
+            ZhunxingKnowledgeTags.Indexes.CreateOne(new CreateIndexModel<ZhunxingKnowledgeTag>(
+                Builders<ZhunxingKnowledgeTag>.IndexKeys.Ascending(x => x.Key),
+                new CreateIndexOptions { Name = "uniq_zhunxing_tags_key", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        ZhunxingKnowledgeTags.Indexes.CreateOne(new CreateIndexModel<ZhunxingKnowledgeTag>(
+            Builders<ZhunxingKnowledgeTag>.IndexKeys.Ascending(x => x.Label),
+            new CreateIndexOptions { Name = "idx_zhunxing_tags_label" }));
 
         // ModelGroups：按 modelType + isDefaultForType 查询默认分组
         ModelGroups.Indexes.CreateOne(new CreateIndexModel<ModelGroup>(

@@ -26,6 +26,30 @@ public class ZhunxingKnowledgeDocument
     /// <summary>责任部门（如 HR）</summary>
     public string? OwnerDepartment { get; set; }
 
+    /// <summary>分类节点 ID（分类树）</summary>
+    public string? CategoryId { get; set; }
+
+    /// <summary>标签键列表（标签字典）</summary>
+    public List<string> TagKeys { get; set; } = new();
+
+    /// <summary>上一版本文档 ID（版本链路）</summary>
+    public string? PreviousVersionDocumentId { get; set; }
+
+    /// <summary>下一版本文档 ID（版本链路）</summary>
+    public string? NextVersionDocumentId { get; set; }
+
+    /// <summary>到期时间（UTC，到期自动失效）</summary>
+    public DateTime? ExpiresAt { get; set; }
+
+    /// <summary>失效时间（UTC）</summary>
+    public DateTime? InvalidatedAt { get; set; }
+
+    /// <summary>失效执行人（system/用户ID）</summary>
+    public string? InvalidatedBy { get; set; }
+
+    /// <summary>失效原因（manual/expired）</summary>
+    public string? InvalidationReason { get; set; }
+
     /// <summary>是否启用</summary>
     public bool IsActive { get; set; } = true;
 
@@ -35,6 +59,44 @@ public class ZhunxingKnowledgeDocument
     /// <summary>最后更新人</summary>
     public string UpdatedBy { get; set; } = string.Empty;
 
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// 准星知识分类（树结构）。
+/// </summary>
+[AppOwnership(AppNames.ZhunxingAgent, AppNames.ZhunxingAgentDisplay, IsPrimary = true)]
+public class ZhunxingKnowledgeCategory
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string Key { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string? ParentId { get; set; }
+    public List<string> Path { get; set; } = new();
+    public int SortOrder { get; set; }
+    public bool IsActive { get; set; } = true;
+    public string CreatedBy { get; set; } = string.Empty;
+    public string UpdatedBy { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// 准星标签字典。
+/// </summary>
+[AppOwnership(AppNames.ZhunxingAgent, AppNames.ZhunxingAgentDisplay, IsPrimary = true)]
+public class ZhunxingKnowledgeTag
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string Key { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+    public List<string> Aliases { get; set; } = new();
+    public string? Description { get; set; }
+    public string? Color { get; set; }
+    public bool IsActive { get; set; } = true;
+    public string CreatedBy { get; set; } = string.Empty;
+    public string UpdatedBy { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
@@ -126,6 +188,16 @@ public static class ZhunxingDepartments
     };
 }
 
+public static class ZhunxingDepartmentHierarchy
+{
+    public static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> Children
+        = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+        {
+            [ZhunxingDepartments.Operation] = new[] { ZhunxingDepartments.Sales, ZhunxingDepartments.CustomerSuccess },
+            [ZhunxingDepartments.Sales] = new[] { ZhunxingDepartments.CustomerSuccess },
+        };
+}
+
 public class CreateZhunxingDocumentRequest
 {
     public string Title { get; set; } = string.Empty;
@@ -133,6 +205,27 @@ public class CreateZhunxingDocumentRequest
     public DateTime EffectiveDate { get; set; } = DateTime.UtcNow;
     public List<string>? Scope { get; set; }
     public string? OwnerDepartment { get; set; }
+    public string? CategoryId { get; set; }
+    public List<string>? TagKeys { get; set; }
+    public string? PreviousVersionDocumentId { get; set; }
+    public DateTime? ExpiresAt { get; set; }
+}
+
+public class CreateZhunxingCategoryRequest
+{
+    public string Key { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string? ParentId { get; set; }
+    public int SortOrder { get; set; }
+}
+
+public class CreateZhunxingTagRequest
+{
+    public string Key { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+    public List<string>? Aliases { get; set; }
+    public string? Description { get; set; }
+    public string? Color { get; set; }
 }
 
 public class ZhunxingAccessScopeResult
@@ -141,6 +234,7 @@ public class ZhunxingAccessScopeResult
     public bool CanManageAllDepartments { get; set; }
     public List<string> ManageableDepartments { get; set; } = new();
     public Dictionary<string, string> DepartmentLabels { get; set; } = new();
+    public Dictionary<string, string> InheritedDepartments { get; set; } = new();
 }
 
 public class CreateZhunxingClauseRequest
@@ -269,6 +363,57 @@ public class ZhunxingHeatmapBucket
     public int PendingCount { get; set; }
     public double AvgConfidence { get; set; }
     public double HeatScore { get; set; }
+}
+
+public class ZhunxingDocumentVersionTimelineResult
+{
+    public string DocumentId { get; set; } = string.Empty;
+    public string RootDocumentId { get; set; } = string.Empty;
+    public List<ZhunxingDocumentVersionNode> Nodes { get; set; } = new();
+}
+
+public class ZhunxingDocumentVersionNode
+{
+    public string DocumentId { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string Version { get; set; } = string.Empty;
+    public DateTime EffectiveDate { get; set; }
+    public bool IsActive { get; set; }
+    public string? PreviousVersionDocumentId { get; set; }
+    public string? NextVersionDocumentId { get; set; }
+    public DateTime UpdatedAt { get; set; }
+}
+
+public class ZhunxingDocumentDiffResult
+{
+    public string SourceDocumentId { get; set; } = string.Empty;
+    public string TargetDocumentId { get; set; } = string.Empty;
+    public string SourceVersion { get; set; } = string.Empty;
+    public string TargetVersion { get; set; } = string.Empty;
+    public int AddedCount { get; set; }
+    public int RemovedCount { get; set; }
+    public int ChangedCount { get; set; }
+    public List<ZhunxingClauseDiffItem> Items { get; set; } = new();
+}
+
+public class ZhunxingClauseDiffItem
+{
+    public string ChangeType { get; set; } = ZhunxingDiffChangeTypes.Changed;
+    public string? SourceClauseId { get; set; }
+    public string? TargetClauseId { get; set; }
+    public string Chapter { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string? SourceRuleText { get; set; }
+    public string? TargetRuleText { get; set; }
+    public string? SourceRiskLevel { get; set; }
+    public string? TargetRiskLevel { get; set; }
+}
+
+public class ZhunxingExpireDocumentsResult
+{
+    public int ExpiredCount { get; set; }
+    public List<string> AffectedDocumentIds { get; set; } = new();
+    public DateTime ExecutedAt { get; set; } = DateTime.UtcNow;
 }
 
 public class CreateZhunxingAskFeedbackRequest
@@ -452,4 +597,17 @@ public static class ZhunxingFeedbackResolutionTypes
     public const string RetrievalTuning = "retrieval_tuning";
     public const string ProcessClarification = "process_clarification";
     public const string Other = "other";
+}
+
+public static class ZhunxingInvalidationReasons
+{
+    public const string Manual = "manual";
+    public const string Expired = "expired";
+}
+
+public static class ZhunxingDiffChangeTypes
+{
+    public const string Added = "added";
+    public const string Removed = "removed";
+    public const string Changed = "changed";
 }
