@@ -240,7 +240,7 @@ export function MdToPptAgentPage() {
     if (slides.length === 0) return;
     // 客户端直接渲染 reveal.js HTML(纯确定性转换),不再走 /render 后端往返:
     // 即时预览、随编辑实时更新、不受代理层/网络影响。
-    setPreviewHtml(buildRevealHtml(slides, selectedTheme, pptTitle || undefined));
+    setPreviewHtml(buildRevealHtml(slides, selectedTheme, pptTitle || undefined, { embeddedPreview: true }));
     setPreviewSlideIndex(0);
   }
 

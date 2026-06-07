@@ -41,7 +41,10 @@ function escapeHtml(text: string): string {
 
 const REVEAL_THEMES = new Set(['black', 'white', 'league', 'beige', 'sky', 'night', 'serif', 'simple', 'solarized', 'blood', 'moon']);
 
-export function buildRevealHtml(slides: PptSlide[], theme?: string, title?: string): string {
+export function buildRevealHtml(slides: PptSlide[], theme?: string, title?: string, opts?: { embeddedPreview?: boolean }): string {
+  // 预览走 iframe srcdoc(about:srcdoc 源),reveal 的 hash 路由会调 History.replaceState 报错;
+  // 嵌入预览时关掉 hash。发布出去的真实页面(真实源)保留 hash 深链。
+  const hash = !opts?.embeddedPreview;
   const t = (theme || 'black').trim().toLowerCase();
   const safeTheme = REVEAL_THEMES.has(t) ? t : 'black';
   const sections = slides.map((s) => {
@@ -75,7 +78,7 @@ ${sections}
   </div>
   <script src="https://cdn.jsdelivr.net/npm/reveal.js@4/dist/reveal.js"></script>
   <script>
-    Reveal.initialize({ hash: true, controls: true, progress: true, slideNumber: true, transition: 'slide', plugins: [] });
+    Reveal.initialize({ hash: ${hash}, controls: true, progress: true, slideNumber: true, transition: 'slide', plugins: [] });
   </script>
 </body>
 </html>`;
