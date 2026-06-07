@@ -110,13 +110,18 @@ export function SyncManagerPanel() {
     const teamResults = await Promise.all(
       teams.map(t => listDocumentStoresWithPreview(1, 500, { scope: 'team', teamId: t.team.id })),
     );
-    if (mySeq !== loadSeq.current) return; // 已有更新的请求发出，丢弃本次回填
-    if (linkRes.success) setLinks(linkRes.data.items ?? []);
-    // 合并去重（按 store id）：mine 优先，团队共享库补充
-    const merged = new Map<string, DocumentStoreWithPreview>();
-    if (mineRes.success) for (const s of mineRes.data.items ?? []) merged.set(s.id, s);
-    for (const tr of teamResults) if (tr.success) for (const s of tr.data.items ?? []) if (!merged.has(s.id)) merged.set(s.id, s);
-    setMyStores([...merged.values()]);
+    // PR #742 review Medium fix：mySeq 失效时之前直接 return 不清 loading，导致
+    // handleRun/handleDirection/handleDelete 在 in-flight 时 bump loadSeq → 旧请求早退 → spinner 永久卡死。
+    // 改为：失效时只跳过数据写入 + 仍清 loading（更新的请求会自己再 setLoading(true)）。
+    const stale = mySeq !== loadSeq.current;
+    if (!stale) {
+      if (linkRes.success) setLinks(linkRes.data.items ?? []);
+      // 合并去重（按 store id）：mine 优先，团队共享库补充
+      const merged = new Map<string, DocumentStoreWithPreview>();
+      if (mineRes.success) for (const s of mineRes.data.items ?? []) merged.set(s.id, s);
+      for (const tr of teamResults) if (tr.success) for (const s of tr.data.items ?? []) if (!merged.has(s.id)) merged.set(s.id, s);
+      setMyStores([...merged.values()]);
+    }
     setLoading(false);
   }, []);
 
