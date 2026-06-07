@@ -211,8 +211,13 @@ public class DefectSyncResource : ISyncableResource
             try
             {
                 // 血缘 = DefectReport.Id（跨节点保留同 id 便于 test↔prod 同库识别）
+                // PR #742 review P2：必须同时 match ProjectId，否则若同 id 已存在于其它项目，
+                // 会误把对端的更新写到无关项目里。我们只在「同 id 且同项目」时认作同一条；
+                // 同 id 但不同项目 → 当成新建（避免跨项目串号）。
                 var lineageId = r.LineageId;
-                var existing = await _db.DefectReports.Find(d => d.Id == lineageId).FirstOrDefaultAsync(ct);
+                var existing = await _db.DefectReports
+                    .Find(d => d.Id == lineageId && d.ProjectId == project.Id)
+                    .FirstOrDefaultAsync(ct);
 
                 var meta = r.Metadata ?? new Dictionary<string, string>();
                 string? Get(string k) => meta.TryGetValue(k, out var v) && !string.IsNullOrEmpty(v) ? v : null;
@@ -255,11 +260,25 @@ public class DefectSyncResource : ISyncableResource
                 if (existing != null)
                 {
                     if (addOnly) { skipped++; continue; }
-                    // 内容 + status 无变化 → 跳过避免无意义 bump
+                    // PR #742 review P2：no-op 比对必须覆盖所有可更新字段，否则只改 priority / resolution /
+                    // assigneeName / attachments / structuredData 的工作流更新会被错误地判为「无变化」而静默跳过。
+                    var existingAttSig = JsonSerializer.Serialize((existing.Attachments ?? new List<DefectAttachment>())
+                        .Select(a => new { a.FileName, a.Url, a.FileSize }).OrderBy(a => a.FileName + a.Url));
+                    var newAttSig = JsonSerializer.Serialize((attachments ?? new List<DefectAttachment>())
+                        .Select(a => new { a.FileName, a.Url, a.FileSize }).OrderBy(a => a.FileName + a.Url));
+                    var existingStructSig = JsonSerializer.Serialize((existing.StructuredData ?? new Dictionary<string, string>())
+                        .OrderBy(kv => kv.Key, StringComparer.Ordinal));
+                    var newStructSig = JsonSerializer.Serialize((structured ?? new Dictionary<string, string>())
+                        .OrderBy(kv => kv.Key, StringComparer.Ordinal));
                     if (existing.RawContent == r.Content
                         && existing.Title == r.Title
-                        && existing.Status == Get("status")
-                        && existing.Severity == Get("severity"))
+                        && existing.Status == (Get("status") ?? existing.Status)
+                        && existing.Severity == (Get("severity") ?? existing.Severity)
+                        && existing.Priority == (Get("priority") ?? existing.Priority)
+                        && existing.Resolution == (Get("resolution") ?? existing.Resolution)
+                        && existing.AssigneeName == (Get("assigneeName") ?? existing.AssigneeName)
+                        && existingAttSig == newAttSig
+                        && existingStructSig == newStructSig)
                     {
                         skipped++;
                         continue;
@@ -271,6 +290,9 @@ public class DefectSyncResource : ISyncableResource
                         .Set(x => x.Severity, Get("severity") ?? existing.Severity)
                         .Set(x => x.Priority, Get("priority") ?? existing.Priority)
                         .Set(x => x.Resolution, Get("resolution") ?? existing.Resolution)
+                        .Set(x => x.AssigneeName, Get("assigneeName") ?? existing.AssigneeName)
+                        .Set(x => x.ProjectId, project.Id)
+                        .Set(x => x.ProjectName, project.Name)
                         .Set(x => x.UpdatedAt, DateTime.UtcNow);
                     if (attachments != null) u = u.Set(x => x.Attachments, attachments);
                     if (structured != null) u = u.Set(x => x.StructuredData, structured);
@@ -279,6 +301,17 @@ public class DefectSyncResource : ISyncableResource
                 }
                 else
                 {
+                    // 跨项目串号兜底：若同 id 存在于其它项目，不插入以免 DuplicateKey；当成 skipped 并记日志。
+                    var crossProject = await _db.DefectReports
+                        .Find(d => d.Id == lineageId && d.ProjectId != project.Id)
+                        .FirstOrDefaultAsync(ct);
+                    if (crossProject != null)
+                    {
+                        _logger.LogWarning("[peer-sync] defect lineage {LineageId} already exists in different project {Other}, skipping insert to target {Target}",
+                            lineageId, crossProject.ProjectId, project.Id);
+                        skipped++;
+                        continue;
+                    }
                     DateTime parsedCreated = DateTime.UtcNow;
                     if (Get("createdAt") is string c && DateTime.TryParse(c, out var dt)) parsedCreated = dt.ToUniversalTime();
 
