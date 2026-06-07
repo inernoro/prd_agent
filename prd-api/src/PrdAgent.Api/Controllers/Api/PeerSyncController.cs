@@ -67,9 +67,23 @@ public class PeerSyncController : ControllerBase
             || string.IsNullOrWhiteSpace(payload.InitiatorNodeId) || string.IsNullOrWhiteSpace(payload.InitiatorBaseUrl))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "握手请求缺少必要信息"));
 
-        var code = await _db.PeerPairingCodes.Find(c => c.Id == payload.PairingCode).FirstOrDefaultAsync(ct);
-        if (code == null || code.Used || code.ExpiresAt < DateTime.UtcNow)
-            return StatusCode(401, ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "配对码无效或已过期"));
+        // 原子 claim 配对码（PR #742 review fix）：FindOneAndUpdate 以「未使用 + 未过期」为条件，
+        // 命中即刻把 Used 设为 true 并落 UsedByNodeId。并发 handshake 同一码只有一方拿得到，
+        // 失败方拿到 null，直接 401。避免「先读后写」窗口里两个发起方各拿到不同 secret 的紫绳。
+        var nowUtc = DateTime.UtcNow;
+        var claimFilter = Builders<PeerPairingCode>.Filter.And(
+            Builders<PeerPairingCode>.Filter.Eq(c => c.Id, payload.PairingCode),
+            Builders<PeerPairingCode>.Filter.Eq(c => c.Used, false),
+            Builders<PeerPairingCode>.Filter.Gte(c => c.ExpiresAt, nowUtc));
+        var claimUpdate = Builders<PeerPairingCode>.Update
+            .Set(c => c.Used, true)
+            .Set(c => c.UsedByNodeId, payload.InitiatorNodeId);
+        var code = await _db.PeerPairingCodes.FindOneAndUpdateAsync(
+            claimFilter, claimUpdate,
+            new FindOneAndUpdateOptions<PeerPairingCode> { ReturnDocument = ReturnDocument.Before },
+            ct);
+        if (code == null)
+            return StatusCode(401, ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "配对码无效、已使用或已过期"));
 
         var selfNodeId = await _peer.GetSelfNodeIdAsync(ct);
         if (payload.InitiatorNodeId == selfNodeId)
@@ -110,10 +124,7 @@ public class PeerSyncController : ControllerBase
             }, cancellationToken: ct);
         }
 
-        await _db.PeerPairingCodes.UpdateOneAsync(c => c.Id == code.Id,
-            Builders<PeerPairingCode>.Update.Set(c => c.Used, true).Set(c => c.UsedByNodeId, payload.InitiatorNodeId),
-            cancellationToken: ct);
-
+        // 配对码已在上面 FindOneAndUpdate 时原子 claim，不需要再 set Used。
         var settings = await _db.AppSettings.Find(s => s.Id == "global").FirstOrDefaultAsync(ct);
         return Ok(ApiResponse<object>.Ok(new HandshakeResult
         {
@@ -264,24 +275,46 @@ public class PeerSyncController : ControllerBase
         {
             try
             {
+                // PR #742 review fix：每条目独立 ok 标记。Push 或 Pull 任一阶段 outcome.Failed>0、
+                // outcome 为 null（对端返回无效）、bundle 为 null 都判失败，前端可正确标红、不再误显示"成功"。
                 var perItem = new List<string>();
+                var itemOk = true;
                 if (direction is "push" or "both")
                 {
                     var bundle = await resource.ExportAsync(itemId, actor, ct);
-                    if (bundle == null) { results.Add(new { itemId, ok = false, message = "本地条目不存在或无权访问" }); anyFail = true; continue; }
+                    if (bundle == null)
+                    {
+                        results.Add(new { itemId, ok = false, message = "本地条目不存在或无权访问" });
+                        anyFail = true;
+                        continue;
+                    }
                     var outcome = await PushToPeerAsync(node, resource.ResourceType, bundle, itemId, mode, ct);
-                    perItem.Add("发送 " + (outcome?.Message ?? "完成"));
-                    if (outcome == null || outcome.Failed > 0) anyFail = true;
+                    if (outcome == null)
+                    {
+                        perItem.Add("发送 失败（对端返回无效）");
+                        itemOk = false;
+                        anyFail = true;
+                    }
+                    else
+                    {
+                        perItem.Add("发送 " + (outcome.Message ?? "完成"));
+                        if (outcome.Failed > 0) { itemOk = false; anyFail = true; }
+                    }
                 }
                 if (direction is "pull" or "both")
                 {
                     var bundle = await PullFromPeerAsync(node, resource.ResourceType, itemId, ct);
-                    if (bundle == null) { results.Add(new { itemId, ok = false, message = "对端条目不存在或不可达" }); anyFail = true; continue; }
+                    if (bundle == null)
+                    {
+                        results.Add(new { itemId, ok = false, message = string.Join("；", perItem.Append("拉取 失败（对端条目不存在或不可达）")) });
+                        anyFail = true;
+                        continue;
+                    }
                     var outcome = await resource.ApplyAsync(bundle, actor, mode, itemId, ct);
                     perItem.Add("拉取 " + (outcome.Message ?? "完成"));
-                    if (outcome.Failed > 0) anyFail = true;
+                    if (outcome.Failed > 0) { itemOk = false; anyFail = true; }
                 }
-                results.Add(new { itemId, ok = true, message = string.Join("；", perItem) });
+                results.Add(new { itemId, ok = itemOk, message = string.Join("；", perItem) });
             }
             catch (Exception ex)
             {

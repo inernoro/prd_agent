@@ -36,14 +36,42 @@ public class PeerNodeService : IPeerNodeService
         if (existing != null && !string.IsNullOrWhiteSpace(existing.MapInstanceId))
             return existing.MapInstanceId!;
 
+        // 关键修复（PR #742 review P1）：旧版 SetOnInsert 在「AppSettings.global 已存在但 MapInstanceId 为空」
+        // 的升级场景下是 no-op —— 每次调用都返回新 GUID 但永不落库，导致 HMAC 身份在请求间漂移、配对失效。
+        // 改为：缺失文档时 InsertOne（带唯一约束兜底）；存在但 MapInstanceId 空时显式 $set 持久化。
         var newId = Guid.NewGuid().ToString("N");
-        var update = Builders<AppSettings>.Update
-            .SetOnInsert(s => s.MapInstanceId, newId)
-            .SetOnInsert(s => s.UpdatedAt, DateTime.UtcNow);
-        await _db.AppSettings.UpdateOneAsync(
-            s => s.Id == "global", update, new UpdateOptions { IsUpsert = true }, ct);
+        if (existing == null)
+        {
+            try
+            {
+                await _db.AppSettings.InsertOneAsync(
+                    new AppSettings { Id = "global", MapInstanceId = newId, UpdatedAt = DateTime.UtcNow },
+                    cancellationToken: ct);
+                return newId;
+            }
+            catch (MongoWriteException)
+            {
+                // 并发：另一进程刚插入。重读取它的 MapInstanceId。
+            }
+        }
+        else
+        {
+            // 文档存在但 MapInstanceId 为空：用条件 $set 落入，仅当当前仍为空时写（避免并发覆盖）。
+            var filter = Builders<AppSettings>.Filter.And(
+                Builders<AppSettings>.Filter.Eq(s => s.Id, "global"),
+                Builders<AppSettings>.Filter.Or(
+                    Builders<AppSettings>.Filter.Eq(s => s.MapInstanceId, (string?)null),
+                    Builders<AppSettings>.Filter.Eq(s => s.MapInstanceId, string.Empty)));
+            var update = Builders<AppSettings>.Update
+                .Set(s => s.MapInstanceId, newId)
+                .Set(s => s.UpdatedAt, DateTime.UtcNow);
+            await _db.AppSettings.UpdateOneAsync(filter, update, cancellationToken: ct);
+        }
         var reloaded = await _db.AppSettings.Find(s => s.Id == "global").FirstOrDefaultAsync(ct);
-        return reloaded?.MapInstanceId ?? newId;
+        if (reloaded != null && !string.IsNullOrWhiteSpace(reloaded.MapInstanceId))
+            return reloaded.MapInstanceId!;
+        // 极端兜底：不返回未持久化的 GUID 给上层（保证调用方拿到的 nodeId 永远是 DB 里那个）
+        throw new InvalidOperationException("PeerNodeService.GetSelfNodeIdAsync: 无法持久化 MapInstanceId");
     }
 
     public (string ts, string sign) Sign(string sharedSecret, string method, string path, string body)

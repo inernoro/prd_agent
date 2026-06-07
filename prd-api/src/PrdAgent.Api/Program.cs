@@ -136,6 +136,8 @@ builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IPeerNodeService,
     PrdAgent.Infrastructure.Services.PeerNodeService>();
 builder.Services.AddScoped<PrdAgent.Core.Sync.ISyncableResource,
     PrdAgent.Infrastructure.Sync.Resources.DocumentStoreSyncResource>();
+builder.Services.AddScoped<PrdAgent.Core.Sync.ISyncableResource,
+    PrdAgent.Infrastructure.Sync.Resources.DefectSyncResource>();
 builder.Services.AddScoped<PrdAgent.Core.Sync.ISyncResourceRegistry,
     PrdAgent.Infrastructure.Sync.SyncResourceRegistry>();
 
@@ -280,6 +282,13 @@ builder.Services.AddSingleton<PrdAgent.Core.Interfaces.ISkillAgentSessionStore, 
 
 // 文档订阅同步引擎。用户可控 URL 禁止自动重定向，避免首跳校验后跳入内网。
 builder.Services.AddHttpClient("DocumentSync")
+    .ConfigurePrimaryHttpMessageHandler(sp =>
+        sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
+
+// 系统级跨节点互传 HttpClient（PR #742 review fix）。
+// 对端 baseUrl 是管理员配置 + ISafeOutboundUrlValidator 把过的，但默认 HttpClientHandler 会自动跟随
+// 重定向 —— 恶意对端响应 3xx 跳内网即可绕过首跳校验。挂 SafeOutbound handler 禁自动跟随。
+builder.Services.AddHttpClient("PeerSync")
     .ConfigurePrimaryHttpMessageHandler(sp =>
         sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
 builder.Services.AddHostedService<PrdAgent.Api.Services.DocumentSyncWorker>();

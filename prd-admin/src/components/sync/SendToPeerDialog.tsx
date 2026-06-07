@@ -51,6 +51,13 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
   const [submitting, setSubmitting] = useState(false);
   const [results, setResults] = useState<TransferItemResult[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<{ stage: string; startedAt: number } | null>(null);
+  const [, setNow] = useState(0);
+  useEffect(() => {
+    if (!submitting) return;
+    const t = setInterval(() => setNow((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [submitting]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -98,13 +105,22 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
     setSubmitting(true);
     setError(null);
     setResults(null);
+    const startedAt = Date.now();
+    const total = selected.size;
+    const dirLabel = direction === 'push' ? '发送' : direction === 'pull' ? '拉取' : '双向同步';
+    setProgress({ stage: `准备 ${dirLabel} ${total} 项条目…`, startedAt });
+    const t1 = setTimeout(() => setProgress({ stage: `正在导出 / 跨节点传输 bundle…`, startedAt }), 1500);
+    const t2 = setTimeout(() => setProgress({ stage: `对端正在 apply（按血缘 upsert）…`, startedAt }), 5000);
+    const t3 = setTimeout(() => setProgress({ stage: `对端响应较慢，知识库较大或网络较差时可能需要更长时间…`, startedAt }), 12000);
     const res = await transferToPeer({
       nodeId,
       resourceType,
       itemIds: Array.from(selected),
       direction,
     });
+    clearTimeout(t1); clearTimeout(t2); clearTimeout(t3);
     setSubmitting(false);
+    setProgress(null);
     if (res.success && res.data) {
       setResults(res.data.results || []);
       if (!res.data.anyFail) onDone?.();
@@ -234,6 +250,25 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
                   </div>
                 )}
               </div>
+
+              {/* 进度（等提示信息，避免空白等待 — CLAUDE.md §6） */}
+              {submitting && progress && (
+                <div
+                  className="rounded-lg p-3 flex items-start gap-2"
+                  style={{
+                    background: 'rgba(59,130,246,0.08)',
+                    border: '1px solid rgba(59,130,246,0.20)',
+                  }}
+                >
+                  <MapSpinner size={13} />
+                  <div className="min-w-0 flex-1 text-[12px]" style={{ color: 'var(--text-primary)' }}>
+                    {progress.stage}
+                    <span className="ml-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      已用 {Math.round((Date.now() - progress.startedAt) / 1000)}s
+                    </span>
+                  </div>
+                </div>
+              )}
 
               {/* 结果 */}
               {results && (

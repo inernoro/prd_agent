@@ -139,6 +139,15 @@ export function PeerNodesSettings() {
   const [addSelfName, setAddSelfName] = useState('');
   const [addBusy, setAddBusy] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+  const [addProgress, setAddProgress] = useState<{ stage: string; startedAt: number } | null>(null);
+  const [testProgress, setTestProgress] = useState<{ id: string; startedAt: number } | null>(null);
+  const [, setNow] = useState(0);
+  // 1s 节拍器：handshake/test 进行中时驱动「已用 Xs」自增显示，避免空白等待（CLAUDE.md §6）
+  useEffect(() => {
+    if (!addBusy && !testProgress) return;
+    const t = setInterval(() => setNow((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [addBusy, testProgress]);
 
   const flash = (msg: string, kind: 'ok' | 'err' = 'ok') => {
     setToast({ msg, kind });
@@ -193,15 +202,24 @@ export function PeerNodesSettings() {
     }
     setAddBusy(true);
     setAddError(null);
+    const startedAt = Date.now();
+    setAddProgress({ stage: '正在与对端发起握手…', startedAt });
+    // 阶段提示节奏：避免单一 spinner，让用户知道系统在做什么
+    const t1 = setTimeout(() => setAddProgress({ stage: '对端正在校验配对码 + 生成共享密钥…', startedAt }), 1500);
+    const t2 = setTimeout(() => setAddProgress({ stage: '交换 HMAC 密钥并落地配对记录…', startedAt }), 4000);
+    const t3 = setTimeout(() => setAddProgress({ stage: '对端响应较慢，仍在等待…', startedAt }), 8000);
     const res = await addPeerNode({
       baseUrl: addBaseUrl.trim(),
       pairingCode: addCode.trim(),
       displayName: addName.trim() || undefined,
       selfDisplayName: addSelfName.trim() || undefined,
     });
+    clearTimeout(t1); clearTimeout(t2); clearTimeout(t3);
     setAddBusy(false);
+    setAddProgress(null);
     if (res.success) {
-      flash('配对成功');
+      const elapsed = Math.round((Date.now() - startedAt) / 100) / 10;
+      flash(`配对成功（耗时 ${elapsed}s）`);
       setShowAdd(false);
       setAddBaseUrl('');
       setAddCode('');
@@ -215,10 +233,14 @@ export function PeerNodesSettings() {
 
   const handleTest = async (id: string) => {
     setBusyId(id);
+    const startedAt = Date.now();
+    setTestProgress({ id, startedAt });
     const res = await testPeerNode(id);
     setBusyId(null);
-    if (res.success && res.data?.ok) flash('连通正常');
-    else flash(res.data?.error || '连通失败，请稍后重试或检查对端配对状态', 'err');
+    setTestProgress(null);
+    const elapsed = Math.round((Date.now() - startedAt) / 100) / 10;
+    if (res.success && res.data?.ok) flash(`连通正常（${elapsed}s）`);
+    else flash(`${res.data?.error || '连通失败，请稍后重试或检查对端配对状态'}（${elapsed}s）`, 'err');
     void load();
   };
 
@@ -466,13 +488,31 @@ export function PeerNodesSettings() {
               <span className="min-w-0 break-words">{addError}</span>
             </div>
           )}
+          {addBusy && addProgress && (
+            <div
+              className="flex items-start gap-2 text-[12px] rounded-lg px-3 py-2"
+              style={{
+                background: 'rgba(59,130,246,0.06)',
+                border: '1px solid rgba(59,130,246,0.18)',
+                color: 'rgba(147,197,253,0.95)',
+              }}
+            >
+              <MapSpinner size={12} />
+              <span className="min-w-0 flex-1">
+                {addProgress.stage}{' '}
+                <span style={{ color: 'rgba(147,197,253,0.6)' }}>
+                  · 已用 {Math.round((Date.now() - addProgress.startedAt) / 1000)}s
+                </span>
+              </span>
+            </div>
+          )}
           <div className="flex items-center gap-2 justify-end pt-1">
-            <Button size="sm" variant="ghost" onClick={() => setShowAdd(false)}>
+            <Button size="sm" variant="ghost" onClick={() => setShowAdd(false)} disabled={addBusy}>
               取消
             </Button>
             <Button size="sm" onClick={handleAdd} disabled={addBusy}>
               {addBusy ? <MapSpinner size={13} /> : <Wifi size={13} />}
-              配对
+              {addBusy ? '握手中…' : '配对'}
             </Button>
           </div>
         </section>
@@ -577,6 +617,11 @@ export function PeerNodesSettings() {
                       </div>
                       <div className="flex items-center gap-2 mt-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                         <span>最近通信 {fmtRelative(n.lastContactAt)}</span>
+                        {testProgress?.id === n.id && (
+                          <span style={{ color: 'rgba(147,197,253,0.95)' }}>
+                            · 测试中 {Math.round((Date.now() - testProgress.startedAt) / 1000)}s…
+                          </span>
+                        )}
                       </div>
                       {n.lastError && (
                         <div
