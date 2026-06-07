@@ -303,13 +303,16 @@ export default function ChangelogPage() {
 
   // releases summary 到位后：只对【第一个版本】立刻拉详情；
   // 其余 release 走 IntersectionObserver — 滚动到可视区才拉，避免一次性 700kB 详情压栈
-  const releaseDetailTriggeredRef = useRef<Set<string>>(new Set());
+  //
+  // 注意：不再用本地 triggeredRef 缓存「已请求」状态。SSE / 刷新会重新调用
+  // loadReleases({summary:true})，把所有版本的 days 清空（entriesOmitted=true），
+  // 若 ref 还记着「已请求过」就永远不会重拉，卡片留空（Bugbot #2）。
+  // 改为：以 `release.entriesOmitted` 本身作为「是否需要拉」的信号；store 端
+  // 用 `loadingReleaseVersions` 做并发去重，本端无需再缓存。
   useEffect(() => {
     if (!releases || releases.releases.length === 0) return;
     const first = releases.releases[0];
     if (!first.entriesOmitted) return;
-    if (releaseDetailTriggeredRef.current.has(first.version)) return;
-    releaseDetailTriggeredRef.current.add(first.version);
     void loadReleaseDetail(first.version);
   }, [releases, loadReleaseDetail]);
 
@@ -323,8 +326,7 @@ export default function ChangelogPage() {
           if (!entry.isIntersecting) continue;
           const v = (entry.target as HTMLElement).dataset.releaseVersion;
           if (!v) continue;
-          if (releaseDetailTriggeredRef.current.has(v)) continue;
-          releaseDetailTriggeredRef.current.add(v);
+          // 让 store 自己判断「是否需要拉」+ 并发去重（loadingReleaseVersions / entriesOmitted）
           void loadReleaseDetail(v);
         }
       },
@@ -383,14 +385,23 @@ export default function ChangelogPage() {
         // 成功就清错误横幅（无论 foreground/trailing/SSE 触发）：否则前一次前台失败留下的
         // 红色「注意」横幅会在后台成功更新后仍挂着，与实际状态不符（Bugbot Medium）。
         setGitHubLogsError(null);
+        const newShas = new Set(res.data.logs.map((log) => log.sha));
         const previousShas = new Set((previous?.logs ?? []).map((log) => log.sha));
         const insertedShas = previous
           ? res.data.logs.filter((log) => !previousShas.has(log.sha)).map((log) => log.sha)
           : [];
 
-        setGitHubLogs(res.data);
+        // 保留用户已通过 cursor 续接到的更老 logs（不在 newShas 里的）。
+        // 否则 35s 轮询 / 手动刷新 / SSE 会用 first-page 80 条覆盖整个列表，
+        // 用户正在看的更老内容直接消失（Bugbot #3 + Codex P2）。
+        const preservedTail = (previous?.logs ?? []).filter((log) => !newShas.has(log.sha));
+        const merged: GitHubLogsView = preservedTail.length > 0
+          ? { ...res.data, logs: [...res.data.logs, ...preservedTail] }
+          : res.data;
+
+        setGitHubLogs(merged);
         setLiveFetchedAt(res.data.fetchedAt);
-        writeGitHubLogsCache(res.data);
+        writeGitHubLogsCache(merged);
 
         if (insertedShas.length > 0) {
           setNewGitHubLogShas((current) => new Set([...current, ...insertedShas]));

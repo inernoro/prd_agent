@@ -82,9 +82,11 @@ public class ChangelogController : ControllerBase
         [FromQuery] bool force = false)
     {
         if (limit <= 0 || limit > 100) limit = 8;
-        var view = await _reader.GetReleasesAsync(limit, force).ConfigureAwait(false);
+        // reader 永远拉满 100（单一 cache key），controller 切片输出。
+        // 这样 chip 显示的 totalReleases / totalEntries 永远基于全量，不会被 limit 截断（Bugbot #5）。
+        var view = await _reader.GetReleasesAsync(100, force).ConfigureAwait(false);
         if (!force) SetClientCacheHeaders();
-        return Ok(ApiResponse<ReleasesDto>.Ok(MapReleases(view, summary)));
+        return Ok(ApiResponse<ReleasesDto>.Ok(MapReleases(view, summary, limit)));
     }
 
     /// <summary>
@@ -372,14 +374,16 @@ public class ChangelogController : ControllerBase
         };
     }
 
-    private static ReleasesDto MapReleases(ReleasesView view, bool summary = false) => new()
+    private static ReleasesDto MapReleases(ReleasesView view, bool summary = false, int displayLimit = int.MaxValue) => new()
     {
         DataSourceAvailable = view.DataSourceAvailable,
         Source = view.Source,
         FetchedAt = view.FetchedAt.ToString("o"),
+        // totals 永远从全量 view 算（与 displayLimit 解耦），让 chip 显示真实数字
         TotalReleases = view.Releases.Count,
         TotalEntries = view.Releases.Sum(r => r.Days.Sum(d => d.Entries.Count)),
-        Releases = view.Releases.ConvertAll(r => MapRelease(r, summary)),
+        // 输出列表按 displayLimit 切片
+        Releases = view.Releases.Take(displayLimit).Select(r => MapRelease(r, summary)).ToList(),
     };
 
     private static ChangelogReleaseDto MapRelease(ChangelogRelease r, bool summary) => new()

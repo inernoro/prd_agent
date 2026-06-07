@@ -137,7 +137,21 @@ export const useChangelogStore = create<ChangelogState>()(
         const res = await getCurrentWeekChangelog({ daysLimit, force: force === true });
         if (mySeq !== currentWeekFetchSeq) return;
         if (res.success) {
-          set({ currentWeek: res.data, loadingCurrent: false });
+          // 保留瀑布已加载的更老日期组（用户已通过 loadMoreFragments 累积到 > daysLimit 个）。
+          // 否则 SSE / 后台刷新会把 fragments 缩回 daysLimit 大小，丢掉用户已滚到的位置（Bugbot #4）。
+          set((state) => {
+            const incoming = res.data;
+            const cur = state.currentWeek;
+            if (cur && cur.fragments.length > incoming.fragments.length) {
+              const incomingDates = new Set(incoming.fragments.map((f) => f.date));
+              const tail = cur.fragments.filter((f) => !incomingDates.has(f.date));
+              return {
+                currentWeek: { ...incoming, fragments: [...incoming.fragments, ...tail] },
+                loadingCurrent: false,
+              };
+            }
+            return { currentWeek: incoming, loadingCurrent: false };
+          });
         } else if (!hasCache) {
           set({ loadingCurrent: false, error: res.error?.message || '加载待发布更新失败' });
         } else {
@@ -156,7 +170,10 @@ export const useChangelogStore = create<ChangelogState>()(
         if (loadingMoreFragments) return;
         if (!currentWeek) return;
         if (!currentWeek.hasMore) return;
-        const nextOffset = currentWeek.fragments.length + (currentWeek.daysOffset ?? 0);
+        // 累积 fragments 的长度本身就是下一批的 offset；
+        // 之前误加 `+ currentWeek.daysOffset` 会双计：每次 merge 后 daysOffset 被新批次的
+        // skip 值覆盖（4→14 而不是 4→10），导致每次跳过几天，留下日期组空洞（Bugbot #1）。
+        const nextOffset = currentWeek.fragments.length;
         set({ loadingMoreFragments: true });
         try {
           const res = await getCurrentWeekChangelog({
