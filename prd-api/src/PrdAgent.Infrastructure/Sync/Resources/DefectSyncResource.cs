@@ -97,6 +97,15 @@ public class DefectSyncResource : ISyncableResource
         if (!string.IsNullOrWhiteSpace(project.OwnerUserId))
             owner = await _db.Users.Find(u => u.UserId == project.OwnerUserId).FirstOrDefaultAsync(ct);
 
+        // PR #742 review Medium fix：预取所有 reporter/assignee 的 username/email，让接收侧能按
+        // 用户名/邮箱对齐到自己节点的真实用户，而不是统一归到项目 owner。
+        var userIds = defects.SelectMany(d => new[] { d.ReporterId, d.AssigneeId })
+            .Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s!).Distinct().ToList();
+        var usersById = userIds.Count == 0
+            ? new Dictionary<string, User>()
+            : (await _db.Users.Find(Builders<User>.Filter.In(u => u.UserId, userIds)).ToListAsync(ct))
+                .ToDictionary(u => u.UserId, u => u);
+
         var records = new List<SyncRecord>();
         foreach (var d in defects)
         {
@@ -104,6 +113,9 @@ public class DefectSyncResource : ISyncableResource
             // 未知字段或对端不识别由 Extras 兜底向下兼容。
             // PR #742 review fix：attachments / structuredData 即使为空也必须在 extras 里显式 emit
             // 空数组 / 空对象 —— 否则源端清空后接收方收到的是缺 key，永远当成「没变」无法清。
+            // PR #742 review Medium fix：除显示名外还带 username/email，接收侧据此对齐到本地真实用户
+            User? reporterUser = !string.IsNullOrWhiteSpace(d.ReporterId) && usersById.TryGetValue(d.ReporterId!, out var rep) ? rep : null;
+            User? assigneeUser = !string.IsNullOrWhiteSpace(d.AssigneeId) && usersById.TryGetValue(d.AssigneeId!, out var asg) ? asg : null;
             var meta = new Dictionary<string, string>
             {
                 [LineageKey] = d.Id,
@@ -112,7 +124,11 @@ public class DefectSyncResource : ISyncableResource
                 ["severity"] = d.Severity ?? string.Empty,
                 ["priority"] = d.Priority ?? string.Empty,
                 ["reporterName"] = d.ReporterName ?? string.Empty,
+                ["reporterUserName"] = reporterUser?.Username ?? string.Empty,
+                ["reporterEmail"] = reporterUser?.Email ?? string.Empty,
                 ["assigneeName"] = d.AssigneeName ?? string.Empty,
+                ["assigneeUserName"] = assigneeUser?.Username ?? string.Empty,
+                ["assigneeEmail"] = assigneeUser?.Email ?? string.Empty,
                 ["createdAt"] = d.CreatedAt.ToString("O"),
                 ["resolvedAt"] = d.ResolvedAt?.ToString("O") ?? string.Empty,
                 ["resolution"] = d.Resolution ?? string.Empty,
@@ -396,6 +412,20 @@ public class DefectSyncResource : ISyncableResource
                     DateTime parsedCreated = DateTime.UtcNow;
                     if (Get("createdAt") is string c && DateTime.TryParse(c, out var dt)) parsedCreated = dt.ToUniversalTime();
 
+                    // PR #742 review Medium fix：按 reporterUserName / reporterEmail 对齐到本地用户；
+                    // 未命中才退回项目 owner（同 doc-store 的兜底逻辑），避免所有 import 全部归项目 owner。
+                    var (reporterId, reporterName) = await ResolveUserAsync(
+                        Get("reporterUserName"), Get("reporterEmail"), Get("reporterName"), ownerUserId, ownerName, ct);
+                    // assignee 可以为空 - 只在 bundle 带了对齐字段时才尝试
+                    string? assigneeId = null;
+                    var assigneeDisplayName = Resolved("assigneeName", null);
+                    if (!string.IsNullOrWhiteSpace(Get("assigneeUserName")) || !string.IsNullOrWhiteSpace(Get("assigneeEmail")))
+                    {
+                        var (aId, aName) = await ResolveUserAsync(
+                            Get("assigneeUserName"), Get("assigneeEmail"), Get("assigneeName"), null, null, ct);
+                        assigneeId = aId;
+                        if (!string.IsNullOrWhiteSpace(aName)) assigneeDisplayName = aName;
+                    }
                     var defect = new DefectReport
                     {
                         Id = lineageId,
@@ -406,9 +436,10 @@ public class DefectSyncResource : ISyncableResource
                         Severity = Resolved("severity", null),
                         Priority = Resolved("priority", null),
                         Resolution = Resolved("resolution", null),
-                        ReporterId = ownerUserId,
-                        ReporterName = Get("reporterName") ?? ownerName,
-                        AssigneeName = Resolved("assigneeName", null),
+                        ReporterId = reporterId ?? ownerUserId,
+                        ReporterName = reporterName,
+                        AssigneeId = assigneeId,
+                        AssigneeName = assigneeDisplayName,
                         ProjectId = project.Id,
                         ProjectName = project.Name,
                         CreatedAt = parsedCreated,
@@ -437,6 +468,25 @@ public class DefectSyncResource : ISyncableResource
             UnmatchedAuthors = authorMatched ? 0 : 1,
             Message = $"新增{created}/更新{updated}/跳过{skipped}" + (failed > 0 ? $"/失败{failed}" : ""),
         };
+    }
+
+    /// <summary>按 username → email 对齐到本地用户；未命中退回 fallbackUserId/Name（可为 null）。
+    /// PR #742 review Medium fix：导入缺陷的 reporter/assignee 不能统一归到项目 owner。</summary>
+    private async Task<(string? userId, string? displayName)> ResolveUserAsync(
+        string? username, string? email, string? displayNameFromMeta,
+        string? fallbackUserId, string? fallbackName, CancellationToken ct)
+    {
+        User? user = null;
+        if (!string.IsNullOrWhiteSpace(username))
+            user = await _db.Users.Find(u => u.Username == username).FirstOrDefaultAsync(ct);
+        if (user == null && !string.IsNullOrWhiteSpace(email))
+            user = await _db.Users.Find(u => u.Email == email).FirstOrDefaultAsync(ct);
+        if (user != null)
+        {
+            var n = !string.IsNullOrWhiteSpace(user.DisplayName) ? user.DisplayName : user.Username;
+            return (user.UserId, n);
+        }
+        return (fallbackUserId, !string.IsNullOrWhiteSpace(displayNameFromMeta) ? displayNameFromMeta : fallbackName);
     }
 
     private async Task<(string userId, string name, bool matched)> ResolveOwnerAsync(
