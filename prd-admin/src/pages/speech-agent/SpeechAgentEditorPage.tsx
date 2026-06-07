@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ChevronLeft, Sparkles, Loader2, Save, Play, AlertTriangle, RotateCcw } from 'lucide-react';
+import { ChevronLeft, Sparkles, Loader2, Save, Play, AlertTriangle, RotateCcw, Brain } from 'lucide-react';
 import { speechAgentApi } from '@/services/real/speechAgent';
 import type { SpeechDeck, SpeechNode } from '@/services/contracts/speechAgent';
 import { useSseStream } from '@/lib/useSseStream';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { StreamingText } from '@/components/streaming/StreamingText';
 import { SpeechMindmapView } from './SpeechMindmapView';
 
 export default function SpeechAgentEditorPage() {
@@ -21,6 +22,8 @@ export default function SpeechAgentEditorPage() {
   const [draftTitle, setDraftTitle] = useState('');
   const [draftBullets, setDraftBullets] = useState('');
   const [saving, setSaving] = useState(false);
+  const [thinking, setThinking] = useState('');
+  const [typing, setTyping] = useState('');
 
   const autoStarted = useRef(false);
   const shouldAutoStart = searchParams.get('autoStart') === '1';
@@ -47,12 +50,17 @@ export default function SpeechAgentEditorPage() {
     method: 'POST',
     body: {},
     typingEvent: 'typing',
+    onTyping: (text) => setTyping((prev) => prev + text),
     onPhase: () => {},
     onEvent: {
       model: (data) => {
         const d = data as { model?: string; platform?: string };
         if (d.model) setModel(d.model);
         if (d.platform) setPlatform(d.platform);
+      },
+      thinking: (data) => {
+        const d = data as { text?: string };
+        if (d.text) setThinking((prev) => prev + d.text);
       },
       node: (data) => {
         const d = data as { node: SpeechNode };
@@ -74,6 +82,8 @@ export default function SpeechAgentEditorPage() {
   const handleStart = useCallback(async () => {
     setNodes([]);
     setSelectedNodeId(null);
+    setThinking('');
+    setTyping('');
     await stream.start();
   }, [stream]);
 
@@ -199,11 +209,11 @@ export default function SpeechAgentEditorPage() {
           <span className="text-xs text-violet-100/85">
             {stream.phaseMessage || 'AI 正在拆解演讲结构…'}
           </span>
-          {stream.typing && (
-            <span className="ml-2 text-[11px] text-white/45 font-mono truncate flex-1">
-              {stream.typing.slice(-80)}
-            </span>
-          )}
+          <span className="ml-auto text-[10px] text-white/40 font-mono">
+            {thinking.length > 0 && `推理 ${thinking.length} 字`}
+            {typing.length > 0 && ` · 输出 ${typing.length} 字`}
+            {nodes.length > 0 && ` · 已落 ${nodes.length} 节点`}
+          </span>
         </div>
       )}
 
@@ -215,7 +225,48 @@ export default function SpeechAgentEditorPage() {
       )}
 
       <div className="flex-1 min-h-0 flex">
-        <div className="flex-1 min-w-0 min-h-0">
+        <div className="flex-1 min-w-0 min-h-0 relative">
+          {isGenerating && nodes.length === 0 && (thinking || typing) && (
+            <div className="absolute inset-0 z-20 flex items-start justify-center px-6 py-8 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+              <div className="w-full max-w-3xl flex flex-col gap-4">
+                {thinking && (
+                  <div className="rounded-xl border border-violet-400/30 bg-violet-500/[0.05] p-5">
+                    <div className="flex items-center gap-2 mb-3 text-[11px] uppercase tracking-wider text-violet-300/80">
+                      <Brain size={13} className="text-violet-300" />
+                      模型思考过程
+                      <span className="ml-auto font-mono text-white/40">{thinking.length} 字</span>
+                    </div>
+                    <div className="text-[13px] text-white/65 leading-relaxed font-mono whitespace-pre-wrap max-h-[200px] overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+                      <StreamingText
+                        text={thinking}
+                        streaming={true}
+                        mode="blur"
+                        cursor={false}
+                      />
+                    </div>
+                  </div>
+                )}
+                {typing && (
+                  <div className="rounded-xl border border-emerald-400/30 bg-emerald-500/[0.05] p-5">
+                    <div className="flex items-center gap-2 mb-3 text-[11px] uppercase tracking-wider text-emerald-300/80">
+                      <Sparkles size={13} className="text-emerald-300" />
+                      正在生成大纲 JSON
+                      <span className="ml-auto font-mono text-white/40">{typing.length} 字</span>
+                    </div>
+                    <div className="text-[13px] text-white/85 leading-relaxed font-mono whitespace-pre-wrap max-h-[320px] overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+                      <StreamingText
+                        text={typing}
+                        streaming={true}
+                        mode="blur"
+                        cursor={true}
+                        cursorContent="map"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
           <SpeechMindmapView
             nodes={nodes}
             selectedNodeId={selectedNodeId}

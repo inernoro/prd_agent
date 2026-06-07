@@ -325,19 +325,15 @@ export default function SpeechAgentPlayPage() {
         <X size={16} />
       </button>
 
-      {/* 主舞台 */}
+      {/* 主舞台 — 镜头过渡参考原版 mindmap-ppt: scale() translate() + 640ms */}
       <div ref={stageRef} className="flex-1 min-h-0 relative overflow-hidden">
-        <div className="absolute inset-0 opacity-50 pointer-events-none" style={{
-          background: 'radial-gradient(ellipse at 30% 20%, rgba(139,92,246,0.10) 0%, transparent 50%), radial-gradient(ellipse at 70% 80%, rgba(236,72,153,0.06) 0%, transparent 50%)',
-        }} />
-
         {viewport && model && (
           <div
             className="absolute top-0 left-0"
             style={{
-              transform: `translate3d(${-viewport.x * cameraZoom}px, ${-viewport.y * cameraZoom}px, 0) scale(${cameraZoom})`,
+              transform: `scale(${cameraZoom}) translate(${-viewport.x}px, ${-viewport.y}px)`,
               transformOrigin: '0 0',
-              transition: 'transform 700ms cubic-bezier(0.22, 1, 0.36, 1)',
+              transition: 'transform 640ms cubic-bezier(0.22, 1, 0.36, 1)',
               willChange: 'transform',
             }}
           >
@@ -595,7 +591,7 @@ function MindCard({
       type="button"
       onClick={(e) => { e.stopPropagation(); onClick(); }}
       onDoubleClick={(e) => { e.stopPropagation(); onDoubleClick(); }}
-      className="absolute text-left rounded-2xl transition-all duration-500 group"
+      className="absolute text-left rounded-2xl group"
       style={{
         left, top,
         width: node.width,
@@ -610,6 +606,7 @@ function MindCard({
             : '0 4px 12px rgba(0,0,0,0.4)',
         transform: `scale(${scale})`,
         transformOrigin: 'left center',
+        transition: 'background 260ms ease, border-color 260ms ease, box-shadow 260ms ease, transform 260ms cubic-bezier(0.22, 1, 0.36, 1)',
         zIndex,
       }}
     >
@@ -617,7 +614,7 @@ function MindCard({
       <div
         onClick={(e) => { e.stopPropagation(); onImageClick(); }}
         onDoubleClick={(e) => e.stopPropagation()}
-        className="absolute top-3 right-3 rounded-xl flex items-center justify-center cursor-zoom-in transition-all"
+        className="absolute top-3 right-3 rounded-xl flex items-center justify-center cursor-zoom-in"
         style={{
           width: isActive ? 44 : 36,
           height: isActive ? 44 : 36,
@@ -625,6 +622,7 @@ function MindCard({
           fontSize: isActive ? 24 : 18,
           color: 'white',
           boxShadow: isActive ? '0 6px 16px rgba(0,0,0,0.4)' : '0 3px 8px rgba(0,0,0,0.3)',
+          transition: 'width 260ms ease, height 260ms ease, font-size 260ms ease',
         }}
         role="button"
         aria-label="点击查看大图"
