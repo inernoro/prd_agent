@@ -1,3 +1,0 @@
-| feat | prd-admin | 右下角教程小书自动展开改为按日级节流：每天最多自动弹一次（含「首次兜底」与「新推送定向 tip」两条路径） |
-| feat | prd-admin | 通知列表（顶部铃铛 / 移动端首页 / 移动端通知页）统一按 createdAt 倒序排列，最新通知排在最前 |
-| fix | prd-admin | WebPagesPage 文件夹 tab 条补 `data-tour-id="webpages-folders"` 锚点，修复教程引导提示「没找到「第 1/3 步」的目标元素」 |
