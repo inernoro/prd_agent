@@ -1848,6 +1848,21 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                         }), ct);
                     }
                     break;
+                case InfraAgentRuntimeEventType.Thinking:
+                    if (!string.IsNullOrEmpty(ev.Text))
+                    {
+                        // 推理模型思考增量。不计入 finalText（思考不是正文），仅落 thinking 事件，
+                        // 让前端在等待期逐字展示思考过程，消除「40 秒空白」。
+                        await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.Thinking, JsonSerializer.Serialize(new
+                        {
+                            messageId = runId,
+                            text = ev.Text,
+                            source = eventSource,
+                            runtimeAdapter = activeAdapterKind,
+                            runtimeInstance = ev.RuntimeInstanceName
+                        }), ct);
+                    }
+                    break;
                 case InfraAgentRuntimeEventType.ToolUse:
                     await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.ToolCall, JsonSerializer.Serialize(new
                     {

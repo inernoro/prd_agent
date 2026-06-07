@@ -24,6 +24,7 @@ public static class InfraAgentEventTypes
 {
     public const string Status = "status";
     public const string TextDelta = "text_delta";
+    public const string Thinking = "thinking";
     public const string ToolCall = "tool_call";
     public const string ToolResult = "tool_result";
     public const string Log = "log";
@@ -39,6 +40,7 @@ public static class InfraAgentEventTypes
     {
         Status,
         TextDelta,
+        Thinking,
         ToolCall,
         ToolResult,
         Log,
@@ -67,6 +69,7 @@ public static class InfraAgentEventSchema
     {
         new InfraAgentEventSchemaItem(InfraAgentEventTypes.Status, "会话状态变化", new[] { "status", "reason" }, Array.Empty<string>()),
         new InfraAgentEventSchemaItem(InfraAgentEventTypes.TextDelta, "Agent 流式文本增量", new[] { "text" }, new[] { "messageId" }),
+        new InfraAgentEventSchemaItem(InfraAgentEventTypes.Thinking, "推理模型思考过程增量", new[] { "text" }, new[] { "messageId" }),
         new InfraAgentEventSchemaItem(InfraAgentEventTypes.ToolCall, "工具调用请求或审批状态", new[] { "toolName" }, new[] { "approvalId", "status", "risk", "input" }),
         new InfraAgentEventSchemaItem(InfraAgentEventTypes.ToolResult, "工具执行结果", new[] { "toolName" }, new[] { "status", "output", "exitCode", "stdout", "stderr" }),
         new InfraAgentEventSchemaItem(InfraAgentEventTypes.Log, "运行日志或诊断信息", new[] { "message" }, new[] { "level", "source" }),

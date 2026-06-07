@@ -50,6 +50,7 @@ public enum SidecarEventType
 {
     Unknown = 0,
     TextDelta,
+    Thinking,
     ToolUse,
     ToolResult,
     Usage,
