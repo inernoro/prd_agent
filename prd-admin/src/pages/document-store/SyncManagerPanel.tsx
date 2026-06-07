@@ -96,33 +96,42 @@ export function SyncManagerPanel() {
   // 防 stale 响应：快速点刷新 / 切走再回来时，旧请求回填会覆盖新数据。
   // 单调递增序号锁住"只有最新一次请求才能 setState"（与 DocumentStorePage 的 listFetchSeq 同款，
   // 满足 prd-admin learned rule: tab/filter 触发的 async fetch 必须有 fetchId stale-guard）。
+  // PR #742 review Medium 续修：用 in-flight 计数器决定何时清 loading。
+  // 之前两版方案都有问题：(a) 旧版 stale 时直接 return 不清 loading → handleRun 等 bump seq
+  // 让 in-flight load 早退 → spinner 卡死；(b) 上版 stale 也 setLoading(false) → 并发两次
+  // load() 旧的先回会把 loading 提前清掉露出过期数据。正解：每个 load 进来 ++inFlight，结束
+  // --inFlight；仅当 inFlight == 0 时才 setLoading(false)，handleRun 等不再依赖 load 自然清。
+  const inFlightRef = useRef(0);
   const load = useCallback(async () => {
     const mySeq = ++loadSeq.current;
+    inFlightRef.current++;
     setLoading(true);
-    // 选择器要列出"我能写的所有库"：自己拥有的(mine) + 各团队共享给我的(team)。
-    // 后端 LoadWritableStoreAsync 接受团队写者，UI 不补这些库的话团队共享库就配不了对（Codex P2）。
-    await useTeamStore.getState().loadTeams().catch(() => {});
-    const teams = useTeamStore.getState().teams;
-    const [linkRes, mineRes] = await Promise.all([
-      listAllSyncLinks(),
-      listDocumentStoresWithPreview(1, 500, { scope: 'mine' }),
-    ]);
-    const teamResults = await Promise.all(
-      teams.map(t => listDocumentStoresWithPreview(1, 500, { scope: 'team', teamId: t.team.id })),
-    );
-    // PR #742 review Medium fix：mySeq 失效时之前直接 return 不清 loading，导致
-    // handleRun/handleDirection/handleDelete 在 in-flight 时 bump loadSeq → 旧请求早退 → spinner 永久卡死。
-    // 改为：失效时只跳过数据写入 + 仍清 loading（更新的请求会自己再 setLoading(true)）。
-    const stale = mySeq !== loadSeq.current;
-    if (!stale) {
-      if (linkRes.success) setLinks(linkRes.data.items ?? []);
-      // 合并去重（按 store id）：mine 优先，团队共享库补充
-      const merged = new Map<string, DocumentStoreWithPreview>();
-      if (mineRes.success) for (const s of mineRes.data.items ?? []) merged.set(s.id, s);
-      for (const tr of teamResults) if (tr.success) for (const s of tr.data.items ?? []) if (!merged.has(s.id)) merged.set(s.id, s);
-      setMyStores([...merged.values()]);
+    try {
+      // 选择器要列出"我能写的所有库"：自己拥有的(mine) + 各团队共享给我的(team)。
+      // 后端 LoadWritableStoreAsync 接受团队写者，UI 不补这些库的话团队共享库就配不了对（Codex P2）。
+      await useTeamStore.getState().loadTeams().catch(() => {});
+      const teams = useTeamStore.getState().teams;
+      const [linkRes, mineRes] = await Promise.all([
+        listAllSyncLinks(),
+        listDocumentStoresWithPreview(1, 500, { scope: 'mine' }),
+      ]);
+      const teamResults = await Promise.all(
+        teams.map(t => listDocumentStoresWithPreview(1, 500, { scope: 'team', teamId: t.team.id })),
+      );
+      if (mySeq === loadSeq.current) {
+        if (linkRes.success) setLinks(linkRes.data.items ?? []);
+        // 合并去重（按 store id）：mine 优先，团队共享库补充
+        const merged = new Map<string, DocumentStoreWithPreview>();
+        if (mineRes.success) for (const s of mineRes.data.items ?? []) merged.set(s.id, s);
+        for (const tr of teamResults) if (tr.success) for (const s of tr.data.items ?? []) if (!merged.has(s.id)) merged.set(s.id, s);
+        setMyStores([...merged.values()]);
+      }
+    } finally {
+      // 计数到 0 才清 loading：避免并发两次 load() 时旧请求先回提前清 loading 露出过期数据；
+      // 也避免 handleRun/Delete bump seq 让本 load 早退后 spinner 卡死（计数器降到 0 触发清理）。
+      inFlightRef.current = Math.max(0, inFlightRef.current - 1);
+      if (inFlightRef.current === 0) setLoading(false);
     }
-    setLoading(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
