@@ -282,6 +282,10 @@ public class PeerSyncController : ControllerBase
 
         var results = new List<object>();
         var anyFail = false;
+        // PR #742 review Medium fix：跟踪是否真的与对端发生过成功的 HTTP 通信。
+        // 之前总是 bump LastContactAt，即便全部 itemId 在本地（无权访问 / Export 返回 null）就失败、
+        // 一次都没真正联系对端。LastContactAt 语义是"最近成功通信"（与 admin ping test 对齐），不该被误更新。
+        var anyPeerContact = false;
         foreach (var itemId in request.ItemIds.Distinct())
         {
             if (!allowedSet.Contains(itemId))
@@ -307,6 +311,7 @@ public class PeerSyncController : ControllerBase
                         continue;
                     }
                     var outcome = await PushToPeerAsync(node, resource.ResourceType, bundle, itemId, mode, ct);
+                    // outcome != null = 已收到对端 HTTP 响应 = 通信成功（即便 Failed>0 也算"通"了）
                     if (outcome == null)
                     {
                         perItem.Add("发送 失败（对端返回无效）");
@@ -316,6 +321,7 @@ public class PeerSyncController : ControllerBase
                     }
                     else
                     {
+                        anyPeerContact = true;
                         perItem.Add("发送 " + (outcome.Message ?? "完成"));
                         if (outcome.Failed > 0) { itemOk = false; pushOk = false; anyFail = true; }
                     }
@@ -331,6 +337,7 @@ public class PeerSyncController : ControllerBase
                         anyFail = true;
                         continue;
                     }
+                    anyPeerContact = true; // bundle != null = 对端 HTTP 200 应答 = 通信成功
                     var outcome = await resource.ApplyAsync(bundle, actor, mode, itemId, ct);
                     perItem.Add("拉取 " + (outcome.Message ?? "完成"));
                     if (outcome.Failed > 0) { itemOk = false; anyFail = true; }
@@ -349,9 +356,12 @@ public class PeerSyncController : ControllerBase
             }
         }
 
-        await _db.PeerNodes.UpdateOneAsync(n => n.Id == node.Id,
-            Builders<PeerNode>.Update.Set(n => n.LastContactAt, DateTime.UtcNow).Set(n => n.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: ct);
+        // 仅在至少有一次真正与对端 HTTP 通信成功时才 bump LastContactAt（与 admin ping test 同口径），
+        // 否则字段会变成"最近 transfer 尝试时间"——偏离原文档的"最近成功通信"语义。
+        var nodeUpdate = anyPeerContact
+            ? Builders<PeerNode>.Update.Set(n => n.LastContactAt, DateTime.UtcNow).Set(n => n.UpdatedAt, DateTime.UtcNow)
+            : Builders<PeerNode>.Update.Set(n => n.UpdatedAt, DateTime.UtcNow);
+        await _db.PeerNodes.UpdateOneAsync(n => n.Id == node.Id, nodeUpdate, cancellationToken: ct);
 
         return Ok(ApiResponse<object>.Ok(new { direction, results, anyFail }));
     }
