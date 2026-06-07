@@ -172,6 +172,19 @@ public class SpeechAgentController : ControllerBase
         var result = await _db.SpeechDecks.DeleteOneAsync(d => d.Id == deckId && d.OwnerUserId == userId);
         if (result.DeletedCount == 0) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "演讲不存在"));
         await _db.SpeechNodes.DeleteManyAsync(n => n.DeckId == deckId);
+
+        // 删 deck 同时吊销该 deck 名下所有 speech-agent 分享链,避免删了演讲但旧 /s/wp/{token}
+        // 仍能访问已撤回内容 (Codex P2 "Revoke public shares when deleting decks")
+        var siteIds = await _db.HostedSites
+            .Find(s => s.SourceType == "speech-agent" && s.SourceRef == deckId)
+            .Project(s => s.Id)
+            .ToListAsync();
+        if (siteIds.Count > 0)
+        {
+            await _db.WebPageShareLinks.UpdateManyAsync(
+                l => siteIds.Contains(l.SiteId!) && !l.IsRevoked,
+                Builders<WebPageShareLink>.Update.Set(l => l.IsRevoked, true));
+        }
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
@@ -511,11 +524,16 @@ public class SpeechAgentController : ControllerBase
                 Builders<SpeechDeck>.Filter.Lt(d => d.UpdatedAt, staleCutoff)));
         // NodeCount 不归零:旧节点要解析成功后才被删,失败路径让 NodeCount 保持原值,
         // 列表卡片继续显示旧 mindmap 的真实节点数 (Bugbot Medium "NodeCount zeroed on failed regen")
+        // GenerationRunId 是新一批的"指纹",service 拿到后给所有新节点打标;
+        // swap 前会重新读 deck.GenerationRunId,不等于本批就放弃 swap,避免 stale-timeout
+        // 让两个并行 LLM run 互相删对方节点 (Bugbot High "Overlapping regen corrupts node tree")
+        var generationRunId = Guid.NewGuid().ToString("N");
         var claimResult = await _db.SpeechDecks.UpdateOneAsync(
             claimFilter,
             Builders<SpeechDeck>.Update
                 .Set(d => d.Status, SpeechDeckStatus.Generating)
                 .Set(d => d.ErrorMessage, null)
+                .Set(d => d.GenerationRunId, generationRunId)
                 .Set(d => d.UpdatedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
         if (claimResult.MatchedCount == 0)
@@ -549,6 +567,7 @@ public class SpeechAgentController : ControllerBase
         {
             await foreach (var ev in _service.GenerateMindmapAsync(
                 deck,
+                generationRunId,
                 onTyping: async text =>
                 {
                     if (!sentPhaseAnalyzing)
@@ -600,8 +619,10 @@ public class SpeechAgentController : ControllerBase
 
         if (errorMessage != null)
         {
+            // Failed 终态仅在本批仍是 active run 时才落:
+            // 如果已被后来者抢占,不能把人家的 Generating 状态盖成 Failed
             await _db.SpeechDecks.UpdateOneAsync(
-                d => d.Id == deckId,
+                d => d.Id == deckId && d.GenerationRunId == generationRunId,
                 Builders<SpeechDeck>.Update
                     .Set(d => d.Status, SpeechDeckStatus.Failed)
                     .Set(d => d.ErrorMessage, errorMessage)

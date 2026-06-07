@@ -39,6 +39,9 @@ public class SpeechDeck
     /// <summary>生成状态：draft / generating / ready / failed。</summary>
     public string Status { get; set; } = SpeechDeckStatus.Draft;
 
+    /// <summary>当前在跑的生成批次 Id。stale-timeout 重抢时新 Run 写入新 Id,旧 Run 完成时校验 != 自己则放弃 swap。</summary>
+    public string? GenerationRunId { get; set; }
+
     /// <summary>失败原因（失败时填）。</summary>
     public string? ErrorMessage { get; set; }
 

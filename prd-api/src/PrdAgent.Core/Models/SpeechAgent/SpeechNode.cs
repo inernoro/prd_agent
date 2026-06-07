@@ -32,6 +32,9 @@ public class SpeechNode
     /// <summary>节点状态：pending / generating / ready / failed。</summary>
     public string Status { get; set; } = SpeechNodeStatus.Ready;
 
+    /// <summary>生成批次 Id。每次 regen 一个新 Guid,用于在并发/stale 抢占场景里精确识别"本批"节点。</summary>
+    public string? GenerationRunId { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

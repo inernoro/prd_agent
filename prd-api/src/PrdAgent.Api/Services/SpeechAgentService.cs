@@ -473,6 +473,7 @@ public class SpeechAgentService
     /// </summary>
     public async IAsyncEnumerable<SpeechGenerateEvent> GenerateMindmapAsync(
         SpeechDeck deck,
+        string generationRunId,
         Func<string, Task>? onTyping = null,
         Func<string, Task>? onThinking = null,
         Func<string, string, Task>? onModel = null,
@@ -562,15 +563,15 @@ public class SpeechAgentService
         }
 
         var nodes = FlattenMindmap(parsed, deck.Id);
-        // 两阶段交换,尽量做到"新节点全部就位才动旧节点",避免 InsertOne 中段失败留下半棵树
-        // (Bugbot High "Node replace not atomic" / Bugbot+Codex P2 "Defer deleting old nodes"):
-        //   1. 快照旧节点 Id(本次回滚/删除的精确范围,避免误伤并发新生成的节点)
-        //   2. 单次 InsertMany 新节点 — 失败时按新 Id 精确回滚,旧节点保持原样
-        //   3. 单次 DeleteMany 旧节点(by 快照 Id)— 至此完成切换
-        var oldIds = await _db.SpeechNodes
-            .Find(n => n.DeckId == deck.Id)
-            .Project(n => n.Id)
-            .ToListAsync(CancellationToken.None);
+        // 给本批所有节点打 generationRunId 指纹,用于在并发/stale-timeout 抢占场景里
+        // 精确识别"本批" (Bugbot High "Overlapping regen corrupts node tree")
+        foreach (var n in nodes) n.GenerationRunId = generationRunId;
+
+        // 三阶段交换,杜绝半棵树 + 杜绝两个并发 run 互删对方节点:
+        //   1. 单次 InsertMany 新节点(带 runId 指纹)— 失败时按新 Id 精确回滚,旧节点保持原样
+        //   2. 重读 deck.GenerationRunId,如果已被后来者抢占(stale-timeout 重新认领),
+        //      本批就放弃 swap、删掉刚插入的新节点,旧节点 / 新 run 的节点都不动
+        //   3. 删除 deck 名下所有 GenerationRunId != 本批 的节点(包含旧节点 + 任何遗留中间态)
         if (nodes.Count > 0)
         {
             try
@@ -589,19 +590,38 @@ public class SpeechAgentService
                 throw;
             }
         }
-        if (oldIds.Count > 0)
+
+        var currentDeck = await _db.SpeechDecks.Find(d => d.Id == deck.Id).FirstOrDefaultAsync(CancellationToken.None);
+        if (currentDeck == null || currentDeck.GenerationRunId != generationRunId)
         {
-            await _db.SpeechNodes.DeleteManyAsync(
-                n => oldIds.Contains(n.Id),
-                CancellationToken.None);
+            // 本批已被后来者抢占,放弃 swap,只清掉自己刚插入的节点
+            _logger.LogWarning("[speech] Run {RunId} superseded by {ActiveRunId}, aborting swap",
+                generationRunId, currentDeck?.GenerationRunId);
+            var newIds = nodes.Select(n => n.Id).ToList();
+            if (newIds.Count > 0)
+            {
+                await _db.SpeechNodes.DeleteManyAsync(
+                    n => newIds.Contains(n.Id),
+                    CancellationToken.None);
+            }
+            yield return SpeechGenerateEvent.Error("本次生成已被新一轮请求取代,放弃覆盖。");
+            yield break;
         }
+
+        // swap:删除该 deck 名下所有非本批的节点
+        await _db.SpeechNodes.DeleteManyAsync(
+            n => n.DeckId == deck.Id && n.GenerationRunId != generationRunId,
+            CancellationToken.None);
+
         foreach (var n in nodes)
         {
             yield return SpeechGenerateEvent.NodeUpserted(n);
         }
 
+        // Ready 终态更新仅在 deck.GenerationRunId 仍等于本批时才写,
+        // 避免和已抢占的新 run 互相覆盖 Status / NodeCount
         await _db.SpeechDecks.UpdateOneAsync(
-            d => d.Id == deck.Id,
+            d => d.Id == deck.Id && d.GenerationRunId == generationRunId,
             Builders<SpeechDeck>.Update
                 .Set(d => d.Status, SpeechDeckStatus.Ready)
                 .Set(d => d.NodeCount, nodes.Count)
