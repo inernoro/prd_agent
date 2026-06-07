@@ -24,3 +24,6 @@
 | fix | prd-admin | CDS Agent 发送时不再弹「正在发送任务/复制诊断」开发者卡片:该诊断卡仅失败时出现,正常进度由对话气泡+右栏承载 |
 | fix | prd-admin | CDS Agent 无模型配置时自动启用系统默认主模型(静默,失败保留手动按钮兜底):刷新后不再卡在「请先同步系统主模型」三连警告 |
 | fix | prd-admin | CDS Agent 兑现「回车发送」:输入框此前没有 onKeyDown,回车只换行不发送;补 Enter 发送(Shift+Enter 换行,输入法组字回车不误发) |
+| fix | prd-admin | CDS Agent 输入区抄 Codex 融合一体:模式/模型/停止/发送合并到输入框底栏一行,textarea 无边框透明融入容器,去掉顶部独立 tab 行+分隔线+提示文案,发送改圆形箭头,不再臃肿拆分 |
+| fix | prd-admin | CDS Agent 右栏「准备情况/运行进展」可折叠(顶栏按钮):折叠后聊天主区占满宽度,借鉴 Codex 右侧不占固定栏 |
+| fix | prd-admin | CDS Agent 刷新后不再 10 秒空白:首屏 loadAll 期间主区显示加载动画(MapSectionLoader),不再空等 |
