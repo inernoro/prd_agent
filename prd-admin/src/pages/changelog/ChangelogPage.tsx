@@ -74,6 +74,8 @@ const GITHUB_LOGS_LIVE_POLL_MS = 35 * 1000;
 const GITHUB_LOGS_NEW_HIGHLIGHT_MS = 5200;
 const RELEASES_INITIAL_VISIBLE = 4;
 const RELEASES_VISIBLE_STEP = 3;
+/** 每个 release 默认渲染前 N 条 entries（across days），余下走「展开全部」按需渲染 */
+const ENTRIES_PER_RELEASE_INITIAL = 12;
 const FRAGMENT_GROUPS_INITIAL_VISIBLE = 6;
 const FRAGMENT_GROUPS_VISIBLE_STEP = 5;
 const GITHUB_LOGS_INITIAL_VISIBLE = 80;
@@ -228,6 +230,8 @@ export default function ChangelogPage() {
 
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<string>('update_center');
+  /** 已点过「展开全部」的 release 版本号集合 —— 控制每个 release 内 entries 渲染数 */
+  const [expandedReleases, setExpandedReleases] = useState<Set<string>>(() => new Set());
   const [historySubtab, setHistorySubtab] = useState<HistorySubtab>('releases');
   const [githubLogs, setGitHubLogs] = useState<GitHubLogsView | null>(() => readGitHubLogsCache());
   const [loadingGitHubLogs, setLoadingGitHubLogs] = useState(false);
@@ -1300,9 +1304,23 @@ export default function ChangelogPage() {
                         </div>
                       )}
 
-                      {visibleDays.length > 0 && (
+                      {visibleDays.length > 0 && (() => {
+                        // 默认每个 release 只渲染前 ENTRIES_PER_RELEASE_INITIAL 条 entries（跨天累加），
+                        // 余下「展开全部」按需展示。避免 638 条一次性灌进 DOM 让页面瀑布到几万 px 高。
+                        const isExpanded = expandedReleases.has(release.version);
+                        const cap = isExpanded ? Infinity : ENTRIES_PER_RELEASE_INITIAL;
+                        let remaining = cap;
+                        const truncatedDays = [] as typeof visibleDays;
+                        for (const day of visibleDays) {
+                          if (remaining <= 0) break;
+                          const take = Math.min(day.entries.length, remaining);
+                          truncatedDays.push({ ...day, entries: day.entries.slice(0, take) });
+                          remaining -= take;
+                        }
+                        const hidden = totalCount - (cap === Infinity ? totalCount : (cap - remaining));
+                        return (
                         <div className="flex flex-col gap-3">
-                          {visibleDays.map((day, dayIdx) => {
+                          {truncatedDays.map((day, dayIdx) => {
                             const dayCommitDateTime = formatCommitDateTime(day.commitTimeUtc);
                             const dayTitle = dayCommitDateTime
                               ? `CHANGELOG 日期：${day.date}\n最近一次 CHANGELOG 合并提交：${dayCommitDateTime}`
@@ -1343,8 +1361,28 @@ export default function ChangelogPage() {
                               </div>
                             );
                           })}
+                          {!isExpanded && hidden > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setExpandedReleases((s) => {
+                                const next = new Set(s);
+                                next.add(release.version);
+                                return next;
+                              })}
+                              className="self-start mt-1 px-3 py-1.5 rounded-lg text-[12px] font-medium transition-all"
+                              style={{
+                                background: 'rgba(99, 102, 241, 0.08)',
+                                border: '1px solid rgba(99, 102, 241, 0.22)',
+                                color: '#a5b4fc',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              展开全部 {hidden} 条
+                            </button>
+                          )}
                         </div>
-                      )}
+                        );
+                      })()}
                     </div>
                   );
                 })}
