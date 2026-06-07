@@ -100,9 +100,10 @@ export function InlineCommentComposer({
         className="px-2.5 py-1.5 rounded-[8px] text-[12px] mb-2 max-h-24 overflow-y-auto"
         style={{
           background: 'rgba(168,85,247,0.12)',
-          borderLeft: '3px solid rgba(168,85,247,0.7)',
+          // 顺序敏感：border shorthand 必须在 borderLeft 之前，否则 shorthand 会重置左侧
+          // 边的 color/style，只剩 3px 宽度但变成淡紫——失去引用块视觉强调（Bugbot Low）
           border: '1px solid rgba(168,85,247,0.22)',
-          borderLeftWidth: 3,
+          borderLeft: '3px solid rgba(168,85,247,0.7)',
           color: 'rgba(232,210,255,0.98)',
           fontStyle: 'italic',
           lineHeight: 1.5,

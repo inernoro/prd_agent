@@ -1677,6 +1677,15 @@ export function DocBrowser({
     rect: { top: number; left: number; width: number; height: number };
     rects: Array<{ top: number; left: number; width: number; height: number }>;
   } | null>(null);
+  // 进入编辑模式 / 切到别的条目时强制收掉 composer 状态，避免 rect 与已经被 textarea
+  // 替换 / 已经卸载的正文不同步（Bugbot Medium）。只渲染守卫不够：退出 editMode 时
+  // composer 状态还在会让覆盖层"复活"在过时位置。
+  useEffect(() => {
+    if (editMode) setComposer(null);
+  }, [editMode]);
+  useEffect(() => {
+    setComposer(null);
+  }, [selectedEntryId]);
   // 选区 offset 必须基于"实际渲染的正文"解析：文本类预览渲染的是
   // parseFrontmatter(text).body（已剥 frontmatter），若把含 frontmatter 的
   // 原文喂给 useContentSelection，选中同时出现在 frontmatter 的文字（如标题）
@@ -3161,8 +3170,10 @@ export function DocBrowser({
                     onDelete={handleDeleteComment}
                   />
                 )}
-                {/* 划词后就地输入浮层（createPortal 到 body） */}
-                {composer && (
+                {/* 划词后就地输入浮层（createPortal 到 body）。!editMode 守卫：进入编辑模式
+                    后正文被 textarea 替换，原选区 rect 与现内容已经对不上，浮层和高亮覆盖层
+                    必须同时收掉，否则旧覆盖层会飘在 textarea 上（Bugbot Medium） */}
+                {composer && !editMode && (
                   <>
                     {/* 保留正文里的选区高亮：textarea 拿 focus 后浏览器选区会消失，
                         用 fixed 覆盖层模拟选区颜色，跟随滚动；用户写到一半依然能看到选了哪段 */}
