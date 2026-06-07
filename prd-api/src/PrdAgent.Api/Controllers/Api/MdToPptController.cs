@@ -1,489 +1,495 @@
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
-using PrdAgent.Core.Security;
-using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Controllers.Api;
 
 /// <summary>
-/// Markdown / 文件 转 网页版 PPT 智能体
-/// appKey = md-to-ppt-agent
-/// 端点：
-///   POST convert  — LLM 流式生成完整 reveal.js HTML PPT（SSE）
-///   POST patch    — 对已有 PPT 的局部页面进行修改（SSE）
-///   POST publish  — 将 HTML 发布为网页托管站点
+/// MD 转网页 PPT — 调用 CDS Agent 生成 reveal.js HTML 幻灯片。
+///
+/// SSE 事件协议（前端不变）：
+///   event: start  — 会话开始
+///   event: delta  — data: {"text":"..."}  增量 HTML 片段
+///   event: done   — data: {"html":"..."}  完整 HTML
+///   event: error  — data: {"message":"..."}
 /// </summary>
 [ApiController]
 [Route("api/md-to-ppt")]
 [Authorize]
-[AdminController("ai-toolbox", AdminPermissionCatalog.AiToolboxUse)]
 public class MdToPptController : ControllerBase
 {
-    private const string AppKey = "md-to-ppt-agent";
+    private readonly IInfraAgentSessionService _sessions;
+    private readonly MongoDbContext _db;
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-    };
+    // PPT Agent 系统提示词：要求 reveal.js@4 CDN、深色主题、多样化版式、纯 HTML 输出
+    private const string PptSystemPrompt = @"你是一名专业网页 PPT 设计师。请把用户提供的 Markdown 内容转换成一份完整的 reveal.js 幻灯片 HTML 文件，遵循以下要求：
 
-    private readonly ILlmGateway _gateway;
-    private readonly ILLMRequestContextAccessor _llmRequestContext;
-    private readonly IHostedSiteService _hostedSiteService;
-    private readonly ILogger<MdToPptController> _logger;
+## 技术规范
+- 使用 reveal.js 4.x CDN（https://cdn.jsdelivr.net/npm/reveal.js@4/）
+- 必须设置 hash: false（因为会嵌入 iframe srcdoc，hash 路由会报错）
+- 所有样式内联在 <head> 里，不依赖外部自定义文件
+- 输出完整的 <!DOCTYPE html>…</html> 文件，不要任何代码块标记
+
+## 视觉风格
+- 使用深色系主题（如深蓝/深紫/深灰作为背景）
+- 文字对比度高（白色或浅色系）
+- 标题字体比正文大 1.5-2 倍，使用 font-weight: 700
+- 每张幻灯片有清晰的视觉层次
+
+## 版式多样化（必须混用以下类型，不允许全部单栏）
+1. 封面页：大标题 + 副标题 + 装饰元素（渐变色块/圆形/线条）
+2. 两栏对比：左右各占 50%，用于比较/对照内容
+3. 数据统计：大号数字 + 说明文字，适合关键指标
+4. 深色反转：浅色文字/图标在深色纯色背景上
+5. 内容配图：左侧文字 + 右侧装饰色块模拟图片区
+6. 结语页：居中大字 + 联系方式/总结
+
+## 装饰元素
+- 用 CSS 绘制几何形状（圆形、矩形、斜线）作为装饰，不依赖图片
+- 渐变色块作为视觉重点
+- 适当使用 border-left 竖线强调引用或要点
+
+## 输出要求
+- 仅输出完整 HTML，不要任何解释、标注或代码块标记
+- reveal.js 初始化配置必须包含：hash: false, transition: 'fade', slideNumber: true";
 
     public MdToPptController(
-        ILlmGateway gateway,
-        ILLMRequestContextAccessor llmRequestContext,
-        IHostedSiteService hostedSiteService,
-        ILogger<MdToPptController> logger)
+        IInfraAgentSessionService sessions,
+        MongoDbContext db)
     {
-        _gateway = gateway;
-        _llmRequestContext = llmRequestContext;
-        _hostedSiteService = hostedSiteService;
-        _logger = logger;
+        _sessions = sessions;
+        _db = db;
     }
 
-    // =========================================================================
-    // POST /api/md-to-ppt/convert  — 流式生成完整 reveal.js HTML PPT
-    // =========================================================================
+    // ─────────────────────────────────────────────
+    // POST /api/md-to-ppt/convert
+    // ─────────────────────────────────────────────
 
-    /// <summary>
-    /// 将 Markdown / 纯文本通过 LLM 流式直接生成完整 reveal.js HTML PPT。
-    /// 返回 SSE 流，delta 事件携带 HTML 增量文本；done 事件携带 { html } 完整 HTML。
-    /// LLM 被要求直接输出富设计 HTML，包含多样版式、inline CSS、视觉层级。
-    /// </summary>
+    /// <summary>将 Markdown 转换为 reveal.js HTML PPT（SSE 流式返回）</summary>
     [HttpPost("convert")]
-    [Produces("text/event-stream")]
-    public async Task ConvertAsync([FromBody] MdToPptConvertRequest request, CancellationToken ct)
+    public async Task Convert([FromBody] MdToPptConvertRequest req)
     {
-        Response.ContentType = "text/event-stream";
-        Response.Headers.CacheControl = "no-cache";
-        Response.Headers.Connection = "keep-alive";
-        Response.Headers["X-Accel-Buffering"] = "no";
-
-        if (string.IsNullOrWhiteSpace(request.Content))
-        {
-            await WriteSseEventAsync("error",
-                JsonSerializer.Serialize(new { code = "INVALID_FORMAT", message = "content 不能为空" }, JsonOptions), ct);
-            return;
-        }
-
         var userId = this.GetRequiredUserId();
+        SetSseHeaders();
 
-        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
-            RequestId: Guid.NewGuid().ToString("N"),
-            GroupId: null,
-            SessionId: null,
-            UserId: userId,
-            ViewRole: null,
-            DocumentChars: request.Content.Length,
-            DocumentHash: null,
-            SystemPromptRedacted: "md-to-ppt-html-generate",
-            RequestType: "chat",
-            AppCallerCode: AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate));
+        await WriteEventAsync("start", null);
 
-        var slideCount = Math.Clamp(request.SlideCount ?? 8, 3, 20);
-        var theme = NormalizeTheme(request.Theme);
-
-        var systemPrompt = BuildHtmlGenerateSystemPrompt(slideCount, theme);
-
-        var userContent = request.Content.Length > 16000
-            ? string.Concat(request.Content.AsSpan(0, 16000), "\n...(内容已截断)")
-            : request.Content;
-
-        var requestBody = new JsonObject
-        {
-            ["messages"] = new JsonArray
-            {
-                new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
-                new JsonObject { ["role"] = "user", ["content"] = userContent },
-            },
-            ["temperature"] = 0.6,
-            ["max_tokens"] = 8000,
-        };
-
-        try
-        {
-            await WriteSseEventAsync("start", JsonSerializer.Serialize(new { slideCount, theme }, JsonOptions), ct);
-
-            var fullHtml = new StringBuilder();
-
-            await foreach (var chunk in _gateway.StreamAsync(new GatewayRequest
-            {
-                AppCallerCode = AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate,
-                ModelType = ModelTypes.Chat,
-                RequestBody = requestBody,
-            }, CancellationToken.None))
-            {
-                if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
-                {
-                    fullHtml.Append(chunk.Content);
-                    try
-                    {
-                        await WriteSseEventAsync("delta",
-                            JsonSerializer.Serialize(new { text = chunk.Content }, JsonOptions), ct);
-                    }
-                    catch (OperationCanceledException) { break; }
-                    catch (ObjectDisposedException) { break; }
-                }
-                else if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null)
-                {
-                    try
-                    {
-                        await WriteSseEventAsync("model", JsonSerializer.Serialize(new
-                        {
-                            model = chunk.Resolution.ActualModel,
-                            platform = chunk.Resolution.ActualPlatformId,
-                        }, JsonOptions), ct);
-                    }
-                    catch (OperationCanceledException) { break; }
-                    catch (ObjectDisposedException) { break; }
-                }
-            }
-
-            var html = StripCodeFences(fullHtml.ToString().Trim());
-
-            try
-            {
-                await WriteSseEventAsync("done", JsonSerializer.Serialize(new { html }, JsonOptions), ct);
-            }
-            catch (OperationCanceledException) { }
-            catch (ObjectDisposedException) { }
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogError(ex, "[MdToPpt] convert failed for user={UserId}", userId);
-            try
-            {
-                await WriteSseEventAsync("error",
-                    JsonSerializer.Serialize(new { code = "LLM_ERROR", message = "AI 生成失败，请稍后重试" }, JsonOptions), ct);
-            }
-            catch { /* ignore write errors when client disconnected */ }
-        }
+        var styleHint = $"目标页数约 {req.SlideCount ?? 8} 页；主题风格：{(string.IsNullOrWhiteSpace(req.Theme) ? "深色现代" : req.Theme)}。";
+        var prompt = $"{PptSystemPrompt}\n\n{styleHint}\n\n---\n\n# 用户内容\n\n{req.Content?.Trim()}";
+        await RunAgentStreamAsync(userId, prompt, "PPT");
     }
 
-    // =========================================================================
-    // POST /api/md-to-ppt/patch  — 局部修改指定页面
-    // =========================================================================
+    // ─────────────────────────────────────────────
+    // POST /api/md-to-ppt/patch
+    // ─────────────────────────────────────────────
 
-    /// <summary>
-    /// 对已有 reveal.js HTML PPT 的指定页面进行局部修改。
-    /// 返回 SSE 流，delta 事件携带修改后的 HTML 增量；done 事件携带 { html } 完整 HTML。
-    /// </summary>
+    /// <summary>根据用户指令修改已有 HTML PPT（SSE 流式返回）</summary>
     [HttpPost("patch")]
-    [Produces("text/event-stream")]
-    public async Task PatchAsync([FromBody] MdToPptPatchRequest request, CancellationToken ct)
+    public async Task Patch([FromBody] MdToPptPatchRequest req)
     {
-        Response.ContentType = "text/event-stream";
-        Response.Headers.CacheControl = "no-cache";
-        Response.Headers.Connection = "keep-alive";
-        Response.Headers["X-Accel-Buffering"] = "no";
-
-        if (string.IsNullOrWhiteSpace(request.CurrentHtml))
-        {
-            await WriteSseEventAsync("error",
-                JsonSerializer.Serialize(new { code = "INVALID_FORMAT", message = "currentHtml 不能为空" }, JsonOptions), ct);
-            return;
-        }
-        if (string.IsNullOrWhiteSpace(request.SlideRequest))
-        {
-            await WriteSseEventAsync("error",
-                JsonSerializer.Serialize(new { code = "INVALID_FORMAT", message = "slideRequest 不能为空" }, JsonOptions), ct);
-            return;
-        }
-
         var userId = this.GetRequiredUserId();
+        SetSseHeaders();
 
-        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
-            RequestId: Guid.NewGuid().ToString("N"),
-            GroupId: null,
-            SessionId: null,
-            UserId: userId,
-            ViewRole: null,
-            DocumentChars: request.CurrentHtml.Length,
-            DocumentHash: null,
-            SystemPromptRedacted: "md-to-ppt-patch",
-            RequestType: "chat",
-            AppCallerCode: AppCallerRegistry.MdToPptAgent.Generation.Patch));
+        await WriteEventAsync("start", null);
 
-        var systemPrompt =
-            "你是一位专业的 reveal.js HTML PPT 编辑助手。用户会提供当前完整的 reveal.js HTML PPT 代码以及修改要求。" +
-            "你的任务是根据修改要求，对指定页面进行局部修改，返回修改后的**完整** HTML 文件。\n" +
-            "要求：\n" +
-            "- 只修改用户指定的内容，其余部分保持不变\n" +
-            "- 保持原有的整体风格、主题和设计语言\n" +
-            "- 直接输出完整 HTML，不要 markdown 代码围栏，不要额外解释\n" +
-            "- 输出必须是能在浏览器直接运行的完整 HTML 文件";
-
-        var slideInfo = request.SlideIndex.HasValue
-            ? $"第 {request.SlideIndex.Value + 1} 页（0-indexed: {request.SlideIndex.Value}）"
-            : "相关页面";
-
-        var userContent =
-            $"当前 PPT HTML 代码如下：\n\n{request.CurrentHtml}\n\n" +
-            $"修改要求（针对{slideInfo}）：{request.SlideRequest}";
-
-        if (userContent.Length > 20000)
-        {
-            userContent = userContent[..20000] + "\n...(已截断)";
-        }
-
-        var requestBody = new JsonObject
-        {
-            ["messages"] = new JsonArray
-            {
-                new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
-                new JsonObject { ["role"] = "user", ["content"] = userContent },
-            },
-            ["temperature"] = 0.4,
-            ["max_tokens"] = 8000,
-        };
-
-        try
-        {
-            await WriteSseEventAsync("start", JsonSerializer.Serialize(new { slideIndex = request.SlideIndex }, JsonOptions), ct);
-
-            var fullHtml = new StringBuilder();
-
-            await foreach (var chunk in _gateway.StreamAsync(new GatewayRequest
-            {
-                AppCallerCode = AppCallerRegistry.MdToPptAgent.Generation.Patch,
-                ModelType = ModelTypes.Chat,
-                RequestBody = requestBody,
-            }, CancellationToken.None))
-            {
-                if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
-                {
-                    fullHtml.Append(chunk.Content);
-                    try
-                    {
-                        await WriteSseEventAsync("delta",
-                            JsonSerializer.Serialize(new { text = chunk.Content }, JsonOptions), ct);
-                    }
-                    catch (OperationCanceledException) { break; }
-                    catch (ObjectDisposedException) { break; }
-                }
-                else if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null)
-                {
-                    try
-                    {
-                        await WriteSseEventAsync("model", JsonSerializer.Serialize(new
-                        {
-                            model = chunk.Resolution.ActualModel,
-                            platform = chunk.Resolution.ActualPlatformId,
-                        }, JsonOptions), ct);
-                    }
-                    catch (OperationCanceledException) { break; }
-                    catch (ObjectDisposedException) { break; }
-                }
-            }
-
-            var html = StripCodeFences(fullHtml.ToString().Trim());
-
-            try
-            {
-                await WriteSseEventAsync("done", JsonSerializer.Serialize(new { html }, JsonOptions), ct);
-            }
-            catch (OperationCanceledException) { }
-            catch (ObjectDisposedException) { }
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogError(ex, "[MdToPpt] patch failed for user={UserId}", userId);
-            try
-            {
-                await WriteSseEventAsync("error",
-                    JsonSerializer.Serialize(new { code = "LLM_ERROR", message = "AI 修改失败，请稍后重试" }, JsonOptions), ct);
-            }
-            catch { /* ignore write errors when client disconnected */ }
-        }
+        var prompt = $"{PptSystemPrompt}\n\n---\n\n# 已有 HTML\n\n```html\n{req.CurrentHtml?.Trim()}\n```\n\n# 修改要求（第 {(req.SlideIndex.HasValue ? req.SlideIndex.Value + 1 : 0)} 页）\n\n{req.SlideRequest?.Trim()}";
+        await RunAgentStreamAsync(userId, prompt, "PPT 修改");
     }
 
-    // =========================================================================
-    // POST /api/md-to-ppt/publish  — 发布为网页托管站点
-    // =========================================================================
+    // ─────────────────────────────────────────────
+    // POST /api/md-to-ppt/publish
+    // ─────────────────────────────────────────────
 
-    /// <summary>
-    /// 将 reveal.js HTML 发布到网页托管，可选分享到团队。
-    /// 返回站点 URL。
-    /// </summary>
+    /// <summary>将生成的 HTML 发布为托管网页</summary>
     [HttpPost("publish")]
-    public async Task<IActionResult> PublishAsync([FromBody] MdToPptPublishRequest request, CancellationToken ct)
+    public async Task<IActionResult> Publish([FromBody] MdToPptPublishRequest req)
     {
-        if (string.IsNullOrWhiteSpace(request.HtmlContent))
+        var userId = this.GetRequiredUserId();
+
+        if (string.IsNullOrWhiteSpace(req.HtmlContent))
+            return BadRequest(new { error = "HTML 内容不能为空" });
+
+        var title = string.IsNullOrWhiteSpace(req.Title) ? "PPT 幻灯片" : req.Title.Trim();
+        var htmlBytes = Encoding.UTF8.GetBytes(req.HtmlContent);
+
+        // 上传为托管站点
+        var siteService = HttpContext.RequestServices.GetRequiredService<IHostedSiteService>();
+        var site = await siteService.CreateFromHtmlAsync(
+            userId,
+            htmlBytes,
+            "index.html",
+            title,
+            string.IsNullOrWhiteSpace(req.Description) ? null : req.Description.Trim(),
+            null,
+            req.Tags?.Where(t => !string.IsNullOrWhiteSpace(t)).ToList(),
+            CancellationToken.None);
+
+        if (req.TeamIds is { Count: > 0 })
         {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "htmlContent 不能为空"));
+            await siteService.SetSharedTeamsAsync(site.Id, userId, req.TeamIds, CancellationToken.None);
         }
 
-        var userId = this.GetRequiredUserId();
-        var title = string.IsNullOrWhiteSpace(request.Title) ? "网页 PPT" : request.Title.Trim();
+        return Ok(new
+        {
+            siteId = site.Id,
+            title = site.Title,
+            siteUrl = site.SiteUrl,
+        });
+    }
+
+    // ─────────────────────────────────────────────
+    // 内部：CDS Agent 流式执行
+    // ─────────────────────────────────────────────
+
+    private async Task RunAgentStreamAsync(string userId, string prompt, string title)
+    {
+        InfraConnection? connection = null;
+        InfraAgentRuntimeProfile? runtimeProfile = null;
+        InfraAgentSessionView? session = null;
 
         try
         {
-            var site = await _hostedSiteService.CreateFromContentAsync(
-                userId: userId,
-                htmlContent: request.HtmlContent,
-                title: title,
-                description: request.Description?.Trim(),
-                sourceType: AppKey,
-                sourceRef: null,
-                tags: request.Tags?.Where(t => !string.IsNullOrWhiteSpace(t)).ToList(),
-                folder: null,
-                ct: ct).ConfigureAwait(false);
-
-            if (request.TeamIds is { Count: > 0 })
+            // 1. 解析 CDS 连接
+            connection = await ResolveCdsConnectionAsync(CancellationToken.None);
+            if (connection == null)
             {
-                await _hostedSiteService.SetSharedTeamsAsync(site.Id, userId, request.TeamIds, ct).ConfigureAwait(false);
+                await WriteEventAsync("error", new { message = "没有可用的 active CDS 连接，请先完成系统级 CDS 授权" });
+                return;
             }
 
-            _logger.LogInformation("[MdToPpt] site published: {SiteId} '{Title}' by {UserId}", site.Id, title, userId);
-
-            return Ok(ApiResponse<object>.Ok(new
+            // 2. 解析运行配置（同 CapsuleExecutor 的四级优先级）
+            runtimeProfile = await ResolveRuntimeProfileAsync(userId, CancellationToken.None);
+            if (runtimeProfile == null)
             {
-                siteId = site.Id,
-                siteUrl = site.SiteUrl,
-                title = site.Title,
-            }));
+                await WriteEventAsync("error", new { message = "没有可用的模型运行配置，请先配置 baseUrl、model 和 API key" });
+                return;
+            }
+
+            var runtime = runtimeProfile.Runtime;
+            var model = runtimeProfile.Model;
+
+            // 3. 创建会话
+            session = await _sessions.CreateAsync(userId,
+                new CreateInfraAgentSessionRequest(
+                    connection.Id,
+                    runtime,
+                    model,
+                    title,
+                    "readonly-auto",
+                    null,
+                    runtimeProfile.Id,
+                    null,
+                    null,
+                    null,
+                    null),
+                CancellationToken.None);
+
+            // 4. 启动会话
+            if (!string.Equals(session.Status, "running", StringComparison.OrdinalIgnoreCase))
+            {
+                session = await _sessions.StartAsync(userId, session.Id,
+                    new StartInfraAgentSessionRequest(runtime, model),
+                    CancellationToken.None) ?? session;
+            }
+
+            // 5. 发送消息
+            session = await _sessions.SendMessageAsync(userId, session.Id,
+                new SendInfraAgentMessageRequest(prompt),
+                CancellationToken.None) ?? session;
+
+            // 6. 轮询事件，流式推送 delta
+            var afterSeq = 0L;
+            var fullText = new StringBuilder();
+            string? finalHtml = null;
+            const int maxPollingRounds = 600; // 最多 ~8 分钟 (600 * 800ms)
+
+            for (var round = 0; round < maxPollingRounds; round++)
+            {
+                var batch = await _sessions.ListEventsAsync(userId, session.Id, afterSeq, 50, CancellationToken.None);
+
+                var gotDone = false;
+                string? errorMessage = null;
+
+                foreach (var evt in batch.OrderBy(x => x.Seq))
+                {
+                    if (evt.Seq <= afterSeq) continue;
+                    afterSeq = evt.Seq;
+
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(evt.PayloadJson ?? "{}");
+                        var root = doc.RootElement;
+
+                        if (evt.Type == InfraAgentEventTypes.TextDelta
+                            && root.TryGetProperty("text", out var textProp))
+                        {
+                            var fragment = textProp.GetString() ?? "";
+                            if (!string.IsNullOrEmpty(fragment))
+                            {
+                                fullText.Append(fragment);
+                                await WriteEventAsync("delta", new { text = fragment });
+                            }
+                        }
+                        else if (evt.Type == InfraAgentEventTypes.Done
+                            && root.TryGetProperty("finalText", out var finalProp))
+                        {
+                            var rawFinal = finalProp.GetString() ?? "";
+                            // finalText 可能补充最后一段内容
+                            if (!string.IsNullOrEmpty(rawFinal) && rawFinal != fullText.ToString())
+                                finalHtml = StripCodeFences(rawFinal);
+                            else
+                                finalHtml = StripCodeFences(fullText.ToString());
+                            gotDone = true;
+                            break;
+                        }
+                        else if (evt.Type == InfraAgentEventTypes.Error
+                            && root.TryGetProperty("message", out var msgProp))
+                        {
+                            errorMessage = msgProp.GetString() ?? "CDS Agent 发生错误";
+                            break;
+                        }
+                    }
+                    catch
+                    {
+                        // 解析单个事件失败不终止流，继续
+                    }
+                }
+
+                if (errorMessage != null)
+                {
+                    await WriteEventAsync("error", new { message = errorMessage });
+                    return;
+                }
+
+                if (gotDone)
+                {
+                    var html = finalHtml ?? StripCodeFences(fullText.ToString());
+                    await WriteEventAsync("done", new { html });
+                    return;
+                }
+
+                // 未完成：等待后继续轮询
+                await Task.Delay(800);
+            }
+
+            // 超时兜底：把已收到的内容作为最终结果
+            var timeoutHtml = StripCodeFences(fullText.ToString());
+            if (!string.IsNullOrWhiteSpace(timeoutHtml))
+                await WriteEventAsync("done", new { html = timeoutHtml });
+            else
+                await WriteEventAsync("error", new { message = "CDS Agent 响应超时，请稍后重试" });
+        }
+        catch (OperationCanceledException)
+        {
+            // 客户端断开，按 server-authority 规则继续后台但停止写 SSE
+        }
+        catch (ObjectDisposedException)
+        {
+            // 同上
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[MdToPpt] publish failed for user={UserId}", userId);
-            return StatusCode(500, ApiResponse<object>.Fail("PUBLISH_ERROR", "发布失败，请稍后重试"));
+            try
+            {
+                await WriteEventAsync("error", new { message = ex.Message });
+            }
+            catch
+            {
+                // 写 SSE 失败则忽略
+            }
+        }
+        finally
+        {
+            // 7. 结束后停止会话（server-authority：用 CancellationToken.None）
+            if (session != null)
+            {
+                try
+                {
+                    await _sessions.StopAsync(userId, session.Id, CancellationToken.None);
+                }
+                catch
+                {
+                    // 停止失败不影响主流程
+                }
+            }
         }
     }
 
-    // =========================================================================
-    // 私有工具方法
-    // =========================================================================
+    // ─────────────────────────────────────────────
+    // 解析 CDS 连接（同 CapsuleExecutor.ResolveCdsConnectionForWorkflowAsync 无 connectionId 分支）
+    // ─────────────────────────────────────────────
 
-    private static string NormalizeTheme(string? theme)
+    private async Task<InfraConnection?> ResolveCdsConnectionAsync(CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(theme)) return "black";
-        var t = theme.Trim().ToLowerInvariant();
-        var valid = new HashSet<string> { "black", "white", "league", "beige", "sky", "night", "serif", "simple", "solarized", "blood", "moon" };
-        return valid.Contains(t) ? t : "black";
+        var now = DateTime.UtcNow;
+        return await _db.InfraConnections
+            .Find(x => x.Partner == "cds"
+                && x.LongTokenEncrypted != string.Empty
+                && (x.Status == "active"
+                    || (x.LastProbeOk == true && x.LongTokenExpiresAt > now)))
+            .SortByDescending(x => x.UpdatedAt)
+            .FirstOrDefaultAsync(ct);
     }
 
-    private static string BuildHtmlGenerateSystemPrompt(int slideCount, string theme)
+    // ─────────────────────────────────────────────
+    // 解析运行配置（同 CapsuleExecutor 四级优先级：owned default → shared default → owned any → shared any）
+    // ─────────────────────────────────────────────
+
+    private async Task<InfraAgentRuntimeProfile?> ResolveRuntimeProfileAsync(string userId, CancellationToken ct)
     {
-        return
-            $"你是一位顶级的演示文稿设计师，精通 reveal.js@4 和 HTML/CSS 设计。\n" +
-            $"请将用户提供的内容转换成一份完整的、视觉设计精良的 reveal.js 网页 PPT。\n\n" +
-            $"设计要求：\n" +
-            $"- 生成 {slideCount} 页幻灯片\n" +
-            $"- reveal.js 主题：{theme}（通过 CDN 加载）\n" +
-            $"- 必须使用多样化的版式布局（不能全是纯文字列表），包括：\n" +
-            $"  * 封面页：大标题 + 副标题 + 背景装饰元素\n" +
-            $"  * 双栏对比页：左右两栏并排展示信息\n" +
-            $"  * 数字亮点页：大数字统计卡片（如 90%、3x、1000+）\n" +
-            $"  * 要点列表页：带视觉前缀的要点（非单调 <ul>）\n" +
-            $"  * 图文混合页（用 CSS 色块/几何形状替代真实图片）\n" +
-            $"  * 引用/金句页：居中大字引用\n" +
-            $"  * 总结/行动号召页\n" +
-            $"- 使用 inline CSS 增强视觉效果：渐变背景、圆角卡片、阴影、色彩强调\n" +
-            $"- 字体大小层级分明：标题 > 副标题 > 正文\n" +
-            $"- 配色和谐，与主题 {theme} 相配\n" +
-            $"- 每页信息密度适中，不过于拥挤\n\n" +
-            $"技术要求：\n" +
-            $"- 输出完整的 HTML 文件，包含 <!DOCTYPE html> 到 </html>\n" +
-            $"- 通过 jsdelivr CDN 加载 reveal.js@4（不要本地文件）：\n" +
-            $"  * https://cdn.jsdelivr.net/npm/reveal.js@4/dist/reset.css\n" +
-            $"  * https://cdn.jsdelivr.net/npm/reveal.js@4/dist/reveal.css\n" +
-            $"  * https://cdn.jsdelivr.net/npm/reveal.js@4/dist/theme/{theme}.css\n" +
-            $"  * https://cdn.jsdelivr.net/npm/reveal.js@4/dist/reveal.js\n" +
-            $"- Reveal.initialize 配置必须包含 hash: false（避免 iframe srcdoc 场景的 History API 错误）\n" +
-            $"- 配置 controls: true, progress: true, slideNumber: true, transition: 'slide'\n" +
-            $"- 直接输出 HTML 代码，不要包裹在 markdown 代码围栏（```html）中\n" +
-            $"- 不要输出任何解释文字，只输出 HTML";
+        var memberTeamIds = await _db.ReportTeamMembers
+            .Find(x => x.UserId == userId)
+            .Limit(500)
+            .ToListAsync(ct);
+        var leaderTeams = await _db.ReportTeams
+            .Find(x => x.LeaderUserId == userId)
+            .Limit(500)
+            .ToListAsync(ct);
+        var visibleTeamIds = memberTeamIds
+            .Select(x => x.TeamId)
+            .Concat(leaderTeams.Select(x => x.Id))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        var fb = Builders<InfraAgentRuntimeProfile>.Filter;
+        var ownedFilter = fb.Eq(x => x.CreatedByUserId, userId);
+        var sharedFilter = visibleTeamIds.Count == 0
+            ? fb.Where(_ => false)
+            : fb.AnyIn(x => x.SharedTeamIds, visibleTeamIds);
+
+        // 优先级 1：用户自己的默认配置
+        var profile = await _db.InfraAgentRuntimeProfiles
+            .Find(ownedFilter & fb.Eq(x => x.IsDefault, true))
+            .FirstOrDefaultAsync(ct);
+        if (profile != null) return profile;
+
+        // 优先级 2：共享的默认配置
+        profile = await _db.InfraAgentRuntimeProfiles
+            .Find(sharedFilter & fb.Eq(x => x.IsDefault, true))
+            .SortByDescending(x => x.UpdatedAt)
+            .FirstOrDefaultAsync(ct);
+        if (profile != null) return profile;
+
+        // 优先级 3：用户自己的任意配置
+        profile = await _db.InfraAgentRuntimeProfiles
+            .Find(ownedFilter)
+            .SortByDescending(x => x.UpdatedAt)
+            .FirstOrDefaultAsync(ct);
+        if (profile != null) return profile;
+
+        // 优先级 4：共享的任意配置
+        return await _db.InfraAgentRuntimeProfiles
+            .Find(sharedFilter)
+            .SortByDescending(x => x.UpdatedAt)
+            .FirstOrDefaultAsync(ct);
     }
 
-    /// <summary>
-    /// 剥除 LLM 可能在 HTML 内容前后附加的 markdown 代码围栏。
-    /// </summary>
+    // ─────────────────────────────────────────────
+    // SSE 工具方法
+    // ─────────────────────────────────────────────
+
+    private void SetSseHeaders()
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers["Cache-Control"] = "no-cache";
+        Response.Headers["X-Accel-Buffering"] = "no";
+        Response.Headers["Transfer-Encoding"] = "chunked";
+    }
+
+    private async Task WriteEventAsync(string eventName, object? data)
+    {
+        try
+        {
+            var dataLine = data == null
+                ? "null"
+                : JsonSerializer.Serialize(data, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+            var payload = $"event: {eventName}\ndata: {dataLine}\n\n";
+            await Response.WriteAsync(payload, CancellationToken.None);
+            await Response.Body.FlushAsync(CancellationToken.None);
+        }
+        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
+    }
+
+    // ─────────────────────────────────────────────
+    // 去除代码围栏（CDS Agent 偶尔会在 HTML 外包 ```html ... ```）
+    // ─────────────────────────────────────────────
+
     private static string StripCodeFences(string text)
     {
         if (string.IsNullOrWhiteSpace(text)) return text;
 
+        var s = text.Trim();
+
         // 去除开头的 ```html 或 ``` 行
-        if (text.StartsWith("```html", StringComparison.OrdinalIgnoreCase))
+        if (s.StartsWith("```", StringComparison.Ordinal))
         {
-            var firstNewline = text.IndexOf('\n');
-            if (firstNewline >= 0) text = text[(firstNewline + 1)..];
-        }
-        else if (text.StartsWith("```"))
-        {
-            var firstNewline = text.IndexOf('\n');
-            if (firstNewline >= 0) text = text[(firstNewline + 1)..];
+            var firstNewline = s.IndexOf('\n');
+            if (firstNewline >= 0)
+                s = s[(firstNewline + 1)..];
         }
 
         // 去除结尾的 ``` 行
-        if (text.TrimEnd().EndsWith("```"))
+        if (s.EndsWith("```", StringComparison.Ordinal))
         {
-            var lastFence = text.LastIndexOf("```");
-            if (lastFence > 0) text = text[..lastFence].TrimEnd();
+            var lastFence = s.LastIndexOf("```", StringComparison.Ordinal);
+            if (lastFence > 0)
+                s = s[..lastFence].TrimEnd();
         }
 
-        return text.Trim();
-    }
-
-    private async Task WriteSseEventAsync(string eventName, string data, CancellationToken ct)
-    {
-        await Response.WriteAsync($"event: {eventName}\ndata: {data}\n\n", ct).ConfigureAwait(false);
-        await Response.Body.FlushAsync(ct).ConfigureAwait(false);
+        return s.Trim();
     }
 }
 
-// =========================================================================
-// Request / Response DTOs
-// =========================================================================
+// ─────────────────────────────────────────────
+// 请求 DTO
+// ─────────────────────────────────────────────
 
-/// <summary>convert 端点请求体</summary>
 public class MdToPptConvertRequest
 {
-    /// <summary>Markdown 或纯文本内容</summary>
-    public string Content { get; set; } = string.Empty;
+    /// <summary>要转换的内容（Markdown / 纯文本），与前端 content 对齐</summary>
+    public string? Content { get; set; }
 
-    /// <summary>期望生成的幻灯片页数（3-20，默认 8）</summary>
+    /// <summary>期望页数（可选）</summary>
     public int? SlideCount { get; set; }
 
-    /// <summary>reveal.js 主题（black/white/league 等，默认 black）</summary>
+    /// <summary>主题（可选）</summary>
     public string? Theme { get; set; }
 }
 
-/// <summary>patch 端点请求体</summary>
 public class MdToPptPatchRequest
 {
-    /// <summary>当前完整的 reveal.js HTML</summary>
-    public string CurrentHtml { get; set; } = string.Empty;
+    /// <summary>当前 HTML 内容，与前端 currentHtml 对齐</summary>
+    public string? CurrentHtml { get; set; }
 
-    /// <summary>修改要求描述</summary>
-    public string SlideRequest { get; set; } = string.Empty;
+    /// <summary>修改要求，与前端 slideRequest 对齐</summary>
+    public string? SlideRequest { get; set; }
 
-    /// <summary>要修改的幻灯片索引（0-based，可选，不传则让 LLM 自行判断）</summary>
+    /// <summary>目标页索引（可选）</summary>
     public int? SlideIndex { get; set; }
 }
 
-/// <summary>publish 端点请求体</summary>
 public class MdToPptPublishRequest
 {
-    /// <summary>完整的 reveal.js HTML 字符串</summary>
-    public string HtmlContent { get; set; } = string.Empty;
+    /// <summary>要发布的 HTML 内容，与前端 htmlContent 对齐</summary>
+    public string? HtmlContent { get; set; }
 
-    /// <summary>站点标题</summary>
+    /// <summary>发布标题</summary>
     public string? Title { get; set; }
 
-    /// <summary>站点描述</summary>
+    /// <summary>站点描述（可选）</summary>
     public string? Description { get; set; }
 
-    /// <summary>标签列表</summary>
+    /// <summary>标签（可选）</summary>
     public List<string>? Tags { get; set; }
 
-    /// <summary>分享到的团队 ID 列表（可选）</summary>
+    /// <summary>分享到的团队 ID（可选）</summary>
     public List<string>? TeamIds { get; set; }
 }
