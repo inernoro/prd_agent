@@ -118,7 +118,7 @@ hasModelPicker=true   hasNoiseBubble=false   自动捕获 P0=0
 ### A 会话生命周期（最严重）
 | # | 问题 | 严重 | 状态 | 根因/修法 |
 |---|---|---|---|---|
-| A1 | 发请求后历史消失 + 列表全是「新会话 已超时」 | P0 | 已修待部署 | done 后会话从不转终态→停留 running 直到超时;下次发送 activeSessionTimedOut→新建会话→历史丢。修:CDS-managed+direct 两路径 done→idle(不计超时、可复用),追问复用同会话 |
+| A1 | 发请求后历史消失 + 列表全是「新会话 已超时」 | P0 | 已修验(多轮脚本 HISTORY_PRESERVED=true) | done 后会话从不转终态→停留 running 直到超时;下次发送 activeSessionTimedOut→新建会话→历史丢。修:CDS-managed+direct 两路径 done→idle(不计超时、可复用),追问复用同会话 |
 | A2 | 多轮上下文:追问只发新消息,不回灌历史→agent 不记得上文 | P1 | 待办 | 需后端把会话历史拼进发给 agent 的 messages |
 
 ### B 流式与延迟（边车层）
