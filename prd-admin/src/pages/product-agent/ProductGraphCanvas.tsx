@@ -27,9 +27,10 @@ import {
   type Node,
   type Edge,
   type NodeProps,
+  type ReactFlowInstance,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Search, GitFork, Maximize2, Minimize2, X, Sparkles, ExternalLink } from 'lucide-react';
+import { Search, GitFork, X, Sparkles, ExternalLink } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 
 /** 富文本 → 纯文本（抽屉里展示干净摘要，不再糊出 HTML 标签）。 */
@@ -78,6 +79,100 @@ const EDGE_LABEL: Record<string, string> = {
 const COL_GAP = 250;
 const ROW_GAP = 78;
 
+type Pt = { x: number; y: number };
+type LayoutNode = { id: string; type: NodeType };
+type LayoutEdge = { source: string; target: string };
+
+/** 「整理」布局：按类型分列（客户|需求|版本|产品|功能|缺陷），每列纵向排开。 */
+function tidyLayout(nodes: LayoutNode[], view: 'card' | 'dot'): Map<string, Pt> {
+  const colRow: Record<number, number> = {};
+  const rowGap = view === 'dot' ? 96 : ROW_GAP;
+  const m = new Map<string, Pt>();
+  for (const n of nodes) {
+    const meta = TYPE_META[n.type];
+    const row = colRow[meta.col] ?? 0;
+    colRow[meta.col] = row + 1;
+    m.set(n.id, { x: meta.col * COL_GAP, y: row * rowGap });
+  }
+  return m;
+}
+
+/** 字符串 → [0,1) 确定性种子（FNV-1a），用于离散布局初始散点，保证每次结果一致不乱跳。 */
+function hashSeed(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return (h >>> 0) / 4294967296;
+}
+
+/**
+ * 「离散」布局：自写轻量力导向（节点斥力 + 边弹簧 + 轻微向心），迭代定格为静态位置。
+ * 参考 Obsidian 的有机团簇呈现——不太挤（大间距 + 最小距离硬排斥）、不太规则（无网格）。
+ * 无第三方依赖；O(n²)·迭代，对几十~上百节点足够快；结果确定性（哈希种子）。
+ */
+function scatterLayout(nodes: LayoutNode[], edges: LayoutEdge[], view: 'card' | 'dot'): Map<string, Pt> {
+  const n = nodes.length;
+  const m = new Map<string, Pt>();
+  if (n === 0) return m;
+  const idealLen = view === 'dot' ? 150 : 260; // 边理想长度（卡片更宽 → 间距更大）
+  const repK = view === 'dot' ? 9000 : 26000;  // 斥力强度
+  const minDist = view === 'dot' ? 70 : 210;   // 最小间距（防卡片重叠）
+  const R = Math.sqrt(n) * idealLen * 0.6;
+
+  const px = new Array<number>(n);
+  const py = new Array<number>(n);
+  const idx = new Map<string, number>();
+  nodes.forEach((nd, i) => {
+    idx.set(nd.id, i);
+    const a = hashSeed(nd.id) * Math.PI * 2;
+    const r = (0.25 + 0.75 * hashSeed(nd.id + 'r')) * R;
+    px[i] = Math.cos(a) * r;
+    py[i] = Math.sin(a) * r;
+  });
+  const ed: [number, number][] = [];
+  for (const e of edges) {
+    const a = idx.get(e.source); const b = idx.get(e.target);
+    if (a != null && b != null && a !== b) ed.push([a, b]);
+  }
+
+  const ITER = 320;
+  for (let it = 0; it < ITER; it++) {
+    const alpha = 1 - it / ITER;
+    const fx = new Array<number>(n).fill(0);
+    const fy = new Array<number>(n).fill(0);
+    // 斥力（含最小距离硬排斥）
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const dx = px[i] - px[j], dy = py[i] - py[j];
+        const d2 = dx * dx + dy * dy || 0.01;
+        const d = Math.sqrt(d2);
+        let f = repK / d2;
+        if (d < minDist) f += (minDist - d) * 6;
+        const ux = dx / d, uy = dy / d;
+        fx[i] += ux * f; fy[i] += uy * f; fx[j] -= ux * f; fy[j] -= uy * f;
+      }
+    }
+    // 边弹簧
+    for (const [a, b] of ed) {
+      const dx = px[b] - px[a], dy = py[b] - py[a];
+      const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+      const f = (d - idealLen) * 0.04;
+      const ux = dx / d, uy = dy / d;
+      fx[a] += ux * f; fy[a] += uy * f; fx[b] -= ux * f; fy[b] -= uy * f;
+    }
+    // 轻微向心，避免整体漂走
+    const maxStep = 30 * alpha + 2;
+    for (let i = 0; i < n; i++) {
+      fx[i] -= px[i] * 0.002; fy[i] -= py[i] * 0.002;
+      let sx = fx[i] * 0.02, sy = fy[i] * 0.02;
+      const sl = Math.hypot(sx, sy);
+      if (sl > maxStep) { sx = (sx / sl) * maxStep; sy = (sy / sl) * maxStep; }
+      px[i] += sx; py[i] += sy;
+    }
+  }
+  nodes.forEach((nd, i) => m.set(nd.id, { x: Math.round(px[i]), y: Math.round(py[i]) }));
+  return m;
+}
+
 /** 定义生成树父子关系的边类型（用于展开/收起）：parent = source，child = target；traces 反向（缺陷是子） */
 function parentChildFromEdge(e: GraphEdge): { parent: string; child: string } | null {
   switch (e.type) {
@@ -103,7 +198,8 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<GraphNode | null>(null);
 
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // 布局模式：tidy=按类型分列「整理」 / scatter=力导向「离散」(参考 Obsidian)
+  const [layout, setLayout] = useState<'tidy' | 'scatter'>('tidy');
   const [typeOn, setTypeOn] = useState<Record<NodeType, boolean>>(
     () => Object.fromEntries(ALL_TYPES.map((t) => [t, true])) as Record<NodeType, boolean>,
   );
@@ -116,6 +212,7 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const rfRef = useRef<ReactFlowInstance<Node, Edge> | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -191,16 +288,6 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
       }
     }
 
-    // 折叠：祖先链上有任一被折叠则隐藏
-    const ancestorCollapsed = (id: string) => {
-      let cur = derived.parentOf.get(id);
-      while (cur) {
-        if (collapsed.has(cur)) return true;
-        cur = derived.parentOf.get(cur);
-      }
-      return false;
-    };
-
     // 版本过滤：以版本为中心 2 跳可达 + 产品根
     let versionScope: Set<string> | null = null;
     if (versionFilter) {
@@ -236,11 +323,10 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
       if (!typeOn[n.type]) continue;
       if (stateFilter && (n.state ?? '') !== stateFilter) continue;
       if (versionScope && !versionScope.has(n.id)) continue;
-      if (ancestorCollapsed(n.id)) continue;
       vis.add(n.id);
     }
     return { visibleIds: vis, matchIds: match };
-  }, [raw, derived, collapsed, typeOn, stateFilter, versionFilter, keyword, productId]);
+  }, [raw, derived, typeOn, stateFilter, versionFilter, keyword, productId]);
 
   // ── 追溯集合：从锚点沿关系路径(无向)可达 ──
   const traceIds = useMemo(() => {
@@ -262,40 +348,28 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
   // 可见集合 key（仅成员变化才重排版）
   const visibleKey = useMemo(() => Array.from(visibleIds).sort().join('|'), [visibleIds]);
 
-  // ── 成员/布局：可见集合变化时重建节点与边（列布局，紧凑）──
+  // ── 成员/布局：可见集合 / 视图 / 布局模式变化时重建节点与边 ──
   useEffect(() => {
     if (!raw) return;
-    const colRow: Record<number, number> = {};
-    const dotRowGap = 96;
-    const rfNodes: Node[] = raw.nodes
-      .filter((n) => visibleIds.has(n.id))
-      .map((n) => {
-        const meta = TYPE_META[n.type];
-        const row = colRow[meta.col] ?? 0;
-        colRow[meta.col] = row + 1;
-        const desc = derived.descCount.get(n.id) ?? 0;
-        const isCollapsed = collapsed.has(n.id) && desc > 0;
-        const label = `${n.label}${isCollapsed ? ` (+${desc})` : ''}${n.sub ? `\n${n.sub}` : ''}`;
-        if (view === 'dot') {
-          // 圆点视图：大小随后代数（重要度），颜色随类型，名称在圆点下方
-          const size = 16 + Math.min(desc, 10) * 4;
-          return {
-            id: n.id,
-            type: 'dot',
-            position: { x: meta.col * COL_GAP, y: row * dotRowGap },
-            data: { label, color: meta.color, size },
-            style: {},
-          };
-        }
-        return {
-          id: n.id,
-          position: { x: meta.col * COL_GAP, y: row * ROW_GAP },
-          data: { label },
-          style: baseStyle(meta.color),
-        };
-      });
-    const rfEdges: Edge[] = raw.edges
-      .filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target))
+    const visNodes = raw.nodes.filter((n) => visibleIds.has(n.id));
+    const visEdges = raw.edges.filter((e) => visibleIds.has(e.source) && visibleIds.has(e.target));
+    // 位置：整理=按类型分列；离散=力导向有机散布
+    const pos = layout === 'scatter'
+      ? scatterLayout(visNodes, visEdges, view)
+      : tidyLayout(visNodes, view);
+    const rfNodes: Node[] = visNodes.map((n) => {
+      const meta = TYPE_META[n.type];
+      const desc = derived.descCount.get(n.id) ?? 0;
+      const label = `${n.label}${n.sub ? `\n${n.sub}` : ''}`;
+      const p = pos.get(n.id) ?? { x: 0, y: 0 };
+      if (view === 'dot') {
+        // 圆点视图：大小随后代数（重要度），颜色随类型，名称在圆点下方
+        const size = 16 + Math.min(desc, 10) * 4;
+        return { id: n.id, type: 'dot', position: p, data: { label, color: meta.color, size }, style: {} };
+      }
+      return { id: n.id, position: p, data: { label }, style: baseStyle(meta.color) };
+    });
+    const rfEdges: Edge[] = visEdges
       .map((e) => ({
         id: e.id,
         source: e.source,
@@ -310,8 +384,10 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
       }));
     setNodes(rfNodes);
     setEdges(rfEdges);
+    // 重排后重新居中适配
+    requestAnimationFrame(() => rfRef.current?.fitView({ duration: 400, padding: 0.2 }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleKey, view]);
+  }, [visibleKey, view, layout]);
 
   // ── 样式：搜索/追溯变化时只改样式，不重排版（拖拽位置得以保留）──
   useEffect(() => {
@@ -473,26 +549,11 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
           <button onClick={() => setView('card')} className={`px-2 py-1 text-[11px] ${view === 'card' ? 'bg-white/10 text-white' : 'text-white/45 hover:bg-white/5'}`}>卡片</button>
           <button onClick={() => setView('dot')} className={`px-2 py-1 text-[11px] ${view === 'dot' ? 'bg-white/10 text-white' : 'text-white/45 hover:bg-white/5'}`}>圆点</button>
         </div>
-        {/* 全部展开/收起 */}
-        <button
-          onClick={() => setCollapsed(new Set())}
-          className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] border border-white/10 text-white/50 hover:bg-white/5"
-        >
-          <Maximize2 size={12} /> 全部展开
-        </button>
-        <button
-          onClick={() => {
-            // 收起到产品：折叠所有有后代的非产品节点
-            const next = new Set<string>();
-            raw?.nodes.forEach((n) => {
-              if (n.type !== 'product' && (derived.descCount.get(n.id) ?? 0) > 0) next.add(n.id);
-            });
-            setCollapsed(next);
-          }}
-          className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] border border-white/10 text-white/50 hover:bg-white/5"
-        >
-          <Minimize2 size={12} /> 收起
-        </button>
+        {/* 布局切换：整理（按类型分列）/ 离散（力导向有机散布） */}
+        <div className="flex rounded-md border border-white/10 overflow-hidden">
+          <button onClick={() => setLayout('tidy')} className={`px-2 py-1 text-[11px] ${layout === 'tidy' ? 'bg-white/10 text-white' : 'text-white/45 hover:bg-white/5'}`} title="按类型分列排好">整理</button>
+          <button onClick={() => setLayout('scatter')} className={`px-2 py-1 text-[11px] ${layout === 'scatter' ? 'bg-white/10 text-white' : 'text-white/45 hover:bg-white/5'}`} title="力导向有机散布（参考 Obsidian）">离散</button>
+        </div>
         {/* 追溯中提示 */}
         {traceAnchor && (
           <span className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-amber-300 bg-amber-400/10 border border-amber-400/30">
@@ -509,6 +570,7 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
         <ReactFlow
           nodes={nodes}
           edges={edges}
+          onInit={(inst) => { rfRef.current = inst; }}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onNodeClick={onNodeClick}
