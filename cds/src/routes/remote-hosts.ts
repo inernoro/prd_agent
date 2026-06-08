@@ -535,7 +535,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
   });
 
   router.post('/projects/:id/runtime-capacity/reconcile', async (req, res) => {
-    const auth = authenticateProjectRequest(req.headers.authorization, req.params.id, pairing, ['shared-service:deploy']);
+    const auth = authenticateProjectRequest(req as any, req.params.id, pairing, ['shared-service:deploy']);
     if (!auth.ok) {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
       return;
@@ -589,7 +589,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
   });
 
   router.post('/projects/:id/agent-sessions', async (req, res) => {
-    const auth = authenticateProjectRequest(req.headers.authorization, req.params.id, pairing, ['shared-service:deploy']);
+    const auth = authenticateProjectRequest(req as any, req.params.id, pairing, ['shared-service:deploy']);
     if (!auth.ok) {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
       return;
@@ -673,7 +673,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
   });
 
   router.get('/projects/:id/agent-sessions', (req, res) => {
-    const auth = authenticateProjectRequest(req.headers.authorization, req.params.id, pairing, ['instance:read']);
+    const auth = authenticateProjectRequest(req as any, req.params.id, pairing, ['instance:read']);
     if (!auth.ok) {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
       return;
@@ -686,7 +686,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
   });
 
   router.get('/projects/:projectId/agent-sessions/:sessionId', (req, res) => {
-    const auth = authenticateProjectRequest(req.headers.authorization, req.params.projectId, pairing, ['instance:read']);
+    const auth = authenticateProjectRequest(req as any, req.params.projectId, pairing, ['instance:read']);
     if (!auth.ok) {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
       return;
@@ -705,7 +705,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
   });
 
   router.post('/projects/:projectId/agent-sessions/:sessionId/messages', async (req, res) => {
-    const auth = authenticateProjectRequest(req.headers.authorization, req.params.projectId, pairing, ['deployment:stream']);
+    const auth = authenticateProjectRequest(req as any, req.params.projectId, pairing, ['deployment:stream']);
     if (!auth.ok) {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
       return;
@@ -835,7 +835,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
   });
 
   router.get('/projects/:projectId/agent-sessions/:sessionId/stream', async (req, res) => {
-    const auth = authenticateProjectRequest(req.headers.authorization, req.params.projectId, pairing, ['deployment:stream']);
+    const auth = authenticateProjectRequest(req as any, req.params.projectId, pairing, ['deployment:stream']);
     if (!auth.ok) {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
       return;
@@ -862,7 +862,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
   });
 
   router.post('/projects/:projectId/agent-sessions/:sessionId/tool-approvals/:approvalId', (req, res) => {
-    const auth = authenticateProjectRequest(req.headers.authorization, req.params.projectId, pairing, ['deployment:stream']);
+    const auth = authenticateProjectRequest(req as any, req.params.projectId, pairing, ['deployment:stream']);
     if (!auth.ok) {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
       return;
@@ -881,7 +881,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
   });
 
   router.post('/projects/:projectId/agent-sessions/:sessionId/stop', (req, res) => {
-    const auth = authenticateProjectRequest(req.headers.authorization, req.params.projectId, pairing, ['shared-service:deploy']);
+    const auth = authenticateProjectRequest(req as any, req.params.projectId, pairing, ['shared-service:deploy']);
     if (!auth.ok) {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
       return;
@@ -913,7 +913,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
   });
 
   router.get('/projects/:projectId/agent-sessions/:sessionId/logs', (req, res) => {
-    const auth = authenticateProjectRequest(req.headers.authorization, req.params.projectId, pairing, ['instance:read']);
+    const auth = authenticateProjectRequest(req as any, req.params.projectId, pairing, ['instance:read']);
     if (!auth.ok) {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
       return;
@@ -1571,12 +1571,19 @@ interface CdsManagedRuntimeResult {
 }
 
 function authenticateProjectRequest(
-  authorization: string | string[] | undefined,
+  req: { headers: { authorization?: string | string[] | undefined }; _cdsCookieAuth?: boolean; _aiSession?: unknown },
   projectId: string,
   pairing: CdsPairingService,
   requiredScopes: string[],
 ): { ok: true } | { ok: false; status: number; code: string; message: string } {
-  const token = extractBearerToken(authorization);
+  // 单租户 CDS 上,人类 cookie 登录(`_cdsCookieAuth`,由 server.ts 主鉴权中间件盖章)
+  // 与 AI 超级密钥会话(`_aiSession`)都是 admin 等价 —— 直接放行,不要求项目连接 token。
+  // 不加这条,仪表盘操作者点「Sidecar Pool / Agent 会话」卡片会永远 401(端点只认
+  // Bearer 连接 token,而浏览器带的是 cds_token cookie),观测面板形同虚设。
+  if (req._cdsCookieAuth === true || req._aiSession) {
+    return { ok: true };
+  }
+  const token = extractBearerToken(req.headers.authorization);
   const connection = pairing.authenticateLongToken(token);
   if (!connection) {
     return { ok: false, status: 401, code: 'invalid_long_token', message: 'invalid connection token' };
