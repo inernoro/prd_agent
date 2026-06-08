@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowRight, Github, Loader2, LockKeyhole, Shield } from 'lucide-react';
+import { ArrowRight, Github, Home, KeyRound, Loader2, LockKeyhole, Server, Shield, UserRound } from 'lucide-react';
 import ShapeGrid from '@/components/effects/ShapeGrid';
 import { CdsMetallicLogo } from '@/components/brand/CdsMetallicLogo';
 import { Button } from '@/components/ui/button';
@@ -83,7 +83,7 @@ export function LoginPage(): JSX.Element {
       </div>
 
       <section className="relative z-10 flex min-h-screen items-center justify-center px-5 py-10">
-        <div className="grid w-full max-w-5xl items-center gap-10 lg:grid-cols-[minmax(0,1fr)_396px]">
+        <div className="grid w-full max-w-5xl items-center gap-10 lg:grid-cols-[minmax(0,1fr)_440px]">
           <div className="cdsh-rise hidden lg:block [text-shadow:0_2px_30px_rgba(0,0,0,0.72)]" style={{ animationDelay: '.05s' }}>
             <div className="inline-flex items-center gap-3 rounded-full border border-white/12 bg-white/[0.035] px-4 py-2 text-xs uppercase tracking-normal text-white/70 backdrop-blur-xl">
               <span className="h-1.5 w-1.5 rounded-full bg-[#dbe4ee] shadow-[0_0_14px_#dbe4ee]" />
@@ -100,45 +100,71 @@ export function LoginPage(): JSX.Element {
             </p>
           </div>
 
-          <div className="cdsh-rise rounded-[1.35rem] border border-white/12 bg-white/[0.035] p-1.5 shadow-[0_32px_120px_rgba(0,0,0,0.46)] backdrop-blur-xl" style={{ animationDelay: '.18s' }}>
-            <form onSubmit={submit} className="rounded-[1.05rem] border border-white/12 bg-white/[0.025] px-5 py-5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/12 bg-white/[0.04]">
+          <div className="cdsh-login-panel cdsh-rise" style={{ animationDelay: '.18s' }}>
+            <form onSubmit={submit} className="cdsh-login-console">
+              <div className="cdsh-login-head">
+                <div className="flex min-w-0 items-center gap-3">
+                  <span className="cdsh-login-logo">
                     <CdsMetallicLogo className="h-6 w-6" />
                   </span>
-                  <div>
-                    <div className="text-[15px] font-semibold leading-tight">Cloud Dev Suite</div>
-                    <div className="mt-0.5 font-mono text-[10.5px] uppercase tracking-normal text-white/50">secure access</div>
+                  <div className="min-w-0">
+                    <div className="truncate text-[17px] font-semibold leading-tight">Cloud Dev Suite</div>
+                    <div className="mt-1 font-mono text-[10.5px] uppercase tracking-normal text-white/48">control access</div>
                   </div>
                 </div>
-                <Shield className="h-[18px] w-[18px] text-white/60" />
+                <span className="cdsh-login-live">
+                  <span className="cdsh-pulse" />
+                  secure
+                </span>
+              </div>
+
+              <div className="cdsh-access-map" aria-hidden>
+                <div className="cdsh-access-node">
+                  <UserRound />
+                  <span>Identity</span>
+                </div>
+                <span className="cdsh-access-link" />
+                <div className="cdsh-access-node">
+                  <Shield />
+                  <span>Session</span>
+                </div>
+                <span className="cdsh-access-link" />
+                <div className="cdsh-access-node">
+                  <Server />
+                  <span>Console</span>
+                </div>
               </div>
 
               <div className="mt-5 space-y-3">
-                <label className="block">
-                  <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-normal text-white/50">Identity</span>
-                  <input
-                    value={username}
-                    onChange={(event) => setUsername(event.target.value)}
-                    autoComplete="username"
-                    autoFocus
-                    required
-                    className="h-10 w-full rounded-lg border border-white/12 bg-white/[0.04] px-3.5 text-sm text-white outline-none transition-colors placeholder:text-white/35 focus:border-white/35 focus:bg-white/[0.06] focus:ring-2 focus:ring-white/15"
-                    placeholder="operator"
-                  />
+                <label className="cdsh-login-field">
+                  <span className="cdsh-login-label">Identity</span>
+                  <span className="cdsh-login-inputwrap">
+                    <UserRound className="cdsh-login-input-icon" aria-hidden />
+                    <input
+                      value={username}
+                      onChange={(event) => setUsername(event.target.value)}
+                      autoComplete="username"
+                      autoFocus
+                      required
+                      className="cdsh-login-input"
+                      placeholder="operator"
+                    />
+                  </span>
                 </label>
-                <label className="block">
-                  <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-normal text-white/50">Secret</span>
-                  <input
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                    type="password"
-                    autoComplete="current-password"
-                    required
-                    className="h-10 w-full rounded-lg border border-white/12 bg-white/[0.04] px-3.5 text-sm text-white outline-none transition-colors placeholder:text-white/35 focus:border-white/35 focus:bg-white/[0.06] focus:ring-2 focus:ring-white/15"
-                    placeholder="password"
-                  />
+                <label className="cdsh-login-field">
+                  <span className="cdsh-login-label">Secret</span>
+                  <span className="cdsh-login-inputwrap">
+                    <KeyRound className="cdsh-login-input-icon" aria-hidden />
+                    <input
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                      type="password"
+                      autoComplete="current-password"
+                      required
+                      className="cdsh-login-input"
+                      placeholder="password"
+                    />
+                  </span>
                 </label>
               </div>
 
@@ -148,26 +174,31 @@ export function LoginPage(): JSX.Element {
                 </div>
               ) : null}
 
-              <Button type="submit" disabled={busy} className="mt-4 h-10 w-full rounded-lg bg-white text-black hover:bg-white/90">
+              <Button type="submit" disabled={busy} className="mt-4 h-12 w-full rounded-xl bg-white text-[15px] font-semibold text-black shadow-[0_16px_46px_rgba(255,255,255,0.12)] hover:bg-white/90">
                 {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <LockKeyhole className="mr-2 h-4 w-4" />}
                 Enter System
                 {!busy ? <ArrowRight className="ml-2 h-4 w-4" /> : null}
               </Button>
 
               <div className="mt-3 grid grid-cols-2 gap-3">
-                <Button asChild type="button" variant="outline" className="h-10 rounded-lg border-white/12 bg-white/[0.035] text-white hover:bg-white/10 hover:text-white">
+                <Button asChild type="button" variant="outline" className="h-11 rounded-xl border-white/12 bg-white/[0.035] text-white hover:bg-white/10 hover:text-white">
                   <a href={githubLoginHref}>
                     <Github className="mr-2 h-4 w-4" />
                     GitHub
                   </a>
                 </Button>
-                <Button asChild type="button" variant="outline" className="h-10 rounded-lg border-white/12 bg-white/[0.035] text-white hover:bg-white/10 hover:text-white">
-                  <Link to="/" viewTransition>Home</Link>
+                <Button asChild type="button" variant="outline" className="h-11 rounded-xl border-white/12 bg-white/[0.035] text-white hover:bg-white/10 hover:text-white">
+                  <Link to="/" viewTransition>
+                    <Home className="mr-2 h-4 w-4" />
+                    Home
+                  </Link>
                 </Button>
               </div>
 
-              <div className="mt-4 border-t border-white/10 pt-3.5 font-mono text-[10.5px] leading-5 text-white/38">
-                access.session / same-origin cookie / no local secret persistence
+              <div className="cdsh-login-foot">
+                <span className="cdsh-mono">access.session</span>
+                <span>same-origin cookie</span>
+                <span>no local secret persistence</span>
               </div>
             </form>
           </div>

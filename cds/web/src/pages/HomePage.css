@@ -163,6 +163,204 @@
 .cdsh-feed { transition: opacity .35s; }
 .cdsh-feed.cdsh-off { opacity: 0; }
 
+/* ---------- login access console ---------- */
+.cdsh-login-panel {
+  position: relative;
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 22px;
+  padding: 7px;
+  background:
+    linear-gradient(135deg, rgba(255,255,255,0.11), rgba(255,255,255,0.025) 42%, rgba(255,255,255,0.08)),
+    rgba(12,11,16,0.54);
+  box-shadow:
+    0 36px 120px rgba(0,0,0,0.58),
+    inset 0 1px 0 rgba(255,255,255,0.08);
+  backdrop-filter: blur(20px);
+}
+.cdsh-login-panel::before {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  pointer-events: none;
+  border-radius: 20px;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.cdsh-login-console {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.11);
+  border-radius: 17px;
+  padding: 22px;
+  background:
+    radial-gradient(520px 280px at 20% 0%, rgba(255,255,255,0.08), transparent 58%),
+    linear-gradient(180deg, rgba(31,30,38,0.88), rgba(18,17,23,0.93));
+}
+.cdsh-login-console::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: linear-gradient(180deg, rgba(0,0,0,0.36), transparent 64%);
+}
+.cdsh-login-head,
+.cdsh-access-map,
+.cdsh-login-field,
+.cdsh-login-foot {
+  position: relative;
+  z-index: 1;
+}
+.cdsh-login-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.cdsh-login-logo {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  flex: none;
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 13px;
+  background: linear-gradient(145deg, rgba(255,255,255,0.11), rgba(255,255,255,0.035));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+}
+.cdsh-login-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 999px;
+  background: rgba(255,255,255,0.035);
+  color: rgba(246,246,248,0.68);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.cdsh-access-map {
+  display: grid;
+  grid-template-columns: 1fr 28px 1fr 28px 1fr;
+  align-items: center;
+  gap: 8px;
+  margin-top: 22px;
+  padding: 13px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 14px;
+  background: rgba(255,255,255,0.026);
+}
+.cdsh-access-node {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  color: rgba(246,246,248,0.64);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.cdsh-access-node svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: rgba(246,246,248,0.86);
+}
+.cdsh-access-node span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cdsh-access-link {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.42), transparent);
+}
+.cdsh-login-field {
+  display: block;
+}
+.cdsh-login-label {
+  display: block;
+  margin-bottom: 8px;
+  color: rgba(246,246,248,0.5);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.cdsh-login-inputwrap {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  height: 48px;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 13px;
+  background: rgba(7,7,10,0.36);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.05),
+    0 10px 30px rgba(0,0,0,0.18);
+  transition: border-color .18s, background .18s, box-shadow .18s;
+}
+.cdsh-login-inputwrap:focus-within {
+  border-color: rgba(255,255,255,0.42);
+  background: rgba(12,12,16,0.62);
+  box-shadow:
+    0 0 0 3px rgba(255,255,255,0.08),
+    inset 0 1px 0 rgba(255,255,255,0.07),
+    0 14px 36px rgba(0,0,0,0.28);
+}
+.cdsh-login-input-icon {
+  width: 18px;
+  height: 18px;
+  margin-left: 14px;
+  flex: none;
+  color: rgba(246,246,248,0.54);
+}
+.cdsh-login-input {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: #f6f6f8;
+  outline: none;
+  font-size: 15px;
+}
+.cdsh-login-input::placeholder {
+  color: rgba(246,246,248,0.34);
+}
+.cdsh-login-input:-webkit-autofill,
+.cdsh-login-input:-webkit-autofill:hover,
+.cdsh-login-input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px rgba(12,12,16,0.96) inset;
+  -webkit-text-fill-color: #f6f6f8;
+  caret-color: #f6f6f8;
+  border-radius: 0 12px 12px 0;
+  transition: background-color 9999s ease-in-out 0s;
+}
+.cdsh-login-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+  padding-top: 15px;
+  border-top: 1px solid rgba(255,255,255,0.09);
+  color: rgba(246,246,248,0.42);
+  font-size: 11px;
+}
+.cdsh-login-foot span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 999px;
+  padding: 0 9px;
+  background: rgba(255,255,255,0.025);
+}
+
 /* ---------- strip ---------- */
 .cdsh-strip { padding: 30px 0 72px; border-top: 1px solid var(--cdsh-line-soft); }
 .cdsh-strip > p { text-align: center; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--cdsh-faint); margin: 0 0 22px; }
@@ -189,6 +387,10 @@
   .cdsh-cta .cdsh-btn-lg { flex: 1 1 auto; justify-content: center; }
   .cdsh-meta-row { margin-top: 24px; gap: 14px 22px; }
   .cdsh-strip { padding: 26px 0 56px; }
+  .cdsh-login-console { padding: 18px; }
+  .cdsh-access-map { grid-template-columns: 1fr; gap: 10px; }
+  .cdsh-access-link { display: none; }
+  .cdsh-access-node { justify-content: flex-start; }
 }
 /* On narrow phones the brand + two nav CTAs overflow the clipped nav; drop the
    secondary "Log in" button (the hero still exposes both entry points). */
