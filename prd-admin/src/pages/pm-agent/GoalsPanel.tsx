@@ -9,7 +9,7 @@ import { Button } from '@/components/design/Button';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import {
-  listPmGoals, createPmGoal, updatePmGoal, deletePmGoal, listPmMilestones, listPmGoalCycles, setGoalAsMilestone,
+  listPmGoals, createPmGoal, updatePmGoal, deletePmGoal, listPmMilestones, listPmGoalCycles, setGoalAsMilestone, updatePmProject,
 } from '@/services';
 import type { PmGoal, PmGoalScope, PmGoalStatus, SavePmGoalInput, PmMilestone, PmGoalCycle } from '@/services/contracts/pmAgent';
 import { GOAL_STATUS_REGISTRY, GOAL_SCOPE, MILESTONE_HEALTH_REGISTRY, GOAL_MAX_DEPTH } from './pmConstants';
@@ -23,6 +23,8 @@ interface Props {
   businessGoal: string;
   /** 是否可管理团队目标（owner/leader） */
   canManage: boolean;
+  /** 业务目标（北极星）保存后通知父级更新 project，使头部同步 */
+  onBusinessGoalChange?: (v: string) => void;
   /** 目标画布反查列表点击跳转 */
   onNavigateTask?: (taskId: string) => void;
   onNavigateWeekly?: (reportId: string) => void;
@@ -40,7 +42,7 @@ function fmtDate(s?: string | null) {
  * 项目目标 —— 以业务目标为北极星，团队目标（全员可见）+ 我的个人目标（仅本人）。
  * 团队目标进度可由关联里程碑自动滚动（auto）或手填（manual）。团队目标写操作限项目经理。
  */
-export function GoalsPanel({ projectId, businessGoal, canManage, onNavigateTask, onNavigateWeekly }: Props) {
+export function GoalsPanel({ projectId, businessGoal, canManage, onBusinessGoalChange, onNavigateTask, onNavigateWeekly }: Props) {
   const [goals, setGoals] = useState<PmGoal[]>([]);
   const [milestones, setMilestones] = useState<PmMilestone[]>([]);
   const [loading, setLoading] = useState(true);
@@ -117,6 +119,20 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onNavigateTask,
     if (res.success) { toast.success(editing.startsWith('new:') ? '已新增' : '已保存', ''); cancelEdit(); await load(); }
     else toast.error('保存失败', res.error?.message || '');
     setBusyId(null);
+  };
+
+  // 业务目标（北极星）内联编辑
+  const [editingBg, setEditingBg] = useState(false);
+  const [bgDraft, setBgDraft] = useState('');
+  const [savingBg, setSavingBg] = useState(false);
+  const startEditBg = () => { setBgDraft(businessGoal || ''); setEditingBg(true); };
+  const saveBg = async () => {
+    setSavingBg(true);
+    const v = bgDraft.trim();
+    const res = await updatePmProject(projectId, { businessGoal: v });
+    setSavingBg(false);
+    if (res.success) { onBusinessGoalChange?.(v); setEditingBg(false); toast.success('已更新业务目标', ''); }
+    else toast.error('保存失败', res.error?.message || '');
   };
 
   const toggleGoalMilestone = async (g: PmGoal) => {
@@ -318,13 +334,29 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onNavigateTask,
         <GoalsDashboard goals={goals} cycles={cycles} />
       ) : (
       <div className="flex-1 min-h-0 flex flex-col gap-5 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-      {/* 业务目标北极星 */}
+      {/* 业务目标北极星（可编辑） */}
       <div className="rounded-xl border p-4" style={{ borderColor: 'rgba(245,158,11,0.4)', background: 'rgba(245,158,11,0.06)' }}>
         <div className="flex items-center gap-2 mb-1">
           <Compass size={15} style={{ color: '#F59E0B' }} />
           <span className="text-[12px] font-semibold" style={{ color: '#F59E0B' }}>项目业务目标（北极星）</span>
+          {canManage && !editingBg && (
+            <button onClick={startEditBg} className="ml-auto p-1 rounded hover:opacity-70" title="编辑业务目标" style={{ color: '#F59E0B' }}><Pencil size={13} /></button>
+          )}
         </div>
-        <div className="text-[14px]" style={{ color: 'var(--text-primary)' }}>{businessGoal || '立项时未填写业务目标'}</div>
+        {editingBg ? (
+          <div className="flex flex-col gap-2">
+            <textarea autoFocus value={bgDraft} onChange={(e) => setBgDraft(e.target.value)} rows={2}
+              placeholder="一句话写清项目的业务北极星目标（如：上线 1 年内拓 100 个客户）"
+              className="w-full rounded-lg px-3 py-2 text-[14px] outline-none border resize-y"
+              style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }} />
+            <div className="flex items-center gap-2 justify-end">
+              <button onClick={() => setEditingBg(false)} className="px-2.5 py-1 rounded text-[12px]" style={{ color: 'var(--text-muted)' }}><X size={13} className="inline mr-0.5" />取消</button>
+              <button onClick={saveBg} disabled={savingBg} className="px-2.5 py-1 rounded text-[12px] border disabled:opacity-50" style={{ color: '#F59E0B', borderColor: 'rgba(245,158,11,0.4)' }}><Check size={13} className="inline mr-0.5" />保存</button>
+            </div>
+          </div>
+        ) : (
+          <div className="text-[14px]" style={{ color: 'var(--text-primary)' }}>{businessGoal || '立项时未填写业务目标，点右上角编辑设置'}</div>
+        )}
       </div>
 
       {/* 里程碑时间轴 */}
