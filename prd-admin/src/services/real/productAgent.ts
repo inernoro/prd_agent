@@ -297,6 +297,13 @@ export interface TracedDefect {
   tracedRequirementId?: string | null;
   tracedVersionId?: string | null;
   tracedFeatureId?: string | null;
+  /** 以下字段由 list/detail 接口返回的完整 DefectReport 提供，用于产品内缺陷详情编辑 */
+  rawContent?: string | null;
+  assigneeId?: string | null;
+  assigneeName?: string | null;
+  reporterName?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
 }
 export function listTracedDefects(productId: string, params?: { requirementId?: string; versionId?: string; featureId?: string }) {
   const q = new URLSearchParams();
@@ -457,4 +464,7 @@ export function getOverviewGraph() {
 }
 export function createProductDefect(productId: string, body: { title: string; description?: string; severity?: string; priority?: string; assigneeId?: string | null; featureId?: string; versionId?: string }) {
   return apiRequest<TracedDefect>(`/api/product/products/${productId}/defects`, { method: 'POST', body });
+}
+export function updateProductDefect(productId: string, defectId: string, body: { title: string; description?: string; severity?: string; priority?: string; status?: string; assigneeId?: string | null; featureId?: string; versionId?: string }) {
+  return apiRequest<TracedDefect>(`/api/product/products/${productId}/defects/${defectId}`, { method: 'PUT', body });
 }
