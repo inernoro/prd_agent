@@ -14,7 +14,7 @@ import { EChart } from '@/components/charts/EChart';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { systemDialog } from '@/lib/systemDialog';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
-import { ProductKnowledgePanel, DefectLinkerModal } from './ProductRelationModals';
+import { ProductKnowledgePanel } from './ProductRelationModals';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { KanbanBoard } from './KanbanBoard';
 import { RtmMatrix } from './RtmMatrix';
@@ -632,7 +632,6 @@ function DefectsTab({ productId }: { productId: string }) {
   const navigate = useNavigate();
   const [items, setItems] = useState<TracedDefect[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showLinker, setShowLinker] = useState(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -655,15 +654,9 @@ function DefectsTab({ productId }: { productId: string }) {
         >
           <Plus size={15} /> 新建缺陷
         </button>
-        <button
-          onClick={() => setShowLinker(true)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-sm"
-        >
-          关联已有缺陷
-        </button>
       </div>
       {items.length === 0 ? (
-        <EmptyHint text="还没有缺陷追溯到本产品。点上方关联已有缺陷，或在需求详情页里把缺陷追溯到具体需求。缺陷本体在「缺陷管理智能体」里维护。" />
+        <EmptyHint text="还没有缺陷。点上方「新建缺陷」创建本产品的第一个缺陷。" />
       ) : (
         <div className="flex flex-col gap-2">
           {items.map((d) => (
@@ -681,9 +674,6 @@ function DefectsTab({ productId }: { productId: string }) {
             />
           ))}
         </div>
-      )}
-      {showLinker && (
-        <DefectLinkerModal productId={productId} onClose={() => setShowLinker(false)} onLinked={() => void reload()} />
       )}
     </div>
   );
