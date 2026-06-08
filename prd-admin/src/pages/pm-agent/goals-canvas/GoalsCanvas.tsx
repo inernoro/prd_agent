@@ -81,7 +81,8 @@ function GoalsCanvasInner({ projectId, businessGoal, canManage, goals, onReload,
 
   return (
     <div className="flex-1 min-h-0 relative">
-      {goals.length === 0 && (
+      {/* 仅当画布真的没有任何节点时才显示空状态；业务目标·北极星根节点存在时不显示，避免与其重叠 */}
+      {graph.nodes.length === 0 && (
         <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
           <div className="flex flex-col items-center gap-3 text-center pointer-events-auto">
             <Target size={32} style={{ color: 'var(--text-muted)' }} />
