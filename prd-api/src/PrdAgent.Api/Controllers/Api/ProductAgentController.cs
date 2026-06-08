@@ -1448,8 +1448,9 @@ public class ProductAgentController : ControllerBase
             .Set(d => d.TracedFeatureId, string.IsNullOrWhiteSpace(request.FeatureId) ? null : request.FeatureId)
             .Set(d => d.TracedVersionId, string.IsNullOrWhiteSpace(request.VersionId) ? null : request.VersionId)
             .Set(d => d.UpdatedAt, DateTime.UtcNow);
-        if (DefectStatus.All.Contains(request.Status ?? ""))
-            u = u.Set(d => d.Status, request.Status);
+        var statusVal = request.Status ?? string.Empty;
+        if (DefectStatus.All.Contains(statusVal))
+            u = u.Set(d => d.Status, statusVal);
 
         await _db.DefectReports.UpdateOneAsync(d => d.Id == defectId, u);
         var updated = await _db.DefectReports.Find(d => d.Id == defectId).FirstOrDefaultAsync();
