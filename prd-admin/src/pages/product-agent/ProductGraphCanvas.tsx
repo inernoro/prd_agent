@@ -32,6 +32,8 @@ import {
 import '@xyflow/react/dist/style.css';
 import { Search, GitFork, X, Sparkles, ExternalLink } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+import { useSseStream } from '@/lib/useSseStream';
+import { StreamingText } from '@/components/streaming/StreamingText';
 
 /** 富文本 → 纯文本（抽屉里展示干净摘要，不再糊出 HTML 标签）。 */
 function htmlToText(html: string): string {
@@ -473,6 +475,21 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
     setSelected(raw?.nodes.find((n) => n.id === node.id) ?? null);
   };
 
+  // 关系分析用：从锚点沿关系(无向)收集整条链的节点 + 边（带关系类型），交给后端补全字段后做 AI 分析
+  const buildChain = useCallback((anchorId: string) => {
+    if (!raw) return { nodes: [], edges: [] };
+    const reached = new Set<string>([anchorId]);
+    const q = [anchorId];
+    while (q.length) {
+      const cur = q.shift()!;
+      for (const nb of derived.adj.get(cur) ?? []) { if (!reached.has(nb)) { reached.add(nb); q.push(nb); } }
+    }
+    return {
+      nodes: raw.nodes.filter((n) => reached.has(n.id)).map((n) => ({ id: n.id, type: n.type, label: n.label, sub: n.sub ?? null })),
+      edges: raw.edges.filter((e) => reached.has(e.source) && reached.has(e.target)).map((e) => ({ source: e.source, target: e.target, type: e.type })),
+    };
+  }, [raw, derived]);
+
   // ── 实时拖拽力导向（离散布局）：拖一个点，关联点经弹簧丝滑跟随（Obsidian 关系图谱效果）──
   const simTick = useCallback(() => {
     const s = simRef.current;
@@ -729,6 +746,7 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
           <NodeDrawer
             node={selected}
             productId={selected.productId ?? productId ?? ''}
+            buildChain={buildChain}
             onClose={() => setSelected(null)}
             onTrace={() => {
               setTraceAnchor(selected.id);
@@ -748,12 +766,14 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
 function NodeDrawer({
   node,
   productId,
+  buildChain,
   onClose,
   onTrace,
   onOpenDetail,
 }: {
   node: GraphNode;
   productId: string;
+  buildChain: (anchorId: string) => { nodes: { id: string; type: string; label: string; sub: string | null }[]; edges: { source: string; target: string; type: string }[] };
   onClose: () => void;
   onTrace: () => void;
   onOpenDetail: () => void;
@@ -771,6 +791,16 @@ function NodeDrawer({
   const [summaryBy, setSummaryBy] = useState<string | null>(null);
   const autoTried = useRef(false);
 
+  // 关系分析（追溯模式下，对整条关系链 AI 流式分析）
+  const [analysisStarted, setAnalysisStarted] = useState(false);
+  const analysis = useSseStream({ url: '/api/product/graph/relation-analysis/stream', method: 'POST' });
+  const runAnalysis = () => {
+    onTrace(); // 同时点亮整条追溯链
+    setAnalysisStarted(true);
+    const chain = buildChain(node.id);
+    void analysis.start({ body: { productId, anchorId: node.id, nodes: chain.nodes, edges: chain.edges } });
+  };
+
   const runSummary = useCallback(async (force = false) => {
     setSummaryBusy(true);
     setSummaryMsg(null);
@@ -780,7 +810,11 @@ function NodeDrawer({
     else setSummaryMsg(res.success ? (res.data.message ?? '暂无可摘要内容') : (res.error?.message ?? '摘要失败'));
   }, [type, rawId]);
 
-  useEffect(() => { autoTried.current = false; setSummary(null); setSummaryMsg(null); setSummaryBy(null); }, [node.id]);
+  useEffect(() => {
+    autoTried.current = false; setSummary(null); setSummaryMsg(null); setSummaryBy(null);
+    setAnalysisStarted(false); analysis.reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [node.id]);
 
   // 首次展开自动摘要（系统只自动一次；之后用户点「重新摘要」）
   useEffect(() => {
@@ -860,6 +894,34 @@ function NodeDrawer({
             追溯关系路径
           </button>
         </div>
+        {/* 关系分析：对整条追溯链做 AI 流式分析（需求/功能/缺陷） */}
+        {canOpen && (
+          <button
+            onClick={runAnalysis}
+            disabled={analysis.isStreaming}
+            className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-500/15 text-violet-200 border border-violet-500/40 hover:bg-violet-500/25 disabled:opacity-50 text-sm"
+          >
+            {analysis.isStreaming ? <MapSpinner size={13} /> : <Sparkles size={13} />} 关系分析
+          </button>
+        )}
+        {canOpen && analysisStarted && (
+          <div className="rounded-lg border border-violet-500/25 bg-violet-500/[0.06] p-3">
+            <div className="text-[11px] text-violet-200/80 mb-1.5 flex items-center gap-1">
+              <Sparkles size={11} /> 关系链分析
+              {analysis.phase === 'connecting' && <span className="text-white/40">· 连接中…</span>}
+              {analysis.phase === 'streaming' && <span className="text-white/40">· 分析中…</span>}
+            </div>
+            {analysis.phase === 'error' ? (
+              <div className="text-amber-300/80 text-sm">{analysis.phaseMessage || '分析失败，请重试'}</div>
+            ) : analysis.typing ? (
+              <div className="text-sm text-white/85">
+                <StreamingText text={analysis.typing} streaming={analysis.isStreaming} />
+              </div>
+            ) : (
+              <div className="text-white/40 text-sm flex items-center gap-1.5"><MapSpinner size={12} /> 正在汇总关系链…</div>
+            )}
+          </div>
+        )}
         {/* 详情直接展示 */}
         <div className="text-base text-white font-medium">{node.label}</div>
         {busy ? (

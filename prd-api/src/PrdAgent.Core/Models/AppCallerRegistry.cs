@@ -134,6 +134,14 @@ public static class Product
         Category = "Analysis"
     )]
     public const string RequirementAiFill = "product-agent.requirement-ai-fill::chat";
+
+    [AppCallerMetadata(
+        "产品管理-追溯关系分析",
+        "图谱追溯模式下，对整条关系链做 AI 流式分析（关键对象/关系/时间节点/前因后果）",
+        ModelTypes = new[] { ModelTypes.Chat },
+        Category = "Analysis"
+    )]
+    public const string TraceRelationAnalysis = "product-agent.trace-relation-analysis::chat";
 }
 
 /// <summary>

@@ -1673,6 +1673,180 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { summary = summaryText, generatedByName = actorName, generatedAt = now, cached = false }));
     }
 
+    // ════════════════════════ 追溯关系分析（SSE 流式）════════════════════════
+
+    private static string RawId(string id) { var i = id.IndexOf(':'); return i >= 0 ? id[(i + 1)..] : id; }
+    private static string NodeTypeOf(string id) { var i = id.IndexOf(':'); return i >= 0 ? id[..i] : ""; }
+
+    /// <summary>解析图谱节点 id（type:rawId）所属产品 id，用于访问校验。</summary>
+    private async Task<string?> ResolveNodeProductIdAsync(string nodeId)
+    {
+        var type = NodeTypeOf(nodeId); var rid = RawId(nodeId);
+        switch (type)
+        {
+            case "product": return rid;
+            case "version": return (await _db.ProductVersions.Find(v => v.Id == rid).FirstOrDefaultAsync())?.ProductId;
+            case "requirement": return (await _db.Requirements.Find(r => r.Id == rid).FirstOrDefaultAsync())?.ProductId;
+            case "feature": return (await _db.Features.Find(f => f.Id == rid).FirstOrDefaultAsync())?.ProductId;
+            case "defect": return (await _db.DefectReports.Find(d => d.Id == rid).FirstOrDefaultAsync())?.TracedProductId;
+            default: return null;
+        }
+    }
+
+    /// <summary>
+    /// 追溯关系分析：前端传入一条关系链（节点 + 带关系类型的边），后端按 id 从 DB 补全描述/时间戳，
+    /// 调 AI 流式输出整条链的前因后果、关键对象与关系、重要时间节点（SSE）。规则 #6 可视化。
+    /// </summary>
+    [HttpPost("graph/relation-analysis/stream")]
+    public async Task RelationAnalysis([FromBody] RelationAnalysisRequest request)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers["X-Accel-Buffering"] = "no";
+        async Task Sse(string evt, object data)
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(data);
+            await Response.WriteAsync($"event: {evt}\ndata: {json}\n\n");
+            await Response.Body.FlushAsync();
+        }
+
+        var userId = GetUserId();
+        var chainNodes = request.Nodes ?? new();
+        var chainEdges = request.Edges ?? new();
+        if (chainNodes.Count == 0) { await Sse("error", new { message = "关系链为空" }); return; }
+
+        var anchorProductId = await ResolveNodeProductIdAsync(request.AnchorId ?? "");
+        if (string.IsNullOrEmpty(anchorProductId) || await FindAccessibleProductAsync(anchorProductId, userId) == null)
+        { await Sse("error", new { message = "无权访问该关系链" }); return; }
+
+        await Sse("phase", new { message = "正在汇总关系链…" });
+
+        string Strip(string? s) => System.Text.RegularExpressions.Regex.Replace(s ?? "", "<[^>]+>", " ")
+            .Replace("&nbsp;", " ").Replace("&amp;", "&").Replace("&lt;", "<").Replace("&gt;", ">").Trim();
+        string Short(string? s, int n = 220) { var t = Strip(s); return t.Length > n ? t[..n] + "…" : t; }
+        string D(DateTime? t) => t.HasValue ? t.Value.ToString("yyyy-MM-dd") : "—";
+
+        var labelById = chainNodes.Where(n => !string.IsNullOrEmpty(n.Id)).ToDictionary(n => n.Id!, n => n.Label ?? n.Id!);
+        List<string> idsOf(string type) => chainNodes.Where(n => NodeTypeOf(n.Id ?? "") == type).Select(n => RawId(n.Id ?? "")).Distinct().ToList();
+
+        var reqIds = idsOf("requirement"); var feaIds = idsOf("feature"); var verIds = idsOf("version");
+        var defIds = idsOf("defect"); var custIds = idsOf("customer"); var prodIds = idsOf("product");
+        var reqs = reqIds.Count == 0 ? new List<Requirement>() : await _db.Requirements.Find(r => reqIds.Contains(r.Id)).ToListAsync();
+        var feas = feaIds.Count == 0 ? new List<Feature>() : await _db.Features.Find(f => feaIds.Contains(f.Id)).ToListAsync();
+        var vers = verIds.Count == 0 ? new List<ProductVersion>() : await _db.ProductVersions.Find(v => verIds.Contains(v.Id)).ToListAsync();
+        var defs = defIds.Count == 0 ? new List<DefectReport>() : await _db.DefectReports.Find(d => defIds.Contains(d.Id)).ToListAsync();
+        var custs = custIds.Count == 0 ? new List<Customer>() : await _db.Customers.Find(c => custIds.Contains(c.Id)).ToListAsync();
+        var prods = prodIds.Count == 0 ? new List<Product>() : await _db.Products.Find(p => prodIds.Contains(p.Id)).ToListAsync();
+
+        var objLines = new List<string>();
+        var timeline = new List<(DateTime when, string label)>();
+        foreach (var p in prods) objLines.Add($"产品 [{p.ProductNo}] {p.Name}（分级 {p.Grade}，状态 {p.CurrentState ?? "—"}）");
+        foreach (var v in vers)
+        {
+            objLines.Add($"版本 {v.VersionName}（生命周期 {v.Lifecycle}/{v.CurrentState ?? "—"}；计划发布 {D(v.PlannedReleaseAt)}，已发布 {D(v.ReleasedAt)}）");
+            if (v.ReleasedAt.HasValue) timeline.Add((v.ReleasedAt.Value, $"版本 {v.VersionName} 发布"));
+        }
+        foreach (var c in custs) objLines.Add($"客户 {c.Name}（{c.Company}）");
+        foreach (var r in reqs)
+        {
+            objLines.Add($"需求 [{r.RequirementNo}] {r.Title}（分级 {r.Grade}，状态 {r.CurrentState ?? "—"}；创建 {D(r.CreatedAt)}）描述：{Short(r.Description)}");
+            timeline.Add((r.CreatedAt, $"需求 {r.RequirementNo} 创建"));
+        }
+        foreach (var f in feas)
+        {
+            objLines.Add($"功能 [{f.FeatureNo}] {f.Title}（分级 {f.Grade}，状态 {f.CurrentState ?? "—"}；创建 {D(f.CreatedAt)}）描述：{Short(f.Description)}");
+            timeline.Add((f.CreatedAt, $"功能 {f.FeatureNo} 创建"));
+        }
+        foreach (var d in defs)
+        {
+            objLines.Add($"缺陷 [{d.DefectNo}] {d.Title}（严重度 {d.Severity ?? "—"}，优先级 {d.Priority ?? "—"}，状态 {d.Status}；提交 {D(d.SubmittedAt ?? d.CreatedAt)}，解决 {D(d.ResolvedAt)}，关闭 {D(d.ClosedAt)}）描述：{Short(d.RawContent)}");
+            timeline.Add((d.SubmittedAt ?? d.CreatedAt, $"缺陷 {d.DefectNo} 提交"));
+            if (d.ResolvedAt.HasValue) timeline.Add((d.ResolvedAt.Value, $"缺陷 {d.DefectNo} 解决"));
+        }
+
+        var relLabel = new Dictionary<string, string>
+        {
+            ["contains"] = "包含", ["includes"] = "关联需求", ["implements"] = "实现",
+            ["from-customer"] = "来自客户", ["traces"] = "追溯", ["feature-in-version"] = "纳入功能",
+        };
+        var relLines = chainEdges.Select(e =>
+        {
+            var sl = labelById.TryGetValue(e.Source ?? "", out var a) ? a : e.Source;
+            var tl = labelById.TryGetValue(e.Target ?? "", out var b) ? b : e.Target;
+            var rl = relLabel.TryGetValue(e.Type ?? "", out var r) ? r : (e.Type ?? "关联");
+            return $"{sl} —[{rl}]→ {tl}";
+        }).Distinct().ToList();
+
+        var timelineLines = timeline.OrderBy(t => t.when).Select(t => $"{t.when:yyyy-MM-dd}：{t.label}").ToList();
+        var anchorLabel = labelById.TryGetValue(request.AnchorId ?? "", out var al) ? al : request.AnchorId;
+
+        var sbCtx = new System.Text.StringBuilder();
+        sbCtx.AppendLine($"## 分析锚点\n{anchorLabel}");
+        sbCtx.AppendLine($"\n## 关系链中的对象（共 {objLines.Count} 个）");
+        foreach (var l in objLines) sbCtx.AppendLine($"- {l}");
+        sbCtx.AppendLine($"\n## 对象间关系（共 {relLines.Count} 条）");
+        foreach (var l in relLines) sbCtx.AppendLine($"- {l}");
+        if (timelineLines.Count > 0)
+        {
+            sbCtx.AppendLine($"\n## 时间线");
+            foreach (var l in timelineLines) sbCtx.AppendLine($"- {l}");
+        }
+        var userContent = sbCtx.ToString();
+        if (userContent.Length > 9000) userContent = userContent[..9000];
+
+        var systemPrompt =
+            "你是资深产品关系分析专家。下面给出一条以某个对象为锚点的「追溯关系链」，包含全部关联对象、它们之间的关系、以及关键时间线。\n" +
+            "请输出一段结构清晰的中文分析，要求：\n" +
+            "1. 讲清这条链的前因后果（从客户/需求出发，到版本/功能落地，到缺陷追溯的来龙去脉）；\n" +
+            "2. 不要遗漏关键对象与关系，点明锚点对象在整条链中的位置与作用；\n" +
+            "3. 必须体现重要时间节点（创建/发布/提交/解决等），说明时序与因果；\n" +
+            "4. 指出值得关注的关键信息或风险（如缺陷未解决、版本未发布、需求无客户来源等）。\n" +
+            "输出纯文本（可用短小分段/项目符号），不要 markdown 代码块、不要寒暄。";
+
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"), GroupId: null, SessionId: null, UserId: userId,
+            ViewRole: null, DocumentChars: userContent.Length, DocumentHash: null,
+            SystemPromptRedacted: "product-trace-relation-analysis", RequestType: "chat",
+            AppCallerCode: AppCallerRegistry.Product.TraceRelationAnalysis));
+
+        var body = new JsonObject
+        {
+            ["messages"] = new JsonArray
+            {
+                new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                new JsonObject { ["role"] = "user", ["content"] = userContent },
+            },
+            ["temperature"] = 0.4,
+            ["max_tokens"] = 1400,
+            ["include_reasoning"] = true,
+            ["reasoning"] = new JsonObject { ["exclude"] = false },
+        };
+
+        try
+        {
+            await foreach (var chunk in _gateway.StreamAsync(new GatewayRequest
+            {
+                AppCallerCode = AppCallerRegistry.Product.TraceRelationAnalysis,
+                ModelType = ModelTypes.Chat,
+                Stream = true,
+                RequestBody = body,
+            }, CancellationToken.None))
+            {
+                if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                    await Sse("typing", new { text = chunk.Content });
+                else if (chunk.Type == GatewayChunkType.Error)
+                { await Sse("error", new { message = chunk.Error ?? "AI 调用失败" }); return; }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[product-agent] relation analysis stream error");
+            await Sse("error", new { message = "AI 调用异常，请重试" });
+            return;
+        }
+        await Sse("done", new { });
+    }
+
     // ════════════════════════ 需求 AI 智能填充（SSE 流式）════════════════════════
 
     /// <summary>
@@ -2629,6 +2803,30 @@ public class CreateProductDefectRequest
     public string? AssigneeId { get; set; }
     public string? RequirementId { get; set; }
     public string? VersionId { get; set; }
+}
+
+public class RelationAnalysisRequest
+{
+    public string? ProductId { get; set; }
+    /// <summary>锚点节点 id（type:rawId），用于访问校验与定位</summary>
+    public string? AnchorId { get; set; }
+    public List<RelationChainNode> Nodes { get; set; } = new();
+    public List<RelationChainEdge> Edges { get; set; } = new();
+}
+
+public class RelationChainNode
+{
+    public string? Id { get; set; }
+    public string? Type { get; set; }
+    public string? Label { get; set; }
+    public string? Sub { get; set; }
+}
+
+public class RelationChainEdge
+{
+    public string? Source { get; set; }
+    public string? Target { get; set; }
+    public string? Type { get; set; }
 }
 
 public class UpsertUpgradeRequestRequest
