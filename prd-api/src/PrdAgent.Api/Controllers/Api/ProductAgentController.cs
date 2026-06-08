@@ -1412,10 +1412,49 @@ public class ProductAgentController : ControllerBase
             TracedProductId = productId,
             TracedRequirementId = request.RequirementId,
             TracedVersionId = request.VersionId,
+            TracedFeatureId = request.FeatureId,
         };
         await _db.DefectReports.InsertOneAsync(defect);
         await RecalcDefectCountAsync(productId);
         return Ok(ApiResponse<object>.Ok(defect));
+    }
+
+    /// <summary>在产品内编辑缺陷核心字段（标题/描述/严重度/优先级/状态/处理人/关联功能/版本）。完整流转仍在缺陷管理智能体。</summary>
+    [HttpPut("products/{productId}/defects/{defectId}")]
+    public async Task<IActionResult> UpdateProductDefect(string productId, string defectId, [FromBody] UpdateProductDefectRequest request)
+    {
+        var userId = GetUserId();
+        if (await FindAccessibleProductAsync(productId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        var defect = await _db.DefectReports.Find(d => d.Id == defectId && d.TracedProductId == productId && !d.IsDeleted).FirstOrDefaultAsync();
+        if (defect == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "缺陷不存在或未追溯到本产品"));
+        if (string.IsNullOrWhiteSpace(request.Title))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺陷标题不能为空"));
+
+        // 处理人：变更则回填显示名
+        string? assigneeName = defect.AssigneeName;
+        if (request.AssigneeId != defect.AssigneeId)
+            assigneeName = string.IsNullOrWhiteSpace(request.AssigneeId)
+                ? null
+                : (await _db.Users.Find(u => u.UserId == request.AssigneeId).FirstOrDefaultAsync())?.DisplayName;
+
+        var u = Builders<DefectReport>.Update
+            .Set(d => d.Title, request.Title.Trim())
+            .Set(d => d.RawContent, request.Description?.Trim() ?? string.Empty)
+            .Set(d => d.Severity, DefectSeverity.All.Contains(request.Severity ?? "") ? request.Severity : null)
+            .Set(d => d.Priority, DefectPriority.All.Contains(request.Priority ?? "") ? request.Priority : null)
+            .Set(d => d.AssigneeId, string.IsNullOrWhiteSpace(request.AssigneeId) ? null : request.AssigneeId)
+            .Set(d => d.AssigneeName, assigneeName)
+            .Set(d => d.TracedFeatureId, string.IsNullOrWhiteSpace(request.FeatureId) ? null : request.FeatureId)
+            .Set(d => d.TracedVersionId, string.IsNullOrWhiteSpace(request.VersionId) ? null : request.VersionId)
+            .Set(d => d.UpdatedAt, DateTime.UtcNow);
+        var statusVal = request.Status ?? string.Empty;
+        if (DefectStatus.All.Contains(statusVal))
+            u = u.Set(d => d.Status, statusVal);
+
+        await _db.DefectReports.UpdateOneAsync(d => d.Id == defectId, u);
+        var updated = await _db.DefectReports.Find(d => d.Id == defectId).FirstOrDefaultAsync();
+        return Ok(ApiResponse<object>.Ok(updated));
     }
 
     /// <summary>解除缺陷的产品追溯。</summary>
@@ -2802,6 +2841,19 @@ public class CreateProductDefectRequest
     public string? Priority { get; set; }
     public string? AssigneeId { get; set; }
     public string? RequirementId { get; set; }
+    public string? VersionId { get; set; }
+    public string? FeatureId { get; set; }
+}
+
+public class UpdateProductDefectRequest
+{
+    public string Title { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public string? Severity { get; set; }
+    public string? Priority { get; set; }
+    public string? Status { get; set; }
+    public string? AssigneeId { get; set; }
+    public string? FeatureId { get; set; }
     public string? VersionId { get; set; }
 }
 

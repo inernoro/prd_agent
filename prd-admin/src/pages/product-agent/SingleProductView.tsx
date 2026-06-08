@@ -7,13 +7,14 @@
  * 升级申请并入「版本」tab；缺陷排在客户之前。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import type { EChartsOption } from 'echarts';
 import { Plus, Trash2, GitBranch, ListChecks, Puzzle, UserCog, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard, Table2, BarChart3, Download, Upload } from 'lucide-react';
 import { EChart } from '@/components/charts/EChart';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+import { systemDialog } from '@/lib/systemDialog';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
-import { ProductKnowledgePanel, DefectLinkerModal } from './ProductRelationModals';
+import { ProductKnowledgePanel } from './ProductRelationModals';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { KanbanBoard } from './KanbanBoard';
 import { RtmMatrix } from './RtmMatrix';
@@ -67,6 +68,8 @@ function orderByHierarchy<T extends { id: string; parentId?: string | null }>(it
   return out;
 }
 
+const SECTION_KEYS = new Set<Section>(['overview', 'versions', 'requirements', 'features', 'board', 'rtm', 'reports', 'defects', 'team', 'knowledge', 'graph']);
+
 const NAV: NavItem<Section>[] = [
   { key: 'overview', label: '工作台', icon: LayoutDashboard },
   { key: 'reports', label: '报表', icon: BarChart3 },
@@ -87,7 +90,17 @@ export function SingleProductView() {
   const { categories } = useProductCategories();
   const [product, setProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
-  const [active, setActive] = useState<Section>('overview');
+  // 当前 tab 记录在 URL（?tab=），从对象详情页返回时能停在原 tab，而不是回弹到工作台。
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const active: Section = (tabParam && SECTION_KEYS.has(tabParam as Section)) ? (tabParam as Section) : 'overview';
+  const setActive = (key: Section) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set('tab', key);
+      return next;
+    }, { replace: true });
+  };
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -101,6 +114,14 @@ export function SingleProductView() {
   }, [reload]);
 
   const onDelete = async () => {
+    const ok = await systemDialog.confirm({
+      title: '删除产品',
+      message: `确定删除产品「${product?.name ?? ''}」吗？该产品下的需求、功能、版本等关联数据将一并不可访问，此操作不可恢复。`,
+      tone: 'danger',
+      confirmText: '删除',
+      cancelText: '取消',
+    });
+    if (!ok) return;
     const res = await deleteProduct(productId);
     if (res.success) navigate('/product-agent');
   };
@@ -611,7 +632,6 @@ function DefectsTab({ productId }: { productId: string }) {
   const navigate = useNavigate();
   const [items, setItems] = useState<TracedDefect[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showLinker, setShowLinker] = useState(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -634,15 +654,9 @@ function DefectsTab({ productId }: { productId: string }) {
         >
           <Plus size={15} /> 新建缺陷
         </button>
-        <button
-          onClick={() => setShowLinker(true)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-sm"
-        >
-          关联已有缺陷
-        </button>
       </div>
       {items.length === 0 ? (
-        <EmptyHint text="还没有缺陷追溯到本产品。点上方关联已有缺陷，或在需求详情页里把缺陷追溯到具体需求。缺陷本体在「缺陷管理智能体」里维护。" />
+        <EmptyHint text="还没有缺陷。点上方「新建缺陷」创建本产品的第一个缺陷。" />
       ) : (
         <div className="flex flex-col gap-2">
           {items.map((d) => (
@@ -660,9 +674,6 @@ function DefectsTab({ productId }: { productId: string }) {
             />
           ))}
         </div>
-      )}
-      {showLinker && (
-        <DefectLinkerModal productId={productId} onClose={() => setShowLinker(false)} onLinked={() => void reload()} />
       )}
     </div>
   );
