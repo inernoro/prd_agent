@@ -555,6 +555,7 @@ export type ListPmGoalsContract = (projectId: string) => Promise<ApiResponse<{ i
 export type CreatePmGoalContract = (projectId: string, input: SavePmGoalInput) => Promise<ApiResponse<PmGoal>>;
 export type UpdatePmGoalContract = (goalId: string, input: SavePmGoalInput) => Promise<ApiResponse<{ updated: boolean }>>;
 export type SetGoalAsMilestoneContract = (goalId: string, enabled: boolean) => Promise<ApiResponse<{ isMilestone: boolean }>>;
+export type ReparentPmGoalContract = (goalId: string, parentId: string | null) => Promise<ApiResponse<{ updated: boolean }>>;
 export type DeletePmGoalContract = (goalId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
 
 // ── 审计日志 ──

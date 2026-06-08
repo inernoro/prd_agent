@@ -2028,6 +2028,7 @@ export {
   createPmGoalReal as createPmGoal,
   updatePmGoalReal as updatePmGoal,
   setGoalAsMilestoneReal as setGoalAsMilestone,
+  reparentPmGoalReal as reparentPmGoal,
   deletePmGoalReal as deletePmGoal,
   listPmGoalCheckInsReal as listPmGoalCheckIns,
   addPmGoalCheckInReal as addPmGoalCheckIn,

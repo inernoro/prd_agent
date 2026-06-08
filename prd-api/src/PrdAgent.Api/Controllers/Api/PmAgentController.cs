@@ -1162,6 +1162,72 @@ public class PmAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { isMilestone = false }));
     }
 
+    /// <summary>调整目标层级（画布拖拽，Xmind 式）：把目标挂到新父目标下，或升为顶层(parentId 空)。
+    /// 校验：同范围、不挂到自身/后代(防环)、调整后层级不超上限；级联更新整棵子树的 Depth。</summary>
+    [HttpPost("goals/{goalId}/reparent")]
+    public async Task<IActionResult> ReparentGoal(string goalId, [FromBody] ReparentGoalRequest request)
+    {
+        var userId = GetUserId();
+        var g = await _db.PmGoals.Find(x => x.Id == goalId).FirstOrDefaultAsync();
+        if (g == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "目标不存在"));
+        var project = await FindAccessibleProjectAsync(g.ProjectId, userId);
+        if (project == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (g.Scope == PmGoalScope.Personal && g.OwnerId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "个人目标仅本人可调整"));
+        if (g.Scope == PmGoalScope.Team && project.OwnerId != userId && project.LeaderId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "团队目标仅立项人或负责人可调整"));
+
+        var newParentId = string.IsNullOrWhiteSpace(request.ParentId) ? null : request.ParentId;
+        if (newParentId == goalId)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不能挂到自己下面"));
+        if (newParentId == (g.ParentId ?? null))
+            return Ok(ApiResponse<object>.Ok(new { updated = false })); // 没变化
+
+        var all = await _db.PmGoals.Find(x => x.ProjectId == g.ProjectId).ToListAsync();
+        var childrenByParent = all.GroupBy(x => x.ParentId ?? "").ToDictionary(x => x.Key, x => x.ToList());
+
+        var newBaseDepth = 0;
+        if (newParentId != null)
+        {
+            var parent = all.FirstOrDefault(x => x.Id == newParentId);
+            if (parent == null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "目标父级不存在"));
+            if (parent.Scope != g.Scope)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅可在同一范围（团队/个人）内调整层级"));
+            // 防环：新父不能是本目标的后代
+            var subtree = new HashSet<string>();
+            var st = new Stack<string>(); st.Push(goalId);
+            while (st.Count > 0) { var cur = st.Pop(); if (!subtree.Add(cur)) continue; if (childrenByParent.TryGetValue(cur, out var cs)) foreach (var c in cs) st.Push(c.Id); }
+            if (subtree.Contains(newParentId))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不能挂到自己的子目标下（会形成循环）"));
+            newBaseDepth = parent.Depth + 1;
+        }
+
+        // BFS 计算子树新深度并校验上限
+        var newDepth = new Dictionary<string, int>();
+        var q = new Queue<(string id, int depth)>(); q.Enqueue((goalId, newBaseDepth));
+        while (q.Count > 0)
+        {
+            var (id, depth) = q.Dequeue();
+            if (newDepth.ContainsKey(id)) continue;
+            if (depth >= PmGoal.MaxGoalDepth)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"调整后层级超过上限（最多 {PmGoal.MaxGoalDepth} 层）"));
+            newDepth[id] = depth;
+            if (childrenByParent.TryGetValue(id, out var cs)) foreach (var c in cs) q.Enqueue((c.Id, depth + 1));
+        }
+
+        var now = DateTime.UtcNow;
+        foreach (var kv in newDepth)
+        {
+            if (kv.Key == goalId)
+                await _db.PmGoals.UpdateOneAsync(x => x.Id == kv.Key,
+                    Builders<PmGoal>.Update.Set(x => x.ParentId, newParentId).Set(x => x.Depth, kv.Value).Set(x => x.UpdatedAt, now));
+            else
+                await _db.PmGoals.UpdateOneAsync(x => x.Id == kv.Key,
+                    Builders<PmGoal>.Update.Set(x => x.Depth, kv.Value).Set(x => x.UpdatedAt, now));
+        }
+        return Ok(ApiResponse<object>.Ok(new { updated = true }));
+    }
+
     /// <summary>删除目标。个人目标仅本人可删</summary>
     [HttpDelete("goals/{goalId}")]
     public async Task<IActionResult> DeleteGoal(string goalId)
@@ -3536,6 +3602,12 @@ public class UpdateWorkLogRequest
 public class ToggleGoalMilestoneRequest
 {
     public bool Enabled { get; set; }
+}
+
+public class ReparentGoalRequest
+{
+    /// <summary>新父目标 Id；空/缺省=升为顶层</summary>
+    public string? ParentId { get; set; }
 }
 
 public class MilestoneRequest

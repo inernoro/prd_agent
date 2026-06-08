@@ -243,7 +243,7 @@ export function GoalDetailDrawer({ projectId, goal, allGoals, businessGoal, crea
           <label className="text-[11px]" style={{ color: 'var(--text-muted)' }}>标题</label>
           <input autoFocus value={draft.title || ''} disabled={!canWrite} onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))} placeholder="目标标题" className={inputCls} style={inputStyle} />
           <label className="text-[11px]" style={{ color: 'var(--text-muted)' }}>详细描述</label>
-          <textarea value={draft.description || ''} disabled={!canWrite} onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))} placeholder="目标的落地思路 / 可行性说明" rows={5} className={`${inputCls} resize-y`} style={inputStyle} />
+          <textarea value={draft.description || ''} disabled={!canWrite} onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))} placeholder="目标的落地思路 / 可行性说明" rows={5} className={`${inputCls} resize-y`} style={{ ...inputStyle, minHeight: 120 }} />
           <div className="flex gap-2">
             <div className="flex-1 flex flex-col gap-1">
               <label className="text-[11px]" style={{ color: 'var(--text-muted)' }}>一句话指标（可选）</label>
@@ -373,7 +373,7 @@ export function GoalDetailDrawer({ projectId, goal, allGoals, businessGoal, crea
                 </div>
                 {canWrite && (
                   <div className="rounded-lg border p-2 flex flex-col gap-1.5" style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }}>
-                    <textarea value={ciNote} onChange={(e) => setCiNote(e.target.value)} placeholder="本次进展 / 阻塞 / 讨论…" rows={2} className="w-full text-[12px] rounded-md px-2 py-1.5 outline-none border resize-y" style={inputStyle} />
+                    <textarea value={ciNote} onChange={(e) => setCiNote(e.target.value)} placeholder="本次进展 / 阻塞 / 讨论…" rows={5} className="w-full text-[12px] rounded-md px-2 py-1.5 outline-none border resize-y" style={{ ...inputStyle, minHeight: 120 }} />
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <div className="flex gap-1 rounded-md p-0.5" style={{ background: 'var(--bg-base)' }}>
                         {(['high', 'medium', 'low'] as PmGoalConfidence[]).map((c) => (

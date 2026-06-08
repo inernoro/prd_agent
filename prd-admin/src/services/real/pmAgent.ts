@@ -52,6 +52,7 @@ import type {
   CreatePmGoalContract,
   UpdatePmGoalContract,
   SetGoalAsMilestoneContract,
+  ReparentPmGoalContract,
   DeletePmGoalContract,
   ListPmGoalCheckInsContract,
   AddPmGoalCheckInContract,
@@ -223,6 +224,10 @@ export const updatePmGoalReal: UpdatePmGoalContract = async (goalId, input) => {
 
 export const setGoalAsMilestoneReal: SetGoalAsMilestoneContract = async (goalId, enabled) => {
   return await apiRequest(api.pm.goals.milestone(encodeURIComponent(goalId)), { method: 'POST', body: { enabled } });
+};
+
+export const reparentPmGoalReal: ReparentPmGoalContract = async (goalId, parentId) => {
+  return await apiRequest(api.pm.goals.reparent(encodeURIComponent(goalId)), { method: 'POST', body: { parentId } });
 };
 
 export const deletePmGoalReal: DeletePmGoalContract = async (goalId) => {
