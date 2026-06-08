@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Search, Pencil, Trash2 } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+import { systemDialog } from '@/lib/systemDialog';
 import { listProducts, createProduct, updateProduct, deleteProduct } from '@/services/real/productAgent';
 import type { Product, ProductGrade, ProductCategory } from './types';
 import { useProductCategories, categoryLabel, categoryColor } from './productCategories';
@@ -119,6 +120,14 @@ export function ProductsSection() {
                   <button
                     onClick={async (e) => {
                       e.stopPropagation();
+                      const ok = await systemDialog.confirm({
+                        title: '删除产品',
+                        message: `确定删除产品「${p.name}」吗？该产品下的需求、功能、版本等关联数据将一并不可访问，此操作不可恢复。`,
+                        tone: 'danger',
+                        confirmText: '删除',
+                        cancelText: '取消',
+                      });
+                      if (!ok) return;
                       const res = await deleteProduct(p.id);
                       if (res.success) await reload();
                     }}

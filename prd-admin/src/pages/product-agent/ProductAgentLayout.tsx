@@ -5,6 +5,7 @@
  */
 import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
+import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
 
 export interface NavItem<K extends string = string> {
   key: K;
@@ -69,6 +70,9 @@ export function ProductAgentLayout<K extends string>({
 
       {/* 主内容 */}
       <main className="flex-1 min-h-0 flex flex-col overflow-hidden">{children}</main>
+
+      {/* 全屏布局不经 AppShell，需自挂确认/提示弹窗宿主（systemDialog 才能在本页生效） */}
+      <SystemDialogHost />
     </div>
   );
 }
