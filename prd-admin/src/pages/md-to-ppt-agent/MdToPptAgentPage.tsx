@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FileText,
   Play,
@@ -66,12 +66,19 @@ function looksLikeDeck(html: string): boolean {
 }
 
 const THEME_OPTIONS = [
-  { value: 'dark-glass', label: '深色玻璃' },
-  { value: 'light-clean', label: '浅色简洁' },
-  { value: 'gradient-purple', label: '紫色渐变' },
-  { value: 'corporate-blue', label: '商务蓝' },
-  { value: 'warm-earth', label: '暖色大地' },
+  { value: 'dark-glass', label: '深色玻璃', desc: '近黑底 + 靛蓝/青/紫霓虹，科技感（默认）' },
+  { value: 'light-clean', label: '浅色简洁', desc: '白底深字、大量留白，干净专业（文档风）' },
+  { value: 'gradient-purple', label: '紫色渐变', desc: '紫粉霓虹、活力大胆，适合发布会/营销' },
+  { value: 'corporate-blue', label: '商务蓝', desc: '藏青稳重、克制，适合汇报/方案' },
+  { value: 'warm-earth', label: '暖色大地', desc: '炭褐底 + 琥珀橙，温暖有质感' },
 ];
+
+// 按内容长度估算页数（让用户生成前心里有数、可调）。约 700 字/页，夹在 4~20 页。
+function estimatePages(content: string): number {
+  const len = content.trim().length;
+  if (len === 0) return 6;
+  return Math.max(4, Math.min(20, Math.round(len / 700)));
+}
 
 // ─── Page ────────────────────────────────────────────────────────────────────
 
@@ -123,6 +130,9 @@ export function MdToPptAgentPage() {
   const diagDivRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  // 按内容估算建议页数（生成前让用户心里有数、可调）
+  const suggestedPages = useMemo(() => estimatePages(textContent), [textContent]);
 
   // 翻页：直接驱动预览 iframe 里的 reveal.js（同源，可直接调用）。
   // reveal 自带的控制箭头太小、键盘还得先点进 iframe 取焦点，用户常以为「翻不了页」。
@@ -223,7 +233,7 @@ export function MdToPptAgentPage() {
     const cleanup = streamMdToPptConvert({
       content,
       theme,
-      slideCount,
+      slideCount: slideCount ?? suggestedPages,
       engine,
       onStart: () => {
         // Phase already set to streaming above
@@ -261,7 +271,7 @@ export function MdToPptAgentPage() {
     });
 
     cleanupRef.current = cleanup;
-  }, [textContent, theme, slideCount, engine]);
+  }, [textContent, theme, slideCount, engine, suggestedPages]);
 
   const handleAbort = useCallback(() => {
     cleanupRef.current?.();
@@ -509,11 +519,40 @@ export function MdToPptAgentPage() {
 
           {/* Options */}
           <div className="shrink-0 border-t border-white/8 p-3 flex flex-col gap-2">
-            {/* Theme selector */}
+            {/* 引擎选择（显眼，让用户清楚走 MAP 直调还是 CDS Agent） */}
             <div className="flex items-center gap-2">
-              <label className="text-[10px] text-[var(--text-tertiary)] w-10 shrink-0">
-                主题
-              </label>
+              <label className="text-[10px] text-[var(--text-tertiary)] w-10 shrink-0">引擎</label>
+              <div className="flex-1 flex gap-1.5">
+                <button
+                  onClick={() => setEngine('map')}
+                  className={[
+                    'flex-1 text-[11px] py-1.5 rounded-md border transition-colors',
+                    engine === 'map'
+                      ? 'bg-purple-500/20 text-purple-200 border-purple-500/30'
+                      : 'bg-white/5 text-[var(--text-tertiary)] border-white/8 hover:border-white/16',
+                  ].join(' ')}
+                  title="MAP 直调：速度快、稳定"
+                >
+                  MAP 直调
+                </button>
+                <button
+                  onClick={() => setEngine('agent')}
+                  className={[
+                    'flex-1 text-[11px] py-1.5 rounded-md border transition-colors',
+                    engine === 'agent'
+                      ? 'bg-blue-500/20 text-blue-200 border-blue-500/30'
+                      : 'bg-white/5 text-[var(--text-tertiary)] border-white/8 hover:border-white/16',
+                  ].join(' ')}
+                  title="CDS Agent：走 CDS sidecar，可观测实时诊断"
+                >
+                  CDS Agent
+                </button>
+              </div>
+            </div>
+
+            {/* 风格模板（5 套，用户直接选，不用描述清楚自己要什么） */}
+            <div className="flex items-center gap-2">
+              <label className="text-[10px] text-[var(--text-tertiary)] w-10 shrink-0">风格</label>
               <div className="relative flex-1">
                 <select
                   value={theme}
@@ -532,17 +571,18 @@ export function MdToPptAgentPage() {
                 />
               </div>
             </div>
+            <div className="text-[10px] text-[var(--text-tertiary)] pl-12 -mt-1">
+              {THEME_OPTIONS.find((t) => t.value === theme)?.desc}
+            </div>
 
-            {/* Slide count */}
+            {/* 页数（按内容估算建议值，可改） */}
             <div className="flex items-center gap-2">
-              <label className="text-[10px] text-[var(--text-tertiary)] w-10 shrink-0">
-                页数
-              </label>
+              <label className="text-[10px] text-[var(--text-tertiary)] w-10 shrink-0">页数</label>
               <input
                 type="number"
                 min={3}
                 max={30}
-                placeholder="自动"
+                placeholder={`建议 ${suggestedPages} 页`}
                 value={slideCount ?? ''}
                 onChange={(e) => {
                   const v = parseInt(e.target.value);
@@ -550,6 +590,9 @@ export function MdToPptAgentPage() {
                 }}
                 className="flex-1 text-xs py-1.5 px-2.5 rounded-md bg-white/5 text-[var(--text-primary)] border border-white/8 outline-none focus:border-purple-500/40"
               />
+              <span className="text-[10px] text-[var(--text-tertiary)] shrink-0">
+                {slideCount ? `约 ${slideCount} 页` : `按内容约 ${suggestedPages} 页`}
+              </span>
             </div>
 
             {/* Generate button */}

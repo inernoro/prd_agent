@@ -38,58 +38,89 @@ public class MdToPptController : ControllerBase
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<MdToPptController> _logger;
 
-    // PPT 系统提示词（两条路径共用），强调直接输出 HTML，禁止工具调用
-    private const string PptSystemPrompt =
-        "你是顶级演示设计师，作品对标 Apple Keynote / Stripe / Linear / Vercel 的发布会幻灯。" +
-        "唯一任务：直接输出一个完整、惊艳、可直接演示的 reveal.js HTML 文件。禁止调用任何工具或执行命令，禁止输出任何解释或代码块标记。\n\n" +
-        "## 硬技术规范\n" +
-        "- reveal.js 4.x CDN：https://cdn.jsdelivr.net/npm/reveal.js@4/dist/reveal.js + reveal.css（不引官方主题，用下面的自定义主题）\n" +
-        "- 初始化：Reveal.initialize({ hash:false, transition:'slide', slideNumber:'c/t', controls:true, progress:true, center:true, margin:0.06 })（不要写 width/height，让它自适应容器）\n" +
-        "- 全部 CSS 内联在 <head> 的 <style> 里；输出完整 <!DOCTYPE html>…</html>；不要 markdown 代码围栏\n" +
-        "- 绝对禁止任何 emoji 字符（一切表情/符号图标都不许，包括大脑/尺子/键盘/循环箭头/程序员等图标 emoji）；需要图标时只用 inline SVG 或 CSS 几何图形\n" +
-        "- 绝对禁止对标题/正文用 `color:transparent` + `background-clip:text`（嵌入式渲染常常不生效，会导致文字整页消失）；标题一律实色 #eef2ff，渐变只能用在 .orb/.bar 等非文字装饰上\n\n" +
-        "## 设计系统（必须照此实现，这是质量下限不是参考）\n" +
-        "把下面这套 CSS 设计 token 与组件类落进 <style>，并在每页真正用上：\n" +
-        "```\n" +
-        ":root{--bg:#070b18;--bg2:#0f1530;--ink:#f6f8ff;--muted:#9aa6c4;--line:rgba(255,255,255,.09);\n" +
-        "--card:rgba(255,255,255,.045);--a1:#6366f1;--a2:#22d3ee;--a3:#a855f7;--a4:#f472b6;}\n" +
-        "html,body,.reveal{background:radial-gradient(1200px 800px at 80% -10%,#1b2350 0%,var(--bg) 55%);}\n" +
-        ".reveal{font-family:'Inter',-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',system-ui,sans-serif;color:var(--ink);}\n" +
-        ".reveal .slides section{text-align:left;padding:2vh 5vw;}\n" +
-        ".eyebrow{text-transform:uppercase;letter-spacing:.24em;font-size:.78rem;font-weight:800;color:var(--a2);margin-bottom:18px;}\n" +
-        ".title-xl{font-size:clamp(44px,6.6vw,86px);font-weight:850;line-height:1.06;letter-spacing:-.025em;margin:0;color:#eef2ff;}\n" +
-        ".title-md{font-size:clamp(30px,4vw,52px);font-weight:800;line-height:1.1;letter-spacing:-.02em;margin:0 0 6px;color:#f6f8ff;}\n" +
-        ".lead{font-size:clamp(17px,1.6vw,22px);color:var(--muted);max-width:46ch;line-height:1.5;}\n" +
-        ".grid{display:grid;gap:22px;margin-top:34px;}.g2{grid-template-columns:1fr 1fr;}.g3{grid-template-columns:repeat(3,1fr);}\n" +
-        ".card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:26px 28px;backdrop-filter:blur(10px);}\n" +
-        ".card h3{margin:0 0 8px;font-size:1.15rem;font-weight:800;color:#f6f8ff;}.card p{margin:0;color:var(--muted);font-size:.98rem;line-height:1.5;}\n" +
-        ".stat{font-size:clamp(40px,5.5vw,72px);font-weight:850;letter-spacing:-.02em;color:#a5b4fc;}\n" +
-        ".stat-l{color:var(--muted);font-size:.95rem;margin-top:4px;}\n" +
-        ".chip{display:inline-flex;align-items:center;gap:8px;padding:7px 14px;border:1px solid var(--line);border-radius:999px;font-size:.85rem;color:var(--ink);background:rgba(255,255,255,.03);}\n" +
-        ".bar{width:54px;height:5px;border-radius:9px;background:linear-gradient(90deg,var(--a1),var(--a2));margin:20px 0;}\n" +
-        ".quote{font-size:clamp(26px,3.2vw,42px);font-weight:700;line-height:1.3;border-left:4px solid var(--a3);padding-left:28px;}\n" +
-        ".orb{position:absolute;border-radius:50%;filter:blur(80px);opacity:.5;z-index:0;pointer-events:none;}.orb.a{width:420px;height:420px;background:var(--a1);right:-80px;top:-90px;}.orb.b{width:340px;height:340px;background:var(--a3);left:-70px;bottom:-90px;}\n" +
-        ".reveal .slide-number{background:transparent;color:var(--muted);}\n" +
-        "li{margin:10px 0;line-height:1.5;}ul{list-style:none;padding:0;}ul li{padding-left:26px;position:relative;}ul li::before{content:'';position:absolute;left:0;top:.6em;width:8px;height:8px;border-radius:3px;background:linear-gradient(120deg,var(--a1),var(--a2));}\n" +
-        "```\n\n" +
-        "## 每页强制结构（杜绝『一行居中标题』的空洞页）\n" +
-        "除封面/结语外，每一页都必须包含：① 一个 .eyebrow 小标签（章节/类别）→ ② 一个 .title-md 标题 → ③ 结构化正文（卡片网格 / 数据 / 对比 / 列表，至少一种）→ ④ 至少一个视觉装置（.orb 光晕、.bar 强调条、卡片、或大号 .stat）。绝不允许出现只有一句话居中、四周大片空白的页。\n\n" +
-        "## 版式库（按内容选用，全篇至少混用 4 种，禁止每页雷同）\n" +
-        "1. 封面：.orb 光晕背景 + .eyebrow + 超大 .title-xl 渐变标题 + .lead 副标题 + 底部 .chip 行（作者/日期/标签）\n" +
-        "2. 要点卡片：.grid.g3 或 .g2，每个 .card 一个要点（标题 + 说明），不要写成裸列表\n" +
-        "3. 数据看板：.grid.g3，每格 .stat 大数字 + .stat-l 说明，凸显关键指标\n" +
-        "4. 两栏对比：.grid.g2，左『现状/问题』右『方案/结果』，各用一张 .card\n" +
-        "5. 金句/转场：.quote 大字引用 + 左侧 .a3 强调条 + .orb 背景\n" +
-        "6. 流程/时间线：横向或纵向步骤，每步一个序号圆 + 标题 + 说明\n" +
-        "7. 结语：居中 .title-xl + 一句行动号召 + .chip 联系方式\n\n" +
-        "## 质量自检（输出前自问）\n" +
-        "- 随手翻到任意一页，是否都『信息充实 + 有设计感』，不是空洞标题页？\n" +
-        "- 是否真的用了渐变标题、卡片、光晕、强调条这些装置，而不是纯文字？\n" +
-        "- 配色克制（深底 + 1-2 个霓虹强调色），留白舒展，层级分明，像一线大厂发布会？\n" +
-        "- 至少 6 页，逻辑连贯，版式不重复？\n\n" +
-        "## 输出要求（最高优先级）\n" +
-        "- 仅输出完整 HTML 文件内容，第一个字符是 <，最后是 >，中间不得有任何解释、标注或 ``` 代码块标记\n" +
-        "- 禁止使用工具调用，禁止执行命令，直接以纯文本形式输出 HTML";
+    // PPT 系统提示词（按风格主题生成不同设计系统）。两条路径共用。
+    private static string BuildPptSystemPrompt(string? theme)
+    {
+        var (tokens, tone) = ThemeTokens(theme);
+        return
+            "你是顶级演示设计师，作品对标 Apple Keynote / Stripe / Linear / Vercel 的发布会幻灯。" +
+            "唯一任务：直接输出一个完整、惊艳、可直接演示的 reveal.js HTML 文件。禁止调用任何工具或执行命令，禁止输出任何解释或代码块标记。\n\n" +
+            "## 硬技术规范\n" +
+            "- reveal.js 4.x CDN：https://cdn.jsdelivr.net/npm/reveal.js@4/dist/reveal.js + reveal.css（不引官方主题，用下面的自定义主题）\n" +
+            "- 初始化：Reveal.initialize({ hash:false, transition:'slide', slideNumber:'c/t', controls:true, progress:true, center:true, margin:0.06 })（不要写 width/height，让它自适应容器）\n" +
+            "- 全部 CSS 内联在 <head> 的 <style> 里；输出完整 <!DOCTYPE html>…</html>；不要 markdown 代码围栏\n" +
+            "- 绝对禁止任何 emoji 字符（一切表情/符号图标都不许）；需要图标时只用 inline SVG 或 CSS 几何图形\n" +
+            "- 绝对禁止对标题/正文用 `color:transparent` + `background-clip:text`（嵌入式渲染常常不生效，会导致文字整页消失）；标题一律用实色 var(--ink)，渐变只能用在 .orb/.bar 等非文字装饰上\n\n" +
+            "## 本次风格：" + tone + "\n" +
+            "严格按上面的风格走（配色、底色、气质），把下面这套 CSS 设计 token 与组件类原样落进 <style>，并在每页真正用上（这是质量下限不是参考）：\n" +
+            "```\n" +
+            tokens +
+            ".reveal{font-family:'Inter',-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',system-ui,sans-serif;color:var(--ink);}\n" +
+            ".reveal .slides section{text-align:left;padding:2vh 5vw;}\n" +
+            ".eyebrow{text-transform:uppercase;letter-spacing:.24em;font-size:.78rem;font-weight:800;color:var(--a2);margin-bottom:18px;}\n" +
+            ".title-xl{font-size:clamp(44px,6.6vw,86px);font-weight:850;line-height:1.06;letter-spacing:-.025em;margin:0;color:var(--ink);}\n" +
+            ".title-md{font-size:clamp(30px,4vw,52px);font-weight:800;line-height:1.1;letter-spacing:-.02em;margin:0 0 6px;color:var(--ink);}\n" +
+            ".lead{font-size:clamp(17px,1.6vw,22px);color:var(--muted);max-width:46ch;line-height:1.5;}\n" +
+            ".grid{display:grid;gap:22px;margin-top:34px;}.g2{grid-template-columns:1fr 1fr;}.g3{grid-template-columns:repeat(3,1fr);}\n" +
+            ".card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:26px 28px;box-shadow:0 2px 14px rgba(0,0,0,.06);}\n" +
+            ".card h3{margin:0 0 8px;font-size:1.15rem;font-weight:800;color:var(--ink);}.card p{margin:0;color:var(--muted);font-size:.98rem;line-height:1.5;}\n" +
+            ".stat{font-size:clamp(40px,5.5vw,72px);font-weight:850;letter-spacing:-.02em;color:var(--a1);}\n" +
+            ".stat-l{color:var(--muted);font-size:.95rem;margin-top:4px;}\n" +
+            ".chip{display:inline-flex;align-items:center;gap:8px;padding:7px 14px;border:1px solid var(--line);border-radius:999px;font-size:.85rem;color:var(--ink);}\n" +
+            ".bar{width:54px;height:5px;border-radius:9px;background:linear-gradient(90deg,var(--a1),var(--a2));margin:20px 0;}\n" +
+            ".quote{font-size:clamp(26px,3.2vw,42px);font-weight:700;line-height:1.3;color:var(--ink);border-left:4px solid var(--a3);padding-left:28px;}\n" +
+            ".orb{position:absolute;border-radius:50%;filter:blur(80px);opacity:var(--orb-op);z-index:0;pointer-events:none;}.orb.a{width:420px;height:420px;background:var(--a1);right:-80px;top:-90px;}.orb.b{width:340px;height:340px;background:var(--a3);left:-70px;bottom:-90px;}\n" +
+            ".reveal .slide-number{background:transparent;color:var(--muted);}\n" +
+            "li{margin:10px 0;line-height:1.5;}ul{list-style:none;padding:0;}ul li{padding-left:26px;position:relative;}ul li::before{content:'';position:absolute;left:0;top:.6em;width:8px;height:8px;border-radius:3px;background:linear-gradient(120deg,var(--a1),var(--a2));}\n" +
+            "```\n\n" +
+            "## 每页强制结构（杜绝『一行居中标题』的空洞页）\n" +
+            "除封面/结语外，每一页都必须包含：① 一个 .eyebrow 小标签 → ② 一个 .title-md 标题 → ③ 结构化正文（卡片网格 / 数据 / 对比 / 列表，至少一种）→ ④ 至少一个视觉装置（.orb 光晕、.bar 强调条、卡片、或大号 .stat）。绝不允许出现只有一句话居中、四周大片空白的页。\n\n" +
+            "## 版式库（按内容选用，全篇至少混用 4 种，禁止每页雷同）\n" +
+            "1. 封面：.orb 光晕背景 + .eyebrow + 超大 .title-xl 标题 + .lead 副标题 + 底部 .chip 行（作者/日期/标签）\n" +
+            "2. 要点卡片：.grid.g3 或 .g2，每个 .card 一个要点（标题 + 说明），不要写成裸列表\n" +
+            "3. 数据看板：.grid.g3，每格 .stat 大数字 + .stat-l 说明\n" +
+            "4. 两栏对比：.grid.g2，左『现状/问题』右『方案/结果』各一张 .card\n" +
+            "5. 金句/转场：.quote 大字引用 + 左侧强调条 + .orb 背景\n" +
+            "6. 流程/时间线：横向或纵向步骤，每步一个序号圆 + 标题 + 说明\n" +
+            "7. 结语：居中 .title-xl + 一句行动号召 + .chip 联系方式\n\n" +
+            "## 质量自检（输出前自问）\n" +
+            "- 随手翻到任意一页，是否都『信息充实 + 有设计感』，不是空洞标题页？\n" +
+            "- 是否真的用了卡片、数据、光晕、强调条这些装置，而不是纯文字？\n" +
+            "- 是否严格贴合本次风格（" + tone + "）的配色与气质？留白舒展、层级分明？\n" +
+            "- 逻辑连贯、版式不重复？\n\n" +
+            "## 输出要求（最高优先级）\n" +
+            "- 仅输出完整 HTML 文件内容，第一个字符是 <，最后是 >，中间不得有任何解释、标注或 ``` 代码块标记\n" +
+            "- 禁止使用工具调用，禁止执行命令，直接以纯文本形式输出 HTML";
+    }
+
+    // 按风格主题返回（CSS token 块 + 风格气质描述）。前端「风格模板」下拉的 5 个值各对应一套配色。
+    private static (string tokens, string tone) ThemeTokens(string? theme)
+    {
+        switch ((theme ?? "dark-glass").Trim().ToLowerInvariant())
+        {
+            case "light-clean":
+                return (
+                    ":root{--bg:#f7f8fc;--bg2:#eef1f8;--ink:#0f172a;--muted:#5b6478;--line:rgba(15,23,42,.1);--card:#ffffff;--a1:#4f46e5;--a2:#0891b2;--a3:#7c3aed;--orb-op:.18;}\nhtml,body,.reveal{background:linear-gradient(180deg,#ffffff,#eef2fb);}\n",
+                    "浅色简洁——白底深字、大量留白、细线点缀，干净专业（Notion/文档风）");
+            case "gradient-purple":
+                return (
+                    ":root{--bg:#1a0b2e;--bg2:#2d1b4e;--ink:#fdf4ff;--muted:#c8b6dc;--line:rgba(255,255,255,.12);--card:rgba(255,255,255,.07);--a1:#c084fc;--a2:#f472b6;--a3:#a855f7;--orb-op:.55;}\nhtml,body,.reveal{background:radial-gradient(1000px 700px at 70% 0%,#3b1d6e 0%,#1a0b2e 60%);}\n",
+                    "紫色渐变——紫粉霓虹、活力大胆，适合发布会/营销");
+            case "corporate-blue":
+                return (
+                    ":root{--bg:#0a1628;--bg2:#0f2138;--ink:#eef6ff;--muted:#8aa0bd;--line:rgba(255,255,255,.1);--card:rgba(255,255,255,.05);--a1:#2563eb;--a2:#38bdf8;--a3:#3b82f6;--orb-op:.4;}\nhtml,body,.reveal{background:linear-gradient(160deg,#0f2138,#0a1628);}\n",
+                    "商务蓝——藏青稳重、克制专业，适合汇报/方案");
+            case "warm-earth":
+                return (
+                    ":root{--bg:#1c1410;--bg2:#2a1f17;--ink:#fdf6ee;--muted:#c8ad95;--line:rgba(255,255,255,.1);--card:rgba(255,255,255,.045);--a1:#f59e0b;--a2:#fb923c;--a3:#d97706;--orb-op:.45;}\nhtml,body,.reveal{background:radial-gradient(1000px 700px at 80% -10%,#3d2817 0%,#1c1410 60%);}\n",
+                    "暖色大地——炭褐底 + 琥珀橙、温暖有质感");
+            default:
+                return (
+                    ":root{--bg:#070b18;--bg2:#0f1530;--ink:#f6f8ff;--muted:#9aa6c4;--line:rgba(255,255,255,.09);--card:rgba(255,255,255,.045);--a1:#6366f1;--a2:#22d3ee;--a3:#a855f7;--orb-op:.5;}\nhtml,body,.reveal{background:radial-gradient(1200px 800px at 80% -10%,#1b2350 0%,var(--bg) 55%);}\n",
+                    "深色玻璃——近黑底 + 靛蓝/青/紫霓虹、毛玻璃卡片，科技感（对标 Vercel/Linear）");
+        }
+    }
+
 
 
     public MdToPptController(
@@ -123,13 +154,14 @@ public class MdToPptController : ControllerBase
         var run = await CreateRunAsync(userId, engine, req.Theme, "convert", req.Content);
         await WriteEventAsync("run", new { runId = run.Id });
 
-        var styleHint = $"目标页数约 {req.SlideCount ?? 8} 页；主题风格：{(string.IsNullOrWhiteSpace(req.Theme) ? "深色现代" : req.Theme)}。";
+        var systemPrompt = BuildPptSystemPrompt(req.Theme);
+        var styleHint = $"目标页数约 {req.SlideCount ?? 8} 页。";
         var userContent = $"{styleHint}\n\n---\n\n# 用户内容\n\n{req.Content?.Trim()}";
 
         if (engine == "agent")
-            await RunAgentStreamAsync(userId, userContent, "PPT", run);
+            await RunAgentStreamAsync(userId, systemPrompt, userContent, "PPT", run);
         else
-            await RunMapStreamAsync(userId, PptSystemPrompt, userContent, AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate, "convert", run);
+            await RunMapStreamAsync(userId, systemPrompt, userContent, AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate, "convert", run);
     }
 
     // ─────────────────────────────────────────────
@@ -149,12 +181,13 @@ public class MdToPptController : ControllerBase
         var run = await CreateRunAsync(userId, engine, null, "patch", req.SlideRequest);
         await WriteEventAsync("run", new { runId = run.Id });
 
+        var systemPrompt = BuildPptSystemPrompt(null);
         var userContent = $"---\n\n# 已有 HTML\n\n```html\n{req.CurrentHtml?.Trim()}\n```\n\n# 修改要求（第 {(req.SlideIndex.HasValue ? req.SlideIndex.Value + 1 : 0)} 页）\n\n{req.SlideRequest?.Trim()}";
 
         if (engine == "agent")
-            await RunAgentStreamAsync(userId, userContent, "PPT 修改", run);
+            await RunAgentStreamAsync(userId, systemPrompt, userContent, "PPT 修改", run);
         else
-            await RunMapStreamAsync(userId, PptSystemPrompt, userContent, AppCallerRegistry.MdToPptAgent.Generation.Patch, "patch", run);
+            await RunMapStreamAsync(userId, systemPrompt, userContent, AppCallerRegistry.MdToPptAgent.Generation.Patch, "patch", run);
     }
 
     // ─────────────────────────────────────────────
@@ -422,7 +455,7 @@ public class MdToPptController : ControllerBase
     // CDS Agent 路径（可观测，诊断插桩）
     // ─────────────────────────────────────────────
 
-    private async Task RunAgentStreamAsync(string userId, string userPrompt, string title, MdToPptRun run)
+    private async Task RunAgentStreamAsync(string userId, string systemPrompt, string userPrompt, string title, MdToPptRun run)
     {
         var overallStart = DateTime.UtcNow;
         InfraConnection? connection = null;
@@ -504,7 +537,7 @@ public class MdToPptController : ControllerBase
             await WriteDiagAsync(new { stage = "start", elapsedMs = startMs, status = session.Status });
 
             // 5. 发送消息（系统提示词 + 用户内容合并）
-            var fullPrompt = $"{PptSystemPrompt}\n\n---\n\n{userPrompt}";
+            var fullPrompt = $"{systemPrompt}\n\n---\n\n{userPrompt}";
             var t4 = DateTime.UtcNow;
             session = await _sessions.SendMessageAsync(userId, session.Id,
                 new SendInfraAgentMessageRequest(fullPrompt),

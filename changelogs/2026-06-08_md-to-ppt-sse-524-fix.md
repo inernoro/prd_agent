@@ -9,3 +9,5 @@
 | fix | prd-admin | MD转PPT 翻页体验：结果工具栏加显眼的上一页/下一页按钮(直接驱动预览 iframe 的 reveal，免去用户找小箭头/点 iframe 取焦点的『翻不了页』困惑) + 生成期间不再糊原始 HTML 流，只显示增长中的字符计数作进度 |
 | feat | prd-api | MD转PPT 落库可重连(server-authority)：生成创建 MdToPptRun 记录(running)并经 SSE run 事件下发 runId，done/error/timeout 全落库；MAP 路径客户端断开不再 return 中止(clientGone 只跳过 SSE 写入、继续生成并落库)；新增 GET runs/{id} + GET runs 历史 |
 | feat | prd-admin | MD转PPT 刷新不再丢：收到 run 事件存 runId 到 sessionStorage，进页/刷新后凭 runId 重连——还在跑就轮询、已完成直接还原结果 |
+| feat | prd-api | MD转PPT 多风格模板：提示词从单一深色玻璃改为 BuildPptSystemPrompt(theme) 按风格出不同设计系统(深色玻璃/浅色简洁/紫色渐变/商务蓝/暖色大地，各一套配色 token)；标题/正文全 token 化(var(--ink)/var(--a1))，浅色模板也能正常显示 |
+| feat | prd-admin | MD转PPT 生成前定页数(按内容约 N 页，可改) + 风格模板下拉带描述(不用描述清楚自己要什么，直接选) + 引擎选择(MAP直调/CDS Agent)移到左侧选项区显眼位置 |
