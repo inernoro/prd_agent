@@ -119,14 +119,17 @@ public class MdToPptController : ControllerBase
         await WriteSsePreambleAsync();
         await WriteEventAsync("start", null);
 
+        var engine = (req.Engine ?? "map").Trim().ToLowerInvariant();
+        var run = await CreateRunAsync(userId, engine, req.Theme, "convert", req.Content);
+        await WriteEventAsync("run", new { runId = run.Id });
+
         var styleHint = $"目标页数约 {req.SlideCount ?? 8} 页；主题风格：{(string.IsNullOrWhiteSpace(req.Theme) ? "深色现代" : req.Theme)}。";
         var userContent = $"{styleHint}\n\n---\n\n# 用户内容\n\n{req.Content?.Trim()}";
 
-        var engine = (req.Engine ?? "map").Trim().ToLowerInvariant();
         if (engine == "agent")
-            await RunAgentStreamAsync(userId, userContent, "PPT");
+            await RunAgentStreamAsync(userId, userContent, "PPT", run);
         else
-            await RunMapStreamAsync(userId, PptSystemPrompt, userContent, AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate, "convert");
+            await RunMapStreamAsync(userId, PptSystemPrompt, userContent, AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate, "convert", run);
     }
 
     // ─────────────────────────────────────────────
@@ -142,13 +145,16 @@ public class MdToPptController : ControllerBase
         await WriteSsePreambleAsync();
         await WriteEventAsync("start", null);
 
+        var engine = (req.Engine ?? "map").Trim().ToLowerInvariant();
+        var run = await CreateRunAsync(userId, engine, null, "patch", req.SlideRequest);
+        await WriteEventAsync("run", new { runId = run.Id });
+
         var userContent = $"---\n\n# 已有 HTML\n\n```html\n{req.CurrentHtml?.Trim()}\n```\n\n# 修改要求（第 {(req.SlideIndex.HasValue ? req.SlideIndex.Value + 1 : 0)} 页）\n\n{req.SlideRequest?.Trim()}";
 
-        var engine = (req.Engine ?? "map").Trim().ToLowerInvariant();
         if (engine == "agent")
-            await RunAgentStreamAsync(userId, userContent, "PPT 修改");
+            await RunAgentStreamAsync(userId, userContent, "PPT 修改", run);
         else
-            await RunMapStreamAsync(userId, PptSystemPrompt, userContent, AppCallerRegistry.MdToPptAgent.Generation.Patch, "patch");
+            await RunMapStreamAsync(userId, PptSystemPrompt, userContent, AppCallerRegistry.MdToPptAgent.Generation.Patch, "patch", run);
     }
 
     // ─────────────────────────────────────────────
@@ -192,6 +198,116 @@ public class MdToPptController : ControllerBase
     }
 
     // ─────────────────────────────────────────────
+    // 生成运行记录（server-authority：刷新可重连/查看）
+    // ─────────────────────────────────────────────
+
+    /// <summary>按 runId 拉取一次生成运行（刷新/断线后前端重连用）</summary>
+    [HttpGet("runs/{id}")]
+    public async Task<IActionResult> GetRun(string id)
+    {
+        var userId = this.GetRequiredUserId();
+        var run = await _db.MdToPptRuns
+            .Find(x => x.Id == id && x.UserId == userId)
+            .FirstOrDefaultAsync();
+        if (run == null) return NotFound(new { error = "运行记录不存在" });
+        return Ok(new
+        {
+            id = run.Id,
+            status = run.Status,
+            engine = run.Engine,
+            op = run.Op,
+            title = run.Title,
+            html = run.Html,
+            error = run.Error,
+            model = run.Model,
+            platform = run.Platform,
+            createdAt = run.CreatedAt,
+            updatedAt = run.UpdatedAt,
+        });
+    }
+
+    /// <summary>最近的生成历史（让用户刷新后还能找回/重开过去的结果）</summary>
+    [HttpGet("runs")]
+    public async Task<IActionResult> RecentRuns()
+    {
+        var userId = this.GetRequiredUserId();
+        var runs = await _db.MdToPptRuns
+            .Find(x => x.UserId == userId)
+            .SortByDescending(x => x.CreatedAt)
+            .Limit(20)
+            .ToListAsync();
+        return Ok(runs.Select(r => new
+        {
+            id = r.Id,
+            status = r.Status,
+            engine = r.Engine,
+            op = r.Op,
+            title = r.Title,
+            contentPreview = r.ContentPreview,
+            hasHtml = !string.IsNullOrEmpty(r.Html),
+            createdAt = r.CreatedAt,
+        }));
+    }
+
+    private async Task<MdToPptRun> CreateRunAsync(string userId, string engine, string? theme, string op, string? content)
+    {
+        var run = new MdToPptRun
+        {
+            UserId = userId,
+            Status = "running",
+            Engine = engine,
+            Theme = theme ?? string.Empty,
+            Op = op,
+            Title = DeriveTitle(content, op),
+            ContentPreview = (content ?? string.Empty).Trim() is { Length: > 0 } cp
+                ? (cp.Length > 200 ? cp[..200] : cp)
+                : string.Empty,
+        };
+        await _db.MdToPptRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
+        return run;
+    }
+
+    private async Task PersistRunDoneAsync(MdToPptRun run, string html, string? model, string? platform)
+    {
+        try
+        {
+            run.Status = "done";
+            run.Html = html;
+            run.Model = model;
+            run.Platform = platform;
+            run.UpdatedAt = DateTime.UtcNow;
+            await _db.MdToPptRuns.ReplaceOneAsync(x => x.Id == run.Id, run, cancellationToken: CancellationToken.None);
+        }
+        catch (Exception ex) { _logger.LogError(ex, "[MdToPpt] persist run done failed runId={Id}", run.Id); }
+    }
+
+    private async Task PersistRunErrorAsync(MdToPptRun run, string error)
+    {
+        try
+        {
+            run.Status = "error";
+            run.Error = error;
+            run.UpdatedAt = DateTime.UtcNow;
+            await _db.MdToPptRuns.ReplaceOneAsync(x => x.Id == run.Id, run, cancellationToken: CancellationToken.None);
+        }
+        catch (Exception ex) { _logger.LogError(ex, "[MdToPpt] persist run error failed runId={Id}", run.Id); }
+    }
+
+    // 取首个 Markdown 标题行或内容前缀作为运行标题
+    private static string DeriveTitle(string? content, string op)
+    {
+        var c = (content ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(c)) return op == "patch" ? "PPT 修改" : "未命名 PPT";
+        foreach (var line in c.Split('\n'))
+        {
+            var t = line.Trim();
+            if (t.StartsWith('#')) { t = t.TrimStart('#').Trim(); if (t.Length > 0) return t.Length > 40 ? t[..40] : t; }
+        }
+        var first = c.Split('\n')[0].Trim();
+        return first.Length > 40 ? first[..40] : first;
+    }
+
+    // ─────────────────────────────────────────────
     // MAP 直调路径（快速可靠）
     // ─────────────────────────────────────────────
 
@@ -200,9 +316,12 @@ public class MdToPptController : ControllerBase
         string systemPrompt,
         string userContent,
         string appCallerCode,
-        string opLabel)
+        string opLabel,
+        MdToPptRun run)
     {
         var startedAt = DateTime.UtcNow;
+        string? resolvedModel = null;
+        string? resolvedPlatform = null;
         _logger.LogInformation(
             "[MdToPpt-MAP] userId={UserId} op={Op} appCaller={AppCaller} started",
             userId, opLabel, appCallerCode);
@@ -240,6 +359,9 @@ public class MdToPptController : ControllerBase
         var fullText = new StringBuilder();
         var sentModel = false;
 
+        // server-authority：客户端断开/刷新不取消生成。clientGone 后仅跳过 SSE 写入，
+        // 仍消费完网关流、把结果落库（刷新后前端凭 runId 重连/查看）。
+        var clientGone = false;
         try
         {
             await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
@@ -247,31 +369,33 @@ public class MdToPptController : ControllerBase
                 if (chunk.Type == GatewayChunkType.Start && !sentModel && chunk.Resolution != null)
                 {
                     sentModel = true;
+                    resolvedModel = chunk.Resolution.ActualModel;
+                    resolvedPlatform = chunk.Resolution.ActualPlatformName;
                     var elapsedMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
                     _logger.LogInformation(
                         "[MdToPpt-MAP] model resolved elapsedMs={Elapsed} model={Model} platform={Platform}",
-                        elapsedMs, chunk.Resolution.ActualModel, chunk.Resolution.ActualPlatformName);
-                    try
+                        elapsedMs, resolvedModel, resolvedPlatform);
+                    if (!clientGone)
                     {
-                        await WriteEventAsync("model", new
-                        {
-                            model = chunk.Resolution.ActualModel,
-                            platform = chunk.Resolution.ActualPlatformName,
-                        });
+                        try { await WriteEventAsync("model", new { model = resolvedModel, platform = resolvedPlatform }); }
+                        catch (ObjectDisposedException) { clientGone = true; }
                     }
-                    catch (ObjectDisposedException) { return; }
                 }
                 else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
                 {
                     fullText.Append(chunk.Content);
-                    try { await WriteEventAsync("delta", new { text = chunk.Content }); }
-                    catch (ObjectDisposedException) { return; }
+                    if (!clientGone)
+                    {
+                        try { await WriteEventAsync("delta", new { text = chunk.Content }); }
+                        catch (ObjectDisposedException) { clientGone = true; }
+                    }
                 }
                 else if (chunk.Type == GatewayChunkType.Error)
                 {
                     var err = chunk.Error ?? chunk.Content ?? "LLM 网关返回未知错误";
                     _logger.LogError("[MdToPpt-MAP] gateway error userId={UserId}: {Error}", userId, err);
-                    try { await WriteEventAsync("error", new { message = err }); } catch { }
+                    await PersistRunErrorAsync(run, err);
+                    if (!clientGone) { try { await WriteEventAsync("error", new { message = err }); } catch { } }
                     return;
                 }
             }
@@ -281,15 +405,16 @@ public class MdToPptController : ControllerBase
             _logger.LogInformation(
                 "[MdToPpt-MAP] done userId={UserId} totalMs={TotalMs} htmlLen={HtmlLen}",
                 userId, totalMs, html.Length);
-            try { await WriteEventAsync("done", new { html }); }
-            catch (ObjectDisposedException) { }
+            await PersistRunDoneAsync(run, html, resolvedModel, resolvedPlatform);
+            if (!clientGone) { try { await WriteEventAsync("done", new { html }); } catch (ObjectDisposedException) { } }
         }
         catch (OperationCanceledException) { }
         catch (ObjectDisposedException) { }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[MdToPpt-MAP] unexpected error userId={UserId}", userId);
-            try { await WriteEventAsync("error", new { message = ex.Message }); } catch { }
+            await PersistRunErrorAsync(run, ex.Message);
+            if (!clientGone) { try { await WriteEventAsync("error", new { message = ex.Message }); } catch { } }
         }
     }
 
@@ -297,7 +422,7 @@ public class MdToPptController : ControllerBase
     // CDS Agent 路径（可观测，诊断插桩）
     // ─────────────────────────────────────────────
 
-    private async Task RunAgentStreamAsync(string userId, string userPrompt, string title)
+    private async Task RunAgentStreamAsync(string userId, string userPrompt, string title, MdToPptRun run)
     {
         var overallStart = DateTime.UtcNow;
         InfraConnection? connection = null;
@@ -320,6 +445,7 @@ public class MdToPptController : ControllerBase
             connection = await ResolveCdsConnectionAsync(CancellationToken.None);
             if (connection == null)
             {
+                await PersistRunErrorAsync(run, "没有可用的 active CDS 连接，请先完成系统级 CDS 授权");
                 await WriteEventAsync("error", new { message = "没有可用的 active CDS 连接，请先完成系统级 CDS 授权" });
                 return;
             }
@@ -332,6 +458,7 @@ public class MdToPptController : ControllerBase
             runtimeProfile = await ResolveRuntimeProfileAsync(userId, CancellationToken.None);
             if (runtimeProfile == null)
             {
+                await PersistRunErrorAsync(run, "没有可用的模型运行配置，请先配置 baseUrl、model 和 API key");
                 await WriteEventAsync("error", new { message = "没有可用的模型运行配置，请先配置 baseUrl、model 和 API key" });
                 return;
             }
@@ -535,6 +662,7 @@ public class MdToPptController : ControllerBase
 
                 if (errorMessage != null)
                 {
+                    await PersistRunErrorAsync(run, errorMessage);
                     await WriteEventAsync("error", new { message = errorMessage });
                     return;
                 }
@@ -558,6 +686,7 @@ public class MdToPptController : ControllerBase
                         logCount,
                         errorCount,
                     });
+                    await PersistRunDoneAsync(run, html, runtimeProfile?.Model ?? model, "CDS Agent");
                     await WriteEventAsync("done", new { html });
                     return;
                 }
@@ -596,15 +725,22 @@ public class MdToPptController : ControllerBase
             });
 
             if (!string.IsNullOrWhiteSpace(timeoutHtml))
+            {
+                await PersistRunDoneAsync(run, timeoutHtml, model, "CDS Agent");
                 await WriteEventAsync("done", new { html = timeoutHtml });
+            }
             else
+            {
+                await PersistRunErrorAsync(run, "CDS Agent 响应超时，请稍后重试或切换到 MAP 直调引擎");
                 await WriteEventAsync("error", new { message = "CDS Agent 响应超时，请稍后重试或切换到 MAP 直调引擎" });
+            }
         }
         catch (OperationCanceledException) { }
         catch (ObjectDisposedException) { }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[MdToPpt-Agent] unexpected error userId={UserId}", userId);
+            await PersistRunErrorAsync(run, ex.Message);
             try { await WriteEventAsync("error", new { message = ex.Message }); } catch { }
         }
         finally

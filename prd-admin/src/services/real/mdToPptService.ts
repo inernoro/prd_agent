@@ -57,6 +57,7 @@ async function readSseStream(
   response: Response,
   handlers: {
     onStart?: (data: Record<string, unknown>) => void;
+    onRun?: (runId: string) => void;
     onModel?: (info: { model: string; platform: string }) => void;
     onDiag?: (data: MdToPptDiagEvent) => void;
     onDelta?: (text: string) => void;
@@ -93,6 +94,8 @@ async function readSseStream(
           const data = JSON.parse(currentData) as Record<string, unknown>;
           if (currentEvent === 'start') {
             handlers.onStart?.(data);
+          } else if (currentEvent === 'run') {
+            handlers.onRun?.((data.runId as string) ?? '');
           } else if (currentEvent === 'model') {
             handlers.onModel?.({
               model: (data.model as string) ?? '',
@@ -127,6 +130,7 @@ export interface MdToPptConvertSseOptions {
   theme?: string;
   engine?: MdToPptEngine;
   onStart?: (info: { slideCount?: number; theme?: string }) => void;
+  onRun?: (runId: string) => void;
   onModel?: (info: { model: string; platform: string }) => void;
   onDiag?: (data: MdToPptDiagEvent) => void;
   onDelta?: (text: string) => void;
@@ -167,6 +171,7 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
             theme: data.theme as string | undefined,
           });
         },
+        onRun: options.onRun,
         onModel: options.onModel,
         onDiag: options.onDiag,
         onDelta: options.onDelta,
@@ -196,6 +201,7 @@ export interface MdToPptPatchSseOptions {
   slideIndex?: number;
   engine?: MdToPptEngine;
   onStart?: () => void;
+  onRun?: (runId: string) => void;
   onModel?: (info: { model: string; platform: string }) => void;
   onDiag?: (data: MdToPptDiagEvent) => void;
   onDelta?: (text: string) => void;
@@ -231,6 +237,7 @@ export function streamMdToPptPatch(options: MdToPptPatchSseOptions): () => void 
 
       await readSseStream(response, {
         onStart: () => options.onStart?.(),
+        onRun: options.onRun,
         onModel: options.onModel,
         onDiag: options.onDiag,
         onDelta: options.onDelta,
@@ -275,4 +282,43 @@ export async function publishMdToPpt(req: MdToPptPublishRequest): Promise<{
     siteUrl: res.data?.siteUrl ?? '',
     siteId: res.data?.siteId ?? '',
   };
+}
+
+// ============ Runs（server-authority：刷新可重连/查看历史）============
+
+export interface MdToPptRunDetail {
+  id: string;
+  status: 'running' | 'done' | 'error';
+  engine: MdToPptEngine;
+  op: string;
+  title: string;
+  html: string;
+  error?: string | null;
+  model?: string | null;
+  platform?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MdToPptRunSummary {
+  id: string;
+  status: 'running' | 'done' | 'error';
+  engine: MdToPptEngine;
+  op: string;
+  title: string;
+  contentPreview: string;
+  hasHtml: boolean;
+  createdAt: string;
+}
+
+/** 按 runId 拉取一次生成运行（刷新/断线后重连） */
+export async function getMdToPptRun(id: string): Promise<MdToPptRunDetail | null> {
+  const res = await apiRequest<MdToPptRunDetail>(`/api/md-to-ppt/runs/${encodeURIComponent(id)}`);
+  return res.success ? (res.data ?? null) : null;
+}
+
+/** 最近生成历史 */
+export async function getRecentMdToPptRuns(): Promise<MdToPptRunSummary[]> {
+  const res = await apiRequest<MdToPptRunSummary[]>('/api/md-to-ppt/runs');
+  return res.success ? (res.data ?? []) : [];
 }

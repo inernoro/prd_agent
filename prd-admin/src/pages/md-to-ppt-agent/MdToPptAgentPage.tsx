@@ -19,7 +19,10 @@ import {
   streamMdToPptConvert,
   streamMdToPptPatch,
   publishMdToPpt,
+  getMdToPptRun,
 } from '@/services/real/mdToPptService';
+
+const ACTIVE_RUN_KEY = 'md-to-ppt-active-run';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -153,6 +156,43 @@ export function MdToPptAgentPage() {
     };
   }, []);
 
+  // server-authority：刷新/重进后凭 runId 重连——上次生成还在跑就轮询、已完成就直接还原结果，
+  // 杜绝「刷新就丢、找不到」。
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    let runId = '';
+    try {
+      runId = sessionStorage.getItem(ACTIVE_RUN_KEY) ?? '';
+    } catch {
+      /* ignore */
+    }
+    if (!runId) return;
+
+    const poll = async () => {
+      const run = await getMdToPptRun(runId);
+      if (cancelled) return;
+      if (!run) return;
+      if (run.status === 'done' && run.html) {
+        setGeneratedHtml(run.html);
+        setPhase('done');
+        if (run.model) setModelInfo({ model: run.model, platform: run.platform ?? '' });
+      } else if (run.status === 'error') {
+        setErrorMsg(run.error ?? '生成失败');
+        setPhase('error');
+      } else {
+        setPhase('streaming');
+        timer = window.setTimeout(poll, 3000);
+      }
+    };
+    void poll();
+
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, []);
+
   // ─── Handlers ───────────────────────────────────────────────────────────────
 
   const handleFileChange = useCallback(
@@ -187,6 +227,13 @@ export function MdToPptAgentPage() {
       engine,
       onStart: () => {
         // Phase already set to streaming above
+      },
+      onRun: (runId) => {
+        try {
+          if (runId) sessionStorage.setItem(ACTIVE_RUN_KEY, runId);
+        } catch {
+          /* ignore */
+        }
       },
       onModel: (info) => {
         setModelInfo(info);
@@ -237,6 +284,13 @@ export function MdToPptAgentPage() {
       engine,
       onStart: () => {
         setStreamBuffer('');
+      },
+      onRun: (runId) => {
+        try {
+          if (runId) sessionStorage.setItem(ACTIVE_RUN_KEY, runId);
+        } catch {
+          /* ignore */
+        }
       },
       onModel: (info) => {
         setModelInfo(info);

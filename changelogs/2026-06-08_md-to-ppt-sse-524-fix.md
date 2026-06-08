@@ -7,3 +7,5 @@
 | fix | prd-admin | 修复 MD转PPT 预览里递归显示整个 MAP 应用而非幻灯：iframe sandbox 去掉 allow-same-origin(生成 HTML 跑在本应用同源里，reveal 的 history/相对跳转会把 iframe 导航回应用 /) + onDone 校验返回的确实是网页 PPT(非 SPA 外壳/空内容) |
 | fix | prd-api | 修复 MD转PPT 幻灯整页空白(只剩光晕)：设计系统里 `.reveal .slides section>*{position:relative}` 优先级高于 `.orb{position:absolute}`，把装饰光晕变成 relative 块占掉 ~700px 流高把正文挤出可视区。服务端 InjectDeckCssFix 强制 .orb 绝对定位(预览+发布都生效) + 提示词移除该冲突规则 |
 | fix | prd-admin | MD转PPT 翻页体验：结果工具栏加显眼的上一页/下一页按钮(直接驱动预览 iframe 的 reveal，免去用户找小箭头/点 iframe 取焦点的『翻不了页』困惑) + 生成期间不再糊原始 HTML 流，只显示增长中的字符计数作进度 |
+| feat | prd-api | MD转PPT 落库可重连(server-authority)：生成创建 MdToPptRun 记录(running)并经 SSE run 事件下发 runId，done/error/timeout 全落库；MAP 路径客户端断开不再 return 中止(clientGone 只跳过 SSE 写入、继续生成并落库)；新增 GET runs/{id} + GET runs 历史 |
+| feat | prd-admin | MD转PPT 刷新不再丢：收到 run 事件存 runId 到 sessionStorage，进页/刷新后凭 runId 重连——还在跑就轮询、已完成直接还原结果 |
