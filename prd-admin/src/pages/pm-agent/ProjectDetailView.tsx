@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Sparkles, Plus, LayoutGrid, List, GanttChartSquare, Trash2, Users, UserCog, Award, Search, CalendarClock, BookOpen, Gavel, FileText, NotebookText, Target, Milestone, FolderOpen, ShieldAlert, Stethoscope, TrendingDown } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -6,7 +7,7 @@ import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { toast } from '@/lib/toast';
 import { useAuthStore } from '@/stores/authStore';
 import {
-  getPmProject, createPmTask, updatePmTask, deletePmTask, updatePmProject, bulkPmTasks, listPmMilestones, listPmGoals, updatePmMilestone,
+  getPmProject, updatePmTask, deletePmTask, updatePmProject, bulkPmTasks, listPmMilestones, listPmGoals, updatePmMilestone,
 } from '@/services';
 import type { PmProject, PmTask, PmTaskStatus, PmTaskPriority, PmMilestone, PmGoal } from '@/services/contracts/pmAgent';
 import { KanbanBoard } from './KanbanBoard';
@@ -69,6 +70,7 @@ const isOverdue = (t: PmTask) => !!t.dueAt && t.status !== 'done' && t.status !=
 const ORDER_STEP = 1024;
 
 export function ProjectDetailView({ projectId, onBack }: Props) {
+  const navigate = useNavigate();
   const myId = useAuthStore((s) => s.user?.userId ?? '');
   const [project, setProject] = useState<PmProject | null>(null);
   const [tasks, setTasks] = useState<PmTask[]>([]);
@@ -82,7 +84,6 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
   const [showClosure, setShowClosure] = useState(false);
   const [showDiagnosis, setShowDiagnosis] = useState(false);
   const [newTitle, setNewTitle] = useState('');
-  const [adding, setAdding] = useState(false);
   const [costEdit, setCostEdit] = useState<{ budget: string; actualCost: string } | null>(null);
   const [savingCost, setSavingCost] = useState(false);
   const [timeEdit, setTimeEdit] = useState<{ start: string; end: string } | null>(null);
@@ -158,13 +159,10 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
     if (!res.success) { toast.error('删除失败', res.error?.message || ''); load(); }
   }, [load]);
 
-  const handleAddTask = async () => {
-    if (!newTitle.trim()) return;
-    setAdding(true);
-    const res = await createPmTask(projectId, { title: newTitle.trim(), status: 'todo' });
-    setAdding(false);
-    if (res.success) { setNewTitle(''); setTasks((prev) => [...prev, res.data]); }
-    else toast.error('创建失败', res.error?.message || '');
+  // 新建任务 → 进入新建详情页（带可选标题预填），在详情页填全字段后保存才落库
+  const handleAddTask = () => {
+    const t = newTitle.trim();
+    navigate(`/pm-agent/p/${projectId}/task/new${t ? `?title=${encodeURIComponent(t)}` : ''}`);
   };
 
   const saveCost = async () => {
@@ -389,8 +387,8 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
             <input className="rounded-lg px-3 py-1.5 text-[12px] outline-none border"
               style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)', width: 200 }}
               value={newTitle} onChange={(e) => setNewTitle(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleAddTask(); }} placeholder="快速添加任务…" />
-            <Button variant="secondary" size="sm" onClick={handleAddTask} disabled={adding || !newTitle.trim()}><Plus size={14} /></Button>
+              onKeyDown={(e) => { if (e.key === 'Enter') handleAddTask(); }} placeholder="新建任务（进入详情页填写）…" />
+            <Button variant="secondary" size="sm" onClick={handleAddTask}><Plus size={14} />新建</Button>
             <Button variant="primary" size="sm" onClick={() => setShowDecompose(true)}><Sparkles size={14} />AI 拆解需求</Button>
           </div>
         </div>

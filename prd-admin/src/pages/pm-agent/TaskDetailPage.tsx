@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Trash2, Link2, AlertTriangle, MessageSquare, ListTree, ClipboardList } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
@@ -37,6 +37,8 @@ const fromDateInput = (v: string) => (v ? new Date(v + 'T00:00:00').toISOString(
 export function TaskDetailPage() {
   const navigate = useNavigate();
   const { projectId = '', taskId = '' } = useParams();
+  const [searchParams] = useSearchParams();
+  const isNew = taskId === 'new';
 
   const [project, setProject] = useState<PmProject | null>(null);
   const [allTasks, setAllTasks] = useState<PmTask[]>([]);
@@ -65,6 +67,8 @@ export function TaskDetailPage() {
   const [progress, setProgress] = useState(0);
   const [saving, setSaving] = useState(false);
 
+  // 新建模式：可选父任务
+  const [newParentId, setNewParentId] = useState('');
   // 子任务 / 动态
   const [subTitle, setSubTitle] = useState('');
   const [attachId, setAttachId] = useState('');
@@ -86,10 +90,10 @@ export function TaskDetailPage() {
   useEffect(() => { load(); }, [load]);
 
   const loadActivities = useCallback(async () => {
-    if (!taskId) return;
+    if (!taskId || isNew) return;
     const res = await getPmTaskActivities(taskId);
     if (res.success) setActivities(res.data.items);
-  }, [taskId]);
+  }, [taskId, isNew]);
   useEffect(() => { loadActivities(); }, [loadActivities]);
   useEffect(() => { getPmMembers(projectId).then((res) => { if (res.success) setMembers(res.data.members); }); }, [projectId]);
 
@@ -110,6 +114,12 @@ export function TaskDetailPage() {
     setDependsOn(task.dependsOn ?? []);
     setProgress(task.progressPercent ?? 0);
   }, [task]);
+
+  // 新建模式：用 ?title= 预填标题（仅首次）
+  useEffect(() => {
+    if (isNew) { const t = searchParams.get('title'); if (t) setTitle(t); setStatus('todo'); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNew]);
 
   const taskById = useMemo(() => new Map(allTasks.map((t) => [t.id, t])), [allTasks]);
   const depCandidates = useMemo(() => allTasks.filter((t) => t.id !== taskId && t.parentTaskId !== taskId), [allTasks, taskId]);
@@ -165,6 +175,23 @@ export function TaskDetailPage() {
 
   const save = async () => {
     if (!title.trim()) { toast.warning('请填写标题', ''); return; }
+    // 新建模式：创建后跳转到真实任务详情页
+    if (isNew) {
+      setSaving(true);
+      const res = await createPmTask(projectId, {
+        title: title.trim(), description: description.trim(), status, priority, assigneeId,
+        estimateDays: estimateDays === '' ? undefined : Number(estimateDays),
+        startAt: fromDateInput(startAt), dueAt: fromDateInput(dueAt),
+        labels: labels.split(',').map((l) => l.trim()).filter(Boolean),
+        dependsOn, milestoneId, goalId,
+        parentTaskId: newParentId || undefined,
+        progressPercent: progress,
+      });
+      setSaving(false);
+      if (res.success) { toast.success('已创建', ''); navigate(`/pm-agent/p/${projectId}/task/${res.data.id}`, { replace: true }); }
+      else toast.error('创建失败', res.error?.message || '');
+      return;
+    }
     if ((status === 'in_progress' || status === 'done') && blockedBy.length > 0) {
       const ok = window.confirm(`该任务有 ${blockedBy.length} 个前置任务尚未完成（${blockedBy.map((d) => d!.title).join('、')}），确定标记为「${TASK_STATUS_REGISTRY[status].label}」吗？`);
       if (!ok) return;
@@ -200,7 +227,7 @@ export function TaskDetailPage() {
   const sectionTitle = 'text-[12px] font-semibold mb-2 flex items-center gap-1.5';
 
   if (loading) return <div className="h-screen flex items-center justify-center" style={{ background: 'var(--bg-primary)' }}><MapSectionLoader text="正在加载任务…" /></div>;
-  if (!task) {
+  if (!isNew && !task) {
     return (
       <div className="h-screen flex flex-col items-center justify-center gap-3" style={{ background: 'var(--bg-primary)' }}>
         <div style={{ color: 'var(--text-secondary)' }}>任务不存在或已被删除</div>
@@ -221,12 +248,12 @@ export function TaskDetailPage() {
           <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
             {project?.title ?? '项目'}{parentTask ? ` / ${parentTask.title}` : ''}
           </div>
-          <div className="text-[15px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{task.title}</div>
+          <div className="text-[15px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{isNew ? '新建任务' : task!.title}</div>
         </div>
-        {task.source === 'ai_decompose' && <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0" style={{ background: 'rgba(168,85,247,0.15)', color: '#A855F7' }}>AI 拆解</span>}
+        {!isNew && task!.source === 'ai_decompose' && <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0" style={{ background: 'rgba(168,85,247,0.15)', color: '#A855F7' }}>AI 拆解</span>}
         <div className="ml-auto flex items-center gap-2 shrink-0">
-          <button onClick={remove} className="p-1.5 rounded hover:opacity-70" style={{ color: '#EF4444' }} title="删除任务"><Trash2 size={16} /></button>
-          <Button variant="primary" onClick={save} disabled={saving}>{saving ? <MapSpinner size={14} /> : null}保存</Button>
+          {!isNew && <button onClick={remove} className="p-1.5 rounded hover:opacity-70" style={{ color: '#EF4444' }} title="删除任务"><Trash2 size={16} /></button>}
+          <Button variant="primary" onClick={save} disabled={saving}>{saving ? <MapSpinner size={14} /> : null}{isNew ? '创建' : '保存'}</Button>
         </div>
       </div>
 
@@ -243,6 +270,12 @@ export function TaskDetailPage() {
             <textarea className={inputCls} style={{ ...inputStyle, resize: 'vertical', minHeight: 96 }} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="任务说明 / 交付物" />
           </div>
 
+          {isNew ? (
+            <div className="rounded-xl border p-4 text-[12px]" style={{ ...cardStyle, color: 'var(--text-muted)' }}>
+              <div className={sectionTitle} style={{ color: 'var(--text-primary)' }}><ClipboardList size={14} /> 工作日志 / 子任务 / 动态</div>
+              创建任务后即可在此记录工作日志、添加子任务、查看动态与评论。
+            </div>
+          ) : (<>
           {/* 工作日志 */}
           <div className="rounded-xl border p-4" style={cardStyle}>
             <div className={sectionTitle} style={{ color: 'var(--text-primary)' }}><ClipboardList size={14} /> 工作日志</div>
@@ -291,6 +324,7 @@ export function TaskDetailPage() {
               ))}
             </div>
           </div>
+          </>)}
         </div>
 
         {/* 右属性栏 */}
@@ -369,7 +403,19 @@ export function TaskDetailPage() {
             <input className={inputCls} style={inputStyle} value={labels} onChange={(e) => setLabels(e.target.value)} placeholder="如：前端, 设计" />
           </div>
 
-          {/* 子任务 */}
+          {/* 新建模式：可选父任务（挂为某任务的子任务） */}
+          {isNew && (
+            <div>
+              <div className={sectionTitle} style={{ color: 'var(--text-secondary)' }}><ListTree size={13} /> 父任务（可选）</div>
+              <select className={inputCls} style={inputStyle} value={newParentId} onChange={(e) => setNewParentId(e.target.value)}>
+                <option value="">作为顶层任务</option>
+                {attachCandidates.map((t) => <option key={t.id} value={t.id}>挂到：{t.title}</option>)}
+              </select>
+            </div>
+          )}
+
+          {/* 子任务（已存在任务才有） */}
+          {!isNew && (
           <div>
             <div className={sectionTitle} style={{ color: 'var(--text-secondary)' }}>
               <ListTree size={13} /> 子任务{hasChildren ? `（${children.filter((c) => c.status === 'done').length}/${children.length}）` : ''}
@@ -403,6 +449,7 @@ export function TaskDetailPage() {
               )}
             </div>
           </div>
+          )}
 
           {/* 依赖 */}
           <div>
