@@ -5,6 +5,8 @@ import {
   Globe,
   X,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Upload,
   Wand2,
   Zap,
@@ -117,6 +119,18 @@ export function MdToPptAgentPage() {
   const streamDivRef = useRef<HTMLDivElement>(null);
   const diagDivRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  // 翻页：直接驱动预览 iframe 里的 reveal.js（同源，可直接调用）。
+  // reveal 自带的控制箭头太小、键盘还得先点进 iframe 取焦点，用户常以为「翻不了页」。
+  const deckNav = useCallback((dir: 'prev' | 'next' | 'first' | 'last') => {
+    try {
+      const w = iframeRef.current?.contentWindow as unknown as { Reveal?: Record<string, () => void> };
+      if (w?.Reveal && typeof w.Reveal[dir] === 'function') w.Reveal[dir]();
+    } catch {
+      /* 跨域/未就绪时忽略 */
+    }
+  }, []);
 
   // Auto-scroll streaming area
   useEffect(() => {
@@ -612,8 +626,13 @@ export function MdToPptAgentPage() {
                   <MapSpinner size={12} />
                   <span>{genStageMsg(elapsedSec, phase === 'patching')}</span>
                 </div>
-                {streamBuffer}
-                <span className="inline-block w-1 h-3 bg-green-400 animate-pulse ml-0.5" />
+                {/* 不再把原始 HTML 流糊在用户脸上（看不懂），只给一个增长中的字符计数作进度信号 */}
+                {streamBuffer.length > 0 && (
+                  <div className="text-[11px] text-[var(--text-tertiary)] font-sans">
+                    已生成 {streamBuffer.length.toLocaleString()} 字符
+                    <span className="inline-block w-1 h-3 bg-green-400 animate-pulse ml-1 align-middle" />
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -669,6 +688,24 @@ export function MdToPptAgentPage() {
             <div className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
               {/* Patch panel toggle */}
               <div className="shrink-0 flex items-center justify-between px-4 py-2 border-b border-white/8">
+                <div className="flex items-center gap-2">
+                  {/* 翻页控制（直接驱动 reveal，免去用户找小箭头/点 iframe 取焦点） */}
+                  <button
+                    onClick={() => deckNav('prev')}
+                    title="上一页"
+                    className="flex items-center justify-center w-7 h-7 rounded-md bg-white/5 hover:bg-white/10 border border-white/10 text-[var(--text-secondary)]"
+                  >
+                    <ChevronLeft size={15} />
+                  </button>
+                  <button
+                    onClick={() => deckNav('next')}
+                    title="下一页"
+                    className="flex items-center justify-center w-7 h-7 rounded-md bg-white/5 hover:bg-white/10 border border-white/10 text-[var(--text-secondary)]"
+                  >
+                    <ChevronRight size={15} />
+                  </button>
+                  <span className="text-xs text-[var(--text-tertiary)] ml-1">翻页</span>
+                </div>
                 <span className="text-xs text-[var(--text-tertiary)]">
                   {generatedHtml.length.toLocaleString()} 字符 HTML
                 </span>
@@ -728,6 +765,7 @@ export function MdToPptAgentPage() {
                   但用 withNavGuard 注入脚本拦住一切非 hash 跳转 + history 操作，杜绝生成的
                   幻灯把 iframe 导航回本应用 `/`（之前会递归显示整个 MAP 应用）。 */}
               <iframe
+                ref={iframeRef}
                 className="flex-1 w-full border-0"
                 srcDoc={withNavGuard(generatedHtml)}
                 sandbox="allow-scripts allow-same-origin"
