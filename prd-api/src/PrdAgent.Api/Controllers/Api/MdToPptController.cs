@@ -92,6 +92,7 @@ public class MdToPptController : ControllerBase
     {
         var userId = this.GetRequiredUserId();
         SetSseHeaders();
+        await WriteSsePreambleAsync();
         await WriteEventAsync("start", null);
 
         var styleHint = $"目标页数约 {req.SlideCount ?? 8} 页；主题风格：{(string.IsNullOrWhiteSpace(req.Theme) ? "深色现代" : req.Theme)}。";
@@ -114,6 +115,7 @@ public class MdToPptController : ControllerBase
     {
         var userId = this.GetRequiredUserId();
         SetSseHeaders();
+        await WriteSsePreambleAsync();
         await WriteEventAsync("start", null);
 
         var userContent = $"---\n\n# 已有 HTML\n\n```html\n{req.CurrentHtml?.Trim()}\n```\n\n# 修改要求（第 {(req.SlideIndex.HasValue ? req.SlideIndex.Value + 1 : 0)} 页）\n\n{req.SlideRequest?.Trim()}";
@@ -668,9 +670,26 @@ public class MdToPptController : ControllerBase
         // 不手动设置 Transfer-Encoding —— Kestrel 自己管理分块编码，手动写 "chunked"
         // 会破坏响应分帧，Cloudflare 收不到合法流而缓冲到 ~100s 后 524（两个引擎都中招）。
         Response.ContentType = "text/event-stream";
-        Response.Headers.CacheControl = "no-cache";
+        // no-transform 告诉 Cloudflare 不要对响应做压缩/转换 —— 这是 Cloudflare 边缘
+        // 缓冲 SSE 的最常见根因(预览域名走 CF)。压缩需要缓冲到响应结束才能算，加上
+        // no-transform 后 CF 直接透传增量分块，逐事件到达客户端而非末尾一次性吐出。
+        Response.Headers.CacheControl = "no-cache, no-transform";
         Response.Headers.Connection = "keep-alive";
         Response.Headers["X-Accel-Buffering"] = "no"; // nginx 不缓冲 SSE，保留
+    }
+
+    // 开流后立刻写一段 2KB 注释 padding 并 flush —— 击穿部分代理/CF 的"最小缓冲
+    // 阈值"，强制 headers + 首字节立即上路，让后续事件真正逐条流式到达。
+    private async Task WriteSsePreambleAsync()
+    {
+        try
+        {
+            var padding = ": " + new string(' ', 2048) + "\n\n";
+            await Response.WriteAsync(padding, CancellationToken.None);
+            await Response.Body.FlushAsync(CancellationToken.None);
+        }
+        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
     }
 
     private async Task WriteEventAsync(string eventName, object? data)
