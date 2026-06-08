@@ -2890,14 +2890,14 @@ case "$CMD" in
     # 之后改 pnpm 标志、node flag 都改这里,不动 unit。
     load_env
     cd "$SCRIPT_DIR" || { err "无法 cd 到 $SCRIPT_DIR"; exit 1; }
-    info "[master-run] CI=true pnpm install --frozen-lockfile --prefer-offline --config.confirmModulesPurge=false"
+    info "[master-run] pnpm install --frozen-lockfile --prefer-offline"
     # ⚠ Bugbot 982b38ca (Medium):必须显式 fail-fast。pnpm install 失败可能由
     # lockfile 与 package.json 漂移、pnpm store 损坏、磁盘满 等原因触发,
     # 静默继续会让 node 启动时遭遇 stale / 不完整 node_modules,运行时崩溃。
     # systemd Restart=always 会无限重启,污染日志且永远起不来。
     # 显式 exit 78(EX_CONFIG)告诉 systemd 这是配置/依赖问题,operator 看 status
     # 一眼区分"代码 bug 崩"vs"依赖装不上",对应不同 runbook。
-    if ! CI=true pnpm install --frozen-lockfile --prefer-offline --config.confirmModulesPurge=false; then
+    if ! pnpm install --frozen-lockfile --prefer-offline; then
       err "[master-run] pnpm install 失败 — 中止启动,避免 node 用陈旧 node_modules"
       err "[master-run] 排查: (a) pnpm-lock.yaml 是否与 package.json 同步 (b) ~/.pnpm-store 是否健康 (c) 磁盘空间"
       exit 78  # EX_CONFIG — operator 友好的 systemd 退出码
