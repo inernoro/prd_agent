@@ -44,9 +44,10 @@ public class MdToPptController : ControllerBase
         "唯一任务：直接输出一个完整、惊艳、可直接演示的 reveal.js HTML 文件。禁止调用任何工具或执行命令，禁止输出任何解释或代码块标记。\n\n" +
         "## 硬技术规范\n" +
         "- reveal.js 4.x CDN：https://cdn.jsdelivr.net/npm/reveal.js@4/dist/reveal.js + reveal.css（不引官方主题，用下面的自定义主题）\n" +
-        "- 初始化：Reveal.initialize({ hash:false, transition:'slide', slideNumber:'c/t', controls:true, progress:true, width:1280, height:720, margin:0.04 })\n" +
+        "- 初始化：Reveal.initialize({ hash:false, transition:'slide', slideNumber:'c/t', controls:true, progress:true, center:true, margin:0.06 })（不要写 width/height，让它自适应容器）\n" +
         "- 全部 CSS 内联在 <head> 的 <style> 里；输出完整 <!DOCTYPE html>…</html>；不要 markdown 代码围栏\n" +
-        "- 禁止 emoji；图标用 inline SVG 或 CSS 几何图形\n\n" +
+        "- 绝对禁止任何 emoji 字符（一切表情/符号图标都不许，包括大脑/尺子/键盘/循环箭头/程序员等图标 emoji）；需要图标时只用 inline SVG 或 CSS 几何图形\n" +
+        "- 绝对禁止对标题/正文用 `color:transparent` + `background-clip:text`（嵌入式渲染常常不生效，会导致文字整页消失）；标题一律实色 #eef2ff，渐变只能用在 .orb/.bar 等非文字装饰上\n\n" +
         "## 设计系统（必须照此实现，这是质量下限不是参考）\n" +
         "把下面这套 CSS 设计 token 与组件类落进 <style>，并在每页真正用上：\n" +
         "```\n" +
@@ -54,15 +55,15 @@ public class MdToPptController : ControllerBase
         "--card:rgba(255,255,255,.045);--a1:#6366f1;--a2:#22d3ee;--a3:#a855f7;--a4:#f472b6;}\n" +
         "html,body,.reveal{background:radial-gradient(1200px 800px at 80% -10%,#1b2350 0%,var(--bg) 55%);}\n" +
         ".reveal{font-family:'Inter',-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',system-ui,sans-serif;color:var(--ink);}\n" +
-        ".reveal .slides section{text-align:left;padding:6vh 7vw;height:100%;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center;overflow:hidden;}\n" +
+        ".reveal .slides section{text-align:left;padding:2vh 5vw;}\n" +
         ".eyebrow{text-transform:uppercase;letter-spacing:.24em;font-size:.78rem;font-weight:800;color:var(--a2);margin-bottom:18px;}\n" +
-        ".title-xl{font-size:clamp(44px,6.6vw,86px);font-weight:850;line-height:1.04;letter-spacing:-.025em;margin:0;background:linear-gradient(120deg,#ffffff 0%,#c7d2fe 55%,#67e8f9 100%);-webkit-background-clip:text;background-clip:text;color:transparent;}\n" +
-        ".title-md{font-size:clamp(30px,4vw,52px);font-weight:800;line-height:1.1;letter-spacing:-.02em;margin:0 0 6px;}\n" +
+        ".title-xl{font-size:clamp(44px,6.6vw,86px);font-weight:850;line-height:1.06;letter-spacing:-.025em;margin:0;color:#eef2ff;}\n" +
+        ".title-md{font-size:clamp(30px,4vw,52px);font-weight:800;line-height:1.1;letter-spacing:-.02em;margin:0 0 6px;color:#f6f8ff;}\n" +
         ".lead{font-size:clamp(17px,1.6vw,22px);color:var(--muted);max-width:46ch;line-height:1.5;}\n" +
         ".grid{display:grid;gap:22px;margin-top:34px;}.g2{grid-template-columns:1fr 1fr;}.g3{grid-template-columns:repeat(3,1fr);}\n" +
         ".card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:26px 28px;backdrop-filter:blur(10px);}\n" +
-        ".card h3{margin:0 0 8px;font-size:1.15rem;font-weight:800;}.card p{margin:0;color:var(--muted);font-size:.98rem;line-height:1.5;}\n" +
-        ".stat{font-size:clamp(40px,5.5vw,72px);font-weight:850;letter-spacing:-.02em;background:linear-gradient(120deg,var(--a1),var(--a3));-webkit-background-clip:text;background-clip:text;color:transparent;}\n" +
+        ".card h3{margin:0 0 8px;font-size:1.15rem;font-weight:800;color:#f6f8ff;}.card p{margin:0;color:var(--muted);font-size:.98rem;line-height:1.5;}\n" +
+        ".stat{font-size:clamp(40px,5.5vw,72px);font-weight:850;letter-spacing:-.02em;color:#a5b4fc;}\n" +
         ".stat-l{color:var(--muted);font-size:.95rem;margin-top:4px;}\n" +
         ".chip{display:inline-flex;align-items:center;gap:8px;padding:7px 14px;border:1px solid var(--line);border-radius:999px;font-size:.85rem;color:var(--ink);background:rgba(255,255,255,.03);}\n" +
         ".bar{width:54px;height:5px;border-radius:9px;background:linear-gradient(90deg,var(--a1),var(--a2));margin:20px 0;}\n" +
@@ -766,8 +767,19 @@ public class MdToPptController : ControllerBase
                 s = s[..lastFence].TrimEnd();
         }
 
+        // 服务端兜底剥离 emoji（CLAUDE 规则 #0：本系统任何项目一律不允许 emoji）。
+        // 模型偶尔会无视提示词往幻灯里塞 emoji 图标，这里统一清掉。
+        s = EmojiRegex.Replace(s, string.Empty);
+
         return s.Trim();
     }
+
+    // 覆盖常见 emoji 区段：BMP 符号/装饰区(U+2600-27BF Dingbats/Misc, U+2B00-2BFF) +
+    // 变体选择符(U+FE00-FE0F) + ZWJ(U+200D) + 组合 keycap(U+20E3) + 星平面 emoji(高代理对)。
+    // 全部用 \u 转义,源码内不出现任何 emoji 字面量(CLAUDE 规则 #0)。
+    private static readonly System.Text.RegularExpressions.Regex EmojiRegex =
+        new("[\u2600-\u27BF\u2B00-\u2BFF\uFE00-\uFE0F\u200D\u20E3]|[\uD83C-\uD83E][\uDC00-\uDFFF]",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
 }
 
 // ─────────────────────────────────────────────
