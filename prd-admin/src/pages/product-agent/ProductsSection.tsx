@@ -9,6 +9,7 @@ import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { listProducts, createProduct, updateProduct, deleteProduct } from '@/services/real/productAgent';
 import type { Product, ProductGrade, ProductCategory } from './types';
 import { useProductCategories, categoryLabel, categoryColor } from './productCategories';
+import './product-cards.css';
 
 export function ProductsSection() {
   const navigate = useNavigate();
@@ -80,11 +81,12 @@ export function ProductsSection() {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-3">
-          {products.map((p) => (
+          {products.map((p, i) => (
             <div
               key={p.id}
               onClick={() => navigate(`/product-agent/p/${p.id}`)}
-              className="group cursor-pointer rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.05] hover:border-white/20 p-4 transition-colors flex flex-col gap-2"
+              style={{ animationDelay: `${Math.min(i, 14) * 45}ms` }}
+              className="pa-card group cursor-pointer rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.05] p-4 flex flex-col gap-2"
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
