@@ -676,6 +676,12 @@ public class MdToPptController : ControllerBase
         Response.Headers.CacheControl = "no-cache, no-transform";
         Response.Headers.Connection = "keep-alive";
         Response.Headers["X-Accel-Buffering"] = "no"; // nginx 不缓冲 SSE，保留
+
+        // 关键：禁用 Kestrel 响应缓冲 —— 与既有 SSE 控制器(VisualAgentVideoController
+        // /VideoAgentController)一致。不调这个，每次 FlushAsync 只是 flush 到 Kestrel
+        // 的输出缓冲，Kestrel 仍 hold 到响应结束才上线，表现为客户端末尾一次性收到整条流。
+        var bodyFeature = HttpContext.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpResponseBodyFeature>();
+        bodyFeature?.DisableBuffering();
     }
 
     // 开流后立刻写一段 2KB 注释 padding 并 flush —— 击穿部分代理/CF 的"最小缓冲
