@@ -55,9 +55,41 @@
 
 `*-page-guide` 写进 `BuildDefaultTips` 后随代码版本走、对全体用户自动可见、不依赖管理员手动 POST，也天然满足「功能更新 → 教程更新」走同一条 PR 审查。临时/活动类 tip 才走 `POST /api/admin/daily-tips`（见 `createzzdemo` 技能）。
 
-## 五、相关
+## 五、统一升级（2026-06-04，本节为现行机制最高优先）
 
-- `.claude/skills/createzzdemo/SKILL.md` — 生成单条教程小书的技能
-- `prd-admin/src/components/daily-tips/TipsDrawer.tsx` — 右下角抽屉，按 `location.pathname === actionUrl` 优先展示本页教程
-- `prd-admin/src/components/daily-tips/SpotlightOverlay.tsx` — 按 `autoAction.steps` 执行高亮引导
+把整套教程系统做了一次统一,以下为**现行行为**,与上面旧描述冲突处以本节为准:
+
+### 5.1 三类 tip（优先级,治「只是更新却重弹新手」）
+- **新手教程 onboarding**：`tier=basic` + `*-page-guide`。每人一次（学会写 `Version=int.MaxValue`,永不再弹）。进页未走完自动开讲一次/session。**计入头像掌握度**。
+- **更新教程 update**：`tier=advanced` + `sourceId=*-update-YYYYwNN`。发布窗口=本周（`StartAt/EndAt`）；学会写真实 Version,功能再更新升 Version → 再次提醒；**绝不动 `*-page-guide`,不重弹新手整套**。由 `tutorial-daily-maintain` 技能定时起草。
+- **快捷任务 task**：其余带 `Steps` 的 seed（如 `defect-full-flow`）。
+- 后端 `CategoryOf()` 按 sourceId 后缀分类;`GET /api/daily-tips/progress` 返回目录 + 掌握度（onboarding 计分母）。
+
+### 5.2 选择面板(诉求 4/7)
+点 pill：本页**只有一套**教程 → 直接开讲（`START_TUTORIAL_EVENT`）；**多套** → 弹「选择面板」(TipsDrawer 列表,每套显示步数/约时/状态 chip/「跟我做」「重看」「已会」)。不再是单卡轮播。
+
+### 5.3 镂空可点(诉求 8)
+`SpotlightOverlay` 用四块透明遮罩围住光圈、**中间留洞**,高亮目标可被用户**真实点击**「跟我做」,点中即推进；「下一步」按钮兜底。**不再**整屏拦截点击。
+
+### 5.4 完成飞回动画(诉求 6)
+教程末步「完成」→ 撒花 + `markLearned` + 一枚毕业帽从光圈**飞回右上角 pill**（`[data-tour-entry]`）,提醒以后从这里重看。
+
+### 5.5 进度可见(诉求 11/12)
+- 头像外圈 `AvatarProgressRing` = 已学/总 onboarding 教程,满环加毕业角标。
+- 「学习中心」页 `/learning-center`（百宝箱 + 头像下拉入口）：分类列全部官方教程 + 一键跟我做/重看。
+- markLearned 走乐观更新,环即时填。
+
+### 5.6 加锚点:TabBar/PageHeader 自动注入 pill
+`PageHeader`/`TabBar` 在有 `title`/`items`/`actions` 时**自动注入** `<TipsEntryButton/>`,pill 在「本页无教程」时自隐。⇒ 用这两个组件的页面**无需手嵌** pill;自定义头部的页面才需手嵌。
+
+## 六、相关
+
+- `.claude/skills/createzzdemo/SKILL.md` — 生成单条教程小书
+- `.claude/skills/tutorial-daily-maintain/SKILL.md` — 教程每日维护（漂移检测 + 更新提醒 + 验收归档）
+- `prd-admin/src/components/daily-tips/TipsDrawer.tsx` — 右上角「选择面板」列表
+- `prd-admin/src/components/daily-tips/TipsEntryButton.tsx` — 页头 pill 入口（`data-tour-entry`）
+- `prd-admin/src/components/daily-tips/SpotlightOverlay.tsx` — 镂空高亮 + 逐步引导 + 飞回动画
+- `prd-admin/src/components/daily-tips/AvatarProgressRing.tsx` — 头像掌握度进度环
+- `prd-admin/src/pages/learning-center/LearningCenterPage.tsx` — 学习中心
+- `DailyTipsController.Progress` / `CategoryOf` — 进度端点 + 分类口径
 - CLAUDE.md 规则 #9 — `data-tour-id` 锚点命名规范

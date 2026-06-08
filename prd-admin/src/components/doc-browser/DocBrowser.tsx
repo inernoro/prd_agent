@@ -306,15 +306,22 @@ import ShinyText from '@/components/reactbits/ShinyText';
 import { systemDialog } from '@/lib/systemDialog';
 import { useViewTracking } from '@/lib/useViewTracking';
 import { useContentSelection, type ContentSelectionInfo } from '@/lib/useContentSelection';
-import { MessageSquareText, MessageSquarePlus, Check, ChevronLeft } from 'lucide-react';
+import { MessageSquareText, MessageSquarePlus, Check, ChevronLeft, PanelRight, MessageSquare } from 'lucide-react';
+import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { InlineCommentDrawer, type PendingSelection } from '@/pages/document-store/InlineCommentDrawer';
 import type { DocumentInlineComment } from '@/services/contracts/documentStore';
 import { AcceptanceEvidenceGraph } from './AcceptanceEvidenceGraph';
 import { Workflow } from 'lucide-react';
-import { listInlineComments } from '@/services';
+import { listInlineComments, createInlineComment, deleteInlineComment } from '@/services';
+import { toast } from '@/lib/toast';
 import { DocToc } from './DocToc';
 import { DocEmptyState } from './DocEmptyState';
 import { InlineCommentOverlay } from './InlineCommentOverlay';
+import { InlineCommentMargin } from './InlineCommentMargin';
+import { InlineCommentComposer } from './InlineCommentComposer';
+import { InlineCommentConnector } from './InlineCommentConnector';
+import { threadColor, groupKey } from './inlineCommentShared';
+import { useDocReaderPrefs } from '@/stores/docReaderPrefsStore';
 import { BulkActionBar } from './BulkActionBar';
 
 // ── 类型 ──
@@ -337,6 +344,8 @@ export type DocBrowserEntry = {
   contentType: string;
   fileSize: number;
   tags?: string[];
+  /** 分类（知识库一等维度，单值） */
+  category?: string;
   createdAt?: string;
   updatedAt?: string;
   updatedByName?: string;
@@ -435,6 +444,19 @@ export type DocBrowserProps = {
    * 不传则不渲染。
    */
   sidebarHeader?: React.ReactNode;
+  /**
+   * 列表标题默认显示模式：true=正文第一行(默认)，false=文件名/entry.title。
+   * 结构化知识库（用户会主动重命名条目）应传 false，否则重命名被正文首行覆盖、看起来"不生效"。
+   * 用户仍可用顶部「正文标题/文件名」开关切换。
+   */
+  defaultUseContentTitle?: boolean;
+  /**
+   * 可选：知识库分类清单（一等维度，区别于自由标签）。传入后右键菜单出现「分类」选择。
+   * 仅 product-agent 等结构化知识库使用；其他调用方不传则无分类概念。
+   */
+  categories?: string[];
+  /** 设置条目分类（category=null 清除）。需配合 categories 才在右键菜单出现。 */
+  onSetEntryCategory?: (entryId: string, category: string | null) => void;
   /**
    * 用户自定义 tag 颜色映射（tagName → 调色板 key）。
    * 不传时回退到 sessionStorage（仅本 tab）；传入时持久化由调用方负责（onTagColorsChange）。
@@ -576,6 +598,7 @@ function ContextMenu({
   x, y, entry, isPrimary, isPinned,
   onSetPrimary, onTogglePin, onDelete, onEditTags, onRename,
   onGenerateSubtitle, onReprocess, onShareEntry, onReplaceFile,
+  categories, onSetCategory,
   onClose,
 }: {
   x: number;
@@ -592,6 +615,8 @@ function ContextMenu({
   onReprocess?: (entryId: string) => void;
   onShareEntry?: (entryId: string) => void;
   onReplaceFile?: (entryId: string) => void;
+  categories?: string[];
+  onSetCategory?: (entryId: string, category: string | null) => void;
   onClose: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -683,6 +708,26 @@ function ContextMenu({
           <Pencil size={12} />
           重命名
         </button>
+      )}
+      {!entry.isFolder && onSetCategory && categories && categories.length > 0 && (
+        <div className="px-3 py-1.5">
+          <div className="text-[11px] text-token-muted mb-1">分类</div>
+          <div className="flex flex-wrap gap-1">
+            <button
+              onClick={() => { onSetCategory(entry.id, null); onClose(); }}
+              className={`px-1.5 py-0.5 rounded text-[11px] border ${!entry.category ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30' : 'text-token-secondary border-token-subtle hover:bg-white/6'}`}>
+              无分类
+            </button>
+            {categories.map((c) => (
+              <button
+                key={c}
+                onClick={() => { onSetCategory(entry.id, c); onClose(); }}
+                className={`px-1.5 py-0.5 rounded text-[11px] border ${entry.category === c ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30' : 'text-token-secondary border-token-subtle hover:bg-white/6'}`}>
+                {c}
+              </button>
+            ))}
+          </div>
+        </div>
       )}
       {!entry.isFolder && onTogglePin && (
         <button
@@ -1421,6 +1466,9 @@ export function DocBrowser({
   appearance = 'inset',
   isEntryFresh,
   sidebarHeader,
+  defaultUseContentTitle,
+  categories: docCategories,
+  onSetEntryCategory,
   tagColors: tagColorsProp,
   onTagColorsChange,
   inlineCommentShareToken,
@@ -1435,7 +1483,7 @@ export function DocBrowser({
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
-  const [useContentTitle, setUseContentTitle] = useState(true);
+  const [useContentTitle, setUseContentTitle] = useState(defaultUseContentTitle ?? true);
   const [showUpdatedTime, setShowUpdatedTime] = useState<boolean>(() => {
     const saved = sessionStorage.getItem('doc-browser-show-updated-time');
     if (saved === '1') return true;
@@ -1514,6 +1562,25 @@ export function DocBrowser({
   const resizeBaseLeftRef = useRef(0);
   const sidebarWidthRef = useRef(sidebarWidth);
   sidebarWidthRef.current = sidebarWidth;
+
+  // ── 移动端「主从单栏」（手机端友好，桌面端 isMobile=false 时完全不改动原布局）──
+  // 窄屏下列表与正文不再并排挤成两条细栏，而是一次只显示一个：选中文档进正文、点「目录」回列表。
+  const { isMobile } = useBreakpoint();
+  const [mobileDetail, setMobileDetail] = useState(false);
+  const prevSelForMobileRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!isMobile) return;
+    // 选中新文档（含分享深链 ?entry= 初次带值）→ 自动进正文。
+    // 「返回目录」只把 mobileDetail 置 false、不改 selectedEntryId，故 deps 不变、本 effect 不会把它拉回正文。
+    if (selectedEntryId && selectedEntryId !== prevSelForMobileRef.current) setMobileDetail(true);
+    prevSelForMobileRef.current = selectedEntryId;
+  }, [isMobile, selectedEntryId]);
+  // 覆盖「返回目录后再点同一篇」：selectedEntryId 没变、上面的 effect 不触发，靠点击处显式进正文。
+  const handleSelectEntry = useCallback((id: string) => {
+    onSelectEntry(id);
+    if (isMobile) setMobileDetail(true);
+  }, [onSelectEntry, isMobile]);
+
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 搜索请求序号：异步响应回来时只有仍是最新一次搜索才采纳，丢弃陈旧响应
   const searchSeqRef = useRef(0);
@@ -1587,6 +1654,38 @@ export function DocBrowser({
   // 评论计数 fetchIdRef 守卫（PR #685 Bugbot Low）：切换条目 / onClose 重拉时，
   // 旧 entry 的慢响应不覆盖新 entry 已设的计数。
   const commentCountFetchIdRef = useRef(0);
+  // 划词评论布局（margin=右侧批注栏 / inline=正文内联气泡），个人偏好走 localStorage 持久化
+  const inlineCommentLayout = useDocReaderPrefs((s) => s.inlineCommentLayout);
+  const setInlineCommentLayout = useDocReaderPrefs((s) => s.setInlineCommentLayout);
+  const [commentsCanCreate, setCommentsCanCreate] = useState(false);
+  // 删除权限逐条判定用（公开库 canCreate 对任意登录者为 true，但删除仅作者/库主，Codex P2）
+  const [commentsIsOwner, setCommentsIsOwner] = useState(false);
+  const [commentsViewerId, setCommentsViewerId] = useState<string | null>(null);
+  // 其它面板（批注栏/内联/composer）增删评论后自增，驱动已打开的抽屉重拉，避免抽屉与正文数据脱节（Bugbot Medium）
+  const [commentsSyncTick, setCommentsSyncTick] = useState(0);
+  // 批注栏 ↔ 正文高亮联动：hover 某条批注卡 → 命中分组 key → 对应高亮微亮
+  const [hoveredCommentKey, setHoveredCommentKey] = useState<string | null>(null);
+  // 激活态（点正文气泡或点批注卡）：高亮加亮 + 批注卡升起 + 画连线，一次只激活一条
+  const [activeCommentKey, setActiveCommentKey] = useState<string | null>(null);
+  // 用户点「收起批注栏」后本条目临时切回 TOC（切文档复位）
+  const [marginCollapsed, setMarginCollapsed] = useState(false);
+  // 划词后就地输入浮层（取代甩到右侧抽屉）
+  // rects: 选区在打开浮层瞬间的所有 client rect（多行选区需要多个矩形），用于保留正文里的高亮覆盖层
+  const [composer, setComposer] = useState<{
+    entryId: string;
+    sel: PendingSelection;
+    rect: { top: number; left: number; width: number; height: number };
+    rects: Array<{ top: number; left: number; width: number; height: number }>;
+  } | null>(null);
+  // 进入编辑模式 / 切到别的条目时强制收掉 composer 状态，避免 rect 与已经被 textarea
+  // 替换 / 已经卸载的正文不同步（Bugbot Medium）。只渲染守卫不够：退出 editMode 时
+  // composer 状态还在会让覆盖层"复活"在过时位置。
+  useEffect(() => {
+    if (editMode) setComposer(null);
+  }, [editMode]);
+  useEffect(() => {
+    setComposer(null);
+  }, [selectedEntryId]);
   // 选区 offset 必须基于"实际渲染的正文"解析：文本类预览渲染的是
   // parseFrontmatter(text).body（已剥 frontmatter），若把含 frontmatter 的
   // 原文喂给 useContentSelection，选中同时出现在 frontmatter 的文字（如标题）
@@ -1610,12 +1709,24 @@ export function DocBrowser({
     const e = selectedEntryData;
     return e && !e.isFolder ? e : null;
   }, [selectedEntryData]);
+  // 仅用稳定的 entryId 作为「切条目」信号：trackedEntryForComments 对象会因 entries/searchResults
+  // 后台刷新拿到新数组引用而重算（同一 entryId 也变），不能用对象做 effect 依赖，否则后台刷新会
+  // 误触发下面的复位、把正在写的就地浮层/草稿清掉（Bugbot Medium）
+  const entryIdForComments = trackedEntryForComments?.id ?? null;
 
-  // 进入条目时预拉评论计数，让正文上方常驻入口（共享视图也能看到他人评论的存在）
+  // 进入条目时预拉评论 + 复位上一条目的临时 UI 态。只在 entryId / shareToken 真正变化时跑。
   useEffect(() => {
-    if (!trackedEntryForComments) {
+    // 切文档复位：收起批注栏的临时态、未发完的就地输入浮层、激活/hover 态
+    setMarginCollapsed(false);
+    setComposer(null);
+    setActiveCommentKey(null);
+    setHoveredCommentKey(null);
+    if (!entryIdForComments) {
       setCommentCount(0);
       setInlineCommentItems([]);
+      setCommentsCanCreate(false);
+      setCommentsIsOwner(false);
+      setCommentsViewerId(null);
       return;
     }
     const myId = ++commentCountFetchIdRef.current;
@@ -1623,16 +1734,147 @@ export function DocBrowser({
     // 旧评论残留，甚至因正文文本碰巧匹配把旧高亮/气泡画到新文档上（Codex P2）
     setCommentCount(0);
     setInlineCommentItems([]);
+    setCommentsCanCreate(false);
+    setCommentsIsOwner(false);
+    setCommentsViewerId(null);
     (async () => {
       try {
-        const res = await listInlineComments(trackedEntryForComments.id, inlineCommentShareToken);
+        const res = await listInlineComments(entryIdForComments, inlineCommentShareToken);
         if (myId === commentCountFetchIdRef.current && res.success) {
           setCommentCount(res.data.items.length);
           setInlineCommentItems(res.data.items);
+          setCommentsCanCreate(res.data.canCreate);
+          setCommentsIsOwner(!!res.data.isOwner);
+          setCommentsViewerId(res.data.viewerUserId ?? null);
         }
       } catch { /* 私有库 + 无分享 + 非 owner 会 404，正常 */ }
     })();
+  }, [entryIdForComments, inlineCommentShareToken]);
+
+  // 评论的增/删后重拉（margin/inline/composer 共用一条刷新路径），带 fetchIdRef 守卫防串档
+  const refreshComments = useCallback(async () => {
+    if (!trackedEntryForComments) return;
+    const myId = ++commentCountFetchIdRef.current;
+    const res = await listInlineComments(trackedEntryForComments.id, inlineCommentShareToken);
+    if (myId === commentCountFetchIdRef.current && res.success) {
+      setCommentCount(res.data.items.length);
+      setInlineCommentItems(res.data.items);
+      setCommentsCanCreate(res.data.canCreate);
+      setCommentsIsOwner(!!res.data.isOwner);
+      setCommentsViewerId(res.data.viewerUserId ?? null);
+      setCommentsSyncTick((t) => t + 1);
+    }
   }, [trackedEntryForComments, inlineCommentShareToken]);
+
+  // 逐条删除权限：库主可删任意；作者可删自己。公开库 canCreate 对任意登录者为 true，不能当 canDelete（Codex P2）
+  const canDeleteComment = useCallback(
+    (c: DocumentInlineComment) => commentsIsOwner || (!!commentsViewerId && c.authorUserId === commentsViewerId),
+    [commentsIsOwner, commentsViewerId],
+  );
+
+  const handleCreateComment = useCallback(async (input: {
+    selectedText: string;
+    contextBefore?: string;
+    contextAfter?: string;
+    startOffset: number;
+    endOffset: number;
+    content: string;
+  }, entryIdOverride?: string): Promise<boolean> => {
+    // 评论必须落到“产生这段选区的那个条目”。composer 打开时已捕获 entryId，
+    // 用它而非提交时的当前条目，避免切档后把旧选区/偏移写到新文档（Bugbot High）。
+    const targetId = entryIdOverride ?? trackedEntryForComments?.id;
+    if (!targetId) return false;
+    const res = await createInlineComment(targetId, input);
+    if (res.success) {
+      // 仅当目标条目仍是当前正在看的条目才更新本地状态，避免改到别的文档
+      if (targetId === trackedEntryForComments?.id) {
+        // 乐观插入：即使随后 refresh 拿到 success:false，新评论也立即可见，
+        // 不会出现“提交成功但列表/计数仍旧、要手动刷新才出现”（Bugbot Medium）
+        const created = res.data;
+        setInlineCommentItems((prev) => (prev.some((c) => c.id === created.id) ? prev : [...prev, created]));
+        setCommentCount((c) => c + 1);
+        // 自动激活新评论的线程 → 触发 InlineCommentConnector 入场动画（从正文气泡画连线到右侧卡），
+        // 用户不用再手动点气泡才看到联系。groupKey 必须和 Overlay/Margin 同一函数，否则 activeKey 对不上。
+        if (input.selectedText) {
+          // margin 模式下若用户手动收起了批注栏（marginCollapsed=true），Margin 与 Connector 都
+          // 没挂载（条件 !marginCollapsed），仅设 activeKey 谁也画不出来。与 handleActivateComment
+          // 保持同样的兜底：先重开批注栏再激活，确保连线必然显现（Bugbot Medium）。
+          if (inlineCommentLayout === 'margin' && marginCollapsed) {
+            setMarginCollapsed(false);
+          }
+          setActiveCommentKey(groupKey(input.selectedText));
+        }
+        await refreshComments(); // 与服务器对账：成功则覆盖为真值，失败则保留乐观结果
+      }
+      return true;
+    }
+    toast.error('添加失败', res.error?.message);
+    return false;
+  }, [trackedEntryForComments, refreshComments, inlineCommentLayout, marginCollapsed]);
+
+  const handleDeleteComment = useCallback(async (comment: DocumentInlineComment) => {
+    // 删除前确认：margin/inline 的「删除」按钮小、易误点，与抽屉路径保持同样的二次确认（Codex P2）
+    const ok = await systemDialog.confirm({
+      title: '删除评论',
+      message: `确认删除这条评论吗？\n\n"${comment.content.slice(0, 80)}"`,
+      tone: 'danger',
+      confirmText: '删除',
+      cancelText: '取消',
+    });
+    if (!ok) return;
+    const res = await deleteInlineComment(comment.id);
+    if (res.success) {
+      // 慢删除可能在切档后才返回：仅当该评论属于当前条目才动列表/计数（Bugbot Medium）
+      if (comment.entryId === trackedEntryForComments?.id) {
+        // 先 bump fetchId：作废所有在途的 refreshComments（抽屉关闭/创建后刷新）响应，
+        // 否则它们带着删除前的服务器快照晚到，会把已删评论“复活”回列表/计数（Bugbot Medium）
+        commentCountFetchIdRef.current += 1;
+        setInlineCommentItems((prev) => prev.filter((c) => c.id !== comment.id));
+        setCommentCount((c) => Math.max(0, c - 1));
+        setCommentsSyncTick((t) => t + 1);
+      }
+    } else {
+      toast.error('删除失败', res.error?.message);
+    }
+  }, [trackedEntryForComments]);
+
+  // 激活某条批注（点正文气泡或点批注卡）：默认 toggle。滚动定位由下面的 effect 按真实锚点处理。
+  const handleActivateComment = useCallback((key: string) => {
+    // margin 收起态下点气泡：重开批注栏并「强制激活」该条（不 toggle off）。
+    // 否则同一条仍 active 时点它会被 toggle 关掉，>3 条时目标卡片仍折叠、点了看不到内容（Codex P2）。
+    if (inlineCommentLayout === 'margin' && marginCollapsed) {
+      setMarginCollapsed(false);
+      setActiveCommentKey(key);
+      return;
+    }
+    setActiveCommentKey((prev) => (prev === key ? null : key));
+    if (inlineCommentLayout === 'margin') setMarginCollapsed(false);
+  }, [inlineCommentLayout, marginCollapsed]);
+
+  // 激活后把正文锚点滚到眼前：用 overlay 已按 findTextRange（去空白 + contextBefore 消歧）放置的
+  // data-active-hl 元素，而非 raw indexOf（会被空白归一化/重复短语坑，Bugbot Medium）。
+  // 仅在激活（非置空）时滚，取消激活不跳视口（Bugbot Low）。下一帧 data 属性才就绪，故走 rAF。
+  useEffect(() => {
+    if (!activeCommentKey) return;
+    const raf = requestAnimationFrame(() => {
+      (document.querySelector('[data-active-hl="1"]') as HTMLElement | null)
+        ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [activeCommentKey]);
+
+  // 激活的分组若已不存在于当前评论列表（删光该处批注 / 刷新后消失）→ 清掉激活/hover，
+  // 避免连线层、hover 联动指向幽灵分组（Bugbot Low：active key survives deletion）
+  useEffect(() => {
+    if (!activeCommentKey) return;
+    const stillThere = inlineCommentItems.some(
+      (c) => !c.isWholeDocument && c.selectedText && groupKey(c.selectedText) === activeCommentKey,
+    );
+    if (!stillThere) {
+      setActiveCommentKey(null);
+      setHoveredCommentKey(null);
+    }
+  }, [inlineCommentItems, activeCommentKey]);
 
   // F1：仅当当前预览是文本类（Markdown/提取文本）时，给右侧 TOC 提供正文
   const tocContent = useMemo(() => {
@@ -2106,11 +2348,12 @@ export function DocBrowser({
     <TagColorsContext.Provider value={tagColorsCtxValue}>
     <div className={rootClass} style={{ minHeight: 0 }}>
 
-      {/* 左侧：文件树（液态玻璃效果 + 可拖拽调整宽度） */}
+      {/* 左侧：文件树（液态玻璃效果 + 可拖拽调整宽度）。移动端：占满整宽，进正文时隐藏。 */}
       <div ref={sidebarRef} className={sidebarClass}
         style={{
-          width: `${sidebarWidth}px`,
+          width: isMobile ? '100%' : `${sidebarWidth}px`,
           minHeight: 0,
+          display: isMobile && mobileDetail ? 'none' : undefined,
         }}>
 
         {/* 批量操作条：选中条目后浮在侧栏底部，支持批量删除（取消即清空选择） */}
@@ -2436,7 +2679,7 @@ export function DocBrowser({
               reprocessingMap={reprocessingMap}
               sharedEntryIds={sharedEntryIds}
               onToggleFolder={toggleFolder}
-              onSelectEntry={onSelectEntry}
+              onSelectEntry={handleSelectEntry}
               onContextMenu={handleContextMenu}
               onShareEntry={onShareEntry}
               onMoveEntry={onMoveEntry}
@@ -2478,8 +2721,9 @@ export function DocBrowser({
 
         {/* 拖拽调整宽度的把手（仅 inset 模式）。cards 模式下双卡片有 12px gap，
             把手挂在 sidebar 内部右边缘会被 overflow-hidden + rounded-xl 剪成孤立小方块，
-            视觉怪异。cards 场景以阅读为主，固定宽度足够，故 cards 模式下不渲染。 */}
-        {!isCards && (
+            视觉怪异。cards 场景以阅读为主，固定宽度足够，故 cards 模式下不渲染。
+            移动端单栏布局无需拖拽调宽，故 isMobile 时也不渲染。 */}
+        {!isCards && !isMobile && (
           <div
             className="absolute top-0 right-0 h-full w-1 cursor-col-resize group/resize"
             onMouseDown={(e) => {
@@ -2503,8 +2747,9 @@ export function DocBrowser({
 
       {/* cards 模式：两卡片之间的可拖拽分隔条（宽 12px，兼作视觉间距）。
           与 inset 模式的 sidebar 内嵌把手共用同一套 resize 逻辑（resizeBaseLeftRef + setResizing）。
-          不挂在 sidebar 内部（会被其 overflow-hidden+rounded 裁切），改作独立 flex 兄弟。 */}
-      {isCards && (
+          不挂在 sidebar 内部（会被其 overflow-hidden+rounded 裁切），改作独立 flex 兄弟。
+          移动端单栏布局无需拖拽分隔条，isMobile 时不渲染。 */}
+      {isCards && !isMobile && (
         <div
           className="relative flex-shrink-0 self-stretch group/resize"
           style={{ width: 12, cursor: 'col-resize' }}
@@ -2525,15 +2770,26 @@ export function DocBrowser({
         </div>
       )}
 
-      {/* 右侧：文档预览 */}
+      {/* 右侧：文档预览。移动端：占满整宽，仅在「进正文(mobileDetail)」时显示，否则让列表占满。 */}
       <div
         className={`flex-1 min-w-0 flex flex-col overflow-hidden${isCards ? ' surface-reading rounded-xl' : ''}`}
-        style={{ minHeight: 0 }}
+        style={{ minHeight: 0, display: isMobile && !mobileDetail ? 'none' : undefined }}
       >
         {selectedEntryId ? (
           <>
-            {/* 面包屑导航 header */}
-            <div className="flex items-center gap-2 px-5 py-2.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+            {/* 面包屑导航 header（移动端缩小左右内边距 + 允许换行，避免徽章/标签挤出右边缘相互重叠） */}
+            <div className={`flex items-center gap-2 py-2.5 ${isMobile ? 'px-3 flex-wrap' : 'px-5'}`} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+              {/* 移动端「返回目录」：单栏布局下从正文回到文件列表（桌面端 isMobile=false 不渲染） */}
+              {isMobile && (
+                <button
+                  onClick={() => setMobileDetail(false)}
+                  className="flex-shrink-0 inline-flex items-center gap-1 h-7 px-2.5 rounded-[8px] text-[12px] cursor-pointer transition-colors hover:opacity-80"
+                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)' }}
+                  title="返回目录"
+                >
+                  <ChevronLeft size={14} /> 目录
+                </button>
+              )}
               {/* 阅读区返回按钮：返回当前空间的文档列表（上一层），仅调用方传 onBackToList 才显示 */}
               {onBackToList && (
                 <button
@@ -2599,7 +2855,8 @@ export function DocBrowser({
               })()}
               {(() => {
                 const sel = entries.find(e => e.id === selectedEntryId);
-                if (!sel || sel.isFolder) return null;
+                // 移动端：隐藏「更新于/更新者」（其 ml-auto 会把自己顶出窄屏右边缘、与标签重叠裁切）。
+                if (!sel || sel.isFolder || isMobile) return null;
                 // 「更新于」用 updatedAt（所有本地变更都会刷新它）；lastChangedAt 仅供 new 徽标，
                 // 避免浏览器内保存只 patch updatedAt 而 lastChangedAt 滞后导致显示陈旧
                 return (
@@ -2626,7 +2883,7 @@ export function DocBrowser({
               {/* 当前文件最近更新徽标 + 订阅来源版本信息（git 类订阅独有） */}
               {(() => {
                 const sel = entries.find(e => e.id === selectedEntryId);
-                if (!sel || sel.isFolder) return null;
+                if (!sel || sel.isFolder || isMobile) return null; // 移动端隐藏 new/订阅徽标，给标题+标签让位
                 const recentlyChanged = isRecentlyChanged(sel.lastChangedAt);
                 const isSubscription = sel.sourceType === 'subscription';
                 const githubSha = sel.metadata?.github_sha;
@@ -2720,12 +2977,35 @@ export function DocBrowser({
                       border: '1px solid rgba(99,102,241,0.22)',
                       color: 'rgba(165,180,252,0.95)',
                     }}
-                    title="证据关系图 — 把报告里的步骤连成页面跳转关系图（探案证据板）"
+                    title="证据板 — 把「需求/用例 → 证据截图 → 结论」连成关系图，按通过/未做上色"
                   >
-                    <Workflow size={11} /> 证据图
+                    <Workflow size={11} /> 证据板
                   </button>
                 );
               })()}
+              {/* 划词评论布局切换：批注栏（右侧常驻）/ 内联（正文气泡展开）。仅文本预览态显示 */}
+              {trackedEntryForComments && tocContent && !editMode && (
+                <div className="flex items-center rounded-[8px] overflow-hidden flex-shrink-0"
+                  style={{ border: '1px solid rgba(168,85,247,0.18)' }}
+                  title="切换批注展示方式（保存为个人偏好）">
+                  {([
+                    { m: 'margin' as const, label: '批注栏', Icon: PanelRight },
+                    { m: 'inline' as const, label: '内联', Icon: MessageSquare },
+                  ]).map(({ m, label, Icon }) => (
+                    <button
+                      key={m}
+                      onClick={() => { setInlineCommentLayout(m); setActiveCommentKey(null); if (m === 'margin') setMarginCollapsed(false); }}
+                      className="h-6 px-2 text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                      style={{
+                        background: inlineCommentLayout === m ? 'rgba(168,85,247,0.18)' : 'transparent',
+                        color: inlineCommentLayout === m ? 'rgba(216,180,254,0.97)' : 'var(--text-muted)',
+                      }}
+                    >
+                      <Icon size={11} /> {label}
+                    </button>
+                  ))}
+                </div>
+              )}
               {/* 批次 D：划词评论开关按钮 */}
               {trackedEntryForComments && (
                 <button
@@ -2799,7 +3079,7 @@ export function DocBrowser({
               )}
               <div
                 ref={contentAreaRef}
-                className="flex-1 min-w-0 px-6 py-4 relative"
+                className={`flex-1 min-w-0 ${isMobile ? 'px-4' : 'px-6'} py-4 relative`}
                 style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
               >
                 {contentLoading ? (
@@ -2832,39 +3112,119 @@ export function DocBrowser({
                     <p className="text-[13px]">{selectedEntryData?.isFolder ? '这是一个目录' : '无法预览该文件'}</p>
                   </div>
                 )}
-                {/* 划词选中时的浮层"添加评论"按钮 */}
-                {liveSelection && !editMode && (
+                {/* 划词选中时的浮层"添加评论"按钮——仅有写权限时出现；只读访客（私有分享/匿名公开）不弹，
+                    避免写了提交才 403（Codex P2：read-only viewers 不该拿到写入框） */}
+                {liveSelection && !composer && !editMode && commentsCanCreate && (
                   <SelectionActionPopover
                     selection={liveSelection}
                     onAddComment={() => {
-                      setPendingSelection({
-                        selectedText: liveSelection.selectedText,
-                        contextBefore: liveSelection.contextBefore,
-                        contextAfter: liveSelection.contextAfter,
-                        startOffset: liveSelection.startOffset,
-                        endOffset: liveSelection.endOffset,
+                      // 就地输入：在选区旁展开 composer，不再甩到右侧抽屉
+                      if (!trackedEntryForComments) return;
+                      const r = liveSelection.rect;
+                      // 捕获选区所有 client rect（多行选区需要多个矩形）用于保留高亮覆盖层
+                      // 用户反馈：打开浮层后正文选区被清掉，写到一半就忘了自己选了哪段
+                      const sel = window.getSelection();
+                      const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
+                      // range 存在但 getClientRects() 空（折叠 / 不可见行 / 被 display:none 包裹）也要回退到
+                      // liveSelection.rect 的 bounding box，否则 PendingSelectionHighlight 渲染不出来（Bugbot Low）
+                      const clientRects = range ? Array.from(range.getClientRects()) : [];
+                      const rects = clientRects.length > 0
+                        ? clientRects.map((cr) => ({
+                            top: cr.top,
+                            left: cr.left,
+                            width: cr.width,
+                            height: cr.height,
+                          }))
+                        : [{ top: r.top, left: r.left, width: r.width, height: r.height }];
+                      setComposer({
+                        entryId: trackedEntryForComments.id,
+                        sel: {
+                          selectedText: liveSelection.selectedText,
+                          contextBefore: liveSelection.contextBefore,
+                          contextAfter: liveSelection.contextAfter,
+                          startOffset: liveSelection.startOffset,
+                          endOffset: liveSelection.endOffset,
+                        },
+                        rect: { top: r.top, left: r.left, width: r.width, height: r.height },
+                        rects,
                       });
-                      setInlineCommentsOpen(true);
+                      // 不主动清浏览器选区——textarea 拿到 focus 时浏览器自己会清，
+                      // 我们用 PendingSelectionHighlight 覆盖层兜底，保证正文高亮不消失
                       clearLiveSelection();
-                      window.getSelection()?.removeAllRanges();
                     }}
                   />
                 )}
-                {/* 行内评论高亮 + 气泡：把他人评论锚回正文，气泡点击打开评论抽屉 */}
+                {/* 行内评论高亮 + 气泡/内联展开：把他人评论锚回正文，边读边可见 */}
                 {!editMode && !contentLoading && tocContent && inlineCommentItems.length > 0 && (
                   <InlineCommentOverlay
                     containerRef={contentAreaRef}
                     comments={inlineCommentItems}
                     reflowKey={`${selectedEntryId ?? ''}:${preview?.text?.length ?? 0}`}
-                    onOpenComment={() => setInlineCommentsOpen(true)}
+                    mode={inlineCommentLayout}
+                    hoveredKey={hoveredCommentKey}
+                    activeKey={activeCommentKey}
+                    onActivate={handleActivateComment}
+                    canCreate={commentsCanCreate}
+                    canDelete={canDeleteComment}
+                    onCreate={handleCreateComment}
+                    onDelete={handleDeleteComment}
                   />
+                )}
+                {/* 划词后就地输入浮层（createPortal 到 body）。!editMode 守卫：进入编辑模式
+                    后正文被 textarea 替换，原选区 rect 与现内容已经对不上，浮层和高亮覆盖层
+                    必须同时收掉，否则旧覆盖层会飘在 textarea 上（Bugbot Medium） */}
+                {composer && !editMode && (
+                  <>
+                    {/* 保留正文里的选区高亮：textarea 拿 focus 后浏览器选区会消失，
+                        用 fixed 覆盖层模拟选区颜色，跟随滚动；用户写到一半依然能看到选了哪段 */}
+                    <PendingSelectionHighlight rects={composer.rects} scrollRef={contentAreaRef} />
+                    <InlineCommentComposer
+                      selectedText={composer.sel.selectedText}
+                      anchorRect={composer.rect}
+                      scrollRef={contentAreaRef}
+                      onSubmit={(content) => handleCreateComment({
+                        selectedText: composer.sel.selectedText,
+                        contextBefore: composer.sel.contextBefore,
+                        contextAfter: composer.sel.contextAfter,
+                        startOffset: composer.sel.startOffset,
+                        endOffset: composer.sel.endOffset,
+                        content,
+                      }, composer.entryId)}
+                      onClose={() => setComposer(null)}
+                    />
+                  </>
                 )}
               </div>
               </div>
-              {/* F1：本页章节导航——仅文本类预览且非编辑态显示，无标题时组件自身返回 null */}
-              {!contentLoading && !editMode && tocContent && (
-                <DocToc content={tocContent} scrollContainerRef={contentAreaRef} />
-              )}
+              {/* 右侧栏：margin 布局且有评论 → 批注栏常驻（取代 TOC）；否则 → 本页章节导航。
+                  移动端单栏阅读不挂右侧 TOC（否则又把正文挤窄），isMobile 时隐藏 DocToc。 */}
+              {(() => {
+                const showMargin = inlineCommentLayout === 'margin' && !contentLoading && !editMode
+                  && !!tocContent && inlineCommentItems.length > 0 && !marginCollapsed;
+                if (showMargin) {
+                  return (
+                    <InlineCommentMargin
+                      comments={inlineCommentItems}
+                      canCreate={commentsCanCreate}
+                      canDelete={canDeleteComment}
+                      hoveredKey={hoveredCommentKey}
+                      activeKey={activeCommentKey}
+                      onHoverKey={setHoveredCommentKey}
+                      onActivate={handleActivateComment}
+                      onCreate={handleCreateComment}
+                      onDelete={handleDeleteComment}
+                      onClose={() => setMarginCollapsed(true)}
+                    />
+                  );
+                }
+                return (!contentLoading && !editMode && tocContent && !isMobile) ? (
+                  <DocToc content={tocContent} scrollContainerRef={contentAreaRef} />
+                ) : null;
+              })()}
+              {/* 激活批注的牵引连线（active-only，业界 Word/Figma 做法）：仅 margin 布局且有激活项时出现 */}
+              {inlineCommentLayout === 'margin' && !marginCollapsed && !editMode && !contentLoading
+                && tocContent && inlineCommentItems.length > 0 && activeCommentKey && (
+                <InlineCommentConnector activeKey={activeCommentKey} color={threadColor(activeCommentKey)} boundsRef={contentAreaRef} />)}
             </div>
           </>
         ) : (
@@ -2929,6 +3289,8 @@ export function DocBrowser({
           onReprocess={onReprocess}
           onShareEntry={onShareEntry}
           onReplaceFile={onReplaceFile}
+          categories={docCategories}
+          onSetCategory={onSetEntryCategory}
           onClose={() => setContextMenu(null)}
         />
       )}
@@ -2968,6 +3330,8 @@ export function DocBrowser({
           entryId={trackedEntryForComments.id}
           entryTitle={trackedEntryForComments.title}
           shareToken={inlineCommentShareToken}
+          syncTick={commentsSyncTick}
+          onChanged={() => { void refreshComments(); }}
           pendingSelection={pendingSelection}
           onClearPending={() => setPendingSelection(null)}
           onLocate={(text) => {
@@ -2977,23 +3341,100 @@ export function DocBrowser({
           onClose={() => {
             setInlineCommentsOpen(false);
             setPendingSelection(null);
-            // 关闭时刷新评论计数（新建/删除/无变化都通用）；带 fetchIdRef 守卫，
-            // 关闭后立刻切换条目时旧响应不覆盖新计数（PR #685 Bugbot Low）
-            if (trackedEntryForComments) {
-              const entryId = trackedEntryForComments.id;
-              const myId = ++commentCountFetchIdRef.current;
-              listInlineComments(entryId, inlineCommentShareToken).then((res) => {
-                if (myId === commentCountFetchIdRef.current && res.success) {
-                  setCommentCount(res.data.items.length);
-                  setInlineCommentItems(res.data.items);
-                }
-              }).catch(() => {});
-            }
+            // 关闭时刷新评论（新建/删除/无变化都通用）。走 refreshComments 统一路径：
+            // 它同时更新 count / items / commentsCanCreate（之前漏同步 canCreate，导致抽屉里
+            // 能评论、关掉后 margin/composer/overlay 仍按只读禁写，Bugbot Medium），并带 fetchIdRef 守卫。
+            void refreshComments();
           }}
         />
       )}
     </div>
     </TagColorsContext.Provider>
+  );
+}
+
+// 打开就地输入浮层期间，正文里的待评论选区高亮覆盖层。
+// 浏览器原生 selection 在 textarea 拿到 focus 后会被清掉，写到一半就忘了选了哪段——
+// 用 fixed 定位、createPortal 到 body，按打开浮层瞬间捕获的 client rect 画选区色块，
+// 跟随正文滚动平移（与 InlineCommentComposer 同一套 scrollDy 逻辑）。
+function PendingSelectionHighlight({
+  rects,
+  scrollRef,
+}: {
+  rects: Array<{ top: number; left: number; width: number; height: number }>;
+  scrollRef?: React.RefObject<HTMLElement>;
+}) {
+  const [scrollDy, setScrollDy] = useState(0);
+  // 滚动容器在视口里的 bounding rect —— 用来把高亮裁剪在正文区域内，
+  // 避免选区滚出正文后还在 toolbar/sidebar 上面继续画（Codex P2）。
+  const [clip, setClip] = useState<{ top: number; left: number; right: number; bottom: number } | null>(null);
+  useEffect(() => {
+    const read = () => (scrollRef?.current?.scrollTop ?? 0) + window.scrollY;
+    const start = read();
+    const onScroll = () => {
+      setScrollDy(read() - start);
+      const el = scrollRef?.current;
+      if (el) {
+        const r = el.getBoundingClientRect();
+        setClip({ top: r.top, left: r.left, right: r.right, bottom: r.bottom });
+      } else {
+        setClip(null);
+      }
+    };
+    onScroll(); // 初始化一次拿到当前裁剪框
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onScroll);
+    return () => {
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onScroll);
+    };
+  }, [scrollRef]);
+  if (rects.length === 0) return null;
+  return createPortal(
+    <div aria-hidden style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 115 }}>
+      {rects.map((r, i) => {
+        // 视口坐标：rect 原始 top - 累计滚动位移
+        const top = r.top - scrollDy;
+        const left = r.left;
+        const right = left + r.width;
+        const bottom = top + r.height;
+        // 完全滚出滚动容器 → 不渲染（节流 DOM）；部分相交 → 用 clipPath 裁掉容器外的部分
+        if (clip) {
+          if (bottom <= clip.top || top >= clip.bottom || right <= clip.left || left >= clip.right) {
+            return null;
+          }
+        }
+        // 用 inset(top right bottom left) clip-path 把超出 clip 的部分切掉；
+        // 数值相对于元素自身左上角（top/right/bottom/left = 各边收进多少 px）
+        let clipPath: string | undefined;
+        if (clip) {
+          const cTop = Math.max(0, clip.top - top);
+          const cLeft = Math.max(0, clip.left - left);
+          const cRight = Math.max(0, right - clip.right);
+          const cBottom = Math.max(0, bottom - clip.bottom);
+          if (cTop || cLeft || cRight || cBottom) {
+            clipPath = `inset(${cTop}px ${cRight}px ${cBottom}px ${cLeft}px)`;
+          }
+        }
+        return (
+          <div
+            key={i}
+            style={{
+              position: 'absolute',
+              top,
+              left,
+              width: r.width,
+              height: r.height,
+              background: 'rgba(168,85,247,0.28)',
+              borderBottom: '2px solid rgba(168,85,247,0.85)',
+              borderRadius: 2,
+              clipPath,
+            }}
+          />
+        );
+      })}
+    </div>,
+    document.body,
   );
 }
 

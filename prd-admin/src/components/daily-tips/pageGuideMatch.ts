@@ -79,7 +79,15 @@ export function matchPageGuide(
  *
  * 规则:
  * - 只看 card / spotlight 类,排除已 dismiss 的。
- * - 管理员定向推送(isTargeted):不限页面,始终纳入(否则会漏掉用户被推送的内容)。
+ * - 管理员定向推送 / 被投递的 tip(isTargeted):
+ *   · 带 actionUrl(指向某个具体页面,如被投递给用户的 /web-pages、/settings 教程)→ 和普通教程一样
+ *     **按页面限定**,只在该页的「本页教程」里出现。否则被投递过的教程会在**每个**页面的「本页教程」
+ *     里冒出来(用户 2026-06-04 二次反馈:「当前页面出现了其他页面的教程」——网页托管/导航排序教程
+ *     出现在不相干的页面上)。
+ *   · 无 actionUrl(页面无关的纯个人消息,如「为你修复」通知,本就无处可去)→ 不限页面纳入,
+ *     否则会漏掉这类个人推送。这类消息不属于任何页面,不会被误认成「别页教程」。
+ *     注:被投递的 tip 仍由 TipsDrawer 的「定向推送自动展开」effect 用全量 tips 兜一次(本 session),
+ *     即便按页限定后不在本页列表里,也不会真的漏看。
  * - *-page-guide:按编辑器感知规则匹配(非编辑器走精确路由、编辑器走深层路由前缀),
  *   与 matchPageGuide 一致,避免列表页教程在编辑器子路由里被误纳入。
  * - 其余(功能公告 / 旧版短教程):按 actionUrl 精确或前缀匹配当前页。
@@ -95,7 +103,9 @@ export function filterPageTips(
   return items.filter((t) => {
     if (dismissed.has(t.id)) return false;
     if (t.kind !== 'card' && t.kind !== 'spotlight') return false;
-    if (t.isTargeted) return true;
+    // 被投递的 tip 若没有落点页面(actionUrl 为空)= 页面无关的纯个人消息,任意页保留;
+    // 有 actionUrl 的被投递 tip 不在这里短路,继续往下走与普通教程相同的「按页面限定」匹配。
+    if (t.isTargeted && !t.actionUrl) return true;
     if (!t.actionUrl) return false;
     if (!actionQuerySatisfied(t.actionUrl, search)) return false;
     const url = routePathOf(t.actionUrl);

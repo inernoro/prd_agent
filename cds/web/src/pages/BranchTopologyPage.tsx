@@ -669,6 +669,7 @@ export function BranchTopologyPage(): JSX.Element {
               <Button asChild variant="ghost" size="sm" title="项目设置">
                 <a href={`/settings/${encodeURIComponent(projectId)}`}>
                   <Settings />
+                  <span className="md:hidden">项目设置</span>
                 </a>
               </Button>
               <Button
@@ -679,6 +680,7 @@ export function BranchTopologyPage(): JSX.Element {
                 title="刷新"
               >
                 <RefreshCw />
+                <span className="md:hidden">刷新</span>
               </Button>
               {/* 2026-05-07 wave 2.1:全屏 toggle — 拓扑视图沉浸观察 */}
               <Button
@@ -696,6 +698,7 @@ export function BranchTopologyPage(): JSX.Element {
                 title="全屏(再点退出)"
               >
                 <Maximize2 />
+                <span className="md:hidden">全屏</span>
               </Button>
             </>
           }

@@ -9,14 +9,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { EChartsOption } from 'echarts';
-import { Plus, Trash2, GitBranch, ListChecks, Puzzle, Users, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard, Table2, BarChart3, Download, Upload } from 'lucide-react';
+import { Plus, Trash2, GitBranch, ListChecks, Puzzle, UserCog, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard, Table2, BarChart3, Download, Upload } from 'lucide-react';
 import { EChart } from '@/components/charts/EChart';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
-import { VersionRelationModal, ProductKnowledgePanel, DefectLinkerModal } from './ProductRelationModals';
+import { ProductKnowledgePanel, DefectLinkerModal } from './ProductRelationModals';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { KanbanBoard } from './KanbanBoard';
 import { RtmMatrix } from './RtmMatrix';
+import { ProductTeamTab } from './ProductTeamSection';
 import { ReportsTab } from './ReportsTab';
 import { BatchBar } from './BatchBar';
 import { UpgradeRequestsTab } from './UpgradeRequestsTab';
@@ -31,22 +32,20 @@ import {
   importRequirements,
   listFeatures,
   deleteFeature,
-  listCustomers,
-  createCustomer,
-  deleteCustomer,
   listTracedDefects,
   untraceDefect,
   createProductDefect,
   transition,
   type TracedDefect,
 } from '@/services/real/productAgent';
-import type { Product, ProductVersion, Requirement, Feature, Customer, ItemGrade, WorkflowDefinition } from './types';
+import type { Product, ProductVersion, Requirement, Feature, ItemGrade, WorkflowDefinition } from './types';
 import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL } from './types';
 import { toCSV, downloadCSV, parseCSV } from '@/lib/csv';
 import { useProductCategories, categoryLabel } from './productCategories';
 import { useEffectiveWorkflow } from './DynamicForm';
+import { useAuthStore } from '@/stores/authStore';
 
-type Section = 'overview' | 'versions' | 'requirements' | 'features' | 'board' | 'rtm' | 'reports' | 'defects' | 'customers' | 'knowledge' | 'graph';
+type Section = 'overview' | 'versions' | 'requirements' | 'features' | 'board' | 'rtm' | 'reports' | 'defects' | 'team' | 'knowledge' | 'graph';
 
 const CHART_COLORS = ['#22D3EE', '#FBBF24', '#A78BFA', '#4ADE80', '#F87171', '#60A5FA'];
 
@@ -70,15 +69,15 @@ function orderByHierarchy<T extends { id: string; parentId?: string | null }>(it
 }
 
 const NAV: NavItem<Section>[] = [
-  { key: 'overview', label: '概览', icon: LayoutDashboard },
+  { key: 'overview', label: '工作台', icon: LayoutDashboard },
+  { key: 'reports', label: '报表', icon: BarChart3 },
+  { key: 'board', label: '看板', icon: LayoutGrid },
   { key: 'versions', label: '版本', icon: GitBranch },
   { key: 'requirements', label: '需求', icon: ListChecks },
-  { key: 'features', label: '功能', icon: Puzzle },
-  { key: 'board', label: '看板', icon: LayoutGrid },
   { key: 'rtm', label: '追溯矩阵', icon: Table2 },
-  { key: 'reports', label: '报表', icon: BarChart3 },
+  { key: 'features', label: '功能', icon: Puzzle },
   { key: 'defects', label: '缺陷', icon: Bug },
-  { key: 'customers', label: '客户', icon: Users },
+  { key: 'team', label: '团队', icon: UserCog },
   { key: 'knowledge', label: '知识库', icon: BookOpen },
   { key: 'graph', label: '图谱', icon: Share2 },
 ];
@@ -121,8 +120,8 @@ export function SingleProductView() {
   }
 
   const SECTION_TITLE: Record<Section, string> = {
-    overview: '概览', versions: '版本（含升级申请）', requirements: '需求', features: '功能', board: '看板', rtm: '追溯矩阵', reports: '报表',
-    defects: '缺陷', customers: '客户', knowledge: '知识库', graph: '图谱',
+    overview: '工作台', versions: '版本（含升级申请）', requirements: '需求', features: '功能', board: '看板', rtm: '追溯矩阵', reports: '报表',
+    defects: '缺陷', team: '团队', knowledge: '知识库', graph: '图谱',
   };
 
   return (
@@ -161,13 +160,18 @@ export function SingleProductView() {
         </div>
       ) : (
         <SectionShell title={SECTION_TITLE[active]}>
-          {active === 'overview' && <ProductDashboard product={product} />}
+          {active === 'overview' && (
+            <div className="flex flex-col gap-5">
+              <MyTodos product={product} />
+              <ProductDashboard product={product} />
+            </div>
+          )}
           {active === 'versions' && <VersionsTab productId={product.id} />}
           {active === 'requirements' && <RequirementsTab productId={product.id} />}
           {active === 'features' && <FeaturesTab productId={product.id} />}
           {active === 'reports' && <ReportsTab productId={product.id} />}
           {active === 'defects' && <DefectsTab productId={product.id} />}
-          {active === 'customers' && <CustomersTab productId={product.id} />}
+          {active === 'team' && <ProductTeamTab productId={product.id} />}
         </SectionShell>
       )}
     </ProductAgentLayout>
@@ -195,6 +199,83 @@ function BoardTab({ productId }: { productId: string }) {
 }
 
 // ── 产品概览仪表盘 ──
+// ── 工作台「我的待办」：需要当前用户处理的需求/功能（指派或负责）+ 本产品未关闭缺陷 ──
+const DEFECT_CLOSED_STATES = new Set(['已解决', '已关闭', '已修复', '已完成', '关闭', 'resolved', 'closed', 'done', 'fixed', 'completed']);
+
+function MyTodos({ product }: { product: Product }) {
+  const navigate = useNavigate();
+  const myId = useAuthStore((s) => s.user?.userId) ?? '';
+  const [reqs, setReqs] = useState<Requirement[]>([]);
+  const [feats, setFeats] = useState<Feature[]>([]);
+  const [defects, setDefects] = useState<TracedDefect[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      const [r, f, d] = await Promise.all([
+        listRequirements(product.id),
+        listFeatures(product.id),
+        listTracedDefects(product.id),
+      ]);
+      if (!alive) return;
+      if (r.success) setReqs(r.data.items);
+      if (f.success) setFeats(f.data.items);
+      if (d.success) setDefects(d.data.items);
+      setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [product.id]);
+
+  const mine = (o: { assigneeId?: string | null; ownerId: string }) => !!myId && (o.assigneeId === myId || o.ownerId === myId);
+  const todoReqs = reqs.filter(mine);
+  const todoFeats = feats.filter(mine);
+  const todoDefects = defects.filter((d) => !DEFECT_CLOSED_STATES.has((d.status ?? '').trim()) && !DEFECT_CLOSED_STATES.has((d.status ?? '').trim().toLowerCase()));
+  const total = todoReqs.length + todoFeats.length + todoDefects.length;
+
+  if (loading) return <MapSectionLoader text="正在汇总待办…" />;
+
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <ListChecks size={15} className="text-cyan-400" />
+        <span className="text-sm font-semibold text-white/80">我的待办</span>
+        <span className="text-[11px] text-white/40">需要我处理的需求 / 功能（指派或负责）+ 本产品未关闭缺陷</span>
+        <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">{total}</span>
+      </div>
+      {total === 0 ? (
+        <div className="text-[12px] text-white/35 py-6 text-center">暂无待办，保持清爽。</div>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {todoReqs.map((r) => (
+            <TodoRow key={`r-${r.id}`} kind="需求" color="#FBBF24" no={r.requirementNo} title={r.title} state={r.currentState}
+              onClick={() => navigate(`/product-agent/p/${product.id}/requirement/${r.id}`)} />
+          ))}
+          {todoFeats.map((f) => (
+            <TodoRow key={`f-${f.id}`} kind="功能" color="#A78BFA" no={f.featureNo} title={f.title} state={f.currentState}
+              onClick={() => navigate(`/product-agent/p/${product.id}/feature/${f.id}`)} />
+          ))}
+          {todoDefects.map((d) => (
+            <TodoRow key={`d-${d.id}`} kind="缺陷" color="#F87171" no={d.defectNo} title={d.title || '(无标题)'} state={d.status}
+              onClick={() => navigate(`/product-agent/p/${product.id}/defect/${d.id}`)} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TodoRow({ kind, color, no, title, state, onClick }: { kind: string; color: string; no: string; title: string; state?: string | null; onClick: () => void }) {
+  return (
+    <button onClick={onClick} className="text-left flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-white/5 border border-white/5">
+      <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0" style={{ color, background: `${color}1a` }}>{kind}</span>
+      <span className="text-[11px] font-mono text-white/35 shrink-0">{no}</span>
+      <span className="text-sm text-white/85 truncate flex-1">{title}</span>
+      {state && <span className="text-[11px] px-1.5 py-0.5 rounded bg-white/8 text-white/55 border border-white/10 shrink-0">{state}</span>}
+    </button>
+  );
+}
+
 function ProductDashboard({ product }: { product: Product }) {
   const [reqs, setReqs] = useState<Requirement[]>([]);
   const [defects, setDefects] = useState<TracedDefect[]>([]);
@@ -299,11 +380,11 @@ function DashChart({ title, option, empty }: { title: string; option: EChartsOpt
 
 // ── 版本 tab（含大版本升级申请）──
 function VersionsTab({ productId }: { productId: string }) {
+  const navigate = useNavigate();
   const [items, setItems] = useState<ProductVersion[]>([]);
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
-  const [relVersion, setRelVersion] = useState<ProductVersion | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -343,8 +424,8 @@ function VersionsTab({ productId }: { productId: string }) {
                 key={v.id}
                 title={v.versionName}
                 sub={`${VERSION_LIFECYCLE_LABEL[v.lifecycle]} · 需求 ${v.requirementIds.length} · 功能 ${v.featureVersionIds.length}${v.isMajor ? ' · 大版本' : ''}`}
-                onClick={() => setRelVersion(v)}
-                actionLabel="关联需求/功能 · 知识库"
+                onClick={() => navigate(`/product-agent/p/${productId}/version/${v.id}`)}
+                actionLabel="查看版本详情"
                 onDelete={async () => {
                   await deleteVersion(v.id);
                   await reload();
@@ -359,15 +440,6 @@ function VersionsTab({ productId }: { productId: string }) {
         <div className="text-xs font-medium text-white/50 mb-2">大版本升级申请</div>
         <UpgradeRequestsTab productId={productId} />
       </div>
-
-      {relVersion && (
-        <VersionRelationModal
-          productId={productId}
-          version={relVersion}
-          onClose={() => setRelVersion(null)}
-          onSaved={() => void reload()}
-        />
-      )}
     </div>
   );
 }
@@ -640,60 +712,6 @@ function NewDefectModal({ productId, onClose, onCreated }: { productId: string; 
         </div>
         <p className="text-[11px] text-white/35">缺陷写入缺陷管理智能体，并自动追溯到本产品。</p>
       </div>
-    </div>
-  );
-}
-
-// ── 客户 tab ──
-function CustomersTab({ productId }: { productId: string }) {
-  const [items, setItems] = useState<Customer[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [name, setName] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  const reload = useCallback(async () => {
-    setLoading(true);
-    const res = await listCustomers(productId);
-    if (res.success) setItems(res.data.items);
-    setLoading(false);
-  }, [productId]);
-
-  useEffect(() => {
-    void reload();
-  }, [reload]);
-
-  const add = async () => {
-    if (!name.trim()) return;
-    setSaving(true);
-    const res = await createCustomer(productId, { name: name.trim() });
-    setSaving(false);
-    if (res.success) {
-      setName('');
-      await reload();
-    }
-  };
-
-  if (loading) return <MapSectionLoader text="正在加载客户…" />;
-  return (
-    <div className="flex flex-col gap-3">
-      <QuickAdd value={name} setValue={setName} onAdd={add} saving={saving} placeholder="客户名称" />
-      {items.length === 0 ? (
-        <EmptyHint text="还没有客户。录入客户后，可在需求上关联客户，回答“这个需求是哪些客户提的”。" />
-      ) : (
-        <div className="flex flex-col gap-2">
-          {items.map((c) => (
-            <Row
-              key={c.id}
-              title={c.name}
-              sub={[c.company, c.contact].filter(Boolean).join(' · ') || '（无联系方式）'}
-              onDelete={async () => {
-                await deleteCustomer(c.id);
-                await reload();
-              }}
-            />
-          ))}
-        </div>
-      )}
     </div>
   );
 }

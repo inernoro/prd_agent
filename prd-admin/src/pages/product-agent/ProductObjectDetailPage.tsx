@@ -6,12 +6,15 @@
  * + 右属性栏(分级/状态/属性型自定义字段/信息)。系统字段与自定义字段同一套视觉语言、必填带星号。
  * 自定义模板里与系统字段重名的项(标题/描述)自动去重，避免「重复填两遍」。
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Save, Unlink, ExternalLink, ListChecks, Puzzle, Bug, Link2, FileText, GitBranch } from 'lucide-react';
+import { ArrowLeft, Save, Unlink, ExternalLink, ListChecks, Puzzle, Bug, Link2, FileText, GitBranch, BookOpen, Share2, X, Sparkles } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
-import { RequirementRelationModal, DefectLinkerModal } from './ProductRelationModals';
+import { useSseStream } from '@/lib/useSseStream';
+import { RequirementRelationModal, DefectLinkerModal, KnowledgeStoreModal } from './ProductRelationModals';
+import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { FormFieldsRenderer, RichTextField, useEffectiveTemplate, useEffectiveWorkflow } from './DynamicForm';
 import { WorkflowBar } from './WorkflowBar';
 import { ActivityTimeline } from './ActivityTimeline';
@@ -24,6 +27,10 @@ import {
   createFeature,
   updateFeature,
   listVersions,
+  updateVersion,
+  createFeatureVersion,
+  deleteFeatureVersion,
+  getVersionKnowledgeStore,
   listCustomers,
   listFeatureVersions,
   listTracedDefects,
@@ -32,8 +39,8 @@ import {
   listDescTemplates,
   type TracedDefect,
 } from '@/services/real/productAgent';
-import type { Requirement, Feature, ProductVersion, Customer, FeatureVersion, ItemGrade, FormField, ProductEntityType, DescTemplate } from './types';
-import { ITEM_GRADE_LABEL } from './types';
+import type { Requirement, Feature, ProductVersion, Customer, FeatureVersion, ItemGrade, FormField, ProductEntityType, DescTemplate, VersionLifecycle } from './types';
+import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL } from './types';
 
 const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
 
@@ -90,7 +97,7 @@ export function ProductObjectDetailPage() {
       listRequirements(productId),
       listFeatures(productId),
       listVersions(productId),
-      listCustomers(productId),
+      listCustomers(),
       listTracedDefects(productId),
     ]);
     if (r.success) setRequirements(r.data.items);
@@ -161,8 +168,18 @@ export function ProductObjectDetailPage() {
               versionName={versionName}
               onReload={reload}
             />
+          ) : kind === 'version' ? (
+            <VersionDetail
+              productId={productId}
+              version={versions.find((v) => v.id === id)}
+              allVersions={versions}
+              requirements={requirements}
+              features={features}
+              onReload={reload}
+            />
           ) : kind === 'defect' ? (
             <DefectDetail
+              productId={productId}
               defect={tracedDefects.find((d) => d.id === id)}
               versionName={versionName}
               requirementName={requirementName}
@@ -182,6 +199,7 @@ function KindBadge({ kind, isNew }: { kind: string; isNew?: boolean }) {
   const meta: Record<string, { label: string; icon: typeof ListChecks; color: string }> = {
     requirement: { label: '需求', icon: ListChecks, color: '#FBBF24' },
     feature: { label: '功能', icon: Puzzle, color: '#A78BFA' },
+    version: { label: '版本', icon: GitBranch, color: '#34D399' },
     defect: { label: '缺陷', icon: Bug, color: '#F87171' },
   };
   const m = meta[kind] ?? { label: '对象', icon: ListChecks, color: '#888' };
@@ -207,6 +225,7 @@ function DetailScaffold({
   dirty,
   saving,
   onSave,
+  headerActions,
   workflow,
   main,
   sidebar,
@@ -222,6 +241,7 @@ function DetailScaffold({
   dirty?: boolean;
   saving?: boolean;
   onSave?: () => void;
+  headerActions?: React.ReactNode;
   workflow?: React.ReactNode;
   main: React.ReactNode;
   sidebar: React.ReactNode;
@@ -234,16 +254,19 @@ function DetailScaffold({
         <div className="flex items-center gap-2 px-4 pt-3">
           <span className="text-[11px] font-mono text-white/40">{no}</span>
           <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ color: kindColor, background: `${kindColor}1a` }}>{kindLabel}</span>
-          {onSave && (
+          {(onSave || headerActions) && (
             <div className="ml-auto flex items-center gap-2.5">
-              {dirty && <span className="text-[11px] text-amber-300/80 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-amber-400" /> 未保存</span>}
-              <button
-                onClick={onSave}
-                disabled={saving || !title.trim() || !dirty}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm hover:bg-cyan-500/30 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {saving ? <MapSpinner size={14} /> : <Save size={14} />} 保存
-              </button>
+              {headerActions}
+              {onSave && dirty && <span className="text-[11px] text-amber-300/80 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-amber-400" /> 未保存</span>}
+              {onSave && (
+                <button
+                  onClick={onSave}
+                  disabled={saving || !title.trim() || !dirty}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm hover:bg-cyan-500/30 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {saving ? <MapSpinner size={14} /> : <Save size={14} />} 保存
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -332,10 +355,72 @@ function DescriptionField({ value, onChange }: { value: string; onChange: (v: st
   return <RichTextField value={value} onChange={onChange} minHeight={420} placeholder="补充背景、目标、验收标准…（支持排版与截图粘贴 / 点右上角套用模板）" />;
 }
 
+/** 详情页头部「追溯关系路径」触发按钮。 */
+function TraceButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-white/70 hover:bg-white/5 hover:text-cyan-200 text-sm"
+      title="在图谱中查看本对象的全部关联（动态高亮）"
+    >
+      <Share2 size={14} /> 追溯关系路径
+    </button>
+  );
+}
+
+/**
+ * 追溯关系路径抽屉：从右侧滑出（占 70% 宽），内嵌复用图谱画布并自动锚定当前对象，
+ * 高亮其在图谱中的全部关联（动态）。复用 ProductGraphCanvas 的 focusNodeId 能力。
+ */
+function TraceRelationDrawer({ productId, nodeId, title, onClose }: { productId: string; nodeId: string; title: string; onClose: () => void }) {
+  const [shown, setShown] = useState(false);
+  useEffect(() => { setShown(true); }, []);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex">
+      <div className="flex-1 bg-black/40" style={{ opacity: shown ? 1 : 0, transition: 'opacity .25s ease' }} onClick={onClose} />
+      <div
+        className="h-full bg-[#0f1014] border-l border-white/10 flex flex-col shadow-2xl"
+        style={{ width: '70%', transform: shown ? 'translateX(0)' : 'translateX(100%)', transition: 'transform .25s ease' }}
+      >
+        <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-white/8">
+          <span className="flex items-center gap-2 text-sm font-semibold text-white">
+            <Share2 size={15} className="text-cyan-400" /> 追溯关系路径 · {title}
+          </span>
+          <button onClick={onClose} className="text-white/40 hover:text-white" title="关闭"><X size={16} /></button>
+        </div>
+        <div className="flex-1 min-h-0">
+          <ProductGraphCanvas productId={productId} focusNodeId={nodeId} />
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 /** 内容非空时追加模板，空时直接套用。 */
 function mergeDesc(prev: string, tpl: string): string {
   const stripped = (prev || '').replace(/<br\s*\/?>/gi, '').replace(/<div>\s*<\/div>/gi, '').replace(/&nbsp;/gi, '').trim();
   return stripped ? `${prev}${tpl}` : tpl;
+}
+
+/** 取默认描述模板内容（列表按 SortOrder 升序，首个即默认），用于新建时自动预填。 */
+function useDefaultDescTemplateContent(entityType: ProductEntityType) {
+  const [content, setContent] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      const res = await listDescTemplates(entityType);
+      if (!alive || !res.success) return;
+      setContent(res.data.items[0]?.content ?? null);
+    })();
+    return () => { alive = false; };
+  }, [entityType]);
+  return content;
 }
 
 /** 描述模板选择器：列出该对象类型的描述模板，一键套用。无模板时不显示。 */
@@ -414,6 +499,52 @@ function NotFound() {
   return <div className="text-white/40 text-sm text-center py-10">对象不存在或已删除</div>;
 }
 
+// ════════════════════════ AI 智能填充（输入文本 → 按模板回填）════════════════════════
+interface AiFillResult { title?: string; description?: string; grade?: string; formData?: Record<string, string> }
+
+function AiFillCard({ productId, templateId, onFill }: { productId: string; templateId?: string; onFill: (r: AiFillResult) => void }) {
+  const [text, setText] = useState('');
+  const { phase, phaseMessage, typing, isStreaming, start, abort } = useSseStream<AiFillResult>({
+    url: `/api/product/products/${productId}/requirements/ai-fill/stream`,
+    method: 'POST',
+    itemEvent: 'result',
+    onItem: (r) => onFill(r),
+  });
+  const run = () => { if (text.trim()) void start({ body: { text: text.trim(), templateId } }); };
+
+  return (
+    <Card title="AI 智能填充">
+      <div className="flex flex-col gap-2">
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={4}
+          placeholder="粘贴一段需求原始描述（背景、痛点、期望…），AI 自动拆解为标题 / 描述 / 分级 / 模板字段，回填后你再修改确认。"
+          className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/40 resize-none placeholder:text-white/25"
+          style={{ overscrollBehavior: 'contain' }}
+        />
+        <div className="flex items-center gap-2">
+          {isStreaming ? (
+            <button onClick={abort} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/15 text-white/70 hover:bg-white/5 text-sm">
+              <MapSpinner size={14} /> 停止
+            </button>
+          ) : (
+            <button onClick={run} disabled={!text.trim()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm hover:bg-cyan-500/30 disabled:opacity-40">
+              <Sparkles size={14} /> 智能填充
+            </button>
+          )}
+          {phase !== 'idle' && <span className={`text-[11px] ${phase === 'error' ? 'text-red-300/80' : 'text-white/45'}`}>{phaseMessage}</span>}
+        </div>
+        {isStreaming && typing && (
+          <div className="text-[11px] text-white/40 font-mono max-h-24 overflow-y-auto bg-white/[0.03] border border-white/5 rounded p-2 whitespace-pre-wrap" style={{ overscrollBehavior: 'contain' }}>
+            {typing}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 // ════════════════════════ 新建对象（需求 / 功能）════════════════════════
 function CreateObjectForm({
   productId,
@@ -434,6 +565,17 @@ function CreateObjectForm({
   const { template } = useEffectiveTemplate(entityType, productId);
   const { workflow } = useEffectiveWorkflow(entityType, productId);
   const split = useMemo(() => splitFields(template?.fields), [template]);
+
+  // 新建时默认套用「默认描述模板」，无需用户再点「套用模板」；用户已输入则不覆盖
+  const defaultDescContent = useDefaultDescTemplateContent(entityType);
+  const descAutoFilledRef = useRef(false);
+  useEffect(() => {
+    if (descAutoFilledRef.current || !defaultDescContent) return;
+    if (description.trim() === '') {
+      descAutoFilledRef.current = true;
+      setDescription(defaultDescContent);
+    }
+  }, [defaultDescContent, description]);
   const kindLabel = kind === 'feature' ? '功能' : '需求';
   const kindColor = kind === 'feature' ? '#A78BFA' : '#FBBF24';
 
@@ -442,6 +584,14 @@ function CreateObjectForm({
   }
 
   const setField = (k: string, v: string) => setFormData((d) => ({ ...d, [k]: v }));
+
+  // AI 智能填充回填：标题/描述/分级/自定义字段
+  const onAiFill = (r: AiFillResult) => {
+    if (r.title) setTitle(r.title);
+    if (r.description) { descAutoFilledRef.current = true; setDescription(r.description); }
+    if (r.grade && ITEM_GRADES.includes(r.grade as ItemGrade)) setGrade(r.grade as ItemGrade);
+    if (r.formData) setFormData((prev) => ({ ...prev, ...r.formData }));
+  };
 
   const create = async () => {
     if (!title.trim()) return;
@@ -465,6 +615,9 @@ function CreateObjectForm({
       onSave={create}
       main={
         <>
+          {entityType === 'requirement' && (
+            <AiFillCard productId={productId} templateId={template?.id} onFill={onAiFill} />
+          )}
           <Card title="描述" action={<DescTemplatePicker entityType={entityType} onApply={(c) => setDescription((p) => mergeDesc(p, c))} />}>
             <DescriptionField value={description} onChange={setDescription} />
           </Card>
@@ -527,6 +680,7 @@ function RequirementDetail({
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [showRel, setShowRel] = useState(false);
+  const [showTrace, setShowTrace] = useState(false);
   const { template } = useEffectiveTemplate('requirement', productId);
   const { workflow } = useEffectiveWorkflow('requirement', productId);
   const split = useMemo(() => splitFields(template?.fields), [template]);
@@ -574,6 +728,7 @@ function RequirementDetail({
       dirty={dirty}
       saving={saving}
       onSave={save}
+      headerActions={<TraceButton onClick={() => setShowTrace(true)} />}
       workflow={
         workflow ? (
           <WorkflowBar workflow={workflow} entityType="requirement" entityId={requirement.id} currentState={requirement.currentState} onChanged={onReload} />
@@ -678,6 +833,9 @@ function RequirementDetail({
       {showRel && (
         <RequirementRelationModal productId={productId} requirement={requirement} onClose={() => setShowRel(false)} onSaved={onReload} />
       )}
+      {showTrace && (
+        <TraceRelationDrawer productId={productId} nodeId={`requirement:${requirement.id}`} title={requirement.title} onClose={() => setShowTrace(false)} />
+      )}
     </DetailScaffold>
   );
 }
@@ -734,6 +892,7 @@ function FeatureDetail({
 
   const [tracedDefects, setTracedDefects] = useState<TracedDefect[]>([]);
   const [showDefectLinker, setShowDefectLinker] = useState(false);
+  const [showTrace, setShowTrace] = useState(false);
   const reloadDefects = useCallback(async () => {
     if (!feature) return;
     const res = await listTracedDefects(feature.productId, { featureId: feature.id });
@@ -800,6 +959,7 @@ function FeatureDetail({
       dirty={dirty}
       saving={saving}
       onSave={save}
+      headerActions={<TraceButton onClick={() => setShowTrace(true)} />}
       workflow={
         workflow ? (
           <WorkflowBar workflow={workflow} entityType="feature" entityId={feature.id} currentState={feature.currentState} onChanged={onReload} />
@@ -898,18 +1058,262 @@ function FeatureDetail({
       {showDefectLinker && (
         <DefectLinkerModal productId={feature.productId} featureId={feature.id} onClose={() => setShowDefectLinker(false)} onLinked={reloadDefects} />
       )}
+      {showTrace && (
+        <TraceRelationDrawer productId={feature.productId} nodeId={`feature:${feature.id}`} title={feature.title} onClose={() => setShowTrace(false)} />
+      )}
+    </DetailScaffold>
+  );
+}
+
+// ════════════════════════ 版本详情 ════════════════════════
+function VersionDetail({
+  productId,
+  version,
+  allVersions,
+  requirements,
+  features,
+  onReload,
+}: {
+  productId: string;
+  version?: ProductVersion;
+  allVersions: ProductVersion[];
+  requirements: Requirement[];
+  features: Feature[];
+  onReload: () => void;
+}) {
+  const [versionName, setVersionName] = useState('');
+  const [description, setDescription] = useState('');
+  const [lifecycle, setLifecycle] = useState<VersionLifecycle>('planning');
+  const [isMajor, setIsMajor] = useState(false);
+  const [parentVersionId, setParentVersionId] = useState('');
+  const [selReqs, setSelReqs] = useState<Set<string>>(new Set());
+  const [formData, setFormData] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [showKnowledge, setShowKnowledge] = useState(false);
+  const [showTrace, setShowTrace] = useState(false);
+  const { template } = useEffectiveTemplate('version', productId);
+  const { workflow } = useEffectiveWorkflow('version', productId);
+  const split = useMemo(() => splitFields(template?.fields), [template]);
+
+  // 纳入功能：本地管理 featureVersions（即勾即存，走 create/deleteFeatureVersion）
+  const [featureVersions, setFeatureVersions] = useState<FeatureVersion[]>([]);
+  const reloadFv = useCallback(async () => {
+    if (!version) return;
+    const res = await listFeatureVersions(productId, { versionId: version.id });
+    if (res.success) setFeatureVersions(res.data.items);
+  }, [productId, version]);
+  useEffect(() => { void reloadFv(); }, [reloadFv]);
+
+  useEffect(() => {
+    if (version) {
+      setVersionName(version.versionName);
+      setDescription(version.description ?? '');
+      setLifecycle(version.lifecycle);
+      setIsMajor(version.isMajor);
+      setParentVersionId(version.parentVersionId ?? '');
+      setSelReqs(new Set(version.requirementIds));
+      setFormData(version.formData ?? {});
+    }
+  }, [version]);
+
+  const reqSetEqual = (a: Set<string>, b: string[]) => a.size === b.length && b.every((x) => a.has(x));
+  const dirty = useMemo(() => {
+    if (!version) return false;
+    return (
+      versionName !== version.versionName ||
+      description !== (version.description ?? '') ||
+      lifecycle !== version.lifecycle ||
+      isMajor !== version.isMajor ||
+      parentVersionId !== (version.parentVersionId ?? '') ||
+      !reqSetEqual(selReqs, version.requirementIds) ||
+      !recordEqual(formData, version.formData ?? {})
+    );
+  }, [version, versionName, description, lifecycle, isMajor, parentVersionId, selReqs, formData]);
+
+  if (!version) return <NotFound />;
+  const setField = (k: string, v: string) => setFormData((d) => ({ ...d, [k]: v }));
+
+  const save = async () => {
+    setSaving(true);
+    await updateVersion(version.id, {
+      versionName: versionName.trim(),
+      description,
+      lifecycle,
+      isMajor,
+      parentVersionId,
+      requirementIds: Array.from(selReqs),
+      formData,
+    });
+    setSaving(false);
+    onReload();
+  };
+
+  const toggleReq = (rid: string) => {
+    setSelReqs((prev) => {
+      const next = new Set(prev);
+      if (next.has(rid)) next.delete(rid);
+      else next.add(rid);
+      return next;
+    });
+  };
+  const featureIncluded = (featureId: string) => featureVersions.find((fv) => fv.featureId === featureId);
+  const toggleFeature = async (featureId: string) => {
+    const existing = featureIncluded(featureId);
+    if (existing) await deleteFeatureVersion(existing.id);
+    else await createFeatureVersion(productId, { featureId, versionId: version.id });
+    await reloadFv();
+  };
+
+  return (
+    <DetailScaffold
+      no={VERSION_LIFECYCLE_LABEL[version.lifecycle]}
+      kindLabel="版本"
+      kindColor="#34D399"
+      title={versionName}
+      onTitleChange={setVersionName}
+      titlePlaceholder="版本名，如 v2.0"
+      dirty={dirty}
+      saving={saving}
+      onSave={save}
+      headerActions={<TraceButton onClick={() => setShowTrace(true)} />}
+      workflow={
+        workflow ? (
+          <WorkflowBar workflow={workflow} entityType="version" entityId={version.id} currentState={version.currentState} onChanged={onReload} />
+        ) : undefined
+      }
+      main={
+        <>
+          <Card title="版本描述" action={<DescTemplatePicker entityType="version" onApply={(c) => setDescription((p) => mergeDesc(p, c))} />}>
+            <DescriptionField value={description} onChange={setDescription} />
+          </Card>
+          {split.files.length > 0 && (
+            <Card title={template?.name || '附件'}>
+              <FormFieldsRenderer fields={split.files} values={formData} onChange={setField} productId={productId} />
+            </Card>
+          )}
+          <Card title="动态">
+            <ActivityTimeline entityType="version" entityId={version.id} />
+          </Card>
+        </>
+      }
+      sidebar={
+        <>
+          <Card title="属性">
+            <div className="flex flex-col gap-3.5">
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel>生命周期</FieldLabel>
+                <div className="flex flex-wrap gap-1.5">
+                  {(Object.keys(VERSION_LIFECYCLE_LABEL) as VersionLifecycle[]).map((lc) => (
+                    <button
+                      key={lc}
+                      onClick={() => setLifecycle(lc)}
+                      className={`px-2 py-1 rounded-md text-xs border ${lifecycle === lc ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40' : 'text-white/40 border-white/10 hover:bg-white/5'}`}
+                    >
+                      {VERSION_LIFECYCLE_LABEL[lc]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={isMajor} onChange={(e) => setIsMajor(e.target.checked)} className="accent-cyan-500" />
+                <span className="text-sm text-white/70">标记为大版本</span>
+              </label>
+              <div className="flex flex-col gap-1.5">
+                <FieldLabel>父版本</FieldLabel>
+                <ParentSelect
+                  value={parentVersionId}
+                  onChange={setParentVersionId}
+                  options={allVersions.filter((v) => v.id !== version.id).map((v) => ({ id: v.id, label: v.versionName }))}
+                  placeholder="无（顶层版本）"
+                />
+              </div>
+              {version.currentState && (
+                <div className="flex flex-col gap-1.5">
+                  <FieldLabel>状态</FieldLabel>
+                  <span className="text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10 self-start">
+                    {workflow?.states.find((s) => s.key === version.currentState)?.label ?? version.currentState}
+                  </span>
+                </div>
+              )}
+              {split.others.length > 0 && (
+                <div className="pt-1 border-t border-white/5">
+                  <FormFieldsRenderer fields={split.others} values={formData} onChange={setField} productId={productId} />
+                </div>
+              )}
+            </div>
+          </Card>
+          <Card
+            title="版本知识库"
+            action={
+              <button onClick={() => setShowKnowledge(true)} className="flex items-center gap-1 text-[11px] text-cyan-300 hover:text-cyan-200">
+                <BookOpen size={12} /> 打开
+              </button>
+            }
+          >
+            <div className="text-[11px] text-white/40">MRD / SRS / PRD 等版本文档，支持分类筛选与快速新建。</div>
+          </Card>
+          <Card title="关联需求（本版本要做哪些需求）">
+            {requirements.length === 0 ? (
+              <div className="text-[11px] text-white/30">该产品还没有需求</div>
+            ) : (
+              <div className="flex flex-col gap-0.5 max-h-64 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+                {requirements.map((r) => (
+                  <label key={r.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5 cursor-pointer">
+                    <input type="checkbox" checked={selReqs.has(r.id)} onChange={() => toggleReq(r.id)} className="accent-cyan-500" />
+                    <span className="text-sm text-white/80 truncate">{r.title}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </Card>
+          <Card title="纳入功能（功能版本化，即勾即存）">
+            {features.length === 0 ? (
+              <div className="text-[11px] text-white/30">该产品还没有功能</div>
+            ) : (
+              <div className="flex flex-col gap-0.5 max-h-64 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+                {features.map((f) => (
+                  <label key={f.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5 cursor-pointer">
+                    <input type="checkbox" checked={!!featureIncluded(f.id)} onChange={() => void toggleFeature(f.id)} className="accent-cyan-500" />
+                    <span className="text-sm text-white/80 truncate">{f.title}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </Card>
+          <Card title="信息">
+            <div className="flex flex-col gap-2">
+              <InfoRow label="计划发布" value={fmtDate(version.plannedReleaseAt)} />
+              <InfoRow label="创建时间" value={fmtDate(version.createdAt)} />
+              <InfoRow label="更新时间" value={fmtDate(version.updatedAt)} />
+            </div>
+          </Card>
+        </>
+      }
+    >
+      {showKnowledge && (
+        <KnowledgeStoreModal
+          title={`${version.versionName} · 版本知识库`}
+          fetcher={() => getVersionKnowledgeStore(version.id)}
+          onClose={() => setShowKnowledge(false)}
+        />
+      )}
+      {showTrace && (
+        <TraceRelationDrawer productId={productId} nodeId={`version:${version.id}`} title={version.versionName} onClose={() => setShowTrace(false)} />
+      )}
     </DetailScaffold>
   );
 }
 
 // ════════════════════════ 缺陷详情（来自缺陷管理，详情只读）════════════════════════
 function DefectDetail({
+  productId,
   defect,
   versionName,
   requirementName,
   onReload,
   gotoRequirement,
 }: {
+  productId: string;
   defect?: TracedDefect;
   versionName: Map<string, string>;
   requirementName: Map<string, string>;
@@ -919,6 +1323,7 @@ function DefectDetail({
   const navigate = useNavigate();
   const [converting, setConverting] = useState(false);
   const [convertErr, setConvertErr] = useState<string | null>(null);
+  const [showTrace, setShowTrace] = useState(false);
   if (!defect) return <NotFound />;
 
   const convert = async () => {
@@ -937,6 +1342,7 @@ function DefectDetail({
       kindColor="#F87171"
       title={defect.title || '(无标题)'}
       readOnlyTitle
+      headerActions={<TraceButton onClick={() => setShowTrace(true)} />}
       main={
         <>
           <Card title="追溯指向">
@@ -987,6 +1393,10 @@ function DefectDetail({
           </div>
         </Card>
       }
-    />
+    >
+      {showTrace && (
+        <TraceRelationDrawer productId={productId} nodeId={`defect:${defect.id}`} title={defect.title || defect.defectNo} onClose={() => setShowTrace(false)} />
+      )}
+    </DetailScaffold>
   );
 }

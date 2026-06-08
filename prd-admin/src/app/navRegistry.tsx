@@ -53,6 +53,11 @@ const CdsAgentPage = lazy(() => import('@/pages/cds-agent').then(m => ({ default
 const InfraServicesPage = lazy(() => import('@/pages/infra-services').then(m => ({ default: m.InfraServicesPage })));
 const OpenPlatformTabsPage = lazy(() => import('@/pages/OpenPlatformTabsPage'));
 const MdToPptAgentPage = lazy(() => import('@/pages/md-to-ppt-agent/MdToPptAgentPage').then(m => ({ default: m.MdToPptAgentPage })));
+const SpeechAgentListPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentListPage })));
+const SpeechAgentCreatePage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentCreatePage })));
+const SpeechAgentEditorPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentEditorPage })));
+const SpeechAgentPlayPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentPlayPage })));
+const LearningCenterPage = lazy(() => import('@/pages/learning-center/LearningCenterPage'));
 
 // ── 类型定义 ──────────────────────────────────────────────
 //
@@ -240,6 +245,37 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       tags: ['任务', '任务树', '卡点', '进度', '智能体'],
     },
   },
+  {
+    path: '/speech-agent/new',
+    permission: 'speech-agent.use',
+    element: shellGuarded('speech-agent.use', <SpeechAgentCreatePage />),
+  },
+  {
+    path: '/speech-agent/:deckId/play',
+    placement: 'fullscreen',
+    permission: 'speech-agent.use',
+    element: fullscreenGuarded('speech-agent.use', <SpeechAgentPlayPage />),
+  },
+  {
+    path: '/speech-agent/:deckId',
+    permission: 'speech-agent.use',
+    element: shellGuarded('speech-agent.use', <SpeechAgentEditorPage />),
+  },
+  {
+    path: '/speech-agent',
+    permission: 'speech-agent.use',
+    element: shellGuarded('speech-agent.use', <SpeechAgentListPage />),
+    nav: {
+      label: '演讲智能体',
+      shortLabel: '演讲',
+      description: '把长文本/文档转成可上台讲的思维导图（首期 mindmap 模式）',
+      icon: 'Mic',
+      section: 'agent',
+      appKey: 'speech-agent',
+      wip: true,
+      tags: ['演讲', '导图', 'PPT', '思维导图', '智能体'],
+    },
+  },
 
   // ╔══════════════ 百宝箱（8）══════════════════════════════
   {
@@ -282,6 +318,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'toolbox',
       appKey: 'review-agent',
       tags: ['评审', '产品', 'PRD'],
+    },
+  },
+  {
+    path: '/learning-center',
+    permission: 'access',
+    element: shellGuarded('access', <LearningCenterPage />),
+    nav: {
+      label: '学习中心',
+      shortLabel: '学习',
+      description: '所有官方教程与你的掌握进度,随时点「跟我做」走一遍',
+      icon: 'GraduationCap',
+      // 普通用户导航中单独存在(用户 2026-06-04):从百宝箱(toolbox)升为基础设施(infra)一级入口,去 wip。
+      section: 'infra',
+      appKey: 'learning-center',
+      tags: ['教程', '新手引导', '学习进度', '帮助'],
     },
   },
   {

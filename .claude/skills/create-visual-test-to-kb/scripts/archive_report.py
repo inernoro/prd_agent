@@ -262,6 +262,15 @@ def validate_inputs(a, body, manifest):
         ws = m.get("warnings") or []
         if ws:
             errs.append(f"[证据] 截图未就绪/有问题：{m.get('name', p)} → {' | '.join(ws)}")
+        # §B2 标注硬门禁(2026-06-05)：指向性证据图截图瞬间必须有 box/circle 标记。
+        # harness.shot() 自动探测页面上的 .__acc_box → 落进 manifest 的 annotated 字段。
+        # `is False` 而非 falsy：老 manifest 无此字段(None)→不追溯拒收；只有新 harness 明确记为
+        # 未标注(False)且非 overview 才拒收。根治"证据是没标注的裸页面、读者看到一个单独页面就懵逼"
+        # (用户 2026-06-05：技能这么多次给没标注的截图)。整体观感图调用方传 overview=true 豁免。
+        if m.get("annotated") is False and not m.get("overview"):
+            errs.append(f"[证据·未标注] 没画框/圈，读者不知道看哪：{m.get('name', p)}。"
+                        f"指向单个按钮/输入框用圈(stepClick / box(...,{{shape:'circle'}}))、"
+                        f"框一片区域/差异用方框(stepShot(...,highlight))；纯整体观感图传 {{overview:true}} 豁免")
     for kw, label in [("Verdict", "Verdict 行"), ("用例", "验收用例段"), ("缺陷", "缺陷清单段")]:
         if kw not in body:
             errs.append(f"[结构] 报告缺{label}")

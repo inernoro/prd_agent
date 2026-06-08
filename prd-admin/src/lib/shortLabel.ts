@@ -10,6 +10,7 @@
 export const SHORT_LABEL_MAP: Record<string, string> = {
   // ── 快捷操作 ─────────────────────────
   'share-link-tester': '链接体检',
+  'learning-center': '学习',
   'my-shares': '我的分享',
   'shares': '我的分享',
   'home': '首页',

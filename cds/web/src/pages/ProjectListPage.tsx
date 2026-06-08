@@ -634,6 +634,7 @@ export function ProjectListPage(): JSX.Element {
                 title="刷新"
               >
                 <RefreshCw />
+                <span className="md:hidden">刷新</span>
               </Button>
               <DropdownMenu
                 trigger={

@@ -78,6 +78,9 @@
 - [统一短链系统规格](spec.short-links) `spec.short-links`
   > 统一短链系统产品规格，已落地（PR #613）
 
+- [演讲智能体产品规格](spec.speech-agent) `spec.speech-agent`
+  > 长文本/文档转思维导图风格的可演讲材料，首期 mindmap 模式（MVP 已落地）
+
 ### 二、设计文档
 
 - [每日小贴士 / 路径式教程系统设计](design.daily-tips) `design.daily-tips`
@@ -305,6 +308,8 @@
 
 - [CDS Railway 式部署向导设计](design.cds-railway-onboarding-flow) `design.cds-railway-onboarding-flow`
 - [CDS 绝对可视化一键部署设计（含架构图）](design.cds-visual-deploy) `design.cds-visual-deploy`
+- [演讲智能体技术设计](design.speech-agent) `design.speech-agent`
+  > 数据模型 / Controller / SpeechAgentService 流式拆大纲 / SSE 协议 / compute-then-send 落地
 - [CDS AI 生成 compose 草稿设计](design.cds-ai-compose) `design.cds-ai-compose`
   > 从 Railway 首次部署路径抽象 CDS 一键部署、运行环境选择、基础设施创建和可观察性闭环
 
@@ -686,6 +691,8 @@
   > Phase 1 MVP 仅交付执行层；治理层（干系人/NPSS/奖金/盘点）待 Phase 2-3；Leader 职级强校验待 User 加字段
 - [视频生成 Agent · 债务台账](debt.video-agent) `debt.video-agent`
   > 4 条 open：OpenRouter CDN 7 天过期、混合渲染 ffmpeg normalize、直出心跳文案分级、成本预估 tooltip
+- [知识库划词评论（批注栏/内联 + 就地输入 + 回读闭环）· 债务台账](debt.kb-inline-comment) `debt.kb-inline-comment`
+  > 6 条边界：图片批注未做、inline 卡片定位 MVP、批注栏按时间非锚点排序、批注栏/TOC 互斥、回读为轮询、偏好走 localStorage
 
 - [工作流 Agent · 债务台账](debt.workflow-agent) `debt.workflow-agent`
   > 7 条 open：video-to-text asr 模式 ASR 池绑定 / maxItems 硬编码 / LlmRequestContext / 转写失败兜底 / ffmpeg 检测 / Play 后无返回 / count 与 maxItems 联动
@@ -708,6 +715,9 @@
 - [CDS 教程（示例工程 + 隔离知识库 + 评分/自愈）· 债务台账](debt.cds-tutorial) `debt.cds-tutorial`
 - [CDS 绝对可视化一键部署 · 债务台账](debt.cds-visual-deploy) `debt.cds-visual-deploy`
   > 5 条 open：--write 重序列化丢注释 / 自愈覆盖面有限 / 占位值需人工 / 真机冒烟依赖 CDS / 发布脚本需真实 owner
+
+- [演讲智能体 · 债务台账](debt.speech-agent) `debt.speech-agent`
+  > 11 条 open：输入仅支持粘贴 / 视图非画布 / 无 Run-Worker / 无配图 / 无备注 / 无播放态 / 无发布 / 白天主题待适配 / 无节点增删 / 无 chunk / CDS 自测待补
 
 - [知识库（AI Toolbox attachment + 文档空间）债务台账](debt.knowledge-base) `debt.knowledge-base`
   > 8 条 open：两套并存模型 / RAG embedding 未做 / wip 标签 CI 守卫 / 上传 API 不互通 / 等
@@ -886,6 +896,7 @@
 
 | 日期 | 操作 | 文件名 | 中文标题 |
 | :--- | :--- | :--- | :--- |
+| 2026-06-04 | 新增 | `report.tutorial-coverage` `debt.onboarding-tips` | 页面教程系统统一升级:全量路由覆盖审计 + 债务台账(video-agent/薄教程加厚/编辑器/跨页待补) |
 | 2026-06-02 | 新增 | `design.agent-universe` `debt.agent-universe` | 智能体宇宙设计（能力契约 + 调用信封）与债务台账 |
 | 2026-06-02 | 新增 | `design.cds-visual-deploy` `guide.cds-one-click-deploy` `report.cds-visual-deploy` `debt.cds-visual-deploy` | CDS 绝对可视化一键部署收尾:设计(含架构图)+使用教程+完整报告+债务台账;`plan.cds-visual-deploy` 状态更新为核心收尾 |
 | 2026-06-01 | 新增 | `design.cds-ai-compose` `plan.cds-visual-deploy` `guide.cds-deploy-acceptance` | CDS AI 生成 compose 草稿设计、绝对可视化部署计划看板、可视化部署与验收指南（已发布到 KB） |

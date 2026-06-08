@@ -1,30 +1,29 @@
 import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from 'react';
-import { MessageSquare } from 'lucide-react';
 import type { DocumentInlineComment } from '@/services/contracts/documentStore';
+import { resolveAvatarUrl, DEFAULT_AVATAR_FALLBACK } from '@/lib/avatar';
+import { CommentLine, ReplyBox, groupKey, threadColor, withAlpha } from './inlineCommentShared';
 
-// 行内评论高亮 + 气泡浮层。
-// 把每条评论的 selectedText 锚回「已渲染的 markdown DOM」，在原文上画高亮条，
-// 并在锚点末尾放一颗可点的评论气泡（点击 → 打开评论抽屉）。
+// 行内评论高亮 + 气泡/内联卡片浮层。
+// 把每条评论的 selectedText 锚回「已渲染的 markdown DOM」，在原文上画高亮条（按线程配色）。
+// 两种布局（由 mode 控制）：
+//   - inline：高亮末尾放气泡，点击就地展开评论卡片（GitHub 评论代码风）。
+//   - margin：高亮末尾放小气泡，点击「激活」右侧批注栏对应卡片（onActivate）；评论卡常驻在 InlineCommentMargin。
+// 强关联（业界做法 Word/Figma/Docs）：同色锚定（高亮下划线=右侧卡片色条同色）+ 激活态（高亮加亮 + 画连线）。
+// activeKey/hoveredKey 由父组件统一管理，margin 与 overlay 双向联动；激活的气泡带 data-active-hl，供连线层取锚点。
 //
 // 坐标系巧思：本层是 contentAreaRef（滚动容器，position:relative）的 absolute 子元素，
-// top:0/left:0、尺寸 0，作为子元素的包含块原点。高亮子元素位置 = 文本 rect 减去本层 rect，
-// 得到「相对本层原点」的偏移——本层与正文同在滚动内容里一起滚，故滚动时无需重算，天然对齐。
+// top:0/left:0、尺寸 0，作为子元素的包含块原点。子元素位置 = 文本 rect 减去本层 rect。
 
 interface AnchorMark {
   key: string;
   rects: Array<{ top: number; left: number; width: number; height: number }>;
   bubble: { top: number; left: number };
-  count: number;
-  preview: string;
+  card: { top: number; left: number };
+  comments: DocumentInlineComment[];
   orphaned: boolean;
 }
 
-// 纯逻辑核心（无 DOM 依赖，可在 node 环境单测）：
-// 在若干文本片段（= 各文本节点的 data）里做「去空白」匹配，markdown 渲染会改变空白/跨块，
-// 故按去空白后的字符序列查找。返回命中区间的起止 (片段下标, 片段内字符偏移)。
-// 短于 2 个非空白字符不锚定，避免误命中。
-// contextBefore（评论创建时记录的「选区前文」）：同一短语在文中多处出现时，用它挑「紧邻前文最吻合」
-// 的那一处，避免重复短语的评论都锚到首次出现（Bugbot/Codex）。无 context 或仅一处时取首个，行为不变。
+// 纯逻辑核心（无 DOM 依赖，可在 node 环境单测）：去空白匹配，contextBefore 消歧多处出现。
 export function locateInSegments(
   segments: string[],
   query: string,
@@ -52,7 +51,7 @@ export function locateInSegments(
       let best = -1;
       for (const i of idxs) {
         const before = hay.slice(Math.max(0, i - ctx.length), i);
-        let k = 0; // 紧邻前文与 contextBefore 的公共后缀长度
+        let k = 0;
         while (k < before.length && k < ctx.length && before[before.length - 1 - k] === ctx[ctx.length - 1 - k]) k++;
         if (k > best) { best = k; chosen = i; }
       }
@@ -64,9 +63,7 @@ export function locateInSegments(
   return { startSeg: a.seg, startOff: a.off, endSeg: b.seg, endOff: b.off };
 }
 
-// DOM 适配层：收集容器内所有文本节点 → 交给纯核心匹配 → 把结果映射回 Range。
-// 只扫正文：跳过 UI 控件文本——代码块「复制」按钮、本浮层自身（aria-hidden）的气泡等，
-// 否则评论可能锚到按钮而非正文（Bugbot「Anchor scan includes copy buttons」）。
+// DOM 适配层：收集容器内所有文本节点 → 交给纯核心匹配 → 把结果映射回 Range。跳过 UI 控件文本。
 function findTextRange(root: HTMLElement, query: string, contextBefore?: string): Range | null {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
@@ -97,13 +94,37 @@ export function InlineCommentOverlay({
   containerRef,
   comments,
   reflowKey,
-  onOpenComment,
+  mode = 'inline',
+  hoveredKey = null,
+  activeKey = null,
+  onActivate,
+  canCreate = false,
+  canDelete,
+  onCreate,
+  onDelete,
 }: {
   containerRef: RefObject<HTMLDivElement>;
   comments: DocumentInlineComment[];
-  /** 变化即重算（切文档 / 正文内容变化） */
   reflowKey: string | number;
-  onOpenComment: () => void;
+  mode?: 'inline' | 'margin';
+  /** 批注栏 hover 命中的分组 key（高亮微亮） */
+  hoveredKey?: string | null;
+  /** 当前激活的分组 key（点高亮/气泡或点卡片）：高亮加亮、inline 展开卡片、margin 出连线锚点 */
+  activeKey?: string | null;
+  /** 点气泡 → 激活该分组（margin 联动右侧卡 / inline 展开） */
+  onActivate?: (key: string, selectedText: string) => void;
+  canCreate?: boolean;
+  /** 逐条删除权限（库主 / 作者）；缺省不可删 */
+  canDelete?: (comment: DocumentInlineComment) => boolean;
+  onCreate?: (input: {
+    selectedText: string;
+    contextBefore?: string;
+    contextAfter?: string;
+    startOffset: number;
+    endOffset: number;
+    content: string;
+  }, entryId?: string) => Promise<boolean>;
+  onDelete?: (comment: DocumentInlineComment) => void;
 }) {
   const overlayRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
@@ -112,28 +133,18 @@ export function InlineCommentOverlay({
   const recompute = useCallback(() => {
     const container = containerRef.current;
     const overlay = overlayRef.current;
-    if (!container || !overlay) {
-      setMarks([]);
-      return;
-    }
-    // 同一短语的多条评论合并成一颗气泡（显示条数）；全文评论不参与行内锚定。
-    // 低风险版（用户定）：分组仍按 selectedText、不按出现位置拆分（key=text 唯一，无重复 React key）；
-    // 但锚定时用首条评论的 contextBefore 选「哪一次出现」，多处出现不再一律锚到首次（Bugbot/Codex）。
-    // 已知边界：同一短语在不同位置的多条评论仍合并到一颗气泡（留待完整版按出现位置拆分）。
+    if (!container || !overlay) { setMarks([]); return; }
     const groups = new Map<string, DocumentInlineComment[]>();
     for (const c of comments) {
       if (c.isWholeDocument || !c.selectedText) continue;
-      const text = c.selectedText.replace(/\s+/g, ' ').trim();
+      const text = groupKey(c.selectedText);
       if (!text) continue;
-      let g = groups.get(text);
-      if (!g) { g = []; groups.set(text, g); }
-      g.push(c);
+      const g = groups.get(text) ?? [];
+      g.push(c); groups.set(text, g);
     }
-    if (groups.size === 0) {
-      setMarks([]);
-      return;
-    }
+    if (groups.size === 0) { setMarks([]); return; }
     const oRect = overlay.getBoundingClientRect();
+    const maxLeft = Math.max(0, container.clientWidth - 348);
     const next: AnchorMark[] = [];
     groups.forEach((list, text) => {
       const range = findTextRange(container, text, list[0].contextBefore ?? undefined);
@@ -141,26 +152,21 @@ export function InlineCommentOverlay({
       const rectList = Array.from(range.getClientRects());
       if (rectList.length === 0) return;
       const orphaned = list.every((c) => c.status === 'orphaned');
-      const rects = rectList.map((r) => ({
-        top: r.top - oRect.top,
-        left: r.left - oRect.left,
-        width: r.width,
-        height: r.height,
-      }));
+      const rects = rectList.map((r) => ({ top: r.top - oRect.top, left: r.left - oRect.left, width: r.width, height: r.height }));
+      const first = rectList[0];
       const last = rectList[rectList.length - 1];
       next.push({
         key: text,
         rects,
         bubble: { top: last.top - oRect.top, left: last.right - oRect.left },
-        count: list.length,
-        preview: list.map((c) => `${c.authorDisplayName}：${c.content}`).join('\n').slice(0, 240),
+        card: { top: last.bottom - oRect.top + 6, left: Math.min(Math.max(0, first.left - oRect.left), maxLeft) },
+        comments: list,
         orphaned,
       });
     });
     setMarks(next);
   }, [comments, containerRef]);
 
-  // rAF 合并高频触发（resize / 拖宽侧栏），避免每帧全量重算
   const schedule = useCallback(() => {
     if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(() => { rafRef.current = null; recompute(); });
@@ -168,7 +174,6 @@ export function InlineCommentOverlay({
 
   useLayoutEffect(() => {
     recompute();
-    // 图片/字体/公式渲染后正文高度会变，延迟两次兜底重算
     const t1 = window.setTimeout(recompute, 120);
     const t2 = window.setTimeout(recompute, 500);
     const container = containerRef.current;
@@ -186,53 +191,157 @@ export function InlineCommentOverlay({
 
   return (
     <div ref={overlayRef} aria-hidden style={{ position: 'absolute', top: 0, left: 0, width: 0, height: 0 }}>
-      {marks.map((m) => (
-        <div key={m.key}>
-          {/* 高亮条：不挡正文点击/划词 */}
-          {m.rects.map((r, i) => (
-            <div
-              key={i}
-              style={{
-                position: 'absolute',
-                top: r.top,
-                left: r.left,
-                width: r.width,
-                height: r.height,
-                background: m.orphaned ? 'rgba(148,163,184,0.16)' : 'rgba(250,204,21,0.18)',
-                borderBottom: `2px solid ${m.orphaned ? 'rgba(148,163,184,0.5)' : 'rgba(234,179,8,0.7)'}`,
-                borderRadius: 2,
-                pointerEvents: 'none',
-              }}
-            />
-          ))}
-          {/* 气泡：可点击，打开评论抽屉；hover 显示作者+内容预览 */}
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); onOpenComment(); }}
-            title={m.preview}
-            className="inline-flex items-center gap-0.5 cursor-pointer"
-            style={{
-              position: 'absolute',
-              top: m.bubble.top - 7,
-              left: m.bubble.left + 2,
-              height: 17,
-              padding: '0 5px',
-              borderRadius: 9,
-              pointerEvents: 'auto',
-              background: m.orphaned ? 'rgba(100,116,139,0.95)' : 'rgba(234,179,8,0.96)',
-              color: m.orphaned ? '#e2e8f0' : '#3a2d05',
-              fontSize: 10,
-              fontWeight: 700,
-              lineHeight: '17px',
-              boxShadow: '0 2px 6px rgba(0,0,0,0.28)',
-              zIndex: 6,
-            }}
-          >
-            <MessageSquare size={10} />
-            {m.count > 1 ? m.count : ''}
-          </button>
-        </div>
-      ))}
+      {marks.map((m) => {
+        const col = m.orphaned ? '#94a3b8' : threadColor(m.key);
+        const active = activeKey === m.key;
+        const hover = hoveredKey === m.key;
+        const inlineExpanded = mode === 'inline' && active;
+        const bg = active ? withAlpha(col, 0.34) : hover ? withAlpha(col, 0.24) : withAlpha(col, 0.15);
+        return (
+          <div key={m.key}>
+            {/* 高亮条：按线程配色，激活/hover 加亮；不挡正文点击/划词 */}
+            {m.rects.map((r, i) => (
+              <div
+                key={i}
+                style={{
+                  position: 'absolute', top: r.top, left: r.left, width: r.width, height: r.height,
+                  background: bg, borderBottom: `2px solid ${withAlpha(col, 0.85)}`, borderRadius: 2,
+                  pointerEvents: 'none', transition: 'background 0.12s',
+                }}
+              />
+            ))}
+
+            {/* 气泡：变体 C 头像堆叠（最多 3 个真实头像，超出显 +N）。
+                按 authorUserId 去重，同一人多条评论合一个头像；最右一个戴线程色 ring。
+                整组可点 → 激活该分组（margin 联动右侧卡 + 连线 / inline 就地展开）；
+                激活的气泡带 data-active-hl，供连线层 InlineCommentConnector 取锚点。 */}
+            {(() => {
+              const AV = 18;
+              const uniqueAuthors = Array.from(
+                new Map(m.comments.map((c) => [c.authorUserId || c.id, c])).values()
+              );
+              const displayed = uniqueAuthors.slice(0, 3);
+              const overflow = uniqueAuthors.length - displayed.length;
+              return (
+                <button
+                  type="button"
+                  data-active-hl={active ? '1' : undefined}
+                  onClick={(e) => { e.stopPropagation(); onActivate?.(m.key, m.comments[0].selectedText); }}
+                  title={m.comments.map((c) => `${c.authorDisplayName}：${c.content}`).join('\n').slice(0, 240)}
+                  className="inline-flex items-center cursor-pointer p-0 bg-transparent"
+                  style={{
+                    position: 'absolute',
+                    top: m.bubble.top - AV / 2 + 4,
+                    left: m.bubble.left + 2,
+                    height: AV,
+                    border: 'none',
+                    pointerEvents: 'auto',
+                    zIndex: 6,
+                    filter: m.orphaned ? 'grayscale(0.7) opacity(0.75)' : undefined,
+                    transition: 'transform 0.12s',
+                  }}
+                >
+                  {displayed.map((c, i) => {
+                    const isRightmost = i === displayed.length - 1 && overflow === 0;
+                    return (
+                      <img
+                        key={c.id}
+                        src={resolveAvatarUrl({ avatarFileName: c.authorAvatar })}
+                        alt={c.authorDisplayName || ''}
+                        width={AV}
+                        height={AV}
+                        onError={(e) => {
+                          const t = e.currentTarget;
+                          if (t.src !== DEFAULT_AVATAR_FALLBACK) t.src = DEFAULT_AVATAR_FALLBACK;
+                        }}
+                        style={{
+                          // Tailwind base layer 默认给 img 加 height: auto，会把 HTML
+                          // width/height 属性覆盖成 0（src 未加载时塌缩成边框那一圈）。
+                          // inline style 显式指定 width/height 强制吃住 18×18。
+                          width: AV,
+                          height: AV,
+                          borderRadius: '50%',
+                          marginLeft: i === 0 ? 0 : -6,
+                          border: isRightmost
+                            ? `2px solid ${col}`
+                            : `2px solid var(--bg-card, #1e1f20)`,
+                          boxShadow: active && isRightmost
+                            ? `0 0 0 2px ${withAlpha(col, 0.5)}, 0 1px 3px rgba(0,0,0,0.45)`
+                            : '0 1px 3px rgba(0,0,0,0.45)',
+                          zIndex: 10 + i,
+                          position: 'relative',
+                          objectFit: 'cover',
+                          background: 'var(--bg-card, #1e1f20)',
+                          display: 'block',
+                          boxSizing: 'content-box',
+                          flexShrink: 0,
+                        }}
+                      />
+                    );
+                  })}
+                  {overflow > 0 && (
+                    <span
+                      style={{
+                        width: AV,
+                        height: AV,
+                        borderRadius: '50%',
+                        marginLeft: -6,
+                        border: `2px solid ${col}`,
+                        background: withAlpha(col, 0.95),
+                        color: m.orphaned ? '#e2e8f0' : '#1a1205',
+                        fontSize: 9,
+                        fontWeight: 800,
+                        lineHeight: 1,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 20,
+                        position: 'relative',
+                        boxShadow: active
+                          ? `0 0 0 2px ${withAlpha(col, 0.5)}, 0 1px 3px rgba(0,0,0,0.45)`
+                          : '0 1px 3px rgba(0,0,0,0.45)',
+                      }}
+                    >
+                      +{overflow}
+                    </span>
+                  )}
+                </button>
+              );
+            })()}
+
+            {/* inline 展开卡片：就地（GitHub 评论代码风），可读可回复可删 */}
+            {inlineExpanded && (
+              <div
+                style={{
+                  position: 'absolute', top: m.card.top, left: m.card.left, width: 338, maxHeight: 360,
+                  overflowY: 'auto', overscrollBehavior: 'contain', pointerEvents: 'auto', zIndex: 8,
+                  borderRadius: 12, padding: '12px 13px',
+                  background: 'linear-gradient(180deg, rgba(30,28,46,0.97), rgba(20,19,28,0.98))',
+                  border: `1px solid ${withAlpha(col, 0.45)}`, boxShadow: '0 18px 44px -10px rgba(0,0,0,0.6)', backdropFilter: 'blur(40px)',
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-semibold truncate" style={{ color: 'var(--text-muted)' }}>{m.comments.length} 条批注</span>
+                  <button onClick={() => onActivate?.(m.key, m.comments[0].selectedText)} className="text-[10px] cursor-pointer hover:underline flex-none" style={{ color: 'var(--text-muted)' }}>收起</button>
+                </div>
+                <div className="space-y-2.5">
+                  {m.comments.map((c) => <CommentLine key={c.id} comment={c} canDelete={canDelete?.(c)} onDelete={onDelete} />)}
+                </div>
+                {canCreate && onCreate && (
+                  <div className="mt-3">
+                    <ReplyBox onSubmit={async (text) => {
+                      const base = m.comments[0];
+                      // 回复落到该线程所属条目（base.entryId），防切档后写到别的文档（Bugbot Medium）
+                      return onCreate({ selectedText: base.selectedText, contextBefore: base.contextBefore, contextAfter: base.contextAfter, startOffset: base.startOffset, endOffset: base.endOffset, content: text }, base.entryId);
+                    }} />
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

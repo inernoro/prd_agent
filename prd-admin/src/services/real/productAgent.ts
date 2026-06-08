@@ -19,6 +19,7 @@ import type {
   ProductEntityType,
   ProductCategory,
   DescTemplate,
+  ProductMembersResult,
 } from '@/pages/product-agent/types';
 
 interface ListWrap<T> {
@@ -52,6 +53,20 @@ export function updateProduct(id: string, body: Partial<Product>): Promise<ApiRe
 }
 export function deleteProduct(id: string) {
   return apiRequest<{ deleted: boolean }>(`/api/product/products/${id}`, { method: 'DELETE' });
+}
+
+// ── 产品团队成员 ──
+export function listProductMembers(productId: string): Promise<ApiResponse<ProductMembersResult>> {
+  return apiRequest<ProductMembersResult>(`/api/product/products/${productId}/members`);
+}
+export function addProductMembers(productId: string, userIds: string[]) {
+  return apiRequest<{ added: number }>(`/api/product/products/${productId}/members`, { method: 'POST', body: { userIds } });
+}
+export function removeProductMember(productId: string, userId: string) {
+  return apiRequest<{ removed: boolean }>(`/api/product/products/${productId}/members/${userId}`, { method: 'DELETE' });
+}
+export function setProductMemberRole(productId: string, userId: string, role: 'admin' | 'member') {
+  return apiRequest<{ role: string }>(`/api/product/products/${productId}/members/${userId}/role`, { method: 'PUT', body: { role } });
 }
 
 // ── 版本 ──
@@ -119,15 +134,15 @@ export function deleteFeatureVersion(featureVersionId: string) {
   return apiRequest<{ deleted: boolean }>(`/api/product/feature-versions/${featureVersionId}`, { method: 'DELETE' });
 }
 
-// ── 客户 ──
-export function listCustomers(productId: string, params?: { keyword?: string }) {
+// ── 客户（全局，跨产品共享）──
+export function listCustomers(params?: { keyword?: string }) {
   const q = new URLSearchParams();
   if (params?.keyword) q.set('keyword', params.keyword);
   const qs = q.toString();
-  return apiRequest<ListWrap<Customer>>(`/api/product/products/${productId}/customers${qs ? `?${qs}` : ''}`);
+  return apiRequest<ListWrap<Customer>>(`/api/product/customers${qs ? `?${qs}` : ''}`);
 }
-export function createCustomer(productId: string, body: Partial<Customer>) {
-  return apiRequest<Customer>(`/api/product/products/${productId}/customers`, { method: 'POST', body });
+export function createCustomer(body: Partial<Customer>) {
+  return apiRequest<Customer>('/api/product/customers', { method: 'POST', body });
 }
 export function updateCustomer(customerId: string, body: Partial<Customer>) {
   return apiRequest<Customer>(`/api/product/customers/${customerId}`, { method: 'PUT', body });

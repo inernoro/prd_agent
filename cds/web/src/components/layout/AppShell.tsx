@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, LayoutGrid, LogOut, Monitor, Moon, Search, Settings, Sun } from 'lucide-react';
+import { Check, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Search, Settings, Sun, X } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { CommitInbox } from '@/components/CommitInbox';
 import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
@@ -30,6 +31,61 @@ import { cn } from '@/lib/utils';
  */
 
 export type AppNavKey = 'projects' | 'cds-settings' | string;
+
+/*
+ * MobileNavContext — lets the TopBar's hamburger (rendered from the page's
+ * `topbar` prop, which lives inside AppShell's tree) open the slide-in nav
+ * drawer that AppShell owns. Desktop never uses it (rail is always visible).
+ */
+const MobileNavContext = createContext<{ openNav: () => void }>({ openNav: () => {} });
+
+/*
+ * useFocusTrap — keep keyboard focus inside an open overlay (mobile nav drawer /
+ * ⋮ action sheet), so Tab can't reach the obscured workspace behind the backdrop
+ * (Bugbot #741「Modal overlays lack focus trap」). On open it moves focus into
+ * the panel; on close it restores focus to the previously-focused trigger.
+ *
+ * Boundary-wrap only (wrap at first/last; never yank focus that is already
+ * OUTSIDE the container). This is deliberately portal-safe: the sheet may host a
+ * nested Radix dropdown (project list「一键部署」) whose content portals to
+ * <body> — an aggressive trap would fight it. Normal tabbing still wraps inside.
+ */
+const FOCUSABLE_SELECTOR =
+  'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+
+function useFocusTrap(active: boolean, ref: React.RefObject<HTMLElement>): void {
+  useEffect(() => {
+    if (!active) return undefined;
+    const container = ref.current;
+    if (!container) return undefined;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const focusables = (): HTMLElement[] =>
+      Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter((el) => el.offsetParent !== null);
+    const initial = window.setTimeout(() => focusables()[0]?.focus(), 0);
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key !== 'Tab') return;
+      const items = focusables();
+      if (items.length === 0) return;
+      const active = document.activeElement as HTMLElement | null;
+      if (!active || !container.contains(active)) return; // focus is elsewhere (e.g. nested portal) — leave it
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      window.clearTimeout(initial);
+      document.removeEventListener('keydown', onKeyDown, true);
+      previouslyFocused?.focus?.();
+    };
+  }, [active, ref]);
+}
 
 export interface AppShellProps {
   /** Which left-rail item is active. */
@@ -65,6 +121,7 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
    * page gets the palette for free, regardless of which page added the rail.
    */
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
   const [authStatus, setAuthStatus] = useState<ShellAuthStatus | null>(null);
   const [logoutState, setLogoutState] = useState<'idle' | 'running' | 'error'>('idle');
   useEffect(() => {
@@ -100,6 +157,15 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
     return () => ctrl.abort();
   }, []);
 
+  // 抽屉打开时锁住页面滚动,否则触屏下背景工作区仍能滚动,与模态行为冲突
+  // (Bugbot #741 Medium「Drawer open background scrolls」)。关闭时还原原值。
+  useEffect(() => {
+    if (!navOpen) return undefined;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, [navOpen]);
+
   const logout = async (): Promise<void> => {
     const endpoint = authStatus?.logoutEndpoint;
     if (!endpoint) return;
@@ -119,8 +185,19 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
   };
 
   return (
+    <MobileNavContext.Provider value={{ openNav: () => setNavOpen(true) }}>
     <div className="cds-app-shell">
+      {/* Desktop rail — always visible ≥768px, CSS-hidden on phones. */}
       <AppRail
+        active={active}
+        canLogout={Boolean(authStatus?.logoutEndpoint)}
+        logoutState={logoutState}
+        onLogout={() => { void logout(); }}
+      />
+      {/* Mobile slide-in drawer — replaces the rail on phones. */}
+      <MobileNavDrawer
+        open={navOpen}
+        onClose={() => setNavOpen(false)}
         active={active}
         canLogout={Boolean(authStatus?.logoutEndpoint)}
         logoutState={logoutState}
@@ -152,6 +229,7 @@ export function AppShell({ active = 'projects', topbar, children, wide = false }
           right slot,所有页面共享。 */}
       <FloatingThemeToggle />
     </div>
+    </MobileNavContext.Provider>
   );
 }
 
@@ -297,53 +375,47 @@ export function PaletteHint(): JSX.Element {
   );
 }
 
-function AppRail({
-  active,
-  canLogout,
-  logoutState,
-  onLogout,
-}: {
+interface RailNavProps {
   active: AppNavKey;
   canLogout: boolean;
   logoutState: 'idle' | 'running' | 'error';
   onLogout: () => void;
-}): JSX.Element {
-  return (
-    <nav className="cds-rail" aria-label="主导航">
-      <div className="cds-rail-brand">
-        <div className="cds-rail-avatar" aria-label="CDS">
-          <CdsMetallicLogo className="cds-rail-avatar-icon" aria-hidden />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="cds-rail-brand-title truncate">Cloud Dev Suite</div>
-        </div>
-      </div>
+}
 
+/*
+ * RailNav — the nav body shared by the desktop rail and the mobile drawer.
+ * `onNavigate` lets the mobile drawer close itself when a link is tapped.
+ */
+function RailNav({ active, canLogout, logoutState, onLogout, onNavigate }: RailNavProps & { onNavigate?: () => void }): JSX.Element {
+  return (
+    <>
       <div className="cds-rail-section">
-      <Link
-        to="/project-list"
-        className="cds-rail-item"
-        data-active={active === 'projects' ? 'true' : 'false'}
-        aria-label="项目列表"
-        title="项目列表"
-        onMouseEnter={preloadProjectListPage}
-        onFocus={preloadProjectListPage}
-      >
-        <LayoutGrid />
-        <span>Projects</span>
-      </Link>
-      <Link
-        to="/cds-settings"
-        className="cds-rail-item"
-        data-active={active === 'cds-settings' ? 'true' : 'false'}
-        aria-label="CDS 系统设置"
-        title="CDS 系统设置（更新 / 存储 / 集群 / 全局变量）"
-        onMouseEnter={preloadCdsSettingsPage}
-        onFocus={preloadCdsSettingsPage}
-      >
-        <Settings />
-        <span>Settings</span>
-      </Link>
+        <Link
+          to="/project-list"
+          className="cds-rail-item"
+          data-active={active === 'projects' ? 'true' : 'false'}
+          aria-label="项目列表"
+          title="项目列表"
+          onClick={onNavigate}
+          onMouseEnter={preloadProjectListPage}
+          onFocus={preloadProjectListPage}
+        >
+          <LayoutGrid />
+          <span>Projects</span>
+        </Link>
+        <Link
+          to="/cds-settings"
+          className="cds-rail-item"
+          data-active={active === 'cds-settings' ? 'true' : 'false'}
+          aria-label="CDS 系统设置"
+          title="CDS 系统设置（更新 / 存储 / 集群 / 全局变量）"
+          onClick={onNavigate}
+          onMouseEnter={preloadCdsSettingsPage}
+          onFocus={preloadCdsSettingsPage}
+        >
+          <Settings />
+          <span>Settings</span>
+        </Link>
       </div>
       <div className="flex-1" />
       {canLogout ? (
@@ -361,10 +433,82 @@ function AppRail({
           </span>
         </button>
       ) : null}
+    </>
+  );
+}
+
+function AppRail(props: RailNavProps): JSX.Element {
+  return (
+    <nav className="cds-rail" aria-label="主导航">
+      <div className="cds-rail-brand">
+        <div className="cds-rail-avatar" aria-label="CDS">
+          <CdsMetallicLogo className="cds-rail-avatar-icon" aria-hidden />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="cds-rail-brand-title truncate">Cloud Dev Suite</div>
+        </div>
+      </div>
+      <RailNav {...props} />
       {/* 2026-05-04 主题切换从这里挪到 AppShell 顶层右上(FloatingThemeToggle),
           原因:左下与 GlobalUpdateBadge 浮动徽章在某些状态下视觉重叠;industry
           标准位置(Vercel / Linear / Notion / Stripe)都在右上。 */}
     </nav>
+  );
+}
+
+/*
+ * MobileNavDrawer — phone-only slide-in navigation (≤767px). Replaces the
+ * persistent desktop rail so the workspace gets the full screen width.
+ * Opens from the TopBar hamburger; closes on backdrop tap, ESC, or nav.
+ */
+function MobileNavDrawer({
+  open,
+  onClose,
+  ...nav
+}: RailNavProps & { open: boolean; onClose: () => void }): JSX.Element {
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  // 打开时把键盘焦点困在抽屉内,Tab 不会跑到背后被遮挡的工作区
+  // (Bugbot #741「Modal overlays lack focus trap」)。
+  useFocusTrap(open, rootRef);
+
+  // 关闭态:除了 aria-hidden + translateX 移出屏幕,还把整个抽屉设为 inert ——
+  // 同步写在 JSX 上(不走 useEffect),避免「渲染后到 effect 执行之间」那一帧里
+  // 关闭的抽屉链接/按钮仍在 Tab 序中(Bugbot #741 Medium「inert applied too late」)。
+  // inert 同时移除交互 + 焦点 + a11y 树;React 18 类型无 inert 声明,用 spread 兼容。
+  const inertProps = open ? {} : ({ inert: '' } as Record<string, string>);
+
+  return (
+    <div ref={rootRef} {...inertProps} className={cn('cds-mobile-drawer md:hidden', open ? 'is-open' : null)} aria-hidden={!open}>
+      <div className="cds-mobile-drawer-backdrop" onClick={onClose} />
+      <nav className="cds-mobile-drawer-panel" aria-label="主导航">
+        <div className="cds-mobile-drawer-head">
+          <div className="cds-rail-brand !pb-0">
+            <div className="cds-rail-avatar" aria-label="CDS">
+              <CdsMetallicLogo className="cds-rail-avatar-icon" aria-hidden />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="cds-rail-brand-title truncate">Cloud Dev Suite</div>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="cds-icon-button"
+            onClick={onClose}
+            aria-label="关闭导航"
+          >
+            <X />
+          </button>
+        </div>
+        <RailNav {...nav} onNavigate={onClose} />
+      </nav>
+    </div>
   );
 }
 
@@ -389,17 +533,102 @@ export interface TopBarProps {
  *   right  = action buttons.
  */
 export function TopBar({ left, center, right, centerWide = false }: TopBarProps): JSX.Element {
+  const { openNav } = useContext(MobileNavContext);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const kebabRef = useRef<HTMLButtonElement>(null);
+  // sheet 通过 portal 挂到 <body>(见下),所以用固定坐标定位到 ⋮ 按钮下方。
+  // 不能留在 .cds-topbar 内:topbar 有 backdrop-filter,会成为 fixed 的包含块,
+  // 导致全屏 backdrop 只盖住顶栏(Bugbot #741 Medium「Sheet backdrop clipped」)。
+  const [sheetPos, setSheetPos] = useState<{ top: number; right: number } | null>(null);
+  const toggleSheet = (): void => {
+    // 先算好定位再切状态:不把 setSheetPos 塞进 setActionsOpen 的 updater(reducer 里
+    // 做副作用是反模式),也保证 actionsOpen=true 时 sheetPos 必非空 —— 否则会出现
+    // 「锁了背景滚动却没渲染 sheet」(Bugbot #741 Medium「Sheet open locks background scroll」)。
+    const r = kebabRef.current?.getBoundingClientRect();
+    setSheetPos(r
+      ? { top: Math.round(r.bottom + 6), right: Math.round(Math.max(8, window.innerWidth - r.right)) }
+      : { top: 56, right: 8 });
+    setActionsOpen((o) => !o);
+  };
+  // ⋮ 动作 sheet 打开:锁背景滚动(否则触屏下背景仍可滚)+ 焦点陷阱(下方 useFocusTrap)。
+  useEffect(() => {
+    if (!actionsOpen) return undefined;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, [actionsOpen]);
+  useFocusTrap(actionsOpen, sheetRef);
+  // ⋮ sheet 的键盘可关闭:焦点被困在 sheet 内时,必须能用 Esc 退出(与抽屉一致),
+  // 否则键盘用户只能在菜单里打转(Bugbot #741 Medium「Sheet lacks keyboard dismiss」)。
+  useEffect(() => {
+    if (!actionsOpen) return undefined;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setActionsOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [actionsOpen]);
   return (
     <header className="cds-topbar">
-      <div className="flex min-w-0 flex-1 items-center gap-3">
-        <div className="flex shrink-0 items-center gap-3">{left}</div>
-        {center ? (
-          <div className={`min-w-0 flex-1 ${centerWide ? 'max-w-none' : 'max-w-[640px]'} hidden md:block`}>
-            {center}
-          </div>
-        ) : null}
+      {/* Hamburger — phone only. Opens the slide-in nav drawer. */}
+      <button
+        type="button"
+        className="cds-topbar-burger cds-icon-button md:hidden"
+        onClick={openNav}
+        aria-label="打开导航菜单"
+      >
+        <Menu />
+      </button>
+      <div className="cds-topbar-lead flex min-w-0 flex-1 items-center gap-3 md:flex-none">
+        {/* 桌面端 left 槽不收缩;手机端允许收缩 + 截断,作为单行 app-bar 标题。 */}
+        <div className="cds-topbar-left flex min-w-0 shrink items-center gap-3 md:shrink-0">{left}</div>
       </div>
-      {right ? <div className="flex shrink-0 items-center gap-2">{right}</div> : null}
+      {/* center(分支搜索 / Git URL 快建)单实例 + 纯 CSS 重定位:桌面行内居中扩展,
+          手机端 order 靠后 + w-full,配合 header flex-wrap 落到 app-bar 第二行整宽。
+          单 DOM 节点跨断点不卸载重挂(Bugbot #741 Low「Resize remounts」),
+          也不双份挂载(避免分支搜索 ref/dropdown 状态被破坏)。 */}
+      {center ? (
+        <div className={`cds-topbar-center order-1 w-full min-w-0 md:order-none md:w-auto md:flex-1 ${centerWide ? 'md:max-w-none' : 'md:max-w-[640px]'}`}>
+          {center}
+        </div>
+      ) : null}
+      {/* 桌面端:动作按钮平铺。 */}
+      {right ? <div className="cds-topbar-actions hidden shrink-0 items-center gap-2 md:flex">{right}</div> : null}
+      {/* 手机端:动作收进 ⋮ 溢出菜单,点开是竖向 action sheet —— 真正的移动端形态,
+          而非把一排 PC 工具栏按钮硬塞进窄屏。 */}
+      {right ? (
+        <div className="md:hidden">
+          <button
+            ref={kebabRef}
+            type="button"
+            className="cds-icon-button"
+            onClick={toggleSheet}
+            aria-label="更多操作"
+            aria-expanded={actionsOpen}
+          >
+            <MoreVertical />
+          </button>
+          {/* backdrop + sheet 通过 portal 挂到 <body>,逃离 .cds-topbar 的
+              backdrop-filter 包含块,fixed backdrop 才能盖满整个视口(Bugbot #741)。
+              不在容器上 auto-close:right 槽可能含嵌套 Radix 菜单(项目列表「一键部署」),
+              点一下就收起会破坏二级菜单 —— 改为点 backdrop / Esc 关闭。 */}
+          {actionsOpen && sheetPos
+            ? createPortal(
+                <>
+                  <div className="cds-topbar-sheet-backdrop" onClick={() => setActionsOpen(false)} />
+                  <div
+                    ref={sheetRef}
+                    className="cds-topbar-sheet"
+                    role="menu"
+                    style={{ top: sheetPos.top, right: sheetPos.right }}
+                  >
+                    {right}
+                  </div>
+                </>,
+                document.body,
+              )
+            : null}
+        </div>
+      ) : null}
       <SiteNoticeInbox />
     </header>
   );

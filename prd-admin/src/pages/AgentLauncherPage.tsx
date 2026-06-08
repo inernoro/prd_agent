@@ -54,6 +54,7 @@ import { HomeAmbientBackdrop } from '@/components/effects/HomeAmbientBackdrop';
 import { Reveal } from '@/pages/home/components/Reveal';
 import { TipsRotator } from '@/components/daily-tips/TipsRotator';
 import { UpdateCenterNewsTeaser } from '@/components/ai-news/UpdateCenterNewsTeaser';
+import { LearningCenterTeaser } from '@/components/daily-tips/LearningCenterTeaser';
 
 /**
  * 进场动效节奏 —— 与 /home LandingPage 同款 Reveal 组件，duration 减半（1000ms）让整体速度翻倍。
@@ -76,8 +77,8 @@ const REVEAL = {
   agentsHeader: 250,
   agentsCardBase: 280,
   agentsCardStep: 20,
-  utilitiesHeader: 400,
-  utilitiesCardBase: 420,
+  utilitiesHeader: 200,   // 首次出现延迟加速 2x(原 400)，让"实用工具"更快露出；step/duration 不变
+  utilitiesCardBase: 210, // 同步减半(原 420)
   utilitiesCardStep: 15,
   infraHeader: 560,
   infraCardBase: 580,
@@ -530,7 +531,7 @@ export default function AgentLauncherPage() {
 
   useEffect(() => {
     loadItems();
-    void loadChangelogCurrentWeek();
+    void loadChangelogCurrentWeek({ daysLimit: 8 });
     void loadHomepageAssets();
     void loadWeeklyPoster();
   }, [loadItems, loadChangelogCurrentWeek, loadHomepageAssets, loadWeeklyPoster]);
@@ -885,41 +886,49 @@ export default function AgentLauncherPage() {
                       <TipsRotator fallback="选一个智能体开始创作，或在下方的实用工具里探索平台能力" />
                     </div>
                   </Reveal>
+                  {/* 搜索框：靠左，紧跟问候/副标题下方（与右侧教程卡分列左右，不再堆叠在右上角） */}
+                  <Reveal delay={REVEAL.heroSearch} duration={REVEAL_DURATION}>
+                    <div className="relative mt-4" style={{ maxWidth: isMobile ? '100%' : 360 }}>
+                      <Search
+                        size={15}
+                        className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}
+                      />
+                      <input
+                        data-tour-id="home-search"
+                        type="text"
+                        placeholder="搜索 Agent..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="w-full h-9 pl-9 pr-4 rounded-lg text-[13px] outline-none transition-colors duration-150"
+                        style={{
+                          background: 'rgba(255,255,255,0.06)',
+                          border: '1px solid rgba(255,255,255,0.1)',
+                          color: 'var(--text-primary, #fff)',
+                          backdropFilter: 'blur(12px)',
+                          WebkitBackdropFilter: 'blur(12px)',
+                        }}
+                        onFocus={(e) => {
+                          e.currentTarget.style.borderColor = 'var(--accent-primary, #818CF8)';
+                          e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
+                        }}
+                        onBlur={(e) => {
+                          e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)';
+                          e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
+                        }}
+                      />
+                    </div>
+                  </Reveal>
                 </div>
 
-                {/* Search (top-right) */}
-                <Reveal delay={REVEAL.heroSearch} duration={REVEAL_DURATION}>
-                  <div className="relative shrink-0" style={{ width: isMobile ? '100%' : 260 }}>
-                    <Search
-                      size={15}
-                      className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
-                      style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}
-                    />
-                    <input
-                      data-tour-id="home-search"
-                      type="text"
-                      placeholder="搜索 Agent..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full h-9 pl-9 pr-4 rounded-lg text-[13px] outline-none transition-colors duration-150"
-                      style={{
-                        background: 'rgba(255,255,255,0.06)',
-                        border: '1px solid rgba(255,255,255,0.1)',
-                        color: 'var(--text-primary, #fff)',
-                        backdropFilter: 'blur(12px)',
-                        WebkitBackdropFilter: 'blur(12px)',
-                      }}
-                      onFocus={(e) => {
-                        e.currentTarget.style.borderColor = 'var(--accent-primary, #818CF8)';
-                        e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
-                      }}
-                      onBlur={(e) => {
-                        e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)';
-                        e.currentTarget.style.background = 'rgba(255,255,255,0.06)';
-                      }}
-                    />
-                  </div>
-                </Reveal>
+                {/* 右栏：仅教程中心承接卡（靠右，与左侧搜索分列左右，不再堆叠） */}
+                {!searchQuery.trim() && (
+                  <Reveal delay={REVEAL.heroSearch} duration={REVEAL_DURATION}>
+                    <div className="shrink-0" style={{ width: isMobile ? '100%' : 260 }}>
+                      <LearningCenterTeaser compact />
+                    </div>
+                  </Reveal>
+                )}
               </div>
             </div>
             {/* end hero content */}

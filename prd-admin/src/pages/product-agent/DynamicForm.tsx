@@ -374,7 +374,7 @@ function RelationField({ value, onChange, entityType, productId }: { value: stri
         const r = await listVersions(productId);
         if (r.success) opts = r.data.items.map((x) => ({ id: x.id, label: x.versionName }));
       } else if (entityType === 'customer') {
-        const r = await listCustomers(productId);
+        const r = await listCustomers();
         if (r.success) opts = r.data.items.map((x) => ({ id: x.id, label: x.name }));
       }
       if (alive) {

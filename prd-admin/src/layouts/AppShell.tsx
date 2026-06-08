@@ -44,6 +44,7 @@ import {
   HardDrive,
   Home,
   BarChart3,
+  GraduationCap,
   type LucideIcon,
 } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
@@ -53,6 +54,7 @@ import { cn } from '@/lib/cn';
 import { PA_SECRETARY_ICON, PaSecretary } from '@/lib/paSecretaryIconRegistry';
 import { glassPanel, glassSidebar, glassFloatingButton, glassMobileHeader } from '@/lib/glassStyles';
 import { useAuthStore } from '@/stores/authStore';
+import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { useAgentSwitcherStore } from '@/stores/agentSwitcherStore';
 import { useThemeStore } from '@/stores/themeStore';
 import { useLayoutStore } from '@/stores/layoutStore';
@@ -70,6 +72,7 @@ import { MobileSafeBoundary } from '@/components/MobileSafeBoundary';
 import { MobileCompatGate } from '@/components/MobileCompatGate';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { UserAvatar } from '@/components/ui/UserAvatar';
+import { AvatarProgressRing } from '@/components/daily-tips/AvatarProgressRing';
 import { getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, updateMyAvatar, uploadMyAvatar } from '@/services';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 import { GlobalDefectSubmitDialog, DefectSubmitButton } from '@/components/ui/GlobalDefectSubmitDialog';
@@ -180,6 +183,7 @@ export default function AppShell() {
   const location = useLocation();
   const logout = useAuthStore((s) => s.logout);
   const user = useAuthStore((s) => s.user);
+  const tutorialProgress = useDailyTipsStore((s) => s.progress);
   const patchUser = useAuthStore((s) => s.patchUser);
   const menuCatalog = useAuthStore((s) => s.menuCatalog);
   const menuCatalogLoaded = useAuthStore((s) => s.menuCatalogLoaded);
@@ -223,7 +227,7 @@ export default function AppShell() {
   const changelogUnread = useChangelogStore(selectUnreadCount);
   const loadChangelogCurrentWeek = useChangelogStore((s) => s.loadCurrentWeek);
   useEffect(() => {
-    void loadChangelogCurrentWeek();
+    void loadChangelogCurrentWeek({ daysLimit: 8 });
   }, [loadChangelogCurrentWeek]);
   // 本会话已关闭的 toast id 黑名单：持久化到 sessionStorage，避免 polling/刷新后重复弹出
   const [dismissedToastIds, setDismissedToastIds] = useState<Set<string>>(() => {
@@ -1348,11 +1352,8 @@ export default function AppShell() {
                       className={cn('flex items-center cursor-pointer', collapsed ? '' : 'gap-3 flex-1 min-w-0')}
                       title="用户菜单"
                     >
-                      {/* 头像 */}
-                      <div
-                        className="h-7 w-7 rounded-full overflow-hidden shrink-0 ring-1 ring-white/10 hover:ring-indigo-400/30 transition-colors duration-200"
-                        style={{ boxShadow: '0 0 0 1px rgba(99, 102, 241, 0.1), 0 2px 12px rgba(0, 0, 0, 0.2)' }}
-                      >
+                      {/* 头像外圈 = 教程掌握度进度环(诉求 12):已学会本页教程占比,满环加毕业角标 */}
+                      <AvatarProgressRing size={30} stroke={2.5}>
                         <UserAvatar
                           src={resolveAvatarUrl({
                             username: user?.username,
@@ -1364,7 +1365,7 @@ export default function AppShell() {
                           alt="avatar"
                           className="h-full w-full object-cover"
                         />
-                      </div>
+                      </AvatarProgressRing>
 
                       {/* 用户信息（仅展开时显示） */}
                       {!collapsed && (
@@ -1433,6 +1434,22 @@ export default function AppShell() {
                     style={{ color: 'var(--text-muted)' }}
                   >
                     常用 / 最近 / 置顶
+                  </span>
+                </DropdownMenu.Item>
+
+                {/* 学习中心:全部官方教程 + 完成进度(诉求 11) */}
+                <DropdownMenu.Item
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onSelect={() => navigate('/learning-center')}
+                >
+                  <GraduationCap size={16} className="shrink-0" />
+                  <span className="text-[13px]">我的学习进度</span>
+                  <span
+                    className="ml-auto text-[10px]"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    {tutorialProgress ? `${tutorialProgress.learned}/${tutorialProgress.total} 已掌握` : '学习中心'}
                   </span>
                 </DropdownMenu.Item>
 

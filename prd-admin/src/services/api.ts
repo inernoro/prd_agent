@@ -1233,6 +1233,19 @@ export const api = {
       delete: (linkId: string) => `/api/document-store/sync/${linkId}`,
     },
   },
+  // ============ 系统级跨节点互传（Peer Sync） ============
+  peerSync: {
+    // 用户侧
+    nodes: () => '/api/peer-sync/nodes',
+    items: (type: string) => `/api/peer-sync/resources/${type}/items`,
+    transfer: () => '/api/peer-sync/transfer',
+    // 管理侧（设置 → 系统互联）
+    adminList: () => '/api/admin/peer-nodes',
+    adminPairingCode: () => '/api/admin/peer-nodes/pairing-code',
+    adminAdd: () => '/api/admin/peer-nodes',
+    adminTest: (id: string) => `/api/admin/peer-nodes/${id}/test`,
+    adminDelete: (id: string) => `/api/admin/peer-nodes/${id}`,
+  },
   // ============ 波2 高级权限：全部网页审计视图 ============
   adminWebPages: {
     list: () => '/api/admin-web-pages',
@@ -1263,18 +1276,27 @@ export const api = {
 
   // ============ Changelog 更新中心（代码级周报） ============
   changelog: {
-    currentWeek: (force?: boolean) =>
-      `/api/changelog/current-week${force ? '?force=true' : ''}`,
-    releases: (limit?: number, force?: boolean) => {
+    currentWeek: (opts?: { daysLimit?: number; daysOffset?: number; force?: boolean }) => {
       const params: string[] = [];
-      if (limit) params.push(`limit=${limit}`);
-      if (force) params.push('force=true');
+      if (opts?.daysLimit != null) params.push(`daysLimit=${opts.daysLimit}`);
+      if (opts?.daysOffset != null && opts.daysOffset > 0) params.push(`daysOffset=${opts.daysOffset}`);
+      if (opts?.force) params.push('force=true');
+      return `/api/changelog/current-week${params.length ? `?${params.join('&')}` : ''}`;
+    },
+    releases: (opts?: { limit?: number; summary?: boolean; force?: boolean }) => {
+      const params: string[] = [];
+      if (opts?.limit != null) params.push(`limit=${opts.limit}`);
+      if (opts?.summary) params.push('summary=true');
+      if (opts?.force) params.push('force=true');
       return `/api/changelog/releases${params.length ? `?${params.join('&')}` : ''}`;
     },
-    githubLogs: (limit?: number, force?: boolean) => {
+    releaseByVersion: (version: string, force?: boolean) =>
+      `/api/changelog/releases/by-version/${encodeURIComponent(version)}${force ? '?force=true' : ''}`,
+    githubLogs: (opts?: { limit?: number; before?: string; force?: boolean }) => {
       const params: string[] = [];
-      if (limit) params.push(`limit=${limit}`);
-      if (force) params.push('force=true');
+      if (opts?.limit != null) params.push(`limit=${opts.limit}`);
+      if (opts?.before) params.push(`before=${encodeURIComponent(opts.before)}`);
+      if (opts?.force) params.push('force=true');
       return `/api/changelog/github-logs${params.length ? `?${params.join('&')}` : ''}`;
     },
     /** AI 总结（走 ILlmGateway + prd-admin.changelog.aiSummary::chat） */
@@ -1292,19 +1314,11 @@ export const api = {
   // ============ Daily Tips 每日小贴士 ============
   dailyTips: {
     visible: () => '/api/daily-tips/visible',
+    progress: () => '/api/daily-tips/progress',
     track: (id: string) => `/api/daily-tips/${id}/track`,
     dismissForever: (id: string) => `/api/daily-tips/${id}/dismiss-forever`,
     markLearned: (id: string) => `/api/daily-tips/${id}/mark-learned`,
-    admin: {
-      list: () => '/api/admin/daily-tips',
-      create: () => '/api/admin/daily-tips',
-      update: (id: string) => `/api/admin/daily-tips/${id}`,
-      delete: (id: string) => `/api/admin/daily-tips/${id}`,
-      push: (id: string) => `/api/admin/daily-tips/${id}/push`,
-      stats: (id: string) => `/api/admin/daily-tips/${id}/stats`,
-      seed: () => '/api/admin/daily-tips/seed',
-      reset: () => '/api/admin/daily-tips/reset',
-    },
+    // 「小技巧管理」后台(create/update/delete/push/seed/reset)已于 2026-06-04 下线,教程统一为代码内置 seed。
   },
 
   // ============ Emergence Explorer 涌现探索器 ============
