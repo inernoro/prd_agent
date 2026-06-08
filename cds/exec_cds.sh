@@ -735,42 +735,60 @@ emit_server_blocks() {
 # For every other half-ready state CDS's own proxy renders a richer loading
 # page with service-level progress; this file is the last-resort safety net.
 # See .claude/rules/cds-auto-deploy.md.
+# HTML SSOT: cds/src/loading-pages/index.ts buildNginxWaitingHtml()
+# exec_cds.sh calls the TypeScript renderer when dist/ is available;
+# falls back to a minimal heredoc only when dist/ hasn't been built yet
+# (e.g., cold-start before the first `pnpm build`).
 write_waiting_html() {
   local target="$NGINX_WWW_DIR/cds-waiting.html"
   mkdir -p "$NGINX_WWW_DIR"
+
+  # Primary path: render from TypeScript SSOT (always used after first build)
+  if [ -f "$SCRIPT_DIR/dist/cli/render-page.js" ]; then
+    local rendered
+    rendered="$(node "$SCRIPT_DIR/dist/cli/render-page.js" nginx-waiting 2>/dev/null)"
+    if [ -n "$rendered" ]; then
+      write_if_changed "$target" "$rendered"
+      return 0
+    fi
+    warn "[nginx] render-page.js failed, falling back to built-in template"
+  fi
+
+  # Fallback: minimal static HTML (cold-start only, before first build).
+  # Keep this in sync with src/loading-pages/index.ts buildNginxWaitingHtml()
+  # when making style changes — this path should rarely be seen in production.
   local content
   content=$(cat <<'WAITING_HTML'
 <!DOCTYPE html>
 <html lang="zh"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>预览环境准备中</title>
+<title>CDS 自升级中</title>
 <style>
+:root{--bg-page:#0d1117;--bg-card:#161b22;--bg-elevated:#21262d;--border:#30363d;--border-subtle:#21262d;--text-primary:#f0f6fc;--text-muted:#8b949e;--text-subtle:#6e7681;--accent:#58a6ff;--accent-bg:rgba(88,166,255,.14);--shadow-card:0 12px 32px rgba(0,0,0,.45)}
+@media(prefers-color-scheme:light){:root{--bg-page:#f4efe9;--bg-card:#ffffff;--bg-elevated:#f1eae4;--border:#d8cfc6;--border-subtle:#e6ddd3;--text-primary:#2a1f19;--text-muted:#7a6a5e;--text-subtle:#9c8e82;--accent:#1f6feb;--accent-bg:rgba(31,111,235,.10);--shadow-card:0 8px 24px rgba(43,33,28,.10)}}
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
-.card{position:relative;overflow:hidden;max-width:460px;width:100%;padding:32px;background:#161b22;border:1px solid #30363d;border-radius:16px;text-align:center;box-shadow:0 24px 80px rgba(0,0,0,.34),0 0 40px -24px #58a6ff}
-.card::before{content:"";position:absolute;inset:0 auto 0 -40%;width:34%;background:linear-gradient(90deg,transparent,rgba(88,166,255,.13),transparent);transform:skewX(-18deg);animation:glint 3.2s ease-in-out infinite}
-.spinner{position:relative;width:34px;height:34px;border:3px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:spin .9s linear infinite;margin:0 auto 16px;box-shadow:0 0 24px -6px #58a6ff}
-.spinner::after{content:"";position:absolute;inset:-9px;border-radius:50%;border:1px solid rgba(88,166,255,.32);animation:halo 1.7s ease-in-out infinite}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg-page);color:var(--text-muted);display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
+.card{max-width:480px;width:100%;padding:28px 30px;background:var(--bg-card);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-card)}
+.header{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+.spinner{width:22px;height:22px;border:2.5px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0}
 @keyframes spin{to{transform:rotate(360deg)}}
-@keyframes halo{0%,100%{opacity:.28;transform:scale(.82)}50%{opacity:1;transform:scale(1.16)}}
-@keyframes glint{0%,36%{transform:translateX(0) skewX(-18deg);opacity:0}52%{opacity:1}78%,100%{transform:translateX(420%) skewX(-18deg);opacity:0}}
-h2{font-size:16px;font-weight:600;color:#f0f6fc;margin-bottom:8px}
-.tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:99px;background:#1f6feb22;color:#58a6ff;border:1px solid #1f6feb55;margin-bottom:16px}
-.desc{font-size:13px;color:#8b949e;line-height:1.6;margin-bottom:16px}
-.kbd{font-family:ui-monospace,SFMono-Regular,monospace;font-size:12px;color:#c9d1d9;background:#21262d;padding:2px 6px;border-radius:4px}
-.hint{font-size:12px;color:#6e7681}
-@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important}}
+h1{font-size:18px;font-weight:600;color:var(--text-primary)}
+.sub{font-size:12px;color:var(--text-muted);margin-bottom:18px;padding-left:34px;line-height:1.55}
+.chip{display:inline-flex;align-items:center;gap:6px;font-family:ui-monospace,monospace;font-size:11px;color:var(--accent);background:var(--accent-bg);padding:4px 10px;border-radius:99px;border:1px solid rgba(88,166,255,.22);margin-bottom:18px}
+.hint{font-size:12px;color:var(--text-subtle);line-height:1.6}
+.hint code{font-family:ui-monospace,monospace;background:var(--bg-elevated);color:var(--text-muted);padding:1px 6px;border-radius:4px;font-size:11px}
+.bar{margin-top:18px;height:2px;border-radius:1px;background:var(--border-subtle);overflow:hidden}
+.bar-fill{height:100%;width:0%;background:var(--accent);border-radius:1px;animation:fill 3s linear forwards}
+@keyframes fill{to{width:100%}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important}.bar-fill{width:100%}}
 </style>
 </head><body>
 <div class="card">
-  <div class="spinner"></div>
-  <h2>预览环境准备中</h2>
-  <div class="tag">CDS 控制面暂时不可达</div>
-  <div class="desc">
-    分支预览正在构建或 CDS 正在自升级，几秒钟后会自动恢复。<br>
-    本页面每 <span class="kbd">3s</span> 自动刷新。
-  </div>
-  <div class="hint">如果持续看到此页面，请在 PR Checks 面板查看 CDS Deploy 状态。</div>
+  <div class="header"><div class="spinner"></div><h1>CDS 自升级中</h1></div>
+  <div class="sub">控制面正在重启，分支预览几秒后自动恢复</div>
+  <div class="chip">自动升级进行中</div>
+  <div class="hint">如持续停留，请在 <code>PR Checks</code> 面板查看 CDS Deploy 状态。</div>
+  <div class="bar"><div class="bar-fill"></div></div>
 </div>
 <script>setTimeout(function(){location.reload()},3000)</script>
 </body></html>
