@@ -67,6 +67,7 @@ export function TaskDetailPage() {
 
   // 子任务 / 动态
   const [subTitle, setSubTitle] = useState('');
+  const [attachId, setAttachId] = useState('');
   const [activities, setActivities] = useState<PmTaskActivity[]>([]);
   const [comment, setComment] = useState('');
   const [members, setMembers] = useState<PmMember[]>([]);
@@ -140,10 +141,21 @@ export function TaskDetailPage() {
     if (res.success) { setComment(''); setMentioned({}); setMentionQuery(null); loadActivities(); } else toast.error('评论失败', res.error?.message || '');
   };
 
+  const parentIdSet = useMemo(() => new Set(allTasks.filter((t) => t.parentTaskId).map((t) => t.parentTaskId!)), [allTasks]);
+  const attachCandidates = useMemo(
+    () => allTasks.filter((t) => t.id !== taskId && t.parentTaskId == null && !parentIdSet.has(t.id)),
+    [allTasks, taskId, parentIdSet],
+  );
+
   const addSubtask = async () => {
     if (!subTitle.trim()) return;
     const res = await createPmTask(projectId, { title: subTitle.trim(), parentTaskId: taskId, status: 'todo' });
     if (res.success) { setSubTitle(''); load(); } else toast.error('创建子任务失败', res.error?.message || '');
+  };
+  const attachSubtask = async () => {
+    if (!attachId) return;
+    const res = await updatePmTask(attachId, { parentTaskId: taskId });
+    if (res.success) { setAttachId(''); load(); } else toast.error('挂载子任务失败', res.error?.message || '');
   };
   const toggleSubDone = async (sub: PmTask) => {
     const next: PmTaskStatus = sub.status === 'done' ? 'todo' : 'done';
@@ -374,11 +386,20 @@ export function TaskDetailPage() {
               {parentTask ? (
                 <div className="text-[11px] py-1" style={{ color: 'var(--text-muted)' }}>子任务不能再有下级（仅支持两级）</div>
               ) : (
-                <div className="flex items-center gap-1.5">
-                  <input className="flex-1 rounded-lg px-2 py-1.5 text-[12px] outline-none border" style={inputStyle}
-                    value={subTitle} onChange={(e) => setSubTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addSubtask(); }} placeholder="添加子任务，回车确认" />
-                  <Button variant="secondary" size="sm" onClick={addSubtask} disabled={!subTitle.trim()}>添加</Button>
-                </div>
+                <>
+                  <div className="flex items-center gap-1.5">
+                    <input className="flex-1 rounded-lg px-2 py-1.5 text-[12px] outline-none border" style={inputStyle}
+                      value={subTitle} onChange={(e) => setSubTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addSubtask(); }} placeholder="新建子任务，回车确认" />
+                    <Button variant="secondary" size="sm" onClick={addSubtask} disabled={!subTitle.trim()}>新建</Button>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <select className="flex-1 rounded-lg px-2 py-1.5 text-[12px] outline-none border" style={inputStyle} value={attachId} onChange={(e) => setAttachId(e.target.value)}>
+                      <option value="">选择已有任务挂为子任务…</option>
+                      {attachCandidates.map((t) => <option key={t.id} value={t.id}>{t.title}</option>)}
+                    </select>
+                    <Button variant="secondary" size="sm" onClick={attachSubtask} disabled={!attachId}>挂载</Button>
+                  </div>
+                </>
               )}
             </div>
           </div>

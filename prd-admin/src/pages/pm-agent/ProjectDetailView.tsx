@@ -27,7 +27,7 @@ import { ClosureReportPanel } from './ClosureReportPanel';
 import { HealthDiagnosisPanel } from './HealthDiagnosisPanel';
 import { EvaluatePanel } from './EvaluatePanel';
 import { TaskDetailDrawer } from './TaskDetailDrawer';
-import { PROJECT_TYPE_REGISTRY, LIFECYCLE_REGISTRY, TASK_STATUS_REGISTRY, PRIORITY_REGISTRY, GRADE_REGISTRY } from './pmConstants';
+import { PROJECT_TYPE_REGISTRY, LIFECYCLE_REGISTRY, TASK_STATUS_REGISTRY, PRIORITY_REGISTRY, GRADE_REGISTRY, progressColor } from './pmConstants';
 
 interface Props {
   projectId: string;
@@ -496,6 +496,14 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
                     {t.priority !== 'none' && <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0" style={{ background: `${p.color}22`, color: p.color }}>{p.label}</span>}
                     {t.assigneeName && <span className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>{t.assigneeName}</span>}
                     {t.estimateDays != null && <span className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>{t.estimateDays}人天</span>}
+                    {(() => { const pct = t.status === 'done' ? 100 : (t.progressPercent ?? 0); return pct > 0 && t.status !== 'cancelled' ? (
+                      <span className="shrink-0 flex items-center gap-1.5 w-20" title={`进度 ${pct}%`}>
+                        <span className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: 'var(--bg-input)' }}>
+                          <span className="block h-full rounded-full" style={{ width: `${pct}%`, background: progressColor(pct, t.status) }} />
+                        </span>
+                        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{pct}%</span>
+                      </span>
+                    ) : null; })()}
                     <span className="text-[11px] shrink-0 w-16 text-right" style={{ color: 'var(--text-muted)' }}>{s.label}</span>
                     <button onClick={(e) => { e.stopPropagation(); handleDelete(t.id); }} className="opacity-0 group-hover:opacity-100 p-0.5 shrink-0" style={{ color: 'var(--text-muted)' }}><Trash2 size={13} /></button>
                   </div>
