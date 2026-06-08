@@ -34,6 +34,22 @@ function genStageMsg(sec: number, isPatch: boolean): string {
   return '内容较多，正在精修中（大模型生成约需 1 分钟）…';
 }
 
+// 给预览 HTML 注入导航守卫：阻止生成的幻灯把 iframe 导航回本应用（递归显示整个 MAP）。
+// reveal.js 渲染需要 same-origin（init 时访问 storage，opaque 源会抛错导致整页空白），
+// 所以保留 allow-same-origin，改用本守卫拦住一切非 hash 跳转 + history 操作。
+function withNavGuard(html: string): string {
+  if (!html) return html;
+  const guard =
+    '<script>(function(){try{' +
+    'var n=function(){return null;};' +
+    'try{history.pushState=n;history.replaceState=n;}catch(e){}' +
+    "document.addEventListener('click',function(e){var t=e.target;while(t&&t!==document){if(t.tagName==='A'){var h=t.getAttribute('href')||'';if(h&&h.charAt(0)!=='#'){e.preventDefault();e.stopPropagation();}break;}t=t.parentNode;}},true);" +
+    '}catch(e){}})();</script>';
+  if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => m + guard);
+  if (/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, (m) => m + guard);
+  return guard + html;
+}
+
 // 校验返回的是不是一份真正的网页 PPT，而不是本应用外壳/空内容/异常返回。
 // 防『预览里递归显示整个 MAP 应用』『后端重启返回 SPA index.html』等异常被当成结果渲染。
 function looksLikeDeck(html: string): boolean {
@@ -708,14 +724,13 @@ export function MdToPptAgentPage() {
                 </div>
               )}
 
-              {/* Iframe —— 关键：不要 allow-same-origin。否则生成的 HTML 跑在本应用
-                  同源里，reveal.js 的 history/hash 操作或任何相对跳转会把 iframe 导航到
-                  本应用 `/`，预览里就会递归显示整个 MAP 应用而不是幻灯。allow-scripts
-                  让 reveal.js（CDN 绝对地址）正常跑，但拿到的是不透明源，无法跳回本应用。 */}
+              {/* Iframe —— 保留 allow-same-origin（reveal.js init 需要 storage，否则整页空白），
+                  但用 withNavGuard 注入脚本拦住一切非 hash 跳转 + history 操作，杜绝生成的
+                  幻灯把 iframe 导航回本应用 `/`（之前会递归显示整个 MAP 应用）。 */}
               <iframe
                 className="flex-1 w-full border-0"
-                srcDoc={generatedHtml}
-                sandbox="allow-scripts"
+                srcDoc={withNavGuard(generatedHtml)}
+                sandbox="allow-scripts allow-same-origin"
                 title="PPT 预览"
                 style={{ minHeight: 0 }}
               />
