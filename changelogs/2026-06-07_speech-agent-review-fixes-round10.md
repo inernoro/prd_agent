@@ -1,2 +1,0 @@
-| feat | prd-api | 演讲生成引入 GenerationRunId 指纹（SpeechDeck + SpeechNode 各加可空字段）：每次 claim 一个新 Guid，service 给本批节点打标，swap 前重新读 deck.GenerationRunId 校验，被后来者抢占则放弃本批 + 删自己刚插入的节点；Ready/Failed 终态更新都加 RunId 守卫，避免 stale-timeout 让两个并行 run 互相覆盖（Bugbot High "Overlapping regen corrupts node tree"） |
-| fix | prd-api | 演讲删除 deck 同步吊销分享链：扫该 deck 名下所有 speech-agent HostedSite，对应 ShareLink 批量 IsRevoked=true，避免删了演讲但旧 /s/wp/{token} 仍能访问（Codex P2 "Revoke public shares when deleting decks"） |

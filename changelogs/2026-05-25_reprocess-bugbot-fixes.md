@@ -1,1 +1,0 @@
-| fix | prd-admin | 修复 Bugbot/codex 评审发现的再加工相关问题：① 复用逻辑仅匹配进行中(streaming)任务，done/失败不再卡住重开；② 新建文档自动编辑前校验 preview 已是该文档内容，避免把旧正文存进新文档；③「开始加工」请求在途禁用按钮，防双击建重复任务；④ SSE error 不再被 onEvent.error 二次覆盖文案；⑤ 已完成的再加工 run 保留 streamedText，刷新后正文不丢；⑥ 知识库页只订阅无 streamedText 的签名，SSE 文本 chunk 不再触发整棵文件树重渲染 |

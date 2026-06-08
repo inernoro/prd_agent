@@ -1,3 +1,0 @@
-| feat | cds | [项目设置 → 基础设施] 新增「重新同步配置」按钮:粘贴 cds-compose.yml → 后端 diff 当前 vs yaml(adds/updates/removes/noChange)→ 用户预览每项变化原因 → 删除项需输入 yes 二次确认 → 执行批量 stop+rm 旧容器 + 用新签名重建 + start。**docker named volume 自动保留**,删/重建容器其数据卷会被新容器同名挂回。解决用户反馈"想重新初始化项目但没地方做,断头应用"的缺口 |
-| feat | cds | 新增 `POST /api/projects/:id/infra/resync/preview` 和 `/execute` 路由(`routes/project-infra-resync.ts`):cmd 白名单复用 pending-import 同款规则(minio/elasticsearch 缺 cmd 直接 400)。diff 算法基于 image/cmd/entrypoint/env/volumes/ports/restartPolicy 任一变化即标"update"。removes 必须 confirmText="yes" 才执行 |
-| test | cds | 新增 `infra-resync-diff.test.ts` 7 个测试锁定 cmd 白名单逻辑 |

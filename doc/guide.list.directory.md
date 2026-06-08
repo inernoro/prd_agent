@@ -796,6 +796,12 @@
 - [CDS Agent 工作台完成复盘（2026-05-15）](report.cds-agent-workbench-2026-05-15) `report.cds-agent-workbench-2026-05-15`
   > CDS Agent 工作台从连接探活到远程 sandbox 自巡检 PR 闭环的功能清单、坑位、未完成债务和交接提示词
 
+- [周报 2026-W23 (06-01 ~ 06-07)](report.2026-W23) `report.2026-W23`
+  > 2026 年第 23 周工作总结（215 commits / 18 PRs，PM Agent Phase 1 完整体系、智能体宇宙能力契约 + 统一调用信封、多页面教程系统从悬浮图标迁移到页头常驻 pill、CDS 基础设施单一 SSOT + 一键部署闭环、知识库列表两次反复改造、网页托管 5 个边界 bug 收口）
+
+- [周报 2026-W22 (05-25 ~ 05-31)](report.2026-W22) `report.2026-W22`
+  > 2026 年第 22 周工作总结（250 commits / 24 PRs，智能体爆发周：CCAS + Project Route + PM + 个人任务树一周新增 4 个 Agent；验收技能 create-visual-test-to-kb 标准化；CDS 自更新链路重构 + 教程体系 + compose 评分自愈；网页托管角色细分 + 分享面板 + 站点评论；CDS Agent Lite 降级）
+
 - [周报 2026-W21 (05-18 ~ 05-24)](report.2026-W21) `report.2026-W21`
   > 2026 年第 21 周工作总结（160 commits / 20 PRs，分享链接安全加固 /s/{token} 统一、周报编辑器 Notion 式大改造 + 时间树视图、CDS Agent 官方 SDK 边界合入、CDS 容器可观测性收口、预览 URL SSOT 化）
 
@@ -902,6 +908,8 @@
 | 2026-05-07 | 新增 | `guide.poster-feed-card` | 多平台博主订阅 → 首页海报弹窗（涌现 1 Phase 3 用户教程：5 平台 + 4 版式 + ASR 字幕） |
 | 2026-05-07 | 调整 | `plan.emergence-1-tiktok-douyin-poster` | Phase 3 已交付，新增 §3 多平台 / media-rehost / feed-card / ASR 字幕 + §3.7 关键文件 + §3.8 已知边界 |
 | 2026-05-07 | 调整 | `debt.workflow-agent` | v2.0：Phase 2 留尾 7 项全部 paid，新增 5 项 open（CDS dev 模式 hot-reload / B站 YouTube 无 mp4 / 小红书图集 / avatar 防盗链 / cues 仅 ASR 模式） |
+| 2026-06-07 | 新增 | `report.2026-W23` | 周报 2026-W23 (06-01 ~ 06-07) |
+| 2026-06-07 | 新增 | `report.2026-W22` | 周报 2026-W22 (05-25 ~ 05-31) |
 | 2026-05-24 | 新增 | `report.2026-W21` | 周报 2026-W21 (05-18 ~ 05-24) |
 | 2026-05-24 | 新增 | `report.2026-W20` | 周报 2026-W20 (05-11 ~ 05-17) |
 | 2026-05-09 | 新增 | `report.2026-W19` | 周报 2026-W19 (05-04 ~ 05-10) |

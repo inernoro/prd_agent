@@ -24,39 +24,81 @@ git log "$DEFAULT_BRANCH" --format="%cd\t%H\t%an\t%s" --date=short | \
   awk -F '\t' -v s="$MONDAY" -v e="$SUNDAY" '$1 >= s && $1 <= e'
 ```
 
-### 纪律 2：只统计默认主干分支，不使用 `--all`
+### 纪律 2：统计基线必须是 `origin/<DEFAULT_BRANCH>`，不是本地分支也不是 HEAD
 
-> **根因案例**：`--all` 会把未合并分支、WIP merge、临时调试分支和历史噪声一起统计进去，导致“研发活动周报”和“主干落地周报”混淆。
-
-**正确做法**：
-1. 先检测默认主干分支（通常是 `main`）
-2. 之后所有 commit、PR、贡献者、类型分布统计都只对这个分支执行
-3. **禁止** `git log --all ...`
-
-```bash
-DEFAULT_BRANCH=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')
-DEFAULT_BRANCH=${DEFAULT_BRANCH:-main}
-```
-### 纪律 3：PR 边界按“本周实际落地主干的 PR”判断，不按 PR 编号连续段
-
-> **根因案例**：本仓库存在“低编号 PR 晚于高编号 PR 合并”的情况。如果用 `#FIRST ~ #LAST` 当周边界，会把跨周 PR 和下周 PR 一起卷进来。
+> **根因案例 v1**：`--all` 会把未合并分支、WIP merge、临时调试分支和历史噪声一起统计进去，导致"研发活动周报"和"主干落地周报"混淆。
 >
-> **新增根因案例**：仅靠 `git log --merges` 会漏掉 fast-forward merge 到 `main` 的 PR，例如 PR #396 这种“已落地主干、但没有 merge commit”的情况。
+> **根因案例 v2（2026-06-07）**：上周 EtJga 分支当天写 W22 周报时，技能跑在该分支 checkout 上，`git log "$DEFAULT_BRANCH"` 用了本地 `main`（未 fetch 最新）/ 或当前 checkout 的 EtJga 分支，结果把 EtJga 分支独有的 #663 / #668 / #669 / #673 / #674 / #681 / #683 / #687 / #698 等"未合 main"的 PR 全算进了 W22 主干，导致同一周（W22）由两次 session 跑出**192 提交 / 33 PR vs 250 提交 / 24 PR**两套不一致结果。
 
 **正确做法**：
-1. **PR 身份**以 GitHub PR 元数据为准：只统计 `base = DEFAULT_BRANCH` 且 `merged = true` 的 PR
-2. **周归属**以该 PR 最终落地主干的 SHA 在本地 `git` 里的 `%cd --date=short` 为准
-3. 这一步要同时覆盖 merge commit、fast-forward merge、rebase merge
-4. 只有在拿不到 GitHub PR 元数据时，才退化为本地 `git log --first-parent --merges`
-5. 附录列出**本周实际 PR 集合**
-6. 头部和附录标题**不要**再写 `#FIRST ~ #LAST`
+1. **检测默认主干分支**：
+   ```bash
+   DEFAULT_BRANCH=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')
+   DEFAULT_BRANCH=${DEFAULT_BRANCH:-main}
+   ```
+2. **强制 fetch 一次**（无网络重试 4 次指数退避，参考 git-fetch/pull 规则）：
+   ```bash
+   git fetch origin "$DEFAULT_BRANCH" --quiet
+   ```
+3. **所有后续 `git log` / `git diff` / `git show` 必须以 `origin/$DEFAULT_BRANCH` 为基线**，不允许使用 `$DEFAULT_BRANCH`（本地分支）/ `HEAD` / 当前 checkout 分支：
+   ```bash
+   # ✅ 正确
+   git log "origin/$DEFAULT_BRANCH" --format="%cd%x09%H%x09%an%x09%s" --date=short
 
-```bash
-# 伪代码：
-# 1. 查询 GitHub PR：base=DEFAULT_BRANCH, merged=true
-# 2. 取 merge_commit_sha（或最终落地主干的 SHA）
-# 3. 用 git show -s --format="%cd" --date=short <sha> 判定是否属于 MONDAY~SUNDAY
-```
+   # ❌ 错误（用本地分支，可能落后于远端 / 用错分支）
+   git log "$DEFAULT_BRANCH" ...
+   git log main ...
+   git log ...   # 默认走 HEAD
+   ```
+4. **禁止** `git log --all ...`
+5. **判定脚本**（生成报告前自查）：
+   - 我执行了 `git fetch origin <DEFAULT_BRANCH>` 吗？
+   - 我所有 `git log` / `git diff` 都加了 `origin/` 前缀吗？
+   - 我手头的 `origin/main` HEAD commit 与远端最新一致吗？（再 fetch 一次比对 SHA）
+6. **冷启动场景**：在浅克隆（shallow clone）下，PR 的 merge commit 父级可能未拉取，需要 `git fetch origin --deepen=500` 或更多直到能解析所有 W 内 PR 的 `merge_commit_sha^`
+### 纪律 3：PR 边界按"本周实际落地 origin/<DEFAULT_BRANCH> 的 PR"判断，不按 PR 编号连续段、不信 GitHub `mergedAt`
+
+> **根因案例 v1**：本仓库存在"低编号 PR 晚于高编号 PR 合并"的情况。如果用 `#FIRST ~ #LAST` 当周边界，会把跨周 PR 和下周 PR 一起卷进来。
+>
+> **根因案例 v2**：仅靠 `git log --merges` 会漏掉 fast-forward merge 到 `main` 的 PR，例如 PR #396 这种"已落地主干、但没有 merge commit"的情况。
+>
+> **根因案例 v3（2026-06-07）**：GitHub `mergedAt` 是 PR 在 GitHub 上的合并时间（UTC，含时区），可能与本地 main 上 merge commit 的 `%cd --date=short`（本地时区）**跨日**。例如 PR #698 GitHub `mergedAt = 2026-05-31 23:50 UTC` 但 main 上 merge commit `commit date = 2026-06-01`，按 mergedAt 算进 W22 / 按 commit date 算进 W23。统一规则：**只信 commit date，不信 GitHub mergedAt**。
+
+**正确做法**：
+1. **PR 身份**：先用 GitHub API 拿候选 PR 列表（`base = DEFAULT_BRANCH` 且 `merged = true`）
+2. **二次校验**：对每个候选 PR，用 `git log "origin/$DEFAULT_BRANCH" --grep="#<PR_NUM>" --format="%H"` 或解析 PR 的 `merge_commit_sha` 在 `origin/$DEFAULT_BRANCH` 上是否可达：
+   ```bash
+   git merge-base --is-ancestor "$MERGE_SHA" "origin/$DEFAULT_BRANCH" && echo "yes" || echo "no"
+   ```
+   `no` = 这个 PR 没真正落到主干，**不计入**
+3. **周归属**：以**本地 `origin/$DEFAULT_BRANCH` 上 merge commit 的 `%cd --date=short`** 为准（不是 GitHub mergedAt）：
+   ```bash
+   git show -s --format="%cd" --date=short "$MERGE_SHA"
+   ```
+4. 同时覆盖三种落地方式：merge commit / fast-forward merge / rebase merge / squash merge
+5. 只在 GitHub API 完全不可用时，才退化为 `git log "origin/$DEFAULT_BRANCH" --first-parent --merges`
+6. 附录列出**本周实际 PR 集合**，每条带 PR 号 + 本地 commit date + 标题
+7. 头部和附录标题**不要**再写 `#FIRST ~ #LAST`
+8. **判定脚本**（生成报告前自查）：
+   - 我每个 PR 都跑了 `git merge-base --is-ancestor` 验证它在 `origin/$DEFAULT_BRANCH` 上吗？
+   - 我用的"本周日期"是本地 commit date，不是 GitHub mergedAt 吗？
+   - 我的 PR 总数 = `comm -12 <(github_prs.sort) <(local_main_merges.sort) | wc -l`?
+
+### 纪律 3.5：同一周两次跑必须出同一份报告（幂等性）
+
+> **根因案例（2026-06-07）**：同一周 W22 由两个 session（5-31 EtJga、6-07 MV3AY）分别跑，结果是 192/33 vs 250/24 两套，脉络也部分不一致。根因 = 当时 `origin/main` 状态不同 + 老 session 把 EtJga 分支独有 PR 当成 main PR。
+
+**正确做法**：
+1. 跑技能时**记录当时 `origin/<DEFAULT_BRANCH>` 的 HEAD SHA**，写进报告头部
+2. 同一周再跑时，必须**对比 SHA**：
+   - 若 SHA 相同 → 报告应字符级一致（除文风差异）
+   - 若 SHA 不同（main 又前进了几个 commit）→ 新报告头部必须标注"基线漂移：从 `OLD_SHA` 推进到 `NEW_SHA`，新增 N 个 commit"，并列出新增 commit 是否影响 W 内统计
+3. 报告头部增加"统计基线"段：
+   ```markdown
+   > **统计基线**：`origin/main @ <SHA前7位>`（采集时间 `YYYY-MM-DD HH:MM UTC`）
+   > **与上次跑同周报告的差异**：`OLD_SHA` → `NEW_SHA`，本次新增 N 个 commit 影响本周统计
+   ```
+4. 这样任何人重跑都能定位"差异是真改了还是基线漂移了"
 
 ### 纪律 4：深读 PR 实际 commits，不信 merge commit 标题
 
@@ -86,6 +128,21 @@ DEFAULT_BRANCH=${DEFAULT_BRANCH:-main}
 ### 纪律 6：文件命名使用 `report.YYYY-WXX.md`
 
 文件名为 `doc/report.{ISO_YEAR}-W{WEEK_NUM}.md`，搜索上周报告时也要用此格式。
+
+### 纪律 7：同一周已有报告时，必须先读对照再覆盖
+
+> **根因案例（2026-06-07）**：检测到目标周报告已存在时，技能 Phase 1 默认走"已存在 → 跳过 / 询问"，但 Phase 1.5 空缺补齐分支并未做这一步——如果某个分支已经写过该周报告（即使没合 main），新一次跑会直接覆盖而不对照，导致脉络叙事被悄悄替换。
+
+**正确做法**：
+1. 写报告前，先 `git log --all --format="%H %s" -- "doc/report.${ISO_YEAR}-W${WEEK_NUM}.md" | head -5` 找历史版本（任何分支）
+2. 若存在历史版本，先 `git show <SHA>:doc/report.${ISO_YEAR}-W${WEEK_NUM}.md` 读出来
+3. 对比新数据 vs 历史脉络分类：
+   - 历史里的脉络如果在新数据基线上**仍然成立**（PR 在 `origin/main` 上可达） → 必须保留
+   - 历史里的脉络如果**已不在新基线上**（PR 在孤儿分支） → 在报告里标"已废弃 / 仅历史分支可见"
+   - 历史里**没有**但新基线里**有**的脉络 → 新增
+4. 报告头部追加一行："**历史版本对照**：本周报告曾在 `<ORPHAN_BRANCH>` 出现过版本，本次基于 `origin/main` 重写并合并/废弃历史脉络"
+
+这样避免"同一周由不同 session 写出两份不一致报告而无人察觉"。
 
 ## 触发词
 
