@@ -804,6 +804,8 @@ export const handleAdminNotification: HandleAdminNotificationContract = withAuth
 export const handleAllAdminNotifications: HandleAllAdminNotificationsContract = withAuth(handleAllAdminNotificationsReal);
 
 export const getUsers: GetUsersContract = withAuth(getUsersReal);
+export { searchDirectoryUsers } from '@/services/real/directory';
+export type { DirectoryUser } from '@/services/real/directory';
 export const createUser: CreateAdminUserContract = withAuth(createUserReal);
 export const bulkCreateUsers: BulkCreateAdminUsersContract = withAuth(bulkCreateUsersReal);
 export const updateUserRole: UpdateUserRoleContract = withAuth(updateUserRoleReal);

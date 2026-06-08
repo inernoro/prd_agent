@@ -1,6 +1,6 @@
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { getRoleMeta } from '@/lib/roleConfig';
-import { getUsers } from '@/services';
+import { searchDirectoryUsers } from '@/services';
 import type { AdminUser } from '@/types/admin';
 import { Check, ChevronDown, Search, User, Users } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -78,21 +78,32 @@ export function UserSearchSelect({
 
   // 内部用户数据（当外部未提供时自动获取）
   const [internalUsers, setInternalUsers] = useState<AdminUser[]>([]);
-  const [fetched, setFetched] = useState(false);
 
   const users = externalUsers ?? internalUsers;
 
-  // 自动获取用户列表（仅在未提供外部用户且首次打开时）
+  // 自动检索用户：走仅登录可用的 /api/teams/search-users（不再用管理员的 /api/users，普通成员也能搜）。
+  // 打开时拉首批；输入关键词时服务端搜索（防抖），结果集合随查询变化。
   useEffect(() => {
-    if (externalUsers || fetched) return;
+    if (externalUsers) return;
     if (!open) return;
-    setFetched(true);
-    void getUsers({ page: 1, pageSize: 200 }).then((res) => {
-      if (res.success) {
-        setInternalUsers(res.data.items.filter((u) => u.status === 'Active'));
-      }
-    });
-  }, [externalUsers, fetched, open]);
+    let cancelled = false;
+    const kw = filter.trim();
+    const t = setTimeout(() => {
+      void searchDirectoryUsers(kw, 50).then((res) => {
+        if (cancelled || !res.success) return;
+        setInternalUsers(res.data.items.map((u) => ({
+          userId: u.userId,
+          username: u.username,
+          displayName: u.displayName,
+          avatarFileName: u.avatarFileName,
+          role: '' as AdminUser['role'],
+          status: 'Active' as AdminUser['status'],
+          createdAt: '',
+        })));
+      });
+    }, kw ? 200 : 0);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [externalUsers, open, filter]);
 
   const selected = users.find((u) => u.userId === value);
   const q = filter.trim().toLowerCase();
@@ -253,13 +264,15 @@ export function UserSearchSelect({
                     <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                       {u.displayName}
                     </span>
-                    <span
-                      className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold px-1 py-px rounded-[3px] leading-tight"
-                      style={{ background: rm.bg, border: `1px solid ${rm.border}`, color: rm.color }}
-                    >
-                      <RoleIcon size={9} />
-                      {rm.label}
-                    </span>
+                    {u.role && (
+                      <span
+                        className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold px-1 py-px rounded-[3px] leading-tight"
+                        style={{ background: rm.bg, border: `1px solid ${rm.border}`, color: rm.color }}
+                      >
+                        <RoleIcon size={9} />
+                        {rm.label}
+                      </span>
+                    )}
                     {isBot && (
                       <span className="shrink-0 text-[9px] px-1 py-px rounded-[3px] leading-tight" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.25)', color: 'rgba(34,197,94,0.9)' }}>
                         BOT
