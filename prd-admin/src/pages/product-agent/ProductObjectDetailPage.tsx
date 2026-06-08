@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Save, Unlink, ExternalLink, ListChecks, Puzzle, Bug, Link2, FileText, GitBranch, BookOpen, Share2, X, Sparkles } from 'lucide-react';
+import { ArrowLeft, Save, ListChecks, Puzzle, Bug, Link2, FileText, GitBranch, BookOpen, Share2, X, Sparkles } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { useSseStream } from '@/lib/useSseStream';
@@ -34,7 +34,6 @@ import {
   listCustomers,
   listFeatureVersions,
   listTracedDefects,
-  untraceDefect,
   convertDefectToRequirement,
   createProductDefect,
   updateProductDefect,
@@ -1581,7 +1580,18 @@ function DefectDetail({
       dirty={dirty}
       saving={saving}
       onSave={save}
-      headerActions={<TraceButton onClick={() => setShowTrace(true)} />}
+      headerActions={
+        <>
+          <button
+            onClick={convert}
+            disabled={converting}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-cyan-200 bg-cyan-500/15 border border-cyan-500/40 hover:bg-cyan-500/25 disabled:opacity-50"
+          >
+            {converting ? <MapSpinner size={14} /> : <GitBranch size={14} />} 转为需求
+          </button>
+          <TraceButton onClick={() => setShowTrace(true)} />
+        </>
+      }
       workflow={
         <div className="flex flex-wrap items-center gap-1.5">
           {DEFECT_STATUSES.map((s) => (
@@ -1610,32 +1620,8 @@ function DefectDetail({
               {!featureId && !defect.tracedRequirementId && !versionId && <div className="text-white/50">仅追溯到产品</div>}
             </div>
           </Card>
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              onClick={convert}
-              disabled={converting}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-cyan-200 bg-cyan-500/15 border border-cyan-500/40 hover:bg-cyan-500/25 disabled:opacity-50"
-            >
-              {converting ? <MapSpinner size={14} /> : <GitBranch size={14} />} 转为需求
-            </button>
-            <button
-              onClick={async () => {
-                await untraceDefect(defect.id);
-                navigate(`/product-agent/p/${productId}?tab=defects`);
-              }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-red-300/80 border border-red-500/30 hover:bg-red-500/10"
-            >
-              <Unlink size={14} /> 解除追溯
-            </button>
-            <button
-              onClick={() => navigate('/defect-agent')}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-white/60 border border-white/10 hover:bg-white/5"
-            >
-              <ExternalLink size={14} /> 在缺陷管理打开完整缺陷
-            </button>
-            {convertErr && <span className="text-xs text-red-300/80">{convertErr}</span>}
-          </div>
-          <p className="text-[11px] text-white/35 px-1">「转为需求」会在本产品下生成一条需求，并把本缺陷追溯到该需求（已转过则直接跳转）。状态流转的完整流程（指派/解决/验收）请在缺陷管理智能体处理。</p>
+          {convertErr && <p className="text-xs text-red-300/80 px-1">{convertErr}</p>}
+          <p className="text-[11px] text-white/35 px-1">右上角「转为需求」会在本产品下生成一条需求，并把本缺陷追溯到该需求（已转过则直接跳转）。</p>
         </>
       }
       sidebar={
