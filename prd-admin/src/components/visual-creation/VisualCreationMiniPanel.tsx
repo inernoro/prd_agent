@@ -2,7 +2,7 @@
  * VisualCreationMiniPanel — 视觉创作迷你面板
  *
  * 嵌入再加工面板的自包含可交互视觉创作缩小版。
- * 复用真实视觉创作生图端点（visual-agent），无业务简化。
+ * 按 appKey 复用真实生图入口：visual-agent 或 literary-agent，无业务简化。
  *
  * 规则：
  * - 深色主题，行内 style 用 rgba
@@ -27,6 +27,8 @@ import { toast } from '@/lib/toast';
 // ============ Props ============
 
 export interface VisualCreationMiniPanelProps {
+  /** 业务归属：文学配图必须走 literary-agent 自己的生图入口。 */
+  appKey?: 'visual-agent' | 'literary-agent';
   /** 当前文档标题 */
   docTitle: string;
   /** 当前文档正文（「用原文」按钮使用） */
@@ -138,6 +140,7 @@ function ResultLightbox({ url, onClose }: { url: string; onClose: () => void }) 
 // ============ 主组件 ============
 
 export function VisualCreationMiniPanel({
+  appKey = 'visual-agent',
   docContent,
   initialPrompt = '',
   initialResult = null,
@@ -183,7 +186,7 @@ export function VisualCreationMiniPanel({
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const res = await listVisualModels();
+      const res = await listVisualModels(appKey);
       if (cancelled) return;
       if (res.success && res.data.length > 0) {
         setModels(res.data);
@@ -191,7 +194,7 @@ export function VisualCreationMiniPanel({
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [appKey]);
 
   // ============ model 变化时拉尺寸 ============
 
@@ -318,7 +321,8 @@ export function VisualCreationMiniPanel({
       prompt: trimmedPrompt,
       size: selectedSize || undefined,
       modelName: selectedModel || undefined,
-      images: refImageUri ? [refImageUri] : undefined,
+      images: appKey === 'visual-agent' && refImageUri ? [refImageUri] : undefined,
+      appKey,
     });
 
     // 用户中途「取消」会 bump genRunIdRef —— 丢弃这次迟到的结果，不覆盖已重置的 UI
@@ -341,7 +345,7 @@ export function VisualCreationMiniPanel({
     setResultUrl(url);
     setGenState('done');
     onResultChange?.(url);  // 上报父级持久化（关窗也不丢）
-  }, [prompt, selectedModel, selectedSize, refImageUri, onResultChange]);
+  }, [prompt, selectedModel, selectedSize, refImageUri, appKey, onResultChange]);
 
   // ============ 取消等待 ============
 
@@ -413,8 +417,11 @@ export function VisualCreationMiniPanel({
     fontSize: 13,
     padding: '8px 10px',
     outline: 'none',
-    resize: 'none' as const,
+    resize: 'vertical' as const,
     lineHeight: 1.5,
+    minHeight: 132,
+    maxHeight: 280,
+    overflowY: 'auto' as const,
   };
 
   const btnBase: React.CSSProperties = {
@@ -482,81 +489,83 @@ export function VisualCreationMiniPanel({
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           placeholder="请输入图片描述，或点击「用原文」从文档内容自动构思画面…"
-          rows={3}
+          rows={6}
           style={inputBase}
           disabled={isGenerating}
         />
       </div>
 
-      {/* 参考图 */}
-      <div>
-        <span style={labelStyle}>参考图（可选）</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            style={{ display: 'none' }}
-            onChange={handleRefImageSelect}
-          />
-          {refImageUri ? (
-            <div style={{ position: 'relative', flexShrink: 0 }}>
-              <img
-                src={refImageUri}
-                alt="参考图预览"
-                style={{
-                  width: 52,
-                  height: 52,
-                  objectFit: 'cover',
-                  borderRadius: 8,
-                  border: '1px solid rgba(168,85,247,0.4)',
-                }}
-              />
+      {/* 参考图：只给 visual-agent 临时图生图使用；literary-agent 使用自身配置里的激活风格图。 */}
+      {appKey === 'visual-agent' && (
+        <div>
+          <span style={labelStyle}>参考图（可选）</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              style={{ display: 'none' }}
+              onChange={handleRefImageSelect}
+            />
+            {refImageUri ? (
+              <div style={{ position: 'relative', flexShrink: 0 }}>
+                <img
+                  src={refImageUri}
+                  alt="参考图预览"
+                  style={{
+                    width: 52,
+                    height: 52,
+                    objectFit: 'cover',
+                    borderRadius: 8,
+                    border: '1px solid rgba(168,85,247,0.4)',
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setRefImageUri(null)}
+                  style={{
+                    position: 'absolute',
+                    top: -6,
+                    right: -6,
+                    width: 18,
+                    height: 18,
+                    borderRadius: '50%',
+                    background: 'rgba(30,20,40,0.95)',
+                    border: '1px solid rgba(255,255,255,0.2)',
+                    color: 'rgba(255,255,255,0.7)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <X size={10} />
+                </button>
+              </div>
+            ) : (
               <button
                 type="button"
-                onClick={() => setRefImageUri(null)}
-                style={{
-                  position: 'absolute',
-                  top: -6,
-                  right: -6,
-                  width: 18,
-                  height: 18,
-                  borderRadius: '50%',
-                  background: 'rgba(30,20,40,0.95)',
-                  border: '1px solid rgba(255,255,255,0.2)',
-                  color: 'rgba(255,255,255,0.7)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  cursor: 'pointer',
-                }}
+                style={btnGhost}
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isGenerating}
               >
-                <X size={10} />
+                <ImagePlus size={13} />
+                选择参考图
               </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              style={btnGhost}
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isGenerating}
-            >
-              <ImagePlus size={13} />
-              选择参考图
-            </button>
-          )}
-          {refImageUri && (
-            <button
-              type="button"
-              style={btnGhost}
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isGenerating}
-            >
-              更换
-            </button>
-          )}
+            )}
+            {refImageUri && (
+              <button
+                type="button"
+                style={btnGhost}
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isGenerating}
+              >
+                更换
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* 模型 / 尺寸 — 仅当有可选项时整行才出现（奥卡姆：单选项/无选项不占位）。
           水印由视觉创作统一管理、服务端自动叠加，不在此 mini 面板内嵌千行编辑器。 */}

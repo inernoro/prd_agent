@@ -1080,6 +1080,7 @@ function TreeNode({
   const reprocessing = !isFolder ? reprocessingMap?.[entry.id] : undefined;
   const isChecked = !isFolder && (selectedIds?.has(entry.id) ?? false);
   const isShared = !isFolder && (sharedEntryIds?.has(entry.id) ?? false);
+  const reserveSelectSpace = isChecked || !!selectionActive;
   const [dragOver, setDragOver] = useState(false);
 
   // 是否需要渲染右上角徽章行
@@ -1185,17 +1186,26 @@ function TreeNode({
         )}
         {/* 第一行：图标 + 标题独占整行（标题增强：更亮更粗略放大），徽章移到第二行，避免挤占标题宽度 */}
         <div className="flex items-center gap-2 w-full min-w-0">
-          {/* 批量多选勾选框：仅文件，hover 或已进入多选态时显示；点击只切换选择不打开文档 */}
+          {/* 批量多选勾选框：普通状态悬浮覆盖文件图标，不再永久占一列目录宽度。 */}
           {!isFolder && onToggleSelect && (
             <span
               role="checkbox"
               aria-checked={isChecked}
               onClick={(e) => { e.stopPropagation(); onToggleSelect(entry.id); }}
-              className={`flex-shrink-0 inline-flex items-center justify-center cursor-pointer transition-opacity ${isChecked || selectionActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+              className={`${reserveSelectSpace ? 'flex-shrink-0' : 'absolute'} inline-flex items-center justify-center cursor-pointer transition-opacity ${reserveSelectSpace ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
               style={{
                 width: 15, height: 15, borderRadius: 4,
                 border: `1.5px solid ${isChecked ? 'var(--accent-primary, #818cf8)' : 'var(--border-strong, rgba(255,255,255,0.28))'}`,
-                background: isChecked ? 'var(--accent-primary, #818cf8)' : 'transparent',
+                background: isChecked ? 'var(--accent-primary, #818cf8)' : 'rgba(18,18,24,0.96)',
+                ...(!reserveSelectSpace
+                  ? {
+                      left: `${10 + depth * 14}px`,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      zIndex: 2,
+                      boxShadow: '0 0 0 2px rgba(18,18,24,0.72)',
+                    }
+                  : {}),
               }}
               title={isChecked ? '取消选择' : '选择（批量操作）'}
             >

@@ -78,6 +78,24 @@ function ToolboxIcon({ name, size = 14 }: { name?: string; size?: number }) {
 // 输入截断：避免 LLM context 爆
 const MAX_DOC_CHARS = 40000;
 
+function isLiteraryIllustrationRequest(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  // 用户明确要"提示词/描述/方案"时保留文学文本链路；否则"配图看看"这类意图直达真实生图面板。
+  if (/(提示词|prompt|描述|文案|构思|方案)/i.test(t) && !/(生成|出图|看看|直接)/.test(t)) return false;
+  return /(配个?图|配一?张图|插图|生成.*图|出图|画[一张个幅]?.*图|做[一张个幅]?.*图|封面|头图|海报)/.test(t);
+}
+
+function buildLiteraryIllustrationPrompt(userText: string, entryTitle: string, docContent: string): string {
+  const excerpt = docContent.trim().slice(0, 1800);
+  return [
+    `基于文档《${entryTitle}》生成一张配图。`,
+    `用户要求：${userText.trim()}`,
+    excerpt ? `参考正文：\n${excerpt}` : '',
+    '画面要求：提炼正文的核心意象与情绪，做成可直接插入文档的横版配图；避免复刻具体 UI 截图，文字元素只保留必要标题或短句。',
+  ].filter(Boolean).join('\n\n');
+}
+
 // 客户端 chat 历史持久化：direct-chat 不在后端落 Run，
 // 关掉抽屉 / 切换标签后再开必须保留对话（Bugbot 九轮 Medium）。
 // 项目禁用 localStorage，统一走 sessionStorage（no-localstorage.md 规则）。
@@ -227,6 +245,8 @@ export function ReprocessChatDrawer({
   const [selectedParams, setSelectedParams] = useState<Record<string, string>>({});
   // 视觉创作 mini 面板的预填提示词（文学「为这段配图」时带入）
   const [visualInitialPrompt, setVisualInitialPrompt] = useState('');
+  // 文学智能体自己的配图模式：UI 仍归属 literary-agent，底层走 literary-agent/image-gen。
+  const [literaryImageMode, setLiteraryImageMode] = useState(false);
   // mini 面板「已生成未插入」的图（后端持久化，关浏览器标签页也不丢）
   const [pendingVisualUrl, setPendingVisualUrl] = useState<string | null>(null);
 
@@ -742,12 +762,33 @@ export function ReprocessChatDrawer({
       setPickerOpen(true);
       return;
     }
+    const isLiteraryToolbox =
+      active.kind === 'toolbox' &&
+      active.item.type === 'builtin' &&
+      active.item.agentKey === 'literary-agent';
+    if (isLiteraryToolbox && isLiteraryIllustrationRequest(input)) {
+      if (loadingDoc) {
+        toast.warning('请稍候', '文档还在加载');
+        return;
+      }
+      if (docLoadError) {
+        toast.warning('无法配图', docLoadError);
+        return;
+      }
+      setVisualInitialPrompt(buildLiteraryIllustrationPrompt(input, entryTitle, docContent));
+      setLiteraryImageMode(true);
+      setPickerOpen(false);
+      setError(null);
+      setInput('');
+      return;
+    }
     const invoker: ChatMessage['invoker'] =
       active.kind === 'toolbox'
         ? { kind: 'toolbox', label: active.item.name, ref: active.item.id, icon: active.item.icon }
         : { kind: 'kbAgent', label: active.agent.label, ref: active.agent.key };
+    setLiteraryImageMode(false);
     void sendMessage(input, invoker, active);
-  }, [input, active, sendMessage]);
+  }, [input, active, loadingDoc, docLoadError, entryTitle, docContent, sendMessage]);
 
   // 开启全新对话：清空当前对话 + 清掉本文档的持久化（保留已选智能体，方便直接再问）
   const handleNewConversation = useCallback(() => {
@@ -761,6 +802,7 @@ export function ReprocessChatDrawer({
     setMessages([]);
     setError(null);
     setInput('');
+    setLiteraryImageMode(false);
     setPendingVisualUrl(null);
     try { sessionStorage.removeItem(`${CHAT_HISTORY_STORAGE_KEY}:${entryId}`); } catch { /* 配额/隐私模式忽略 */ }
     void clearReprocessConversation(entryId);  // 同步清后端，否则重开又把旧对话拉回来
@@ -772,6 +814,7 @@ export function ReprocessChatDrawer({
   // 现在用户必须先输入指令（生成型则输入画面描述）再点发送/回车才触发。
   const pickToolbox = useCallback((item: ToolboxItem) => {
     setActive({ kind: 'toolbox', item });
+    setLiteraryImageMode(false);
     setPickerOpen(false);
     setError(null);
     requestAnimationFrame(() => inputRef.current?.focus());
@@ -779,6 +822,7 @@ export function ReprocessChatDrawer({
 
   const pickKbAgent = useCallback((agent: ReprocessAgent) => {
     setActive({ kind: 'kbAgent', agent });
+    setLiteraryImageMode(false);
     setPickerOpen(false);
     setError(null);
     requestAnimationFrame(() => inputRef.current?.focus());
@@ -795,6 +839,7 @@ export function ReprocessChatDrawer({
     setKbAgents((prev) => [...prev, res.data]);
     toast.success('智能体创建成功', '已选中，可立即使用');
     setActive({ kind: 'kbAgent', agent: res.data });
+    setLiteraryImageMode(false);
     return true;
   }, []);
 
@@ -879,12 +924,11 @@ export function ReprocessChatDrawer({
   const handleOutbound = useCallback(async (actionKey: string, content: string) => {
     if (!content || !content.trim()) return;
     if (actionKey === 'illustrate') {
-      // 文学「为这段配图」→ 打开真实视觉创作 mini 面板，预填该段作为配图起点
-      //（交互式：可改提示词 / 用原文 / 参考图 / 水印 / 尺寸模型 后再生成；不再默认值自动跑）
+      // 文学「为这段配图」→ 打开 literary-agent 自己的配图 mini 面板，预填该段作为配图起点。
+      // 业务归属保持文学创作；底层走 /api/literary-agent/image-gen，不切换到 visual-agent。
       setVisualInitialPrompt(content.slice(0, 2000));
-      const visualItem = toolboxItems.find((t) => t.agentKey === 'visual-agent');
-      if (visualItem) { setActive({ kind: 'toolbox', item: visualItem }); setPickerOpen(false); }
-      else toast.warning('未找到视觉创作智能体', '请确认已在百宝箱启用');
+      setLiteraryImageMode(true);
+      setPickerOpen(false);
       return;
     }
     if (actionKey === 'create-defect') {
@@ -897,7 +941,7 @@ export function ReprocessChatDrawer({
       }
       toast.success('缺陷已创建', `「${res.data?.defect?.title || '新缺陷'}」已建入缺陷库，可去缺陷管理指派/处理`);
     }
-  }, [toolboxItems]);
+  }, []);
 
   // 视觉创作 mini 面板：把生成的配图写回文档（追加到文末）
   const insertVisualToDoc = useCallback(async (markdown: string) => {
@@ -939,6 +983,8 @@ export function ReprocessChatDrawer({
 
   const isBusy = streamingId !== null;
   const isGenerationActive = activeCapability?.invokeMode === 'generation';
+  const isLiteraryImageActive = literaryImageMode && active?.kind === 'toolbox' && active.item.agentKey === 'literary-agent';
+  const isImagePanelActive = isGenerationActive || isLiteraryImageActive;
 
   // 把图片成果物以 Markdown 形式写回文档（替换/追加/另存为新文档）
   const handleApplyArtifact = useCallback(async (
@@ -1256,8 +1302,9 @@ export function ReprocessChatDrawer({
           className="flex-1 overflow-y-auto px-5 py-4 space-y-3.5"
           style={{ minHeight: 0, overscrollBehavior: 'contain' }}
         >
-          {isGenerationActive ? (
+          {isImagePanelActive ? (
             <VisualCreationMiniPanel
+              appKey={isLiteraryImageActive ? 'literary-agent' : 'visual-agent'}
               docTitle={entryTitle}
               docContent={docContent}
               initialPrompt={visualInitialPrompt}
@@ -1299,11 +1346,11 @@ export function ReprocessChatDrawer({
           )}
         </div>
 
-        {/* 输入区（生成型智能体走 mini 面板，隐藏聊天输入） */}
-        {!isGenerationActive && (
+        {/* 输入区（图片生成面板打开时隐藏聊天输入） */}
+        {!isImagePanelActive && (
         <div className="surface-panel-footer px-5 py-3 shrink-0 border-t border-token-subtle">
           {/* 引用文档指示：让用户在输入时明确"这次会带上哪篇文章" */}
-          {!docLoadError && !isGenerationActive && (
+          {!docLoadError && !isImagePanelActive && (
             <div className="flex items-center gap-1.5 mb-2 text-[10px] text-token-muted">
               <FileText size={11} className="shrink-0" style={{ color: 'rgba(96,165,250,0.85)' }} />
               <span className="truncate">引用：《{entryTitle}》{docTruncated ? ' · 已截取前 4 万字' : ''}</span>

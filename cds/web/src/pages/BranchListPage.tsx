@@ -19,7 +19,6 @@ import {
   Lightbulb,
   Loader2,
   Clock3,
-  Container,
   MoreHorizontal,
   Network,
   Play,
@@ -4374,7 +4373,7 @@ function BranchCard({
               className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 font-mono text-xs ${chipClass}`}
               title={`${service.profileId}${service.hostPort ? ` :${service.hostPort}` : ''}`}
             >
-              <Container className={`h-3 w-3 ${chipRailClass.replace('bg-', 'text-')}`} aria-hidden />
+              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${chipRailClass}`} aria-hidden />
               <span>{compactServiceLabel(service.profileId)}</span>
             </span>
           );
