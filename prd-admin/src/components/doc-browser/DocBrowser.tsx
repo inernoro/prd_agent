@@ -1091,7 +1091,7 @@ function TreeNode({
     !isFolder && (
       isShared || reprocessing !== undefined || !!verdictForRow ||
       hasTags || isContentMatch ||
-      isPrimary || (isPinned && !isPrimary)
+      isPrimary
     );
 
 
@@ -1324,15 +1324,11 @@ function TreeNode({
           </span>
         )}
 
-        {/* README / Pin 简化为 icon */}
+        {/* README 保留为文字徽章；置顶状态已由行首 Pin 图标表达，避免重复。 */}
         {!isFolder && isPrimary && (
           <span className="flex-shrink-0" title="主文档（README）" style={{ color: 'rgba(234,179,8,0.85)', fontSize: 9, fontWeight: 700, letterSpacing: '0.04em' }}>
             README
           </span>
-        )}
-
-        {isPinned && !isPrimary && (
-          <Pin size={10} className="flex-shrink-0" style={{ color: 'rgba(59,130,246,0.5)' }} />
         )}
         {/* 时间：第二行右对齐，跟随排序键显示 createdAt 或 updatedAt */}
         {showUpdatedTime && entry[timeField] && (
