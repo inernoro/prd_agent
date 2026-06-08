@@ -41,6 +41,7 @@ export function MilestoneDetailDrawer({ projectId, milestone, allMilestones, goa
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [dueAt, setDueAt] = useState('');
+  const [reachedAt, setReachedAt] = useState('');
   const [goalId, setGoalId] = useState('');
   const [ownerId, setOwnerId] = useState('');
   const [criteria, setCriteria] = useState<DraftCriterion[]>([]);
@@ -70,13 +71,14 @@ export function MilestoneDetailDrawer({ projectId, milestone, allMilestones, goa
       setTitle(milestone.title);
       setDescription(milestone.description || '');
       setDueAt(milestone.dueAt ? milestone.dueAt.slice(0, 10) : '');
+      setReachedAt(milestone.reachedAt ? milestone.reachedAt.slice(0, 10) : '');
       setGoalId(milestone.goalId || '');
       setOwnerId(milestone.ownerId || '');
       setCriteria((milestone.acceptanceCriteria ?? []).map((c) => ({ id: c.id, text: c.text, done: c.done })));
       setDependsOn(milestone.dependsOn ?? []);
       setDeliverables((milestone.deliverables ?? []).map((d) => ({ type: d.type, refId: d.refId ?? undefined, title: d.title, url: d.url ?? undefined })));
     } else {
-      setTitle(''); setDescription(''); setDueAt(''); setGoalId(''); setOwnerId(''); setCriteria([]); setDependsOn([]); setDeliverables([]);
+      setTitle(''); setDescription(''); setDueAt(''); setReachedAt(''); setGoalId(''); setOwnerId(''); setCriteria([]); setDependsOn([]); setDeliverables([]);
     }
   }, [milestone]);
 
@@ -145,9 +147,13 @@ export function MilestoneDetailDrawer({ projectId, milestone, allMilestones, goa
   const save = async () => {
     if (!title.trim()) { toast.error('请填写里程碑名称', ''); return; }
     setSaving(true);
+    // 实际完成时间：填了即设置（早于/等于计划截止不算逾期），清空则显式清除
+    const reachedPayload = reachedAt
+      ? { reachedAt: new Date(reachedAt + 'T00:00:00').toISOString() }
+      : { clearReachedAt: true };
     const res = isCreate
-      ? await createPmMilestone(projectId, buildPayload())
-      : await updatePmMilestone(milestone!.id, buildPayload());
+      ? await createPmMilestone(projectId, { ...buildPayload(), ...reachedPayload })
+      : await updatePmMilestone(milestone!.id, { ...buildPayload(), ...reachedPayload });
     setSaving(false);
     if (res.success) { toast.success(isCreate ? '已新增' : '已保存', ''); onSaved(); }
     else toast.error('保存失败', res.error?.message || '');
@@ -237,9 +243,13 @@ export function MilestoneDetailDrawer({ projectId, milestone, allMilestones, goa
           <input autoFocus value={title} disabled={!canManage} onChange={(e) => setTitle(e.target.value)} placeholder="里程碑名称（如：架构评审通过）" className={inputCls} style={inputStyle} />
 
           <div className="flex gap-2">
-            <div className="flex flex-col gap-1" style={{ width: 150 }}>
+            <div className="flex flex-col gap-1" style={{ width: 140 }}>
               <label className="text-[11px]" style={{ color: 'var(--text-muted)' }}>计划截止</label>
               <input type="date" value={dueAt} disabled={!canManage} onChange={(e) => setDueAt(e.target.value)} className={inputCls} style={inputStyle} />
+            </div>
+            <div className="flex flex-col gap-1" style={{ width: 140 }}>
+              <label className="text-[11px]" style={{ color: 'var(--text-muted)' }}>实际完成</label>
+              <input type="date" value={reachedAt} disabled={!canManage} onChange={(e) => setReachedAt(e.target.value)} className={inputCls} style={inputStyle} />
             </div>
             <div className="flex-1 flex flex-col gap-1 min-w-0">
               <label className="text-[11px]" style={{ color: 'var(--text-muted)' }}>负责人</label>
@@ -248,6 +258,16 @@ export function MilestoneDetailDrawer({ projectId, milestone, allMilestones, goa
                 : <div className="text-[12.5px] px-2.5 py-2 rounded-md border" style={{ ...inputStyle }}>{milestone?.ownerName || '未指派'}</div>}
             </div>
           </div>
+          {reachedAt && dueAt && (
+            <div className="text-[11px]" style={{ color: reachedAt <= dueAt ? '#10B981' : '#F59E0B' }}>
+              {reachedAt <= dueAt
+                ? '实际完成早于/等于计划截止 —— 按时达成，不计逾期'
+                : `实际完成晚于计划截止 ${Math.round((new Date(reachedAt).getTime() - new Date(dueAt).getTime()) / 86400000)} 天`}
+            </div>
+          )}
+          {!reachedAt && (
+            <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>填写「实际完成」时间后，若不晚于计划截止则不再标记逾期</div>
+          )}
 
           <label className="text-[11px]" style={{ color: 'var(--text-muted)' }}>关联目标</label>
           <select value={goalId} disabled={!canManage} onChange={(e) => setGoalId(e.target.value)} className={inputCls} style={inputStyle}>

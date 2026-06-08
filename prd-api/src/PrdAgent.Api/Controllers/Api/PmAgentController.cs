@@ -1410,6 +1410,9 @@ public class PmAgentController : ControllerBase
     {
         if (m.Status == PmMilestoneStatus.Reached) return "reached";
         if (m.Status == PmMilestoneStatus.Cancelled) return "cancelled";
+        // 有实际完成时间即视为已完成 —— 不再按"未完成"判逾期。
+        // 早于/等于计划截止 = 按时达成；晚于计划截止仍算完成（滑移由 slippageDays 单独体现）。
+        if (m.ReachedAt.HasValue) return "reached";
         var allDone = total > 0 && done >= total;
         var today = DateTime.UtcNow.Date;
         if (m.DueAt.HasValue && !allDone)
@@ -1606,6 +1609,11 @@ public class PmAgentController : ControllerBase
             else if (request.Status != PmMilestoneStatus.Reached && m.Status == PmMilestoneStatus.Reached)
                 update = update.Set(x => x.ReachedAt, (DateTime?)null);
         }
+        // 实际完成时间（可补录，独立于状态切换）：显式设置优先于上面的状态联动
+        if (request.ClearReachedAt == true)
+            update = update.Set(x => x.ReachedAt, (DateTime?)null);
+        else if (request.ReachedAt.HasValue)
+            update = update.Set(x => x.ReachedAt, request.ReachedAt);
         await _db.PmMilestones.UpdateOneAsync(x => x.Id == milestoneId, update);
         return Ok(ApiResponse<object>.Ok(new { updated = true }));
     }
@@ -3499,6 +3507,10 @@ public class MilestoneRequest
     public bool? ResetBaseline { get; set; }
     public string? Status { get; set; }
     public long? OrderKey { get; set; }
+    /// <summary>实际完成时间（可补录）。非空=设置；配合 ClearReachedAt 清空。null=不变。</summary>
+    public DateTime? ReachedAt { get; set; }
+    /// <summary>true=清空实际完成时间。</summary>
+    public bool? ClearReachedAt { get; set; }
 }
 
 public class MilestoneCriterionInput

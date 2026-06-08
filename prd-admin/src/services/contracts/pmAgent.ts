@@ -618,6 +618,10 @@ export type SavePmMilestoneInput = Partial<{
   deliverables: { type: PmDeliverableType; refId?: string; title: string; url?: string }[];
   resetBaseline: boolean;
   status: PmMilestoneStatus; orderKey: number;
+  /** 实际完成时间（ISO）。设置后早于/等于计划截止即不算逾期 */
+  reachedAt: string;
+  /** true=清空实际完成时间 */
+  clearReachedAt: boolean;
 }>;
 /** AI 建议的里程碑草稿 */
 export type PmMilestoneDraft = { title: string; description?: string; acceptanceCriteria?: string[]; dueDate?: string };
