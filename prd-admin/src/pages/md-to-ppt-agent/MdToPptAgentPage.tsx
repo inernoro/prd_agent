@@ -34,6 +34,16 @@ function genStageMsg(sec: number, isPatch: boolean): string {
   return '内容较多，正在精修中（大模型生成约需 1 分钟）…';
 }
 
+// 校验返回的是不是一份真正的网页 PPT，而不是本应用外壳/空内容/异常返回。
+// 防『预览里递归显示整个 MAP 应用』『后端重启返回 SPA index.html』等异常被当成结果渲染。
+function looksLikeDeck(html: string): boolean {
+  if (!html || html.length < 200) return false;
+  const low = html.toLowerCase();
+  if (!low.includes('<!doctype html') && !low.includes('<html')) return false;
+  if (low.includes('id="root"')) return false; // SPA index.html 特征，绝不是 PPT
+  return low.includes('reveal') || low.includes('<section');
+}
+
 const THEME_OPTIONS = [
   { value: 'dark-glass', label: '深色玻璃' },
   { value: 'light-clean', label: '浅色简洁' },
@@ -158,7 +168,13 @@ export function MdToPptAgentPage() {
         setStreamBuffer((prev) => prev + text);
       },
       onDone: (result) => {
-        setGeneratedHtml(result.html);
+        const html = String((result as { html?: unknown }).html ?? '');
+        if (!looksLikeDeck(html)) {
+          setErrorMsg('生成结果异常：未得到有效的网页 PPT（可能后端在重启或返回了非预期内容），请重试。');
+          setPhase('error');
+          return;
+        }
+        setGeneratedHtml(html);
         setPhase('done');
       },
       onError: (msg) => {
@@ -202,7 +218,13 @@ export function MdToPptAgentPage() {
         setStreamBuffer((prev) => prev + text);
       },
       onDone: (result) => {
-        setGeneratedHtml(result.html);
+        const html = String((result as { html?: unknown }).html ?? '');
+        if (!looksLikeDeck(html)) {
+          setErrorMsg('修改结果异常：未得到有效的网页 PPT，请重试。');
+          setPhase('error');
+          return;
+        }
+        setGeneratedHtml(html);
         setPhase('done');
         setPatchRequest('');
       },
@@ -686,11 +708,14 @@ export function MdToPptAgentPage() {
                 </div>
               )}
 
-              {/* Iframe */}
+              {/* Iframe —— 关键：不要 allow-same-origin。否则生成的 HTML 跑在本应用
+                  同源里，reveal.js 的 history/hash 操作或任何相对跳转会把 iframe 导航到
+                  本应用 `/`，预览里就会递归显示整个 MAP 应用而不是幻灯。allow-scripts
+                  让 reveal.js（CDN 绝对地址）正常跑，但拿到的是不透明源，无法跳回本应用。 */}
               <iframe
                 className="flex-1 w-full border-0"
                 srcDoc={generatedHtml}
-                sandbox="allow-scripts allow-same-origin"
+                sandbox="allow-scripts"
                 title="PPT 预览"
                 style={{ minHeight: 0 }}
               />
