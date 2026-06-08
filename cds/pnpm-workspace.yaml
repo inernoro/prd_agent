@@ -1,4 +1,8 @@
+# pnpm 11 在检测到带 native build script 的依赖时会写入这个 allowBuilds 块并
+# 把 install 当 fatal(ERR_PNPM_IGNORED_BUILDS, exit 1)。master-run 的 install
+# 失败 → exit 78 → systemd 崩溃循环。必须显式批准这几个 build,值是 true/false,
+# 不能是占位字符串(占位字符串会被 pnpm 忽略 → 仍报错)。
 allowBuilds:
-  cpu-features: set this to true or false
-  esbuild: set this to true or false
-  ssh2: set this to true or false
+  cpu-features: true
+  esbuild: true
+  ssh2: true
