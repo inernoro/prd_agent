@@ -5,3 +5,4 @@
 | fix | cds | 修复 Sidecar Pool 观测面板对仪表盘操作者永远 401：agent-sessions 端点的 authenticateProjectRequest 只认 Bearer 连接 token，浏览器带的是 cds_token cookie；改为人类 cookie 登录(_cdsCookieAuth)/AI 超级密钥(_aiSession)等 admin 等价会话直接放行 |
 | fix | prd-api | 大幅提升 MD转PPT 生成质量：内置完整 reveal.js 设计系统提示词(卡片/数据/光晕/强调条) + 强制每页结构杜绝空洞页；标题改实色(原渐变 color:transparent 在嵌入式渲染会整页消失) + 服务端兜底剥离 emoji(规则#0) |
 | fix | prd-admin | 修复 MD转PPT 预览里递归显示整个 MAP 应用而非幻灯：iframe sandbox 去掉 allow-same-origin(生成 HTML 跑在本应用同源里，reveal 的 history/相对跳转会把 iframe 导航回应用 /) + onDone 校验返回的确实是网页 PPT(非 SPA 外壳/空内容) |
+| fix | prd-api | 修复 MD转PPT 幻灯整页空白(只剩光晕)：设计系统里 `.reveal .slides section>*{position:relative}` 优先级高于 `.orb{position:absolute}`，把装饰光晕变成 relative 块占掉 ~700px 流高把正文挤出可视区。服务端 InjectDeckCssFix 强制 .orb 绝对定位(预览+发布都生效) + 提示词移除该冲突规则 |

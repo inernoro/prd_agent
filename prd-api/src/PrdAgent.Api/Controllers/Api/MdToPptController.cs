@@ -68,8 +68,7 @@ public class MdToPptController : ControllerBase
         ".chip{display:inline-flex;align-items:center;gap:8px;padding:7px 14px;border:1px solid var(--line);border-radius:999px;font-size:.85rem;color:var(--ink);background:rgba(255,255,255,.03);}\n" +
         ".bar{width:54px;height:5px;border-radius:9px;background:linear-gradient(90deg,var(--a1),var(--a2));margin:20px 0;}\n" +
         ".quote{font-size:clamp(26px,3.2vw,42px);font-weight:700;line-height:1.3;border-left:4px solid var(--a3);padding-left:28px;}\n" +
-        ".orb{position:absolute;border-radius:50%;filter:blur(80px);opacity:.55;z-index:0;}.orb.a{width:420px;height:420px;background:var(--a1);right:-80px;top:-90px;}.orb.b{width:340px;height:340px;background:var(--a3);left:-70px;bottom:-90px;}\n" +
-        ".reveal .slides section>*{position:relative;z-index:1;}\n" +
+        ".orb{position:absolute;border-radius:50%;filter:blur(80px);opacity:.5;z-index:0;pointer-events:none;}.orb.a{width:420px;height:420px;background:var(--a1);right:-80px;top:-90px;}.orb.b{width:340px;height:340px;background:var(--a3);left:-70px;bottom:-90px;}\n" +
         ".reveal .slide-number{background:transparent;color:var(--muted);}\n" +
         "li{margin:10px 0;line-height:1.5;}ul{list-style:none;padding:0;}ul li{padding-left:26px;position:relative;}ul li::before{content:'';position:absolute;left:0;top:.6em;width:8px;height:8px;border-radius:3px;background:linear-gradient(120deg,var(--a1),var(--a2));}\n" +
         "```\n\n" +
@@ -771,7 +770,24 @@ public class MdToPptController : ControllerBase
         // 模型偶尔会无视提示词往幻灯里塞 emoji 图标，这里统一清掉。
         s = EmojiRegex.Replace(s, string.Empty);
 
+        s = InjectDeckCssFix(s);
+
         return s.Trim();
+    }
+
+    // 兜底修正生成 HTML 的布局 bug（预览 + 发布的网页都生效）：
+    // 模型常把 `.reveal .slides section>*{position:relative}` 写进样式，其优先级高于
+    // `.orb{position:absolute}`，导致装饰光晕 .orb 变成 relative 块、占掉 ~700px 流式高度，
+    // 把正文整体挤到幻灯可视区之外（表现为「整页空白只剩光晕」）。这里强制 .orb 绝对定位。
+    private static string InjectDeckCssFix(string html)
+    {
+        if (string.IsNullOrEmpty(html)) return html;
+        const string fix = "<style>.reveal .slides .orb{position:absolute !important;pointer-events:none;}</style>";
+        var idx = html.IndexOf("</head", StringComparison.OrdinalIgnoreCase);
+        if (idx >= 0) return html[..idx] + fix + html[idx..];
+        var bodyIdx = html.IndexOf("<body", StringComparison.OrdinalIgnoreCase);
+        if (bodyIdx >= 0) return html[..bodyIdx] + fix + html[bodyIdx..];
+        return fix + html;
     }
 
     // 覆盖常见 emoji 区段：BMP 符号/装饰区(U+2600-27BF Dingbats/Misc, U+2B00-2BFF) +
