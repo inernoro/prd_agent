@@ -215,12 +215,42 @@ export type PmTask = {
   dependsOn: string[];
   labels: string[];
   orderKey: number;
+  /** 进度百分比 0-100（叶子任务手填/日志带入；父任务由子任务自动汇总） */
+  progressPercent: number;
+  /** 是否由子任务自动汇总进度 */
+  autoProgress: boolean;
   source: 'manual' | 'ai_decompose';
   sourceRef?: string | null;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
 };
+
+/** 任务工作日志条目（处理人按天记录做了什么、完成多少进度） */
+export type PmTaskWorkLog = {
+  id: string;
+  taskId: string;
+  projectId: string;
+  userId: string;
+  userName?: string | null;
+  date: string;
+  content: string;
+  durationMinutes?: number | null;
+  progressPercent?: number | null;
+  category: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CreatePmTaskWorkLogInput = {
+  content: string;
+  date?: string;
+  durationMinutes?: number | null;
+  progressPercent?: number | null;
+  category?: string;
+};
+
+export type UpdatePmTaskWorkLogInput = Partial<CreatePmTaskWorkLogInput>;
 
 /** AI 拆解出的任务草稿（SSE 流式返回，未落库） */
 export type PmTaskDraft = {
@@ -297,6 +327,9 @@ export type UpdatePmTaskInput = Partial<{
   orderKey: number;
   milestoneId: string;
   goalId: string;
+  progressPercent: number;
+  /** 重设父任务：空串=升为顶层，非空=挂为子任务 */
+  parentTaskId: string;
 }>;
 
 export type BatchCreatePmTasksInput = {
@@ -683,3 +716,9 @@ export type TogglePmExcellenceContract = (projectId: string, isExcellent: boolea
 export type GetPmTaskActivitiesContract = (taskId: string) => Promise<ApiResponse<{ items: PmTaskActivity[] }>>;
 export type AddPmTaskCommentContract = (taskId: string, content: string, mentionedUserIds?: string[]) => Promise<ApiResponse<PmTaskActivity>>;
 export type BulkPmTasksContract = (projectId: string, input: BulkTasksInput) => Promise<ApiResponse<{ matched?: number; modified?: number; deletedCount?: number }>>;
+
+// ── 任务工作日志 ──
+export type ListPmTaskWorkLogsContract = (taskId: string) => Promise<ApiResponse<{ items: PmTaskWorkLog[] }>>;
+export type CreatePmTaskWorkLogContract = (taskId: string, input: CreatePmTaskWorkLogInput) => Promise<ApiResponse<PmTaskWorkLog>>;
+export type UpdatePmTaskWorkLogContract = (logId: string, input: UpdatePmTaskWorkLogInput) => Promise<ApiResponse<{ updated: boolean }>>;
+export type DeletePmTaskWorkLogContract = (logId: string) => Promise<ApiResponse<{ deleted: boolean }>>;

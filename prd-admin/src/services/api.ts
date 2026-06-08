@@ -1402,6 +1402,11 @@ export const api = {
       delete: (taskId: string) => `/api/pm/tasks/${taskId}`,
       activities: (taskId: string) => `/api/pm/tasks/${taskId}/activities`,
       comments: (taskId: string) => `/api/pm/tasks/${taskId}/comments`,
+      workLogs: (taskId: string) => `/api/pm/tasks/${taskId}/work-logs`,
+    },
+    workLogs: {
+      update: (logId: string) => `/api/pm/work-logs/${logId}`,
+      delete: (logId: string) => `/api/pm/work-logs/${logId}`,
     },
     knowledge: {
       file: (fileId: string) => `/api/pm/knowledge/files/${fileId}`,

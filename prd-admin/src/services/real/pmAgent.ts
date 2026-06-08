@@ -21,6 +21,10 @@ import type {
   GetPmTaskActivitiesContract,
   AddPmTaskCommentContract,
   BulkPmTasksContract,
+  ListPmTaskWorkLogsContract,
+  CreatePmTaskWorkLogContract,
+  UpdatePmTaskWorkLogContract,
+  DeletePmTaskWorkLogContract,
   GetPmMembersContract,
   SetPmMembersContract,
   SetPmObserversContract,
@@ -348,6 +352,22 @@ export const addPmTaskCommentReal: AddPmTaskCommentContract = async (taskId, con
 
 export const bulkPmTasksReal: BulkPmTasksContract = async (projectId, input) => {
   return await apiRequest(api.pm.projects.bulkTasks(encodeURIComponent(projectId)), { method: 'POST', body: input });
+};
+
+export const listPmTaskWorkLogsReal: ListPmTaskWorkLogsContract = async (taskId) => {
+  return await apiRequest(api.pm.tasks.workLogs(encodeURIComponent(taskId)), { method: 'GET' });
+};
+
+export const createPmTaskWorkLogReal: CreatePmTaskWorkLogContract = async (taskId, input) => {
+  return await apiRequest(api.pm.tasks.workLogs(encodeURIComponent(taskId)), { method: 'POST', body: input });
+};
+
+export const updatePmTaskWorkLogReal: UpdatePmTaskWorkLogContract = async (logId, input) => {
+  return await apiRequest(api.pm.workLogs.update(encodeURIComponent(logId)), { method: 'PUT', body: input });
+};
+
+export const deletePmTaskWorkLogReal: DeletePmTaskWorkLogContract = async (logId) => {
+  return await apiRequest(api.pm.workLogs.delete(encodeURIComponent(logId)), { method: 'DELETE' });
 };
 
 export const getPmRewardConfigReal: GetPmRewardConfigContract = async () => {
