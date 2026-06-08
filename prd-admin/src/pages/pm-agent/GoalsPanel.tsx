@@ -9,7 +9,7 @@ import { Button } from '@/components/design/Button';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import {
-  listPmGoals, createPmGoal, updatePmGoal, deletePmGoal, listPmMilestones, listPmGoalCycles,
+  listPmGoals, createPmGoal, updatePmGoal, deletePmGoal, listPmMilestones, listPmGoalCycles, setGoalAsMilestone,
 } from '@/services';
 import type { PmGoal, PmGoalScope, PmGoalStatus, SavePmGoalInput, PmMilestone, PmGoalCycle } from '@/services/contracts/pmAgent';
 import { GOAL_STATUS_REGISTRY, GOAL_SCOPE, MILESTONE_HEALTH_REGISTRY, GOAL_MAX_DEPTH } from './pmConstants';
@@ -119,6 +119,12 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onNavigateTask,
     setBusyId(null);
   };
 
+  const toggleGoalMilestone = async (g: PmGoal) => {
+    const res = await setGoalAsMilestone(g.id, !g.isMilestone);
+    if (res.success) { toast.success(g.isMilestone ? '已取消里程碑' : '已设为里程碑', g.isMilestone ? '' : '已在「里程碑」同步显示'); await load(); }
+    else toast.error('操作失败', res.error?.message || '');
+  };
+
   const handleDelete = async (g: PmGoal) => {
     const hasChildren = (childrenByParent.get(g.id)?.length ?? 0) > 0;
     const msg = hasChildren
@@ -201,6 +207,7 @@ export function GoalsPanel({ projectId, businessGoal, canManage, onNavigateTask,
             <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 shrink-0">
               <button onClick={() => setAiTarget({ parentGoalId: g.id, parentTitle: g.title, scope: g.scope })} className="p-1 rounded disabled:opacity-30" title={canHaveChildren ? 'AI 拆细为子目标' : '已达最大层级'} style={{ color: '#F59E0B' }} disabled={!canHaveChildren}><Sparkles size={13} /></button>
               <button onClick={() => startCreate(g.scope, g.id)} className="p-1 rounded disabled:opacity-30" title={canHaveChildren ? '加子目标' : '已达最大层级'} style={{ color: 'var(--text-muted)' }} disabled={!canHaveChildren}><Plus size={13} /></button>
+              <button onClick={() => toggleGoalMilestone(g)} className="p-1 rounded" title={g.isMilestone ? '取消里程碑' : '设为里程碑（在里程碑同步显示）'} style={{ color: g.isMilestone ? '#A855F7' : 'var(--text-muted)' }}><Flag size={13} /></button>
               <button onClick={() => startEdit(g)} className="p-1 rounded" title="编辑" style={{ color: 'var(--text-muted)' }}><Pencil size={13} /></button>
               <button onClick={() => handleDelete(g)} className="p-1 rounded" title="删除" style={{ color: 'var(--text-muted)' }} disabled={busyId === g.id}><Trash2 size={13} /></button>
             </div>

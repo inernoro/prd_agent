@@ -520,6 +520,8 @@ export type PmGoal = {
   progress: number;
   progressMode: 'auto' | 'manual';
   linkedMilestoneCount?: number;
+  /** 是否已设为里程碑（存在 AutoFromGoal 联动里程碑） */
+  isMilestone?: boolean;
   status: PmGoalStatus;
   createdBy: string;
   createdByName?: string | null;
@@ -552,6 +554,7 @@ export type PmGoalDraft = { title: string; description?: string | null; metric?:
 export type ListPmGoalsContract = (projectId: string) => Promise<ApiResponse<{ items: PmGoal[] }>>;
 export type CreatePmGoalContract = (projectId: string, input: SavePmGoalInput) => Promise<ApiResponse<PmGoal>>;
 export type UpdatePmGoalContract = (goalId: string, input: SavePmGoalInput) => Promise<ApiResponse<{ updated: boolean }>>;
+export type SetGoalAsMilestoneContract = (goalId: string, enabled: boolean) => Promise<ApiResponse<{ isMilestone: boolean }>>;
 export type DeletePmGoalContract = (goalId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
 
 // ── 审计日志 ──

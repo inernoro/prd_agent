@@ -1429,6 +1429,7 @@ export const api = {
     },
     goals: {
       item: (goalId: string) => `/api/pm/goals/${goalId}`,
+      milestone: (goalId: string) => `/api/pm/goals/${goalId}/milestone`,
       checkins: (goalId: string) => `/api/pm/goals/${goalId}/checkins`,
       score: (goalId: string) => `/api/pm/goals/${goalId}/score`,
     },

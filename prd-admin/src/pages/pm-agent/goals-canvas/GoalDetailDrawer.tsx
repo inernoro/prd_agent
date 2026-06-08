@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Check, Sparkles, Plus, Trash2, ListTodo, FileText, Gavel, User, Target, TrendingUp, Send, Compass, Award, CalendarRange } from 'lucide-react';
+import { X, Check, Sparkles, Plus, Trash2, ListTodo, FileText, Gavel, User, Target, TrendingUp, Send, Compass, Award, CalendarRange, Flag } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { toast } from '@/lib/toast';
-import { createPmGoal, updatePmGoal, deletePmGoal, getPmProject, listPmMilestones, listPmWeeklyReports, listPmDecisions, listPmGoalCheckIns, addPmGoalCheckIn, scorePmGoal, listPmGoalCycles } from '@/services';
+import { createPmGoal, updatePmGoal, deletePmGoal, getPmProject, listPmMilestones, listPmWeeklyReports, listPmDecisions, listPmGoalCheckIns, addPmGoalCheckIn, scorePmGoal, listPmGoalCycles, setGoalAsMilestone } from '@/services';
 import type { PmGoal, PmGoalScope, PmGoalStatus, SavePmGoalInput, PmTask, PmWeeklyReport, PmDecision, PmKeyResult, PmKeyResultType, PmGoalConfidence, PmGoalCheckIn, PmGoalCycle } from '@/services/contracts/pmAgent';
 import { GOAL_STATUS_REGISTRY, TASK_STATUS_REGISTRY, DECISION_TYPE_REGISTRY } from '../pmConstants';
 
@@ -64,6 +64,8 @@ export function GoalDetailDrawer({ projectId, goal, allGoals, businessGoal, crea
   const [cycles, setCycles] = useState<PmGoalCycle[]>([]);
   const [krs, setKrs] = useState<PmKeyResult[]>([]);
   const [saving, setSaving] = useState(false);
+  const [isMilestone, setIsMilestone] = useState(false);
+  const [msToggling, setMsToggling] = useState(false);
   // 反查：关联任务（直接挂的 + 里程碑下的） + 提及本目标的周报 + 关联本目标的决策
   const [relTasks, setRelTasks] = useState<PmTask[]>([]);
   const [mentionReports, setMentionReports] = useState<PmWeeklyReport[]>([]);
@@ -87,6 +89,7 @@ export function GoalDetailDrawer({ projectId, goal, allGoals, businessGoal, crea
       setKrs((goal.keyResults ?? []).map((k) => ({ ...k })));
       setScoreVal(goal.score != null ? String(goal.score) : '');
       setScoreNote(goal.scoreNote || '');
+      setIsMilestone(!!goal.isMilestone);
     } else if (createCtx) {
       setDraft({ scope: createCtx.scope, parentId: createCtx.parentId, status: 'on_track', progress: 0, progressMode: 'auto' });
       setLeadId(''); setCycleId(''); setKrs([]);
@@ -200,6 +203,16 @@ export function GoalDetailDrawer({ projectId, goal, allGoals, businessGoal, crea
     else toast.error('删除失败', res.error?.message || '');
   };
 
+  const toggleMilestone = async () => {
+    if (!goal) return;
+    const next = !isMilestone;
+    setMsToggling(true);
+    const res = await setGoalAsMilestone(goal.id, next);
+    setMsToggling(false);
+    if (res.success) { setIsMilestone(res.data.isMilestone); toast.success(next ? '已设为里程碑' : '已取消里程碑', next ? '已在「里程碑」同步显示' : ''); onSaved(); }
+    else toast.error('操作失败', res.error?.message || '');
+  };
+
   const titleText = isCreate ? (createCtx?.parentTitle ? `新增子目标 · ${createCtx.parentTitle}` : '新增目标') : '目标详情';
 
   const drawer = (
@@ -246,6 +259,27 @@ export function GoalDetailDrawer({ projectId, goal, allGoals, businessGoal, crea
             <option value="">未归类</option>
             {cycles.map((c) => <option key={c.id} value={c.id}>{c.name}{c.status === 'closed' ? '（已归档）' : ''}</option>)}
           </select>
+
+          {/* 设为里程碑：开启后在「里程碑」同步显示，避免重复创建（团队/个人目标都支持）。仅已保存的目标可设 */}
+          {!isCreate && canWrite && (
+            <div className="flex items-center justify-between rounded-lg border px-3 py-2" style={{ borderColor: isMilestone ? 'rgba(168,85,247,0.4)' : 'var(--border-subtle)', background: isMilestone ? 'rgba(168,85,247,0.08)' : 'transparent' }}>
+              <div className="flex flex-col min-w-0 pr-2">
+                <span className="text-[12px] inline-flex items-center gap-1" style={{ color: 'var(--text-primary)' }}><Flag size={12} style={{ color: '#A855F7' }} />设为里程碑</span>
+                <span className="text-[10.5px]" style={{ color: 'var(--text-muted)' }}>开启后在「里程碑」同步显示，无需重复创建</span>
+              </div>
+              <button
+                type="button"
+                onClick={toggleMilestone}
+                disabled={msToggling}
+                role="switch"
+                aria-checked={isMilestone}
+                className="shrink-0 rounded-full transition-colors disabled:opacity-50"
+                style={{ width: 38, height: 22, padding: 2, background: isMilestone ? '#A855F7' : 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
+              >
+                <span className="block rounded-full" style={{ width: 16, height: 16, background: '#fff', transform: isMilestone ? 'translateX(16px)' : 'translateX(0)', transition: 'transform .18s ease' }} />
+              </button>
+            </div>
+          )}
 
           {/* 关键结果 KR（结构化、可量化） */}
           <div className="flex items-center gap-1.5">

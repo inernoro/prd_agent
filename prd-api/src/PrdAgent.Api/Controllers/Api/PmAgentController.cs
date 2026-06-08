@@ -1001,6 +1001,7 @@ public class PmAgentController : ControllerBase
                 leadId = g.LeadId, leadName = g.LeadName, confidence = g.Confidence,
                 score = g.Score, scoreNote = g.ScoreNote, scoredAt = g.ScoredAt, scoredByName = g.ScoredByName,
                 progress = effective, progressMode = g.ProgressMode, linkedMilestoneCount = linked.Count,
+                isMilestone = linked.Any(m => m.AutoFromGoal),
                 status = g.Status, createdBy = g.CreatedBy, createdByName = g.CreatedByName,
                 orderKey = g.OrderKey, createdAt = g.CreatedAt, updatedAt = g.UpdatedAt,
             };
@@ -1117,6 +1118,48 @@ public class PmAgentController : ControllerBase
         if (request.OrderKey.HasValue) update = update.Set(x => x.OrderKey, request.OrderKey.Value);
         await _db.PmGoals.UpdateOneAsync(x => x.Id == goalId, update);
         return Ok(ApiResponse<object>.Ok(new { updated = true }));
+    }
+
+    /// <summary>把目标设为/取消里程碑：开 → 建一条联动里程碑(AutoFromGoal=true，GoalId 关联)；关 → 删除该联动里程碑。
+    /// 团队/个人目标都支持（个人目标仅本人，团队目标 owner/leader）。</summary>
+    [HttpPost("goals/{goalId}/milestone")]
+    public async Task<IActionResult> ToggleGoalMilestone(string goalId, [FromBody] ToggleGoalMilestoneRequest request)
+    {
+        var userId = GetUserId();
+        var g = await _db.PmGoals.Find(x => x.Id == goalId).FirstOrDefaultAsync();
+        if (g == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "目标不存在"));
+        var project = await FindAccessibleProjectAsync(g.ProjectId, userId);
+        if (project == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (g.Scope == PmGoalScope.Personal && g.OwnerId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "个人目标仅本人可操作"));
+        if (g.Scope == PmGoalScope.Team && project.OwnerId != userId && project.LeaderId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "团队目标仅立项人或负责人可操作"));
+
+        var existing = await _db.PmMilestones.Find(m => m.GoalId == goalId && m.AutoFromGoal).FirstOrDefaultAsync();
+        if (request.Enabled)
+        {
+            if (existing == null)
+            {
+                var creatorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+                await _db.PmMilestones.InsertOneAsync(new PmMilestone
+                {
+                    ProjectId = g.ProjectId,
+                    Title = g.Title,
+                    Description = g.Description,
+                    GoalId = goalId,
+                    OwnerId = g.LeadId,
+                    OwnerName = g.LeadName,
+                    AutoFromGoal = true,
+                    Status = PmMilestoneStatus.Planned,
+                    OrderKey = DateTime.UtcNow.Ticks,
+                    CreatedBy = userId,
+                    CreatedByName = creatorName,
+                });
+            }
+            return Ok(ApiResponse<object>.Ok(new { isMilestone = true }));
+        }
+        await _db.PmMilestones.DeleteManyAsync(m => m.GoalId == goalId && m.AutoFromGoal);
+        return Ok(ApiResponse<object>.Ok(new { isMilestone = false }));
     }
 
     /// <summary>删除目标。个人目标仅本人可删</summary>
@@ -3488,6 +3531,11 @@ public class UpdateWorkLogRequest
     public int? DurationMinutes { get; set; }
     public int? ProgressPercent { get; set; }
     public string? Category { get; set; }
+}
+
+public class ToggleGoalMilestoneRequest
+{
+    public bool Enabled { get; set; }
 }
 
 public class MilestoneRequest

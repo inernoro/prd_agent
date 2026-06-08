@@ -243,20 +243,20 @@ export function MilestoneDetailDrawer({ projectId, milestone, allMilestones, goa
           <input autoFocus value={title} disabled={!canManage} onChange={(e) => setTitle(e.target.value)} placeholder="里程碑名称（如：架构评审通过）" className={inputCls} style={inputStyle} />
 
           <div className="flex gap-2">
-            <div className="flex flex-col gap-1" style={{ width: 140 }}>
+            <div className="flex-1 flex flex-col gap-1 min-w-0">
               <label className="text-[11px]" style={{ color: 'var(--text-muted)' }}>计划截止</label>
               <input type="date" value={dueAt} disabled={!canManage} onChange={(e) => setDueAt(e.target.value)} className={inputCls} style={inputStyle} />
             </div>
-            <div className="flex flex-col gap-1" style={{ width: 140 }}>
+            <div className="flex-1 flex flex-col gap-1 min-w-0">
               <label className="text-[11px]" style={{ color: 'var(--text-muted)' }}>实际完成</label>
               <input type="date" value={reachedAt} disabled={!canManage} onChange={(e) => setReachedAt(e.target.value)} className={inputCls} style={inputStyle} />
             </div>
-            <div className="flex-1 flex flex-col gap-1 min-w-0">
-              <label className="text-[11px]" style={{ color: 'var(--text-muted)' }}>负责人</label>
-              {canManage
-                ? <UserSearchSelect value={ownerId} onChange={(uid) => setOwnerId(uid || '')} placeholder="指派负责人（可选）" />
-                : <div className="text-[12.5px] px-2.5 py-2 rounded-md border" style={{ ...inputStyle }}>{milestone?.ownerName || '未指派'}</div>}
-            </div>
+          </div>
+          <div className="flex flex-col gap-1 min-w-0">
+            <label className="text-[11px]" style={{ color: 'var(--text-muted)' }}>负责人</label>
+            {canManage
+              ? <UserSearchSelect value={ownerId} onChange={(uid) => setOwnerId(uid || '')} placeholder="指派负责人（可选）" />
+              : <div className="text-[12.5px] px-2.5 py-2 rounded-md border" style={{ ...inputStyle }}>{milestone?.ownerName || '未指派'}</div>}
           </div>
           {reachedAt && dueAt && (
             <div className="text-[11px]" style={{ color: reachedAt <= dueAt ? '#10B981' : '#F59E0B' }}>
