@@ -208,6 +208,8 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
   const [keyword, setKeyword] = useState('');
   const [mode, setMode] = useState<'collapse' | 'trace'>('collapse');
   const [traceAnchor, setTraceAnchor] = useState<string | null>(null);
+  // 悬停临时追溯锚点：移上去高亮关系网，移出取消；点击设置的 traceAnchor（固定）优先
+  const [hoverAnchor, setHoverAnchor] = useState<string | null>(null);
   const [view, setView] = useState<'card' | 'dot'>('card');
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
@@ -330,9 +332,10 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
 
   // ── 追溯集合：从锚点沿关系路径(无向)可达 ──
   const traceIds = useMemo(() => {
-    if (!traceAnchor || !raw) return null;
-    const reached = new Set<string>([traceAnchor]);
-    const queue = [traceAnchor];
+    const anchor = traceAnchor ?? hoverAnchor; // 固定锚点优先，否则用悬停锚点
+    if (!anchor || !raw) return null;
+    const reached = new Set<string>([anchor]);
+    const queue = [anchor];
     while (queue.length) {
       const cur = queue.shift()!;
       for (const nb of derived.adj.get(cur) ?? []) {
@@ -343,7 +346,7 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
       }
     }
     return reached;
-  }, [traceAnchor, raw, derived]);
+  }, [traceAnchor, hoverAnchor, raw, derived]);
 
   // 可见集合 key（仅成员变化才重排版）
   const visibleKey = useMemo(() => Array.from(visibleIds).sort().join('|'), [visibleIds]);
@@ -363,9 +366,10 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
       const label = `${n.label}${n.sub ? `\n${n.sub}` : ''}`;
       const p = pos.get(n.id) ?? { x: 0, y: 0 };
       if (view === 'dot') {
-        // 圆点视图：大小随后代数（重要度），颜色随类型，名称在圆点下方
-        const size = 16 + Math.min(desc, 10) * 4;
-        return { id: n.id, type: 'dot', position: p, data: { label, color: meta.color, size }, style: {} };
+        // 圆点视图：大小随后代数（重要度），颜色随类型，名称在圆点下方。
+        // 缩小整体尺寸（原 16+desc*4 偏大），delay 让各点呼吸错峰、更像活的星图。
+        const size = 9 + Math.min(desc, 10) * 2;
+        return { id: n.id, type: 'dot', position: p, data: { label, color: meta.color, size, delay: hashSeed(n.id) * 2.4 }, style: {} };
       }
       return { id: n.id, position: p, data: { label }, style: baseStyle(meta.color) };
     });
@@ -439,7 +443,10 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
       }),
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [traceAnchor, traceIds, keyword, matchIds, visibleKey, view, selected]);
+  }, [traceAnchor, hoverAnchor, traceIds, keyword, matchIds, visibleKey, view, selected]);
+
+  const onNodeMouseEnter = useCallback((_e: ReactMouseEvent, node: Node) => { setHoverAnchor(node.id); }, []);
+  const onNodeMouseLeave = useCallback(() => { setHoverAnchor(null); }, []);
 
   const onNodeClick = (_e: ReactMouseEvent, node: Node) => {
     if (mode === 'trace') {
@@ -574,6 +581,8 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onNodeClick={onNodeClick}
+          onNodeMouseEnter={onNodeMouseEnter}
+          onNodeMouseLeave={onNodeMouseLeave}
           nodeTypes={NODE_TYPES}
           fitView
           fitViewOptions={{ padding: 0.25 }}
@@ -814,19 +823,21 @@ function DrawerRow({ label, value }: { label: string; value: string }) {
 
 /** 圆点视图自定义节点：彩色圆点(大小随重要度) + 下方名称；选中时圆点外圈白色光环。 */
 function DotNode({ data }: NodeProps) {
-  const d = data as { label: string; color: string; size: number; selected?: boolean };
+  const d = data as { label: string; color: string; size: number; selected?: boolean; delay?: number };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 130 }}>
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
       <div
+        className={`pa-dot${d.selected ? ' sel' : ''}`}
         style={{
           width: d.size,
           height: d.size,
           borderRadius: '50%',
           background: d.color,
-          boxShadow: d.selected ? `0 0 0 3px #fff, 0 0 14px ${d.color}` : `0 0 10px ${d.color}66`,
-          border: d.selected ? '2px solid #fff' : '2px solid rgba(255,255,255,0.25)',
-          animation: d.selected ? 'paGraphDotPulse 2s ease-in-out infinite' : undefined,
+          boxShadow: d.selected ? `0 0 0 3px #fff, 0 0 22px ${d.color}` : `0 0 14px ${d.color}99`,
+          border: d.selected ? '2px solid #fff' : '2px solid rgba(255,255,255,0.3)',
+          // 所有圆点常态呼吸（错峰），选中/激活时更大幅度脉冲（class 驱动，便于 reduce-motion 降级）
+          animationDelay: `${d.delay ?? 0}s`,
         }}
       />
       <div style={{ marginTop: 6, fontSize: 10, color: d.selected ? '#fff' : 'rgba(255,255,255,0.78)', textAlign: 'center', whiteSpace: 'pre-line', lineHeight: 1.25 }}>
@@ -844,11 +855,14 @@ const NODE_TYPES = { dot: DotNode };
  * 让激活节点微微浮动；圆点内圈用 transform scale 呼吸（内层 div，安全）。尊重 reduce-motion。
  */
 const GRAPH_FX_CSS = `
-@keyframes paGraphFloat { 0%, 100% { translate: 0 0; } 50% { translate: 0 -3px; } }
-@keyframes paGraphDotPulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.13); } }
-.pa-graph-active { animation: paGraphFloat 2.6s ease-in-out infinite; will-change: translate; }
+@keyframes paGraphFloat { 0%, 100% { translate: 0 0; } 50% { translate: 0 -8px; } }
+@keyframes paGraphDotPulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.42); } }
+@keyframes paGraphDotBreath { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.14); } }
+.pa-graph-active { animation: paGraphFloat 2.4s ease-in-out infinite; will-change: translate; }
+.pa-dot { animation: paGraphDotBreath 3.2s ease-in-out infinite; will-change: transform; }
+.pa-dot.sel { animation: paGraphDotPulse 1.8s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) {
-  .pa-graph-active { animation: none; }
+  .pa-graph-active, .pa-dot, .pa-dot.sel { animation: none; }
 }
 `;
 
