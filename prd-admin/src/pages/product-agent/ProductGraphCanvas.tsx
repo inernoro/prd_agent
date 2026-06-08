@@ -83,6 +83,17 @@ type Pt = { x: number; y: number };
 type LayoutNode = { id: string; type: NodeType };
 type LayoutEdge = { source: string; target: string };
 
+/** 实时拖拽力导向运行态（仅离散布局拖动期间存在） */
+type SimNode = { x: number; y: number; vx: number; vy: number };
+type SimState = {
+  pos: Map<string, SimNode>;
+  pinned: Set<string>;   // 用户拖过/正在拖的点：固定不受力
+  edges: [string, string][];
+  dragId: string | null; // 当前正在拖的点
+  raf: number | null;
+  alpha: number;         // 能量，冷却到阈值停止
+};
+
 /** 「整理」布局：按类型分列（客户|需求|版本|产品|功能|缺陷），每列纵向排开。 */
 function tidyLayout(nodes: LayoutNode[], view: 'card' | 'dot'): Map<string, Pt> {
   const colRow: Record<number, number> = {};
@@ -215,6 +226,11 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const rfRef = useRef<ReactFlowInstance<Node, Edge> | null>(null);
+  // 实时拖拽力导向（离散布局，Obsidian 式：拖一个点，关联点经弹簧丝滑跟随）的运行态
+  const nodesRef = useRef(nodes); nodesRef.current = nodes;
+  const edgesRef = useRef(edges); edgesRef.current = edges;
+  const simRef = useRef<SimState | null>(null);
+  const viewRef = useRef(view); viewRef.current = view;
 
   useEffect(() => {
     let alive = true;
@@ -457,6 +473,94 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
     setSelected(raw?.nodes.find((n) => n.id === node.id) ?? null);
   };
 
+  // ── 实时拖拽力导向（离散布局）：拖一个点，关联点经弹簧丝滑跟随（Obsidian 关系图谱效果）──
+  const simTick = useCallback(() => {
+    const s = simRef.current;
+    if (!s) return;
+    const dot = viewRef.current === 'dot';
+    const ideal = dot ? 150 : 260;
+    const kRep = dot ? 9000 : 26000;
+    const kSpring = 0.05;
+    const damp = 0.85;
+    const ids = [...s.pos.keys()];
+    const n = ids.length;
+    const fx = new Map<string, number>(); const fy = new Map<string, number>();
+    ids.forEach((id) => { fx.set(id, 0); fy.set(id, 0); });
+    // 斥力（全对，节点数小，开销可忽略）
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const a = s.pos.get(ids[i])!; const b = s.pos.get(ids[j])!;
+        const dx = a.x - b.x, dy = a.y - b.y;
+        const d2 = dx * dx + dy * dy || 0.01; const d = Math.sqrt(d2);
+        const f = kRep / d2; const ux = dx / d, uy = dy / d;
+        fx.set(ids[i], fx.get(ids[i])! + ux * f); fy.set(ids[i], fy.get(ids[i])! + uy * f);
+        fx.set(ids[j], fx.get(ids[j])! - ux * f); fy.set(ids[j], fy.get(ids[j])! - uy * f);
+      }
+    }
+    // 边弹簧
+    for (const [a, b] of s.edges) {
+      const pa = s.pos.get(a); const pb = s.pos.get(b);
+      if (!pa || !pb) continue;
+      const dx = pb.x - pa.x, dy = pb.y - pa.y;
+      const d = Math.hypot(dx, dy) || 0.01;
+      const f = kSpring * (d - ideal); const ux = dx / d, uy = dy / d;
+      fx.set(a, fx.get(a)! + ux * f); fy.set(a, fy.get(a)! + uy * f);
+      fx.set(b, fx.get(b)! - ux * f); fy.set(b, fy.get(b)! - uy * f);
+    }
+    let moving = false;
+    for (const id of ids) {
+      const p = s.pos.get(id)!;
+      if (id === s.dragId || s.pinned.has(id)) { p.vx = 0; p.vy = 0; continue; }
+      p.vx = (p.vx + fx.get(id)! * 0.02) * damp;
+      p.vy = (p.vy + fy.get(id)! * 0.02) * damp;
+      const sp = Math.hypot(p.vx, p.vy);
+      if (sp > 28) { p.vx = (p.vx / sp) * 28; p.vy = (p.vy / sp) * 28; }
+      if (sp > 0.15) moving = true;
+      p.x += p.vx; p.y += p.vy;
+    }
+    setNodes((ns) => ns.map((nd) => { const p = s.pos.get(nd.id); return p ? { ...nd, position: { x: p.x, y: p.y } } : nd; }));
+    s.alpha *= 0.985;
+    if (s.dragId || (moving && s.alpha > 0.02)) {
+      s.raf = requestAnimationFrame(simTick);
+    } else {
+      s.raf = null;
+    }
+  }, [setNodes]);
+
+  const onNodeDragStart = useCallback((_e: ReactMouseEvent, node: Node) => {
+    if (layout !== 'scatter') return; // 仅离散布局启用力导向跟随；整理布局走普通拖拽
+    const pos = new Map<string, SimNode>();
+    for (const nd of nodesRef.current) pos.set(nd.id, { x: nd.position.x, y: nd.position.y, vx: 0, vy: 0 });
+    const pinned = simRef.current?.pinned ?? new Set<string>();
+    pinned.add(node.id);
+    const edgeList = edgesRef.current.map((e) => [e.source, e.target] as [string, string]);
+    if (simRef.current?.raf) cancelAnimationFrame(simRef.current.raf);
+    simRef.current = { pos, pinned, edges: edgeList, dragId: node.id, raf: null, alpha: 1 };
+    simRef.current.raf = requestAnimationFrame(simTick);
+  }, [layout, simTick]);
+
+  const onNodeDrag = useCallback((_e: ReactMouseEvent, node: Node) => {
+    const s = simRef.current; if (!s) return;
+    const p = s.pos.get(node.id); if (p) { p.x = node.position.x; p.y = node.position.y; p.vx = 0; p.vy = 0; }
+    s.alpha = 1;
+    if (s.raf == null) s.raf = requestAnimationFrame(simTick);
+  }, [simTick]);
+
+  const onNodeDragStop = useCallback((_e: ReactMouseEvent, node: Node) => {
+    const s = simRef.current; if (!s) return;
+    const p = s.pos.get(node.id); if (p) { p.x = node.position.x; p.y = node.position.y; }
+    s.dragId = null; // 松手后该点固定在落点，其余继续 settle
+    s.alpha = Math.max(s.alpha, 0.6);
+    if (s.raf == null) s.raf = requestAnimationFrame(simTick);
+  }, [simTick]);
+
+  // 卸载 / 切换布局视图成员时停掉模拟（位置由布局 effect 重置）
+  useEffect(() => () => { if (simRef.current?.raf) cancelAnimationFrame(simRef.current.raf); }, []);
+  useEffect(() => {
+    if (simRef.current?.raf) cancelAnimationFrame(simRef.current.raf);
+    simRef.current = null;
+  }, [visibleKey, view, layout]);
+
   // 距离过滤选项
   const stateOptions = useMemo(() => {
     const s = new Set<string>();
@@ -583,6 +687,9 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
           onNodeClick={onNodeClick}
           onNodeMouseEnter={onNodeMouseEnter}
           onNodeMouseLeave={onNodeMouseLeave}
+          onNodeDragStart={onNodeDragStart}
+          onNodeDrag={onNodeDrag}
+          onNodeDragStop={onNodeDragStop}
           nodeTypes={NODE_TYPES}
           fitView
           fitViewOptions={{ padding: 0.25 }}
