@@ -120,7 +120,7 @@ describe('validateBuildReadiness (P4 Part 18 hardening)', () => {
 
     const cwds = shell.cwds;
     expect(cwds).toContain('/opt/prd_agent/cds');
-    // Both commands should run in that cwd
-    expect(cwds.filter((c) => c === '/opt/prd_agent/cds').length).toBe(2);
+    // 三条命令都在 cds 目录跑:cached install + #746 guard#3 boot-install smoke + tsc
+    expect(cwds.filter((c) => c === '/opt/prd_agent/cds').length).toBe(3);
   });
 });

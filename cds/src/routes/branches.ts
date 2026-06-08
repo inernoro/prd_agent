@@ -891,6 +891,35 @@ export async function validateBuildReadiness(
   if (webInstallResult && webInstallResult.exitCode !== 0) {
     webWarning = 'web pnpm install 失败 — web build 大概率会跟着失败,继续 self-update 但前端可能不更新';
   }
+  // #746 guard #3 — 真实 boot 预检(boot install smoke)。
+  // runPnpmInstallWithCache 在 lockfile 哈希命中 stamp 时直接 skip,不跑真正的
+  // `pnpm install`。但 master-run 启动时跑的是**未缓存的** `pnpm install
+  // --frozen-lockfile --prefer-offline`,这条会在 pnpm 11 的 ERR_PNPM_IGNORED_BUILDS
+  // (未批准 native build)等 gate 上 exit 1 → master-run exit 78 → systemd 崩溃循环。
+  // 2026-06-08 两次 502 事故(CI=true / pnpm-workspace.yaml 占位字符串)都是从这个
+  // 缓存 skip 的缝里溜过去的:tsc 过了、cached install skip 了,真实启动才崩。
+  // 这里用 master-run 的**确切命令**跑一次,把"编译过但启动崩"挡在 swap 之前。
+  const bootInstall = await shell.exec(
+    'pnpm install --frozen-lockfile --prefer-offline',
+    { cwd: cdsDir, timeout: 240_000 },
+  );
+  if (bootInstall.exitCode !== 0) {
+    const err = (combinedOutput(bootInstall) || 'boot install 失败').slice(0, 600);
+    timings['total_ms'] = Date.now() - validateStartedAt;
+    progress({
+      phase: 'validate-install',
+      status: 'error',
+      message: `boot 预检失败(master-run 的 pnpm install 会崩,已阻止 swap): ${formatValidationTimings(timings)}`,
+      timings: { ...timings },
+    });
+    return {
+      ok: false,
+      stage: 'install',
+      error: `boot 预检失败 — master-run 启动时的 \`pnpm install --frozen-lockfile --prefer-offline\` 退出非零(若放行将导致 systemd 崩溃循环 502): ${err}`,
+      timings,
+    };
+  }
+
   progress({
     phase: 'validate-install',
     status: webWarning ? 'warning' : 'done',
@@ -12458,6 +12487,30 @@ cdscli project list --human
           res.end();
           recordFailure(`origin/${branch} 不存在`);
           return;
+        }
+      }
+
+      // #746 guard #2 — 分支新鲜度警告(非阻断)。
+      // 落后 main 太多的分支 self-update 容易撞上 lockfile 漂移 / 陈旧配置
+      // (2026-06-08 一次事故的诱因)。这里只**警告**不阻断:真正的"装不上/起不来"
+      // 由 guard #3(boot install smoke)在 swap 前兜住;此处给操作者早期可见性。
+      if (branch && branch !== 'main') {
+        try {
+          const behindRaw = (await shell.exec(
+            `git rev-list --count origin/${branch}..origin/main`,
+            { cwd: repoRoot },
+          )).stdout.trim();
+          const behind = Number.parseInt(behindRaw, 10);
+          if (Number.isFinite(behind) && behind >= 50) {
+            send(
+              'checkout',
+              'warning',
+              `分支落后 origin/main ${behind} 个提交 — 陈旧分支更易撞 lockfile/配置漂移。` +
+                `建议先 rebase 到 main。本次仍会继续(由 boot 预检兜底),仅提醒。`,
+            );
+          }
+        } catch {
+          /* 新鲜度检查失败不影响 self-update */
         }
       }
 
