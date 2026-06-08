@@ -664,10 +664,13 @@ public class MdToPptController : ControllerBase
 
     private void SetSseHeaders()
     {
+        // 与全仓既有 SSE 控制器（PreviewAskController 等）保持一致：
+        // 不手动设置 Transfer-Encoding —— Kestrel 自己管理分块编码，手动写 "chunked"
+        // 会破坏响应分帧，Cloudflare 收不到合法流而缓冲到 ~100s 后 524（两个引擎都中招）。
         Response.ContentType = "text/event-stream";
-        Response.Headers["Cache-Control"] = "no-cache";
-        Response.Headers["X-Accel-Buffering"] = "no";
-        Response.Headers["Transfer-Encoding"] = "chunked";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Connection = "keep-alive";
+        Response.Headers["X-Accel-Buffering"] = "no"; // nginx 不缓冲 SSE，保留
     }
 
     private async Task WriteEventAsync(string eventName, object? data)
