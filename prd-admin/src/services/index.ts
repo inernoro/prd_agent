@@ -804,6 +804,8 @@ export const handleAdminNotification: HandleAdminNotificationContract = withAuth
 export const handleAllAdminNotifications: HandleAllAdminNotificationsContract = withAuth(handleAllAdminNotificationsReal);
 
 export const getUsers: GetUsersContract = withAuth(getUsersReal);
+export { searchDirectoryUsers } from '@/services/real/directory';
+export type { DirectoryUser } from '@/services/real/directory';
 export const createUser: CreateAdminUserContract = withAuth(createUserReal);
 export const bulkCreateUsers: BulkCreateAdminUsersContract = withAuth(bulkCreateUsersReal);
 export const updateUserRole: UpdateUserRoleContract = withAuth(updateUserRoleReal);
@@ -1994,6 +1996,10 @@ export {
   getPmTaskActivitiesReal as getPmTaskActivities,
   addPmTaskCommentReal as addPmTaskComment,
   bulkPmTasksReal as bulkPmTasks,
+  listPmTaskWorkLogsReal as listPmTaskWorkLogs,
+  createPmTaskWorkLogReal as createPmTaskWorkLog,
+  updatePmTaskWorkLogReal as updatePmTaskWorkLog,
+  deletePmTaskWorkLogReal as deletePmTaskWorkLog,
   getPmMembersReal as getPmMembers,
   setPmMembersReal as setPmMembers,
   setPmObserversReal as setPmObservers,
@@ -2021,6 +2027,8 @@ export {
   listPmGoalsReal as listPmGoals,
   createPmGoalReal as createPmGoal,
   updatePmGoalReal as updatePmGoal,
+  setGoalAsMilestoneReal as setGoalAsMilestone,
+  reparentPmGoalReal as reparentPmGoal,
   deletePmGoalReal as deletePmGoal,
   listPmGoalCheckInsReal as listPmGoalCheckIns,
   addPmGoalCheckInReal as addPmGoalCheckIn,
@@ -2065,6 +2073,9 @@ export type {
   SavePmMilestoneInput,
   PmTask,
   PmTaskDraft,
+  PmTaskWorkLog,
+  CreatePmTaskWorkLogInput,
+  UpdatePmTaskWorkLogInput,
   PmStakeholder,
   PmEvaluation,
   PmEvaluationRound,

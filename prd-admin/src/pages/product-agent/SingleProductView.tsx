@@ -34,7 +34,6 @@ import {
   deleteFeature,
   listTracedDefects,
   untraceDefect,
-  createProductDefect,
   transition,
   type TracedDefect,
 } from '@/services/real/productAgent';
@@ -613,7 +612,6 @@ function DefectsTab({ productId }: { productId: string }) {
   const [items, setItems] = useState<TracedDefect[]>([]);
   const [loading, setLoading] = useState(true);
   const [showLinker, setShowLinker] = useState(false);
-  const [creating, setCreating] = useState(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -631,7 +629,7 @@ function DefectsTab({ productId }: { productId: string }) {
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-2">
         <button
-          onClick={() => setCreating(true)}
+          onClick={() => navigate(`/product-agent/p/${productId}/defect/new`)}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 text-sm"
         >
           <Plus size={15} /> 新建缺陷
@@ -666,52 +664,6 @@ function DefectsTab({ productId }: { productId: string }) {
       {showLinker && (
         <DefectLinkerModal productId={productId} onClose={() => setShowLinker(false)} onLinked={() => void reload()} />
       )}
-      {creating && (
-        <NewDefectModal
-          productId={productId}
-          onClose={() => setCreating(false)}
-          onCreated={() => {
-            setCreating(false);
-            void reload();
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-function NewDefectModal({ productId, onClose, onCreated }: { productId: string; onClose: () => void; onCreated: () => void }) {
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [severity, setSeverity] = useState('');
-  const [saving, setSaving] = useState(false);
-  const create = async () => {
-    if (!title.trim()) return;
-    setSaving(true);
-    const res = await createProductDefect(productId, { title: title.trim(), description: description.trim() || undefined, severity: severity || undefined });
-    setSaving(false);
-    if (res.success) onCreated();
-  };
-  return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="w-[440px] rounded-xl border border-white/10 bg-[#16181d] p-5 flex flex-col gap-3" onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-sm font-semibold text-white">新建缺陷</h2>
-        <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="缺陷标题" className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40" />
-        <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} placeholder="复现步骤 / 描述" className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40 resize-none" />
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-white/50">严重度</span>
-          {['blocker', 'critical', 'major', 'minor', 'trivial'].map((s) => (
-            <button key={s} onClick={() => setSeverity(severity === s ? '' : s)} className={`px-2 py-1 rounded-md text-xs border ${severity === s ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40' : 'text-white/40 border-white/10 hover:bg-white/5'}`}>{s}</button>
-          ))}
-        </div>
-        <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-sm text-white/60 hover:bg-white/5">取消</button>
-          <button onClick={create} disabled={!title.trim() || saving} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm disabled:opacity-50">
-            {saving ? <MapSpinner size={14} /> : <Plus size={14} />} 创建
-          </button>
-        </div>
-        <p className="text-[11px] text-white/35">缺陷写入缺陷管理智能体，并自动追溯到本产品。</p>
-      </div>
     </div>
   );
 }

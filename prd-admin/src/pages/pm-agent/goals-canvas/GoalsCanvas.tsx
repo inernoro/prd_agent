@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import {
   ReactFlow, ReactFlowProvider, Background, BackgroundVariant, MiniMap, Panel,
   useNodesState, useEdgesState, useReactFlow, type Node, type Edge,
@@ -6,6 +6,8 @@ import {
 import '@xyflow/react/dist/style.css';
 import { Sparkles, Plus, Lock, Users, Maximize2, Minimize2, Target } from 'lucide-react';
 import { Button } from '@/components/design/Button';
+import { toast } from '@/lib/toast';
+import { reparentPmGoal } from '@/services';
 import type { PmGoal, PmGoalScope } from '@/services/contracts/pmAgent';
 import { GOAL_MAX_DEPTH } from '../pmConstants';
 import { GoalDecomposePanel } from '../GoalDecomposePanel';
@@ -77,11 +79,37 @@ function GoalsCanvasInner({ projectId, businessGoal, canManage, goals, onReload,
 
   const afterMutation = () => { setSelected(null); setCreateCtx(null); setAiTarget(null); onReload(); };
 
+  // 拖拽改层级（Xmind 式）：把目标拖到另一目标上=成为其子目标；拖到北极星/个人根=升为顶层。落空则回弹。
+  const onNodeDragStop = useCallback((_e: ReactMouseEvent, node: Node) => {
+    if (!canManage) { onReload(); return; }
+    const data = node.data as GoalNodeData;
+    if (data.kind !== 'goal' || !data.goal) { onReload(); return; }
+    const dragged = data.goal;
+    const target = reactFlow.getIntersectingNodes(node).find((n) => n.id !== node.id);
+    if (!target) { onReload(); return; } // 落在空白：回弹到自动布局位置
+    const td = target.data as GoalNodeData;
+    let newParentId: string | null;
+    if (td.kind === 'root') {
+      if (td.rootScope !== dragged.scope) { toast.error('只能在同一范围（团队/个人）内调整层级', ''); onReload(); return; }
+      newParentId = null;
+    } else if (td.goal) {
+      newParentId = td.goal.id;
+    } else { onReload(); return; }
+    if (newParentId === (dragged.parentId ?? null)) { onReload(); return; }
+    void (async () => {
+      const res = await reparentPmGoal(dragged.id, newParentId);
+      if (res.success) toast.success('已调整层级', '');
+      else toast.error('调整层级失败', res.error?.message || '');
+      onReload();
+    })();
+  }, [canManage, reactFlow, onReload]);
+
   const selectedDepth = selectedFresh?.depth ?? 0;
 
   return (
     <div className="flex-1 min-h-0 relative">
-      {goals.length === 0 && (
+      {/* 仅当画布真的没有任何节点时才显示空状态；业务目标·北极星根节点存在时不显示，避免与其重叠 */}
+      {graph.nodes.length === 0 && (
         <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
           <div className="flex flex-col items-center gap-3 text-center pointer-events-auto">
             <Target size={32} style={{ color: 'var(--text-muted)' }} />
@@ -102,7 +130,8 @@ function GoalsCanvasInner({ projectId, businessGoal, canManage, goals, onReload,
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         nodeTypes={nodeTypes}
-        nodesDraggable={false}
+        nodesDraggable={canManage}
+        onNodeDragStop={onNodeDragStop}
         minZoom={0.2}
         maxZoom={2}
         proOptions={{ hideAttribution: true }}

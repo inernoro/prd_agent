@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Trash2, Link2, AlertTriangle, MessageSquare } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { X, Trash2, Link2, AlertTriangle, MessageSquare, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { toast } from '@/lib/toast';
 import { updatePmTask, deletePmTask, createPmTask, getPmTaskActivities, addPmTaskComment, getPmMembers } from '@/services';
 import type { PmMember, PmMilestone, PmGoal, PmTask, PmTaskStatus, PmTaskPriority, PmTaskActivity } from '@/services/contracts/pmAgent';
-import { TASK_STATUS_REGISTRY, PRIORITY_REGISTRY } from './pmConstants';
+import { TASK_STATUS_REGISTRY, PRIORITY_REGISTRY, progressColor } from './pmConstants';
 
 const FIELD_LABEL: Record<string, string> = { status: '状态', priority: '优先级', assignee: '负责人', title: '标题' };
 const codeLabel = (field: string, v?: string | null) => {
@@ -41,6 +42,7 @@ const fromDateInput = (v: string) => (v ? new Date(v + 'T00:00:00').toISOString(
  * 接现有 updatePmTask（后端已支持全字段），右侧滑入，createPortal 到 body。
  */
 export function TaskDetailDrawer({ task, allTasks, milestones = [], goals = [], onClose, onSaved, onDeleted, onChanged }: Props) {
+  const navigate = useNavigate();
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description ?? '');
   const [status, setStatus] = useState<PmTaskStatus>(task.status);
@@ -53,8 +55,10 @@ export function TaskDetailDrawer({ task, allTasks, milestones = [], goals = [], 
   const [dueAt, setDueAt] = useState(toDateInput(task.dueAt));
   const [labels, setLabels] = useState((task.labels ?? []).join(', '));
   const [dependsOn, setDependsOn] = useState<string[]>(task.dependsOn ?? []);
+  const [progress, setProgress] = useState(task.progressPercent ?? 0);
   const [saving, setSaving] = useState(false);
   const [subTitle, setSubTitle] = useState('');
+  const [attachId, setAttachId] = useState('');
   const [activities, setActivities] = useState<PmTaskActivity[]>([]);
   const [comment, setComment] = useState('');
   // @ 提醒：项目成员候选 + 已提及映射 + 弹层状态
@@ -103,11 +107,24 @@ export function TaskDetailDrawer({ task, allTasks, milestones = [], goals = [], 
   };
 
   const children = useMemo(() => allTasks.filter((t) => t.parentTaskId === task.id), [allTasks, task.id]);
+  const isSubtask = task.parentTaskId != null;
+  // 有子任务的任务集合（用于两级约束：这些不能再被挂为别人的子任务）
+  const parentIdSet = useMemo(() => new Set(allTasks.filter((t) => t.parentTaskId).map((t) => t.parentTaskId!)), [allTasks]);
+  // 可挂为当前任务子任务的候选：顶层任务、非自己、未挂在自己名下、且自身无子任务（避免三级）
+  const attachCandidates = useMemo(
+    () => allTasks.filter((t) => t.id !== task.id && t.parentTaskId == null && !parentIdSet.has(t.id)),
+    [allTasks, task.id, parentIdSet],
+  );
 
   const addSubtask = async () => {
     if (!subTitle.trim()) return;
     const res = await createPmTask(task.projectId, { title: subTitle.trim(), parentTaskId: task.id, status: 'todo' });
     if (res.success) { setSubTitle(''); onChanged(); } else toast.error('创建子任务失败', res.error?.message || '');
+  };
+  const attachSubtask = async () => {
+    if (!attachId) return;
+    const res = await updatePmTask(attachId, { parentTaskId: task.id });
+    if (res.success) { setAttachId(''); onChanged(); } else toast.error('挂载子任务失败', res.error?.message || '');
   };
   const toggleSubDone = async (sub: PmTask) => {
     const next: PmTaskStatus = sub.status === 'done' ? 'todo' : 'done';
@@ -148,6 +165,8 @@ export function TaskDetailDrawer({ task, allTasks, milestones = [], goals = [], 
       dependsOn,
       milestoneId,
       goalId,
+      // 父任务进度自动汇总，仅叶子任务提交手填进度
+      ...(children.length > 0 ? {} : { progressPercent: progress }),
     });
     setSaving(false);
     if (res.success) {
@@ -189,7 +208,8 @@ export function TaskDetailDrawer({ task, allTasks, milestones = [], goals = [], 
         <div className="flex items-center gap-2 px-5 py-4 shrink-0 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
           <div className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>任务详情</div>
           {task.source === 'ai_decompose' && <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(168,85,247,0.15)', color: '#A855F7' }}>AI 拆解</span>}
-          <button onClick={remove} className="ml-auto p-1 rounded hover:opacity-70" style={{ color: '#EF4444' }} title="删除任务"><Trash2 size={16} /></button>
+          <button onClick={() => navigate(`/pm-agent/p/${task.projectId}/task/${task.id}`)} className="ml-auto inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded hover:opacity-70 border" style={{ color: 'var(--text-secondary)', borderColor: 'var(--border-subtle)' }} title="打开独立详情页"><ExternalLink size={12} />详情页</button>
+          <button onClick={remove} className="p-1 rounded hover:opacity-70" style={{ color: '#EF4444' }} title="删除任务"><Trash2 size={16} /></button>
           <button onClick={onClose} className="p-1 rounded hover:opacity-70" style={{ color: 'var(--text-muted)' }}><X size={18} /></button>
         </div>
 
@@ -261,6 +281,19 @@ export function TaskDetailDrawer({ task, allTasks, milestones = [], goals = [], 
           </div>
 
           <div>
+            <label className={labelCls} style={{ color: 'var(--text-secondary)' }}>进度 {children.length > 0 ? '（子任务自动汇总）' : ''}</label>
+            <div className="flex items-center gap-2">
+              <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'var(--bg-input)' }}>
+                <div className="h-full rounded-full" style={{ width: `${status === 'done' ? 100 : progress}%`, background: progressColor(progress, status) }} />
+              </div>
+              <span className="text-[12px] font-medium w-9 text-right" style={{ color: 'var(--text-primary)' }}>{status === 'done' ? 100 : progress}%</span>
+            </div>
+            {children.length === 0 && (
+              <input type="range" min={0} max={100} step={5} value={progress} onChange={(e) => setProgress(Number(e.target.value))} className="w-full mt-1.5" style={{ accentColor: progressColor(progress, status) }} disabled={status === 'done'} />
+            )}
+          </div>
+
+          <div>
             <label className={labelCls} style={{ color: 'var(--text-secondary)' }}>标签（逗号分隔）</label>
             <input className={inputCls} style={inputStyle} value={labels} onChange={(e) => setLabels(e.target.value)} placeholder="如：前端, 设计" />
           </div>
@@ -296,11 +329,24 @@ export function TaskDetailDrawer({ task, allTasks, milestones = [], goals = [], 
                   <span className="truncate" style={{ color: 'var(--text-primary)', textDecoration: c.status === 'done' ? 'line-through' : 'none', opacity: c.status === 'done' ? 0.6 : 1 }}>{c.title}</span>
                 </div>
               ))}
-              <div className="flex items-center gap-1.5">
-                <input className="flex-1 rounded-lg px-2 py-1.5 text-[12px] outline-none border" style={inputStyle}
-                  value={subTitle} onChange={(e) => setSubTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addSubtask(); }} placeholder="添加子任务，回车确认" />
-                <Button variant="secondary" size="sm" onClick={addSubtask} disabled={!subTitle.trim()}>添加</Button>
-              </div>
+              {isSubtask ? (
+                <div className="text-[11px] py-1" style={{ color: 'var(--text-muted)' }}>子任务不能再有下级（仅支持两级）</div>
+              ) : (
+                <>
+                  <div className="flex items-center gap-1.5">
+                    <input className="flex-1 rounded-lg px-2 py-1.5 text-[12px] outline-none border" style={inputStyle}
+                      value={subTitle} onChange={(e) => setSubTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addSubtask(); }} placeholder="新建子任务，回车确认" />
+                    <Button variant="secondary" size="sm" onClick={addSubtask} disabled={!subTitle.trim()}>新建</Button>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <select className="flex-1 rounded-lg px-2 py-1.5 text-[12px] outline-none border" style={inputStyle} value={attachId} onChange={(e) => setAttachId(e.target.value)}>
+                      <option value="">选择已有任务挂为子任务…</option>
+                      {attachCandidates.map((t) => <option key={t.id} value={t.id}>{t.title}</option>)}
+                    </select>
+                    <Button variant="secondary" size="sm" onClick={attachSubtask} disabled={!attachId}>挂载</Button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 

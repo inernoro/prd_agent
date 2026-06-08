@@ -50,6 +50,7 @@ import { ReviewAgentCardArt } from '@/pages/ai-toolbox/components/ReviewAgentCar
 import { ProjectRouteAgentCardArt } from '@/pages/ai-toolbox/components/ProjectRouteAgentCardArt';
 import { PaAgentCardArt } from '@/pages/ai-toolbox/components/PaAgentCardArt';
 import { PmAgentCardArt } from '@/pages/ai-toolbox/components/PmAgentCardArt';
+import { ProductAgentCardArt } from '@/pages/ai-toolbox/components/ProductAgentCardArt';
 import { HomeAmbientBackdrop } from '@/components/effects/HomeAmbientBackdrop';
 import { Reveal } from '@/pages/home/components/Reveal';
 import { TipsRotator } from '@/components/daily-tips/TipsRotator';
@@ -272,6 +273,8 @@ function FeaturedCard({ item, onClick }: { item: ToolboxItem; onClick: () => voi
         <ReviewAgentCardArt />
       ) : item.agentKey === 'pm-agent' && !uploadedCover ? (
         <PmAgentCardArt />
+      ) : item.agentKey === 'product-agent' && !uploadedCover ? (
+        <ProductAgentCardArt />
       ) : item.agentKey === 'project-route-agent' ? (
         <ProjectRouteAgentCardArt />
       ) : item.agentKey === 'pa-agent' && !uploadedCover ? (

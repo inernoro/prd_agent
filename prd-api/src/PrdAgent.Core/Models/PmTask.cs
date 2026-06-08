@@ -60,6 +60,12 @@ public class PmTask
     /// <summary>同列排序键（看板拖拽排序）</summary>
     public double OrderKey { get; set; }
 
+    /// <summary>进度百分比 0-100（叶子任务手填或工作日志带入；父任务由子任务自动汇总）</summary>
+    public int ProgressPercent { get; set; }
+
+    /// <summary>是否由子任务自动汇总进度（有子任务的父任务默认 true；叶子任务手填进度后置 false）</summary>
+    public bool AutoProgress { get; set; } = true;
+
     /// <summary>来源类型：manual(手动创建) / ai_decompose(AI 拆解)</summary>
     public string Source { get; set; } = PmTaskSource.Manual;
 
@@ -71,6 +77,26 @@ public class PmTask
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>进度裁剪到 0-100。</summary>
+    public static int ClampProgress(int v) => v < 0 ? 0 : v > 100 ? 100 : v;
+
+    /// <summary>
+    /// 父任务进度 = 各直属子任务进度均值（done=100 / cancelled=0 / 其余取各自 ProgressPercent，裁剪到 0-100）。
+    /// 无子任务返回 null（调用方据此决定不覆盖父任务进度）。纯函数，便于单测。
+    /// </summary>
+    public static int? ComputeParentProgress(IReadOnlyCollection<PmTask> children)
+    {
+        if (children == null || children.Count == 0) return null;
+        var sum = 0;
+        foreach (var c in children)
+        {
+            sum += c.Status == PmTaskStatus.Done ? 100
+                 : c.Status == PmTaskStatus.Cancelled ? 0
+                 : ClampProgress(c.ProgressPercent);
+        }
+        return (int)Math.Round((double)sum / children.Count);
+    }
 }
 
 /// <summary>任务状态常量</summary>

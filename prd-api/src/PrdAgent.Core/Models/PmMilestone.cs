@@ -50,6 +50,9 @@ public class PmMilestone
     /// <summary>同项目内排序键</summary>
     public long OrderKey { get; set; }
 
+    /// <summary>是否由「目标设为里程碑」自动创建（toggle 关闭时只删这类，不动手动建的）</summary>
+    public bool AutoFromGoal { get; set; }
+
     public string CreatedBy { get; set; } = string.Empty;
     public string? CreatedByName { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

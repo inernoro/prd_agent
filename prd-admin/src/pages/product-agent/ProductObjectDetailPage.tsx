@@ -36,6 +36,7 @@ import {
   listTracedDefects,
   untraceDefect,
   convertDefectToRequirement,
+  createProductDefect,
   listDescTemplates,
   type TracedDefect,
 } from '@/services/real/productAgent';
@@ -141,11 +142,18 @@ export function ProductObjectDetailPage() {
       <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
         <div className="mx-auto py-5" style={{ width: '80%' }}>
           {isNew ? (
-            <CreateObjectForm
-              productId={productId}
-              kind={kind}
-              onCreated={(newId) => navigate(`/product-agent/p/${productId}/${kind}/${newId}`, { replace: true })}
-            />
+            kind === 'defect' ? (
+              <CreateDefectForm
+                productId={productId}
+                onCreated={(newId) => navigate(`/product-agent/p/${productId}/defect/${newId}`, { replace: true })}
+              />
+            ) : (
+              <CreateObjectForm
+                productId={productId}
+                kind={kind}
+                onCreated={(newId) => navigate(`/product-agent/p/${productId}/${kind}/${newId}`, { replace: true })}
+              />
+            )
           ) : loading ? (
             <MapSectionLoader text="正在加载详情…" />
           ) : kind === 'requirement' ? (
@@ -645,6 +653,123 @@ function CreateObjectForm({
                 <FormFieldsRenderer fields={split.others} values={formData} onChange={setField} productId={productId} />
               </div>
             )}
+          </div>
+        </Card>
+      }
+    />
+  );
+}
+
+// ════════════════════════ 新建缺陷（独立页，对齐新建需求）════════════════════════
+const DEFECT_SEVERITIES: { v: string; label: string }[] = [
+  { v: 'blocker', label: '阻断' },
+  { v: 'critical', label: '严重' },
+  { v: 'major', label: '主要' },
+  { v: 'minor', label: '次要' },
+  { v: 'trivial', label: '轻微' },
+  { v: 'suggestion', label: '建议' },
+];
+const DEFECT_PRIORITIES: { v: string; label: string }[] = [
+  { v: 'high', label: '高' },
+  { v: 'medium', label: '中' },
+  { v: 'low', label: '低' },
+];
+
+function CreateDefectForm({ productId, onCreated }: { productId: string; onCreated: (newId: string) => void }) {
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [severity, setSeverity] = useState('');
+  const [priority, setPriority] = useState('');
+  const [assigneeId, setAssigneeId] = useState('');
+  const [requirementId, setRequirementId] = useState('');
+  const [versionId, setVersionId] = useState('');
+  const [reqs, setReqs] = useState<Requirement[]>([]);
+  const [versions, setVersions] = useState<ProductVersion[]>([]);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    void (async () => {
+      const [r, v] = await Promise.all([listRequirements(productId), listVersions(productId)]);
+      if (r.success && r.data) setReqs(r.data.items);
+      if (v.success && v.data) setVersions(v.data.items);
+    })();
+  }, [productId]);
+
+  const create = async () => {
+    if (!title.trim()) return;
+    setSaving(true);
+    const res = await createProductDefect(productId, {
+      title: title.trim(),
+      description: description || undefined,
+      severity: severity || undefined,
+      priority: priority || undefined,
+      assigneeId: assigneeId || null,
+      requirementId: requirementId || undefined,
+      versionId: versionId || undefined,
+    });
+    setSaving(false);
+    if (res.success && res.data) onCreated(res.data.id);
+  };
+
+  const chip = (active: boolean) => `px-2.5 py-1 rounded-md text-xs border ${active ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40' : 'text-white/45 border-white/10 hover:bg-white/5'}`;
+  const selectCls = 'w-full px-2.5 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40';
+
+  return (
+    <DetailScaffold
+      no="新建缺陷"
+      kindLabel="缺陷"
+      kindColor="#F87171"
+      title={title}
+      onTitleChange={setTitle}
+      titlePlaceholder="缺陷标题"
+      dirty
+      saving={saving}
+      onSave={create}
+      main={
+        <>
+          <Card title="描述 / 复现步骤">
+            <DescriptionField value={description} onChange={setDescription} />
+          </Card>
+          <p className="text-[11px] text-white/35 px-1">创建后进入缺陷详情页，自动追溯到本产品；可在缺陷管理智能体继续处理流转。</p>
+        </>
+      }
+      sidebar={
+        <Card title="属性">
+          <div className="flex flex-col gap-3.5">
+            <div className="flex flex-col gap-1.5">
+              <FieldLabel>严重度</FieldLabel>
+              <div className="flex flex-wrap gap-1.5">
+                {DEFECT_SEVERITIES.map((s) => (
+                  <button key={s.v} type="button" onClick={() => setSeverity(severity === s.v ? '' : s.v)} className={chip(severity === s.v)}>{s.label}</button>
+                ))}
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <FieldLabel>优先级</FieldLabel>
+              <div className="flex gap-1.5">
+                {DEFECT_PRIORITIES.map((p) => (
+                  <button key={p.v} type="button" onClick={() => setPriority(priority === p.v ? '' : p.v)} className={chip(priority === p.v)}>{p.label}</button>
+                ))}
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <FieldLabel>处理人</FieldLabel>
+              <UserSearchSelect value={assigneeId} onChange={setAssigneeId} />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <FieldLabel>关联需求</FieldLabel>
+              <select className={selectCls} value={requirementId} onChange={(e) => setRequirementId(e.target.value)}>
+                <option value="">不关联</option>
+                {reqs.map((r) => <option key={r.id} value={r.id}>{r.title}</option>)}
+              </select>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <FieldLabel>关联版本</FieldLabel>
+              <select className={selectCls} value={versionId} onChange={(e) => setVersionId(e.target.value)}>
+                <option value="">不关联</option>
+                {versions.map((v) => <option key={v.id} value={v.id}>{v.versionName}</option>)}
+              </select>
+            </div>
           </div>
         </Card>
       }

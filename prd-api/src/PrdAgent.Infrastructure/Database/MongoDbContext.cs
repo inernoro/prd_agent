@@ -328,6 +328,7 @@ public class MongoDbContext
     public IMongoCollection<PmTask> PmTasks => _database.GetCollection<PmTask>("pm_tasks");
     public IMongoCollection<PmRewardConfig> PmRewardConfigs => _database.GetCollection<PmRewardConfig>("pm_reward_configs");
     public IMongoCollection<PmTaskActivity> PmTaskActivities => _database.GetCollection<PmTaskActivity>("pm_task_activities");
+    public IMongoCollection<PmTaskWorkLog> PmTaskWorkLogs => _database.GetCollection<PmTaskWorkLog>("pm_task_work_logs");
     public IMongoCollection<PmKnowledgeFile> PmKnowledgeFiles => _database.GetCollection<PmKnowledgeFile>("pm_knowledge_files");
     public IMongoCollection<PmDecision> PmDecisions => _database.GetCollection<PmDecision>("pm_decisions");
     public IMongoCollection<PmWeeklyReport> PmWeeklyReports => _database.GetCollection<PmWeeklyReport>("pm_weekly_reports");
