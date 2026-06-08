@@ -67,7 +67,9 @@ try {
               lines.push(stamp('diag ' + data.slice(0, 220)));
             } else if (curEvent === 'done') {
               lines.push(stamp('DONE len=' + data.length));
-              return { lines, firstDelta, firstDiag, ended: 'done' };
+              let html = '';
+              try { html = JSON.parse(data).html || ''; } catch {}
+              return { lines, firstDelta, firstDiag, ended: 'done', html };
             } else if (curEvent === 'error') {
               lines.push(stamp('ERROR ' + data.slice(0, 300)));
               return { lines, firstDelta, firstDiag, ended: 'error' };
@@ -88,6 +90,10 @@ try {
   for (const l of result.lines) console.log(l);
   console.log('--- SUMMARY ---');
   console.log(JSON.stringify({ firstDiagMs: result.firstDiag, firstDeltaMs: result.firstDelta, ended: result.ended || 'timeout' }));
+  if (result.html && process.env.DUMP_HTML) {
+    require('fs').writeFileSync(process.env.DUMP_HTML, result.html);
+    console.log('HTML_DUMPED', process.env.DUMP_HTML, result.html.length);
+  }
 } catch (e) {
   console.log('PROBE_ERR', e?.message || e);
 } finally {
