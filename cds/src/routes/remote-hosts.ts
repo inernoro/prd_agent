@@ -1576,6 +1576,7 @@ function authenticateProjectRequest(
   pairing: CdsPairingService,
   requiredScopes: string[],
 ): { ok: true } | { ok: false; status: number; code: string; message: string } {
+  // [#746 obs-auth] 仪表盘操作者放行。
   // 单租户 CDS 上,人类 cookie 登录(`_cdsCookieAuth`,由 server.ts 主鉴权中间件盖章)
   // 与 AI 超级密钥会话(`_aiSession`)都是 admin 等价 —— 直接放行,不要求项目连接 token。
   // 不加这条,仪表盘操作者点「Sidecar Pool / Agent 会话」卡片会永远 401(端点只认
