@@ -455,6 +455,6 @@ export function getOverviewKnowledge() {
 export function getOverviewGraph() {
   return apiRequest<{ nodes: GraphNode[]; edges: GraphEdge[] }>('/api/product/overview/graph');
 }
-export function createProductDefect(productId: string, body: { title: string; description?: string; severity?: string; priority?: string; assigneeId?: string | null; requirementId?: string; versionId?: string }) {
+export function createProductDefect(productId: string, body: { title: string; description?: string; severity?: string; priority?: string; assigneeId?: string | null; featureId?: string; versionId?: string }) {
   return apiRequest<TracedDefect>(`/api/product/products/${productId}/defects`, { method: 'POST', body });
 }

@@ -1412,6 +1412,7 @@ public class ProductAgentController : ControllerBase
             TracedProductId = productId,
             TracedRequirementId = request.RequirementId,
             TracedVersionId = request.VersionId,
+            TracedFeatureId = request.FeatureId,
         };
         await _db.DefectReports.InsertOneAsync(defect);
         await RecalcDefectCountAsync(productId);
@@ -2803,6 +2804,7 @@ public class CreateProductDefectRequest
     public string? AssigneeId { get; set; }
     public string? RequirementId { get; set; }
     public string? VersionId { get; set; }
+    public string? FeatureId { get; set; }
 }
 
 public class RelationAnalysisRequest

@@ -681,30 +681,53 @@ function CreateDefectForm({ productId, onCreated }: { productId: string; onCreat
   const [severity, setSeverity] = useState('');
   const [priority, setPriority] = useState('');
   const [assigneeId, setAssigneeId] = useState('');
-  const [requirementId, setRequirementId] = useState('');
+  const [featureId, setFeatureId] = useState('');
   const [versionId, setVersionId] = useState('');
-  const [reqs, setReqs] = useState<Requirement[]>([]);
+  const [versionTouched, setVersionTouched] = useState(false);
+  const [features, setFeatures] = useState<Feature[]>([]);
   const [versions, setVersions] = useState<ProductVersion[]>([]);
+  const [featureVersions, setFeatureVersions] = useState<FeatureVersion[]>([]);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     void (async () => {
-      const [r, v] = await Promise.all([listRequirements(productId), listVersions(productId)]);
-      if (r.success && r.data) setReqs(r.data.items);
+      const [f, v, fv] = await Promise.all([listFeatures(productId), listVersions(productId), listFeatureVersions(productId)]);
+      if (f.success && f.data) setFeatures(f.data.items);
       if (v.success && v.data) setVersions(v.data.items);
+      if (fv.success && fv.data) setFeatureVersions(fv.data.items);
     })();
   }, [productId]);
 
+  // 版本默认填充所选功能的版本号（取该功能最新关联的版本），用户未手动改过时随功能联动。
+  const versionCreatedAt = useMemo(() => new Map(versions.map((v) => [v.id, v.createdAt])), [versions]);
+  const defaultVersionForFeature = useCallback(
+    (fid: string): string => {
+      if (!fid) return '';
+      const linked = featureVersions.filter((x) => x.featureId === fid).map((x) => x.versionId);
+      if (linked.length === 0) return '';
+      // 取关联版本里创建时间最新的那个作为默认
+      return linked.sort((a, b) => (versionCreatedAt.get(b) ?? '').localeCompare(versionCreatedAt.get(a) ?? ''))[0] ?? '';
+    },
+    [featureVersions, versionCreatedAt],
+  );
+
+  const onFeatureChange = (fid: string) => {
+    setFeatureId(fid);
+    if (!versionTouched) setVersionId(defaultVersionForFeature(fid));
+  };
+
+  const canSubmit = !!title.trim() && !!priority && !!featureId;
+
   const create = async () => {
-    if (!title.trim()) return;
+    if (!canSubmit) return;
     setSaving(true);
     const res = await createProductDefect(productId, {
       title: title.trim(),
       description: description || undefined,
       severity: severity || undefined,
-      priority: priority || undefined,
+      priority,
       assigneeId: assigneeId || null,
-      requirementId: requirementId || undefined,
+      featureId,
       versionId: versionId || undefined,
     });
     setSaving(false);
@@ -722,7 +745,7 @@ function CreateDefectForm({ productId, onCreated }: { productId: string; onCreat
       title={title}
       onTitleChange={setTitle}
       titlePlaceholder="缺陷标题"
-      dirty
+      dirty={canSubmit}
       saving={saving}
       onSave={create}
       main={
@@ -730,7 +753,10 @@ function CreateDefectForm({ productId, onCreated }: { productId: string; onCreat
           <Card title="描述 / 复现步骤">
             <DescriptionField value={description} onChange={setDescription} />
           </Card>
-          <p className="text-[11px] text-white/35 px-1">创建后进入缺陷详情页，自动追溯到本产品；可在缺陷管理智能体继续处理流转。</p>
+          {!canSubmit && (
+            <p className="text-[11px] text-amber-300/70 px-1">请填写「标题」「优先级」「关联功能」后才能提交。</p>
+          )}
+          <p className="text-[11px] text-white/35 px-1">创建后进入缺陷详情页，自动追溯到本产品与所选功能；可在缺陷管理智能体继续处理流转。</p>
         </>
       }
       sidebar={
@@ -745,10 +771,10 @@ function CreateDefectForm({ productId, onCreated }: { productId: string; onCreat
               </div>
             </div>
             <div className="flex flex-col gap-1.5">
-              <FieldLabel>优先级</FieldLabel>
+              <FieldLabel required>优先级</FieldLabel>
               <div className="flex gap-1.5">
                 {DEFECT_PRIORITIES.map((p) => (
-                  <button key={p.v} type="button" onClick={() => setPriority(priority === p.v ? '' : p.v)} className={chip(priority === p.v)}>{p.label}</button>
+                  <button key={p.v} type="button" onClick={() => setPriority(p.v)} className={chip(priority === p.v)}>{p.label}</button>
                 ))}
               </div>
             </div>
@@ -757,18 +783,20 @@ function CreateDefectForm({ productId, onCreated }: { productId: string; onCreat
               <UserSearchSelect value={assigneeId} onChange={setAssigneeId} />
             </div>
             <div className="flex flex-col gap-1.5">
-              <FieldLabel>关联需求</FieldLabel>
-              <select className={selectCls} value={requirementId} onChange={(e) => setRequirementId(e.target.value)}>
-                <option value="">不关联</option>
-                {reqs.map((r) => <option key={r.id} value={r.id}>{r.title}</option>)}
+              <FieldLabel required>关联功能</FieldLabel>
+              <select className={selectCls} value={featureId} onChange={(e) => onFeatureChange(e.target.value)}>
+                <option value="">请选择功能</option>
+                {features.map((f) => <option key={f.id} value={f.id}>{f.title}</option>)}
               </select>
+              <span className="text-[10px] text-white/30">缺陷通过功能关联到需求，请先选择所属功能。</span>
             </div>
             <div className="flex flex-col gap-1.5">
               <FieldLabel>关联版本</FieldLabel>
-              <select className={selectCls} value={versionId} onChange={(e) => setVersionId(e.target.value)}>
+              <select className={selectCls} value={versionId} onChange={(e) => { setVersionTouched(true); setVersionId(e.target.value); }}>
                 <option value="">不关联</option>
                 {versions.map((v) => <option key={v.id} value={v.id}>{v.versionName}</option>)}
               </select>
+              <span className="text-[10px] text-white/30">默认填充所选功能的版本，可手动调整。</span>
             </div>
           </div>
         </Card>
