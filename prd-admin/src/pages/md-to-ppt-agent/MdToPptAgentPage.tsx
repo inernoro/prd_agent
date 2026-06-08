@@ -24,6 +24,16 @@ import {
 type InputTab = 'text' | 'file';
 type GenPhase = 'idle' | 'streaming' | 'done' | 'error' | 'patching';
 
+// 生成阶段提示文案（按已等待秒数滚动），保证屏幕在等待时持续有变化（CLAUDE §6 / 2 秒定理）。
+function genStageMsg(sec: number, isPatch: boolean): string {
+  if (isPatch) return sec < 8 ? '正在理解修改指令…' : sec < 25 ? '正在重排指定页面…' : '正在收尾排版…';
+  if (sec < 5) return '正在分析内容结构…';
+  if (sec < 18) return '正在设计版式与配色…';
+  if (sec < 38) return '正在逐页生成幻灯片…';
+  if (sec < 60) return '正在排版与收尾…';
+  return '内容较多，正在精修中（大模型生成约需 1 分钟）…';
+}
+
 const THEME_OPTIONS = [
   { value: 'dark-glass', label: '深色玻璃' },
   { value: 'light-clean', label: '浅色简洁' },
@@ -54,6 +64,18 @@ export function MdToPptAgentPage() {
 
   // Diag log (agent engine only)
   const [diagLines, setDiagLines] = useState<MdToPptDiagEvent[]>([]);
+
+  // 等待计时（秒）—— 用于生成期间的进度反馈，避免静止空白（CLAUDE §6）
+  const [elapsedSec, setElapsedSec] = useState(0);
+  useEffect(() => {
+    if (phase !== 'streaming' && phase !== 'patching') {
+      setElapsedSec(0);
+      return;
+    }
+    setElapsedSec(0);
+    const t = window.setInterval(() => setElapsedSec((s) => s + 1), 1000);
+    return () => window.clearInterval(t);
+  }, [phase]);
 
   // Patch state
   const [patchRequest, setPatchRequest] = useState('');
@@ -540,11 +562,17 @@ export function MdToPptAgentPage() {
                   wordBreak: 'break-all',
                 }}
               >
-                <div className="text-[10px] text-[var(--text-tertiary)] mb-2 font-sans">
-                  {phase === 'patching' ? '正在修改指定页面…' : '正在生成 HTML PPT…'}
+                <div className="text-[10px] text-[var(--text-tertiary)] mb-2 font-sans flex items-center gap-2">
+                  <span>{phase === 'patching' ? '正在修改指定页面…' : '正在生成 HTML PPT…'}</span>
                   {engine === 'agent' && (
-                    <span className="ml-2 text-blue-400/70">（CDS Agent 路径）</span>
+                    <span className="text-blue-400/70">（CDS Agent 路径）</span>
                   )}
+                  <span className="ml-auto tabular-nums text-[var(--text-secondary)]">{elapsedSec}s</span>
+                </div>
+                {/* 持续变化的阶段提示 + 品牌 spinner，避免空白等待（CLAUDE §6） */}
+                <div className="mb-3 flex items-center gap-2 text-[11px] text-[var(--text-secondary)] font-sans">
+                  <MapSpinner size={12} />
+                  <span>{genStageMsg(elapsedSec, phase === 'patching')}</span>
                 </div>
                 {streamBuffer}
                 <span className="inline-block w-1 h-3 bg-green-400 animate-pulse ml-0.5" />
