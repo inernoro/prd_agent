@@ -1393,12 +1393,19 @@ public class ProductAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "缺陷标题不能为空"));
 
         var user = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
+        // 处理人（对齐新建需求）：有指派则回填显示名
+        string? assigneeName = null;
+        if (!string.IsNullOrWhiteSpace(request.AssigneeId))
+            assigneeName = (await _db.Users.Find(u => u.UserId == request.AssigneeId).FirstOrDefaultAsync())?.DisplayName;
         var defect = new DefectReport
         {
             DefectNo = await GenerateNoAsync("DEF", _db.DefectReports, "DefectNo"),
             Title = request.Title.Trim(),
             RawContent = request.Description?.Trim() ?? string.Empty,
             Severity = request.Severity,
+            Priority = DefectPriority.All.Contains(request.Priority ?? "") ? request.Priority : null,
+            AssigneeId = string.IsNullOrWhiteSpace(request.AssigneeId) ? null : request.AssigneeId,
+            AssigneeName = assigneeName,
             Status = DefectStatus.Submitted,
             ReporterId = userId,
             ReporterName = user?.DisplayName,
@@ -2618,6 +2625,8 @@ public class CreateProductDefectRequest
     public string Title { get; set; } = string.Empty;
     public string? Description { get; set; }
     public string? Severity { get; set; }
+    public string? Priority { get; set; }
+    public string? AssigneeId { get; set; }
     public string? RequirementId { get; set; }
     public string? VersionId { get; set; }
 }
