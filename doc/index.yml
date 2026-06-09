@@ -98,6 +98,7 @@ docs:
   design.knowledge-agent-architecture: CDS Agent 工作区基础设施模型（文件夹/知识库为主，GitHub 降级为钩子）
   design.cds-onboarding: CDS 极简上手设计：一键配置 + 项目扫描技能
   design.cds-ai-compose: CDS AI 生成 compose 草稿设计（可选路径，借用 CDS Agent/OpenRouter，确定性检测器为兜底）
+  design.cds-skill-version-update: CDS 技能版本与更新架构（单一版本来源 + cdscli update 固定路径）
   design.ai-report-systems: AI 周报系统市场调研报告
   design.exec-bt-deployment: CDS 部署架构与冲突分析
   design.model-pool-failover: 模型池故障转移与自动探活设计
@@ -300,6 +301,7 @@ docs:
   debt.peer-sync: 系统级跨节点互传（Peer Sync）债务台账
   debt.task-tree: 个人任务树 Agent · 债务台账
   debt.web-hosting-comments: 网页托管评论 · 债务台账
+  debt.cds-nginx-loading-pages: CDS loading pages 债务台账
 
   # ── 七、周报（降序：最新在前）──
   report.agent-universe-completeness: 智能体宇宙 · 各智能体完备度看板（终极目标 vs 当前进度）
@@ -351,3 +353,4 @@ docs:
   report.skill-eval-sample-diataxis: 文档技能评测·documentation-writer（Diátaxis）样本输出
   report.cds-mongo-log-split-incident-2026-05-23: CDS Mongo 日志拆分事故复盘（2026-05-23）
   report.tutorial-coverage: 页面教程全量路由覆盖审计（2026-06-04）
+  report.cds-agent-ux-acceptance-2026-06-06: CDS Agent 体验修复验收 · 报告（2026-06-06）

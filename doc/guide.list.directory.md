@@ -312,6 +312,8 @@
   > 数据模型 / Controller / SpeechAgentService 流式拆大纲 / SSE 协议 / compute-then-send 落地
 - [CDS AI 生成 compose 草稿设计](design.cds-ai-compose) `design.cds-ai-compose`
   > 从 Railway 首次部署路径抽象 CDS 一键部署、运行环境选择、基础设施创建和可观察性闭环
+- [CDS 技能版本与更新架构](design.cds-skill-version-update) `design.cds-skill-version-update`
+  > 单一可判断的版本来源，旧版 cdscli 在日常 API 调用中自动发现落后并通过 cdscli update 升级
 
 - [缺陷分享与 Agent 技能修复架构](design.defect-agent-share-skill-architecture) `design.defect-agent-share-skill-architecture`
   > 缺陷分享中心、外部 Agent 技能接入与修复报告闭环的架构设计
@@ -728,6 +730,7 @@
 - [CDS 教程（示例工程 + 隔离知识库 + 评分/自愈）· 债务台账](debt.cds-tutorial) `debt.cds-tutorial`
 - [CDS 绝对可视化一键部署 · 债务台账](debt.cds-visual-deploy) `debt.cds-visual-deploy`
   > 5 条 open：--write 重序列化丢注释 / 自愈覆盖面有限 / 占位值需人工 / 真机冒烟依赖 CDS / 发布脚本需真实 owner
+- [CDS loading pages 债务台账](debt.cds-nginx-loading-pages) `debt.cds-nginx-loading-pages`
 
 - [演讲智能体 · 债务台账](debt.speech-agent) `debt.speech-agent`
   > 11 条 open：输入仅支持粘贴 / 视图非画布 / 无 Run-Worker / 无配图 / 无备注 / 无播放态 / 无发布 / 白天主题待适配 / 无节点增删 / 无 chunk / CDS 自测待补
