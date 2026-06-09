@@ -247,6 +247,7 @@ Code changes to `prd-api/`, `prd-admin/`, `prd-desktop/`, `prd-video/` require a
   | feat | prd-admin | Added XX feature |
   | fix | prd-api | Fixed XX issue |
   ```
+- Allowed type keys: `feat`, `fix`, `perf`, `refactor`, `docs`, `chore`, `test`, `ci`, `security`, `ops`, `style`, `polish`, `rule`, `merge`, `revert`.
 - On release: `bash scripts/assemble-changelog.sh` merges fragments into `CHANGELOG.md`
 
 ### 4. LLM Interaction Visibility
