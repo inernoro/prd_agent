@@ -46,12 +46,13 @@ public class MdToPptController : ControllerBase
             "你是顶级演示设计师，作品对标 Apple Keynote / Stripe / Linear / Vercel 的发布会幻灯。" +
             "唯一任务：直接输出一个完整、惊艳、可直接演示的 reveal.js HTML 文件。禁止调用任何工具或执行命令，禁止输出任何解释或代码块标记。\n\n" +
             "## 硬技术规范\n" +
-            "- reveal.js 4.x CDN：https://cdn.jsdelivr.net/npm/reveal.js@4/dist/reveal.js + reveal.css（不引官方主题，用下面的自定义主题）\n" +
-            "- 初始化：Reveal.initialize({ hash:false, transition:'slide', slideNumber:'c/t', controls:true, progress:true, center:true, margin:0.06 })（不要写 width/height，让它自适应容器）\n" +
-            "- <head> 必须在 reveal.js 之前加载 Google Fonts：<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\"><link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin><link href=\"https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap\" rel=\"stylesheet\">\n" +
+            "- reveal.js 4.x CDN：https://cdn.jsdelivr.net/npm/reveal.js@4/dist/reveal.js + reveal.css（不引官方主题，完全用下面的自定义主题）\n" +
+            "- 初始化：Reveal.initialize({ hash:false, transition:'fade', slideNumber:'c/t', controls:true, progress:true, center:true, margin:0.06 })（不要写 width/height，让它自适应容器）\n" +
+            "- <head> 字体：前端会注入全套字体（Inter / JetBrains Mono / Newsreader / Hanken Grotesk / Playfair Display / Space Grotesk / Noto Sans SC），你只需按本次风格在 CSS 里引用正确字体名\n" +
             "- 全部 CSS 内联在 <head> 的 <style> 里；输出完整 <!DOCTYPE html>…</html>；不要 markdown 代码围栏\n" +
             "- 绝对禁止任何 emoji 字符（一切表情/符号图标都不许）；需要图标时只用 inline SVG 或 CSS 几何图形\n" +
-            "- 绝对禁止对标题/正文用 `color:transparent` + `background-clip:text`（嵌入式渲染常常不生效，会导致文字整页消失）；标题一律用实色 var(--ink)，渐变只能用在 .orb/.bar 等非文字装饰上\n\n" +
+            "- 绝对禁止对标题/正文用 `color:transparent` + `background-clip:text`（嵌入式渲染常常不生效，会导致文字整页消失）；标题一律用实色 var(--ink)，渐变只能用在 .orb/.bar 等非文字装饰上\n" +
+            "- 前端会在 </head> 前额外注入主题 CSS 覆盖层（!important），所以你的 CSS 变量和 html/body/.reveal 背景颜色必须在你的 <style> 里原样写出来，以便覆盖层对齐\n\n" +
             "## 本次风格：" + tone + "\n" +
             "严格按上面的风格走（配色、底色、气质），把下面这套 CSS 设计 token 与组件类原样落进 <style>，并在每页真正用上（这是质量下限不是参考）：\n" +
             "```\n" +
@@ -92,18 +93,18 @@ public class MdToPptController : ControllerBase
             ".step-item p{font-size:.82rem;color:var(--muted);margin:0;line-height:1.4;}\n" +
             "```\n\n" +
             "## 每页强制结构（杜绝『一行居中标题』的空洞页）\n" +
-            "除封面/结语外，每一页都必须包含：① 一个 .eyebrow 小标签 → ② 一个 .title-md 标题 → ③ 结构化正文（卡片网格 / 数据 / 对比 / 列表，至少一种）→ ④ 至少一个视觉装置（.orb 光晕、.bar 强调条、卡片、或大号 .stat）。绝不允许出现只有一句话居中、四周大片空白的页。\n\n" +
+            "除封面/结语外，每一页都必须包含：① 一个 .eyebrow 小标签 → ② 一个 .title-md 标题 → ③ 结构化正文（卡片网格 / 数据 / 对比 / 列表，至少一种）→ ④ 至少一个视觉装置（.orb 光晕、.bar 强调条、卡片、大号 .stat、或版式独特的大字编排）。绝不允许出现只有一句话居中、四周大片空白的页。\n\n" +
             "## 版式库（按内容选用，全篇至少混用 5 种，禁止每页雷同）\n" +
-            "1. 封面：.orb 光晕背景 + .eyebrow + 超大 .title-xl 标题 + .lead 副标题 + 底部 .chip 行（作者/日期/标签）\n" +
+            "1. 封面：（暗色主题）.orb 光晕背景 + .eyebrow + 超大 .title-xl 标题 + .lead 副标题 + 底部 .chip 行；（亮色主题）大字占满页面 2/3 + 纤细副标题 + 底部 hairline 分隔\n" +
             "2. 要点卡片：.grid.g3 或 .g2，每个 .card 一个要点（标题 + 说明），禁止写成裸列表\n" +
-            "3. 数据看板：.grid.g3，每格 .stat 大数字 + .stat-l 说明，纯数据页视觉震撼\n" +
-            "4. 两栏对比：.grid.g2，左『现状/问题』右『方案/结果』各一张 .card，对比清晰\n" +
+            "3. 数据看板（Big Numbers）：.grid.g3 或 .g4，每格顶部 kicker 标签 + 超大 .stat 数字 + 下方说明，「大数字压住版面」的视觉冲击，有边界线分隔格子\n" +
+            "4. 两栏对比：.grid.g2，左『现状/问题』右『方案/结果』各一张 .card，或各一条竖线分隔的文字块，对比清晰\n" +
             "5. 功能特性列表：3-4 个 .feat 条目竖排，每条含图标方块 + 标题 + 说明，替代普通列表\n" +
-            "6. 对比表格：.table 展示多列对比（功能/价格/优劣/指标），比卡片更直观\n" +
-            "7. 流程步骤：.step-row 横向流程图（3-4 步），每步序号圆 + 标题 + 说明\n" +
-            "8. 金句/转场：.quote 大字引用 + 左侧强调条 + .orb 背景，用于重要观点\n" +
+            "6. 对比表格：.table 展示多列对比（功能/价格/优劣/指标），表头加 kicker 样式\n" +
+            "7. 流程步骤：.step-row 横向流程图（3-4 步），每步序号圆 + 标题 + 说明，圆间连接线\n" +
+            "8. 金句/章节转场：.quote 大字引用（font-size:clamp(28px,4vw,54px)）+ 左侧强调条 + 淡化引用符号，用于重要观点或章节分隔\n" +
             "9. 标注提示：.callout 高亮框 + 重要结论，搭配其他内容出现\n" +
-            "10. 结语：居中 .title-xl + 一句行动号召 + .chip 联系方式\n\n" +
+            "10. 结语：居中 .title-xl + 一句行动号召 + .chip 联系方式，或左对齐大字 + 右侧装饰图形\n\n" +
             "## 质量自检（输出前逐条过）\n" +
             "- 全篇是否真的用了至少 5 种不同版式？每页版式与前后页都不同？\n" +
             "- 是否至少出现了一页 .feat 功能列表、一页 .stat 数据看板或 .table 对比表？\n" +
@@ -117,49 +118,55 @@ public class MdToPptController : ControllerBase
     }
 
     // 按风格主题返回（CSS token 块 + 风格气质描述）。前端「风格模板」下拉的 5 个值各对应一套配色。
+    // 5 套主题借鉴 open-design 模板库，视觉各异：Tech 极黑 / 钴蓝格纸 / 纸墨编辑 / 复古 Zine / Swiss 极简
     private static (string tokens, string tone) ThemeTokens(string? theme)
     {
-        switch ((theme ?? "dark-glass").Trim().ToLowerInvariant())
+        switch ((theme ?? "tech-dark").Trim().ToLowerInvariant())
         {
-            case "light-clean":
+            case "cobalt-grid":
                 return (
-                    ":root{--bg:#f7f8fc;--bg2:#eef1f8;--ink:#0f172a;--muted:#5b6478;--line:rgba(15,23,42,.1);--card:#ffffff;--a1:#4f46e5;--a2:#0891b2;--a3:#7c3aed;--orb-op:.18;}\nhtml,body,.reveal{background:linear-gradient(180deg,#ffffff,#eef2fb);}\n",
-                    "浅色简洁（Notion/文档风）——白底深字、大量留白。" +
-                    "特别要求：.card 必须用白色背景 + 浅灰边框；.orb 透明度极低（仅作点缀）；" +
-                    "优先用 .table 对比表和 .feat 功能列表展示信息，少用大面积深色背景块；" +
-                    "封面 .title-xl 用深墨色（--ink），整体感觉干净克制");
-            case "gradient-purple":
+                    ":root{--bg:#F0EBDE;--bg2:#E6E0CE;--ink:#1F2BE0;--muted:#5560E5;--line:rgba(31,43,224,.2);--card:rgba(31,43,224,.06);--a1:#1F2BE0;--a2:#5560E5;--a3:#002FA7;--orb-op:0;}\n" +
+                    "html,body,.reveal{background-color:#F0EBDE;}\n",
+                    "钴蓝格纸（Cobalt Grid 风）——奶油纸底（#F0EBDE）+ 电气钴蓝（#1F2BE0），前端会叠加格纸底纹。" +
+                    "字体：h1/h2 用 Newsreader 斜体衬线（font-style:italic；font-weight:400）；h3/h4 用 Hanken Grotesk 全大写；正文 Inter。" +
+                    "所有文字统一用钴蓝 var(--ink)；.card 用 rgba(31,43,224,.06) 极浅蓝底 + 1px 钴蓝边；" +
+                    "禁止任何暗色背景块；.stat 数字用 var(--a1)；标题不渐变；整体感觉如高档设计杂志或博物馆图录");
+            case "editorial-ink":
                 return (
-                    ":root{--bg:#1a0b2e;--bg2:#2d1b4e;--ink:#fdf4ff;--muted:#c8b6dc;--line:rgba(255,255,255,.12);--card:rgba(255,255,255,.07);--a1:#c084fc;--a2:#f472b6;--a3:#a855f7;--orb-op:.55;}\nhtml,body,.reveal{background:radial-gradient(1000px 700px at 70% 0%,#3b1d6e 0%,#1a0b2e 60%);}\n",
-                    "紫色渐变（营销/发布会风）——深紫底 + 粉紫霓虹、超大光晕。" +
-                    "特别要求：封面必须有巨大 .orb 光晕占整个背景右上角；" +
-                    "多用 .stat 大数字页（用 --a1/#c084fc 紫色数字）；" +
-                    "用 .quote 引用页做转场；.card 有明显毛玻璃感（rgba 白/7%）；" +
-                    "整体视觉大胆、充满动感，如 Figma/Framer 发布会 PPT");
-            case "corporate-blue":
+                    ":root{--bg:#f1efea;--bg2:#e8e4dc;--ink:#0a0a0b;--muted:#3a382f;--line:rgba(10,10,11,.15);--card:#ffffff;--a1:#0a0a0b;--a2:#3a382f;--a3:#6b665b;--orb-op:0;}\n" +
+                    "html,body,.reveal{background:#f1efea;}\n",
+                    "纸墨编辑（Magazine Editorial 风）——暖纸底（#f1efea）+ 墨黑字（#0a0a0b），如 Monocle/《卫报》杂志排版。" +
+                    "字体：h1/h2 用 Playfair Display 斜体衬线（font-style:italic；font-weight:500）；h3/h4 用 Inter 全大写小字（font-size:.75em；letter-spacing:.1em）；正文 Inter。" +
+                    "严禁任何彩色：文字一律 var(--ink) 黑；强调用 border-left 竖线或横向 hairline；" +
+                    ".stat 大数字黑色；.card 白底浅灰边框；.quote 左侧细竖条 var(--ink)；" +
+                    "整体克制纯净，排版节奏如高品质印刷杂志内文，不用任何光晕效果");
+            case "warm-zine":
                 return (
-                    ":root{--bg:#0a1628;--bg2:#0f2138;--ink:#eef6ff;--muted:#8aa0bd;--line:rgba(255,255,255,.1);--card:rgba(255,255,255,.05);--a1:#2563eb;--a2:#38bdf8;--a3:#3b82f6;--orb-op:.4;}\nhtml,body,.reveal{background:linear-gradient(160deg,#0f2138,#0a1628);}\n",
-                    "商务蓝（企业汇报/方案风）——藏青深底 + 蓝色系强调色。" +
-                    "特别要求：多用 .table 对比表展示数据/功能/规格；" +
-                    "用 .step-row 流程图展示方案步骤；.stat 数字用蓝色（--a1/#2563eb）；" +
-                    ".callout 高亮重要结论；封面用正式 .eyebrow + 标题 + 副标题结构；" +
-                    "整体克制稳重，没有过度装饰，如麦肯锡/咨询公司 PPT");
-            case "warm-earth":
+                    ":root{--bg:#C8B99A;--bg2:#B8A98A;--ink:#1A1A1A;--muted:#3d3830;--line:rgba(26,26,26,.25);--card:#F4EFE6;--a1:#008F4D;--a2:#00A85D;--a3:#006B3A;--orb-op:0;}\n" +
+                    "html,body,.reveal{background:#C8B99A;}\n",
+                    "复古 Zine（Retro Zine 风）——暖褐纸底（#C8B99A）+ 近黑字 + 墨绿强调（#008F4D），复古报纸/独立杂志气质。" +
+                    "字体：h1/h2 用 Space Grotesk 超大号（font-size:clamp(44px,8vw,110px)；font-weight:700；line-height:.92）；h3/h4 绿色全大写（color:var(--a1)；letter-spacing:.16em）；正文 Space Grotesk。" +
+                    "大标题占据整版 2/3 高度；用 .table 展示数据时边框用 var(--ink)；" +
+                    ".stat 数字绿色 var(--a1)；.card 用 #F4EFE6 米白底 + 近黑边框；" +
+                    ".quote 左侧绿色粗竖条；整体大胆朴拙，不圆滑");
+            case "swiss-minimal":
                 return (
-                    ":root{--bg:#1c1410;--bg2:#2a1f17;--ink:#fdf6ee;--muted:#c8ad95;--line:rgba(255,255,255,.1);--card:rgba(255,255,255,.045);--a1:#f59e0b;--a2:#fb923c;--a3:#d97706;--orb-op:.45;}\nhtml,body,.reveal{background:radial-gradient(1000px 700px at 80% -10%,#3d2817 0%,#1c1410 60%);}\n",
-                    "暖色大地（品牌/故事风）——炭褐底 + 琥珀橙/暖橙强调色。" +
-                    "特别要求：多用 .quote 金句页（用橙色 --a1/#f59e0b 左侧条）；" +
-                    ".feat 列表带圆角橙色图标方块；.stat 数字用暖橙色；" +
-                    ".card 背景微暖（卡片有轻微暖褐色）；" +
-                    "整体质感温暖有力，如餐饮/品牌/创意公司 Deck");
-            default:
+                    ":root{--bg:#fafaf8;--bg2:#f0ede8;--ink:#0a0a0a;--muted:#555;--line:rgba(10,10,10,.12);--card:#ffffff;--a1:#002FA7;--a2:#4455cc;--a3:#001d85;--orb-op:0;}\n" +
+                    "html,body,.reveal{background:#fafaf8;}\n",
+                    "Swiss 极简（Swiss International Style）——近白底（#fafaf8）+ 极黑字 + IKB 蓝（#002FA7），如包豪斯/瑞士国际风格海报。" +
+                    "字体：h1/h2 用 Inter 极黑全大写（font-weight:900；letter-spacing:-.03em；text-transform:uppercase）；h3/h4 用 IKB 蓝全大写细字（color:var(--a1)；letter-spacing:.14em；font-size:.72em）；正文 Inter。" +
+                    "严格网格排版，大量留白；前端会注入顶部/底部细 hairline；" +
+                    "颜色只用黑与蓝，完全禁止渐变、光晕、装饰性色块；" +
+                    ".stat 数字全大写蓝色；.table 表头蓝色全大写；整体理性精准，如 Apple 发布会 keynote 的极简版");
+            default: // tech-dark
                 return (
-                    ":root{--bg:#070b18;--bg2:#0f1530;--ink:#f6f8ff;--muted:#9aa6c4;--line:rgba(255,255,255,.09);--card:rgba(255,255,255,.045);--a1:#6366f1;--a2:#22d3ee;--a3:#a855f7;--orb-op:.5;}\nhtml,body,.reveal{background:radial-gradient(1200px 800px at 80% -10%,#1b2350 0%,var(--bg) 55%);}\n",
-                    "深色玻璃（科技/SaaS 风，对标 Vercel/Linear）——近黑底 + 靛蓝/青/紫霓虹、毛玻璃卡片。" +
-                    "特别要求：封面 .orb 背景光晕覆盖右上 1/3；" +
-                    "多用 .feat 功能列表（左侧渐变方块图标）和 .stat 数据大字（靛蓝 --a1/#6366f1）；" +
-                    ".card 要有真实毛玻璃感（rgba(255,255,255,0.045)）；" +
-                    ".step-row 流程图用青色（--a2/#22d3ee）连接线；整体未来感强");
+                    ":root{--bg:#0d1117;--bg2:#161b22;--ink:#e6edf3;--muted:#8b949e;--line:rgba(139,148,158,.22);--card:#161b22;--a1:#7ee787;--a2:#79c0ff;--a3:#d2a8ff;--orb-op:.14;}\n" +
+                    "html,body,.reveal{background:#0d1117;}\n",
+                    "Tech 极黑（GitHub Dark 风，对标 GitHub/Stripe/Linear）——极深黑底（#0d1117）+ 草绿 mono 标题（#7ee787）+ 蓝色链接，代码感强。" +
+                    "字体：h1/h2/h3 用 JetBrains Mono（font-family:'JetBrains Mono',monospace；font-weight:700；color:var(--a1)）；正文 Inter；kicker 用 .eyebrow class（mono 字体）。" +
+                    "特别要求：封面 kicker 前加 '> ' 前缀；多用 .feat 功能列表（绿色图标方块）；" +
+                    ".stat 数字用草绿 var(--a1)；.card 用深灰 #161b22 底 + 细灰边；" +
+                    ".step-row 步骤连接线用青色 var(--a2)；整体终端/代码风格，不用圆润装饰");
         }
     }
 

@@ -84,30 +84,86 @@ interface KbEntry {
 const SESSION_KEY = 'md-to-ppt-chat-v1';
 
 const THEME_OPTIONS = [
-  { value: 'dark-glass', label: '深色玻璃' },
-  { value: 'light-clean', label: '浅色简洁' },
-  { value: 'gradient-purple', label: '紫色渐变' },
-  { value: 'corporate-blue', label: '商务蓝' },
-  { value: 'warm-earth', label: '暖色大地' },
+  { value: 'tech-dark', label: 'Tech 极黑' },
+  { value: 'cobalt-grid', label: '钴蓝格纸' },
+  { value: 'editorial-ink', label: '纸墨编辑' },
+  { value: 'warm-zine', label: '复古 Zine' },
+  { value: 'swiss-minimal', label: 'Swiss 极简' },
 ];
 
-// 主题 CSS 变量覆盖（前端注入，确保无论 LLM 输出什么，主题色始终正确）
+// 主题 CSS 覆盖层（open-design 风格，前端注入到 iframe）
+// 策略：用 !important 直接覆盖 reveal.js 自身 CSS，确保无论 LLM 输出什么主题色都正确
 const THEME_CSS_OVERRIDES: Record<string, string> = {
-  'dark-glass':
-    ':root{--bg:#070b18;--bg2:#0f1530;--ink:#f6f8ff;--muted:#9aa6c4;--line:rgba(255,255,255,.09);--card:rgba(255,255,255,.045);--a1:#6366f1;--a2:#22d3ee;--a3:#a855f7;--orb-op:.5;}' +
-    'html,body,.reveal{background:radial-gradient(1200px 800px at 80% -10%,#1b2350 0%,#070b18 55%)!important;}',
-  'light-clean':
-    ':root{--bg:#f7f8fc;--bg2:#eef1f8;--ink:#0f172a;--muted:#5b6478;--line:rgba(15,23,42,.1);--card:#ffffff;--a1:#4f46e5;--a2:#0891b2;--a3:#7c3aed;--orb-op:.18;}' +
-    'html,body,.reveal{background:linear-gradient(180deg,#ffffff,#eef2fb)!important;}.reveal .slides section{color:var(--ink)!important;}',
-  'gradient-purple':
-    ':root{--bg:#1a0b2e;--bg2:#2d1b4e;--ink:#fdf4ff;--muted:#c8b6dc;--line:rgba(255,255,255,.12);--card:rgba(255,255,255,.07);--a1:#c084fc;--a2:#f472b6;--a3:#a855f7;--orb-op:.55;}' +
-    'html,body,.reveal{background:radial-gradient(1000px 700px at 70% 0%,#3b1d6e 0%,#1a0b2e 60%)!important;}',
-  'corporate-blue':
-    ':root{--bg:#0a1628;--bg2:#0f2138;--ink:#eef6ff;--muted:#8aa0bd;--line:rgba(255,255,255,.1);--card:rgba(255,255,255,.05);--a1:#2563eb;--a2:#38bdf8;--a3:#3b82f6;--orb-op:.4;}' +
-    'html,body,.reveal{background:linear-gradient(160deg,#0f2138,#0a1628)!important;}',
-  'warm-earth':
-    ':root{--bg:#1c1410;--bg2:#2a1f17;--ink:#fdf6ee;--muted:#c8ad95;--line:rgba(255,255,255,.1);--card:rgba(255,255,255,.045);--a1:#f59e0b;--a2:#fb923c;--a3:#d97706;--orb-op:.45;}' +
-    'html,body,.reveal{background:radial-gradient(1000px 700px at 80% -10%,#3d2817 0%,#1c1410 60%)!important;}',
+  // Tech 极黑：GitHub-dark 风格，绿色 mono 标题，代码感
+  'tech-dark':
+    ':root{--bg:#0d1117;--bg2:#161b22;--ink:#e6edf3;--muted:#8b949e;--line:rgba(139,148,158,.22);--card:#161b22;--a1:#7ee787;--a2:#79c0ff;--a3:#d2a8ff;--orb-op:.14;}' +
+    'html,body,.reveal,.reveal-viewport{background:#0d1117!important;}' +
+    '.reveal{color:#e6edf3!important;}' +
+    '.reveal .slides section{background:transparent!important;color:#e6edf3!important;}' +
+    '.reveal h1,.reveal h2,.reveal h3,.reveal h4,.reveal h5,.reveal h6{color:#7ee787!important;font-family:"JetBrains Mono","IBM Plex Mono",monospace!important;font-weight:700!important;letter-spacing:-.02em!important;}' +
+    '.reveal p,.reveal li,.reveal td,.reveal th{color:#e6edf3!important;}' +
+    '.reveal blockquote{color:#8b949e!important;border-left:3px solid #7ee787!important;}' +
+    '.reveal a{color:#79c0ff!important;}' +
+    '.reveal .progress span{background:#7ee787!important;}' +
+    '.reveal .controls button{color:#7ee787!important;}' +
+    '.reveal .slides section::before{content:"";position:absolute;inset:0;background:radial-gradient(600px 500px at 90% 0%,rgba(126,231,135,.1),transparent 70%),radial-gradient(500px 400px at 10% 100%,rgba(121,192,255,.08),transparent 70%);pointer-events:none;z-index:0;}',
+  // 钴蓝格纸：cream paper + electric cobalt，带格纸底纹，Newsreader 斜体
+  'cobalt-grid':
+    ':root{--bg:#F0EBDE;--bg2:#E6E0CE;--ink:#1F2BE0;--muted:#5560E5;--line:rgba(31,43,224,.2);--card:rgba(31,43,224,.06);--a1:#1F2BE0;--a2:#5560E5;--a3:#002FA7;--orb-op:0;}' +
+    'html,body,.reveal,.reveal-viewport{background-color:#F0EBDE!important;background-image:linear-gradient(rgba(31,43,224,.09) 1px,transparent 1px),linear-gradient(to right,rgba(31,43,224,.09) 1px,transparent 1px)!important;background-size:40px 40px!important;}' +
+    '.reveal{color:#1F2BE0!important;}' +
+    '.reveal .slides section{background:transparent!important;color:#1F2BE0!important;}' +
+    '.reveal h1,.reveal h2{font-family:"Newsreader",Georgia,serif!important;font-style:italic!important;font-weight:400!important;color:#1F2BE0!important;line-height:.92!important;}' +
+    '.reveal h3,.reveal h4,.reveal h5,.reveal h6{font-family:"Hanken Grotesk","Inter",sans-serif!important;font-weight:700!important;color:#1F2BE0!important;text-transform:uppercase!important;letter-spacing:.12em!important;font-style:normal!important;}' +
+    '.reveal p,.reveal li,.reveal td,.reveal th{color:#1F2BE0!important;}' +
+    '.reveal a{color:#002FA7!important;}' +
+    '.reveal .progress span{background:#1F2BE0!important;}' +
+    '.reveal .controls button{color:#1F2BE0!important;}',
+  // 纸墨编辑：杂志风，Playfair Display 斜体大标，暖纸底
+  'editorial-ink':
+    ':root{--bg:#f1efea;--bg2:#e8e4dc;--ink:#0a0a0b;--muted:#3a382f;--line:rgba(10,10,11,.15);--card:#ffffff;--a1:#0a0a0b;--a2:#3a382f;--a3:#6b665b;--orb-op:0;}' +
+    'html,body,.reveal,.reveal-viewport{background:#f1efea!important;}' +
+    '.reveal{color:#0a0a0b!important;}' +
+    '.reveal .slides section{background:transparent!important;color:#0a0a0b!important;}' +
+    '.reveal h1,.reveal h2{font-family:"Playfair Display","Noto Serif SC",Georgia,serif!important;font-style:italic!important;font-weight:500!important;color:#0a0a0b!important;line-height:.95!important;letter-spacing:-.01em!important;}' +
+    '.reveal h3,.reveal h4,.reveal h5,.reveal h6{font-family:"Inter","Noto Sans SC",sans-serif!important;font-weight:700!important;color:#0a0a0b!important;letter-spacing:.1em!important;text-transform:uppercase!important;font-style:normal!important;font-size:.75em!important;}' +
+    '.reveal p,.reveal li{color:#0a0a0b!important;font-family:"Inter","Noto Sans SC",sans-serif!important;}' +
+    '.reveal td,.reveal th{color:#0a0a0b!important;}' +
+    '.reveal blockquote{color:#3a382f!important;border-left:3px solid #0a0a0b!important;}' +
+    '.reveal a{color:#0a0a0b!important;text-decoration:underline!important;}' +
+    '.reveal .progress span{background:#0a0a0b!important;}' +
+    '.reveal .controls button{color:#0a0a0b!important;}',
+  // 复古 Zine：暖褐色 + 墨绿，Space Grotesk，报纸/Zine 质感
+  'warm-zine':
+    ':root{--bg:#C8B99A;--bg2:#B8A98A;--ink:#1A1A1A;--muted:#3d3830;--line:rgba(26,26,26,.25);--card:#F4EFE6;--a1:#008F4D;--a2:#00A85D;--a3:#006B3A;--orb-op:0;}' +
+    'html,body,.reveal,.reveal-viewport{background:#C8B99A!important;}' +
+    '.reveal{color:#1A1A1A!important;}' +
+    '.reveal .slides section{background:transparent!important;color:#1A1A1A!important;}' +
+    '.reveal h1,.reveal h2{font-family:"Space Grotesk","Inter",sans-serif!important;font-weight:700!important;color:#1A1A1A!important;line-height:.92!important;letter-spacing:-.02em!important;}' +
+    '.reveal h3,.reveal h4,.reveal h5,.reveal h6{font-family:"Space Grotesk","Inter",sans-serif!important;font-weight:600!important;color:#008F4D!important;text-transform:uppercase!important;letter-spacing:.16em!important;font-size:.78em!important;}' +
+    '.reveal p,.reveal li{color:#1A1A1A!important;font-family:"Space Grotesk","Inter",sans-serif!important;}' +
+    '.reveal td,.reveal th{color:#1A1A1A!important;}' +
+    '.reveal blockquote{color:#3d3830!important;border-left:3px solid #008F4D!important;}' +
+    '.reveal a{color:#008F4D!important;}' +
+    '.reveal .progress span{background:#008F4D!important;}' +
+    '.reveal .controls button{color:#008F4D!important;}',
+  // Swiss 极简：IKB 蓝（#002FA7）+ 近白，极简排版，发卡线
+  'swiss-minimal':
+    ':root{--bg:#fafaf8;--bg2:#f0ede8;--ink:#0a0a0a;--muted:#555;--line:rgba(10,10,10,.12);--card:#ffffff;--a1:#002FA7;--a2:#4455cc;--a3:#001d85;--orb-op:0;}' +
+    'html,body,.reveal,.reveal-viewport{background:#fafaf8!important;}' +
+    '.reveal{color:#0a0a0a!important;}' +
+    '.reveal .slides section{background:transparent!important;color:#0a0a0a!important;}' +
+    '.reveal h1,.reveal h2{font-family:"Inter","Noto Sans SC",sans-serif!important;font-weight:900!important;color:#0a0a0a!important;line-height:.95!important;letter-spacing:-.03em!important;text-transform:uppercase!important;}' +
+    '.reveal h3,.reveal h4,.reveal h5,.reveal h6{font-family:"Inter","Noto Sans SC",sans-serif!important;font-weight:600!important;color:#002FA7!important;text-transform:uppercase!important;letter-spacing:.14em!important;font-size:.72em!important;}' +
+    '.reveal p,.reveal li{color:#0a0a0a!important;}' +
+    '.reveal td,.reveal th{color:#0a0a0a!important;}' +
+    '.reveal th{color:#002FA7!important;font-weight:700!important;letter-spacing:.08em!important;}' +
+    '.reveal blockquote{color:#555!important;border-left:2px solid #002FA7!important;}' +
+    '.reveal a{color:#002FA7!important;}' +
+    '.reveal .progress span{background:#002FA7!important;}' +
+    '.reveal .controls button{color:#002FA7!important;}' +
+    '.reveal .slides section::before{content:"";position:absolute;top:24px;left:40px;right:40px;height:1px;background:rgba(0,47,167,.3);pointer-events:none;}' +
+    '.reveal .slides section::after{content:"";position:absolute;bottom:24px;left:40px;right:40px;height:1px;background:rgba(0,47,167,.15);pointer-events:none;}',
 };
 
 // 按内容长度估算页数（约 700 字/页，夹在 4~20 页）
@@ -174,14 +230,16 @@ function prepareIframeHtml(html: string, theme?: string): string {
     "document.addEventListener('click',function(e){var t=e.target;while(t&&t!==document){if(t.tagName==='A'){var h=t.getAttribute('href')||'';if(h&&h.charAt(0)!=='#'){e.preventDefault();e.stopPropagation();}break;}t=t.parentNode;}},true);" +
     '}catch(e){}})();</script>';
 
-  // 3. Google Fonts（Inter 字重 400-900，允许跨源 CSS 加载）
+  // 3. 所有主题字体（允许跨源 CSS 加载，不受 opaque origin 限制）
+  // 涵盖 5 个主题：Inter/JetBrains Mono(tech-dark) / Newsreader+Hanken Grotesk(cobalt-grid) /
+  //   Playfair Display(editorial-ink) / Space Grotesk(warm-zine) / Inter Tight(swiss-minimal)
   const fonts =
     '<link rel="preconnect" href="https://fonts.googleapis.com">' +
     '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>' +
-    '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">';
+    '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Newsreader:ital,wght@0,400;0,500;1,300;1,400&family=Hanken+Grotesk:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,400;0,700;0,800;1,400;1,600&family=Space+Grotesk:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@300;400;700&display=swap" rel="stylesheet">';
 
   // 4. 主题 CSS 强制覆盖（放在 </head> 前，最高级联叠加层，确保 LLM 输出的主题始终正确）
-  const themeCss = THEME_CSS_OVERRIDES[theme ?? 'dark-glass'] ?? THEME_CSS_OVERRIDES['dark-glass'];
+  const themeCss = THEME_CSS_OVERRIDES[theme ?? 'tech-dark'] ?? THEME_CSS_OVERRIDES['tech-dark'];
   const themeOverride = '<style id="__map_theme_override__">' + themeCss + '</style>';
 
   const headInject = storageshim + navguard + fonts;
@@ -483,7 +541,7 @@ function OutlineBubble({ msg, onConfirm, onAdjust, disabled }: OutlineBubbleProp
 
 export function MdToPptAgentPage() {
   // ─── Global settings (收进设置区，不占对话空间）
-  const [theme, setTheme] = useState('dark-glass');
+  const [theme, setTheme] = useState('tech-dark');
   const [engine, setEngine] = useState<MdToPptEngine>('map');
   const [showSettings, setShowSettings] = useState(false);
 
@@ -542,7 +600,7 @@ export function MdToPptAgentPage() {
     const saved = loadSession();
     if (!saved) return;
 
-    setTheme(saved.theme ?? 'dark-glass');
+    setTheme(saved.theme ?? 'tech-dark');
     setEngine(saved.engine ?? 'map');
     setMessages(saved.messages ?? []);
 
