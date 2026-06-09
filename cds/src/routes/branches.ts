@@ -898,26 +898,32 @@ export async function validateBuildReadiness(
   // (未批准 native build)等 gate 上 exit 1 → master-run exit 78 → systemd 崩溃循环。
   // 2026-06-08 两次 502 事故(CI=true / pnpm-workspace.yaml 占位字符串)都是从这个
   // 缓存 skip 的缝里溜过去的:tsc 过了、cached install skip 了,真实启动才崩。
-  // 这里用 master-run 的**确切命令**跑一次,把"编译过但启动崩"挡在 swap 之前。
-  const bootInstall = await shell.exec(
-    'pnpm install --frozen-lockfile --prefer-offline',
-    { cwd: cdsDir, timeout: 240_000 },
-  );
-  if (bootInstall.exitCode !== 0) {
-    const err = (combinedOutput(bootInstall) || 'boot install 失败').slice(0, 600);
-    timings['total_ms'] = Date.now() - validateStartedAt;
-    progress({
-      phase: 'validate-install',
-      status: 'error',
-      message: `boot 预检失败(master-run 的 pnpm install 会崩,已阻止 swap): ${formatValidationTimings(timings)}`,
-      timings: { ...timings },
-    });
-    return {
-      ok: false,
-      stage: 'install',
-      error: `boot 预检失败 — master-run 启动时的 \`pnpm install --frozen-lockfile --prefer-offline\` 退出非零(若放行将导致 systemd 崩溃循环 502): ${err}`,
-      timings,
-    };
+  //
+  // 只在上面 helper **跳过了真实 install**(命中缓存 stamp)时才补跑这条 boot 预检:
+  // 那才是"真实 pnpm install 行为尚未被验证"的危险缝隙。若 helper 本轮已经用**同一条**
+  // 命令真实跑过且成功,再跑第二遍纯属重复(双倍 install 时间 + 第二次偶发失败可能误伤),
+  // helper 自己那次就已经是等价的 boot 预检了。
+  if (installResult._timing.skipped) {
+    const bootInstall = await shell.exec(
+      'pnpm install --frozen-lockfile --prefer-offline',
+      { cwd: cdsDir, timeout: 240_000 },
+    );
+    if (bootInstall.exitCode !== 0) {
+      const err = (combinedOutput(bootInstall) || 'boot install 失败').slice(0, 600);
+      timings['total_ms'] = Date.now() - validateStartedAt;
+      progress({
+        phase: 'validate-install',
+        status: 'error',
+        message: `boot 预检失败(master-run 的 pnpm install 会崩,已阻止 swap): ${formatValidationTimings(timings)}`,
+        timings: { ...timings },
+      });
+      return {
+        ok: false,
+        stage: 'install',
+        error: `boot 预检失败 — master-run 启动时的 \`pnpm install --frozen-lockfile --prefer-offline\` 退出非零(若放行将导致 systemd 崩溃循环 502): ${err}`,
+        timings,
+      };
+    }
   }
 
   progress({

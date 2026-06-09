@@ -1571,18 +1571,41 @@ interface CdsManagedRuntimeResult {
 }
 
 function authenticateProjectRequest(
-  req: { headers: { authorization?: string | string[] | undefined }; _cdsCookieAuth?: boolean; _aiSession?: unknown },
+  req: {
+    headers: { authorization?: string | string[] | undefined };
+    _cdsCookieAuth?: boolean;
+    _aiSession?: unknown;
+    cdsProjectKey?: { projectId: string; keyId: string };
+  },
   projectId: string,
   pairing: CdsPairingService,
   requiredScopes: string[],
 ): { ok: true } | { ok: false; status: number; code: string; message: string } {
-  // [#746 obs-auth] 仪表盘操作者放行。
-  // 单租户 CDS 上,人类 cookie 登录(`_cdsCookieAuth`,由 server.ts 主鉴权中间件盖章)
-  // 与 AI 超级密钥会话(`_aiSession`)都是 admin 等价 —— 直接放行,不要求项目连接 token。
-  // 不加这条,仪表盘操作者点「Sidecar Pool / Agent 会话」卡片会永远 401(端点只认
-  // Bearer 连接 token,而浏览器带的是 cds_token cookie),观测面板形同虚设。
-  if (req._cdsCookieAuth === true || req._aiSession) {
+  // [#746 obs-auth] 仪表盘操作者放行 —— 人类 cookie 登录(`_cdsCookieAuth`,由 server.ts
+  // 主鉴权中间件盖章)是 admin 等价,直接放行。不加这条,仪表盘操作者点「Sidecar Pool /
+  // Agent 会话」卡片会永远 401(端点只认 Bearer 连接 token,而浏览器带的是 cds_token cookie)。
+  if (req._cdsCookieAuth === true) {
     return { ok: true };
+  }
+  // AI 会话分两种(server.ts resolveAiSession):
+  //  - 全局超级密钥(AI_ACCESS_KEY):有 `_aiSession`、无 `cdsProjectKey` → admin 等价,放行。
+  //  - 项目级 Agent Key(cdsp_*):同时带 `_aiSession` 和 `cdsProjectKey={projectId,keyId}`,
+  //    只能访问自己被授权的那个项目。绝不能把它当 admin 等价 —— 否则给项目 A 签的 key 改下
+  //    URL 里的 projectId 就能列/控制项目 B 的 Agent 会话(跨租户越权,Codex P1)。
+  if (req._aiSession) {
+    const projectKey = req.cdsProjectKey;
+    if (!projectKey) {
+      return { ok: true };
+    }
+    if (projectKey.projectId === projectId) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      status: 403,
+      code: 'project_mismatch',
+      message: 'project-scoped key cannot access another project',
+    };
   }
   const token = extractBearerToken(req.headers.authorization);
   const connection = pairing.authenticateLongToken(token);
