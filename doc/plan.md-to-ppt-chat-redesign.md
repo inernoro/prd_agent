@@ -89,7 +89,7 @@ AI patch，右侧实时更新。引擎（MAP/CDS Agent）+ 风格模板收进设
 **Phase 1 验收（能跑标准）**：
 - 在对话框输入"把这段内容做成 PPT"（带一个附件或 KB 引用）→ 出大纲 → 确认 → 右侧出真 reveal 网页 PPT，可翻页。
 - 刷新页面对话 + 结果还在（复用落库重连）。
-- 用真实知识库文章走通一遍（参考 `.claude/skills/create-visual-test-to-kb/scripts/kb-acceptance.mjs` 的真人路径取证）。
+- 用真实知识库文章走通一遍（用 `.claude/skills/create-visual-test-to-kb/scripts/harness.mjs` 走真人路径取证）。
 
 ### Phase 2：对话式多轮精修（自然语言 patch）
 
@@ -107,7 +107,7 @@ AI patch，右侧实时更新。引擎（MAP/CDS Agent）+ 风格模板收进设
 ## 5. 技术约束 / 质量门
 
 - **遵守 CLAUDE.md 全部强制规则**：禁 emoji（含代码字面量）；LLM 调用走 `ILlmGateway` + `LlmRequestContext.BeginScope`（规则见 `llm-gateway.md`）；AppCallerCode 注册（`app-caller-registry.md`）；server-authority（`CancellationToken.None`）；前端无业务状态 SSOT；模态/全高布局规则。
-- **改完先视觉验收再说"好了"**（血泪教训）：用 `.claude/skills/create-visual-test-to-kb` 的真人路径 + 本地 inline reveal 渲染核对（参考本分支 `render-inline.mjs` / `mdppt-acceptance-driver*.mjs`）。
+- **改完先视觉验收再说"好了"**（血泪教训）：用 `.claude/skills/create-visual-test-to-kb` 的真人路径取证（`harness.mjs` / `example-driver.mjs`），本地 inline reveal 渲染核对自己写临时脚本即可，别再往技能 scripts 目录里堆一次性 driver。
 - 后端无本地 dotnet → 走预览部署编译验证（`cds-first-verification.md`）。前端 `pnpm tsc --noEmit` + `pnpm lint` 零新增告警。
 - 任何新出图 HTML 必须过 `StripCodeFences`(去 emoji) + `InjectDeckCssFix`(orb 修复)。
 
@@ -119,7 +119,7 @@ AI patch，右侧实时更新。引擎（MAP/CDS Agent）+ 风格模板收进设
 - 后端模型：`prd-api/src/PrdAgent.Core/Models/MdToPptRun.cs`（+ 可能新增 Conversation）
 - 集合注册：`prd-api/src/PrdAgent.Infrastructure/Database/MongoDbContext.cs`
 - 附件 / 知识库 / 连接器复用：grep `document-store`、`attachment`、现有 "+" 菜单组件
-- 验收脚手架：`.claude/skills/create-visual-test-to-kb/scripts/`（kb-acceptance / render-inline / mdppt-acceptance-driver）
+- 验收脚手架：`.claude/skills/create-visual-test-to-kb/scripts/`（harness / example-driver / verify-open / archive_report）
 
 ## 7. 一句话给执行者
 
