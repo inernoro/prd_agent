@@ -3941,6 +3941,44 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return false;
   }
 
+  function buildResourcePermissionSummary(req: Request, branch: BranchEntry, resource: UnifiedBranchResource): {
+    role: ResourcePermissionRole;
+    productionLike: boolean;
+    actions: Record<ResourcePermissionAction, { allowed: boolean; requiredRole: ResourcePermissionRole; reason?: string }>;
+  } {
+    const role = resolveResourcePermissionRole(req);
+    const rank = resourcePermissionRank(role);
+    const actions = [
+      'resource-restart',
+      'external-temporary-access',
+      'external-policy-admin',
+      'database-clone',
+      'database-connect-existing',
+      'backup-create',
+      'backup-restore',
+      'credentials-reset',
+      'connection-inject',
+      'data-clear',
+      'data-write',
+      'resource-delete',
+    ] as const satisfies readonly ResourcePermissionAction[];
+    const result = {} as Record<ResourcePermissionAction, { allowed: boolean; requiredRole: ResourcePermissionRole; reason?: string }>;
+    for (const action of actions) {
+      const requiredRole = requiredResourceRole(action, branch, resource);
+      const allowed = rank >= resourcePermissionRank(requiredRole);
+      result[action] = {
+        allowed,
+        requiredRole,
+        ...(allowed ? {} : { reason: `当前角色 ${role} 需要 ${requiredRole} 权限才能执行 ${action}` }),
+      };
+    }
+    return {
+      role,
+      productionLike: isProductionLikeResource(branch, resource),
+      actions: result,
+    };
+  }
+
   function decodeResourceId(raw: string): string {
     try { return decodeURIComponent(raw); } catch { return raw; }
   }
@@ -5890,6 +5928,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
       .filter((entry) => entry.branchId === branch.id && entry.resourceId === resourceId)
       .slice(0, limit);
     res.json({ branchId: branch.id, resourceId, logs, total: logs.length });
+  });
+
+  router.get('/branches/:id/resources/:resourceId/permissions', async (req, res) => {
+    const branch = stateService.getBranch(req.params.id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return;
+    }
+    const projectId = branch.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) { res.status(m.status).json(m.body); return; }
+    const resourceId = decodeResourceId(req.params.resourceId);
+    const resources = await getBranchResourceSnapshot(branch);
+    const resource = resources.find((item) => item.id === resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${resourceId}" 不存在` });
+      return;
+    }
+    const permissions = buildResourcePermissionSummary(req, branch, resource);
+    res.json({ branchId: branch.id, resourceId, ...permissions });
   });
 
   router.get('/branches/:id/resources/:resourceId/data/tables', async (req, res) => {

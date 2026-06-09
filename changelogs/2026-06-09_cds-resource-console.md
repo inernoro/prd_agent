@@ -12,3 +12,4 @@
 | feat | cds | 资源级备份恢复扩展到 PostgreSQL、MongoDB、Redis，PostgreSQL/MongoDB 支持空库创建、clone-main 和从备份创建分支独立库 |
 | feat | cds | 资源设置页新增清空数据、删除分支数据库、执行写 SQL 的危险操作入口，后端强制管理员权限、资源名确认、安全备份和审计日志 |
 | fix | cds | MySQL clone-main 复制任务现在检查 mysqldump/mysql 导入退出码，失败时正确落到任务失败状态并记录失败原因 |
+| feat | cds | 新增资源权限摘要 API，资源控制台按服务端判定的 member/developer/admin 权限禁用重启、外部访问、备份恢复、凭据、克隆和危险操作按钮 |

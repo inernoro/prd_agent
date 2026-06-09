@@ -2718,6 +2718,40 @@ function BuildLogsPanel({ logs, query, selection }: { logs: OperationLog[]; quer
 }
 
 type ResourceAction = 'start' | 'stop' | 'restart';
+type ResourcePermissionRole = 'member' | 'developer' | 'admin';
+type ResourcePermissionAction =
+  | 'resource-restart'
+  | 'external-temporary-access'
+  | 'external-policy-admin'
+  | 'database-clone'
+  | 'database-connect-existing'
+  | 'backup-create'
+  | 'backup-restore'
+  | 'credentials-reset'
+  | 'connection-inject'
+  | 'data-clear'
+  | 'data-write'
+  | 'resource-delete';
+
+interface ResourcePermissionSummary {
+  role: ResourcePermissionRole;
+  productionLike: boolean;
+  actions: Record<ResourcePermissionAction, {
+    allowed: boolean;
+    requiredRole: ResourcePermissionRole;
+    reason?: string;
+  }>;
+}
+
+function resourcePermissionAllows(permissions: ResourcePermissionSummary | null, action: ResourcePermissionAction): boolean {
+  if (!permissions) return false;
+  return permissions.actions[action]?.allowed === true;
+}
+
+function resourcePermissionReason(permissions: ResourcePermissionSummary | null, action: ResourcePermissionAction): string {
+  if (!permissions) return '权限信息加载中';
+  return permissions.actions[action]?.reason || `需要 ${permissions.actions[action]?.requiredRole || 'developer'} 权限`;
+}
 
 function ResourceConsole({
   resources,
@@ -2754,10 +2788,42 @@ function ResourceConsole({
   }, [resources]);
   const [detailTab, setDetailTab] = useState<'overview' | 'connection' | 'data' | 'backups' | 'variables' | 'metrics' | 'logs' | 'settings'>('overview');
   const [resourceMutation, setResourceMutation] = useState<string | null>(null);
+  const [permissionState, setPermissionState] = useState<{
+    status: 'idle' | 'loading' | 'ok' | 'error';
+    resourceId?: string;
+    permissions: ResourcePermissionSummary | null;
+    message?: string;
+  }>({ status: 'idle', permissions: null });
 
   useEffect(() => {
     setDetailTab('overview');
   }, [selectedResource?.id]);
+
+  useEffect(() => {
+    if (!selectedResource?.branchId) {
+      setPermissionState({ status: 'idle', permissions: null });
+      return;
+    }
+    let cancelled = false;
+    setPermissionState({ status: 'loading', resourceId: selectedResource.id, permissions: null });
+    apiRequest<ResourcePermissionSummary>(
+      `/api/branches/${encodeURIComponent(selectedResource.branchId)}/resources/${encodeURIComponent(selectedResource.id)}/permissions`,
+    )
+      .then((permissions) => {
+        if (!cancelled) setPermissionState({ status: 'ok', resourceId: selectedResource.id, permissions });
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setPermissionState({
+            status: 'error',
+            resourceId: selectedResource.id,
+            permissions: null,
+            message: err instanceof ApiError ? err.message : String(err),
+          });
+        }
+      });
+    return () => { cancelled = true; };
+  }, [selectedResource?.branchId, selectedResource?.id]);
 
   if (resources.length === 0) {
     return (
@@ -2786,6 +2852,8 @@ function ResourceConsole({
       ['logs', '日志'],
       ['settings', '设置'],
     ] as const;
+  const currentPermissions = permissionState.resourceId === selectedResource?.id ? permissionState.permissions : null;
+  const canRestartResource = resourcePermissionAllows(currentPermissions, 'resource-restart');
 
   return (
     <section className="cds-surface-raised cds-hairline overflow-hidden">
@@ -2796,10 +2864,19 @@ function ResourceConsole({
             <p className="mt-1 text-xs text-muted-foreground">应用容器、数据库、缓存和中间件使用同一套状态、端口和连接模型。</p>
           </div>
           {selectedResource ? (
-            <span className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs ${statusClass(selectedResource.status)}`}>
-              <span className={`h-1.5 w-1.5 rounded-full ${statusRailClass(selectedResource.status)}`} />
-              {resourceStatusLabel(selectedResource.status)}
-            </span>
+            <div className="flex flex-wrap justify-end gap-2">
+              <span className="inline-flex h-7 items-center rounded-md border border-[hsl(var(--hairline))] px-2 text-xs text-muted-foreground">
+                {permissionState.status === 'loading'
+                  ? '权限加载中'
+                  : permissionState.status === 'error'
+                    ? '权限未知'
+                    : `当前角色：${currentPermissions?.role || 'admin'}`}
+              </span>
+              <span className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs ${statusClass(selectedResource.status)}`}>
+                <span className={`h-1.5 w-1.5 rounded-full ${statusRailClass(selectedResource.status)}`} />
+                {resourceStatusLabel(selectedResource.status)}
+              </span>
+            </div>
           ) : null}
         </div>
       </header>
@@ -2868,15 +2945,15 @@ function ResourceConsole({
                     </Button>
                   ) : (
                     <>
-                      <Button type="button" size="sm" variant="outline" onClick={() => void onInfraAction(selectedResource, 'start')}>
+                      <Button type="button" size="sm" variant="outline" disabled={!canRestartResource} title={!canRestartResource ? resourcePermissionReason(currentPermissions, 'resource-restart') : undefined} onClick={() => void onInfraAction(selectedResource, 'start')}>
                         <Play />
                         启动
                       </Button>
-                      <Button type="button" size="sm" variant="outline" onClick={() => void onInfraAction(selectedResource, 'restart')}>
+                      <Button type="button" size="sm" variant="outline" disabled={!canRestartResource} title={!canRestartResource ? resourcePermissionReason(currentPermissions, 'resource-restart') : undefined} onClick={() => void onInfraAction(selectedResource, 'restart')}>
                         <RefreshCw />
                         重启
                       </Button>
-                      <Button type="button" size="sm" variant="outline" onClick={() => void onInfraAction(selectedResource, 'stop')}>
+                      <Button type="button" size="sm" variant="outline" disabled={!canRestartResource} title={!canRestartResource ? resourcePermissionReason(currentPermissions, 'resource-restart') : undefined} onClick={() => void onInfraAction(selectedResource, 'stop')}>
                         <Square />
                         停止
                       </Button>
@@ -2904,6 +2981,7 @@ function ResourceConsole({
                 {detailTab === 'connection' ? (
                   <ResourceConnection
                     resource={selectedResource}
+                    permissions={currentPermissions}
                     externalBusy={resourceMutation === `${selectedResource.id}:external`}
                     resetBusy={resourceMutation === `${selectedResource.id}:credentials`}
                     injectBusy={resourceMutation === `${selectedResource.id}:inject`}
@@ -2938,6 +3016,7 @@ function ResourceConsole({
                 {detailTab === 'backups' ? (
                   <ResourceBackupsPanel
                     resource={selectedResource}
+                    permissions={currentPermissions}
                     busy={resourceMutation?.startsWith(`${selectedResource.id}:clone:`) || false}
                     onCreateCloneTask={async (input) => {
                       setResourceMutation(`${selectedResource.id}:clone:${input.mode}`);
@@ -2956,7 +3035,7 @@ function ResourceConsole({
                     ? <ServiceLogsPanel service={selectedResource.raw as ServiceState} state={serviceLogs} />
                     : <ResourceLogsPanel resource={selectedResource} />
                 ) : null}
-                {detailTab === 'settings' ? <ResourceSettingsPanel resource={selectedResource} /> : null}
+                {detailTab === 'settings' ? <ResourceSettingsPanel resource={selectedResource} permissions={currentPermissions} /> : null}
               </div>
             </>
           ) : null}
@@ -3006,6 +3085,7 @@ function ResourceOverview({ resource, branchName }: { resource: BranchResource; 
 
 function ResourceConnection({
   resource,
+  permissions,
   externalBusy,
   resetBusy,
   injectBusy,
@@ -3015,6 +3095,7 @@ function ResourceConnection({
   onInjectConnection,
 }: {
   resource: BranchResource;
+  permissions: ResourcePermissionSummary | null;
   externalBusy: boolean;
   resetBusy: boolean;
   injectBusy: boolean;
@@ -3028,6 +3109,9 @@ function ResourceConnection({
   const dependentApps = resource.consumers || [];
   const [allowlistDraft, setAllowlistDraft] = useState((resource.externalAccess?.allowlist || []).join('\n'));
   const [ttlDraft, setTtlDraft] = useState(resource.externalAccess?.expiresAt ? '120' : '120');
+  const canTemporaryExternal = resourcePermissionAllows(permissions, 'external-temporary-access');
+  const canResetCredentials = resourcePermissionAllows(permissions, 'credentials-reset');
+  const canInjectConnection = resourcePermissionAllows(permissions, 'connection-inject');
   const rows = [
     ['内部地址', resource.internalUrl || '-'],
     ['外部地址', externalEnabled ? externalAddress || '未开启' : externalAddress ? `${externalAddress}（未开启）` : '未开启'],
@@ -3072,7 +3156,8 @@ function ResourceConnection({
             type="button"
             size="sm"
             variant="outline"
-            disabled={externalBusy}
+            disabled={externalBusy || !canTemporaryExternal}
+            title={!canTemporaryExternal ? resourcePermissionReason(permissions, 'external-temporary-access') : undefined}
             onClick={() => {
               const allowlist = allowlistDraft
                 .split(/[\n,]/)
@@ -3125,11 +3210,11 @@ function ResourceConnection({
               </div>
             </div>
             <div className="flex shrink-0 flex-wrap justify-end gap-2">
-              <Button type="button" size="sm" variant="outline" disabled={resetBusy} onClick={() => void resetCredentials()}>
+              <Button type="button" size="sm" variant="outline" disabled={resetBusy || !canResetCredentials} title={!canResetCredentials ? resourcePermissionReason(permissions, 'credentials-reset') : undefined} onClick={() => void resetCredentials()}>
                 {resetBusy ? <Loader2 className="animate-spin" /> : <RotateCw />}
                 重置凭据
               </Button>
-              <Button type="button" size="sm" variant="outline" disabled={injectBusy || dependentApps.length === 0} onClick={() => void onInjectConnection()}>
+              <Button type="button" size="sm" variant="outline" disabled={injectBusy || dependentApps.length === 0 || !canInjectConnection} title={!canInjectConnection ? resourcePermissionReason(permissions, 'connection-inject') : undefined} onClick={() => void onInjectConnection()}>
                 {injectBusy ? <Loader2 className="animate-spin" /> : <Rocket />}
                 注入依赖应用
               </Button>
@@ -3861,14 +3946,20 @@ interface ResourceBackupEntry {
 
 function ResourceBackupsPanel({
   resource,
+  permissions,
   busy,
   onCreateCloneTask,
 }: {
   resource: BranchResource;
+  permissions: ResourcePermissionSummary | null;
   busy: boolean;
   onCreateCloneTask: (input: ResourceCloneInput) => Promise<void>;
 }): JSX.Element {
   const cloneTasks = resource.cloneTasks || [];
+  const canCloneDatabase = resourcePermissionAllows(permissions, 'database-clone');
+  const canConnectExisting = resourcePermissionAllows(permissions, 'database-connect-existing');
+  const canCreateBackup = resourcePermissionAllows(permissions, 'backup-create');
+  const canRestoreBackup = resourcePermissionAllows(permissions, 'backup-restore');
   const [backupState, setBackupState] = useState<{
     status: 'idle' | 'loading' | 'ok' | 'error';
     backups: ResourceBackupEntry[];
@@ -3960,7 +4051,7 @@ function ResourceBackupsPanel({
       <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-3">
         <div className="flex items-center justify-between gap-3">
           <div className="font-semibold">创建分支独立数据库</div>
-          <Button type="button" size="sm" variant="outline" disabled={busy || resource.kind !== 'database'} onClick={() => void onCreateCloneTask({ mode: 'empty' })}>
+          <Button type="button" size="sm" variant="outline" disabled={busy || resource.kind !== 'database' || !canCloneDatabase} title={!canCloneDatabase ? resourcePermissionReason(permissions, 'database-clone') : undefined} onClick={() => void onCreateCloneTask({ mode: 'empty' })}>
             {busy ? <Loader2 className="animate-spin" /> : <Database />}
             空库
           </Button>
@@ -3972,7 +4063,7 @@ function ResourceBackupsPanel({
       <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-3">
         <div className="flex items-center justify-between gap-3">
           <div className="font-semibold">{resource.runtime === 'MySQL' ? 'MySQL 快速复制' : '备份与恢复'}</div>
-          <Button type="button" size="sm" variant="outline" disabled={busy || resource.kind !== 'database'} onClick={() => void onCreateCloneTask({ mode: 'clone-main' })}>
+          <Button type="button" size="sm" variant="outline" disabled={busy || resource.kind !== 'database' || !canCloneDatabase} title={!canCloneDatabase ? resourcePermissionReason(permissions, 'database-clone') : undefined} onClick={() => void onCreateCloneTask({ mode: 'clone-main' })}>
             {busy ? <Loader2 className="animate-spin" /> : <Copy />}
             克隆 main/prod
           </Button>
@@ -3987,7 +4078,7 @@ function ResourceBackupsPanel({
             <div className="font-semibold">连接已有数据库</div>
             <div className="mt-1 text-xs leading-5 text-muted-foreground">把外部数据库连接串写入当前分支 scope，不修改主库；管理员操作会进入审计。</div>
           </div>
-          <Button type="button" size="sm" variant="outline" disabled={busy || resource.kind !== 'database'} onClick={() => void connectExistingDatabase()}>
+          <Button type="button" size="sm" variant="outline" disabled={busy || resource.kind !== 'database' || !canConnectExisting} title={!canConnectExisting ? resourcePermissionReason(permissions, 'database-connect-existing') : undefined} onClick={() => void connectExistingDatabase()}>
             {busy ? <Loader2 className="animate-spin" /> : <ExternalLink />}
             连接已有
           </Button>
@@ -4004,7 +4095,7 @@ function ResourceBackupsPanel({
               <RefreshCw className={backupState.status === 'loading' ? 'animate-spin' : ''} />
               刷新
             </Button>
-            <Button type="button" size="sm" variant="outline" disabled={busy || backupBusy !== null || resource.kind !== 'database' || backupState.supported === false} onClick={() => void createManualBackup()}>
+            <Button type="button" size="sm" variant="outline" disabled={busy || backupBusy !== null || resource.kind !== 'database' || backupState.supported === false || !canCreateBackup} title={!canCreateBackup ? resourcePermissionReason(permissions, 'backup-create') : undefined} onClick={() => void createManualBackup()}>
               {backupBusy === 'manual' ? <Loader2 className="animate-spin" /> : <Database />}
               手动备份
             </Button>
@@ -4025,11 +4116,11 @@ function ResourceBackupsPanel({
                   <div className="mt-0.5 text-muted-foreground">{formatBytes(backup.sizeBytes)} · {new Date(backup.createdAt).toLocaleString()}</div>
                 </div>
                 <span className="rounded border border-[hsl(var(--hairline))] px-2 py-0.5 text-muted-foreground">{backup.runtime}</span>
-                <Button type="button" size="sm" variant="outline" disabled={busy || backupBusy !== null} onClick={() => void restoreBackup(backup)}>
+                <Button type="button" size="sm" variant="outline" disabled={busy || backupBusy !== null || !canRestoreBackup} title={!canRestoreBackup ? resourcePermissionReason(permissions, 'backup-restore') : undefined} onClick={() => void restoreBackup(backup)}>
                   {backupBusy === 'restore' ? <Loader2 className="animate-spin" /> : <RotateCw />}
                   恢复
                 </Button>
-                <Button type="button" size="sm" variant="outline" disabled={busy || backupBusy !== null} onClick={() => void createDatabaseFromBackup(backup)}>
+                <Button type="button" size="sm" variant="outline" disabled={busy || backupBusy !== null || !canRestoreBackup} title={!canRestoreBackup ? resourcePermissionReason(permissions, 'backup-restore') : undefined} onClick={() => void createDatabaseFromBackup(backup)}>
                   <Database />
                   新库
                 </Button>
@@ -4110,7 +4201,7 @@ interface ResourceAuditLog {
   result?: 'success' | 'failed' | 'pending';
 }
 
-function ResourceSettingsPanel({ resource }: { resource: BranchResource }): JSX.Element {
+function ResourceSettingsPanel({ resource, permissions }: { resource: BranchResource; permissions: ResourcePermissionSummary | null }): JSX.Element {
   const [auditState, setAuditState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; logs: ResourceAuditLog[]; message?: string }>({ status: 'idle', logs: [] });
   const [dangerBusy, setDangerBusy] = useState<'clear' | 'delete' | 'write-sql' | null>(null);
   const [dangerSql, setDangerSql] = useState('');
@@ -4168,9 +4259,16 @@ function ResourceSettingsPanel({ resource }: { resource: BranchResource }): JSX.
   const supportsWriteSql = resource.runtime === 'MySQL' || resource.runtime === 'PostgreSQL';
   const supportsClear = resource.kind === 'database' || resource.kind === 'cache';
   const supportsDelete = resource.kind === 'database' && resource.runtime !== 'Redis';
+  const canClearData = resourcePermissionAllows(permissions, 'data-clear');
+  const canDeleteResource = resourcePermissionAllows(permissions, 'resource-delete');
+  const canWriteSql = resourcePermissionAllows(permissions, 'data-write');
 
   return (
     <div className="space-y-3 text-sm">
+      <div className={`rounded-md border px-3 py-2 text-xs leading-5 ${permissions ? 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 text-muted-foreground' : 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'}`}>
+        当前权限：{permissions ? permissions.role : '加载中'}。生产相关资源：{permissions?.productionLike ? '是' : '否'}。
+        {permissions?.role === 'member' ? '普通成员只能查看连接信息，写入类按钮会被禁用。' : null}
+      </div>
       <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
         危险操作保护：删除、清空数据、恢复覆盖、写 SQL、开启生产库公网访问必须二次确认，并记录操作者、时间、资源和结果。
       </div>
@@ -4182,11 +4280,11 @@ function ResourceSettingsPanel({ resource }: { resource: BranchResource }): JSX.
               <div className="mt-1 text-xs leading-5 text-muted-foreground">后端会校验管理员权限、资源名确认，并先创建安全备份。</div>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button type="button" size="sm" variant="outline" disabled={!supportsClear || dangerBusy !== null} onClick={() => void runDangerAction('clear')}>
+              <Button type="button" size="sm" variant="outline" disabled={!supportsClear || dangerBusy !== null || !canClearData} title={!canClearData ? resourcePermissionReason(permissions, 'data-clear') : undefined} onClick={() => void runDangerAction('clear')}>
                 {dangerBusy === 'clear' ? <Loader2 className="animate-spin" /> : <RotateCw />}
                 清空数据
               </Button>
-              <Button type="button" size="sm" variant="destructive" disabled={!supportsDelete || dangerBusy !== null} onClick={() => void runDangerAction('delete')}>
+              <Button type="button" size="sm" variant="destructive" disabled={!supportsDelete || dangerBusy !== null || !canDeleteResource} title={!canDeleteResource ? resourcePermissionReason(permissions, 'resource-delete') : undefined} onClick={() => void runDangerAction('delete')}>
                 {dangerBusy === 'delete' ? <Loader2 className="animate-spin" /> : <Trash2 />}
                 删除分支库
               </Button>
@@ -4202,7 +4300,7 @@ function ResourceSettingsPanel({ resource }: { resource: BranchResource }): JSX.
                 spellCheck={false}
               />
               <div className="flex justify-end">
-                <Button type="button" size="sm" variant="destructive" disabled={!dangerSql.trim() || dangerBusy !== null} onClick={() => void runDangerAction('write-sql')}>
+                <Button type="button" size="sm" variant="destructive" disabled={!dangerSql.trim() || dangerBusy !== null || !canWriteSql} title={!canWriteSql ? resourcePermissionReason(permissions, 'data-write') : undefined} onClick={() => void runDangerAction('write-sql')}>
                   {dangerBusy === 'write-sql' ? <Loader2 className="animate-spin" /> : <Play />}
                   执行写 SQL
                 </Button>
