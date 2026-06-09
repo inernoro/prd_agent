@@ -8,3 +8,4 @@
 | feat | prd-admin | MD转PPT：扩充字体栈（JetBrains Mono / Newsreader / Hanken Grotesk / Playfair Display / Space Grotesk / Noto Serif SC），各主题字形各异 |
 | feat | prd-api | MD转PPT：更新后端 ThemeTokens 5 个新主题描述，提示词强化字体/背景/层叠约定 |
 | fix | prd-admin | MD转PPT：修复刷新后历史记录丢失问题——改用 lazy useState initializer 在首次渲染前从 sessionStorage 恢复状态，消除 saveSession 以空初始 state 覆写的竞态 |
+| fix | prd-admin | MD转PPT：将工具注册到百宝箱 BUILTIN_TOOLS，修复百宝箱找不到「MD 转网页 PPT」卡片的 P1 缺陷 |
