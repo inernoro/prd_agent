@@ -1,5 +1,6 @@
 import http from 'node:http';
 import https from 'node:https';
+import { isIP } from 'node:net';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,7 +16,7 @@ import { classifyDeployRuntime, computeServiceDrift } from '../services/deploy-r
 import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
-import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, BuildProfileOverride, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project, ProjectActivityLog } from '../types.js';
+import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, BuildProfileOverride, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project, ProjectActivityLog, ResourceExternalAccessPolicy } from '../types.js';
 import { discoverComposeFiles, parseComposeFile, parseComposeString, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
@@ -1294,6 +1295,164 @@ async function collectListeningPorts(shell: IShellExecutor): Promise<Set<number>
   const result = await shell.exec('ss -H -ltn').catch(() => null);
   if (!result || result.exitCode !== 0) return new Set();
   return parseListenPorts(result.stdout);
+}
+
+function routeShellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function dockerNameSafeHash(parts: string[]): string {
+  return createHash('sha1').update(parts.join('\n')).digest('hex').slice(0, 20);
+}
+
+function resourceExternalProxyName(projectId: string, branchId: string, resourceId: string): string {
+  return `cds-ext-${dockerNameSafeHash([projectId, branchId, resourceId])}`;
+}
+
+function resourceExternalFirewallChain(projectId: string, branchId: string, resourceId: string): string {
+  return `CDS_EXT_${dockerNameSafeHash([projectId, branchId, resourceId]).slice(0, 16).toUpperCase()}`;
+}
+
+function resourceExternalPortRange(): { start: number; end: number } {
+  const startRaw = Number(process.env.CDS_RESOURCE_TCP_PORT_START);
+  const endRaw = Number(process.env.CDS_RESOURCE_TCP_PORT_END);
+  const start = Number.isFinite(startRaw) && startRaw >= 1024 && startRaw <= 65000 ? Math.floor(startRaw) : 43000;
+  const end = Number.isFinite(endRaw) && endRaw >= start && endRaw <= 65535 ? Math.floor(endRaw) : Math.min(65535, start + 1999);
+  return { start, end };
+}
+
+async function allocateResourceExternalPort(shell: IShellExecutor, preferred?: number): Promise<number> {
+  const used = await collectListeningPorts(shell);
+  const { start, end } = resourceExternalPortRange();
+  if (preferred && preferred >= 1024 && preferred <= 65535) return preferred;
+  for (let port = start; port <= end; port += 1) {
+    if (!used.has(port)) return port;
+  }
+  throw new Error(`资源公网 TCP 端口池已耗尽：${start}-${end}`);
+}
+
+function normalizeIpv4Allowlist(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const result: string[] = [];
+  for (const raw of input.slice(0, 20)) {
+    const item = String(raw || '').trim();
+    if (!item) continue;
+    const [ip, prefixRaw] = item.split('/');
+    if (isIP(ip) !== 4) {
+      throw new Error(`IP allowlist 目前仅支持 IPv4/CIDR：${item}`);
+    }
+    if (prefixRaw !== undefined) {
+      const prefix = Number(prefixRaw);
+      if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) {
+        throw new Error(`CIDR 前缀必须在 0-32 之间：${item}`);
+      }
+      result.push(`${ip}/${prefix}`);
+    } else {
+      result.push(`${ip}/32`);
+    }
+  }
+  return Array.from(new Set(result));
+}
+
+async function ensureDockerNetwork(shell: IShellExecutor, network: string): Promise<void> {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(network)) {
+    throw new Error(`Docker network 名称非法：${network}`);
+  }
+  const inspect = await shell.exec(`docker network inspect ${routeShellQuote(network)}`, { timeout: 10_000 });
+  if (inspect.exitCode === 0) return;
+  const create = await shell.exec(`docker network create ${routeShellQuote(network)}`, { timeout: 15_000 });
+  if (create.exitCode !== 0) {
+    throw new Error(`创建 Docker 网络 "${network}" 失败：${combinedOutput(create)}`);
+  }
+}
+
+async function cleanupResourceExternalFirewall(shell: IShellExecutor, chain: string, port?: number): Promise<void> {
+  if (!/^[A-Z0-9_]{1,28}$/.test(chain)) return;
+  if (port && port >= 1 && port <= 65535) {
+    for (let i = 0; i < 8; i += 1) {
+      const del = await shell.exec(`iptables -D DOCKER-USER -p tcp -m conntrack --ctorigdstport ${port} -j ${chain}`, { timeout: 5000 });
+      if (del.exitCode !== 0) break;
+    }
+  }
+  await shell.exec(`iptables -F ${chain} 2>/dev/null || true`, { timeout: 5000 });
+  await shell.exec(`iptables -X ${chain} 2>/dev/null || true`, { timeout: 5000 });
+}
+
+async function applyResourceExternalFirewall(
+  shell: IShellExecutor,
+  chain: string,
+  port: number,
+  allowlist: string[],
+): Promise<{ enforced: boolean; chain?: string }> {
+  if (allowlist.length === 0) {
+    await cleanupResourceExternalFirewall(shell, chain, port);
+    return { enforced: false };
+  }
+  if (!/^[A-Z0-9_]{1,28}$/.test(chain)) throw new Error(`iptables chain 名称非法：${chain}`);
+  const probe = await shell.exec('iptables -L DOCKER-USER -n', { timeout: 5000 });
+  if (probe.exitCode !== 0) {
+    throw new Error(`IP allowlist 需要主机 iptables DOCKER-USER 链，但当前不可用：${combinedOutput(probe).slice(0, 240)}`);
+  }
+  await shell.exec(`iptables -N ${chain} 2>/dev/null || true`, { timeout: 5000 });
+  await shell.exec(`iptables -F ${chain}`, { timeout: 5000 });
+  for (const cidr of allowlist) {
+    const add = await shell.exec(`iptables -A ${chain} -s ${cidr} -j ACCEPT`, { timeout: 5000 });
+    if (add.exitCode !== 0) {
+      throw new Error(`写入 IP allowlist 失败 (${cidr})：${combinedOutput(add).slice(0, 240)}`);
+    }
+  }
+  const drop = await shell.exec(`iptables -A ${chain} -j DROP`, { timeout: 5000 });
+  if (drop.exitCode !== 0) {
+    throw new Error(`写入 IP allowlist 默认拒绝规则失败：${combinedOutput(drop).slice(0, 240)}`);
+  }
+  const check = await shell.exec(`iptables -C DOCKER-USER -p tcp -m conntrack --ctorigdstport ${port} -j ${chain}`, { timeout: 5000 });
+  if (check.exitCode !== 0) {
+    const jump = await shell.exec(`iptables -I DOCKER-USER 1 -p tcp -m conntrack --ctorigdstport ${port} -j ${chain}`, { timeout: 5000 });
+    if (jump.exitCode !== 0) {
+      throw new Error(`挂载 IP allowlist 链失败：${combinedOutput(jump).slice(0, 240)}`);
+    }
+  }
+  return { enforced: true, chain };
+}
+
+const RESOURCE_TCP_PROXY_SCRIPT = `
+const net = require('net');
+const targetHost = process.env.TARGET_HOST;
+const targetPort = Number(process.env.TARGET_PORT || 0);
+const listenPort = Number(process.env.LISTEN_PORT || 15432);
+const allowlist = (process.env.ALLOWLIST || '').split(',').map((x) => x.trim()).filter(Boolean);
+const block = new net.BlockList();
+for (const rule of allowlist) {
+  const [ip, prefixRaw] = rule.split('/');
+  const prefix = Number(prefixRaw || '32');
+  if (Number.isInteger(prefix) && prefix >= 0 && prefix <= 32) block.addSubnet(ip, prefix, 'ipv4');
+}
+function normalizeIp(ip) {
+  return String(ip || '').replace(/^::ffff:/, '');
+}
+const server = net.createServer((client) => {
+  const ip = normalizeIp(client.remoteAddress);
+  if (allowlist.length > 0 && !block.check(ip, 'ipv4')) {
+    client.destroy();
+    return;
+  }
+  const upstream = net.connect({ host: targetHost, port: targetPort });
+  upstream.on('error', () => client.destroy());
+  client.on('error', () => upstream.destroy());
+  client.pipe(upstream);
+  upstream.pipe(client);
+});
+server.listen(listenPort, '0.0.0.0');
+process.on('SIGTERM', () => server.close(() => process.exit(0)));
+process.on('SIGINT', () => server.close(() => process.exit(0)));
+`;
+
+function resourceTcpProxyImage(): string {
+  const image = process.env.CDS_RESOURCE_TCP_PROXY_IMAGE || 'node:20-alpine';
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._/:@-]{0,180}$/.test(image)) {
+    throw new Error(`资源 TCP proxy 镜像名非法：${image}`);
+  }
+  return image;
 }
 
 interface RunServiceWithPortRetryOptions {
@@ -3857,14 +4016,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
       .replace(/\/+$/, '');
   }
 
-  function sanitizeAllowlist(input: unknown): string[] {
-    if (!Array.isArray(input)) return [];
-    return input
-      .map((item) => String(item || '').trim())
-      .filter(Boolean)
-      .slice(0, 20);
-  }
-
   type ResourcePermissionRole = 'member' | 'developer' | 'admin';
   type ResourcePermissionAction =
     | 'resource-restart'
@@ -5770,6 +5921,127 @@ export function createBranchRouter(deps: RouterDeps): Router {
     };
   }
 
+  function externalRuntimeConnectionString(
+    resource: UnifiedBranchResource,
+    service: InfraService,
+    host: string,
+    port: number,
+    branch: BranchEntry,
+  ): string {
+    const runtime = resourceRuntimeKey(resource.runtime);
+    const env = service.env || {};
+    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const db = branchEnv.MYSQL_DATABASE || service.dbName || env.MYSQL_DATABASE || env.POSTGRES_DB || env.MONGO_INITDB_DATABASE || 'app';
+    if (runtime === 'mysql') return `mysql://${branchEnv.MYSQL_USER || env.MYSQL_USER || 'user'}:******@${host}:${port}/${db}`;
+    if (runtime === 'postgres') return `postgres://${env.POSTGRES_USER || 'user'}:******@${host}:${port}/${db}`;
+    if (runtime === 'mongodb') return `mongodb://${env.MONGO_INITDB_ROOT_USERNAME || 'user'}:******@${host}:${port}/${db}`;
+    if (runtime === 'redis') return `redis://:******@${host}:${port}`;
+    return `${host}:${port}`;
+  }
+
+  async function disableTcpResourceExternalAccess(policy?: ResourceExternalAccessPolicy | null): Promise<void> {
+    if (!policy) return;
+    const proxyContainerName = policy.proxyContainerName;
+    if (proxyContainerName && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(proxyContainerName)) {
+      await shell.exec(`docker rm -f ${routeShellQuote(proxyContainerName)} 2>/dev/null || true`, { timeout: 15_000 });
+    }
+    if (policy.firewallChain) {
+      await cleanupResourceExternalFirewall(shell, policy.firewallChain, policy.port);
+    }
+  }
+
+  async function enableTcpResourceExternalAccess(input: {
+    branch: BranchEntry;
+    projectId: string;
+    resourceId: string;
+    resource: UnifiedBranchResource;
+    allowlist: string[];
+    currentPolicy?: ResourceExternalAccessPolicy;
+  }): Promise<{
+    address: string;
+    host: string;
+    port: number;
+    connectionString: string;
+    proxyContainerName: string;
+    targetHost: string;
+    targetPort: number;
+    allowlistEnforced: boolean;
+    firewallChain?: string;
+  }> {
+    if (input.resource.source !== 'infra') {
+      throw new Error('只有 infra TCP 资源需要资源级 TCP proxy');
+    }
+    const service = input.resource.raw as InfraService;
+    const targetContainer = resourceContainerName(input.resource);
+    if (!targetContainer) throw new Error(`资源 "${input.resource.displayName}" 没有关联目标容器`);
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(targetContainer)) {
+      throw new Error(`目标容器名非法：${targetContainer}`);
+    }
+    const targetRunning = await containerService.isRunning(targetContainer).catch(() => false);
+    if (!targetRunning) {
+      throw new Error(`资源 "${input.resource.displayName}" 未运行，不能开启公网 TCP 访问`);
+    }
+    const targetPort = input.resource.containerPort || service.containerPort || input.resource.port;
+    if (!targetPort || targetPort < 1 || targetPort > 65535) {
+      throw new Error(`资源 "${input.resource.displayName}" 缺少可代理的容器端口`);
+    }
+    const host = resourcePublicHost();
+    if (!host) throw new Error('CDS 未配置 previewDomain/rootDomains，无法生成公网 TCP host');
+
+    const proxyContainerName = resourceExternalProxyName(input.projectId, input.branch.id, input.resourceId);
+    const firewallChain = resourceExternalFirewallChain(input.projectId, input.branch.id, input.resourceId);
+    const network = stateService.getProject(input.projectId)?.dockerNetwork || config.dockerNetwork;
+    const listenPort = 15432;
+    const port = await allocateResourceExternalPort(shell, input.currentPolicy?.enabled ? input.currentPolicy.port : undefined);
+    await disableTcpResourceExternalAccess(input.currentPolicy);
+    await ensureDockerNetwork(shell, network);
+    const firewall = await applyResourceExternalFirewall(shell, firewallChain, port, input.allowlist);
+
+    const scriptB64 = Buffer.from(RESOURCE_TCP_PROXY_SCRIPT, 'utf8').toString('base64');
+    const evalScript = "eval(Buffer.from(process.env.CDS_PROXY_SCRIPT_B64,'base64').toString('utf8'))";
+    const labels = [
+      'cds.managed=true',
+      'cds.type=resource-external-access',
+      `cds.project.id=${input.projectId}`,
+      `cds.branch.id=${input.branch.id}`,
+      `cds.resource.id=${input.resourceId}`,
+      `cds.target.container=${targetContainer}`,
+    ];
+    const cmd = [
+      'docker run -d',
+      `--name ${routeShellQuote(proxyContainerName)}`,
+      `--network ${routeShellQuote(network)}`,
+      `-p 0.0.0.0:${port}:${listenPort}`,
+      ...labels.map((label) => `--label ${routeShellQuote(label)}`),
+      `-e ${routeShellQuote(`TARGET_HOST=${targetContainer}`)}`,
+      `-e ${routeShellQuote(`TARGET_PORT=${targetPort}`)}`,
+      `-e ${routeShellQuote(`LISTEN_PORT=${listenPort}`)}`,
+      `-e ${routeShellQuote(`ALLOWLIST=${input.allowlist.join(',')}`)}`,
+      `-e ${routeShellQuote(`CDS_PROXY_SCRIPT_B64=${scriptB64}`)}`,
+      '--restart unless-stopped',
+      resourceTcpProxyImage(),
+      'node',
+      '-e',
+      routeShellQuote(evalScript),
+    ].join(' ');
+    const run = await shell.exec(cmd, { timeout: 60_000 });
+    if (run.exitCode !== 0) {
+      await cleanupResourceExternalFirewall(shell, firewallChain, port);
+      throw new Error(`启动资源公网 TCP proxy 失败：${combinedOutput(run).slice(0, 500)}`);
+    }
+    return {
+      address: `tcp://${host}:${port}`,
+      host,
+      port,
+      connectionString: externalRuntimeConnectionString(input.resource, service, host, port, input.branch),
+      proxyContainerName,
+      targetHost: targetContainer,
+      targetPort,
+      allowlistEnforced: firewall.enforced,
+      ...(firewall.chain ? { firewallChain: firewall.chain } : {}),
+    };
+  }
+
   async function resolveSqlDataResourceForRequest(req: Request, res: Response): Promise<{
     branch: BranchEntry;
     projectId: string;
@@ -5900,6 +6172,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     const enabled = Boolean(req.body?.enabled);
+    let allowlist: string[];
+    try {
+      allowlist = normalizeIpv4Allowlist(req.body?.allowlist);
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+      return;
+    }
     const ttlMinutesRaw = Number(req.body?.ttlMinutes);
     const ttlMinutes = Number.isFinite(ttlMinutesRaw) && ttlMinutesRaw > 0
       ? Math.min(ttlMinutesRaw, 7 * 24 * 60)
@@ -5912,9 +6191,41 @@ export function createBranchRouter(deps: RouterDeps): Router {
       : 'external-temporary-access';
     if (!requireResourcePermission(req, res, externalAction, branch, resource)) return;
     const previewHost = resourcePublicHost();
+    const currentPolicy = stateService.getResourceExternalAccess(projectId, branch.id, resourceId);
+    let runtime: Partial<ResourceExternalAccessPolicy> = {};
+    if (resource.source === 'infra') {
+      try {
+        if (enabled) {
+          runtime = await enableTcpResourceExternalAccess({
+            branch,
+            projectId,
+            resourceId,
+            resource,
+            allowlist,
+            currentPolicy,
+          });
+        } else {
+          await disableTcpResourceExternalAccess(currentPolicy);
+          runtime = {
+            address: currentPolicy?.address || resource.externalAccess?.address,
+            host: currentPolicy?.host || resource.externalAccess?.host || previewHost,
+            port: currentPolicy?.port || resource.externalAccess?.port,
+            connectionString: currentPolicy?.connectionString || resource.externalAccess?.connectionString,
+            proxyContainerName: undefined,
+            targetHost: undefined,
+            targetPort: undefined,
+            allowlistEnforced: false,
+            firewallChain: undefined,
+          };
+        }
+      } catch (err) {
+        res.status(500).json({ error: (err as Error).message });
+        return;
+      }
+    }
     const fallbackAddress = resource.source === 'app'
       ? resource.externalUrl || resource.externalAccess?.address || ''
-      : resource.externalAccess?.address || (previewHost && resource.port ? `tcp://${previewHost}:${resource.port}` : '');
+      : runtime.address || resource.externalAccess?.address || (previewHost && runtime.port ? `tcp://${previewHost}:${runtime.port}` : '');
     if (enabled && !fallbackAddress) {
       res.status(409).json({ error: `资源 "${resource.displayName}" 没有可用的外部地址或端口` });
       return;
@@ -5927,9 +6238,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
       enabled,
       kind: resource.source === 'app' ? 'https' : 'tcp',
       address: enabled ? fallbackAddress : resource.externalAccess?.address || fallbackAddress || undefined,
-      host: previewHost || resource.externalAccess?.host,
-      port: resource.port,
-      allowlist: sanitizeAllowlist(req.body?.allowlist),
+      host: runtime.host || previewHost || resource.externalAccess?.host,
+      port: runtime.port || resource.externalAccess?.port || resource.port,
+      connectionString: runtime.connectionString || resource.externalAccess?.connectionString,
+      proxyContainerName: enabled ? runtime.proxyContainerName || resource.externalAccess?.proxyContainerName : undefined,
+      targetHost: enabled ? runtime.targetHost || resource.externalAccess?.targetHost : undefined,
+      targetPort: enabled ? runtime.targetPort || resource.externalAccess?.targetPort : undefined,
+      allowlistEnforced: Boolean(runtime.allowlistEnforced),
+      firewallChain: enabled ? runtime.firewallChain || resource.externalAccess?.firewallChain : undefined,
+      allowlist,
       expiresAt,
       updatedBy: actor,
     });

@@ -3148,7 +3148,8 @@ function ResourceConnection({
   const rows = [
     ['内部地址', resource.internalUrl || '-'],
     ['外部地址', externalEnabled ? externalAddress || '未开启' : externalAddress ? `${externalAddress}（未开启）` : '未开启'],
-    ['连接串', resource.connectionString || externalAddress || resource.internalUrl || '-'],
+    ['外部连接串', externalEnabled ? resource.externalAccess?.connectionString || externalAddress || '-' : '未开启'],
+    ['内部连接串', resource.connectionString || resource.internalUrl || '-'],
   ];
   useEffect(() => {
     setAllowlistDraft((resource.externalAccess?.allowlist || []).join('\n'));
@@ -3182,7 +3183,15 @@ function ResourceConnection({
             <div className="mt-1">数据库默认保持内部访问；开启公网 TCP 访问时需要 IP allowlist、临时有效期和凭据重置记录。</div>
             {resource.externalAccess?.expiresAt ? <div className="mt-1 font-mono">有效期至 {resource.externalAccess.expiresAt}</div> : null}
             {resource.externalAccess?.allowlist && resource.externalAccess.allowlist.length > 0 ? (
-              <div className="mt-1 font-mono">allowlist: {resource.externalAccess.allowlist.join(', ')}</div>
+              <div className="mt-1 font-mono">
+                allowlist: {resource.externalAccess.allowlist.join(', ')}
+                {resource.externalAccess.allowlistEnforced ? ' · 网络层已执行' : ' · 等待网络层执行'}
+              </div>
+            ) : externalEnabled && resource.externalAccess?.kind === 'tcp' ? (
+              <div className="mt-1 font-mono">allowlist: 未限制</div>
+            ) : null}
+            {resource.externalAccess?.proxyContainerName ? (
+              <div className="mt-1 font-mono">proxy: {resource.externalAccess.proxyContainerName}</div>
             ) : null}
           </div>
           <Button

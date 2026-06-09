@@ -14,3 +14,4 @@
 | fix | cds | MySQL clone-main 复制任务现在检查 mysqldump/mysql 导入退出码，失败时正确落到任务失败状态并记录失败原因 |
 | feat | cds | 新增资源权限摘要 API，资源控制台按服务端判定的 member/developer/admin 权限禁用重启、外部访问、备份恢复、凭据、克隆和危险操作按钮 |
 | feat | cds | 资源详情指标/日志 tab 接入资源级 metrics/logs API，数据库、缓存等 infra 容器不再显示占位指标和占位日志 |
+| feat | cds | 资源公网 TCP 访问接入受管 Docker proxy 与 iptables allowlist，数据库外部连接串使用动态端口并在资源连接页显示网络层执行状态 |

@@ -10,6 +10,12 @@ export interface UnifiedResourceExternalAccess {
   address?: string;
   host?: string;
   port?: number;
+  connectionString?: string;
+  proxyContainerName?: string;
+  targetHost?: string;
+  targetPort?: number;
+  allowlistEnforced?: boolean;
+  firewallChain?: string;
   allowlist: string[];
   expiresAt?: string | null;
 }
@@ -261,13 +267,21 @@ export function buildUnifiedBranchResources(input: BuildUnifiedResourcesInput): 
       access: policy?.enabled ? 'external' as const : 'internal' as const,
       externalUrl: policy?.enabled ? policy.address || '' : '',
       internalUrl: internalInfraAddress(service),
-      connectionString: infraConnectionString(inferred.runtime, service, service.id || '127.0.0.1', input.branchEnv),
+      connectionString: policy?.enabled && policy.connectionString
+        ? policy.connectionString
+        : infraConnectionString(inferred.runtime, service, service.id || '127.0.0.1', input.branchEnv),
       externalAccess: {
         enabled: policy?.enabled || false,
         kind: 'tcp' as const,
         address: policy?.address || tcpAddress || undefined,
         host: policy?.host || publicHost || undefined,
         port: policy?.port || service.hostPort,
+        connectionString: policy?.connectionString,
+        proxyContainerName: policy?.proxyContainerName,
+        targetHost: policy?.targetHost,
+        targetPort: policy?.targetPort,
+        allowlistEnforced: policy?.allowlistEnforced,
+        firewallChain: policy?.firewallChain,
         allowlist: policy?.allowlist || [],
         expiresAt: policy?.expiresAt ?? null,
       },

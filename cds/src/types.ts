@@ -1365,6 +1365,12 @@ export interface ResourceExternalAccessPolicy {
   address?: string;
   host?: string;
   port?: number;
+  connectionString?: string;
+  proxyContainerName?: string;
+  targetHost?: string;
+  targetPort?: number;
+  allowlistEnforced?: boolean;
+  firewallChain?: string;
   allowlist: string[];
   expiresAt?: string | null;
   createdAt: string;
