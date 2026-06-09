@@ -26,6 +26,15 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
   const [togglingComments, setTogglingComments] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
+  const focusPreviewFrame = () => {
+    const frame = iframeRef.current;
+    if (!frame) return;
+    // PPT/幻灯片类托管页的快捷键通常绑在 iframe 内部 window 上。
+    // 弹窗打开后焦点仍可能停在后台按钮/关闭按钮上，需要把键盘焦点交给预览内容。
+    requestAnimationFrame(() => frame.focus());
+    window.setTimeout(() => frame.focus(), 80);
+  };
+
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -130,11 +139,13 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
               ref={iframeRef}
               src={site.siteUrl}
               className="w-full h-full"
+              tabIndex={-1}
               onLoad={() => {
                 // iframe 成功加载：清 loading 同时清 errored
                 // 修复"超时已置 errored，但站点随后加载成功，错误遮罩却一直盖住"（Cursor medium）
                 setLoading(false);
                 setErrored(false);
+                focusPreviewFrame();
               }}
               sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-modals"
               title={site.title}

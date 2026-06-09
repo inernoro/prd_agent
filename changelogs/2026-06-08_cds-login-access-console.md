@@ -1,1 +1,1 @@
-| perf | cds | 登录页右侧访问框升级为控制台式玻璃面板：深色输入槽、访问链路拓扑、轻量状态胶囊与更克制的边框层级 |
+| perf | cds | 登录页右侧访问区重构为可登录 runtime board：账号/密码保持上下结构，session/console/preview 节点在同一面板内静态连线，首页 Enter Console/Access 改为本页原地切换访问态，并增加 board morph、输入展开与 Access 收缩动画 |
