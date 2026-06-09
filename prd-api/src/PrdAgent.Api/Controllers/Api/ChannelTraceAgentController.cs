@@ -356,79 +356,115 @@ public class ChannelTraceAgentController : ControllerBase
                 return;
             }
 
-            var text = Truncate(attachment.ExtractedText, 60_000);
+            // 大文件（如 93 条缺陷汇总）一次性让模型输出整段 JSON 会超 max_tokens 被截断 →
+            // JSON 解析失败 → 整体导入失败，且非流式等待很久。改为「分段解析 + 逐条入库 + 增量进度」：
+            // 每段独立调用，单段失败只跳过该段不影响其它段，避免长时间空白与一损俱损。
+            var text = Truncate(attachment.ExtractedText, 200_000);
+            var chunks = SplitIntoChunks(text, 6000);
 
             var systemPrompt =
-                "你是「商品溯源智能体」的案例整理助手。请把用户导入的「历史线上问题/缺陷文档」解析为结构化的防窜物流线上问题案例数组。\n" +
+                "你是「商品溯源智能体」的案例整理助手。下面是一份「历史线上问题/缺陷文档」的**一个片段**，" +
+                "请只把该片段中**确实描述了的具体线上问题**解析为结构化案例；统计/概述/目录类内容没有具体问题就返回空数组。\n" +
                 "每条案例字段：title（一句话标题）、symptom（问题现象）、rootCause（根因，可空）、resolution（排查步骤/解决方案，可空）、tags（字符串数组）、severity（low/medium/high）。\n" +
-                "规则：忠实于原文，不要编造原文没有的根因或解决方案（缺失就留空）；一个文档可能含多条问题，按条拆分。\n" +
+                "规则：忠实于原文，不要编造原文没有的根因或解决方案（缺失就留空）。\n" +
                 "严格只输出一个 JSON 对象，UTF-8，禁止 markdown 代码围栏：{ \"cases\": [ { ... } ] }";
 
-            await writeEvent("phase", new { phase = "parsing", message = "AI 正在解析文件中的历史问题…" });
-
-            string content;
-            string? model = null, platform = null;
-            using (var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
-                RequestId: Guid.NewGuid().ToString("N"),
-                GroupId: null, SessionId: null, UserId: userId, ViewRole: null,
-                DocumentChars: text.Length, DocumentHash: null,
-                SystemPromptRedacted: AppCallerRegistry.ChannelTraceAgent.CaseImport.Chat,
-                RequestType: "chat",
-                AppCallerCode: AppCallerRegistry.ChannelTraceAgent.CaseImport.Chat)))
-            {
-                var resp = await _gateway.SendAsync(new GatewayRequest
-                {
-                    AppCallerCode = AppCallerRegistry.ChannelTraceAgent.CaseImport.Chat,
-                    ModelType = ModelTypes.Chat,
-                    RequestBody = new JsonObject
-                    {
-                        ["messages"] = new JsonArray
-                        {
-                            new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
-                            new JsonObject { ["role"] = "user", ["content"] = text },
-                        },
-                        ["temperature"] = 0.2,
-                    },
-                    TimeoutSeconds = 180,
-                }, CancellationToken.None);
-
-                model = string.IsNullOrEmpty(resp.Resolution?.ActualModel) ? null : resp.Resolution!.ActualModel;
-                platform = resp.Resolution?.ActualPlatformName;
-                if (!resp.Success || string.IsNullOrWhiteSpace(resp.Content))
-                {
-                    await writeEvent("error", new { message = "AI 解析失败：" + (resp.ErrorMessage ?? "模型未返回内容") });
-                    return;
-                }
-                content = resp.Content!;
-            }
-
-            if (!string.IsNullOrEmpty(model))
-                await writeEvent("model", new { model, platform });
-
-            var parsedCases = ParseCasesJson(content);
-            if (parsedCases.Count == 0)
-            {
-                await writeEvent("error", new { message = "未能从文件中解析出任何案例，请检查文件内容" });
-                return;
-            }
+            await writeEvent("phase", new { phase = "parsing", message = $"文件已切分为 {chunks.Count} 段，开始逐段解析…" });
 
             var now = DateTime.UtcNow;
             var displayName = GetDisplayName();
             var inserted = 0;
-            foreach (var c in parsedCases)
+            var sentModel = false;
+            var anyChunkSucceeded = false;
+
+            for (var ci = 0; ci < chunks.Count; ci++)
             {
-                c.Tags = NormalizeTags(c.Tags);
-                c.Tags.Add("导入");
-                c.Tags = c.Tags.Distinct().ToList();
-                c.Severity = NormalizeSeverity(c.Severity);
-                c.CreatedBy = userId;
-                c.CreatedByName = displayName;
-                c.UpdatedBy = userId;
-                c.CreatedAt = now;
-                c.UpdatedAt = now;
-                await _db.ChannelTraceCases.InsertOneAsync(c, cancellationToken: CancellationToken.None);
-                inserted++;
-                await writeEvent("case", new { id = c.Id, title = c.Title, severity = c.Severity, index = inserted });
+                await writeEvent("phase", new
+                {
+                    phase = "parsing",
+                    message = $"正在解析第 {ci + 1}/{chunks.Count} 段…（已入库 {inserted} 条）",
+                });
+
+                string? content = null;
+                string? model = null, platform = null;
+                try
+                {
+                    using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+                        RequestId: Guid.NewGuid().ToString("N"),
+                        GroupId: null, SessionId: null, UserId: userId, ViewRole: null,
+                        DocumentChars: chunks[ci].Length, DocumentHash: null,
+                        SystemPromptRedacted: AppCallerRegistry.ChannelTraceAgent.CaseImport.Chat,
+                        RequestType: "chat",
+                        AppCallerCode: AppCallerRegistry.ChannelTraceAgent.CaseImport.Chat));
+
+                    var resp = await _gateway.SendAsync(new GatewayRequest
+                    {
+                        AppCallerCode = AppCallerRegistry.ChannelTraceAgent.CaseImport.Chat,
+                        ModelType = ModelTypes.Chat,
+                        RequestBody = new JsonObject
+                        {
+                            ["messages"] = new JsonArray
+                            {
+                                new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                                new JsonObject { ["role"] = "user", ["content"] = chunks[ci] },
+                            },
+                            ["temperature"] = 0.2,
+                            ["max_tokens"] = 4000,
+                        },
+                        TimeoutSeconds = 120,
+                    }, CancellationToken.None);
+
+                    model = string.IsNullOrEmpty(resp.Resolution?.ActualModel) ? null : resp.Resolution!.ActualModel;
+                    platform = resp.Resolution?.ActualPlatformName;
+                    if (resp.Success && !string.IsNullOrWhiteSpace(resp.Content))
+                    {
+                        content = resp.Content;
+                        anyChunkSucceeded = true;
+                    }
+                    else
+                    {
+                        _logger.LogWarning("[ChannelTraceAgent] case import chunk {Idx} failed: {Err}", ci, resp.ErrorMessage);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "[ChannelTraceAgent] case import chunk {Idx} exception", ci);
+                }
+
+                if (content == null) continue;
+
+                if (!sentModel && !string.IsNullOrEmpty(model))
+                {
+                    sentModel = true;
+                    await writeEvent("model", new { model, platform });
+                }
+
+                foreach (var c in ParseCasesJson(content))
+                {
+                    c.Tags = NormalizeTags(c.Tags);
+                    c.Tags.Add("导入");
+                    c.Tags = c.Tags.Distinct().ToList();
+                    c.Severity = NormalizeSeverity(c.Severity);
+                    c.CreatedBy = userId;
+                    c.CreatedByName = displayName;
+                    c.UpdatedBy = userId;
+                    c.CreatedAt = now;
+                    c.UpdatedAt = now;
+                    await _db.ChannelTraceCases.InsertOneAsync(c, cancellationToken: CancellationToken.None);
+                    inserted++;
+                    await writeEvent("case", new { id = c.Id, title = c.Title, severity = c.Severity, index = inserted });
+                }
+            }
+
+            if (inserted == 0)
+            {
+                await writeEvent("error", new
+                {
+                    message = anyChunkSucceeded
+                        ? "未能从文件中解析出任何线上问题案例（文件可能只含统计/概述，没有具体问题清单）"
+                        : "AI 解析失败，请稍后重试或更换更清晰的文件",
+                });
+                return;
             }
 
             await writeEvent("done", new { count = inserted });
@@ -942,12 +978,52 @@ public class ChannelTraceAgentController : ControllerBase
         return t.Trim();
     }
 
+    /// <summary>从可能含前后噪声的文本中截取第一个 '{' 到最后一个 '}' 的 JSON 对象子串。</summary>
+    private static string ExtractJsonObject(string s)
+    {
+        var start = s.IndexOf('{');
+        var end = s.LastIndexOf('}');
+        return start >= 0 && end > start ? s.Substring(start, end - start + 1) : s;
+    }
+
+    /// <summary>
+    /// 把长文本按目标字符数切分成若干段，优先在 Markdown 标题 / 空行 / 换行边界断开，
+    /// 避免把一条问题切成两半。用于大文件导入时分段喂给 LLM。
+    /// </summary>
+    private static List<string> SplitIntoChunks(string text, int targetChars)
+    {
+        var lines = text.Replace("\r\n", "\n").Split('\n');
+        var chunks = new List<string>();
+        var sb = new StringBuilder();
+        foreach (var line in lines)
+        {
+            // 已积累到目标长度，且当前行是新的标题/分隔，则在此切段（保证段落完整）
+            if (sb.Length >= targetChars &&
+                (line.StartsWith("#") || line.StartsWith("---") || line.Trim().Length == 0))
+            {
+                if (sb.Length > 0) { chunks.Add(sb.ToString()); sb.Clear(); }
+            }
+            sb.Append(line).Append('\n');
+            // 硬上限兜底：单行极长或一直没遇到边界时强制切，防止单段超模型上下文
+            if (sb.Length >= targetChars * 2)
+            {
+                chunks.Add(sb.ToString());
+                sb.Clear();
+            }
+        }
+        if (sb.Length > 0) chunks.Add(sb.ToString());
+        return chunks.Count == 0 ? new List<string> { text } : chunks;
+    }
+
     private List<ChannelTraceCase> ParseCasesJson(string content)
     {
         var result = new List<ChannelTraceCase>();
         try
         {
-            var parsed = JsonNode.Parse(StripCodeFence(content));
+            var stripped = StripCodeFence(content);
+            JsonNode? parsed;
+            try { parsed = JsonNode.Parse(stripped); }
+            catch { parsed = JsonNode.Parse(ExtractJsonObject(stripped)); } // 容错：截取首尾花括号内的 JSON
             if (parsed is JsonObject obj && obj["cases"] is JsonArray arr)
             {
                 foreach (var node in arr)

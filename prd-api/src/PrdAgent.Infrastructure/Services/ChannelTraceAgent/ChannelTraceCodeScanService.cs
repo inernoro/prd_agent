@@ -57,11 +57,23 @@ public sealed class ChannelTraceCodeScanService
     public IReadOnlyList<RepoConfig> GetConfiguredRepos()
         => _config.GetSection("ChannelTrace:Repos").Get<List<RepoConfig>>() ?? new List<RepoConfig>();
 
-    /// <summary>读取配置的服务级 GitHub PAT（建议用环境变量 ChannelTrace__GitHubToken 注入，勿提交明文）。</summary>
+    /// <summary>
+    /// 解析服务级 GitHub PAT。优先级：
+    ///   1. 显式配置 ChannelTrace:GitHubToken（含环境变量 ChannelTrace__GitHubToken）
+    ///   2. 常见通用环境变量名兜底（GITHUB_TOKEN / GH_TOKEN / GITHUB_PAT / GITHUB_ACCESS_TOKEN）
+    /// 这样无论用户把凭据配在专用键还是通用键上，都能被识别使用。
+    /// </summary>
     public string? GetGitHubToken()
     {
-        var t = _config["ChannelTrace:GitHubToken"];
-        return string.IsNullOrWhiteSpace(t) ? null : t.Trim();
+        var configured = _config["ChannelTrace:GitHubToken"];
+        if (!string.IsNullOrWhiteSpace(configured)) return configured.Trim();
+
+        foreach (var key in new[] { "GITHUB_TOKEN", "GH_TOKEN", "GITHUB_PAT", "GITHUB_ACCESS_TOKEN", "MIDOUTECH_GITHUB_TOKEN" })
+        {
+            var v = Environment.GetEnvironmentVariable(key);
+            if (!string.IsNullOrWhiteSpace(v)) return v.Trim();
+        }
+        return null;
     }
 
     public sealed class RepoScanResult
