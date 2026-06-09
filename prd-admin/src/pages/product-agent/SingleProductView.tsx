@@ -35,14 +35,17 @@ import {
   listFeatures,
   deleteFeature,
   listTracedDefects,
+  listCustomers,
   untraceDefect,
   transition,
   getMyTodos,
   type TracedDefect,
   type MyTodoItem,
 } from '@/services/real/productAgent';
-import type { Product, ProductVersion, Requirement, Feature, ItemGrade, WorkflowDefinition } from './types';
-import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, defectStatusLabel } from './types';
+import { searchDirectoryUsers } from '@/services';
+import type { Product, ProductVersion, Requirement, Feature, ItemGrade, WorkflowDefinition, Customer } from './types';
+import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, defectStatusLabel, effectiveDefectGrade } from './types';
+import { useListFilter, distinctOptions, distinctMultiOptions, TIME_PRESETS, inTimeRange, type FilterFieldDef } from './listFilter';
 import { toCSV, downloadCSV, parseCSV } from '@/lib/csv';
 import { useProductCategories, categoryLabel } from './productCategories';
 import { useEffectiveWorkflow } from './DynamicForm';
@@ -468,6 +471,17 @@ function VersionsTab({ productId }: { productId: string }) {
   );
 }
 
+// 目录用户名解析（处理人/负责人显示名），仅需登录可用。
+function useDirectoryNames() {
+  const [map, setMap] = useState<Map<string, string>>(new Map());
+  useEffect(() => {
+    void searchDirectoryUsers('', 200).then((res) => {
+      if (res.success) setMap(new Map(res.data.items.map((u) => [u.userId, u.displayName || u.username])));
+    });
+  }, []);
+  return useCallback((id?: string | null) => (id ? map.get(id) ?? id : '未指派'), [map]);
+}
+
 // ── 需求 tab（新建走独立页）──
 function RequirementsTab({ productId }: { productId: string }) {
   const navigate = useNavigate();
@@ -476,10 +490,32 @@ function RequirementsTab({ productId }: { productId: string }) {
   const [view, setView] = useState<'list' | 'board'>('list');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [importing, setImporting] = useState(false);
+  const [versions, setVersions] = useState<ProductVersion[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const { workflow } = useEffectiveWorkflow('requirement', productId);
+  const nameOf = useDirectoryNames();
   const openDetail = (id: string) => navigate(`/product-agent/p/${productId}/requirement/${id}`);
   const toggleSel = (id: string) => setSelected((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+
+  useEffect(() => {
+    void listVersions(productId).then((r) => { if (r.success) setVersions(r.data.items); });
+    void listCustomers().then((r) => { if (r.success) setCustomers(r.data.items); });
+  }, [productId]);
+
+  const stateLabel = useCallback((key: string) => workflow?.states.find((s) => s.key === key)?.label ?? key, [workflow]);
+  const versionName = useMemo(() => new Map(versions.map((v) => [v.id, v.versionName])), [versions]);
+  const customerName = useMemo(() => new Map(customers.map((c) => [c.id, c.name])), [customers]);
+  const fields = useMemo<FilterFieldDef<Requirement>[]>(() => [
+    { key: 'grade', label: '等级', defaultVisible: true, options: () => (['p0', 'p1', 'p2', 'p3'] as const).map((g) => ({ value: g, label: ITEM_GRADE_LABEL[g] })), test: (r, v) => r.grade === v },
+    { key: 'state', label: '状态', defaultVisible: true, options: (its) => distinctOptions(its, (r) => r.currentState ?? '', stateLabel), test: (r, v) => (r.currentState ?? '') === v },
+    { key: 'assignee', label: '处理人', defaultVisible: true, options: (its) => distinctOptions(its, (r) => r.assigneeId ?? '', nameOf), test: (r, v) => (r.assigneeId ?? '') === v },
+    { key: 'owner', label: '负责人', options: (its) => distinctOptions(its, (r) => r.ownerId ?? '', nameOf), test: (r, v) => (r.ownerId ?? '') === v },
+    { key: 'version', label: '关联版本', options: (its) => distinctMultiOptions(its, (r) => r.versionIds, (id) => versionName.get(id) ?? id), test: (r, v) => r.versionIds.includes(v) },
+    { key: 'customer', label: '关联客户', options: (its) => distinctMultiOptions(its, (r) => r.customerIds, (id) => customerName.get(id) ?? id), test: (r, v) => r.customerIds.includes(v) },
+    { key: 'created', label: '创建时间', options: () => TIME_PRESETS, test: (r, v) => inTimeRange(r.createdAt, v) },
+  ], [stateLabel, nameOf, versionName, customerName]);
+  const { bar, filtered } = useListFilter({ items, storageKey: 'pa-list-filters:requirement', fields, keywordOf: (r) => `${r.requirementNo} ${r.title} ${r.description ?? ''}`, keywordPlaceholder: '搜索编号/标题/描述' });
 
   const exportCsv = () => {
     const rows = items.map((r) => [r.requirementNo, r.title, ITEM_GRADE_LABEL[r.grade] ?? r.grade, r.currentState ?? '', r.description ?? '']);
@@ -540,11 +576,16 @@ function RequirementsTab({ productId }: { productId: string }) {
       </div>
       {items.length === 0 ? (
         <EmptyHint text="还没有需求。点「新建需求」打开独立页面填写，可分级并关联客户、版本、功能，被缺陷追溯。" />
-      ) : view === 'board' && workflow && workflow.states.length > 0 ? (
-        <StateBoard items={items} workflow={workflow} onCardClick={(r) => openDetail(r.id)} onChanged={reload} />
+      ) : (
+        <>
+        {bar}
+        {filtered.length === 0 ? (
+          <div className="text-center text-white/35 text-sm py-10">没有匹配的需求，调整筛选条件试试。</div>
+        ) : view === 'board' && workflow && workflow.states.length > 0 ? (
+        <StateBoard items={filtered} workflow={workflow} onCardClick={(r) => openDetail(r.id)} onChanged={reload} />
       ) : view === 'board' ? (
         <GradeBoard
-          items={items}
+          items={filtered}
           onCardClick={(r) => openDetail(r.id)}
           renderSub={(r) => `${r.requirementNo} · 客户 ${r.customerIds.length} · 版本 ${r.versionIds.length}`}
         />
@@ -553,7 +594,7 @@ function RequirementsTab({ productId }: { productId: string }) {
           {selected.size > 0 && (
             <BatchBar entityType="requirement" ids={[...selected]} onDone={reload} onClear={() => setSelected(new Set())} />
           )}
-          {orderByHierarchy(items).map(({ item: r, depth }) => (
+          {orderByHierarchy(filtered).map(({ item: r, depth }) => (
             <div key={r.id} style={{ marginLeft: depth * 24 }} className="flex items-center gap-2">
               <input type="checkbox" checked={selected.has(r.id)} onChange={() => toggleSel(r.id)} className="accent-cyan-500 shrink-0" />
               <div className={`flex-1 min-w-0 ${depth > 0 ? 'border-l-2 border-white/10 pl-2' : ''}`}>
@@ -573,6 +614,8 @@ function RequirementsTab({ productId }: { productId: string }) {
           ))}
         </div>
       )}
+        </>
+      )}
     </div>
   );
 }
@@ -583,6 +626,8 @@ function FeaturesTab({ productId }: { productId: string }) {
   const [items, setItems] = useState<Feature[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const { workflow } = useEffectiveWorkflow('feature', productId);
+  const nameOf = useDirectoryNames();
   const toggleSel = (id: string) => setSelected((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   const reload = useCallback(async () => {
@@ -596,6 +641,18 @@ function FeaturesTab({ productId }: { productId: string }) {
     void reload();
   }, [reload]);
 
+  const stateLabel = useCallback((key: string) => workflow?.states.find((s) => s.key === key)?.label ?? key, [workflow]);
+  const featureTitle = useMemo(() => new Map(items.map((f) => [f.id, f.title])), [items]);
+  const fields = useMemo<FilterFieldDef<Feature>[]>(() => [
+    { key: 'grade', label: '等级', defaultVisible: true, options: () => (['p0', 'p1', 'p2', 'p3'] as const).map((g) => ({ value: g, label: ITEM_GRADE_LABEL[g] })), test: (f, v) => f.grade === v },
+    { key: 'state', label: '状态', defaultVisible: true, options: (its) => distinctOptions(its, (f) => f.currentState ?? '', stateLabel), test: (f, v) => (f.currentState ?? '') === v },
+    { key: 'assignee', label: '处理人', defaultVisible: true, options: (its) => distinctOptions(its, (f) => f.assigneeId ?? '', nameOf), test: (f, v) => (f.assigneeId ?? '') === v },
+    { key: 'owner', label: '负责人', options: (its) => distinctOptions(its, (f) => f.ownerId ?? '', nameOf), test: (f, v) => (f.ownerId ?? '') === v },
+    { key: 'parent', label: '父功能', options: (its) => distinctOptions(its, (f) => f.parentId ?? '', (id) => featureTitle.get(id) ?? id), test: (f, v) => (f.parentId ?? '') === v },
+    { key: 'created', label: '创建时间', options: () => TIME_PRESETS, test: (f, v) => inTimeRange(f.createdAt, v) },
+  ], [stateLabel, nameOf, featureTitle]);
+  const { bar, filtered } = useListFilter({ items, storageKey: 'pa-list-filters:feature', fields, keywordOf: (f) => `${f.featureNo} ${f.title} ${f.description ?? ''}`, keywordPlaceholder: '搜索编号/标题/描述' });
+
   if (loading) return <MapSectionLoader text="正在加载功能…" />;
   return (
     <div className="flex flex-col gap-3">
@@ -603,11 +660,16 @@ function FeaturesTab({ productId }: { productId: string }) {
       {items.length === 0 ? (
         <EmptyHint text="还没有功能。点「新建功能」打开独立页面填写。功能跨版本演进，可实现需求、被版本纳入（功能版本化）。" />
       ) : (
+        <>
+        {bar}
+        {filtered.length === 0 ? (
+          <div className="text-center text-white/35 text-sm py-10">没有匹配的功能，调整筛选条件试试。</div>
+        ) : (
         <div className="flex flex-col gap-2">
           {selected.size > 0 && (
             <BatchBar entityType="feature" ids={[...selected]} onDone={reload} onClear={() => setSelected(new Set())} />
           )}
-          {orderByHierarchy(items).map(({ item: f, depth }) => (
+          {orderByHierarchy(filtered).map(({ item: f, depth }) => (
             <div key={f.id} style={{ marginLeft: depth * 24 }} className="flex items-center gap-2">
               <input type="checkbox" checked={selected.has(f.id)} onChange={() => toggleSel(f.id)} className="accent-cyan-500 shrink-0" />
               <div className={`flex-1 min-w-0 ${depth > 0 ? 'border-l-2 border-white/10 pl-2' : ''}`}>
@@ -627,6 +689,8 @@ function FeaturesTab({ productId }: { productId: string }) {
           ))}
         </div>
       )}
+        </>
+      )}
     </div>
   );
 }
@@ -636,6 +700,8 @@ function DefectsTab({ productId }: { productId: string }) {
   const navigate = useNavigate();
   const [items, setItems] = useState<TracedDefect[]>([]);
   const [loading, setLoading] = useState(true);
+  const [features, setFeatures] = useState<Feature[]>([]);
+  const [versions, setVersions] = useState<ProductVersion[]>([]);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -647,6 +713,31 @@ function DefectsTab({ productId }: { productId: string }) {
   useEffect(() => {
     void reload();
   }, [reload]);
+  useEffect(() => {
+    void listFeatures(productId).then((r) => { if (r.success) setFeatures(r.data.items); });
+    void listVersions(productId).then((r) => { if (r.success) setVersions(r.data.items); });
+  }, [productId]);
+
+  const featureName = useMemo(() => new Map(features.map((f) => [f.id, f.title])), [features]);
+  const versionName = useMemo(() => new Map(versions.map((v) => [v.id, v.versionName])), [versions]);
+  const personName = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const d of items) {
+      if (d.assigneeId) m.set(d.assigneeId, d.assigneeName || d.assigneeId);
+      if (d.reporterId) m.set(d.reporterId, d.reporterName || d.reporterId);
+    }
+    return m;
+  }, [items]);
+  const fields = useMemo<FilterFieldDef<TracedDefect>[]>(() => [
+    { key: 'grade', label: '等级', defaultVisible: true, options: () => (['p0', 'p1', 'p2', 'p3'] as const).map((g) => ({ value: g, label: ITEM_GRADE_LABEL[g] })), test: (d, v) => effectiveDefectGrade(d) === v },
+    { key: 'status', label: '状态', defaultVisible: true, options: (its) => distinctOptions(its, (d) => d.status, defectStatusLabel), test: (d, v) => d.status === v },
+    { key: 'assignee', label: '处理人', defaultVisible: true, options: (its) => distinctOptions(its, (d) => d.assigneeId ?? '', (id) => personName.get(id) ?? id), test: (d, v) => (d.assigneeId ?? '') === v },
+    { key: 'reporter', label: '上报人', options: (its) => distinctOptions(its, (d) => d.reporterId ?? '', (id) => personName.get(id) ?? id), test: (d, v) => (d.reporterId ?? '') === v },
+    { key: 'feature', label: '关联功能', options: (its) => distinctOptions(its, (d) => d.tracedFeatureId ?? '', (id) => featureName.get(id) ?? id), test: (d, v) => (d.tracedFeatureId ?? '') === v },
+    { key: 'version', label: '关联版本', options: (its) => distinctOptions(its, (d) => d.tracedVersionId ?? '', (id) => versionName.get(id) ?? id), test: (d, v) => (d.tracedVersionId ?? '') === v },
+    { key: 'created', label: '提交时间', options: () => TIME_PRESETS, test: (d, v) => inTimeRange(d.createdAt, v) },
+  ], [personName, featureName, versionName]);
+  const { bar, filtered } = useListFilter({ items, storageKey: 'pa-list-filters:defect', fields, keywordOf: (d) => `${d.defectNo} ${d.title ?? ''} ${d.rawContent ?? ''}`, keywordPlaceholder: '搜索编号/标题/描述' });
 
   if (loading) return <MapSectionLoader text="正在加载缺陷…" />;
   return (
@@ -662,8 +753,13 @@ function DefectsTab({ productId }: { productId: string }) {
       {items.length === 0 ? (
         <EmptyHint text="还没有缺陷。点上方「新建缺陷」创建本产品的第一个缺陷。" />
       ) : (
+        <>
+        {bar}
+        {filtered.length === 0 ? (
+          <div className="text-center text-white/35 text-sm py-10">没有匹配的缺陷，调整筛选条件试试。</div>
+        ) : (
         <div className="flex flex-col gap-2">
-          {items.map((d) => (
+          {filtered.map((d) => (
             <Row
               key={d.id}
               title={d.title || '(无标题)'}
@@ -678,6 +774,8 @@ function DefectsTab({ productId }: { productId: string }) {
             />
           ))}
         </div>
+        )}
+        </>
       )}
     </div>
   );

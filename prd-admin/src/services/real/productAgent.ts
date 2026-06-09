@@ -303,6 +303,7 @@ export interface TracedDefect {
   rawContent?: string | null;
   assigneeId?: string | null;
   assigneeName?: string | null;
+  reporterId?: string | null;
   reporterName?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
