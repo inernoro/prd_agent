@@ -1482,26 +1482,43 @@ public class HostedSiteService : IHostedSiteService
         var expiredShares = allShares.Count(s => s.ExpiresAt.HasValue && s.ExpiresAt.Value <= now);
 
         var tokens = allShares.Select(s => s.Token).ToList();
-        var shareSiteIds = allShares
-            .SelectMany(s =>
-            {
-                var ids = s.SiteIds.Count > 0 ? s.SiteIds : new List<string>();
-                if (!string.IsNullOrWhiteSpace(s.SiteId) && !ids.Contains(s.SiteId)) ids.Insert(0, s.SiteId);
-                return ids;
-            })
-            .Where(id => !string.IsNullOrWhiteSpace(id))
-            .Distinct()
-            .ToList();
+        var shareSiteIds = string.IsNullOrWhiteSpace(siteId)
+            ? allShares
+                .SelectMany(s =>
+                {
+                    var ids = s.SiteIds.Count > 0 ? s.SiteIds : new List<string>();
+                    if (!string.IsNullOrWhiteSpace(s.SiteId) && !ids.Contains(s.SiteId)) ids.Insert(0, s.SiteId);
+                    return ids;
+                })
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct()
+                .ToList()
+            : new List<string> { siteId };
         var fbLog = Builders<ShareViewLog>.Filter;
+        var logFilter = tokens.Count == 0
+            ? fbLog.Eq(x => x.ShareToken, "__none__")
+            : fbLog.In(x => x.ShareToken, tokens) & fbLog.Gte(x => x.ViewedAt, rangeStart);
         var windowLogs = tokens.Count == 0
             ? new List<ShareViewLog>()
             : await _db.ShareViewLogs
-                .Find(fbLog.In(x => x.ShareToken, tokens) & fbLog.Gte(x => x.ViewedAt, rangeStart))
+                .Find(logFilter)
                 .SortByDescending(x => x.ViewedAt)
+                .Limit(5000)
                 .ToListAsync(ct);
         var recentLogs = windowLogs.Take(500).ToList();
 
-        var totalViews = windowLogs.Count;
+        var tokenViewStats = tokens.Count == 0
+            ? new List<ShareTokenViewAggregate>()
+            : await _db.ShareViewLogs.Aggregate()
+                .Match(logFilter)
+                .Group(l => l.ShareToken, g => new ShareTokenViewAggregate
+                {
+                    Token = g.Key,
+                    ViewCount = g.Count(),
+                    LastViewedAt = g.Max(x => x.ViewedAt),
+                })
+                .ToListAsync(ct);
+        var totalViews = tokenViewStats.Sum(s => s.ViewCount);
         var uniqueVisitors = windowLogs
             .Select(ViewerDedupeKey)
             .Where(k => !string.IsNullOrWhiteSpace(k))
@@ -1566,12 +1583,8 @@ public class HostedSiteService : IHostedSiteService
         var visitorCountsByToken = windowLogs
             .GroupBy(l => l.ShareToken)
             .ToDictionary(g => g.Key, g => g.Select(ViewerDedupeKey).Distinct().LongCount());
-        var viewCountsByToken = windowLogs
-            .GroupBy(l => l.ShareToken)
-            .ToDictionary(g => g.Key, g => g.LongCount());
-        var lastViewedAtByToken = windowLogs
-            .GroupBy(l => l.ShareToken)
-            .ToDictionary(g => g.Key, g => g.Max(l => l.ViewedAt));
+        var viewCountsByToken = tokenViewStats.ToDictionary(s => s.Token, s => s.ViewCount);
+        var lastViewedAtByToken = tokenViewStats.ToDictionary(s => s.Token, s => s.LastViewedAt);
 
         var siteTitleMap = shareSiteIds.Count == 0
             ? new Dictionary<string, string>()
@@ -1593,19 +1606,24 @@ public class HostedSiteService : IHostedSiteService
                 .SortByDescending(c => c.CreatedAt)
                 .ToListAsync(ct);
 
-        var trend = Enumerable.Range(0, rangeDays)
-            .Select(offset =>
+        var trend = new List<ShareAnalyticsTrendPoint>();
+        for (var offset = 0; offset < rangeDays; offset++)
+        {
+            var date = rangeStart.Date.AddDays(offset);
+            var nextDate = date.AddDays(1);
+            var key = date.ToString("yyyy-MM-dd");
+            var views = tokens.Count == 0
+                ? 0
+                : await _db.ShareViewLogs.CountDocumentsAsync(
+                    logFilter & fbLog.Gte(x => x.ViewedAt, date) & fbLog.Lt(x => x.ViewedAt, nextDate),
+                    cancellationToken: ct);
+            trend.Add(new ShareAnalyticsTrendPoint
             {
-                var date = rangeStart.Date.AddDays(offset);
-                var key = date.ToString("yyyy-MM-dd");
-                return new ShareAnalyticsTrendPoint
-                {
-                    Date = key,
-                    Views = windowLogs.LongCount(l => l.ViewedAt.ToString("yyyy-MM-dd") == key),
-                    Comments = comments.LongCount(c => c.CreatedAt.ToString("yyyy-MM-dd") == key),
-                };
-            })
-            .ToList();
+                Date = key,
+                Views = views,
+                Comments = comments.LongCount(c => c.CreatedAt >= date && c.CreatedAt < nextDate),
+            });
+        }
 
         var hourly = Enumerable.Range(0, 24)
             .Select(hour => new ShareAnalyticsHourlyPoint
@@ -2617,5 +2635,12 @@ public class HostedSiteService : IHostedSiteService
         public string EntryFile { get; set; } = "index.html";
         public long TotalSize { get; set; }
         public string? Error { get; set; }
+    }
+
+    private sealed class ShareTokenViewAggregate
+    {
+        public string Token { get; set; } = string.Empty;
+        public long ViewCount { get; set; }
+        public DateTime LastViewedAt { get; set; }
     }
 }

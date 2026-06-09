@@ -218,6 +218,7 @@ public class AdminPeerNodesController : ControllerBase
         var displayName = string.IsNullOrWhiteSpace(request.DisplayName)
             ? (string.IsNullOrWhiteSpace(result.DisplayName) ? "对端节点" : result.DisplayName!)
             : request.DisplayName!.Trim();
+        var existingLocal = await _db.PeerNodes.Find(n => n.RemoteNodeId == result.NodeId).FirstOrDefaultAsync(ct);
         try
         {
             await _db.PeerNodes.UpdateOneAsync(
@@ -248,11 +249,15 @@ public class AdminPeerNodesController : ControllerBase
             var finalize = await PostPeerJsonAsync(baseLeft, "/api/peer-sync/handshake/finalize", confirmBody, ct);
             if (!finalize.Ok)
             {
+                await TryCancelPeerHandshakeAsync(baseLeft, confirmBody, ct);
+                await RestoreLocalPeerAfterFailedFinalizeAsync(existingLocal, result.NodeId, result.SharedSecret, ct);
                 _logger.LogWarning(
                     "[peer-sync] remote handshake finalize failed remoteNodeId={RemoteNodeId} status={Status} error={Error}",
                     result.NodeId,
                     finalize.Status,
                     finalize.Error);
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
+                    $"对端完成确认失败（HTTP {finalize.Status}）：{finalize.Error ?? "finalize 未完成"}。已撤销本次互联，不会保存半连接状态。"));
             }
         }
         // PR #742 review Medium fix：upsert 后回读可能因极端时序 / 副本集读不到，不可直接 ! 解引用。
@@ -375,6 +380,28 @@ public class AdminPeerNodesController : ControllerBase
     {
         try { await PostPeerJsonAsync(baseLeft, "/api/peer-sync/handshake/cancel", body, ct); }
         catch (Exception ex) { _logger.LogWarning(ex, "[peer-sync] cancel remote handshake failed"); }
+    }
+
+    private async Task RestoreLocalPeerAfterFailedFinalizeAsync(PeerNode? previous, string remoteNodeId, string newSecret, CancellationToken ct)
+    {
+        if (previous == null)
+        {
+            await _db.PeerNodes.DeleteOneAsync(n => n.RemoteNodeId == remoteNodeId && n.SharedSecret == newSecret, ct);
+            return;
+        }
+
+        await _db.PeerNodes.UpdateOneAsync(
+            n => n.Id == previous.Id && n.RemoteNodeId == remoteNodeId && n.SharedSecret == newSecret,
+            Builders<PeerNode>.Update
+                .Set(n => n.DisplayName, previous.DisplayName)
+                .Set(n => n.BaseUrl, previous.BaseUrl)
+                .Set(n => n.SharedSecret, previous.SharedSecret)
+                .Set(n => n.Status, previous.Status)
+                .Set(n => n.LastError, previous.LastError)
+                .Set(n => n.LastContactAt, previous.LastContactAt)
+                .Set(n => n.CreatedBy, previous.CreatedBy)
+                .Set(n => n.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: ct);
     }
 
     private static string? ExtractErrorMessage(string json)
