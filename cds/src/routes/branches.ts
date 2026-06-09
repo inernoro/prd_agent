@@ -42,6 +42,7 @@ import { nodeModulesVolumePrefix } from '../util/node-modules-volume.js';
 import { analyzeChangeImpact, isWebOnlyChange } from '../services/change-impact-analyzer.js';
 import { computeBundleFreshness } from '../services/bundle-freshness.js';
 import { waitForFlushWithTimeout } from '../services/bounded-flush.js';
+import { readBundledCdsCliVersion } from '../services/cdscli-version.js';
 import { ProxyService } from '../services/proxy.js';
 import { archiveBranchContainerLogs } from '../services/container-log-archiver.js';
 import { normalizeLogText, type ServerEventLogSink } from '../services/server-event-log-store.js';
@@ -10430,36 +10431,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.type('text/yaml').send(yamlContent);
   });
 
-  // GET /api/cli-version — return the currently-bundled cdscli VERSION
-  //
-  // 读 .claude/skills/cds/cli/cdscli.py 里的 `VERSION = "x.y.z"` 常量，
-  // 每次被 cdscli update / cdscli version 调用时返回。解析结果缓存 60s
-  // 避免每次都 read+regex（CLI 进程短命，主要让 Dashboard 轮询便宜）。
-  let _cliVersionCache: { version: string | null; at: number } = { version: null, at: 0 };
-  function readBundledCliVersion(): string | null {
-    const now = Date.now();
-    if (_cliVersionCache.version !== null && now - _cliVersionCache.at < 60_000) {
-      return _cliVersionCache.version;
-    }
-    try {
-      const cliPath = path.join(config.repoRoot, '.claude', 'skills', 'cds', 'cli', 'cdscli.py');
-      if (!fs.existsSync(cliPath)) {
-        _cliVersionCache = { version: null, at: now };
-        return null;
-      }
-      const content = fs.readFileSync(cliPath, 'utf-8');
-      // Anchor on VERSION = "..." at start of line to avoid catching
-      // comments, test fixtures, or nested module vars. Only first match.
-      const match = content.match(/^VERSION\s*=\s*"([^"]+)"/m);
-      const version = match ? match[1] : null;
-      _cliVersionCache = { version, at: now };
-      return version;
-    } catch {
-      return null;
-    }
-  }
+  // GET /api/cli-version — return the currently-bundled cdscli VERSION.
+  // Shared with the global X-Cds-Cli-Latest response header so CLI drift
+  // detection and the explicit version endpoint cannot diverge.
   router.get('/cli-version', (_req, res) => {
-    const version = readBundledCliVersion();
+    const version = readBundledCdsCliVersion(config.repoRoot);
     if (!version) {
       res.status(404).json({ error: '未找到 cdscli VERSION 常量' });
       return;
