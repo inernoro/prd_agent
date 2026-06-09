@@ -137,6 +137,51 @@ public class ChannelTraceCodeHit
     public int Score { get; set; }
 }
 
+/// <summary>
+/// 线上问题对话式诊断会话：多轮问答，AI 结合历史案例库 + 内置仓库代码逐步定位问题，
+/// 信息不足时主动发澄清问题引导用户补齐信息链条。
+/// </summary>
+[BsonIgnoreExtraElements]
+public class ChannelTraceDiagnoseSession
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
+    /// <summary>会话标题（取首条用户消息摘要）</summary>
+    public string Title { get; set; } = string.Empty;
+
+    public List<ChannelTraceDiagnoseMessage> Messages { get; set; } = new();
+
+    public string CreatedBy { get; set; } = string.Empty;
+    public string CreatedByName { get; set; } = string.Empty;
+
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>诊断会话中的一条消息（user / assistant）。</summary>
+[BsonIgnoreExtraElements]
+public class ChannelTraceDiagnoseMessage
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
+    /// <summary>角色：user / assistant</summary>
+    public string Role { get; set; } = "user";
+
+    public string Content { get; set; } = string.Empty;
+
+    /// <summary>本轮 assistant 回复时召回的历史案例 id（溯源用）</summary>
+    public List<string> RelatedCaseIds { get; set; } = new();
+
+    /// <summary>本轮 assistant 回复时命中的代码（溯源用）</summary>
+    public List<ChannelTraceCodeHit> CodeHits { get; set; } = new();
+
+    /// <summary>本轮 AI 调用使用的模型（assistant 消息填充）</summary>
+    public string? Model { get; set; }
+    public string? ModelPlatform { get; set; }
+
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
 public static class ChannelTraceCaseSeverities
 {
     public const string Low = "low";

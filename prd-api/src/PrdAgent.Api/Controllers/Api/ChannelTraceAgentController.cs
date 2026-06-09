@@ -472,78 +472,197 @@ public class ChannelTraceAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
-    public class DiagnoseRequest
+    // ── 线上问题对话式诊断（多轮会话：案例召回 + 代码定位 + 模糊时引导补齐）──
+
+    [HttpGet("diagnose/sessions")]
+    public async Task<IActionResult> ListDiagnoseSessions(CancellationToken ct)
     {
-        public string? Problem { get; set; }
+        var userId = GetUserId();
+        var items = await _db.ChannelTraceDiagnoseSessions
+            .Find(x => x.CreatedBy == userId)
+            .SortByDescending(x => x.UpdatedAt)
+            .Limit(100)
+            .ToListAsync(ct);
+        // 列表只回摘要，不带完整 messages，省带宽
+        var summaries = items.Select(s => new
+        {
+            id = s.Id,
+            title = s.Title,
+            messageCount = s.Messages.Count,
+            createdAt = s.CreatedAt,
+            updatedAt = s.UpdatedAt,
+        }).ToList();
+        return Ok(ApiResponse<object>.Ok(new { items = summaries }));
+    }
+
+    [HttpGet("diagnose/sessions/{id}")]
+    public async Task<IActionResult> GetDiagnoseSession(string id, CancellationToken ct)
+    {
+        var session = await _db.ChannelTraceDiagnoseSessions.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (session == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "会话不存在"));
+        if (session.CreatedBy != GetUserId() && !HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权访问"));
+        return Ok(ApiResponse<object>.Ok(new { item = session }));
+    }
+
+    [HttpDelete("diagnose/sessions/{id}")]
+    public async Task<IActionResult> DeleteDiagnoseSession(string id, CancellationToken ct)
+    {
+        var session = await _db.ChannelTraceDiagnoseSessions.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (session == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "会话不存在"));
+        if (session.CreatedBy != GetUserId() && !HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权删除"));
+        await _db.ChannelTraceDiagnoseSessions.DeleteOneAsync(x => x.Id == id, cancellationToken: CancellationToken.None);
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    public class DiagnoseAskRequest
+    {
+        /// <summary>已有会话 id；为空时新建会话</summary>
+        public string? SessionId { get; set; }
+        public string? Message { get; set; }
     }
 
     /// <summary>
-    /// 线上问题智能排查（SSE 流式）。先召回相似历史案例，再基于案例给出排查路径。
-    /// 事件：relatedCases / model / typing / done / error。
+    /// 线上问题对话式诊断（SSE 流式，多轮）。每轮：召回历史案例 + 扫描内置仓库代码 →
+    /// AI 给出初步原因/建议；信息不足以定位时主动发澄清问题引导用户补齐。
+    /// 事件：session / relatedCases / codeHits / model / typing / done / error。
     /// </summary>
-    [HttpPost("cases/diagnose")]
+    [HttpPost("diagnose/ask")]
     [Produces("text/event-stream")]
-    public async Task DiagnoseProblem([FromBody] DiagnoseRequest req)
+    public async Task DiagnoseAsk([FromBody] DiagnoseAskRequest req)
     {
         var userId = GetUserId();
         await RunSseAsync(async writeEvent =>
         {
-            if (req == null || string.IsNullOrWhiteSpace(req.Problem))
+            if (req == null || string.IsNullOrWhiteSpace(req.Message))
             {
-                await writeEvent("error", new { message = "请描述线上问题现象" });
+                await writeEvent("error", new { message = "请输入问题描述" });
                 return;
             }
+            var message = req.Message.Trim();
 
-            var problem = req.Problem.Trim();
+            // 1. 取/建会话
+            ChannelTraceDiagnoseSession? session = null;
+            if (!string.IsNullOrWhiteSpace(req.SessionId))
+            {
+                session = await _db.ChannelTraceDiagnoseSessions.Find(x => x.Id == req.SessionId).FirstOrDefaultAsync(CancellationToken.None);
+                if (session != null && session.CreatedBy != userId && !HasManagePermission())
+                {
+                    await writeEvent("error", new { message = "无权访问该会话" });
+                    return;
+                }
+            }
+            var isNew = session == null;
+            if (session == null)
+            {
+                session = new ChannelTraceDiagnoseSession
+                {
+                    Title = message.Length > 30 ? message[..30] + "…" : message,
+                    CreatedBy = userId,
+                    CreatedByName = GetDisplayName(),
+                };
+            }
+
+            session.Messages.Add(new ChannelTraceDiagnoseMessage { Role = "user", Content = message });
+            await writeEvent("session", new { sessionId = session.Id, isNew });
+
+            // 2. 历史案例召回（用全部用户轮次的描述做召回，信息越补越准）
+            var problemText = string.Join("\n", session.Messages.Where(m => m.Role == "user").Select(m => m.Content));
             var allCases = await _db.ChannelTraceCases.Find(Builders<ChannelTraceCase>.Filter.Empty)
                 .SortByDescending(x => x.UpdatedAt)
                 .Limit(500)
                 .ToListAsync(CancellationToken.None);
-
-            // 朴素关键词召回：按问题描述与案例标题/现象/标签的词重合度排序，取 Top N。
-            var ranked = RankCasesByRelevance(allCases, problem, 8);
-
+            var ranked = RankCasesByRelevance(allCases, problemText, 8);
             await writeEvent("relatedCases", new
             {
-                items = ranked.Select(c => new
-                {
-                    id = c.Id,
-                    title = c.Title,
-                    severity = c.Severity,
-                    tags = c.Tags,
-                }).ToList(),
+                items = ranked.Select(c => new { id = c.Id, title = c.Title, severity = c.Severity, tags = c.Tags }).ToList(),
             });
-
             var caseContext = BuildCaseContext(ranked, CaseContextBudget);
 
+            // 3. 代码定位（best-effort：克隆+扫描内置仓库；无 token 或失败则跳过）
+            var hits = new List<ChannelTraceCodeHit>();
+            if (_codeScan.GetGitHubToken() != null)
+            {
+                try
+                {
+                    await writeEvent("phase", new { phase = "scanning", message = "正在到内置仓库定位相关代码…" });
+                    var keywords = await ExtractKeywordsAsync(userId, problemText);
+                    var repoResults = await _codeScan.EnsureReposAsync(CancellationToken.None);
+                    foreach (var r in repoResults.Where(r => r.Dir != null))
+                        hits.AddRange(_codeScan.SearchRepo(r.Name, r.Dir!, keywords));
+                    hits = hits.OrderByDescending(h => h.Score).Take(12).ToList();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "[ChannelTraceAgent] diagnose code scan skipped");
+                }
+            }
+            if (hits.Count > 0)
+            {
+                await writeEvent("codeHits", new
+                {
+                    items = hits.Select(h => new { repo = h.Repo, path = h.Path, score = h.Score }).ToList(),
+                });
+            }
+
+            // 4. 组装多轮消息
             var systemPrompt =
-                "你是「商品溯源智能体」中的防窜物流线上问题排查助手。给定一个新线上问题，请基于「历史案例库」给出快速排查路径。\n" +
-                "输出结构（中文 Markdown）：\n" +
-                " 1. **最可能的方向**：结合历史案例，列 1~3 个最可能根因方向（标注命中了哪条历史案例标题）\n" +
-                " 2. **排查步骤**：给出有序、可立即执行的排查 checklist（从最快验证、影响最小的查起）\n" +
-                " 3. **需要确认的信息**：列出还需向用户/日志/DB 补充确认的关键信息\n" +
-                " 4. **若无相似案例**：明确说明历史案例库未命中，转为依据防窜物流通用链路（上码/关联/出入库/流通/窜货判定）给出通用排查建议\n" +
-                "不要编造历史案例里不存在的结论。";
+                "你是「商品溯源智能体」中的防窜物流线上问题诊断助手，采用多轮对话逐步定位问题。每轮请遵循：\n" +
+                " 1. 先看「历史案例库」是否命中相似问题（命中就标注是哪条案例标题）；\n" +
+                " 2. 结合「命中代码」分析可能原因，给出初步判断 + 可执行的排查建议；\n" +
+                " 3. 若现有信息不足以确定根因，**只问 1~2 个最关键的澄清问题**（如复现步骤、报错原文、涉及的码/批次/环境、时间点），用「## 还需要你补充」小节列出，引导用户逐步补齐信息链条；\n" +
+                " 4. 信息足够时，给出「## 定位结论」+ 根因 + 修复建议（涉及代码时标注仓库/文件路径）。\n" +
+                "严禁编造历史案例或代码里不存在的内容；不确定就明说并继续追问。全程中文 Markdown。";
 
-            var userPrompt = new StringBuilder();
-            if (!string.IsNullOrWhiteSpace(caseContext))
-            {
-                userPrompt.AppendLine("===== 召回的历史案例（按相关度排序）=====");
-                userPrompt.AppendLine(caseContext);
-                userPrompt.AppendLine();
-            }
-            else
-            {
-                userPrompt.AppendLine("（历史案例库为空或未召回到相关案例）");
-                userPrompt.AppendLine();
-            }
-            userPrompt.AppendLine("===== 新线上问题 =====");
-            userPrompt.AppendLine(problem);
+            var contextNote = new StringBuilder();
+            contextNote.AppendLine("【本轮检索到的上下文，仅供你参考，不要原样复述】");
+            contextNote.AppendLine("== 历史案例库召回 ==");
+            contextNote.AppendLine(string.IsNullOrWhiteSpace(caseContext) ? "（无命中）" : caseContext);
+            contextNote.AppendLine();
+            contextNote.AppendLine("== 内置仓库命中代码 ==");
+            contextNote.AppendLine(hits.Count == 0 ? "（未扫描到相关代码或未配置仓库访问）" : BuildCodeContext(hits, CodeDiffInputBudget));
 
-            await writeEvent("phase", new { phase = "diagnosing", message = "AI 正在召回相似案例并给出排查路径…" });
-            await StreamChatAsync(writeEvent, userId, systemPrompt, userPrompt.ToString(),
-                AppCallerRegistry.ChannelTraceAgent.Diagnose.Chat);
-            await writeEvent("done", new { });
+            var messages = new JsonArray
+            {
+                new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                new JsonObject { ["role"] = "system", ["content"] = contextNote.ToString() },
+            };
+            foreach (var m in session.Messages)
+                messages.Add(new JsonObject { ["role"] = m.Role == "assistant" ? "assistant" : "user", ["content"] = m.Content });
+
+            await writeEvent("phase", new { phase = "diagnosing", message = "AI 正在分析并定位问题…" });
+
+            try
+            {
+                var (fullText, model, platform) = await StreamChatMessagesAsync(
+                    writeEvent, userId, messages, AppCallerRegistry.ChannelTraceAgent.Diagnose.Chat);
+
+                session.Messages.Add(new ChannelTraceDiagnoseMessage
+                {
+                    Role = "assistant",
+                    Content = fullText,
+                    RelatedCaseIds = ranked.Select(c => c.Id).ToList(),
+                    CodeHits = hits,
+                    Model = model,
+                    ModelPlatform = platform,
+                });
+                session.UpdatedAt = DateTime.UtcNow;
+
+                if (isNew)
+                    await _db.ChannelTraceDiagnoseSessions.InsertOneAsync(session, cancellationToken: CancellationToken.None);
+                else
+                    await _db.ChannelTraceDiagnoseSessions.ReplaceOneAsync(x => x.Id == session.Id, session, cancellationToken: CancellationToken.None);
+
+                await writeEvent("done", new { sessionId = session.Id, model, platform });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[ChannelTraceAgent] diagnose ask failed");
+                await writeEvent("error", new { message = "诊断失败：" + ex.Message });
+            }
         });
     }
 
@@ -960,13 +1079,39 @@ public class ChannelTraceAgentController : ControllerBase
             RequestType: "chat",
             AppCallerCode: appCallerCode));
 
+        var messages = new JsonArray
+        {
+            new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+            new JsonObject { ["role"] = "user", ["content"] = userPrompt },
+        };
+        return await StreamChatMessagesAsync(writeEvent, userId, messages, appCallerCode);
+    }
+
+    /// <summary>
+    /// 多轮消息版流式对话：直接传入完整 messages 数组（用于对话式诊断）。
+    /// 推送 model + typing 事件，返回累计全文 + 实际模型信息；异常向上抛。
+    /// </summary>
+    private async Task<(string Text, string? Model, string? Platform)> StreamChatMessagesAsync(
+        Func<string, object, Task> writeEvent,
+        string userId,
+        JsonArray messages,
+        string appCallerCode)
+    {
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null,
+            SessionId: null,
+            UserId: userId,
+            ViewRole: null,
+            DocumentChars: messages.Count,
+            DocumentHash: null,
+            SystemPromptRedacted: appCallerCode,
+            RequestType: "chat",
+            AppCallerCode: appCallerCode));
+
         var body = new JsonObject
         {
-            ["messages"] = new JsonArray
-            {
-                new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
-                new JsonObject { ["role"] = "user", ["content"] = userPrompt },
-            },
+            ["messages"] = messages,
             ["temperature"] = 0.3,
         };
 
