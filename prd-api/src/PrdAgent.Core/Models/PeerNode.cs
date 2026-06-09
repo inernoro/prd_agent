@@ -70,5 +70,17 @@ public class PeerPairingCode
     /// <summary>使用方（握手成功后记录对端 nodeId，审计用）</summary>
     public string? UsedByNodeId { get; set; }
 
+    /// <summary>两阶段握手 prepare 阶段暂存的发起方回连地址。</summary>
+    public string? PendingInitiatorBaseUrl { get; set; }
+
+    /// <summary>两阶段握手 prepare 阶段暂存的发起方展示名。</summary>
+    public string? PendingInitiatorDisplayName { get; set; }
+
+    /// <summary>两阶段握手 prepare 阶段生成的共享密钥；confirm 成功后才落 PeerNode。</summary>
+    public string? PendingSharedSecret { get; set; }
+
+    /// <summary>两阶段握手 confirm 完成时间。</summary>
+    public DateTime? ConfirmedAt { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

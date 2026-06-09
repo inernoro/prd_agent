@@ -7,7 +7,7 @@
  *
  * 设计要点（基于 2026-06-07 真人验收反馈打磨）：
  * 1. 本节点身份明显可见且可复制（旧版用 11px mono 灰字塞在角落）
- * 2. 动作分两栏 — 邀请对端接入我 / 接入已知对端 — 角色一眼可辨
+ * 2. 主流程收敛为一个「添加对端」入口，两端互换连接串后同时确认
  * 3. 已配对节点卡片改用图标 + 状态点 + 时间 + 内联动作，错误自动展开真因
  * 4. 严格遵守 cds-theme-tokens.md：颜色全部走 var(--*) token
  */
@@ -23,9 +23,7 @@ import {
   Wifi,
   KeyRound,
   X,
-  Send,
   ArrowRight,
-  Inbox,
   AlertCircle,
   CheckCircle2,
   Server,
@@ -117,6 +115,48 @@ function CopyChip({ value, label }: { value: string; label: string }) {
   );
 }
 
+type PeerConnectPayload = {
+  kind: 'peer-connect';
+  version: 1;
+  nodeId: string;
+  baseUrl: string;
+  pairingCode: string;
+  expiresAt: string;
+  displayName?: string;
+};
+
+function toBase64Url(json: string) {
+  const bytes = new TextEncoder().encode(json);
+  let binary = '';
+  bytes.forEach((b) => { binary += String.fromCharCode(b); });
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function fromBase64Url(s: string) {
+  const padded = s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (s.length % 4)) % 4);
+  const binary = atob(padded);
+  const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+function buildPeerConnectString(payload: PeerConnectPayload) {
+  return `peer-connect:v1:${toBase64Url(JSON.stringify(payload))}`;
+}
+
+function parsePeerConnectString(text: string): PeerConnectPayload {
+  const raw = text.trim();
+  if (!raw.startsWith('peer-connect:v1:')) {
+    throw new Error('请粘贴 peer-connect:v1 开头的对端连接串');
+  }
+  const payload = JSON.parse(fromBase64Url(raw.slice('peer-connect:v1:'.length))) as Partial<PeerConnectPayload>;
+  if (payload.kind !== 'peer-connect' || payload.version !== 1) throw new Error('连接串版本不正确');
+  if (!payload.nodeId || !payload.baseUrl || !payload.pairingCode || !payload.expiresAt) {
+    throw new Error('连接串缺少节点标识、地址或密钥');
+  }
+  if (Date.parse(payload.expiresAt) <= Date.now()) throw new Error('对端连接串已过期，请让对端重新生成');
+  return payload as PeerConnectPayload;
+}
+
 export function PeerNodesSettings() {
   const [nodes, setNodes] = useState<PeerNode[]>([]);
   const [selfNodeId, setSelfNodeId] = useState('');
@@ -125,7 +165,7 @@ export function PeerNodesSettings() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ msg: string; kind: 'ok' | 'err' } | null>(null);
 
-  // 配对码
+  // 连接串里的短期配对密钥
   const [code, setCode] = useState<string | null>(null);
   const [codeExpiresAt, setCodeExpiresAt] = useState<number | null>(null);
   const [genBusy, setGenBusy] = useState(false);
@@ -133,8 +173,9 @@ export function PeerNodesSettings() {
 
   // 添加对端
   const [showAdd, setShowAdd] = useState(false);
-  const [addBaseUrl, setAddBaseUrl] = useState('');
-  const [addCode, setAddCode] = useState('');
+  const [peerConnectText, setPeerConnectText] = useState('');
+  const [parsedPeer, setParsedPeer] = useState<PeerConnectPayload | null>(null);
+  const [parseError, setParseError] = useState<string | null>(null);
   const [addName, setAddName] = useState('');
   const [addSelfName, setAddSelfName] = useState('');
   const [addBusy, setAddBusy] = useState(false);
@@ -142,8 +183,7 @@ export function PeerNodesSettings() {
   const [addProgress, setAddProgress] = useState<{ stage: string; startedAt: number } | null>(null);
   const [testProgress, setTestProgress] = useState<{ id: string; startedAt: number } | null>(null);
   const [, setNow] = useState(0);
-  // 1s 节拍器：handshake/test 进行中 或 配对码倒计时显示时驱动「已用 Xs / 剩余 Xs」自增显示
-  // （CLAUDE.md §6 + PR #742 review fix：之前配对码倒计时只在首渲染那一刻定格，永不更新）
+  // 1s 节拍器：handshake/test 进行中 或 连接串倒计时显示时驱动「已用 Xs / 剩余 Xs」自增显示
   useEffect(() => {
     if (!addBusy && !testProgress && !code) return;
     const t = setInterval(() => setNow((n) => n + 1), 1000);
@@ -161,7 +201,10 @@ export function PeerNodesSettings() {
   // PR #742 review Low fix：补 isMountedRef 卸载守卫（用户切到别的 settings tab）。
   const loadSeqRef = useRef(0);
   const isMountedRef = useRef(true);
-  useEffect(() => () => { isMountedRef.current = false; }, []);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
   const load = useCallback(async () => {
     const mySeq = ++loadSeqRef.current;
     setLoading(true);
@@ -188,6 +231,8 @@ export function PeerNodesSettings() {
     if (res.success && res.data) {
       setCode(res.data.pairingCode);
       setCodeExpiresAt(Date.now() + (res.data.expiresInSeconds || 300) * 1000);
+      setSelfNodeId(res.data.selfNodeId);
+      setSelfBaseUrl(res.data.selfBaseUrl);
       setCopiedCode(false);
     } else {
       flash(res.error?.message || '生成失败', 'err');
@@ -195,9 +240,9 @@ export function PeerNodesSettings() {
   };
 
   const handleCopyCode = async () => {
-    if (!code) return;
+    if (!selfConnectText) return;
     try {
-      await navigator.clipboard.writeText(code);
+      await navigator.clipboard.writeText(selfConnectText);
       setCopiedCode(true);
       setTimeout(() => setCopiedCode(false), 2000);
     } catch {
@@ -205,9 +250,31 @@ export function PeerNodesSettings() {
     }
   };
 
+  const handlePeerConnectTextChange = (value: string) => {
+    setPeerConnectText(value);
+    setAddError(null);
+    if (!value.trim()) {
+      setParsedPeer(null);
+      setParseError(null);
+      return;
+    }
+    try {
+      const parsed = parsePeerConnectString(value);
+      setParsedPeer(parsed);
+      setParseError(null);
+      if (!addName.trim() && parsed.displayName) setAddName(parsed.displayName);
+    } catch (ex) {
+      setParsedPeer(null);
+      setParseError(ex instanceof Error ? ex.message : '连接串无法解析');
+    }
+  };
+
   const handleAdd = async () => {
-    if (!addBaseUrl.trim() || !addCode.trim()) {
-      setAddError('请填写对端地址和配对码');
+    let parsed: PeerConnectPayload;
+    try {
+      parsed = parsePeerConnectString(peerConnectText);
+    } catch (ex) {
+      setAddError(ex instanceof Error ? ex.message : '请粘贴有效的对端连接串');
       return;
     }
     setAddBusy(true);
@@ -215,13 +282,13 @@ export function PeerNodesSettings() {
     const startedAt = Date.now();
     setAddProgress({ stage: '正在与对端发起握手…', startedAt });
     // 阶段提示节奏：避免单一 spinner，让用户知道系统在做什么
-    const t1 = setTimeout(() => setAddProgress({ stage: '对端正在校验配对码 + 生成共享密钥…', startedAt }), 1500);
+    const t1 = setTimeout(() => setAddProgress({ stage: '对端正在校验连接串 + 生成共享密钥…', startedAt }), 1500);
     const t2 = setTimeout(() => setAddProgress({ stage: '交换 HMAC 密钥并落地配对记录…', startedAt }), 4000);
     const t3 = setTimeout(() => setAddProgress({ stage: '对端响应较慢，仍在等待…', startedAt }), 8000);
     const res = await addPeerNode({
-      baseUrl: addBaseUrl.trim(),
-      pairingCode: addCode.trim(),
-      displayName: addName.trim() || undefined,
+      baseUrl: parsed.baseUrl.trim(),
+      pairingCode: parsed.pairingCode.trim(),
+      displayName: addName.trim() || parsed.displayName || undefined,
       selfDisplayName: addSelfName.trim() || undefined,
     });
     clearTimeout(t1); clearTimeout(t2); clearTimeout(t3);
@@ -230,10 +297,11 @@ export function PeerNodesSettings() {
     setAddProgress(null);
     if (res.success) {
       const elapsed = Math.round((Date.now() - startedAt) / 100) / 10;
-      flash(`配对成功（耗时 ${elapsed}s）`);
+      flash(`互联成功（耗时 ${elapsed}s）`);
       setShowAdd(false);
-      setAddBaseUrl('');
-      setAddCode('');
+      setPeerConnectText('');
+      setParsedPeer(null);
+      setParseError(null);
       setAddName('');
       setAddSelfName('');
       void load();
@@ -274,6 +342,16 @@ export function PeerNodesSettings() {
   };
 
   const codeSecondsLeft = codeExpiresAt ? Math.max(0, Math.ceil((codeExpiresAt - Date.now()) / 1000)) : 0;
+  const selfConnectText = code && codeExpiresAt
+    ? buildPeerConnectString({
+        kind: 'peer-connect',
+        version: 1,
+        nodeId: selfNodeId,
+        baseUrl: selfBaseUrl,
+        pairingCode: code,
+        expiresAt: new Date(codeExpiresAt).toISOString(),
+      })
+    : '';
 
   return (
     <div
@@ -320,101 +398,37 @@ export function PeerNodesSettings() {
         </div>
       </section>
 
-      {/* ── 双动作：邀请对端 vs 接入对端 ── */}
-      <section className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {/* 邀请对端接入我 */}
-        <div
-          className="rounded-xl p-4"
-          style={{
-            background: 'var(--bg-card, rgba(255,255,255,0.03))',
-            border: '1px solid rgba(255,255,255,0.08)',
-          }}
-        >
-          <div className="flex items-start gap-3 mb-2">
+      {/* ── 添加对端 ── */}
+      <section
+        className="rounded-xl p-4 space-y-3"
+        style={{
+          background: 'var(--bg-card, rgba(255,255,255,0.03))',
+          border: '1px solid rgba(255,255,255,0.08)',
+        }}
+      >
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div className="flex items-start gap-3 min-w-0">
             <div
               className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center"
-              style={{ background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.20)' }}
+              style={{ background: 'rgba(99,102,241,0.14)', border: '1px solid rgba(99,102,241,0.24)' }}
             >
-              <Send size={15} style={{ color: 'rgba(96,165,250,0.95)' }} />
+              <Plus size={16} style={{ color: 'rgba(165,180,252,0.95)' }} />
             </div>
             <div className="min-w-0">
               <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
-                邀请对端接入我
+                添加对端
               </div>
               <div className="text-[11px] mt-0.5 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-                生成一次性配对码，配上本节点对外地址发给对端管理员
+                两端各生成自己的连接串，互相粘贴对方连接串后点击添加；双方确认和探活成功后才会保存为已互联。
               </div>
             </div>
           </div>
-          {code ? (
-            <div
-              className="mt-3 rounded-lg p-3 space-y-2"
-              style={{ background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.16)' }}
-            >
-              <div className="flex items-center gap-2">
-                <code
-                  className="flex-1 text-[12px] font-mono break-all px-2 py-1.5 rounded"
-                  style={{ background: 'rgba(0,0,0,0.20)', color: 'var(--text-primary)' }}
-                >
-                  {code}
-                </code>
-                <Button size="xs" variant="secondary" onClick={handleCopyCode}>
-                  {copiedCode ? <Check size={12} /> : <Copy size={12} />}
-                  {copiedCode ? '已复制' : '复制'}
-                </Button>
-              </div>
-              <div className="flex items-center justify-between text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                <span>剩余有效时间 {codeSecondsLeft}s · 仅可用一次</span>
-                <button
-                  onClick={handleGenCode}
-                  className="hover:underline"
-                  style={{ color: 'rgba(96,165,250,0.95)' }}
-                  disabled={genBusy}
-                >
-                  重新生成
-                </button>
-              </div>
-            </div>
-          ) : (
-            <Button size="sm" variant="secondary" onClick={handleGenCode} disabled={genBusy} className="mt-2 w-full">
-              {genBusy ? <MapSpinner size={13} /> : <KeyRound size={13} />}
-              生成配对码
-            </Button>
-          )}
-        </div>
-
-        {/* 接入已知对端 */}
-        <div
-          className="rounded-xl p-4"
-          style={{
-            background: 'var(--bg-card, rgba(255,255,255,0.03))',
-            border: '1px solid rgba(255,255,255,0.08)',
-          }}
-        >
-          <div className="flex items-start gap-3 mb-2">
-            <div
-              className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center"
-              style={{ background: 'rgba(168,85,247,0.12)', border: '1px solid rgba(168,85,247,0.20)' }}
-            >
-              <Inbox size={15} style={{ color: 'rgba(192,132,252,0.95)' }} />
-            </div>
-            <div className="min-w-0">
-              <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
-                接入已知对端
-              </div>
-              <div className="text-[11px] mt-0.5 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-                拿到对端管理员发来的配对码后，在这里录入对端地址
-              </div>
-            </div>
-          </div>
-          {/* PR #742 review Medium fix：握手 in-flight 时禁掉收起，否则收起会把进度 + addError 全藏起来 */}
-          <Button size="sm" onClick={() => { if (!addBusy) setShowAdd((v) => !v); }} disabled={addBusy} className="mt-2 w-full">
-            <Plus size={13} /> {showAdd ? (addBusy ? '握手中…（请勿关闭）' : '收起表单') : '添加对端节点'}
+          <Button size="sm" onClick={() => { if (!addBusy) setShowAdd((v) => !v); }} disabled={addBusy}>
+            <Plus size={13} /> {showAdd ? (addBusy ? '添加中…' : '收起') : '添加对端'}
           </Button>
         </div>
       </section>
 
-      {/* ── 添加对端表单（展开式） ── */}
       {showAdd && (
         <section
           className="rounded-xl p-4 space-y-3"
@@ -424,40 +438,85 @@ export function PeerNodesSettings() {
           }}
         >
           <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
-            添加对端节点
+            添加对端
           </div>
+
+          <div
+            className="rounded-lg p-3 space-y-2"
+            style={{ background: 'rgba(59,130,246,0.05)', border: '1px solid rgba(59,130,246,0.16)' }}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+                我的连接串
+              </span>
+              {code && (
+                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  剩余 {codeSecondsLeft}s
+                </span>
+              )}
+            </div>
+            {selfConnectText ? (
+              <>
+                <code
+                  className="block text-[11px] font-mono break-all px-2 py-2 rounded max-h-20 overflow-y-auto"
+                  style={{ background: 'rgba(0,0,0,0.22)', color: 'var(--text-primary)' }}
+                >
+                  {selfConnectText}
+                </code>
+                <div className="flex items-center justify-end gap-2">
+                  <Button size="xs" variant="ghost" onClick={handleGenCode} disabled={genBusy}>
+                    {genBusy ? <MapSpinner size={12} /> : <KeyRound size={12} />}
+                    重新生成
+                  </Button>
+                  <Button size="xs" variant="secondary" onClick={handleCopyCode}>
+                    {copiedCode ? <Check size={12} /> : <Copy size={12} />}
+                    {copiedCode ? '已复制' : '复制'}
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <Button size="sm" variant="secondary" onClick={handleGenCode} disabled={genBusy} className="w-full">
+                {genBusy ? <MapSpinner size={13} /> : <KeyRound size={13} />}
+                生成我的连接串
+              </Button>
+            )}
+          </div>
+
           <label className="grid gap-1.5">
             <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-              对端地址 baseUrl
+              对端连接串
             </span>
-            <input
-              className="w-full rounded-lg px-3 py-2 text-[13px] outline-none"
+            <textarea
+              className="w-full min-h-[92px] resize-y rounded-lg px-3 py-2 text-[12px] font-mono outline-none"
               style={{
                 background: 'var(--bg-input, rgba(255,255,255,0.04))',
                 border: '1px solid rgba(255,255,255,0.10)',
                 color: 'var(--text-primary)',
               }}
-              placeholder="https://prod-xxx.miduo.org"
-              value={addBaseUrl}
-              onChange={(e) => setAddBaseUrl(e.target.value)}
+              placeholder="粘贴对端生成的 peer-connect:v1:..."
+              value={peerConnectText}
+              onChange={(e) => handlePeerConnectTextChange(e.target.value)}
             />
           </label>
-          <label className="grid gap-1.5">
-            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-              对端生成的配对码
-            </span>
-            <input
-              className="w-full rounded-lg px-3 py-2 text-[13px] outline-none font-mono"
+
+          {(parsedPeer || parseError) && (
+            <div
+              className="flex items-start gap-2 text-[12px] rounded-lg px-3 py-2"
               style={{
-                background: 'var(--bg-input, rgba(255,255,255,0.04))',
-                border: '1px solid rgba(255,255,255,0.10)',
-                color: 'var(--text-primary)',
+                background: parsedPeer ? 'rgba(34,197,94,0.07)' : 'rgba(239,68,68,0.08)',
+                border: `1px solid ${parsedPeer ? 'rgba(34,197,94,0.18)' : 'rgba(239,68,68,0.20)'}`,
+                color: parsedPeer ? 'rgba(134,239,172,0.95)' : 'rgba(252,165,165,0.95)',
               }}
-              placeholder="粘贴对端管理员发来的配对码"
-              value={addCode}
-              onChange={(e) => setAddCode(e.target.value)}
-            />
-          </label>
+            >
+              {parsedPeer ? <CheckCircle2 size={14} className="shrink-0 mt-0.5" /> : <AlertCircle size={14} className="shrink-0 mt-0.5" />}
+              <span className="min-w-0 break-words">
+                {parsedPeer
+                  ? `已识别对端 ${parsedPeer.displayName || parsedPeer.nodeId} · ${parsedPeer.baseUrl}`
+                  : parseError}
+              </span>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="grid gap-1.5">
               <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
@@ -527,9 +586,9 @@ export function PeerNodesSettings() {
             <Button size="sm" variant="ghost" onClick={() => setShowAdd(false)} disabled={addBusy}>
               取消
             </Button>
-            <Button size="sm" onClick={handleAdd} disabled={addBusy}>
+            <Button size="sm" onClick={handleAdd} disabled={addBusy || !!parseError || !peerConnectText.trim()}>
               {addBusy ? <MapSpinner size={13} /> : <Wifi size={13} />}
-              {addBusy ? '握手中…' : '配对'}
+              {addBusy ? '添加中…' : '添加'}
             </Button>
           </div>
         </section>
@@ -573,9 +632,9 @@ export function PeerNodesSettings() {
               还没有配对任何对端节点
             </div>
             <div className="text-[12px] max-w-md mx-auto leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-              从上面「邀请对端接入我」生成配对码发给对端，
+              点击「添加对端」生成自己的连接串并发给对端，
               <br />
-              或拿到对端配对码后点「添加对端节点」打通两个环境。
+              再粘贴对端连接串完成双端确认。
             </div>
           </div>
         ) : (

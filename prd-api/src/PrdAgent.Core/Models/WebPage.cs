@@ -285,6 +285,9 @@ public class ShareViewLog
     /// <summary>观看者显示名称（未登录为 null）</summary>
     public string? ViewerName { get; set; }
 
+    /// <summary>观看者头像文件名快照（未登录为 null）</summary>
+    public string? ViewerAvatarFileName { get; set; }
+
     /// <summary>分享创建者用户 ID</summary>
     public string ShareOwnerUserId { get; set; } = string.Empty;
 

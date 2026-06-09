@@ -1098,12 +1098,17 @@ public class HostedSiteService : IHostedSiteService
         // 记录观看日志
         try
         {
+            var viewerAvatarFileName = !string.IsNullOrWhiteSpace(viewerUserId)
+                ? await LookupAvatarFileNameAsync(viewerUserId, ct)
+                : null;
+
             await _db.ShareViewLogs.InsertOneAsync(new ShareViewLog
             {
                 ShareToken = token,
                 ShareId = share.Id,
                 ViewerUserId = viewerUserId,
                 ViewerName = viewerName,
+                ViewerAvatarFileName = viewerAvatarFileName,
                 ShareOwnerUserId = share.CreatedBy,
                 IpAddress = ipAddress,
                 UserAgent = userAgent,
@@ -1477,6 +1482,16 @@ public class HostedSiteService : IHostedSiteService
         var expiredShares = allShares.Count(s => s.ExpiresAt.HasValue && s.ExpiresAt.Value <= now);
 
         var tokens = allShares.Select(s => s.Token).ToList();
+        var shareSiteIds = allShares
+            .SelectMany(s =>
+            {
+                var ids = s.SiteIds.Count > 0 ? s.SiteIds : new List<string>();
+                if (!string.IsNullOrWhiteSpace(s.SiteId) && !ids.Contains(s.SiteId)) ids.Insert(0, s.SiteId);
+                return ids;
+            })
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct()
+            .ToList();
         var fbLog = Builders<ShareViewLog>.Filter;
         var recentLogs = tokens.Count == 0
             ? new List<ShareViewLog>()
@@ -1487,19 +1502,142 @@ public class HostedSiteService : IHostedSiteService
                 .ToListAsync(ct);
 
         var totalViews = recentLogs.Count;
-        var uniqueIps = recentLogs.Where(l => !string.IsNullOrEmpty(l.IpAddress))
-            .Select(l => l.IpAddress!).Distinct().Count();
+        var uniqueVisitors = recentLogs
+            .Select(ViewerDedupeKey)
+            .Where(k => !string.IsNullOrWhiteSpace(k))
+            .Distinct()
+            .Count();
 
-        // 时间线（脱敏 IP：前两段保留，后两段打码，避免泄露给非 admin）
-        var titleByToken = allShares.ToDictionary(s => s.Token, s => s.Title);
+        var viewerUserIds = recentLogs
+            .Select(l => l.ViewerUserId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Select(id => id!)
+            .Distinct()
+            .ToList();
+        var viewerUsers = viewerUserIds.Count == 0
+            ? new List<User>()
+            : await _db.Users.Find(Builders<User>.Filter.In(u => u.UserId, viewerUserIds))
+                .Project(Builders<User>.Projection.Expression(u => new User
+                {
+                    UserId = u.UserId,
+                    Username = u.Username,
+                    DisplayName = u.DisplayName,
+                    AvatarFileName = u.AvatarFileName,
+                }))
+                .ToListAsync(ct);
+        var viewerMap = viewerUsers.ToDictionary(u => u.UserId, u => u);
+
+        // 时间线（脱敏 IP：前两段保留，后两段打码，避免泄露给非 admin；UI 不再把 IP 作为主指标）
+        var shareByToken = allShares.ToDictionary(s => s.Token, s => s);
         var timeline = recentLogs.Take(100).Select(l => new ShareAnalyticsTimelineEntry
         {
             ViewedAt = l.ViewedAt,
             ShareToken = l.ShareToken,
-            ShareTitle = StripLegacySharePrefix(titleByToken.TryGetValue(l.ShareToken, out var t) ? t : null),
-            ViewerName = l.ViewerName,
+            ShareTitle = StripLegacySharePrefix(shareByToken.TryGetValue(l.ShareToken, out var s) ? s.Title : null),
+            ShareUrl = shareByToken.TryGetValue(l.ShareToken, out var s2) ? BuildSharePreviewPath(s2) : $"/s/wp/{l.ShareToken}",
+            ViewerUserId = l.ViewerUserId,
+            ViewerName = ResolveViewerName(l, viewerMap),
+            ViewerAvatarFileName = ResolveViewerAvatar(l, viewerMap),
             IpAddress = MaskIp(l.IpAddress),
             UserAgent = l.UserAgent,
+            ClientSummary = BuildClientSummary(l.UserAgent, l.IpAddress),
+        }).ToList();
+
+        var visitorsByToken = recentLogs
+            .GroupBy(l => l.ShareToken)
+            .ToDictionary(
+                g => g.Key,
+                g => g.GroupBy(ViewerDedupeKey)
+                    .Select(vg =>
+                    {
+                        var latest = vg.OrderByDescending(x => x.ViewedAt).First();
+                        return new ShareAnalyticsVisitorSummary
+                        {
+                            ViewerUserId = latest.ViewerUserId,
+                            ViewerName = ResolveViewerName(latest, viewerMap),
+                            ViewerAvatarFileName = ResolveViewerAvatar(latest, viewerMap),
+                            ViewCount = vg.LongCount(),
+                        };
+                    })
+                    .OrderByDescending(v => v.ViewCount)
+                    .ThenBy(v => v.ViewerName == "匿名访客" ? 1 : 0)
+                    .Take(5)
+                    .ToList());
+        var visitorCountsByToken = recentLogs
+            .GroupBy(l => l.ShareToken)
+            .ToDictionary(g => g.Key, g => g.Select(ViewerDedupeKey).Distinct().LongCount());
+
+        var siteTitleMap = shareSiteIds.Count == 0
+            ? new Dictionary<string, string>()
+            : (await _db.HostedSites.Find(Builders<HostedSite>.Filter.In(s => s.Id, shareSiteIds))
+                .Project(Builders<HostedSite>.Projection.Expression(s => new HostedSite
+                {
+                    Id = s.Id,
+                    Title = s.Title,
+                }))
+                .ToListAsync(ct))
+                .ToDictionary(s => s.Id, s => s.Title);
+
+        var comments = shareSiteIds.Count == 0
+            ? new List<HostedSiteComment>()
+            : await _db.HostedSiteComments
+                .Find(Builders<HostedSiteComment>.Filter.In(c => c.SiteId, shareSiteIds)
+                    & Builders<HostedSiteComment>.Filter.Eq(c => c.IsDeleted, false)
+                    & Builders<HostedSiteComment>.Filter.Gte(c => c.CreatedAt, rangeStart))
+                .SortByDescending(c => c.CreatedAt)
+                .ToListAsync(ct);
+
+        var trend = Enumerable.Range(0, rangeDays)
+            .Select(offset =>
+            {
+                var date = rangeStart.Date.AddDays(offset + 1);
+                var key = date.ToString("yyyy-MM-dd");
+                return new ShareAnalyticsTrendPoint
+                {
+                    Date = key,
+                    Views = recentLogs.LongCount(l => l.ViewedAt.ToString("yyyy-MM-dd") == key),
+                    Comments = comments.LongCount(c => c.CreatedAt.ToString("yyyy-MM-dd") == key),
+                };
+            })
+            .ToList();
+
+        var hourly = Enumerable.Range(0, 24)
+            .Select(hour => new ShareAnalyticsHourlyPoint
+            {
+                Hour = hour,
+                Views = recentLogs.LongCount(l => l.ViewedAt.Hour == hour),
+            })
+            .ToList();
+
+        var topVisitors = recentLogs
+            .GroupBy(ViewerDedupeKey)
+            .Select(g =>
+            {
+                var latest = g.OrderByDescending(x => x.ViewedAt).First();
+                return new ShareAnalyticsVisitorStats
+                {
+                    ViewerUserId = latest.ViewerUserId,
+                    ViewerName = ResolveViewerName(latest, viewerMap),
+                    ViewerAvatarFileName = ResolveViewerAvatar(latest, viewerMap),
+                    ViewCount = g.LongCount(),
+                    LastViewedAt = latest.ViewedAt,
+                };
+            })
+            .OrderByDescending(v => v.ViewCount)
+            .ThenByDescending(v => v.LastViewedAt)
+            .Take(8)
+            .ToList();
+
+        var recentComments = comments.Take(20).Select(c => new ShareAnalyticsCommentEntry
+        {
+            Id = c.Id,
+            SiteId = c.SiteId,
+            SiteTitle = siteTitleMap.TryGetValue(c.SiteId, out var title) ? title : "网页",
+            ShareToken = c.ShareToken,
+            AuthorName = c.AuthorName,
+            AuthorAvatarFileName = c.AuthorAvatarFileName,
+            Content = TruncateComment(c.Content),
+            CreatedAt = c.CreatedAt,
         }).ToList();
 
         // Top 链接（按 ViewCount 排序，最多 10 条）
@@ -1512,12 +1650,14 @@ public class HostedSiteService : IHostedSiteService
                 ShareId = s.Id,
                 Token = s.Token,
                 Title = StripLegacySharePrefix(s.Title),
+                ShareUrl = BuildSharePreviewPath(s),
                 ViewCount = s.ViewCount,
-                UniqueIpCount = s.UniqueIpCount,
+                UniqueIpCount = visitorCountsByToken.TryGetValue(s.Token, out var visitorCount) ? visitorCount : 0,
                 LastViewedAt = s.LastViewedAt,
                 CreatedAt = s.CreatedAt,
                 ExpiresAt = s.ExpiresAt,
                 Visibility = s.Visibility ?? "owner-only",
+                Visitors = visitorsByToken.TryGetValue(s.Token, out var visitors) ? visitors : new List<ShareAnalyticsVisitorSummary>(),
             })
             .ToList();
 
@@ -1527,9 +1667,14 @@ public class HostedSiteService : IHostedSiteService
             ActiveShares = activeShares,
             ExpiredShares = expiredShares,
             TotalViews = totalViews,
-            UniqueIpCount = uniqueIps,
+            UniqueIpCount = uniqueVisitors,
+            CommentCount = comments.Count,
             Timeline = timeline,
             TopLinks = topLinks,
+            Trend = trend,
+            Hourly = hourly,
+            TopVisitors = topVisitors,
+            RecentComments = recentComments,
         };
     }
 
@@ -1666,6 +1811,79 @@ public class HostedSiteService : IHostedSiteService
             .Project(Builders<User>.Projection.Expression(u => u.DisplayName))
             .FirstOrDefaultAsync(ct);
         return string.IsNullOrWhiteSpace(user) ? null : user;
+    }
+
+    private async Task<string?> LookupAvatarFileNameAsync(string userId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(userId)) return null;
+        var avatar = await _db.Users.Find(x => x.UserId == userId)
+            .Project(Builders<User>.Projection.Expression(u => u.AvatarFileName))
+            .FirstOrDefaultAsync(ct);
+        return string.IsNullOrWhiteSpace(avatar) ? null : avatar;
+    }
+
+    private static string BuildSharePreviewPath(WebPageShareLink share)
+        => share.ShortSeq > 0 ? $"/s/{share.ShortSeq}" : $"/s/wp/{share.Token}";
+
+    private static string ViewerDedupeKey(ShareViewLog log)
+    {
+        if (!string.IsNullOrWhiteSpace(log.ViewerUserId))
+            return $"u:{log.ViewerUserId}";
+        if (!string.IsNullOrWhiteSpace(log.IpAddress))
+            return $"ip:{log.IpAddress}";
+        if (!string.IsNullOrWhiteSpace(log.UserAgent))
+            return $"ua:{log.UserAgent}";
+        return "anonymous";
+    }
+
+    private static string ResolveViewerName(ShareViewLog log, IReadOnlyDictionary<string, User> viewerMap)
+    {
+        if (!string.IsNullOrWhiteSpace(log.ViewerUserId) && viewerMap.TryGetValue(log.ViewerUserId, out var user))
+        {
+            if (!string.IsNullOrWhiteSpace(user.DisplayName)) return user.DisplayName;
+            if (!string.IsNullOrWhiteSpace(user.Username)) return user.Username;
+        }
+        if (!string.IsNullOrWhiteSpace(log.ViewerName)) return log.ViewerName;
+        return "匿名访客";
+    }
+
+    private static string? ResolveViewerAvatar(ShareViewLog log, IReadOnlyDictionary<string, User> viewerMap)
+    {
+        if (!string.IsNullOrWhiteSpace(log.ViewerUserId)
+            && viewerMap.TryGetValue(log.ViewerUserId, out var user)
+            && !string.IsNullOrWhiteSpace(user.AvatarFileName))
+            return user.AvatarFileName;
+        return string.IsNullOrWhiteSpace(log.ViewerAvatarFileName) ? null : log.ViewerAvatarFileName;
+    }
+
+    private static string BuildClientSummary(string? userAgent, string? ipAddress)
+    {
+        var parts = new List<string>();
+        var ua = userAgent ?? string.Empty;
+        if (ua.Contains("Mobile", StringComparison.OrdinalIgnoreCase) ||
+            ua.Contains("Android", StringComparison.OrdinalIgnoreCase) ||
+            ua.Contains("iPhone", StringComparison.OrdinalIgnoreCase))
+            parts.Add("移动端");
+        else if (!string.IsNullOrWhiteSpace(ua))
+            parts.Add("桌面端");
+
+        var browser =
+            ua.Contains("Edg/", StringComparison.OrdinalIgnoreCase) ? "Edge" :
+            ua.Contains("Chrome/", StringComparison.OrdinalIgnoreCase) ? "Chrome" :
+            ua.Contains("Safari/", StringComparison.OrdinalIgnoreCase) ? "Safari" :
+            ua.Contains("Firefox/", StringComparison.OrdinalIgnoreCase) ? "Firefox" :
+            null;
+        if (browser != null) parts.Add(browser);
+
+        var maskedIp = MaskIp(ipAddress);
+        if (!string.IsNullOrWhiteSpace(maskedIp)) parts.Add(maskedIp);
+        return parts.Count == 0 ? "未知来源" : string.Join(" · ", parts);
+    }
+
+    private static string TruncateComment(string? content)
+    {
+        var text = (content ?? string.Empty).Trim();
+        return text.Length <= 80 ? text : text[..80] + "…";
     }
 
     // ─────────────────────────────────────────────
