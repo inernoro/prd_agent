@@ -20,6 +20,7 @@ import {
   type FrontEndAgentRequest,
   type FrontEndAgentTaskType,
 } from '@/services/real/frontEndAgent';
+import { FrontEndPdaGuide } from './FrontEndPdaGuide';
 import { FrontEndProjectTable } from './FrontEndProjectTable';
 
 interface TaskDefinition {
@@ -314,6 +315,8 @@ export function FrontEndAgentPage() {
       </div>
 
       <FrontEndProjectTable />
+
+      <FrontEndPdaGuide />
 
       <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-[420px_minmax(0,1fr)] gap-4">
         <section className="min-h-0 rounded-2xl border border-white/10 bg-white/[0.035] flex flex-col overflow-hidden">
