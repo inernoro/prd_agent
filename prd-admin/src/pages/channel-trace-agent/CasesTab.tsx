@@ -1,14 +1,16 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Send, Plus, Pencil, Trash2, Loader2, X, Stethoscope, Search } from 'lucide-react';
+import { Send, Plus, Pencil, Trash2, Loader2, X, Stethoscope, Search, Upload } from 'lucide-react';
 import { useSseStream } from '@/lib/useSseStream';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
+import { uploadAttachment } from '@/services/real/aiToolbox';
 import {
   listCases,
   createCase,
   updateCase,
   deleteCase,
   caseDiagnoseUrl,
+  caseImportUrl,
   type ChannelTraceCase,
   type ChannelTraceCaseSeverity,
   type ChannelTraceRelatedCase,
@@ -30,6 +32,8 @@ export function CasesTab() {
   const [model, setModel] = useState<{ model?: string; platform?: string } | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<ChannelTraceCase | null>(null);
+  const [importMsg, setImportMsg] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { phase, phaseMessage, typing, isStreaming, start } = useSseStream({
     url: caseDiagnoseUrl,
@@ -38,6 +42,25 @@ export function CasesTab() {
       model: (d) => setModel(d as { model?: string; platform?: string }),
       relatedCases: (d) => setRelated((d as { items: ChannelTraceRelatedCase[] }).items ?? []),
     },
+  });
+
+  const importStream = useSseStream({
+    url: caseImportUrl,
+    method: 'POST',
+    onEvent: {
+      case: (d) => {
+        const c = d as { title: string; index: number };
+        setImportMsg(`已解析第 ${c.index} 条：${c.title}`);
+      },
+    },
+    onPhase: (m) => setImportMsg(m),
+    onDone: (d) => {
+      const count = (d as { count?: number }).count ?? 0;
+      setImportMsg(`导入完成，共 ${count} 条案例`);
+      void load(keyword);
+      window.setTimeout(() => setImportMsg(''), 4000);
+    },
+    onError: (m) => setImportMsg(`导入失败：${m}`),
   });
 
   const load = useCallback(async (kw?: string) => {
@@ -65,6 +88,19 @@ export function CasesTab() {
     if (!window.confirm('确定删除该案例？')) return;
     const res = await deleteCase(id);
     if (res.success) void load(keyword);
+  };
+
+  const onImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setImportMsg('上传文件中…');
+    const up = await uploadAttachment(file);
+    if (!up.success || !up.data) {
+      setImportMsg(`上传失败：${up.error?.message || ''}`);
+      return;
+    }
+    void importStream.start({ body: { attachmentId: up.data.attachmentId } });
   };
 
   return (
@@ -166,6 +202,19 @@ export function CasesTab() {
             />
           </div>
           <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={importStream.isStreaming}
+            className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white/80 hover:bg-white/10 disabled:opacity-40"
+            title="导入历史 bug 文件，AI 自动解析为案例"
+          >
+            {importStream.isStreaming ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Upload className="w-3.5 h-3.5" />
+            )}
+            导入
+          </button>
+          <button
             onClick={() => {
               setEditing(null);
               setEditorOpen(true);
@@ -175,7 +224,20 @@ export function CasesTab() {
             <Plus className="w-3.5 h-3.5" />
             记录
           </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="hidden"
+            accept=".md,.txt,.pdf,.doc,.docx,.xls,.xlsx,.csv"
+            onChange={onImportFile}
+          />
         </div>
+        {importMsg && (
+          <div className="shrink-0 px-4 pb-2 text-[11px] text-emerald-300/80 inline-flex items-center gap-1.5">
+            {importStream.isStreaming && <Loader2 className="w-3 h-3 animate-spin" />}
+            {importMsg}
+          </div>
+        )}
         <div
           className="flex-1 px-4 pb-4 space-y-2"
           style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}

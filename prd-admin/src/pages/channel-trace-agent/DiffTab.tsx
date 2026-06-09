@@ -1,29 +1,51 @@
 import { useState, useEffect, useCallback } from 'react';
-import { GitCompare, Loader2, Trash2, History, Play } from 'lucide-react';
+import { GitCompare, Loader2, Trash2, History, Play, Github, AlertTriangle, FileCode } from 'lucide-react';
 import { useSseStream } from '@/lib/useSseStream';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import {
   listDiffs,
   getDiff,
   deleteDiff,
+  getCodeScanRepos,
   diffCompareUrl,
   type ChannelTraceDiff,
+  type ChannelTraceCodeHit,
+  type ChannelTraceCodeScanRepo,
 } from '@/services/real/channelTraceAgent';
+
+interface RepoStatus {
+  name: string;
+  branch: string;
+  ok: boolean;
+  error?: string | null;
+}
 
 export function DiffTab() {
   const [title, setTitle] = useState('');
-  const [businessRule, setBusinessRule] = useState('');
-  const [codeContent, setCodeContent] = useState('');
-  const [codeLocation, setCodeLocation] = useState('');
+  const [description, setDescription] = useState('');
   const [model, setModel] = useState<{ model?: string; platform?: string } | null>(null);
+  const [keywords, setKeywords] = useState<string[]>([]);
+  const [repoStatus, setRepoStatus] = useState<RepoStatus[]>([]);
+  const [codeHits, setCodeHits] = useState<ChannelTraceCodeHit[]>([]);
   const [history, setHistory] = useState<ChannelTraceDiff[]>([]);
   const [viewing, setViewing] = useState<ChannelTraceDiff | null>(null);
+  const [builtinRepos, setBuiltinRepos] = useState<ChannelTraceCodeScanRepo[]>([]);
+  const [tokenConfigured, setTokenConfigured] = useState(true);
 
   const { phase, phaseMessage, typing, isStreaming, start, reset } = useSseStream({
     url: diffCompareUrl,
     method: 'POST',
     onEvent: {
       model: (d) => setModel(d as { model?: string; platform?: string }),
+      keywords: (d) => setKeywords((d as { keywords: string[] }).keywords ?? []),
+      repos: (d) => setRepoStatus((d as { items: RepoStatus[] }).items ?? []),
+      codeHits: (d) =>
+        setCodeHits(
+          ((d as { items: { repo: string; path: string; score: number }[] }).items ?? []).map((h) => ({
+            ...h,
+            snippet: '',
+          })),
+        ),
     },
     onDone: () => {
       void loadHistory();
@@ -37,26 +59,41 @@ export function DiffTab() {
 
   useEffect(() => {
     void loadHistory();
+    void (async () => {
+      const res = await getCodeScanRepos();
+      if (res.success && res.data) {
+        setBuiltinRepos(res.data.repos);
+        setTokenConfigured(res.data.tokenConfigured);
+      }
+    })();
   }, [loadHistory]);
 
   const compare = () => {
-    if (!businessRule.trim() || !codeContent.trim() || isStreaming) return;
+    if (!description.trim() || isStreaming) return;
     setModel(null);
+    setKeywords([]);
+    setRepoStatus([]);
+    setCodeHits([]);
     setViewing(null);
     void start({
       body: {
         title: title.trim() || undefined,
-        businessRule: businessRule.trim(),
-        codeContent: codeContent.trim(),
-        codeLocation: codeLocation.trim() || undefined,
+        featureDescription: description.trim(),
       },
     });
   };
 
   const openHistory = async (id: string) => {
     reset();
+    setKeywords([]);
+    setRepoStatus([]);
+    setCodeHits([]);
     const res = await getDiff(id);
-    if (res.success && res.data) setViewing(res.data.item);
+    if (res.success && res.data) {
+      setViewing(res.data.item);
+      setKeywords(res.data.item.keywords ?? []);
+      setCodeHits(res.data.item.codeHits ?? []);
+    }
   };
 
   const onDelete = async (id: string) => {
@@ -74,60 +111,68 @@ export function DiffTab() {
       ? { model: viewing.model, platform: viewing.modelPlatform ?? undefined }
       : null
     : model;
+  const shownHits = codeHits;
 
   return (
     <div className="h-full min-h-0 flex">
-      {/* 左：输入 + 结果 */}
+      {/* 左：描述输入 + 结果 */}
       <div className="flex-1 min-w-0 flex flex-col border-r border-white/10">
         <div className="shrink-0 px-6 pt-5 pb-3 space-y-2.5">
           <div className="text-sm font-medium text-white/85 inline-flex items-center gap-1.5">
             <GitCompare className="w-4 h-4 text-emerald-400" />
-            业务规则 vs 代码实现差异对比
+            功能描述 vs 代码实现异同分析
           </div>
+          <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-white/45">
+            <Github className="w-3.5 h-3.5" />
+            内置扫描仓库：
+            {builtinRepos.length === 0 ? (
+              <span>加载中…</span>
+            ) : (
+              builtinRepos.map((r) => (
+                <span key={r.name} className="px-1.5 py-0.5 rounded bg-white/5 text-white/70">
+                  {r.name}@{r.branch}
+                </span>
+              ))
+            )}
+          </div>
+          {!tokenConfigured && (
+            <div className="flex items-start gap-1.5 text-[11px] text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded-lg px-2.5 py-1.5">
+              <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              <span>
+                未检测到服务级 GitHub PAT，私有仓库将无法克隆。请在部署环境注入密钥{' '}
+                <code className="font-mono">ChannelTrace__GitHubToken</code>。
+              </span>
+            </div>
+          )}
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="对比任务标题（可选），如：窜货判定规则一致性核对"
+            placeholder="对比任务标题（可选），如：窜货判定逻辑核对"
             className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 placeholder:text-white/30 focus:outline-none focus:border-emerald-500/40"
           />
-          <div className="grid grid-cols-2 gap-2.5">
-            <textarea
-              value={businessRule}
-              onChange={(e) => setBusinessRule(e.target.value)}
-              rows={6}
-              placeholder="防窜物流业务规则描述（期望行为）…"
-              className="resize-y rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 placeholder:text-white/30 leading-relaxed focus:outline-none focus:border-emerald-500/40"
-            />
-            <textarea
-              value={codeContent}
-              onChange={(e) => setCodeContent(e.target.value)}
-              rows={6}
-              placeholder="当前代码实现（粘贴相关代码片段 / 逻辑）…"
-              className="resize-y rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 placeholder:text-white/30 font-mono leading-relaxed focus:outline-none focus:border-emerald-500/40"
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <input
-              value={codeLocation}
-              onChange={(e) => setCodeLocation(e.target.value)}
-              placeholder="代码位置标注（可选），如 prd-api/.../ChannelService.cs:120"
-              className="flex-1 rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 placeholder:text-white/30 focus:outline-none focus:border-emerald-500/40"
-            />
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) compare();
+            }}
+            rows={4}
+            placeholder="具体描述要核对的功能/业务规则，越具体越好（涉及的实体、流程、边界、状态流转）。子 agent 会按描述去两个仓库里找相关代码再做异同分析。（Ctrl/⌘+Enter 开始）"
+            className="w-full resize-y rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 placeholder:text-white/30 leading-relaxed focus:outline-none focus:border-emerald-500/40"
+          />
+          <div className="flex items-center justify-between">
+            <div className="text-[11px] text-white/40 font-mono">
+              {resultModel?.model ? `● ${resultModel.model}${resultModel.platform ? ` · ${resultModel.platform}` : ''}` : ''}
+            </div>
             <button
               onClick={compare}
-              disabled={isStreaming || !businessRule.trim() || !codeContent.trim()}
+              disabled={isStreaming || !description.trim()}
               className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-sm hover:bg-emerald-500/25 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {isStreaming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-              开始对比
+              开始分析
             </button>
           </div>
-          {resultModel?.model && (
-            <div className="text-[11px] text-white/40 font-mono">
-              ● {resultModel.model}
-              {resultModel.platform ? ` · ${resultModel.platform}` : ''}
-            </div>
-          )}
         </div>
 
         <div
@@ -136,14 +181,58 @@ export function DiffTab() {
         >
           {viewing && (
             <div className="text-xs text-white/45 mb-2">
-              历史记录：{viewing.title} ·{' '}
-              {new Date(viewing.createdAt).toLocaleString('zh-CN')}
+              历史记录：{viewing.title} · {new Date(viewing.createdAt).toLocaleString('zh-CN')}
+              {viewing.scannedRepos?.length > 0 && ` · 扫描：${viewing.scannedRepos.join(', ')}`}
             </div>
           )}
+
+          {keywords.length > 0 && (
+            <div className="mb-2">
+              <span className="text-[11px] text-white/45">检索关键词：</span>
+              {keywords.map((k) => (
+                <span key={k} className="ml-1 text-[11px] px-1.5 py-0.5 rounded bg-white/5 text-white/70">
+                  {k}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {repoStatus.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-1.5 text-[11px]">
+              {repoStatus.map((r) => (
+                <span
+                  key={r.name}
+                  className={`px-1.5 py-0.5 rounded ${
+                    r.ok ? 'bg-emerald-500/10 text-emerald-300' : 'bg-rose-500/10 text-rose-300'
+                  }`}
+                  title={r.error ?? ''}
+                >
+                  {r.ok ? '克隆成功' : '克隆失败'}：{r.name}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {shownHits.length > 0 && (
+            <div className="mb-3">
+              <div className="text-xs text-white/50 mb-1.5 inline-flex items-center gap-1">
+                <FileCode className="w-3.5 h-3.5" />
+                命中代码（{shownHits.length}）
+              </div>
+              <div className="space-y-1">
+                {shownHits.map((h, i) => (
+                  <div key={`${h.repo}-${h.path}-${i}`} className="text-[11px] text-white/60 font-mono truncate">
+                    <span className="text-emerald-300/80">[{h.repo}]</span> {h.path}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {isStreaming && !typing && (
             <div className="flex items-center gap-2 text-sm text-white/50 py-4">
               <Loader2 className="w-4 h-4 animate-spin" />
-              {phaseMessage || 'AI 正在对比…'}
+              {phaseMessage || '子 agent 处理中…'}
             </div>
           )}
           {resultText ? (
@@ -151,9 +240,10 @@ export function DiffTab() {
               <MarkdownContent content={resultText} variant="reading" />
             </div>
           ) : (
-            !isStreaming && (
+            !isStreaming &&
+            keywords.length === 0 && (
               <div className="text-sm text-white/35 py-10 text-center">
-                填入业务规则与代码实现，AI 会给出「已实现 / 缺失 / 偏差 / 代码额外行为」的差异清单。
+                描述要核对的功能，子 agent 会扫描内置两个仓库的相关代码，给出与你描述的异同分析。
               </div>
             )
           )}
@@ -167,14 +257,14 @@ export function DiffTab() {
       <div className="w-[320px] shrink-0 flex flex-col">
         <div className="shrink-0 px-4 pt-5 pb-3 text-sm font-medium text-white/85 inline-flex items-center gap-1.5">
           <History className="w-4 h-4 text-white/50" />
-          对比历史
+          分析历史
         </div>
         <div
           className="flex-1 px-4 pb-4 space-y-2"
           style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
         >
           {history.length === 0 ? (
-            <div className="text-sm text-white/35 py-10 text-center">暂无对比记录。</div>
+            <div className="text-sm text-white/35 py-10 text-center">暂无分析记录。</div>
           ) : (
             history.map((it) => (
               <div

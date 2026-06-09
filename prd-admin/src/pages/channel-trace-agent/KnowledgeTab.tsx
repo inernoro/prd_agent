@@ -1,13 +1,15 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Send, Plus, Pencil, Trash2, Loader2, X, BookOpen, Search } from 'lucide-react';
+import { Send, Plus, Pencil, Trash2, Loader2, X, BookOpen, Search, Upload } from 'lucide-react';
 import { useSseStream } from '@/lib/useSseStream';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
+import { uploadAttachment } from '@/services/real/aiToolbox';
 import {
   listKnowledge,
   createKnowledge,
   updateKnowledge,
   deleteKnowledge,
+  importKnowledge,
   knowledgeAskUrl,
   type ChannelTraceKnowledge,
 } from '@/services/real/channelTraceAgent';
@@ -20,6 +22,8 @@ export function KnowledgeTab() {
   const [model, setModel] = useState<{ model?: string; platform?: string } | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<ChannelTraceKnowledge | null>(null);
+  const [importing, setImporting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { phase, phaseMessage, typing, isStreaming, start } = useSseStream({
     url: knowledgeAskUrl,
@@ -53,6 +57,25 @@ export function KnowledgeTab() {
     if (!window.confirm('确定删除该知识条目？')) return;
     const res = await deleteKnowledge(id);
     if (res.success) void load(keyword);
+  };
+
+  const onImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setImporting(true);
+    try {
+      const up = await uploadAttachment(file);
+      if (!up.success || !up.data) {
+        window.alert(up.error?.message || '文件上传失败');
+        return;
+      }
+      const res = await importKnowledge({ attachmentId: up.data.attachmentId });
+      if (res.success) void load(keyword);
+      else window.alert(res.error?.message || '导入失败（请确认文件可解析出文本）');
+    } finally {
+      setImporting(false);
+    }
   };
 
   return (
@@ -135,6 +158,15 @@ export function KnowledgeTab() {
             />
           </div>
           <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={importing}
+            className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white/80 hover:bg-white/10 disabled:opacity-40"
+            title="导入文件形成知识"
+          >
+            {importing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+            导入
+          </button>
+          <button
             onClick={() => {
               setEditing(null);
               setEditorOpen(true);
@@ -144,6 +176,13 @@ export function KnowledgeTab() {
             <Plus className="w-3.5 h-3.5" />
             新增
           </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="hidden"
+            accept=".md,.txt,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv"
+            onChange={onImportFile}
+          />
         </div>
         <div
           className="flex-1 px-4 pb-4 space-y-2"

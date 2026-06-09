@@ -36,12 +36,23 @@ export interface ChannelTraceCase {
 
 export type ChannelTraceDiffStatus = 'Queued' | 'Running' | 'Done' | 'Error';
 
+export interface ChannelTraceCodeHit {
+  repo: string;
+  path: string;
+  snippet: string;
+  score: number;
+}
+
 export interface ChannelTraceDiff {
   id: string;
   title: string;
+  /** 用户对功能的描述（期望行为），历史字段名沿用 businessRule */
   businessRule: string;
   codeContent: string;
   codeLocation?: string | null;
+  keywords: string[];
+  scannedRepos: string[];
+  codeHits: ChannelTraceCodeHit[];
   diffReport?: string | null;
   status: ChannelTraceDiffStatus;
   errorMessage?: string | null;
@@ -51,6 +62,11 @@ export interface ChannelTraceDiff {
   createdByName: string;
   createdAt: string;
   completedAt?: string | null;
+}
+
+export interface ChannelTraceCodeScanRepo {
+  name: string;
+  branch: string;
 }
 
 /** 智能排查时召回的相似案例（轻量字段） */
@@ -94,6 +110,15 @@ export async function deleteKnowledge(id: string): Promise<ApiResponse<{ deleted
   return apiRequest(`/api/channel-trace-agent/knowledge/${encodeURIComponent(id)}`, {
     method: 'DELETE',
   });
+}
+
+/** 从已上传附件导入一条业务知识 */
+export async function importKnowledge(payload: {
+  attachmentId: string;
+  title?: string;
+  tags?: string[];
+}): Promise<ApiResponse<{ item: ChannelTraceKnowledge }>> {
+  return apiRequest('/api/channel-trace-agent/knowledge/import', { method: 'POST', body: payload });
 }
 
 /** 业务知识问答 SSE 流地址（POST，内联 SSE，断线重发） */
@@ -144,6 +169,9 @@ export async function deleteCase(id: string): Promise<ApiResponse<{ deleted: boo
 /** 线上问题智能排查 SSE 流地址（POST） */
 export const caseDiagnoseUrl = '/api/channel-trace-agent/cases/diagnose';
 
+/** 从已上传附件导入线上问题案例 SSE 流地址（POST，AI 解析为多条案例入库） */
+export const caseImportUrl = '/api/channel-trace-agent/cases/import';
+
 // ──────────────────────────────────────────────
 // 业务/代码差异对比
 // ──────────────────────────────────────────────
@@ -168,5 +196,12 @@ export async function deleteDiff(id: string): Promise<ApiResponse<{ deleted: boo
   });
 }
 
-/** 业务规则 vs 代码实现对比 SSE 流地址（POST） */
+/** 内置代码扫描仓库配置 */
+export async function getCodeScanRepos(): Promise<
+  ApiResponse<{ repos: ChannelTraceCodeScanRepo[]; tokenConfigured: boolean }>
+> {
+  return apiRequest('/api/channel-trace-agent/diffs/repos');
+}
+
+/** 描述驱动的功能 vs 代码异同分析 SSE 流地址（POST） */
 export const diffCompareUrl = '/api/channel-trace-agent/diffs/compare';
