@@ -19,6 +19,34 @@ interface QA {
   a: string;
 }
 
+/** 去除 Markdown 标记，渲染为正常纯文本（不显示井号、星号、竖线表格等记号）。 */
+function stripMarkdown(s: string): string {
+  return s
+    // 代码块围栏 ```lang ... ```
+    .replace(/```[a-zA-Z0-9]*\n?/g, '')
+    // 行内代码 `x`
+    .replace(/`([^`]+)`/g, '$1')
+    // 标题 ###
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+    // 引用 >
+    .replace(/^\s{0,3}>\s?/gm, '')
+    // 粗体/斜体
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1$2')
+    // 表格分隔行 |---|:--:|
+    .replace(/^\s*\|?[\s:|-]+\|\s*[\s:|-]*$/gm, '')
+    // 表格数据行 | a | b | → a    b
+    .replace(/^\s*\|(.+)\|\s*$/gm, (_m, inner: string) => inner.split('|').map((c) => c.trim()).filter(Boolean).join('    '))
+    // 列表标记 - / * → ·
+    .replace(/^\s{0,3}[-*]\s+/gm, '· ')
+    // 链接 [text](url) → text
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    // 压缩 3+ 空行
+    .replace(/\n{3,}/g, '\n\n')
+    .trimEnd();
+}
+
 export function ProductAssistantDrawer({
   productId,
   productName,
@@ -100,7 +128,7 @@ export function ProductAssistantDrawer({
         <div className="shrink-0 flex items-center gap-2 px-4 py-3 border-b border-white/10">
           <Sparkles size={16} className="text-cyan-300" />
           <div className="flex flex-col min-w-0">
-            <span className="text-sm font-semibold text-white/90">工作助手</span>
+            <span className="text-sm font-semibold text-white/90">AI助手</span>
             <span className="text-[11px] text-white/40 truncate">基于「{productName}」全量数据 + 知识库问答</span>
           </div>
           <button onClick={onClose} className="ml-auto text-white/50 hover:text-white" title="关闭">
@@ -131,7 +159,7 @@ export function ProductAssistantDrawer({
                     <MapSpinner size={14} /> {sse.phaseMessage || '思考中…'}
                   </span>
                 ) : (
-                  <StreamingText text={liveAnswer} streaming markdown />
+                  <StreamingText text={stripMarkdown(liveAnswer)} streaming />
                 )}
               </div>
             </div>
@@ -198,7 +226,7 @@ function QaBlock({ q, a }: { q: string; a: string }) {
   return (
     <div className="space-y-2">
       <UserBubble text={q} />
-      <div className="text-sm text-white/85 whitespace-pre-wrap leading-relaxed">{a}</div>
+      <div className="text-sm text-white/85 whitespace-pre-wrap leading-relaxed">{stripMarkdown(a)}</div>
     </div>
   );
 }

@@ -1988,9 +1988,28 @@ public class ProductAgentController : ControllerBase
         var custIds = reqs.SelectMany(r => r.CustomerIds).Distinct().ToList();
         var custs = custIds.Count == 0 ? new List<Customer>() : await _db.Customers.Find(c => custIds.Contains(c.Id)).ToListAsync();
 
+        // 解析相关人员名（处理人/负责人/上报人/团队）—— 让助手能回答「某人本月情况 / 分工 / 负载」
+        var userIds = new HashSet<string>();
+        void AddU(string? id) { if (!string.IsNullOrWhiteSpace(id)) userIds.Add(id!); }
+        AddU(product.OwnerId);
+        foreach (var id in product.MemberIds) AddU(id);
+        foreach (var id in product.AdminIds) AddU(id);
+        foreach (var r in reqs) { AddU(r.AssigneeId); AddU(r.OwnerId); }
+        foreach (var f in feats) { AddU(f.AssigneeId); AddU(f.OwnerId); }
+        foreach (var d in defects) { AddU(d.AssigneeId); AddU(d.ReporterId); }
+        var usersList = userIds.Count == 0 ? new List<User>() : await _db.Users.Find(u => userIds.Contains(u.UserId)).ToListAsync();
+        var nameById = usersList.ToDictionary(u => u.UserId, u => string.IsNullOrWhiteSpace(u.DisplayName) ? (string.IsNullOrWhiteSpace(u.Username) ? u.UserId : u.Username) : u.DisplayName);
+        string N(string? id) => string.IsNullOrWhiteSpace(id) ? "未指派" : (nameById.TryGetValue(id!, out var nm) ? nm : id!);
+        var reqTitleById = reqs.GroupBy(r => r.Id).ToDictionary(g => g.Key, g => $"[{g.First().RequirementNo}]{g.First().Title}");
+        var verNameById = versions.GroupBy(v => v.Id).ToDictionary(g => g.Key, g => g.First().VersionName);
+
         var sb = new System.Text.StringBuilder();
         sb.AppendLine($"# 产品：[{product.ProductNo}] {product.Name}（分级 {product.Grade}，状态 {product.CurrentState ?? "—"}）");
         sb.AppendLine($"今日：{DateTime.UtcNow:yyyy-MM-dd}（涉及本月时以当前自然月为准）");
+        var teamNames = new List<string>();
+        if (!string.IsNullOrWhiteSpace(product.OwnerId)) teamNames.Add($"{N(product.OwnerId)}(负责人)");
+        foreach (var id in product.MemberIds.Distinct()) if (id != product.OwnerId) teamNames.Add(N(id));
+        if (teamNames.Count > 0) sb.AppendLine($"团队成员：{string.Join("、", teamNames)}");
         if (versions.Count > 0)
         {
             sb.AppendLine($"\n## 版本（{versions.Count}）");
@@ -2004,17 +2023,28 @@ public class ProductAgentController : ControllerBase
         if (reqs.Count > 0)
         {
             sb.AppendLine($"\n## 需求（{reqs.Count}）");
-            foreach (var r in reqs) sb.AppendLine($"- [{r.RequirementNo}] {r.Title}（等级 {r.Grade.ToUpperInvariant()}，状态 {r.CurrentState ?? "—"}；创建 {D(r.CreatedAt)}）{Short(r.Description)}");
+            foreach (var r in reqs) sb.AppendLine($"- [{r.RequirementNo}] {r.Title}（等级 {r.Grade.ToUpperInvariant()}，状态 {r.CurrentState ?? "—"}；处理人 {N(r.AssigneeId)}，负责人 {N(r.OwnerId)}；创建 {D(r.CreatedAt)}）{Short(r.Description)}");
         }
         if (feats.Count > 0)
         {
             sb.AppendLine($"\n## 功能（{feats.Count}）");
-            foreach (var f in feats) sb.AppendLine($"- [{f.FeatureNo}] {f.Title}（等级 {f.Grade.ToUpperInvariant()}，状态 {f.CurrentState ?? "—"}；创建 {D(f.CreatedAt)}）{Short(f.Description)}");
+            foreach (var f in feats)
+            {
+                var implReqs = f.RequirementIds.Count == 0 ? "无" : string.Join("、", f.RequirementIds.Select(id => reqTitleById.TryGetValue(id, out var t) ? t : id));
+                sb.AppendLine($"- [{f.FeatureNo}] {f.Title}（等级 {f.Grade.ToUpperInvariant()}，状态 {f.CurrentState ?? "—"}；处理人 {N(f.AssigneeId)}，负责人 {N(f.OwnerId)}；实现需求 {implReqs}；创建 {D(f.CreatedAt)}）{Short(f.Description)}");
+            }
         }
         if (defects.Count > 0)
         {
             sb.AppendLine($"\n## 缺陷（{defects.Count}）");
-            foreach (var d in defects) sb.AppendLine($"- [{d.DefectNo}] {d.Title}（等级 {(d.Grade ?? SeverityToGrade(d.Severity)).ToUpperInvariant()}，状态 {d.Status}；提交 {D(d.SubmittedAt ?? d.CreatedAt)}，解决 {D(d.ResolvedAt)}）{Short(d.RawContent)}");
+            foreach (var d in defects)
+            {
+                var traced = !string.IsNullOrEmpty(d.TracedFeatureId) ? "功能"
+                    : !string.IsNullOrEmpty(d.TracedRequirementId) ? "需求"
+                    : !string.IsNullOrEmpty(d.TracedVersionId) ? ("版本" + (verNameById.TryGetValue(d.TracedVersionId!, out var vn) ? vn : ""))
+                    : "产品";
+                sb.AppendLine($"- [{d.DefectNo}] {d.Title}（等级 {(d.Grade ?? SeverityToGrade(d.Severity)).ToUpperInvariant()}，状态 {d.Status}；处理人 {N(d.AssigneeId)}，上报人 {N(d.ReporterId)}；追溯到{traced}；提交 {D(d.SubmittedAt ?? d.CreatedAt)}，解决 {D(d.ResolvedAt)}）{Short(d.RawContent)}");
+            }
         }
         // 知识库：仅本产品挂载的 DocumentStore 文本索引/摘要，截断保护，不取原文件
         if (!string.IsNullOrEmpty(product.KnowledgeStoreId))
@@ -2037,13 +2067,17 @@ public class ProductAgentController : ControllerBase
         if (ctx.Length > 14000) ctx = ctx[..14000] + "\n…（上下文过长已截断）";
 
         var systemPrompt =
-            "你是「" + product.Name + "」这个产品的工作助手。你的知识库仅限下面提供的该产品数据与知识库文档摘录。\n" +
+            "你是「" + product.Name + "」这个产品的 AI 助手。你的知识库仅限下面提供的该产品数据（需求/功能/缺陷/版本/客户/团队人员）与知识库文档摘录。\n" +
             "要求：\n" +
-            "1. 只依据所给数据回答，不得编造或引用其它产品/外部信息；数据中没有的，明确说明「现有数据未覆盖」；\n" +
-            "2. 涉及本月/本周等时间口径时，按给定的今日日期与对象的创建/提交/发布日期推算；\n" +
-            "3. 回答用中文，结构清晰（可用小标题/项目符号/必要的表格），先结论后依据；\n" +
-            "4. 涉及矩阵/分布分析时，按等级(P0-P3) 与 状态/版本 交叉汇总，并点出风险；\n" +
-            "输出 Markdown 文本，不要寒暄。";
+            "1. 只依据所给数据回答，不得编造或引用其它产品/外部信息；数据中没有的，明确说明「现有数据未覆盖」。\n" +
+            "2. 涉及本月/本周/某人等口径时，按给定的今日日期、各对象的创建/提交/发布日期、以及处理人/负责人/上报人字段推算。\n" +
+            "3. 输出纯文本，禁止使用任何 Markdown 标记：不要 #、*、**、反引号、代码块、竖线表格。用自然段落和「· 」项目符号组织，必要时用「一、二、三」分节。\n" +
+            "4. 分析要深入，不能只罗列：\n" +
+            "   - 挖掘对象之间的关系（需求→功能→缺陷→版本→客户 的落地链路、缺陷追溯到哪个功能/需求）；\n" +
+            "   - 分析人员分工与负载（谁处理得多、谁的项卡住、上报与处理是否同一人等）；\n" +
+            "   - 指出趋势、异常与风险（如高等级项无状态/无人处理、缺陷集中在某功能、需求无客户来源等）。\n" +
+            "5. 结构固定为三段：先「结论」（2-4 句直接给判断），再「依据」（列数据与关系），最后「经验总结 / 建议」（可执行的下一步）。\n" +
+            "不要寒暄、不要复述本提示词。";
 
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
             RequestId: Guid.NewGuid().ToString("N"), GroupId: null, SessionId: null, UserId: userId,
@@ -2058,8 +2092,8 @@ public class ProductAgentController : ControllerBase
                 new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
                 new JsonObject { ["role"] = "user", ["content"] = "# 产品数据上下文\n" + ctx + "\n\n# 我的问题\n" + question },
             },
-            ["temperature"] = 0.4,
-            ["max_tokens"] = 1800,
+            ["temperature"] = 0.5,
+            ["max_tokens"] = 2400,
             ["include_reasoning"] = true,
             ["reasoning"] = new JsonObject { ["exclude"] = false },
         };

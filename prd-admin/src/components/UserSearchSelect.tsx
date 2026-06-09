@@ -105,6 +105,37 @@ export function UserSearchSelect({
     return () => { cancelled = true; clearTimeout(t); };
   }, [externalUsers, open, filter]);
 
+  // 已选 value 但用户未加载（关闭态/首次渲染）时，预拉目录解析显示名，避免触发器空白（如「处理人」框已指派却显示占位）。
+  useEffect(() => {
+    if (externalUsers || !value || open) return;
+    if (users.some((u) => u.userId === value)) return;
+    let cancelled = false;
+    void searchDirectoryUsers('', 200).then((res) => {
+      if (cancelled || !res.success) return;
+      setInternalUsers((prev) => {
+        if (prev.some((u) => u.userId === value)) return prev;
+        const map = new Map(prev.map((u) => [u.userId, u]));
+        for (const u of res.data.items) {
+          if (!map.has(u.userId)) {
+            map.set(u.userId, {
+              userId: u.userId,
+              username: u.username,
+              displayName: u.displayName,
+              avatarFileName: u.avatarFileName,
+              role: '' as AdminUser['role'],
+              status: 'Active' as AdminUser['status'],
+              createdAt: '',
+            });
+          }
+        }
+        return [...map.values()];
+      });
+    });
+    return () => { cancelled = true; };
+    // users 故意不入依赖（派生自 internalUsers，入依赖会在 setInternalUsers 后循环触发）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value, open, externalUsers]);
+
   const selected = users.find((u) => u.userId === value);
   const q = filter.trim().toLowerCase();
   const filtered = q
