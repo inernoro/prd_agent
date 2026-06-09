@@ -746,7 +746,7 @@ write_waiting_html() {
   # Primary path: render from TypeScript SSOT (always used after first build)
   if [ -f "$SCRIPT_DIR/dist/cli/render-page.js" ]; then
     local rendered
-    rendered="$(node "$SCRIPT_DIR/dist/cli/render-page.js" nginx-waiting 2>/dev/null)"
+    rendered="$(node "$SCRIPT_DIR/dist/cli/render-page.js" nginx-waiting 2>/dev/null)" || rendered=""
     if [ -n "$rendered" ]; then
       write_if_changed "$target" "$rendered"
       return 0
