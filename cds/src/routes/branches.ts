@@ -30,8 +30,7 @@ import { GitHubAppClient } from '../services/github-app-client.js';
 import { classifyEnvKey } from '../config/known-env-keys.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 import { isAllowedCdsBranchName, isSafeGitRef } from '../services/github-webhook-dispatcher.js';
-import { buildPreviewUrl } from '../services/comment-template.js';
-import { computePreviewSlug, previewProjectSlug } from '../services/preview-slug.js';
+import { buildPreviewUrlForProject } from '../services/comment-template.js';
 import { maskSecrets as maskSecretsText, shouldMask } from '../services/secret-masker.js';
 import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
 import { resolveGitAuthEnv } from '../services/git-auth-env.js';
@@ -2468,8 +2467,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       emitSkip('preview_host_missing');
       return null;
     }
-    // 走 buildPreviewUrl 全栈唯一入口，公式同 v3（tail-prefix-projectSlug）。
-    const smokeHost = buildPreviewUrl(previewHost, entry.branch, previewProjectSlug(project, project.id));
+    // 走 buildPreviewUrlForProject 全栈入口，项目预览身份由 preview-slug.ts 统一解析。
+    const smokeHost = buildPreviewUrlForProject(previewHost, entry.branch, project, project.id).url;
     if (!smokeHost) {
       emitSkip('preview_host_missing');
       return null;
@@ -2981,10 +2980,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const branchesWithSubject = await Promise.all(
       branches.map(async (b) => {
         const project = b.projectId ? stateService.getProject(b.projectId) : undefined;
-        const projectSlug = previewProjectSlug(project, b.projectId);
-        const previewSlug = b.branch && projectSlug
-          ? computePreviewSlug(b.branch, projectSlug)
-          : b.id;
+        const preview = b.branch
+          ? buildPreviewUrlForProject('', b.branch, project, b.projectId)
+          : undefined;
+        const projectSlug = preview?.projectIdentity.slug || b.projectId || '';
+        const previewSlug = preview?.previewSlug || b.id;
         const deployRuntime = summarizeBranchDeployRuntime(
           b,
           stateService.getBuildProfilesForProject(b.projectId || 'default'),
@@ -2998,6 +2998,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             commitSha: b.githubCommitSha || '',
             subject: '',
             builder: buildGithubSenderBuilder(b),
+            projectSlug,
             previewSlug,
             deployRuntime,
           };
@@ -3017,6 +3018,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             commitSha: lines[0] || '',
             subject: lines[1] || '',
             builder: mergeBuilderAvatar(commitBuilder, buildGithubSenderBuilder(b)),
+            projectSlug,
             previewSlug,
             deployRuntime,
           };
@@ -3029,6 +3031,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             commitSha: b.githubCommitSha || '',
             subject: '',
             builder: buildGithubSenderBuilder(b),
+            projectSlug,
             previewSlug,
             deployRuntime,
           };
@@ -5960,10 +5963,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       return;
     }
-    // 走 buildPreviewUrl 全栈唯一入口；project 必有，用 'default' 兜底。
+    // 走 buildPreviewUrlForProject 全栈入口；project 必有，用 'default' 兜底。
     const smokeProject = stateService.getProject(entry.projectId || 'default');
-    const smokeProjectSlug = previewProjectSlug(smokeProject, entry.projectId || 'default');
-    const smokeHost = buildPreviewUrl(previewHost, entry.branch, smokeProjectSlug);
+    const smokeHost = buildPreviewUrlForProject(
+      previewHost,
+      entry.branch,
+      smokeProject,
+      entry.projectId || 'default',
+    ).url;
     if (!smokeHost) {
       res.status(400).json({ error: 'preview_host_missing', message: '无法生成预览 URL' });
       return;
