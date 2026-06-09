@@ -241,12 +241,12 @@ public class PeerSyncController : ControllerBase
             c.Id == payload.PairingCode.Trim()
             && c.UsedByNodeId == payload.InitiatorNodeId.Trim()
             && c.PendingSharedSecret == payload.SharedSecret
-            && c.ConfirmedAt != null
             && c.FinalizedAt == null).FirstOrDefaultAsync(ct);
         if (code == null)
             return Ok(ApiResponse<object>.Ok(new { cancelled = false }));
 
-        if (!string.IsNullOrWhiteSpace(code.PendingReplacedPeerNodeId)
+        if (code.ConfirmedAt != null
+            && !string.IsNullOrWhiteSpace(code.PendingReplacedPeerNodeId)
             && !string.IsNullOrWhiteSpace(code.PendingPreviousSharedSecret))
         {
             await _db.PeerNodes.UpdateOneAsync(
@@ -264,7 +264,7 @@ public class PeerSyncController : ControllerBase
                     .Set(n => n.UpdatedAt, DateTime.UtcNow),
                 cancellationToken: ct);
         }
-        else
+        else if (code.ConfirmedAt != null)
         {
             await _db.PeerNodes.DeleteOneAsync(n =>
                 n.RemoteNodeId == payload.InitiatorNodeId.Trim()
