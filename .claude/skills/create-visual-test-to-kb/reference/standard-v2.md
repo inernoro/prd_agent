@@ -99,6 +99,7 @@ doc-store 归档是两步:`POST /entries`(建标题条目)→ `PUT /entries/{id}
 
 ## 5. 截图标准（强制)
 
+- **仓库零污染**:截图、过程视频、本地验收报告只能写 `/tmp` 或仓库外目录。禁止写入 `doc/acceptance/`、`artifacts/acceptance/` 或任何项目源码目录；发现 git status 里出现验收图片/视频即验收流程不合格,先汇报用户,不得自行删除。
 - 基线视口 `1440×900`,`deviceScaleFactor: 2`(高清)。
 - 每个关键步骤一张;关键断言区(toast / 卡片 / 页签激活态 / 空状态)必须清晰可见。
 - **页面 header / 标题区必须入镜**(证明"在对的页面")。

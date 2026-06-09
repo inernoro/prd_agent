@@ -56,6 +56,11 @@ coverage/
 # Generated test images
 **/GeneratedImages/
 
+# Visual acceptance artifacts are local/KB evidence, never source.
+doc/acceptance/
+/acceptance/
+/acceptance-artifacts/
+
 # Misc
 *.swp
 *.swo
