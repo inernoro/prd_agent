@@ -292,6 +292,8 @@ export interface TracedDefect {
   defectNo: string;
   title?: string | null;
   status: string;
+  /** 统一等级 p0/p1/p2/p3（取代严重度）。severity 仍保留用于旧数据兜底。 */
+  grade?: string | null;
   severity?: string | null;
   priority?: string | null;
   tracedRequirementId?: string | null;
@@ -444,7 +446,7 @@ export function getOverviewFeatures(params?: { grade?: string; keyword?: string;
 }
 export interface OverviewDefectRow {
   id: string; productId: string; productName: string; defectNo: string; title?: string | null;
-  status: string; severity?: string | null; priority?: string | null; tracedRequirementId?: string | null; tracedVersionId?: string | null; updatedAt: string;
+  status: string; grade?: string | null; tracedRequirementId?: string | null; tracedVersionId?: string | null; updatedAt: string;
 }
 export function getOverviewDefects(params?: { status?: string; keyword?: string }) {
   const q = new URLSearchParams();
@@ -462,9 +464,9 @@ export function getOverviewKnowledge() {
 export function getOverviewGraph() {
   return apiRequest<{ nodes: GraphNode[]; edges: GraphEdge[] }>('/api/product/overview/graph');
 }
-export function createProductDefect(productId: string, body: { title: string; description?: string; severity?: string; priority?: string; assigneeId?: string | null; featureId?: string; versionId?: string }) {
+export function createProductDefect(productId: string, body: { title: string; description?: string; grade?: string; assigneeId?: string | null; featureId?: string; versionId?: string }) {
   return apiRequest<TracedDefect>(`/api/product/products/${productId}/defects`, { method: 'POST', body });
 }
-export function updateProductDefect(productId: string, defectId: string, body: { title: string; description?: string; severity?: string; priority?: string; status?: string; assigneeId?: string | null; featureId?: string; versionId?: string }) {
+export function updateProductDefect(productId: string, defectId: string, body: { title: string; description?: string; grade?: string; status?: string; assigneeId?: string | null; featureId?: string; versionId?: string }) {
   return apiRequest<TracedDefect>(`/api/product/products/${productId}/defects/${defectId}`, { method: 'PUT', body });
 }

@@ -55,6 +55,7 @@ import {
   type GraphNode,
   type GraphEdge,
 } from '@/services/real/productAgent';
+import { ITEM_GRADE_LABEL, effectiveDefectGrade } from './types';
 
 type NodeType = GraphNode['type'];
 
@@ -862,7 +863,7 @@ function NodeDrawer({
       } else if (type === 'defect') {
         const res = await listTracedDefects(productId);
         const o = res.success ? res.data.items.find((x) => x.id === rawId) : undefined;
-        if (o) { r.push({ label: '编号', value: o.defectNo }, { label: '状态', value: o.status }, { label: '严重度', value: o.severity || '-' }, { label: '追溯', value: o.tracedRequirementId ? '需求' : o.tracedVersionId ? '版本' : '产品' }); }
+        if (o) { r.push({ label: '编号', value: o.defectNo }, { label: '状态', value: o.status }, { label: '等级', value: ITEM_GRADE_LABEL[effectiveDefectGrade(o)] }, { label: '追溯', value: o.tracedRequirementId ? '需求' : o.tracedVersionId ? '版本' : '产品' }); }
       } else if (type === 'product') {
         const res = await getProduct(productId);
         const o = res.success ? res.data : undefined;

@@ -53,7 +53,7 @@ import {
   type OverviewKnowledgeRow,
 } from '@/services/real/productAgent';
 import type { Customer } from './types';
-import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL } from './types';
+import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, effectiveDefectGrade } from './types';
 
 type Section = 'dashboard' | 'products' | 'requirements' | 'features' | 'defects' | 'customers' | 'knowledge' | 'graph' | 'settings';
 
@@ -524,7 +524,7 @@ function DefectsTable() {
             { header: '标题', render: (r) => <span className="text-white/90">{r.title || '(无标题)'}</span> },
             { header: '产品', render: (r) => <span className="text-white/55 text-xs">{r.productName}</span> },
             { header: '状态', render: (r) => <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70">{r.status}</span> },
-            { header: '严重度', render: (r) => <span className="text-white/55 text-xs">{r.severity || '-'}</span> },
+            { header: '等级', render: (r) => GRADE_BADGE(effectiveDefectGrade(r)) },
             { header: '追溯', render: (r) => <span className="text-white/55 text-xs">{r.tracedRequirementId ? '需求' : r.tracedVersionId ? '版本' : '产品'}</span> },
             { header: '更新', render: (r) => <span className="text-white/35 text-xs">{relTime(r.updatedAt)}</span> },
           ]}
