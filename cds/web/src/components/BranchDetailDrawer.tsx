@@ -4112,6 +4112,9 @@ interface ResourceAuditLog {
 
 function ResourceSettingsPanel({ resource }: { resource: BranchResource }): JSX.Element {
   const [auditState, setAuditState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; logs: ResourceAuditLog[]; message?: string }>({ status: 'idle', logs: [] });
+  const [dangerBusy, setDangerBusy] = useState<'clear' | 'delete' | 'write-sql' | null>(null);
+  const [dangerSql, setDangerSql] = useState('');
+  const [dangerMessage, setDangerMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!resource.branchId) return;
@@ -4127,11 +4130,88 @@ function ResourceSettingsPanel({ resource }: { resource: BranchResource }): JSX.
     return () => { cancelled = true; };
   }, [resource.branchId, resource.id]);
 
+  async function runDangerAction(action: 'clear' | 'delete' | 'write-sql'): Promise<void> {
+    if (!resource.branchId) return;
+    const confirmResourceName = window.prompt(`危险操作会影响 ${resource.displayName}。请输入资源名确认：${resource.serviceName}`);
+    if (!confirmResourceName) return;
+    setDangerBusy(action);
+    setDangerMessage(null);
+    try {
+      if (action === 'clear') {
+        await apiRequest(`/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/clear-data`, {
+          method: 'POST',
+          body: { confirmResourceName },
+        });
+        setDangerMessage('数据已清空，操作前备份和审计日志已记录。');
+      } else if (action === 'delete') {
+        await apiRequest(`/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}`, {
+          method: 'DELETE',
+          body: { confirmResourceName },
+        });
+        setDangerMessage('分支数据库已删除，连接变量已从分支 scope 移除。');
+      } else {
+        await apiRequest(`/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/data/query-write`, {
+          method: 'POST',
+          body: { sql: dangerSql, confirmResourceName },
+        });
+        setDangerMessage('写 SQL 已执行并记录审计日志。');
+      }
+      const res = await apiRequest<{ logs: ResourceAuditLog[] }>(`/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/audit`);
+      setAuditState({ status: 'ok', logs: res.logs || [] });
+    } catch (err) {
+      setDangerMessage(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setDangerBusy(null);
+    }
+  }
+
+  const supportsWriteSql = resource.runtime === 'MySQL' || resource.runtime === 'PostgreSQL';
+  const supportsClear = resource.kind === 'database' || resource.kind === 'cache';
+  const supportsDelete = resource.kind === 'database' && resource.runtime !== 'Redis';
+
   return (
     <div className="space-y-3 text-sm">
       <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
         危险操作保护：删除、清空数据、恢复覆盖、写 SQL、开启生产库公网访问必须二次确认，并记录操作者、时间、资源和结果。
       </div>
+      {resource.source === 'infra' ? (
+        <div className="space-y-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-semibold text-destructive">危险操作</div>
+              <div className="mt-1 text-xs leading-5 text-muted-foreground">后端会校验管理员权限、资源名确认，并先创建安全备份。</div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" size="sm" variant="outline" disabled={!supportsClear || dangerBusy !== null} onClick={() => void runDangerAction('clear')}>
+                {dangerBusy === 'clear' ? <Loader2 className="animate-spin" /> : <RotateCw />}
+                清空数据
+              </Button>
+              <Button type="button" size="sm" variant="destructive" disabled={!supportsDelete || dangerBusy !== null} onClick={() => void runDangerAction('delete')}>
+                {dangerBusy === 'delete' ? <Loader2 className="animate-spin" /> : <Trash2 />}
+                删除分支库
+              </Button>
+            </div>
+          </div>
+          {supportsWriteSql ? (
+            <div className="grid gap-2">
+              <textarea
+                value={dangerSql}
+                onChange={(event) => setDangerSql(event.target.value)}
+                className="min-h-[84px] resize-y rounded-md border border-destructive/25 bg-background px-3 py-2 font-mono text-xs outline-none focus:border-destructive"
+                placeholder="INSERT / UPDATE / DELETE / CREATE / ALTER / DROP / TRUNCATE / REPLACE"
+                spellCheck={false}
+              />
+              <div className="flex justify-end">
+                <Button type="button" size="sm" variant="destructive" disabled={!dangerSql.trim() || dangerBusy !== null} onClick={() => void runDangerAction('write-sql')}>
+                  {dangerBusy === 'write-sql' ? <Loader2 className="animate-spin" /> : <Play />}
+                  执行写 SQL
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          {dangerMessage ? <div className="text-xs leading-5 text-muted-foreground">{dangerMessage}</div> : null}
+        </div>
+      ) : null}
       <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2">
         权限：成员查看连接信息，开发者可重启和开启临时访问，管理员可删除资源、恢复备份和修改公网策略。
       </div>
