@@ -54,6 +54,7 @@ const CdsAgentPage = lazy(() => import('@/pages/cds-agent').then(m => ({ default
 const InfraServicesPage = lazy(() => import('@/pages/infra-services').then(m => ({ default: m.InfraServicesPage })));
 const OpenPlatformTabsPage = lazy(() => import('@/pages/OpenPlatformTabsPage'));
 const MdToPptAgentPage = lazy(() => import('@/pages/md-to-ppt-agent/MdToPptAgentPage').then(m => ({ default: m.MdToPptAgentPage })));
+const TechDocFormatAgentPage = lazy(() => import('@/pages/tech-doc-format-agent').then(m => ({ default: m.TechDocFormatAgentPage })));
 const SpeechAgentListPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentListPage })));
 const SpeechAgentCreatePage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentCreatePage })));
 const SpeechAgentEditorPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentEditorPage })));
@@ -472,6 +473,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'toolbox',
       appKey: 'md-to-ppt-agent',
       tags: ['PPT', 'Markdown', '演示', '网页', 'reveal.js'],
+      wip: true,
+    },
+  },
+  {
+    path: '/tech-doc-format-agent',
+    permission: 'access',
+    element: shellGuarded('access', <TechDocFormatAgentPage />),
+    nav: {
+      label: '技术分析文档格式校验 Agent',
+      shortLabel: '技分',
+      description: '按 PM2502 模板生成技术分析文档，并检查上传文档的标题、表格和微格式',
+      icon: 'FileText',
+      section: 'toolbox',
+      appKey: 'tech-doc-format-agent',
+      tags: ['技术分析', '文档格式', 'PM2502', '模板校验'],
       wip: true,
     },
   },
