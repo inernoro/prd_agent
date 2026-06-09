@@ -54,6 +54,14 @@ import { DropdownDivider, DropdownItem, DropdownLabel, DropdownMenu } from '@/co
 import { apiRequest, ApiError, apiUrl } from '@/lib/api';
 import { reduceBranchListState, type BranchListAction, type BranchListSlice } from '@/lib/branch-list-state';
 import { normalizeHostStats, type NormalizedHostStats } from '@/lib/host-stats';
+import {
+  buildBranchResources,
+  ResourceIcon,
+  resourceAccessIcon,
+  type BranchResource,
+  type BranchResourceInfraInput,
+  type BranchResourceProfileInput,
+} from '@/lib/resources';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
 import { CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
 
@@ -80,12 +88,16 @@ interface ServiceState {
   errorMessage?: string;
 }
 
+type InfraServiceSummary = BranchResourceInfraInput;
+type BuildProfileSummary = BranchResourceProfileInput;
+
 interface BranchSummary {
   id: string;
   projectId: string;
   branch: string;
   status: 'idle' | 'building' | 'starting' | 'running' | 'restarting' | 'stopping' | 'error';
   services: Record<string, ServiceState>;
+  resources?: BranchResource[];
   createdAt: string;
   lastPushAt?: string;
   lastAccessedAt?: string;
@@ -294,6 +306,8 @@ type LoadState =
       remoteBranches: RemoteBranch[];
       previewMode: 'simple' | 'port' | 'multi';
       config: CdsConfigResponse;
+      buildProfiles: BuildProfileSummary[];
+      infraServices: InfraServiceSummary[];
       capacity?: BranchesResponse['capacity'];
       projectWarning?: string;
       // Codex review(PR #590):banner 条件需要 infra service dockerImage,而非 branch.services 的 key。
@@ -1030,24 +1044,6 @@ function runningServiceCount(branch: BranchSummary): number {
   return Object.values(branch.services || {}).filter((svc) => svc.status === 'running').length;
 }
 
-function compactServiceLabel(profileId: string): string {
-  const normalized = profileId.trim();
-  if (!normalized) return 'service';
-  const tokens = normalized.toLowerCase().split(/[-_]+/).filter(Boolean);
-
-  if (tokens.includes('frontend')) return 'frontend';
-  if (tokens.includes('backend')) return 'backend';
-  if (tokens.includes('api')) return 'api';
-  if (tokens.includes('admin')) return 'admin';
-  if (tokens.includes('web')) return 'web';
-  if (tokens.includes('bootstrap') || tokens.includes('server')) return 'backend';
-
-  return normalized
-    .replace(/[-_]prd[-_]?agent$/i, '')
-    .replace(/[-_]agent$/i, '')
-    .replace(/[-_]mytapd$/i, '');
-}
-
 function isBusy(branch?: BranchSummary): boolean {
   if (!branch) return false;
   return branch.status === 'building' || branch.status === 'starting' || branch.status === 'restarting' || branch.status === 'stopping';
@@ -1384,14 +1380,14 @@ export function BranchListPage(): JSX.Element {
     try {
       const branchUrl = `/api/branches?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}`;
       const infraUrl = `/api/infra?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}`;
-      const [projectResult, branchesResult, previewModeResult, configResult, infraResult] = await Promise.allSettled([
+      const profilesUrl = `/api/build-profiles?project=${encodeURIComponent(projectId)}`;
+      const [projectResult, branchesResult, previewModeResult, configResult, infraResult, profilesResult] = await Promise.allSettled([
         apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
         apiRequest<BranchesResponse>(branchUrl),
         apiRequest<PreviewModeResponse>(`/api/projects/${encodeURIComponent(projectId)}/preview-mode`),
         apiRequest<CdsConfigResponse>('/api/config'),
-        apiRequest<{ services: Array<{ id: string; dockerImage?: string }> }>(
-          infraUrl,
-        ),
+        apiRequest<{ services: InfraServiceSummary[] }>(infraUrl),
+        apiRequest<{ profiles: BuildProfileSummary[] }>(profilesUrl),
       ]);
       if (branchesResult.status === 'rejected') {
         if (branchesResult.reason instanceof ApiError && branchesResult.reason.transient) {
@@ -1418,6 +1414,7 @@ export function BranchListPage(): JSX.Element {
         : { mode: 'multi' as const };
       const config = configResult.status === 'fulfilled' ? configResult.value : {};
       const infraRes = infraResult.status === 'fulfilled' ? infraResult.value : { services: [] };
+      const buildProfiles = profilesResult.status === 'fulfilled' ? (profilesResult.value.profiles || []) : [];
       // Codex review(PR #590):banner 显示条件来自 infra dockerImage,不是 branch.services key。
       // 兜底也看 id(用户用 'db' 等命名,但 image 字段是真实信号)。
       // Bugbot review(PR #590):**不**含 mongo。banner 文案专写 "schema.sql / mysql / postgres",
@@ -1437,6 +1434,8 @@ export function BranchListPage(): JSX.Element {
             remoteBranches: [],
             previewMode: previewModeRes.mode || 'multi',
             config,
+            buildProfiles,
+            infraServices: infraRes.services || [],
             capacity: branchesRes.capacity,
             projectWarning,
             hasSchemafulInfra,
@@ -1456,6 +1455,8 @@ export function BranchListPage(): JSX.Element {
           remoteBranches: prev.status === 'ok' ? prev.remoteBranches : [],
           previewMode: previewModeRes.mode || 'multi',
           config,
+          buildProfiles,
+          infraServices: infraRes.services || [],
           capacity: branchesRes.capacity,
           projectWarning: applied.state.projectWarning || projectWarning,
           hasSchemafulInfra,
@@ -2988,6 +2989,16 @@ export function BranchListPage(): JSX.Element {
                   <BranchCard
                     key={branch.id}
                     branch={branch}
+                    resources={branch.resources && branch.resources.length > 0 ? branch.resources : state.status === 'ok' ? buildBranchResources({
+                      branchId: branch.id,
+                      branchName: branch.branch,
+                      services: branch.services || {},
+                      profiles: state.buildProfiles,
+                      infraServices: state.infraServices,
+                      previewUrl: state.previewMode === 'simple'
+                        ? simplePreviewUrl(state.config)
+                        : multiPreviewUrl(branch, state.config),
+                    }) : []}
                     action={actions[branch.id]}
                     now={actionClock}
                     projectId={projectId}
@@ -3941,6 +3952,7 @@ function OpsDrawer({
 
 function BranchCard({
   branch,
+  resources,
   action,
   now,
   capacityWarning,
@@ -3969,6 +3981,7 @@ function BranchCard({
   onClickTag,
 }: {
   branch: BranchSummary;
+  resources: BranchResource[];
   action?: BranchAction;
   now: number;
   capacityWarning?: string;
@@ -4010,10 +4023,7 @@ function BranchCard({
   const busy = action?.status === 'running' || isBusy(branch);
   const deleteBusy = action?.status === 'running' && action.kind === 'delete';
   const runningCount = runningServiceCount(branch);
-  const services = Object.values(branch.services || {});
-  // 用户反馈(2026-05-04):"+1 显得很多余,明明都可以显示" — 不再 slice(0,1) +
-  // hiddenCount,所有有 hostPort 的 service 全部 inline 显示。卡片自动 wrap。
-  const portChips = services.filter((service) => service.hostPort);
+  const visibleResources = resources.filter((resource) => resource.port).slice(0, 6);
   const previewCapacityWarning = branch.status === 'running' ? '' : capacityWarning;
 
   // 新设计(2026-05-04 用户主诉求):
@@ -4360,21 +4370,28 @@ function BranchCard({
             ) : null}
           </span>
         ) : null}
-        {portChips.length > 0 ? portChips.map((service) => {
+        {visibleResources.length > 0 ? visibleResources.map((resource) => {
           // 端口 chip 颜色优先跟 branch 整体态:isInterim/isError 时强制对齐
           // (端口监听了不代表流量已通,容易给用户"绿色=就绪"的错觉);
           // running 时才用 service 自身状态做精细化区分。
-          const chipStatus = isInterim || isError ? branch.status : service.status;
+          const chipStatus = isInterim || isError ? branch.status : resource.status;
           const chipClass = isError ? issueClass : statusClass(chipStatus);
           const chipRailClass = isError ? issueRailClass : statusRailClass(chipStatus);
           return (
             <span
-              key={service.profileId}
-              className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 font-mono text-xs ${chipClass}`}
-              title={`${service.profileId}${service.hostPort ? ` :${service.hostPort}` : ''}`}
+              key={resource.id}
+              className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs ${chipClass} ${
+                resource.access === 'external'
+                  ? 'shadow-[0_0_0_1px_rgba(56,189,248,0.28),0_0_16px_-8px_rgba(56,189,248,0.85)] ring-1 ring-sky-400/35'
+                  : ''
+              }`}
+              title={`${resource.displayName}\n${resource.serviceName}${resource.containerName ? ` · ${resource.containerName}` : ''}\n${resource.access === 'external' ? '公网访问已开启' : '仅内部访问'}`}
             >
               <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${chipRailClass}`} aria-hidden />
-              <span>{compactServiceLabel(service.profileId)}</span>
+              <ResourceIcon resource={resource} className="h-3.5 w-3.5 shrink-0" />
+              <span className="font-mono">{resource.runtime}</span>
+              <span className="font-mono text-muted-foreground">:{resource.port}</span>
+              {resourceAccessIcon(resource)}
             </span>
           );
         }) : (

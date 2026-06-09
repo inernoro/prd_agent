@@ -783,6 +783,10 @@ export interface CdsState {
   schedulerMaxHotOverride?: number;
   /** Data migration task history */
   dataMigrations?: DataMigration[];
+  /** Per-branch/per-resource external access policies. Keyed by projectId:branchId:resourceId. */
+  resourceExternalAccess?: Record<string, ResourceExternalAccessPolicy>;
+  /** Resource-scoped database clone / create / restore task history. */
+  resourceCloneTasks?: ResourceCloneTask[];
   /** Registered remote CDS peers (for one-click cross-CDS data migration) */
   cdsPeers?: CdsPeer[];
   /**
@@ -1324,6 +1328,16 @@ export interface ProjectActivityLog {
     | 'ai-release'     // AI agent 释放
     | 'branch-deleted' // DELETE /branches/:id
     | 'branch-created' // POST /branches
+    | 'resource-created'
+    | 'resource-deleted'
+    | 'resource-restart'
+    | 'resource-external-access'
+    | 'resource-db-clone'
+    | 'resource-backup'
+    | 'resource-restore'
+    | 'resource-credentials-reset'
+    | 'resource-connection-inject'
+    | 'resource-data-query'
   ;
   /** 关联分支（如有）。 */
   branchId?: string;
@@ -1333,6 +1347,55 @@ export interface ProjectActivityLog {
   actor?: string;
   /** 自由文本，可空。展示用，<= 200 字符。 */
   note?: string;
+  /** 关联资源（如 app:frontend / infra:mysql）。 */
+  resourceId?: string;
+  /** 资源显示名缓存，避免 UI 再 join。 */
+  resourceName?: string;
+  /** 操作结果。 */
+  result?: 'success' | 'failed' | 'pending';
+}
+
+export interface ResourceExternalAccessPolicy {
+  id: string;
+  projectId: string;
+  branchId: string;
+  resourceId: string;
+  enabled: boolean;
+  kind: 'https' | 'tcp';
+  address?: string;
+  host?: string;
+  port?: number;
+  allowlist: string[];
+  expiresAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  updatedBy?: string;
+}
+
+export interface ResourceCloneTask {
+  id: string;
+  projectId: string;
+  branchId: string;
+  resourceId: string;
+  runtime: 'mysql' | 'postgres' | 'mongodb' | 'redis' | 'unknown';
+  mode: 'empty' | 'clone-main' | 'restore-backup' | 'connect-existing';
+  strategy: 'branch-database' | 'mysqldump' | 'mysqlpump' | 'background-copy' | 'backup-restore' | 'external-connection';
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  progress: number;
+  progressMessage?: string;
+  sourceBranchId?: string;
+  sourceResourceId?: string;
+  targetDatabase?: string;
+  backupId?: string;
+  externalConnectionName?: string;
+  injectedEnv?: Record<string, string>;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  actor?: string;
+  log?: string;
 }
 
 /**

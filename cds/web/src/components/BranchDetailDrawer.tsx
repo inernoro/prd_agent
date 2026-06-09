@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, Clock, Copy, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Play, RefreshCw, Rocket, RotateCw, Search, Settings, Square, Trash2, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Settings, Square, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiRequest, ApiError } from '@/lib/api';
@@ -10,6 +10,16 @@ import { ActiveDeployment } from '@/components/deployment/ActiveDeployment';
 import { HistoryRow } from '@/components/deployment/HistoryRow';
 import { deriveBranchPhases, type PhaseKey } from '@/lib/deploymentPhases';
 import { normalizeContainerLogsForDisplay } from '@/lib/containerLogs';
+import {
+  buildBranchResources,
+  ResourceIcon,
+  resourceAccessIcon,
+  resourceKindLabel,
+  resourceStatusLabel,
+  type BranchResource,
+  type BranchResourceInfraInput,
+  type BranchResourceProfileInput,
+} from '@/lib/resources';
 import type { PhaseLogState } from '@/components/deployment/PhaseTree';
 
 /*
@@ -44,6 +54,7 @@ interface BranchDetailData {
   previewSlug?: string;
   previewUrl?: string;
   services: Record<string, ServiceState>;
+  resources?: BranchResource[];
   createdAt?: string;
   commitSha?: string;
   subject?: string;
@@ -94,6 +105,11 @@ interface ProfileRow {
   };
   override?: BuildProfileOverride | null;
   effective?: {
+    dockerImage?: string;
+    command?: string;
+    containerPort?: number;
+    pathPrefixes?: string[];
+    dependsOn?: string[];
     activeDeployMode?: string;
     deployModes?: Record<string, { label?: string }>;
   };
@@ -229,6 +245,22 @@ export interface BranchDeploymentItem {
 }
 
 type DrawerTab = 'overview' | 'deployments' | 'services' | 'logs' | 'variables' | 'metrics' | 'settings';
+type ResourceCloneMode = 'empty' | 'clone-main' | 'restore-backup' | 'connect-existing';
+
+interface ResourceExternalAccessInput {
+  enabled: boolean;
+  ttlMinutes?: number;
+  allowlist?: string[];
+}
+
+interface ResourceCloneInput {
+  mode: ResourceCloneMode;
+  backupName?: string;
+  backupId?: string;
+  targetDatabase?: string;
+  connectionString?: string;
+  externalConnectionName?: string;
+}
 // 2026-05-18: 日志页签合一。原本 Webhook 日志 / 日志 / HTTP 三个并列页签
 // 用户找不全，合并成单个「日志」页签，内部用 pill 切换：
 // 系统日志（生命周期：谁停的/何时/为什么）/ 构建日志 / 容器日志 / Webhook / HTTP。
@@ -239,7 +271,7 @@ const DETAIL_LOG_EMPTY_CLASS = 'h-[424px] flex items-center px-5 text-sm leading
 const drawerTabs: Array<{ key: DrawerTab; label: string; planned?: boolean }> = [
   { key: 'overview', label: '详情' },
   { key: 'deployments', label: '部署' },
-  { key: 'services', label: '服务' },
+  { key: 'services', label: '资源' },
   { key: 'logs', label: '日志' },
   { key: 'variables', label: '变量' },           // 2026-05-04 Phase A 落地
   { key: 'metrics', label: '指标' },             // 2026-05-04 Phase B 落地
@@ -741,6 +773,8 @@ export function BranchDetailDrawer({
   // 同步置位，是真正的去重闸门。
   const triggerLogsLoadMoreInFlightRef = useRef(false);
   const [profileState, setProfileState] = useState<ProfileOverridesState>({ status: 'idle' });
+  const [infraServices, setInfraServices] = useState<BranchResourceInfraInput[]>([]);
+  const [resourceSnapshot, setResourceSnapshot] = useState<BranchResource[]>([]);
   const [modeSavingProfileId, setModeSavingProfileId] = useState<string | null>(null);
   // ring buffer keyed by profileId,内存级,关抽屉就丢(metrics 是观测,不是审计)
   const [metricSeries, setMetricSeries] = useState<Record<string, MetricSeries>>({});
@@ -767,6 +801,7 @@ export function BranchDetailDrawer({
   const [logsMode, setLogsMode] = useState<LogsMode>('system');
   const [selectedBuildLog, setSelectedBuildLog] = useState<BuildLogSelection | null>(null);
   const [selectedServiceId, setSelectedServiceId] = useState<string | null>(null);
+  const [selectedResourceId, setSelectedResourceId] = useState<string | null>(null);
   const [serviceLogs, setServiceLogs] = useState<ServiceLogsState>({ status: 'idle' });
   const [logQuery, setLogQuery] = useState('');
   const logsSectionRef = useRef<HTMLElement | null>(null);
@@ -792,7 +827,7 @@ export function BranchDetailDrawer({
     try {
       // The backend exposes /api/branches?project=<id> (list) but no
       // single-branch endpoint, mirroring how BranchDetailPage loads.
-      const [branchesRes, logsRes, profilesRes] = await Promise.all([
+      const [branchesRes, logsRes, profilesRes, infraRes, resourcesRes] = await Promise.all([
         apiRequest<{ branches: BranchDetailData[] }>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`),
         apiRequest<{ logs: OperationLog[] }>(`/api/branches/${encodeURIComponent(branchId)}/logs`).catch(() => ({ logs: [] })),
         apiRequest<{ profiles: ProfileRow[] }>(`/api/branches/${encodeURIComponent(branchId)}/profile-overrides`)
@@ -800,6 +835,10 @@ export function BranchDetailDrawer({
             setProfileState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
             return { profiles: [] };
           }),
+        apiRequest<{ services: BranchResourceInfraInput[] }>(`/api/infra?project=${encodeURIComponent(projectId)}&live=false`)
+          .catch(() => ({ services: [] })),
+        apiRequest<{ resources: BranchResource[] }>(`/api/branches/${encodeURIComponent(branchId)}/resources?live=false`)
+          .catch(() => ({ resources: [] })),
       ]);
       const found = (branchesRes.branches || []).find((b) => b.id === branchId);
       if (!found) {
@@ -810,6 +849,8 @@ export function BranchDetailDrawer({
       }
       setLogs(logsRes.logs || []);
       setProfileState({ status: 'ok', profiles: profilesRes.profiles || [] });
+      setInfraServices(infraRes.services || []);
+      setResourceSnapshot(resourcesRes.resources || found?.resources || []);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -959,6 +1000,7 @@ export function BranchDetailDrawer({
     setLogsMode('system');
     setSelectedBuildLog(null);
     setSelectedServiceId(null);
+    setSelectedResourceId(null);
     // 2026-05-14 Codex review P2：切到另一分支时必须清空内联容器日志的
     // 用户选择，否则 drawer 复用、且新分支有同名 profileId 时，旧分支选过
     // 的 profile 会粘住，deploymentLogProfileId 不再回退到新分支的
@@ -969,6 +1011,8 @@ export function BranchDetailDrawer({
     setShowAllHistory(false);
     setEnvState({ status: 'idle' });
     setProfileState({ status: 'loading' });
+    setInfraServices([]);
+    setResourceSnapshot([]);
     setModeSavingProfileId(null);
     setRevealedValues(new Map());
     setEnvQuery('');
@@ -1334,6 +1378,33 @@ export function BranchDetailDrawer({
   }, [open, onClose]);
 
   const services = branch ? Object.values(branch.services || {}) : [];
+  const resourceProfiles = useMemo<BranchResourceProfileInput[]>(() => (
+    profileState.status === 'ok'
+      ? profileState.profiles.map((profile) => ({
+        id: profile.profileId,
+        name: profile.profileName,
+        dockerImage: profile.effective?.dockerImage,
+        command: profile.effective?.command,
+        containerPort: profile.effective?.containerPort,
+        pathPrefixes: profile.effective?.pathPrefixes,
+        dependsOn: profile.effective?.dependsOn,
+      }))
+      : []
+  ), [profileState]);
+  const resources = useMemo<BranchResource[]>(() => {
+    if (!branch) return [];
+    if (resourceSnapshot.length > 0) return resourceSnapshot;
+    if (branch.resources && branch.resources.length > 0) return branch.resources;
+    return buildBranchResources({
+      branchId: branch.id,
+      branchName: branch.branch,
+      services: branch.services || {},
+      profiles: resourceProfiles,
+      infraServices,
+      previewUrl,
+    });
+  }, [branch, infraServices, previewUrl, resourceProfiles, resourceSnapshot]);
+  const selectedResource = resources.find((resource) => resource.id === selectedResourceId) || resources[0] || null;
   const selectedService = services.find((svc) => svc.profileId === selectedServiceId) || services[0] || null;
   const fullPageHref = `/branch-panel/${encodeURIComponent(branchId || '')}?project=${encodeURIComponent(projectId)}`;
   const githubPrHref = branch?.githubRepoFullName && branch.githubPrNumber
@@ -1951,71 +2022,70 @@ export function BranchDetailDrawer({
                 ) : null}
 
                 {activeTab === 'services' ? (
-                  <section className="cds-surface-raised cds-hairline">
-                    <header className="border-b border-[hsl(var(--hairline))] px-5 py-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <h3 className="text-sm font-semibold">服务（{services.length}）</h3>
-                        {selectedService ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => openContainerLogs(selectedService.profileId)}
-                          >
-                            查看日志
-                          </Button>
-                        ) : null}
-                      </div>
-                    </header>
-                    {/* Bug C(2026-05-03)— 左右分栏改顶部 tab 横排,下方 log
-                        全宽展示。原 220px 左栏挤占了 log 的横向空间,导致用户
-                        要往右拖滚动条才能看完一行容器输出。 */}
-                    <div className="flex min-h-[420px] flex-col">
-                      {services.length === 0 ? (
-                        <div className="px-5 py-6 text-sm text-muted-foreground">没有运行中的服务。</div>
-                      ) : (
-                        <>
-                          {/* 顶部 tab 行 — 横向滚动避免服务多时撑破 */}
-                          <div
-                            role="tablist"
-                            aria-label="服务列表"
-                            className="flex shrink-0 gap-1 overflow-x-auto border-b border-[hsl(var(--hairline))] px-3 py-2"
-                            style={{ overscrollBehavior: 'contain' }}
-                          >
-                            {services.map((svc) => {
-                              const active = selectedService?.profileId === svc.profileId;
-                              return (
-                                <button
-                                  key={svc.profileId}
-                                  type="button"
-                                  role="tab"
-                                  aria-selected={active}
-                                  className={`group inline-flex shrink-0 items-center gap-2 rounded-md border px-3 py-1.5 text-left transition-colors ${
-                                    active
-                                      ? 'border-primary bg-primary/10 shadow-[0_0_0_1px_hsl(var(--primary)/.4)]'
-                                      : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 hover:bg-[hsl(var(--surface-sunken))]'
-                                  }`}
-                                  onClick={() => void loadServiceLogs(svc.profileId)}
-                                  title={`${svc.profileId} · :${svc.hostPort || '?'} · ${svc.containerName}`}
-                                >
-                                  <span className={`h-1.5 w-1.5 rounded-full ${statusRailClass(svc.status)}`} aria-hidden />
-                                  <span className="text-sm font-medium">{svc.profileId}</span>
-                                  <span className="font-mono text-[11px] text-muted-foreground">:{svc.hostPort || '?'}</span>
-                                  {svc.errorMessage ? (
-                                    <span className="rounded bg-destructive/15 px-1 text-[10px] font-semibold text-destructive">!</span>
-                                  ) : null}
-                                </button>
-                              );
-                            })}
-                          </div>
-                          {/* 下方 log 区 — 占 1fr,横向不再被左栏挤压 */}
-                          <div className="flex-1 min-h-0">
-                            <ServiceLogsPanel service={selectedService} state={serviceLogs} />
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  </section>
+                  <ResourceConsole
+                    resources={resources}
+                    selectedResource={selectedResource}
+                    serviceLogs={serviceLogs}
+                    branchName={branch.branch}
+                    onSelect={(resource) => {
+                      setSelectedResourceId(resource.id);
+                      if (resource.source === 'app') {
+                        const raw = resource.raw as ServiceState;
+                        void loadServiceLogs(raw.profileId);
+                      }
+                    }}
+                    onOpenLogs={(resource) => {
+                      if (resource.source !== 'app') return;
+                      const raw = resource.raw as ServiceState;
+                      openContainerLogs(raw.profileId);
+                    }}
+                    onInfraAction={async (resource, action) => {
+                      if (resource.source !== 'infra') return;
+                      const raw = resource.raw as BranchResourceInfraInput;
+                      await apiRequest(`/api/infra/${encodeURIComponent(raw.id)}/${action}?project=${encodeURIComponent(projectId)}`, { method: 'POST' });
+                      onToast?.(`${resource.runtime} 已${action === 'start' ? '启动' : action === 'stop' ? '停止' : '重启'}`);
+                      void load();
+                    }}
+                    onExternalAccess={async (resource, input) => {
+                      await apiRequest(`/api/branches/${encodeURIComponent(branch.id)}/resources/${encodeURIComponent(resource.id)}/external-access`, {
+                        method: 'PUT',
+                        body: input,
+                      });
+                      onToast?.(`${resource.runtime} 外部访问已${input.enabled ? '开启' : '关闭'}`);
+                      void load();
+                    }}
+                    onCreateCloneTask={async (resource, input) => {
+                      await apiRequest(`/api/branches/${encodeURIComponent(branch.id)}/resources/${encodeURIComponent(resource.id)}/clone-tasks`, {
+                        method: 'POST',
+                        body: input,
+                      });
+                      onToast?.(`${resource.runtime} ${input.mode === 'empty' ? '分支空库' : input.mode === 'connect-existing' ? '外部连接' : '克隆/恢复'}任务已创建`);
+                      void load();
+                    }}
+                    onResetCredentials={async (resource, confirmResourceName) => {
+                      await apiRequest(`/api/branches/${encodeURIComponent(branch.id)}/resources/${encodeURIComponent(resource.id)}/credentials/reset`, {
+                        method: 'POST',
+                        body: { confirmResourceName },
+                      });
+                      onToast?.(`${resource.runtime} 凭据已重置，依赖应用需要重新部署`);
+                      void load();
+                    }}
+                    onInjectConnection={async (resource) => {
+                      const targetResourceIds = resources
+                        .filter((item) => item.source === 'app' && (resource.consumers || []).includes(item.serviceName))
+                        .map((item) => item.id);
+                      await apiRequest(`/api/branches/${encodeURIComponent(branch.id)}/resources/${encodeURIComponent(resource.id)}/inject-connection`, {
+                        method: 'POST',
+                        body: { targetResourceIds },
+                      });
+                      onToast?.(`${resource.runtime} 连接变量已注入依赖应用，重新部署后生效`);
+                      void load();
+                    }}
+                    onCopy={async (value) => {
+                      await navigator.clipboard.writeText(value);
+                      onToast?.('已复制');
+                    }}
+                  />
                 ) : null}
 
                 {activeTab === 'overview' ? (
@@ -2642,6 +2712,1453 @@ function BuildLogsPanel({ logs, query, selection }: { logs: OperationLog[]; quer
             <pre className="whitespace-pre-wrap font-mono text-[11px] leading-5 text-muted-foreground">{row.text}</pre>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+type ResourceAction = 'start' | 'stop' | 'restart';
+
+function ResourceConsole({
+  resources,
+  selectedResource,
+  serviceLogs,
+  branchName,
+  onSelect,
+  onOpenLogs,
+  onInfraAction,
+  onExternalAccess,
+  onCreateCloneTask,
+  onResetCredentials,
+  onInjectConnection,
+  onCopy,
+}: {
+  resources: BranchResource[];
+  selectedResource: BranchResource | null;
+  serviceLogs: ServiceLogsState;
+  branchName: string;
+  onSelect: (resource: BranchResource) => void;
+  onOpenLogs: (resource: BranchResource) => void;
+  onInfraAction: (resource: BranchResource, action: ResourceAction) => Promise<void>;
+  onExternalAccess: (resource: BranchResource, input: ResourceExternalAccessInput) => Promise<void>;
+  onCreateCloneTask: (resource: BranchResource, input: ResourceCloneInput) => Promise<void>;
+  onResetCredentials: (resource: BranchResource, confirmResourceName: string) => Promise<void>;
+  onInjectConnection: (resource: BranchResource) => Promise<void>;
+  onCopy: (value: string) => Promise<void>;
+}): JSX.Element {
+  const groups = useMemo(() => {
+    const order = ['app', 'database', 'cache', 'queue', 'storage', 'service'] as const;
+    return order
+      .map((kind) => ({ kind, items: resources.filter((resource) => resource.kind === kind) }))
+      .filter((group) => group.items.length > 0);
+  }, [resources]);
+  const [detailTab, setDetailTab] = useState<'overview' | 'connection' | 'data' | 'backups' | 'variables' | 'metrics' | 'logs' | 'settings'>('overview');
+  const [resourceMutation, setResourceMutation] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDetailTab('overview');
+  }, [selectedResource?.id]);
+
+  if (resources.length === 0) {
+    return (
+      <section className="cds-surface-raised cds-hairline px-5 py-8 text-sm text-muted-foreground">
+        当前分支还没有资源。先部署分支，CDS 会把应用容器、数据库、缓存和中间件统一展示在这里。
+      </section>
+    );
+  }
+
+  const tabs = selectedResource?.kind === 'app'
+    ? [
+      ['overview', '概览'],
+      ['connection', '连接'],
+      ['variables', '变量'],
+      ['metrics', '指标'],
+      ['logs', '日志'],
+      ['settings', '设置'],
+    ] as const
+    : [
+      ['overview', '概览'],
+      ['connection', '连接'],
+      ['data', '数据'],
+      ['backups', '备份'],
+      ['variables', '变量'],
+      ['metrics', '指标'],
+      ['logs', '日志'],
+      ['settings', '设置'],
+    ] as const;
+
+  return (
+    <section className="cds-surface-raised cds-hairline overflow-hidden">
+      <header className="border-b border-[hsl(var(--hairline))] px-5 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold">资源（{resources.length}）</h3>
+            <p className="mt-1 text-xs text-muted-foreground">应用容器、数据库、缓存和中间件使用同一套状态、端口和连接模型。</p>
+          </div>
+          {selectedResource ? (
+            <span className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-xs ${statusClass(selectedResource.status)}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${statusRailClass(selectedResource.status)}`} />
+              {resourceStatusLabel(selectedResource.status)}
+            </span>
+          ) : null}
+        </div>
+      </header>
+      <div className="grid min-h-[520px] grid-cols-1 lg:grid-cols-[220px_minmax(0,1fr)]">
+        <aside className="border-b border-[hsl(var(--hairline))] p-3 lg:border-b-0 lg:border-r">
+          <div className="space-y-3">
+            {groups.map((group) => (
+              <div key={group.kind}>
+                <div className="mb-1.5 px-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {resourceKindLabel(group.kind)}
+                </div>
+                <div className="space-y-1">
+                  {group.items.map((resource) => {
+                    const active = selectedResource?.id === resource.id;
+                    return (
+                      <button
+                        key={resource.id}
+                        type="button"
+                        className={`flex w-full min-w-0 items-center gap-2 rounded-md border px-2 py-2 text-left transition-colors ${
+                          active
+                            ? 'border-primary bg-primary/10 shadow-[0_0_0_1px_hsl(var(--primary)/.35)]'
+                            : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 hover:bg-[hsl(var(--surface-sunken))]'
+                        } ${resource.access === 'external' ? 'ring-1 ring-sky-400/30' : ''}`}
+                        onClick={() => onSelect(resource)}
+                        title={`${resource.displayName}\n${resource.serviceName}`}
+                      >
+                        <ResourceIcon resource={resource} className="h-5 w-5 shrink-0" />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-xs font-semibold">{resource.runtime}</span>
+                          <span className="block truncate font-mono text-[11px] text-muted-foreground">:{resource.port || resource.containerPort || '?'}</span>
+                        </span>
+                        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusRailClass(resource.status)}`} />
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </aside>
+
+        <div className="min-w-0">
+          {selectedResource ? (
+            <>
+              <div className="flex min-w-0 items-start justify-between gap-3 border-b border-[hsl(var(--hairline))] px-5 py-4">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]">
+                    <ResourceIcon resource={selectedResource} className="h-6 w-6" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="truncate text-base font-semibold">{selectedResource.displayName}</div>
+                    <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      <span className="truncate">{selectedResource.serviceName}</span>
+                      <span>{selectedResource.source === 'infra' ? '依赖资源' : '应用容器'}</span>
+                      <span className="inline-flex items-center gap-1">
+                        {resourceAccessIcon(selectedResource)}
+                        {selectedResource.access === 'external' ? '公网访问' : '内部访问'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                  {selectedResource.source === 'app' ? (
+                    <Button type="button" size="sm" variant="outline" onClick={() => onOpenLogs(selectedResource)}>
+                      查看日志
+                    </Button>
+                  ) : (
+                    <>
+                      <Button type="button" size="sm" variant="outline" onClick={() => void onInfraAction(selectedResource, 'start')}>
+                        <Play />
+                        启动
+                      </Button>
+                      <Button type="button" size="sm" variant="outline" onClick={() => void onInfraAction(selectedResource, 'restart')}>
+                        <RefreshCw />
+                        重启
+                      </Button>
+                      <Button type="button" size="sm" variant="outline" onClick={() => void onInfraAction(selectedResource, 'stop')}>
+                        <Square />
+                        停止
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex gap-1 overflow-x-auto border-b border-[hsl(var(--hairline))] px-3">
+                {tabs.map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className={`relative h-10 shrink-0 px-3 text-xs transition-colors ${detailTab === key ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                    onClick={() => setDetailTab(key)}
+                  >
+                    {label}
+                    {detailTab === key ? <span className="absolute inset-x-2 bottom-0 h-px bg-primary" /> : null}
+                  </button>
+                ))}
+              </div>
+
+              <div className="p-5">
+                {detailTab === 'overview' ? <ResourceOverview resource={selectedResource} branchName={branchName} /> : null}
+                {detailTab === 'connection' ? (
+                  <ResourceConnection
+                    resource={selectedResource}
+                    externalBusy={resourceMutation === `${selectedResource.id}:external`}
+                    resetBusy={resourceMutation === `${selectedResource.id}:credentials`}
+                    injectBusy={resourceMutation === `${selectedResource.id}:inject`}
+                    onCopy={onCopy}
+                    onToggleExternalAccess={async (input) => {
+                      setResourceMutation(`${selectedResource.id}:external`);
+                      try {
+                        await onExternalAccess(selectedResource, input);
+                      } finally {
+                        setResourceMutation(null);
+                      }
+                    }}
+                    onResetCredentials={async (confirmResourceName) => {
+                      setResourceMutation(`${selectedResource.id}:credentials`);
+                      try {
+                        await onResetCredentials(selectedResource, confirmResourceName);
+                      } finally {
+                        setResourceMutation(null);
+                      }
+                    }}
+                    onInjectConnection={async () => {
+                      setResourceMutation(`${selectedResource.id}:inject`);
+                      try {
+                        await onInjectConnection(selectedResource);
+                      } finally {
+                        setResourceMutation(null);
+                      }
+                    }}
+                  />
+                ) : null}
+                {detailTab === 'data' ? <ResourceDataPanel resource={selectedResource} /> : null}
+                {detailTab === 'backups' ? (
+                  <ResourceBackupsPanel
+                    resource={selectedResource}
+                    busy={resourceMutation?.startsWith(`${selectedResource.id}:clone:`) || false}
+                    onCreateCloneTask={async (input) => {
+                      setResourceMutation(`${selectedResource.id}:clone:${input.mode}`);
+                      try {
+                        await onCreateCloneTask(selectedResource, input);
+                      } finally {
+                        setResourceMutation(null);
+                      }
+                    }}
+                  />
+                ) : null}
+                {detailTab === 'variables' ? <ResourceVariablesPanel resource={selectedResource} /> : null}
+                {detailTab === 'metrics' ? <ResourceMetricsPanel resource={selectedResource} /> : null}
+                {detailTab === 'logs' ? (
+                  selectedResource.source === 'app'
+                    ? <ServiceLogsPanel service={selectedResource.raw as ServiceState} state={serviceLogs} />
+                    : <ResourceLogsPanel resource={selectedResource} />
+                ) : null}
+                {detailTab === 'settings' ? <ResourceSettingsPanel resource={selectedResource} /> : null}
+              </div>
+            </>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ResourceOverview({ resource, branchName }: { resource: BranchResource; branchName: string }): JSX.Element {
+  const rows = [
+    ['所属分支', branchName],
+    ['资源类型', `${resourceKindLabel(resource.kind)} / ${resource.runtime}`],
+    ['容器端口', resource.containerPort ? `:${resource.containerPort}` : '-'],
+    ['访问端口', resource.port ? `:${resource.port}` : '-'],
+    ['访问范围', resource.access === 'external' ? '公网访问' : '内部访问'],
+    ['容器', resource.containerName || '-'],
+  ];
+  return (
+    <div className="grid gap-4">
+      <div className="grid gap-2 text-sm">
+        {rows.map(([label, value]) => (
+          <div key={label} className="flex justify-between gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2">
+            <span className="text-muted-foreground">{label}</span>
+            <span className="min-w-0 truncate font-mono">{value}</span>
+          </div>
+        ))}
+      </div>
+      {(resource.dependsOn || []).length > 0 ? (
+        <div className="rounded-md border border-sky-500/25 bg-sky-500/10 px-3 py-2 text-xs leading-5 text-sky-700 dark:text-sky-300">
+          依赖关系：{resource.displayName} 依赖 {resource.dependsOn.join(', ')}。连接变化后应提示重新部署依赖应用。
+        </div>
+      ) : null}
+      {(resource.consumers || []).length > 0 ? (
+        <div className="rounded-md border border-sky-500/25 bg-sky-500/10 px-3 py-2 text-xs leading-5 text-sky-700 dark:text-sky-300">
+          被依赖：{resource.consumers.join(', ')} 使用 {resource.displayName}。连接变量变更后建议重新部署这些应用。
+        </div>
+      ) : null}
+      {resource.errorMessage ? (
+        <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
+          {resource.errorMessage}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ResourceConnection({
+  resource,
+  externalBusy,
+  resetBusy,
+  injectBusy,
+  onCopy,
+  onToggleExternalAccess,
+  onResetCredentials,
+  onInjectConnection,
+}: {
+  resource: BranchResource;
+  externalBusy: boolean;
+  resetBusy: boolean;
+  injectBusy: boolean;
+  onCopy: (value: string) => Promise<void>;
+  onToggleExternalAccess: (input: ResourceExternalAccessInput) => Promise<void>;
+  onResetCredentials: (confirmResourceName: string) => Promise<void>;
+  onInjectConnection: () => Promise<void>;
+}): JSX.Element {
+  const externalAddress = resource.externalUrl || resource.externalAccess?.address || '';
+  const externalEnabled = resource.externalAccess?.enabled || resource.access === 'external';
+  const dependentApps = resource.consumers || [];
+  const [allowlistDraft, setAllowlistDraft] = useState((resource.externalAccess?.allowlist || []).join('\n'));
+  const [ttlDraft, setTtlDraft] = useState(resource.externalAccess?.expiresAt ? '120' : '120');
+  const rows = [
+    ['内部地址', resource.internalUrl || '-'],
+    ['外部地址', externalEnabled ? externalAddress || '未开启' : externalAddress ? `${externalAddress}（未开启）` : '未开启'],
+    ['连接串', resource.connectionString || externalAddress || resource.internalUrl || '-'],
+  ];
+  useEffect(() => {
+    setAllowlistDraft((resource.externalAccess?.allowlist || []).join('\n'));
+    setTtlDraft(resource.externalAccess?.expiresAt ? '120' : '120');
+  }, [resource.id, resource.externalAccess?.allowlist, resource.externalAccess?.expiresAt]);
+  async function resetCredentials(): Promise<void> {
+    const confirmResourceName = window.prompt(`重置会让 ${resource.displayName} 的旧连接失效。请输入资源名确认：${resource.serviceName}`);
+    if (!confirmResourceName) return;
+    await onResetCredentials(confirmResourceName);
+  }
+  return (
+    <div className="space-y-3">
+      {rows.map(([label, value]) => (
+        <div key={label} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3">
+          <div className="mb-1 text-xs text-muted-foreground">{label}</div>
+          <div className="flex min-w-0 items-center gap-2">
+            <code className="min-w-0 flex-1 truncate font-mono text-xs">{value}</code>
+            {value && value !== '-' && value !== '未开启' ? (
+              <Button type="button" size="sm" variant="outline" onClick={() => void onCopy(value)}>
+                <Copy />
+                复制
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      ))}
+      <div className="grid gap-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="font-semibold">外部访问控制</div>
+            <div className="mt-1">数据库默认保持内部访问；开启公网 TCP 访问时需要 IP allowlist、临时有效期和凭据重置记录。</div>
+            {resource.externalAccess?.expiresAt ? <div className="mt-1 font-mono">有效期至 {resource.externalAccess.expiresAt}</div> : null}
+            {resource.externalAccess?.allowlist && resource.externalAccess.allowlist.length > 0 ? (
+              <div className="mt-1 font-mono">allowlist: {resource.externalAccess.allowlist.join(', ')}</div>
+            ) : null}
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={externalBusy}
+            onClick={() => {
+              const allowlist = allowlistDraft
+                .split(/[\n,]/)
+                .map((item) => item.trim())
+                .filter(Boolean);
+              const ttlMinutes = Number(ttlDraft);
+              void onToggleExternalAccess({
+                enabled: !externalEnabled,
+                ttlMinutes: !externalEnabled && Number.isFinite(ttlMinutes) && ttlMinutes > 0 ? ttlMinutes : undefined,
+                allowlist,
+              });
+            }}
+          >
+            {externalBusy ? <Loader2 className="animate-spin" /> : externalEnabled ? <PowerOff /> : <ExternalLink />}
+            {externalEnabled ? '关闭公网' : '临时开启'}
+          </Button>
+        </div>
+        <div className="grid gap-2 md:grid-cols-[140px_minmax(0,1fr)]">
+          <label className="grid gap-1">
+            <span className="text-[11px] text-amber-700/80 dark:text-amber-300/80">有效期（分钟）</span>
+            <input
+              value={ttlDraft}
+              onChange={(event) => setTtlDraft(event.target.value)}
+              className="h-8 rounded-md border border-amber-500/30 bg-background px-2 font-mono text-xs outline-none focus:border-amber-500"
+              inputMode="numeric"
+              placeholder="120"
+            />
+          </label>
+          <label className="grid gap-1">
+            <span className="text-[11px] text-amber-700/80 dark:text-amber-300/80">IP allowlist（每行一个，留空表示后端默认策略）</span>
+            <textarea
+              value={allowlistDraft}
+              onChange={(event) => setAllowlistDraft(event.target.value)}
+              className="min-h-[64px] resize-y rounded-md border border-amber-500/30 bg-background px-2 py-1.5 font-mono text-xs outline-none focus:border-amber-500"
+              placeholder="203.0.113.10/32"
+              spellCheck={false}
+            />
+          </label>
+        </div>
+      </div>
+      {resource.kind === 'database' ? (
+        <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-3 text-xs leading-5">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <div>
+              <div className="font-semibold">连接变量管理</div>
+              <div className="mt-1 text-muted-foreground">
+                {dependentApps.length > 0
+                  ? `依赖应用：${dependentApps.join(', ')}`
+                  : '还没有应用声明依赖这个数据库。'}
+              </div>
+            </div>
+            <div className="flex shrink-0 flex-wrap justify-end gap-2">
+              <Button type="button" size="sm" variant="outline" disabled={resetBusy} onClick={() => void resetCredentials()}>
+                {resetBusy ? <Loader2 className="animate-spin" /> : <RotateCw />}
+                重置凭据
+              </Button>
+              <Button type="button" size="sm" variant="outline" disabled={injectBusy || dependentApps.length === 0} onClick={() => void onInjectConnection()}>
+                {injectBusy ? <Loader2 className="animate-spin" /> : <Rocket />}
+                注入依赖应用
+              </Button>
+            </div>
+          </div>
+          <div className="text-muted-foreground">
+            注入会写入目标应用的分支级配置覆盖；需要重新部署应用后容器才能拿到新的连接变量。
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+interface DbTableSummary {
+  name: string;
+  type?: string;
+}
+
+interface DbColumnSummary {
+  name: string;
+  type: string;
+  nullable?: string;
+  key?: string;
+  defaultValue?: string;
+  extra?: string;
+}
+
+interface DbQueryResult {
+  columns: string[];
+  rows: string[][];
+  rowCount: number;
+}
+
+function ResourceDataPanel({ resource }: { resource: BranchResource }): JSX.Element {
+  const isSqlDatabase = resource.runtime === 'MySQL' || resource.runtime === 'PostgreSQL';
+  if (resource.runtime === 'Redis') {
+    return <RedisResourceDataPanel resource={resource} />;
+  }
+  if (resource.runtime === 'MongoDB') {
+    return <MongoResourceDataPanel resource={resource} />;
+  }
+  if (!isSqlDatabase) {
+    const items = ['表列表', 'Schema', '只读数据预览', 'SQL Console'];
+    return (
+      <div className="grid gap-2">
+        {items.map((item) => (
+          <div key={item} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-sm">
+            {item}
+          </div>
+        ))}
+        <div className="rounded-md border border-[hsl(var(--hairline))] px-3 py-2 text-xs leading-5 text-muted-foreground">
+          第一阶段 MySQL/PostgreSQL 已接入结构化只读面板；{resource.runtime} 的数据浏览执行器待接入。
+        </div>
+      </div>
+    );
+  }
+
+  return <SqlResourceDataPanel resource={resource} />;
+}
+
+interface MongoDatabaseSummary {
+  name: string;
+  sizeOnDisk?: number;
+}
+
+interface MongoCollectionSummary {
+  name: string;
+  type?: string;
+}
+
+function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX.Element {
+  const [databasesState, setDatabasesState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; databases: MongoDatabaseSummary[]; currentDatabase?: string; message?: string }>({ status: 'idle', databases: [] });
+  const [collectionsState, setCollectionsState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; collections: MongoCollectionSummary[]; database?: string; message?: string }>({ status: 'idle', collections: [] });
+  const [selectedCollection, setSelectedCollection] = useState('');
+  const [documentsState, setDocumentsState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; documents: unknown[]; message?: string }>({ status: 'idle', documents: [] });
+  const [filter, setFilter] = useState('{}');
+  const [projection, setProjection] = useState('{}');
+  const [sort, setSort] = useState('{}');
+  const basePath = resource.branchId
+    ? `/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/data/mongo`
+    : '';
+
+  const loadDatabases = useCallback(async () => {
+    if (!basePath) return;
+    setDatabasesState((current) => ({ ...current, status: 'loading', message: undefined }));
+    try {
+      const res = await apiRequest<{ currentDatabase?: string; databases: MongoDatabaseSummary[] }>(`${basePath}/databases`);
+      setDatabasesState({ status: 'ok', databases: res.databases || [], currentDatabase: res.currentDatabase });
+    } catch (err) {
+      setDatabasesState({ status: 'error', databases: [], message: err instanceof ApiError ? err.message : String(err) });
+    }
+  }, [basePath]);
+
+  const loadCollections = useCallback(async () => {
+    if (!basePath) return;
+    setCollectionsState((current) => ({ ...current, status: 'loading', message: undefined }));
+    try {
+      const res = await apiRequest<{ database?: string; collections: MongoCollectionSummary[] }>(`${basePath}/collections`);
+      const collections = res.collections || [];
+      setCollectionsState({ status: 'ok', collections, database: res.database });
+      setSelectedCollection((current) => current || collections[0]?.name || '');
+    } catch (err) {
+      setCollectionsState({ status: 'error', collections: [], message: err instanceof ApiError ? err.message : String(err) });
+    }
+  }, [basePath]);
+
+  const loadDocuments = useCallback(async (collection: string) => {
+    if (!basePath || !collection) return;
+    setDocumentsState({ status: 'loading', documents: [] });
+    try {
+      const res = await apiRequest<{ documents: unknown[] }>(`${basePath}/documents?collection=${encodeURIComponent(collection)}&limit=50`);
+      setDocumentsState({ status: 'ok', documents: res.documents || [] });
+    } catch (err) {
+      setDocumentsState({ status: 'error', documents: [], message: err instanceof ApiError ? err.message : String(err) });
+    }
+  }, [basePath]);
+
+  useEffect(() => {
+    void loadDatabases();
+    void loadCollections();
+  }, [loadDatabases, loadCollections]);
+
+  useEffect(() => {
+    if (!selectedCollection) return;
+    void loadDocuments(selectedCollection);
+  }, [loadDocuments, selectedCollection]);
+
+  async function runMongoQuery(): Promise<void> {
+    if (!basePath || !selectedCollection) return;
+    setDocumentsState({ status: 'loading', documents: [] });
+    try {
+      const res = await apiRequest<{ documents: unknown[] }>(`${basePath}/query`, {
+        method: 'POST',
+        body: {
+          collection: selectedCollection,
+          filter,
+          projection,
+          sort,
+          limit: 50,
+        },
+      });
+      setDocumentsState({ status: 'ok', documents: res.documents || [] });
+    } catch (err) {
+      setDocumentsState({ status: 'error', documents: [], message: err instanceof ApiError ? err.message : String(err) });
+    }
+  }
+
+  return (
+    <div className="grid gap-3 text-sm">
+      <div className="grid min-h-[420px] gap-3 lg:grid-cols-[260px_minmax(0,1fr)]">
+        <aside className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
+          <div className="flex items-center justify-between gap-2 border-b border-[hsl(var(--hairline))] px-3 py-2">
+            <div>
+              <div className="text-xs font-semibold">Database</div>
+              <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{databasesState.currentDatabase || '-'}</div>
+            </div>
+            <Button type="button" size="sm" variant="outline" disabled={databasesState.status === 'loading'} onClick={() => void loadDatabases()}>
+              <RefreshCw className={databasesState.status === 'loading' ? 'animate-spin' : ''} />
+            </Button>
+          </div>
+          <div className="max-h-[120px] overflow-auto border-b border-[hsl(var(--hairline))] p-2">
+            {databasesState.databases.length > 0 ? databasesState.databases.map((db) => (
+              <div key={db.name} className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-xs">
+                <span className="font-mono">{db.name}</span>
+                <span className="text-muted-foreground">{db.sizeOnDisk ? formatBytes(db.sizeOnDisk) : '-'}</span>
+              </div>
+            )) : (
+              <div className="px-2 py-2 text-xs text-muted-foreground">{databasesState.status === 'loading' ? '读取中...' : databasesState.message || '没有数据库信息。'}</div>
+            )}
+          </div>
+
+          <div className="flex items-center justify-between gap-2 border-b border-[hsl(var(--hairline))] px-3 py-2">
+            <div>
+              <div className="text-xs font-semibold">Collection</div>
+              <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{collectionsState.database || '-'}</div>
+            </div>
+            <Button type="button" size="sm" variant="outline" disabled={collectionsState.status === 'loading'} onClick={() => void loadCollections()}>
+              <RefreshCw className={collectionsState.status === 'loading' ? 'animate-spin' : ''} />
+            </Button>
+          </div>
+          <div className="max-h-[260px] overflow-auto p-2">
+            {collectionsState.status === 'error' ? (
+              <div className="px-2 py-3 text-xs text-destructive">{collectionsState.message}</div>
+            ) : collectionsState.collections.length > 0 ? (
+              <div className="space-y-1">
+                {collectionsState.collections.map((collection) => {
+                  const active = collection.name === selectedCollection;
+                  return (
+                    <button
+                      key={collection.name}
+                      type="button"
+                      className={`flex w-full min-w-0 items-center justify-between gap-2 rounded-md border px-2 py-2 text-left text-xs ${active ? 'border-primary bg-primary/10 text-foreground' : 'border-transparent text-muted-foreground hover:border-[hsl(var(--hairline))] hover:text-foreground'}`}
+                      onClick={() => setSelectedCollection(collection.name)}
+                    >
+                      <span className="min-w-0 truncate font-mono">{collection.name}</span>
+                      <span className="text-[10px]">{collection.type || 'collection'}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="px-2 py-3 text-xs text-muted-foreground">{collectionsState.status === 'loading' ? '读取中...' : '没有 collection。'}</div>
+            )}
+          </div>
+        </aside>
+
+        <div className="grid min-w-0 gap-3">
+          <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
+            <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
+              <div className="text-xs font-semibold">Query Console</div>
+              <Button type="button" size="sm" variant="outline" disabled={documentsState.status === 'loading'} onClick={() => void runMongoQuery()}>
+                {documentsState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Play />}
+                执行查询
+              </Button>
+            </div>
+            <div className="grid gap-2 p-3 lg:grid-cols-3">
+              <JsonTextArea label="filter" value={filter} onChange={setFilter} />
+              <JsonTextArea label="projection" value={projection} onChange={setProjection} />
+              <JsonTextArea label="sort" value={sort} onChange={setSort} />
+            </div>
+          </section>
+
+          <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
+            <div className="border-b border-[hsl(var(--hairline))] px-3 py-2 text-xs font-semibold">Document Browser</div>
+            {documentsState.status === 'loading' ? (
+              <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />读取文档</div>
+            ) : documentsState.status === 'error' ? (
+              <div className="px-3 py-3 text-xs leading-5 text-destructive">{documentsState.message}</div>
+            ) : documentsState.documents.length > 0 ? (
+              <div className="max-h-[420px] space-y-2 overflow-auto p-3">
+                {documentsState.documents.map((doc, index) => (
+                  // eslint-disable-next-line react/no-array-index-key
+                  <pre key={index} className="rounded-md border border-[hsl(var(--hairline))] bg-background p-3 font-mono text-xs leading-5 text-muted-foreground">
+                    {JSON.stringify(doc, null, 2)}
+                  </pre>
+                ))}
+              </div>
+            ) : (
+              <div className="px-3 py-3 text-xs text-muted-foreground">选择 collection 后预览前 50 条文档。</div>
+            )}
+          </section>
+        </div>
+      </div>
+      <div className="rounded-md border border-[hsl(var(--hairline))] px-3 py-2 text-xs leading-5 text-muted-foreground">
+        MongoDB 数据面板只接收 filter/projection/sort JSON object，不执行任意 JavaScript；第一阶段保持只读。
+      </div>
+    </div>
+  );
+}
+
+function JsonTextArea({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}): JSX.Element {
+  return (
+    <label className="grid gap-1 text-xs">
+      <span className="text-muted-foreground">{label}</span>
+      <textarea
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="min-h-[82px] resize-y rounded-md border border-[hsl(var(--hairline))] bg-background px-3 py-2 font-mono text-xs outline-none focus:border-primary"
+        spellCheck={false}
+      />
+    </label>
+  );
+}
+
+interface RedisKeySummary {
+  key: string;
+  type: string;
+  ttl: number;
+  memoryBytes?: number | null;
+}
+
+interface RedisKeyDetail extends RedisKeySummary {
+  preview: {
+    kind: string;
+    values: string[];
+    truncated?: boolean;
+  };
+}
+
+function RedisResourceDataPanel({ resource }: { resource: BranchResource }): JSX.Element {
+  const [pattern, setPattern] = useState('*');
+  const [cursor, setCursor] = useState('0');
+  const [keysState, setKeysState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; keys: RedisKeySummary[]; nextCursor: string; message?: string }>({ status: 'idle', keys: [], nextCursor: '0' });
+  const [selectedKey, setSelectedKey] = useState('');
+  const [detailState, setDetailState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; detail?: RedisKeyDetail; message?: string }>({ status: 'idle' });
+  const [memoryState, setMemoryState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; memory: Record<string, string>; message?: string }>({ status: 'idle', memory: {} });
+  const basePath = resource.branchId
+    ? `/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/data/redis`
+    : '';
+
+  const loadKeys = useCallback(async (nextCursor = '0') => {
+    if (!basePath) return;
+    setKeysState((current) => ({ ...current, status: 'loading', message: undefined }));
+    try {
+      const res = await apiRequest<{ cursor: string; keys: RedisKeySummary[] }>(
+        `${basePath}/keys?cursor=${encodeURIComponent(nextCursor)}&pattern=${encodeURIComponent(pattern || '*')}&count=100`,
+      );
+      const keys = res.keys || [];
+      setKeysState({ status: 'ok', keys, nextCursor: res.cursor || '0' });
+      setCursor(res.cursor || '0');
+      setSelectedKey((current) => current || keys[0]?.key || '');
+    } catch (err) {
+      setKeysState({ status: 'error', keys: [], nextCursor: '0', message: err instanceof ApiError ? err.message : String(err) });
+    }
+  }, [basePath, pattern]);
+
+  const loadMemory = useCallback(async () => {
+    if (!basePath) return;
+    setMemoryState((current) => ({ ...current, status: 'loading', message: undefined }));
+    try {
+      const res = await apiRequest<{ memory: Record<string, string> }>(`${basePath}/memory`);
+      setMemoryState({ status: 'ok', memory: res.memory || {} });
+    } catch (err) {
+      setMemoryState({ status: 'error', memory: {}, message: err instanceof ApiError ? err.message : String(err) });
+    }
+  }, [basePath]);
+
+  const loadKeyDetail = useCallback(async (key: string) => {
+    if (!basePath || !key) return;
+    setDetailState({ status: 'loading' });
+    try {
+      const detail = await apiRequest<RedisKeyDetail>(`${basePath}/key?key=${encodeURIComponent(key)}`);
+      setDetailState({ status: 'ok', detail });
+    } catch (err) {
+      setDetailState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+    }
+  }, [basePath]);
+
+  useEffect(() => {
+    void loadKeys('0');
+    void loadMemory();
+  }, [loadKeys, loadMemory]);
+
+  useEffect(() => {
+    if (!selectedKey) return;
+    void loadKeyDetail(selectedKey);
+  }, [loadKeyDetail, selectedKey]);
+
+  return (
+    <div className="grid gap-3 text-sm">
+      <div className="grid min-h-[420px] gap-3 lg:grid-cols-[280px_minmax(0,1fr)]">
+        <aside className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
+          <div className="grid gap-2 border-b border-[hsl(var(--hairline))] px-3 py-3">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <div className="text-xs font-semibold">Key Browser</div>
+                <div className="mt-0.5 text-[11px] text-muted-foreground">SCAN · 只读</div>
+              </div>
+              <Button type="button" size="sm" variant="outline" disabled={keysState.status === 'loading'} onClick={() => void loadKeys('0')}>
+                <RefreshCw className={keysState.status === 'loading' ? 'animate-spin' : ''} />
+              </Button>
+            </div>
+            <div className="flex gap-2">
+              <input
+                value={pattern}
+                onChange={(event) => setPattern(event.target.value)}
+                className="min-w-0 flex-1 rounded-md border border-[hsl(var(--hairline))] bg-background px-2 py-1.5 font-mono text-xs outline-none focus:border-primary"
+                placeholder="*"
+              />
+              <Button type="button" size="sm" variant="outline" onClick={() => void loadKeys('0')}>过滤</Button>
+            </div>
+          </div>
+          <div className="max-h-[340px] overflow-auto p-2">
+            {keysState.status === 'error' ? (
+              <div className="px-2 py-3 text-xs leading-5 text-destructive">{keysState.message}</div>
+            ) : keysState.keys.length > 0 ? (
+              <div className="space-y-1">
+                {keysState.keys.map((item) => {
+                  const active = item.key === selectedKey;
+                  return (
+                    <button
+                      key={item.key}
+                      type="button"
+                      className={`grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border px-2 py-2 text-left text-xs ${active ? 'border-primary bg-primary/10 text-foreground' : 'border-transparent text-muted-foreground hover:border-[hsl(var(--hairline))] hover:text-foreground'}`}
+                      onClick={() => setSelectedKey(item.key)}
+                    >
+                      <span className="min-w-0 truncate font-mono">{item.key}</span>
+                      <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 text-[10px]">{item.type}</span>
+                      <span className="col-span-2 text-[11px] text-muted-foreground">
+                        TTL {formatRedisTtl(item.ttl)} · {item.memoryBytes ? formatBytes(item.memoryBytes) : 'memory -'}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="px-2 py-3 text-xs text-muted-foreground">{keysState.status === 'loading' ? '扫描中...' : '没有匹配的 key。'}</div>
+            )}
+          </div>
+          <div className="flex items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] px-3 py-2 text-xs text-muted-foreground">
+            <span>cursor {cursor}</span>
+            <Button type="button" size="sm" variant="outline" disabled={keysState.status === 'loading' || keysState.nextCursor === '0'} onClick={() => void loadKeys(keysState.nextCursor)}>
+              下一批
+            </Button>
+          </div>
+        </aside>
+
+        <div className="grid min-w-0 gap-3">
+          <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
+            <div className="border-b border-[hsl(var(--hairline))] px-3 py-2 text-xs font-semibold">Key Detail</div>
+            {detailState.status === 'loading' ? (
+              <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />读取 key</div>
+            ) : detailState.status === 'error' ? (
+              <div className="px-3 py-3 text-xs leading-5 text-destructive">{detailState.message}</div>
+            ) : detailState.detail ? (
+              <div className="grid gap-3 p-3">
+                <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+                  <MetricChip label="Type" value={detailState.detail.type} />
+                  <MetricChip label="TTL" value={formatRedisTtl(detailState.detail.ttl)} />
+                  <MetricChip label="Memory" value={detailState.detail.memoryBytes ? formatBytes(detailState.detail.memoryBytes) : '-'} />
+                  <MetricChip label="Preview" value={detailState.detail.preview.kind} />
+                </div>
+                <pre className="max-h-[260px] overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-background p-3 font-mono text-xs leading-5 text-muted-foreground">
+                  {formatRedisPreview(detailState.detail.preview)}
+                </pre>
+              </div>
+            ) : (
+              <div className="px-3 py-3 text-xs text-muted-foreground">选择 key 查看 TTL、类型和值预览。</div>
+            )}
+          </section>
+
+          <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
+            <div className="flex items-center justify-between gap-2 border-b border-[hsl(var(--hairline))] px-3 py-2">
+              <div className="text-xs font-semibold">Memory Usage</div>
+              <Button type="button" size="sm" variant="outline" disabled={memoryState.status === 'loading'} onClick={() => void loadMemory()}>
+                <RefreshCw className={memoryState.status === 'loading' ? 'animate-spin' : ''} />
+              </Button>
+            </div>
+            {memoryState.status === 'error' ? (
+              <div className="px-3 py-3 text-xs leading-5 text-destructive">{memoryState.message}</div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2 p-3 lg:grid-cols-4">
+                <MetricChip label="used_memory" value={formatRedisBytes(memoryState.memory.used_memory)} />
+                <MetricChip label="peak" value={formatRedisBytes(memoryState.memory.used_memory_peak)} />
+                <MetricChip label="rss" value={formatRedisBytes(memoryState.memory.used_memory_rss)} />
+                <MetricChip label="fragmentation" value={memoryState.memory.mem_fragmentation_ratio || '-'} />
+              </div>
+            )}
+          </section>
+        </div>
+      </div>
+
+      <div className="rounded-md border border-[hsl(var(--hairline))] px-3 py-2 text-xs leading-5 text-muted-foreground">
+        Redis 数据面板只执行 SCAN / TYPE / TTL / MEMORY / GET / HGETALL / LRANGE / SMEMBERS / ZRANGE 等只读命令。
+      </div>
+    </div>
+  );
+}
+
+function MetricChip({ label, value }: { label: string; value: string }): JSX.Element {
+  return (
+    <div className="rounded-md border border-[hsl(var(--hairline))] bg-background/60 px-3 py-2">
+      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="mt-1 truncate font-mono text-xs">{value}</div>
+    </div>
+  );
+}
+
+function formatRedisTtl(value: number): string {
+  if (value === -1) return '永久';
+  if (value === -2) return '不存在';
+  if (!Number.isFinite(value) || value < 0) return '-';
+  if (value < 60) return `${value}s`;
+  if (value < 3600) return `${Math.round(value / 60)}m`;
+  return `${Math.round(value / 3600)}h`;
+}
+
+function formatRedisBytes(value?: string): string {
+  const n = Number(value);
+  return Number.isFinite(n) ? formatBytes(n) : '-';
+}
+
+function formatRedisPreview(preview: RedisKeyDetail['preview']): string {
+  if (!preview.values.length) return '(empty)';
+  if (preview.kind === 'hash') {
+    const lines: string[] = [];
+    for (let i = 0; i < preview.values.length; i += 2) {
+      lines.push(`${preview.values[i]}: ${preview.values[i + 1] || ''}`);
+    }
+    return lines.join('\n');
+  }
+  if (preview.kind === 'zset') {
+    const lines: string[] = [];
+    for (let i = 0; i < preview.values.length; i += 2) {
+      lines.push(`${preview.values[i]}  score=${preview.values[i + 1] || ''}`);
+    }
+    return lines.join('\n');
+  }
+  return preview.values.join('\n');
+}
+
+function quoteSqlTableName(resource: BranchResource, table: string): string {
+  if (resource.runtime === 'PostgreSQL') return `"${table.replace(/"/g, '""')}"`;
+  return `\`${table.replace(/`/g, '``')}\``;
+}
+
+function SqlResourceDataPanel({ resource }: { resource: BranchResource }): JSX.Element {
+  const [tablesState, setTablesState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; tables: DbTableSummary[]; database?: string; message?: string }>({ status: 'idle', tables: [] });
+  const [selectedTable, setSelectedTable] = useState('');
+  const [schemaState, setSchemaState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; columns: DbColumnSummary[]; message?: string }>({ status: 'idle', columns: [] });
+  const [previewState, setPreviewState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; result?: DbQueryResult; message?: string }>({ status: 'idle' });
+  const [sql, setSql] = useState('SELECT 1');
+  const [queryState, setQueryState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; result?: DbQueryResult; message?: string }>({ status: 'idle' });
+
+  const basePath = resource.branchId
+    ? `/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/data`
+    : '';
+
+  const loadTables = useCallback(async () => {
+    if (!basePath) return;
+    setTablesState((current) => ({ ...current, status: 'loading', message: undefined }));
+    try {
+      const res = await apiRequest<{ database?: string; tables: DbTableSummary[] }>(`${basePath}/tables`);
+      const tables = res.tables || [];
+      setTablesState({ status: 'ok', tables, database: res.database });
+      setSelectedTable((current) => current || tables[0]?.name || '');
+      setSql((current) => (!current || current === 'SELECT 1') && tables[0]?.name ? `SELECT * FROM ${quoteSqlTableName(resource, tables[0].name)} LIMIT 50` : current);
+    } catch (err) {
+      setTablesState({ status: 'error', tables: [], message: err instanceof ApiError ? err.message : String(err) });
+    }
+  }, [basePath, resource]);
+
+  const loadTableDetail = useCallback(async (table: string) => {
+    if (!basePath || !table) return;
+    setSchemaState({ status: 'loading', columns: [] });
+    setPreviewState({ status: 'loading' });
+    try {
+      const [schema, preview] = await Promise.all([
+        apiRequest<{ columns: DbColumnSummary[] }>(`${basePath}/schema?table=${encodeURIComponent(table)}`),
+        apiRequest<DbQueryResult>(`${basePath}/preview?table=${encodeURIComponent(table)}&limit=50`),
+      ]);
+      setSchemaState({ status: 'ok', columns: schema.columns || [] });
+      setPreviewState({ status: 'ok', result: preview });
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : String(err);
+      setSchemaState({ status: 'error', columns: [], message });
+      setPreviewState({ status: 'error', message });
+    }
+  }, [basePath]);
+
+  useEffect(() => {
+    void loadTables();
+  }, [loadTables]);
+
+  useEffect(() => {
+    if (!selectedTable) return;
+    void loadTableDetail(selectedTable);
+  }, [loadTableDetail, selectedTable]);
+
+  async function runReadOnlySql(): Promise<void> {
+    if (!basePath) return;
+    setQueryState({ status: 'loading' });
+    try {
+      const result = await apiRequest<DbQueryResult>(`${basePath}/query`, {
+        method: 'POST',
+        body: { sql },
+      });
+      setQueryState({ status: 'ok', result });
+    } catch (err) {
+      setQueryState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+    }
+  }
+
+  return (
+    <div className="grid gap-3 text-sm">
+      <div className="grid min-h-[360px] gap-3 lg:grid-cols-[220px_minmax(0,1fr)]">
+        <aside className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
+          <div className="flex items-center justify-between gap-2 border-b border-[hsl(var(--hairline))] px-3 py-2">
+            <div>
+              <div className="text-xs font-semibold">表</div>
+              <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{tablesState.database || '-'}</div>
+            </div>
+            <Button type="button" size="sm" variant="outline" disabled={tablesState.status === 'loading'} onClick={() => void loadTables()}>
+              <RefreshCw className={tablesState.status === 'loading' ? 'animate-spin' : ''} />
+            </Button>
+          </div>
+          <div className="max-h-[320px] overflow-auto p-2">
+            {tablesState.status === 'error' ? (
+              <div className="px-2 py-3 text-xs leading-5 text-destructive">{tablesState.message}</div>
+            ) : tablesState.tables.length > 0 ? (
+              <div className="space-y-1">
+                {tablesState.tables.map((table) => {
+                  const active = table.name === selectedTable;
+                  return (
+                    <button
+                      key={table.name}
+                      type="button"
+                      className={`flex w-full min-w-0 items-center justify-between gap-2 rounded-md border px-2 py-2 text-left text-xs ${active ? 'border-primary bg-primary/10 text-foreground' : 'border-transparent text-muted-foreground hover:border-[hsl(var(--hairline))] hover:text-foreground'}`}
+                      onClick={() => {
+                        setSelectedTable(table.name);
+                        setSql(`SELECT * FROM ${quoteSqlTableName(resource, table.name)} LIMIT 50`);
+                      }}
+                    >
+                      <span className="min-w-0 truncate font-mono">{table.name}</span>
+                      <span className="shrink-0 text-[10px]">{table.type === 'VIEW' ? 'view' : 'table'}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="px-2 py-3 text-xs text-muted-foreground">{tablesState.status === 'loading' ? '读取中...' : '没有表。'}</div>
+            )}
+          </div>
+        </aside>
+
+        <div className="grid min-w-0 gap-3">
+          <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
+            <div className="border-b border-[hsl(var(--hairline))] px-3 py-2 text-xs font-semibold">Schema</div>
+            {schemaState.status === 'error' ? (
+              <div className="px-3 py-3 text-xs text-destructive">{schemaState.message}</div>
+            ) : schemaState.status === 'loading' ? (
+              <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />读取字段</div>
+            ) : (
+              <div className="max-h-[180px] overflow-auto">
+                <table className="w-full min-w-[640px] text-left text-xs">
+                  <thead className="sticky top-0 bg-[hsl(var(--surface-sunken))] text-muted-foreground">
+                    <tr>
+                      {['字段', '类型', 'Null', 'Key', 'Default', 'Extra'].map((head) => <th key={head} className="px-3 py-2 font-medium">{head}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {schemaState.columns.map((column) => (
+                      <tr key={column.name} className="border-t border-[hsl(var(--hairline))]">
+                        <td className="px-3 py-2 font-mono">{column.name}</td>
+                        <td className="px-3 py-2 font-mono text-muted-foreground">{column.type}</td>
+                        <td className="px-3 py-2">{column.nullable || '-'}</td>
+                        <td className="px-3 py-2">{column.key || '-'}</td>
+                        <td className="px-3 py-2 font-mono text-muted-foreground">{column.defaultValue || '-'}</td>
+                        <td className="px-3 py-2 text-muted-foreground">{column.extra || '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
+            <div className="border-b border-[hsl(var(--hairline))] px-3 py-2 text-xs font-semibold">只读预览</div>
+            <DbResultTable state={previewState} emptyLabel="选择表后预览前 50 行。" />
+          </section>
+        </div>
+      </div>
+
+      <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
+        <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
+          <div className="text-xs font-semibold">SQL Console</div>
+          <Button type="button" size="sm" variant="outline" disabled={queryState.status === 'loading'} onClick={() => void runReadOnlySql()}>
+            {queryState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Play />}
+            执行只读 SQL
+          </Button>
+        </div>
+        <div className="grid gap-3 p-3">
+          <textarea
+            value={sql}
+            onChange={(event) => setSql(event.target.value)}
+            className="min-h-[92px] resize-y rounded-md border border-[hsl(var(--hairline))] bg-background px-3 py-2 font-mono text-xs outline-none focus:border-primary"
+            spellCheck={false}
+          />
+          <DbResultTable state={queryState} emptyLabel="支持 SELECT / SHOW / DESCRIBE / EXPLAIN；写入操作会被后端拒绝。" />
+        </div>
+      </section>
+
+      <div className="rounded-md border border-[hsl(var(--hairline))] px-3 py-2 text-xs leading-5 text-muted-foreground">
+        第一阶段默认只读；写 SQL、删除数据、覆盖数据等操作仍需后续接入二次确认和审计授权。
+      </div>
+    </div>
+  );
+}
+
+function DbResultTable({
+  state,
+  emptyLabel,
+}: {
+  state: { status: 'idle' | 'loading' | 'ok' | 'error'; result?: DbQueryResult; message?: string };
+  emptyLabel: string;
+}): JSX.Element {
+  if (state.status === 'loading') {
+    return <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />查询中</div>;
+  }
+  if (state.status === 'error') {
+    return <div className="px-3 py-3 text-xs leading-5 text-destructive">{state.message}</div>;
+  }
+  if (!state.result || state.result.columns.length === 0) {
+    return <div className="px-3 py-3 text-xs text-muted-foreground">{emptyLabel}</div>;
+  }
+  return (
+    <div className="max-h-[260px] overflow-auto">
+      <table className="w-full min-w-[720px] text-left text-xs">
+        <thead className="sticky top-0 bg-[hsl(var(--surface-sunken))] text-muted-foreground">
+          <tr>
+            {state.result.columns.map((column) => <th key={column} className="px-3 py-2 font-medium">{column}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {state.result.rows.map((row, rowIndex) => (
+            // eslint-disable-next-line react/no-array-index-key
+            <tr key={rowIndex} className="border-t border-[hsl(var(--hairline))]">
+              {state.result!.columns.map((column, columnIndex) => (
+                <td key={`${column}-${columnIndex}`} className="max-w-[260px] truncate px-3 py-2 font-mono text-muted-foreground" title={row[columnIndex] || ''}>
+                  {row[columnIndex] || 'NULL'}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+interface ResourceBackupEntry {
+  id: string;
+  name: string;
+  sizeBytes: number;
+  createdAt: string;
+  runtime: string;
+  database?: string;
+}
+
+function ResourceBackupsPanel({
+  resource,
+  busy,
+  onCreateCloneTask,
+}: {
+  resource: BranchResource;
+  busy: boolean;
+  onCreateCloneTask: (input: ResourceCloneInput) => Promise<void>;
+}): JSX.Element {
+  const cloneTasks = resource.cloneTasks || [];
+  const [backupState, setBackupState] = useState<{
+    status: 'idle' | 'loading' | 'ok' | 'error';
+    backups: ResourceBackupEntry[];
+    message?: string;
+    database?: string;
+    supported?: boolean;
+  }>({ status: 'idle', backups: [] });
+  const [backupBusy, setBackupBusy] = useState<'manual' | 'restore' | null>(null);
+
+  const loadBackups = useCallback(async () => {
+    if (!resource.branchId || resource.kind !== 'database') {
+      setBackupState({ status: 'ok', backups: [], supported: false, message: '当前资源没有分支上下文，暂不能读取备份。' });
+      return;
+    }
+    setBackupState((current) => ({ ...current, status: 'loading', message: undefined }));
+    try {
+      const res = await apiRequest<{
+        backups: ResourceBackupEntry[];
+        database?: string;
+        supported?: boolean;
+        message?: string;
+      }>(`/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/backups`);
+      setBackupState({
+        status: 'ok',
+        backups: res.backups || [],
+        database: res.database,
+        supported: res.supported !== false,
+        message: res.message,
+      });
+    } catch (err) {
+      setBackupState({ status: 'error', backups: [], message: err instanceof ApiError ? err.message : String(err) });
+    }
+  }, [resource.branchId, resource.id, resource.kind]);
+
+  useEffect(() => {
+    void loadBackups();
+  }, [loadBackups]);
+
+  async function createManualBackup(): Promise<void> {
+    if (!resource.branchId) return;
+    setBackupBusy('manual');
+    try {
+      await apiRequest(`/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/backups`, {
+        method: 'POST',
+        body: { reason: 'manual' },
+      });
+      await loadBackups();
+    } catch (err) {
+      setBackupState((current) => ({ ...current, status: 'error', message: err instanceof ApiError ? err.message : String(err) }));
+    } finally {
+      setBackupBusy(null);
+    }
+  }
+
+  async function restoreBackup(backup: ResourceBackupEntry): Promise<void> {
+    if (!resource.branchId) return;
+    const confirmResourceName = window.prompt(`恢复会覆盖当前 ${resource.displayName} 数据库。请输入资源名确认：${resource.serviceName}`);
+    if (!confirmResourceName) return;
+    setBackupBusy('restore');
+    try {
+      await apiRequest(`/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/restore-backup`, {
+        method: 'POST',
+        body: { backupName: backup.name, confirmResourceName },
+      });
+      await loadBackups();
+    } catch (err) {
+      setBackupState((current) => ({ ...current, status: 'error', message: err instanceof ApiError ? err.message : String(err) }));
+    } finally {
+      setBackupBusy(null);
+    }
+  }
+
+  async function createDatabaseFromBackup(backup: ResourceBackupEntry): Promise<void> {
+    const targetDatabase = window.prompt(`从备份创建新的分支数据库。请输入目标数据库名：`, backup.database ? `${backup.database}_copy` : '');
+    if (!targetDatabase) return;
+    await onCreateCloneTask({ mode: 'restore-backup', backupName: backup.name, backupId: backup.id, targetDatabase });
+    await loadBackups();
+  }
+
+  async function connectExistingDatabase(): Promise<void> {
+    const connectionString = window.prompt(`连接已有 ${resource.runtime} 数据库。请输入连接串：`);
+    if (!connectionString) return;
+    const externalConnectionName = window.prompt('给这个外部连接起一个名称：', `${resource.serviceName}-external`) || `${resource.serviceName}-external`;
+    await onCreateCloneTask({ mode: 'connect-existing', connectionString, externalConnectionName });
+  }
+
+  return (
+    <div className="space-y-3 text-sm">
+      <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="font-semibold">创建分支独立数据库</div>
+          <Button type="button" size="sm" variant="outline" disabled={busy || resource.kind !== 'database'} onClick={() => void onCreateCloneTask({ mode: 'empty' })}>
+            {busy ? <Loader2 className="animate-spin" /> : <Database />}
+            空库
+          </Button>
+        </div>
+        <div className="mt-1 text-xs leading-5 text-muted-foreground">
+          支持空库、从 main/prod 克隆、从备份恢复、连接已有数据库。克隆完成后写入必须与主库隔离。
+        </div>
+      </div>
+      <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="font-semibold">{resource.runtime === 'MySQL' ? 'MySQL 快速复制' : '备份与恢复'}</div>
+          <Button type="button" size="sm" variant="outline" disabled={busy || resource.kind !== 'database'} onClick={() => void onCreateCloneTask({ mode: 'clone-main' })}>
+            {busy ? <Loader2 className="animate-spin" /> : <Copy />}
+            克隆 main/prod
+          </Button>
+        </div>
+        <div className="mt-1 text-xs leading-5 text-muted-foreground">
+          MySQL 小库走 mysqldump/mysqlpump；中型库走后台任务；大库预留 snapshot/provider clone。恢复覆盖当前库必须输入资源名确认。
+        </div>
+      </div>
+      <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="font-semibold">连接已有数据库</div>
+            <div className="mt-1 text-xs leading-5 text-muted-foreground">把外部数据库连接串写入当前分支 scope，不修改主库；管理员操作会进入审计。</div>
+          </div>
+          <Button type="button" size="sm" variant="outline" disabled={busy || resource.kind !== 'database'} onClick={() => void connectExistingDatabase()}>
+            {busy ? <Loader2 className="animate-spin" /> : <ExternalLink />}
+            连接已有
+          </Button>
+        </div>
+      </div>
+      <div className="rounded-md border border-[hsl(var(--hairline))] px-3 py-3">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <div>
+            <div className="text-xs font-semibold text-muted-foreground">备份文件</div>
+            {backupState.database ? <div className="mt-1 font-mono text-[11px] text-muted-foreground">{backupState.database}</div> : null}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button type="button" size="sm" variant="outline" disabled={backupState.status === 'loading'} onClick={() => void loadBackups()}>
+              <RefreshCw className={backupState.status === 'loading' ? 'animate-spin' : ''} />
+              刷新
+            </Button>
+            <Button type="button" size="sm" variant="outline" disabled={busy || backupBusy !== null || resource.kind !== 'database' || backupState.supported === false} onClick={() => void createManualBackup()}>
+              {backupBusy === 'manual' ? <Loader2 className="animate-spin" /> : <Database />}
+              手动备份
+            </Button>
+          </div>
+        </div>
+        {backupState.status === 'loading' ? (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />读取备份列表</div>
+        ) : backupState.status === 'error' ? (
+          <div className="text-xs leading-5 text-destructive">{backupState.message}</div>
+        ) : backupState.supported === false ? (
+          <div className="text-xs leading-5 text-muted-foreground">{backupState.message || '当前数据库类型的资源级备份恢复待接入。'}</div>
+        ) : backupState.backups.length > 0 ? (
+          <div className="space-y-2">
+            {backupState.backups.slice(0, 6).map((backup) => (
+              <div key={backup.id} className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-2 rounded-md bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-xs">
+                <div className="min-w-0">
+                  <div className="truncate font-mono" title={backup.name}>{backup.name}</div>
+                  <div className="mt-0.5 text-muted-foreground">{formatBytes(backup.sizeBytes)} · {new Date(backup.createdAt).toLocaleString()}</div>
+                </div>
+                <span className="rounded border border-[hsl(var(--hairline))] px-2 py-0.5 text-muted-foreground">{backup.runtime}</span>
+                <Button type="button" size="sm" variant="outline" disabled={busy || backupBusy !== null} onClick={() => void restoreBackup(backup)}>
+                  {backupBusy === 'restore' ? <Loader2 className="animate-spin" /> : <RotateCw />}
+                  恢复
+                </Button>
+                <Button type="button" size="sm" variant="outline" disabled={busy || backupBusy !== null} onClick={() => void createDatabaseFromBackup(backup)}>
+                  <Database />
+                  新库
+                </Button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-xs text-muted-foreground">还没有可恢复的备份文件。</div>
+        )}
+      </div>
+      <div className="rounded-md border border-[hsl(var(--hairline))] px-3 py-3">
+        <div className="mb-2 text-xs font-semibold text-muted-foreground">最近任务</div>
+        {cloneTasks.length > 0 ? (
+          <div className="space-y-2">
+            {cloneTasks.slice(0, 4).map((task) => (
+              <div key={task.id} className="flex items-center justify-between gap-3 rounded-md bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-xs">
+                <div className="min-w-0">
+                  <div className="font-medium">{task.mode} · {task.strategy}</div>
+                  <div className="truncate text-muted-foreground">{task.progressMessage || task.status}</div>
+                </div>
+                <span className={`rounded border px-2 py-0.5 ${task.status === 'completed' ? 'border-emerald-500/30 text-emerald-600' : task.status === 'failed' ? 'border-destructive/30 text-destructive' : 'border-amber-500/30 text-amber-600'}`}>
+                  {task.progress}%
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-xs text-muted-foreground">还没有数据库创建或克隆任务。</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ResourceVariablesPanel({ resource }: { resource: BranchResource }): JSX.Element {
+  return (
+    <div className="grid gap-2">
+      {(resource.envKeys.length > 0 ? resource.envKeys : ['RESOURCE_HOST', 'RESOURCE_PORT']).map((key) => (
+        <div key={key} className="flex items-center justify-between gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2">
+          <code className="font-mono text-xs">{key}</code>
+          <span className="text-xs text-muted-foreground">可注入依赖应用</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ResourceMetricsPanel({ resource }: { resource: BranchResource }): JSX.Element {
+  const metrics = resource.kind === 'database'
+    ? ['连接数', '存储空间', '慢查询', '备份状态']
+    : ['CPU', 'Memory', 'Network', 'Restart Count'];
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      {metrics.map((metric) => (
+        <div key={metric} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-3">
+          <div className="text-xs text-muted-foreground">{metric}</div>
+          <div className="mt-1 font-mono text-sm">--</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ResourceLogsPanel({ resource }: { resource: BranchResource }): JSX.Element {
+  return (
+    <div className={DETAIL_LOG_EMPTY_CLASS}>
+      {resource.runtime} 日志将从 infra 容器日志和审计事件中汇总展示。
+    </div>
+  );
+}
+
+interface ResourceAuditLog {
+  id: string;
+  at: string;
+  type: string;
+  actor?: string;
+  note?: string;
+  result?: 'success' | 'failed' | 'pending';
+}
+
+function ResourceSettingsPanel({ resource }: { resource: BranchResource }): JSX.Element {
+  const [auditState, setAuditState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; logs: ResourceAuditLog[]; message?: string }>({ status: 'idle', logs: [] });
+
+  useEffect(() => {
+    if (!resource.branchId) return;
+    let cancelled = false;
+    setAuditState({ status: 'loading', logs: [] });
+    apiRequest<{ logs: ResourceAuditLog[] }>(`/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/audit`)
+      .then((res) => {
+        if (!cancelled) setAuditState({ status: 'ok', logs: res.logs || [] });
+      })
+      .catch((err) => {
+        if (!cancelled) setAuditState({ status: 'error', logs: [], message: err instanceof ApiError ? err.message : String(err) });
+      });
+    return () => { cancelled = true; };
+  }, [resource.branchId, resource.id]);
+
+  return (
+    <div className="space-y-3 text-sm">
+      <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
+        危险操作保护：删除、清空数据、恢复覆盖、写 SQL、开启生产库公网访问必须二次确认，并记录操作者、时间、资源和结果。
+      </div>
+      <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2">
+        权限：成员查看连接信息，开发者可重启和开启临时访问，管理员可删除资源、恢复备份和修改公网策略。
+      </div>
+      <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2">
+        审计：资源创建、删除、重启、外部访问、数据库克隆、备份恢复、凭据重置都进入审计日志。
+      </div>
+      <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-3">
+        <div className="mb-2 text-xs font-semibold text-muted-foreground">最近审计</div>
+        {auditState.status === 'loading' ? (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />加载中</div>
+        ) : auditState.status === 'error' ? (
+          <div className="text-xs text-destructive">{auditState.message}</div>
+        ) : auditState.logs.length > 0 ? (
+          <div className="space-y-2">
+            {auditState.logs.slice(0, 6).map((log) => (
+              <div key={log.id} className="rounded-md border border-[hsl(var(--hairline))] px-3 py-2 text-xs">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-medium">{log.type}</span>
+                  <span className="font-mono text-muted-foreground">{log.at}</span>
+                </div>
+                <div className="mt-1 text-muted-foreground">{log.note || '-'}</div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-xs text-muted-foreground">当前资源还没有审计事件。</div>
+        )}
       </div>
     </div>
   );
