@@ -143,20 +143,11 @@ export function resolvePreviewProjectIdentity(
   const slug = slugifyForPreview(project?.slug || '');
   if (slug) {
     if (project?.legacyFlag && isGenericPreviewProjectSlug(slug)) {
-      const repo = repoNameFromGitRef(project.gitRepoUrl) || repoNameFromGitRef(project.githubRepoFullName);
-      if (repo && repo !== slug) {
-        return {
-          slug: repo,
-          source: 'repo',
-          degraded: true,
-          reason: `legacy project slug '${slug}' is generic; using repository slug '${repo}' for preview identity`,
-        };
-      }
       return {
         slug,
         source: 'slug',
         degraded: true,
-        reason: `legacy project slug '${slug}' is generic and no repository slug is available`,
+        reason: `legacy project slug '${slug}' is generic; keeping it unless a collision-checked aliasSlug is persisted`,
       };
     }
     return { slug, source: 'slug', degraded: false };

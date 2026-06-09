@@ -151,15 +151,15 @@ describe('preview project identity helpers', () => {
     });
   });
 
-  it('uses repository slug as degraded identity for generic legacy project slugs', () => {
+  it('keeps generic legacy project slug unless collision-checked alias exists', () => {
     expect(resolvePreviewProjectIdentity({
       id: 'default',
       slug: 'workspace',
       legacyFlag: true,
       gitRepoUrl: 'git@github.com:inernoro/prd_agent.git',
     })).toMatchObject({
-      slug: 'prd-agent',
-      source: 'repo',
+      slug: 'workspace',
+      source: 'slug',
       degraded: true,
     });
   });
