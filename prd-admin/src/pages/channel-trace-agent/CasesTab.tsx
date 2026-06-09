@@ -1,6 +1,19 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Send, Plus, Pencil, Trash2, Loader2, X, Stethoscope, Search, Upload } from 'lucide-react';
+import {
+  Send,
+  Plus,
+  Pencil,
+  Trash2,
+  Loader2,
+  X,
+  Stethoscope,
+  Search,
+  Upload,
+  MessageSquarePlus,
+  History,
+  FileCode,
+} from 'lucide-react';
 import { useSseStream } from '@/lib/useSseStream';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import { uploadAttachment } from '@/services/real/aiToolbox';
@@ -9,11 +22,17 @@ import {
   createCase,
   updateCase,
   deleteCase,
-  caseDiagnoseUrl,
   caseImportUrl,
+  diagnoseAskUrl,
+  listDiagnoseSessions,
+  getDiagnoseSession,
+  deleteDiagnoseSession,
   type ChannelTraceCase,
   type ChannelTraceCaseSeverity,
   type ChannelTraceRelatedCase,
+  type ChannelTraceCodeHit,
+  type ChannelTraceDiagnoseMessage,
+  type ChannelTraceDiagnoseSessionSummary,
   type UpsertCasePayload,
 } from '@/services/real/channelTraceAgent';
 
@@ -23,26 +42,86 @@ const SEVERITY_META: Record<ChannelTraceCaseSeverity, { label: string; cls: stri
   high: { label: '高', cls: 'bg-rose-500/10 text-rose-300' },
 };
 
+interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  relatedCases?: ChannelTraceRelatedCase[];
+  codeHits?: { repo: string; path: string }[];
+}
+
 export function CasesTab() {
   const [items, setItems] = useState<ChannelTraceCase[]>([]);
   const [keyword, setKeyword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [problem, setProblem] = useState('');
-  const [related, setRelated] = useState<ChannelTraceRelatedCase[]>([]);
-  const [model, setModel] = useState<{ model?: string; platform?: string } | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<ChannelTraceCase | null>(null);
   const [importMsg, setImportMsg] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const { phase, phaseMessage, typing, isStreaming, start } = useSseStream({
-    url: caseDiagnoseUrl,
+  // 对话式诊断状态
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput] = useState('');
+  const [model, setModel] = useState<{ model?: string; platform?: string } | null>(null);
+  const [streamingText, setStreamingText] = useState('');
+  const [curRelated, setCurRelated] = useState<ChannelTraceRelatedCase[]>([]);
+  const [curHits, setCurHits] = useState<{ repo: string; path: string }[]>([]);
+  const [sessions, setSessions] = useState<ChannelTraceDiagnoseSessionSummary[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const streamRef = useRef('');
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const { phase, phaseMessage, isStreaming, start } = useSseStream({
+    url: diagnoseAskUrl,
     method: 'POST',
+    onTyping: (t) => {
+      streamRef.current += t;
+      setStreamingText(streamRef.current);
+    },
     onEvent: {
+      session: (d) => setSessionId((d as { sessionId: string }).sessionId),
       model: (d) => setModel(d as { model?: string; platform?: string }),
-      relatedCases: (d) => setRelated((d as { items: ChannelTraceRelatedCase[] }).items ?? []),
+      relatedCases: (d) => setCurRelated((d as { items: ChannelTraceRelatedCase[] }).items ?? []),
+      codeHits: (d) => setCurHits((d as { items: { repo: string; path: string }[] }).items ?? []),
+    },
+    onDone: () => {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: streamRef.current,
+          relatedCases: curRelated,
+          codeHits: curHits,
+        },
+      ]);
+      streamRef.current = '';
+      setStreamingText('');
+      void loadSessions();
+    },
+    onError: () => {
+      // 出错时把已流出的内容固化为一条 assistant 消息，避免丢失
+      if (streamRef.current) {
+        setMessages((prev) => [...prev, { role: 'assistant', content: streamRef.current }]);
+      }
+      streamRef.current = '';
+      setStreamingText('');
     },
   });
+
+  const load = useCallback(async (kw?: string) => {
+    setLoading(true);
+    try {
+      const res = await listCases(kw);
+      if (res.success && res.data) setItems(res.data.items);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadSessions = useCallback(async () => {
+    const res = await listDiagnoseSessions();
+    if (res.success && res.data) setSessions(res.data.items);
+  }, []);
 
   const importStream = useSseStream({
     url: caseImportUrl,
@@ -63,25 +142,63 @@ export function CasesTab() {
     onError: (m) => setImportMsg(`导入失败：${m}`),
   });
 
-  const load = useCallback(async (kw?: string) => {
-    setLoading(true);
-    try {
-      const res = await listCases(kw);
-      if (res.success && res.data) setItems(res.data.items);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
     void load();
-  }, [load]);
+    void loadSessions();
+  }, [load, loadSessions]);
 
-  const diagnose = () => {
-    if (!problem.trim() || isStreaming) return;
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+  }, [messages, streamingText]);
+
+  const send = () => {
+    if (!input.trim() || isStreaming) return;
+    const text = input.trim();
+    setInput('');
     setModel(null);
-    setRelated([]);
-    void start({ body: { problem: problem.trim() } });
+    setCurRelated([]);
+    setCurHits([]);
+    streamRef.current = '';
+    setStreamingText('');
+    setMessages((prev) => [...prev, { role: 'user', content: text }]);
+    void start({ body: { sessionId: sessionId ?? undefined, message: text } });
+  };
+
+  const newSession = () => {
+    if (isStreaming) return;
+    setSessionId(null);
+    setMessages([]);
+    setCurRelated([]);
+    setCurHits([]);
+    streamRef.current = '';
+    setStreamingText('');
+    setModel(null);
+  };
+
+  const openSession = async (id: string) => {
+    setHistoryOpen(false);
+    const res = await getDiagnoseSession(id);
+    if (res.success && res.data) {
+      const s = res.data.item;
+      setSessionId(s.id);
+      setMessages(
+        s.messages.map((m: ChannelTraceDiagnoseMessage) => ({
+          role: m.role,
+          content: m.content,
+          codeHits: (m.codeHits ?? []).map((h: ChannelTraceCodeHit) => ({ repo: h.repo, path: h.path })),
+        })),
+      );
+      setStreamingText('');
+      streamRef.current = '';
+    }
+  };
+
+  const removeSession = async (id: string) => {
+    const res = await deleteDiagnoseSession(id);
+    if (res.success) {
+      if (sessionId === id) newSession();
+      void loadSessions();
+    }
   };
 
   const onDelete = async (id: string) => {
@@ -105,89 +222,155 @@ export function CasesTab() {
 
   return (
     <div className="h-full min-h-0 flex">
-      {/* 左：智能排查 */}
+      {/* 左：对话式诊断 */}
       <div className="flex-1 min-w-0 flex flex-col border-r border-white/10">
-        <div className="shrink-0 px-6 pt-5 pb-3">
-          <div className="text-sm font-medium text-white/85 mb-2 inline-flex items-center gap-1.5">
+        <div className="shrink-0 px-6 pt-4 pb-3 flex items-center gap-2">
+          <div className="text-sm font-medium text-white/85 inline-flex items-center gap-1.5">
             <Stethoscope className="w-4 h-4 text-emerald-400" />
-            线上问题智能排查
+            线上问题对话式诊断
           </div>
-          <div className="flex items-end gap-2">
-            <textarea
-              value={problem}
-              onChange={(e) => setProblem(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) diagnose();
-              }}
-              rows={2}
-              placeholder="描述线上问题现象，例如：扫码提示「该码未上码」，但生产系统显示已上码（Ctrl/⌘+Enter 发送）"
-              className="flex-1 resize-none rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 placeholder:text-white/30 focus:outline-none focus:border-emerald-500/40"
-            />
+          <div className="ml-auto flex items-center gap-1.5">
+            <div className="relative">
+              <button
+                onClick={() => {
+                  setHistoryOpen((v) => !v);
+                  if (!historyOpen) void loadSessions();
+                }}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white/75 hover:bg-white/10"
+              >
+                <History className="w-3.5 h-3.5" />
+                历史
+              </button>
+              {historyOpen && (
+                <div
+                  className="absolute right-0 top-full mt-1 w-72 max-h-80 overflow-y-auto rounded-lg border border-white/10 bg-[#15161b] shadow-xl z-20"
+                  style={{ overscrollBehavior: 'contain' }}
+                >
+                  {sessions.length === 0 ? (
+                    <div className="text-xs text-white/40 px-3 py-4 text-center">暂无历史会话</div>
+                  ) : (
+                    sessions.map((s) => (
+                      <div
+                        key={s.id}
+                        className="flex items-center gap-2 px-3 py-2 hover:bg-white/5 cursor-pointer group"
+                        onClick={() => void openSession(s.id)}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs text-white/85 truncate">{s.title}</div>
+                          <div className="text-[10px] text-white/40">
+                            {s.messageCount} 条 · {new Date(s.updatedAt).toLocaleString('zh-CN')}
+                          </div>
+                        </div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void removeSession(s.id);
+                          }}
+                          className="shrink-0 p-1 rounded text-white/30 hover:text-rose-400 opacity-0 group-hover:opacity-100"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
             <button
-              onClick={diagnose}
-              disabled={isStreaming || !problem.trim()}
-              className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-sm hover:bg-emerald-500/25 disabled:opacity-40 disabled:cursor-not-allowed"
+              onClick={newSession}
+              disabled={isStreaming}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white/75 hover:bg-white/10 disabled:opacity-40"
             >
-              {isStreaming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-              排查
+              <MessageSquarePlus className="w-3.5 h-3.5" />
+              新对话
             </button>
           </div>
-          {model?.model && (
-            <div className="text-[11px] text-white/40 font-mono mt-2">
-              ● {model.model}
-              {model.platform ? ` · ${model.platform}` : ''}
+        </div>
+
+        {model?.model && (
+          <div className="shrink-0 px-6 pb-1 text-[11px] text-white/40 font-mono">
+            ● {model.model}
+            {model.platform ? ` · ${model.platform}` : ''}
+          </div>
+        )}
+
+        <div
+          ref={scrollRef}
+          className="flex-1 px-6 py-3 space-y-3"
+          style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
+        >
+          {messages.length === 0 && !isStreaming && (
+            <div className="text-sm text-white/35 py-10 text-center">
+              描述线上问题，AI 会召回相似历史案例 + 到内置仓库定位代码，初步分析原因；
+              <br />
+              信息不足时会主动追问，引导你逐步补齐信息链条直到定位问题。
             </div>
+          )}
+
+          {messages.map((m, i) =>
+            m.role === 'user' ? (
+              <div key={i} className="flex justify-end">
+                <div className="max-w-[80%] rounded-xl bg-emerald-500/15 border border-emerald-500/25 px-3.5 py-2 text-sm text-white/90 whitespace-pre-wrap">
+                  {m.content}
+                </div>
+              </div>
+            ) : (
+              <div key={i} className="flex flex-col gap-1.5">
+                <MsgMeta related={m.relatedCases} hits={m.codeHits} />
+                <div className="rounded-xl bg-white/3 border border-white/10 px-4 py-3">
+                  <MarkdownContent content={m.content} variant="reading" />
+                </div>
+              </div>
+            ),
+          )}
+
+          {isStreaming && (
+            <div className="flex flex-col gap-1.5">
+              <MsgMeta related={curRelated} hits={curHits} />
+              {streamingText ? (
+                <div className="rounded-xl bg-white/3 border border-white/10 px-4 py-3">
+                  <MarkdownContent content={streamingText} variant="reading" />
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-sm text-white/50 py-2">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  {phaseMessage || 'AI 正在分析…'}
+                </div>
+              )}
+            </div>
+          )}
+
+          {phase === 'error' && !isStreaming && (
+            <div className="text-sm text-rose-400">{phaseMessage || '请求失败'}</div>
           )}
         </div>
 
-        <div
-          className="flex-1 px-6 pb-5"
-          style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
-        >
-          {related.length > 0 && (
-            <div className="mb-3">
-              <div className="text-xs text-white/50 mb-1.5">召回的相似历史案例：</div>
-              <div className="flex flex-wrap gap-1.5">
-                {related.map((c) => (
-                  <span
-                    key={c.id}
-                    className="text-[11px] px-2 py-1 rounded-md bg-white/5 border border-white/10 text-white/75"
-                  >
-                    {c.title}
-                    <span className={`ml-1.5 px-1 rounded ${SEVERITY_META[c.severity].cls}`}>
-                      {SEVERITY_META[c.severity].label}
-                    </span>
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-          {isStreaming && !typing && (
-            <div className="flex items-center gap-2 text-sm text-white/50 py-4">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              {phaseMessage || 'AI 正在排查…'}
-            </div>
-          )}
-          {typing ? (
-            <div className="rounded-xl bg-white/3 border border-white/10 px-4 py-3">
-              <MarkdownContent content={typing} variant="reading" />
-            </div>
-          ) : (
-            !isStreaming &&
-            related.length === 0 && (
-              <div className="text-sm text-white/35 py-10 text-center">
-                描述线上问题，AI 会召回相似历史案例并给出快速排查路径。
-              </div>
-            )
-          )}
-          {phase === 'error' && (
-            <div className="text-sm text-rose-400 py-3">{phaseMessage || '请求失败'}</div>
-          )}
+        <div className="shrink-0 px-6 py-3 border-t border-white/10">
+          <div className="flex items-end gap-2">
+            <textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send();
+              }}
+              rows={2}
+              placeholder="描述线上问题现象 / 回答 AI 的追问（Ctrl/⌘+Enter 发送）"
+              className="flex-1 resize-none rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 placeholder:text-white/30 focus:outline-none focus:border-emerald-500/40"
+            />
+            <button
+              onClick={send}
+              disabled={isStreaming || !input.trim()}
+              className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-sm hover:bg-emerald-500/25 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {isStreaming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              发送
+            </button>
+          </div>
         </div>
       </div>
 
       {/* 右：案例库管理 */}
-      <div className="w-[380px] shrink-0 flex flex-col">
+      <div className="w-[360px] shrink-0 flex flex-col">
         <div className="shrink-0 px-4 pt-5 pb-3 flex items-center gap-2">
           <div className="relative flex-1">
             <Search className="w-3.5 h-3.5 text-white/30 absolute left-2.5 top-1/2 -translate-y-1/2" />
@@ -246,7 +429,7 @@ export function CasesTab() {
             <div className="text-sm text-white/40 py-6 text-center">加载中…</div>
           ) : items.length === 0 ? (
             <div className="text-sm text-white/35 py-10 text-center">
-              暂无案例，点击「记录」沉淀第一条线上问题排查经验。
+              暂无案例，点击「记录」或「导入」沉淀线上问题排查经验。
             </div>
           ) : (
             items.map((it) => (
@@ -315,6 +498,34 @@ export function CasesTab() {
             void load(keyword);
           }}
         />
+      )}
+    </div>
+  );
+}
+
+function MsgMeta({
+  related,
+  hits,
+}: {
+  related?: ChannelTraceRelatedCase[];
+  hits?: { repo: string; path: string }[];
+}) {
+  if ((!related || related.length === 0) && (!hits || hits.length === 0)) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+      {related && related.length > 0 && (
+        <span className="text-white/45">召回案例：</span>
+      )}
+      {related?.slice(0, 5).map((c) => (
+        <span key={c.id} className="px-1.5 py-0.5 rounded bg-white/5 text-white/70">
+          {c.title}
+        </span>
+      ))}
+      {hits && hits.length > 0 && (
+        <span className="text-white/45 inline-flex items-center gap-1 ml-1">
+          <FileCode className="w-3 h-3" />
+          命中代码 {hits.length}
+        </span>
       )}
     </div>
   );

@@ -166,11 +166,60 @@ export async function deleteCase(id: string): Promise<ApiResponse<{ deleted: boo
   });
 }
 
-/** 线上问题智能排查 SSE 流地址（POST） */
-export const caseDiagnoseUrl = '/api/channel-trace-agent/cases/diagnose';
-
 /** 从已上传附件导入线上问题案例 SSE 流地址（POST，AI 解析为多条案例入库） */
 export const caseImportUrl = '/api/channel-trace-agent/cases/import';
+
+// ── 线上问题对话式诊断（多轮会话）──
+
+export interface ChannelTraceDiagnoseMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  relatedCaseIds: string[];
+  codeHits: ChannelTraceCodeHit[];
+  model?: string | null;
+  modelPlatform?: string | null;
+  createdAt: string;
+}
+
+export interface ChannelTraceDiagnoseSession {
+  id: string;
+  title: string;
+  messages: ChannelTraceDiagnoseMessage[];
+  createdBy: string;
+  createdByName: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChannelTraceDiagnoseSessionSummary {
+  id: string;
+  title: string;
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function listDiagnoseSessions(): Promise<
+  ApiResponse<{ items: ChannelTraceDiagnoseSessionSummary[] }>
+> {
+  return apiRequest('/api/channel-trace-agent/diagnose/sessions');
+}
+
+export async function getDiagnoseSession(
+  id: string,
+): Promise<ApiResponse<{ item: ChannelTraceDiagnoseSession }>> {
+  return apiRequest(`/api/channel-trace-agent/diagnose/sessions/${encodeURIComponent(id)}`);
+}
+
+export async function deleteDiagnoseSession(id: string): Promise<ApiResponse<{ deleted: boolean }>> {
+  return apiRequest(`/api/channel-trace-agent/diagnose/sessions/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
+/** 对话式诊断 SSE 流地址（POST，body: { sessionId?, message }） */
+export const diagnoseAskUrl = '/api/channel-trace-agent/diagnose/ask';
 
 // ──────────────────────────────────────────────
 // 业务/代码差异对比
