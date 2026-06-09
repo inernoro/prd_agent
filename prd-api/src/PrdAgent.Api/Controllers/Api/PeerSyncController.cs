@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -419,18 +420,62 @@ public class PeerSyncController : ControllerBase
         var selfNodeId = await _peer.GetSelfNodeIdAsync(ct);
         var (ts, sign) = _peer.Sign(node.SharedSecret, method.Method, path, bodyStr);
 
-        var req = new HttpRequestMessage(method, baseLeft + path);
-        req.Headers.TryAddWithoutValidation("X-Peer-Node", selfNodeId);
-        req.Headers.TryAddWithoutValidation("X-Peer-Ts", ts);
-        req.Headers.TryAddWithoutValidation("X-Peer-Sign", sign);
-        if (body != null)
-            req.Content = new StringContent(bodyStr, Encoding.UTF8, "application/json");
-
         var client = _httpFactory.CreateClient("PeerSync");
         client.Timeout = TimeSpan.FromSeconds(120);
-        using var resp = await client.SendAsync(req, ct);
+        using var resp = await SendSignedPeerRequestAsync(client, node, method, baseLeft, path, bodyStr, selfNodeId, ts, sign, ct);
         var json = await resp.Content.ReadAsStringAsync(ct);
         return (resp.IsSuccessStatusCode, json, (int)resp.StatusCode);
+    }
+
+    private async Task<HttpResponseMessage> SendSignedPeerRequestAsync(
+        HttpClient client,
+        PeerNode node,
+        HttpMethod method,
+        string baseUrl,
+        string path,
+        string bodyStr,
+        string selfNodeId,
+        string ts,
+        string sign,
+        CancellationToken ct)
+    {
+        HttpRequestMessage BuildRequest(string requestUrl)
+        {
+            var req = new HttpRequestMessage(method, requestUrl);
+            req.Headers.TryAddWithoutValidation("X-Peer-Node", selfNodeId);
+            req.Headers.TryAddWithoutValidation("X-Peer-Ts", ts);
+            req.Headers.TryAddWithoutValidation("X-Peer-Sign", sign);
+            if (!string.IsNullOrEmpty(bodyStr))
+                req.Content = new StringContent(bodyStr, Encoding.UTF8, "application/json");
+            return req;
+        }
+
+        var url = baseUrl + path;
+        var resp = await client.SendAsync(BuildRequest(url), ct);
+        if (!PeerSyncRedirectHelper.IsRedirect(resp.StatusCode))
+            return resp;
+
+        if (!PeerSyncRedirectHelper.TryBuildSameHostHttpsRedirect(
+                new Uri(url), resp.Headers.Location, path,
+                out var redirectedBaseUrl, out var redirectedUrl, out var reason))
+            return resp;
+
+        await _urlValidator.EnsureSafeHttpUrlAsync(redirectedBaseUrl, "peer-sync", ct);
+        _logger.LogInformation("[peer-sync] normalized peer call baseUrl via redirect {NodeId}: {Original} -> {Redirected}",
+            node.RemoteNodeId, baseUrl, redirectedBaseUrl);
+        resp.Dispose();
+
+        var redirectedResp = await client.SendAsync(BuildRequest(redirectedUrl), ct);
+        if (redirectedResp.IsSuccessStatusCode && !string.Equals(node.BaseUrl, redirectedBaseUrl, StringComparison.Ordinal))
+        {
+            await _db.PeerNodes.UpdateOneAsync(n => n.Id == node.Id,
+                Builders<PeerNode>.Update
+                    .Set(n => n.BaseUrl, redirectedBaseUrl)
+                    .Set(n => n.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: ct);
+            node.BaseUrl = redirectedBaseUrl;
+        }
+        return redirectedResp;
     }
 
     /// <summary>

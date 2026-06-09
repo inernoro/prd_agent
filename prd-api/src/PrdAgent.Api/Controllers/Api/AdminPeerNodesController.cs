@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -128,16 +129,16 @@ public class AdminPeerNodesController : ControllerBase
             InitiatorBaseUrl = selfBaseUrl,
             InitiatorDisplayName = string.IsNullOrWhiteSpace(request.SelfDisplayName) ? "对端 MAP 节点" : request.SelfDisplayName!.Trim(),
         };
-        var baseLeft = baseUri.GetLeftPart(UriPartial.Path).TrimEnd('/');
-        var url = $"{baseLeft}/api/peer-sync/handshake";
+        var effectiveBaseUrl = baseUri.GetLeftPart(UriPartial.Path).TrimEnd('/');
 
         HandshakeResult? result;
         try
         {
             var client = _httpFactory.CreateClient("PeerSync");
             client.Timeout = TimeSpan.FromSeconds(30);
-            var content = new StringContent(JsonSerializer.Serialize(handshakeBody, JsonOpts), Encoding.UTF8, "application/json");
-            using var resp = await client.PostAsync(url, content, ct);
+            var handshake = await SendHandshakeAsync(client, effectiveBaseUrl, handshakeBody, ct);
+            effectiveBaseUrl = handshake.EffectiveBaseUrl;
+            using var resp = handshake.Response;
             var json = await resp.Content.ReadAsStringAsync(ct);
             if (!resp.IsSuccessStatusCode)
             {
@@ -167,7 +168,7 @@ public class AdminPeerNodesController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[peer-sync] handshake request error to {Url}", url);
+            _logger.LogWarning(ex, "[peer-sync] handshake request error to {BaseUrl}", effectiveBaseUrl);
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"无法连接对端：{ex.Message}"));
         }
 
@@ -191,7 +192,7 @@ public class AdminPeerNodesController : ControllerBase
                 .SetOnInsert(n => n.RemoteNodeId, result.NodeId)
                 .SetOnInsert(n => n.CreatedAt, DateTime.UtcNow)
                 .Set(n => n.DisplayName, displayName)
-                .Set(n => n.BaseUrl, baseUrl)
+                .Set(n => n.BaseUrl, effectiveBaseUrl)
                 .Set(n => n.SharedSecret, result.SharedSecret)
                 .Set(n => n.Status, PeerNodeStatus.Connected)
                 .Set(n => n.LastError, (string?)null)
@@ -232,18 +233,17 @@ public class AdminPeerNodesController : ControllerBase
             var (ts, sign) = _peer.Sign(node.SharedSecret, "GET", path, string.Empty);
             var client = _httpFactory.CreateClient("PeerSync");
             client.Timeout = TimeSpan.FromSeconds(20);
-            var req = new HttpRequestMessage(HttpMethod.Get, baseLeft + path);
-            req.Headers.TryAddWithoutValidation("X-Peer-Node", selfNodeId);
-            req.Headers.TryAddWithoutValidation("X-Peer-Ts", ts);
-            req.Headers.TryAddWithoutValidation("X-Peer-Sign", sign);
-            using var resp = await client.SendAsync(req, ct);
+            var originalBaseUrl = node.BaseUrl;
+            using var resp = await SendSignedPeerRequestAsync(client, node, baseLeft, path, selfNodeId, ts, sign, ct);
             var ok = resp.IsSuccessStatusCode;
-            await _db.PeerNodes.UpdateOneAsync(n => n.Id == id,
-                Builders<PeerNode>.Update
-                    .Set(n => n.Status, ok ? PeerNodeStatus.Connected : PeerNodeStatus.Error)
-                    .Set(n => n.LastError, ok ? null : $"ping 返回 HTTP {(int)resp.StatusCode}")
-                    .Set(n => n.LastContactAt, ok ? DateTime.UtcNow : node.LastContactAt)
-                    .Set(n => n.UpdatedAt, DateTime.UtcNow), cancellationToken: ct);
+            var update = Builders<PeerNode>.Update
+                .Set(n => n.Status, ok ? PeerNodeStatus.Connected : PeerNodeStatus.Error)
+                .Set(n => n.LastError, ok ? null : $"ping 返回 HTTP {(int)resp.StatusCode}")
+                .Set(n => n.LastContactAt, ok ? DateTime.UtcNow : node.LastContactAt)
+                .Set(n => n.UpdatedAt, DateTime.UtcNow);
+            if (ok && !string.Equals(node.BaseUrl, originalBaseUrl, StringComparison.Ordinal))
+                update = update.Set(n => n.BaseUrl, node.BaseUrl);
+            await _db.PeerNodes.UpdateOneAsync(n => n.Id == id, update, cancellationToken: ct);
             return Ok(ApiResponse<object>.Ok(new { ok, status = (int)resp.StatusCode }));
         }
         catch (Exception ex)
@@ -277,6 +277,72 @@ public class AdminPeerNodesController : ControllerBase
         n.CreatedAt,
         n.UpdatedAt,
     };
+
+    private async Task<(HttpResponseMessage Response, string EffectiveBaseUrl)> SendHandshakeAsync(
+        HttpClient client,
+        string baseUrl,
+        HandshakePayload handshakeBody,
+        CancellationToken ct)
+    {
+        const string path = "/api/peer-sync/handshake";
+        var url = $"{baseUrl}{path}";
+        using var content = CreateJsonContent(handshakeBody);
+        var resp = await client.PostAsync(url, content, ct);
+        if (!PeerSyncRedirectHelper.IsRedirect(resp.StatusCode))
+            return (resp, baseUrl);
+
+        if (!PeerSyncRedirectHelper.TryBuildSameHostHttpsRedirect(
+                new Uri(url), resp.Headers.Location, path,
+                out var redirectedBaseUrl, out var redirectedUrl, out var reason))
+            return (resp, baseUrl);
+
+        await _urlValidator.EnsureSafeHttpUrlAsync(redirectedBaseUrl, "peer-sync", ct);
+        _logger.LogInformation("[peer-sync] normalized peer baseUrl via redirect {Original} -> {Redirected}", baseUrl, redirectedBaseUrl);
+        resp.Dispose();
+
+        using var redirectedContent = CreateJsonContent(handshakeBody);
+        return (await client.PostAsync(redirectedUrl, redirectedContent, ct), redirectedBaseUrl);
+    }
+
+    private async Task<HttpResponseMessage> SendSignedPeerRequestAsync(
+        HttpClient client,
+        PeerNode node,
+        string baseUrl,
+        string path,
+        string selfNodeId,
+        string ts,
+        string sign,
+        CancellationToken ct)
+    {
+        HttpRequestMessage BuildRequest(string requestUrl)
+        {
+            var req = new HttpRequestMessage(HttpMethod.Get, requestUrl);
+            req.Headers.TryAddWithoutValidation("X-Peer-Node", selfNodeId);
+            req.Headers.TryAddWithoutValidation("X-Peer-Ts", ts);
+            req.Headers.TryAddWithoutValidation("X-Peer-Sign", sign);
+            return req;
+        }
+
+        var url = baseUrl + path;
+        var resp = await client.SendAsync(BuildRequest(url), ct);
+        if (!PeerSyncRedirectHelper.IsRedirect(resp.StatusCode))
+            return resp;
+
+        if (!PeerSyncRedirectHelper.TryBuildSameHostHttpsRedirect(
+                new Uri(url), resp.Headers.Location, path,
+                out var redirectedBaseUrl, out var redirectedUrl, out var reason))
+            return resp;
+
+        await _urlValidator.EnsureSafeHttpUrlAsync(redirectedBaseUrl, "peer-sync", ct);
+        _logger.LogInformation("[peer-sync] normalized peer test baseUrl via redirect {NodeId}: {Original} -> {Redirected}",
+            node.RemoteNodeId, baseUrl, redirectedBaseUrl);
+        resp.Dispose();
+        node.BaseUrl = redirectedBaseUrl;
+        return await client.SendAsync(BuildRequest(redirectedUrl), ct);
+    }
+
+    private static StringContent CreateJsonContent(object value) =>
+        new(JsonSerializer.Serialize(value, JsonOpts), Encoding.UTF8, "application/json");
 
     // ── DTO ──
     public class AddPeerRequest
