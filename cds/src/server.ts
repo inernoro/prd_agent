@@ -60,6 +60,7 @@ import {
 import type { ServerEventLogSink, ServerEventCategory, ServerEventSeverity } from './services/server-event-log-store.js';
 import type { BranchOperationCoordinator } from './services/branch-operation-coordinator.js';
 import { computeBundleFreshness } from './services/bundle-freshness.js';
+import { readBundledCdsCliVersion } from './services/cdscli-version.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1202,6 +1203,12 @@ export function createServer(deps: ServerDeps): express.Express {
     res.locals.cdsRequestId = requestId;
     if (!res.getHeader('X-CDS-Request-Id')) {
       res.setHeader('X-CDS-Request-Id', requestId);
+    }
+    if (!res.getHeader('X-Cds-Cli-Latest')) {
+      const latestCdsCliVersion = readBundledCdsCliVersion(deps.config.repoRoot);
+      if (latestCdsCliVersion) {
+        res.setHeader('X-Cds-Cli-Latest', latestCdsCliVersion);
+      }
     }
     res.once('finish', () => {
       if (res.statusCode < 400) return;
