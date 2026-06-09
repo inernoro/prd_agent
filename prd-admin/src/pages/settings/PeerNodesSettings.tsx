@@ -285,32 +285,42 @@ export function PeerNodesSettings() {
     const t1 = setTimeout(() => setAddProgress({ stage: '对端正在校验连接串 + 生成共享密钥…', startedAt }), 1500);
     const t2 = setTimeout(() => setAddProgress({ stage: '交换 HMAC 密钥并落地配对记录…', startedAt }), 4000);
     const t3 = setTimeout(() => setAddProgress({ stage: '对端响应较慢，仍在等待…', startedAt }), 8000);
-    const res = await addPeerNode({
-      baseUrl: parsed.baseUrl.trim(),
-      pairingCode: parsed.pairingCode.trim(),
-      displayName: addName.trim() || parsed.displayName || undefined,
-      selfDisplayName: addSelfName.trim() || undefined,
-    });
-    clearTimeout(t1); clearTimeout(t2); clearTimeout(t3);
-    if (!isMountedRef.current) return; // PR #742 review Low fix
-    setAddBusy(false);
-    setAddProgress(null);
-    if (res.success) {
-      const elapsed = Math.round((Date.now() - startedAt) / 100) / 10;
-      flash(`互联成功（耗时 ${elapsed}s）`);
-      setShowAdd(false);
-      setPeerConnectText('');
-      setParsedPeer(null);
-      setParseError(null);
-      setAddName('');
-      setAddSelfName('');
-      void load();
-    } else {
-      // PR #742 review Medium fix：若用户在 in-flight 时点过"收起表单"（被本提交的 disabled 兜底拦下时尤其要兜底），
-      // addError 渲染在 showAdd 块里看不到，再 flash 一条 toast 确保失败原因可见。
-      const msg = res.error?.message || '配对失败';
+    try {
+      const res = await addPeerNode({
+        baseUrl: parsed.baseUrl.trim(),
+        pairingCode: parsed.pairingCode.trim(),
+        displayName: addName.trim() || parsed.displayName || undefined,
+        selfDisplayName: addSelfName.trim() || undefined,
+      });
+      if (!isMountedRef.current) return; // PR #742 review Low fix
+      if (res.success) {
+        const elapsed = Math.round((Date.now() - startedAt) / 100) / 10;
+        flash(`互联成功（耗时 ${elapsed}s）`);
+        setShowAdd(false);
+        setPeerConnectText('');
+        setParsedPeer(null);
+        setParseError(null);
+        setAddName('');
+        setAddSelfName('');
+        void load();
+      } else {
+        // PR #742 review Medium fix：若用户在 in-flight 时点过"收起表单"（被本提交的 disabled 兜底拦下时尤其要兜底），
+        // addError 渲染在 showAdd 块里看不到，再 flash 一条 toast 确保失败原因可见。
+        const msg = res.error?.message || '配对失败';
+        setAddError(msg);
+        flash(msg, 'err');
+      }
+    } catch (ex) {
+      if (!isMountedRef.current) return;
+      const msg = ex instanceof Error ? ex.message : '配对失败';
       setAddError(msg);
       flash(msg, 'err');
+    } finally {
+      clearTimeout(t1); clearTimeout(t2); clearTimeout(t3);
+      if (isMountedRef.current) {
+        setAddBusy(false);
+        setAddProgress(null);
+      }
     }
   };
 
