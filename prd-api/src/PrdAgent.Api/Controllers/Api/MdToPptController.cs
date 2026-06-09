@@ -558,6 +558,10 @@ public class MdToPptController : ControllerBase
             const int maxPollingRounds = 600; // 最多 ~8 分钟 (600 * 800ms)
             var firstEventAt = (DateTime?)null;
             var firstTextDeltaAt = (DateTime?)null;
+            // server-authority：客户端刷新/断开不取消生成。clientGone 后仅跳过 SSE 心跳写入,
+            // 继续轮询 CDS Agent 会话事件并落库,客户端可凭 runId 重连拿完整结果。
+            // (WriteEventAsync/WriteDiagAsync 本身已吞掉 OCE/ODE,只有这里的直写心跳要单独防护。)
+            var clientGone = false;
 
             for (var round = 0; round < maxPollingRounds; round++)
             {
@@ -729,16 +733,19 @@ public class MdToPptController : ControllerBase
                     return;
                 }
 
-                // SSE 心跳：防止 Cloudflare ~100s 无数据超时（HTTP 524），每 ~10s 一次
-                if (round % 12 == 11)
+                // SSE 心跳：防止 Cloudflare ~100s 无数据超时（HTTP 524），每 ~10s 一次。
+                // 客户端断开后心跳写入会抛 OCE/ODE —— 不能 break(那会提前掉进超时分支,落盘
+                // 半成品并 StopAsync 掉还在跑的会话)。改为标记 clientGone 后继续轮询到真正
+                // done/error/timeout,把完整结果落库,客户端再凭 runId 重连。
+                if (!clientGone && round % 12 == 11)
                 {
                     try
                     {
                         await Response.WriteAsync(": keepalive\n\n", CancellationToken.None);
                         await Response.Body.FlushAsync(CancellationToken.None);
                     }
-                    catch (OperationCanceledException) { break; }
-                    catch (ObjectDisposedException) { break; }
+                    catch (OperationCanceledException) { clientGone = true; }
+                    catch (ObjectDisposedException) { clientGone = true; }
                 }
 
                 await Task.Delay(800);

@@ -63,7 +63,8 @@ AI patch，右侧实时更新。引擎（MAP/CDS Agent）+ 风格模板收进设
 | 服务端兜底 | `StripCodeFences`(去 emoji) + `InjectDeckCssFix`(orb 绝对定位) | 任何新出图路径都要过这两步，否则会复现整页空白/emoji |
 
 **已知坑（务必遵守，否则复现历史 bug）**：
-- 预览 iframe 必须 `sandbox="allow-scripts allow-same-origin"` + `withNavGuard()` 注入（去 same-origin 会让 reveal 渲染空白；不加 nav-guard 会递归显示整个应用）。
+- 预览 iframe 当前用 `sandbox="allow-scripts allow-same-origin"` + `withNavGuard()`（去 same-origin 会让 reveal 渲染空白；不加 nav-guard 会递归显示整个应用）。
+  **⚠ 安全债（必须在本次重构里一并解决，见 `doc/debt.md-to-ppt.md`）**：same-origin + allow-scripts 让 LLM 生成的 HTML 以本应用源运行，prompt-injection 出的 `<script>` 能读 auth token / 冒用用户身份调 API。nav-guard 只拦跳转、不沙箱化脚本。**重构后预览必须从隔离源渲染**（独立子域 / hosted-site 发布域 / opaque origin + storage shim），不能再沿用 same-origin 这条坑。
 - 标题/正文一律实色 `var(--ink)`，**禁止** `color:transparent + background-clip:text`（嵌入式渲染会整页消失）。
 - 生成 HTML 落库走 server-authority：用 `CancellationToken.None`，客户端断开不取消（见 `RunMapStreamAsync` 的 `clientGone` 模式）。
 

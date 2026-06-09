@@ -53,8 +53,6 @@ import {
   type InfraAgentSessionView,
   type InfraAgentSlaDashboardView,
 } from '@/services/real/infraAgentSessions';
-import { listDocumentStoresReal } from '@/services/real/documentStore';
-import type { DocumentStore } from '@/services/contracts/documentStore';
 import { resolveExecutionRunway, resolveProviderEvidenceState, resolveSessionRuntimeState } from './cdsAgentReadiness';
 
 const EVENT_PAGE_LIMIT = 500;
@@ -990,8 +988,6 @@ export default function CdsAgentPage() {
     workspaceRoot: '',
     workspaceKbId: '',
   });
-  const [documentStores, setDocumentStores] = useState<DocumentStore[]>([]);
-  const [documentStoresLoading, setDocumentStoresLoading] = useState(false);
   const [profileDraft, setProfileDraft] = useState({
     name: '',
     runtime: 'claude-sdk',
@@ -2311,23 +2307,6 @@ export default function CdsAgentPage() {
 
   useEffect(() => {
     void loadAll().finally(() => setBootLoading(false));
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    const fetchDocumentStores = async () => {
-      setDocumentStoresLoading(true);
-      try {
-        const res = await listDocumentStoresReal(1, 100);
-        if (!cancelled && res.success && res.data) {
-          setDocumentStores(res.data.items);
-        }
-      } finally {
-        if (!cancelled) setDocumentStoresLoading(false);
-      }
-    };
-    void fetchDocumentStores();
-    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -3916,12 +3895,13 @@ export default function CdsAgentPage() {
 	          </div>
 	          {simpleTaskMode === 'code' && (
 	            <>
-	              <select value={draft.workspaceKbId} onChange={(e) => setDraft((prev) => ({ ...prev, workspaceKbId: e.target.value }))}
-	                disabled={documentStoresLoading} title="工作区：知识库/文件夹（Agent 上下文来源）"
-	                className="h-7 min-w-[150px] flex-1 rounded-md px-2 text-xs text-white outline-none"
+	              {/* 知识库注入：UI 先占位但后端尚未支持把知识库灌进 CDS Agent 会话上下文,
+	                  createInfraAgentSession 也没有这个字段。为避免"选了却不生效"误导用户,
+	                  暂时禁用并标注「开发中」。后端 KB 注入设计落地后再启用并接 workspaceKbId。 */}
+	              <select value="" disabled title="知识库注入开发中，暂不生效"
+	                className="h-7 min-w-[150px] flex-1 rounded-md px-2 text-xs text-white/45 outline-none cursor-not-allowed"
 	                style={{ background: 'rgba(0,0,0,0.24)', border: '1px solid rgba(255,255,255,0.09)' }}>
-	                <option value="">{documentStoresLoading ? '加载知识库...' : '工作区：知识库/文件夹（可选）'}</option>
-	                {documentStores.map((store) => (<option key={store.id} value={store.id}>{store.name}</option>))}
+	                <option value="">知识库注入（开发中）</option>
 	              </select>
 	              <input value={draft.gitRepository} onChange={(e) => setDraft((prev) => ({ ...prev, gitRepository: e.target.value }))}
 	                placeholder="可选：GitHub（钩子）"

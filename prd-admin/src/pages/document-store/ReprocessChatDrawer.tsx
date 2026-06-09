@@ -857,18 +857,19 @@ export function ReprocessChatDrawer({
   }, [messages, applying]);
 
   // 第二步：用户在确认窗点「确认」后才真正落库（保留原有全部并发/切档防护）。
+  // 返回是否真正写回成功（供确认窗决定要不要关窗：失败时保留 diff 预览，不白关）。
   const performApply = useCallback(async (
     msgId: string, mode: 'replace' | 'append' | 'new', title?: string, parentId?: string,
-  ) => {
+  ): Promise<boolean> => {
     const msg = messages.find((m) => m.id === msgId);
-    if (!msg || msg.role !== 'assistant' || !msg.content) return;
+    if (!msg || msg.role !== 'assistant' || !msg.content) return false;
     // 已写回的 message 拒绝重入（防止"已写回"按钮被重复点击造成 append 第二次或
     // 又 new 一个）（Codex P2 十轮）
-    if (msg.applied) return;
+    if (msg.applied) return false;
     const key = `${msgId}:${mode}`;
     // 同步 ref 锁：state-based applying 在 React 还没 commit 之前会让双击两次都漏过
-    if (applyLockRef.current) return;
-    if (applying) return;
+    if (applyLockRef.current) return false;
+    if (applying) return false;
     applyLockRef.current = true;
     // 锁定调用瞬间的 entryId；若 await 期间用户切到了别的文档，绝对不能把 success/error
     // 状态再写到当前抽屉里，也不能给 onApplied 回调（会让外层选中错的 entry）。
@@ -887,19 +888,19 @@ export function ReprocessChatDrawer({
       // 即使 entry 切走也得清 applying，不然新 doc 的写回按钮永远 disabled（Bugbot #3 三轮 Low）
       setApplying(null);
       applyLockRef.current = false;
-      if (entryIdRef.current !== requestedEntryId) return; // 切走了，静默丢弃错误 toast
+      if (entryIdRef.current !== requestedEntryId) return false; // 切走了，静默丢弃错误 toast
       toast.error('写回失败', e instanceof Error ? e.message : '网络异常');
-      return;
+      return false;
     }
     setApplying(null);
     applyLockRef.current = false;
     if (entryIdRef.current !== requestedEntryId) {
       // entry 在 await 期间被切换：丢弃这次结果，避免错认归属
-      return;
+      return false;
     }
     if (!res.success) {
       toast.error('写回失败', res.error?.message);
-      return;
+      return false;
     }
     const target = res.data.outputEntryId || res.data.updatedEntryId;
     setMessages((prev) => prev.map((m) => m.id === msgId ? { ...m, applied: mode } : m));
@@ -925,14 +926,16 @@ export function ReprocessChatDrawer({
     }
 
     if (target && onApplied) onApplied(mode, target);
+    return true;
   }, [messages, applying, entryId, onApplied]);
 
-  // 确认窗点「确认」：执行真正写回，完成后关窗。失败/切档由 performApply 自行处理 toast。
+  // 确认窗点「确认」：执行真正写回。仅在写回成功后才关窗；失败时保留 diff 预览,
+  // 让用户能直接重试,不必从消息里重新打开（失败/切档的 toast 由 performApply 自理）。
   const confirmPendingApply = useCallback(async (opts: { title?: string; parentId?: string }) => {
     if (!pendingApply) return;
     const { msgId, mode } = pendingApply;
-    await performApply(msgId, mode, opts.title, opts.parentId);
-    setPendingApply(null);
+    const ok = await performApply(msgId, mode, opts.title, opts.parentId);
+    if (ok) setPendingApply(null);
   }, [pendingApply, performApply]);
 
   // 智能体专属出站动作：把产出送回它自己的原生系统（巧思）

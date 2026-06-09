@@ -707,6 +707,9 @@
 - [CDS Agent 工作台 · 债务台账](debt.cds-agent) `debt.cds-agent`
   > 4 条 open：R1 商业级 provider 闭环 / Lite 只读模式能力边界 / CDS Agent 文档群熵减 / 无 profile 时 Lite 直跑
 
+- [MD 转网页 PPT · 债务台账](debt.md-to-ppt) `debt.md-to-ppt`
+  > 2 条 open：预览 iframe same-origin 安全债（重构时从隔离源渲染）/ 知识库注入 CDS Agent 会话未实现（UI 已禁用占位）
+
 - [CDS state.json 影子存储 · 债务台账](debt.cds-state-json) `debt.cds-state-json`
   > 4 条 open：webhook deliveries 全量刷盘 / StateService 内存全量加载 / mongo-split 模式 state.json 同步写 / 无独立清理策略
 
