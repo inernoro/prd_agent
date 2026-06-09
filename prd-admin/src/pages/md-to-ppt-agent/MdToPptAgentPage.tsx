@@ -91,6 +91,25 @@ const THEME_OPTIONS = [
   { value: 'warm-earth', label: '暖色大地' },
 ];
 
+// 主题 CSS 变量覆盖（前端注入，确保无论 LLM 输出什么，主题色始终正确）
+const THEME_CSS_OVERRIDES: Record<string, string> = {
+  'dark-glass':
+    ':root{--bg:#070b18;--bg2:#0f1530;--ink:#f6f8ff;--muted:#9aa6c4;--line:rgba(255,255,255,.09);--card:rgba(255,255,255,.045);--a1:#6366f1;--a2:#22d3ee;--a3:#a855f7;--orb-op:.5;}' +
+    'html,body,.reveal{background:radial-gradient(1200px 800px at 80% -10%,#1b2350 0%,#070b18 55%)!important;}',
+  'light-clean':
+    ':root{--bg:#f7f8fc;--bg2:#eef1f8;--ink:#0f172a;--muted:#5b6478;--line:rgba(15,23,42,.1);--card:#ffffff;--a1:#4f46e5;--a2:#0891b2;--a3:#7c3aed;--orb-op:.18;}' +
+    'html,body,.reveal{background:linear-gradient(180deg,#ffffff,#eef2fb)!important;}.reveal .slides section{color:var(--ink)!important;}',
+  'gradient-purple':
+    ':root{--bg:#1a0b2e;--bg2:#2d1b4e;--ink:#fdf4ff;--muted:#c8b6dc;--line:rgba(255,255,255,.12);--card:rgba(255,255,255,.07);--a1:#c084fc;--a2:#f472b6;--a3:#a855f7;--orb-op:.55;}' +
+    'html,body,.reveal{background:radial-gradient(1000px 700px at 70% 0%,#3b1d6e 0%,#1a0b2e 60%)!important;}',
+  'corporate-blue':
+    ':root{--bg:#0a1628;--bg2:#0f2138;--ink:#eef6ff;--muted:#8aa0bd;--line:rgba(255,255,255,.1);--card:rgba(255,255,255,.05);--a1:#2563eb;--a2:#38bdf8;--a3:#3b82f6;--orb-op:.4;}' +
+    'html,body,.reveal{background:linear-gradient(160deg,#0f2138,#0a1628)!important;}',
+  'warm-earth':
+    ':root{--bg:#1c1410;--bg2:#2a1f17;--ink:#fdf6ee;--muted:#c8ad95;--line:rgba(255,255,255,.1);--card:rgba(255,255,255,.045);--a1:#f59e0b;--a2:#fb923c;--a3:#d97706;--orb-op:.45;}' +
+    'html,body,.reveal{background:radial-gradient(1000px 700px at 80% -10%,#3d2817 0%,#1c1410 60%)!important;}',
+};
+
 // 按内容长度估算页数（约 700 字/页，夹在 4~20 页）
 function estimatePages(content: string): number {
   const len = content.trim().length;
@@ -126,11 +145,10 @@ function looksLikeDeck(html: string): boolean {
 //
 // 验收口径：生成含 <script>fetch(...localStorage...)</script> 的 deck，
 //   确认脚本拿不到主应用 token、不能以用户身份调 API，且 reveal 仍正常渲染可翻页。
-function prepareIframeHtml(html: string): string {
+function prepareIframeHtml(html: string, theme?: string): string {
   if (!html) return html;
 
   // 1. in-memory storage shim（遮蔽 opaque origin 下 reveal 对 storage 的访问）
-  // 所有 \u 转义，源码内不出现任何 emoji 字面量（CLAUDE 规则 #0）
   const storageshim =
     '<script>' +
     '(function(){' +
@@ -156,11 +174,33 @@ function prepareIframeHtml(html: string): string {
     "document.addEventListener('click',function(e){var t=e.target;while(t&&t!==document){if(t.tagName==='A'){var h=t.getAttribute('href')||'';if(h&&h.charAt(0)!=='#'){e.preventDefault();e.stopPropagation();}break;}t=t.parentNode;}},true);" +
     '}catch(e){}})();</script>';
 
-  const inject = storageshim + navguard;
+  // 3. Google Fonts（Inter 字重 400-900，允许跨源 CSS 加载）
+  const fonts =
+    '<link rel="preconnect" href="https://fonts.googleapis.com">' +
+    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>' +
+    '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">';
 
-  if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => m + inject);
-  if (/<html[^>]*>/i.test(html)) return html.replace(/<html[^>]*>/i, (m) => m + inject);
-  return inject + html;
+  // 4. 主题 CSS 强制覆盖（放在 </head> 前，最高级联叠加层，确保 LLM 输出的主题始终正确）
+  const themeCss = THEME_CSS_OVERRIDES[theme ?? 'dark-glass'] ?? THEME_CSS_OVERRIDES['dark-glass'];
+  const themeOverride = '<style id="__map_theme_override__">' + themeCss + '</style>';
+
+  const headInject = storageshim + navguard + fonts;
+
+  let result = html;
+  if (/<head[^>]*>/i.test(result)) {
+    result = result.replace(/<head[^>]*>/i, (m) => m + headInject);
+  } else if (/<html[^>]*>/i.test(result)) {
+    result = result.replace(/<html[^>]*>/i, (m) => m + headInject);
+  } else {
+    result = headInject + result;
+  }
+  // 主题覆盖注入到 </head> 前（LLM CSS 之后，优先级最高）
+  if (/<\/head>/i.test(result)) {
+    result = result.replace(/<\/head>/i, themeOverride + '</head>');
+  } else {
+    result = result + themeOverride;
+  }
+  return result;
 }
 
 // 生成阶段提示文案
@@ -460,6 +500,7 @@ export function MdToPptAgentPage() {
   const [elapsedSec, setElapsedSec] = useState(0);
   const [artifactPhase, setArtifactPhase] = useState<'idle' | 'outlining' | 'generating' | 'patching' | 'done'>('idle');
   const [diagLines, setDiagLines] = useState<MdToPptDiagEvent[]>([]);
+  const [modelInfo, setModelInfo] = useState<{ model: string; platform: string } | null>(null);
 
   // ─── Attachments & KB
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
@@ -709,7 +750,7 @@ export function MdToPptAgentPage() {
             sessionStorage.setItem(SESSION_KEY + '-run', runId);
           } catch { /* ignore */ }
         },
-        onModel: () => {},
+        onModel: (info) => setModelInfo(info),
         onDiag: (d) => setDiagLines((prev) => [...prev, d]),
         onDelta: () => {},
         onDone: (result) => {
@@ -780,7 +821,7 @@ export function MdToPptAgentPage() {
         onRun: (runId) => {
           if (runId) setActiveRunId(runId);
         },
-        onModel: () => {},
+        onModel: (info) => setModelInfo(info),
         onDiag: (d) => setDiagLines((prev) => [...prev, d]),
         onDelta: () => {},
         onDone: (result) => {
@@ -1335,9 +1376,16 @@ export function MdToPptAgentPage() {
                   </button>
                   <span className="text-[10px] text-[var(--text-tertiary)]">翻页</span>
                 </div>
-                <span className="text-[10px] text-[var(--text-tertiary)]">
-                  {generatedHtml.length.toLocaleString()} 字符 · reveal.js PPT
-                </span>
+                <div className="flex items-center gap-2">
+                  {modelInfo && (
+                    <span className="text-[9px] font-mono text-[var(--text-tertiary)] bg-white/4 border border-white/8 rounded px-1.5 py-0.5 max-w-[200px] truncate" title={modelInfo.model + ' via ' + modelInfo.platform}>
+                      {modelInfo.model.split('/').pop()} · {modelInfo.platform}
+                    </span>
+                  )}
+                  <span className="text-[10px] text-[var(--text-tertiary)]">
+                    {generatedHtml.length.toLocaleString()} 字符 · reveal.js
+                  </span>
+                </div>
               </div>
 
               {/* iframe —— sandbox="allow-scripts"（opaque origin，无 same-origin）
@@ -1347,7 +1395,7 @@ export function MdToPptAgentPage() {
               <iframe
                 ref={iframeRef}
                 className="flex-1 w-full border-0"
-                srcDoc={prepareIframeHtml(generatedHtml)}
+                srcDoc={prepareIframeHtml(generatedHtml, theme)}
                 sandbox="allow-scripts"
                 title="PPT 预览"
                 style={{ minHeight: 0 }}

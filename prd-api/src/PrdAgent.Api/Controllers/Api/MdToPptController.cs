@@ -48,6 +48,7 @@ public class MdToPptController : ControllerBase
             "## 硬技术规范\n" +
             "- reveal.js 4.x CDN：https://cdn.jsdelivr.net/npm/reveal.js@4/dist/reveal.js + reveal.css（不引官方主题，用下面的自定义主题）\n" +
             "- 初始化：Reveal.initialize({ hash:false, transition:'slide', slideNumber:'c/t', controls:true, progress:true, center:true, margin:0.06 })（不要写 width/height，让它自适应容器）\n" +
+            "- <head> 必须在 reveal.js 之前加载 Google Fonts：<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\"><link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin><link href=\"https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap\" rel=\"stylesheet\">\n" +
             "- 全部 CSS 内联在 <head> 的 <style> 里；输出完整 <!DOCTYPE html>…</html>；不要 markdown 代码围栏\n" +
             "- 绝对禁止任何 emoji 字符（一切表情/符号图标都不许）；需要图标时只用 inline SVG 或 CSS 几何图形\n" +
             "- 绝对禁止对标题/正文用 `color:transparent` + `background-clip:text`（嵌入式渲染常常不生效，会导致文字整页消失）；标题一律用实色 var(--ink)，渐变只能用在 .orb/.bar 等非文字装饰上\n\n" +
@@ -72,22 +73,44 @@ public class MdToPptController : ControllerBase
             ".orb{position:absolute;border-radius:50%;filter:blur(80px);opacity:var(--orb-op);z-index:0;pointer-events:none;}.orb.a{width:420px;height:420px;background:var(--a1);right:-80px;top:-90px;}.orb.b{width:340px;height:340px;background:var(--a3);left:-70px;bottom:-90px;}\n" +
             ".reveal .slide-number{background:transparent;color:var(--muted);}\n" +
             "li{margin:10px 0;line-height:1.5;}ul{list-style:none;padding:0;}ul li{padding-left:26px;position:relative;}ul li::before{content:'';position:absolute;left:0;top:.6em;width:8px;height:8px;border-radius:3px;background:linear-gradient(120deg,var(--a1),var(--a2));}\n" +
+            ".feat{display:flex;align-items:flex-start;gap:16px;padding:18px;background:var(--card);border:1px solid var(--line);border-radius:16px;}\n" +
+            ".feat-icon{flex-shrink:0;width:40px;height:40px;border-radius:12px;background:linear-gradient(135deg,var(--a1),var(--a2));display:flex;align-items:center;justify-content:center;}\n" +
+            ".feat h4{margin:0 0 4px;font-size:1rem;font-weight:700;color:var(--ink);}.feat p{margin:0;font-size:.9rem;color:var(--muted);line-height:1.5;}\n" +
+            ".table{width:100%;border-collapse:collapse;font-size:.9rem;}\n" +
+            ".table th{padding:10px 14px;text-align:left;font-size:.78rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--a2);border-bottom:2px solid var(--line);}\n" +
+            ".table td{padding:10px 14px;color:var(--ink);border-bottom:1px solid var(--line);}\n" +
+            ".table tr:last-child td{border-bottom:none;}.table tr:nth-child(even) td{background:var(--card);}\n" +
+            ".callout{display:flex;gap:14px;padding:18px 20px;border-radius:14px;border:1px solid var(--a1);background:rgba(99,102,241,.08);}\n" +
+            ".callout-icon{flex-shrink:0;width:22px;height:22px;border-radius:50%;background:var(--a1);margin-top:1px;}\n" +
+            ".callout p{margin:0;color:var(--ink);font-size:.98rem;line-height:1.55;}\n" +
+            ".step-row{display:flex;gap:0;margin-top:30px;}\n" +
+            ".step-item{flex:1;position:relative;padding:0 12px;text-align:center;}\n" +
+            ".step-item::before{content:'';position:absolute;top:20px;left:50%;right:-50%;height:2px;background:linear-gradient(90deg,var(--a1),var(--a2));z-index:0;}\n" +
+            ".step-item:last-child::before{display:none;}\n" +
+            ".step-num{width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,var(--a1),var(--a2));color:#fff;font-weight:800;font-size:1rem;display:inline-flex;align-items:center;justify-content:center;position:relative;z-index:1;margin-bottom:10px;}\n" +
+            ".step-item h4{font-size:.9rem;font-weight:700;color:var(--ink);margin:0 0 4px;}\n" +
+            ".step-item p{font-size:.82rem;color:var(--muted);margin:0;line-height:1.4;}\n" +
             "```\n\n" +
             "## 每页强制结构（杜绝『一行居中标题』的空洞页）\n" +
             "除封面/结语外，每一页都必须包含：① 一个 .eyebrow 小标签 → ② 一个 .title-md 标题 → ③ 结构化正文（卡片网格 / 数据 / 对比 / 列表，至少一种）→ ④ 至少一个视觉装置（.orb 光晕、.bar 强调条、卡片、或大号 .stat）。绝不允许出现只有一句话居中、四周大片空白的页。\n\n" +
-            "## 版式库（按内容选用，全篇至少混用 4 种，禁止每页雷同）\n" +
+            "## 版式库（按内容选用，全篇至少混用 5 种，禁止每页雷同）\n" +
             "1. 封面：.orb 光晕背景 + .eyebrow + 超大 .title-xl 标题 + .lead 副标题 + 底部 .chip 行（作者/日期/标签）\n" +
-            "2. 要点卡片：.grid.g3 或 .g2，每个 .card 一个要点（标题 + 说明），不要写成裸列表\n" +
-            "3. 数据看板：.grid.g3，每格 .stat 大数字 + .stat-l 说明\n" +
-            "4. 两栏对比：.grid.g2，左『现状/问题』右『方案/结果』各一张 .card\n" +
-            "5. 金句/转场：.quote 大字引用 + 左侧强调条 + .orb 背景\n" +
-            "6. 流程/时间线：横向或纵向步骤，每步一个序号圆 + 标题 + 说明\n" +
-            "7. 结语：居中 .title-xl + 一句行动号召 + .chip 联系方式\n\n" +
-            "## 质量自检（输出前自问）\n" +
-            "- 随手翻到任意一页，是否都『信息充实 + 有设计感』，不是空洞标题页？\n" +
-            "- 是否真的用了卡片、数据、光晕、强调条这些装置，而不是纯文字？\n" +
-            "- 是否严格贴合本次风格（" + tone + "）的配色与气质？留白舒展、层级分明？\n" +
-            "- 逻辑连贯、版式不重复？\n\n" +
+            "2. 要点卡片：.grid.g3 或 .g2，每个 .card 一个要点（标题 + 说明），禁止写成裸列表\n" +
+            "3. 数据看板：.grid.g3，每格 .stat 大数字 + .stat-l 说明，纯数据页视觉震撼\n" +
+            "4. 两栏对比：.grid.g2，左『现状/问题』右『方案/结果』各一张 .card，对比清晰\n" +
+            "5. 功能特性列表：3-4 个 .feat 条目竖排，每条含图标方块 + 标题 + 说明，替代普通列表\n" +
+            "6. 对比表格：.table 展示多列对比（功能/价格/优劣/指标），比卡片更直观\n" +
+            "7. 流程步骤：.step-row 横向流程图（3-4 步），每步序号圆 + 标题 + 说明\n" +
+            "8. 金句/转场：.quote 大字引用 + 左侧强调条 + .orb 背景，用于重要观点\n" +
+            "9. 标注提示：.callout 高亮框 + 重要结论，搭配其他内容出现\n" +
+            "10. 结语：居中 .title-xl + 一句行动号召 + .chip 联系方式\n\n" +
+            "## 质量自检（输出前逐条过）\n" +
+            "- 全篇是否真的用了至少 5 种不同版式？每页版式与前后页都不同？\n" +
+            "- 是否至少出现了一页 .feat 功能列表、一页 .stat 数据看板或 .table 对比表？\n" +
+            "- 随手翻到任意一页，是否都『信息充实 + 有设计感』，而不是只有文字列表？\n" +
+            "- 所有卡片/图块/背景是否真的用了本风格的 CSS 变量（var(--card)/var(--a1) 等）？\n" +
+            "- 是否严格贴合本次风格（" + tone + "）的底色与气质？留白舒展、层级分明？\n" +
+            "- 逻辑连贯、节奏有起伏（数据页后跟文字页，避免视觉疲劳）？\n\n" +
             "## 输出要求（最高优先级）\n" +
             "- 仅输出完整 HTML 文件内容，第一个字符是 <，最后是 >，中间不得有任何解释、标注或 ``` 代码块标记\n" +
             "- 禁止使用工具调用，禁止执行命令，直接以纯文本形式输出 HTML";
@@ -101,23 +124,42 @@ public class MdToPptController : ControllerBase
             case "light-clean":
                 return (
                     ":root{--bg:#f7f8fc;--bg2:#eef1f8;--ink:#0f172a;--muted:#5b6478;--line:rgba(15,23,42,.1);--card:#ffffff;--a1:#4f46e5;--a2:#0891b2;--a3:#7c3aed;--orb-op:.18;}\nhtml,body,.reveal{background:linear-gradient(180deg,#ffffff,#eef2fb);}\n",
-                    "浅色简洁——白底深字、大量留白、细线点缀，干净专业（Notion/文档风）");
+                    "浅色简洁（Notion/文档风）——白底深字、大量留白。" +
+                    "特别要求：.card 必须用白色背景 + 浅灰边框；.orb 透明度极低（仅作点缀）；" +
+                    "优先用 .table 对比表和 .feat 功能列表展示信息，少用大面积深色背景块；" +
+                    "封面 .title-xl 用深墨色（--ink），整体感觉干净克制");
             case "gradient-purple":
                 return (
                     ":root{--bg:#1a0b2e;--bg2:#2d1b4e;--ink:#fdf4ff;--muted:#c8b6dc;--line:rgba(255,255,255,.12);--card:rgba(255,255,255,.07);--a1:#c084fc;--a2:#f472b6;--a3:#a855f7;--orb-op:.55;}\nhtml,body,.reveal{background:radial-gradient(1000px 700px at 70% 0%,#3b1d6e 0%,#1a0b2e 60%);}\n",
-                    "紫色渐变——紫粉霓虹、活力大胆，适合发布会/营销");
+                    "紫色渐变（营销/发布会风）——深紫底 + 粉紫霓虹、超大光晕。" +
+                    "特别要求：封面必须有巨大 .orb 光晕占整个背景右上角；" +
+                    "多用 .stat 大数字页（用 --a1/#c084fc 紫色数字）；" +
+                    "用 .quote 引用页做转场；.card 有明显毛玻璃感（rgba 白/7%）；" +
+                    "整体视觉大胆、充满动感，如 Figma/Framer 发布会 PPT");
             case "corporate-blue":
                 return (
                     ":root{--bg:#0a1628;--bg2:#0f2138;--ink:#eef6ff;--muted:#8aa0bd;--line:rgba(255,255,255,.1);--card:rgba(255,255,255,.05);--a1:#2563eb;--a2:#38bdf8;--a3:#3b82f6;--orb-op:.4;}\nhtml,body,.reveal{background:linear-gradient(160deg,#0f2138,#0a1628);}\n",
-                    "商务蓝——藏青稳重、克制专业，适合汇报/方案");
+                    "商务蓝（企业汇报/方案风）——藏青深底 + 蓝色系强调色。" +
+                    "特别要求：多用 .table 对比表展示数据/功能/规格；" +
+                    "用 .step-row 流程图展示方案步骤；.stat 数字用蓝色（--a1/#2563eb）；" +
+                    ".callout 高亮重要结论；封面用正式 .eyebrow + 标题 + 副标题结构；" +
+                    "整体克制稳重，没有过度装饰，如麦肯锡/咨询公司 PPT");
             case "warm-earth":
                 return (
                     ":root{--bg:#1c1410;--bg2:#2a1f17;--ink:#fdf6ee;--muted:#c8ad95;--line:rgba(255,255,255,.1);--card:rgba(255,255,255,.045);--a1:#f59e0b;--a2:#fb923c;--a3:#d97706;--orb-op:.45;}\nhtml,body,.reveal{background:radial-gradient(1000px 700px at 80% -10%,#3d2817 0%,#1c1410 60%);}\n",
-                    "暖色大地——炭褐底 + 琥珀橙、温暖有质感");
+                    "暖色大地（品牌/故事风）——炭褐底 + 琥珀橙/暖橙强调色。" +
+                    "特别要求：多用 .quote 金句页（用橙色 --a1/#f59e0b 左侧条）；" +
+                    ".feat 列表带圆角橙色图标方块；.stat 数字用暖橙色；" +
+                    ".card 背景微暖（卡片有轻微暖褐色）；" +
+                    "整体质感温暖有力，如餐饮/品牌/创意公司 Deck");
             default:
                 return (
                     ":root{--bg:#070b18;--bg2:#0f1530;--ink:#f6f8ff;--muted:#9aa6c4;--line:rgba(255,255,255,.09);--card:rgba(255,255,255,.045);--a1:#6366f1;--a2:#22d3ee;--a3:#a855f7;--orb-op:.5;}\nhtml,body,.reveal{background:radial-gradient(1200px 800px at 80% -10%,#1b2350 0%,var(--bg) 55%);}\n",
-                    "深色玻璃——近黑底 + 靛蓝/青/紫霓虹、毛玻璃卡片，科技感（对标 Vercel/Linear）");
+                    "深色玻璃（科技/SaaS 风，对标 Vercel/Linear）——近黑底 + 靛蓝/青/紫霓虹、毛玻璃卡片。" +
+                    "特别要求：封面 .orb 背景光晕覆盖右上 1/3；" +
+                    "多用 .feat 功能列表（左侧渐变方块图标）和 .stat 数据大字（靛蓝 --a1/#6366f1）；" +
+                    ".card 要有真实毛玻璃感（rgba(255,255,255,0.045)）；" +
+                    ".step-row 流程图用青色（--a2/#22d3ee）连接线；整体未来感强");
         }
     }
 
