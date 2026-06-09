@@ -2,6 +2,7 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
@@ -188,7 +189,14 @@ public class AdminPeerNodesController : ControllerBase
         };
 
         var confirm = await PostPeerJsonAsync(baseLeft, "/api/peer-sync/handshake/confirm", confirmBody, ct);
-        if (!confirm.Ok)
+        var legacyPeerCommittedOnHandshake = !confirm.Ok && confirm.Status == StatusCodes.Status404NotFound;
+        if (legacyPeerCommittedOnHandshake)
+        {
+            _logger.LogInformation(
+                "[peer-sync] remote peer has no two-phase confirm endpoint; continuing with legacy committed handshake remoteNodeId={RemoteNodeId}",
+                result.NodeId);
+        }
+        else if (!confirm.Ok)
         {
             await TryCancelPeerHandshakeAsync(baseLeft, confirmBody, ct);
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,

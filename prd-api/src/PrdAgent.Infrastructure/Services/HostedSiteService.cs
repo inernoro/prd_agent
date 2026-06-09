@@ -1465,7 +1465,8 @@ public class HostedSiteService : IHostedSiteService
     public async Task<ShareAnalyticsResult> GetShareAnalyticsAsync(string userId, int rangeDays, string? siteId = null, CancellationToken ct = default)
     {
         if (rangeDays <= 0 || rangeDays > 365) rangeDays = 7;
-        var rangeStart = DateTime.UtcNow.AddDays(-rangeDays);
+        var now = DateTime.UtcNow;
+        var rangeStart = now.Date.AddDays(-(rangeDays - 1));
 
         // 全量 shares（含已过期、不含 visit 链）
         var fbLink = Builders<WebPageShareLink>.Filter;
@@ -1476,7 +1477,6 @@ public class HostedSiteService : IHostedSiteService
             .Find(fbLink.Eq(x => x.CreatedBy, userId) & fbLink.Ne(x => x.Purpose, "visit") & siteScopedFilter)
             .ToListAsync(ct);
 
-        var now = DateTime.UtcNow;
         var totalShares = allShares.Count;
         var activeShares = allShares.Count(s => !s.IsRevoked && (!s.ExpiresAt.HasValue || s.ExpiresAt.Value > now));
         var expiredShares = allShares.Count(s => s.ExpiresAt.HasValue && s.ExpiresAt.Value <= now);
@@ -1566,6 +1566,12 @@ public class HostedSiteService : IHostedSiteService
         var visitorCountsByToken = recentLogs
             .GroupBy(l => l.ShareToken)
             .ToDictionary(g => g.Key, g => g.Select(ViewerDedupeKey).Distinct().LongCount());
+        var viewCountsByToken = recentLogs
+            .GroupBy(l => l.ShareToken)
+            .ToDictionary(g => g.Key, g => g.LongCount());
+        var lastViewedAtByToken = recentLogs
+            .GroupBy(l => l.ShareToken)
+            .ToDictionary(g => g.Key, g => g.Max(l => l.ViewedAt));
 
         var siteTitleMap = shareSiteIds.Count == 0
             ? new Dictionary<string, string>()
@@ -1590,7 +1596,7 @@ public class HostedSiteService : IHostedSiteService
         var trend = Enumerable.Range(0, rangeDays)
             .Select(offset =>
             {
-                var date = rangeStart.Date.AddDays(offset + 1);
+                var date = rangeStart.Date.AddDays(offset);
                 var key = date.ToString("yyyy-MM-dd");
                 return new ShareAnalyticsTrendPoint
                 {
@@ -1640,10 +1646,11 @@ public class HostedSiteService : IHostedSiteService
             CreatedAt = c.CreatedAt,
         }).ToList();
 
-        // Top 链接（按 ViewCount 排序，最多 10 条）
+        // Top 链接（按当前时间窗 PV 排序，最多 10 条）
         var topLinks = allShares
             .Where(s => !s.IsRevoked)
-            .OrderByDescending(s => s.ViewCount)
+            .OrderByDescending(s => viewCountsByToken.TryGetValue(s.Token, out var viewCount) ? viewCount : 0)
+            .ThenByDescending(s => lastViewedAtByToken.TryGetValue(s.Token, out var lastViewedAt) ? lastViewedAt : DateTime.MinValue)
             .Take(10)
             .Select(s => new ShareAnalyticsLinkSummary
             {
@@ -1651,9 +1658,9 @@ public class HostedSiteService : IHostedSiteService
                 Token = s.Token,
                 Title = StripLegacySharePrefix(s.Title),
                 ShareUrl = BuildSharePreviewPath(s),
-                ViewCount = s.ViewCount,
+                ViewCount = viewCountsByToken.TryGetValue(s.Token, out var viewCount) ? viewCount : 0,
                 UniqueIpCount = visitorCountsByToken.TryGetValue(s.Token, out var visitorCount) ? visitorCount : 0,
-                LastViewedAt = s.LastViewedAt,
+                LastViewedAt = lastViewedAtByToken.TryGetValue(s.Token, out var lastViewedAt) ? lastViewedAt : null,
                 CreatedAt = s.CreatedAt,
                 ExpiresAt = s.ExpiresAt,
                 Visibility = s.Visibility ?? "owner-only",
@@ -2145,7 +2152,9 @@ public class HostedSiteService : IHostedSiteService
     // v2：改「可靠驱动优先」，新增任意带 next()/prev() 的自定义元素（如 deck-stage）直驱
     // v3：分档 + 透明可控 —— 高可信自动开（角落提示条可关）、低可信(.slide≥2)仅邀请不劫持
     // v4：一律邀请式 —— 任何情况都不自动劫持键盘，必须用户点角落「开启」才生效（会话内记住）
-    private const int SlideNavVersion = 4;
+    // v5：幻灯片判定后主动聚焦页面主体，避免新窗口/iframe 预览必须先点内容区才接收快捷键。
+    // v6：所有托管 HTML 都在加载后尝试聚焦内部文档；幻灯片判断只决定是否启用翻页兼容 UI。
+    private const int SlideNavVersion = 6;
 
     // 注入块起始标记。注入块形如 {marker}<script>...</script>，剥离时从 marker 找到其后
     // 第一个 </script> 一并删除，因此升级垫片版本时旧块会被整体替换而非被「幂等跳过」。
@@ -2263,6 +2272,21 @@ public class HostedSiteService : IHostedSiteService
     (document.activeElement || document.body || document).dispatchEvent(ev);
   }
   function inEditable(t){ return !!(t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)); }
+  function focusDeck(){
+    try {
+      if (inEditable(document.activeElement)) return;
+      var t = document.body || document.documentElement;
+      if (!t) return;
+      if (!t.hasAttribute('tabindex')) t.setAttribute('tabindex', '-1');
+      if (typeof t.focus === 'function') t.focus({ preventScroll:true });
+      if (typeof window.focus === 'function') window.focus();
+    } catch(e){}
+  }
+  function bootFocus(){
+    focusDeck();
+    setTimeout(focusDeck, 80);
+    setTimeout(focusDeck, 240);
+  }
   function onKey(e){
     if (e[SYN] || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
     if (inEditable(e.target)) return;
@@ -2336,9 +2360,9 @@ public class HostedSiteService : IHostedSiteService
     if (getPref() === 'on') enable(false); // 本会话已主动开过 → 直接开
     else renderPill(false);                // 默认仅邀请，绝不自动劫持键盘
   }
-  if (document.readyState !== 'loading') decide();
-  document.addEventListener('DOMContentLoaded', decide);
-  window.addEventListener('load', decide);
+  if (document.readyState !== 'loading') { bootFocus(); decide(); }
+  document.addEventListener('DOMContentLoaded', function(){ bootFocus(); decide(); });
+  window.addEventListener('load', function(){ bootFocus(); decide(); });
   // 框架/自定义元素可能异步 upgrade：未决策则重试
   var tries = 0;
   var timer = setInterval(function(){ if (!decided) decide(); if (decided || ++tries > 30) clearInterval(timer); }, 300);

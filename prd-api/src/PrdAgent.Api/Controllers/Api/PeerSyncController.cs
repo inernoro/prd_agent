@@ -170,9 +170,21 @@ public class PeerSyncController : ControllerBase
             ? payload.InitiatorDisplayName.Trim()
             : (string.IsNullOrWhiteSpace(code.PendingInitiatorDisplayName) ? "对端节点" : code.PendingInitiatorDisplayName!);
 
-        await UpsertPeerNodeAsync(payload.InitiatorNodeId.Trim(), baseUrl!, displayName, payload.SharedSecret, code.CreatedBy, ct);
+        var initiatorNodeId = payload.InitiatorNodeId.Trim();
+        var existing = await _db.PeerNodes.Find(n => n.RemoteNodeId == initiatorNodeId).FirstOrDefaultAsync(ct);
+
+        await UpsertPeerNodeAsync(initiatorNodeId, baseUrl!, displayName, payload.SharedSecret, code.CreatedBy, ct);
         await _db.PeerPairingCodes.UpdateOneAsync(c => c.Id == code.Id,
-            Builders<PeerPairingCode>.Update.Set(c => c.ConfirmedAt, DateTime.UtcNow),
+            Builders<PeerPairingCode>.Update
+                .Set(c => c.ConfirmedAt, DateTime.UtcNow)
+                .Set(c => c.PendingReplacedPeerNodeId, existing?.Id)
+                .Set(c => c.PendingPreviousDisplayName, existing?.DisplayName)
+                .Set(c => c.PendingPreviousBaseUrl, existing?.BaseUrl)
+                .Set(c => c.PendingPreviousSharedSecret, existing?.SharedSecret)
+                .Set(c => c.PendingPreviousStatus, existing?.Status)
+                .Set(c => c.PendingPreviousLastError, existing?.LastError)
+                .Set(c => c.PendingPreviousLastContactAt, existing?.LastContactAt)
+                .Set(c => c.PendingPreviousCreatedBy, existing?.CreatedBy),
             cancellationToken: ct);
         return Ok(ApiResponse<object>.Ok(new { ok = true }));
     }
@@ -194,9 +206,30 @@ public class PeerSyncController : ControllerBase
         if (code == null)
             return Ok(ApiResponse<object>.Ok(new { cancelled = false }));
 
-        await _db.PeerNodes.DeleteOneAsync(n =>
-            n.RemoteNodeId == payload.InitiatorNodeId.Trim()
-            && n.SharedSecret == payload.SharedSecret, ct);
+        if (!string.IsNullOrWhiteSpace(code.PendingReplacedPeerNodeId)
+            && !string.IsNullOrWhiteSpace(code.PendingPreviousSharedSecret))
+        {
+            await _db.PeerNodes.UpdateOneAsync(
+                n => n.Id == code.PendingReplacedPeerNodeId
+                    && n.RemoteNodeId == payload.InitiatorNodeId.Trim()
+                    && n.SharedSecret == payload.SharedSecret,
+                Builders<PeerNode>.Update
+                    .Set(n => n.DisplayName, code.PendingPreviousDisplayName ?? "对端节点")
+                    .Set(n => n.BaseUrl, code.PendingPreviousBaseUrl ?? string.Empty)
+                    .Set(n => n.SharedSecret, code.PendingPreviousSharedSecret)
+                    .Set(n => n.Status, code.PendingPreviousStatus ?? PeerNodeStatus.Connected)
+                    .Set(n => n.LastError, code.PendingPreviousLastError)
+                    .Set(n => n.LastContactAt, code.PendingPreviousLastContactAt)
+                    .Set(n => n.CreatedBy, code.PendingPreviousCreatedBy ?? code.CreatedBy)
+                    .Set(n => n.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: ct);
+        }
+        else
+        {
+            await _db.PeerNodes.DeleteOneAsync(n =>
+                n.RemoteNodeId == payload.InitiatorNodeId.Trim()
+                && n.SharedSecret == payload.SharedSecret, ct);
+        }
         await _db.PeerPairingCodes.UpdateOneAsync(c => c.Id == code.Id,
             Builders<PeerPairingCode>.Update
                 .Set(c => c.Used, false)
@@ -204,6 +237,14 @@ public class PeerSyncController : ControllerBase
                 .Set(c => c.PendingSharedSecret, (string?)null)
                 .Set(c => c.PendingInitiatorBaseUrl, (string?)null)
                 .Set(c => c.PendingInitiatorDisplayName, (string?)null)
+                .Set(c => c.PendingReplacedPeerNodeId, (string?)null)
+                .Set(c => c.PendingPreviousDisplayName, (string?)null)
+                .Set(c => c.PendingPreviousBaseUrl, (string?)null)
+                .Set(c => c.PendingPreviousSharedSecret, (string?)null)
+                .Set(c => c.PendingPreviousStatus, (string?)null)
+                .Set(c => c.PendingPreviousLastError, (string?)null)
+                .Set(c => c.PendingPreviousLastContactAt, (DateTime?)null)
+                .Set(c => c.PendingPreviousCreatedBy, (string?)null)
                 .Set(c => c.ConfirmedAt, (DateTime?)null),
             cancellationToken: ct);
         return Ok(ApiResponse<object>.Ok(new { cancelled = true }));

@@ -79,6 +79,30 @@ public class PeerPairingCode
     /// <summary>两阶段握手 prepare 阶段生成的共享密钥；confirm 成功后才落 PeerNode。</summary>
     public string? PendingSharedSecret { get; set; }
 
+    /// <summary>confirm 阶段若替换了已有节点，记录旧节点 ID 以便 cancel 回滚。</summary>
+    public string? PendingReplacedPeerNodeId { get; set; }
+
+    /// <summary>confirm 阶段替换已有节点前的展示名。</summary>
+    public string? PendingPreviousDisplayName { get; set; }
+
+    /// <summary>confirm 阶段替换已有节点前的地址。</summary>
+    public string? PendingPreviousBaseUrl { get; set; }
+
+    /// <summary>confirm 阶段替换已有节点前的共享密钥。</summary>
+    public string? PendingPreviousSharedSecret { get; set; }
+
+    /// <summary>confirm 阶段替换已有节点前的状态。</summary>
+    public string? PendingPreviousStatus { get; set; }
+
+    /// <summary>confirm 阶段替换已有节点前的最后错误。</summary>
+    public string? PendingPreviousLastError { get; set; }
+
+    /// <summary>confirm 阶段替换已有节点前的最后通信时间。</summary>
+    public DateTime? PendingPreviousLastContactAt { get; set; }
+
+    /// <summary>confirm 阶段替换已有节点前的创建人。</summary>
+    public string? PendingPreviousCreatedBy { get; set; }
+
     /// <summary>两阶段握手 confirm 完成时间。</summary>
     public DateTime? ConfirmedAt { get; set; }
 
