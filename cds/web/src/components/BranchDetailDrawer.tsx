@@ -3142,14 +3142,24 @@ function ResourceConnection({
   const dependentApps = resource.consumers || [];
   const [allowlistDraft, setAllowlistDraft] = useState((resource.externalAccess?.allowlist || []).join('\n'));
   const [ttlDraft, setTtlDraft] = useState(resource.externalAccess?.expiresAt ? '120' : '120');
+  const [connectionBusy, setConnectionBusy] = useState<'external' | 'internal' | null>(null);
+  const [connectionMessage, setConnectionMessage] = useState<string | null>(null);
   const canTemporaryExternal = resourcePermissionAllows(permissions, 'external-temporary-access');
   const canResetCredentials = resourcePermissionAllows(permissions, 'credentials-reset');
   const canInjectConnection = resourcePermissionAllows(permissions, 'connection-inject');
   const rows = [
-    ['内部地址', resource.internalUrl || '-'],
-    ['外部地址', externalEnabled ? externalAddress || '未开启' : externalAddress ? `${externalAddress}（未开启）` : '未开启'],
-    ['外部连接串', externalEnabled ? resource.externalAccess?.connectionString || externalAddress || '-' : '未开启'],
-    ['内部连接串', resource.connectionString || resource.internalUrl || '-'],
+    { label: '内部地址', value: resource.internalUrl || '-' },
+    { label: '外部地址', value: externalEnabled ? externalAddress || '未开启' : externalAddress ? `${externalAddress}（未开启）` : '未开启' },
+    {
+      label: '外部连接串',
+      value: externalEnabled ? resource.externalAccess?.connectionString || externalAddress || '-' : '未开启',
+      connectionScope: externalEnabled && resource.source === 'infra' ? 'external' as const : undefined,
+    },
+    {
+      label: '内部连接串',
+      value: resource.connectionString || resource.internalUrl || '-',
+      connectionScope: resource.source === 'infra' ? 'internal' as const : undefined,
+    },
   ];
   useEffect(() => {
     setAllowlistDraft((resource.externalAccess?.allowlist || []).join('\n'));
@@ -3160,22 +3170,52 @@ function ResourceConnection({
     if (!confirmResourceName) return;
     await onResetCredentials(confirmResourceName);
   }
+  async function copyConnectionString(scope: 'external' | 'internal'): Promise<void> {
+    if (!resource.branchId) return;
+    setConnectionBusy(scope);
+    setConnectionMessage(null);
+    try {
+      const res = await apiRequest<{ connectionString: string; expiresAt?: string | null }>(
+        `/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/connection-string?scope=${scope}`,
+      );
+      await onCopy(res.connectionString);
+      setConnectionMessage(`${scope === 'external' ? '外部' : '内部'}连接串已复制${res.expiresAt ? `，有效期至 ${res.expiresAt}` : ''}。`);
+    } catch (err) {
+      setConnectionMessage(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setConnectionBusy(null);
+    }
+  }
   return (
     <div className="space-y-3">
-      {rows.map(([label, value]) => (
-        <div key={label} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3">
-          <div className="mb-1 text-xs text-muted-foreground">{label}</div>
+      {rows.map((row) => (
+        <div key={row.label} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3">
+          <div className="mb-1 text-xs text-muted-foreground">{row.label}</div>
           <div className="flex min-w-0 items-center gap-2">
-            <code className="min-w-0 flex-1 truncate font-mono text-xs">{value}</code>
-            {value && value !== '-' && value !== '未开启' ? (
-              <Button type="button" size="sm" variant="outline" onClick={() => void onCopy(value)}>
-                <Copy />
-                复制
+            <code className="min-w-0 flex-1 truncate font-mono text-xs">{row.value}</code>
+            {row.value && row.value !== '-' && row.value !== '未开启' ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={row.connectionScope ? connectionBusy !== null || !canInjectConnection : false}
+                title={row.connectionScope && !canInjectConnection ? resourcePermissionReason(permissions, 'connection-inject') : undefined}
+                onClick={() => {
+                  if (row.connectionScope) {
+                    void copyConnectionString(row.connectionScope);
+                  } else {
+                    void onCopy(row.value);
+                  }
+                }}
+              >
+                {row.connectionScope && connectionBusy === row.connectionScope ? <Loader2 className="animate-spin" /> : <Copy />}
+                {row.connectionScope ? '复制可用' : '复制'}
               </Button>
             ) : null}
           </div>
         </div>
       ))}
+      {connectionMessage ? <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-xs leading-5 text-muted-foreground">{connectionMessage}</div> : null}
       <div className="grid gap-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
         <div className="flex items-center justify-between gap-3">
           <div>
@@ -3331,6 +3371,7 @@ interface MongoCollectionSummary {
 function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX.Element {
   const [databasesState, setDatabasesState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; databases: MongoDatabaseSummary[]; currentDatabase?: string; message?: string }>({ status: 'idle', databases: [] });
   const [collectionsState, setCollectionsState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; collections: MongoCollectionSummary[]; database?: string; message?: string }>({ status: 'idle', collections: [] });
+  const [selectedDatabase, setSelectedDatabase] = useState('');
   const [selectedCollection, setSelectedCollection] = useState('');
   const [documentsState, setDocumentsState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; documents: unknown[]; message?: string }>({ status: 'idle', documents: [] });
   const [filter, setFilter] = useState('{}');
@@ -3345,30 +3386,34 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
     setDatabasesState((current) => ({ ...current, status: 'loading', message: undefined }));
     try {
       const res = await apiRequest<{ currentDatabase?: string; databases: MongoDatabaseSummary[] }>(`${basePath}/databases`);
-      setDatabasesState({ status: 'ok', databases: res.databases || [], currentDatabase: res.currentDatabase });
+      const databases = res.databases || [];
+      const currentDatabase = res.currentDatabase || databases[0]?.name || '';
+      setDatabasesState({ status: 'ok', databases, currentDatabase });
+      setSelectedDatabase((current) => current || currentDatabase);
     } catch (err) {
       setDatabasesState({ status: 'error', databases: [], message: err instanceof ApiError ? err.message : String(err) });
     }
   }, [basePath]);
 
-  const loadCollections = useCallback(async () => {
-    if (!basePath) return;
+  const loadCollections = useCallback(async (database: string) => {
+    if (!basePath || !database) return;
     setCollectionsState((current) => ({ ...current, status: 'loading', message: undefined }));
+    setDocumentsState({ status: 'idle', documents: [] });
     try {
-      const res = await apiRequest<{ database?: string; collections: MongoCollectionSummary[] }>(`${basePath}/collections`);
+      const res = await apiRequest<{ database?: string; collections: MongoCollectionSummary[] }>(`${basePath}/collections?database=${encodeURIComponent(database)}`);
       const collections = res.collections || [];
       setCollectionsState({ status: 'ok', collections, database: res.database });
-      setSelectedCollection((current) => current || collections[0]?.name || '');
+      setSelectedCollection(collections[0]?.name || '');
     } catch (err) {
       setCollectionsState({ status: 'error', collections: [], message: err instanceof ApiError ? err.message : String(err) });
     }
   }, [basePath]);
 
-  const loadDocuments = useCallback(async (collection: string) => {
-    if (!basePath || !collection) return;
+  const loadDocuments = useCallback(async (database: string, collection: string) => {
+    if (!basePath || !database || !collection) return;
     setDocumentsState({ status: 'loading', documents: [] });
     try {
-      const res = await apiRequest<{ documents: unknown[] }>(`${basePath}/documents?collection=${encodeURIComponent(collection)}&limit=50`);
+      const res = await apiRequest<{ documents: unknown[] }>(`${basePath}/documents?database=${encodeURIComponent(database)}&collection=${encodeURIComponent(collection)}&limit=50`);
       setDocumentsState({ status: 'ok', documents: res.documents || [] });
     } catch (err) {
       setDocumentsState({ status: 'error', documents: [], message: err instanceof ApiError ? err.message : String(err) });
@@ -3377,21 +3422,26 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
 
   useEffect(() => {
     void loadDatabases();
-    void loadCollections();
-  }, [loadDatabases, loadCollections]);
+  }, [loadDatabases]);
 
   useEffect(() => {
-    if (!selectedCollection) return;
-    void loadDocuments(selectedCollection);
-  }, [loadDocuments, selectedCollection]);
+    if (!selectedDatabase) return;
+    void loadCollections(selectedDatabase);
+  }, [loadCollections, selectedDatabase]);
+
+  useEffect(() => {
+    if (!selectedDatabase || !selectedCollection) return;
+    void loadDocuments(selectedDatabase, selectedCollection);
+  }, [loadDocuments, selectedCollection, selectedDatabase]);
 
   async function runMongoQuery(): Promise<void> {
-    if (!basePath || !selectedCollection) return;
+    if (!basePath || !selectedDatabase || !selectedCollection) return;
     setDocumentsState({ status: 'loading', documents: [] });
     try {
       const res = await apiRequest<{ documents: unknown[] }>(`${basePath}/query`, {
         method: 'POST',
         body: {
+          database: selectedDatabase,
           collection: selectedCollection,
           filter,
           projection,
@@ -3412,7 +3462,7 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
           <div className="flex items-center justify-between gap-2 border-b border-[hsl(var(--hairline))] px-3 py-2">
             <div>
               <div className="text-xs font-semibold">Database</div>
-              <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{databasesState.currentDatabase || '-'}</div>
+              <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{selectedDatabase || databasesState.currentDatabase || '-'}</div>
             </div>
             <Button type="button" size="sm" variant="outline" disabled={databasesState.status === 'loading'} onClick={() => void loadDatabases()}>
               <RefreshCw className={databasesState.status === 'loading' ? 'animate-spin' : ''} />
@@ -3420,10 +3470,15 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
           </div>
           <div className="max-h-[120px] overflow-auto border-b border-[hsl(var(--hairline))] p-2">
             {databasesState.databases.length > 0 ? databasesState.databases.map((db) => (
-              <div key={db.name} className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-xs">
-                <span className="font-mono">{db.name}</span>
+              <button
+                key={db.name}
+                type="button"
+                className={`flex w-full items-center justify-between gap-2 rounded-md border px-2 py-1.5 text-left text-xs ${db.name === selectedDatabase ? 'border-primary bg-primary/10 text-foreground' : 'border-transparent text-muted-foreground hover:border-[hsl(var(--hairline))] hover:text-foreground'}`}
+                onClick={() => setSelectedDatabase(db.name)}
+              >
+                <span className="min-w-0 truncate font-mono">{db.name}</span>
                 <span className="text-muted-foreground">{db.sizeOnDisk ? formatBytes(db.sizeOnDisk) : '-'}</span>
-              </div>
+              </button>
             )) : (
               <div className="px-2 py-2 text-xs text-muted-foreground">{databasesState.status === 'loading' ? '读取中...' : databasesState.message || '没有数据库信息。'}</div>
             )}
@@ -3434,7 +3489,7 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
               <div className="text-xs font-semibold">Collection</div>
               <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{collectionsState.database || '-'}</div>
             </div>
-            <Button type="button" size="sm" variant="outline" disabled={collectionsState.status === 'loading'} onClick={() => void loadCollections()}>
+            <Button type="button" size="sm" variant="outline" disabled={collectionsState.status === 'loading' || !selectedDatabase} onClick={() => void loadCollections(selectedDatabase)}>
               <RefreshCw className={collectionsState.status === 'loading' ? 'animate-spin' : ''} />
             </Button>
           </div>

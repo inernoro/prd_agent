@@ -4377,7 +4377,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
       .slice(0, 63);
   }
 
-  function mongoCredentials(service: InfraService, branch: BranchEntry): { user: string; password: string; database: string; uri: string; secrets: string[] } {
+  function mongoDatabaseFromRequest(input: unknown, fallback: string): string {
+    const value = String(input || fallback || '').trim();
+    if (!value || !/^[a-zA-Z0-9_-]{1,63}$/.test(value)) {
+      throw new Error(`MongoDB database 名不合法：${value || '(empty)'}`);
+    }
+    return value;
+  }
+
+  function mongoCredentials(service: InfraService, branch: BranchEntry, databaseOverride?: string): { user: string; password: string; database: string; uri: string; secrets: string[] } {
     const branchEnv = stateService.getCustomEnvScope(branch.id);
     const user = branchEnv.MONGO_INITDB_ROOT_USERNAME
       || branchEnv.MONGODB_USERNAME
@@ -4391,18 +4399,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
       || service.env?.MONGO_PASSWORD
       || service.env?.MONGODB_PASSWORD
       || '';
-    const database = mongoDatabaseForBranch(service, branch);
+    const database = databaseOverride || mongoDatabaseForBranch(service, branch);
     const uri = user
       ? `mongodb://${encodeURIComponent(user)}:${encodeURIComponent(password)}@localhost:27017/${encodeURIComponent(database)}?authSource=admin`
       : `mongodb://localhost:27017/${encodeURIComponent(database)}`;
     return { user, password, database, uri, secrets: [password] };
   }
 
-  async function runMongoJson(service: InfraService, branch: BranchEntry, script: string, timeoutMs = 30_000): Promise<unknown> {
+  async function runMongoJson(service: InfraService, branch: BranchEntry, script: string, databaseOverride?: string, timeoutMs = 30_000): Promise<unknown> {
     if (service.status !== 'running') {
       throw new Error(`MongoDB 服务当前未运行（status=${service.status}）`);
     }
-    const creds = mongoCredentials(service, branch);
+    const creds = mongoCredentials(service, branch, databaseOverride);
     const result = await shell.exec(
       `docker exec ${shq(service.containerName || '')} mongosh ${shq(creds.uri)} --quiet --eval ${shq(script)}`,
       { timeout: timeoutMs },
@@ -5939,6 +5947,43 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return `${host}:${port}`;
   }
 
+  function usableRuntimeConnectionString(
+    resource: UnifiedBranchResource,
+    service: InfraService,
+    branch: BranchEntry,
+    host: string,
+    port: number,
+  ): string {
+    const runtime = resourceRuntimeKey(resource.runtime);
+    const env = service.env || {};
+    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    if (runtime === 'mysql') {
+      const database = branchEnv.MYSQL_DATABASE || service.dbName || env.MYSQL_DATABASE || 'app';
+      const user = branchEnv.MYSQL_USER || env.MYSQL_USER || 'root';
+      const password = branchEnv.MYSQL_PASSWORD || env.MYSQL_PASSWORD || env.MYSQL_ROOT_PASSWORD || '';
+      return `mysql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${encodeURIComponent(database)}`;
+    }
+    if (runtime === 'postgres') {
+      const database = branchEnv.POSTGRES_DB || service.dbName || env.POSTGRES_DB || env.POSTGRES_USER || 'postgres';
+      const user = branchEnv.POSTGRES_USER || env.POSTGRES_USER || 'postgres';
+      const password = branchEnv.POSTGRES_PASSWORD || env.POSTGRES_PASSWORD || '';
+      return `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${encodeURIComponent(database)}`;
+    }
+    if (runtime === 'mongodb') {
+      const database = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || service.dbName || env.MONGO_INITDB_DATABASE || 'app';
+      const user = branchEnv.MONGO_INITDB_ROOT_USERNAME || branchEnv.MONGODB_USERNAME || env.MONGO_INITDB_ROOT_USERNAME || env.MONGO_USERNAME || env.MONGODB_USERNAME || '';
+      const password = branchEnv.MONGO_INITDB_ROOT_PASSWORD || branchEnv.MONGODB_PASSWORD || env.MONGO_INITDB_ROOT_PASSWORD || env.MONGO_PASSWORD || env.MONGODB_PASSWORD || '';
+      const auth = user ? `${encodeURIComponent(user)}:${encodeURIComponent(password)}@` : '';
+      const authSource = user ? '?authSource=admin' : '';
+      return `mongodb://${auth}${host}:${port}/${encodeURIComponent(database)}${authSource}`;
+    }
+    if (runtime === 'redis') {
+      const password = branchEnv.REDIS_PASSWORD || env.REDIS_PASSWORD || env.REDIS_PASS || env.REDISCLI_AUTH || '';
+      return password ? `redis://:${encodeURIComponent(password)}@${host}:${port}` : `redis://${host}:${port}`;
+    }
+    return `${host}:${port}`;
+  }
+
   async function disableTcpResourceExternalAccess(policy?: ResourceExternalAccessPolicy | null): Promise<void> {
     if (!policy) return;
     const proxyContainerName = policy.proxyContainerName;
@@ -6263,6 +6308,67 @@ export function createBranchRouter(deps: RouterDeps): Router {
     stateService.save();
     const nextResources = await getBranchResourceSnapshot(branch);
     res.json({ policy, resource: nextResources.find((item) => item.id === resourceId) || null });
+  });
+
+  router.get('/branches/:id/resources/:resourceId/connection-string', async (req, res) => {
+    const branch = stateService.getBranch(req.params.id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return;
+    }
+    const projectId = branch.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) { res.status(m.status).json(m.body); return; }
+    const resourceId = decodeResourceId(req.params.resourceId);
+    const resources = await getBranchResourceSnapshot(branch);
+    const resource = resources.find((item) => item.id === resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${resourceId}" 不存在` });
+      return;
+    }
+    if (resource.source !== 'infra') {
+      res.status(400).json({ error: '只有 infra 资源支持生成数据库/缓存连接串' });
+      return;
+    }
+    if (!requireResourcePermission(req, res, 'connection-inject', branch, resource)) return;
+    const service = resource.raw as InfraService;
+    const scope = String(req.query.scope || 'internal') === 'external' ? 'external' : 'internal';
+    const policy = stateService.getResourceExternalAccess(projectId, branch.id, resourceId);
+    let host = service.id;
+    let port = service.containerPort || resource.containerPort || resource.port;
+    if (scope === 'external') {
+      if (!policy?.enabled || !policy.host || !policy.port) {
+        res.status(409).json({ error: '资源尚未开启公网访问，无法生成外部连接串' });
+        return;
+      }
+      host = policy.host;
+      port = policy.port;
+    }
+    if (!host || !port) {
+      res.status(409).json({ error: `资源 "${resource.displayName}" 缺少可用 host/port` });
+      return;
+    }
+    const connectionString = usableRuntimeConnectionString(resource, service, branch, host, port);
+    const maskedConnectionString = maskConnectionString(connectionString);
+    stateService.appendActivityLog(projectId, {
+      type: 'resource-connection-inject',
+      branchId: branch.id,
+      branchName: branch.branch,
+      actor: resolveActorFromRequest(req),
+      resourceId,
+      resourceName: resource.displayName,
+      result: 'success',
+      note: `${resource.displayName} 复制${scope === 'external' ? '外部' : '内部'}连接串`,
+    });
+    stateService.save();
+    res.json({
+      branchId: branch.id,
+      resourceId,
+      scope,
+      connectionString,
+      maskedConnectionString,
+      expiresAt: scope === 'external' ? policy?.expiresAt || null : null,
+    });
   });
 
   router.get('/branches/:id/resources/:resourceId/audit', (req, res) => {
@@ -6629,9 +6735,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const ctx = await resolveMongoDataResourceForRequest(req, res);
     if (!ctx) return;
     try {
-      const database = mongoDatabaseForBranch(ctx.service, ctx.branch);
+      const database = mongoDatabaseFromRequest(req.query.database, mongoDatabaseForBranch(ctx.service, ctx.branch));
       const script = `JSON.stringify(db.getCollectionInfos({}, { nameOnly: false }).map(c => ({ name: c.name, type: c.type || 'collection' })))`;
-      const data = await runMongoJson(ctx.service, ctx.branch, script);
+      const data = await runMongoJson(ctx.service, ctx.branch, script, database);
       res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, database, collections: Array.isArray(data) ? data : [] });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -6651,9 +6757,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const limitRaw = Number(req.query.limit);
     const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.floor(limitRaw), 1), 100) : 50;
     try {
-      const database = mongoDatabaseForBranch(ctx.service, ctx.branch);
+      const database = mongoDatabaseFromRequest(req.query.database, mongoDatabaseForBranch(ctx.service, ctx.branch));
       const script = `JSON.stringify(db.getCollection(${mongoSafeJson(collection)}).find({}).limit(${limit}).toArray())`;
-      const data = await runMongoJson(ctx.service, ctx.branch, script);
+      const data = await runMongoJson(ctx.service, ctx.branch, script, database);
       res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, database, collection, limit, documents: Array.isArray(data) ? data : [] });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -6669,6 +6775,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     let sort: Record<string, unknown>;
     try {
       collection = mongoCollectionFromRequest(req.body?.collection);
+      mongoDatabaseFromRequest(req.body?.database, mongoDatabaseForBranch(ctx.service, ctx.branch));
       filter = mongoJsonObject(req.body?.filter, 'filter');
       projection = mongoJsonObject(req.body?.projection, 'projection');
       sort = mongoJsonObject(req.body?.sort, 'sort');
@@ -6679,12 +6786,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const limitRaw = Number(req.body?.limit);
     const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.floor(limitRaw), 1), 100) : 50;
     try {
-      const database = mongoDatabaseForBranch(ctx.service, ctx.branch);
+      const database = mongoDatabaseFromRequest(req.body?.database, mongoDatabaseForBranch(ctx.service, ctx.branch));
       const script = [
         `const cursor = db.getCollection(${mongoSafeJson(collection)}).find(${mongoSafeJson(filter)}, ${mongoSafeJson(projection)}).sort(${mongoSafeJson(sort)}).limit(${limit});`,
         'JSON.stringify(cursor.toArray())',
       ].join(' ');
-      const data = await runMongoJson(ctx.service, ctx.branch, script);
+      const data = await runMongoJson(ctx.service, ctx.branch, script, database);
       stateService.appendActivityLog(ctx.projectId, {
         type: 'resource-data-query',
         branchId: ctx.branch.id,
