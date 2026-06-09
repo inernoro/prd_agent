@@ -1493,22 +1493,22 @@ public class HostedSiteService : IHostedSiteService
             .Distinct()
             .ToList();
         var fbLog = Builders<ShareViewLog>.Filter;
-        var recentLogs = tokens.Count == 0
+        var windowLogs = tokens.Count == 0
             ? new List<ShareViewLog>()
             : await _db.ShareViewLogs
                 .Find(fbLog.In(x => x.ShareToken, tokens) & fbLog.Gte(x => x.ViewedAt, rangeStart))
                 .SortByDescending(x => x.ViewedAt)
-                .Limit(500)
                 .ToListAsync(ct);
+        var recentLogs = windowLogs.Take(500).ToList();
 
-        var totalViews = recentLogs.Count;
-        var uniqueVisitors = recentLogs
+        var totalViews = windowLogs.Count;
+        var uniqueVisitors = windowLogs
             .Select(ViewerDedupeKey)
             .Where(k => !string.IsNullOrWhiteSpace(k))
             .Distinct()
             .Count();
 
-        var viewerUserIds = recentLogs
+        var viewerUserIds = windowLogs
             .Select(l => l.ViewerUserId)
             .Where(id => !string.IsNullOrWhiteSpace(id))
             .Select(id => id!)
@@ -1543,7 +1543,7 @@ public class HostedSiteService : IHostedSiteService
             ClientSummary = BuildClientSummary(l.UserAgent, l.IpAddress),
         }).ToList();
 
-        var visitorsByToken = recentLogs
+        var visitorsByToken = windowLogs
             .GroupBy(l => l.ShareToken)
             .ToDictionary(
                 g => g.Key,
@@ -1563,13 +1563,13 @@ public class HostedSiteService : IHostedSiteService
                     .ThenBy(v => v.ViewerName == "匿名访客" ? 1 : 0)
                     .Take(5)
                     .ToList());
-        var visitorCountsByToken = recentLogs
+        var visitorCountsByToken = windowLogs
             .GroupBy(l => l.ShareToken)
             .ToDictionary(g => g.Key, g => g.Select(ViewerDedupeKey).Distinct().LongCount());
-        var viewCountsByToken = recentLogs
+        var viewCountsByToken = windowLogs
             .GroupBy(l => l.ShareToken)
             .ToDictionary(g => g.Key, g => g.LongCount());
-        var lastViewedAtByToken = recentLogs
+        var lastViewedAtByToken = windowLogs
             .GroupBy(l => l.ShareToken)
             .ToDictionary(g => g.Key, g => g.Max(l => l.ViewedAt));
 
@@ -1601,7 +1601,7 @@ public class HostedSiteService : IHostedSiteService
                 return new ShareAnalyticsTrendPoint
                 {
                     Date = key,
-                    Views = recentLogs.LongCount(l => l.ViewedAt.ToString("yyyy-MM-dd") == key),
+                    Views = windowLogs.LongCount(l => l.ViewedAt.ToString("yyyy-MM-dd") == key),
                     Comments = comments.LongCount(c => c.CreatedAt.ToString("yyyy-MM-dd") == key),
                 };
             })
@@ -1611,11 +1611,11 @@ public class HostedSiteService : IHostedSiteService
             .Select(hour => new ShareAnalyticsHourlyPoint
             {
                 Hour = hour,
-                Views = recentLogs.LongCount(l => l.ViewedAt.Hour == hour),
+                Views = windowLogs.LongCount(l => l.ViewedAt.Hour == hour),
             })
             .ToList();
 
-        var topVisitors = recentLogs
+        var topVisitors = windowLogs
             .GroupBy(ViewerDedupeKey)
             .Select(g =>
             {

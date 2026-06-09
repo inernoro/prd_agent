@@ -243,6 +243,18 @@ public class AdminPeerNodesController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
                 "本端保存失败，已尝试撤销对端确认；本次不会保存半连接状态。"));
         }
+        if (!legacyPeerCommittedOnHandshake)
+        {
+            var finalize = await PostPeerJsonAsync(baseLeft, "/api/peer-sync/handshake/finalize", confirmBody, ct);
+            if (!finalize.Ok)
+            {
+                _logger.LogWarning(
+                    "[peer-sync] remote handshake finalize failed remoteNodeId={RemoteNodeId} status={Status} error={Error}",
+                    result.NodeId,
+                    finalize.Status,
+                    finalize.Error);
+            }
+        }
         // PR #742 review Medium fix：upsert 后回读可能因极端时序 / 副本集读不到，不可直接 ! 解引用。
         // 命中 null 时 500 已配对成功用户却看 NRE，体验糟；显式回报"已配对但读取失败"，配对码已用过、
         // SharedSecret 已落库，让用户刷新即能看到。

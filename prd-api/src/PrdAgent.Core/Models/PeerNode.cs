@@ -106,5 +106,8 @@ public class PeerPairingCode
     /// <summary>两阶段握手 confirm 完成时间。</summary>
     public DateTime? ConfirmedAt { get; set; }
 
+    /// <summary>发起端完成探活和本地落库后写入；写入后 cancel 不能再撤销正式连接。</summary>
+    public DateTime? FinalizedAt { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

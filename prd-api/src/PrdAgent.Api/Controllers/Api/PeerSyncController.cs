@@ -189,6 +189,44 @@ public class PeerSyncController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { ok = true }));
     }
 
+    /// <summary>两阶段握手完成：发起端已探活并本地落库，之后 cancel 不再允许撤销正式连接。</summary>
+    [AllowAnonymous]
+    [HttpPost("handshake/finalize")]
+    public async Task<IActionResult> FinalizeHandshake([FromBody] HandshakeConfirmPayload payload, CancellationToken ct)
+    {
+        if (payload == null || string.IsNullOrWhiteSpace(payload.PairingCode)
+            || string.IsNullOrWhiteSpace(payload.InitiatorNodeId)
+            || string.IsNullOrWhiteSpace(payload.SharedSecret))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "完成请求缺少必要信息"));
+
+        var code = await _db.PeerPairingCodes.Find(c =>
+            c.Id == payload.PairingCode.Trim()
+            && c.Used
+            && c.UsedByNodeId == payload.InitiatorNodeId.Trim()
+            && c.PendingSharedSecret == payload.SharedSecret
+            && c.ConfirmedAt != null
+            && c.FinalizedAt == null).FirstOrDefaultAsync(ct);
+        if (code == null)
+            return Ok(ApiResponse<object>.Ok(new { finalized = false }));
+
+        await _db.PeerPairingCodes.UpdateOneAsync(c => c.Id == code.Id,
+            Builders<PeerPairingCode>.Update
+                .Set(c => c.FinalizedAt, DateTime.UtcNow)
+                .Set(c => c.PendingSharedSecret, (string?)null)
+                .Set(c => c.PendingInitiatorBaseUrl, (string?)null)
+                .Set(c => c.PendingInitiatorDisplayName, (string?)null)
+                .Set(c => c.PendingReplacedPeerNodeId, (string?)null)
+                .Set(c => c.PendingPreviousDisplayName, (string?)null)
+                .Set(c => c.PendingPreviousBaseUrl, (string?)null)
+                .Set(c => c.PendingPreviousSharedSecret, (string?)null)
+                .Set(c => c.PendingPreviousStatus, (string?)null)
+                .Set(c => c.PendingPreviousLastError, (string?)null)
+                .Set(c => c.PendingPreviousLastContactAt, (DateTime?)null)
+                .Set(c => c.PendingPreviousCreatedBy, (string?)null),
+            cancellationToken: ct);
+        return Ok(ApiResponse<object>.Ok(new { finalized = true }));
+    }
+
     /// <summary>两阶段握手失败清理：confirm 后探活失败或发起端落库失败时撤销接收端正式记录。</summary>
     [AllowAnonymous]
     [HttpPost("handshake/cancel")]
@@ -202,7 +240,9 @@ public class PeerSyncController : ControllerBase
         var code = await _db.PeerPairingCodes.Find(c =>
             c.Id == payload.PairingCode.Trim()
             && c.UsedByNodeId == payload.InitiatorNodeId.Trim()
-            && c.PendingSharedSecret == payload.SharedSecret).FirstOrDefaultAsync(ct);
+            && c.PendingSharedSecret == payload.SharedSecret
+            && c.ConfirmedAt != null
+            && c.FinalizedAt == null).FirstOrDefaultAsync(ct);
         if (code == null)
             return Ok(ApiResponse<object>.Ok(new { cancelled = false }));
 
@@ -245,6 +285,7 @@ public class PeerSyncController : ControllerBase
                 .Set(c => c.PendingPreviousLastError, (string?)null)
                 .Set(c => c.PendingPreviousLastContactAt, (DateTime?)null)
                 .Set(c => c.PendingPreviousCreatedBy, (string?)null)
+                .Set(c => c.FinalizedAt, (DateTime?)null)
                 .Set(c => c.ConfirmedAt, (DateTime?)null),
             cancellationToken: ct);
         return Ok(ApiResponse<object>.Ok(new { cancelled = true }));
