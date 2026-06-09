@@ -73,8 +73,8 @@ export function UserSearchSelect({
   const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // 下拉面板位置（Portal 渲染需要绝对坐标）
-  const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  // 下拉面板位置（Portal 渲染需要绝对坐标）。空间不足时向上翻转，并按可用空间限高。
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; left: number; width: number; maxHeight: number } | null>(null);
 
   // 内部用户数据（当外部未提供时自动获取）
   const [internalUsers, setInternalUsers] = useState<AdminUser[]>([]);
@@ -116,15 +116,23 @@ export function UserSearchSelect({
       )
     : users;
 
-  // 计算下拉面板位置
+  // 计算下拉面板位置：默认向下；若下方空间不足且上方更宽裕则向上翻转，maxHeight 按可用空间收敛，
+  // 同时把 left 夹在视口内，避免靠近底部/右侧时被裁切（修复评论区 @ 弹层显示不全）。
   const updatePos = useCallback(() => {
     if (!triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
-    setPos({
-      top: rect.bottom + 4,
-      left: rect.left,
-      width: Math.max(rect.width, 260),
-    });
+    const margin = 8;
+    const desired = 320;
+    const spaceBelow = window.innerHeight - rect.bottom - margin;
+    const spaceAbove = rect.top - margin;
+    const openUp = spaceBelow < Math.min(desired, 200) && spaceAbove > spaceBelow;
+    const width = Math.max(rect.width, 260);
+    const left = Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin));
+    if (openUp) {
+      setPos({ bottom: window.innerHeight - rect.top + 4, left, width, maxHeight: Math.max(160, Math.min(desired, spaceAbove)) });
+    } else {
+      setPos({ top: rect.bottom + 4, left, width, maxHeight: Math.max(160, Math.min(desired, spaceBelow)) });
+    }
   }, []);
 
   // 打开时计算位置，滚动/resize 时更新
@@ -176,9 +184,10 @@ export function UserSearchSelect({
       style={{
         position: 'fixed',
         top: pos.top,
+        bottom: pos.bottom,
         left: pos.left,
         width: pos.width,
-        maxHeight: '320px',
+        maxHeight: pos.maxHeight,
         zIndex: 9999,
         background: 'var(--glass-bg-end, rgba(22, 22, 28, 0.98))',
         border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
