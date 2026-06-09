@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Send, Plus, Pencil, Trash2, Loader2, X, BookOpen, Search, Upload } from 'lucide-react';
+import { Send, Plus, Pencil, Trash2, Loader2, X, BookOpen, Search, Upload, Paperclip, Image as ImageIcon } from 'lucide-react';
 import { useSseStream } from '@/lib/useSseStream';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import { uploadAttachment } from '@/services/real/aiToolbox';
@@ -23,7 +23,10 @@ export function KnowledgeTab() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<ChannelTraceKnowledge | null>(null);
   const [importing, setImporting] = useState(false);
+  const [askFiles, setAskFiles] = useState<{ attachmentId: string; fileName: string; isImage: boolean }[]>([]);
+  const [askUploading, setAskUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const askFileInputRef = useRef<HTMLInputElement>(null);
 
   const { phase, phaseMessage, typing, isStreaming, start } = useSseStream({
     url: knowledgeAskUrl,
@@ -50,7 +53,33 @@ export function KnowledgeTab() {
   const ask = () => {
     if (!question.trim() || isStreaming) return;
     setModel(null);
-    void start({ body: { question: question.trim() } });
+    void start({
+      body: {
+        question: question.trim(),
+        attachmentIds: askFiles.length > 0 ? askFiles.map((f) => f.attachmentId) : undefined,
+      },
+    });
+  };
+
+  const onAttachAskFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = '';
+    if (files.length === 0) return;
+    setAskUploading(true);
+    try {
+      for (const file of files) {
+        if (askFiles.length >= 8) break;
+        const up = await uploadAttachment(file);
+        if (up.success && up.data) {
+          setAskFiles((prev) => [
+            ...prev,
+            { attachmentId: up.data!.attachmentId, fileName: file.name, isImage: file.type.startsWith('image/') },
+          ]);
+        }
+      }
+    } finally {
+      setAskUploading(false);
+    }
   };
 
   const onDelete = async (id: string) => {
@@ -99,6 +128,14 @@ export function KnowledgeTab() {
               className="flex-1 resize-none rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 placeholder:text-white/30 focus:outline-none focus:border-emerald-500/40"
             />
             <button
+              onClick={() => askFileInputRef.current?.click()}
+              disabled={askUploading || askFiles.length >= 8}
+              title="上传防窜后台页面截图 / 文档，让 AI 识别页面与操作"
+              className="shrink-0 inline-flex items-center gap-1 px-2.5 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white/75 hover:bg-white/10 disabled:opacity-40"
+            >
+              {askUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
+            </button>
+            <button
               onClick={ask}
               disabled={isStreaming || !question.trim()}
               className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-sm hover:bg-emerald-500/25 disabled:opacity-40 disabled:cursor-not-allowed"
@@ -106,7 +143,34 @@ export function KnowledgeTab() {
               {isStreaming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
               提问
             </button>
+            <input
+              ref={askFileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              accept="image/*,.md,.txt,.pdf,.doc,.docx,.xls,.xlsx,.csv"
+              onChange={onAttachAskFiles}
+            />
           </div>
+          {askFiles.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {askFiles.map((f, i) => (
+                <span
+                  key={f.attachmentId}
+                  className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-white/5 border border-white/10 text-white/70"
+                >
+                  {f.isImage ? <ImageIcon className="w-3 h-3" /> : <Paperclip className="w-3 h-3" />}
+                  <span className="max-w-[140px] truncate">{f.fileName}</span>
+                  <button
+                    onClick={() => setAskFiles((prev) => prev.filter((_, idx) => idx !== i))}
+                    className="text-white/40 hover:text-rose-400"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           {model?.model && (
             <div className="text-[11px] text-white/40 font-mono mt-2">
               ● {model.model}

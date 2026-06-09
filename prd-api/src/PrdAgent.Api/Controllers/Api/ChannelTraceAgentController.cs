@@ -212,10 +212,19 @@ public class ChannelTraceAgentController : ControllerBase
     public class AskKnowledgeRequest
     {
         public string? Question { get; set; }
+        /// <summary>可选：上传的截图 / 文档附件 id（截图走视觉识别，文档取抽取文本作为上下文）。</summary>
+        public List<string>? AttachmentIds { get; set; }
     }
 
     /// <summary>
-    /// 业务知识问答（SSE 流式）。事件：model / typing / done / error。
+    /// 防窜物流系统访问入口（固定路径，供 AI 给出"去哪操作"的导航；不含任何账号密码）。
+    /// </summary>
+    private const string FcSystemNavContext =
+        "防窜物流系统访问路径：登录后进入工作台首页 → 点右上角「应用服务」下拉 → 选择「防窜物流」进入系统。" +
+        "回答涉及「在哪操作 / 怎么操作」时，请基于该入口给出从进入系统到目标功能的分步路径。";
+
+    /// <summary>
+    /// 业务知识问答（SSE 流式，支持上传防窜后台截图做视觉识别）。事件：model / typing / done / error。
     /// </summary>
     [HttpPost("knowledge/ask")]
     [Produces("text/event-stream")]
@@ -234,16 +243,36 @@ public class ChannelTraceAgentController : ControllerBase
                 .SortByDescending(x => x.UpdatedAt)
                 .Limit(500)
                 .ToListAsync(CancellationToken.None);
-
             var kbContext = BuildKnowledgeContext(entries, KnowledgeContextBudget);
 
+            // 取出用户上传的附件：图片走视觉识别，文档取抽取文本
+            var imageUrls = new List<string>();
+            var docTexts = new List<string>();
+            if (req.AttachmentIds is { Count: > 0 })
+            {
+                var ids = req.AttachmentIds.Take(8).ToList();
+                var atts = await _db.Attachments
+                    .Find(x => ids.Contains(x.AttachmentId) && x.UploaderId == userId)
+                    .ToListAsync(CancellationToken.None);
+                foreach (var a in atts)
+                {
+                    if (!string.IsNullOrEmpty(a.MimeType) && a.MimeType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)
+                        && !string.IsNullOrWhiteSpace(a.Url))
+                        imageUrls.Add(a.Url);
+                    else if (!string.IsNullOrWhiteSpace(a.ExtractedText))
+                        docTexts.Add($"【{a.FileName}】\n{Truncate(a.ExtractedText, 20_000)}");
+                }
+            }
+
             var systemPrompt =
-                "你是「商品溯源智能体」中的防窜物流业务知识助手。你的职责是帮助研发 / 运营 / 测试人员快速理解防窜物流业务知识。\n" +
+                "你是「商品溯源智能体」中的防窜物流业务知识助手，帮助研发 / 运营 / 测试人员快速理解防窜物流业务、并给出在后台系统里的具体操作指引。\n" +
                 "回答要求：\n" +
-                " - 优先依据下方「业务知识库」内容作答，引用到的要点尽量贴合原文术语\n" +
-                " - 知识库未覆盖时，可结合通用领域常识补充，但必须明确标注「（知识库未收录，以下为通用理解）」\n" +
-                " - 用中文回答，结构清晰（必要时分点 / 小标题），先给结论再展开\n" +
-                " - 涉及流程的，按「上码 → 关联 → 出入库 → 流通 → 窜货判定」之类的链路顺序讲清楚\n" +
+                " - 优先依据「业务知识库」内容作答，贴合原文术语；知识库未覆盖时可补充通用理解，但要标注「（知识库未收录，以下为通用理解）」\n" +
+                " - 用中文，结构清晰，先结论后展开；涉及流程按「上码 → 关联 → 出入库 → 流通 → 窜货判定」链路讲清楚\n" +
+                " - **当问题是「某业务怎么操作 / 在哪里操作 / 线上问题如何在后台排查」时，必须额外输出「## 操作步骤」小节**：" +
+                "给出从进入防窜系统到目标功能的分步指引（入口路径 → 点哪个菜单/按钮 → 每步做什么），步骤要具体可照做；信息不足时明确指出还需确认哪些点\n" +
+                " - 若用户上传了防窜后台页面截图，请结合截图识别当前所在页面与可点击的关键操作，指出下一步点哪里\n" +
+                " - " + FcSystemNavContext + "\n" +
                 (string.IsNullOrWhiteSpace(kbContext)
                     ? " - 当前知识库为空，请提示用户先在「业务知识」标签维护知识，并基于通用理解谨慎作答\n"
                     : "");
@@ -255,12 +284,49 @@ public class ChannelTraceAgentController : ControllerBase
                 userPrompt.AppendLine(kbContext);
                 userPrompt.AppendLine();
             }
+            if (docTexts.Count > 0)
+            {
+                userPrompt.AppendLine("===== 用户上传的文档内容 =====");
+                foreach (var d in docTexts) userPrompt.AppendLine(d);
+                userPrompt.AppendLine();
+            }
+            if (imageUrls.Count > 0)
+                userPrompt.AppendLine("（用户附带了 " + imageUrls.Count + " 张防窜后台页面截图，请结合截图识别页面与可操作项）");
             userPrompt.AppendLine("===== 用户问题 =====");
             userPrompt.AppendLine(req.Question.Trim());
 
-            await writeEvent("phase", new { phase = "answering", message = "AI 正在检索业务知识并作答…" });
-            await StreamChatAsync(writeEvent, userId, systemPrompt, userPrompt.ToString(),
-                AppCallerRegistry.ChannelTraceAgent.Knowledge.Chat);
+            await writeEvent("phase", new
+            {
+                phase = "answering",
+                message = imageUrls.Count > 0 ? "AI 正在识别截图并结合业务知识作答…" : "AI 正在检索业务知识并作答…",
+            });
+
+            if (imageUrls.Count > 0)
+            {
+                // 视觉路径：content 用「文本 + image_url」数组
+                var contentArray = new JsonArray { new JsonObject { ["type"] = "text", ["text"] = userPrompt.ToString() } };
+                foreach (var url in imageUrls)
+                {
+                    contentArray.Add(new JsonObject
+                    {
+                        ["type"] = "image_url",
+                        ["image_url"] = new JsonObject { ["url"] = url, ["detail"] = "high" },
+                    });
+                }
+                var messages = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                    new JsonObject { ["role"] = "user", ["content"] = contentArray },
+                };
+                await StreamChatMessagesAsync(writeEvent, userId, messages,
+                    AppCallerRegistry.ChannelTraceAgent.Knowledge.Vision, "vision");
+            }
+            else
+            {
+                await StreamChatAsync(writeEvent, userId, systemPrompt, userPrompt.ToString(),
+                    AppCallerRegistry.ChannelTraceAgent.Knowledge.Chat);
+            }
+
             await writeEvent("done", new { });
         });
     }
@@ -1171,7 +1237,8 @@ public class ChannelTraceAgentController : ControllerBase
         Func<string, object, Task> writeEvent,
         string userId,
         JsonArray messages,
-        string appCallerCode)
+        string appCallerCode,
+        string modelType = "chat")
     {
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
             RequestId: Guid.NewGuid().ToString("N"),
@@ -1182,7 +1249,7 @@ public class ChannelTraceAgentController : ControllerBase
             DocumentChars: messages.Count,
             DocumentHash: null,
             SystemPromptRedacted: appCallerCode,
-            RequestType: "chat",
+            RequestType: modelType,
             AppCallerCode: appCallerCode));
 
         var body = new JsonObject
@@ -1199,7 +1266,7 @@ public class ChannelTraceAgentController : ControllerBase
         await foreach (var chunk in _gateway.StreamAsync(new GatewayRequest
         {
             AppCallerCode = appCallerCode,
-            ModelType = ModelTypes.Chat,
+            ModelType = modelType,
             Stream = true,
             RequestBody = body,
             TimeoutSeconds = 180,

@@ -1521,6 +1521,14 @@ public static class ChannelTraceAgent
             Category = "ChannelTrace"
         )]
         public const string Chat = "channel-trace-agent.knowledge::chat";
+
+        [AppCallerMetadata(
+            "商品溯源-业务知识截图识别",
+            "用户上传防窜后台页面截图时，结合视觉识别关键业务操作并给出操作流程",
+            ModelTypes = new[] { ModelTypes.Vision },
+            Category = "ChannelTrace"
+        )]
+        public const string Vision = "channel-trace-agent.knowledge::vision";
     }
 
     public static class Diagnose
