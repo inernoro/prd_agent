@@ -382,6 +382,7 @@ builder.Services.AddScoped<PrdAgent.Api.Services.ReviewAgent.ReviewWebhookServic
 
 // Project Route Agent: 浅克隆缓存服务（任意第三方仓库 git clone --depth=1）
 builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ProjectRouteAgent.GitRepoCacheService>();
+builder.Services.AddSingleton<PrdAgent.Infrastructure.Services.ChannelTraceAgent.ChannelTraceCodeScanService>();
 
 // ImageMaster 资产存储：默认本地文件（可替换为对象存储实现）
 builder.Services.AddSingleton<IAssetStorage>(sp =>

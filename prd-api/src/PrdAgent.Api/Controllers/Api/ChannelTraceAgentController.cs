@@ -7,6 +7,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.Services.ChannelTraceAgent;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
@@ -40,17 +41,20 @@ public class ChannelTraceAgentController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
+    private readonly ChannelTraceCodeScanService _codeScan;
     private readonly ILogger<ChannelTraceAgentController> _logger;
 
     public ChannelTraceAgentController(
         MongoDbContext db,
         ILlmGateway gateway,
         ILLMRequestContextAccessor llmRequestContext,
+        ChannelTraceCodeScanService codeScan,
         ILogger<ChannelTraceAgentController> logger)
     {
         _db = db;
         _gateway = gateway;
         _llmRequestContext = llmRequestContext;
+        _codeScan = codeScan;
         _logger = logger;
     }
 
@@ -119,6 +123,47 @@ public class ChannelTraceAgentController : ControllerBase
         {
             Title = req.Title.Trim(),
             Content = req.Content,
+            Tags = NormalizeTags(req.Tags),
+            CreatedBy = userId,
+            CreatedByName = GetDisplayName(),
+            UpdatedBy = userId,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        await _db.ChannelTraceKnowledge.InsertOneAsync(entry, cancellationToken: CancellationToken.None);
+        return Ok(ApiResponse<object>.Ok(new { item = entry }));
+    }
+
+    public class ImportRequest
+    {
+        public string? AttachmentId { get; set; }
+        public string? Title { get; set; }
+        public List<string>? Tags { get; set; }
+    }
+
+    /// <summary>
+    /// 从已上传附件导入一条业务知识：读取附件抽取出的文本作为正文（1 文件 = 1 条）。
+    /// </summary>
+    [HttpPost("knowledge/import")]
+    public async Task<IActionResult> ImportKnowledge([FromBody] ImportRequest req, CancellationToken ct)
+    {
+        if (req == null || string.IsNullOrWhiteSpace(req.AttachmentId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "attachmentId 不能为空"));
+
+        var userId = GetUserId();
+        var attachment = await _db.Attachments
+            .Find(x => x.AttachmentId == req.AttachmentId && x.UploaderId == userId)
+            .FirstOrDefaultAsync(ct);
+        if (attachment == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "附件不存在或不属于当前用户"));
+        if (string.IsNullOrWhiteSpace(attachment.ExtractedText))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "无法从文件中提取文本内容，请确认上传的是可解析的文档"));
+
+        var now = DateTime.UtcNow;
+        var entry = new ChannelTraceKnowledge
+        {
+            Title = string.IsNullOrWhiteSpace(req.Title) ? StripExtension(attachment.FileName) : req.Title.Trim(),
+            Content = attachment.ExtractedText,
             Tags = NormalizeTags(req.Tags),
             CreatedBy = userId,
             CreatedByName = GetDisplayName(),
@@ -280,6 +325,116 @@ public class ChannelTraceAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { item = entry }));
     }
 
+    /// <summary>
+    /// 从已上传附件导入线上问题案例（SSE 流式）：AI 把历史 bug 文档解析为多条结构化案例并入库。
+    /// 事件：phase / model / case（每解析出一条）/ done / error。
+    /// </summary>
+    [HttpPost("cases/import")]
+    [Produces("text/event-stream")]
+    public async Task ImportCases([FromBody] ImportRequest req)
+    {
+        var userId = GetUserId();
+        await RunSseAsync(async writeEvent =>
+        {
+            if (req == null || string.IsNullOrWhiteSpace(req.AttachmentId))
+            {
+                await writeEvent("error", new { message = "attachmentId 不能为空" });
+                return;
+            }
+
+            var attachment = await _db.Attachments
+                .Find(x => x.AttachmentId == req.AttachmentId && x.UploaderId == userId)
+                .FirstOrDefaultAsync(CancellationToken.None);
+            if (attachment == null)
+            {
+                await writeEvent("error", new { message = "附件不存在或不属于当前用户" });
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(attachment.ExtractedText))
+            {
+                await writeEvent("error", new { message = "无法从文件中提取文本内容" });
+                return;
+            }
+
+            var text = Truncate(attachment.ExtractedText, 60_000);
+
+            var systemPrompt =
+                "你是「商品溯源智能体」的案例整理助手。请把用户导入的「历史线上问题/缺陷文档」解析为结构化的防窜物流线上问题案例数组。\n" +
+                "每条案例字段：title（一句话标题）、symptom（问题现象）、rootCause（根因，可空）、resolution（排查步骤/解决方案，可空）、tags（字符串数组）、severity（low/medium/high）。\n" +
+                "规则：忠实于原文，不要编造原文没有的根因或解决方案（缺失就留空）；一个文档可能含多条问题，按条拆分。\n" +
+                "严格只输出一个 JSON 对象，UTF-8，禁止 markdown 代码围栏：{ \"cases\": [ { ... } ] }";
+
+            await writeEvent("phase", new { phase = "parsing", message = "AI 正在解析文件中的历史问题…" });
+
+            string content;
+            string? model = null, platform = null;
+            using (var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+                RequestId: Guid.NewGuid().ToString("N"),
+                GroupId: null, SessionId: null, UserId: userId, ViewRole: null,
+                DocumentChars: text.Length, DocumentHash: null,
+                SystemPromptRedacted: AppCallerRegistry.ChannelTraceAgent.CaseImport.Chat,
+                RequestType: "chat",
+                AppCallerCode: AppCallerRegistry.ChannelTraceAgent.CaseImport.Chat)))
+            {
+                var resp = await _gateway.SendAsync(new GatewayRequest
+                {
+                    AppCallerCode = AppCallerRegistry.ChannelTraceAgent.CaseImport.Chat,
+                    ModelType = ModelTypes.Chat,
+                    RequestBody = new JsonObject
+                    {
+                        ["messages"] = new JsonArray
+                        {
+                            new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                            new JsonObject { ["role"] = "user", ["content"] = text },
+                        },
+                        ["temperature"] = 0.2,
+                    },
+                    TimeoutSeconds = 180,
+                }, CancellationToken.None);
+
+                model = string.IsNullOrEmpty(resp.Resolution?.ActualModel) ? null : resp.Resolution!.ActualModel;
+                platform = resp.Resolution?.ActualPlatformName;
+                if (!resp.Success || string.IsNullOrWhiteSpace(resp.Content))
+                {
+                    await writeEvent("error", new { message = "AI 解析失败：" + (resp.ErrorMessage ?? "模型未返回内容") });
+                    return;
+                }
+                content = resp.Content!;
+            }
+
+            if (!string.IsNullOrEmpty(model))
+                await writeEvent("model", new { model, platform });
+
+            var parsedCases = ParseCasesJson(content);
+            if (parsedCases.Count == 0)
+            {
+                await writeEvent("error", new { message = "未能从文件中解析出任何案例，请检查文件内容" });
+                return;
+            }
+
+            var now = DateTime.UtcNow;
+            var displayName = GetDisplayName();
+            var inserted = 0;
+            foreach (var c in parsedCases)
+            {
+                c.Tags = NormalizeTags(c.Tags);
+                c.Tags.Add("导入");
+                c.Tags = c.Tags.Distinct().ToList();
+                c.Severity = NormalizeSeverity(c.Severity);
+                c.CreatedBy = userId;
+                c.CreatedByName = displayName;
+                c.UpdatedBy = userId;
+                c.CreatedAt = now;
+                c.UpdatedAt = now;
+                await _db.ChannelTraceCases.InsertOneAsync(c, cancellationToken: CancellationToken.None);
+                inserted++;
+                await writeEvent("case", new { id = c.Id, title = c.Title, severity = c.Severity, index = inserted });
+            }
+
+            await writeEvent("done", new { count = inserted });
+        });
+    }
+
     [HttpPut("cases/{id}")]
     public async Task<IActionResult> UpdateCase(string id, [FromBody] UpsertCaseRequest req, CancellationToken ct)
     {
@@ -439,14 +594,26 @@ public class ChannelTraceAgentController : ControllerBase
     public class CompareDiffRequest
     {
         public string? Title { get; set; }
+        /// <summary>用户对功能的具体描述（新版主输入）。</summary>
+        public string? FeatureDescription { get; set; }
+        /// <summary>兼容旧字段名。</summary>
         public string? BusinessRule { get; set; }
-        public string? CodeContent { get; set; }
-        public string? CodeLocation { get; set; }
+    }
+
+    /// <summary>查看内置仓库配置（前端展示「将扫描哪些仓库」）。</summary>
+    [HttpGet("diffs/repos")]
+    public IActionResult GetCodeScanRepos()
+    {
+        var repos = _codeScan.GetConfiguredRepos()
+            .Select(r => new { name = r.Name, branch = string.IsNullOrWhiteSpace(r.Branch) ? "master" : r.Branch })
+            .ToList();
+        return Ok(ApiResponse<object>.Ok(new { repos, tokenConfigured = _codeScan.GetGitHubToken() != null }));
     }
 
     /// <summary>
-    /// 业务规则 vs 代码实现差异对比（SSE 流式 + 落库）。
-    /// 事件：diff（记录已创建）/ model / typing / done / error。
+    /// 描述驱动的「业务功能 vs 代码实现」异同分析（SSE 流式 + 落库）。
+    /// 子 agent 流程：抽关键词 → 克隆并扫描内置两个仓库 → 命中代码 → AI 对比描述与代码异同。
+    /// 事件：diff / keywords / repos / codeHits / model / typing / done / error。
     /// </summary>
     [HttpPost("diffs/compare")]
     [Produces("text/event-stream")]
@@ -455,26 +622,18 @@ public class ChannelTraceAgentController : ControllerBase
         var userId = GetUserId();
         await RunSseAsync(async writeEvent =>
         {
-            if (req == null || string.IsNullOrWhiteSpace(req.BusinessRule))
+            var description = (req?.FeatureDescription ?? req?.BusinessRule ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(description))
             {
-                await writeEvent("error", new { message = "请填写防窜物流业务规则描述" });
+                await writeEvent("error", new { message = "请具体描述要对比的功能" });
                 return;
             }
-            if (string.IsNullOrWhiteSpace(req.CodeContent))
-            {
-                await writeEvent("error", new { message = "请粘贴需要对比的代码实现" });
-                return;
-            }
-
-            var businessRule = Truncate(req.BusinessRule.Trim(), CodeDiffInputBudget);
-            var codeContent = Truncate(req.CodeContent.Trim(), CodeDiffInputBudget);
+            description = Truncate(description, CodeDiffInputBudget);
 
             var diff = new ChannelTraceDiff
             {
-                Title = string.IsNullOrWhiteSpace(req.Title) ? "未命名对比" : req.Title.Trim(),
-                BusinessRule = businessRule,
-                CodeContent = codeContent,
-                CodeLocation = string.IsNullOrWhiteSpace(req.CodeLocation) ? null : req.CodeLocation.Trim(),
+                Title = string.IsNullOrWhiteSpace(req?.Title) ? "未命名对比" : req!.Title!.Trim(),
+                BusinessRule = description,
                 Status = ChannelTraceDiffStatuses.Running,
                 CreatedBy = userId,
                 CreatedByName = GetDisplayName(),
@@ -483,33 +642,75 @@ public class ChannelTraceAgentController : ControllerBase
             await _db.ChannelTraceDiffs.InsertOneAsync(diff, cancellationToken: CancellationToken.None);
             await writeEvent("diff", new { id = diff.Id, title = diff.Title });
 
-            var systemPrompt =
-                "你是「商品溯源智能体」中的防窜物流业务/代码一致性审计助手。给定一份「业务规则描述（期望行为）」和一份「当前代码实现」，请定向对比两者的逻辑差异。\n" +
-                "输出结构（中文 Markdown）：\n" +
-                " ## 一致性结论\n 一句话总体判断（高度一致 / 部分偏差 / 严重不一致）。\n" +
-                " ## 已正确实现\n 业务规则中已被代码正确覆盖的点（逐条）。\n" +
-                " ## 缺失 / 未实现\n 业务规则要求但代码里看不到对应实现的点（逐条，指出对应业务条款）。\n" +
-                " ## 实现有偏差\n 代码实现与业务规则不一致 / 边界处理不同的点（说明差在哪、可能后果）。\n" +
-                " ## 代码额外行为\n 代码做了但业务规则未提及的逻辑（可能是历史包袱或隐藏规则）。\n" +
-                " ## 建议\n 给出按优先级排序的修正建议。\n" +
-                "严格基于给定材料判断，材料不足以判断时明确写「材料不足，无法判断」，不要编造业务条款或代码行为。";
-
-            var userPrompt = new StringBuilder();
-            if (!string.IsNullOrWhiteSpace(diff.CodeLocation))
-            {
-                userPrompt.AppendLine($"代码位置：{diff.CodeLocation}");
-                userPrompt.AppendLine();
-            }
-            userPrompt.AppendLine("===== 业务规则描述（期望行为）=====");
-            userPrompt.AppendLine(businessRule);
-            userPrompt.AppendLine();
-            userPrompt.AppendLine("===== 当前代码实现 =====");
-            userPrompt.AppendLine(codeContent);
-
-            await writeEvent("phase", new { phase = "comparing", message = "AI 正在对比业务规则与代码实现…" });
-
             try
             {
+                // ===== 1. 抽取检索关键词 =====
+                await writeEvent("phase", new { phase = "keywords", message = "子 agent 正在从描述中抽取检索关键词…" });
+                var keywords = await ExtractKeywordsAsync(userId, description);
+                diff.Keywords = keywords;
+                await writeEvent("keywords", new { keywords });
+
+                // ===== 2. 克隆并扫描内置仓库 =====
+                await writeEvent("phase", new { phase = "scanning", message = "子 agent 正在克隆并扫描内置仓库…" });
+                var repoResults = await _codeScan.EnsureReposAsync(CancellationToken.None);
+                await writeEvent("repos", new
+                {
+                    items = repoResults.Select(r => new
+                    {
+                        name = r.Name,
+                        branch = r.Branch,
+                        ok = r.Dir != null,
+                        error = r.Error,
+                    }).ToList(),
+                });
+
+                var usableRepos = repoResults.Where(r => r.Dir != null).ToList();
+                if (usableRepos.Count == 0)
+                {
+                    var errs = string.Join("；", repoResults.Select(r => $"{r.Name}: {r.Error}"));
+                    var hint = _codeScan.GetGitHubToken() == null
+                        ? "（未配置服务级 GitHub PAT，请在部署环境注入密钥 ChannelTrace__GitHubToken）"
+                        : "（请确认该 PAT 有 MiDouTech 组织仓库访问权限）";
+                    throw new InvalidOperationException($"内置仓库克隆失败{hint}：{errs}");
+                }
+
+                var hits = new List<ChannelTraceCodeHit>();
+                foreach (var r in usableRepos)
+                    hits.AddRange(_codeScan.SearchRepo(r.Name, r.Dir!, keywords));
+                hits = hits.OrderByDescending(h => h.Score).Take(16).ToList();
+
+                diff.ScannedRepos = usableRepos.Select(r => $"{r.Name}@{r.Branch}").ToList();
+                diff.CodeHits = hits;
+                await writeEvent("codeHits", new
+                {
+                    items = hits.Select(h => new { repo = h.Repo, path = h.Path, score = h.Score }).ToList(),
+                });
+
+                // ===== 3. 组装代码上下文 + AI 异同分析 =====
+                var codeContext = BuildCodeContext(hits, CodeDiffInputBudget);
+                diff.CodeContent = codeContext;
+
+                var systemPrompt =
+                    "你是「商品溯源智能体」中的防窜物流业务/代码一致性审计助手。用户描述了一个功能的期望行为，子 agent 已从内置仓库（" +
+                    string.Join(", ", diff.ScannedRepos) +
+                    "）按关键词扫描出相关代码片段。请对比「用户描述的功能」与「实际代码实现」的异同。\n" +
+                    "输出结构（中文 Markdown）：\n" +
+                    " ## 总体结论\n 一句话判断（高度一致 / 部分偏差 / 严重不一致 / 代码中未找到相关实现）。\n" +
+                    " ## 代码中的实现\n 根据命中片段，概述代码实际是怎么做的（标注涉及的仓库/文件路径）。\n" +
+                    " ## 与描述一致的点\n 逐条。\n" +
+                    " ## 差异 / 缺失\n 描述要求但代码未实现或实现不同的点（指出文件路径 + 差在哪 + 可能后果）。\n" +
+                    " ## 代码额外行为\n 代码做了但描述未提及的逻辑。\n" +
+                    " ## 建议\n 按优先级排序。\n" +
+                    "严格基于给定代码片段判断；片段不足以判断时明确写「命中代码不足，无法确认」，不要编造未出现的代码逻辑。";
+
+                var userPrompt = new StringBuilder();
+                userPrompt.AppendLine("===== 用户描述的功能（期望行为）=====");
+                userPrompt.AppendLine(description);
+                userPrompt.AppendLine();
+                userPrompt.AppendLine("===== 子 agent 扫描命中的代码片段 =====");
+                userPrompt.AppendLine(string.IsNullOrWhiteSpace(codeContext) ? "（未命中相关代码）" : codeContext);
+
+                await writeEvent("phase", new { phase = "comparing", message = "AI 正在对比功能描述与代码实现…" });
                 var (fullText, model, platform) = await StreamChatAsync(
                     writeEvent, userId, systemPrompt, userPrompt.ToString(),
                     AppCallerRegistry.ChannelTraceAgent.CodeDiff.Chat);
@@ -532,6 +733,130 @@ public class ChannelTraceAgentController : ControllerBase
                 await writeEvent("error", new { message = "对比失败：" + ex.Message });
             }
         });
+    }
+
+    /// <summary>调用 LLM 从功能描述中抽取代码检索关键词（非流式 + JSON 解析），失败时回退到本地分词。</summary>
+    private async Task<List<string>> ExtractKeywordsAsync(string userId, string description)
+    {
+        try
+        {
+            using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+                RequestId: Guid.NewGuid().ToString("N"),
+                GroupId: null, SessionId: null, UserId: userId, ViewRole: null,
+                DocumentChars: description.Length, DocumentHash: null,
+                SystemPromptRedacted: AppCallerRegistry.ChannelTraceAgent.CodeDiff.Keywords,
+                RequestType: "chat",
+                AppCallerCode: AppCallerRegistry.ChannelTraceAgent.CodeDiff.Keywords));
+
+            var resp = await _gateway.SendAsync(new GatewayRequest
+            {
+                AppCallerCode = AppCallerRegistry.ChannelTraceAgent.CodeDiff.Keywords,
+                ModelType = ModelTypes.Chat,
+                RequestBody = new JsonObject
+                {
+                    ["messages"] = new JsonArray
+                    {
+                        new JsonObject
+                        {
+                            ["role"] = "system",
+                            ["content"] = "从用户的功能描述中抽取 5~12 个用于在代码仓库里检索的关键词（类名/方法名/表名/业务术语/英文标识符优先，中文术语也可）。" +
+                                          "严格只输出 JSON：{\"keywords\":[\"...\"]}，不要解释，不要 markdown 围栏。",
+                        },
+                        new JsonObject { ["role"] = "user", ["content"] = description },
+                    },
+                    ["temperature"] = 0.1,
+                    ["max_tokens"] = 400,
+                },
+                TimeoutSeconds = 60,
+            }, CancellationToken.None);
+
+            if (resp.Success && !string.IsNullOrWhiteSpace(resp.Content))
+            {
+                var parsed = JsonNode.Parse(StripCodeFence(resp.Content!));
+                if (parsed is JsonObject obj && obj["keywords"] is JsonArray arr)
+                {
+                    var kws = arr.Where(n => n != null)
+                        .Select(n => n!.ToString().Trim())
+                        .Where(s => s.Length >= 2)
+                        .Distinct()
+                        .Take(12)
+                        .ToList();
+                    if (kws.Count > 0) return kws;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[ChannelTraceAgent] keyword extraction failed, fallback to local tokenize");
+        }
+        return Tokenize(description).Take(12).ToList();
+    }
+
+    private static string BuildCodeContext(IReadOnlyList<ChannelTraceCodeHit> hits, int budget)
+    {
+        var sb = new StringBuilder();
+        foreach (var h in hits)
+        {
+            var block = $"--- [{h.Repo}] {h.Path} (score={h.Score}) ---\n{h.Snippet}\n\n";
+            if (sb.Length + block.Length > budget) break;
+            sb.Append(block);
+        }
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string StripExtension(string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName)) return "导入知识";
+        var dot = fileName.LastIndexOf('.');
+        return dot > 0 ? fileName[..dot] : fileName;
+    }
+
+    private static string StripCodeFence(string s)
+    {
+        var t = s.Trim();
+        if (t.StartsWith("```"))
+        {
+            var nl = t.IndexOf('\n');
+            if (nl > 0) t = t[(nl + 1)..];
+            if (t.EndsWith("```")) t = t[..^3];
+        }
+        return t.Trim();
+    }
+
+    private List<ChannelTraceCase> ParseCasesJson(string content)
+    {
+        var result = new List<ChannelTraceCase>();
+        try
+        {
+            var parsed = JsonNode.Parse(StripCodeFence(content));
+            if (parsed is JsonObject obj && obj["cases"] is JsonArray arr)
+            {
+                foreach (var node in arr)
+                {
+                    if (node is not JsonObject c) continue;
+                    var title = c["title"]?.GetValue<string>()?.Trim();
+                    var symptom = c["symptom"]?.GetValue<string>()?.Trim();
+                    if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(symptom)) continue;
+                    var tags = new List<string>();
+                    if (c["tags"] is JsonArray ta)
+                        tags = ta.Where(n => n != null).Select(n => n!.ToString().Trim()).Where(s => s.Length > 0).ToList();
+                    result.Add(new ChannelTraceCase
+                    {
+                        Title = title,
+                        Symptom = symptom,
+                        RootCause = c["rootCause"]?.GetValue<string>()?.Trim(),
+                        Resolution = c["resolution"]?.GetValue<string>()?.Trim(),
+                        Tags = tags,
+                        Severity = c["severity"]?.GetValue<string>()?.Trim() ?? ChannelTraceCaseSeverities.Medium,
+                    });
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[ChannelTraceAgent] parse cases json failed");
+        }
+        return result;
     }
 
     // ──────────────────────────────────────────────────────────────

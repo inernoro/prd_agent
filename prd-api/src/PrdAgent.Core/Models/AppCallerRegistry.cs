@@ -1543,6 +1543,25 @@ public static class ChannelTraceAgent
             Category = "ChannelTrace"
         )]
         public const string Chat = "channel-trace-agent.code-diff::chat";
+
+        [AppCallerMetadata(
+            "商品溯源-代码检索关键词抽取",
+            "从用户功能描述中抽取用于扫描仓库代码的检索关键词",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "ChannelTrace"
+        )]
+        public const string Keywords = "channel-trace-agent.code-diff.keywords::chat";
+    }
+
+    public static class CaseImport
+    {
+        [AppCallerMetadata(
+            "商品溯源-案例文件解析",
+            "把导入的历史 bug 文件解析为结构化线上问题案例（标题/现象/根因/排查）",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "ChannelTrace"
+        )]
+        public const string Chat = "channel-trace-agent.case-import::chat";
     }
 }
 
