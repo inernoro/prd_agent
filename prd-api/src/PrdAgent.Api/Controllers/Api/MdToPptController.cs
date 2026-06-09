@@ -547,7 +547,7 @@ public class MdToPptController : ControllerBase
             AppCallerCode = appCallerCode,
             ModelType = ModelTypes.Chat,
             Stream = true,
-            TimeoutSeconds = 180,
+            TimeoutSeconds = 600,
             RequestBody = new JsonObject
             {
                 ["messages"] = new JsonArray
@@ -566,6 +566,30 @@ public class MdToPptController : ControllerBase
         // server-authority：客户端断开/刷新不取消生成。clientGone 后仅跳过 SSE 写入，
         // 仍消费完网关流、把结果落库（刷新后前端凭 runId 重连/查看）。
         var clientGone = false;
+
+        // 每 20s 发 keepalive 注释，防止代理因 SSE 空闲超时断连
+        using var keepaliveCts = new CancellationTokenSource();
+        var keepaliveTask = Task.Run(async () =>
+        {
+            try
+            {
+                while (!keepaliveCts.Token.IsCancellationRequested)
+                {
+                    await Task.Delay(20000, keepaliveCts.Token);
+                    if (!clientGone)
+                    {
+                        try
+                        {
+                            await Response.WriteAsync(": keepalive\n\n", CancellationToken.None);
+                            await Response.Body.FlushAsync(CancellationToken.None);
+                        }
+                        catch { clientGone = true; }
+                    }
+                }
+            }
+            catch (OperationCanceledException) { }
+        });
+
         try
         {
             await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
@@ -612,13 +636,25 @@ public class MdToPptController : ControllerBase
             await PersistRunDoneAsync(run, html, resolvedModel, resolvedPlatform);
             if (!clientGone) { try { await WriteEventAsync("done", new { html }); } catch (ObjectDisposedException) { } }
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException)
+        {
+            // LLM 请求超时（TimeoutSeconds 到期）或被取消 — 必须通知前端，否则前端永久卡在"生成中"
+            var timeoutMsg = "PPT 生成超时（LLM 响应超过 600s），请重试或缩短内容";
+            _logger.LogWarning("[MdToPpt-MAP] LLM timeout userId={UserId} op={Op}", userId, opLabel);
+            await PersistRunErrorAsync(run, timeoutMsg);
+            if (!clientGone) { try { await WriteEventAsync("error", new { message = timeoutMsg }); } catch { } }
+        }
         catch (ObjectDisposedException) { }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[MdToPpt-MAP] unexpected error userId={UserId}", userId);
             await PersistRunErrorAsync(run, ex.Message);
             if (!clientGone) { try { await WriteEventAsync("error", new { message = ex.Message }); } catch { } }
+        }
+        finally
+        {
+            keepaliveCts.Cancel();
+            try { await keepaliveTask; } catch { }
         }
     }
 

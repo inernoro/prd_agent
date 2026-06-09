@@ -205,6 +205,7 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
         return;
       }
 
+      let resolved = false;
       await readSseStream(response, {
         onStart: (data) => {
           options.onStart?.({
@@ -217,10 +218,18 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
         onDiag: options.onDiag,
         onDelta: options.onDelta,
         onDone: (data) => {
+          resolved = true;
           options.onDone?.({ html: (data.html as string) ?? '' });
         },
-        onError: options.onError,
+        onError: (msg) => {
+          resolved = true;
+          options.onError?.(msg);
+        },
       });
+      // stream ended without done/error — unblock the UI
+      if (!resolved && !abortController.signal.aborted) {
+        options.onError?.('连接意外断开，请重试');
+      }
     } catch (e) {
       if ((e as Error).name !== 'AbortError') {
         console.error('MD to PPT SSE error:', e);
@@ -276,6 +285,7 @@ export function streamMdToPptPatch(options: MdToPptPatchSseOptions): () => void 
         return;
       }
 
+      let resolved = false;
       await readSseStream(response, {
         onStart: () => options.onStart?.(),
         onRun: options.onRun,
@@ -283,10 +293,18 @@ export function streamMdToPptPatch(options: MdToPptPatchSseOptions): () => void 
         onDiag: options.onDiag,
         onDelta: options.onDelta,
         onDone: (data) => {
+          resolved = true;
           options.onDone?.({ html: (data.html as string) ?? '' });
         },
-        onError: options.onError,
+        onError: (msg) => {
+          resolved = true;
+          options.onError?.(msg);
+        },
       });
+      // stream ended without done/error — unblock the UI
+      if (!resolved && !abortController.signal.aborted) {
+        options.onError?.('连接意外断开，请重试');
+      }
     } catch (e) {
       if ((e as Error).name !== 'AbortError') {
         console.error('MD to PPT Patch SSE error:', e);
