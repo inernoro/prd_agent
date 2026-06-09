@@ -1394,6 +1394,25 @@ public static class PageAgent
 }
 
 /// <summary>
+/// 前端搭档智能体 — API 接入、组件生成、前端报错诊断和视觉样式建议
+/// </summary>
+public static class FrontEndAgent
+{
+    public const string AppName = "前端搭档智能体";
+
+    public static class Assistant
+    {
+        [AppCallerMetadata(
+            "前端搭档-流式助手",
+            "面向后端同事生成前端类型、service、组件代码、报错修复方案和验收清单",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Code"
+        )]
+        public const string Chat = "front-end-agent.assistant::chat";
+    }
+}
+
+/// <summary>
 /// Skill Agent 技能引导创建
 /// </summary>
 public static class SkillAgent

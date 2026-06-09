@@ -41,6 +41,7 @@ export const SHORT_LABEL_MAP: Record<string, string> = {
   'skill-agent': '技能助手',
   'workflow-agent': '工作流',
   'md-to-ppt-agent': 'PPT',
+  'front-end-agent': '前端',
 
   // ── 基础设施 ──────────────────────────
   'marketplace': '市场',

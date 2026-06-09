@@ -42,6 +42,7 @@ const ReviewAgentPage = lazy(() => import('@/pages/review-agent').then(m => ({ d
 const CcasAgentPage = lazy(() => import('@/pages/ccas-agent').then(m => ({ default: m.CcasAgentPage })));
 const PrReviewPage = lazy(() => import('@/pages/pr-review').then(m => ({ default: m.PrReviewPage })));
 const PaAgentPage = lazy(() => import('@/pages/pa-agent').then(m => ({ default: m.PaAgentPage })));
+const FrontEndAgentPage = lazy(() => import('@/pages/front-end-agent').then(m => ({ default: m.FrontEndAgentPage })));
 const ProjectRouteAgentPage = lazy(() => import('@/pages/project-route-agent').then(m => ({ default: m.ProjectRouteAgentPage })));
 const UsersPage = lazy(() => import('@/pages/UsersPage'));
 const ModelManageTabsPage = lazy(() => import('@/pages/ModelManageTabsPage').then(m => ({ default: m.ModelManageTabsPage })));
@@ -377,6 +378,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       appKey: 'pa-agent',
       wip: true,
       tags: ['助理', 'PA', '任务', '四象限', 'MECE'],
+    },
+  },
+  {
+    path: '/front-end-agent',
+    permission: 'front-end-agent.use',
+    element: shellGuarded('front-end-agent.use', <FrontEndAgentPage />),
+    nav: {
+      label: '前端搭档智能体',
+      shortLabel: '前端',
+      description: '给后端同事用的前端交付助手：接 API、写组件、修报错、看截图现象',
+      icon: 'Code2',
+      section: 'toolbox',
+      appKey: 'front-end-agent',
+      wip: true,
+      tags: ['前端', 'API', '组件', '报错', 'CSS', '智能体'],
     },
   },
   {

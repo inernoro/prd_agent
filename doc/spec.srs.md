@@ -1949,6 +1949,7 @@ sequenceDiagram
 | `literary-agent` | 文学创作 Agent | 文章配图、文学创作场景 |
 | `defect-agent` | 缺陷管理 Agent | 缺陷提交与跟踪 |
 | `report-agent` | 周报管理 Agent | 周报创建、提交、审阅管理 |
+| `front-end-agent` | 前端搭档智能体 | API 接入、组件生成、前端报错诊断和视觉样式建议 |
 
 **架构原则**：
 - 权限控制：基于 Controller/appKey 做细粒度权限管理
@@ -2223,6 +2224,33 @@ sequenceDiagram
 - [ ] 粘贴错误编号：返回"PR 编号不存在"
 - [ ] 前端无 `localStorage` 使用（grep 校验）
 - [ ] 前端主页面 ≤ 200 行，后端 Controller ≤ 500 行
+
+### 4.25 前端搭档智能体（Front End Agent）
+
+#### 4.25.1 FEAGENT-001 面向后端同事的前端交付助手
+
+| 属性 | 描述 |
+|------|------|
+| 需求编号 | FEAGENT-001 |
+| 需求名称 | 前端搭档智能体 |
+| 优先级 | **[应该]** |
+| 实现层 | Web 管理后台 + 后端 LLM Gateway |
+
+**功能详述**：
+1. 用户从百宝箱进入 `/front-end-agent` 页面。
+2. 页面提供四类任务入口：接 API、写组件、修报错、看截图现象。
+3. 用户输入需求描述、目标技术栈、样式约束，并可上传文本类接口/代码/日志材料。
+4. 后端通过 `ILlmGateway` 流式生成前端交付方案，前端展示阶段状态、模型信息、思考过程和逐步输出。
+5. 输出必须包含结论摘要、交付文件、可复制代码、接入步骤、自测清单、风险与假设。
+
+**API 端点**：
+- `POST /api/front-end-agent/assist/stream` — 前端搭档智能体流式助手，SSE 事件包括 `phase` / `model` / `thinking` / `typing` / `done` / `error`。
+
+**权限定义**：`front-end-agent.use`
+
+**应用标识**：`front-end-agent`
+
+**设计文档**：`doc/spec.front-end-agent.md`
 
 ---
 

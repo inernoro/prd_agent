@@ -81,6 +81,9 @@
 - [演讲智能体产品规格](spec.speech-agent) `spec.speech-agent`
   > 长文本/文档转思维导图风格的可演讲材料，首期 mindmap 模式（MVP 已落地）
 
+- [前端搭档智能体产品规格](spec.front-end-agent) `spec.front-end-agent`
+  > 面向后端同事的前端交付助手：接 API、写组件、修报错、看截图现象
+
 ### 二、设计文档
 
 - [每日小贴士 / 路径式教程系统设计](design.daily-tips) `design.daily-tips`
