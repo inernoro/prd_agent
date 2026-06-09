@@ -1244,6 +1244,7 @@ export class StateService {
         | 'githubAutoDeploy'
         | 'githubLinkedAt'
         | 'autoSmokeEnabled'
+        | 'resourceChipDisplay'
         | 'composeYaml'
         | 'composeUpdatedAt'
         | 'composeVersion'

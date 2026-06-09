@@ -1603,6 +1603,16 @@ export interface Project {
    */
   infraIsolation?: 'shared' | 'per-branch';
   /**
+   * 分支卡片资源 chip 的显示项。默认只显示技术图标 + 端口，避免
+   * Node.js / .NET / MongoDB 等名称把卡片撑成多行。项目设置可开启
+   * 运行时名称显示，但 icon/name/port 至少要保留一项。
+   */
+  resourceChipDisplay?: {
+    icon?: boolean;
+    name?: boolean;
+    port?: boolean;
+  };
+  /**
    * Project kind. 'git' is the only value Part 1 creates; 'manual'
    * lands in P6 when users can upload their own compose.
    *

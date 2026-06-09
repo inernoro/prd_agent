@@ -70,6 +70,7 @@ interface ProjectSummary {
   slug: string;
   name: string;
   aliasName?: string;
+  resourceChipDisplay?: ResourceChipDisplay;
   description?: string;
   cloneStatus?: 'pending' | 'cloning' | 'ready' | 'error';
   cloneError?: string;
@@ -78,6 +79,31 @@ interface ProjectSummary {
   gitDefaultBranch?: string | null;
   defaultBranch?: string | null;
   branchCount?: number;
+}
+
+type ResourceChipDisplay = {
+  icon?: boolean;
+  name?: boolean;
+  port?: boolean;
+};
+
+const DEFAULT_RESOURCE_CHIP_DISPLAY: Required<ResourceChipDisplay> = {
+  icon: true,
+  name: false,
+  port: true,
+};
+
+function normalizeResourceChipDisplay(display?: ResourceChipDisplay): Required<ResourceChipDisplay> {
+  const next = {
+    icon: display?.icon !== false,
+    name: display?.name === true,
+    port: display?.port !== false,
+  };
+  return next.icon || next.name || next.port ? next : DEFAULT_RESOURCE_CHIP_DISPLAY;
+}
+
+function resourceChipName(resource: BranchResource): string {
+  return resource.runtime || resource.displayName || resource.serviceName;
 }
 
 interface ServiceState {
@@ -144,6 +170,13 @@ interface BranchSummary {
       hasDrift: boolean;
     };
   };
+}
+
+interface BranchCommitSummary {
+  hash: string;
+  subject: string;
+  author?: string;
+  date?: string;
 }
 
 interface BranchesResponse {
@@ -581,6 +614,10 @@ function branchRoleCardClass(role: BranchVisualRole): string {
 function shortCommitSha(branch: BranchSummary): string {
   const sha = branch.commitSha || branch.githubCommitSha || '';
   return /^[0-9a-f]{7,40}$/i.test(sha) ? sha.slice(0, 7) : '';
+}
+
+function commitSubject(branch: BranchSummary): string {
+  return branch.subject?.trim() || '暂无提交信息';
 }
 
 function builderHandle(branch: BranchSummary): string {
@@ -3002,6 +3039,7 @@ export function BranchListPage(): JSX.Element {
                     action={actions[branch.id]}
                     now={actionClock}
                     projectId={projectId}
+                    resourceChipDisplay={state.status === 'ok' ? state.project.resourceChipDisplay : undefined}
                     highlighted={highlightedBranchId === branch.id}
                     highlightPulse={highlightPulseBranchId === branch.id}
                     activityEvents={activityEvents
@@ -3956,6 +3994,7 @@ function BranchCard({
   action,
   now,
   capacityWarning,
+  resourceChipDisplay,
   highlighted,
   highlightPulse,
   activityEvents = [],
@@ -3991,6 +4030,7 @@ function BranchCard({
   // `branch.projectId`. Keeping the prop optional to avoid a churn of
   // callers when we later need it (e.g. cross-project routing tests).
   projectId?: string;
+  resourceChipDisplay?: ResourceChipDisplay;
   selected?: boolean;
   // 搜索框命中"已粘贴的分支名/SHA"时,父组件 set 这个 prop = true,触发
   // 稳定选中态 + 自动滚到可视区。详见 focusBranchCard / index.css。
@@ -4024,6 +4064,7 @@ function BranchCard({
   const deleteBusy = action?.status === 'running' && action.kind === 'delete';
   const runningCount = runningServiceCount(branch);
   const visibleResources = resources.filter((resource) => resource.port).slice(0, 6);
+  const chipDisplay = normalizeResourceChipDisplay(resourceChipDisplay);
   const previewCapacityWarning = branch.status === 'running' ? '' : capacityWarning;
 
   // 新设计(2026-05-04 用户主诉求):
@@ -4070,7 +4111,12 @@ function BranchCard({
   const builderInitial = builderLabel ? (builderLabel.trim().charAt(0) || '?').toUpperCase() : '?';
   const footerBuilder = builderHandle(branch);
   const footerSha = shortCommitSha(branch);
+  const footerSubject = commitSubject(branch);
   const [builderAvatarStatus, setBuilderAvatarStatus] = useState<AvatarLoadStatus>(() => cachedAvatarStatus(builderAvatarUrl));
+  const [commitMenuOpen, setCommitMenuOpen] = useState(false);
+  const [commitHistoryState, setCommitHistoryState] = useState<
+    { status: 'idle' | 'loading' | 'ok' | 'error'; commits: BranchCommitSummary[]; message?: string }
+  >({ status: 'idle', commits: [] });
   const actorOrbitVisible = Boolean(footerBuilder) && (isInterim || action?.status === 'running' || isAiActive);
   const actorOrbitTone = isError || action?.status === 'error'
     ? 'danger'
@@ -4092,6 +4138,24 @@ function BranchCard({
   useEffect(() => {
     setBuilderAvatarStatus(cachedAvatarStatus(builderAvatarUrl));
   }, [builderAvatarUrl]);
+  const toggleCommitMenu = async (): Promise<void> => {
+    const nextOpen = !commitMenuOpen;
+    setCommitMenuOpen(nextOpen);
+    if (!nextOpen || commitHistoryState.status === 'ok' || commitHistoryState.status === 'loading') return;
+    setCommitHistoryState({ status: 'loading', commits: [] });
+    try {
+      const result = await apiRequest<{ commits?: BranchCommitSummary[] }>(
+        `/api/branches/${encodeURIComponent(branch.id)}/git-log?count=8`,
+      );
+      setCommitHistoryState({ status: 'ok', commits: result.commits || [] });
+    } catch (err) {
+      setCommitHistoryState({
+        status: 'error',
+        commits: [],
+        message: err instanceof ApiError ? err.message : String(err),
+      });
+    }
+  };
   const submitTagDraft = async (): Promise<void> => {
     const trimmed = tagDraft.trim();
     if (!trimmed) {
@@ -4108,11 +4172,53 @@ function BranchCard({
     setTagEditorOpen(false);
     setTagDeleteTarget(null);
   };
+  const commitHistoryPanel = commitMenuOpen ? (
+    <div
+      className="mt-2 rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2 shadow-lg"
+      role="menu"
+      aria-label={`${branch.branch} 最近提交`}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <div className="mb-1 flex items-center justify-between gap-2 px-1.5 text-[11px] text-muted-foreground">
+        <span>最近提交</span>
+        <span className="truncate font-mono">{branch.branch}</span>
+      </div>
+      {commitHistoryState.status === 'loading' ? (
+        <div className="px-2 py-3 text-xs text-muted-foreground">读取提交历史...</div>
+      ) : null}
+      {commitHistoryState.status === 'error' ? (
+        <div className="px-2 py-3 text-xs leading-5 text-destructive">{commitHistoryState.message || '读取失败'}</div>
+      ) : null}
+      {commitHistoryState.status === 'ok' && commitHistoryState.commits.length === 0 ? (
+        <div className="px-2 py-3 text-xs text-muted-foreground">暂无提交历史。</div>
+      ) : null}
+      {commitHistoryState.status === 'ok' && commitHistoryState.commits.length > 0 ? (
+        <div className="max-h-72 overflow-y-auto">
+          {commitHistoryState.commits.map((commit, index) => (
+            <div
+              key={`${commit.hash}-${index}`}
+              className="grid grid-cols-[56px_minmax(0,1fr)] gap-2 rounded-md px-2 py-2 text-xs hover:bg-muted/35"
+              role="menuitem"
+              title={`${commit.hash} ${commit.subject}`}
+            >
+              <span className="font-mono text-muted-foreground">{commit.hash}</span>
+              <span className="min-w-0">
+                <span className="block truncate text-foreground">{commit.subject || '无提交信息'}</span>
+                <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
+                  {[commit.author, commit.date].filter(Boolean).join(' · ')}
+                </span>
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  ) : null;
 
   return (
     <article
       data-branch-card-id={branch.id}
-      className={`group relative flex min-h-[158px] cursor-pointer flex-col ${tagEditorOpen || tagDeleteTarget || aiPanelOpen ? 'z-40 overflow-visible' : isError ? 'z-20 overflow-visible hover:z-50 focus-within:z-50' : 'overflow-hidden'} rounded-md border ${
+      className={`group relative flex min-h-[158px] cursor-pointer flex-col ${tagEditorOpen || tagDeleteTarget || aiPanelOpen || commitMenuOpen ? 'z-40 overflow-visible' : isError ? 'z-20 overflow-visible hover:z-50 focus-within:z-50' : 'overflow-hidden'} rounded-md border ${
         isError
           ? branchIssueCardClass(branch)
           : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
@@ -4388,9 +4494,9 @@ function BranchCard({
               title={`${resource.displayName}\n${resource.serviceName}${resource.containerName ? ` · ${resource.containerName}` : ''}\n${resource.access === 'external' ? '公网访问已开启' : '仅内部访问'}`}
             >
               <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${chipRailClass}`} aria-hidden />
-              <ResourceIcon resource={resource} className="h-3.5 w-3.5 shrink-0" />
-              <span className="font-mono">{resource.runtime}</span>
-              <span className="font-mono text-muted-foreground">:{resource.port}</span>
+              {chipDisplay.icon ? <ResourceIcon resource={resource} className="h-3.5 w-3.5 shrink-0" /> : null}
+              {chipDisplay.name ? <span className="max-w-[92px] truncate font-semibold">{resourceChipName(resource)}</span> : null}
+              {chipDisplay.port ? <span className="font-mono text-muted-foreground">:{resource.port}</span> : null}
               {resourceAccessIcon(resource)}
             </span>
           );
@@ -4613,8 +4719,9 @@ function BranchCard({
           }
         }}
       >
-        <div className="flex min-w-0 items-center gap-3 pr-2 text-muted-foreground">
-          <div className="flex min-w-[54px] max-w-[94px] shrink-0 flex-col items-center gap-1" title={builderTitle}>
+        <div className="min-w-0 pr-2 text-muted-foreground">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex min-w-[54px] max-w-[94px] shrink-0 flex-col items-center gap-1" title={builderTitle}>
             <div className={`cds-actor-orbit ${actorOrbitVisible ? `cds-actor-orbit--active cds-actor-orbit--${actorOrbitTone}` : ''}`}>
               {actorOrbitVisible && footerBuilder ? <CircularActorText text={footerBuilder} /> : null}
               <div
@@ -4648,14 +4755,31 @@ function BranchCard({
               </span>
             ) : null}
           </div>
-          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <div className="relative flex min-w-0 flex-1 items-center gap-2">
             {footerSha ? (
               <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground" title={`commit ${footerSha}`}>
                 {footerSha}
               </span>
             ) : null}
-            <span className="min-w-0 truncate text-sm">{branch.subject || branch.branch}</span>
+            <span className="min-w-0 flex-1 truncate text-sm" title={footerSubject}>
+              {footerSubject}
+            </span>
+            <button
+              type="button"
+              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+              title="查看提交历史"
+              aria-label={`${branch.branch} 提交历史`}
+              aria-expanded={commitMenuOpen}
+              onClick={(event) => {
+                event.stopPropagation();
+                void toggleCommitMenu();
+              }}
+            >
+              <ChevronDown className={`h-3.5 w-3.5 transition-transform ${commitMenuOpen ? 'rotate-180' : ''}`} />
+            </button>
+            </div>
           </div>
+          {commitHistoryPanel}
         </div>
         {/*
           重设计(2026-05-04 用户主诉求):
