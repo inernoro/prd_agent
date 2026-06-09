@@ -13,3 +13,5 @@
 | fix | prd-admin | UserSearchSelect 已选 value 在关闭态预拉目录解析显示名，修复「处理人」已指派却显示占位空白 |
 | fix | prd-admin | AI助手抽屉改主流聊天样式：用户/AI 各带头像+气泡(底色+边框)，回答可一键复制，字号收小；对话存 sessionStorage(按产品隔离)关闭重开不丢+手动清除；工作台入口移到 SectionShell 右上角不占空间 |
 | feat | prd-admin | 需求/功能/缺陷列表新增搜索+多字段筛选(客户端)：关键词搜编号/标题/描述，可按等级/状态/处理人/负责人/上报人/版本/客户/关联功能/时间等筛选；默认展示核心项，「筛选设置」可自定义显示哪些(按列表类型存localStorage) |
+| fix | prd-admin | 图谱「关系分析」去除 Markdown 标记渲染为纯文本 + 一键复制；stripMarkdown 提取为 lib 共享工具(AI助手复用) |
+| fix | prd-api | 追溯关系分析 prompt 改为简洁纯文本输出(3-5 要点、禁 Markdown 标记、保留关键信息与风险) |

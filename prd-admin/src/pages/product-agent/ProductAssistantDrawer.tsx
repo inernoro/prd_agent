@@ -14,30 +14,13 @@ import { StreamingText } from '@/components/streaming/StreamingText';
 import { useSseStream } from '@/lib/useSseStream';
 import { useAuthStore } from '@/stores/authStore';
 import { resolveAvatarUrl } from '@/lib/avatar';
+import { stripMarkdown } from '@/lib/stripMarkdown';
 
 const PRESETS = ['本月需求分析', '本月需求矩阵分析', '本月缺陷分析'];
 
 interface QA {
   q: string;
   a: string;
-}
-
-/** 去除 Markdown 标记，渲染为正常纯文本（不显示井号、星号、竖线表格等记号）。 */
-function stripMarkdown(s: string): string {
-  return s
-    .replace(/```[a-zA-Z0-9]*\n?/g, '')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
-    .replace(/^\s{0,3}>\s?/gm, '')
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/__([^_]+)__/g, '$1')
-    .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1$2')
-    .replace(/^\s*\|?[\s:|-]+\|\s*[\s:|-]*$/gm, '')
-    .replace(/^\s*\|(.+)\|\s*$/gm, (_m, inner: string) => inner.split('|').map((c) => c.trim()).filter(Boolean).join('    '))
-    .replace(/^\s{0,3}[-*]\s+/gm, '· ')
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/\n{3,}/g, '\n\n')
-    .trimEnd();
 }
 
 export function ProductAssistantDrawer({

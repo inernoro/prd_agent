@@ -30,10 +30,11 @@ import {
   type ReactFlowInstance,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Search, GitFork, X, Sparkles, ExternalLink } from 'lucide-react';
+import { Search, GitFork, X, Sparkles, ExternalLink, Copy, Check } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { useSseStream } from '@/lib/useSseStream';
 import { StreamingText } from '@/components/streaming/StreamingText';
+import { stripMarkdown } from '@/lib/stripMarkdown';
 
 /** 富文本 → 纯文本（抽屉里展示干净摘要，不再糊出 HTML 标签）。 */
 function htmlToText(html: string): string {
@@ -794,7 +795,16 @@ function NodeDrawer({
 
   // 关系分析（追溯模式下，对整条关系链 AI 流式分析）
   const [analysisStarted, setAnalysisStarted] = useState(false);
+  const [analysisCopied, setAnalysisCopied] = useState(false);
   const analysis = useSseStream({ url: '/api/product/graph/relation-analysis/stream', method: 'POST' });
+  const copyAnalysis = () => {
+    const text = stripMarkdown(analysis.typing);
+    if (!text) return;
+    void navigator.clipboard?.writeText(text).then(() => {
+      setAnalysisCopied(true);
+      setTimeout(() => setAnalysisCopied(false), 1500);
+    });
+  };
   const runAnalysis = () => {
     onTrace(); // 同时点亮整条追溯链
     setAnalysisStarted(true);
@@ -911,12 +921,21 @@ function NodeDrawer({
               <Sparkles size={11} /> 关系链分析
               {analysis.phase === 'connecting' && <span className="text-white/40">· 连接中…</span>}
               {analysis.phase === 'streaming' && <span className="text-white/40">· 分析中…</span>}
+              {analysis.typing && !analysis.isStreaming && (
+                <button
+                  onClick={copyAnalysis}
+                  className="ml-auto flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-white/50 hover:text-white/90"
+                  title="复制分析内容"
+                >
+                  {analysisCopied ? <Check size={11} /> : <Copy size={11} />} {analysisCopied ? '已复制' : '复制'}
+                </button>
+              )}
             </div>
             {analysis.phase === 'error' ? (
               <div className="text-amber-300/80 text-sm">{analysis.phaseMessage || '分析失败，请重试'}</div>
             ) : analysis.typing ? (
-              <div className="text-sm text-white/85">
-                <StreamingText text={analysis.typing} streaming={analysis.isStreaming} />
+              <div className="text-[13px] text-white/85 leading-relaxed whitespace-pre-wrap">
+                <StreamingText text={stripMarkdown(analysis.typing)} streaming={analysis.isStreaming} />
               </div>
             ) : (
               <div className="text-white/40 text-sm flex items-center gap-1.5"><MapSpinner size={12} /> 正在汇总关系链…</div>
