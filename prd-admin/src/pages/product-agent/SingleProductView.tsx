@@ -39,7 +39,7 @@ import {
   type TracedDefect,
 } from '@/services/real/productAgent';
 import type { Product, ProductVersion, Requirement, Feature, ItemGrade, WorkflowDefinition } from './types';
-import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL } from './types';
+import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, defectStatusLabel } from './types';
 import { toCSV, downloadCSV, parseCSV } from '@/lib/csv';
 import { useProductCategories, categoryLabel } from './productCategories';
 import { useEffectiveWorkflow } from './DynamicForm';
@@ -276,7 +276,7 @@ function MyTodos({ product }: { product: Product }) {
               onClick={() => navigate(`/product-agent/p/${product.id}/feature/${f.id}`)} />
           ))}
           {todoDefects.map((d) => (
-            <TodoRow key={`d-${d.id}`} kind="缺陷" color="#F87171" no={d.defectNo} title={d.title || '(无标题)'} state={d.status}
+            <TodoRow key={`d-${d.id}`} kind="缺陷" color="#F87171" no={d.defectNo} title={d.title || '(无标题)'} state={defectStatusLabel(d.status)}
               onClick={() => navigate(`/product-agent/p/${product.id}/defect/${d.id}`)} />
           ))}
         </div>
@@ -334,7 +334,7 @@ function ProductDashboard({ product }: { product: Product }) {
 
   const defectStatusBar = useMemo<EChartsOption>(() => {
     const map = new Map<string, number>();
-    defects.forEach((d) => map.set(d.status, (map.get(d.status) ?? 0) + 1));
+    defects.forEach((d) => { const k = defectStatusLabel(d.status); map.set(k, (map.get(k) ?? 0) + 1); });
     const entries = Array.from(map.entries());
     return {
       tooltip: { trigger: 'axis' },
@@ -663,7 +663,7 @@ function DefectsTab({ productId }: { productId: string }) {
             <Row
               key={d.id}
               title={d.title || '(无标题)'}
-              badge={d.status}
+              badge={defectStatusLabel(d.status)}
               sub={`${d.defectNo}${d.tracedRequirementId ? ' · 已追溯到需求' : d.tracedVersionId ? ' · 已追溯到版本' : ' · 仅追溯到产品'}`}
               onClick={() => navigate(`/product-agent/p/${productId}/defect/${d.id}`)}
               actionLabel="查看详情"
