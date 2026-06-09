@@ -42,7 +42,7 @@ import {
   type SidecarSpec,
 } from '../services/sidecar/sidecar-deployer.js';
 import { CdsPairingService } from '../services/connection/pairing-service.js';
-import { computePreviewSlug, previewProjectSlug } from '../services/preview-slug.js';
+import { buildPreviewUrlForProject } from '../services/comment-template.js';
 
 export interface RemoteHostsRouterDeps {
   stateService: StateService;
@@ -1027,7 +1027,6 @@ function collectProjectRuntimeInstances(
   }
 
   if (shouldIncludeBranchServicesInInstanceDiscovery(project)) {
-    const projectSlug = previewProjectSlug(project, project.id);
     const previewRoot = resolvePreviewRootDomain();
     discovery.previewRootConfigured = Boolean(previewRoot);
     const branches = stateService.getBranchesForProject(project.id);
@@ -1044,8 +1043,9 @@ function collectProjectRuntimeInstances(
           continue;
         }
         discovery.runtimeBranchServiceCount += 1;
-        const previewSlug = computePreviewSlug(branch.branch, projectSlug);
-        const baseUrl = previewRoot ? `https://${previewSlug}.${previewRoot}` : undefined;
+        const preview = buildPreviewUrlForProject(previewRoot, branch.branch, project, project.id);
+        const previewSlug = preview.previewSlug;
+        const baseUrl = preview.url || undefined;
         const officialSdkRuntime = isOfficialSdkRuntimeService('claude-sdk', serviceState, profile);
         instances.push({
           deploymentId: `branch:${branch.id}:${serviceState.profileId}`,
@@ -1707,8 +1707,7 @@ function resolveCdsManagedRuntimeBaseUrl(
   }
   const previewRoot = resolvePreviewRootDomain();
   if (!previewRoot) return null;
-  const previewSlug = computePreviewSlug(branch.branch, previewProjectSlug(project, project.id));
-  return `https://${previewSlug}.${previewRoot}`;
+  return buildPreviewUrlForProject(previewRoot, branch.branch, project, project.id).url || null;
 }
 
 function toCdsManagedRuntimeTransportView(transport: CdsManagedRuntimeTransport): Record<string, unknown> {

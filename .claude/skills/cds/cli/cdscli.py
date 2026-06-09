@@ -925,6 +925,39 @@ def _slugify_for_preview(s: str) -> str:
     return s.strip('-')
 
 
+def _repo_name_from_git_ref(raw: str) -> str:
+    """与 cds/src/services/preview-slug.ts:repoNameFromGitRef 保持语义一致。"""
+    value = (raw or "").strip()
+    if not value:
+        return ""
+    without_query = re.sub(r'[?#].*$', '', value).rstrip('/')
+    path_part = without_query
+    if re.match(r'^[^@\s]+@[^:\s]+:.+', without_query):
+        path_part = without_query.split(':', 1)[1]
+    else:
+        parsed = urllib.parse.urlparse(without_query)
+        if parsed.scheme and parsed.path:
+            path_part = parsed.path
+    last = [p for p in path_part.replace('\\', '/').split('/') if p]
+    if not last:
+        return ""
+    return _slugify_for_preview(re.sub(r'\.git$', '', last[-1], flags=re.I))
+
+
+def _git_origin_slug() -> str:
+    try:
+        remote = subprocess.check_output(
+            ["git", "config", "--get", "remote.origin.url"],
+            text=True, stderr=subprocess.DEVNULL).strip()
+    except subprocess.CalledProcessError:
+        return ""
+    return _repo_name_from_git_ref(remote)
+
+
+def _project_slug_hint(repo_root: str) -> str:
+    return _git_origin_slug() or _slugify_for_preview(os.path.basename(repo_root))
+
+
 def _compute_preview_slug(branch: str, project_slug: str) -> str:
     """与 cds/src/services/preview-slug.ts:computePreviewSlug 完全一致（v3）。
 
@@ -1059,8 +1092,11 @@ def _match_branches_for_project(branches: list, git_branch: str,
     # legacy entry 会污染本项目结果）—— 必须禁用 legacy 启发式。
     multi_project_cds = any(b.get("projectId") or b.get("projectSlug")
                             for b in branches)
+    expected_preview = _compute_preview_slug(git_branch, project_slug_hint)
 
     def _belongs(b: dict) -> bool:
+        if b.get("previewSlug") and b["previewSlug"] == expected_preview:
+            return True
         if b.get("projectSlug") and b["projectSlug"] == project_slug_hint:
             return True
         if b.get("projectId") and b["projectId"] == project_slug_hint:
@@ -1121,8 +1157,7 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
         die("当前没有分支（detached HEAD？）— 先 git checkout 一个功能分支", code=1)
         return
 
-    project_basename = os.path.basename(repo_root)
-    fallback_project_slug = _slugify_for_preview(project_basename)
+    fallback_project_slug = _project_slug_hint(repo_root)
     root = _preview_root_from_host()
 
     # Step 1: 优先走 CDS API（有 CDS_HOST + 任一认证密钥时；
@@ -1146,8 +1181,8 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
                   file=sys.stderr)
             api_failed = True
         # 项目身份过滤：没 CDS_PROJECT_ID 时多项目 CDS 可能有同名分支，取首条
-        # 会拿到错项目的 previewSlug。用本地仓库目录名 slugify 作为项目身份，
-        # 配合 canonical id 形如 `${projectSlug}-${slugify(branch)}` 二次过滤。
+        # 会拿到错项目的 previewSlug。优先用 git remote 仓库名作为项目 hint，
+        # 再 fallback 到本地目录名，配合 previewSlug / canonical id 二次过滤。
         project_scoped = bool(os.environ.get("CDS_PROJECT_ID", "").strip())
         # `body.get("branches", [])` 在 "branches": null 时返回 None（默认值
         # 只在 key 缺失时生效）；用 `or []` 兜底。
@@ -1215,7 +1250,7 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
             "projectSlug": fallback_project_slug,
             "previewSlug": slug,
             "url": url,
-            "note": "本地推算依赖「目录名 slugify 后 == CDS 项目 slug」。"
+            "note": "本地推算优先使用 git remote 仓库名，缺失时才退回目录名。"
                     "设置 CDS_HOST + (AI_ACCESS_KEY 或 CDS_PROJECT_KEY) 走 API 模式更准。",
         })
 
@@ -1243,7 +1278,7 @@ def cmd_branch_id(args: argparse.Namespace) -> None:
     if not branch:
         die("当前没有分支（detached HEAD？）", code=1)
         return
-    project_slug_hint = _slugify_for_preview(os.path.basename(repo_root))
+    project_slug_hint = _project_slug_hint(repo_root)
 
     # 用 _call_safe 而不是 _call(quiet=True)：后者在 URLError / TimeoutError 时
     # _request.die() exit 1（违反 CLI 契约 4xx→2/5xx→3）。_call_safe 把 HTTP +

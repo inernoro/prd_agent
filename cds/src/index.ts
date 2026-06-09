@@ -19,8 +19,8 @@ import { JanitorService } from './services/janitor.js';
 import { AutoLifecycleService } from './services/auto-lifecycle.js';
 import { InfraFlapWatchdog } from './services/infra-flap-watchdog.js';
 import { BridgeService } from './services/bridge.js';
-import { buildPreviewUrl } from './services/comment-template.js';
-import { computePreviewSlug, previewProjectSlug, previewSlugMatchPercent } from './services/preview-slug.js';
+import { buildPreviewUrlForProject } from './services/comment-template.js';
+import { previewSlugMatchPercent } from './services/preview-slug.js';
 import crypto from 'node:crypto';
 import { BranchDispatcher, HttpSnapshotFetcher } from './scheduler/dispatcher.js';
 import { ExecutorAgent } from './executor/agent.js';
@@ -2732,12 +2732,9 @@ function liveBranchesForGonePage(host: string, targetSlug: string): BranchGoneLi
     let previewSlug = slug;
     if (previewHost && b.branch) {
       const project = b.projectId ? stateService.getProject(b.projectId) : undefined;
-      const projectSlug = previewProjectSlug(project, b.projectId);
-      if (projectSlug) {
-        previewSlug = computePreviewSlug(b.branch, projectSlug);
-        const built = buildPreviewUrl(previewHost, b.branch, projectSlug);
-        if (built) url = built;
-      }
+      const built = buildPreviewUrlForProject(previewHost, b.branch, project, b.projectId);
+      if (built.previewSlug) previewSlug = built.previewSlug;
+      if (built.url) url = built.url;
     }
     out.push({
       slug,

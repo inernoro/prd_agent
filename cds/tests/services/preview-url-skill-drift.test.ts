@@ -154,4 +154,37 @@ describe('preview URL drift guard', () => {
     }
     expect(offenders).toEqual([]);
   });
+
+  it('业务代码不得绕过 buildPreviewUrlForProject 手算预览项目身份', () => {
+    const files = walk(path.join(REPO_ROOT, 'cds', 'src'));
+    const allow = new Set([
+      'cds/src/services/comment-template.ts',
+      'cds/src/services/preview-slug.ts',
+      // 解析旧 preview host / 反查 branch 的兼容层必须直接用候选公式。
+      'cds/src/services/proxy.ts',
+      'cds/src/services/worktree.ts',
+    ]);
+    const offenders: { file: string; line: number; text: string }[] = [];
+    for (const f of files) {
+      const rel = path.relative(REPO_ROOT, f);
+      if (allow.has(rel)) continue;
+      const lines = fs.readFileSync(f, 'utf8').split('\n');
+      lines.forEach((line, idx) => {
+        if (line.includes('computePreviewSlug(') || line.includes('previewProjectSlug(')) {
+          offenders.push({ file: rel, line: idx + 1, text: line.trim() });
+        }
+      });
+    }
+    if (offenders.length > 0) {
+      const msg = offenders
+        .map((o) => `  ${o.file}:${o.line}  ${o.text}`)
+        .join('\n');
+      throw new Error(
+        `检测到 ${offenders.length} 处绕过 buildPreviewUrlForProject 的预览身份计算。\n` +
+        `业务代码必须走 cds/src/services/comment-template.ts:buildPreviewUrlForProject，` +
+        `由 preview-slug.ts:resolvePreviewProjectIdentity 统一决定项目身份来源。\n${msg}`,
+      );
+    }
+    expect(offenders).toEqual([]);
+  });
 });
