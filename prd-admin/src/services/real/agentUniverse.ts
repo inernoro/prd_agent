@@ -190,6 +190,10 @@ export function invokeAgent(options: {
                   model: data.model,
                   platform: data.platform,
                 });
+              } else if (currentEvent === 'model') {
+                // 真实解析到的模型（adapter Start chunk 透出）—— start 事件早于网关解析，
+                // 模型名要等这个事件才有（与 direct-chat 的 start 带 model 形成统一可观测性）
+                options.onStart?.({ model: data.model, platform: data.platform });
               } else if (currentEvent === 'thinking' && data.content) {
                 options.onThinking?.(data.content);
               } else if (currentEvent === 'text' && data.content) {

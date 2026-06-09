@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { FolderKanban, Plus, Trash2, TrendingUp, Lightbulb, ChevronUp, ChevronDown, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -17,7 +18,9 @@ export function PmAgentPage() {
   const [projects, setProjects] = useState<PmProject[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // 支持从任务详情页等深链 ?project=xxx 直接回到该项目
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [selectedId, setSelectedId] = useState<string | null>(() => searchParams.get('project'));
   const [showDashboard, setShowDashboard] = useState(false);
   const [showAudit, setShowAudit] = useState(false);
   const [scope, setScope] = useState<PmProjectScope>('managed');
@@ -55,7 +58,10 @@ export function PmAgentPage() {
   if (selectedId) {
     return (
       <div className="h-full min-h-0 p-5">
-        <ProjectDetailView projectId={selectedId} onBack={() => setSelectedId(null)} />
+        <ProjectDetailView projectId={selectedId} onBack={() => {
+          setSelectedId(null);
+          if (searchParams.has('project')) { searchParams.delete('project'); setSearchParams(searchParams, { replace: true }); }
+        }} />
       </div>
     );
   }

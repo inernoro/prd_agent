@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { MessageSquare, ArrowRight, UserPlus, GitBranch, Sparkles, Send, X } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
-import { getUsers } from '@/services';
+import { searchDirectoryUsers } from '@/services';
 import type { AdminUser } from '@/types/admin';
 import { sanitizeHtml } from '@/lib/sanitizeHtml';
 import { RichTextField } from './DynamicForm';
@@ -36,9 +36,21 @@ export function ActivityTimeline({ entityType, entityId }: { entityType: string;
   useEffect(() => {
     void reload();
   }, [reload]);
+  // 干系人目录走 /api/teams/search-users（仅需登录），普通产品成员也能搜，
+  // 不再误用管理员专用的 /api/users（非管理员会 403 → 列表空 → 无法 @ 提醒）。
   useEffect(() => {
-    void getUsers({ page: 1, pageSize: 200 }).then((res) => {
-      if (res.success) setUsers(res.data.items);
+    void searchDirectoryUsers('', 200).then((res) => {
+      if (res.success) {
+        setUsers(res.data.items.map((u) => ({
+          userId: u.userId,
+          username: u.username,
+          displayName: u.displayName,
+          avatarFileName: u.avatarFileName,
+          role: '' as AdminUser['role'],
+          status: 'Active' as AdminUser['status'],
+          createdAt: '',
+        })));
+      }
     });
   }, []);
   const nameOf = useMemo(() => {

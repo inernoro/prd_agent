@@ -46,7 +46,7 @@ interface ChangelogState {
 }
 
 /**
- * 计算「未读条目数」：待发布碎片中比 lastSeenAt 更新的条目数。
+ * 计算「未读条目数」：未发布碎片中比 lastSeenAt 更新的条目数。
  * 用于顶栏铃铛红点显示。
  *
  * 简化处理：用 fragment.date 做比较（精度到天即可）。
@@ -74,7 +74,7 @@ export function selectUnreadCount(state: ChangelogState): number {
 }
 
 /**
- * 拉平待发布更新为「最近 N 条」列表（铃铛弹层使用）。
+ * 拉平未发布更新为「最近 N 条」列表（铃铛弹层使用）。
  */
 export function selectRecentEntries(
   state: ChangelogState,
@@ -94,7 +94,7 @@ export function selectRecentEntries(
 
 // 冷加载在途时被守卫挡掉的重读请求（如 SSE update 在初次冷加载期间到达）记一个 pending，
 // 待在途请求结束后补跑一次，避免页面停在「冷加载启动时拿到的旧快照」
-// （Codex P2：store-backed tab 也要 queue SSE reload，与 GitHub 日志的 trailing-edge 对称）。
+// （Codex P2：store-backed tab 也要 queue SSE reload，与 GitHub 提交的 trailing-edge 对称）。
 // force 取「或」：在途期间若有任一次 force=true（如用户点了头部刷新），补跑须保留 force，
 // 不能把硬刷新静默降级为只读重读（Bugbot Medium）。
 let pendingCurrentWeekReload = false;
@@ -154,7 +154,7 @@ export const useChangelogStore = create<ChangelogState>()(
             return { currentWeek: incoming, loadingCurrent: false };
           });
         } else if (!hasCache) {
-          set({ loadingCurrent: false, error: res.error?.message || '加载待发布更新失败' });
+          set({ loadingCurrent: false, error: res.error?.message || '加载未发布更新失败' });
         } else {
           set({ loadingCurrent: false });
         }
@@ -212,7 +212,7 @@ export const useChangelogStore = create<ChangelogState>()(
         if (res.success) {
           set({ releases: res.data, loadingReleases: false });
         } else if (!hasCache) {
-          set({ loadingReleases: false, error: res.error?.message || '加载历史发布失败' });
+          set({ loadingReleases: false, error: res.error?.message || '加载已发布流水失败' });
         } else {
           set({ loadingReleases: false });
         }

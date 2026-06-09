@@ -134,6 +134,22 @@ public static class Product
         Category = "Analysis"
     )]
     public const string RequirementAiFill = "product-agent.requirement-ai-fill::chat";
+
+    [AppCallerMetadata(
+        "产品管理-追溯关系分析",
+        "图谱追溯模式下，对整条关系链做 AI 流式分析（关键对象/关系/时间节点/前因后果）",
+        ModelTypes = new[] { ModelTypes.Chat },
+        Category = "Analysis"
+    )]
+    public const string TraceRelationAnalysis = "product-agent.trace-relation-analysis::chat";
+
+    [AppCallerMetadata(
+        "产品管理-AI助手",
+        "工作台右侧抽屉 AI 助手问答：以该产品全量数据 + 知识库文档为上下文，回答需求/缺陷/矩阵/人员等分析问题（SSE 流式）",
+        ModelTypes = new[] { ModelTypes.Chat },
+        Category = "Analysis"
+    )]
+    public const string WorkAssistant = "product-agent.work-assistant::chat";
 }
 
 /// <summary>
@@ -1517,6 +1533,41 @@ public static class InfraAgent
             Category = "Workflow"
         )]
         public const string Chat = "infra-agent.review-lite::chat";
+    }
+}
+
+/// <summary>
+/// Markdown 转 PPT Agent — 直接生成富设计 reveal.js HTML 网页 PPT
+/// </summary>
+public static class MdToPptAgent
+{
+    public const string AppName = "MD 转 PPT 智能体";
+
+    public static class Generation
+    {
+        [AppCallerMetadata(
+            "MD转PPT-大纲生成",
+            "将 Markdown/文本内容通过 LLM 流式生成 PPT 大纲结构，每页含标题和要点",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Document"
+        )]
+        public const string Convert = "md-to-ppt-agent.generation::chat";
+
+        [AppCallerMetadata(
+            "MD转PPT-富设计HTML直出",
+            "将 Markdown/文本内容直接生成完整 reveal.js HTML 网页 PPT，多样版式、富视觉设计，无需大纲中转",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Document"
+        )]
+        public const string HtmlGenerate = "md-to-ppt-agent.html-generate::chat";
+
+        [AppCallerMetadata(
+            "MD转PPT-局部修改",
+            "对已有网页 PPT 的指定页面进行局部修改和重新生成",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Document"
+        )]
+        public const string Patch = "md-to-ppt-agent.patch::chat";
     }
 }
 }

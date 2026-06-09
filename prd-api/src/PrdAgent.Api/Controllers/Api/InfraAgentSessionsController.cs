@@ -1267,6 +1267,35 @@ public class InfraAgentSessionsController : ControllerBase
         }
     }
 
+    /// <summary>把文本文件注入 agent 工作区（path 1 文件注入接缝 v1，复用 CDS files 端点）。</summary>
+    [HttpPost("{id}/inject-files")]
+    public async Task<IActionResult> InjectFiles(string id, [FromBody] InjectWorkspaceFilesRequest? req, CancellationToken ct)
+    {
+        var userId = this.GetRequiredUserId();
+        if (req?.Files == null || req.Files.Count == 0)
+        {
+            return BadRequest(ApiResponse<object>.Fail(InfraAgentSessionErrorCodes.MessageContentRequired, "files 不能为空"));
+        }
+        try
+        {
+            var inputs = req.Files
+                .Where(f => !string.IsNullOrWhiteSpace(f.Path))
+                .Select(f => new InfraAgentWorkspaceFileInput(f.Path!.Trim(), f.Content ?? string.Empty))
+                .ToList();
+            var ok = await _service.InjectWorkspaceFilesAsync(userId, id, inputs, ct);
+            return Ok(ApiResponse<object>.Ok(new { injected = ok, count = inputs.Count }));
+        }
+        catch (InfraAgentSessionException ex)
+        {
+            return StatusCode(ex.HttpStatus, ApiResponse<object>.Fail(ex.ErrorCode, ex.Message));
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway,
+                ApiResponse<object>.Fail(InfraAgentSessionErrorCodes.CdsRequestFailed, ex.Message));
+        }
+    }
+
     [HttpPost("{id}/stop")]
     public async Task<IActionResult> Stop(string id, CancellationToken ct)
     {
@@ -1657,4 +1686,15 @@ public class InfraAgentSessionsController : ControllerBase
             return null;
         }
     }
+}
+
+public sealed class InjectWorkspaceFilesRequest
+{
+    public List<InjectWorkspaceFileItem>? Files { get; set; }
+}
+
+public sealed class InjectWorkspaceFileItem
+{
+    public string? Path { get; set; }
+    public string? Content { get; set; }
 }

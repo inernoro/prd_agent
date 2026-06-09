@@ -292,11 +292,21 @@ export interface TracedDefect {
   defectNo: string;
   title?: string | null;
   status: string;
+  /** 统一等级 p0/p1/p2/p3（取代严重度）。severity 仍保留用于旧数据兜底。 */
+  grade?: string | null;
   severity?: string | null;
   priority?: string | null;
   tracedRequirementId?: string | null;
   tracedVersionId?: string | null;
   tracedFeatureId?: string | null;
+  /** 以下字段由 list/detail 接口返回的完整 DefectReport 提供，用于产品内缺陷详情编辑 */
+  rawContent?: string | null;
+  assigneeId?: string | null;
+  assigneeName?: string | null;
+  reporterId?: string | null;
+  reporterName?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
 }
 export function listTracedDefects(productId: string, params?: { requirementId?: string; versionId?: string; featureId?: string }) {
   const q = new URLSearchParams();
@@ -321,6 +331,22 @@ export function untraceDefect(defectId: string) {
 /** 缺陷转需求：在缺陷所追溯的产品下生成一条需求并建立溯源追溯，返回新需求。 */
 export function convertDefectToRequirement(defectId: string) {
   return apiRequest<Requirement>(`/api/product/defects/${defectId}/convert-to-requirement`, { method: 'POST' });
+}
+
+/** 工作台「我的待办」一条：需求/功能/缺陷统一结构（后端已按"需我处理"过滤好）。 */
+export interface MyTodoItem {
+  kind: 'requirement' | 'feature' | 'defect';
+  id: string;
+  no: string;
+  title: string;
+  /** 原始状态值（需求/功能为工作流状态 Key，缺陷为 DefectStatus）。 */
+  state?: string | null;
+  /** 已解析的状态中文标签（需求/功能由后端工作流解析；缺陷为空，前端用 defectStatusLabel 兜底）。 */
+  stateLabel?: string | null;
+}
+/** 工作台「我的待办」：只返回当前用户现在需要处理的项（后端按状态责任人 + 未到终态/未完成过滤）。 */
+export function getMyTodos(productId: string) {
+  return apiRequest<ListWrap<MyTodoItem>>(`/api/product/products/${productId}/my-todos`);
 }
 
 // ── 动态/讨论时间线（P2）──
@@ -437,7 +463,7 @@ export function getOverviewFeatures(params?: { grade?: string; keyword?: string;
 }
 export interface OverviewDefectRow {
   id: string; productId: string; productName: string; defectNo: string; title?: string | null;
-  status: string; severity?: string | null; priority?: string | null; tracedRequirementId?: string | null; tracedVersionId?: string | null; updatedAt: string;
+  status: string; grade?: string | null; tracedRequirementId?: string | null; tracedVersionId?: string | null; updatedAt: string;
 }
 export function getOverviewDefects(params?: { status?: string; keyword?: string }) {
   const q = new URLSearchParams();
@@ -455,6 +481,9 @@ export function getOverviewKnowledge() {
 export function getOverviewGraph() {
   return apiRequest<{ nodes: GraphNode[]; edges: GraphEdge[] }>('/api/product/overview/graph');
 }
-export function createProductDefect(productId: string, body: { title: string; description?: string; severity?: string; requirementId?: string; versionId?: string }) {
+export function createProductDefect(productId: string, body: { title: string; description?: string; grade?: string; assigneeId?: string | null; featureId?: string; versionId?: string }) {
   return apiRequest<TracedDefect>(`/api/product/products/${productId}/defects`, { method: 'POST', body });
+}
+export function updateProductDefect(productId: string, defectId: string, body: { title: string; description?: string; grade?: string; status?: string; assigneeId?: string | null; featureId?: string; versionId?: string }) {
+  return apiRequest<TracedDefect>(`/api/product/products/${productId}/defects/${defectId}`, { method: 'PUT', body });
 }

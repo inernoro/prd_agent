@@ -180,10 +180,31 @@ public class AgentStreamChunk
     /// </summary>
     public Dictionary<string, object>? Metadata { get; set; }
 
+    /// <summary>
+    /// 解析到的模型名（当 Type=Model 时）。来源：gateway Start chunk 的 Resolution，
+    /// 透出给前端做「当前模型」可观测性展示（ai-model-visibility 规则），禁止前端硬编码。
+    /// </summary>
+    public string? Model { get; set; }
+
+    /// <summary>
+    /// 解析到的平台名（当 Type=Model 时）。
+    /// </summary>
+    public string? Platform { get; set; }
+
     public static AgentStreamChunk Text(string content) => new()
     {
         Type = AgentChunkType.Text,
         Content = content
+    };
+
+    /// <summary>
+    /// 模型解析块：把 gateway 真实解析到的模型 / 平台透出（首个 Start chunk 时发一次）。
+    /// </summary>
+    public static AgentStreamChunk ModelChunk(string? model, string? platform) => new()
+    {
+        Type = AgentChunkType.Model,
+        Model = model,
+        Platform = platform
     };
 
     public static AgentStreamChunk ArtifactChunk(ToolboxArtifact artifact) => new()
@@ -213,5 +234,6 @@ public enum AgentChunkType
     Text,
     Artifact,
     Done,
-    Error
+    Error,
+    Model
 }

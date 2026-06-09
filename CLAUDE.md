@@ -95,6 +95,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
   | feat | prd-admin | 新增XX功能 |
   | fix | prd-api | 修复XX问题 |
   ```
+- 类型枚举只允许：`feat` 新功能、`fix` 修复、`perf` 优化、`refactor` 重构、`docs` 文档、`chore` 杂项、`test` 测试、`ci` 构建、`security` 安全、`ops` 运维、`style` 样式、`polish` 润色、`rule` 规范、`merge` 合并、`revert` 回滚。
 - 同一 PR 的所有变更放在**一个碎片文件**中
 - 纯文档变更（`doc/`）、纯 CLAUDE.md 规则调整可选记录
 
@@ -110,7 +111,9 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 #### 5.1 Commit message 必须使用中文
 
-所有 `git commit` 信息**必须用中文**撰写（标题 + 正文）。允许保留英文技术术语（API/SSE/createPortal 等专有名词）和 Conventional Commits 前缀（`feat`/`fix`/`refactor`/`perf`/`docs`/`chore`/`test`），其余表述一律中文。
+所有 `git commit` 信息**必须用中文**撰写（标题 + 正文）。允许保留英文技术术语（API/SSE/createPortal 等专有名词）和 Conventional Commits 前缀，其余表述一律中文。
+
+提交标题类型枚举只允许：`feat`、`fix`、`perf`、`refactor`、`docs`、`chore`、`test`、`ci`、`build`、`release`、`revert`、`merge`、`security`、`ops`、`style`、`polish`、`rule`。
 
 ```
 ✅ fix(prd-admin): 修复周报弹窗样式错乱

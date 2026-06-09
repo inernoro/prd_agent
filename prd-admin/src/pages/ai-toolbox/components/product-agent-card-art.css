@@ -1,0 +1,56 @@
+/*
+ * 产品管理智能体 (product-agent) 卡片封面动效
+ * 主题：知识图谱链路（产品-版本-需求-功能-缺陷-客户全链路串联）
+ * 动效：连线数据流光 + 节点脉冲 + 彗星沿链流动 + 背景光晕漂移
+ * 悬停（.group:hover）整体提速增亮；prefers-reduced-motion 下全部静止。
+ */
+
+@keyframes paArtDash {
+  to { stroke-dashoffset: -40; }
+}
+
+@keyframes paArtPulse {
+  0%, 100% { transform: scale(1); opacity: 0.55; }
+  50% { transform: scale(1.55); opacity: 0; }
+}
+
+@keyframes paArtOrbDrift {
+  0%, 100% { transform: translate(0, 0); }
+  50% { transform: translate(14px, -10px); }
+}
+
+@keyframes paArtOrbDrift2 {
+  0%, 100% { transform: translate(0, 0); }
+  50% { transform: translate(-16px, 12px); }
+}
+
+.pa-art-flow {
+  stroke-dasharray: 6 10;
+  animation: paArtDash 1.6s linear infinite;
+}
+
+.pa-art-pulse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: paArtPulse 2.6s ease-in-out infinite;
+}
+
+.pa-art-orb {
+  animation: paArtOrbDrift 9s ease-in-out infinite;
+}
+.pa-art-orb2 {
+  animation: paArtOrbDrift2 11s ease-in-out infinite;
+}
+
+/* 悬停整体提速 + 更亮 */
+.group:hover .pa-art-flow { animation-duration: 0.8s; }
+.group:hover .pa-art-pulse { animation-duration: 1.5s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pa-art-flow,
+  .pa-art-pulse,
+  .pa-art-orb,
+  .pa-art-orb2 {
+    animation: none;
+  }
+}

@@ -157,14 +157,26 @@ async function resolveVisitUrl(site: HostedSite): Promise<string> {
 // ─── 分组方式（参考文学创作 LiteraryAgentWorkspaceListPage） ───
 
 type GroupMode = 'time' | 'folder';
+type WebPageCardSize = 'small' | 'medium' | 'large';
 
-// ─── 列表偏好持久化（排序/视图/分组）───
+const CARD_SIZE_OPTIONS: { value: WebPageCardSize; label: string; width: number }[] = [
+  { value: 'small', label: '小', width: 220 },
+  { value: 'medium', label: '中', width: 260 },
+  { value: 'large', label: '大', width: 320 },
+];
+
+function normalizeCardSize(v: string): WebPageCardSize {
+  return v === 'small' || v === 'large' || v === 'medium' ? v : 'medium';
+}
+
+// ─── 列表偏好持久化（排序/视图/分组/卡片尺寸）───
 // 用 localStorage：纯 UI 偏好（非敏感、设备本地、发版后用旧值无害），
 // 关浏览器重开也要记住用户的排序/视图选择。符合 .claude/rules/no-localstorage.md 的例外清单。
 const PREF_KEYS = {
   sort: 'webpages.pref.sort',
   viewMode: 'webpages.pref.viewMode',
   groupMode: 'webpages.pref.groupMode',
+  cardSize: 'webpages.pref.cardSize',
 } as const;
 
 function readPref(key: string, fallback: string): string {
@@ -224,17 +236,9 @@ function buildSiteGroups(items: HostedSite[], mode: GroupMode): SiteGroup[] {
     }
     g.items.push(site);
   }
-  const groups = [...map.values()];
-  // 文件夹分组：组顺序按文件夹名字母序，「未分类」置底（对齐文学创作可预测排序）。
-  // 时间分组：保持 first-seen（= 排序结果）顺序，让排序方向决定时间桶先后。
-  if (mode === 'folder') {
-    groups.sort((a, b) => {
-      if (a.key === 'f:__none__') return 1;
-      if (b.key === 'f:__none__') return -1;
-      return a.label.localeCompare(b.label, 'zh-Hans-CN');
-    });
-  }
-  return groups;
+  // 所有分组都保持 first-seen（= 后端排序结果）顺序。
+  // 这样“最新 / 最早 / 标题 / 浏览 / 体积”控制的是全局顺序，分组只负责插入标题。
+  return [...map.values()];
 }
 
 // ─── 排序循环：单击在 5 个选项之间下一步 ───
@@ -328,6 +332,9 @@ export default function WebPagesPage() {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>(
     () => readPref(PREF_KEYS.viewMode, 'grid') as 'grid' | 'list',
   );
+  const [cardSize, setCardSize] = useState<WebPageCardSize>(
+    () => normalizeCardSize(readPref(PREF_KEYS.cardSize, 'medium')),
+  );
 
   // 空间 → 作用域（个人空间走 mine 再客户端剔除已进团队的；团队空间走 team）。下游隔离/角色门控不变
   const teamScope = useMemo(
@@ -340,10 +347,11 @@ export default function WebPagesPage() {
     () => readPref(PREF_KEYS.groupMode, 'time') as GroupMode,
   );
 
-  // 排序/视图/分组偏好变化即写回 localStorage，刷新/重开浏览器后自动恢复
+  // 排序/视图/分组/卡片尺寸偏好变化即写回 localStorage，刷新/重开浏览器后自动恢复
   useEffect(() => { writePref(PREF_KEYS.sort, sort); }, [sort]);
   useEffect(() => { writePref(PREF_KEYS.viewMode, viewMode); }, [viewMode]);
   useEffect(() => { writePref(PREF_KEYS.groupMode, groupMode); }, [groupMode]);
+  useEffect(() => { writePref(PREF_KEYS.cardSize, cardSize); }, [cardSize]);
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   // 已分享站点集合（单站点分享）：驱动卡片「已分享」标记 + 分享按钮转「取消分享」 + 投放槽读心
@@ -590,6 +598,7 @@ export default function WebPagesPage() {
     [spaceSites, activeFolder],
   );
   const siteGroups = useMemo(() => buildSiteGroups(displaySites, groupMode), [displaySites, groupMode]);
+  const cardWidth = CARD_SIZE_OPTIONS.find(o => o.value === cardSize)?.width ?? 260;
 
   const enterSpace = (s: Space) => {
     setCurrentSpace(s);
@@ -617,7 +626,7 @@ export default function WebPagesPage() {
       <div
         className="grid gap-3"
         style={{
-          gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 260px), 260px))',
+          gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, ${cardWidth}px), ${cardWidth}px))`,
           justifyContent: 'start',
         }}
       >
@@ -850,6 +859,15 @@ export default function WebPagesPage() {
                 color: 'var(--text-primary)',
                 border: '1px solid var(--border-default)',
               }}
+            />
+          </div>
+
+          {/* Card size */}
+          <div data-tour-id="webpages-card-size-pills" title="调整网页卡片大小，刷新后保持">
+            <SegmentPills
+              options={CARD_SIZE_OPTIONS.map(({ value, label }) => ({ value, label }))}
+              value={cardSize}
+              onChange={(v) => setCardSize(normalizeCardSize(v))}
             />
           </div>
 
@@ -2706,9 +2724,16 @@ function SharesPanel({ shares, setShares, onClose, scopedSiteId, scopedSiteTitle
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <Link2 size={14} style={{ color: 'var(--text-muted)' }} />
-                        <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                        <a
+                          href={shareUrlOf(share)}
+                          target="_blank"
+                          rel="noopener"
+                          className="text-sm font-medium truncate hover:underline"
+                          style={{ color: 'var(--text-primary)' }}
+                          title="预览分享链接"
+                        >
                           {share.title || (share.shareType === 'collection' ? `合集 (${share.siteIds.length} 站)` : '单站点分享')}
-                        </span>
+                        </a>
                         {share.shortSeq && share.shortSeq > 0 ? (
                           <span title={`/s/${share.shortSeq}`}>
                             <Badge variant="subtle">#{share.shortSeq}</Badge>
@@ -2736,7 +2761,7 @@ function SharesPanel({ shares, setShares, onClose, scopedSiteId, scopedSiteTitle
                       <div className="flex items-center gap-3 mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
                         <span className="flex items-center gap-1"><Eye size={10} /> {share.viewCount} PV</span>
                         {(share.uniqueIpCount ?? 0) > 0 && (
-                          <span title="独立 IP 数">{share.uniqueIpCount} 个 IP</span>
+                          <span title="基于访问日志估算的访客线索">{share.uniqueIpCount} 位访客</span>
                         )}
                         <span>创建于 {fmtDate(share.createdAt)}</span>
                         {share.expiresAt && <span>{isExpired ? '过期于' : '到期'} {fmtDate(share.expiresAt)}</span>}

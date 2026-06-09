@@ -1001,6 +1001,7 @@ public class PmAgentController : ControllerBase
                 leadId = g.LeadId, leadName = g.LeadName, confidence = g.Confidence,
                 score = g.Score, scoreNote = g.ScoreNote, scoredAt = g.ScoredAt, scoredByName = g.ScoredByName,
                 progress = effective, progressMode = g.ProgressMode, linkedMilestoneCount = linked.Count,
+                isMilestone = linked.Any(m => m.AutoFromGoal),
                 status = g.Status, createdBy = g.CreatedBy, createdByName = g.CreatedByName,
                 orderKey = g.OrderKey, createdAt = g.CreatedAt, updatedAt = g.UpdatedAt,
             };
@@ -1116,6 +1117,114 @@ public class PmAgentController : ControllerBase
         }
         if (request.OrderKey.HasValue) update = update.Set(x => x.OrderKey, request.OrderKey.Value);
         await _db.PmGoals.UpdateOneAsync(x => x.Id == goalId, update);
+        return Ok(ApiResponse<object>.Ok(new { updated = true }));
+    }
+
+    /// <summary>把目标设为/取消里程碑：开 → 建一条联动里程碑(AutoFromGoal=true，GoalId 关联)；关 → 删除该联动里程碑。
+    /// 团队/个人目标都支持（个人目标仅本人，团队目标 owner/leader）。</summary>
+    [HttpPost("goals/{goalId}/milestone")]
+    public async Task<IActionResult> ToggleGoalMilestone(string goalId, [FromBody] ToggleGoalMilestoneRequest request)
+    {
+        var userId = GetUserId();
+        var g = await _db.PmGoals.Find(x => x.Id == goalId).FirstOrDefaultAsync();
+        if (g == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "目标不存在"));
+        var project = await FindAccessibleProjectAsync(g.ProjectId, userId);
+        if (project == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (g.Scope == PmGoalScope.Personal && g.OwnerId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "个人目标仅本人可操作"));
+        if (g.Scope == PmGoalScope.Team && project.OwnerId != userId && project.LeaderId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "团队目标仅立项人或负责人可操作"));
+
+        var existing = await _db.PmMilestones.Find(m => m.GoalId == goalId && m.AutoFromGoal).FirstOrDefaultAsync();
+        if (request.Enabled)
+        {
+            if (existing == null)
+            {
+                var creatorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+                await _db.PmMilestones.InsertOneAsync(new PmMilestone
+                {
+                    ProjectId = g.ProjectId,
+                    Title = g.Title,
+                    Description = g.Description,
+                    GoalId = goalId,
+                    OwnerId = g.LeadId,
+                    OwnerName = g.LeadName,
+                    AutoFromGoal = true,
+                    Status = PmMilestoneStatus.Planned,
+                    OrderKey = DateTime.UtcNow.Ticks,
+                    CreatedBy = userId,
+                    CreatedByName = creatorName,
+                });
+            }
+            return Ok(ApiResponse<object>.Ok(new { isMilestone = true }));
+        }
+        await _db.PmMilestones.DeleteManyAsync(m => m.GoalId == goalId && m.AutoFromGoal);
+        return Ok(ApiResponse<object>.Ok(new { isMilestone = false }));
+    }
+
+    /// <summary>调整目标层级（画布拖拽，Xmind 式）：把目标挂到新父目标下，或升为顶层(parentId 空)。
+    /// 校验：同范围、不挂到自身/后代(防环)、调整后层级不超上限；级联更新整棵子树的 Depth。</summary>
+    [HttpPost("goals/{goalId}/reparent")]
+    public async Task<IActionResult> ReparentGoal(string goalId, [FromBody] ReparentGoalRequest request)
+    {
+        var userId = GetUserId();
+        var g = await _db.PmGoals.Find(x => x.Id == goalId).FirstOrDefaultAsync();
+        if (g == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "目标不存在"));
+        var project = await FindAccessibleProjectAsync(g.ProjectId, userId);
+        if (project == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "项目不存在或无权访问"));
+        if (g.Scope == PmGoalScope.Personal && g.OwnerId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "个人目标仅本人可调整"));
+        if (g.Scope == PmGoalScope.Team && project.OwnerId != userId && project.LeaderId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "团队目标仅立项人或负责人可调整"));
+
+        var newParentId = string.IsNullOrWhiteSpace(request.ParentId) ? null : request.ParentId;
+        if (newParentId == goalId)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不能挂到自己下面"));
+        if (newParentId == (g.ParentId ?? null))
+            return Ok(ApiResponse<object>.Ok(new { updated = false })); // 没变化
+
+        var all = await _db.PmGoals.Find(x => x.ProjectId == g.ProjectId).ToListAsync();
+        var childrenByParent = all.GroupBy(x => x.ParentId ?? "").ToDictionary(x => x.Key, x => x.ToList());
+
+        var newBaseDepth = 0;
+        if (newParentId != null)
+        {
+            var parent = all.FirstOrDefault(x => x.Id == newParentId);
+            if (parent == null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "目标父级不存在"));
+            if (parent.Scope != g.Scope)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "仅可在同一范围（团队/个人）内调整层级"));
+            // 防环：新父不能是本目标的后代
+            var subtree = new HashSet<string>();
+            var st = new Stack<string>(); st.Push(goalId);
+            while (st.Count > 0) { var cur = st.Pop(); if (!subtree.Add(cur)) continue; if (childrenByParent.TryGetValue(cur, out var cs)) foreach (var c in cs) st.Push(c.Id); }
+            if (subtree.Contains(newParentId))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不能挂到自己的子目标下（会形成循环）"));
+            newBaseDepth = parent.Depth + 1;
+        }
+
+        // BFS 计算子树新深度并校验上限
+        var newDepth = new Dictionary<string, int>();
+        var q = new Queue<(string id, int depth)>(); q.Enqueue((goalId, newBaseDepth));
+        while (q.Count > 0)
+        {
+            var (id, depth) = q.Dequeue();
+            if (newDepth.ContainsKey(id)) continue;
+            if (depth >= PmGoal.MaxGoalDepth)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"调整后层级超过上限（最多 {PmGoal.MaxGoalDepth} 层）"));
+            newDepth[id] = depth;
+            if (childrenByParent.TryGetValue(id, out var cs)) foreach (var c in cs) q.Enqueue((c.Id, depth + 1));
+        }
+
+        var now = DateTime.UtcNow;
+        foreach (var kv in newDepth)
+        {
+            if (kv.Key == goalId)
+                await _db.PmGoals.UpdateOneAsync(x => x.Id == kv.Key,
+                    Builders<PmGoal>.Update.Set(x => x.ParentId, newParentId).Set(x => x.Depth, kv.Value).Set(x => x.UpdatedAt, now));
+            else
+                await _db.PmGoals.UpdateOneAsync(x => x.Id == kv.Key,
+                    Builders<PmGoal>.Update.Set(x => x.Depth, kv.Value).Set(x => x.UpdatedAt, now));
+        }
         return Ok(ApiResponse<object>.Ok(new { updated = true }));
     }
 
@@ -1410,6 +1519,9 @@ public class PmAgentController : ControllerBase
     {
         if (m.Status == PmMilestoneStatus.Reached) return "reached";
         if (m.Status == PmMilestoneStatus.Cancelled) return "cancelled";
+        // 有实际完成时间即视为已完成 —— 不再按"未完成"判逾期。
+        // 早于/等于计划截止 = 按时达成；晚于计划截止仍算完成（滑移由 slippageDays 单独体现）。
+        if (m.ReachedAt.HasValue) return "reached";
         var allDone = total > 0 && done >= total;
         var today = DateTime.UtcNow.Date;
         if (m.DueAt.HasValue && !allDone)
@@ -1606,6 +1718,11 @@ public class PmAgentController : ControllerBase
             else if (request.Status != PmMilestoneStatus.Reached && m.Status == PmMilestoneStatus.Reached)
                 update = update.Set(x => x.ReachedAt, (DateTime?)null);
         }
+        // 实际完成时间（可补录，独立于状态切换）：显式设置优先于上面的状态联动
+        if (request.ClearReachedAt == true)
+            update = update.Set(x => x.ReachedAt, (DateTime?)null);
+        else if (request.ReachedAt.HasValue)
+            update = update.Set(x => x.ReachedAt, request.ReachedAt);
         await _db.PmMilestones.UpdateOneAsync(x => x.Id == milestoneId, update);
         return Ok(ApiResponse<object>.Ok(new { updated = true }));
     }
@@ -2319,12 +2436,22 @@ public class PmAgentController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Title))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "任务标题不能为空"));
 
+        // 两级子任务约束：父任务必须存在、同项目，且自身不能已是子任务（否则会变三级）
+        var parentId = string.IsNullOrWhiteSpace(request.ParentTaskId) ? null : request.ParentTaskId;
+        if (parentId != null)
+        {
+            var parentErr = await ValidateParentForTwoLevelAsync(projectId, parentId, childId: null);
+            if (parentErr != null)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, parentErr));
+        }
+
+        var progress = ClampProgress(request.ProgressPercent ?? 0);
         var task = new PmTask
         {
             ProjectId = projectId,
             Title = request.Title.Trim(),
             Description = request.Description?.Trim(),
-            ParentTaskId = request.ParentTaskId,
+            ParentTaskId = parentId,
             MilestoneId = string.IsNullOrWhiteSpace(request.MilestoneId) ? null : request.MilestoneId,
             GoalId = string.IsNullOrWhiteSpace(request.GoalId) ? null : request.GoalId,
             Status = PmTaskStatus.All.Contains(request.Status ?? "") ? request.Status! : PmTaskStatus.Backlog,
@@ -2336,10 +2463,14 @@ public class PmAgentController : ControllerBase
             DependsOn = request.DependsOn ?? new(),
             Labels = request.Labels ?? new(),
             OrderKey = request.OrderKey ?? DateTime.UtcNow.Ticks,
+            ProgressPercent = progress,
+            AutoProgress = request.ProgressPercent == null,
             CreatedBy = userId,
         };
         await FillAssigneeNameAsync(task);
         await _db.PmTasks.InsertOneAsync(task);
+        // 新增子任务 → 父任务转自动汇总并重算进度
+        if (parentId != null) await RecalcParentProgressAsync(parentId);
         await RecalcTaskCountAsync(projectId);
         return Ok(ApiResponse<object>.Ok(task));
     }
@@ -2430,8 +2561,47 @@ public class PmAgentController : ControllerBase
         // GoalId：空串=解除归属（置 null），非空=归属
         if (request.GoalId != null) update = update.Set(t => t.GoalId, string.IsNullOrWhiteSpace(request.GoalId) ? null : request.GoalId);
 
+        // 手填进度 → 该任务转为手动进度（不再被自动汇总覆盖）
+        var manualProgressSet = false;
+        if (request.ProgressPercent.HasValue)
+        {
+            update = update.Set(t => t.ProgressPercent, ClampProgress(request.ProgressPercent.Value))
+                           .Set(t => t.AutoProgress, false);
+            manualProgressSet = true;
+        }
+
+        // 重设父任务（两级约束）：空串=升为顶层，非空=挂为子任务
+        string? newParentId = null;
+        var reparented = false;
+        if (request.ParentTaskId != null)
+        {
+            newParentId = string.IsNullOrWhiteSpace(request.ParentTaskId) ? null : request.ParentTaskId;
+            if (newParentId != (task.ParentTaskId ?? null))
+            {
+                if (newParentId != null)
+                {
+                    var parentErr = await ValidateParentForTwoLevelAsync(task.ProjectId, newParentId, childId: taskId);
+                    if (parentErr != null)
+                        return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, parentErr));
+                }
+                update = update.Set(t => t.ParentTaskId, newParentId);
+                reparented = true;
+            }
+        }
+
         await _db.PmTasks.UpdateOneAsync(t => t.Id == taskId, update);
         if (request.Status != null) await RecalcTaskCountAsync(task.ProjectId);
+
+        // 进度汇总：状态/进度/父子关系变化时，重算相关父任务
+        if (request.Status != null || manualProgressSet)
+        {
+            if (task.ParentTaskId != null) await RecalcParentProgressAsync(task.ParentTaskId);
+        }
+        if (reparented)
+        {
+            if (task.ParentTaskId != null) await RecalcParentProgressAsync(task.ParentTaskId); // 旧父
+            if (newParentId != null) await RecalcParentProgressAsync(newParentId);              // 新父
+        }
 
         // 变更留痕（仅记录关键字段）
         var changes = new List<PmTaskActivity>();
@@ -2495,6 +2665,110 @@ public class PmAgentController : ControllerBase
         await NotifyMentionsAsync(request.MentionedUserIds, userId, actorName, task, activity.Content ?? "");
 
         return Ok(ApiResponse<object>.Ok(activity));
+    }
+
+    // ─────────────────────────────────────────────
+    // 任务工作日志（处理人按天记录"做了什么、完成多少进度"，流水多条）
+    // ─────────────────────────────────────────────
+
+    /// <summary>列出某任务的工作日志（按日期 + 创建时间倒序）</summary>
+    [HttpGet("tasks/{taskId}/work-logs")]
+    public async Task<IActionResult> GetWorkLogs(string taskId)
+    {
+        var userId = GetUserId();
+        var task = await _db.PmTasks.Find(t => t.Id == taskId).FirstOrDefaultAsync();
+        if (task == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
+        if (await FindAccessibleProjectAsync(task.ProjectId, userId) == null)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权操作"));
+
+        var items = await _db.PmTaskWorkLogs.Find(w => w.TaskId == taskId)
+            .SortByDescending(w => w.Date).Limit(500).ToListAsync();
+        items = items.OrderByDescending(w => w.Date).ThenByDescending(w => w.CreatedAt).ToList();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    /// <summary>新增一条工作日志（带进度时联动更新任务进度）</summary>
+    [HttpPost("tasks/{taskId}/work-logs")]
+    public async Task<IActionResult> CreateWorkLog(string taskId, [FromBody] CreateWorkLogRequest request)
+    {
+        var userId = GetUserId();
+        var task = await _db.PmTasks.Find(t => t.Id == taskId).FirstOrDefaultAsync();
+        if (task == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
+        if (await FindAccessibleProjectAsync(task.ProjectId, userId) == null)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权操作"));
+        if (string.IsNullOrWhiteSpace(request.Content))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "工作内容不能为空"));
+
+        var actorName = (await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync())?.DisplayName;
+        var log = new PmTaskWorkLog
+        {
+            TaskId = taskId,
+            ProjectId = task.ProjectId,
+            UserId = userId,
+            UserName = actorName,
+            Date = (request.Date ?? DateTime.UtcNow).Date,
+            Content = request.Content.Trim(),
+            DurationMinutes = request.DurationMinutes,
+            ProgressPercent = request.ProgressPercent.HasValue ? ClampProgress(request.ProgressPercent.Value) : null,
+            Category = DailyLogCategory.All.Contains(request.Category ?? "") ? request.Category! : DailyLogCategory.Development,
+        };
+        await _db.PmTaskWorkLogs.InsertOneAsync(log);
+
+        // 带进度 → 联动更新任务进度（仅叶子任务；父任务进度由子任务汇总，不被日志覆盖）
+        if (request.ProgressPercent.HasValue)
+        {
+            var hasChildren = await _db.PmTasks.Find(t => t.ParentTaskId == taskId).AnyAsync();
+            if (!hasChildren)
+            {
+                var p = ClampProgress(request.ProgressPercent.Value);
+                await _db.PmTasks.UpdateOneAsync(t => t.Id == taskId,
+                    Builders<PmTask>.Update
+                        .Set(t => t.ProgressPercent, p)
+                        .Set(t => t.AutoProgress, false)
+                        .Set(t => t.UpdatedAt, DateTime.UtcNow));
+                await _db.PmTaskActivities.InsertOneAsync(new PmTaskActivity
+                {
+                    TaskId = taskId, ProjectId = task.ProjectId, Type = PmActivityType.Change,
+                    UserId = userId, UserName = actorName,
+                    Field = "progress", FromValue = task.ProgressPercent.ToString(), ToValue = p.ToString(),
+                });
+                if (task.ParentTaskId != null) await RecalcParentProgressAsync(task.ParentTaskId);
+            }
+        }
+        return Ok(ApiResponse<object>.Ok(log));
+    }
+
+    /// <summary>编辑工作日志（仅作者本人）</summary>
+    [HttpPut("work-logs/{logId}")]
+    public async Task<IActionResult> UpdateWorkLog(string logId, [FromBody] UpdateWorkLogRequest request)
+    {
+        var userId = GetUserId();
+        var log = await _db.PmTaskWorkLogs.Find(w => w.Id == logId).FirstOrDefaultAsync();
+        if (log == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "日志不存在"));
+        if (log.UserId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "只能编辑本人填写的日志"));
+
+        var update = Builders<PmTaskWorkLog>.Update.Set(w => w.UpdatedAt, DateTime.UtcNow);
+        if (request.Content != null) update = update.Set(w => w.Content, request.Content.Trim());
+        if (request.Date.HasValue) update = update.Set(w => w.Date, request.Date.Value.Date);
+        if (request.DurationMinutes.HasValue) update = update.Set(w => w.DurationMinutes, request.DurationMinutes);
+        if (request.ProgressPercent.HasValue) update = update.Set(w => w.ProgressPercent, ClampProgress(request.ProgressPercent.Value));
+        if (request.Category != null && DailyLogCategory.All.Contains(request.Category)) update = update.Set(w => w.Category, request.Category);
+        await _db.PmTaskWorkLogs.UpdateOneAsync(w => w.Id == logId, update);
+        return Ok(ApiResponse<object>.Ok(new { updated = true }));
+    }
+
+    /// <summary>删除工作日志（仅作者本人）</summary>
+    [HttpDelete("work-logs/{logId}")]
+    public async Task<IActionResult> DeleteWorkLog(string logId)
+    {
+        var userId = GetUserId();
+        var log = await _db.PmTaskWorkLogs.Find(w => w.Id == logId).FirstOrDefaultAsync();
+        if (log == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "日志不存在"));
+        if (log.UserId != userId)
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "只能删除本人填写的日志"));
+        await _db.PmTaskWorkLogs.DeleteOneAsync(w => w.Id == logId);
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
     /// <summary>评论 @ 提醒：给被提及用户各写一条站内通知。失败不影响评论本身。</summary>
@@ -2600,6 +2874,10 @@ public class PmAgentController : ControllerBase
         await _db.PmTasks.UpdateManyAsync(
             t => t.ProjectId == task.ProjectId,
             Builders<PmTask>.Update.PullAll(t => t.DependsOn, toDelete));
+        // 同时清理被删任务相关的工作日志
+        await _db.PmTaskWorkLogs.DeleteManyAsync(w => toDelete.Contains(w.TaskId));
+        // 删的是子任务 → 重算父任务进度
+        if (task.ParentTaskId != null) await RecalcParentProgressAsync(task.ParentTaskId);
         await RecalcTaskCountAsync(task.ProjectId);
         return Ok(ApiResponse<object>.Ok(new { deletedCount = result.DeletedCount }));
     }
@@ -2981,6 +3259,45 @@ public class PmAgentController : ControllerBase
                 .Set(p => p.UpdatedAt, DateTime.UtcNow));
     }
 
+    private static int ClampProgress(int v) => PmTask.ClampProgress(v);
+
+    /// <summary>
+    /// 校验某任务能否作为两级层级里的父任务。返回 null 表示通过，否则返回错误文案。
+    /// </summary>
+    private async Task<string?> ValidateParentForTwoLevelAsync(string projectId, string parentId, string? childId)
+    {
+        if (childId != null && parentId == childId)
+            return "父任务不能是自己";
+        var parent = await _db.PmTasks.Find(t => t.Id == parentId).FirstOrDefaultAsync();
+        if (parent == null || parent.ProjectId != projectId)
+            return "父任务不存在或不在同一项目";
+        if (parent.ParentTaskId != null)
+            return "仅支持两级子任务：所选任务本身已是子任务";
+        // 目标任务若已有子任务，则它是父任务，不能再被挂到别人下面（否则其子任务变三级）
+        if (childId != null)
+        {
+            var childHasChildren = await _db.PmTasks.Find(t => t.ProjectId == projectId && t.ParentTaskId == childId).AnyAsync();
+            if (childHasChildren)
+                return "仅支持两级子任务：该任务已有子任务，不能再挂为他人的子任务";
+        }
+        return null;
+    }
+
+    /// <summary>重算父任务进度并落库（由子任务汇总，无子任务则不动）。</summary>
+    private async Task RecalcParentProgressAsync(string parentTaskId)
+    {
+        var parent = await _db.PmTasks.Find(t => t.Id == parentTaskId).FirstOrDefaultAsync();
+        if (parent == null) return;
+        var children = await _db.PmTasks.Find(t => t.ParentTaskId == parentTaskId).ToListAsync();
+        var progress = PmTask.ComputeParentProgress(children);
+        if (progress == null) return; // 没有子任务则不动父任务进度
+        var update = Builders<PmTask>.Update
+            .Set(t => t.AutoProgress, true)
+            .Set(t => t.ProgressPercent, progress.Value)
+            .Set(t => t.UpdatedAt, DateTime.UtcNow);
+        await _db.PmTasks.UpdateOneAsync(t => t.Id == parentTaskId, update);
+    }
+
     private async Task WriteSseEvent(string eventName, object data)
     {
         try
@@ -3217,6 +3534,8 @@ public class CreatePmTaskRequest
     public List<string>? DependsOn { get; set; }
     public List<string>? Labels { get; set; }
     public double? OrderKey { get; set; }
+    /// <summary>进度百分比 0-100（可选，叶子任务可创建即带进度）</summary>
+    public int? ProgressPercent { get; set; }
 }
 
 public class BatchCreatePmTasksRequest
@@ -3252,6 +3571,43 @@ public class UpdatePmTaskRequest
     public string? MilestoneId { get; set; }
     /// <summary>所属目标：传空串=解除归属，非空=归属，null=不变</summary>
     public string? GoalId { get; set; }
+    /// <summary>进度百分比 0-100（null=不变；叶子任务手填后该任务转为手动进度）</summary>
+    public int? ProgressPercent { get; set; }
+    /// <summary>父任务 ID：传空串=取消父子关系（升为顶层），非空=挂为该任务的子任务，null=不变</summary>
+    public string? ParentTaskId { get; set; }
+}
+
+public class CreateWorkLogRequest
+{
+    public string Content { get; set; } = string.Empty;
+    /// <summary>工作日期（默认今天）</summary>
+    public DateTime? Date { get; set; }
+    /// <summary>耗时（分钟，选填）</summary>
+    public int? DurationMinutes { get; set; }
+    /// <summary>填报进度 0-100（选填；带入则联动任务进度）</summary>
+    public int? ProgressPercent { get; set; }
+    /// <summary>分类（DailyLogCategory，选填）</summary>
+    public string? Category { get; set; }
+}
+
+public class UpdateWorkLogRequest
+{
+    public string? Content { get; set; }
+    public DateTime? Date { get; set; }
+    public int? DurationMinutes { get; set; }
+    public int? ProgressPercent { get; set; }
+    public string? Category { get; set; }
+}
+
+public class ToggleGoalMilestoneRequest
+{
+    public bool Enabled { get; set; }
+}
+
+public class ReparentGoalRequest
+{
+    /// <summary>新父目标 Id；空/缺省=升为顶层</summary>
+    public string? ParentId { get; set; }
 }
 
 public class MilestoneRequest
@@ -3271,6 +3627,10 @@ public class MilestoneRequest
     public bool? ResetBaseline { get; set; }
     public string? Status { get; set; }
     public long? OrderKey { get; set; }
+    /// <summary>实际完成时间（可补录）。非空=设置；配合 ClearReachedAt 清空。null=不变。</summary>
+    public DateTime? ReachedAt { get; set; }
+    /// <summary>true=清空实际完成时间。</summary>
+    public bool? ClearReachedAt { get; set; }
 }
 
 public class MilestoneCriterionInput

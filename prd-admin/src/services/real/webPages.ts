@@ -78,21 +78,34 @@ export interface ShareAnalyticsLinkSummary {
   shareId: string;
   token: string;
   title?: string;
+  shareUrl?: string;
   viewCount: number;
   uniqueIpCount: number;
   lastViewedAt?: string;
   createdAt: string;
   expiresAt?: string;
   visibility: string;
+  visitors?: ShareAnalyticsVisitorSummary[];
 }
 
 export interface ShareAnalyticsTimelineEntry {
   viewedAt: string;
   shareToken: string;
   shareTitle?: string;
+  shareUrl?: string;
+  viewerUserId?: string;
   viewerName?: string;
+  viewerAvatarFileName?: string;
   ipAddress?: string;
   userAgent?: string;
+  clientSummary?: string;
+}
+
+export interface ShareAnalyticsVisitorSummary {
+  viewerUserId?: string;
+  viewerName: string;
+  viewerAvatarFileName?: string;
+  viewCount: number;
 }
 
 export interface ShareAnalyticsResult {
@@ -101,8 +114,43 @@ export interface ShareAnalyticsResult {
   expiredShares: number;
   totalViews: number;
   uniqueIpCount: number;
+  commentCount?: number;
   timeline: ShareAnalyticsTimelineEntry[];
   topLinks: ShareAnalyticsLinkSummary[];
+  trend?: ShareAnalyticsTrendPoint[];
+  hourly?: ShareAnalyticsHourlyPoint[];
+  topVisitors?: ShareAnalyticsVisitorStats[];
+  recentComments?: ShareAnalyticsCommentEntry[];
+}
+
+export interface ShareAnalyticsTrendPoint {
+  date: string;
+  views: number;
+  comments: number;
+}
+
+export interface ShareAnalyticsHourlyPoint {
+  hour: number;
+  views: number;
+}
+
+export interface ShareAnalyticsVisitorStats {
+  viewerUserId?: string;
+  viewerName: string;
+  viewerAvatarFileName?: string;
+  viewCount: number;
+  lastViewedAt: string;
+}
+
+export interface ShareAnalyticsCommentEntry {
+  id: string;
+  siteId: string;
+  siteTitle: string;
+  shareToken?: string;
+  authorName: string;
+  authorAvatarFileName?: string;
+  content: string;
+  createdAt: string;
 }
 
 export interface TagCount {
@@ -372,6 +420,7 @@ export interface ShareViewLogItem {
   shareId: string;
   viewerUserId?: string;
   viewerName?: string;
+  viewerAvatarFileName?: string;
   shareOwnerUserId: string;
   viewedAt: string;
   ipAddress?: string;
@@ -394,7 +443,7 @@ export async function renewShare(shareId: string, extendDays: number): Promise<A
   });
 }
 
-/** 用户分享统计聚合（参考 Cloudflare 简化版，含活跃链接 / 时间窗内访问 / 独立 IP / 时间线 / Top 链接） */
+/** 用户分享统计聚合（参考 Cloudflare 简化版，含活跃链接 / 时间窗内访问 / 独立访客 / 时间线 / Top 链接） */
 export async function getShareAnalytics(rangeDays = 7, siteId?: string): Promise<ApiResponse<ShareAnalyticsResult>> {
   const params = new URLSearchParams({ rangeDays: String(rangeDays) });
   if (siteId) params.set('siteId', siteId);

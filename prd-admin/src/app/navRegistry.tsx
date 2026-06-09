@@ -31,6 +31,7 @@ const LibraryLandingPage = lazy(() => import('@/pages/library/LibraryLandingPage
 const EmergenceExplorerPage = lazy(() => import('@/pages/emergence').then(m => ({ default: m.EmergenceExplorerPage })));
 const TaskTreePage = lazy(() => import('@/pages/task-tree').then(m => ({ default: m.TaskTreePage })));
 const PmAgentPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.PmAgentPage })));
+const PmTaskDetailPage = lazy(() => import('@/pages/pm-agent').then(m => ({ default: m.TaskDetailPage })));
 const OverviewShell = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.OverviewShell })));
 const SingleProductView = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.SingleProductView })));
 const ProductObjectDetailPage = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.ProductObjectDetailPage })));
@@ -52,6 +53,7 @@ const MyAssetsPage = lazy(() => import('@/pages/MyAssetsPage'));
 const CdsAgentPage = lazy(() => import('@/pages/cds-agent').then(m => ({ default: m.CdsAgentPage })));
 const InfraServicesPage = lazy(() => import('@/pages/infra-services').then(m => ({ default: m.InfraServicesPage })));
 const OpenPlatformTabsPage = lazy(() => import('@/pages/OpenPlatformTabsPage'));
+const MdToPptAgentPage = lazy(() => import('@/pages/md-to-ppt-agent/MdToPptAgentPage').then(m => ({ default: m.MdToPptAgentPage })));
 const SpeechAgentListPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentListPage })));
 const SpeechAgentCreatePage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentCreatePage })));
 const SpeechAgentEditorPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentEditorPage })));
@@ -378,6 +380,13 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     },
   },
   {
+    // 任务独立详情页（全屏路由，参数化子路由，不进导航）
+    path: '/pm-agent/p/:projectId/task/:taskId',
+    placement: 'fullscreen',
+    permission: 'pm-agent.use',
+    element: fullscreenGuarded('pm-agent.use', <PmTaskDetailPage />),
+  },
+  {
     path: '/pm-agent',
     permission: 'pm-agent.use',
     element: shellGuarded('pm-agent.use', <PmAgentPage />),
@@ -449,6 +458,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'toolbox',
       appKey: 'transcript-agent',
       tags: ['转录', '语音', 'ASR', '字幕'],
+    },
+  },
+  {
+    path: '/md-to-ppt-agent',
+    permission: 'access',
+    element: shellGuarded('access', <MdToPptAgentPage />),
+    nav: {
+      label: 'MD 转网页 PPT',
+      shortLabel: 'PPT',
+      description: '将 Markdown 或文档内容 AI 直出 reveal.js 网页 PPT，支持局部修改与一键发布',
+      icon: 'FileText',
+      section: 'toolbox',
+      appKey: 'md-to-ppt-agent',
+      tags: ['PPT', 'Markdown', '演示', '网页', 'reveal.js'],
+      wip: true,
     },
   },
   {

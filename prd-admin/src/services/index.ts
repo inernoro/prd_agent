@@ -804,6 +804,8 @@ export const handleAdminNotification: HandleAdminNotificationContract = withAuth
 export const handleAllAdminNotifications: HandleAllAdminNotificationsContract = withAuth(handleAllAdminNotificationsReal);
 
 export const getUsers: GetUsersContract = withAuth(getUsersReal);
+export { searchDirectoryUsers } from '@/services/real/directory';
+export type { DirectoryUser } from '@/services/real/directory';
 export const createUser: CreateAdminUserContract = withAuth(createUserReal);
 export const bulkCreateUsers: BulkCreateAdminUsersContract = withAuth(bulkCreateUsersReal);
 export const updateUserRole: UpdateUserRoleContract = withAuth(updateUserRoleReal);
@@ -1700,7 +1702,7 @@ export {
   renewShare as renewSiteShare,
   getShareAnalytics as getSiteShareAnalytics,
 } from '@/services/real/webPages';
-export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInfo, ShareViewData, ShareViewLogItem, SiteOwnerCard, ShareAnalyticsResult, ShareAnalyticsLinkSummary, ShareAnalyticsTimelineEntry } from '@/services/real/webPages';
+export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInfo, ShareViewData, ShareViewLogItem, SiteOwnerCard, ShareAnalyticsResult, ShareAnalyticsLinkSummary, ShareAnalyticsTimelineEntry, ShareAnalyticsVisitorSummary, ShareAnalyticsTrendPoint, ShareAnalyticsHourlyPoint, ShareAnalyticsVisitorStats, ShareAnalyticsCommentEntry } from '@/services/real/webPages';
 
 // ── Team 团队（跨应用协作） ──
 export {
@@ -1909,6 +1911,7 @@ export {
   getDocStoreShareView,
   listDocStoreShareEntries,
   getDocStoreShareEntryContent,
+  getDocumentStoreFolders,
 } from '@/services/real/documentStore';
 export type {
   DocumentStore,
@@ -1994,6 +1997,10 @@ export {
   getPmTaskActivitiesReal as getPmTaskActivities,
   addPmTaskCommentReal as addPmTaskComment,
   bulkPmTasksReal as bulkPmTasks,
+  listPmTaskWorkLogsReal as listPmTaskWorkLogs,
+  createPmTaskWorkLogReal as createPmTaskWorkLog,
+  updatePmTaskWorkLogReal as updatePmTaskWorkLog,
+  deletePmTaskWorkLogReal as deletePmTaskWorkLog,
   getPmMembersReal as getPmMembers,
   setPmMembersReal as setPmMembers,
   setPmObserversReal as setPmObservers,
@@ -2021,6 +2028,8 @@ export {
   listPmGoalsReal as listPmGoals,
   createPmGoalReal as createPmGoal,
   updatePmGoalReal as updatePmGoal,
+  setGoalAsMilestoneReal as setGoalAsMilestone,
+  reparentPmGoalReal as reparentPmGoal,
   deletePmGoalReal as deletePmGoal,
   listPmGoalCheckInsReal as listPmGoalCheckIns,
   addPmGoalCheckInReal as addPmGoalCheckIn,
@@ -2065,6 +2074,9 @@ export type {
   SavePmMilestoneInput,
   PmTask,
   PmTaskDraft,
+  PmTaskWorkLog,
+  CreatePmTaskWorkLogInput,
+  UpdatePmTaskWorkLogInput,
   PmStakeholder,
   PmEvaluation,
   PmEvaluationRound,

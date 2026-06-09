@@ -39,7 +39,8 @@ public class ContentReprocessApplyService
         int messageSeq,
         string mode,
         string? title,
-        MongoDbContext db)
+        MongoDbContext db,
+        string? targetParentId = null)
     {
         // 旧 BSON 文档可能没 Messages 字段（Bugbot #1 四轮 High）
         var messages = run.Messages ?? new List<ReprocessChatMessage>();
@@ -62,7 +63,7 @@ public class ContentReprocessApplyService
         {
             "replace" => await ReplaceAsync(sourceEntry, content, actorId, db),
             "append" => await AppendAsync(sourceEntry, content, actorId, db),
-            "new" => await CreateNewAsync(sourceEntry, content, title, actorId, db),
+            "new" => await CreateNewAsync(sourceEntry, content, title, actorId, db, targetParentId),
             _ => throw new InvalidOperationException($"未知 mode: {mode}"),
         };
     }
@@ -102,7 +103,8 @@ public class ContentReprocessApplyService
     }
 
     private async Task<ApplyResult> CreateNewAsync(
-        DocumentEntry sourceEntry, string content, string? title, string userId, MongoDbContext db)
+        DocumentEntry sourceEntry, string content, string? title, string userId, MongoDbContext db,
+        string? targetParentId = null)
     {
         var parsed = await _documentService.ParseAsync(content);
         var finalTitle = string.IsNullOrWhiteSpace(title)
@@ -114,7 +116,8 @@ public class ContentReprocessApplyService
         var newEntry = new DocumentEntry
         {
             StoreId = sourceEntry.StoreId,
-            ParentId = sourceEntry.ParentId,
+            // Phase 2：另存为新文档可落到用户指定目录；未指定时沿用源文档所在目录
+            ParentId = string.IsNullOrEmpty(targetParentId) ? sourceEntry.ParentId : targetParentId,
             Title = finalTitle,
             Summary = content.Length > 200 ? content[..200] : content,
             SourceType = DocumentSourceType.Upload,

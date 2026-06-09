@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Sparkles, Plus, LayoutGrid, List, GanttChartSquare, Trash2, Users, UserCog, Award, Search, CalendarClock, BookOpen, Gavel, FileText, NotebookText, Target, Milestone, FolderOpen, ShieldAlert, Stethoscope, TrendingDown } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -6,7 +7,7 @@ import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { toast } from '@/lib/toast';
 import { useAuthStore } from '@/stores/authStore';
 import {
-  getPmProject, createPmTask, updatePmTask, deletePmTask, updatePmProject, bulkPmTasks, listPmMilestones, listPmGoals, updatePmMilestone,
+  getPmProject, updatePmTask, deletePmTask, updatePmProject, bulkPmTasks, listPmMilestones, listPmGoals, updatePmMilestone,
 } from '@/services';
 import type { PmProject, PmTask, PmTaskStatus, PmTaskPriority, PmMilestone, PmGoal } from '@/services/contracts/pmAgent';
 import { KanbanBoard } from './KanbanBoard';
@@ -27,7 +28,7 @@ import { ClosureReportPanel } from './ClosureReportPanel';
 import { HealthDiagnosisPanel } from './HealthDiagnosisPanel';
 import { EvaluatePanel } from './EvaluatePanel';
 import { TaskDetailDrawer } from './TaskDetailDrawer';
-import { PROJECT_TYPE_REGISTRY, LIFECYCLE_REGISTRY, TASK_STATUS_REGISTRY, PRIORITY_REGISTRY, GRADE_REGISTRY } from './pmConstants';
+import { PROJECT_TYPE_REGISTRY, LIFECYCLE_REGISTRY, TASK_STATUS_REGISTRY, PRIORITY_REGISTRY, GRADE_REGISTRY, progressColor } from './pmConstants';
 
 interface Props {
   projectId: string;
@@ -69,6 +70,7 @@ const isOverdue = (t: PmTask) => !!t.dueAt && t.status !== 'done' && t.status !=
 const ORDER_STEP = 1024;
 
 export function ProjectDetailView({ projectId, onBack }: Props) {
+  const navigate = useNavigate();
   const myId = useAuthStore((s) => s.user?.userId ?? '');
   const [project, setProject] = useState<PmProject | null>(null);
   const [tasks, setTasks] = useState<PmTask[]>([]);
@@ -82,7 +84,6 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
   const [showClosure, setShowClosure] = useState(false);
   const [showDiagnosis, setShowDiagnosis] = useState(false);
   const [newTitle, setNewTitle] = useState('');
-  const [adding, setAdding] = useState(false);
   const [costEdit, setCostEdit] = useState<{ budget: string; actualCost: string } | null>(null);
   const [savingCost, setSavingCost] = useState(false);
   const [timeEdit, setTimeEdit] = useState<{ start: string; end: string } | null>(null);
@@ -158,13 +159,10 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
     if (!res.success) { toast.error('删除失败', res.error?.message || ''); load(); }
   }, [load]);
 
-  const handleAddTask = async () => {
-    if (!newTitle.trim()) return;
-    setAdding(true);
-    const res = await createPmTask(projectId, { title: newTitle.trim(), status: 'todo' });
-    setAdding(false);
-    if (res.success) { setNewTitle(''); setTasks((prev) => [...prev, res.data]); }
-    else toast.error('创建失败', res.error?.message || '');
+  // 新建任务 → 进入新建详情页（带可选标题预填），在详情页填全字段后保存才落库
+  const handleAddTask = () => {
+    const t = newTitle.trim();
+    navigate(`/pm-agent/p/${projectId}/task/new${t ? `?title=${encodeURIComponent(t)}` : ''}`);
   };
 
   const saveCost = async () => {
@@ -389,8 +387,8 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
             <input className="rounded-lg px-3 py-1.5 text-[12px] outline-none border"
               style={{ background: 'var(--bg-input)', borderColor: 'var(--border-subtle)', color: 'var(--text-primary)', width: 200 }}
               value={newTitle} onChange={(e) => setNewTitle(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleAddTask(); }} placeholder="快速添加任务…" />
-            <Button variant="secondary" size="sm" onClick={handleAddTask} disabled={adding || !newTitle.trim()}><Plus size={14} /></Button>
+              onKeyDown={(e) => { if (e.key === 'Enter') handleAddTask(); }} placeholder="新建任务（进入详情页填写）…" />
+            <Button variant="secondary" size="sm" onClick={handleAddTask}><Plus size={14} />新建</Button>
             <Button variant="primary" size="sm" onClick={() => setShowDecompose(true)}><Sparkles size={14} />AI 拆解需求</Button>
           </div>
         </div>
@@ -496,6 +494,14 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
                     {t.priority !== 'none' && <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0" style={{ background: `${p.color}22`, color: p.color }}>{p.label}</span>}
                     {t.assigneeName && <span className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>{t.assigneeName}</span>}
                     {t.estimateDays != null && <span className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>{t.estimateDays}人天</span>}
+                    {(() => { const pct = t.status === 'done' ? 100 : (t.progressPercent ?? 0); return pct > 0 && t.status !== 'cancelled' ? (
+                      <span className="shrink-0 flex items-center gap-1.5 w-20" title={`进度 ${pct}%`}>
+                        <span className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: 'var(--bg-input)' }}>
+                          <span className="block h-full rounded-full" style={{ width: `${pct}%`, background: progressColor(pct, t.status) }} />
+                        </span>
+                        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{pct}%</span>
+                      </span>
+                    ) : null; })()}
                     <span className="text-[11px] shrink-0 w-16 text-right" style={{ color: 'var(--text-muted)' }}>{s.label}</span>
                     <button onClick={(e) => { e.stopPropagation(); handleDelete(t.id); }} className="opacity-0 group-hover:opacity-100 p-0.5 shrink-0" style={{ color: 'var(--text-muted)' }}><Trash2 size={13} /></button>
                   </div>
@@ -542,7 +548,7 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
         </div>
       )}
 
-      {tab === 'goals' && <GoalsPanel projectId={projectId} businessGoal={project.businessGoal} canManage={project.ownerId === myId || project.leaderId === myId} onNavigateTask={navigateToTask} onNavigateWeekly={navigateToWeekly} />}
+      {tab === 'goals' && <GoalsPanel projectId={projectId} businessGoal={project.businessGoal} canManage={project.ownerId === myId || project.leaderId === myId} onBusinessGoalChange={(v) => setProject((p) => (p ? { ...p, businessGoal: v } : p))} onNavigateTask={navigateToTask} onNavigateWeekly={navigateToWeekly} />}
 
       {tab === 'members' && (
         <MembersPanel projectId={projectId} canManage={project.ownerId === myId || project.leaderId === myId} />

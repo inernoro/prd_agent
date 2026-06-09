@@ -30,8 +30,7 @@ import { GitHubAppClient } from '../services/github-app-client.js';
 import { classifyEnvKey } from '../config/known-env-keys.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 import { isAllowedCdsBranchName, isSafeGitRef } from '../services/github-webhook-dispatcher.js';
-import { buildPreviewUrl } from '../services/comment-template.js';
-import { computePreviewSlug, previewProjectSlug } from '../services/preview-slug.js';
+import { buildPreviewUrlForProject } from '../services/comment-template.js';
 import { maskSecrets as maskSecretsText, shouldMask } from '../services/secret-masker.js';
 import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
 import { resolveGitAuthEnv } from '../services/git-auth-env.js';
@@ -42,6 +41,7 @@ import { nodeModulesVolumePrefix } from '../util/node-modules-volume.js';
 import { analyzeChangeImpact, isWebOnlyChange } from '../services/change-impact-analyzer.js';
 import { computeBundleFreshness } from '../services/bundle-freshness.js';
 import { waitForFlushWithTimeout } from '../services/bounded-flush.js';
+import { readBundledCdsCliVersion } from '../services/cdscli-version.js';
 import { ProxyService } from '../services/proxy.js';
 import { archiveBranchContainerLogs } from '../services/container-log-archiver.js';
 import { normalizeLogText, type ServerEventLogSink } from '../services/server-event-log-store.js';
@@ -891,6 +891,41 @@ export async function validateBuildReadiness(
   if (webInstallResult && webInstallResult.exitCode !== 0) {
     webWarning = 'web pnpm install 失败 — web build 大概率会跟着失败,继续 self-update 但前端可能不更新';
   }
+  // #746 guard #3 — 真实 boot 预检(boot install smoke)。
+  // runPnpmInstallWithCache 在 lockfile 哈希命中 stamp 时直接 skip,不跑真正的
+  // `pnpm install`。但 master-run 启动时跑的是**未缓存的** `pnpm install
+  // --frozen-lockfile --prefer-offline`,这条会在 pnpm 11 的 ERR_PNPM_IGNORED_BUILDS
+  // (未批准 native build)等 gate 上 exit 1 → master-run exit 78 → systemd 崩溃循环。
+  // 2026-06-08 两次 502 事故(CI=true / pnpm-workspace.yaml 占位字符串)都是从这个
+  // 缓存 skip 的缝里溜过去的:tsc 过了、cached install skip 了,真实启动才崩。
+  //
+  // 只在上面 helper **跳过了真实 install**(命中缓存 stamp)时才补跑这条 boot 预检:
+  // 那才是"真实 pnpm install 行为尚未被验证"的危险缝隙。若 helper 本轮已经用**同一条**
+  // 命令真实跑过且成功,再跑第二遍纯属重复(双倍 install 时间 + 第二次偶发失败可能误伤),
+  // helper 自己那次就已经是等价的 boot 预检了。
+  if (installResult._timing.skipped) {
+    const bootInstall = await shell.exec(
+      'pnpm install --frozen-lockfile --prefer-offline',
+      { cwd: cdsDir, timeout: 240_000 },
+    );
+    if (bootInstall.exitCode !== 0) {
+      const err = (combinedOutput(bootInstall) || 'boot install 失败').slice(0, 600);
+      timings['total_ms'] = Date.now() - validateStartedAt;
+      progress({
+        phase: 'validate-install',
+        status: 'error',
+        message: `boot 预检失败(master-run 的 pnpm install 会崩,已阻止 swap): ${formatValidationTimings(timings)}`,
+        timings: { ...timings },
+      });
+      return {
+        ok: false,
+        stage: 'install',
+        error: `boot 预检失败 — master-run 启动时的 \`pnpm install --frozen-lockfile --prefer-offline\` 退出非零(若放行将导致 systemd 崩溃循环 502): ${err}`,
+        timings,
+      };
+    }
+  }
+
   progress({
     phase: 'validate-install',
     status: webWarning ? 'warning' : 'done',
@@ -2432,8 +2467,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       emitSkip('preview_host_missing');
       return null;
     }
-    // 走 buildPreviewUrl 全栈唯一入口，公式同 v3（tail-prefix-projectSlug）。
-    const smokeHost = buildPreviewUrl(previewHost, entry.branch, previewProjectSlug(project, project.id));
+    // 走 buildPreviewUrlForProject 全栈入口，项目预览身份由 preview-slug.ts 统一解析。
+    const smokeHost = buildPreviewUrlForProject(previewHost, entry.branch, project, project.id).url;
     if (!smokeHost) {
       emitSkip('preview_host_missing');
       return null;
@@ -2945,10 +2980,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const branchesWithSubject = await Promise.all(
       branches.map(async (b) => {
         const project = b.projectId ? stateService.getProject(b.projectId) : undefined;
-        const projectSlug = previewProjectSlug(project, b.projectId);
-        const previewSlug = b.branch && projectSlug
-          ? computePreviewSlug(b.branch, projectSlug)
-          : b.id;
+        const preview = b.branch
+          ? buildPreviewUrlForProject('', b.branch, project, b.projectId)
+          : undefined;
+        const projectSlug = preview?.projectIdentity.slug || b.projectId || '';
+        const previewSlug = preview?.previewSlug || b.id;
         const deployRuntime = summarizeBranchDeployRuntime(
           b,
           stateService.getBuildProfilesForProject(b.projectId || 'default'),
@@ -2962,6 +2998,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             commitSha: b.githubCommitSha || '',
             subject: '',
             builder: buildGithubSenderBuilder(b),
+            projectSlug,
             previewSlug,
             deployRuntime,
           };
@@ -2981,6 +3018,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             commitSha: lines[0] || '',
             subject: lines[1] || '',
             builder: mergeBuilderAvatar(commitBuilder, buildGithubSenderBuilder(b)),
+            projectSlug,
             previewSlug,
             deployRuntime,
           };
@@ -2993,6 +3031,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             commitSha: b.githubCommitSha || '',
             subject: '',
             builder: buildGithubSenderBuilder(b),
+            projectSlug,
             previewSlug,
             deployRuntime,
           };
@@ -5924,10 +5963,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       return;
     }
-    // 走 buildPreviewUrl 全栈唯一入口；project 必有，用 'default' 兜底。
+    // 走 buildPreviewUrlForProject 全栈入口；project 必有，用 'default' 兜底。
     const smokeProject = stateService.getProject(entry.projectId || 'default');
-    const smokeProjectSlug = previewProjectSlug(smokeProject, entry.projectId || 'default');
-    const smokeHost = buildPreviewUrl(previewHost, entry.branch, smokeProjectSlug);
+    const smokeHost = buildPreviewUrlForProject(
+      previewHost,
+      entry.branch,
+      smokeProject,
+      entry.projectId || 'default',
+    ).url;
     if (!smokeHost) {
       res.status(400).json({ error: 'preview_host_missing', message: '无法生成预览 URL' });
       return;
@@ -10395,36 +10438,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.type('text/yaml').send(yamlContent);
   });
 
-  // GET /api/cli-version — return the currently-bundled cdscli VERSION
-  //
-  // 读 .claude/skills/cds/cli/cdscli.py 里的 `VERSION = "x.y.z"` 常量，
-  // 每次被 cdscli update / cdscli version 调用时返回。解析结果缓存 60s
-  // 避免每次都 read+regex（CLI 进程短命，主要让 Dashboard 轮询便宜）。
-  let _cliVersionCache: { version: string | null; at: number } = { version: null, at: 0 };
-  function readBundledCliVersion(): string | null {
-    const now = Date.now();
-    if (_cliVersionCache.version !== null && now - _cliVersionCache.at < 60_000) {
-      return _cliVersionCache.version;
-    }
-    try {
-      const cliPath = path.join(config.repoRoot, '.claude', 'skills', 'cds', 'cli', 'cdscli.py');
-      if (!fs.existsSync(cliPath)) {
-        _cliVersionCache = { version: null, at: now };
-        return null;
-      }
-      const content = fs.readFileSync(cliPath, 'utf-8');
-      // Anchor on VERSION = "..." at start of line to avoid catching
-      // comments, test fixtures, or nested module vars. Only first match.
-      const match = content.match(/^VERSION\s*=\s*"([^"]+)"/m);
-      const version = match ? match[1] : null;
-      _cliVersionCache = { version, at: now };
-      return version;
-    } catch {
-      return null;
-    }
-  }
+  // GET /api/cli-version — return the currently-bundled cdscli VERSION.
+  // Shared with the global X-Cds-Cli-Latest response header so CLI drift
+  // detection and the explicit version endpoint cannot diverge.
   router.get('/cli-version', (_req, res) => {
-    const version = readBundledCliVersion();
+    const version = readBundledCdsCliVersion(config.repoRoot);
     if (!version) {
       res.status(404).json({ error: '未找到 cdscli VERSION 常量' });
       return;
@@ -12458,6 +12476,30 @@ cdscli project list --human
           res.end();
           recordFailure(`origin/${branch} 不存在`);
           return;
+        }
+      }
+
+      // #746 guard #2 — 分支新鲜度警告(非阻断)。
+      // 落后 main 太多的分支 self-update 容易撞上 lockfile 漂移 / 陈旧配置
+      // (2026-06-08 一次事故的诱因)。这里只**警告**不阻断:真正的"装不上/起不来"
+      // 由 guard #3(boot install smoke)在 swap 前兜住;此处给操作者早期可见性。
+      if (branch && branch !== 'main') {
+        try {
+          const behindRaw = (await shell.exec(
+            `git rev-list --count origin/${branch}..origin/main`,
+            { cwd: repoRoot },
+          )).stdout.trim();
+          const behind = Number.parseInt(behindRaw, 10);
+          if (Number.isFinite(behind) && behind >= 50) {
+            send(
+              'checkout',
+              'warning',
+              `分支落后 origin/main ${behind} 个提交 — 陈旧分支更易撞 lockfile/配置漂移。` +
+                `建议先 rebase 到 main。本次仍会继续(由 boot 预检兜底),仅提醒。`,
+            );
+          }
+        } catch {
+          /* 新鲜度检查失败不影响 self-update */
         }
       }
 

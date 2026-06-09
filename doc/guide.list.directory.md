@@ -92,6 +92,8 @@
 
 - [智能体宇宙设计](design.agent-universe) `design.agent-universe`
   > 能力契约 SSOT + 统一调用信封；选了不自动发、视觉创作真出图、漫威宇宙式互通
+- [知识库智能体架构设计](design.knowledge-agent-architecture) `design.knowledge-agent-architecture`
+  > 三层模型(脑/技能/沙箱) + map-agent·cds-agent 命名 + 借运行时不重建 + 唯一接缝(KB 当工作目录进、改动经 diff 闸出)；md→ppt 避坑
 - [服务器权威性设计](design.server-authority) `design.server-authority`
   > 客户端断开不取消服务器任务的架构设计
 
@@ -210,6 +212,9 @@
 - [CDS Agent R0 · CDS-managed runtime fact source 设计](design.cds-agent-managed-runtime-fact-source) `design.cds-agent-managed-runtime-fact-source`
   > CDS-managed runtime 事实来源的设计文档
 
+- [CDS Agent 工作区基础设施模型](design.knowledge-agent-architecture) `design.knowledge-agent-architecture`
+  > 工作区来源从 GitHub 仓库迁移到文件夹/知识库（document_stores），GitHub 降级为可选钩子；含官方/自建边界表、数据模型、文件注入受阻说明
+
 - [CDS 极简上手设计](design.cds-onboarding) `design.cds-onboarding`
   > CDS 一键配置与项目扫描技能的上手设计
 
@@ -310,6 +315,12 @@
 
 - [缺陷分享与 Agent 技能修复架构](design.defect-agent-share-skill-architecture) `design.defect-agent-share-skill-architecture`
   > 缺陷分享中心、外部 Agent 技能接入与修复报告闭环的架构设计
+
+- [系统级跨节点互传（Peer Sync）设计](design.peer-sync) `design.peer-sync`
+  > 多节点间消息互传的协议设计、数据模型与同步机制
+
+- [文档再加工 · 智能体调用路由设计](design.reprocess-chat-routing) `design.reprocess-chat-routing`
+  > 文档再加工功能中不同智能体（视觉/文学）的调用路由与分发设计
 
 ### 三、指南
 
@@ -599,6 +610,7 @@
   > AI 百宝箱后续迭代的待办事项与方向
 
 - [AI 文本辅助通用 Domain 设计](plan.ai-text-assist) `plan.ai-text-assist`
+- [MD转PPT 对话式 artifact 工作台改造计划](plan.md-to-ppt-chat-redesign) `plan.md-to-ppt-chat-redesign`
   > AI 文本辅助功能的通用领域模型设计
 
 - [配图标记手动干预](plan.manual-image-marking-control) `plan.manual-image-marking-control`
@@ -674,6 +686,9 @@
 - [视频创作 Agent 列表/详情页全面重做交接](plan.video-agent-list-detail-rebuild) `plan.video-agent-list-detail-rebuild`
   > 视频创作 Agent 列表与详情页全面重做的交接文档
 
+- [CDS PR #684 审查修复计划](plan.cds-pr684-review-remediation) `plan.cds-pr684-review-remediation`
+  > CDS PR #684 代码审查发现问题的分阶段修复计划与进度追踪
+
 ### 六、技术债务台账
 
 > 模块级未还工程债（已知边界 / 后续可补 / 留尾风险）。命名规范见 `rule.doc-naming.md` 「debt.* 专项约定」。
@@ -700,6 +715,9 @@
 
 - [CDS Agent 工作台 · 债务台账](debt.cds-agent) `debt.cds-agent`
   > 4 条 open：R1 商业级 provider 闭环 / Lite 只读模式能力边界 / CDS Agent 文档群熵减 / 无 profile 时 Lite 直跑
+
+- [MD 转网页 PPT · 债务台账](debt.md-to-ppt) `debt.md-to-ppt`
+  > 2 条 open：预览 iframe same-origin 安全债（重构时从隔离源渲染）/ 知识库注入 CDS Agent 会话未实现（UI 已禁用占位）
 
 - [CDS state.json 影子存储 · 债务台账](debt.cds-state-json) `debt.cds-state-json`
   > 4 条 open：webhook deliveries 全量刷盘 / StateService 内存全量加载 / mongo-split 模式 state.json 同步写 / 无独立清理策略
@@ -745,6 +763,18 @@
 - [开放接口对外网关债务台账](debt.open-api) `debt.open-api`
   > Phase 1 落地网关 + 按 Key 绑定 + 默认回落 + 导航修复；伞形 appCallerCode 静态注册不变量（守卫测试）；限流按 Key 桶 / 降级预警 / 配额 / embeddings 分到 Phase 2
 
+- [日报技能债务台账](debt.daily-report) `debt.daily-report`
+  > daily-report-summary 技能与 reference/publish.py 的已知边界与待补项
+
+- [系统级跨节点互传（Peer Sync）债务台账](debt.peer-sync) `debt.peer-sync`
+  > prd-api PeerSync + prd-admin 系统互联的已知边界与 Phase 2 待补功能
+
+- [个人任务树 Agent · 债务台账](debt.task-tree) `debt.task-tree`
+  > TaskTreeController + prd-admin pages/task-tree 的已知边界与后续可补项
+
+- [网页托管评论 · 债务台账](debt.web-hosting-comments) `debt.web-hosting-comments`
+  > 网页托管评论功能的已知边界与待补实现
+
 ### 七、周报
 
 - [智能体宇宙 · 完备度看板](report.agent-universe-completeness) `report.agent-universe-completeness`
@@ -753,6 +783,8 @@
 - [CDS 绝对可视化一键部署 · 完整报告](report.cds-visual-deploy) `report.cds-visual-deploy`
 - [CDS Agent 商业级可用闭环目标审计报告](report.cds-agent-goal-completion-audit-2026-05-19) `report.cds-agent-goal-completion-audit-2026-05-19`
   > CDS Agent 商业级可用闭环目标的完成度审计报告（2026-05-19）
+- [CDS Agent 体验修复验收报告](report.cds-agent-ux-acceptance-2026-06-06) `report.cds-agent-ux-acceptance-2026-06-06`
+  > 用户 9 问逐条验收：发送卡死/不流式/噪声/展开空已修并取证；工具循环/线程不停在借来的 runtime（缓解）；工作区文件注入是需新建的接缝（gates md→ppt 案例）
 
 - [CDS Agent P4-1 远端发布前验收与试用入口报告](report.cds-agent-p4-1-remote-preflight-2026-05-19) `report.cds-agent-p4-1-remote-preflight-2026-05-19`
   > CDS Agent P4-1 远端发布前验收与试用入口的验收报告
