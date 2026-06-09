@@ -1,3 +1,11 @@
+# cds 不是 monorepo,这个 pnpm-workspace.yaml 只为承载 allowBuilds(见下)。
+# packages 字段必填:CI 跑的 pnpm 9 在 `pnpm store path` 时,只要 pnpm-workspace.yaml
+# 存在就强制要求非空 packages,否则报 "packages field missing or empty" → store path
+# 输出为空 → actions/cache 拿不到 path 直接失败。这里用一个匹配不到任何子包的占位
+# glob(cds 下没有 packages/ 目录),既满足 pnpm 9 的字段校验,又不会把 cds 变成多包仓库。
+packages:
+  - 'packages/*'
+
 # pnpm 11 在检测到带 native build script 的依赖时会写入这个 allowBuilds 块并
 # 把 install 当 fatal(ERR_PNPM_IGNORED_BUILDS, exit 1)。master-run 的 install
 # 失败 → exit 78 → systemd 崩溃循环。必须显式批准这几个 build,值是 true/false,
