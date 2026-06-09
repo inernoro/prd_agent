@@ -1342,7 +1342,8 @@ public class ProductAgentController : ControllerBase
     /// 工作台「我的待办」：只返回当前用户「现在需要处理」的项。
     /// 需求/功能：当前状态责任人=我（处理人优先，未指派时取负责人）且未到终态(IsFinal)；
     ///            流转给他人或到终态后自动从待办消失。
-    /// 缺陷：跟我相关（处理人或上报人是我）且未完成（非 resolved/rejected/closed）。
+    /// 缺陷：同样按状态责任人——处理人=我且处于处理环节(评审/待处理/已提交/已分配/处理中)，
+    ///      或上报人=我且处于起草/待验收。提交后流转到处理环节、或到终态，即从我的待办消失。
     /// </summary>
     [HttpGet("products/{productId}/my-todos")]
     public async Task<IActionResult> MyTodos(string productId)
@@ -1376,14 +1377,24 @@ public class ProductAgentController : ControllerBase
         bool MineByState(string? assigneeId, string ownerId)
             => (string.IsNullOrEmpty(assigneeId) ? ownerId : assigneeId) == userId;
 
-        var doneDefect = new HashSet<string> { DefectStatus.Resolved, DefectStatus.Rejected, DefectStatus.Closed };
+        // 缺陷按"状态责任人"判定（与需求/功能口径一致）：只在轮到我的状态才算待办。
+        // 处理环节(评审/待处理/已提交/已分配/处理中)的责任人是处理人；只有起草/待验收才轮到上报人。
+        // 已解决/已拒绝/已关闭为终态，永不进待办。
+        var assigneeActive = new HashSet<string>
+        {
+            DefectStatus.Reviewing, DefectStatus.Awaiting, DefectStatus.Submitted, DefectStatus.Assigned, DefectStatus.Processing,
+        };
+        var reporterActive = new HashSet<string> { DefectStatus.Draft, DefectStatus.Verifying };
+        bool DefectMine(DefectReport d)
+            => (d.AssigneeId == userId && assigneeActive.Contains(d.Status ?? ""))
+               || (d.ReporterId == userId && reporterActive.Contains(d.Status ?? ""));
 
         var items = new List<object>();
         foreach (var r in reqs.Where(r => MineByState(r.AssigneeId, r.OwnerId) && !IsFinal(r.WorkflowDefId, r.CurrentState)))
             items.Add(new { kind = "requirement", id = r.Id, no = r.RequirementNo, title = r.Title, state = r.CurrentState, stateLabel = StateLabel(r.WorkflowDefId, r.CurrentState) });
         foreach (var f in feats.Where(f => MineByState(f.AssigneeId, f.OwnerId) && !IsFinal(f.WorkflowDefId, f.CurrentState)))
             items.Add(new { kind = "feature", id = f.Id, no = f.FeatureNo, title = f.Title, state = f.CurrentState, stateLabel = StateLabel(f.WorkflowDefId, f.CurrentState) });
-        foreach (var d in defects.Where(d => (d.AssigneeId == userId || d.ReporterId == userId) && !doneDefect.Contains(d.Status ?? "")))
+        foreach (var d in defects.Where(DefectMine))
             items.Add(new { kind = "defect", id = d.Id, no = d.DefectNo, title = string.IsNullOrWhiteSpace(d.Title) ? d.DefectNo : d.Title!, state = (string?)d.Status, stateLabel = (string?)null });
 
         return Ok(ApiResponse<object>.Ok(new { items }));
