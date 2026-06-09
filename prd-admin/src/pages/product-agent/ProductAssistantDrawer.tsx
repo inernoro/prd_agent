@@ -1,16 +1,19 @@
 /**
- * 产品管理智能体 — 工作台「工作助手」右侧抽屉（问答形式）。
+ * 产品管理智能体 — 工作台「AI助手」右侧抽屉（问答形式）。
  *
- * 以该产品全量数据（需求/功能/缺陷/版本/客户）+ 本产品知识库文档为上下文，
- * 通过 SSE 流式问答调用 AI。预置 3 个快捷问题。占视口约 30%（createPortal 固定右侧）。
- * 遵循 frontend-modal 规则：createPortal、inline 尺寸、min-h-0 滚动、overscroll-contain、ESC/遮罩关闭。
+ * 以该产品全量数据（需求/功能/缺陷/版本/客户/人员）+ 知识库文档为上下文，SSE 流式问答。
+ * 主流聊天样式：用户/AI 各带头像 + 气泡（底色+边框），AI 回答可一键复制。
+ * 对话保存在 sessionStorage（按产品隔离），关闭重开不丢，支持手动清除。
+ * 遵 frontend-modal 规则：createPortal、inline 尺寸、min-h-0 滚动、overscroll-contain、ESC/遮罩关闭。
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Sparkles, Send, X } from 'lucide-react';
+import { Sparkles, Send, X, Copy, Check, Trash2 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { StreamingText } from '@/components/streaming/StreamingText';
 import { useSseStream } from '@/lib/useSseStream';
+import { useAuthStore } from '@/stores/authStore';
+import { resolveAvatarUrl } from '@/lib/avatar';
 
 const PRESETS = ['本月需求分析', '本月需求矩阵分析', '本月缺陷分析'];
 
@@ -22,27 +25,17 @@ interface QA {
 /** 去除 Markdown 标记，渲染为正常纯文本（不显示井号、星号、竖线表格等记号）。 */
 function stripMarkdown(s: string): string {
   return s
-    // 代码块围栏 ```lang ... ```
     .replace(/```[a-zA-Z0-9]*\n?/g, '')
-    // 行内代码 `x`
     .replace(/`([^`]+)`/g, '$1')
-    // 标题 ###
     .replace(/^\s{0,3}#{1,6}\s+/gm, '')
-    // 引用 >
     .replace(/^\s{0,3}>\s?/gm, '')
-    // 粗体/斜体
     .replace(/\*\*([^*]+)\*\*/g, '$1')
     .replace(/__([^_]+)__/g, '$1')
     .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1$2')
-    // 表格分隔行 |---|:--:|
     .replace(/^\s*\|?[\s:|-]+\|\s*[\s:|-]*$/gm, '')
-    // 表格数据行 | a | b | → a    b
     .replace(/^\s*\|(.+)\|\s*$/gm, (_m, inner: string) => inner.split('|').map((c) => c.trim()).filter(Boolean).join('    '))
-    // 列表标记 - / * → ·
     .replace(/^\s{0,3}[-*]\s+/gm, '· ')
-    // 链接 [text](url) → text
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    // 压缩 3+ 空行
     .replace(/\n{3,}/g, '\n\n')
     .trimEnd();
 }
@@ -56,13 +49,33 @@ export function ProductAssistantDrawer({
   productName: string;
   onClose: () => void;
 }) {
-  const [history, setHistory] = useState<QA[]>([]);
+  const storageKey = `pa-ai-assistant:${productId}`;
+  const me = useAuthStore((s) => s.user);
+  const myAvatar = resolveAvatarUrl({ username: me?.username, avatarFileName: me?.avatarFileName });
+
+  const [history, setHistory] = useState<QA[]>(() => {
+    try {
+      const raw = sessionStorage.getItem(storageKey);
+      return raw ? (JSON.parse(raw) as QA[]) : [];
+    } catch {
+      return [];
+    }
+  });
   const [pendingQ, setPendingQ] = useState<string | null>(null);
   const [liveAnswer, setLiveAnswer] = useState('');
   const [input, setInput] = useState('');
   const answerRef = useRef('');
   const pendingRef = useRef<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // 对话持久化（按产品隔离，sessionStorage：关闭重开不丢，手动清除才没）
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(storageKey, JSON.stringify(history));
+    } catch {
+      /* ignore quota */
+    }
+  }, [history, storageKey]);
 
   const finalize = (a: string) => {
     const q = pendingRef.current;
@@ -80,7 +93,7 @@ export function ProductAssistantDrawer({
       answerRef.current += t;
       setLiveAnswer(answerRef.current);
     },
-    onDone: () => finalize(answerRef.current || '（无内容）'),
+    onDone: () => finalize(stripMarkdown(answerRef.current) || '（无内容）'),
     onError: (m) => finalize(`出错：${m}`),
   });
 
@@ -93,6 +106,20 @@ export function ProductAssistantDrawer({
     setPendingQ(text);
     setInput('');
     void sse.start({ body: { question: text } });
+  };
+
+  const clearAll = () => {
+    sse.abort();
+    pendingRef.current = null;
+    answerRef.current = '';
+    setPendingQ(null);
+    setLiveAnswer('');
+    setHistory([]);
+    try {
+      sessionStorage.removeItem(storageKey);
+    } catch {
+      /* ignore */
+    }
   };
 
   // ESC 关闭
@@ -131,29 +158,43 @@ export function ProductAssistantDrawer({
             <span className="text-sm font-semibold text-white/90">AI助手</span>
             <span className="text-[11px] text-white/40 truncate">基于「{productName}」全量数据 + 知识库问答</span>
           </div>
-          <button onClick={onClose} className="ml-auto text-white/50 hover:text-white" title="关闭">
-            <X size={18} />
-          </button>
+          <div className="ml-auto flex items-center gap-1">
+            {history.length > 0 && (
+              <button
+                onClick={clearAll}
+                className="flex items-center gap-1 text-[11px] text-white/45 hover:text-white/80 px-1.5 py-1 rounded hover:bg-white/5"
+                title="清除全部对话"
+              >
+                <Trash2 size={13} /> 清除
+              </button>
+            )}
+            <button onClick={onClose} className="text-white/50 hover:text-white p-1" title="关闭">
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
         {/* 消息区 */}
         <div
           ref={scrollRef}
-          className="flex-1 px-4 py-3 space-y-4"
+          className="flex-1 px-3.5 py-3 space-y-3"
           style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
         >
           {history.length === 0 && !pendingQ && (
-            <div className="text-[12px] text-white/40 leading-relaxed">
+            <div className="text-[12px] text-white/40 leading-relaxed px-1">
               我能基于本产品的需求 / 功能 / 缺陷 / 版本 / 客户与知识库回答你的问题。试试下面的快捷分析，或直接提问。
             </div>
           )}
           {history.map((m, i) => (
-            <QaBlock key={i} q={m.q} a={m.a} />
+            <div key={i} className="space-y-2.5">
+              <UserRow text={m.q} avatar={myAvatar} />
+              <AiRow text={m.a} />
+            </div>
           ))}
           {pendingQ && (
-            <div className="space-y-2">
-              <UserBubble text={pendingQ} />
-              <div className="text-sm text-white/85 leading-relaxed">
+            <div className="space-y-2.5">
+              <UserRow text={pendingQ} avatar={myAvatar} />
+              <AiRow streaming>
                 {connecting ? (
                   <span className="inline-flex items-center gap-2 text-white/50 text-[12px]">
                     <MapSpinner size={14} /> {sse.phaseMessage || '思考中…'}
@@ -161,13 +202,13 @@ export function ProductAssistantDrawer({
                 ) : (
                   <StreamingText text={stripMarkdown(liveAnswer)} streaming />
                 )}
-              </div>
+              </AiRow>
             </div>
           )}
         </div>
 
         {/* 快捷问题 */}
-        <div className="shrink-0 px-4 pt-2 flex flex-wrap gap-1.5">
+        <div className="shrink-0 px-3.5 pt-2 flex flex-wrap gap-1.5">
           {PRESETS.map((p) => (
             <button
               key={p}
@@ -181,7 +222,7 @@ export function ProductAssistantDrawer({
         </div>
 
         {/* 输入区 */}
-        <div className="shrink-0 px-4 py-3 flex items-end gap-2">
+        <div className="shrink-0 px-3.5 py-3 flex items-end gap-2">
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -193,7 +234,7 @@ export function ProductAssistantDrawer({
             }}
             rows={1}
             placeholder="输入问题，Enter 发送…"
-            className="flex-1 resize-none rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 outline-none focus:border-cyan-500/40"
+            className="flex-1 resize-none rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-[13px] text-white/90 outline-none focus:border-cyan-500/40"
             style={{ maxHeight: 120 }}
           />
           <button
@@ -212,21 +253,45 @@ export function ProductAssistantDrawer({
   return createPortal(drawer, document.body);
 }
 
-function UserBubble({ text }: { text: string }) {
+/** 用户消息行：头像在右，气泡右对齐。 */
+function UserRow({ text, avatar }: { text: string; avatar: string }) {
   return (
-    <div className="flex justify-end">
-      <div className="max-w-[85%] text-sm text-cyan-100 bg-cyan-500/15 border border-cyan-500/25 rounded-lg px-3 py-1.5 whitespace-pre-wrap">
+    <div className="flex items-start gap-2 justify-end">
+      <div className="max-w-[80%] text-[13px] text-cyan-50 bg-cyan-500/15 border border-cyan-500/25 rounded-2xl rounded-tr-sm px-3 py-2 whitespace-pre-wrap leading-relaxed">
         {text}
       </div>
+      <img src={avatar} alt="" referrerPolicy="no-referrer" className="w-7 h-7 rounded-full object-cover shrink-0 mt-0.5" />
     </div>
   );
 }
 
-function QaBlock({ q, a }: { q: string; a: string }) {
+/** AI 消息行：头像在左，气泡带底色+边框，hover 出现复制按钮（已完成的回答 text 传入）。 */
+function AiRow({ text, streaming, children }: { text?: string; streaming?: boolean; children?: ReactNode }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    if (!text) return;
+    void navigator.clipboard?.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
   return (
-    <div className="space-y-2">
-      <UserBubble text={q} />
-      <div className="text-sm text-white/85 whitespace-pre-wrap leading-relaxed">{stripMarkdown(a)}</div>
+    <div className="flex items-start gap-2">
+      <div className="w-7 h-7 rounded-full shrink-0 flex items-center justify-center bg-cyan-500/15 border border-cyan-500/30 mt-0.5">
+        <Sparkles size={14} className="text-cyan-300" />
+      </div>
+      <div className="group relative max-w-[85%] text-[13px] text-white/85 bg-white/[0.04] border border-white/10 rounded-2xl rounded-tl-sm px-3 py-2 leading-relaxed whitespace-pre-wrap">
+        {children ?? text}
+        {!streaming && text && (
+          <button
+            onClick={copy}
+            className="absolute -bottom-2.5 right-1 flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-[#1a1c22] border border-white/10 text-white/50 hover:text-white/90 opacity-0 group-hover:opacity-100 transition-opacity"
+            title="复制内容"
+          >
+            {copied ? <Check size={11} /> : <Copy size={11} />} {copied ? '已复制' : '复制'}
+          </button>
+        )}
+      </div>
     </div>
   );
 }

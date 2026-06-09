@@ -11,3 +11,4 @@
 | feat | prd-api | AI助手上下文补全人员(处理人/负责人/上报人/团队)与关系(功能→需求、缺陷→追溯对象)，prompt 改为纯文本输出+深度分析(关系挖掘/人员负载/经验总结建议)，修复"查无某人"；端点重命名为 AI助手 |
 | fix | prd-admin | AI助手回答去除 Markdown 标记渲染为纯文本(stripMarkdown)；「工作助手」改名「AI助手」 |
 | fix | prd-admin | UserSearchSelect 已选 value 在关闭态预拉目录解析显示名，修复「处理人」已指派却显示占位空白 |
+| fix | prd-admin | AI助手抽屉改主流聊天样式：用户/AI 各带头像+气泡(底色+边框)，回答可一键复制，字号收小；对话存 sessionStorage(按产品隔离)关闭重开不丢+手动清除；工作台入口移到 SectionShell 右上角不占空间 |

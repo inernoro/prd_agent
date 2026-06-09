@@ -182,18 +182,20 @@ export function SingleProductView() {
           <RtmMatrix productId={product.id} />
         </div>
       ) : (
-        <SectionShell title={SECTION_TITLE[active]}>
+        <SectionShell
+          title={SECTION_TITLE[active]}
+          actions={active === 'overview' ? (
+            <button
+              onClick={() => setAssistantOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-200 border border-cyan-500/40 text-sm hover:bg-cyan-500/25"
+              title="基于本产品数据与知识库的问答助手"
+            >
+              <Sparkles size={14} /> AI助手
+            </button>
+          ) : undefined}
+        >
           {active === 'overview' && (
             <div className="flex flex-col gap-5">
-              <div className="flex">
-                <button
-                  onClick={() => setAssistantOpen(true)}
-                  className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-200 border border-cyan-500/40 text-sm hover:bg-cyan-500/25"
-                  title="基于本产品数据与知识库的问答助手"
-                >
-                  <Sparkles size={14} /> AI助手
-                </button>
-              </div>
               <MyTodos product={product} />
               <ProductDashboard product={product} />
             </div>
