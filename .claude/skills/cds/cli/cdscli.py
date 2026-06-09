@@ -1160,6 +1160,20 @@ def _match_branches_for_project(branches: list, git_branch: str,
     return scoped
 
 
+def _die_if_ambiguous_project_matches(scoped: list, git_branch: str,
+                                      project_slug_hints: list[str]) -> None:
+    if len(scoped) <= 1:
+        return
+    die(f"/api/branches 有 {len(scoped)} 条同名分支 '{git_branch}' "
+        f"同时匹配本地项目 hints '{', '.join(project_slug_hints)}'。"
+        f"无法安全判断当前 checkout 对应哪个 CDS 项目；请设置 "
+        f"CDS_PROJECT_ID=<真实 projectId> 后重试。",
+        code=2, extra={
+            "matches": scoped,
+            "projectHints": project_slug_hints,
+        })
+
+
 def _warn_quiet_call_error(body: Any, label: str) -> bool:
     """如果 `_call(..., quiet=True)` 返回了 __error__ 包，打 stderr 警告并返回 True。
     调用方决定是否继续 / 退化。"""
@@ -1228,6 +1242,8 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
                          if isinstance(body, dict) and not api_failed else [])
         scoped = _match_branches_for_project(
             branches_list, branch, project_slug_hints, project_scoped)
+        if not project_scoped:
+            _die_if_ambiguous_project_matches(scoped, branch, project_slug_hints)
         # 区分两种 scoped 为空的情况，避免静默给错 URL：
         #   1. raw 本就无该 git 分支 → fallback 合理（用户没部署过）
         #   2. raw 里**有**但本地项目 hint 过滤排除掉 → 错配，必须 die 否则
@@ -1351,6 +1367,8 @@ def cmd_branch_id(args: argparse.Namespace) -> None:
     branches_list = body.get("branches") or []
     matches = _match_branches_for_project(
         branches_list, branch, project_slug_hints, project_scoped)
+    if not project_scoped:
+        _die_if_ambiguous_project_matches(matches, branch, project_slug_hints)
     for b in matches:
         bid = b.get("id")
         if bid:

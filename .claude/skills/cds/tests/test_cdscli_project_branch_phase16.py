@@ -171,6 +171,46 @@ def test_preview_branch_match_accepts_generic_slug_and_repo_alias(monkeypatch):
         [other_row], branch, candidates, already_scoped=False) == []
 
 
+def test_branch_id_dies_when_generic_and_alias_both_match(monkeypatch):
+    """同一 git branch 同时命中 generic slug 和 alias 时不能取第一条。"""
+    branch = "cursor/frontend-agent-1685"
+
+    def fake_check_output(args, text=False, stderr=None):
+        if args == ["git", "branch", "--show-current"]:
+            return branch + "\n"
+        if args == ["git", "rev-parse", "--show-toplevel"]:
+            return "/tmp/workspace\n"
+        raise AssertionError(f"unexpected command: {args!r}")
+
+    monkeypatch.setattr(cdscli.subprocess, "check_output", fake_check_output)
+    monkeypatch.setattr(cdscli, "_git_origin_slug", lambda: "prd-agent")
+    monkeypatch.setattr(cdscli, "_call_safe",
+                        lambda method, path, timeout=10: {
+                            "branches": [
+                                {
+                                    "id": "workspace-cursor-frontend-agent-1685",
+                                    "projectSlug": "workspace",
+                                    "branch": branch,
+                                    "previewSlug": "frontend-agent-1685-cursor-workspace",
+                                },
+                                {
+                                    "id": "prd-agent-cursor-frontend-agent-1685",
+                                    "projectSlug": "prd-agent",
+                                    "branch": branch,
+                                    "previewSlug": "frontend-agent-1685-cursor-prd-agent",
+                                },
+                            ]
+                        })
+
+    code, out = call_main(["branch-id"])
+
+    assert code == 2, out
+    payload = json.loads(out.strip().split("\n")[-1])
+    assert payload["ok"] is False
+    assert "同时匹配" in payload["error"]
+    assert payload["projectHints"] == ["workspace", "prd-agent"]
+
+
 # ── project clone (SSE) ──────────────────────────────────────────────
 
 
