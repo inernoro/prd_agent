@@ -125,6 +125,52 @@ def test_project_create_empty_name_dies(monkeypatch):
     assert "--name" in payload["error"]
 
 
+# ── preview identity helpers ─────────────────────────────────────────
+
+
+def test_generic_workspace_uses_directory_slug_for_local_fallback(monkeypatch):
+    """generic checkout 不能无条件把本地 fallback 改成 repo slug。
+
+    服务端未持久化 collision-checked alias 时,安全身份仍可能是 workspace。
+    """
+    monkeypatch.setattr(cdscli, "_git_origin_slug", lambda: "prd-agent")
+
+    assert cdscli._project_slug_hint("/tmp/workspace") == "workspace"
+    assert cdscli._project_slug_hints("/tmp/workspace") == ["workspace", "prd-agent"]
+
+
+def test_preview_branch_match_accepts_generic_slug_and_repo_alias(monkeypatch):
+    """API 模式同时接受 legacy generic slug 与迁移后的 aliasSlug。"""
+    branch = "cursor/frontend-agent-1685"
+    candidates = ["workspace", "prd-agent"]
+
+    workspace_row = {
+        "id": "workspace-cursor-frontend-agent-1685",
+        "projectSlug": "workspace",
+        "branch": branch,
+        "previewSlug": "frontend-agent-1685-cursor-workspace",
+    }
+    alias_row = {
+        "id": "prd-agent-cursor-frontend-agent-1685",
+        "projectSlug": "prd-agent",
+        "branch": branch,
+        "previewSlug": "frontend-agent-1685-cursor-prd-agent",
+    }
+    other_row = {
+        "id": "app-cursor-frontend-agent-1685",
+        "projectSlug": "app",
+        "branch": branch,
+        "previewSlug": "frontend-agent-1685-cursor-app",
+    }
+
+    assert cdscli._match_branches_for_project(
+        [workspace_row], branch, candidates, already_scoped=False) == [workspace_row]
+    assert cdscli._match_branches_for_project(
+        [alias_row], branch, candidates, already_scoped=False) == [alias_row]
+    assert cdscli._match_branches_for_project(
+        [other_row], branch, candidates, already_scoped=False) == []
+
+
 # ── project clone (SSE) ──────────────────────────────────────────────
 
 

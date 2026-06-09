@@ -966,13 +966,28 @@ def _git_origin_slug() -> str:
 
 
 def _project_slug_hint(repo_root: str) -> str:
+    hints = _project_slug_hints(repo_root)
+    return hints[0] if hints else ""
+
+
+def _project_slug_hints(repo_root: str) -> list[str]:
+    def unique(values: tuple[str, ...]) -> list[str]:
+        seen = set()
+        out = []
+        for value in values:
+            if value and value not in seen:
+                seen.add(value)
+                out.append(value)
+        return out
+
     explicit = os.environ.get("CDS_PROJECT_SLUG", "").strip()
     if explicit:
-        return _slugify_for_preview(explicit)
+        return [_slugify_for_preview(explicit)]
     directory_slug = _slugify_for_preview(os.path.basename(repo_root))
+    origin_slug = _git_origin_slug()
     if directory_slug in _GENERIC_WORKSPACE_SLUGS:
-        return _git_origin_slug() or directory_slug
-    return directory_slug or _git_origin_slug()
+        return unique((directory_slug, origin_slug))
+    return unique((directory_slug or origin_slug,))
 
 
 def _compute_preview_slug(branch: str, project_slug: str) -> str:
@@ -1080,7 +1095,7 @@ def _branches_path() -> str:
 
 
 def _match_branches_for_project(branches: list, git_branch: str,
-                                project_slug_hint: str,
+                                project_slug_hints: Any,
                                 already_scoped: bool) -> list:
     """从 `/api/branches` 结果里筛选属于当前项目的、且 git branch 字段匹配的条目。
 
@@ -1109,18 +1124,22 @@ def _match_branches_for_project(branches: list, git_branch: str,
     # legacy entry 会污染本项目结果）—— 必须禁用 legacy 启发式。
     multi_project_cds = any(b.get("projectId") or b.get("projectSlug")
                             for b in branches)
-    expected_preview = _compute_preview_slug(git_branch, project_slug_hint)
+    if isinstance(project_slug_hints, str):
+        hints = [project_slug_hints] if project_slug_hints else []
+    else:
+        hints = [h for h in (project_slug_hints or []) if isinstance(h, str) and h]
+    expected_previews = {_compute_preview_slug(git_branch, h) for h in hints}
 
     def _belongs(b: dict) -> bool:
-        if b.get("previewSlug") and b["previewSlug"] == expected_preview:
+        if b.get("previewSlug") and b["previewSlug"] in expected_previews:
             return True
-        if b.get("projectSlug") and b["projectSlug"] == project_slug_hint:
+        if b.get("projectSlug") and b["projectSlug"] in hints:
             return True
-        if b.get("projectId") and b["projectId"] == project_slug_hint:
+        if b.get("projectId") and b["projectId"] in hints:
             return True
         # canonical id 前缀启发式（兼容老版 API 没 projectSlug 字段）
         bid = b.get("id", "")
-        if bid.startswith(f"{project_slug_hint}-"):
+        if any(bid.startswith(f"{h}-") for h in hints):
             return True
         # legacy 项目 canonical id 是裸 branch slug（无项目前缀）。仅在
         # **整个 CDS 实例都还是 legacy 单项目格式**时放行——避免多项目
@@ -1133,8 +1152,9 @@ def _match_branches_for_project(branches: list, git_branch: str,
     if matches and not scoped:
         # 仅当后端确实返回了 N 条同名分支但都不属于本项目时才提示。
         # branches 列表本就为空（API 失败被空集替代）时不打这条噪音 warn。
+        hint_text = ", ".join(hints) or "<empty>"
         print(f"[warn] /api/branches 有 {len(matches)} 条同名分支但无一匹配项目"
-              f" hint '{project_slug_hint}'，可能是目录名 ≠ CDS 项目 slug；"
+              f" hint '{hint_text}'，可能是目录名 ≠ CDS 项目 slug；"
               f"设 CDS_PROJECT_ID 走 server-side 过滤更稳",
               file=sys.stderr)
     return scoped
@@ -1174,7 +1194,8 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
         die("当前没有分支（detached HEAD？）— 先 git checkout 一个功能分支", code=1)
         return
 
-    fallback_project_slug = _project_slug_hint(repo_root)
+    project_slug_hints = _project_slug_hints(repo_root)
+    fallback_project_slug = project_slug_hints[0] if project_slug_hints else ""
     root = _preview_root_from_host()
 
     # Step 1: 优先走 CDS API（有 CDS_HOST + 任一认证密钥时；
@@ -1198,15 +1219,15 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
                   file=sys.stderr)
             api_failed = True
         # 项目身份过滤：没 CDS_PROJECT_ID 时多项目 CDS 可能有同名分支，取首条
-        # 会拿到错项目的 previewSlug。优先用 git remote 仓库名作为项目 hint，
-        # 再 fallback 到本地目录名，配合 previewSlug / canonical id 二次过滤。
+        # 会拿到错项目的 previewSlug。generic workspace 目录同时接受目录 slug
+        # 和 git remote alias；本地 fallback 仍使用目录 slug，避免碰撞时造错 host。
         project_scoped = bool(os.environ.get("CDS_PROJECT_ID", "").strip())
         # `body.get("branches", [])` 在 "branches": null 时返回 None（默认值
         # 只在 key 缺失时生效）；用 `or []` 兜底。
         branches_list = ((body.get("branches") or [])
                          if isinstance(body, dict) and not api_failed else [])
         scoped = _match_branches_for_project(
-            branches_list, branch, fallback_project_slug, project_scoped)
+            branches_list, branch, project_slug_hints, project_scoped)
         # 区分两种 scoped 为空的情况，避免静默给错 URL：
         #   1. raw 本就无该 git 分支 → fallback 合理（用户没部署过）
         #   2. raw 里**有**但本地项目 hint 过滤排除掉 → 错配，必须 die 否则
@@ -1217,12 +1238,12 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
             if raw_same_branch:
                 die(f"/api/branches 有 {len(raw_same_branch)} 条同名分支 "
                     f"'{branch}' 但都不属于本地项目 hint "
-                    f"'{fallback_project_slug}'。可能是仓库目录名 ≠ CDS 项目 "
+                    f"'{', '.join(project_slug_hints)}'。可能是仓库目录名 ≠ CDS 项目 "
                     f"slug — 设 CDS_PROJECT_ID=<真实 projectId> 重试，"
                     f"或检查 /api/projects 列表。",
                     code=2, extra={
                         "rawMatches": raw_same_branch,
-                        "projectHint": fallback_project_slug,
+                        "projectHints": project_slug_hints,
                     })
                 return
         for b in scoped:
@@ -1267,8 +1288,9 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
             "projectSlug": fallback_project_slug,
             "previewSlug": slug,
             "url": url,
-            "note": "本地推算优先使用 git remote 仓库名，缺失时才退回目录名。"
-                    "设置 CDS_HOST + (AI_ACCESS_KEY 或 CDS_PROJECT_KEY) 走 API 模式更准。",
+            "note": "本地推算使用当前目录名或 CDS_PROJECT_SLUG。generic workspace "
+                    "目录下设置 CDS_HOST + (AI_ACCESS_KEY 或 CDS_PROJECT_KEY) "
+                    "走 API 模式才能使用服务端 collision-checked alias。",
         })
 
 
@@ -1295,7 +1317,7 @@ def cmd_branch_id(args: argparse.Namespace) -> None:
     if not branch:
         die("当前没有分支（detached HEAD？）", code=1)
         return
-    project_slug_hint = _project_slug_hint(repo_root)
+    project_slug_hints = _project_slug_hints(repo_root)
 
     # 用 _call_safe 而不是 _call(quiet=True)：后者在 URLError / TimeoutError 时
     # _request.die() exit 1（违反 CLI 契约 4xx→2/5xx→3）。_call_safe 把 HTTP +
@@ -1328,7 +1350,7 @@ def cmd_branch_id(args: argparse.Namespace) -> None:
     project_scoped = bool(os.environ.get("CDS_PROJECT_ID", "").strip())
     branches_list = body.get("branches") or []
     matches = _match_branches_for_project(
-        branches_list, branch, project_slug_hint, project_scoped)
+        branches_list, branch, project_slug_hints, project_scoped)
     for b in matches:
         bid = b.get("id")
         if bid:
@@ -1345,12 +1367,12 @@ def cmd_branch_id(args: argparse.Namespace) -> None:
         raw_same_branch = [b for b in branches_list if b.get("branch") == branch]
         if raw_same_branch:
             die(f"/api/branches 有 {len(raw_same_branch)} 条同名分支 '{branch}' "
-                f"但都不属于本地项目 hint '{project_slug_hint}'。可能是仓库目录"
+                f"但都不属于本地项目 hint '{', '.join(project_slug_hints)}'。可能是仓库目录"
                 f"名 ≠ CDS 项目 slug — 设 CDS_PROJECT_ID=<真实 projectId> 重试，"
                 f"或检查 /api/projects 列表。",
                 code=2, extra={
                     "rawMatches": raw_same_branch,
-                    "projectHint": project_slug_hint,
+                    "projectHints": project_slug_hints,
                 })
             return
     die(f"CDS 里找不到 git 分支 '{branch}'，先跑 /cds-deploy 部署", code=2)
