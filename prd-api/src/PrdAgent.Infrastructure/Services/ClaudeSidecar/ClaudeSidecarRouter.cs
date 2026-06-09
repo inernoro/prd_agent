@@ -1055,6 +1055,7 @@ public sealed class ClaudeSidecarRouter : IClaudeSidecarRouter
     private static SidecarEventType MapType(string? eventName) => eventName switch
     {
         "text_delta" => SidecarEventType.TextDelta,
+        "thinking" => SidecarEventType.Thinking,
         "tool_use" => SidecarEventType.ToolUse,
         "tool_result" => SidecarEventType.ToolResult,
         "usage" => SidecarEventType.Usage,

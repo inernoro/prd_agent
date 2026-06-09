@@ -142,11 +142,19 @@ async def run_agent(req: SidecarRunRequest) -> AsyncIterator[SidecarEvent]:
                         #   - TextEvent.text （SDK 累积版，更友好）
                         if et == "RawContentBlockDeltaEvent":
                             delta = getattr(event, "delta", None)
-                            if delta is not None and getattr(delta, "type", "") == "text_delta":
+                            dtype = getattr(delta, "type", "") if delta is not None else ""
+                            if dtype == "text_delta":
                                 chunk = getattr(delta, "text", "") or ""
                                 if chunk:
                                     current_text += chunk
                                     yield SidecarEvent(type="text_delta", text=chunk, turn=turn)
+                            elif dtype == "thinking_delta":
+                                # 推理模型（extended thinking / anthropic-compatible 上游）
+                                # 的思考增量。透传给上层，UI 在等待期展示思考过程，
+                                # 消除「40 秒空白」（CLAUDE.md §6 + llm-gateway.md §2/§3）。
+                                think = getattr(delta, "thinking", "") or ""
+                                if think:
+                                    yield SidecarEvent(type="thinking", text=think, turn=turn)
                         elif et in ("RawMessageDeltaEvent", "MessageDeltaEvent"):
                             usage = getattr(event, "usage", None)
                             if usage is not None:
@@ -303,6 +311,12 @@ async def _run_openai_compatible(
                 "messages": history,
                 "max_tokens": req.max_tokens,
                 "stream": True,
+                # OpenRouter 默认不向客户端转发 reasoning，会把 reasoning hold 到
+                # 推理结束才 flush content，表现为「等 40 秒才出第一个字」。显式要求
+                # 转发推理（两个字段名都给，OpenRouter 不同模型/时期支持不一致）。
+                # 见 .claude/rules/llm-gateway.md §2/§3。
+                "include_reasoning": True,
+                "reasoning": {"exclude": False},
             }
             if tools_payload:
                 body["tools"] = tools_payload
@@ -338,6 +352,12 @@ async def _run_openai_compatible(
                         choice = choices[0]
                         finish_reason = choice.get("finish_reason") or finish_reason
                         delta = choice.get("delta") or {}
+                        # 推理增量：OpenRouter 归一为 `reasoning`，DeepSeek/硅基流动等
+                        # 原生为 `reasoning_content`。两个都读，透传为 thinking 事件，
+                        # 让 UI 在等待期逐字展示思考，消除 40 秒空白。
+                        reasoning = delta.get("reasoning") or delta.get("reasoning_content")
+                        if reasoning:
+                            yield SidecarEvent(type="thinking", text=reasoning, turn=turn)
                         content = delta.get("content")
                         if content:
                             current_text += content

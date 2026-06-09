@@ -149,7 +149,12 @@ public class PrdAgentAdapter : IAgentAdapter
 
         await foreach (var chunk in _gateway.StreamAsync(request, ct))
         {
-            if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+            if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null)
+            {
+                // 透出真实解析到的模型 / 平台，供前端「当前模型」徽标展示（ai-model-visibility）
+                yield return AgentStreamChunk.ModelChunk(chunk.Resolution.ActualModel, chunk.Resolution.ActualPlatformName);
+            }
+            else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
             {
                 fullContent.Append(chunk.Content);
                 yield return AgentStreamChunk.Text(chunk.Content);

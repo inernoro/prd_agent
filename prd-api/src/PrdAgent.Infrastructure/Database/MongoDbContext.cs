@@ -245,6 +245,9 @@ public class MongoDbContext
     // Video Agent 文章转视频
     public IMongoCollection<VideoGenRun> VideoGenRuns => _database.GetCollection<VideoGenRun>("video_gen_runs");
 
+    // MD 转网页 PPT 生成运行记录（server-authority：刷新可重连/查看）
+    public IMongoCollection<MdToPptRun> MdToPptRuns => _database.GetCollection<MdToPptRun>("md_to_ppt_runs");
+
     // Desktop 更新加速缓存
     public IMongoCollection<DesktopUpdateCache> DesktopUpdateCaches => _database.GetCollection<DesktopUpdateCache>("desktop_update_caches");
 

@@ -1527,6 +1527,41 @@ public static class InfraAgent
         public const string Chat = "infra-agent.review-lite::chat";
     }
 }
+
+/// <summary>
+/// Markdown 转 PPT Agent — 直接生成富设计 reveal.js HTML 网页 PPT
+/// </summary>
+public static class MdToPptAgent
+{
+    public const string AppName = "MD 转 PPT 智能体";
+
+    public static class Generation
+    {
+        [AppCallerMetadata(
+            "MD转PPT-大纲生成",
+            "将 Markdown/文本内容通过 LLM 流式生成 PPT 大纲结构，每页含标题和要点",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Document"
+        )]
+        public const string Convert = "md-to-ppt-agent.generation::chat";
+
+        [AppCallerMetadata(
+            "MD转PPT-富设计HTML直出",
+            "将 Markdown/文本内容直接生成完整 reveal.js HTML 网页 PPT，多样版式、富视觉设计，无需大纲中转",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Document"
+        )]
+        public const string HtmlGenerate = "md-to-ppt-agent.html-generate::chat";
+
+        [AppCallerMetadata(
+            "MD转PPT-局部修改",
+            "对已有网页 PPT 的指定页面进行局部修改和重新生成",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Document"
+        )]
+        public const string Patch = "md-to-ppt-agent.patch::chat";
+    }
+}
 }
 
 /// <summary>

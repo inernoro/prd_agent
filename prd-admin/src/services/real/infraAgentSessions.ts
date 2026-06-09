@@ -46,6 +46,7 @@ export interface InfraAgentSessionView {
 export type InfraAgentEventType =
   | 'status'
   | 'text_delta'
+  | 'thinking'
   | 'tool_call'
   | 'tool_result'
   | 'log'

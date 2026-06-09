@@ -404,11 +404,6 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         var token = await GetLongTokenAsync(connection.Id, ct);
         var cdsItem = await PostMessageToCdsAsync(connection, token, session, request.Content.Trim(), ct);
         var cdsStatus = MapCdsStatus(GetString(cdsItem, "status"));
-        var importResult = await ImportCdsStreamEventsAsync(connection, token, session, 0, ct);
-        if (!string.IsNullOrWhiteSpace(importResult.SessionStatus))
-        {
-            cdsStatus = importResult.SessionStatus;
-        }
 
         session.UpdatedAt = DateTime.UtcNow;
         await _db.InfraAgentSessions.UpdateOneAsync(
@@ -416,22 +411,15 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             Builders<InfraAgentSession>.Update.Set(x => x.UpdatedAt, session.UpdatedAt).Set(x => x.Status, cdsStatus),
             cancellationToken: ct);
         session.Status = cdsStatus;
-        await AppendRawEventAsync(
-            session.Id,
-            await NextEventSeqAsync(session.Id, ct),
-            InfraAgentEventTypes.Log,
-            JsonSerializer.Serialize(new
-            {
-                level = "info",
-                source = "cds-session-transport",
-                message = "message dispatched through CDS session transport; MAP direct runtime queue skipped",
-                mapRole = "control-plane-client",
-                cdsRole = "runtime-container-sandbox-manager",
-                fallbackScope = "operator-debug-only",
-                directRuntimeFallbackEnabled = IsMapDirectRuntimeFallbackEnabled(),
-                dispatchedAt = DateTime.UtcNow
-            }),
-            ct);
+        // 关键修复：不再内联阻塞导入。旧实现 await ImportCdsStreamEventsAsync 把整段 CDS 流读完才返回，
+        // 表现为「发送卡 2 秒 → 一直等 → 死掉」。改为消息 POST 到 CDS 后立即入队，由
+        // InfraAgentRuntimeWorker 后台拉流落库（与 HTTP 请求生命周期解耦，server-authority），
+        // 前端 GET {id}/stream 的长连 SSE 实时呈现逐字。POST 毫秒级返回。
+        await _runtimeJobs.EnqueueAsync(
+            new InfraAgentRuntimeJob(userId, session.Id, request.Content.Trim(), DateTime.UtcNow), ct);
+        _logger.LogDebug(
+            "[infra-agent] message posted to CDS, stream import dispatched to background worker (session={SessionId})",
+            session.Id);
         return ToView(session);
 
         async Task<JsonElement> PostMessageToCdsAsync(
@@ -499,6 +487,38 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         }
     }
 
+    public async Task<bool> InjectWorkspaceFilesAsync(
+        string userId, string id, IReadOnlyList<InfraAgentWorkspaceFileInput> files, CancellationToken ct)
+    {
+        var session = await FindOwnedSessionAsync(userId, id, ct);
+        if (session == null)
+        {
+            throw new InfraAgentSessionException(
+                InfraAgentSessionErrorCodes.SessionNotFound, "会话不存在", StatusCodes.Status404NotFound);
+        }
+        if (files == null || files.Count == 0) return false;
+
+        var connection = await GetActiveConnectionAsync(session, ct);
+        var token = await GetLongTokenAsync(connection.Id, ct);
+        // v1：复用 CDS 现成的 POST /projects/:id/files（写进项目分支 worktree，不改边车镜像）。
+        // 探针目的：实测 agent 会话能否读到注入的文件。
+        using var response = await SendCdsJsonAsync(
+            HttpMethod.Post,
+            connection,
+            token,
+            $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/files",
+            new
+            {
+                files = files.Select(f => new { relativePath = f.Path, content = f.Content }).ToArray()
+            },
+            ct);
+        response.EnsureSuccessStatusCode();
+        _logger.LogInformation(
+            "[infra-agent] injected {Count} file(s) into workspace project={ProjectId} session={SessionId}",
+            files.Count, session.CdsProjectId, session.Id);
+        return true;
+    }
+
     public async Task RunRuntimeJobAsync(string userId, string id, string content, CancellationToken ct)
     {
         var session = await FindOwnedSessionAsync(userId, id, ct);
@@ -506,20 +526,32 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
         if (!IsMapDirectRuntimeFallbackEnabled())
         {
-            await AppendRawEventAsync(
-                session.Id,
-                await NextEventSeqAsync(session.Id, ct),
-                InfraAgentEventTypes.Log,
-                JsonSerializer.Serialize(new
+            // CDS session transport（默认路径）：在后台 worker 里拉取 CDS 流式事件落库，
+            // 与 HTTP 请求解耦。消息已由 SendMessageAsync 同步 POST 到 CDS，这里只负责导入。
+            if (string.IsNullOrWhiteSpace(session.CdsSessionId))
+            {
+                return;
+            }
+            try
+            {
+                var connection = await GetActiveConnectionAsync(session, CancellationToken.None);
+                var token = await GetLongTokenAsync(connection.Id, CancellationToken.None);
+                // server-authority：用 CancellationToken.None，客户端断开 / worker 调度不打断 agent 运行。
+                var importResult = await ImportCdsStreamEventsAsync(connection, token, session, 0, CancellationToken.None);
+                if (!string.IsNullOrWhiteSpace(importResult.SessionStatus))
                 {
-                    level = "info",
-                    source = "runtime-dispatcher",
-                    message = "MAP direct runtime job skipped; CDS session transport owns execution",
-                    mapRole = "control-plane-client",
-                    cdsRole = "runtime-container-sandbox-manager",
-                    fallbackScope = "operator-debug-only"
-                }),
-                ct);
+                    await _db.InfraAgentSessions.UpdateOneAsync(
+                        x => x.Id == session.Id,
+                        Builders<InfraAgentSession>.Update
+                            .Set(x => x.Status, importResult.SessionStatus)
+                            .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                        cancellationToken: CancellationToken.None);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[infra-agent] background CDS stream import failed session={SessionId}", session.Id);
+            }
             return;
         }
 
@@ -1588,13 +1620,40 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(session.CdsSessionId!)}/stream?afterSeq={afterSeq}",
             null,
             ct);
-        var stream = await response.Content.ReadAsStringAsync(ct);
+        using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(ct));
         string? sessionStatus = null;
         string? sessionError = null;
-        foreach (var block in stream.Split("\n\n", StringSplitOptions.RemoveEmptyEntries))
+        var turnDone = false;
+        // 增量读取：CDS 的 SSE 块以空行分隔，逐块到达即解析落库，前端 /stream SSE 立即转发，
+        // 实现真流式。旧实现 ReadAsStringAsync 会阻塞到整段流读完、事件全堆到结尾，
+        // 表现为「不流式 + 很久不返回」。SendCdsJsonAsync 已用 ResponseHeadersRead，可增量读。
+        var blockBuilder = new System.Text.StringBuilder();
+        string? line;
+        while (!turnDone && (line = await reader.ReadLineAsync(ct)) != null)
         {
-            var dataLine = block.Split('\n').FirstOrDefault(line => line.StartsWith("data: ", StringComparison.Ordinal));
-            if (dataLine == null || block.Contains("event: keepalive", StringComparison.Ordinal)) continue;
+            if (line.Length != 0)
+            {
+                blockBuilder.Append(line).Append('\n');
+                continue;
+            }
+            if (blockBuilder.Length > 0)
+            {
+                await ProcessBlockAsync(blockBuilder.ToString());
+                blockBuilder.Clear();
+            }
+        }
+        if (blockBuilder.Length > 0)
+        {
+            await ProcessBlockAsync(blockBuilder.ToString());
+        }
+
+        return new CdsStreamImportResult(sessionStatus, sessionError);
+
+        // 单个 SSE 块的解析与落库（逻辑与旧 foreach 体一致，仅改为逐块即时处理）。
+        async Task ProcessBlockAsync(string block)
+        {
+            var dataLine = block.Split('\n').FirstOrDefault(l => l.StartsWith("data: ", StringComparison.Ordinal));
+            if (dataLine == null || block.Contains("event: keepalive", StringComparison.Ordinal)) return;
             using var doc = JsonDocument.Parse(dataLine["data: ".Length..]);
             var root = doc.RootElement;
             var type = GetString(root, "type") ?? InfraAgentEventTypes.Log;
@@ -1603,11 +1662,18 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 : "{}";
             if (await HasImportedEventAsync(session.Id, type, payload, ct))
             {
-                continue;
+                return;
             }
 
             await AppendRawEventAsync(session.Id, await NextEventSeqAsync(session.Id, ct), type, payload, ct);
 
+            if (type == InfraAgentEventTypes.Done)
+            {
+                // 一轮回复结束 → 会话回到 idle(可复用、不再计时超时),而不是停留在 running 直到超时。
+                // 后续追问复用同一会话(历史保留),任务列表不再堆「新会话 已超时」尸体(用户:历史消失+全是超时)。
+                sessionStatus = InfraAgentSessionStatuses.Idle;
+                turnDone = true;
+            }
             if (type == InfraAgentEventTypes.Done && root.TryGetProperty("payload", out var donePayload))
             {
                 var finalText = GetString(donePayload, "finalText");
@@ -1635,8 +1701,6 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 sessionError = errorStatus.SessionError;
             }
         }
-
-        return new CdsStreamImportResult(sessionStatus, sessionError);
     }
 
     private async Task<bool> RunSidecarRuntimeIfAvailableAsync(
@@ -1726,15 +1790,18 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             }),
             ct);
 
+        // 多轮上下文窗口：加载此前对话历史，追问时 agent 不再从头开始。
+        // 当前用户消息已由 SendMessageAsync 写入 DB，LoadConversationHistoryAsync
+        // 直接拉取含当前消息的完整窗口并做窗口截断。首条消息时列表仅含该条，
+        // 行为与原来完全一致，不破坏单轮场景。
+        var conversationHistory = await LoadConversationHistoryAsync(session.Id, ct);
+
         var request = new InfraAgentRuntimeRunRequest
         {
             RunId = runId,
             Model = model,
             SystemPrompt = BuildAgentSystemPrompt(),
-            Messages = new List<InfraAgentRuntimeMessage>
-            {
-                new() { Role = "user", Content = content }
-            },
+            Messages = conversationHistory,
             Tools = BuildSidecarToolDefs(session),
             MaxTokens = 4096,
             MaxTurns = ResolveMaxTurns(content),
@@ -1786,6 +1853,21 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                         {
                             messageId = runId,
                             text,
+                            source = eventSource,
+                            runtimeAdapter = activeAdapterKind,
+                            runtimeInstance = ev.RuntimeInstanceName
+                        }), ct);
+                    }
+                    break;
+                case InfraAgentRuntimeEventType.Thinking:
+                    if (!string.IsNullOrEmpty(ev.Text))
+                    {
+                        // 推理模型思考增量。不计入 finalText（思考不是正文），仅落 thinking 事件，
+                        // 让前端在等待期逐字展示思考过程，消除「40 秒空白」。
+                        await AppendRawEventAsync(session.Id, seq, InfraAgentEventTypes.Thinking, JsonSerializer.Serialize(new
+                        {
+                            messageId = runId,
+                            text = ev.Text,
                             source = eventSource,
                             runtimeAdapter = activeAdapterKind,
                             runtimeInstance = ev.RuntimeInstanceName
@@ -1855,9 +1937,13 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                         x => x.Id == session.Id,
                         Builders<InfraAgentSession>.Update
                             .Set(x => x.CurrentRuntimeRunId, null)
+                            // 一轮结束 → idle(可复用、不计时超时),否则停留 running 直到超时,
+                            // 导致后续追问新建会话(历史丢失)+ 列表堆超时尸体。
+                            .Set(x => x.Status, InfraAgentSessionStatuses.Idle)
                             .Set(x => x.UpdatedAt, DateTime.UtcNow),
                         cancellationToken: ct);
                     session.CurrentRuntimeRunId = null;
+                    session.Status = InfraAgentSessionStatuses.Idle;
                     if (!string.IsNullOrWhiteSpace(doneText))
                     {
                         await _db.InfraAgentMessages.InsertOneAsync(new InfraAgentMessage
@@ -1891,6 +1977,51 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// 从 DB 加载本 session 最近的对话历史，用于 direct-sidecar 路径的多轮上下文。
+    /// 双重截断：条数上限（WindowMessageCount）+ 字符预算（MaxHistoryChars），
+    /// 防止历史无限增长撑爆 LLM context window。
+    /// 当前用户消息在 SendMessageAsync 里已写入 DB，会自然包含在返回列表中。
+    /// </summary>
+    private async Task<List<InfraAgentRuntimeMessage>> LoadConversationHistoryAsync(
+        string sessionId,
+        CancellationToken ct)
+    {
+        const int WindowMessageCount = 20;
+        const int MaxHistoryChars = 40_000;
+
+        // 取最近 WindowMessageCount 条已完成的 user/assistant 消息，降序排列。
+        var recent = await _db.InfraAgentMessages
+            .Find(x => x.SessionId == sessionId
+                && x.Status == InfraAgentMessageStatuses.Completed
+                && (x.Role == InfraAgentMessageRoles.User
+                    || x.Role == InfraAgentMessageRoles.Assistant))
+            .SortByDescending(x => x.CreatedAt)
+            .Limit(WindowMessageCount)
+            .ToListAsync(ct);
+
+        // 还原为时间升序（最旧在前，最新在后），与 LLM 期望的消息顺序一致。
+        recent.Reverse();
+
+        // 从最新消息向前累计字符数，超出预算则截断早期消息。
+        var charCount = 0;
+        var startIndex = recent.Count;
+        for (var i = recent.Count - 1; i >= 0; i--)
+        {
+            charCount += recent[i].Content.Length;
+            if (charCount > MaxHistoryChars)
+            {
+                break;
+            }
+            startIndex = i;
+        }
+
+        return recent
+            .Skip(startIndex)
+            .Select(m => new InfraAgentRuntimeMessage { Role = m.Role, Content = m.Content })
+            .ToList();
     }
 
     private static string BuildAgentSystemPrompt()
