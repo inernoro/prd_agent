@@ -1946,6 +1946,150 @@ public class ProductAgentController : ControllerBase
         await Sse("done", new { });
     }
 
+    // ════════════════════════ 工作台「工作助手」问答（SSE 流式）════════════════════════
+
+    /// <summary>
+    /// 工作台「工作助手」：以该产品全量数据（需求/功能/缺陷/版本/客户）+ 本产品知识库文档摘录为上下文，
+    /// 流式回答用户问题（SSE：phase/typing/done）。
+    /// 保护：仅本产品成员可访问（FindAccessibleProductAsync），只取本产品数据，知识库只取该产品挂载
+    /// DocumentStore 的文本索引/摘要并截断，不跨产品、不倾倒原文件、prompt 约束不得编造或外引。
+    /// </summary>
+    [HttpPost("products/{productId}/assistant/ask")]
+    public async Task AssistantAsk(string productId, [FromBody] AssistantAskRequest request)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers["X-Accel-Buffering"] = "no";
+        async Task Sse(string evt, object data)
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(data);
+            await Response.WriteAsync($"event: {evt}\ndata: {json}\n\n");
+            await Response.Body.FlushAsync();
+        }
+
+        var userId = GetUserId();
+        var product = await FindAccessibleProductAsync(productId, userId);
+        if (product == null) { await Sse("error", new { message = "产品不存在或无权访问" }); return; }
+        var question = (request.Question ?? "").Trim();
+        if (question.Length == 0) { await Sse("error", new { message = "请输入问题" }); return; }
+        if (question.Length > 1000) question = question[..1000];
+
+        await Sse("phase", new { message = "正在汇总该产品数据与知识库…" });
+
+        string Strip(string? s) => System.Text.RegularExpressions.Regex.Replace(s ?? "", "<[^>]+>", " ")
+            .Replace("&nbsp;", " ").Replace("&amp;", "&").Replace("&lt;", "<").Replace("&gt;", ">").Trim();
+        string Short(string? s, int n = 200) { var t = Strip(s); return t.Length > n ? t[..n] + "…" : t; }
+        string D(DateTime? t) => t.HasValue ? t.Value.ToString("yyyy-MM-dd") : "—";
+
+        var versions = await _db.ProductVersions.Find(v => v.ProductId == productId && !v.IsDeleted).ToListAsync();
+        var reqs = await _db.Requirements.Find(r => r.ProductId == productId && !r.IsDeleted).ToListAsync();
+        var feats = await _db.Features.Find(f => f.ProductId == productId && !f.IsDeleted).ToListAsync();
+        var defects = await _db.DefectReports.Find(d => d.TracedProductId == productId && !d.IsDeleted).ToListAsync();
+        var custIds = reqs.SelectMany(r => r.CustomerIds).Distinct().ToList();
+        var custs = custIds.Count == 0 ? new List<Customer>() : await _db.Customers.Find(c => custIds.Contains(c.Id)).ToListAsync();
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"# 产品：[{product.ProductNo}] {product.Name}（分级 {product.Grade}，状态 {product.CurrentState ?? "—"}）");
+        sb.AppendLine($"今日：{DateTime.UtcNow:yyyy-MM-dd}（涉及本月时以当前自然月为准）");
+        if (versions.Count > 0)
+        {
+            sb.AppendLine($"\n## 版本（{versions.Count}）");
+            foreach (var v in versions) sb.AppendLine($"- {v.VersionName}（{v.Lifecycle}/{v.CurrentState ?? "—"}；计划 {D(v.PlannedReleaseAt)}，已发布 {D(v.ReleasedAt)}）");
+        }
+        if (custs.Count > 0)
+        {
+            sb.AppendLine($"\n## 客户（{custs.Count}）");
+            foreach (var c in custs) sb.AppendLine($"- {c.Name}（{c.Company}）");
+        }
+        if (reqs.Count > 0)
+        {
+            sb.AppendLine($"\n## 需求（{reqs.Count}）");
+            foreach (var r in reqs) sb.AppendLine($"- [{r.RequirementNo}] {r.Title}（等级 {r.Grade.ToUpperInvariant()}，状态 {r.CurrentState ?? "—"}；创建 {D(r.CreatedAt)}）{Short(r.Description)}");
+        }
+        if (feats.Count > 0)
+        {
+            sb.AppendLine($"\n## 功能（{feats.Count}）");
+            foreach (var f in feats) sb.AppendLine($"- [{f.FeatureNo}] {f.Title}（等级 {f.Grade.ToUpperInvariant()}，状态 {f.CurrentState ?? "—"}；创建 {D(f.CreatedAt)}）{Short(f.Description)}");
+        }
+        if (defects.Count > 0)
+        {
+            sb.AppendLine($"\n## 缺陷（{defects.Count}）");
+            foreach (var d in defects) sb.AppendLine($"- [{d.DefectNo}] {d.Title}（等级 {(d.Grade ?? SeverityToGrade(d.Severity)).ToUpperInvariant()}，状态 {d.Status}；提交 {D(d.SubmittedAt ?? d.CreatedAt)}，解决 {D(d.ResolvedAt)}）{Short(d.RawContent)}");
+        }
+        // 知识库：仅本产品挂载的 DocumentStore 文本索引/摘要，截断保护，不取原文件
+        if (!string.IsNullOrEmpty(product.KnowledgeStoreId))
+        {
+            var entries = await _db.DocumentEntries
+                .Find(e => e.StoreId == product.KnowledgeStoreId && !e.IsFolder)
+                .Limit(40).ToListAsync();
+            if (entries.Count > 0)
+            {
+                sb.AppendLine($"\n## 知识库文档（{entries.Count}，仅摘录）");
+                foreach (var e in entries)
+                {
+                    var body = !string.IsNullOrWhiteSpace(e.Summary) ? e.Summary : e.ContentIndex;
+                    sb.AppendLine($"- 《{e.Title}》：{Short(body, 300)}");
+                }
+            }
+        }
+
+        var ctx = sb.ToString();
+        if (ctx.Length > 14000) ctx = ctx[..14000] + "\n…（上下文过长已截断）";
+
+        var systemPrompt =
+            "你是「" + product.Name + "」这个产品的工作助手。你的知识库仅限下面提供的该产品数据与知识库文档摘录。\n" +
+            "要求：\n" +
+            "1. 只依据所给数据回答，不得编造或引用其它产品/外部信息；数据中没有的，明确说明「现有数据未覆盖」；\n" +
+            "2. 涉及本月/本周等时间口径时，按给定的今日日期与对象的创建/提交/发布日期推算；\n" +
+            "3. 回答用中文，结构清晰（可用小标题/项目符号/必要的表格），先结论后依据；\n" +
+            "4. 涉及矩阵/分布分析时，按等级(P0-P3) 与 状态/版本 交叉汇总，并点出风险；\n" +
+            "输出 Markdown 文本，不要寒暄。";
+
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"), GroupId: null, SessionId: null, UserId: userId,
+            ViewRole: null, DocumentChars: ctx.Length, DocumentHash: null,
+            SystemPromptRedacted: "product-work-assistant", RequestType: "chat",
+            AppCallerCode: AppCallerRegistry.Product.WorkAssistant));
+
+        var bodyJson = new JsonObject
+        {
+            ["messages"] = new JsonArray
+            {
+                new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                new JsonObject { ["role"] = "user", ["content"] = "# 产品数据上下文\n" + ctx + "\n\n# 我的问题\n" + question },
+            },
+            ["temperature"] = 0.4,
+            ["max_tokens"] = 1800,
+            ["include_reasoning"] = true,
+            ["reasoning"] = new JsonObject { ["exclude"] = false },
+        };
+
+        await Sse("phase", new { message = "AI 正在分析…" });
+        try
+        {
+            await foreach (var chunk in _gateway.StreamAsync(new GatewayRequest
+            {
+                AppCallerCode = AppCallerRegistry.Product.WorkAssistant,
+                ModelType = ModelTypes.Chat,
+                Stream = true,
+                RequestBody = bodyJson,
+            }, CancellationToken.None))
+            {
+                if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                    await Sse("typing", new { text = chunk.Content });
+                else if (chunk.Type == GatewayChunkType.Error)
+                { await Sse("error", new { message = chunk.Error ?? "AI 调用失败" }); return; }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[product-agent] work assistant stream error");
+            await Sse("error", new { message = "AI 调用异常，请重试" });
+            return;
+        }
+        await Sse("done", new { });
+    }
+
     // ════════════════════════ 需求 AI 智能填充（SSE 流式）════════════════════════
 
     /// <summary>
@@ -2915,6 +3059,12 @@ public class UpdateProductDefectRequest
     public string? AssigneeId { get; set; }
     public string? FeatureId { get; set; }
     public string? VersionId { get; set; }
+}
+
+public class AssistantAskRequest
+{
+    /// <summary>用户问题（工作助手问答）</summary>
+    public string? Question { get; set; }
 }
 
 public class RelationAnalysisRequest

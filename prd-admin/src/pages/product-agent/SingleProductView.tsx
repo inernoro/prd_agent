@@ -9,7 +9,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import type { EChartsOption } from 'echarts';
-import { Plus, Trash2, GitBranch, ListChecks, Puzzle, UserCog, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard, Table2, BarChart3, Download, Upload } from 'lucide-react';
+import { Plus, Trash2, GitBranch, ListChecks, Puzzle, UserCog, BookOpen, Share2, LayoutGrid, List, ArrowLeft, Bug, LayoutDashboard, Table2, BarChart3, Download, Upload, Sparkles } from 'lucide-react';
+import { ProductAssistantDrawer } from './ProductAssistantDrawer';
 import { EChart } from '@/components/charts/EChart';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { systemDialog } from '@/lib/systemDialog';
@@ -91,6 +92,7 @@ export function SingleProductView() {
   const { categories } = useProductCategories();
   const [product, setProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
+  const [assistantOpen, setAssistantOpen] = useState(false);
   // 当前 tab 记录在 URL（?tab=），从对象详情页返回时能停在原 tab，而不是回弹到工作台。
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
@@ -183,6 +185,15 @@ export function SingleProductView() {
         <SectionShell title={SECTION_TITLE[active]}>
           {active === 'overview' && (
             <div className="flex flex-col gap-5">
+              <div className="flex">
+                <button
+                  onClick={() => setAssistantOpen(true)}
+                  className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-200 border border-cyan-500/40 text-sm hover:bg-cyan-500/25"
+                  title="基于本产品数据与知识库的问答助手"
+                >
+                  <Sparkles size={14} /> 工作助手
+                </button>
+              </div>
               <MyTodos product={product} />
               <ProductDashboard product={product} />
             </div>
@@ -194,6 +205,9 @@ export function SingleProductView() {
           {active === 'defects' && <DefectsTab productId={product.id} />}
           {active === 'team' && <ProductTeamTab productId={product.id} />}
         </SectionShell>
+      )}
+      {assistantOpen && (
+        <ProductAssistantDrawer productId={product.id} productName={product.name} onClose={() => setAssistantOpen(false)} />
       )}
     </ProductAgentLayout>
   );
