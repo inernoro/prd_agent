@@ -8,3 +8,4 @@
 | fix | prd-api | MD转PPT CDS Agent 引擎补齐 server-authority:客户端断开时 SSE 心跳写失败不再 break(原会提前掉进超时分支落半成品 HTML 并 StopAsync 掉还在跑的会话),改标记 clientGone 继续轮询到 done/error/timeout 完整落库,客户端凭 runId 重连 |
 | fix | prd-admin | CDS Agent code 模式「知识库/工作区」selector 暂禁用并标注「开发中」:后端尚无把知识库灌进 Agent 会话上下文的能力,createInfraAgentSession 也无此字段,避免"选了却不生效"误导(债务见 doc/debt.md-to-ppt.md) |
 | fix | prd-admin | 知识库再加工确认窗写回失败不再误关:performApply 返回写回成功与否,confirmPendingApply 仅成功才关 diff 预览,失败时保留预览供用户直接重试 |
+| fix | cds | CDS Agent 会话详情流补 stale 守卫:切会话/关窗后,上一会话晚返回的 SSE 事件不再 append(原会把两个会话时间线混在一起),且被 abort 的旧轮询不再误置新会话的 streaming=false |

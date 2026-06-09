@@ -2359,6 +2359,9 @@ function AgentSessionsDialog({
                 const st = (evt.payload as { status?: string } | undefined)?.status;
                 if (st === 'stopped' || st === 'error') terminal = true;
               }
+              // stale 守卫:切到别的会话/关窗时,cleanup 已 abort 本 controller。此刻
+              // 上一会话晚返回的事件不能再 append(否则两个会话的时间线会混在一起)。
+              if (controller.signal.aborted) return { terminal, ok: true };
               setEvents((prev) => [...prev, evt]);
             } catch {
               // ignore parse errors
@@ -2383,7 +2386,9 @@ function AgentSessionsDialog({
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return;
       } finally {
-        setStreaming(false);
+        // 仅当本 controller 仍是当前会话的(未被 cleanup abort)才落 streaming=false;
+        // 否则会把刚切过去的新会话的 streaming 误置回 false。
+        if (!controller.signal.aborted) setStreaming(false);
       }
     }
 
