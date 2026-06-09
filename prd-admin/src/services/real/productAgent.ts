@@ -332,6 +332,22 @@ export function convertDefectToRequirement(defectId: string) {
   return apiRequest<Requirement>(`/api/product/defects/${defectId}/convert-to-requirement`, { method: 'POST' });
 }
 
+/** 工作台「我的待办」一条：需求/功能/缺陷统一结构（后端已按"需我处理"过滤好）。 */
+export interface MyTodoItem {
+  kind: 'requirement' | 'feature' | 'defect';
+  id: string;
+  no: string;
+  title: string;
+  /** 原始状态值（需求/功能为工作流状态 Key，缺陷为 DefectStatus）。 */
+  state?: string | null;
+  /** 已解析的状态中文标签（需求/功能由后端工作流解析；缺陷为空，前端用 defectStatusLabel 兜底）。 */
+  stateLabel?: string | null;
+}
+/** 工作台「我的待办」：只返回当前用户现在需要处理的项（后端按状态责任人 + 未到终态/未完成过滤）。 */
+export function getMyTodos(productId: string) {
+  return apiRequest<ListWrap<MyTodoItem>>(`/api/product/products/${productId}/my-todos`);
+}
+
 // ── 动态/讨论时间线（P2）──
 export interface ProductActivity {
   id: string;

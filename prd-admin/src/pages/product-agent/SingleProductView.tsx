@@ -36,14 +36,15 @@ import {
   listTracedDefects,
   untraceDefect,
   transition,
+  getMyTodos,
   type TracedDefect,
+  type MyTodoItem,
 } from '@/services/real/productAgent';
 import type { Product, ProductVersion, Requirement, Feature, ItemGrade, WorkflowDefinition } from './types';
 import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, defectStatusLabel } from './types';
 import { toCSV, downloadCSV, parseCSV } from '@/lib/csv';
 import { useProductCategories, categoryLabel } from './productCategories';
 import { useEffectiveWorkflow } from './DynamicForm';
-import { useAuthStore } from '@/stores/authStore';
 
 type Section = 'overview' | 'versions' | 'requirements' | 'features' | 'board' | 'rtm' | 'reports' | 'defects' | 'team' | 'knowledge' | 'graph';
 
@@ -219,65 +220,52 @@ function BoardTab({ productId }: { productId: string }) {
 }
 
 // ── 产品概览仪表盘 ──
-// ── 工作台「我的待办」：需要当前用户处理的需求/功能（指派或负责）+ 本产品未关闭缺陷 ──
-const DEFECT_CLOSED_STATES = new Set(['已解决', '已关闭', '已修复', '已完成', '关闭', 'resolved', 'closed', 'done', 'fixed', 'completed']);
+// ── 工作台「我的待办」：只显示当前用户现在需要处理的项 ──
+// 过滤口径由后端 GET /products/{id}/my-todos 闭环（状态责任人 + 未到终态/未完成）；
+// 需求/功能流转给他人或到终态、缺陷已完成后，会自动从这里消失。
+const TODO_KIND_META: Record<MyTodoItem['kind'], { label: string; color: string }> = {
+  requirement: { label: '需求', color: '#FBBF24' },
+  feature: { label: '功能', color: '#A78BFA' },
+  defect: { label: '缺陷', color: '#F87171' },
+};
 
 function MyTodos({ product }: { product: Product }) {
   const navigate = useNavigate();
-  const myId = useAuthStore((s) => s.user?.userId) ?? '';
-  const [reqs, setReqs] = useState<Requirement[]>([]);
-  const [feats, setFeats] = useState<Feature[]>([]);
-  const [defects, setDefects] = useState<TracedDefect[]>([]);
+  const [items, setItems] = useState<MyTodoItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let alive = true;
     void (async () => {
-      const [r, f, d] = await Promise.all([
-        listRequirements(product.id),
-        listFeatures(product.id),
-        listTracedDefects(product.id),
-      ]);
+      const res = await getMyTodos(product.id);
       if (!alive) return;
-      if (r.success) setReqs(r.data.items);
-      if (f.success) setFeats(f.data.items);
-      if (d.success) setDefects(d.data.items);
+      if (res.success) setItems(res.data.items);
       setLoading(false);
     })();
     return () => { alive = false; };
   }, [product.id]);
 
-  const mine = (o: { assigneeId?: string | null; ownerId: string }) => !!myId && (o.assigneeId === myId || o.ownerId === myId);
-  const todoReqs = reqs.filter(mine);
-  const todoFeats = feats.filter(mine);
-  const todoDefects = defects.filter((d) => !DEFECT_CLOSED_STATES.has((d.status ?? '').trim()) && !DEFECT_CLOSED_STATES.has((d.status ?? '').trim().toLowerCase()));
-  const total = todoReqs.length + todoFeats.length + todoDefects.length;
-
   if (loading) return <MapSectionLoader text="正在汇总待办…" />;
+  const total = items.length;
+  // 状态标签：缺陷用前端 SSOT 映射，需求/功能用后端已解析的工作流状态名
+  const stateOf = (it: MyTodoItem) => (it.kind === 'defect' ? defectStatusLabel(it.state) : it.stateLabel || undefined);
 
   return (
     <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
       <div className="flex items-center gap-2 mb-3">
         <ListChecks size={15} className="text-cyan-400" />
         <span className="text-sm font-semibold text-white/80">我的待办</span>
-        <span className="text-[11px] text-white/40">需要我处理的需求 / 功能（指派或负责）+ 本产品未关闭缺陷</span>
+        <span className="text-[11px] text-white/40">只显示当前需要我处理的需求 / 功能 / 缺陷，已处理或流转走的自动消失</span>
         <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">{total}</span>
       </div>
       {total === 0 ? (
         <div className="text-[12px] text-white/35 py-6 text-center">暂无待办，保持清爽。</div>
       ) : (
         <div className="flex flex-col gap-1.5">
-          {todoReqs.map((r) => (
-            <TodoRow key={`r-${r.id}`} kind="需求" color="#FBBF24" no={r.requirementNo} title={r.title} state={r.currentState}
-              onClick={() => navigate(`/product-agent/p/${product.id}/requirement/${r.id}`)} />
-          ))}
-          {todoFeats.map((f) => (
-            <TodoRow key={`f-${f.id}`} kind="功能" color="#A78BFA" no={f.featureNo} title={f.title} state={f.currentState}
-              onClick={() => navigate(`/product-agent/p/${product.id}/feature/${f.id}`)} />
-          ))}
-          {todoDefects.map((d) => (
-            <TodoRow key={`d-${d.id}`} kind="缺陷" color="#F87171" no={d.defectNo} title={d.title || '(无标题)'} state={defectStatusLabel(d.status)}
-              onClick={() => navigate(`/product-agent/p/${product.id}/defect/${d.id}`)} />
+          {items.map((it) => (
+            <TodoRow key={`${it.kind}-${it.id}`} kind={TODO_KIND_META[it.kind].label} color={TODO_KIND_META[it.kind].color}
+              no={it.no} title={it.title || '(无标题)'} state={stateOf(it)}
+              onClick={() => navigate(`/product-agent/p/${product.id}/${it.kind}/${it.id}`)} />
           ))}
         </div>
       )}

@@ -1338,6 +1338,57 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
+    /// <summary>
+    /// 工作台「我的待办」：只返回当前用户「现在需要处理」的项。
+    /// 需求/功能：当前状态责任人=我（处理人优先，未指派时取负责人）且未到终态(IsFinal)；
+    ///            流转给他人或到终态后自动从待办消失。
+    /// 缺陷：跟我相关（处理人或上报人是我）且未完成（非 resolved/rejected/closed）。
+    /// </summary>
+    [HttpGet("products/{productId}/my-todos")]
+    public async Task<IActionResult> MyTodos(string productId)
+    {
+        var userId = GetUserId();
+        if (await FindAccessibleProductAsync(productId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+
+        var reqs = await _db.Requirements.Find(r => r.ProductId == productId && !r.IsDeleted).SortByDescending(r => r.CreatedAt).ToListAsync();
+        var feats = await _db.Features.Find(f => f.ProductId == productId && !f.IsDeleted).SortByDescending(f => f.CreatedAt).ToListAsync();
+        var defects = await _db.DefectReports.Find(d => d.TracedProductId == productId && !d.IsDeleted).SortByDescending(d => d.CreatedAt).ToListAsync();
+
+        // 加载需求/功能实际绑定的流程定义，建终态键集合 + 状态标签表
+        var defIds = reqs.Select(r => r.WorkflowDefId).Concat(feats.Select(f => f.WorkflowDefId))
+            .Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!).Distinct().ToList();
+        var defs = defIds.Count == 0 ? new List<ProductWorkflowDefinition>()
+            : await _db.ProductWorkflowDefinitions.Find(w => defIds.Contains(w.Id) && !w.IsDeleted).ToListAsync();
+        var defById = defs.ToDictionary(d => d.Id, d => d);
+
+        bool IsFinal(string? defId, string? state)
+            => !string.IsNullOrEmpty(state) && !string.IsNullOrEmpty(defId)
+               && defById.TryGetValue(defId, out var def) && def.States.Any(s => s.Key == state && s.IsFinal);
+        string? StateLabel(string? defId, string? state)
+        {
+            if (string.IsNullOrEmpty(state)) return null;
+            if (!string.IsNullOrEmpty(defId) && defById.TryGetValue(defId, out var def))
+                return def.States.FirstOrDefault(s => s.Key == state)?.Label ?? state;
+            return state;
+        }
+        // 状态责任人：有处理人取处理人，否则取负责人
+        bool MineByState(string? assigneeId, string ownerId)
+            => (string.IsNullOrEmpty(assigneeId) ? ownerId : assigneeId) == userId;
+
+        var doneDefect = new HashSet<string> { DefectStatus.Resolved, DefectStatus.Rejected, DefectStatus.Closed };
+
+        var items = new List<object>();
+        foreach (var r in reqs.Where(r => MineByState(r.AssigneeId, r.OwnerId) && !IsFinal(r.WorkflowDefId, r.CurrentState)))
+            items.Add(new { kind = "requirement", id = r.Id, no = r.RequirementNo, title = r.Title, state = r.CurrentState, stateLabel = StateLabel(r.WorkflowDefId, r.CurrentState) });
+        foreach (var f in feats.Where(f => MineByState(f.AssigneeId, f.OwnerId) && !IsFinal(f.WorkflowDefId, f.CurrentState)))
+            items.Add(new { kind = "feature", id = f.Id, no = f.FeatureNo, title = f.Title, state = f.CurrentState, stateLabel = StateLabel(f.WorkflowDefId, f.CurrentState) });
+        foreach (var d in defects.Where(d => (d.AssigneeId == userId || d.ReporterId == userId) && !doneDefect.Contains(d.Status ?? "")))
+            items.Add(new { kind = "defect", id = d.Id, no = d.DefectNo, title = string.IsNullOrWhiteSpace(d.Title) ? d.DefectNo : d.Title!, state = (string?)d.Status, stateLabel = (string?)null });
+
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
     /// <summary>列出可被关联（追溯）的缺陷：当前用户可见、尚未追溯到任何产品。</summary>
     [HttpGet("products/{productId}/defects/linkable")]
     public async Task<IActionResult> ListLinkableDefects(string productId, [FromQuery] string? keyword = null)
