@@ -182,7 +182,12 @@ public class MdToPptController : ControllerBase
         await WriteEventAsync("run", new { runId = run.Id });
 
         var systemPrompt = BuildPptSystemPrompt(null);
-        var userContent = $"---\n\n# 已有 HTML\n\n```html\n{req.CurrentHtml?.Trim()}\n```\n\n# 修改要求（第 {(req.SlideIndex.HasValue ? req.SlideIndex.Value + 1 : 0)} 页）\n\n{req.SlideRequest?.Trim()}";
+        // 前端的"指定第几页"输入框是 1-based(min=1)且原样下发,这里直接用,不能再 +1(否则
+        // 输入 3 会被改成第 4 页);留空时 SlideIndex 为 null,语义是整份 PPT,不能写成"第 0 页"。
+        var pageHint = req.SlideIndex.HasValue
+            ? $"（仅修改第 {req.SlideIndex.Value} 页）"
+            : "（未指定具体页，按要求修改整份 PPT）";
+        var userContent = $"---\n\n# 已有 HTML\n\n```html\n{req.CurrentHtml?.Trim()}\n```\n\n# 修改要求{pageHint}\n\n{req.SlideRequest?.Trim()}";
 
         if (engine == "agent")
             await RunAgentStreamAsync(userId, systemPrompt, userContent, "PPT 修改", run);

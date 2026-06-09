@@ -2236,11 +2236,14 @@ interface AgentSessionView {
   eventCount?: number;
 }
 
+// 后端 pushCdsAgentEvent 落库的事件形状是 { seq, type, payload, createdAt }
+// (见 cds/src/routes/remote-hosts.ts)。早先这里误写成 ts/data,导致时间显示 Invalid Date、
+// 摘要永远为空。字段名必须与后端一致。
 interface AgentSessionEvent {
   seq: number;
   type: string;
-  ts: string;
-  data?: unknown;
+  createdAt: string;
+  payload?: unknown;
 }
 
 function AgentSessionsDialog({
@@ -2262,18 +2265,27 @@ function AgentSessionsDialog({
   const abortRef = useRef<AbortController | null>(null);
   const eventsEndRef = useRef<HTMLDivElement | null>(null);
 
-  const loadSessions = useCallback(async () => {
-    if (!project) return;
-    setListState({ status: 'loading' });
-    try {
-      const data = await apiRequest<{ items: AgentSessionView[] }>(
-        `/api/projects/${encodeURIComponent(project.id)}/agent-sessions`,
-      );
-      setListState({ status: 'ok', sessions: data.items || [] });
-    } catch (err) {
-      setListState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
-    }
-  }, [project]);
+  const fetchSeqRef = useRef(0);
+  // silent=true 用于 5s 后台自动刷新:不切回 loading 态(否则列表每 5 秒闪一次骨架)。
+  // fetchSeqRef 守卫:切项目/快速重入时,旧请求晚返回不得覆盖新项目的列表(stale response)。
+  const loadSessions = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!project) return;
+      const seq = ++fetchSeqRef.current;
+      if (!opts?.silent) setListState({ status: 'loading' });
+      try {
+        const data = await apiRequest<{ items: AgentSessionView[] }>(
+          `/api/projects/${encodeURIComponent(project.id)}/agent-sessions`,
+        );
+        if (seq !== fetchSeqRef.current) return;
+        setListState({ status: 'ok', sessions: data.items || [] });
+      } catch (err) {
+        if (seq !== fetchSeqRef.current) return;
+        setListState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      }
+    },
+    [project],
+  );
 
   useEffect(() => {
     if (project) {
@@ -2289,7 +2301,7 @@ function AgentSessionsDialog({
   useEffect(() => {
     if (!project || selectedSession) return;
     const timer = setInterval(() => {
-      void loadSessions();
+      void loadSessions({ silent: true });
     }, 5000);
     return () => clearInterval(timer);
   }, [loadSessions, project, selectedSession]);
@@ -2313,44 +2325,65 @@ function AgentSessionsDialog({
       `/api/projects/${encodeURIComponent(project.id)}/agent-sessions/${encodeURIComponent(selectedSession.id)}/stream`,
     );
 
-    async function readStream() {
-      try {
-        const response = await fetch(`${url}?afterSeq=${afterSeq}`, {
-          credentials: 'include',
-          signal: controller.signal,
-        });
-        if (!response.ok || !response.body) {
-          setStreaming(false);
-          return;
-        }
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() ?? '';
-          for (const line of lines) {
-            if (line.startsWith('data:')) {
-              const raw = line.slice(5).trim();
-              if (!raw || raw === '[DONE]') continue;
-              try {
-                const evt = JSON.parse(raw) as AgentSessionEvent;
-                if (typeof evt.seq === 'number') afterSeq = evt.seq;
-                setEvents((prev) => [...prev, evt]);
-              } catch {
-                // ignore parse errors
+    // 读一次流:回放 afterSeq 之后的事件,返回是否已到达终态(看到 done/error/stopped)。
+    // CDS 的 stream 端点是一次性的(回放缓冲事件 + keepalive 后即 Connection: close,见
+    // remote-hosts.ts),所以单次 fetch 读不到之后产生的事件。
+    async function readOnce(): Promise<{ terminal: boolean; ok: boolean }> {
+      const response = await fetch(`${url}?afterSeq=${afterSeq}`, {
+        credentials: 'include',
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.body) return { terminal: true, ok: false };
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let terminal = false;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (line.startsWith('data:')) {
+            const raw = line.slice(5).trim();
+            if (!raw || raw === '[DONE]') continue;
+            try {
+              const evt = JSON.parse(raw) as AgentSessionEvent;
+              // 流末尾的 keepalive 帧是 { ts }(无 seq/type/payload),不是真实事件,
+              // 不能塞进时间线(否则显示为空白垃圾行)。只接收带 type 的真实事件。
+              if (typeof evt.type !== 'string') continue;
+              if (typeof evt.seq === 'number') afterSeq = evt.seq;
+              if (evt.type === 'done' || evt.type === 'error') terminal = true;
+              if (evt.type === 'status') {
+                const st = (evt.payload as { status?: string } | undefined)?.status;
+                if (st === 'stopped' || st === 'error') terminal = true;
               }
+              setEvents((prev) => [...prev, evt]);
+            } catch {
+              // ignore parse errors
             }
           }
         }
-        setStreaming(false);
-      } catch (err) {
-        if (!(err instanceof DOMException && err.name === 'AbortError')) {
-          setStreaming(false);
+      }
+      return { terminal, ok: true };
+    }
+
+    async function readStream() {
+      try {
+        // 会话本身已是终态(stopped/error/idle)→ 只回放一次;运行中(running/pending)→
+        // 用更新后的 afterSeq 持续重连轮询,直到看到终态事件,保证"实时可观测"不假死。
+        const sessionAlreadyTerminal =
+          selectedSession!.status !== 'running' && selectedSession!.status !== 'pending';
+        while (!controller.signal.aborted) {
+          const { terminal, ok } = await readOnce();
+          if (sessionAlreadyTerminal || terminal || !ok || controller.signal.aborted) break;
+          await new Promise((resolve) => setTimeout(resolve, 1500));
         }
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+      } finally {
+        setStreaming(false);
       }
     }
 
@@ -2370,6 +2403,7 @@ function AgentSessionsDialog({
   function eventTypeLabel(type: string): string {
     const map: Record<string, string> = {
       text_delta: '文本输出',
+      thinking: '思考',
       tool_call: '调用工具',
       tool_result: '工具结果',
       status: '状态变更',
@@ -2394,26 +2428,23 @@ function AgentSessionsDialog({
   }
 
   function eventSummary(evt: AgentSessionEvent): string {
-    if (!evt.data) return '';
-    if (evt.type === 'text_delta') {
-      const d = evt.data as { text?: string };
-      return typeof d.text === 'string' ? d.text.slice(0, 120) : '';
+    const p = evt.payload as Record<string, unknown> | undefined;
+    if (!p) return '';
+    if (evt.type === 'text_delta' || evt.type === 'thinking') {
+      return typeof p.text === 'string' ? (p.text as string).slice(0, 120) : '';
     }
-    if (evt.type === 'tool_call') {
-      const d = evt.data as { tool?: string; name?: string };
-      return d.tool ?? d.name ?? '';
-    }
-    if (evt.type === 'tool_result') {
-      const d = evt.data as { tool?: string; name?: string };
-      return d.tool ?? d.name ?? '';
+    if (evt.type === 'tool_call' || evt.type === 'tool_result') {
+      // 后端 payload 用 toolName(claude-agent-sdk)；兼容旧字段 tool/name。
+      return (p.toolName as string) ?? (p.tool as string) ?? (p.name as string) ?? '';
     }
     if (evt.type === 'status') {
-      const d = evt.data as { status?: string };
-      return d.status ?? '';
+      return (p.status as string) ?? '';
     }
-    if (evt.type === 'error') {
-      const d = evt.data as { message?: string };
-      return d.message ?? '';
+    if (evt.type === 'done') {
+      return typeof p.finalText === 'string' ? (p.finalText as string).slice(0, 120) : '';
+    }
+    if (evt.type === 'error' || evt.type === 'log') {
+      return (p.message as string) ?? (p.reason as string) ?? '';
     }
     return '';
   }
@@ -2513,7 +2544,7 @@ function AgentSessionsDialog({
                   {events.map((evt) => (
                     <div key={evt.seq} className="flex gap-2 text-xs">
                       <span className="shrink-0 text-muted-foreground">
-                        {new Date(evt.ts).toLocaleTimeString()}
+                        {evt.createdAt ? new Date(evt.createdAt).toLocaleTimeString() : ''}
                       </span>
                       <span className="shrink-0 font-medium">{eventTypeLabel(evt.type)}</span>
                       {eventSummary(evt) ? (
