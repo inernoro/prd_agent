@@ -207,7 +207,7 @@ public class PeerSyncController : ControllerBase
             && c.ConfirmedAt != null
             && c.FinalizedAt == null).FirstOrDefaultAsync(ct);
         if (code == null)
-            return Ok(ApiResponse<object>.Ok(new { finalized = false }));
+            return StatusCode(409, ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "握手完成请求无效或已处理"));
 
         await _db.PeerPairingCodes.UpdateOneAsync(c => c.Id == code.Id,
             Builders<PeerPairingCode>.Update
