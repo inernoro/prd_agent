@@ -338,6 +338,39 @@ type MetricsState =
   | { status: 'error'; message: string }
   | { status: 'ok'; data: MetricsResponse };
 
+interface ResourceMetricsResponse {
+  branchId: string;
+  projectId?: string;
+  resourceId: string;
+  resourceName: string;
+  containerName: string | null;
+  status: string;
+  ts: number;
+  stats: ContainerStatsResponse | null;
+}
+type ResourceMetricsState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ok'; data: ResourceMetricsResponse };
+
+interface ResourceLogsResponse {
+  branchId: string;
+  projectId?: string;
+  resourceId: string;
+  resourceName: string;
+  containerName: string;
+  status: string;
+  tail: number;
+  masked: boolean;
+  logs: string;
+}
+type ResourceLogsState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ok'; data: ResourceLogsResponse };
+
 type TriggerLogsState =
   | { status: 'idle' }
   | { status: 'loading' }
@@ -4169,25 +4202,174 @@ function ResourceVariablesPanel({ resource }: { resource: BranchResource }): JSX
 }
 
 function ResourceMetricsPanel({ resource }: { resource: BranchResource }): JSX.Element {
-  const metrics = resource.kind === 'database'
-    ? ['连接数', '存储空间', '慢查询', '备份状态']
-    : ['CPU', 'Memory', 'Network', 'Restart Count'];
-  return (
-    <div className="grid grid-cols-2 gap-2">
-      {metrics.map((metric) => (
-        <div key={metric} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-3">
-          <div className="text-xs text-muted-foreground">{metric}</div>
-          <div className="mt-1 font-mono text-sm">--</div>
+  const [state, setState] = useState<ResourceMetricsState>({ status: 'idle' });
+
+  const loadMetrics = useCallback(async () => {
+    if (!resource.branchId) {
+      setState({ status: 'error', message: '资源缺少所属分支，无法读取指标。' });
+      return;
+    }
+    setState((current) => current.status === 'ok' ? current : { status: 'loading' });
+    try {
+      const data = await apiRequest<ResourceMetricsResponse>(
+        `/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/metrics`,
+      );
+      setState({ status: 'ok', data });
+    } catch (err) {
+      setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+    }
+  }, [resource.branchId, resource.id]);
+
+  useEffect(() => {
+    void loadMetrics();
+    const timer = window.setInterval(() => void loadMetrics(), 5000);
+    return () => window.clearInterval(timer);
+  }, [loadMetrics]);
+
+  if (state.status === 'idle' || state.status === 'loading') {
+    return (
+      <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
+        <CdsLogoLoader size="sm" className="mb-2 justify-center" inline={false} />
+        正在读取 {resource.displayName} 指标…
+      </div>
+    );
+  }
+
+  if (state.status === 'error') {
+    return (
+      <div className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+        <div className="flex items-center gap-2">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          <span>读取指标失败：{state.message}</span>
+          <Button type="button" size="sm" variant="outline" className="ml-auto" onClick={() => void loadMetrics()}>
+            <RefreshCw />重试
+          </Button>
         </div>
-      ))}
+      </div>
+    );
+  }
+
+  const { data } = state;
+  const { stats } = data;
+  if (!stats) {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+          <span className="truncate font-mono">{data.containerName || resource.containerName || resource.serviceName}</span>
+          <Button type="button" size="sm" variant="ghost" onClick={() => void loadMetrics()}>
+            <RefreshCw />刷新
+          </Button>
+        </div>
+        <div className="rounded-md border border-dashed border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
+          当前状态为 {resourceStatusLabel(resource.status)}，没有可读的实时容器指标。
+        </div>
+      </div>
+    );
+  }
+
+  const metrics = [
+    { label: 'CPU', value: `${stats.cpuPercent.toFixed(1)}%` },
+    { label: '内存', value: `${stats.memPercent.toFixed(1)}%`, sub: `${formatBytes(stats.memUsedBytes)} / ${formatBytes(stats.memLimitBytes)}` },
+    { label: '网络入站', value: formatBytes(stats.netRxBytes) },
+    { label: '网络出站', value: formatBytes(stats.netTxBytes) },
+    { label: '磁盘读取', value: formatBytes(stats.blockReadBytes) },
+    { label: '磁盘写入', value: formatBytes(stats.blockWriteBytes) },
+    { label: 'PIDs', value: String(stats.pids) },
+    { label: '采集时间', value: new Date(data.ts).toLocaleTimeString() },
+  ];
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+        <span className="truncate font-mono" title={data.containerName || undefined}>{data.containerName || resource.containerName || resource.serviceName}</span>
+        <Button type="button" size="sm" variant="ghost" onClick={() => void loadMetrics()}>
+          <RefreshCw />刷新
+        </Button>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        {metrics.map((metric) => (
+          <div key={metric.label} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-3">
+            <div className="text-xs text-muted-foreground">{metric.label}</div>
+            <div className="mt-1 font-mono text-sm">{metric.value}</div>
+            {'sub' in metric && metric.sub ? <div className="mt-0.5 text-[10px] text-muted-foreground">{metric.sub}</div> : null}
+          </div>
+        ))}
+      </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        <MetricBar label="CPU" value={stats.cpuPercent} unit="%" max={100} />
+        <MetricBar label="内存" value={stats.memPercent} unit="%" max={100} sub={`${formatBytes(stats.memUsedBytes)} / ${formatBytes(stats.memLimitBytes)}`} />
+      </div>
     </div>
   );
 }
 
 function ResourceLogsPanel({ resource }: { resource: BranchResource }): JSX.Element {
+  const [state, setState] = useState<ResourceLogsState>({ status: 'idle' });
+
+  const loadLogs = useCallback(async () => {
+    if (!resource.branchId) {
+      setState({ status: 'error', message: '资源缺少所属分支，无法读取日志。' });
+      return;
+    }
+    setState((current) => current.status === 'ok' ? current : { status: 'loading' });
+    try {
+      const data = await apiRequest<ResourceLogsResponse>(
+        `/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/logs?tail=200`,
+      );
+      setState({ status: 'ok', data });
+    } catch (err) {
+      setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+    }
+  }, [resource.branchId, resource.id]);
+
+  useEffect(() => {
+    void loadLogs();
+  }, [loadLogs]);
+
+  if (state.status === 'idle' || state.status === 'loading') {
+    return (
+      <div className="rounded-md border border-[hsl(var(--hairline))] bg-card px-5 py-8 text-center text-sm text-muted-foreground">
+        <CdsLogoLoader size="sm" className="mb-2 justify-center" inline={false} />
+        正在读取 {resource.displayName} 日志…
+      </div>
+    );
+  }
+
+  if (state.status === 'error') {
+    return (
+      <div className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+        <div className="flex items-center gap-2">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          <span>读取日志失败：{state.message}</span>
+          <Button type="button" size="sm" variant="outline" className="ml-auto" onClick={() => void loadLogs()}>
+            <RefreshCw />重试
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const logs = normalizeContainerLogsForDisplay(state.data.logs || '');
   return (
-    <div className={DETAIL_LOG_EMPTY_CLASS}>
-      {resource.runtime} 日志将从 infra 容器日志和审计事件中汇总展示。
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+        <div className="min-w-0">
+          <div className="truncate font-mono" title={state.data.containerName}>{state.data.containerName}</div>
+          <div>最近 {state.data.tail} 行{state.data.masked ? ' · 已脱敏' : ''}</div>
+        </div>
+        <Button type="button" size="sm" variant="ghost" onClick={() => void loadLogs()}>
+          <RefreshCw />刷新
+        </Button>
+      </div>
+      {logs ? (
+        <pre className="max-h-[420px] overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-3 font-mono text-[11px] leading-5 text-foreground">
+          {logs}
+        </pre>
+      ) : (
+        <div className={DETAIL_LOG_EMPTY_CLASS}>
+          该资源暂时没有容器日志。
+        </div>
+      )}
     </div>
   );
 }

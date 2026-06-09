@@ -13,3 +13,4 @@
 | feat | cds | 资源设置页新增清空数据、删除分支数据库、执行写 SQL 的危险操作入口，后端强制管理员权限、资源名确认、安全备份和审计日志 |
 | fix | cds | MySQL clone-main 复制任务现在检查 mysqldump/mysql 导入退出码，失败时正确落到任务失败状态并记录失败原因 |
 | feat | cds | 新增资源权限摘要 API，资源控制台按服务端判定的 member/developer/admin 权限禁用重启、外部访问、备份恢复、凭据、克隆和危险操作按钮 |
+| feat | cds | 资源详情指标/日志 tab 接入资源级 metrics/logs API，数据库、缓存等 infra 容器不再显示占位指标和占位日志 |

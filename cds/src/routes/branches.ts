@@ -5734,6 +5734,42 @@ export function createBranchRouter(deps: RouterDeps): Router {
     });
   }
 
+  function resourceContainerName(resource: UnifiedBranchResource): string {
+    const raw = resource.raw as { containerName?: string } | undefined;
+    return String(resource.containerName || raw?.containerName || '').trim();
+  }
+
+  async function resolveResourceForRequest(req: Request, res: Response): Promise<{
+    branch: BranchEntry;
+    projectId: string;
+    resourceId: string;
+    resource: UnifiedBranchResource;
+    containerName: string;
+  } | null> {
+    const branch = stateService.getBranch(req.params.id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return null;
+    }
+    const projectId = branch.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) { res.status(m.status).json(m.body); return null; }
+    const resourceId = decodeResourceId(req.params.resourceId);
+    const resources = await getBranchResourceSnapshot(branch);
+    const resource = resources.find((item) => item.id === resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${resourceId}" 不存在` });
+      return null;
+    }
+    return {
+      branch,
+      projectId,
+      resourceId,
+      resource,
+      containerName: resourceContainerName(resource),
+    };
+  }
+
   async function resolveSqlDataResourceForRequest(req: Request, res: Response): Promise<{
     branch: BranchEntry;
     projectId: string;
@@ -5948,6 +5984,59 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     const permissions = buildResourcePermissionSummary(req, branch, resource);
     res.json({ branchId: branch.id, resourceId, ...permissions });
+  });
+
+  router.get('/branches/:id/resources/:resourceId/metrics', async (req, res) => {
+    const ctx = await resolveResourceForRequest(req, res);
+    if (!ctx) return;
+    try {
+      const statsMap = ctx.containerName && ctx.resource.status === 'running'
+        ? await containerService.getServiceStats([ctx.containerName])
+        : new Map();
+      res.json({
+        branchId: ctx.branch.id,
+        projectId: ctx.projectId,
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resource.displayName,
+        containerName: ctx.containerName || null,
+        status: ctx.resource.status,
+        ts: Date.now(),
+        stats: ctx.containerName && ctx.resource.status === 'running'
+          ? (statsMap.get(ctx.containerName) || null)
+          : null,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.get('/branches/:id/resources/:resourceId/logs', async (req, res) => {
+    const ctx = await resolveResourceForRequest(req, res);
+    if (!ctx) return;
+    if (!ctx.containerName) {
+      res.status(409).json({ error: `资源 "${ctx.resource.displayName}" 没有关联容器，无法读取日志` });
+      return;
+    }
+    const tailRaw = Number(req.query.tail);
+    const tail = Number.isFinite(tailRaw) ? Math.min(Math.max(Math.floor(tailRaw), 20), 1000) : 200;
+    try {
+      const logs = await containerService.getLogs(ctx.containerName, tail);
+      const mask = shouldMask(req);
+      const maskedLogs = maskSecretsText(logs, { mask });
+      res.json({
+        branchId: ctx.branch.id,
+        projectId: ctx.projectId,
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resource.displayName,
+        containerName: ctx.containerName,
+        status: ctx.resource.status,
+        tail,
+        masked: mask,
+        logs: maskedLogs,
+      });
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   router.get('/branches/:id/resources/:resourceId/data/tables', async (req, res) => {
