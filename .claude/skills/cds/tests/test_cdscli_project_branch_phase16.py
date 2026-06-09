@@ -136,13 +136,13 @@ def test_generic_workspace_uses_directory_slug_for_local_fallback(monkeypatch):
     monkeypatch.setattr(cdscli, "_git_origin_slug", lambda: "prd-agent")
 
     assert cdscli._project_slug_hint("/tmp/workspace") == "workspace"
-    assert cdscli._project_slug_hints("/tmp/workspace") == ["workspace", "prd-agent"]
+    assert cdscli._project_slug_hints("/tmp/workspace") == ["workspace"]
 
 
-def test_preview_branch_match_accepts_generic_slug_and_repo_alias(monkeypatch):
-    """API 模式同时接受 legacy generic slug 与迁移后的 aliasSlug。"""
+def test_preview_branch_match_rejects_unverified_repo_alias(monkeypatch):
+    """generic checkout 只接受 directory slug,不隐式接受 repo alias。"""
     branch = "cursor/frontend-agent-1685"
-    candidates = ["workspace", "prd-agent"]
+    candidates = ["workspace"]
 
     workspace_row = {
         "id": "workspace-cursor-frontend-agent-1685",
@@ -166,45 +166,40 @@ def test_preview_branch_match_accepts_generic_slug_and_repo_alias(monkeypatch):
     assert cdscli._match_branches_for_project(
         [workspace_row], branch, candidates, already_scoped=False) == [workspace_row]
     assert cdscli._match_branches_for_project(
-        [alias_row], branch, candidates, already_scoped=False) == [alias_row]
+        [alias_row], branch, candidates, already_scoped=False) == []
     assert cdscli._match_branches_for_project(
         [other_row], branch, candidates, already_scoped=False) == []
 
 
-def test_branch_id_dies_when_generic_and_alias_both_match(monkeypatch):
-    """同一 git branch 同时命中 generic slug 和 alias 时不能取第一条。"""
+def test_ambiguous_project_matches_die_instead_of_picking_first(monkeypatch):
+    """同一 git branch 同时命中多个候选时不能取第一条。"""
     branch = "cursor/frontend-agent-1685"
+    matches = [
+        {
+            "id": "workspace-cursor-frontend-agent-1685",
+            "projectSlug": "workspace",
+            "branch": branch,
+            "previewSlug": "frontend-agent-1685-cursor-workspace",
+        },
+        {
+            "id": "prd-agent-cursor-frontend-agent-1685",
+            "projectSlug": "prd-agent",
+            "branch": branch,
+            "previewSlug": "frontend-agent-1685-cursor-prd-agent",
+        },
+    ]
+    buf = io.StringIO()
+    real_stdout = sys.stdout
+    sys.stdout = buf
+    try:
+        with pytest.raises(SystemExit) as exc:
+            cdscli._die_if_ambiguous_project_matches(
+                matches, branch, ["workspace", "prd-agent"])
+    finally:
+        sys.stdout = real_stdout
 
-    def fake_check_output(args, text=False, stderr=None):
-        if args == ["git", "branch", "--show-current"]:
-            return branch + "\n"
-        if args == ["git", "rev-parse", "--show-toplevel"]:
-            return "/tmp/workspace\n"
-        raise AssertionError(f"unexpected command: {args!r}")
-
-    monkeypatch.setattr(cdscli.subprocess, "check_output", fake_check_output)
-    monkeypatch.setattr(cdscli, "_git_origin_slug", lambda: "prd-agent")
-    monkeypatch.setattr(cdscli, "_call_safe",
-                        lambda method, path, timeout=10: {
-                            "branches": [
-                                {
-                                    "id": "workspace-cursor-frontend-agent-1685",
-                                    "projectSlug": "workspace",
-                                    "branch": branch,
-                                    "previewSlug": "frontend-agent-1685-cursor-workspace",
-                                },
-                                {
-                                    "id": "prd-agent-cursor-frontend-agent-1685",
-                                    "projectSlug": "prd-agent",
-                                    "branch": branch,
-                                    "previewSlug": "frontend-agent-1685-cursor-prd-agent",
-                                },
-                            ]
-                        })
-
-    code, out = call_main(["branch-id"])
-
-    assert code == 2, out
+    assert exc.value.code == 2
+    out = buf.getvalue()
     payload = json.loads(out.strip().split("\n")[-1])
     assert payload["ok"] is False
     assert "同时匹配" in payload["error"]

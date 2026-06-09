@@ -986,7 +986,7 @@ def _project_slug_hints(repo_root: str) -> list[str]:
     directory_slug = _slugify_for_preview(os.path.basename(repo_root))
     origin_slug = _git_origin_slug()
     if directory_slug in _GENERIC_WORKSPACE_SLUGS:
-        return unique((directory_slug, origin_slug))
+        return unique((directory_slug,))
     return unique((directory_slug or origin_slug,))
 
 
@@ -1233,8 +1233,8 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
                   file=sys.stderr)
             api_failed = True
         # 项目身份过滤：没 CDS_PROJECT_ID 时多项目 CDS 可能有同名分支，取首条
-        # 会拿到错项目的 previewSlug。generic workspace 目录同时接受目录 slug
-        # 和 git remote alias；本地 fallback 仍使用目录 slug，避免碰撞时造错 host。
+        # 会拿到错项目的 previewSlug。generic workspace 目录只使用目录 slug；
+        # repo origin 未经服务端 collision check，不能当作隐式 alias。
         project_scoped = bool(os.environ.get("CDS_PROJECT_ID", "").strip())
         # `body.get("branches", [])` 在 "branches": null 时返回 None（默认值
         # 只在 key 缺失时生效）；用 `or []` 兜底。
