@@ -43,6 +43,7 @@ const CcasAgentPage = lazy(() => import('@/pages/ccas-agent').then(m => ({ defau
 const PrReviewPage = lazy(() => import('@/pages/pr-review').then(m => ({ default: m.PrReviewPage })));
 const PaAgentPage = lazy(() => import('@/pages/pa-agent').then(m => ({ default: m.PaAgentPage })));
 const ProjectRouteAgentPage = lazy(() => import('@/pages/project-route-agent').then(m => ({ default: m.ProjectRouteAgentPage })));
+const ChannelTraceAgentPage = lazy(() => import('@/pages/channel-trace-agent').then(m => ({ default: m.ChannelTraceAgentPage })));
 const UsersPage = lazy(() => import('@/pages/UsersPage'));
 const ModelManageTabsPage = lazy(() => import('@/pages/ModelManageTabsPage').then(m => ({ default: m.ModelManageTabsPage })));
 const LlmLogsPage = lazy(() => import('@/pages/LlmLogsPage'));
@@ -444,6 +445,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       appKey: 'project-route-agent',
       wip: true,
       tags: ['路由', 'routemap', '项目定位', '仓库', '方案'],
+    },
+  },
+  {
+    path: '/channel-trace-agent',
+    permission: 'channel-trace-agent.use',
+    element: shellGuarded('channel-trace-agent.use', <ChannelTraceAgentPage />),
+    nav: {
+      label: '商品溯源智能体',
+      shortLabel: '溯源',
+      description: '防窜物流业务知识问答、线上问题案例排查、业务规则与代码实现差异对比',
+      icon: 'PackageSearch',
+      section: 'toolbox',
+      appKey: 'channel-trace-agent',
+      wip: true,
+      tags: ['防窜', '物流', '溯源', '商品', '知识库', '排查', '代码对比'],
     },
   },
   {
