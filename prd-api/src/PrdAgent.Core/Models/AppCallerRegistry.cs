@@ -1560,6 +1560,22 @@ public static class MdToPptAgent
             Category = "Document"
         )]
         public const string Patch = "md-to-ppt-agent.patch::chat";
+
+        [AppCallerMetadata(
+            "MD转PPT-大纲规划",
+            "根据用户内容和对话指令，规划 PPT 大纲（页数+每页标题和要点），JSON 格式返回供用户确认后生成",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Document"
+        )]
+        public const string Outline = "md-to-ppt-agent.outline::chat";
+
+        [AppCallerMetadata(
+            "MD转PPT-对话精修",
+            "基于用户自然语言指令（如修改配色/加页/改布局）对已有 PPT 进行对话式精修，调用 Patch 端点实现",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Document"
+        )]
+        public const string ChatRefine = "md-to-ppt-agent.chat-refine::chat";
     }
 }
 }

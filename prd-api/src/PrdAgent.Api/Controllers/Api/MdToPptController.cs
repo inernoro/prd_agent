@@ -138,6 +138,123 @@ public class MdToPptController : ControllerBase
     }
 
     // ─────────────────────────────────────────────
+    // POST /api/md-to-ppt/outline
+    // ─────────────────────────────────────────────
+
+    /// <summary>
+    /// 根据内容生成 PPT 大纲（JSON，非 SSE），用于对话式「大纲先行确认」流程。
+    /// 返回 { outline: [{title, bullets[]}], totalPages, summary }
+    /// </summary>
+    [HttpPost("outline")]
+    public async Task<IActionResult> Outline([FromBody] MdToPptOutlineRequest req)
+    {
+        var userId = this.GetRequiredUserId();
+
+        if (string.IsNullOrWhiteSpace(req.Content))
+            return BadRequest(new { error = "内容不能为空" });
+
+        var targetPages = req.TargetPages is > 0 ? req.TargetPages.Value : 8;
+        var systemPrompt =
+            "你是专业 PPT 策划师。根据用户内容，输出一份 PPT 大纲（纯 JSON，不要其他任何解释和代码围栏）。\n" +
+            $"目标页数：约 {targetPages} 页（封面+结语 2 页 + 内容页，实际可根据内容增减 1-2 页）。\n" +
+            "输出格式：\n" +
+            "{\"totalPages\":8,\"summary\":\"一句话总结本 PPT 讲什么\",\"outline\":[{\"title\":\"封面\",\"bullets\":[\"副标题\",\"作者/日期\"]},{\"title\":\"现状分析\",\"bullets\":[\"要点1\",\"要点2\",\"要点3\"]},...,{\"title\":\"结语\",\"bullets\":[\"行动号召\",\"联系方式\"]}]}\n\n" +
+            "严格规则：\n" +
+            "1. 只输出 JSON，第一个字符是 {，最后一个字符是 }，不得有 markdown 代码块、前缀说明、后缀解释\n" +
+            "2. 每页 bullets 2-4 条，语言精炼\n" +
+            "3. 版式不重复，避免每页都是列表结构\n" +
+            "4. 禁止输出任何 emoji\n" +
+            "5. title 字段纯文本，不含序号（如「一、」「1.」）";
+
+        var contextParts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(req.Content))
+            contextParts.Add($"# 用户内容\n\n{req.Content.Trim()}");
+        if (!string.IsNullOrWhiteSpace(req.AttachmentText))
+            contextParts.Add($"# 附件内容\n\n{req.AttachmentText.Trim()}");
+        if (!string.IsNullOrWhiteSpace(req.KbContext))
+            contextParts.Add($"# 知识库内容\n\n{req.KbContext.Trim()}");
+        if (!string.IsNullOrWhiteSpace(req.ChatHistory))
+            contextParts.Add($"# 对话历史\n\n{req.ChatHistory.Trim()}");
+        var userContent = string.Join("\n\n---\n\n", contextParts);
+
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null,
+            SessionId: null,
+            UserId: userId,
+            ViewRole: null,
+            DocumentChars: userContent.Length,
+            DocumentHash: null,
+            SystemPromptRedacted: "[MdToPpt-Outline]",
+            RequestType: "chat",
+            AppCallerCode: AppCallerRegistry.MdToPptAgent.Generation.Outline));
+
+        var gatewayRequest = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.MdToPptAgent.Generation.Outline,
+            ModelType = ModelTypes.Chat,
+            Stream = true,
+            TimeoutSeconds = 60,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                    new JsonObject { ["role"] = "user",   ["content"] = userContent },
+                },
+                ["temperature"] = 0.3,
+                ["max_tokens"] = 4096,
+            },
+        };
+
+        var fullText = new StringBuilder();
+        try
+        {
+            await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
+            {
+                if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                    fullText.Append(chunk.Content);
+                else if (chunk.Type == GatewayChunkType.Error)
+                {
+                    var err = chunk.Error ?? chunk.Content ?? "大纲生成失败";
+                    _logger.LogError("[MdToPpt-Outline] gateway error userId={UserId}: {Error}", userId, err);
+                    return StatusCode(502, new { error = err });
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[MdToPpt-Outline] unexpected error userId={UserId}", userId);
+            return StatusCode(500, new { error = ex.Message });
+        }
+
+        var raw = fullText.ToString().Trim();
+        // 去除可能的代码围栏
+        if (raw.StartsWith("```", StringComparison.Ordinal))
+        {
+            var nl = raw.IndexOf('\n');
+            if (nl >= 0) raw = raw[(nl + 1)..];
+        }
+        if (raw.EndsWith("```", StringComparison.Ordinal))
+        {
+            var last = raw.LastIndexOf("```", StringComparison.Ordinal);
+            if (last > 0) raw = raw[..last].TrimEnd();
+        }
+        raw = raw.Trim();
+
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            return Ok(doc.RootElement.Clone());
+        }
+        catch (JsonException)
+        {
+            _logger.LogWarning("[MdToPpt-Outline] JSON parse failed, raw={Raw}", raw.Length > 200 ? raw[..200] : raw);
+            return StatusCode(502, new { error = "大纲 JSON 解析失败，请重试", raw });
+        }
+    }
+
+    // ─────────────────────────────────────────────
     // POST /api/md-to-ppt/convert
     // ─────────────────────────────────────────────
 
@@ -1029,4 +1146,22 @@ public class MdToPptPublishRequest
 
     /// <summary>分享到的团队 ID（可选）</summary>
     public List<string>? TeamIds { get; set; }
+}
+
+public class MdToPptOutlineRequest
+{
+    /// <summary>主内容（Markdown / 文本）</summary>
+    public string? Content { get; set; }
+
+    /// <summary>附件文本（已提取的文件内容）</summary>
+    public string? AttachmentText { get; set; }
+
+    /// <summary>知识库上下文（已提取的 KB 条目内容）</summary>
+    public string? KbContext { get; set; }
+
+    /// <summary>对话历史摘要（告知 AI 用户的历史需求）</summary>
+    public string? ChatHistory { get; set; }
+
+    /// <summary>目标页数（可选，默认 8）</summary>
+    public int? TargetPages { get; set; }
 }

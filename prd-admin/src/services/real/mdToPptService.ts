@@ -1,6 +1,47 @@
 import { apiRequest } from '@/services/real/apiClient';
 import { useAuthStore } from '@/stores/authStore';
 
+// ============ Outline（大纲先行对话式流程）============
+
+export interface OutlineSlide {
+  title: string;
+  bullets: string[];
+}
+
+export interface MdToPptOutlineResult {
+  totalPages: number;
+  summary: string;
+  outline: OutlineSlide[];
+}
+
+export interface MdToPptOutlineRequest {
+  content?: string;
+  attachmentText?: string;
+  kbContext?: string;
+  chatHistory?: string;
+  targetPages?: number;
+}
+
+/**
+ * 请求 PPT 大纲（JSON，非 SSE）。
+ * 返回 { totalPages, summary, outline[] } 供用户确认后再生成 HTML。
+ */
+export async function getMdToPptOutline(
+  req: MdToPptOutlineRequest
+): Promise<{ success: true; data: MdToPptOutlineResult } | { success: false; error: string }> {
+  const res = await apiRequest<MdToPptOutlineResult>('/api/md-to-ppt/outline', {
+    method: 'POST',
+    body: req,
+  });
+  if (!res.success) {
+    return { success: false, error: res.error?.message ?? '大纲生成失败' };
+  }
+  if (!res.data) {
+    return { success: false, error: '大纲数据为空' };
+  }
+  return { success: true, data: res.data };
+}
+
 // ============ Types ============
 
 export type MdToPptEngine = 'map' | 'agent';
