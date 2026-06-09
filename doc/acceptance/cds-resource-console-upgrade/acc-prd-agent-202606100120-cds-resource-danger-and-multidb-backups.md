@@ -23,6 +23,19 @@
 - `git diff --check`：通过。
 - Playwright smoke：通过，MySQL 资源设置页可见危险操作、清空数据、删除分支库、执行写 SQL、审计记录，控制台无错误。
 
+## 需求一一对应表
+
+| 需求 | 本轮证据 | 状态 |
+|---|---|---|
+| 5 数据库资源独立控制 | PostgreSQL/MongoDB 新增空库、clone-main、从备份创建分支库并注入分支 env | 部分完成 |
+| 6 MySQL 快速复制 | `mysqldump/mysql` 退出码现在会导致任务失败并记录原因 | 完成增强 |
+| 7 数据库连接管理 | PostgreSQL/MongoDB 支持重置凭据和注入依赖应用连接变量 | 部分完成 |
+| 9 数据库面板 | 本轮未改只读数据面板，沿用上一轮 MySQL/Postgres/Mongo/Redis 验证 | 已有证据 |
+| 10 备份与恢复 | MySQL/Postgres/MongoDB/Redis 支持备份列表、手动备份、恢复覆盖；Postgres/Mongo 支持从备份创建新库 | 部分完成 |
+| 11 危险操作保护 | 清空数据、删除分支库、写 SQL 后端要求 admin + 资源名确认 + 安全备份 + 审计，前端设置页提供入口 | 部分完成 |
+| 13 权限控制 | 新危险操作纳入 `ResourcePermissionAction`，要求 admin | 后端完成 |
+| 14 审计日志 | 新危险操作写入资源审计和破坏性操作日志 | 完成增强 |
+
 截图：
 
 ![resource danger settings](./acc-prd-agent-202606100120-cds-resource-danger-and-multidb-backups/resource-danger-settings-smoke.png)
