@@ -540,19 +540,23 @@ function OutlineBubble({ msg, onConfirm, onAdjust, disabled }: OutlineBubbleProp
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export function MdToPptAgentPage() {
+  // ─── Session lazy-load: run BEFORE any other useState so saveSession
+  // never overwrites sessionStorage with empty initial state on first render.
+  const [savedSession] = useState<SessionState | null>(loadSession);
+
   // ─── Global settings (收进设置区，不占对话空间）
-  const [theme, setTheme] = useState('tech-dark');
-  const [engine, setEngine] = useState<MdToPptEngine>('map');
+  const [theme, setTheme] = useState(savedSession?.theme ?? 'tech-dark');
+  const [engine, setEngine] = useState<MdToPptEngine>(savedSession?.engine ?? 'map');
   const [showSettings, setShowSettings] = useState(false);
 
   // ─── Chat state
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(savedSession?.messages ?? []);
   const [input, setInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
 
   // ─── Artifact state（右侧）
   const [generatedHtml, setGeneratedHtml] = useState('');
-  const [activeRunId, setActiveRunId] = useState('');
+  const [activeRunId, setActiveRunId] = useState(savedSession?.activeRunId ?? '');
   const [publishedUrl, setPublishedUrl] = useState('');
   const [isPublishing, setIsPublishing] = useState(false);
   const [elapsedSec, setElapsedSec] = useState(0);
@@ -595,17 +599,10 @@ export function MdToPptAgentPage() {
     };
   }, []);
 
-  // ─── Session persistence: load on mount
+  // ─── Session persistence: restore HTML for active run on mount
+  // (theme/engine/messages are already restored via lazy useState above)
   useEffect(() => {
-    const saved = loadSession();
-    if (!saved) return;
-
-    setTheme(saved.theme ?? 'tech-dark');
-    setEngine(saved.engine ?? 'map');
-    setMessages(saved.messages ?? []);
-
-    // 如果有 activeRunId，尝试重连拉取 HTML
-    const runId = saved.activeRunId;
+    const runId = savedSession?.activeRunId;
     if (!runId) return;
 
     let cancelled = false;
@@ -630,7 +627,7 @@ export function MdToPptAgentPage() {
       cancelled = true;
       if (timer) window.clearTimeout(timer);
     };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Session persistence: save on state change
   useEffect(() => {
