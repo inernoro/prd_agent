@@ -8,6 +8,7 @@ import { Bold, Italic, Underline, Heading, List, ListOrdered, Link2, RemoveForma
 import { sanitizeHtml, cleanPastedHtml } from '@/lib/sanitizeHtml';
 import { uploadAttachment } from '@/services/real/aiToolbox';
 import { fileKindOf, fmtSize } from './shared';
+import './knowledge.css';
 
 export function RichKnowledgeEditor({ value, onChange }: { value: string; onChange: (html: string) => void }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -162,7 +163,7 @@ export function RichKnowledgeEditor({ value, onChange }: { value: string; onChan
         onPaste={onPaste}
         onDragOver={(e) => e.preventDefault()}
         onDrop={onDrop}
-        className="no-focus-ring flex-1 overflow-y-auto px-7 py-6 text-[14.5px] text-white/90 outline-none markdown-reading"
+        className="no-focus-ring knowledge-rich flex-1 overflow-y-auto px-7 py-6 text-[14.5px] outline-none"
         style={{ lineHeight: 1.85, overscrollBehavior: 'contain' }}
       />
     </div>

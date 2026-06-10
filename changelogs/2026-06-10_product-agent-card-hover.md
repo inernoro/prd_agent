@@ -11,3 +11,6 @@
 | fix | prd-admin | 知识详情 HTML 预览改为沙箱 iframe 真实网页渲染（保留自带样式/布局/脚本视觉，预览容器放宽至 1400px），富文本片段仍走主题内联渲染 |
 | polish | prd-admin | 知识详情：预览/代码切换仅对完整 HTML 网页显示（md/富文本片段不再显示）；显示卡片与富文本编辑器宽度/样式统一；列表点标题快捷改名；详情目录双击标题改名 |
 | fix | prd-admin | 富文本工具栏逐项修复：execCommand 前确保光标在编辑器内（修「点了没反应」），标题/引用/代码块改为可切回正文的块级切换，styleWithCSS=false 输出语义标签 |
+| fix | prd-admin | 富文本工具栏根治：新增 knowledge-rich 作用域 CSS（Tailwind preflight 重置了 h2/blockquote/ul/pre 默认样式导致 formatBlock 生效但视觉无变化），编辑器与片段渲染同 class 所见即所得 |
+| fix | prd-admin | 知识格式纠错：contentType 误标 html 但正文无标签的按 Markdown 渲染与编辑（保存自动纠正类型），详情页新增「格式」手动切换（Markdown/富文本）；md 预览/编辑宽度与 HTML 统一为 1400 |
+| feat | prd-api | UpdateEntry 支持可选 contentType（格式纠错 Markdown 与 HTML 互转） |

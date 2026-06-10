@@ -37,6 +37,14 @@ export function isFullHtmlDocument(content: string | null | undefined): boolean 
   return !!content && /<!doctype html|<html[\s>]|<head[\s>]|<style[\s>]/i.test(content);
 }
 
+/**
+ * 正文是否真的包含 HTML 标签。
+ * 用于纠错：contentType 标了 html 但正文是纯 markdown 文本（历史数据/误存）→ 按 markdown 渲染与编辑。
+ */
+export function contentLooksHtml(content: string | null | undefined): boolean {
+  return !!content && /<(p|div|h[1-6]|ul|ol|li|table|img|a|blockquote|pre|br|hr|span|strong|em|b|i|u)[\s>/]/i.test(content);
+}
+
 /** 是否可在线富文本编辑（markdown / 纯文本 / html 走内置编辑器） */
 export function isEditableText(contentType: string | undefined): boolean {
   const ct = (contentType ?? '').toLowerCase();

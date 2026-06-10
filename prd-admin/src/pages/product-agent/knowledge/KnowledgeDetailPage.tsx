@@ -24,7 +24,8 @@ import type { DocumentEntry, DocumentStore } from '@/services/contracts/document
 import { listVersions } from '@/services/real/productAgent';
 import type { ProductVersion } from '../types';
 import type { LucideIcon } from 'lucide-react';
-import { fileKindOf, fmtSize, fmtTime, isEditableText, isHtml, isFullHtmlDocument } from './shared';
+import { fileKindOf, fmtSize, fmtTime, isEditableText, isHtml, isFullHtmlDocument, contentLooksHtml } from './shared';
+import './knowledge.css';
 import { VersionLinkDialog } from './VersionLinkDialog';
 import { RichKnowledgeEditor, FileKindBadge } from './RichKnowledgeEditor';
 
@@ -109,13 +110,20 @@ export function KnowledgeDetailPage() {
 
   const startEdit = () => { setDraft(content ?? ''); setEditing(true); };
 
-  const handleSave = async () => {
+  const handleSave = async (asMarkdown: boolean) => {
     setSaving(true);
-    // 富文本编辑统一存为 HTML，详情走 HTML 预览
-    const res = await updateDocumentContent(entryId, draft, 'text/html');
+    // markdown 文档保持 markdown；富文本编辑产出 HTML（顺带纠正历史误标的 contentType）
+    const res = await updateDocumentContent(entryId, draft, asMarkdown ? 'text/markdown' : 'text/html');
     setSaving(false);
     if (res.success) { setContent(draft); setEditing(false); toast.success('已保存'); void reload(); }
     else toast.error('保存失败', res.error?.message);
+  };
+
+  /** 格式手动纠错：Markdown ↔ 富文本 HTML（不改正文，只改渲染/编辑方式） */
+  const handleSetFormat = async (ct: string) => {
+    const res = await updateDocumentEntry(entryId, { contentType: ct });
+    if (res.success) { setEntry(res.data); toast.success(ct.includes('markdown') ? '已按 Markdown 处理' : '已按富文本处理'); }
+    else toast.error('切换格式失败', res.error?.message);
   };
 
   const handleRenameTitle = async () => {
@@ -179,6 +187,10 @@ export function KnowledgeDetailPage() {
   const html = isHtml(entry?.contentType);
   // 仅「完整 HTML 网页」需要预览/代码切换（iframe 渲染）；md / 富文本片段没有代码视角，不显示切换
   const fullHtml = html && isFullHtmlDocument(content);
+  // 格式纠错：contentType 标了 html 但正文没有任何 HTML 标签（历史误存的 markdown）→ 按 markdown 处理
+  const effectiveMarkdown = !!entry && !entry.isFolder
+    && (entry.contentType.includes('markdown') || entry.contentType === 'text/plain' || (html && content != null && !contentLooksHtml(content)));
+  const effectiveContentType = effectiveMarkdown ? 'text/markdown' : entry?.contentType;
 
   return (
     <div className="h-screen min-h-0 flex flex-col bg-[#0f1014]">
@@ -189,14 +201,14 @@ export function KnowledgeDetailPage() {
         <button onClick={back} className="flex items-center justify-center w-8 h-8 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 shrink-0" title="返回知识库">
           <ArrowLeft size={16} />
         </button>
-        <FileKindBadge contentType={entry?.contentType} />
+        <FileKindBadge contentType={effectiveContentType} />
         <span className="text-sm text-white/45 truncate">{entry?.title}</span>
         <div className="ml-auto flex items-center gap-1.5 shrink-0">
           {busy && <MapSpinner size={14} />}
           {editing ? (
             <>
               <button onClick={() => setEditing(false)} className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm text-white/60 hover:bg-white/5 border border-white/10"><X size={13} /> 取消</button>
-              <button onClick={() => void handleSave()} disabled={saving} className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm hover:bg-cyan-500/30 disabled:opacity-50">
+              <button onClick={() => void handleSave(effectiveMarkdown)} disabled={saving} className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm hover:bg-cyan-500/30 disabled:opacity-50">
                 {saving ? <MapSpinner size={13} /> : <Save size={13} />} 保存
               </button>
             </>
@@ -230,11 +242,23 @@ export function KnowledgeDetailPage() {
           ) : !entry ? (
             <div className="text-sm text-white/40 text-center py-20">知识不存在或已被删除</div>
           ) : editing ? (
-            <div className="mx-auto py-6 px-6" style={{ maxWidth: 980 }}>
-              <RichKnowledgeEditor value={draft} onChange={setDraft} />
+            <div className="mx-auto py-6 px-6" style={{ maxWidth: 1400 }}>
+              {effectiveMarkdown ? (
+                <textarea
+                  autoFocus
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  spellCheck={false}
+                  className="no-focus-ring w-full rounded-xl bg-white/[0.02] border border-white/10 px-7 py-6 text-[13.5px] leading-relaxed text-white/90 font-mono outline-none focus:border-cyan-500/40 resize-none"
+                  style={{ minHeight: '70vh' }}
+                  placeholder="用 Markdown 书写知识内容…"
+                />
+              ) : (
+                <RichKnowledgeEditor value={draft} onChange={setDraft} />
+              )}
             </div>
           ) : (
-            <div className="mx-auto py-8 px-6" style={{ maxWidth: fullHtml && !codeMode ? 1400 : 980 }}>
+            <div className="mx-auto py-8 px-6" style={{ maxWidth: 1400 }}>
               {/* 标题 + 元信息 */}
               <div className="mb-6 pb-5 border-b border-white/8">
                 <h1
@@ -274,9 +298,25 @@ export function KnowledgeDetailPage() {
                     ))
                   )}
                 </div>
-                <div className="text-[11px] text-white/30 mt-3">
-                  {kind.label} · {fmtSize(entry.fileSize)} · 创建于 {fmtTime(entry.createdAt)}
-                  {entry.updatedByName ? ` · ${entry.updatedByName} 更新于 ${fmtTime(entry.updatedAt)}` : ` · 更新于 ${fmtTime(entry.updatedAt)}`}
+                <div className="flex items-center gap-2 text-[11px] text-white/30 mt-3">
+                  {/* 文本类知识允许手动纠错格式（Markdown ↔ 富文本），历史误标一键修正 */}
+                  {(editable || effectiveMarkdown) && !fullHtml ? (
+                    <select
+                      value={effectiveMarkdown ? 'text/markdown' : 'text/html'}
+                      onChange={(e) => void handleSetFormat(e.target.value)}
+                      className="no-focus-ring px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-[11px] text-white/50 outline-none focus:border-cyan-500/40 [&>option]:bg-[#16181d]"
+                      title="文档格式（渲染与编辑方式）"
+                    >
+                      <option value="text/markdown">Markdown</option>
+                      <option value="text/html">富文本</option>
+                    </select>
+                  ) : (
+                    <span>{kind.label}</span>
+                  )}
+                  <span>
+                    {fmtSize(entry.fileSize)} · 创建于 {fmtTime(entry.createdAt)}
+                    {entry.updatedByName ? ` · ${entry.updatedByName} 更新于 ${fmtTime(entry.updatedAt)}` : ` · 更新于 ${fmtTime(entry.updatedAt)}`}
+                  </span>
                 </div>
               </div>
 
@@ -285,6 +325,7 @@ export function KnowledgeDetailPage() {
                 content={content}
                 fileUrl={fileUrl}
                 html={html}
+                markdown={effectiveMarkdown}
                 codeMode={codeMode}
                 editable={editable}
                 onStartEdit={startEdit}
@@ -303,12 +344,13 @@ export function KnowledgeDetailPage() {
   );
 }
 
-/** 正文渲染：富文本/HTML 预览或代码 → markdown → 图片 → PDF → 文件下载 → 空态 */
-function DocBody({ entry, content, fileUrl, html, codeMode, editable, onStartEdit, kindColor, KindIcon }: {
+/** 正文渲染：markdown → 富文本/HTML 预览或代码 → 图片 → PDF → 文件下载 → 空态 */
+function DocBody({ entry, content, fileUrl, html, markdown, codeMode, editable, onStartEdit, kindColor, KindIcon }: {
   entry: DocumentEntry;
   content: string | null;
   fileUrl: string;
   html: boolean;
+  markdown: boolean;
   codeMode: boolean;
   editable: boolean;
   onStartEdit: () => void;
@@ -317,6 +359,14 @@ function DocBody({ entry, content, fileUrl, html, codeMode, editable, onStartEdi
 }) {
   const hasText = content != null && content.trim() !== '';
 
+  // markdown（含 contentType 误标 html 但正文无标签的纠错场景）→ 阅读排版
+  if (hasText && markdown) {
+    return (
+      <div className="rounded-xl border border-white/10 bg-white/[0.02] px-7 py-6">
+        <MarkdownContent content={content!} variant="reading" />
+      </div>
+    );
+  }
   if (hasText && html) {
     if (codeMode) {
       return <pre className="rounded-xl border border-white/10 bg-white/[0.02] p-4 text-[12.5px] leading-relaxed text-white/80 overflow-x-auto whitespace-pre-wrap break-words" style={{ fontFamily: 'monospace' }}>{content}</pre>;
@@ -334,10 +384,10 @@ function DocBody({ entry, content, fileUrl, html, codeMode, editable, onStartEdi
         />
       );
     }
-    // 富文本片段 → 内联渲染，融入当前主题；用与编辑器一致的卡片承载，显示/编辑观感统一
+    // 富文本片段 → 内联渲染，融入当前主题；与编辑器同 class（knowledge-rich），所见即所得
     return (
       <div className="rounded-xl border border-white/10 bg-white/[0.02] px-7 py-6">
-        <div className="markdown-reading text-[14.5px]" style={{ lineHeight: 1.85 }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(content!) }} />
+        <div className="knowledge-rich text-[14.5px]" style={{ lineHeight: 1.85 }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(content!) }} />
       </div>
     );
   }

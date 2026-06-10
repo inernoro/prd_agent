@@ -297,6 +297,8 @@ export type UpdateDocumentEntryInput = {
   metadata?: Record<string, string>;
   /** 关联的产品版本 ID 列表（传空数组=清空；不传=不变） */
   versionIds?: string[];
+  /** 内容 MIME 类型（格式纠错：text/markdown 与 text/html 互转；不传=不变） */
+  contentType?: string;
 };
 
 // ── Contract 签名 ──

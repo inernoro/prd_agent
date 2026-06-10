@@ -802,6 +802,8 @@ public class DocumentStoreController : ControllerBase
             updates.Add(Builders<DocumentEntry>.Update.Set(e => e.Metadata, request.Metadata));
         if (request.VersionIds != null)
             updates.Add(Builders<DocumentEntry>.Update.Set(e => e.VersionIds, request.VersionIds));
+        if (!string.IsNullOrWhiteSpace(request.ContentType))
+            updates.Add(Builders<DocumentEntry>.Update.Set(e => e.ContentType, request.ContentType));
 
         updates.Add(Builders<DocumentEntry>.Update.Set(e => e.UpdatedAt, DateTime.UtcNow));
         updates.Add(Builders<DocumentEntry>.Update.Set(e => e.UpdatedBy, userId));
@@ -4581,6 +4583,8 @@ public class UpdateDocumentEntryRequest
     public Dictionary<string, string>? Metadata { get; set; }
     /// <summary>关联的产品版本 ID 列表（产品知识库专用；传空数组=清空关联；null=不变）</summary>
     public List<string>? VersionIds { get; set; }
+    /// <summary>内容 MIME 类型（格式纠错：text/markdown ↔ text/html；null=不变）</summary>
+    public string? ContentType { get; set; }
 }
 
 public class AddSubscriptionRequest
