@@ -36,6 +36,7 @@ import { GlobalSearch } from './GlobalSearch';
 import { ProductsSection } from './ProductsSection';
 import { SettingsSection } from './SettingsSection';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
+import './product-cards.css';
 import {
   getOverviewStats,
   getOverviewRequirements,
@@ -222,11 +223,12 @@ function DashboardSection({ stats, loading, onGoto }: { stats: OverviewStats | n
     <div className="flex flex-col gap-5">
       {/* KPI */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        {kpis.map((k) => (
+        {kpis.map((k, i) => (
           <button
             key={k.label}
             onClick={() => onGoto(k.section)}
-            className="text-left rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.05] p-4 transition-colors"
+            style={{ animationDelay: `${Math.min(i, 14) * 45}ms` }}
+            className="pa-card text-left rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.05] p-4"
           >
             <div className="text-2xl font-semibold" style={{ color: k.color }}>{k.value}</div>
             <div className="text-xs text-white/50 mt-1">{k.label}</div>
@@ -557,11 +559,12 @@ function KnowledgeSection() {
   if (rows.length === 0) return <div className="text-center text-white/40 text-sm py-12">还没有产品知识库。进入产品的「知识库」tab 即可创建。</div>;
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-      {rows.map((r) => (
+      {rows.map((r, i) => (
         <button
           key={r.storeId}
           onClick={() => navigate(`/product-agent/p/${r.productId}`)}
-          className="text-left rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.05] p-4 transition-colors flex flex-col gap-1.5"
+          style={{ animationDelay: `${Math.min(i, 14) * 45}ms` }}
+          className="pa-card text-left rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.05] p-4 flex flex-col gap-1.5"
         >
           <div className="flex items-center gap-2 text-white font-medium">
             <BookOpen size={15} className="text-cyan-400 shrink-0" />
