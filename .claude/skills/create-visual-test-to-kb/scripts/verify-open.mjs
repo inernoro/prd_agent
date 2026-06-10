@@ -28,9 +28,13 @@ try {
   }
   const txt = await page.locator('body').innerText();
   const imgCount = await page.locator('img').count();
-  const dead = ['暂无可预览', '未对外开放', '不存在', '已失效', '无权', '404'].some((k) => txt.includes(k));
   const hasText = mustText ? txt.includes(mustText.replace(/[.*+?^${}()|[\]\\]/g, '')) || new RegExp(mustText).test(txt) : txt.length > 200;
   const okImg = imgCount >= minImg;
+  // 死页判定只在「内容没渲染出来」时才有意义：报告正文完全可能合法地包含
+  // "不存在 / 已失效" 等词（如缺陷描述、整改记录），全文扫词会把正常报告误杀。
+  // 故仅当 必现文字未命中 或 图片数不达标 时，才用关键词区分"死页"与"内容缺失"。
+  const deadKeywordHit = ['暂无可预览', '未对外开放', '页面不存在', '链接已失效', '无权访问', '404'].some((k) => txt.includes(k));
+  const dead = (!hasText || !okImg) && deadKeywordHit;
   console.log(`[verify-open] url=${url}`);
   console.log(`  必现文字命中=${hasText}  图片数=${imgCount}(需≥${minImg})  死页提示=${dead}`);
   if (dead || !hasText || !okImg) {
