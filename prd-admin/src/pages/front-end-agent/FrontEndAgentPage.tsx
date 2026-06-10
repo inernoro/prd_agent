@@ -116,16 +116,6 @@ function getTaskDefinition(key: FrontEndAgentTaskType): TaskDefinition {
   return TASK_DEFINITIONS.find((t) => t.key === key) ?? TASK_DEFINITIONS[0];
 }
 
-function accentClasses(accent: string): { border: string; bg: string; text: string; soft: string; glow: string } {
-  const map: Record<string, { border: string; bg: string; text: string; soft: string; glow: string }> = {
-    emerald: { border: 'border-emerald-400/30', bg: 'bg-emerald-500/10', text: 'text-emerald-200', soft: 'text-emerald-300/70', glow: 'shadow-[0_0_24px_rgba(16,185,129,0.15)]' },
-    sky: { border: 'border-sky-400/30', bg: 'bg-sky-500/10', text: 'text-sky-200', soft: 'text-sky-300/70', glow: 'shadow-[0_0_24px_rgba(14,165,233,0.15)]' },
-    rose: { border: 'border-rose-400/30', bg: 'bg-rose-500/10', text: 'text-rose-200', soft: 'text-rose-300/70', glow: 'shadow-[0_0_24px_rgba(244,63,94,0.15)]' },
-    violet: { border: 'border-violet-400/30', bg: 'bg-violet-500/10', text: 'text-violet-200', soft: 'text-violet-300/70', glow: 'shadow-[0_0_24px_rgba(139,92,246,0.15)]' },
-  };
-  return map[accent] ?? map.emerald;
-}
-
 export function FrontEndAgentPage() {
   const [taskType, setTaskType] = useState<FrontEndAgentTaskType>('api-adapter');
   const [requirement, setRequirement] = useState('');
@@ -148,7 +138,6 @@ export function FrontEndAgentPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const activeTask = getTaskDefinition(taskType);
-  const activeAccent = accentClasses(activeTask.accent);
   const isStreaming = phase === 'streaming';
 
   const primaryContextValue = useMemo(() => {
@@ -287,17 +276,17 @@ export function FrontEndAgentPage() {
   const ActiveIcon = activeTask.icon;
 
   return (
-    <div className="fea-page h-full min-h-0 flex flex-col overflow-hidden relative bg-[#080604]">
+    <div className="fea-page h-full min-h-0 flex flex-col overflow-hidden relative bg-[#0a0a0c]">
       <FrontEndCosmosBackground />
 
       <header className="relative shrink-0 px-6 pt-5 pb-3 fea-fade-up">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-2xl font-bold tracking-tight fea-title-shimmer">前端搭档智能体</h1>
+              <h1 className="text-2xl font-bold fea-title-holo">前端搭档智能体</h1>
               <span className="fea-vintage-badge px-2 py-0.5 rounded-full border">WIP</span>
             </div>
-            <p className="mt-1.5 text-sm fea-subtitle-warm italic">
+            <p className="mt-1.5 text-sm fea-subtitle-warm">
               你的前端同事没有离去，只是变成了智能体。
             </p>
             <p className="mt-1 text-xs fea-subtitle-muted">
@@ -325,19 +314,16 @@ export function FrontEndAgentPage() {
           {TASK_DEFINITIONS.map((task) => {
             const Icon = task.icon;
             const selected = task.key === taskType;
-            const colors = accentClasses(task.accent);
             return (
               <button
                 key={task.key}
                 type="button"
                 onClick={() => setTaskType(task.key)}
                 className={`fea-task-pill inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-left ${
-                  selected
-                    ? `${colors.border} ${colors.bg} ${colors.text} ${colors.glow} fea-task-pill-active`
-                    : 'fea-task-pill-idle'
+                  selected ? 'fea-task-pill-active' : 'fea-task-pill-idle'
                 }`}
               >
-                <Icon className={`w-3.5 h-3.5 ${selected ? colors.text : 'text-white/45'}`} />
+                <Icon className={`w-3.5 h-3.5 ${selected ? 'text-indigo-200' : 'text-indigo-200/45'}`} />
                 <span className="text-xs font-medium">{task.shortTitle}</span>
               </button>
             );
@@ -348,7 +334,7 @@ export function FrontEndAgentPage() {
       <div className="relative flex-1 min-h-0 px-6 pb-5 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_280px] gap-4">
         <section className="fea-panel min-h-0 rounded-2xl border flex flex-col overflow-hidden fea-fade-up">
           <div className="fea-panel-header shrink-0 px-4 py-3 border-b flex items-center gap-2">
-            <ActiveIcon className={`w-4 h-4 ${activeAccent.soft}`} />
+            <ActiveIcon className="w-4 h-4 text-indigo-300/75" />
             <div className="min-w-0">
               <h2 className="text-sm font-medium text-white truncate">{activeTask.title}</h2>
               <p className="text-[11px] text-white/45">{activeTask.description}</p>
@@ -451,7 +437,7 @@ export function FrontEndAgentPage() {
               <button
                 type="button"
                 onClick={handleGenerate}
-                className={`fea-btn fea-btn-primary w-full h-10 rounded-xl border text-sm inline-flex items-center justify-center gap-2 ${activeAccent.border} ${activeAccent.bg} ${activeAccent.text}`}
+                className="fea-btn fea-btn-primary w-full h-10 rounded-xl border text-sm inline-flex items-center justify-center gap-2"
               >
                 <Sparkles className="w-4 h-4" />
                 生成前端方案

@@ -146,19 +146,19 @@ export function FrontEndProjectRailCard({ onOpen }: { onOpen: () => void }) {
     <button
       type="button"
       onClick={onOpen}
-      className="fea-rail-card w-full text-left rounded-2xl border border-sky-400/20 bg-gradient-to-br from-sky-500/[0.12] to-cyan-500/[0.04] p-4 hover:border-sky-300/35 hover:shadow-[0_8px_32px_rgba(14,165,233,0.12)]"
+      className="fea-rail-card w-full text-left rounded-2xl border border-violet-400/20 bg-gradient-to-br from-violet-500/[0.12] to-indigo-500/[0.04] p-4 hover:border-violet-300/35 hover:shadow-[0_8px_32px_rgba(139,92,246,0.14)]"
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2.5 min-w-0">
-          <div className="w-9 h-9 rounded-xl border border-sky-400/30 bg-sky-500/15 flex items-center justify-center shrink-0">
-            <FolderSearch className="w-4 h-4 text-sky-200" />
+          <div className="w-9 h-9 rounded-xl border border-violet-400/30 bg-violet-500/15 flex items-center justify-center shrink-0">
+            <FolderSearch className="w-4 h-4 text-violet-200" />
           </div>
           <div className="min-w-0">
             <h3 className="text-sm font-semibold text-white">前端项目表</h3>
-            <p className="text-[11px] text-sky-100/55 mt-0.5">{FRONT_END_PROJECTS.length} 个仓库地址</p>
+            <p className="text-[11px] text-violet-100/55 mt-0.5">{FRONT_END_PROJECTS.length} 个仓库地址</p>
           </div>
         </div>
-        <ChevronRight className="w-4 h-4 text-sky-200/50 shrink-0 mt-1" />
+        <ChevronRight className="w-4 h-4 text-violet-200/50 shrink-0 mt-1" />
       </div>
       <div className="mt-3 space-y-1.5">
         {preview.map((p) => (
@@ -168,7 +168,7 @@ export function FrontEndProjectRailCard({ onOpen }: { onOpen: () => void }) {
             <span>{FRONT_END_PROJECT_KIND_LABEL[p.kind]}</span>
           </div>
         ))}
-        <p className="text-[10px] text-sky-200/45 pt-0.5">点击查看完整列表与搜索</p>
+        <p className="text-[10px] text-violet-200/45 pt-0.5">点击查看完整列表与搜索</p>
       </div>
     </button>
   );

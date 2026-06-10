@@ -128,28 +128,28 @@ export function FrontEndPdaRailCard({ onOpen }: { onOpen: () => void }) {
     <button
       type="button"
       onClick={onOpen}
-      className="fea-rail-card w-full text-left rounded-2xl border border-amber-400/25 bg-gradient-to-br from-amber-500/[0.16] to-orange-500/[0.05] p-4 hover:border-amber-300/40 hover:shadow-[0_8px_32px_rgba(245,158,11,0.14)] relative overflow-hidden"
+      className="fea-rail-card w-full text-left rounded-2xl border border-indigo-400/25 bg-gradient-to-br from-indigo-500/[0.14] to-violet-500/[0.05] p-4 hover:border-indigo-300/40 hover:shadow-[0_8px_32px_rgba(99,102,241,0.16)] relative overflow-hidden"
     >
       <div
-        className="absolute -right-6 -top-6 w-24 h-24 rounded-full bg-amber-400/10 fea-hero-orb-alt pointer-events-none"
+        className="absolute -right-6 -top-6 w-24 h-24 rounded-full bg-indigo-400/10 pointer-events-none"
         aria-hidden
       />
       <div className="relative flex items-start justify-between gap-2">
         <div className="flex items-center gap-2.5 min-w-0">
-          <div className="w-9 h-9 rounded-xl border border-amber-400/35 bg-amber-500/20 flex items-center justify-center shrink-0">
-            <Smartphone className="w-4 h-4 text-amber-100" />
+          <div className="w-9 h-9 rounded-xl border border-indigo-400/35 bg-indigo-500/20 flex items-center justify-center shrink-0">
+            <Smartphone className="w-4 h-4 text-indigo-100" />
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h3 className="text-sm font-semibold text-white">PDA 项目手册</h3>
-              <span className="px-1.5 py-0.5 rounded text-[9px] font-medium border border-amber-300/30 bg-amber-400/15 text-amber-100/90">
+              <span className="px-1.5 py-0.5 rounded text-[9px] font-medium border border-indigo-300/30 bg-indigo-400/15 text-indigo-100/90">
                 重点
               </span>
             </div>
-            <p className="text-[11px] text-amber-100/55 mt-0.5">uniapp-pda · 真机调试 · 发布排障</p>
+            <p className="text-[11px] text-indigo-100/55 mt-0.5">uniapp-pda · 真机调试 · 发布排障</p>
           </div>
         </div>
-        <ChevronRight className="w-4 h-4 text-amber-200/50 shrink-0 mt-1" />
+        <ChevronRight className="w-4 h-4 text-indigo-200/50 shrink-0 mt-1" />
       </div>
       <div className="relative mt-3 grid grid-cols-2 gap-1.5">
         {PDA_LINKS.slice(0, 2).map((link) => (
@@ -158,7 +158,7 @@ export function FrontEndPdaRailCard({ onOpen }: { onOpen: () => void }) {
           </span>
         ))}
       </div>
-      <p className="relative mt-2 text-[10px] text-amber-200/50">点击打开完整手册、快捷链接与 AI 排障模板</p>
+      <p className="relative mt-2 text-[10px] text-indigo-200/50">点击打开完整手册、快捷链接与 AI 排障模板</p>
     </button>
   );
 }
