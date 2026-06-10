@@ -727,9 +727,11 @@ export function MdToPptAgentPage() {
   const editedHtmlRef = useRef<string>('');
   const previewWrapRef = useRef<HTMLDivElement>(null);
 
-  // ─── 页位恢复：跟踪当前页（0-based），iframe 重载（编辑保存/换主题/patch）后经
-  //     map-ppt-ready 信号回跳，不再每次跳回第 1 页
+  // ─── 页位恢复：restoreSlideRef 实时跟踪当前页（0-based）；触发 iframe 重载的动作
+  //     （换主题/进出编辑/精修）先把它快照进 pendingRestoreRef，ready 信号到达时按快照回跳。
+  //     不能直接用实时 ref——新 iframe 初始化时会先上报第 1 页，把实时 ref 清零（竞态，已踩过）。
   const restoreSlideRef = useRef(0);
+  const pendingRestoreRef = useRef<number | null>(null);
 
   // ─── 圈选反馈：拖框圈选幻灯片区域 → 反查元素文本 → 组装精修指令填入输入框
   const [feedbackMode, setFeedbackMode] = useState(false);
@@ -843,9 +845,13 @@ export function MdToPptAgentPage() {
         editedHtmlRef.current = d.html;
         setDirtyEdits(true);
       }
-      // 桥就绪：iframe 重载后回跳到重载前所在页（open-design ready-signal 模式）
-      if (d.type === 'map-ppt-ready' && restoreSlideRef.current > 0) {
-        iframeRef.current?.contentWindow?.postMessage({ type: 'map-ppt-goto', h: restoreSlideRef.current }, '*');
+      // 桥就绪：按重载前的快照回跳（open-design ready-signal 模式）
+      if (d.type === 'map-ppt-ready') {
+        const target = pendingRestoreRef.current;
+        pendingRestoreRef.current = null;
+        if (target != null && target > 0) {
+          iframeRef.current?.contentWindow?.postMessage({ type: 'map-ppt-goto', h: target }, '*');
+        }
       }
       // 圈选反查结果：组装精修指令填入输入框（不自动发送，控制权交给用户）
       if (d.type === 'map-ppt-rect-info' && typeof d.id === 'string') {
@@ -904,6 +910,7 @@ export function MdToPptAgentPage() {
   }, []);
 
   const toggleEditMode = useCallback(() => {
+    pendingRestoreRef.current = restoreSlideRef.current; // 进出编辑都触发 iframe 重载，先快照页位
     if (editMode) {
       commitEdits();
       setEditMode(false);
@@ -916,6 +923,7 @@ export function MdToPptAgentPage() {
   // ─── 主题切换（编辑中先落盘编辑稿，避免 iframe 重载丢修改）
   const switchTheme = useCallback(
     (value: string) => {
+      pendingRestoreRef.current = restoreSlideRef.current; // 换主题触发 iframe 重载，先快照页位
       if (editMode && editedHtmlRef.current) commitEdits();
       setTheme(value);
     },
@@ -1088,6 +1096,7 @@ export function MdToPptAgentPage() {
       setPublishedUrl('');
       setFeedbackMode(false);
       restoreSlideRef.current = 0; // 新一轮生成回到第 1 页
+      pendingRestoreRef.current = null;
 
       const genMsg = pushMsg({
         role: 'assistant',
@@ -1165,6 +1174,7 @@ export function MdToPptAgentPage() {
 
       setIsProcessing(true);
       setArtifactPhase('patching');
+      pendingRestoreRef.current = restoreSlideRef.current; // 精修完成重载后回到当前页
 
       const patchMsg = pushMsg({
         role: 'assistant',
@@ -1324,6 +1334,7 @@ export function MdToPptAgentPage() {
     setFeedbackMode(false);
     editedHtmlRef.current = '';
     restoreSlideRef.current = 0;
+    pendingRestoreRef.current = null;
     if (pendingRectRef.current) {
       window.clearTimeout(pendingRectRef.current.timer);
       pendingRectRef.current = null;
