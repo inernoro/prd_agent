@@ -187,6 +187,8 @@ export interface MdToPptConvertSseOptions {
   content: string;
   slideCount?: number;
   theme?: string;
+  /** 自定义模板 ID（优先于 theme 生效，后端取模板风格规范作为生成参照） */
+  templateId?: string;
   onStart?: (info: { slideCount?: number; theme?: string }) => void;
   onRun?: (runId: string) => void;
   onModel?: (info: { model: string; platform: string }) => void;
@@ -214,6 +216,7 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
           content: options.content,
           slideCount: options.slideCount,
           theme: options.theme,
+          templateId: options.templateId,
         }),
         signal: abortController.signal,
       });
@@ -270,6 +273,8 @@ export interface MdToPptPatchSseOptions {
   slideIndex?: number;
   /** 风格主题（patch 沿用当前风格 / 换风格重绘时传新值） */
   theme?: string;
+  /** 自定义模板 ID（优先于 theme 生效） */
+  templateId?: string;
   onStart?: () => void;
   onRun?: (runId: string) => void;
   onModel?: (info: { model: string; platform: string }) => void;
@@ -298,6 +303,7 @@ export function streamMdToPptPatch(options: MdToPptPatchSseOptions): () => void 
           slideRequest: options.slideRequest,
           slideIndex: options.slideIndex,
           theme: options.theme,
+          templateId: options.templateId,
         }),
         signal: abortController.signal,
       });
@@ -403,4 +409,44 @@ export async function getMdToPptRun(id: string): Promise<MdToPptRunDetail | null
 export async function getRecentMdToPptRuns(): Promise<MdToPptRunSummary[]> {
   const res = await apiRequest<MdToPptRunSummary[]>('/api/md-to-ppt/runs');
   return res.success ? (res.data ?? []) : [];
+}
+
+// ============ 自定义模板（上传参考图 → 视觉模型提取风格规范）============
+
+export interface MdToPptTemplateItem {
+  id: string;
+  name: string;
+  /** 风格规范摘要（前 160 字） */
+  styleSpec: string;
+  bgColor: string;
+  accentColor: string;
+  createdAt: string;
+}
+
+/** 当前用户的自定义模板列表（官方模板在前端常量 THEME_OPTIONS） */
+export async function getMdToPptTemplates(): Promise<MdToPptTemplateItem[]> {
+  const res = await apiRequest<MdToPptTemplateItem[]>('/api/md-to-ppt/templates');
+  return res.success ? (res.data ?? []) : [];
+}
+
+/** 上传参考图创建自定义模板（视觉模型提取风格规范，约 5-15s） */
+export async function createMdToPptTemplate(req: { name: string; imageDataUrl: string }): Promise<
+  { success: true; template: MdToPptTemplateItem } | { success: false; error: string }
+> {
+  const res = await apiRequest<MdToPptTemplateItem>('/api/md-to-ppt/templates', {
+    method: 'POST',
+    body: req,
+  });
+  if (!res.success || !res.data) {
+    return { success: false, error: res.error?.message ?? '模板创建失败' };
+  }
+  return { success: true, template: res.data };
+}
+
+/** 删除自定义模板 */
+export async function deleteMdToPptTemplate(id: string): Promise<boolean> {
+  const res = await apiRequest<{ deleted: boolean }>(`/api/md-to-ppt/templates/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+  return res.success;
 }

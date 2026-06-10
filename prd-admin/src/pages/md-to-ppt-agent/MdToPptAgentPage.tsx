@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   FileText,
   Globe,
@@ -18,17 +19,26 @@ import {
   Download,
   Maximize2,
   BoxSelect,
+  History,
+  ImagePlus,
+  Trash2,
 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { StreamingText } from '@/components/streaming/StreamingText';
 import {
   type MdToPptDiagEvent,
+  type MdToPptRunSummary,
+  type MdToPptTemplateItem,
   type OutlineSlide,
   streamMdToPptConvert,
   streamMdToPptPatch,
   publishMdToPpt,
   getMdToPptRun,
+  getRecentMdToPptRuns,
   getMdToPptOutline,
+  getMdToPptTemplates,
+  createMdToPptTemplate,
+  deleteMdToPptTemplate,
   prewarmMdToPpt,
 } from '@/services/real/mdToPptService';
 import { apiRequest } from '@/services/real/apiClient';
@@ -70,6 +80,8 @@ interface SessionState {
   messages: ChatMessage[];
   activeRunId: string;
   theme: string;
+  /** 选中的自定义模板 ID（null = 用官方主题 theme） */
+  templateId?: string | null;
 }
 
 interface KbStore {
@@ -428,7 +440,8 @@ function saveSession(s: SessionState): void {
   }
 }
 
-// ─── KB 选择迷你弹层 ──────────────────────────────────────────────────────────
+// ─── 知识库选择模态（库 → 文档列表 → 内容预览 → 引用）──────────────────────
+// 不是只给名字让用户盲选：点文档可先看内容，确认是想要的再引用。
 
 interface KbPickerProps {
   onClose: () => void;
@@ -439,138 +452,180 @@ function KbPicker({ onClose, onSelect }: KbPickerProps) {
   const [stores, setStores] = useState<KbStore[]>([]);
   const [selectedStore, setSelectedStore] = useState<KbStore | null>(null);
   const [entries, setEntries] = useState<KbEntry[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [entryLoading, setEntryLoading] = useState<string | null>(null);
+  const [storesLoading, setStoresLoading] = useState(false);
+  const [entriesLoading, setEntriesLoading] = useState(false);
+  // 预览态：选中的文档 + 已加载的内容
+  const [previewEntry, setPreviewEntry] = useState<KbEntry | null>(null);
+  const [previewContent, setPreviewContent] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   useEffect(() => {
-    setLoading(true);
+    setStoresLoading(true);
     apiRequest<{ items: KbStore[] }>('/api/document-store/stores?pageSize=50')
       .then((res) => {
         if (res.success && res.data) setStores(res.data.items ?? []);
       })
-      .finally(() => setLoading(false));
+      .finally(() => setStoresLoading(false));
   }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   const openStore = useCallback(async (store: KbStore) => {
     setSelectedStore(store);
-    setLoading(true);
+    setPreviewEntry(null);
+    setPreviewContent(null);
+    setEntriesLoading(true);
     const res = await apiRequest<{ items: KbEntry[] }>(
       `/api/document-store/stores/${encodeURIComponent(store.id)}/entries?pageSize=200&all=true`
     );
     if (res.success && res.data) setEntries(res.data.items ?? []);
-    setLoading(false);
+    setEntriesLoading(false);
   }, []);
 
-  const pickEntry = useCallback(
-    async (entry: KbEntry) => {
-      if (!selectedStore) return;
-      setEntryLoading(entry.id);
-      const res = await apiRequest<{ content: string | null; title: string }>(
-        `/api/document-store/entries/${encodeURIComponent(entry.id)}/content`
-      );
-      setEntryLoading(null);
-      if (res.success && res.data) {
-        onSelect({
-          storeName: selectedStore.name,
-          entryTitle: res.data.title || entry.title,
-          content: res.data.content ?? '',
-        });
-      }
-    },
-    [selectedStore, onSelect]
-  );
+  const openPreview = useCallback(async (entry: KbEntry) => {
+    setPreviewEntry(entry);
+    setPreviewContent(null);
+    setPreviewLoading(true);
+    const res = await apiRequest<{ content: string | null; title: string }>(
+      `/api/document-store/entries/${encodeURIComponent(entry.id)}/content`
+    );
+    setPreviewLoading(false);
+    setPreviewContent(res.success ? (res.data?.content ?? '') : '（内容加载失败）');
+  }, []);
 
-  return (
-    <div
-      className="fixed inset-0 z-[200] flex items-center justify-center"
-      onClick={onClose}
-    >
+  const confirmSelect = useCallback(() => {
+    if (!selectedStore || !previewEntry || previewContent == null) return;
+    onSelect({
+      storeName: selectedStore.name,
+      entryTitle: previewEntry.title,
+      content: previewContent,
+    });
+  }, [selectedStore, previewEntry, previewContent, onSelect]);
+
+  const modal = (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/45" onClick={onClose}>
       <div
-        className="w-80 rounded-xl border border-white/10 bg-[var(--bg-elevated)] shadow-xl"
-        style={{ maxHeight: '70vh', display: 'flex', flexDirection: 'column' }}
+        data-testid="kb-picker-modal"
+        className="rounded-xl border border-white/10 bg-[var(--bg-elevated)] shadow-2xl flex flex-col"
+        style={{ width: 'min(860px, 92vw)', height: '76vh', maxHeight: '76vh' }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-white/8">
-          <span className="text-sm font-semibold text-[var(--text-primary)]">
-            {selectedStore ? selectedStore.name : '选择知识库'}
+          <span className="text-sm font-semibold text-[var(--text-primary)] flex items-center gap-1.5">
+            <BookOpen size={13} className="text-blue-400" />
+            引用知识库
+            {selectedStore && <span className="text-[var(--text-tertiary)] font-normal">/ {selectedStore.name}</span>}
+            {previewEntry && <span className="text-[var(--text-tertiary)] font-normal truncate max-w-[260px]">/ {previewEntry.title}</span>}
           </span>
-          <button
-            onClick={onClose}
-            className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)]"
-          >
+          <button onClick={onClose} className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)]">
             <X size={14} />
           </button>
         </div>
 
-        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
-          {loading && (
-            <div className="flex justify-center py-6">
-              <MapSpinner size={16} />
-            </div>
-          )}
-
-          {!loading && !selectedStore &&
-            stores.map((st) => (
+        <div className="flex flex-1" style={{ minHeight: 0 }}>
+          {/* 左列：知识库列表 */}
+          <div
+            className="w-52 shrink-0 border-r border-white/8"
+            style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
+          >
+            {storesLoading && <div className="flex justify-center py-6"><MapSpinner size={14} /></div>}
+            {!storesLoading && stores.map((st) => (
               <button
                 key={st.id}
                 onClick={() => void openStore(st)}
-                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/4 border-b border-white/5 text-left"
+                className={[
+                  'w-full flex items-start gap-2 px-3 py-2.5 text-left border-b border-white/4',
+                  selectedStore?.id === st.id ? 'bg-blue-500/12' : 'hover:bg-white/4',
+                ].join(' ')}
               >
-                <BookOpen size={14} className="shrink-0 text-blue-400" />
-                <div>
-                  <div className="text-xs font-medium text-[var(--text-primary)]">{st.name}</div>
-                  <div className="text-[10px] text-[var(--text-tertiary)]">
-                    {st.documentCount} 篇文档
+                <BookOpen size={12} className={selectedStore?.id === st.id ? 'shrink-0 mt-0.5 text-blue-400' : 'shrink-0 mt-0.5 text-[var(--text-tertiary)]'} />
+                <div className="min-w-0">
+                  <div className={['text-[11px] truncate', selectedStore?.id === st.id ? 'text-blue-200 font-medium' : 'text-[var(--text-primary)]'].join(' ')}>
+                    {st.name}
                   </div>
+                  <div className="text-[9px] text-[var(--text-tertiary)]">{st.documentCount} 篇</div>
                 </div>
               </button>
             ))}
+          </div>
 
-          {!loading &&
-            selectedStore &&
-            entries.map((entry) => (
-              <button
-                key={entry.id}
-                onClick={() => void pickEntry(entry)}
-                disabled={entryLoading === entry.id}
-                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/4 border-b border-white/5 text-left disabled:opacity-50"
-              >
-                {entryLoading === entry.id ? (
-                  <MapSpinner size={12} />
-                ) : (
-                  <FileText size={12} className="shrink-0 text-[var(--text-tertiary)]" />
+          {/* 右区：文档列表 / 内容预览 */}
+          <div className="flex-1 flex flex-col" style={{ minWidth: 0, minHeight: 0 }}>
+            {!selectedStore && (
+              <div className="flex-1 flex items-center justify-center text-xs text-[var(--text-tertiary)]">
+                左侧选择一个知识库
+              </div>
+            )}
+
+            {selectedStore && !previewEntry && (
+              <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+                {entriesLoading && <div className="flex justify-center py-6"><MapSpinner size={14} /></div>}
+                {!entriesLoading && entries.length === 0 && (
+                  <div className="py-10 text-center text-xs text-[var(--text-tertiary)]">该知识库暂无文档</div>
                 )}
-                <div className="min-w-0">
-                  <div className="text-xs text-[var(--text-primary)] truncate">{entry.title}</div>
-                  {entry.summary && (
-                    <div className="text-[10px] text-[var(--text-tertiary)] truncate">
-                      {entry.summary}
+                {!entriesLoading && entries.map((entry) => (
+                  <button
+                    key={entry.id}
+                    onClick={() => void openPreview(entry)}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-white/4 border-b border-white/4 text-left"
+                  >
+                    <FileText size={12} className="shrink-0 text-[var(--text-tertiary)]" />
+                    <div className="min-w-0">
+                      <div className="text-xs text-[var(--text-primary)] truncate">{entry.title}</div>
+                      {entry.summary && (
+                        <div className="text-[10px] text-[var(--text-tertiary)] truncate mt-0.5">{entry.summary}</div>
+                      )}
                     </div>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {selectedStore && previewEntry && (
+              <>
+                <div className="shrink-0 flex items-center gap-2 px-4 py-2 border-b border-white/6">
+                  <button
+                    onClick={() => { setPreviewEntry(null); setPreviewContent(null); }}
+                    className="flex items-center gap-1 text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]"
+                  >
+                    <ChevronLeft size={12} />
+                    返回列表
+                  </button>
+                  <span className="flex-1" />
+                  <button
+                    onClick={confirmSelect}
+                    disabled={previewLoading || previewContent == null}
+                    data-testid="kb-confirm-select"
+                    className="flex items-center gap-1 px-3 py-1 rounded-md text-[11px] font-semibold bg-blue-500/85 text-white hover:bg-blue-500 disabled:opacity-40"
+                  >
+                    <Check size={11} />
+                    引用此文档
+                  </button>
+                </div>
+                <div
+                  className="flex-1 px-4 py-3"
+                  style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
+                >
+                  {previewLoading && <div className="flex justify-center py-8"><MapSpinner size={14} /></div>}
+                  {!previewLoading && (
+                    <pre className="text-[11px] leading-relaxed text-[var(--text-secondary)] whitespace-pre-wrap break-words font-sans">
+                      {previewContent || '（空文档）'}
+                    </pre>
                   )}
                 </div>
-              </button>
-            ))}
-
-          {!loading && selectedStore && entries.length === 0 && (
-            <div className="py-6 text-center text-xs text-[var(--text-tertiary)]">
-              该知识库暂无文档
-            </div>
-          )}
-        </div>
-
-        {selectedStore && (
-          <div className="shrink-0 px-4 py-2 border-t border-white/8">
-            <button
-              onClick={() => { setSelectedStore(null); setEntries([]); }}
-              className="text-[10px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]"
-            >
-              返回知识库列表
-            </button>
+              </>
+            )}
           </div>
-        )}
+        </div>
       </div>
     </div>
   );
+
+  return createPortal(modal, document.body);
 }
 
 // ─── Outline 确认气泡内容 ──────────────────────────────────────────────────────
@@ -680,7 +735,19 @@ export function MdToPptAgentPage() {
   // 引擎只有 CDS Agent 一条路（2026-06-10 用户拍板移除 MAP 直出），无引擎/模型选择；
   // 模型由 Agent 运行配置决定，经 SSE model 事件回显（ai-model-visibility）。
   const [theme, setTheme] = useState(savedSession?.theme ?? 'tech-dark');
+  // 自定义模板（上传参考图 → 视觉模型提取风格规范，生成时优先于官方主题）
+  const [templateId, setTemplateId] = useState<string | null>(savedSession?.templateId ?? null);
+  const [customTemplates, setCustomTemplates] = useState<MdToPptTemplateItem[]>([]);
+  const templatesLoadedRef = useRef(false);
+  const [templateBusy, setTemplateBusy] = useState(false);
+  const templateFileRef = useRef<HTMLInputElement>(null);
   const [showSettings, setShowSettings] = useState(false);
+
+  // 历史生成（server-authority：runs 落库，随时可载入继续精修/编辑/发布）
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyRuns, setHistoryRuns] = useState<MdToPptRunSummary[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyOpeningId, setHistoryOpeningId] = useState<string | null>(null);
 
   // ─── Chat state
   const [messages, setMessages] = useState<ChatMessage[]>(savedSession?.messages ?? []);
@@ -788,6 +855,40 @@ export function MdToPptAgentPage() {
   const [showPlusMenu, setShowPlusMenu] = useState(false);
   const [showKbPicker, setShowKbPicker] = useState(false);
 
+  // 左侧对话栏宽度（可拖拽，280-640px；纯 UI 偏好走 localStorage——关浏览器仍记住）
+  const [chatWidth, setChatWidth] = useState<number>(() => {
+    try {
+      const v = parseInt(localStorage.getItem('md2ppt-chat-width') ?? '', 10);
+      return v >= 280 && v <= 640 ? v : 340;
+    } catch {
+      return 340;
+    }
+  });
+  const chatResizeRef = useRef<{ startX: number; startW: number; lastW: number } | null>(null);
+
+  const onChatResizeStart = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    chatResizeRef.current = { startX: e.clientX, startW: chatWidth, lastW: chatWidth };
+    const onMove = (ev: PointerEvent) => {
+      const st = chatResizeRef.current;
+      if (!st) return;
+      const w = Math.max(280, Math.min(640, st.startW + (ev.clientX - st.startX)));
+      st.lastW = w;
+      setChatWidth(w);
+    };
+    const onUp = () => {
+      const st = chatResizeRef.current;
+      chatResizeRef.current = null;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      if (st) {
+        try { localStorage.setItem('md2ppt-chat-width', String(st.lastW)); } catch { /* ignore */ }
+      }
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  }, [chatWidth]);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -849,8 +950,15 @@ export function MdToPptAgentPage() {
 
   // ─── Session persistence: save on state change
   useEffect(() => {
-    saveSession({ messages, activeRunId, theme });
-  }, [messages, activeRunId, theme]);
+    saveSession({ messages, activeRunId, theme, templateId });
+  }, [messages, activeRunId, theme, templateId]);
+
+  // 模板列表进页即载（右侧模板画廊是空状态主视觉，必须秒出）
+  useEffect(() => {
+    if (templatesLoadedRef.current) return;
+    templatesLoadedRef.current = true;
+    void getMdToPptTemplates().then(setCustomTemplates);
+  }, []);
 
   // ─── 圈选反馈指令组装（texts 为空时退化为坐标描述）
   const composeFeedback = useCallback((slide: number, texts: string[], note: string, rect: SelectionRectPct) => {
@@ -1136,6 +1244,7 @@ export function MdToPptAgentPage() {
       const cleanup = streamMdToPptConvert({
         content: fullContent,
         theme,
+        templateId: templateId ?? undefined,
         slideCount: outlineMsg.totalPages,
         onRun: (runId) => {
           if (runId) setActiveRunId(runId);
@@ -1191,13 +1300,14 @@ export function MdToPptAgentPage() {
 
       cleanupRef.current = cleanup;
     },
-    [isProcessing, messages, pushMsg, theme, resetStreamPreview, handleStreamDelta, handleThinkingDelta]
+    [isProcessing, messages, pushMsg, theme, templateId, resetStreamPreview, handleStreamDelta, handleThinkingDelta]
   );
 
   // ─── Patch flow（对话式精修）。baseHtml 允许携带编辑模式未提交的最新稿；
-  //     themeOverride 用于「换风格 = AI 按新风格重绘」场景（不传则沿用当前风格）。
+  //     styleOverride 用于「换风格/换模板 = AI 按新参照重绘」（不传则沿用当前选择；
+  //     templateId 传 null 表示明确切回官方主题）。
   const startPatch = useCallback(
-    (instruction: string, baseHtml?: string, themeOverride?: string) => {
+    (instruction: string, baseHtml?: string, styleOverride?: { theme?: string; templateId?: string | null }) => {
       const base = baseHtml ?? generatedHtml;
       if (!base || isProcessing) return;
 
@@ -1213,10 +1323,12 @@ export function MdToPptAgentPage() {
         phase: 'patching',
       });
 
+      const effTemplateId = styleOverride?.templateId !== undefined ? styleOverride.templateId : templateId;
       const cleanup = streamMdToPptPatch({
         currentHtml: base,
         slideRequest: instruction,
-        theme: themeOverride ?? theme,
+        theme: styleOverride?.theme ?? theme,
+        templateId: effTemplateId ?? undefined,
         onRun: (runId) => {
           if (runId) setActiveRunId(runId);
         },
@@ -1264,16 +1376,17 @@ export function MdToPptAgentPage() {
 
       cleanupRef.current = cleanup;
     },
-    [generatedHtml, isProcessing, pushMsg, theme, slidePos, resetStreamPreview, handleStreamDelta, handleThinkingDelta]
+    [generatedHtml, isProcessing, pushMsg, theme, templateId, slidePos, resetStreamPreview, handleStreamDelta, handleThinkingDelta]
   );
 
-  // ─── 换风格 = AI 参照新风格整体重绘（2026-06-10 用户纠偏：风格是 AI 的设计参照，
-  //     不是前端 CSS 换皮）。无产物时只改默认风格（影响下一次生成）；
-  //     有产物时把当前 HTML 交给 AI 按新风格重新设计排版与配色。
+  // ─── 换风格/换模板 = AI 参照新设计参照整体重绘（2026-06-10 用户纠偏：风格是
+  //     AI 的设计参照，不是前端 CSS 换皮）。无产物时只改选择（影响下一次生成）；
+  //     有产物时把当前 HTML 交给 AI 按新参照重新设计排版与配色。
   const switchTheme = useCallback(
     (value: string) => {
-      if (value === theme) return;
+      if (value === theme && templateId == null) return;
       setTheme(value);
+      setTemplateId(null);
       if (!generatedHtml || isProcessing) return;
 
       const label = THEME_OPTIONS.find((o) => o.value === value)?.label ?? value;
@@ -1286,10 +1399,120 @@ export function MdToPptAgentPage() {
       startPatch(
         `参照「${label}」风格把整份 PPT 重新设计：配色、字体、版式气质全部按该风格重绘，内容与页数保持不变。`,
         base,
-        value
+        { theme: value, templateId: null }
       );
     },
-    [theme, generatedHtml, isProcessing, latestHtml, editMode, commitEdits, pushMsg, startPatch]
+    [theme, templateId, generatedHtml, isProcessing, latestHtml, editMode, commitEdits, pushMsg, startPatch]
+  );
+
+  // ─── 选自定义模板（参考图提取的风格规范作为生成参照）
+  const selectCustomTemplate = useCallback(
+    (t: MdToPptTemplateItem) => {
+      setTemplateId(t.id);
+      if (!generatedHtml || isProcessing) return;
+      const base = latestHtml();
+      if (editMode) {
+        commitEdits();
+        setEditMode(false);
+      }
+      pushMsg({ role: 'user', content: `整体换成自定义模板「${t.name}」的风格` });
+      startPatch(
+        `参照自定义模板「${t.name}」的风格规范把整份 PPT 重新设计：配色、字体、版式气质全部按规范重绘，内容与页数保持不变。`,
+        base,
+        { templateId: t.id }
+      );
+    },
+    [generatedHtml, isProcessing, latestHtml, editMode, commitEdits, pushMsg, startPatch]
+  );
+
+  // ─── 上传参考图创建模板（零摩擦：选图即建，名字默认取文件名；视觉提取约 5-15s）
+  const handleTemplateFile = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      e.target.value = '';
+      if (file.size > 6 * 1024 * 1024) {
+        pushMsg({ role: 'assistant', content: '参考图超过 6MB，请压缩后再试。', phase: 'error' });
+        return;
+      }
+      setTemplateBusy(true);
+      try {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(new Error('读取图片失败'));
+          reader.readAsDataURL(file);
+        });
+        const name = file.name.replace(/\.[^.]+$/, '') || '自定义模板';
+        const result = await createMdToPptTemplate({ name, imageDataUrl: dataUrl });
+        if (result.success) {
+          setCustomTemplates((prev) => [result.template, ...prev]);
+          setTemplateId(result.template.id);
+          pushMsg({
+            role: 'assistant',
+            content: `自定义模板「${result.template.name}」已创建并选中（参考图风格已提取）。下次生成按它执行；想立即把当前 PPT 重绘成该风格，点设置里的模板色点即可。`,
+            phase: 'text',
+          });
+        } else {
+          pushMsg({ role: 'assistant', content: '模板创建失败：' + result.error, phase: 'error' });
+        }
+      } catch (err) {
+        pushMsg({ role: 'assistant', content: '模板创建失败：' + (err as Error).message, phase: 'error' });
+      } finally {
+        setTemplateBusy(false);
+      }
+    },
+    [pushMsg]
+  );
+
+  const removeTemplate = useCallback(
+    async (t: MdToPptTemplateItem) => {
+      const ok = await deleteMdToPptTemplate(t.id);
+      if (!ok) return;
+      setCustomTemplates((prev) => prev.filter((x) => x.id !== t.id));
+      setTemplateId((cur) => (cur === t.id ? null : cur));
+    },
+    []
+  );
+
+  // ─── 历史生成：打开抽屉拉列表；点击条目载入 deck 继续精修/编辑/发布
+  const openHistory = useCallback(() => {
+    setShowHistory(true);
+    setHistoryLoading(true);
+    void getRecentMdToPptRuns()
+      .then(setHistoryRuns)
+      .finally(() => setHistoryLoading(false));
+  }, []);
+
+  const loadHistoryRun = useCallback(
+    async (summary: MdToPptRunSummary) => {
+      if (isProcessing || historyOpeningId) return;
+      setHistoryOpeningId(summary.id);
+      const run = await getMdToPptRun(summary.id);
+      setHistoryOpeningId(null);
+      if (!run || !run.html || !looksLikeDeck(run.html)) {
+        pushMsg({ role: 'assistant', content: `历史记录「${summary.title || '未命名'}」没有可用的 PPT 产物（状态：${run?.status ?? '未知'}）。`, phase: 'error' });
+        return;
+      }
+      // 载入为当前产物：可继续对话精修 / 编辑 / 换风格 / 发布
+      setGeneratedHtml(run.html);
+      setActiveRunId(run.id);
+      setArtifactPhase('done');
+      setPublishedUrl('');
+      setEditMode(false);
+      setDirtyEdits(false);
+      setFeedbackMode(false);
+      editedHtmlRef.current = '';
+      restoreSlideRef.current = 0;
+      pendingRestoreRef.current = null;
+      setShowHistory(false);
+      pushMsg({
+        role: 'assistant',
+        content: `已载入历史生成「${run.title || '未命名 PPT'}」（${new Date(run.createdAt).toLocaleString()}）。可以继续对话精修、编辑内容、换风格或发布。`,
+        phase: 'text',
+      });
+    },
+    [isProcessing, historyOpeningId, pushMsg]
   );
 
   // ─── Outline adjust（调整大纲后重新请求）
@@ -1450,6 +1673,17 @@ export function MdToPptAgentPage() {
           )}
 
           <button
+            onClick={openHistory}
+            disabled={isStreaming}
+            title="历史生成：查看并载入以前生成的 PPT 继续精修"
+            data-testid="history-button"
+            className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-white/5 disabled:opacity-40"
+          >
+            <History size={12} />
+            历史
+          </button>
+
+          <button
             onClick={handleReset}
             title="新建对话"
             className="flex items-center justify-center w-6 h-6 rounded-md text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-white/5"
@@ -1459,30 +1693,101 @@ export function MdToPptAgentPage() {
         </div>
       </div>
 
-      {/* Settings panel（收起）。引擎只有 CDS Agent 一条路，模型由 Agent 运行配置决定，
-          这里只剩风格选择（模型名在生成时经 model 事件回显到工具栏 chip） */}
+      {/* Settings panel（收起）。引擎只有 CDS Agent 一条路，模型由 Agent 运行配置决定。
+          模板 = AI 生成时参照的设计语言：官方 5 套 + 自定义（上传参考图提取风格规范）。
+          生成前选 = 按它画；生成后切 = AI 整体重绘（不是 CSS 换皮）。 */}
       {showSettings && (
-        <div className="shrink-0 flex items-center gap-4 px-4 py-2 border-b border-white/6 bg-white/2 text-[11px]">
-          {/* 风格（AI 设计参照：生成前选 = 按该风格画；生成后切 = AI 整体重绘） */}
-          <div className="flex items-center gap-1.5">
-            <span className="text-[var(--text-tertiary)]">风格</span>
-            <select
-              value={theme}
-              onChange={(e) => switchTheme(e.target.value)}
-              disabled={isStreaming}
-              title={generatedHtml ? '切换后 AI 将按新风格整体重绘当前 PPT（约 1 分钟）' : 'AI 生成时参照的设计风格'}
-              className="appearance-none text-[11px] py-1 pl-2 pr-5 rounded-md bg-white/5 text-[var(--text-primary)] border border-white/8 outline-none cursor-pointer disabled:opacity-40"
-            >
-              {THEME_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-            {generatedHtml && (
-              <span className="text-[9px] text-[var(--text-tertiary)]">切换 = AI 按新风格重绘</span>
-            )}
+        <div className="shrink-0 flex items-start gap-3 px-4 py-2 border-b border-white/6 bg-white/2 text-[11px] flex-wrap">
+          <span className="text-[var(--text-tertiary)] pt-1">模板</span>
+
+          <div className="flex flex-col gap-1.5 min-w-0">
+            {/* 官方模板 */}
+            <div className="flex items-center gap-1.5 flex-wrap" data-testid="official-templates">
+              {THEME_OPTIONS.map((opt) => {
+                const active = templateId == null && theme === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    onClick={() => switchTheme(opt.value)}
+                    disabled={isStreaming}
+                    title={(generatedHtml ? '切换后 AI 按该风格整体重绘（约 1 分钟）：' : 'AI 生成参照：') + opt.label}
+                    className={[
+                      'flex items-center gap-1.5 px-2 py-1 rounded-md border disabled:opacity-40',
+                      active
+                        ? 'bg-purple-500/20 border-purple-500/40 text-purple-200 font-semibold'
+                        : 'bg-white/4 border-white/8 text-[var(--text-secondary)] hover:bg-white/8',
+                    ].join(' ')}
+                  >
+                    <span
+                      className="w-3 h-3 rounded-full shrink-0"
+                      style={{ background: opt.dotBg, border: '2px solid ' + opt.dotRing }}
+                    />
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* 自定义模板（上传参考图 → 风格规范提取） */}
+            <div className="flex items-center gap-1.5 flex-wrap" data-testid="custom-templates">
+              {customTemplates.map((t) => {
+                const active = templateId === t.id;
+                return (
+                  <span key={t.id} className="inline-flex items-center">
+                    <button
+                      onClick={() => selectCustomTemplate(t)}
+                      disabled={isStreaming}
+                      title={(generatedHtml ? '点击 = AI 按该模板整体重绘：' : 'AI 生成参照：') + t.styleSpec}
+                      className={[
+                        'flex items-center gap-1.5 px-2 py-1 rounded-l-md border border-r-0 disabled:opacity-40 max-w-[160px]',
+                        active
+                          ? 'bg-purple-500/20 border-purple-500/40 text-purple-200 font-semibold'
+                          : 'bg-white/4 border-white/8 text-[var(--text-secondary)] hover:bg-white/8',
+                      ].join(' ')}
+                    >
+                      <span
+                        className="w-3 h-3 rounded-full shrink-0"
+                        style={{ background: t.bgColor, border: '2px solid ' + t.accentColor }}
+                      />
+                      <span className="truncate">{t.name}</span>
+                    </button>
+                    <button
+                      onClick={() => void removeTemplate(t)}
+                      disabled={isStreaming}
+                      title={'删除模板：' + t.name}
+                      className={[
+                        'flex items-center justify-center w-5 self-stretch rounded-r-md border disabled:opacity-40',
+                        active
+                          ? 'bg-purple-500/15 border-purple-500/40 text-purple-300/70 hover:text-red-300'
+                          : 'bg-white/4 border-white/8 text-[var(--text-tertiary)] hover:text-red-400',
+                      ].join(' ')}
+                    >
+                      <Trash2 size={10} />
+                    </button>
+                  </span>
+                );
+              })}
+
+              <button
+                onClick={() => templateFileRef.current?.click()}
+                disabled={isStreaming || templateBusy}
+                title="上传一张设计参考图（截图/海报/喜欢的 PPT 页面），AI 提取风格规范作为自定义模板"
+                data-testid="upload-template"
+                className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-dashed border-white/15 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] hover:border-white/30 disabled:opacity-40"
+              >
+                {templateBusy ? <MapSpinner size={11} /> : <ImagePlus size={11} />}
+                {templateBusy ? '正在提取风格（约 10s）...' : '上传参考图新建'}
+              </button>
+            </div>
           </div>
+
+          <input
+            ref={templateFileRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            onChange={(e) => void handleTemplateFile(e)}
+            className="hidden"
+          />
         </div>
       )}
 
@@ -1500,11 +1805,18 @@ export function MdToPptAgentPage() {
       {/* Main: left chat + right artifact */}
       <div className="flex flex-1 min-h-0">
 
-        {/* ─── Left: Chat panel ─────────────────────────────────────────────── */}
+        {/* ─── Left: Chat panel（宽度可拖拽，右缘手柄） ───────────────────── */}
         <div
-          className="w-[340px] shrink-0 flex flex-col border-r border-white/8"
-          style={{ minHeight: 0 }}
+          className="shrink-0 flex flex-col border-r border-white/8"
+          style={{ minHeight: 0, width: chatWidth, position: 'relative' }}
         >
+          <div
+            data-testid="chat-resize-handle"
+            onPointerDown={onChatResizeStart}
+            title="拖拽调整对话栏宽度"
+            className="absolute top-0 right-0 h-full hover:bg-purple-500/40 transition-colors"
+            style={{ width: 5, cursor: 'col-resize', zIndex: 10, marginRight: -2.5 }}
+          />
           {/* Messages */}
           <div
             className="flex-1 px-3 py-3 flex flex-col gap-3"
@@ -1598,12 +1910,32 @@ export function MdToPptAgentPage() {
                     />
                   )}
 
-                  {/* Assistant: generating / patching / outlining */}
+                  {/* Assistant: generating / patching（思考流作为 AI 输出进对话气泡——
+                        对话归对话，中间只放 PPT 预览，两不干扰） */}
                   {msg.role === 'assistant' &&
                     (msg.phase === 'generating' || msg.phase === 'patching') && (
-                      <div className="flex items-center gap-2">
-                        <MapSpinner size={11} />
-                        <span>{msg.content}</span>
+                      <div className="flex flex-col gap-1.5">
+                        <div className="flex items-center gap-2">
+                          <MapSpinner size={11} />
+                          <span>{msg.content}</span>
+                        </div>
+                        {isStreaming && thinkingPreview.length > 0 && (
+                          <div
+                            data-testid="thinking-bubble"
+                            className="rounded-md bg-purple-500/6 border border-purple-500/15 px-2 py-1.5"
+                          >
+                            <div className="text-[9px] text-purple-300/80 font-semibold mb-0.5 flex items-center gap-1">
+                              <span className="w-1 h-1 rounded-full bg-purple-400 animate-pulse" />
+                              AI 思考中 · {thinkingPreview.length.toLocaleString()} 字
+                            </div>
+                            <div
+                              className="text-[10px] leading-relaxed text-[var(--text-tertiary)]"
+                              style={{ maxHeight: 110, overflow: 'hidden', wordBreak: 'break-word' }}
+                            >
+                              <StreamingText text={thinkingPreview} streaming maxTailChars={300} className="whitespace-pre-wrap" />
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -1642,7 +1974,7 @@ export function MdToPptAgentPage() {
           <div className="shrink-0 border-t border-white/8 px-3 pt-3" style={{ paddingBottom: 34 }}>
             <div
               data-testid="composer-shell"
-              className="flex flex-col gap-1.5 rounded-xl border border-white/10 bg-white/4 px-2.5 pt-2.5 pb-2 transition-colors focus-within:border-purple-500/45 focus-within:bg-white/6"
+              className="flex flex-col gap-1.5 rounded-xl border border-white/10 bg-white/4 px-2.5 pt-2.5 pb-2 transition-all focus-within:border-purple-400/70 focus-within:bg-white/6 focus-within:ring-2 focus-within:ring-purple-500/30 focus-within:shadow-[0_0_18px_rgba(168,85,247,.15)]"
             >
               {/* Pending attachments & KB refs（卡内顶部） */}
               {(pendingAttachments.length > 0 || pendingKbRefs.length > 0) && (
@@ -1770,19 +2102,124 @@ export function MdToPptAgentPage() {
 
         {/* ─── Right: Artifact panel ──────────────────────────────────────── */}
         <div className="flex-1 min-w-0 flex flex-col" style={{ minHeight: 0 }}>
-          {/* Idle / empty */}
+          {/* Idle = 模板画廊：右侧大空间选模板（模板 = AI 生成参照），不藏设置里。
+                官方 5 套大卡片（迷你风格预览）+ 自定义模板 + 上传参考图新建。 */}
           {artifactPhase === 'idle' && !generatedHtml && (
-            <div className="flex-1 flex flex-col items-center justify-center gap-3 text-[var(--text-tertiary)]">
-              <div className="w-12 h-12 rounded-2xl bg-purple-500/8 flex items-center justify-center">
-                <Wand2 size={22} className="text-purple-400/60" />
+            <div
+              className="flex-1 flex flex-col px-6 py-5 gap-4"
+              style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
+              data-testid="template-gallery"
+            >
+              <div className="shrink-0 flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-purple-500/10 flex items-center justify-center">
+                  <Wand2 size={17} className="text-purple-400/80" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-[var(--text-primary)]">选择模板，然后在左侧告诉 AI 你想做什么</p>
+                  <p className="text-[11px] text-[var(--text-tertiary)] mt-0.5">
+                    模板是 AI 生成时参照的设计语言（配色 / 字体 / 版式气质），生成后也可一键换模板重绘
+                  </p>
+                </div>
               </div>
-              <div className="text-center">
-                <p className="text-sm font-medium text-[var(--text-secondary)]">
-                  PPT 预览区
-                </p>
-                <p className="text-xs mt-1 text-[var(--text-tertiary)]">
-                  在左侧对话框输入需求，AI 将生成 reveal.js 网页 PPT
-                </p>
+
+              {/* 官方模板 */}
+              <div className="shrink-0">
+                <div className="text-[11px] font-semibold text-[var(--text-tertiary)] mb-2">官方模板</div>
+                <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))' }}>
+                  {THEME_OPTIONS.map((opt) => {
+                    const active = templateId == null && theme === opt.value;
+                    return (
+                      <button
+                        key={opt.value}
+                        onClick={() => switchTheme(opt.value)}
+                        data-testid={'tpl-official-' + opt.value}
+                        className={[
+                          'group text-left rounded-xl border overflow-hidden transition-all',
+                          active
+                            ? 'border-purple-400/70 ring-2 ring-purple-500/30'
+                            : 'border-white/10 hover:border-white/25',
+                        ].join(' ')}
+                      >
+                        {/* 迷你风格预览：用模板自己的底色/强调色画一张缩略幻灯 */}
+                        <div className="px-4 pt-4 pb-3" style={{ background: opt.dotBg, height: 96 }}>
+                          <div className="w-8 h-1 rounded-full mb-2" style={{ background: opt.dotRing }} />
+                          <div className="text-[15px] font-extrabold leading-tight" style={{ color: opt.dotRing }}>
+                            Aa 标题示意
+                          </div>
+                          <div className="mt-1.5 h-1.5 w-3/4 rounded" style={{ background: opt.dotRing, opacity: 0.25 }} />
+                          <div className="mt-1 h-1.5 w-1/2 rounded" style={{ background: opt.dotRing, opacity: 0.18 }} />
+                        </div>
+                        <div className="flex items-center justify-between px-3 py-2 bg-white/4">
+                          <span className={['text-[12px] font-medium', active ? 'text-purple-200' : 'text-[var(--text-secondary)]'].join(' ')}>
+                            {opt.label}
+                          </span>
+                          {active && <Check size={12} className="text-purple-300" />}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 自定义模板（上传参考图，AI 提取风格规范作为参照） */}
+              <div className="shrink-0">
+                <div className="text-[11px] font-semibold text-[var(--text-tertiary)] mb-2">自定义模板</div>
+                <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))' }}>
+                  {customTemplates.map((t) => {
+                    const active = templateId === t.id;
+                    return (
+                      <div
+                        key={t.id}
+                        className={[
+                          'group relative rounded-xl border overflow-hidden transition-all',
+                          active
+                            ? 'border-purple-400/70 ring-2 ring-purple-500/30'
+                            : 'border-white/10 hover:border-white/25',
+                        ].join(' ')}
+                      >
+                        <button onClick={() => selectCustomTemplate(t)} className="block w-full text-left">
+                          <div className="px-4 pt-4 pb-3" style={{ background: t.bgColor, height: 96 }}>
+                            <div className="w-8 h-1 rounded-full mb-2" style={{ background: t.accentColor }} />
+                            <div className="text-[15px] font-extrabold leading-tight" style={{ color: t.accentColor }}>
+                              Aa {t.name.slice(0, 6)}
+                            </div>
+                            <div className="mt-1.5 h-1.5 w-3/4 rounded" style={{ background: t.accentColor, opacity: 0.25 }} />
+                          </div>
+                          <div className="flex items-center justify-between px-3 py-2 bg-white/4">
+                            <span className={['text-[12px] font-medium truncate', active ? 'text-purple-200' : 'text-[var(--text-secondary)]'].join(' ')}>
+                              {t.name}
+                            </span>
+                            {active && <Check size={12} className="text-purple-300 shrink-0" />}
+                          </div>
+                        </button>
+                        <button
+                          onClick={() => void removeTemplate(t)}
+                          title={'删除模板：' + t.name}
+                          className="absolute top-2 right-2 w-6 h-6 rounded-md bg-black/45 text-white/60 hover:text-red-300 hover:bg-black/65 items-center justify-center hidden group-hover:flex"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    );
+                  })}
+
+                  {/* 上传参考图新建（零摩擦：选图即建，名字取文件名） */}
+                  <button
+                    onClick={() => templateFileRef.current?.click()}
+                    disabled={templateBusy}
+                    data-testid="gallery-upload-template"
+                    className="rounded-xl border border-dashed border-white/15 hover:border-purple-400/50 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] flex flex-col items-center justify-center gap-2 transition-colors disabled:opacity-50"
+                    style={{ minHeight: 134 }}
+                  >
+                    {templateBusy ? <MapSpinner size={18} /> : <ImagePlus size={18} />}
+                    <span className="text-[11px] font-medium">
+                      {templateBusy ? '正在提取风格（约 10s）...' : '上传参考图新建模板'}
+                    </span>
+                    <span className="text-[9px] px-4 text-center leading-relaxed">
+                      截图 / 海报 / 喜欢的 PPT 页面，AI 提取配色字体版式作为生成参照
+                    </span>
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -1898,25 +2335,6 @@ export function MdToPptAgentPage() {
                         </div>
                       </div>
 
-                      {thinkingPreview.length > 0 && (
-                        <div
-                          data-testid="thinking-preview"
-                          className="w-full rounded-lg bg-purple-500/6 border border-purple-500/20 overflow-hidden"
-                          style={{ maxWidth: 460 }}
-                        >
-                          <div className="px-3 py-1.5 text-[9px] text-purple-300/90 font-semibold border-b border-purple-500/15 flex items-center gap-1.5">
-                            <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
-                            AI 思考过程（推理模型先想后写）
-                          </div>
-                          <div
-                            className="px-3 py-2 text-[10px] leading-relaxed text-[var(--text-tertiary)]"
-                            style={{ maxHeight: 120, overflow: 'hidden', wordBreak: 'break-word' }}
-                          >
-                            <StreamingText text={thinkingPreview} streaming maxTailChars={420} className="whitespace-pre-wrap" />
-                          </div>
-                        </div>
-                      )}
-
                       {streamPreview.length > 0 && (
                         <div
                           data-testid="stream-preview"
@@ -2028,19 +2446,35 @@ export function MdToPptAgentPage() {
                     <ChevronRight size={14} />
                   </button>
 
-                  {/* 风格色点：点击 = AI 参照该风格整体重绘（约 1 分钟，全程流式可见） */}
+                  {/* 模板色点：点击 = AI 参照该模板整体重绘（约 1 分钟，全程流式可见）。
+                        官方 5 套 + 自定义模板（参考图提取） */}
                   <div className="flex items-center gap-1.5 ml-2 pl-2.5 border-l border-white/10" data-testid="theme-dots">
                     {THEME_OPTIONS.map((opt) => (
                       <button
                         key={opt.value}
                         onClick={() => switchTheme(opt.value)}
                         disabled={isStreaming}
-                        title={'换风格（AI 整体重绘，约 1 分钟）：' + opt.label}
+                        title={'换模板（AI 整体重绘，约 1 分钟）：' + opt.label}
                         className="w-4 h-4 rounded-full transition-transform hover:scale-110 disabled:opacity-40"
                         style={{
                           background: opt.dotBg,
                           border: '2px solid ' + opt.dotRing,
-                          boxShadow: theme === opt.value ? '0 0 0 2px rgba(168,85,247,.7)' : 'none',
+                          boxShadow: templateId == null && theme === opt.value ? '0 0 0 2px rgba(168,85,247,.7)' : 'none',
+                        }}
+                      />
+                    ))}
+                    {customTemplates.length > 0 && <span className="w-px h-3.5 bg-white/10" />}
+                    {customTemplates.slice(0, 6).map((t) => (
+                      <button
+                        key={t.id}
+                        onClick={() => selectCustomTemplate(t)}
+                        disabled={isStreaming}
+                        title={'换模板（AI 整体重绘，约 1 分钟）：' + t.name}
+                        className="w-4 h-4 rounded-full transition-transform hover:scale-110 disabled:opacity-40"
+                        style={{
+                          background: t.bgColor,
+                          border: '2px solid ' + t.accentColor,
+                          boxShadow: templateId === t.id ? '0 0 0 2px rgba(168,85,247,.7)' : 'none',
                         }}
                       />
                     ))}
@@ -2157,6 +2591,74 @@ export function MdToPptAgentPage() {
           )}
         </div>
       </div>
+
+      {/* History modal：历史生成列表，点击载入继续精修/编辑/发布 */}
+      {showHistory && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40" onClick={() => setShowHistory(false)}>
+          <div
+            data-testid="history-modal"
+            className="w-[560px] rounded-xl border border-white/10 bg-[var(--bg-elevated)] shadow-xl"
+            style={{ maxHeight: '72vh', display: 'flex', flexDirection: 'column' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-white/8">
+              <span className="text-sm font-semibold text-[var(--text-primary)] flex items-center gap-1.5">
+                <History size={13} className="text-purple-400" />
+                历史生成
+              </span>
+              <button onClick={() => setShowHistory(false)} className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)]">
+                <X size={14} />
+              </button>
+            </div>
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+              {historyLoading && (
+                <div className="flex justify-center py-8"><MapSpinner size={16} /></div>
+              )}
+              {!historyLoading && historyRuns.length === 0 && (
+                <div className="py-10 text-center text-xs text-[var(--text-tertiary)]">
+                  还没有历史生成。左侧发个需求，生成的每一份 PPT 都会留在这里，随时回来继续改。
+                </div>
+              )}
+              {!historyLoading && historyRuns.map((r) => (
+                <button
+                  key={r.id}
+                  onClick={() => void loadHistoryRun(r)}
+                  disabled={!r.hasHtml || historyOpeningId != null}
+                  title={r.hasHtml ? '载入这份 PPT 继续精修/编辑/发布' : '该次运行没有产物（' + r.status + '）'}
+                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/4 border-b border-white/5 text-left disabled:opacity-45"
+                >
+                  {historyOpeningId === r.id ? (
+                    <MapSpinner size={13} />
+                  ) : (
+                    <FileText size={13} className={r.hasHtml ? 'shrink-0 text-purple-400' : 'shrink-0 text-[var(--text-tertiary)]'} />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-medium text-[var(--text-primary)] truncate">
+                      {r.title || '未命名 PPT'}
+                    </div>
+                    <div className="text-[10px] text-[var(--text-tertiary)] truncate mt-0.5">
+                      {r.contentPreview || '（无内容预览）'}
+                    </div>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <div className={[
+                      'text-[9px] px-1.5 py-0.5 rounded inline-block',
+                      r.status === 'done' ? 'bg-green-500/10 text-green-400'
+                        : r.status === 'error' ? 'bg-red-500/10 text-red-400'
+                          : 'bg-white/8 text-[var(--text-tertiary)]',
+                    ].join(' ')}>
+                      {r.status === 'done' ? '已完成' : r.status === 'error' ? '失败' : '生成中'}
+                    </div>
+                    <div className="text-[9px] text-[var(--text-tertiary)] mt-1 tabular-nums">
+                      {new Date(r.createdAt).toLocaleString()}
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* KB picker modal */}
       {showKbPicker && (

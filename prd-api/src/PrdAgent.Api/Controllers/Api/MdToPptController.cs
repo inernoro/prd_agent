@@ -40,9 +40,14 @@ public class MdToPptController : ControllerBase
     private readonly ILogger<MdToPptController> _logger;
 
     // PPT 系统提示词（按风格主题生成不同设计系统）。
-    private static string BuildPptSystemPrompt(string? theme)
+    private static string BuildPptSystemPrompt(string? theme, string? customStyleSpec = null)
     {
-        var (tokens, tone) = ThemeTokens(theme);
+        // 自定义模板（用户参考图提取的风格规范）优先于官方主题：
+        // 规范全文作为「本次风格」，:root 色值由模型按规范自定（模板 = 生成参照，不是换皮）
+        var (tokens, tone) = string.IsNullOrWhiteSpace(customStyleSpec)
+            ? ThemeTokens(theme)
+            : (":root{/* 按下方「本次风格」规范自行定义 --bg --bg2 --ink --muted --line --card --a1 --a2 --a3 --orb-op 的具体取值，必须与规范一致 */}\n",
+               "自定义模板（从用户上传的参考图提取的风格规范，必须严格执行）——" + customStyleSpec.Trim());
         return
             "你是顶级演示设计师，作品对标 Apple Keynote / Stripe / Linear / Vercel 的发布会幻灯。" +
             "唯一任务：直接输出一个完整、惊艳、可直接演示的 reveal.js HTML 文件。禁止调用任何工具或执行命令，禁止输出任何解释或代码块标记。\n\n" +
@@ -305,6 +310,177 @@ public class MdToPptController : ControllerBase
     }
 
     // ─────────────────────────────────────────────
+    // 自定义模板（上传参考图 → 视觉模型提取风格规范 → 生成时作为 AI 设计参照）
+    // ─────────────────────────────────────────────
+
+    /// <summary>当前用户的自定义模板列表（官方模板在前端常量里，这里只返回自定义）</summary>
+    [HttpGet("templates")]
+    public async Task<IActionResult> ListTemplates()
+    {
+        var userId = this.GetRequiredUserId();
+        var items = await _db.MdToPptTemplates
+            .Find(x => x.UserId == userId)
+            .SortByDescending(x => x.CreatedAt)
+            .Limit(50)
+            .ToListAsync();
+        return Ok(items.Select(t => new
+        {
+            id = t.Id,
+            name = t.Name,
+            styleSpec = t.StyleSpec.Length > 160 ? t.StyleSpec[..160] + "…" : t.StyleSpec,
+            bgColor = t.BgColor,
+            accentColor = t.AccentColor,
+            createdAt = t.CreatedAt,
+        }));
+    }
+
+    /// <summary>
+    /// 上传参考图创建自定义模板：视觉模型提取风格规范（配色 hex/字体气质/版式特征），
+    /// 不存原图，只存规范文本 + 两个主色（UI 色点）。
+    /// </summary>
+    [HttpPost("templates")]
+    public async Task<IActionResult> CreateTemplate([FromBody] MdToPptTemplateCreateRequest req)
+    {
+        var userId = this.GetRequiredUserId();
+        var name = (req.Name ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(name)) return BadRequest(new { error = "模板名不能为空" });
+        if (string.IsNullOrWhiteSpace(req.ImageDataUrl) || !req.ImageDataUrl.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase))
+            return BadRequest(new { error = "请上传参考图（dataURL 格式）" });
+        // base64 dataURL 上限 ~8MB，防止超大图打爆请求/视觉模型
+        if (req.ImageDataUrl.Length > 8 * 1024 * 1024)
+            return BadRequest(new { error = "参考图过大（限 6MB 以内）" });
+
+        var count = await _db.MdToPptTemplates.CountDocumentsAsync(x => x.UserId == userId);
+        if (count >= 20) return BadRequest(new { error = "自定义模板已达 20 个上限，请先删除不用的" });
+
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null,
+            SessionId: null,
+            UserId: userId,
+            ViewRole: null,
+            DocumentChars: null,
+            DocumentHash: null,
+            SystemPromptRedacted: "[MdToPpt-TemplateExtract]",
+            RequestType: "vision",
+            AppCallerCode: AppCallerRegistry.MdToPptAgent.Template.Extract));
+
+        var systemPrompt =
+            "你是资深视觉设计师。分析用户上传的设计参考图，输出一份可供 AI 生成 reveal.js PPT 时严格执行的风格规范。\n" +
+            "输出格式（纯文本，无 markdown 围栏）：\n" +
+            "第一行固定：COLORS: #背景主色 #强调色（两个 hex，估算最接近的值）\n" +
+            "随后 200-400 字规范正文，必须覆盖：背景与底色层次（hex）、文字主色与弱化色（hex）、强调色系（hex）、" +
+            "字体气质（衬线/无衬线/等宽，粗细与字号节奏）、版式特征（留白、网格、对齐、装饰元素如线条/色块/光晕）、整体气质一句话。\n" +
+            "禁止输出 emoji；颜色一律 hex。";
+
+        var gatewayRequest = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.MdToPptAgent.Template.Extract,
+            ModelType = ModelTypes.Vision,
+            Stream = true,
+            TimeoutSeconds = 90,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                    new JsonObject
+                    {
+                        ["role"] = "user",
+                        ["content"] = new JsonArray
+                        {
+                            new JsonObject { ["type"] = "text", ["text"] = $"参考图名称：{name}。请提取风格规范。" },
+                            new JsonObject
+                            {
+                                ["type"] = "image_url",
+                                ["image_url"] = new JsonObject { ["url"] = req.ImageDataUrl },
+                            },
+                        },
+                    },
+                },
+                ["temperature"] = 0.2,
+                ["max_tokens"] = 1024,
+            },
+        };
+
+        var fullText = new StringBuilder();
+        string? extractModel = null;
+        try
+        {
+            await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
+            {
+                if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null)
+                    extractModel = chunk.Resolution.ActualModel;
+                else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                    fullText.Append(chunk.Content);
+                else if (chunk.Type == GatewayChunkType.Error)
+                {
+                    var err = chunk.Error ?? chunk.Content ?? "风格提取失败";
+                    _logger.LogError("[MdToPpt-Template] vision error userId={UserId}: {Error}", userId, err);
+                    return StatusCode(502, new { error = "风格提取失败：" + err });
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[MdToPpt-Template] extract failed userId={UserId}", userId);
+            return StatusCode(500, new { error = ex.Message });
+        }
+
+        var spec = fullText.ToString().Trim();
+        if (spec.Length < 40)
+            return StatusCode(502, new { error = "风格提取结果过短，请换一张更清晰的参考图重试" });
+
+        // 解析首行 COLORS: #xxx #yyy（解析失败用默认色，不阻塞创建）
+        var bg = "#1a1a1e";
+        var accent = "#a78bfa";
+        var firstLineEnd = spec.IndexOf('\n');
+        var firstLine = firstLineEnd > 0 ? spec[..firstLineEnd] : spec;
+        var hexes = System.Text.RegularExpressions.Regex.Matches(firstLine, "#[0-9a-fA-F]{6}");
+        if (hexes.Count >= 1) bg = hexes[0].Value;
+        if (hexes.Count >= 2) accent = hexes[1].Value;
+
+        var template = new MdToPptTemplate
+        {
+            UserId = userId,
+            Name = name.Length > 30 ? name[..30] : name,
+            StyleSpec = spec,
+            BgColor = bg,
+            AccentColor = accent,
+            ExtractModel = extractModel,
+        };
+        await _db.MdToPptTemplates.InsertOneAsync(template, cancellationToken: CancellationToken.None);
+        return Ok(new
+        {
+            id = template.Id,
+            name = template.Name,
+            styleSpec = template.StyleSpec.Length > 160 ? template.StyleSpec[..160] + "…" : template.StyleSpec,
+            bgColor = template.BgColor,
+            accentColor = template.AccentColor,
+            createdAt = template.CreatedAt,
+        });
+    }
+
+    /// <summary>删除自定义模板</summary>
+    [HttpDelete("templates/{id}")]
+    public async Task<IActionResult> DeleteTemplate(string id)
+    {
+        var userId = this.GetRequiredUserId();
+        var result = await _db.MdToPptTemplates.DeleteOneAsync(x => x.Id == id && x.UserId == userId);
+        if (result.DeletedCount == 0) return NotFound(new { error = "模板不存在" });
+        return Ok(new { deleted = true });
+    }
+
+    /// <summary>按 ID 取当前用户的自定义模板（convert/patch 共用；空 ID 返回 null）</summary>
+    private async Task<MdToPptTemplate?> ResolveTemplateAsync(string userId, string? templateId)
+    {
+        if (string.IsNullOrWhiteSpace(templateId)) return null;
+        return await _db.MdToPptTemplates
+            .Find(x => x.Id == templateId && x.UserId == userId)
+            .FirstOrDefaultAsync();
+    }
+
+    // ─────────────────────────────────────────────
     // POST /api/md-to-ppt/prewarm
     // ─────────────────────────────────────────────
 
@@ -407,10 +583,11 @@ public class MdToPptController : ControllerBase
         await WriteSsePreambleAsync();
         await WriteEventAsync("start", null);
 
-        var run = await CreateRunAsync(userId, "agent", req.Theme, "convert", req.Content);
+        var template = await ResolveTemplateAsync(userId, req.TemplateId);
+        var run = await CreateRunAsync(userId, "agent", template != null ? $"custom:{template.Name}" : req.Theme, "convert", req.Content);
         await WriteEventAsync("run", new { runId = run.Id });
 
-        var systemPrompt = BuildPptSystemPrompt(req.Theme);
+        var systemPrompt = BuildPptSystemPrompt(req.Theme, template?.StyleSpec);
         var styleHint = $"目标页数约 {req.SlideCount ?? 8} 页。";
         var userContent = $"{styleHint}\n\n---\n\n# 用户内容\n\n{req.Content?.Trim()}";
 
@@ -430,12 +607,13 @@ public class MdToPptController : ControllerBase
         await WriteSsePreambleAsync();
         await WriteEventAsync("start", null);
 
-        var run = await CreateRunAsync(userId, "agent", req.Theme, "patch", req.SlideRequest);
+        var template = await ResolveTemplateAsync(userId, req.TemplateId);
+        var run = await CreateRunAsync(userId, "agent", template != null ? $"custom:{template.Name}" : req.Theme, "patch", req.SlideRequest);
         await WriteEventAsync("run", new { runId = run.Id });
 
-        // 风格主题随 patch 下发：换风格 = AI 参照该风格重绘整页 HTML（设计 token、
+        // 风格/模板随 patch 下发：换风格 = AI 参照该风格重绘整页 HTML（设计 token、
         // 字体、版式气质都在系统提示词里），不是前端套一层 CSS 换皮。
-        var systemPrompt = BuildPptSystemPrompt(req.Theme);
+        var systemPrompt = BuildPptSystemPrompt(req.Theme, template?.StyleSpec);
         // 前端的"指定第几页"输入框是 1-based(min=1)且原样下发,这里直接用,不能再 +1(否则
         // 输入 3 会被改成第 4 页);留空时 SlideIndex 为 null,语义是整份 PPT,不能写成"第 0 页"。
         var pageHint = req.SlideIndex.HasValue
@@ -1159,7 +1337,8 @@ public class MdToPptConvertRequest
     /// <summary>主题（可选）</summary>
     public string? Theme { get; set; }
 
-
+    /// <summary>自定义模板 ID（可选；优先于 Theme 生效）</summary>
+    public string? TemplateId { get; set; }
 }
 
 public class MdToPptPatchRequest
@@ -1176,7 +1355,17 @@ public class MdToPptPatchRequest
     /// <summary>风格主题（可选）。换风格走 patch 由 AI 按该风格重绘，前端不做 CSS 换皮</summary>
     public string? Theme { get; set; }
 
+    /// <summary>自定义模板 ID（可选；优先于 Theme 生效）</summary>
+    public string? TemplateId { get; set; }
+}
 
+public class MdToPptTemplateCreateRequest
+{
+    /// <summary>模板名（默认取参考图文件名，可改）</summary>
+    public string? Name { get; set; }
+
+    /// <summary>参考图 dataURL（data:image/...;base64,...，限 6MB）</summary>
+    public string? ImageDataUrl { get; set; }
 }
 
 public class MdToPptPublishRequest

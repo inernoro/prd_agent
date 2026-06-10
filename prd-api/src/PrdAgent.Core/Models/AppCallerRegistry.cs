@@ -1577,6 +1577,17 @@ public static class MdToPptAgent
         )]
         public const string ChatRefine = "md-to-ppt-agent.chat-refine::chat";
     }
+
+    public static class Template
+    {
+        [AppCallerMetadata(
+            "MD转PPT-模板风格提取",
+            "用户上传参考图创建自定义模板时，视觉模型从图中提取风格规范（配色/字体气质/版式特征），生成 PPT 时作为 AI 的设计参照",
+            ModelTypes = new[] { PrdAgent.Core.Models.ModelTypes.Vision },
+            Category = "Document"
+        )]
+        public const string Extract = "md-to-ppt-agent.template-extract::vision";
+    }
 }
 }
 
