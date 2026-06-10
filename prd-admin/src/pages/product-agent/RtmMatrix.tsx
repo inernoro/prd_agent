@@ -10,6 +10,7 @@ import { AlertTriangle, Puzzle } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { getRtm, type RtmData } from '@/services/real/productAgent';
 import { ITEM_GRADE_LABEL } from './types';
+import './product-cards.css';
 
 export function RtmMatrix({ productId }: { productId: string }) {
   const navigate = useNavigate();
@@ -104,7 +105,7 @@ export function RtmMatrix({ productId }: { productId: string }) {
 
 function Stat({ label, value, warn }: { label: string; value: number; warn?: boolean }) {
   return (
-    <div className={`rounded-lg border px-3 py-2 ${warn ? 'border-red-500/30 bg-red-500/[0.06]' : 'border-white/10 bg-white/[0.02]'}`}>
+    <div className={`pa-card rounded-lg border px-3 py-2 ${warn ? 'border-red-500/30 bg-red-500/[0.06]' : 'border-white/10 bg-white/[0.02]'}`}>
       <div className={`text-lg font-semibold leading-none ${warn ? 'text-red-300' : 'text-white/90'}`}>{value}</div>
       <div className="text-[10px] text-white/45 mt-1">{label}</div>
     </div>

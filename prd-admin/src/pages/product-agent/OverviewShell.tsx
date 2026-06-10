@@ -250,7 +250,7 @@ function DashboardSection({ stats, loading, onGoto }: { stats: OverviewStats | n
       </div>
 
       {/* 最近活动 */}
-      <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+      <div className="pa-row rounded-xl border border-white/10 bg-white/[0.02] p-4">
         <div className="text-sm font-medium text-white/70 mb-3">最近活动</div>
         {stats.recent.length === 0 ? (
           <div className="text-xs text-white/40 py-4 text-center">暂无活动</div>
@@ -283,7 +283,7 @@ function DashboardSection({ stats, loading, onGoto }: { stats: OverviewStats | n
 
 function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+    <div className="pa-card rounded-xl border border-white/10 bg-white/[0.02] p-4">
       <div className="text-sm font-medium text-white/70 mb-2">{title}</div>
       {children}
     </div>

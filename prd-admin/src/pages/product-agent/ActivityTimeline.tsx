@@ -13,6 +13,7 @@ import type { AdminUser } from '@/types/admin';
 import { sanitizeHtml } from '@/lib/sanitizeHtml';
 import { RichTextField } from './DynamicForm';
 import { listActivities, addComment, type ProductActivity } from '@/services/real/productAgent';
+import './product-cards.css';
 
 function fmt(s: string): string {
   const d = new Date(s);
@@ -134,7 +135,7 @@ function MentionPicker({ users, onPick }: { users: AdminUser[]; onPick: (id: str
 function ActivityRow({ a }: { a: ProductActivity }) {
   if (a.type === 'comment') {
     return (
-      <div className="flex flex-col gap-1 rounded-lg border border-white/10 bg-white/[0.02] p-3">
+      <div className="pa-row flex flex-col gap-1 rounded-lg border border-white/10 bg-white/[0.02] p-3">
         <div className="flex items-center gap-2">
           <MessageSquare size={13} className="text-cyan-300/80" />
           <span className="text-xs text-white/80">{a.actorName || a.actorId}</span>
