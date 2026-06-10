@@ -118,6 +118,13 @@ public sealed class GitHubLogEntry
 public sealed class GitHubLogsView : IChangelogView
 {
     public List<GitHubLogEntry> Logs { get; set; } = new();
+    /// <summary>
+    /// 仓库全历史提交总数（不受「最近一周」窗口限制）。
+    /// 本地源走 git rev-list --count（浅克隆数不准则置 null 由 GitHub 兜底），
+    /// GitHub 源用 commits?per_page=1 的 Link header rel="last" 页码反推。
+    /// null = 暂未统计成功，前端应降级展示窗口内条数。
+    /// </summary>
+    public int? RepoTotalCommitCount { get; set; }
     public bool DataSourceAvailable { get; set; }
     public string Source { get; set; } = "none";
     public DateTime FetchedAt { get; set; }
@@ -516,7 +523,23 @@ public sealed class ChangelogReader : IChangelogReader
     private async Task<GitHubLogsView> FetchGitHubLogsAsync(int limit)
     {
         var localView = await BuildGitHubLogsViewFromLocalAsync(limit).ConfigureAwait(false);
-        if (localView.DataSourceAvailable) return localView;
+        if (localView.DataSourceAvailable)
+        {
+            // 浅克隆等场景本地数不出全量提交数 → 用 GitHub API 反推兜底（1 次调用，失败不影响列表）
+            if (localView.RepoTotalCommitCount == null)
+            {
+                try
+                {
+                    localView.RepoTotalCommitCount =
+                        await TryCountTotalCommitsFromGitHubAsync(CreateGitHubClient()).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "[Changelog] GitHub 总提交数兜底统计失败（保持 null）");
+                }
+            }
+            return localView;
+        }
 
         try
         {
@@ -701,7 +724,68 @@ public sealed class ChangelogReader : IChangelogReader
 
         view.DataSourceAvailable = true;
         view.Logs = logs;
+        view.RepoTotalCommitCount =
+            await TryCountLocalTotalCommitsAsync(root, GetGitHubBranch()).ConfigureAwait(false)
+            ?? await TryCountLocalTotalCommitsAsync(root, null).ConfigureAwait(false);
         return view;
+    }
+
+    /// <summary>
+    /// 本地仓库全历史提交总数（git rev-list --count）。浅克隆只能数到截断处、
+    /// 结果严重偏小，此时返回 null 交给 GitHub API 兜底。
+    /// </summary>
+    private async Task<int?> TryCountLocalTotalCommitsAsync(string root, string? branch)
+    {
+        try
+        {
+            var shallow = await RunGitAsync(root, new[] { "rev-parse", "--is-shallow-repository" }).ConfigureAwait(false);
+            if (shallow == null || shallow.Trim().Equals("true", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            var output = await RunGitAsync(root, new[] { "rev-list", "--count", branch ?? "HEAD" }).ConfigureAwait(false);
+            return int.TryParse(output?.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var n) && n > 0
+                ? n
+                : null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[Changelog] 本地总提交数统计异常 branch={Branch}", branch ?? "HEAD");
+            return null;
+        }
+    }
+
+    /// <summary>跑一条 git 命令并返回 stdout（exit code 非 0 返回 null）</summary>
+    private static async Task<string?> RunGitAsync(string root, IReadOnlyList<string> args)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "git",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        startInfo.ArgumentList.Add("-C");
+        startInfo.ArgumentList.Add(root);
+        foreach (var arg in args)
+        {
+            startInfo.ArgumentList.Add(arg);
+        }
+
+        using var process = new Process { StartInfo = startInfo };
+        if (!process.Start())
+        {
+            return null;
+        }
+
+        // 并行读 stdout/stderr，避免单管道先读满导致子进程阻塞死锁
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
+        await process.WaitForExitAsync().ConfigureAwait(false);
+        return process.ExitCode == 0 ? stdoutTask.Result : null;
     }
 
     // ── GitHub 源 ─────────────────────────────────────────────────────
@@ -1169,7 +1253,56 @@ public sealed class ChangelogReader : IChangelogReader
             .OrderByDescending(l => l.CommitTimeUtc)
             .ToList();
         view.DataSourceAvailable = true;
+        view.RepoTotalCommitCount = await TryCountTotalCommitsFromGitHubAsync(client).ConfigureAwait(false);
         return view;
+    }
+
+    // Link header 形如 <https://api.github.com/...&page=24735>; rel="last"
+    private static readonly Regex GitHubLinkLastPageRegex =
+        new("[?&]page=(\\d+)[^>]*>;\\s*rel=\"last\"", RegexOptions.Compiled);
+
+    /// <summary>
+    /// 仓库全历史提交总数：请求 commits?per_page=1，用 Link header rel="last" 的页码反推
+    /// （每页 1 条 → 末页页码 = 总提交数）。仅 1 次 API 调用，不翻页。失败返回 null。
+    /// </summary>
+    private async Task<int?> TryCountTotalCommitsFromGitHubAsync(HttpClient client)
+    {
+        var owner = GetGitHubOwner();
+        var repo = GetGitHubRepo();
+        var branch = GetGitHubBranch();
+        var apiBase = GetGitHubApiBase();
+        var url = $"{apiBase}/repos/{owner}/{repo}/commits?sha={branch}&per_page=1";
+        try
+        {
+            using var req = CreateGitHubApiRequest(HttpMethod.Get, url);
+            using var resp = await client.SendAsync(req).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("[Changelog] GitHub 总提交数统计失败 {Url} status={Status}", url, (int)resp.StatusCode);
+                return null;
+            }
+
+            if (resp.Headers.TryGetValues("Link", out var linkValues))
+            {
+                var match = GitHubLinkLastPageRegex.Match(string.Join(",", linkValues));
+                if (match.Success &&
+                    int.TryParse(match.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var pages) &&
+                    pages > 0)
+                {
+                    return pages;
+                }
+            }
+
+            // 无 Link header = 只有一页（总提交数 0 或 1），直接数返回数组长度
+            var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.ValueKind == JsonValueKind.Array ? doc.RootElement.GetArrayLength() : null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[Changelog] GitHub 总提交数统计异常 {Url}", url);
+            return null;
+        }
     }
 
     private GitHubLogEntry? ParseGitHubCommitItem(JsonElement item)

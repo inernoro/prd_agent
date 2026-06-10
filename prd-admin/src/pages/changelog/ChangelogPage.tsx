@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   Sparkles, Calendar, Tag, RefreshCw, Filter, X, FileText,
   Wrench, Zap, Gauge, Shuffle, Shield, Package, FlaskConical, Cog,
-  Github, GitCommit, ExternalLink, Brain, Wand2, Radio,
+  Github, GitCommit, ExternalLink, Brain, Wand2, Radio, UserCheck,
 } from 'lucide-react';
 import { useChangelogStore } from '@/stores/changelogStore';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
@@ -23,6 +23,7 @@ import {
 } from './components/WeeklyReportsTab';
 import { WeeklyReportSourcesProvider } from './components/weeklyReportSourcesContext';
 import { AiNewsTimeline } from '@/components/ai-news/AiNewsTimeline';
+import { groupGitHubLogsByWeek } from './lib/groupGitHubLogsByWeek';
 
 
 interface TypeBadgeMeta {
@@ -101,7 +102,8 @@ interface FlatEntry extends ChangelogEntry {
 type HistorySubtab = 'releases' | 'fragments' | 'github_logs';
 type HistorySummaryStatus = 'idle' | 'loading' | 'ready' | 'error';
 
-const GITHUB_LOGS_CACHE_KEY = 'changelog:github-logs:v2';
+// v3：新增 repoTotalCommitCount / matched* 字段，bump key 使旧缓存自然失效
+const GITHUB_LOGS_CACHE_KEY = 'changelog:github-logs:v3';
 const GITHUB_LOGS_CACHE_TTL_MS = 5 * 60 * 1000;
 /** 首屏只拉 80 条（与 visible=80 对齐），后续走 cursor 续接 */
 const GITHUB_LOGS_INITIAL_FETCH = 80;
@@ -682,7 +684,9 @@ export default function ChangelogPage() {
     const unpublished = currentWeek?.totalEntries
       ?? currentWeek?.fragments.reduce((sum, fragment) => sum + fragment.entries.length, 0)
       ?? 0;
-    const logs = githubLogs?.totalCount ?? githubLogs?.logs.length ?? 0;
+    // chip 显示仓库全历史提交总数（用户关心的是「这个仓库一共提交了多少次」），
+    // 统计失败时降级为「最近一周」窗口内条数
+    const logs = githubLogs?.repoTotalCommitCount ?? githubLogs?.totalCount ?? githubLogs?.logs.length ?? 0;
     return { releases: released, fragments: unpublished, github_logs: logs };
   }, [currentWeek, githubLogs, releases]);
 
@@ -815,6 +819,19 @@ export default function ChangelogPage() {
     GITHUB_LOGS_VISIBLE_STEP,
     scrollRootRef
   );
+
+  const githubLogVisibleCount = githubLogList.visibleCount;
+  // 当前可见的提交按自然周分组；startIndex 用于保持入场动画的全局 stagger 次序
+  const githubLogWeekGroups = useMemo(() => {
+    const rows = githubLogs?.logs ?? [];
+    const groups = groupGitHubLogsByWeek(rows.slice(0, githubLogVisibleCount));
+    let offset = 0;
+    return groups.map((group) => {
+      const withOffset = { ...group, startIndex: offset };
+      offset += group.logs.length;
+      return withOffset;
+    });
+  }, [githubLogs, githubLogVisibleCount]);
 
   useEffect(() => {
     if (activeTab !== 'update_center' || historySubtab !== 'releases') return;
@@ -1163,14 +1180,17 @@ export default function ChangelogPage() {
               }}
               title={`${activeSummaryLabel}总数量`}
             >
-              共 {activeTotal} 条
+              共 {activeTotal} {historySubtab === 'github_logs' ? '次提交' : '条'}
             </span>
             <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
               {historySubtab === 'releases' && '来自 admin 生产发布流水'}
               {historySubtab === 'fragments' && '来自已合并但未上生产的 changelogs/*.md 碎片'}
               {historySubtab === 'github_logs' && (
                 <>
-                  {githubLogs?.source === 'local' ? '来自本地 git log · 最近一周' : '来自 GitHub commits API · 最近一周'}
+                  {githubLogs?.source === 'local' ? '来自本地 git log' : '来自 GitHub commits API'}
+                  {githubLogs?.repoTotalCommitCount != null
+                    ? ` · 仓库总提交 ${githubLogs.repoTotalCommitCount} 次 · 下方列出最近一周 ${githubLogs.totalCount ?? githubLogs.logs.length} 条`
+                    : ' · 最近一周'}
                   {' · 35 秒自动同步'}
                   {liveFetchedAtRelative ? ` · ${liveFetchedAtRelative}` : ''}
                 </>
@@ -1525,17 +1545,49 @@ export default function ChangelogPage() {
             )}
 
             {githubLogs && githubLogRows.length > 0 && (
-              <div className="flex flex-col gap-2">
-                <AnimatePresence initial={false}>
-                  {githubLogRows.slice(0, githubLogList.visibleCount).map((log, index) => (
-                    <GitHubLogRow
-                      key={log.sha}
-                      log={log}
-                      index={index}
-                      isLiveNew={newGitHubLogShas.has(log.sha)}
-                    />
-                  ))}
-                </AnimatePresence>
+              <div className="flex flex-col gap-4">
+                {githubLogWeekGroups.map((group) => (
+                  <div
+                    key={group.weekStart}
+                    className="rounded-xl px-4 py-3"
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.025)',
+                      border: '1px solid rgba(255, 255, 255, 0.06)',
+                    }}
+                  >
+                    <div className="flex items-center gap-2 mb-3 flex-wrap">
+                      <div
+                        className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md"
+                        style={{
+                          background: 'rgba(255, 255, 255, 0.04)',
+                          border: '1px solid rgba(255, 255, 255, 0.08)',
+                          color: 'var(--text-secondary)',
+                          fontSize: '13px',
+                          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                          fontWeight: 600,
+                        }}
+                      >
+                        <Calendar size={13} />
+                        {group.label}
+                      </div>
+                      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        · {group.logs.length} 条提交
+                      </span>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <AnimatePresence initial={false}>
+                        {group.logs.map((log, idx) => (
+                          <GitHubLogRow
+                            key={log.sha}
+                            log={log}
+                            index={group.startIndex + idx}
+                            isLiveNew={newGitHubLogShas.has(log.sha)}
+                          />
+                        ))}
+                      </AnimatePresence>
+                    </div>
+                  </div>
+                ))}
                 <IncrementalSentinel
                   refEl={githubLogList.sentinelRef}
                   show={githubLogList.hasMore || (githubLogs.hasMore ?? false)}
@@ -1743,6 +1795,20 @@ function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: n
         )}
         {log.authorName}
       </div>
+      {log.matchedDisplayName && (
+        <span
+          className="shrink-0 inline-flex items-center gap-1 h-[26px] px-2 rounded-md text-[12px]"
+          style={{
+            background: 'rgba(34, 197, 94, 0.10)',
+            border: '1px solid rgba(34, 197, 94, 0.28)',
+            color: '#86efac',
+          }}
+          title={`GitHub 账号已匹配系统用户：${log.matchedDisplayName}${log.matchedUsername && log.matchedUsername !== log.matchedDisplayName ? `（${log.matchedUsername}）` : ''}`}
+        >
+          <UserCheck size={11} />
+          {log.matchedDisplayName}
+        </span>
+      )}
       <div className="text-[13px] leading-relaxed flex-1 truncate" style={{ color: 'var(--text-secondary)', minWidth: 0 }}>
         {log.message}
       </div>
