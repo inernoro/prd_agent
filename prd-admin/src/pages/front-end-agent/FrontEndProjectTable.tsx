@@ -58,7 +58,7 @@ function AddressLink({ label, url }: { label: string; url?: string }) {
       href={url}
       target="_blank"
       rel="noreferrer"
-      className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] text-sky-200/85 hover:bg-white/[0.08]"
+      className="fea-link inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] text-sky-200/85 hover:bg-white/[0.08]"
       title={url}
     >
       {label}
@@ -126,7 +126,7 @@ function ProjectTableBody({
               <button
                 type="button"
                 onClick={() => onCopy(project)}
-                className="h-8 shrink-0 rounded-lg border border-white/10 bg-white/5 px-2.5 text-[11px] text-white/65 hover:bg-white/10 inline-flex items-center gap-1.5 transition-colors duration-200"
+                className="fea-btn h-8 shrink-0 rounded-lg border border-white/10 bg-white/5 px-2.5 text-[11px] text-white/65 hover:bg-white/10 inline-flex items-center gap-1.5"
               >
                 <Clipboard className="w-3.5 h-3.5" />
                 复制地址
@@ -219,7 +219,7 @@ export function FrontEndProjectTableModal({ open, onClose }: { open: boolean; on
           <button
             type="button"
             onClick={onClose}
-            className="h-8 w-8 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 inline-flex items-center justify-center text-white/60"
+            className="fea-btn h-8 w-8 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 inline-flex items-center justify-center text-white/60"
             aria-label="关闭"
           >
             <X className="w-4 h-4" />

@@ -24,6 +24,7 @@ import {
 import { FrontEndPdaGuideModal, FrontEndPdaRailCard } from './FrontEndPdaGuide';
 import { FrontEndProjectRailCard, FrontEndProjectTableModal } from './FrontEndProjectTable';
 import { FrontEndScreenshotInput, type ScreenshotAttachment } from './FrontEndScreenshotInput';
+import { FrontEndCosmosBackground } from './FrontEndCosmosBackground';
 import './front-end-agent.css';
 
 interface TaskDefinition {
@@ -279,12 +280,8 @@ export function FrontEndAgentPage() {
   const ActiveIcon = activeTask.icon;
 
   return (
-    <div className="h-full min-h-0 flex flex-col overflow-hidden relative">
-      <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
-        <div className="fea-hero-orb absolute -left-20 top-8 w-56 h-56 rounded-full bg-sky-500/10 blur-3xl" />
-        <div className="fea-hero-orb-alt absolute right-10 top-0 w-48 h-48 rounded-full bg-amber-500/10 blur-3xl" />
-        <div className="absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-sky-500/[0.06] to-transparent" />
-      </div>
+    <div className="fea-page h-full min-h-0 flex flex-col overflow-hidden relative bg-[#02040a]">
+      <FrontEndCosmosBackground />
 
       <header className="relative shrink-0 px-6 pt-5 pb-3 fea-fade-up">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
@@ -341,7 +338,7 @@ export function FrontEndAgentPage() {
       </header>
 
       <div className="relative flex-1 min-h-0 px-6 pb-5 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_280px] gap-4">
-        <section className="min-h-0 rounded-2xl border border-white/10 bg-white/[0.035] backdrop-blur-sm flex flex-col overflow-hidden fea-fade-up">
+        <section className="fea-panel min-h-0 rounded-2xl border border-white/10 flex flex-col overflow-hidden fea-fade-up">
           <div className="shrink-0 px-4 py-3 border-b border-white/10 flex items-center gap-2">
             <ActiveIcon className={`w-4 h-4 ${activeAccent.soft}`} />
             <div className="min-w-0">
@@ -416,7 +413,7 @@ export function FrontEndAgentPage() {
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="h-8 px-3 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-xs text-white/70 inline-flex items-center gap-1.5 transition-colors duration-200"
+                className="fea-btn h-8 px-3 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-xs text-white/70 inline-flex items-center gap-1.5"
               >
                 <FileText className="w-3.5 h-3.5" />
                 上传文本
@@ -424,7 +421,7 @@ export function FrontEndAgentPage() {
               <button
                 type="button"
                 onClick={handleReset}
-                className="h-8 px-3 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-xs text-white/55 inline-flex items-center gap-1.5 transition-colors duration-200"
+                className="fea-btn h-8 px-3 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-xs text-white/55 inline-flex items-center gap-1.5"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
                 清空
@@ -437,7 +434,7 @@ export function FrontEndAgentPage() {
               <button
                 type="button"
                 onClick={handleAbort}
-                className="w-full h-10 rounded-xl border border-rose-400/25 bg-rose-500/10 hover:bg-rose-500/15 text-sm text-rose-100 inline-flex items-center justify-center gap-2 transition-colors duration-200"
+                className="fea-btn fea-btn-danger w-full h-10 rounded-xl border border-rose-400/25 bg-rose-500/10 hover:bg-rose-500/15 text-sm text-rose-100 inline-flex items-center justify-center gap-2"
               >
                 <StopCircle className="w-4 h-4" />
                 中止
@@ -446,7 +443,7 @@ export function FrontEndAgentPage() {
               <button
                 type="button"
                 onClick={handleGenerate}
-                className={`w-full h-10 rounded-xl border text-sm inline-flex items-center justify-center gap-2 transition-all duration-200 ${activeAccent.border} ${activeAccent.bg} ${activeAccent.text} hover:brightness-110`}
+                className={`fea-btn fea-btn-primary w-full h-10 rounded-xl border text-sm inline-flex items-center justify-center gap-2 ${activeAccent.border} ${activeAccent.bg} ${activeAccent.text}`}
               >
                 <Sparkles className="w-4 h-4" />
                 生成前端方案
@@ -455,7 +452,7 @@ export function FrontEndAgentPage() {
           </div>
         </section>
 
-        <section className="min-h-0 rounded-2xl border border-white/10 bg-[#0b0d12]/90 backdrop-blur-sm flex flex-col overflow-hidden fea-fade-up">
+        <section className="fea-panel min-h-0 rounded-2xl border border-white/10 flex flex-col overflow-hidden fea-fade-up">
           <div className="shrink-0 px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
             <div className="min-w-0">
               <h2 className="text-sm font-medium text-white">输出结果</h2>
@@ -467,7 +464,7 @@ export function FrontEndAgentPage() {
               type="button"
               onClick={handleCopy}
               disabled={!output.trim()}
-              className="h-8 px-3 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 disabled:opacity-40 text-xs text-white/65 inline-flex items-center gap-1.5 transition-colors duration-200"
+              className="fea-btn h-8 px-3 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 disabled:opacity-40 text-xs text-white/65 inline-flex items-center gap-1.5"
             >
               <Clipboard className="w-3.5 h-3.5" />
               复制

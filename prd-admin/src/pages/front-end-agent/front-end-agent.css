@@ -23,6 +23,21 @@
   50% { box-shadow: 0 0 0 6px rgba(56, 189, 248, 0); }
 }
 
+@keyframes fea-cosmos-drift-a {
+  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.55; }
+  50% { transform: translate(28px, -18px) scale(1.12); opacity: 0.85; }
+}
+
+@keyframes fea-cosmos-drift-b {
+  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.4; }
+  50% { transform: translate(-22px, 14px) scale(1.08); opacity: 0.7; }
+}
+
+@keyframes fea-cosmos-drift-c {
+  0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.35; }
+  50% { transform: translate(calc(-50% + 12px), calc(-50% - 10px)) scale(1.06); opacity: 0.6; }
+}
+
 .fea-hero-orb {
   animation: fea-orb-drift 9s ease-in-out infinite;
 }
@@ -31,13 +46,27 @@
   animation: fea-orb-drift-alt 11s ease-in-out infinite;
 }
 
+.fea-cosmos-nebula-a {
+  animation: fea-cosmos-drift-a 18s ease-in-out infinite;
+}
+
+.fea-cosmos-nebula-b {
+  animation: fea-cosmos-drift-b 22s ease-in-out infinite;
+}
+
+.fea-cosmos-nebula-c {
+  left: 33%;
+  top: 50%;
+  animation: fea-cosmos-drift-c 26s ease-in-out infinite;
+}
+
 .fea-title-shimmer {
-  background: linear-gradient(90deg, #e2e8f0 0%, #38bdf8 35%, #fbbf24 65%, #e2e8f0 100%);
+  background: linear-gradient(90deg, #c8d4e8 0%, #7dd3fc 28%, #a5b4fc 52%, #94a3b8 78%, #c8d4e8 100%);
   background-size: 200% auto;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  animation: fea-shimmer 6s linear infinite;
+  animation: fea-shimmer 7s linear infinite;
 }
 
 .fea-fade-up {
@@ -45,23 +74,98 @@
 }
 
 .fea-rail-card {
-  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.28s ease, box-shadow 0.28s ease, background 0.28s ease;
+  cursor: pointer;
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.28s ease, box-shadow 0.28s ease, background 0.28s ease, filter 0.28s ease;
 }
 
 .fea-rail-card:hover {
-  transform: translateY(-2px);
+  transform: translateY(-3px) scale(1.01);
+  filter: brightness(1.06);
+}
+
+.fea-rail-card:active {
+  transform: translateY(-1px) scale(0.995);
 }
 
 .fea-task-pill {
-  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.22s ease, background 0.22s ease, box-shadow 0.22s ease;
+  cursor: pointer;
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.22s ease, background 0.22s ease, box-shadow 0.22s ease, filter 0.22s ease;
 }
 
 .fea-task-pill:hover {
-  transform: translateY(-1px);
+  transform: translateY(-2px) scale(1.03);
+  filter: brightness(1.08);
+}
+
+.fea-task-pill:active {
+  transform: translateY(0) scale(0.98);
 }
 
 .fea-task-pill-active {
   animation: fea-pulse-ring 2.4s ease-in-out infinite;
+}
+
+/* 页面内可点击按钮：手型 + 悬停抬起 + 按下反馈 */
+.fea-page button,
+.fea-modal-panel button {
+  cursor: pointer;
+}
+
+.fea-page button:disabled,
+.fea-modal-panel button:disabled {
+  cursor: not-allowed;
+}
+
+.fea-btn {
+  cursor: pointer;
+  transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1), background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease, opacity 0.2s ease;
+}
+
+.fea-btn:not(:disabled):hover {
+  transform: translateY(-1px) scale(1.02);
+  filter: brightness(1.08);
+  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.35);
+}
+
+.fea-btn:not(:disabled):active {
+  transform: translateY(0) scale(0.98);
+  filter: brightness(1.02);
+}
+
+.fea-btn:disabled {
+  cursor: not-allowed;
+  transform: none;
+  filter: none;
+  box-shadow: none;
+}
+
+.fea-btn-primary:not(:disabled):hover {
+  box-shadow: 0 6px 28px rgba(56, 189, 248, 0.18);
+}
+
+.fea-btn-danger:not(:disabled):hover {
+  box-shadow: 0 6px 24px rgba(244, 63, 94, 0.16);
+}
+
+.fea-link {
+  cursor: pointer;
+  transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease, color 0.2s ease, filter 0.2s ease;
+}
+
+.fea-link:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.06);
+}
+
+.fea-link:active {
+  transform: translateY(0) scale(0.99);
+}
+
+.fea-panel {
+  background: rgba(8, 12, 22, 0.62);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .fea-modal-backdrop {
@@ -70,4 +174,24 @@
 
 .fea-modal-panel {
   animation: fea-fade-up 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fea-hero-orb,
+  .fea-hero-orb-alt,
+  .fea-cosmos-nebula-a,
+  .fea-cosmos-nebula-b,
+  .fea-cosmos-nebula-c,
+  .fea-title-shimmer,
+  .fea-fade-up,
+  .fea-task-pill-active {
+    animation: none;
+  }
+
+  .fea-btn:not(:disabled):hover,
+  .fea-task-pill:hover,
+  .fea-rail-card:hover,
+  .fea-link:hover {
+    transform: none;
+  }
 }

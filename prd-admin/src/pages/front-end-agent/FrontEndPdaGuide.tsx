@@ -219,7 +219,7 @@ export function FrontEndPdaGuideModal({ open, onClose }: { open: boolean; onClos
           <button
             type="button"
             onClick={onClose}
-            className="h-8 w-8 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 inline-flex items-center justify-center text-white/60"
+            className="fea-btn h-8 w-8 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 inline-flex items-center justify-center text-white/60"
             aria-label="关闭"
           >
             <X className="w-4 h-4" />
@@ -239,7 +239,7 @@ export function FrontEndPdaGuideModal({ open, onClose }: { open: boolean; onClos
           <button
             type="button"
             onClick={() => copyText(RELEASE_CHECKLIST, '已复制 PDA 发布检查清单')}
-            className="h-9 shrink-0 rounded-xl border border-white/10 bg-white/5 px-3 text-xs text-white/65 hover:bg-white/10 inline-flex items-center gap-1.5"
+            className="fea-btn h-9 shrink-0 rounded-xl border border-white/10 bg-white/5 px-3 text-xs text-white/65 hover:bg-white/10 inline-flex items-center gap-1.5"
           >
             <PackageCheck className="w-3.5 h-3.5" />
             复制发布清单
@@ -247,7 +247,7 @@ export function FrontEndPdaGuideModal({ open, onClose }: { open: boolean; onClos
           <button
             type="button"
             onClick={() => copyText(AI_BUG_PROMPT, '已复制 PDA 排障提示词')}
-            className="h-9 shrink-0 rounded-xl border border-white/10 bg-white/5 px-3 text-xs text-white/65 hover:bg-white/10 inline-flex items-center gap-1.5"
+            className="fea-btn h-9 shrink-0 rounded-xl border border-white/10 bg-white/5 px-3 text-xs text-white/65 hover:bg-white/10 inline-flex items-center gap-1.5"
           >
             <Terminal className="w-3.5 h-3.5" />
             复制排障提示词
@@ -265,7 +265,7 @@ export function FrontEndPdaGuideModal({ open, onClose }: { open: boolean; onClos
                 href={link.url}
                 target="_blank"
                 rel="noreferrer"
-                className="rounded-xl border border-white/10 bg-black/15 px-3 py-2 text-xs text-sky-200/85 hover:bg-white/[0.06] inline-flex items-center justify-between gap-2 transition-colors duration-200"
+                className="fea-link rounded-xl border border-white/10 bg-black/15 px-3 py-2 text-xs text-sky-200/85 hover:bg-white/[0.06] inline-flex items-center justify-between gap-2"
               >
                 <span className="truncate">{link.label}</span>
                 <ExternalLink className="w-3.5 h-3.5 shrink-0" />
@@ -292,7 +292,7 @@ export function FrontEndPdaGuideModal({ open, onClose }: { open: boolean; onClos
                     <button
                       type="button"
                       onClick={() => copyText(sectionText(section), `已复制 ${section.title}`)}
-                      className="h-8 shrink-0 rounded-lg border border-white/10 bg-white/5 px-2.5 text-[11px] text-white/65 hover:bg-white/10 inline-flex items-center gap-1.5"
+                      className="fea-btn h-8 shrink-0 rounded-lg border border-white/10 bg-white/5 px-2.5 text-[11px] text-white/65 hover:bg-white/10 inline-flex items-center gap-1.5"
                     >
                       <Clipboard className="w-3.5 h-3.5" />
                       复制

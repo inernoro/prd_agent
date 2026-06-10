@@ -135,7 +135,7 @@ export function FrontEndScreenshotInput({
               <button
                 type="button"
                 onClick={() => removeScreenshot(shot.id)}
-                className="absolute top-1.5 right-1.5 h-6 w-6 rounded-md border border-white/15 bg-black/55 text-white/70 opacity-0 group-hover:opacity-100 hover:bg-black/75 inline-flex items-center justify-center transition-opacity duration-200"
+                className="fea-btn absolute top-1.5 right-1.5 h-6 w-6 rounded-md border border-white/15 bg-black/55 text-white/70 opacity-0 group-hover:opacity-100 hover:bg-black/75 inline-flex items-center justify-center transition-opacity duration-200"
                 aria-label="移除截图"
               >
                 <X className="w-3.5 h-3.5" />
@@ -156,7 +156,7 @@ export function FrontEndScreenshotInput({
       <button
         type="button"
         onClick={() => imageInputRef.current?.click()}
-        className="mt-2 h-8 px-3 rounded-lg border border-violet-400/20 bg-violet-500/10 hover:bg-violet-500/15 text-xs text-violet-100 inline-flex items-center gap-1.5 transition-colors duration-200"
+        className="fea-btn mt-2 h-8 px-3 rounded-lg border border-violet-400/20 bg-violet-500/10 hover:bg-violet-500/15 text-xs text-violet-100 inline-flex items-center gap-1.5"
       >
         <ImageIcon className="w-3.5 h-3.5" />
         上传截图
