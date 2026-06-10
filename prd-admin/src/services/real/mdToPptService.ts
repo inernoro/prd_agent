@@ -44,13 +44,14 @@ export async function getMdToPptOutline(
 
 // ============ Types ============
 
+// 生成引擎只有 CDS Agent 一条路（2026-06-10 用户拍板移除 MAP 直出）。
+// 类型保留用于历史 run 记录展示（旧 run 的 engine 字段可能是 'map'）。
 export type MdToPptEngine = 'map' | 'agent';
 
 export interface MdToPptConvertRequest {
   content: string;
   slideCount?: number;
   theme?: string;
-  engine?: MdToPptEngine;
 }
 
 export interface MdToPptPatchRequest {
@@ -59,7 +60,6 @@ export interface MdToPptPatchRequest {
   slideIndex?: number;
   /** 风格主题：换风格走 patch 由 AI 按该风格重绘（不是前端 CSS 换皮） */
   theme?: string;
-  engine?: MdToPptEngine;
 }
 
 export interface MdToPptPublishRequest {
@@ -171,9 +171,6 @@ export interface MdToPptConvertSseOptions {
   content: string;
   slideCount?: number;
   theme?: string;
-  engine?: MdToPptEngine;
-  /** 期望模型（仅 engine=map 生效；空 = 自动调度。来自 getMdToPptModels） */
-  model?: string;
   onStart?: (info: { slideCount?: number; theme?: string }) => void;
   onRun?: (runId: string) => void;
   onModel?: (info: { model: string; platform: string }) => void;
@@ -199,8 +196,6 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
           content: options.content,
           slideCount: options.slideCount,
           theme: options.theme,
-          engine: options.engine ?? 'map',
-          model: options.model || undefined,
         }),
         signal: abortController.signal,
       });
@@ -256,9 +251,6 @@ export interface MdToPptPatchSseOptions {
   slideIndex?: number;
   /** 风格主题（patch 沿用当前风格 / 换风格重绘时传新值） */
   theme?: string;
-  engine?: MdToPptEngine;
-  /** 期望模型（仅 engine=map 生效；空 = 自动调度） */
-  model?: string;
   onStart?: () => void;
   onRun?: (runId: string) => void;
   onModel?: (info: { model: string; platform: string }) => void;
@@ -285,8 +277,6 @@ export function streamMdToPptPatch(options: MdToPptPatchSseOptions): () => void 
           slideRequest: options.slideRequest,
           slideIndex: options.slideIndex,
           theme: options.theme,
-          engine: options.engine ?? 'map',
-          model: options.model || undefined,
         }),
         signal: abortController.signal,
       });
@@ -391,17 +381,4 @@ export async function getMdToPptRun(id: string): Promise<MdToPptRunDetail | null
 export async function getRecentMdToPptRuns(): Promise<MdToPptRunSummary[]> {
   const res = await apiRequest<MdToPptRunSummary[]>('/api/md-to-ppt/runs');
   return res.success ? (res.data ?? []) : [];
-}
-
-// ============ Models（直出引擎可切换的 chat 模型）============
-
-export interface MdToPptModelItem {
-  model: string;
-  isDefault: boolean;
-}
-
-/** 直出引擎（map）可切换的 chat 模型列表，默认池模型排最前 */
-export async function getMdToPptModels(): Promise<{ items: MdToPptModelItem[]; defaultModel: string | null } | null> {
-  const res = await apiRequest<{ items: MdToPptModelItem[]; defaultModel: string | null }>('/api/md-to-ppt/models');
-  return res.success ? (res.data ?? null) : null;
 }

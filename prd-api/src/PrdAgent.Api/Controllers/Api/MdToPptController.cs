@@ -15,17 +15,17 @@ namespace PrdAgent.Api.Controllers.Api;
 /// <summary>
 /// MD 转网页 PPT。
 ///
-/// SSE 事件协议（两条路径共用）：
+/// SSE 事件协议：
 ///   event: start  — 会话开始
 ///   event: model  — data: {"model":"...","platform":"..."}  模型信息
-///   event: diag   — data: {...}  诊断事件（agent 路径专有）
+///   event: diag   — data: {...}  诊断事件
 ///   event: delta  — data: {"text":"..."}  增量 HTML 片段
 ///   event: done   — data: {"html":"..."}  完整 HTML
 ///   event: error  — data: {"message":"..."}
 ///
-/// 生成引擎：
-///   engine=map    — MAP 直调（ILlmGateway.StreamAsync，快速可靠）
-///   engine=agent  — CDS Agent（可观测工具调用路径，toolPolicy=deny-all 避免工具循环）
+/// 生成引擎：仅 CDS Agent（2026-06-10 用户拍板移除 MAP 直出，PPT 生成完全走
+/// CDS Agent 会话；toolPolicy=deny-all 避免工具循环）。大纲规划仍走 ILlmGateway
+/// （快速 JSON 往返，非 PPT 产物本体）。
 /// </summary>
 [ApiController]
 [Route("api/md-to-ppt")]
@@ -38,7 +38,7 @@ public class MdToPptController : ControllerBase
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<MdToPptController> _logger;
 
-    // PPT 系统提示词（按风格主题生成不同设计系统）。两条路径共用。
+    // PPT 系统提示词（按风格主题生成不同设计系统）。
     private static string BuildPptSystemPrompt(string? theme)
     {
         var (tokens, tone) = ThemeTokens(theme);
@@ -316,18 +316,14 @@ public class MdToPptController : ControllerBase
         await WriteSsePreambleAsync();
         await WriteEventAsync("start", null);
 
-        var engine = (req.Engine ?? "map").Trim().ToLowerInvariant();
-        var run = await CreateRunAsync(userId, engine, req.Theme, "convert", req.Content);
+        var run = await CreateRunAsync(userId, "agent", req.Theme, "convert", req.Content);
         await WriteEventAsync("run", new { runId = run.Id });
 
         var systemPrompt = BuildPptSystemPrompt(req.Theme);
         var styleHint = $"目标页数约 {req.SlideCount ?? 8} 页。";
         var userContent = $"{styleHint}\n\n---\n\n# 用户内容\n\n{req.Content?.Trim()}";
 
-        if (engine == "agent")
-            await RunAgentStreamAsync(userId, systemPrompt, userContent, "PPT", run);
-        else
-            await RunMapStreamAsync(userId, systemPrompt, userContent, AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate, "convert", run, req.Model);
+        await RunAgentStreamAsync(userId, systemPrompt, userContent, "PPT", run);
     }
 
     // ─────────────────────────────────────────────
@@ -343,8 +339,7 @@ public class MdToPptController : ControllerBase
         await WriteSsePreambleAsync();
         await WriteEventAsync("start", null);
 
-        var engine = (req.Engine ?? "map").Trim().ToLowerInvariant();
-        var run = await CreateRunAsync(userId, engine, req.Theme, "patch", req.SlideRequest);
+        var run = await CreateRunAsync(userId, "agent", req.Theme, "patch", req.SlideRequest);
         await WriteEventAsync("run", new { runId = run.Id });
 
         // 风格主题随 patch 下发：换风格 = AI 参照该风格重绘整页 HTML（设计 token、
@@ -357,41 +352,7 @@ public class MdToPptController : ControllerBase
             : "（未指定具体页，按要求修改整份 PPT）";
         var userContent = $"---\n\n# 已有 HTML\n\n```html\n{req.CurrentHtml?.Trim()}\n```\n\n# 修改要求{pageHint}\n\n{req.SlideRequest?.Trim()}";
 
-        if (engine == "agent")
-            await RunAgentStreamAsync(userId, systemPrompt, userContent, "PPT 修改", run);
-        else
-            await RunMapStreamAsync(userId, systemPrompt, userContent, AppCallerRegistry.MdToPptAgent.Generation.Patch, "patch", run, req.Model);
-    }
-
-    // ─────────────────────────────────────────────
-    // GET /api/md-to-ppt/models
-    // ─────────────────────────────────────────────
-
-    /// <summary>
-    /// 列出直出引擎（engine=map）可切换的 chat 模型。
-    /// 数据源：chat 类型模型池（model_groups），默认池模型排最前；前端据此渲染模型选择器，
-    /// 选中值经 Convert/Patch 的 Model 字段作为 ExpectedModel 传给 Gateway（调度器优先尊重）。
-    /// </summary>
-    [HttpGet("models")]
-    public async Task<IActionResult> GetModels()
-    {
-        var groups = await _db.ModelGroups
-            .Find(g => g.ModelType == ModelTypes.Chat)
-            .ToListAsync();
-
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var items = new List<object>();
-        string? defaultModel = null;
-        foreach (var g in groups.OrderByDescending(x => x.IsDefaultForType).ThenByDescending(x => x.Priority))
-        {
-            foreach (var m in g.Models)
-            {
-                if (string.IsNullOrWhiteSpace(m.ModelId) || !seen.Add(m.ModelId)) continue;
-                if (defaultModel == null && g.IsDefaultForType) defaultModel = m.ModelId;
-                items.Add(new { model = m.ModelId, isDefault = m.ModelId == defaultModel });
-            }
-        }
-        return Ok(new { items, defaultModel });
+        await RunAgentStreamAsync(userId, systemPrompt, userContent, "PPT 修改", run);
     }
 
     // ─────────────────────────────────────────────
@@ -545,156 +506,6 @@ public class MdToPptController : ControllerBase
     }
 
     // ─────────────────────────────────────────────
-    // MAP 直调路径（快速可靠）
-    // ─────────────────────────────────────────────
-
-    private async Task RunMapStreamAsync(
-        string userId,
-        string systemPrompt,
-        string userContent,
-        string appCallerCode,
-        string opLabel,
-        MdToPptRun run,
-        string? expectedModel = null)
-    {
-        var startedAt = DateTime.UtcNow;
-        string? resolvedModel = null;
-        string? resolvedPlatform = null;
-        _logger.LogInformation(
-            "[MdToPpt-MAP] userId={UserId} op={Op} appCaller={AppCaller} started",
-            userId, opLabel, appCallerCode);
-
-        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
-            RequestId: Guid.NewGuid().ToString("N"),
-            GroupId: null,
-            SessionId: null,
-            UserId: userId,
-            ViewRole: null,
-            DocumentChars: userContent.Length,
-            DocumentHash: null,
-            SystemPromptRedacted: "[MdToPpt]",
-            RequestType: "chat",
-            AppCallerCode: appCallerCode));
-
-        var gatewayRequest = new GatewayRequest
-        {
-            AppCallerCode = appCallerCode,
-            ModelType = ModelTypes.Chat,
-            // 用户在前端选择的模型（可空 = 自动调度）。调度器优先尊重 expectedModel
-            ExpectedModel = string.IsNullOrWhiteSpace(expectedModel) ? null : expectedModel.Trim(),
-            Stream = true,
-            TimeoutSeconds = 600,
-            RequestBody = new JsonObject
-            {
-                ["messages"] = new JsonArray
-                {
-                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
-                    new JsonObject { ["role"] = "user",   ["content"] = userContent },
-                },
-                ["temperature"] = 0.4,
-                ["max_tokens"] = 16384,
-            },
-        };
-
-        var fullText = new StringBuilder();
-        var sentModel = false;
-
-        // server-authority：客户端断开/刷新不取消生成。clientGone 后仅跳过 SSE 写入，
-        // 仍消费完网关流、把结果落库（刷新后前端凭 runId 重连/查看）。
-        var clientGone = false;
-
-        // 每 20s 发 keepalive 注释，防止代理因 SSE 空闲超时断连
-        using var keepaliveCts = new CancellationTokenSource();
-        var keepaliveTask = Task.Run(async () =>
-        {
-            try
-            {
-                while (!keepaliveCts.Token.IsCancellationRequested)
-                {
-                    await Task.Delay(20000, keepaliveCts.Token);
-                    if (!clientGone)
-                    {
-                        try
-                        {
-                            await Response.WriteAsync(": keepalive\n\n", CancellationToken.None);
-                            await Response.Body.FlushAsync(CancellationToken.None);
-                        }
-                        catch { clientGone = true; }
-                    }
-                }
-            }
-            catch (OperationCanceledException) { }
-        });
-
-        try
-        {
-            await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
-            {
-                if (chunk.Type == GatewayChunkType.Start && !sentModel && chunk.Resolution != null)
-                {
-                    sentModel = true;
-                    resolvedModel = chunk.Resolution.ActualModel;
-                    resolvedPlatform = chunk.Resolution.ActualPlatformName;
-                    var elapsedMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
-                    _logger.LogInformation(
-                        "[MdToPpt-MAP] model resolved elapsedMs={Elapsed} model={Model} platform={Platform}",
-                        elapsedMs, resolvedModel, resolvedPlatform);
-                    if (!clientGone)
-                    {
-                        try { await WriteEventAsync("model", new { model = resolvedModel, platform = resolvedPlatform }); }
-                        catch (ObjectDisposedException) { clientGone = true; }
-                    }
-                }
-                else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
-                {
-                    fullText.Append(chunk.Content);
-                    if (!clientGone)
-                    {
-                        try { await WriteEventAsync("delta", new { text = chunk.Content }); }
-                        catch (ObjectDisposedException) { clientGone = true; }
-                    }
-                }
-                else if (chunk.Type == GatewayChunkType.Error)
-                {
-                    var err = chunk.Error ?? chunk.Content ?? "LLM 网关返回未知错误";
-                    _logger.LogError("[MdToPpt-MAP] gateway error userId={UserId}: {Error}", userId, err);
-                    await PersistRunErrorAsync(run, err);
-                    if (!clientGone) { try { await WriteEventAsync("error", new { message = err }); } catch { } }
-                    return;
-                }
-            }
-
-            var html = StripCodeFences(fullText.ToString());
-            var totalMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
-            _logger.LogInformation(
-                "[MdToPpt-MAP] done userId={UserId} totalMs={TotalMs} htmlLen={HtmlLen}",
-                userId, totalMs, html.Length);
-            await PersistRunDoneAsync(run, html, resolvedModel, resolvedPlatform);
-            if (!clientGone) { try { await WriteEventAsync("done", new { html }); } catch (ObjectDisposedException) { } }
-        }
-        catch (OperationCanceledException)
-        {
-            // LLM 请求超时（TimeoutSeconds 到期）或被取消 — 必须通知前端，否则前端永久卡在"生成中"
-            var timeoutMsg = "PPT 生成超时（LLM 响应超过 600s），请重试或缩短内容";
-            _logger.LogWarning("[MdToPpt-MAP] LLM timeout userId={UserId} op={Op}", userId, opLabel);
-            await PersistRunErrorAsync(run, timeoutMsg);
-            if (!clientGone) { try { await WriteEventAsync("error", new { message = timeoutMsg }); } catch { } }
-        }
-        catch (ObjectDisposedException) { }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "[MdToPpt-MAP] unexpected error userId={UserId}", userId);
-            await PersistRunErrorAsync(run, ex.Message);
-            if (!clientGone) { try { await WriteEventAsync("error", new { message = ex.Message }); } catch { } }
-        }
-        finally
-        {
-            keepaliveCts.Cancel();
-            try { await keepaliveTask; } catch { }
-        }
-    }
-
-    // ─────────────────────────────────────────────
     // CDS Agent 路径（可观测，诊断插桩）
     // ─────────────────────────────────────────────
 
@@ -745,6 +556,8 @@ public class MdToPptController : ControllerBase
 
             var runtime = runtimeProfile.Runtime;
             var model = runtimeProfile.Model;
+            // 模型可见性：Agent 路径也要第一时间把模型名推给前端（ai-model-visibility 规则）
+            await WriteEventAsync("model", new { model, platform = "CDS Agent" });
 
             // 3. 创建会话 — toolPolicy=deny-all 禁止暴露任何工具，避免 agent 进入工具循环
             var t2 = DateTime.UtcNow;
@@ -1014,8 +827,8 @@ public class MdToPptController : ControllerBase
             }
             else
             {
-                await PersistRunErrorAsync(run, "CDS Agent 响应超时，请稍后重试或切换到 MAP 直调引擎");
-                await WriteEventAsync("error", new { message = "CDS Agent 响应超时，请稍后重试或切换到 MAP 直调引擎" });
+                await PersistRunErrorAsync(run, "CDS Agent 响应超时，请稍后重试或缩短内容");
+                await WriteEventAsync("error", new { message = "CDS Agent 响应超时，请稍后重试或缩短内容" });
             }
         }
         catch (OperationCanceledException) { }
@@ -1232,11 +1045,7 @@ public class MdToPptConvertRequest
     /// <summary>主题（可选）</summary>
     public string? Theme { get; set; }
 
-    /// <summary>生成引擎："map"（默认，MAP 直调）或 "agent"（CDS Agent）</summary>
-    public string? Engine { get; set; }
 
-    /// <summary>期望模型（可选，仅 engine=map 生效；空 = 自动调度。来自 GET models 列表）</summary>
-    public string? Model { get; set; }
 }
 
 public class MdToPptPatchRequest
@@ -1253,11 +1062,7 @@ public class MdToPptPatchRequest
     /// <summary>风格主题（可选）。换风格走 patch 由 AI 按该风格重绘，前端不做 CSS 换皮</summary>
     public string? Theme { get; set; }
 
-    /// <summary>生成引擎："map"（默认）或 "agent"</summary>
-    public string? Engine { get; set; }
 
-    /// <summary>期望模型（可选，仅 engine=map 生效；空 = 自动调度）</summary>
-    public string? Model { get; set; }
 }
 
 public class MdToPptPublishRequest

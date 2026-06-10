@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FileText,
   Globe,
@@ -10,8 +10,6 @@ import {
   Plus,
   Upload,
   BookOpen,
-  Bot,
-  Zap,
   ChevronDown,
   Check,
   AlertCircle,
@@ -25,18 +23,15 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { StreamingText } from '@/components/streaming/StreamingText';
 import {
   type MdToPptDiagEvent,
-  type MdToPptEngine,
   type OutlineSlide,
   streamMdToPptConvert,
   streamMdToPptPatch,
   publishMdToPpt,
   getMdToPptRun,
   getMdToPptOutline,
-  getMdToPptModels,
 } from '@/services/real/mdToPptService';
 import { apiRequest } from '@/services/real/apiClient';
 import { NextStepBar } from './NextStepBar';
-import { ModelChipPopover } from './ModelChipPopover';
 import { SelectionFeedbackOverlay, type SelectionRectPct } from './SelectionFeedbackOverlay';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -74,9 +69,6 @@ interface SessionState {
   messages: ChatMessage[];
   activeRunId: string;
   theme: string;
-  engine: MdToPptEngine;
-  /** 直出引擎期望模型（'' = 自动调度） */
-  model?: string;
 }
 
 interface KbStore {
@@ -335,7 +327,7 @@ function extractDeckTitle(html: string): string {
   return m ? m[1].trim() : '';
 }
 
-// 生成阶段提示文案
+// 生成阶段提示文案（流式数据未到达时的兜底；数据到达后由幻灯进度卡接管主视觉）
 function genStageMsg(sec: number, isPatch: boolean): string {
   if (isPatch)
     return sec < 8 ? '正在理解修改指令...' : sec < 25 ? '正在重排指定页面...' : '正在收尾排版...';
@@ -344,6 +336,27 @@ function genStageMsg(sec: number, isPatch: boolean): string {
   if (sec < 38) return '正在逐页生成幻灯片...';
   if (sec < 60) return '正在排版与收尾...';
   return '内容较多，正在精修中（大模型生成约需 1 分钟）...';
+}
+
+// ─── 幻灯进度解析（Gamma 式"页面一张张点亮"）────────────────────────────────
+// 从已接收的 HTML 流里数 <section>：闭合的算"已生成"（抽出页内首个标题展示），
+// 已开口未闭合的算"正在绘制"。deck 是扁平 section 结构，正则解析足够。
+export interface SlideProgress {
+  titles: string[];
+  building: boolean;
+}
+
+export function parseSlideProgress(html: string): SlideProgress {
+  const titles: string[] = [];
+  const re = /<section\b[^>]*>([\s\S]*?)<\/section>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    const t = /<h[1-4][^>]*>([\s\S]*?)<\/h[1-4]>/i.exec(m[1]);
+    const title = t ? t[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim() : '';
+    titles.push(title);
+  }
+  const opens = (html.match(/<section\b/gi) ?? []).length;
+  return { titles, building: opens > titles.length };
 }
 
 // 读取 sessionStorage（安全）
@@ -619,12 +632,9 @@ export function MdToPptAgentPage() {
   const [savedSession] = useState<SessionState | null>(loadSession);
 
   // ─── Global settings (收进设置区，不占对话空间）
+  // 引擎只有 CDS Agent 一条路（2026-06-10 用户拍板移除 MAP 直出），无引擎/模型选择；
+  // 模型由 Agent 运行配置决定，经 SSE model 事件回显（ai-model-visibility）。
   const [theme, setTheme] = useState(savedSession?.theme ?? 'tech-dark');
-  // 引擎不做会话恢复：每次进页一律 MAP 直出（用户 2026-06-10 反馈 Agent 引擎产出差且慢，
-  // 不允许旧会话把默认值悄悄带回 agent）。Agent 引擎仅作实验入口，本次会话内手动切换有效。
-  const [engine, setEngine] = useState<MdToPptEngine>('map');
-  const [model, setModel] = useState(savedSession?.model ?? '');
-  const [chatModels, setChatModels] = useState<string[]>([]);
   const [showSettings, setShowSettings] = useState(false);
 
   // ─── Chat state
@@ -645,8 +655,13 @@ export function MdToPptAgentPage() {
   // ─── 生成期流式可视化（2 秒定理：等待时屏幕必须有持续变化的内容）
   //     delta 先进 ref，150ms 节流刷进 state，避免大 HTML 每个 token 触发整页 re-render。
   const [streamPreview, setStreamPreview] = useState('');
+  // 本轮预计页数（来自大纲），驱动"逐页点亮"进度卡的占位格子数
+  const [expectedPages, setExpectedPages] = useState<number | null>(null);
   const streamBufRef = useRef('');
   const streamFlushTimerRef = useRef<number | null>(null);
+
+  // 幻灯进度：从流里解析已闭合的 <section>（页标题逐张点亮）
+  const slideProgress = useMemo(() => parseSlideProgress(streamPreview), [streamPreview]);
 
   const resetStreamPreview = useCallback(() => {
     streamBufRef.current = '';
@@ -721,7 +736,7 @@ export function MdToPptAgentPage() {
   }, []);
 
   // ─── Session persistence: restore HTML for active run on mount
-  // (theme/engine/messages are already restored via lazy useState above)
+  // (theme/messages are already restored via lazy useState above)
   useEffect(() => {
     const runId = savedSession?.activeRunId;
     if (!runId) return;
@@ -752,20 +767,8 @@ export function MdToPptAgentPage() {
 
   // ─── Session persistence: save on state change
   useEffect(() => {
-    saveSession({ messages, activeRunId, theme, engine, model });
-  }, [messages, activeRunId, theme, engine, model]);
-
-  // ─── 模型列表惰性拉取（设置面板展开 / 工具栏模型 chip 打开时共用）
-  const loadModels = useCallback(() => {
-    if (chatModels.length > 0) return;
-    void getMdToPptModels().then((r) => {
-      if (r && r.items.length > 0) setChatModels(r.items.map((i) => i.model));
-    });
-  }, [chatModels.length]);
-
-  useEffect(() => {
-    if (showSettings) loadModels();
-  }, [showSettings, loadModels]);
+    saveSession({ messages, activeRunId, theme });
+  }, [messages, activeRunId, theme]);
 
   // ─── 圈选反馈指令组装（texts 为空时退化为坐标描述）
   const composeFeedback = useCallback((slide: number, texts: string[], note: string, rect: SelectionRectPct) => {
@@ -1034,6 +1037,7 @@ export function MdToPptAgentPage() {
       setPublishedUrl('');
       setFeedbackMode(false);
       resetStreamPreview();
+      setExpectedPages(outlineMsg.totalPages ?? outlineMsg.outline?.length ?? null);
       restoreSlideRef.current = 0; // 新一轮生成回到第 1 页
       pendingRestoreRef.current = null;
 
@@ -1047,8 +1051,6 @@ export function MdToPptAgentPage() {
         content: fullContent,
         theme,
         slideCount: outlineMsg.totalPages,
-        engine,
-        model: engine === 'map' ? model : undefined,
         onRun: (runId) => {
           if (runId) setActiveRunId(runId);
           try {
@@ -1064,13 +1066,7 @@ export function MdToPptAgentPage() {
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === genMsg.id
-                  ? {
-                      ...m,
-                      content:
-                        '生成结果异常，未得到有效 PPT，请重试。' +
-                        (engine === 'agent' ? '（Agent 引擎为实验通道，建议在右上「设置」切回 MAP 直出）' : ''),
-                      phase: 'error',
-                    }
+                  ? { ...m, content: '生成结果异常，未得到有效 PPT，请重试。', phase: 'error' }
                   : m
               )
             );
@@ -1108,7 +1104,7 @@ export function MdToPptAgentPage() {
 
       cleanupRef.current = cleanup;
     },
-    [isProcessing, messages, pushMsg, theme, engine, model, resetStreamPreview, handleStreamDelta]
+    [isProcessing, messages, pushMsg, theme, resetStreamPreview, handleStreamDelta]
   );
 
   // ─── Patch flow（对话式精修）。baseHtml 允许携带编辑模式未提交的最新稿；
@@ -1121,6 +1117,7 @@ export function MdToPptAgentPage() {
       setIsProcessing(true);
       setArtifactPhase('patching');
       resetStreamPreview();
+      setExpectedPages(slidePos?.total ?? null); // 精修重出整份 deck，按当前页数占位
       pendingRestoreRef.current = restoreSlideRef.current; // 精修完成重载后回到当前页
 
       const patchMsg = pushMsg({
@@ -1133,8 +1130,6 @@ export function MdToPptAgentPage() {
         currentHtml: base,
         slideRequest: instruction,
         theme: themeOverride ?? theme,
-        engine,
-        model: engine === 'map' ? model : undefined,
         onRun: (runId) => {
           if (runId) setActiveRunId(runId);
         },
@@ -1181,7 +1176,7 @@ export function MdToPptAgentPage() {
 
       cleanupRef.current = cleanup;
     },
-    [generatedHtml, isProcessing, pushMsg, theme, engine, model, resetStreamPreview, handleStreamDelta]
+    [generatedHtml, isProcessing, pushMsg, theme, slidePos, resetStreamPreview, handleStreamDelta]
   );
 
   // ─── 换风格 = AI 参照新风格整体重绘（2026-06-10 用户纠偏：风格是 AI 的设计参照，
@@ -1376,55 +1371,10 @@ export function MdToPptAgentPage() {
         </div>
       </div>
 
-      {/* Settings panel（收起） */}
+      {/* Settings panel（收起）。引擎只有 CDS Agent 一条路，模型由 Agent 运行配置决定，
+          这里只剩风格选择（模型名在生成时经 model 事件回显到工具栏 chip） */}
       {showSettings && (
         <div className="shrink-0 flex items-center gap-4 px-4 py-2 border-b border-white/6 bg-white/2 text-[11px]">
-          {/* 引擎 */}
-          <div className="flex items-center gap-1.5">
-            <span className="text-[var(--text-tertiary)]">引擎</span>
-            <div className="flex rounded-md border border-white/10 overflow-hidden">
-              <button
-                onClick={() => setEngine('map')}
-                className={[
-                  'flex items-center gap-1 px-2 py-1',
-                  engine === 'map' ? 'bg-purple-500/20 text-purple-300' : 'text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]',
-                ].join(' ')}
-              >
-                <Zap size={9} /> MAP
-              </button>
-              <button
-                onClick={() => setEngine('agent')}
-                title="实验通道：走 CDS Agent 会话，慢且质量不稳定，默认请用 MAP 直出"
-                className={[
-                  'flex items-center gap-1 px-2 py-1 border-l border-white/10',
-                  engine === 'agent' ? 'bg-blue-500/20 text-blue-300' : 'text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]',
-                ].join(' ')}
-              >
-                <Bot size={9} /> Agent（实验）
-              </button>
-            </div>
-          </div>
-
-          {/* 模型（仅直出引擎可切换；Agent 引擎模型由运行配置决定） */}
-          {engine === 'map' && (
-            <div className="flex items-center gap-1.5">
-              <span className="text-[var(--text-tertiary)]">模型</span>
-              <select
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                data-testid="model-select"
-                className="appearance-none text-[11px] py-1 pl-2 pr-5 rounded-md bg-white/5 text-[var(--text-primary)] border border-white/8 outline-none cursor-pointer max-w-[220px]"
-              >
-                <option value="">自动（默认池调度）</option>
-                {chatModels.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
           {/* 风格（AI 设计参照：生成前选 = 按该风格画；生成后切 = AI 整体重绘） */}
           <div className="flex items-center gap-1.5">
             <span className="text-[var(--text-tertiary)]">风格</span>
@@ -1758,67 +1708,157 @@ export function MdToPptAgentPage() {
             </div>
           )}
 
-          {/* Generating progress（2 秒定理：流式输出实时可见，不许静止 spinner 干等） */}
-          {(artifactPhase === 'generating' || artifactPhase === 'patching') && (
-            <div className="flex-1 flex flex-col items-center justify-center gap-4 px-6" style={{ minHeight: 0 }}>
-              <MapSpinner size={20} />
-              <div className="text-center">
-                <p className="text-sm text-[var(--text-secondary)]">
-                  {genStageMsg(elapsedSec, artifactPhase === 'patching')}
-                </p>
-                <p className="text-xs text-[var(--text-tertiary)] mt-1 tabular-nums">
-                  已等待 {elapsedSec}s
-                  {streamPreview.length > 0 && ` · 已接收 ${streamPreview.length.toLocaleString()} 字符`}
-                </p>
-              </div>
-
-              {/* LLM 输出实时滚动尾巴（maxTailChars 防大文本 span 爆炸） */}
-              {streamPreview.length > 0 && (
-                <div
-                  data-testid="stream-preview"
-                  className="w-full rounded-lg bg-white/3 border border-white/8 overflow-hidden"
-                  style={{ maxWidth: 640 }}
-                >
-                  <div className="px-3 py-1.5 text-[9px] text-[var(--text-tertiary)] font-semibold border-b border-white/5 flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
-                    AI 正在逐字输出 HTML
-                    {modelInfo && (
-                      <span className="ml-auto font-mono font-normal">
-                        {modelInfo.model} · {modelInfo.platform}
-                      </span>
-                    )}
+          {/* Generating progress（2 秒定理 + Gamma 式逐页点亮：等待全程屏幕持续有内容变化，
+                不让用户对着静止 spinner 空等。三层信息：阶段文案 → 幻灯页进度卡 → 代码流尾巴） */}
+          {(artifactPhase === 'generating' || artifactPhase === 'patching') && (() => {
+            const doneCount = slideProgress.titles.length;
+            const building = slideProgress.building;
+            const totalSlots = Math.max(expectedPages ?? 0, doneCount + (building ? 1 : 0));
+            const agentPrepared =
+              modelInfo != null ||
+              diagLines.some((d) => d.stage === 'send' || d.stage === 'first_event' || d.stage === 'first_text_delta');
+            const stageText =
+              streamPreview.length === 0
+                ? agentPrepared
+                  ? '模型已就绪，正在构思整体设计与版式...'
+                  : '正在连接 CDS Agent 环境...'
+                : doneCount > 0 || building
+                  ? building
+                    ? `正在绘制第 ${doneCount + 1} 页${expectedPages ? `（共约 ${expectedPages} 页）` : ''}...`
+                    : doneCount >= (expectedPages ?? Infinity)
+                      ? '全部页面已生成，正在收尾排版...'
+                      : `已完成 ${doneCount} 页，正在排版后续页面...`
+                  : genStageMsg(elapsedSec, artifactPhase === 'patching');
+            const pct = totalSlots > 0 ? Math.min(99, Math.round((doneCount / totalSlots) * 100)) : 0;
+            return (
+              <div
+                className="flex-1 flex flex-col items-center justify-center gap-4 px-6"
+                style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
+              >
+                <div className="flex items-center gap-3">
+                  <MapSpinner size={18} />
+                  <div>
+                    <p className="text-sm text-[var(--text-secondary)]">{stageText}</p>
+                    <p className="text-[11px] text-[var(--text-tertiary)] mt-0.5 tabular-nums">
+                      已等待 {elapsedSec}s
+                      {streamPreview.length > 0 && ` · 已接收 ${streamPreview.length.toLocaleString()} 字符`}
+                      {modelInfo && (
+                        <span className="font-mono"> · {modelInfo.model}</span>
+                      )}
+                    </p>
                   </div>
-                  <div
-                    className="px-3 py-2 font-mono text-[10px] leading-relaxed text-[var(--text-tertiary)]"
-                    style={{ maxHeight: 160, overflow: 'hidden', wordBreak: 'break-all' }}
-                  >
-                    <StreamingText
-                      text={streamPreview}
-                      streaming
-                      maxTailChars={520}
-                      className="whitespace-pre-wrap"
+                </div>
+
+                {/* 总进度条（有页数预期才显示，避免假精确） */}
+                {totalSlots > 0 && (
+                  <div className="w-full rounded-full bg-white/6 overflow-hidden" style={{ maxWidth: 560, height: 4 }}>
+                    <div
+                      className="h-full rounded-full bg-purple-400/80 transition-all duration-700"
+                      style={{ width: `${Math.max(pct, streamPreview.length > 0 ? 4 : 0)}%` }}
                     />
                   </div>
-                </div>
-              )}
+                )}
 
-              {diagLines.length > 0 && (
-                <div className="w-72 rounded-md bg-white/3 border border-white/6 overflow-hidden">
-                  <div className="px-3 py-1 text-[9px] text-[var(--text-tertiary)] font-semibold border-b border-white/5">
-                    Agent 诊断
+                {/* 幻灯页进度卡：已生成的页逐张点亮（显示抽出的页标题），当前页呼吸闪烁 */}
+                {totalSlots > 0 && (
+                  <div
+                    data-testid="slide-progress-cards"
+                    className="flex flex-wrap justify-center gap-2"
+                    style={{ maxWidth: 620 }}
+                  >
+                    {Array.from({ length: totalSlots }, (_, i) => {
+                      const isDone = i < doneCount;
+                      const isCurrent = i === doneCount && building;
+                      return (
+                        <div
+                          key={i}
+                          className={[
+                            'rounded-md border px-2 pt-1.5 pb-1 transition-colors duration-500',
+                            isDone
+                              ? 'bg-purple-500/12 border-purple-500/30'
+                              : isCurrent
+                                ? 'bg-white/6 border-purple-500/40 animate-pulse'
+                                : 'bg-transparent border-dashed border-white/10',
+                          ].join(' ')}
+                          style={{ width: 108, height: 62 }}
+                        >
+                          <div
+                            className={[
+                              'text-[9px] tabular-nums',
+                              isDone ? 'text-purple-300' : 'text-[var(--text-tertiary)]',
+                            ].join(' ')}
+                          >
+                            第 {i + 1} 页
+                          </div>
+                          <div
+                            className={[
+                              'text-[10px] leading-tight mt-0.5',
+                              isDone ? 'text-[var(--text-secondary)]' : 'text-[var(--text-tertiary)]',
+                            ].join(' ')}
+                            style={{
+                              display: '-webkit-box',
+                              WebkitLineClamp: 2,
+                              WebkitBoxOrient: 'vertical',
+                              overflow: 'hidden',
+                            }}
+                          >
+                            {isDone
+                              ? slideProgress.titles[i] || '已生成'
+                              : isCurrent
+                                ? '绘制中...'
+                                : ''}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                  <div style={{ maxHeight: '100px', overflowY: 'auto', overscrollBehavior: 'contain' }}>
-                    {diagLines.slice(-10).map((d, i) => (
-                      <div key={i} className="px-3 py-0.5 text-[9px] font-mono text-[var(--text-tertiary)]">
-                        [{d.stage}]{' '}
-                        {d.message ? String(d.message) : d.warning ? String(d.warning) : ''}
-                      </div>
-                    ))}
+                )}
+
+                {/* LLM 输出实时滚动尾巴（maxTailChars 防大文本 span 爆炸） */}
+                {streamPreview.length > 0 && (
+                  <div
+                    data-testid="stream-preview"
+                    className="w-full rounded-lg bg-white/3 border border-white/8 overflow-hidden"
+                    style={{ maxWidth: 560 }}
+                  >
+                    <div className="px-3 py-1.5 text-[9px] text-[var(--text-tertiary)] font-semibold border-b border-white/5 flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
+                      AI 正在逐字输出 HTML
+                    </div>
+                    <div
+                      className="px-3 py-2 font-mono text-[10px] leading-relaxed text-[var(--text-tertiary)]"
+                      style={{ maxHeight: 96, overflow: 'hidden', wordBreak: 'break-all' }}
+                    >
+                      <StreamingText
+                        text={streamPreview}
+                        streaming
+                        maxTailChars={360}
+                        className="whitespace-pre-wrap"
+                      />
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
-          )}
+                )}
+
+                {/* Agent 诊断（流式数据到达前的环境阶段反馈；数据到达后退为次要信息） */}
+                {diagLines.length > 0 && streamPreview.length === 0 && (
+                  <div className="w-72 rounded-md bg-white/3 border border-white/6 overflow-hidden">
+                    <div className="px-3 py-1 text-[9px] text-[var(--text-tertiary)] font-semibold border-b border-white/5">
+                      Agent 环境准备
+                    </div>
+                    <div style={{ maxHeight: '100px', overflowY: 'auto', overscrollBehavior: 'contain' }}>
+                      {diagLines.slice(-10).map((d, i) => (
+                        <div key={i} className="px-3 py-0.5 text-[9px] font-mono text-[var(--text-tertiary)]">
+                          [{d.stage}]{' '}
+                          {d.message ? String(d.message) : d.warning ? String(d.warning) : ''}
+                          {typeof d.elapsedMs === 'number' ? ` ${Math.round(d.elapsedMs / 100) / 10}s` : ''}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Done: iframe preview */}
           {(artifactPhase === 'done' || (artifactPhase === 'idle' && generatedHtml)) && generatedHtml && (
@@ -1867,15 +1907,16 @@ export function MdToPptAgentPage() {
                 </div>
 
                 <div className="flex items-center gap-1.5">
-                  {/* 模型 chip：常驻可点（借鉴 open-design InlineModelSwitcher），免去翻设置面板 */}
-                  <ModelChipPopover
-                    modelInfo={modelInfo}
-                    selectedModel={model}
-                    models={chatModels}
-                    onSelect={setModel}
-                    onOpen={loadModels}
-                    disabled={engine !== 'map'}
-                  />
+                  {/* 模型 chip：只读展示本次生成实际使用的模型（CDS Agent 运行配置决定） */}
+                  {modelInfo && (
+                    <span
+                      data-testid="model-chip"
+                      title="本次生成使用的模型（由 CDS Agent 运行配置决定）"
+                      className="px-2 py-1 rounded-md text-[10px] font-mono bg-white/4 text-[var(--text-tertiary)] border border-white/8 max-w-[200px] truncate"
+                    >
+                      {modelInfo.model} · {modelInfo.platform}
+                    </span>
+                  )}
                   <button
                     onClick={() => setFeedbackMode((v) => !v)}
                     disabled={isStreaming || editMode}
