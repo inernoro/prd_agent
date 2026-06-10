@@ -5,13 +5,14 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Plus, Upload, ChevronLeft, ChevronRight, Trash2, Pencil, RefreshCw, GitBranch, Eye, X } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { Search, Plus, Upload, ChevronLeft, ChevronRight, Trash2, Pencil, RefreshCw, GitBranch, Eye, X, FolderInput, FolderOpen } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
 import {
   listKnowledgeEntriesPaged, uploadDocumentFile, replaceDocumentFile,
-  deleteDocumentEntry, addDocumentEntry, updateDocumentEntry,
+  deleteDocumentEntry, addDocumentEntry, updateDocumentEntry, moveDocumentEntry,
 } from '@/services';
 import type { DocumentStore, DocumentEntry } from '@/services/contracts/documentStore';
 import type { ProductVersion } from '../types';
@@ -42,6 +43,7 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
   const [tag, setTag] = useState('');
   const [versionId, setVersionId] = useState('');
   const [linkTarget, setLinkTarget] = useState<DocumentEntry | null>(null);
+  const [moveTarget, setMoveTarget] = useState<DocumentEntry | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -267,6 +269,7 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
                   <RowBtn title="查看详情" onClick={() => goDetail(e.id)}><Eye size={13} /></RowBtn>
                   {isEditableText(e.contentType) && <RowBtn title="编辑" onClick={() => goDetail(e.id, true)}><Pencil size={13} /></RowBtn>}
                   <RowBtn title="关联版本" onClick={() => setLinkTarget(e)}><GitBranch size={13} /></RowBtn>
+                  <RowBtn title="移动到文件夹" onClick={() => setMoveTarget(e)}><FolderInput size={13} /></RowBtn>
                   {isUploadedFile(e) && <RowBtn title="重新上传" onClick={() => handleReplace(e.id)}><RefreshCw size={13} /></RowBtn>}
                   <RowBtn title="删除" danger onClick={() => void handleDelete(e)}><Trash2 size={13} /></RowBtn>
                 </div>
@@ -300,7 +303,54 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
           onSave={(ids) => void handleLinkVersions(linkTarget, ids)}
         />
       )}
+      {moveTarget && (
+        <MoveToFolderDialog
+          entry={moveTarget}
+          folders={allEntries.filter((x) => x.isFolder)}
+          onClose={() => setMoveTarget(null)}
+          onMove={async (folderId) => {
+            const res = await moveDocumentEntry(moveTarget.id, folderId);
+            if (res.success) { toast.success(folderId ? '已移入文件夹' : '已移回根目录'); setMoveTarget(null); onChanged(); await reload(); }
+            else toast.error('移动失败', res.error?.message);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/** 移动到文件夹：选根目录或任一文件夹（详情页左侧目录也支持直接拖拽） */
+function MoveToFolderDialog({ entry, folders, onClose, onMove }: {
+  entry: DocumentEntry;
+  folders: DocumentEntry[];
+  onClose: () => void;
+  onMove: (folderId: string | null) => void | Promise<void>;
+}) {
+  const current = entry.parentId ?? null;
+  const optionCls = (on: boolean) =>
+    `w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg border text-sm ${on ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/30' : 'text-white/75 border-white/5 bg-white/[0.03] hover:bg-white/[0.06]'}`;
+  return createPortal(
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div className="rounded-xl border border-white/10 bg-[#16181d] flex flex-col" style={{ width: 400, maxWidth: '92vw', maxHeight: '70vh' }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
+          <h2 className="text-sm font-semibold text-white flex items-center gap-2"><FolderInput size={14} className="text-cyan-400" /> 移动到文件夹</h2>
+          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={16} /></button>
+        </div>
+        <div className="px-4 pt-2 text-xs text-white/40 shrink-0 truncate">「{entry.title}」</div>
+        <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-1.5" style={{ minHeight: 0, overscrollBehavior: 'contain' }}>
+          <button onClick={() => void onMove(null)} className={optionCls(current === null)}>
+            <FolderOpen size={14} className="text-white/40" /> 根目录（不归入文件夹）
+          </button>
+          {folders.length === 0 && <div className="text-[11px] text-white/30 px-1 py-2">还没有文件夹，去「文件夹管理」tab 创建。</div>}
+          {folders.map((f) => (
+            <button key={f.id} onClick={() => void onMove(f.id)} className={optionCls(current === f.id)}>
+              <FolderOpen size={14} className="text-amber-300/80" /> {f.title}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 

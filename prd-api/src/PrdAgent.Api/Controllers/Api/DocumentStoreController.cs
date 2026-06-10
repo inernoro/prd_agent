@@ -804,6 +804,8 @@ public class DocumentStoreController : ControllerBase
             updates.Add(Builders<DocumentEntry>.Update.Set(e => e.VersionIds, request.VersionIds));
         if (!string.IsNullOrWhiteSpace(request.ContentType))
             updates.Add(Builders<DocumentEntry>.Update.Set(e => e.ContentType, request.ContentType));
+        if (request.SortOrder.HasValue)
+            updates.Add(Builders<DocumentEntry>.Update.Set(e => e.SortOrder, request.SortOrder.Value));
 
         updates.Add(Builders<DocumentEntry>.Update.Set(e => e.UpdatedAt, DateTime.UtcNow));
         updates.Add(Builders<DocumentEntry>.Update.Set(e => e.UpdatedBy, userId));
@@ -4585,6 +4587,8 @@ public class UpdateDocumentEntryRequest
     public List<string>? VersionIds { get; set; }
     /// <summary>内容 MIME 类型（格式纠错：text/markdown ↔ text/html；null=不变）</summary>
     public string? ContentType { get; set; }
+    /// <summary>目录手动排序值（拖拽排序写入；null=不变）</summary>
+    public double? SortOrder { get; set; }
 }
 
 public class AddSubscriptionRequest

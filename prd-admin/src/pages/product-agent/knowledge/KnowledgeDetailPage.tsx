@@ -18,7 +18,7 @@ import { systemDialog } from '@/lib/systemDialog';
 import {
   getDocumentEntry, getDocumentContent, updateDocumentContent,
   updateDocumentEntry, deleteDocumentEntry, replaceDocumentFile, getDocumentStore,
-  listDocumentEntries,
+  listDocumentEntries, moveDocumentEntry,
 } from '@/services';
 import type { DocumentEntry, DocumentStore } from '@/services/contracts/documentStore';
 import { listVersions } from '@/services/real/productAgent';
@@ -28,7 +28,7 @@ import { fileKindOf, fmtSize, fmtTime, isEditableText, isHtml, isFullHtmlDocumen
 import { htmlToMarkdown, markdownToHtml } from './htmlMarkdown';
 import './knowledge.css';
 import { VersionLinkDialog } from './VersionLinkDialog';
-import { RichKnowledgeEditor, FileKindBadge } from './RichKnowledgeEditor';
+import { KnowledgeEditor, FileKindBadge, type EditorMode } from './RichKnowledgeEditor';
 
 export function KnowledgeDetailPage() {
   const { productId = '', entryId = '' } = useParams();
@@ -43,6 +43,7 @@ export function KnowledgeDetailPage() {
   const [fileUrl, setFileUrl] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
+  const [editMode, setEditMode] = useState<EditorMode>('rich');
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -97,6 +98,30 @@ export function KnowledgeDetailPage() {
   const back = () => navigate(`/product-agent/p/${productId}?tab=knowledge`);
   const openEntry = (id: string) => { if (id !== entryId) navigate(`/product-agent/p/${productId}/knowledge/${id}`); };
 
+  // 拖拽：文档移入文件夹 / 移回根目录
+  const handleMoveSibling = async (id: string, folderId: string | null) => {
+    const res = await moveDocumentEntry(id, folderId);
+    if (res.success) {
+      setSiblings((prev) => prev.map((x) => (x.id === id ? { ...x, parentId: folderId ?? undefined } : x)));
+      toast.success(folderId ? '已移入文件夹' : '已移回根目录');
+    } else toast.error('移动失败', res.error?.message);
+  };
+
+  // 拖拽排序：容器内重排后整体重写 sortOrder（容器规模小，逐条持久化可接受）
+  const handleReorderSiblings = async (ordered: DocumentEntry[]) => {
+    const updates: { id: string; sortOrder: number }[] = [];
+    ordered.forEach((e, i) => {
+      const target = (i + 1) * 1000;
+      if (e.sortOrder !== target) updates.push({ id: e.id, sortOrder: target });
+    });
+    // 乐观更新本地顺序
+    setSiblings((prev) => prev.map((x) => {
+      const u = updates.find((y) => y.id === x.id);
+      return u ? { ...x, sortOrder: u.sortOrder } : x;
+    }));
+    for (const u of updates) await updateDocumentEntry(u.id, { sortOrder: u.sortOrder });
+  };
+
   // 左侧目录双击改名（同步当前条目标题）
   const handleRenameSibling = async (id: string, title: string) => {
     const name = title.trim();
@@ -109,17 +134,30 @@ export function KnowledgeDetailPage() {
     } else toast.error('重命名失败', res.error?.message);
   };
 
-  // 进入编辑：markdown 模式但正文是 HTML（历史混存）→ 转成干净 Markdown 再编辑
+  // 进入编辑：按文档格式选模式；markdown 模式但正文是 HTML（历史混存）→ 转成干净 Markdown 再编辑
   const startEdit = () => {
     const raw = content ?? '';
-    setDraft(effectiveMarkdown && contentLooksHtml(raw) ? htmlToMarkdown(raw) : raw);
+    if (effectiveMarkdown) {
+      setEditMode('md');
+      setDraft(contentLooksHtml(raw) ? htmlToMarkdown(raw) : raw);
+    } else {
+      setEditMode('rich');
+      setDraft(raw);
+    }
     setEditing(true);
   };
 
-  const handleSave = async (asMarkdown: boolean) => {
+  /** 编辑态切模式：正文真正转换（富文本→Markdown / Markdown→富文本），不丢编辑中内容 */
+  const handleEditModeChange = (m: EditorMode) => {
+    if (m === editMode) return;
+    setDraft((d) => (m === 'md' ? htmlToMarkdown(d) : markdownToHtml(d)));
+    setEditMode(m);
+  };
+
+  const handleSave = async () => {
     setSaving(true);
-    // markdown 文档保持 markdown；富文本编辑产出 HTML（顺带纠正历史误标的 contentType）
-    const res = await updateDocumentContent(entryId, draft, asMarkdown ? 'text/markdown' : 'text/html');
+    // 按编辑模式落正确的 contentType（顺带纠正历史误标）
+    const res = await updateDocumentContent(entryId, draft, editMode === 'md' ? 'text/markdown' : 'text/html');
     setSaving(false);
     if (res.success) { setContent(draft); setEditing(false); toast.success('已保存'); void reload(); }
     else toast.error('保存失败', res.error?.message);
@@ -221,7 +259,7 @@ export function KnowledgeDetailPage() {
           {editing ? (
             <>
               <button onClick={() => setEditing(false)} className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm text-white/60 hover:bg-white/5 border border-white/10"><X size={13} /> 取消</button>
-              <button onClick={() => void handleSave(effectiveMarkdown)} disabled={saving} className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm hover:bg-cyan-500/30 disabled:opacity-50">
+              <button onClick={() => void handleSave()} disabled={saving} className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm hover:bg-cyan-500/30 disabled:opacity-50">
                 {saving ? <MapSpinner size={13} /> : <Save size={13} />} 保存
               </button>
             </>
@@ -247,7 +285,14 @@ export function KnowledgeDetailPage() {
 
       {/* 主体：左目录 + 右内容 */}
       <div className="flex-1 min-h-0 flex">
-        <FolderNav entries={siblings} currentId={entryId} onOpen={openEntry} onRename={handleRenameSibling} />
+        <FolderNav
+          entries={siblings}
+          currentId={entryId}
+          onOpen={openEntry}
+          onRename={handleRenameSibling}
+          onMove={(id, folderId) => void handleMoveSibling(id, folderId)}
+          onReorder={(ordered) => void handleReorderSiblings(ordered)}
+        />
 
         <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
           {loading ? (
@@ -256,19 +301,7 @@ export function KnowledgeDetailPage() {
             <div className="text-sm text-white/40 text-center py-20">知识不存在或已被删除</div>
           ) : editing ? (
             <div className="mx-auto py-6 px-6" style={{ maxWidth: 1400 }}>
-              {effectiveMarkdown ? (
-                <textarea
-                  autoFocus
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  spellCheck={false}
-                  className="no-focus-ring w-full rounded-xl bg-white/[0.02] border border-white/10 px-7 py-6 text-[13.5px] leading-relaxed text-white/90 font-mono outline-none focus:border-cyan-500/40 resize-none"
-                  style={{ minHeight: '70vh' }}
-                  placeholder="用 Markdown 书写知识内容…"
-                />
-              ) : (
-                <RichKnowledgeEditor value={draft} onChange={setDraft} />
-              )}
+              <KnowledgeEditor mode={editMode} onModeChange={handleEditModeChange} value={draft} onChange={setDraft} />
             </div>
           ) : (
             <div className="mx-auto py-8 px-6" style={{ maxWidth: 1400 }}>
@@ -445,47 +478,174 @@ function DocBody({ entry, content, fileUrl, html, markdown, codeMode, editable, 
   );
 }
 
-/** 左侧目录：按文件夹分组列出同库知识，高亮当前，单击切换、双击标题改名。无文件夹时平铺。 */
-function FolderNav({ entries, currentId, onOpen, onRename }: {
+/** 目录排序：手动排序值优先（小在前），未排序的按创建时间排在后面 */
+function sortNav(list: DocumentEntry[]): DocumentEntry[] {
+  return [...list].sort((a, b) =>
+    ((a.sortOrder ?? Number.MAX_SAFE_INTEGER) - (b.sortOrder ?? Number.MAX_SAFE_INTEGER))
+    || a.createdAt.localeCompare(b.createdAt));
+}
+
+interface DragInfo { id: string; isFolder: boolean; parentId: string | null }
+
+/**
+ * 左侧目录：文件夹区（含各自子文件）+ 根目录文件区。
+ * 单击切换、双击改名；拖拽：文件拖到文件夹=移入、拖到「文件」区头=移回根目录、
+ * 同容器内拖到另一项上=插到其前面（排序）；文件夹之间拖拽=文件夹排序。
+ */
+function FolderNav({ entries, currentId, onOpen, onRename, onMove, onReorder }: {
   entries: DocumentEntry[];
   currentId: string;
   onOpen: (id: string) => void;
   onRename: (id: string, title: string) => void;
+  onMove: (id: string, folderId: string | null) => void;
+  onReorder: (ordered: DocumentEntry[]) => void;
 }) {
-  const folders = entries.filter((e) => e.isFolder);
+  const dragRef = useRef<DragInfo | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
+
+  const folders = sortNav(entries.filter((e) => e.isFolder));
   const docs = entries.filter((e) => !e.isFolder);
-  const rootDocs = docs.filter((d) => !d.parentId);
-  const byFolder = (fid: string) => docs.filter((d) => d.parentId === fid);
+  const rootDocs = sortNav(docs.filter((d) => !d.parentId));
+  const byFolder = (fid: string) => sortNav(docs.filter((d) => d.parentId === fid));
 
   if (entries.length === 0) return null;
 
+  /** 同容器内把 dragged 插到 target 前面，产出新顺序交给父组件持久化 */
+  const reorderWithin = (container: DocumentEntry[], draggedId: string, targetId: string) => {
+    const without = container.filter((x) => x.id !== draggedId);
+    const dragged = container.find((x) => x.id === draggedId);
+    if (!dragged) return;
+    const idx = without.findIndex((x) => x.id === targetId);
+    if (idx < 0) return;
+    without.splice(idx, 0, dragged);
+    onReorder(without);
+  };
+
+  const handleDropOnItem = (target: DocumentEntry) => {
+    const d = dragRef.current;
+    dragRef.current = null;
+    setOverId(null);
+    if (!d || d.id === target.id) return;
+    if (d.isFolder) {
+      // 文件夹只参与文件夹排序
+      if (target.isFolder) reorderWithin(folders, d.id, target.id);
+      return;
+    }
+    if (target.isFolder) { onMove(d.id, target.id); return; }
+    const targetParent = target.parentId ?? null;
+    if (d.parentId === targetParent) {
+      reorderWithin(targetParent ? byFolder(targetParent) : rootDocs, d.id, target.id);
+    } else {
+      onMove(d.id, targetParent); // 跨容器：先移过去（追加到该容器末尾）
+    }
+  };
+
+  const handleDropOnRoot = () => {
+    const d = dragRef.current;
+    dragRef.current = null;
+    setOverId(null);
+    if (d && !d.isFolder && d.parentId !== null) onMove(d.id, null);
+  };
+
+  const dragProps = (e2: DocumentEntry) => ({
+    draggable: true,
+    onDragStart: () => { dragRef.current = { id: e2.id, isFolder: e2.isFolder, parentId: e2.parentId ?? null }; },
+    onDragOver: (ev: React.DragEvent) => { ev.preventDefault(); setOverId(e2.id); },
+    onDragLeave: () => setOverId((v) => (v === e2.id ? null : v)),
+    onDrop: (ev: React.DragEvent) => { ev.preventDefault(); ev.stopPropagation(); handleDropOnItem(e2); },
+  });
+
   return (
-    <div className="shrink-0 w-60 border-r border-white/8 overflow-y-auto py-3 px-2" style={{ overscrollBehavior: 'contain' }}>
-      <div className="px-2 pb-2 text-[11px] text-white/35 flex items-center gap-1"><FolderOpen size={12} /> 目录 · 双击标题改名</div>
-      {rootDocs.map((d) => <NavItem key={d.id} entry={d} active={d.id === currentId} onOpen={onOpen} onRename={onRename} />)}
-      {folders.map((f) => {
-        const kids = byFolder(f.id);
-        return (
-          <div key={f.id} className="mt-1">
-            <div className="flex items-center gap-1.5 px-2 py-1 text-[11px] text-white/45">
-              <FolderOpen size={12} className="text-amber-300/70" /> {f.title} <span className="text-white/25">{kids.length}</span>
-            </div>
-            <div className="pl-2">
-              {kids.map((d) => <NavItem key={d.id} entry={d} active={d.id === currentId} onOpen={onOpen} onRename={onRename} />)}
-            </div>
-          </div>
-        );
-      })}
+    <div className="shrink-0 w-64 border-r border-white/8 overflow-y-auto py-3 px-2 flex flex-col gap-0.5" style={{ overscrollBehavior: 'contain' }}>
+      {folders.length > 0 && (
+        <>
+          <div className="px-2 pb-1 text-[11px] text-white/35">文件夹 · 拖文件进入 / 拖动排序</div>
+          {folders.map((f) => {
+            const kids = byFolder(f.id);
+            return (
+              <div key={f.id} className="mb-1">
+                <FolderRow folder={f} count={kids.length} highlight={overId === f.id} onRename={onRename} {...dragProps(f)} />
+                <div className="pl-3 flex flex-col gap-0.5 mt-0.5">
+                  {kids.map((d) => (
+                    <NavItem key={d.id} entry={d} active={d.id === currentId} highlight={overId === d.id} onOpen={onOpen} onRename={onRename} {...dragProps(d)} />
+                  ))}
+                  {kids.length === 0 && <div className="px-2 py-1 text-[11px] text-white/25">空文件夹，把文件拖进来</div>}
+                </div>
+              </div>
+            );
+          })}
+          <div className="my-1 border-t border-white/8" />
+        </>
+      )}
+
+      <div
+        className={`px-2 pb-1 text-[11px] rounded ${overId === '__root__' ? 'text-cyan-300 bg-cyan-500/10' : 'text-white/35'}`}
+        onDragOver={(ev) => { ev.preventDefault(); setOverId('__root__'); }}
+        onDragLeave={() => setOverId((v) => (v === '__root__' ? null : v))}
+        onDrop={(ev) => { ev.preventDefault(); handleDropOnRoot(); }}
+      >
+        文件 · 双击改名{folders.length > 0 ? ' / 拖到这里移回根目录' : ''}
+      </div>
+      {rootDocs.map((d) => (
+        <NavItem key={d.id} entry={d} active={d.id === currentId} highlight={overId === d.id} onOpen={onOpen} onRename={onRename} {...dragProps(d)} />
+      ))}
     </div>
   );
 }
 
-function NavItem({ entry, active, onOpen, onRename }: {
+type DragHandlers = {
+  draggable: boolean;
+  onDragStart: () => void;
+  onDragOver: (ev: React.DragEvent) => void;
+  onDragLeave: () => void;
+  onDrop: (ev: React.DragEvent) => void;
+};
+
+function FolderRow({ folder, count, highlight, onRename, ...drag }: {
+  folder: DocumentEntry;
+  count: number;
+  highlight: boolean;
+  onRename: (id: string, title: string) => void;
+} & DragHandlers) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(folder.title);
+  const submit = () => {
+    setEditing(false);
+    if (val.trim() && val.trim() !== folder.title) onRename(folder.id, val.trim());
+  };
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } if (e.key === 'Escape') setEditing(false); }}
+        onBlur={submit}
+        className="no-focus-ring w-full text-sm bg-white/10 border border-cyan-500/40 rounded-md px-2 py-1 text-white outline-none"
+      />
+    );
+  }
+  return (
+    <div
+      {...drag}
+      onDoubleClick={() => { setVal(folder.title); setEditing(true); }}
+      className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-sm cursor-grab active:cursor-grabbing select-none ${highlight ? 'bg-cyan-500/15 text-cyan-200 ring-1 ring-cyan-500/40' : 'text-white/80 hover:bg-white/5'}`}
+      title={`${folder.title}（双击改名，可拖动排序）`}
+    >
+      <FolderOpen size={15} className="shrink-0 text-amber-300/80" />
+      <span className="truncate font-medium">{folder.title}</span>
+      <span className="ml-auto text-[11px] text-white/30 shrink-0">{count}</span>
+    </div>
+  );
+}
+
+function NavItem({ entry, active, highlight, onOpen, onRename, ...drag }: {
   entry: DocumentEntry;
   active: boolean;
+  highlight: boolean;
   onOpen: (id: string) => void;
   onRename: (id: string, title: string) => void;
-}) {
+} & DragHandlers) {
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(entry.title);
   const kind = fileKindOf(entry.contentType);
@@ -511,12 +671,16 @@ function NavItem({ entry, active, onOpen, onRename }: {
 
   return (
     <button
+      {...drag}
       onClick={() => onOpen(entry.id)}
       onDoubleClick={() => { setVal(entry.title); setEditing(true); }}
-      className={`w-full text-left flex items-center gap-2 px-2 py-1.5 rounded-md text-sm truncate ${active ? 'bg-cyan-500/15 text-cyan-100' : 'text-white/70 hover:bg-white/5'}`}
-      title={`${entry.title}（双击改名）`}
+      className={`w-full text-left flex items-center gap-2 px-2 py-1.5 rounded-md text-sm truncate select-none ${
+        highlight ? 'bg-cyan-500/15 text-cyan-200 ring-1 ring-cyan-500/40'
+        : active ? 'bg-cyan-500/15 text-cyan-100' : 'text-white/70 hover:bg-white/5'
+      }`}
+      title={`${entry.title}（双击改名，可拖动排序/移入文件夹）`}
     >
-      <Icon size={13} className="shrink-0" style={{ color: active ? undefined : kind.color }} />
+      <Icon size={14} className="shrink-0" style={{ color: active ? undefined : kind.color }} />
       <span className="truncate">{entry.title}</span>
     </button>
   );

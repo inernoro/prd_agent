@@ -50,6 +50,12 @@ public class DocumentEntry
     /// </summary>
     public List<string> VersionIds { get; set; } = new();
 
+    /// <summary>
+    /// 目录手动排序值（越小越靠前；null=未手动排序，前端按创建时间兜底排在已排序项之后）。
+    /// 同一容器（文件夹/根目录）内拖拽排序时由前端批量重写。
+    /// </summary>
+    public double? SortOrder { get; set; }
+
     /// <summary>扩展元数据（键值对，便于不同来源携带额外信息）</summary>
     public Dictionary<string, string> Metadata { get; set; } = new();
 

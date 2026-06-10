@@ -112,6 +112,8 @@ export type DocumentEntry = {
   category?: string;
   /** 关联的产品版本 ID 列表（产品知识库专用；空=未关联） */
   versionIds?: string[];
+  /** 目录手动排序值（越小越靠前；null=未手动排序） */
+  sortOrder?: number;
   metadata: Record<string, string>;
   createdBy: string;
   updatedBy?: string;
@@ -299,6 +301,8 @@ export type UpdateDocumentEntryInput = {
   versionIds?: string[];
   /** 内容 MIME 类型（格式纠错：text/markdown 与 text/html 互转；不传=不变） */
   contentType?: string;
+  /** 目录手动排序值（拖拽排序写入；不传=不变） */
+  sortOrder?: number;
 };
 
 // ── Contract 签名 ──
