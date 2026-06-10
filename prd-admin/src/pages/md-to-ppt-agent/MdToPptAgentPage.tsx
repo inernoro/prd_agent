@@ -16,6 +16,9 @@ import {
   Check,
   AlertCircle,
   RotateCcw,
+  Pencil,
+  Download,
+  Maximize2,
 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import {
@@ -83,12 +86,29 @@ interface KbEntry {
 
 const SESSION_KEY = 'md-to-ppt-chat-v1';
 
+// dotBg/dotRing 用于预览工具栏的主题快速切换色点（即时换肤，无需重新生成）
 const THEME_OPTIONS = [
-  { value: 'tech-dark', label: 'Tech 极黑' },
-  { value: 'cobalt-grid', label: '钴蓝格纸' },
-  { value: 'editorial-ink', label: '纸墨编辑' },
-  { value: 'warm-zine', label: '复古 Zine' },
-  { value: 'swiss-minimal', label: 'Swiss 极简' },
+  { value: 'tech-dark', label: 'Tech 极黑', dotBg: '#0d1117', dotRing: '#7ee787' },
+  { value: 'cobalt-grid', label: '钴蓝格纸', dotBg: '#F0EBDE', dotRing: '#1F2BE0' },
+  { value: 'editorial-ink', label: '纸墨编辑', dotBg: '#f1efea', dotRing: '#0a0a0b' },
+  { value: 'warm-zine', label: '复古 Zine', dotBg: '#C8B99A', dotRing: '#008F4D' },
+  { value: 'swiss-minimal', label: 'Swiss 极简', dotBg: '#fafaf8', dotRing: '#002FA7' },
+];
+
+// 空状态快速开始示例（零摩擦输入：点击填入输入框，用户可改后再发送）
+const QUICK_STARTS = [
+  {
+    label: '产品发布会',
+    text: '帮我做一个新产品发布会 PPT，共 8 页，面向客户，包含产品亮点、应用场景、客户案例、定价与发布计划',
+  },
+  {
+    label: '季度业务汇报',
+    text: '生成一份季度业务汇报 PPT，共 10 页，包含业绩回顾、关键指标达成、问题复盘、下季度目标与行动计划',
+  },
+  {
+    label: '技术方案评审',
+    text: '做一份技术方案评审 PPT，共 8 页，包含项目背景、目标与非目标、整体架构、关键设计取舍、风险与排期',
+  },
 ];
 
 // 主题 CSS 覆盖层（open-design 风格，前端注入到 iframe）
@@ -201,12 +221,21 @@ function looksLikeDeck(html: string): boolean {
 //
 // 验收口径：生成含 <script>fetch(...localStorage...)</script> 的 deck，
 //   确认脚本拿不到主应用 token、不能以用户身份调 API，且 reveal 仍正常渲染可翻页。
-function prepareIframeHtml(html: string, theme?: string): string {
+// 所有主题字体（允许跨源 CSS 加载，不受 opaque origin 限制）
+// 涵盖 5 个主题：Inter/JetBrains Mono(tech-dark) / Newsreader+Hanken Grotesk(cobalt-grid) /
+//   Playfair Display(editorial-ink) / Space Grotesk(warm-zine) / Inter Tight(swiss-minimal)
+// data-map-inject 标记：编辑模式序列化回传 HTML 时剥离所有注入节点，保证存回的是纯净 deck
+const FONT_LINKS =
+  '<link rel="preconnect" href="https://fonts.googleapis.com" data-map-inject>' +
+  '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin data-map-inject>' +
+  '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Newsreader:ital,wght@0,400;0,500;1,300;1,400&family=Hanken+Grotesk:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,400;0,700;0,800;1,400;1,600&family=Space+Grotesk:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@300;400;700&display=swap" rel="stylesheet" data-map-inject>';
+
+function prepareIframeHtml(html: string, theme?: string, opts?: { editor?: boolean }): string {
   if (!html) return html;
 
   // 1. in-memory storage shim（遮蔽 opaque origin 下 reveal 对 storage 的访问）
   const storageshim =
-    '<script>' +
+    '<script data-map-inject>' +
     '(function(){' +
     'var m={};' +
     'var s={' +
@@ -224,25 +253,73 @@ function prepareIframeHtml(html: string, theme?: string): string {
 
   // 2. nav-guard（阻止 reveal 内链接把 iframe 导航到主应用）
   const navguard =
-    '<script>(function(){try{' +
+    '<script data-map-inject>(function(){try{' +
     'var n=function(){return null;};' +
     'try{history.pushState=n;history.replaceState=n;}catch(e){}' +
     "document.addEventListener('click',function(e){var t=e.target;while(t&&t!==document){if(t.tagName==='A'){var h=t.getAttribute('href')||'';if(h&&h.charAt(0)!=='#'){e.preventDefault();e.stopPropagation();}break;}t=t.parentNode;}},true);" +
     '}catch(e){}})();</script>';
 
-  // 3. 所有主题字体（允许跨源 CSS 加载，不受 opaque origin 限制）
-  // 涵盖 5 个主题：Inter/JetBrains Mono(tech-dark) / Newsreader+Hanken Grotesk(cobalt-grid) /
-  //   Playfair Display(editorial-ink) / Space Grotesk(warm-zine) / Inter Tight(swiss-minimal)
-  const fonts =
-    '<link rel="preconnect" href="https://fonts.googleapis.com">' +
-    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>' +
-    '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Newsreader:ital,wght@0,400;0,500;1,300;1,400&family=Hanken+Grotesk:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,400;0,700;0,800;1,400;1,600&family=Space+Grotesk:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@300;400;700&display=swap" rel="stylesheet">';
+  // 3. 控制脚本（常注入）：页码上报 + 父窗口翻页指令监听。
+  //    opaque origin（sandbox 仅 allow-scripts）下父页面无法访问 contentWindow.Reveal，
+  //    postMessage 是唯一可靠通道——翻页按钮/页码指示全靠它。
+  const controlScript =
+    '<script data-map-inject>(function(){' +
+    'function tot(){var s=document.querySelectorAll(".reveal .slides>section");return s.length||1;}' +
+    'function cur(){try{if(window.Reveal&&Reveal.getIndices){return (Reveal.getIndices().h||0)+1;}}catch(e){}return 1;}' +
+    'function rep(){try{parent.postMessage({type:"map-ppt-slide",cur:cur(),total:tot()},"*");}catch(e){}}' +
+    'window.addEventListener("message",function(e){var d=e.data||{};try{' +
+    'if(d.type==="map-ppt-nav"&&window.Reveal){if(d.dir==="prev"){Reveal.prev();}else{Reveal.next();}setTimeout(rep,80);}' +
+    '}catch(err){}});' +
+    'var n=0;var iv=setInterval(function(){n++;var R=window.Reveal;' +
+    'if(R&&R.getIndices){clearInterval(iv);rep();try{if(R.on){R.on("slidechanged",rep);}else if(R.addEventListener){R.addEventListener("slidechanged",rep);}}catch(e){}}' +
+    'else if(n>60){clearInterval(iv);}},250);' +
+    '})();</script>';
 
-  // 4. 主题 CSS 强制覆盖（放在 </head> 前，最高级联叠加层，确保 LLM 输出的主题始终正确）
+  // 4. 编辑器脚本（仅编辑模式注入）：点击文字 contenteditable 直接改、
+  //    悬浮工具条 A+/A- 调字号，改动 debounce 序列化（剥离全部注入节点）postMessage 回父页面。
+  const editorScript = !opts?.editor
+    ? ''
+    : '<style data-map-inject>' +
+      '.__map_editing__{outline:2px dashed #c084fc!important;outline-offset:4px!important;cursor:text;}' +
+      '#__map_editor_toolbar__{position:fixed;display:none;z-index:99999;gap:6px;align-items:center;background:#17181c;color:#eee;border:1px solid rgba(255,255,255,.18);border-radius:8px;padding:6px 8px;font:12px/1 Inter,system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.4);}' +
+      '#__map_editor_toolbar__ button{all:unset;cursor:pointer;padding:4px 8px;border-radius:5px;background:rgba(255,255,255,.08);color:#fff;font-weight:600;}' +
+      '#__map_editor_toolbar__ button:hover{background:rgba(255,255,255,.18);}' +
+      '#__map_editor_toolbar__ span{color:rgba(255,255,255,.5);font-size:10px;}' +
+      '</style>' +
+      '<script data-map-inject>(function(){' +
+      'var SEL="h1,h2,h3,h4,h5,h6,p,li,blockquote,td,th";var cur=null;var t=null;' +
+      'function serialize(){try{' +
+      'var root=document.documentElement.cloneNode(true);' +
+      'var rm=root.querySelectorAll("[data-map-inject],#__map_editor_toolbar__");' +
+      'for(var i=0;i<rm.length;i++){if(rm[i].parentNode){rm[i].parentNode.removeChild(rm[i]);}}' +
+      'var ce=root.querySelectorAll("[contenteditable]");for(var j=0;j<ce.length;j++){ce[j].removeAttribute("contenteditable");}' +
+      'var ed=root.querySelectorAll(".__map_editing__");for(var k=0;k<ed.length;k++){ed[k].classList.remove("__map_editing__");if(!ed[k].getAttribute("class")){ed[k].removeAttribute("class");}}' +
+      'parent.postMessage({type:"map-ppt-html",html:"<!DOCTYPE html>\\n"+root.outerHTML},"*");' +
+      '}catch(e){}}' +
+      'function sched(){clearTimeout(t);t=setTimeout(serialize,500);}' +
+      'var tb=document.createElement("div");tb.id="__map_editor_toolbar__";' +
+      "tb.innerHTML='<button data-act=\"minus\">A-</button><button data-act=\"plus\">A+</button><span>编辑中 · A+/A- 调字号 · Esc 退出</span>';" +
+      'tb.addEventListener("mousedown",function(e){e.preventDefault();e.stopPropagation();});' +
+      'tb.addEventListener("click",function(e){var b=e.target.closest?e.target.closest("button"):null;if(!b||!cur)return;e.preventDefault();e.stopPropagation();' +
+      'var fs=parseFloat(getComputedStyle(cur).fontSize)||24;var nv=b.getAttribute("data-act")==="plus"?fs*1.12:fs/1.12;cur.style.fontSize=nv.toFixed(1)+"px";sched();place();});' +
+      'function place(){if(!cur)return;var r=cur.getBoundingClientRect();tb.style.display="flex";var top=r.top-46;if(top<8){top=r.bottom+10;}tb.style.top=top+"px";tb.style.left=Math.max(8,Math.min(window.innerWidth-220,r.left))+"px";}' +
+      'function desel(skip){if(!cur)return;cur.removeEventListener("input",sched);cur.removeAttribute("contenteditable");cur.classList.remove("__map_editing__");cur=null;tb.style.display="none";if(!skip){serialize();}}' +
+      'function sel(el){if(cur===el)return;desel(true);cur=el;el.classList.add("__map_editing__");el.setAttribute("contenteditable","true");el.addEventListener("input",sched);place();try{el.focus();}catch(e){}}' +
+      'document.addEventListener("click",function(e){' +
+      'if(e.target.closest&&e.target.closest("#__map_editor_toolbar__")){return;}' +
+      'var el=e.target.closest?e.target.closest(SEL):null;' +
+      'if(el&&el.closest(".slides")){e.preventDefault();e.stopPropagation();sel(el);}else{desel(false);}' +
+      '},true);' +
+      'document.addEventListener("keydown",function(e){if(e.key==="Escape"){desel(false);}},true);' +
+      'window.addEventListener("resize",function(){place();});' +
+      'function mount(){if(document.body){document.body.appendChild(tb);}else{setTimeout(mount,100);}}mount();' +
+      '})();</script>';
+
+  // 5. 主题 CSS 强制覆盖（放在 </head> 前，最高级联叠加层，确保 LLM 输出的主题始终正确）
   const themeCss = THEME_CSS_OVERRIDES[theme ?? 'tech-dark'] ?? THEME_CSS_OVERRIDES['tech-dark'];
-  const themeOverride = '<style id="__map_theme_override__">' + themeCss + '</style>';
+  const themeOverride = '<style id="__map_theme_override__" data-map-inject>' + themeCss + '</style>';
 
-  const headInject = storageshim + navguard + fonts;
+  const headInject = storageshim + navguard + controlScript + editorScript + FONT_LINKS;
 
   let result = html;
   if (/<head[^>]*>/i.test(result)) {
@@ -259,6 +336,23 @@ function prepareIframeHtml(html: string, theme?: string): string {
     result = result + themeOverride;
   }
   return result;
+}
+
+// 导出/发布用 HTML：只带字体 + 主题覆盖（保持当前预览观感），不带 shim/编辑器等运行时注入。
+// 修复历史 bug：以前发布的是 LLM 原始 HTML，前端注入的主题 CSS 没带上，发布出去主题全丢。
+function prepareExportHtml(html: string, theme?: string): string {
+  if (!html) return html;
+  const themeCss = THEME_CSS_OVERRIDES[theme ?? 'tech-dark'] ?? THEME_CSS_OVERRIDES['tech-dark'];
+  const block = FONT_LINKS + '<style id="__map_theme_override__">' + themeCss + '</style>';
+  if (/<\/head>/i.test(html)) return html.replace(/<\/head>/i, block + '</head>');
+  if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => m + block);
+  return block + html;
+}
+
+// 从生成 HTML 提取 <title>，用作下载文件名与发布标题
+function extractDeckTitle(html: string): string {
+  const m = /<title[^>]*>([^<]+)<\/title>/i.exec(html);
+  return m ? m[1].trim() : '';
 }
 
 // 生成阶段提示文案
@@ -564,6 +658,13 @@ export function MdToPptAgentPage() {
   const [diagLines, setDiagLines] = useState<MdToPptDiagEvent[]>([]);
   const [modelInfo, setModelInfo] = useState<{ model: string; platform: string } | null>(null);
 
+  // ─── 所见即所得编辑 + 页码（iframe postMessage 通道）
+  const [editMode, setEditMode] = useState(false);
+  const [dirtyEdits, setDirtyEdits] = useState(false);
+  const [slidePos, setSlidePos] = useState<{ cur: number; total: number } | null>(null);
+  const editedHtmlRef = useRef<string>('');
+  const previewWrapRef = useRef<HTMLDivElement>(null);
+
   // ─── Attachments & KB
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
   const [pendingKbRefs, setPendingKbRefs] = useState<KbRef[]>([]);
@@ -634,17 +735,82 @@ export function MdToPptAgentPage() {
     saveSession({ messages, activeRunId, theme, engine });
   }, [messages, activeRunId, theme, engine]);
 
-  // ─── Nav: translate page
-  const deckNav = useCallback((dir: 'prev' | 'next') => {
-    try {
-      const w = iframeRef.current?.contentWindow as unknown as {
-        Reveal?: Record<string, () => void>;
-      };
-      if (w?.Reveal && typeof w.Reveal[dir] === 'function') w.Reveal[dir]();
-    } catch {
-      /* opaque origin: cannot access contentWindow — use postMessage if needed */
-    }
+  // ─── iframe postMessage 监听：页码上报 + 编辑模式 HTML 回传
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      // opaque origin 下 e.origin === 'null'，只认来自当前预览 iframe 的消息
+      if (e.source !== iframeRef.current?.contentWindow) return;
+      const d = e.data as { type?: string; html?: string; cur?: number; total?: number } | null;
+      if (!d || typeof d !== 'object') return;
+      if (d.type === 'map-ppt-slide' && typeof d.cur === 'number' && typeof d.total === 'number') {
+        setSlidePos({ cur: d.cur, total: d.total });
+      }
+      if (d.type === 'map-ppt-html' && typeof d.html === 'string' && looksLikeDeck(d.html)) {
+        editedHtmlRef.current = d.html;
+        setDirtyEdits(true);
+      }
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
   }, []);
+
+  // ─── Nav: 翻页走 postMessage（opaque origin 下无法直接访问 contentWindow.Reveal）
+  const deckNav = useCallback((dir: 'prev' | 'next') => {
+    iframeRef.current?.contentWindow?.postMessage({ type: 'map-ppt-nav', dir }, '*');
+  }, []);
+
+  // ─── 编辑产物：取最新 HTML（编辑模式下优先未提交的编辑稿）
+  const latestHtml = useCallback(() => {
+    return editedHtmlRef.current && looksLikeDeck(editedHtmlRef.current)
+      ? editedHtmlRef.current
+      : generatedHtml;
+  }, [generatedHtml]);
+
+  // ─── 提交编辑（把 iframe 回传的编辑稿存为正式产物）
+  const commitEdits = useCallback(() => {
+    if (editedHtmlRef.current && looksLikeDeck(editedHtmlRef.current)) {
+      setGeneratedHtml(editedHtmlRef.current);
+    }
+    editedHtmlRef.current = '';
+    setDirtyEdits(false);
+  }, []);
+
+  const toggleEditMode = useCallback(() => {
+    if (editMode) {
+      commitEdits();
+      setEditMode(false);
+    } else {
+      setEditMode(true);
+    }
+  }, [editMode, commitEdits]);
+
+  // ─── 主题切换（编辑中先落盘编辑稿，避免 iframe 重载丢修改）
+  const switchTheme = useCallback(
+    (value: string) => {
+      if (editMode && editedHtmlRef.current) commitEdits();
+      setTheme(value);
+    },
+    [editMode, commitEdits]
+  );
+
+  // ─── 全屏演示
+  const handleFullscreen = useCallback(() => {
+    void previewWrapRef.current?.requestFullscreen?.();
+  }, []);
+
+  // ─── 下载独立 HTML（含当前主题样式，可直接双击打开演示）
+  const handleDownload = useCallback(() => {
+    const base = latestHtml();
+    if (!base) return;
+    const out = prepareExportHtml(base, theme);
+    const blob = new Blob([out], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = (extractDeckTitle(base) || '网页PPT') + '.html';
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [latestHtml, theme]);
 
   // ─── Add message helper
   const pushMsg = useCallback(
@@ -855,10 +1021,11 @@ export function MdToPptAgentPage() {
     [isProcessing, messages, pushMsg, theme, engine]
   );
 
-  // ─── Patch flow（对话式精修）
+  // ─── Patch flow（对话式精修）。baseHtml 允许携带编辑模式未提交的最新稿。
   const startPatch = useCallback(
-    (instruction: string) => {
-      if (!generatedHtml || isProcessing) return;
+    (instruction: string, baseHtml?: string) => {
+      const base = baseHtml ?? generatedHtml;
+      if (!base || isProcessing) return;
 
       setIsProcessing(true);
       setArtifactPhase('patching');
@@ -870,7 +1037,7 @@ export function MdToPptAgentPage() {
       });
 
       const cleanup = streamMdToPptPatch({
-        currentHtml: generatedHtml,
+        currentHtml: base,
         slideRequest: instruction,
         engine,
         onRun: (runId) => {
@@ -961,27 +1128,37 @@ export function MdToPptAgentPage() {
 
     // 决策：如果已有 HTML → patch；否则 → 请求大纲
     if (generatedHtml) {
-      // 对话精修模式
-      startPatch(text);
+      // 对话精修模式。若编辑模式有未提交修改，以编辑稿为基底并先落盘。
+      const base = latestHtml();
+      if (editMode) {
+        commitEdits();
+        setEditMode(false);
+      }
+      startPatch(text, base);
     } else {
       // 初次生成：大纲先行
       void requestOutline(text, atts, kbs);
     }
-  }, [input, isProcessing, pendingAttachments, pendingKbRefs, generatedHtml, pushMsg, startPatch, requestOutline]);
+  }, [input, isProcessing, pendingAttachments, pendingKbRefs, generatedHtml, pushMsg, startPatch, requestOutline, latestHtml, editMode, commitEdits]);
 
-  // ─── Publish
+  // ─── Publish（携带主题样式发布，标题取自 deck <title>）
   const handlePublish = useCallback(async () => {
-    if (!generatedHtml) return;
+    const base = latestHtml();
+    if (!base) return;
+    if (editMode) {
+      commitEdits();
+      setEditMode(false);
+    }
     setIsPublishing(true);
     const result = await publishMdToPpt({
-      htmlContent: generatedHtml,
-      title: 'PPT 演示',
+      htmlContent: prepareExportHtml(base, theme),
+      title: extractDeckTitle(base) || 'PPT 演示',
     });
     setIsPublishing(false);
     if (result.success && result.siteUrl) {
       setPublishedUrl(result.siteUrl);
     }
-  }, [generatedHtml]);
+  }, [latestHtml, editMode, commitEdits, theme]);
 
   // ─── Abort
   const handleAbort = useCallback(() => {
@@ -1004,6 +1181,10 @@ export function MdToPptAgentPage() {
     setArtifactPhase('idle');
     setPendingAttachments([]);
     setPendingKbRefs([]);
+    setEditMode(false);
+    setDirtyEdits(false);
+    setSlidePos(null);
+    editedHtmlRef.current = '';
     try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
   }, []);
 
@@ -1099,7 +1280,7 @@ export function MdToPptAgentPage() {
             <span className="text-[var(--text-tertiary)]">风格</span>
             <select
               value={theme}
-              onChange={(e) => setTheme(e.target.value)}
+              onChange={(e) => switchTheme(e.target.value)}
               className="appearance-none text-[11px] py-1 pl-2 pr-5 rounded-md bg-white/5 text-[var(--text-primary)] border border-white/8 outline-none cursor-pointer"
             >
               {THEME_OPTIONS.map((opt) => (
@@ -1147,9 +1328,30 @@ export function MdToPptAgentPage() {
                     告诉我你想做什么样的 PPT
                   </p>
                   <p className="text-[10px] text-[var(--text-tertiary)] mt-1 leading-relaxed">
-                    例：把这段内容做成 8 页的商务汇报<br />
-                    支持附件和知识库引用
+                    支持附件和知识库引用，生成后可直接<br />
+                    点击文字编辑、切换主题、下载、发布
                   </p>
+                </div>
+
+                {/* 快速开始：点击填入输入框，可修改后再发送 */}
+                <div className="flex flex-col gap-1.5 w-full mt-1" data-testid="quick-starts">
+                  {QUICK_STARTS.map((q) => (
+                    <button
+                      key={q.label}
+                      onClick={() => {
+                        setInput(q.text);
+                        inputRef.current?.focus();
+                      }}
+                      className="text-left px-2.5 py-2 rounded-lg bg-white/4 border border-white/8 hover:bg-purple-500/10 hover:border-purple-500/25 transition-colors"
+                    >
+                      <div className="text-[11px] font-medium text-[var(--text-secondary)]">
+                        {q.label}
+                      </div>
+                      <div className="text-[9px] text-[var(--text-tertiary)] truncate mt-0.5">
+                        {q.text}
+                      </div>
+                    </button>
+                  ))}
                 </div>
               </div>
             )}
@@ -1413,7 +1615,7 @@ export function MdToPptAgentPage() {
           {(artifactPhase === 'done' || (artifactPhase === 'idle' && generatedHtml)) && generatedHtml && (
             <div className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
               {/* Toolbar */}
-              <div className="shrink-0 flex items-center justify-between px-3 py-2 border-b border-white/8">
+              <div className="shrink-0 flex items-center justify-between gap-2 px-3 py-2 border-b border-white/8 flex-wrap">
                 <div className="flex items-center gap-1.5">
                   <button
                     onClick={() => deckNav('prev')}
@@ -1422,6 +1624,12 @@ export function MdToPptAgentPage() {
                   >
                     <ChevronLeft size={14} />
                   </button>
+                  <span
+                    data-testid="ppt-page-indicator"
+                    className="text-[10px] tabular-nums text-[var(--text-secondary)] min-w-[40px] text-center"
+                  >
+                    {slidePos ? `${slidePos.cur} / ${slidePos.total}` : '- / -'}
+                  </span>
                   <button
                     onClick={() => deckNav('next')}
                     title="下一页"
@@ -1429,32 +1637,92 @@ export function MdToPptAgentPage() {
                   >
                     <ChevronRight size={14} />
                   </button>
-                  <span className="text-[10px] text-[var(--text-tertiary)]">翻页</span>
+
+                  {/* 主题快速切换色点（即时换肤，无需重新生成） */}
+                  <div className="flex items-center gap-1.5 ml-2 pl-2.5 border-l border-white/10" data-testid="theme-dots">
+                    {THEME_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.value}
+                        onClick={() => switchTheme(opt.value)}
+                        title={'切换主题：' + opt.label}
+                        className="w-4 h-4 rounded-full transition-transform hover:scale-110"
+                        style={{
+                          background: opt.dotBg,
+                          border: '2px solid ' + opt.dotRing,
+                          boxShadow: theme === opt.value ? '0 0 0 2px rgba(168,85,247,.7)' : 'none',
+                        }}
+                      />
+                    ))}
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
+
+                <div className="flex items-center gap-1.5">
                   {modelInfo && (
-                    <span className="text-[9px] font-mono text-[var(--text-tertiary)] bg-white/4 border border-white/8 rounded px-1.5 py-0.5 max-w-[200px] truncate" title={modelInfo.model + ' via ' + modelInfo.platform}>
+                    <span className="text-[9px] font-mono text-[var(--text-tertiary)] bg-white/4 border border-white/8 rounded px-1.5 py-0.5 max-w-[160px] truncate" title={modelInfo.model + ' via ' + modelInfo.platform}>
                       {modelInfo.model.split('/').pop()} · {modelInfo.platform}
                     </span>
                   )}
-                  <span className="text-[10px] text-[var(--text-tertiary)]">
-                    {generatedHtml.length.toLocaleString()} 字符 · reveal.js
-                  </span>
+                  <button
+                    onClick={toggleEditMode}
+                    disabled={isStreaming}
+                    title={editMode ? '完成编辑并保存修改' : '直接编辑：点击幻灯片文字修改内容、调整字号'}
+                    className={[
+                      'flex items-center gap-1 px-2 py-1 rounded-md text-[11px] border disabled:opacity-40',
+                      editMode
+                        ? 'bg-purple-500/25 text-purple-200 border-purple-500/40 font-semibold'
+                        : 'bg-white/5 text-[var(--text-secondary)] hover:bg-white/10 border-white/10',
+                    ].join(' ')}
+                  >
+                    {editMode ? <Check size={11} /> : <Pencil size={11} />}
+                    {editMode ? '完成编辑' : '编辑内容'}
+                  </button>
+                  <button
+                    onClick={handleDownload}
+                    title="下载独立 HTML（含当前主题样式，双击即可演示）"
+                    className="flex items-center justify-center w-7 h-7 rounded-md bg-white/5 hover:bg-white/10 border border-white/10 text-[var(--text-secondary)]"
+                  >
+                    <Download size={13} />
+                  </button>
+                  <button
+                    onClick={handleFullscreen}
+                    title="全屏演示"
+                    className="flex items-center justify-center w-7 h-7 rounded-md bg-white/5 hover:bg-white/10 border border-white/10 text-[var(--text-secondary)]"
+                  >
+                    <Maximize2 size={13} />
+                  </button>
                 </div>
               </div>
+
+              {/* 编辑模式提示条 */}
+              {editMode && (
+                <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 bg-purple-500/10 border-b border-purple-500/20 text-[11px] text-purple-300">
+                  <Pencil size={11} className="shrink-0" />
+                  <span>
+                    编辑模式：点击幻灯片里的文字直接修改，悬浮工具条 A+/A- 调字号，Esc 取消选中；点「完成编辑」保存
+                  </span>
+                  {dirtyEdits && (
+                    <span className="ml-auto shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 border border-purple-500/30">
+                      已记录修改
+                    </span>
+                  )}
+                </div>
+              )}
 
               {/* iframe —— sandbox="allow-scripts"（opaque origin，无 same-origin）
                     配合上方 prepareIframeHtml() 注入的 storage shim，
                     reveal.js init 不会因 storage 访问抛错导致整页空白。
-                    生成 HTML 中的 <script> 无法访问主应用的 token/cookie/storage。 */}
-              <iframe
-                ref={iframeRef}
-                className="flex-1 w-full border-0"
-                srcDoc={prepareIframeHtml(generatedHtml, theme)}
-                sandbox="allow-scripts"
-                title="PPT 预览"
-                style={{ minHeight: 0 }}
-              />
+                    生成 HTML 中的 <script> 无法访问主应用的 token/cookie/storage。
+                    翻页/页码/编辑全部走 postMessage 通道（见 controlScript/editorScript）。 */}
+              <div ref={previewWrapRef} className="flex-1 flex flex-col bg-black" style={{ minHeight: 0 }}>
+                <iframe
+                  ref={iframeRef}
+                  className="flex-1 w-full border-0"
+                  srcDoc={prepareIframeHtml(generatedHtml, theme, { editor: editMode })}
+                  sandbox="allow-scripts"
+                  title="PPT 预览"
+                  style={{ minHeight: 0 }}
+                />
+              </div>
             </div>
           )}
         </div>
