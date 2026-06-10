@@ -96,11 +96,19 @@ public class DocumentStoreController : ControllerBase
 
     /// <summary>
     /// 产品知识库访问判定：仅当 store.ProductKnowledgeRef 非空时生效（格式 product:{id} / version:{id}）。
-    /// 产品 owner 与成员均可读写（与 product-agent 的产品访问语义对齐）。
+    /// 产品 owner、成员、全局产品管理权限（Super/ProductAgentAdmin/ProductAgentManage）均可读写
+    /// （与 product-agent 的 FindAccessibleProductAsync 访问语义完全对齐）。
     /// </summary>
     private async Task<bool> IsProductKnowledgeMemberAsync(DocumentStore s, string userId)
     {
         if (string.IsNullOrEmpty(s.ProductKnowledgeRef)) return false;
+        // 与 ProductAgentController.CanManage() 对齐：全局产品管理权限可读写所有产品知识库。
+        // 否则管理员能通过 find-or-create 拿到 storeId，却在本控制器被拒（"文档空间不存在"）。
+        var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
+        if (permissions.Contains(AdminPermissionCatalog.Super)
+            || permissions.Contains(AdminPermissionCatalog.ProductAgentAdmin)
+            || permissions.Contains(AdminPermissionCatalog.ProductAgentManage))
+            return true;
         var parts = s.ProductKnowledgeRef.Split(':', 2);
         if (parts.Length != 2) return false;
         string? productId = parts[0] switch
