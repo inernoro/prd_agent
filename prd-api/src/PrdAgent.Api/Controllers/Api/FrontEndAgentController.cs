@@ -21,6 +21,8 @@ namespace PrdAgent.Api.Controllers.Api;
 public class FrontEndAgentController : ControllerBase
 {
     private const string AppKey = "front-end-agent";
+    private const int MaxScreenshotCount = 4;
+    private const int MaxScreenshotDataUrlLength = 6 * 1024 * 1024;
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<FrontEndAgentController> _logger;
@@ -43,6 +45,7 @@ public class FrontEndAgentController : ControllerBase
         public string? ExistingCode { get; set; }
         public string? ErrorLog { get; set; }
         public string? ScreenshotNotes { get; set; }
+        public List<string>? ScreenshotImages { get; set; }
         public string? TargetFramework { get; set; }
         public string? StyleGuidance { get; set; }
     }
@@ -56,19 +59,38 @@ public class FrontEndAgentController : ControllerBase
         Response.Headers.Connection = "keep-alive";
 
         var userId = this.GetRequiredUserId();
-        if (req == null || string.IsNullOrWhiteSpace(req.Requirement))
+        if (req == null)
         {
-            await WriteSseAsync("error", new { message = "请填写需求、报错或要接入的接口说明" });
+            await WriteSseAsync("error", new { message = "请求体不能为空" });
             return;
         }
 
         var taskType = NormalizeTaskType(req.TaskType);
+        var screenshotImages = NormalizeScreenshotImages(req.ScreenshotImages);
+        var hasScreenshots = screenshotImages.Count > 0;
+        var hasRequirement = !string.IsNullOrWhiteSpace(req.Requirement);
+        var hasScreenshotNotes = !string.IsNullOrWhiteSpace(req.ScreenshotNotes);
+
+        if (!hasRequirement && !(taskType == "visual-diagnosis" && (hasScreenshots || hasScreenshotNotes)))
+        {
+            await WriteSseAsync("error", new { message = "请填写需求、报错或要接入的接口说明；截图诊断至少提供截图或现象描述" });
+            return;
+        }
+
         var userPrompt = BuildUserPrompt(req, taskType);
-        var appCallerCode = AppCallerRegistry.FrontEndAgent.Assistant.Chat;
+        var useVision = taskType == "visual-diagnosis" && hasScreenshots;
+        var appCallerCode = useVision
+            ? AppCallerRegistry.FrontEndAgent.Assistant.VisualDiagnosis
+            : AppCallerRegistry.FrontEndAgent.Assistant.Chat;
+
+        JsonNode userMessageContent = useVision
+            ? BuildVisionUserContent(userPrompt, screenshotImages)
+            : JsonValue.Create(userPrompt)!;
+
         var gatewayRequest = new GatewayRequest
         {
             AppCallerCode = appCallerCode,
-            ModelType = ModelTypes.Chat,
+            ModelType = useVision ? ModelTypes.Vision : ModelTypes.Chat,
             Stream = true,
             IncludeThinking = true,
             RequestBody = new JsonObject
@@ -76,7 +98,7 @@ public class FrontEndAgentController : ControllerBase
                 ["messages"] = new JsonArray
                 {
                     new JsonObject { ["role"] = "system", ["content"] = BuildSystemPrompt(taskType) },
-                    new JsonObject { ["role"] = "user", ["content"] = userPrompt },
+                    new JsonObject { ["role"] = "user", ["content"] = userMessageContent },
                 },
                 ["temperature"] = 0.25,
                 ["max_tokens"] = 8192,
@@ -94,10 +116,10 @@ public class FrontEndAgentController : ControllerBase
             DocumentChars: userPrompt.Length,
             DocumentHash: null,
             SystemPromptRedacted: $"[{AppKey}:{taskType}]",
-            RequestType: "chat",
+            RequestType: useVision ? "vision" : "chat",
             AppCallerCode: appCallerCode));
 
-        await WriteSseAsync("phase", new { phase = "preparing", message = GetPreparingMessage(taskType) });
+        await WriteSseAsync("phase", new { phase = "preparing", message = GetPreparingMessage(taskType, hasScreenshots) });
 
         var startedAt = DateTime.UtcNow;
         var sentModel = false;
@@ -113,7 +135,7 @@ public class FrontEndAgentController : ControllerBase
                         model = chunk.Resolution.ActualModel,
                         platform = chunk.Resolution.ActualPlatformName,
                     });
-                    await WriteSseAsync("phase", new { phase = "working", message = GetWorkingMessage(taskType) });
+                    await WriteSseAsync("phase", new { phase = "working", message = GetWorkingMessage(taskType, hasScreenshots) });
                 }
                 else if (chunk.Type == GatewayChunkType.Thinking && !string.IsNullOrEmpty(chunk.Content))
                 {
@@ -163,18 +185,56 @@ public class FrontEndAgentController : ControllerBase
         };
     }
 
-    private static string GetPreparingMessage(string taskType) => taskType switch
+    private static List<string> NormalizeScreenshotImages(IEnumerable<string>? raw)
+    {
+        if (raw == null) return new List<string>();
+
+        return raw
+            .Where(url => !string.IsNullOrWhiteSpace(url))
+            .Select(url => url.Trim())
+            .Where(url => url.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase))
+            .Where(url => url.Length <= MaxScreenshotDataUrlLength)
+            .Take(MaxScreenshotCount)
+            .ToList();
+    }
+
+    private static JsonArray BuildVisionUserContent(string userPrompt, IReadOnlyList<string> screenshotImages)
+    {
+        var parts = new JsonArray
+        {
+            new JsonObject
+            {
+                ["type"] = "text",
+                ["text"] = userPrompt,
+            },
+        };
+
+        foreach (var imageUrl in screenshotImages)
+        {
+            parts.Add(new JsonObject
+            {
+                ["type"] = "image_url",
+                ["image_url"] = new JsonObject { ["url"] = imageUrl },
+            });
+        }
+
+        return parts;
+    }
+
+    private static string GetPreparingMessage(string taskType, bool hasScreenshots) => taskType switch
     {
         "component" => "正在梳理组件职责、状态边界和可复用结构...",
         "debug" => "正在解析报错、堆栈和可能的前端故障点...",
+        "visual-diagnosis" when hasScreenshots => "正在读取截图并整理视觉现象、布局约束和 CSS 修复方向...",
         "visual-diagnosis" => "正在整理视觉现象、布局约束和 CSS 修复方向...",
         _ => "正在分析接口契约、字段类型和前端调用边界...",
     };
 
-    private static string GetWorkingMessage(string taskType) => taskType switch
+    private static string GetWorkingMessage(string taskType, bool hasScreenshots) => taskType switch
     {
         "component" => "AI 正在生成组件代码和接入步骤...",
         "debug" => "AI 正在给出定位路径和最小修复方案...",
+        "visual-diagnosis" when hasScreenshots => "AI 正在结合截图输出视觉诊断报告和 CSS 建议...",
         "visual-diagnosis" => "AI 正在输出视觉诊断报告和 CSS 建议...",
         _ => "AI 正在生成类型、service 和页面调用示例...",
     };
@@ -185,7 +245,7 @@ public class FrontEndAgentController : ControllerBase
         {
             "component" => "当前任务：生成可落地的前端组件或页面片段。",
             "debug" => "当前任务：定位前端报错、构建失败、接口调用失败或白屏问题。",
-            "visual-diagnosis" => "当前任务：根据用户提供的截图现象、设计稿说明或视觉差异描述，输出样式诊断和修复建议。",
+            "visual-diagnosis" => "当前任务：根据用户提供的截图、截图现象、设计稿说明或视觉差异描述，输出样式诊断和修复建议。",
             _ => "当前任务：把后端 API 契约转换为前端类型、请求方法和调用示例。",
         };
 
@@ -201,7 +261,7 @@ public class FrontEndAgentController : ControllerBase
         - API 调用层要提醒：请求 body 传原始对象，避免重复 JSON.stringify；返回结构要先判断 success。
         - 生成 UI 时必须考虑 loading、empty、error、disabled、可访问性和移动端基本适配。
         - 修复报错时必须按「现象 → 根因候选 → 定位步骤 → 最小修复 → 回归验证」输出。
-        - 视觉诊断时必须按「问题区域 → CSS/布局原因 → 修复代码 → 验收标准」输出。
+        - 视觉诊断时必须按「问题区域 → CSS/布局原因 → 修复代码 → 验收标准」输出；若用户附了截图，先描述你在截图里看到的问题，再给修复方案。
         - 禁止使用任何 emoji 字符；状态用 [P0]、[P1]、[注意]、[可选] 等文本标签。
 
         # 固定输出结构
@@ -231,6 +291,12 @@ public class FrontEndAgentController : ControllerBase
         AppendBlock(sb, "现有前端代码", req.ExistingCode);
         AppendBlock(sb, "报错日志 / 构建输出 / 控制台信息", req.ErrorLog);
         AppendBlock(sb, "截图现象 / 设计稿差异描述", req.ScreenshotNotes);
+        if (req.ScreenshotImages is { Count: > 0 })
+        {
+            sb.AppendLine();
+            sb.AppendLine($"# 截图附件");
+            sb.AppendLine($"用户已附上 {Math.Min(req.ScreenshotImages.Count, MaxScreenshotCount)} 张截图，请结合截图内容分析布局、样式和视觉问题。");
+        }
         sb.AppendLine();
         sb.AppendLine("# 请输出");
         sb.AppendLine("请按系统提示词的固定结构输出，让后端同事可以直接复制代码并完成验证。");

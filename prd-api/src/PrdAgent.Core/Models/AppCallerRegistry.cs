@@ -1409,6 +1409,14 @@ public static class FrontEndAgent
             Category = "Code"
         )]
         public const string Chat = "front-end-agent.assistant::chat";
+
+        [AppCallerMetadata(
+            "前端搭档-截图视觉诊断",
+            "根据截图识别布局/CSS 问题并输出修复方案",
+            ModelTypes = new[] { ModelTypes.Vision },
+            Category = "Code"
+        )]
+        public const string VisualDiagnosis = "front-end-agent.assistant::vision";
     }
 }
 

@@ -23,6 +23,7 @@ import {
 } from '@/services/real/frontEndAgent';
 import { FrontEndPdaGuideModal, FrontEndPdaRailCard } from './FrontEndPdaGuide';
 import { FrontEndProjectRailCard, FrontEndProjectTableModal } from './FrontEndProjectTable';
+import { FrontEndScreenshotInput, type ScreenshotAttachment } from './FrontEndScreenshotInput';
 import './front-end-agent.css';
 
 interface TaskDefinition {
@@ -126,6 +127,7 @@ export function FrontEndAgentPage() {
   const [existingCode, setExistingCode] = useState('');
   const [errorLog, setErrorLog] = useState('');
   const [screenshotNotes, setScreenshotNotes] = useState('');
+  const [screenshotImages, setScreenshotImages] = useState<ScreenshotAttachment[]>([]);
   const [phase, setPhase] = useState<Phase>('idle');
   const [phaseMsg, setPhaseMsg] = useState('');
   const [model, setModel] = useState<{ name?: string; platform?: string }>({});
@@ -179,8 +181,11 @@ export function FrontEndAgentPage() {
   }, [primaryContextValue, setPrimaryContextValue]);
 
   const handleGenerate = useCallback(async () => {
-    if (!requirement.trim()) {
-      toast.error('请先填写需求或问题描述');
+    const hasScreenshots = screenshotImages.length > 0;
+    if (!requirement.trim() && !(taskType === 'visual-diagnosis' && (hasScreenshots || screenshotNotes.trim()))) {
+      toast.error(taskType === 'visual-diagnosis'
+        ? '请填写问题描述，或至少粘贴一张截图并补充现象说明'
+        : '请先填写需求或问题描述');
       return;
     }
 
@@ -203,6 +208,9 @@ export function FrontEndAgentPage() {
       existingCode: existingCode.trim() || undefined,
       errorLog: errorLog.trim() || undefined,
       screenshotNotes: screenshotNotes.trim() || undefined,
+      screenshotImages: screenshotImages.length > 0
+        ? screenshotImages.map((item) => item.dataUrl)
+        : undefined,
     };
 
     const result = await connectSse({
@@ -238,7 +246,7 @@ export function FrontEndAgentPage() {
       setPhase('error');
       setErrorMsg(result.errorMessage || '连接失败');
     }
-  }, [apiSpec, errorLog, existingCode, requirement, screenshotNotes, styleGuidance, targetFramework, taskType]);
+  }, [apiSpec, errorLog, existingCode, requirement, screenshotImages, screenshotNotes, styleGuidance, targetFramework, taskType]);
 
   const handleAbort = useCallback(() => {
     abortRef.current?.abort();
@@ -253,6 +261,7 @@ export function FrontEndAgentPage() {
     setExistingCode('');
     setErrorLog('');
     setScreenshotNotes('');
+    setScreenshotImages([]);
     setOutput('');
     setThinking('');
     setModel({});
@@ -376,15 +385,25 @@ export function FrontEndAgentPage() {
               </label>
             </div>
 
-            <label className="block">
-              <span className="text-xs font-medium text-white/70">{activeTask.primaryContextLabel}</span>
-              <textarea
-                value={primaryContextValue}
-                onChange={(e) => setPrimaryContextValue(e.target.value)}
+            {activeTask.primaryContextKey === 'screenshotNotes' ? (
+              <FrontEndScreenshotInput
+                notes={screenshotNotes}
+                onNotesChange={setScreenshotNotes}
+                screenshots={screenshotImages}
+                onScreenshotsChange={setScreenshotImages}
                 placeholder={activeTask.contextPlaceholder}
-                className="mt-2 w-full min-h-[120px] rounded-xl border border-white/10 bg-black/20 px-3 py-2 font-mono text-xs leading-5 text-white placeholder:text-white/25 outline-none focus:border-white/25 transition-colors duration-200"
               />
-            </label>
+            ) : (
+              <label className="block">
+                <span className="text-xs font-medium text-white/70">{activeTask.primaryContextLabel}</span>
+                <textarea
+                  value={primaryContextValue}
+                  onChange={(e) => setPrimaryContextValue(e.target.value)}
+                  placeholder={activeTask.contextPlaceholder}
+                  className="mt-2 w-full min-h-[120px] rounded-xl border border-white/10 bg-black/20 px-3 py-2 font-mono text-xs leading-5 text-white placeholder:text-white/25 outline-none focus:border-white/25 transition-colors duration-200"
+                />
+              </label>
+            )}
 
             <input
               ref={fileInputRef}

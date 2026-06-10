@@ -9,6 +9,8 @@ export interface FrontEndAgentRequest {
   existingCode?: string;
   errorLog?: string;
   screenshotNotes?: string;
+  /** data:image/...;base64,... 格式，视觉诊断任务可随请求发送 */
+  screenshotImages?: string[];
   targetFramework?: string;
   styleGuidance?: string;
 }
