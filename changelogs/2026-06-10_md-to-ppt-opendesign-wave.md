@@ -4,3 +4,4 @@
 | feat | prd-admin | MD转PPT 工具栏模型 chip 可点击弹层切换（借鉴 open-design InlineModelSwitcher），免去翻设置面板 |
 | feat | prd-admin | MD转PPT 生成完成后显示「下一步」引导条：精修建议 chip（填入输入框）+ 下载 HTML + 发布为网页 |
 | fix | prd-admin | MD转PPT 页位恢复竞态修复：新 iframe 初始页码上报会清零实时跟踪 ref，改为重载触发时快照进 pendingRestoreRef，ready 按快照回跳 |
+| fix | prd-admin | MD转PPT 编辑器样式写入改 setProperty important：修复主题覆盖层 !important 压住编辑颜色导致改色无效（验收 driver 实测捕获） |

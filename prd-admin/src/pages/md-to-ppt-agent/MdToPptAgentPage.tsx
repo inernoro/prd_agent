@@ -358,9 +358,11 @@ function prepareIframeHtml(html: string, theme?: string, opts?: { editor?: boole
       // 撤销：弹栈回填 slides → 清空选中态 → 同步 reveal 布局 → 序列化回传；栈空时无操作
       'if(act==="undo"){if(!hist.length){return;}var se=slidesEl();if(!se){return;}se.innerHTML=hist.pop();cur=null;dirty=false;tb.style.display="none";try{if(window.Reveal&&Reveal.sync){Reveal.sync();}}catch(e1){}try{if(window.Reveal&&Reveal.layout){Reveal.layout();}}catch(e2){}sched();return;}' +
       'if(!cur){return;}snap();dirty=false;' +
-      'if(act==="plus"||act==="minus"){var fs=parseFloat(getComputedStyle(cur).fontSize)||24;var nv=act==="plus"?fs*1.12:fs/1.12;cur.style.fontSize=nv.toFixed(1)+"px";}' +
-      'else if(act==="color"){cur.style.color=b2.getAttribute("data-color")||"";}' +
-      'else if(act==="align"){cur.style.textAlign=b2.getAttribute("data-align")||"";}' +
+      // 主题覆盖层（themeOverride）对标题等元素带 !important，普通内联样式会被压住；
+      // 内联 setProperty(...,"important") 优先级最高，编辑结果在任何主题下都生效
+      'if(act==="plus"||act==="minus"){var fs=parseFloat(getComputedStyle(cur).fontSize)||24;var nv=act==="plus"?fs*1.12:fs/1.12;cur.style.setProperty("font-size",nv.toFixed(1)+"px","important");}' +
+      'else if(act==="color"){cur.style.setProperty("color",b2.getAttribute("data-color")||"","important");}' +
+      'else if(act==="align"){cur.style.setProperty("text-align",b2.getAttribute("data-align")||"","important");}' +
       'sched();place();});' +
       'function place(){if(!cur)return;var r=cur.getBoundingClientRect();tb.style.display="flex";var top=r.top-46;if(top<8){top=r.bottom+10;}tb.style.top=top+"px";tb.style.left=Math.max(8,Math.min(window.innerWidth-460,r.left))+"px";}' +
       'function desel(skip){if(!cur)return;cur.removeEventListener("input",sched);cur.removeEventListener("beforeinput",onBI);cur.removeAttribute("contenteditable");cur.classList.remove("__map_editing__");cur=null;dirty=false;tb.style.display="none";if(!skip){serialize();}}' +
