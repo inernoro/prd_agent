@@ -807,8 +807,12 @@ export function MdToPptAgentPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = (extractDeckTitle(base) || '网页PPT') + '.html';
+    // 文件名清洗非法字符；挂载 DOM 后再 click（Firefox 要求 anchor 在文档内）
+    const safeName = (extractDeckTitle(base) || '网页PPT').replace(/[\\/:*?"<>|]/g, '_').trim();
+    a.download = safeName + '.html';
+    document.body.appendChild(a);
     a.click();
+    a.remove();
     URL.revokeObjectURL(url);
   }, [latestHtml, theme]);
 

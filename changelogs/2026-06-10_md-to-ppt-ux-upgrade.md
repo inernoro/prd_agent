@@ -3,3 +3,4 @@
 | feat | prd-admin | MD转PPT 空状态新增 3 个快速开始示例（产品发布会/季度业务汇报/技术方案评审），点击一键填入输入框 |
 | fix | prd-admin | MD转PPT 修复翻页按钮在沙箱 iframe（opaque origin）下完全失效的问题，翻页改走 postMessage 通道 |
 | fix | prd-admin | MD转PPT 修复发布/下载的 HTML 不携带前端注入主题样式导致主题丢失的问题；发布标题改为取自 deck title |
+| fix | prd-admin | MD转PPT 下载文件名清洗非法字符，下载 anchor 挂载 DOM 后触发（Firefox 兼容） |
