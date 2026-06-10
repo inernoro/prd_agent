@@ -24,6 +24,8 @@ function getBuildId(): string {
 }
 
 const buildId = getBuildId();
+/** CDS static 部署会注入 VITE_BUILD_ID；此时启用更低内存的 build 配置 */
+const isCdsBuild = Boolean(process.env.VITE_BUILD_ID);
 
 export default defineConfig({
   plugins: [tailwindcss(), react()],
@@ -72,7 +74,16 @@ export default defineConfig({
     },
   },
   build: {
+    // CDS static 部署在共享主机上 vite build 易 OOM（exitCode=137）。
+    // isCdsBuild：关 minify + 限并行 + 关体积报告，优先保活过构建。
+    sourcemap: false,
+    minify: isCdsBuild ? false : 'esbuild',
+    cssMinify: isCdsBuild ? false : 'esbuild',
+    reportCompressedSize: !isCdsBuild,
+    target: 'es2022',
+    chunkSizeWarningLimit: 2000,
     rollupOptions: {
+      maxParallelFileOps: isCdsBuild ? 1 : undefined,
       output: {
         entryFileNames: `assets/[name]-[hash]-${buildId}.js`,
         chunkFileNames: `assets/[name]-[hash]-${buildId}.js`,

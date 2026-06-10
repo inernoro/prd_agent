@@ -2145,3 +2145,12 @@ export type {
   CcasQaRequest,
   CcasQaReferencePayload,
 } from '@/services/real/ccasAgent';
+
+// ── Front End Agent 前端搭档智能体 ──
+export {
+  FRONT_END_AGENT_STREAM_URL,
+} from '@/services/real/frontEndAgent';
+export type {
+  FrontEndAgentRequest,
+  FrontEndAgentTaskType,
+} from '@/services/real/frontEndAgent';

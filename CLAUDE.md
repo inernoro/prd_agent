@@ -345,7 +345,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 
 | 规则文件 | 触发范围 | 核心要点 |
 |----------|----------|----------|
-| `app-identity.md` | `prd-api/src/**/*.cs` | Controller 硬编码 appKey，6 个应用标识 |
+| `app-identity.md` | `prd-api/src/**/*.cs` | Controller 硬编码 appKey，应用标识清单 |
 | `data-audit.md` | `Models/**/*.cs`, `Controllers/**/*.cs` | 新增实体引用时审计所有消费端点 |
 | `llm-gateway.md` | `prd-api/src/**/*.cs` | 所有 LLM 调用必须通过 ILlmGateway |
 | `frontend-architecture.md` | `**/*.{ts,tsx}` | 前端无业务状态 + SSOT + 组件复用 + 默认可编辑 |

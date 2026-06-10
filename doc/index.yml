@@ -45,6 +45,7 @@ docs:
   spec.cds-project-model: CDS 多项目数据字典
   spec.short-links: 统一短链系统规格
   spec.speech-agent: 演讲智能体（长文本 → 思维导图演讲）产品规格
+  spec.front-end-agent: 前端搭档智能体产品规格
 
   # ── 二、设计文档 ──
   # 先看核心架构，再看各模块设计
