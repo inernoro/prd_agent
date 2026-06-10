@@ -22,6 +22,7 @@ import {
   BoxSelect,
 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { StreamingText } from '@/components/streaming/StreamingText';
 import {
   type MdToPptDiagEvent,
   type MdToPptEngine,
@@ -93,7 +94,10 @@ interface KbEntry {
 
 const SESSION_KEY = 'md-to-ppt-chat-v1';
 
-// dotBg/dotRing 用于预览工具栏的主题快速切换色点（即时换肤，无需重新生成）
+// dotBg/dotRing 用于预览工具栏的风格色点。
+// 「风格」语义（2026-06-10 用户纠偏）：风格是 AI 生成 HTML 时参照的设计语言（提示词里的
+// 设计 token + 字体 + 版式气质），切换风格 = 让 AI 按新风格整体重绘，
+// 绝不是前端注入一层 !important CSS 把 AI 的设计盖掉换个皮。
 const THEME_OPTIONS = [
   { value: 'tech-dark', label: 'Tech 极黑', dotBg: '#0d1117', dotRing: '#7ee787' },
   { value: 'cobalt-grid', label: '钴蓝格纸', dotBg: '#F0EBDE', dotRing: '#1F2BE0' },
@@ -117,81 +121,6 @@ const QUICK_STARTS = [
     text: '做一份技术方案评审 PPT，共 8 页，包含项目背景、目标与非目标、整体架构、关键设计取舍、风险与排期',
   },
 ];
-
-// 主题 CSS 覆盖层（open-design 风格，前端注入到 iframe）
-// 策略：用 !important 直接覆盖 reveal.js 自身 CSS，确保无论 LLM 输出什么主题色都正确
-const THEME_CSS_OVERRIDES: Record<string, string> = {
-  // Tech 极黑：GitHub-dark 风格，绿色 mono 标题，代码感
-  'tech-dark':
-    ':root{--bg:#0d1117;--bg2:#161b22;--ink:#e6edf3;--muted:#8b949e;--line:rgba(139,148,158,.22);--card:#161b22;--a1:#7ee787;--a2:#79c0ff;--a3:#d2a8ff;--orb-op:.14;}' +
-    'html,body,.reveal,.reveal-viewport{background:#0d1117!important;}' +
-    '.reveal{color:#e6edf3!important;}' +
-    '.reveal .slides section{background:transparent!important;color:#e6edf3!important;}' +
-    '.reveal h1,.reveal h2,.reveal h3,.reveal h4,.reveal h5,.reveal h6{color:#7ee787!important;font-family:"JetBrains Mono","IBM Plex Mono",monospace!important;font-weight:700!important;letter-spacing:-.02em!important;}' +
-    '.reveal p,.reveal li,.reveal td,.reveal th{color:#e6edf3!important;}' +
-    '.reveal blockquote{color:#8b949e!important;border-left:3px solid #7ee787!important;}' +
-    '.reveal a{color:#79c0ff!important;}' +
-    '.reveal .progress span{background:#7ee787!important;}' +
-    '.reveal .controls button{color:#7ee787!important;}' +
-    '.reveal .slides section::before{content:"";position:absolute;inset:0;background:radial-gradient(600px 500px at 90% 0%,rgba(126,231,135,.1),transparent 70%),radial-gradient(500px 400px at 10% 100%,rgba(121,192,255,.08),transparent 70%);pointer-events:none;z-index:0;}',
-  // 钴蓝格纸：cream paper + electric cobalt，带格纸底纹，Newsreader 斜体
-  'cobalt-grid':
-    ':root{--bg:#F0EBDE;--bg2:#E6E0CE;--ink:#1F2BE0;--muted:#5560E5;--line:rgba(31,43,224,.2);--card:rgba(31,43,224,.06);--a1:#1F2BE0;--a2:#5560E5;--a3:#002FA7;--orb-op:0;}' +
-    'html,body,.reveal,.reveal-viewport{background-color:#F0EBDE!important;background-image:linear-gradient(rgba(31,43,224,.09) 1px,transparent 1px),linear-gradient(to right,rgba(31,43,224,.09) 1px,transparent 1px)!important;background-size:40px 40px!important;}' +
-    '.reveal{color:#1F2BE0!important;}' +
-    '.reveal .slides section{background:transparent!important;color:#1F2BE0!important;}' +
-    '.reveal h1,.reveal h2{font-family:"Newsreader",Georgia,serif!important;font-style:italic!important;font-weight:400!important;color:#1F2BE0!important;line-height:.92!important;}' +
-    '.reveal h3,.reveal h4,.reveal h5,.reveal h6{font-family:"Hanken Grotesk","Inter",sans-serif!important;font-weight:700!important;color:#1F2BE0!important;text-transform:uppercase!important;letter-spacing:.12em!important;font-style:normal!important;}' +
-    '.reveal p,.reveal li,.reveal td,.reveal th{color:#1F2BE0!important;}' +
-    '.reveal a{color:#002FA7!important;}' +
-    '.reveal .progress span{background:#1F2BE0!important;}' +
-    '.reveal .controls button{color:#1F2BE0!important;}',
-  // 纸墨编辑：杂志风，Playfair Display 斜体大标，暖纸底
-  'editorial-ink':
-    ':root{--bg:#f1efea;--bg2:#e8e4dc;--ink:#0a0a0b;--muted:#3a382f;--line:rgba(10,10,11,.15);--card:#ffffff;--a1:#0a0a0b;--a2:#3a382f;--a3:#6b665b;--orb-op:0;}' +
-    'html,body,.reveal,.reveal-viewport{background:#f1efea!important;}' +
-    '.reveal{color:#0a0a0b!important;}' +
-    '.reveal .slides section{background:transparent!important;color:#0a0a0b!important;}' +
-    '.reveal h1,.reveal h2{font-family:"Playfair Display","Noto Serif SC",Georgia,serif!important;font-style:italic!important;font-weight:500!important;color:#0a0a0b!important;line-height:.95!important;letter-spacing:-.01em!important;}' +
-    '.reveal h3,.reveal h4,.reveal h5,.reveal h6{font-family:"Inter","Noto Sans SC",sans-serif!important;font-weight:700!important;color:#0a0a0b!important;letter-spacing:.1em!important;text-transform:uppercase!important;font-style:normal!important;font-size:.75em!important;}' +
-    '.reveal p,.reveal li{color:#0a0a0b!important;font-family:"Inter","Noto Sans SC",sans-serif!important;}' +
-    '.reveal td,.reveal th{color:#0a0a0b!important;}' +
-    '.reveal blockquote{color:#3a382f!important;border-left:3px solid #0a0a0b!important;}' +
-    '.reveal a{color:#0a0a0b!important;text-decoration:underline!important;}' +
-    '.reveal .progress span{background:#0a0a0b!important;}' +
-    '.reveal .controls button{color:#0a0a0b!important;}',
-  // 复古 Zine：暖褐色 + 墨绿，Space Grotesk，报纸/Zine 质感
-  'warm-zine':
-    ':root{--bg:#C8B99A;--bg2:#B8A98A;--ink:#1A1A1A;--muted:#3d3830;--line:rgba(26,26,26,.25);--card:#F4EFE6;--a1:#008F4D;--a2:#00A85D;--a3:#006B3A;--orb-op:0;}' +
-    'html,body,.reveal,.reveal-viewport{background:#C8B99A!important;}' +
-    '.reveal{color:#1A1A1A!important;}' +
-    '.reveal .slides section{background:transparent!important;color:#1A1A1A!important;}' +
-    '.reveal h1,.reveal h2{font-family:"Space Grotesk","Inter",sans-serif!important;font-weight:700!important;color:#1A1A1A!important;line-height:.92!important;letter-spacing:-.02em!important;}' +
-    '.reveal h3,.reveal h4,.reveal h5,.reveal h6{font-family:"Space Grotesk","Inter",sans-serif!important;font-weight:600!important;color:#008F4D!important;text-transform:uppercase!important;letter-spacing:.16em!important;font-size:.78em!important;}' +
-    '.reveal p,.reveal li{color:#1A1A1A!important;font-family:"Space Grotesk","Inter",sans-serif!important;}' +
-    '.reveal td,.reveal th{color:#1A1A1A!important;}' +
-    '.reveal blockquote{color:#3d3830!important;border-left:3px solid #008F4D!important;}' +
-    '.reveal a{color:#008F4D!important;}' +
-    '.reveal .progress span{background:#008F4D!important;}' +
-    '.reveal .controls button{color:#008F4D!important;}',
-  // Swiss 极简：IKB 蓝（#002FA7）+ 近白，极简排版，发卡线
-  'swiss-minimal':
-    ':root{--bg:#fafaf8;--bg2:#f0ede8;--ink:#0a0a0a;--muted:#555;--line:rgba(10,10,10,.12);--card:#ffffff;--a1:#002FA7;--a2:#4455cc;--a3:#001d85;--orb-op:0;}' +
-    'html,body,.reveal,.reveal-viewport{background:#fafaf8!important;}' +
-    '.reveal{color:#0a0a0a!important;}' +
-    '.reveal .slides section{background:transparent!important;color:#0a0a0a!important;}' +
-    '.reveal h1,.reveal h2{font-family:"Inter","Noto Sans SC",sans-serif!important;font-weight:900!important;color:#0a0a0a!important;line-height:.95!important;letter-spacing:-.03em!important;text-transform:uppercase!important;}' +
-    '.reveal h3,.reveal h4,.reveal h5,.reveal h6{font-family:"Inter","Noto Sans SC",sans-serif!important;font-weight:600!important;color:#002FA7!important;text-transform:uppercase!important;letter-spacing:.14em!important;font-size:.72em!important;}' +
-    '.reveal p,.reveal li{color:#0a0a0a!important;}' +
-    '.reveal td,.reveal th{color:#0a0a0a!important;}' +
-    '.reveal th{color:#002FA7!important;font-weight:700!important;letter-spacing:.08em!important;}' +
-    '.reveal blockquote{color:#555!important;border-left:2px solid #002FA7!important;}' +
-    '.reveal a{color:#002FA7!important;}' +
-    '.reveal .progress span{background:#002FA7!important;}' +
-    '.reveal .controls button{color:#002FA7!important;}' +
-    '.reveal .slides section::before{content:"";position:absolute;top:24px;left:40px;right:40px;height:1px;background:rgba(0,47,167,.3);pointer-events:none;}' +
-    '.reveal .slides section::after{content:"";position:absolute;bottom:24px;left:40px;right:40px;height:1px;background:rgba(0,47,167,.15);pointer-events:none;}',
-};
 
 // 按内容长度估算页数（约 700 字/页，夹在 4~20 页）
 function estimatePages(content: string): number {
@@ -237,7 +166,7 @@ const FONT_LINKS =
   '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin data-map-inject>' +
   '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Newsreader:ital,wght@0,400;0,500;1,300;1,400&family=Hanken+Grotesk:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,400;0,700;0,800;1,400;1,600&family=Space+Grotesk:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@300;400;700&display=swap" rel="stylesheet" data-map-inject>';
 
-function prepareIframeHtml(html: string, theme?: string, opts?: { editor?: boolean }): string {
+function prepareIframeHtml(html: string, opts?: { editor?: boolean }): string {
   if (!html) return html;
 
   // 1. in-memory storage shim（遮蔽 opaque origin 下 reveal 对 storage 的访问）
@@ -377,10 +306,8 @@ function prepareIframeHtml(html: string, theme?: string, opts?: { editor?: boole
       'function mount(){if(document.body){document.body.appendChild(tb);}else{setTimeout(mount,100);}}mount();' +
       '})();</script>';
 
-  // 5. 主题 CSS 强制覆盖（放在 </head> 前，最高级联叠加层，确保 LLM 输出的主题始终正确）
-  const themeCss = THEME_CSS_OVERRIDES[theme ?? 'tech-dark'] ?? THEME_CSS_OVERRIDES['tech-dark'];
-  const themeOverride = '<style id="__map_theme_override__" data-map-inject>' + themeCss + '</style>';
-
+  // 不再注入任何主题 CSS 覆盖层：AI 输出的 <style> 就是最终视觉（风格语义见 THEME_OPTIONS 注释）。
+  // 历史上这里有一层 !important 覆盖把 AI 的设计强行盖掉换皮，已按用户纠偏删除（2026-06-10）。
   const headInject = storageshim + navguard + controlScript + editorScript + FONT_LINKS;
 
   let result = html;
@@ -391,24 +318,15 @@ function prepareIframeHtml(html: string, theme?: string, opts?: { editor?: boole
   } else {
     result = headInject + result;
   }
-  // 主题覆盖注入到 </head> 前（LLM CSS 之后，优先级最高）
-  if (/<\/head>/i.test(result)) {
-    result = result.replace(/<\/head>/i, themeOverride + '</head>');
-  } else {
-    result = result + themeOverride;
-  }
   return result;
 }
 
-// 导出/发布用 HTML：只带字体 + 主题覆盖（保持当前预览观感），不带 shim/编辑器等运行时注入。
-// 修复历史 bug：以前发布的是 LLM 原始 HTML，前端注入的主题 CSS 没带上，发布出去主题全丢。
-function prepareExportHtml(html: string, theme?: string): string {
+// 导出/发布用 HTML：只补字体链接（AI 的 CSS 引用了这些字体名），不带 shim/编辑器等运行时注入。
+function prepareExportHtml(html: string): string {
   if (!html) return html;
-  const themeCss = THEME_CSS_OVERRIDES[theme ?? 'tech-dark'] ?? THEME_CSS_OVERRIDES['tech-dark'];
-  const block = FONT_LINKS + '<style id="__map_theme_override__">' + themeCss + '</style>';
-  if (/<\/head>/i.test(html)) return html.replace(/<\/head>/i, block + '</head>');
-  if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => m + block);
-  return block + html;
+  if (/<\/head>/i.test(html)) return html.replace(/<\/head>/i, FONT_LINKS + '</head>');
+  if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (m) => m + FONT_LINKS);
+  return FONT_LINKS + html;
 }
 
 // 从生成 HTML 提取 <title>，用作下载文件名与发布标题
@@ -702,7 +620,9 @@ export function MdToPptAgentPage() {
 
   // ─── Global settings (收进设置区，不占对话空间）
   const [theme, setTheme] = useState(savedSession?.theme ?? 'tech-dark');
-  const [engine, setEngine] = useState<MdToPptEngine>(savedSession?.engine ?? 'map');
+  // 引擎不做会话恢复：每次进页一律 MAP 直出（用户 2026-06-10 反馈 Agent 引擎产出差且慢，
+  // 不允许旧会话把默认值悄悄带回 agent）。Agent 引擎仅作实验入口，本次会话内手动切换有效。
+  const [engine, setEngine] = useState<MdToPptEngine>('map');
   const [model, setModel] = useState(savedSession?.model ?? '');
   const [chatModels, setChatModels] = useState<string[]>([]);
   const [showSettings, setShowSettings] = useState(false);
@@ -721,6 +641,32 @@ export function MdToPptAgentPage() {
   const [artifactPhase, setArtifactPhase] = useState<'idle' | 'outlining' | 'generating' | 'patching' | 'done'>('idle');
   const [diagLines, setDiagLines] = useState<MdToPptDiagEvent[]>([]);
   const [modelInfo, setModelInfo] = useState<{ model: string; platform: string } | null>(null);
+
+  // ─── 生成期流式可视化（2 秒定理：等待时屏幕必须有持续变化的内容）
+  //     delta 先进 ref，150ms 节流刷进 state，避免大 HTML 每个 token 触发整页 re-render。
+  const [streamPreview, setStreamPreview] = useState('');
+  const streamBufRef = useRef('');
+  const streamFlushTimerRef = useRef<number | null>(null);
+
+  const resetStreamPreview = useCallback(() => {
+    streamBufRef.current = '';
+    if (streamFlushTimerRef.current != null) {
+      window.clearTimeout(streamFlushTimerRef.current);
+      streamFlushTimerRef.current = null;
+    }
+    setStreamPreview('');
+  }, []);
+
+  const handleStreamDelta = useCallback((text: string) => {
+    if (!text) return;
+    streamBufRef.current += text;
+    if (streamFlushTimerRef.current == null) {
+      streamFlushTimerRef.current = window.setTimeout(() => {
+        streamFlushTimerRef.current = null;
+        setStreamPreview(streamBufRef.current);
+      }, 150);
+    }
+  }, []);
 
   // ─── 所见即所得编辑 + 页码（iframe postMessage 通道）
   const [editMode, setEditMode] = useState(false);
@@ -922,16 +868,6 @@ export function MdToPptAgentPage() {
     }
   }, [editMode, commitEdits]);
 
-  // ─── 主题切换（编辑中先落盘编辑稿，避免 iframe 重载丢修改）
-  const switchTheme = useCallback(
-    (value: string) => {
-      pendingRestoreRef.current = restoreSlideRef.current; // 换主题触发 iframe 重载，先快照页位
-      if (editMode && editedHtmlRef.current) commitEdits();
-      setTheme(value);
-    },
-    [editMode, commitEdits]
-  );
-
   // ─── 全屏演示
   const handleFullscreen = useCallback(() => {
     void previewWrapRef.current?.requestFullscreen?.();
@@ -941,7 +877,7 @@ export function MdToPptAgentPage() {
   const handleDownload = useCallback(() => {
     const base = latestHtml();
     if (!base) return;
-    const out = prepareExportHtml(base, theme);
+    const out = prepareExportHtml(base);
     const blob = new Blob([out], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -953,7 +889,7 @@ export function MdToPptAgentPage() {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-  }, [latestHtml, theme]);
+  }, [latestHtml]);
 
   // ─── Add message helper
   const pushMsg = useCallback(
@@ -1097,6 +1033,7 @@ export function MdToPptAgentPage() {
       setArtifactPhase('generating');
       setPublishedUrl('');
       setFeedbackMode(false);
+      resetStreamPreview();
       restoreSlideRef.current = 0; // 新一轮生成回到第 1 页
       pendingRestoreRef.current = null;
 
@@ -1120,14 +1057,20 @@ export function MdToPptAgentPage() {
         },
         onModel: (info) => setModelInfo(info),
         onDiag: (d) => setDiagLines((prev) => [...prev, d]),
-        onDelta: () => {},
+        onDelta: handleStreamDelta,
         onDone: (result) => {
           const html = result.html;
           if (!looksLikeDeck(html)) {
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === genMsg.id
-                  ? { ...m, content: '生成结果异常，未得到有效 PPT，请重试。', phase: 'error' }
+                  ? {
+                      ...m,
+                      content:
+                        '生成结果异常，未得到有效 PPT，请重试。' +
+                        (engine === 'agent' ? '（Agent 引擎为实验通道，建议在右上「设置」切回 MAP 直出）' : ''),
+                      phase: 'error',
+                    }
                   : m
               )
             );
@@ -1165,17 +1108,19 @@ export function MdToPptAgentPage() {
 
       cleanupRef.current = cleanup;
     },
-    [isProcessing, messages, pushMsg, theme, engine, model]
+    [isProcessing, messages, pushMsg, theme, engine, model, resetStreamPreview, handleStreamDelta]
   );
 
-  // ─── Patch flow（对话式精修）。baseHtml 允许携带编辑模式未提交的最新稿。
+  // ─── Patch flow（对话式精修）。baseHtml 允许携带编辑模式未提交的最新稿；
+  //     themeOverride 用于「换风格 = AI 按新风格重绘」场景（不传则沿用当前风格）。
   const startPatch = useCallback(
-    (instruction: string, baseHtml?: string) => {
+    (instruction: string, baseHtml?: string, themeOverride?: string) => {
       const base = baseHtml ?? generatedHtml;
       if (!base || isProcessing) return;
 
       setIsProcessing(true);
       setArtifactPhase('patching');
+      resetStreamPreview();
       pendingRestoreRef.current = restoreSlideRef.current; // 精修完成重载后回到当前页
 
       const patchMsg = pushMsg({
@@ -1187,6 +1132,7 @@ export function MdToPptAgentPage() {
       const cleanup = streamMdToPptPatch({
         currentHtml: base,
         slideRequest: instruction,
+        theme: themeOverride ?? theme,
         engine,
         model: engine === 'map' ? model : undefined,
         onRun: (runId) => {
@@ -1194,7 +1140,7 @@ export function MdToPptAgentPage() {
         },
         onModel: (info) => setModelInfo(info),
         onDiag: (d) => setDiagLines((prev) => [...prev, d]),
-        onDelta: () => {},
+        onDelta: handleStreamDelta,
         onDone: (result) => {
           const html = result.html;
           if (!looksLikeDeck(html)) {
@@ -1235,7 +1181,32 @@ export function MdToPptAgentPage() {
 
       cleanupRef.current = cleanup;
     },
-    [generatedHtml, isProcessing, pushMsg, engine, model]
+    [generatedHtml, isProcessing, pushMsg, theme, engine, model, resetStreamPreview, handleStreamDelta]
+  );
+
+  // ─── 换风格 = AI 参照新风格整体重绘（2026-06-10 用户纠偏：风格是 AI 的设计参照，
+  //     不是前端 CSS 换皮）。无产物时只改默认风格（影响下一次生成）；
+  //     有产物时把当前 HTML 交给 AI 按新风格重新设计排版与配色。
+  const switchTheme = useCallback(
+    (value: string) => {
+      if (value === theme) return;
+      setTheme(value);
+      if (!generatedHtml || isProcessing) return;
+
+      const label = THEME_OPTIONS.find((o) => o.value === value)?.label ?? value;
+      const base = latestHtml();
+      if (editMode) {
+        commitEdits();
+        setEditMode(false);
+      }
+      pushMsg({ role: 'user', content: `整体换成「${label}」风格` });
+      startPatch(
+        `参照「${label}」风格把整份 PPT 重新设计：配色、字体、版式气质全部按该风格重绘，内容与页数保持不变。`,
+        base,
+        value
+      );
+    },
+    [theme, generatedHtml, isProcessing, latestHtml, editMode, commitEdits, pushMsg, startPatch]
   );
 
   // ─── Outline adjust（调整大纲后重新请求）
@@ -1300,14 +1271,14 @@ export function MdToPptAgentPage() {
     }
     setIsPublishing(true);
     const result = await publishMdToPpt({
-      htmlContent: prepareExportHtml(base, theme),
+      htmlContent: prepareExportHtml(base),
       title: extractDeckTitle(base) || 'PPT 演示',
     });
     setIsPublishing(false);
     if (result.success && result.siteUrl) {
       setPublishedUrl(result.siteUrl);
     }
-  }, [latestHtml, editMode, commitEdits, theme]);
+  }, [latestHtml, editMode, commitEdits]);
 
   // ─── Abort
   const handleAbort = useCallback(() => {
@@ -1315,8 +1286,9 @@ export function MdToPptAgentPage() {
     cleanupRef.current = null;
     setIsProcessing(false);
     setArtifactPhase(generatedHtml ? 'done' : 'idle');
+    resetStreamPreview();
     updateLastAssistantMsg({ content: '已中止。', phase: 'text' });
-  }, [generatedHtml, updateLastAssistantMsg]);
+  }, [generatedHtml, updateLastAssistantMsg, resetStreamPreview]);
 
   // ─── Reset
   const handleReset = useCallback(() => {
@@ -1334,6 +1306,7 @@ export function MdToPptAgentPage() {
     setDirtyEdits(false);
     setSlidePos(null);
     setFeedbackMode(false);
+    resetStreamPreview();
     editedHtmlRef.current = '';
     restoreSlideRef.current = 0;
     pendingRestoreRef.current = null;
@@ -1342,7 +1315,7 @@ export function MdToPptAgentPage() {
       pendingRectRef.current = null;
     }
     try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
-  }, []);
+  }, [resetStreamPreview]);
 
   const isStreaming = artifactPhase === 'generating' || artifactPhase === 'patching';
 
@@ -1421,12 +1394,13 @@ export function MdToPptAgentPage() {
               </button>
               <button
                 onClick={() => setEngine('agent')}
+                title="实验通道：走 CDS Agent 会话，慢且质量不稳定，默认请用 MAP 直出"
                 className={[
                   'flex items-center gap-1 px-2 py-1 border-l border-white/10',
                   engine === 'agent' ? 'bg-blue-500/20 text-blue-300' : 'text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]',
                 ].join(' ')}
               >
-                <Bot size={9} /> Agent
+                <Bot size={9} /> Agent（实验）
               </button>
             </div>
           </div>
@@ -1451,13 +1425,15 @@ export function MdToPptAgentPage() {
             </div>
           )}
 
-          {/* 风格 */}
+          {/* 风格（AI 设计参照：生成前选 = 按该风格画；生成后切 = AI 整体重绘） */}
           <div className="flex items-center gap-1.5">
             <span className="text-[var(--text-tertiary)]">风格</span>
             <select
               value={theme}
               onChange={(e) => switchTheme(e.target.value)}
-              className="appearance-none text-[11px] py-1 pl-2 pr-5 rounded-md bg-white/5 text-[var(--text-primary)] border border-white/8 outline-none cursor-pointer"
+              disabled={isStreaming}
+              title={generatedHtml ? '切换后 AI 将按新风格整体重绘当前 PPT（约 1 分钟）' : 'AI 生成时参照的设计风格'}
+              className="appearance-none text-[11px] py-1 pl-2 pr-5 rounded-md bg-white/5 text-[var(--text-primary)] border border-white/8 outline-none cursor-pointer disabled:opacity-40"
             >
               {THEME_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>
@@ -1465,6 +1441,9 @@ export function MdToPptAgentPage() {
                 </option>
               ))}
             </select>
+            {generatedHtml && (
+              <span className="text-[9px] text-[var(--text-tertiary)]">切换 = AI 按新风格重绘</span>
+            )}
           </div>
         </div>
       )}
@@ -1779,9 +1758,9 @@ export function MdToPptAgentPage() {
             </div>
           )}
 
-          {/* Generating progress */}
+          {/* Generating progress（2 秒定理：流式输出实时可见，不许静止 spinner 干等） */}
           {(artifactPhase === 'generating' || artifactPhase === 'patching') && (
-            <div className="flex-1 flex flex-col items-center justify-center gap-4">
+            <div className="flex-1 flex flex-col items-center justify-center gap-4 px-6" style={{ minHeight: 0 }}>
               <MapSpinner size={20} />
               <div className="text-center">
                 <p className="text-sm text-[var(--text-secondary)]">
@@ -1789,8 +1768,40 @@ export function MdToPptAgentPage() {
                 </p>
                 <p className="text-xs text-[var(--text-tertiary)] mt-1 tabular-nums">
                   已等待 {elapsedSec}s
+                  {streamPreview.length > 0 && ` · 已接收 ${streamPreview.length.toLocaleString()} 字符`}
                 </p>
               </div>
+
+              {/* LLM 输出实时滚动尾巴（maxTailChars 防大文本 span 爆炸） */}
+              {streamPreview.length > 0 && (
+                <div
+                  data-testid="stream-preview"
+                  className="w-full rounded-lg bg-white/3 border border-white/8 overflow-hidden"
+                  style={{ maxWidth: 640 }}
+                >
+                  <div className="px-3 py-1.5 text-[9px] text-[var(--text-tertiary)] font-semibold border-b border-white/5 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
+                    AI 正在逐字输出 HTML
+                    {modelInfo && (
+                      <span className="ml-auto font-mono font-normal">
+                        {modelInfo.model} · {modelInfo.platform}
+                      </span>
+                    )}
+                  </div>
+                  <div
+                    className="px-3 py-2 font-mono text-[10px] leading-relaxed text-[var(--text-tertiary)]"
+                    style={{ maxHeight: 160, overflow: 'hidden', wordBreak: 'break-all' }}
+                  >
+                    <StreamingText
+                      text={streamPreview}
+                      streaming
+                      maxTailChars={520}
+                      className="whitespace-pre-wrap"
+                    />
+                  </div>
+                </div>
+              )}
+
               {diagLines.length > 0 && (
                 <div className="w-72 rounded-md bg-white/3 border border-white/6 overflow-hidden">
                   <div className="px-3 py-1 text-[9px] text-[var(--text-tertiary)] font-semibold border-b border-white/5">
@@ -1836,14 +1847,15 @@ export function MdToPptAgentPage() {
                     <ChevronRight size={14} />
                   </button>
 
-                  {/* 主题快速切换色点（即时换肤，无需重新生成） */}
+                  {/* 风格色点：点击 = AI 参照该风格整体重绘（约 1 分钟，全程流式可见） */}
                   <div className="flex items-center gap-1.5 ml-2 pl-2.5 border-l border-white/10" data-testid="theme-dots">
                     {THEME_OPTIONS.map((opt) => (
                       <button
                         key={opt.value}
                         onClick={() => switchTheme(opt.value)}
-                        title={'切换主题：' + opt.label}
-                        className="w-4 h-4 rounded-full transition-transform hover:scale-110"
+                        disabled={isStreaming}
+                        title={'换风格（AI 整体重绘，约 1 分钟）：' + opt.label}
+                        className="w-4 h-4 rounded-full transition-transform hover:scale-110 disabled:opacity-40"
                         style={{
                           background: opt.dotBg,
                           border: '2px solid ' + opt.dotRing,
@@ -1947,7 +1959,7 @@ export function MdToPptAgentPage() {
                 <iframe
                   ref={iframeRef}
                   className="flex-1 w-full border-0"
-                  srcDoc={prepareIframeHtml(generatedHtml, theme, { editor: editMode })}
+                  srcDoc={prepareIframeHtml(generatedHtml, { editor: editMode })}
                   sandbox="allow-scripts"
                   title="PPT 预览"
                   style={{ minHeight: 0 }}

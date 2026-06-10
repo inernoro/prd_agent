@@ -52,7 +52,7 @@ public class MdToPptController : ControllerBase
             "- 全部 CSS 内联在 <head> 的 <style> 里；输出完整 <!DOCTYPE html>…</html>；不要 markdown 代码围栏\n" +
             "- 绝对禁止任何 emoji 字符（一切表情/符号图标都不许）；需要图标时只用 inline SVG 或 CSS 几何图形\n" +
             "- 绝对禁止对标题/正文用 `color:transparent` + `background-clip:text`（嵌入式渲染常常不生效，会导致文字整页消失）；标题一律用实色 var(--ink)，渐变只能用在 .orb/.bar 等非文字装饰上\n" +
-            "- 前端会在 </head> 前额外注入主题 CSS 覆盖层（!important），所以你的 CSS 变量和 html/body/.reveal 背景颜色必须在你的 <style> 里原样写出来，以便覆盖层对齐\n\n" +
+            "- 你的 <style> 就是最终视觉，没有任何外部覆盖层替你纠正配色——CSS 变量与 html/body/.reveal 背景必须严格按本次风格写对，每一页的版式都要按该风格重新设计，不是同一版式换色\n\n" +
             "## 本次风格：" + tone + "\n" +
             "严格按上面的风格走（配色、底色、气质），把下面这套 CSS 设计 token 与组件类原样落进 <style>，并在每页真正用上（这是质量下限不是参考）：\n" +
             "```\n" +
@@ -344,10 +344,12 @@ public class MdToPptController : ControllerBase
         await WriteEventAsync("start", null);
 
         var engine = (req.Engine ?? "map").Trim().ToLowerInvariant();
-        var run = await CreateRunAsync(userId, engine, null, "patch", req.SlideRequest);
+        var run = await CreateRunAsync(userId, engine, req.Theme, "patch", req.SlideRequest);
         await WriteEventAsync("run", new { runId = run.Id });
 
-        var systemPrompt = BuildPptSystemPrompt(null);
+        // 风格主题随 patch 下发：换风格 = AI 参照该风格重绘整页 HTML（设计 token、
+        // 字体、版式气质都在系统提示词里），不是前端套一层 CSS 换皮。
+        var systemPrompt = BuildPptSystemPrompt(req.Theme);
         // 前端的"指定第几页"输入框是 1-based(min=1)且原样下发,这里直接用,不能再 +1(否则
         // 输入 3 会被改成第 4 页);留空时 SlideIndex 为 null,语义是整份 PPT,不能写成"第 0 页"。
         var pageHint = req.SlideIndex.HasValue
@@ -1247,6 +1249,9 @@ public class MdToPptPatchRequest
 
     /// <summary>目标页索引（可选）</summary>
     public int? SlideIndex { get; set; }
+
+    /// <summary>风格主题（可选）。换风格走 patch 由 AI 按该风格重绘，前端不做 CSS 换皮</summary>
+    public string? Theme { get; set; }
 
     /// <summary>生成引擎："map"（默认）或 "agent"</summary>
     public string? Engine { get; set; }

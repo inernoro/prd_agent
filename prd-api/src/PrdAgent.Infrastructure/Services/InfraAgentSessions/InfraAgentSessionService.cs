@@ -1613,11 +1613,22 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         long afterSeq,
         CancellationToken ct)
     {
+        // 去重水位线：本会话已导入的最大 CDS seq。CDS 每个事件带单调递增 seq，
+        // 用 seq 判重是唯一正确做法。历史实现按 (type, payload) 内容判重，
+        // LLM 流式 delta 大量内容相同（如单个 "<" token），第二次出现被误判
+        // "已导入" 丢弃 → 生成的 HTML 所有重复 token 系统性丢失（乱码事故 2026-06-10）。
+        var lastImported = await _db.InfraAgentEvents
+            .Find(x => x.SessionId == session.Id && x.CdsSeq != null)
+            .SortByDescending(x => x.CdsSeq)
+            .Limit(1)
+            .FirstOrDefaultAsync(ct);
+        var cdsSeqWatermark = Math.Max(afterSeq, lastImported?.CdsSeq ?? 0L);
+
         using var response = await SendCdsJsonAsync(
             HttpMethod.Get,
             connection,
             token,
-            $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(session.CdsSessionId!)}/stream?afterSeq={afterSeq}",
+            $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(session.CdsSessionId!)}/stream?afterSeq={cdsSeqWatermark}",
             null,
             ct);
         using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(ct));
@@ -1660,12 +1671,17 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             var payload = root.TryGetProperty("payload", out var payloadElement)
                 ? payloadElement.GetRawText()
                 : "{}";
-            if (await HasImportedEventAsync(session.Id, type, payload, ct))
+
+            // 优先用 CDS seq 判重（水位线）；只有事件没带 seq 时才退回内容判重兜底
+            var decision = DecideCdsEventImport(root, cdsSeqWatermark);
+            if (!decision.Import) return;
+            if (decision.RequiresPayloadDedup && await HasImportedEventAsync(session.Id, type, payload, ct))
             {
                 return;
             }
+            cdsSeqWatermark = decision.Watermark;
 
-            await AppendRawEventAsync(session.Id, await NextEventSeqAsync(session.Id, ct), type, payload, ct);
+            await AppendRawEventAsync(session.Id, await NextEventSeqAsync(session.Id, ct), type, payload, ct, decision.CdsSeq);
 
             if (type == InfraAgentEventTypes.Done)
             {
@@ -2317,7 +2333,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         long seq,
         string type,
         string payloadJson,
-        CancellationToken ct)
+        CancellationToken ct,
+        long? cdsSeq = null)
     {
         var evt = new InfraAgentEvent
         {
@@ -2326,9 +2343,35 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             TraceId = await ResolveTraceIdAsync(sessionId, ct),
             Type = InfraAgentEventTypes.IsKnown(type) ? type : InfraAgentEventTypes.Log,
             PayloadJson = string.IsNullOrWhiteSpace(payloadJson) ? "{}" : payloadJson,
+            CdsSeq = cdsSeq,
             CreatedAt = DateTime.UtcNow
         };
         await _db.InfraAgentEvents.InsertOneAsync(evt, cancellationToken: ct);
+    }
+
+    /// <summary>
+    /// CDS 事件导入决策（纯函数，可单测）。
+    /// 带 seq 的事件按水位线判重：seq 大于水位线即导入（即使 payload 与历史事件完全相同——
+    /// LLM 流式 delta 大量内容重复，按内容判重会把重复 token 全丢，生成的 HTML 残缺乱码）；
+    /// 不带 seq 的事件无法用水位线，标记 RequiresPayloadDedup 退回内容判重兜底。
+    /// </summary>
+    internal readonly record struct CdsEventImportDecision(
+        bool Import,
+        bool RequiresPayloadDedup,
+        long Watermark,
+        long? CdsSeq);
+
+    internal static CdsEventImportDecision DecideCdsEventImport(JsonElement root, long watermark)
+    {
+        if (root.TryGetProperty("seq", out var seqElement)
+            && seqElement.ValueKind == JsonValueKind.Number
+            && seqElement.TryGetInt64(out var seq))
+        {
+            return seq <= watermark
+                ? new CdsEventImportDecision(false, false, watermark, seq)
+                : new CdsEventImportDecision(true, false, seq, seq);
+        }
+        return new CdsEventImportDecision(true, true, watermark, null);
     }
 
     private async Task<bool> HasImportedEventAsync(

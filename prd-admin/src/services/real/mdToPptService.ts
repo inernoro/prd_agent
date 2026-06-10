@@ -57,6 +57,8 @@ export interface MdToPptPatchRequest {
   currentHtml: string;
   slideRequest: string;
   slideIndex?: number;
+  /** 风格主题：换风格走 patch 由 AI 按该风格重绘（不是前端 CSS 换皮） */
+  theme?: string;
   engine?: MdToPptEngine;
 }
 
@@ -252,6 +254,8 @@ export interface MdToPptPatchSseOptions {
   currentHtml: string;
   slideRequest: string;
   slideIndex?: number;
+  /** 风格主题（patch 沿用当前风格 / 换风格重绘时传新值） */
+  theme?: string;
   engine?: MdToPptEngine;
   /** 期望模型（仅 engine=map 生效；空 = 自动调度） */
   model?: string;
@@ -280,6 +284,7 @@ export function streamMdToPptPatch(options: MdToPptPatchSseOptions): () => void 
           currentHtml: options.currentHtml,
           slideRequest: options.slideRequest,
           slideIndex: options.slideIndex,
+          theme: options.theme,
           engine: options.engine ?? 'map',
           model: options.model || undefined,
         }),
