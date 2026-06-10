@@ -15,7 +15,7 @@ import {
 } from '@/services';
 import type { DocumentStore, DocumentEntry } from '@/services/contracts/documentStore';
 import type { ProductVersion } from '../types';
-import { fileKindOf, fmtSize, fmtTime, NO_CATEGORY } from './shared';
+import { fileKindOf, fmtSize, fmtTime, isUploadedFile, isEditableText, NO_CATEGORY, FOCUS_BOX } from './shared';
 import { VersionLinkDialog } from './VersionLinkDialog';
 
 const PAGE_SIZE = 20;
@@ -143,14 +143,14 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
 
       {/* 工具栏：搜索 + 筛选 + 新建/上传 */}
       <div className="shrink-0 flex items-center gap-2 flex-wrap" data-tour-id="knowledge-toolbar">
-        <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10">
+        <div className={FOCUS_BOX}>
           <Search size={14} className="text-white/40" />
           <input
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') applySearch(); }}
             placeholder="搜索标题 / 全文，回车确认"
-            className="bg-transparent text-sm text-white outline-none w-52"
+            className="no-focus-ring bg-transparent text-sm text-white outline-none w-52"
           />
           {keyword && <button onClick={clearFilters} className="text-white/30 hover:text-white"><X size={13} /></button>}
         </div>
@@ -230,9 +230,9 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
                 </div>
                 <div className="shrink-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(ev) => ev.stopPropagation()}>
                   <RowBtn title="查看详情" onClick={() => goDetail(e.id)}><Eye size={13} /></RowBtn>
-                  <RowBtn title="编辑" onClick={() => goDetail(e.id, true)}><Pencil size={13} /></RowBtn>
+                  {isEditableText(e.contentType) && <RowBtn title="编辑" onClick={() => goDetail(e.id, true)}><Pencil size={13} /></RowBtn>}
                   <RowBtn title="关联版本" onClick={() => setLinkTarget(e)}><GitBranch size={13} /></RowBtn>
-                  <RowBtn title="重新上传" onClick={() => handleReplace(e.id)}><RefreshCw size={13} /></RowBtn>
+                  {isUploadedFile(e) && <RowBtn title="重新上传" onClick={() => handleReplace(e.id)}><RefreshCw size={13} /></RowBtn>}
                   <RowBtn title="删除" danger onClick={() => void handleDelete(e)}><Trash2 size={13} /></RowBtn>
                 </div>
               </div>

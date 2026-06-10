@@ -10,7 +10,7 @@ import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { getOverviewKnowledgeEntries, listProducts } from '@/services/real/productAgent';
 import type { OverviewKnowledgeEntryRow } from '@/services/real/productAgent';
 import type { Product } from '../types';
-import { fileKindOf, fmtSize, fmtTime } from './shared';
+import { fileKindOf, fmtSize, fmtTime, FOCUS_BOX } from './shared';
 import '../product-cards.css';
 
 const PAGE_SIZE = 20;
@@ -56,14 +56,14 @@ export function OverviewKnowledgeList() {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-2 flex-wrap">
-        <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10">
+        <div className={FOCUS_BOX}>
           <Search size={14} className="text-white/40" />
           <input
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') applySearch(); }}
             placeholder="跨产品搜索知识（标题 / 全文），回车确认"
-            className="bg-transparent text-sm text-white outline-none w-64"
+            className="no-focus-ring bg-transparent text-sm text-white outline-none w-64"
           />
           {keyword && <button onClick={clearAll} className="text-white/30 hover:text-white"><X size={13} /></button>}
         </div>
