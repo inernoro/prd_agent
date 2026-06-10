@@ -1121,8 +1121,7 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
         die("当前没有分支（detached HEAD？）— 先 git checkout 一个功能分支", code=1)
         return
 
-    project_basename = os.path.basename(repo_root)
-    fallback_project_slug = _slugify_for_preview(project_basename)
+    fallback_project_slug = _fallback_project_slug(repo_root)
     root = _preview_root_from_host()
 
     # Step 1: 优先走 CDS API（有 CDS_HOST + 任一认证密钥时；
@@ -1215,7 +1214,7 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
             "projectSlug": fallback_project_slug,
             "previewSlug": slug,
             "url": url,
-            "note": "本地推算依赖「目录名 slugify 后 == CDS 项目 slug」。"
+            "note": "本地推算优先 git remote 仓库名，其次目录名。"
                     "设置 CDS_HOST + (AI_ACCESS_KEY 或 CDS_PROJECT_KEY) 走 API 模式更准。",
         })
 
@@ -1243,7 +1242,7 @@ def cmd_branch_id(args: argparse.Namespace) -> None:
     if not branch:
         die("当前没有分支（detached HEAD？）", code=1)
         return
-    project_slug_hint = _slugify_for_preview(os.path.basename(repo_root))
+    project_slug_hint = _fallback_project_slug(repo_root)
 
     # 用 _call_safe 而不是 _call(quiet=True)：后者在 URLError / TimeoutError 时
     # _request.die() exit 1（违反 CLI 契约 4xx→2/5xx→3）。_call_safe 把 HTTP +
@@ -4192,6 +4191,43 @@ def _git_remote_url(root: str) -> str | None:
     except Exception:
         pass
     return None
+
+
+def _repo_name_from_git_ref(raw: str | None) -> str:
+    """与 cds/src/services/preview-slug.ts:repoNameFromGitRef 对齐。
+
+    Cloud Agent / 临时 clone 目录常叫 workspace，不能拿目录名当 CDS 项目 slug。
+    """
+    value = (raw or "").strip()
+    if not value:
+        return ""
+    without_query = re.sub(r"[?#].*$", "", value).rstrip("/")
+    path_part = without_query
+    if re.match(r"^[^@\s]+@[^:\s]+:.+", without_query):
+        path_part = without_query[without_query.index(":") + 1:]
+    else:
+        try:
+            path_part = urllib.parse.urlparse(without_query).path
+        except Exception:
+            path_part = without_query
+    last = (
+        path_part.replace("\\", "/").split("/")
+    )
+    last = [p for p in last if p]
+    repo = last[-1] if last else ""
+    repo = re.sub(r"\.git$", "", repo, flags=re.IGNORECASE)
+    return _slugify_for_preview(repo)
+
+
+def _fallback_project_slug(repo_root: str) -> str:
+    """preview-url / branch-id 本地推算用的项目 slug。
+
+    优先 git remote 仓库名（prd_agent → prd-agent），目录名仅作兜底。
+    """
+    from_git = _repo_name_from_git_ref(_git_remote_url(repo_root))
+    if from_git:
+        return from_git
+    return _slugify_for_preview(os.path.basename(repo_root))
 
 
 def _detect_modules(root: str) -> list[dict]:
