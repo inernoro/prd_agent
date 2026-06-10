@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Compass, AlertCircle, Heart, AlertTriangle, FileText, Award,
-  MessageSquare, BookOpen,
+  MessageSquare, BookOpen, HelpCircle, User,
 } from 'lucide-react';
 import { getShituMeta } from '@/services';
 import type { ShituCategoryKey, ShituMeta, ShituTabMeta } from '@/services';
@@ -9,6 +9,7 @@ import { TabBar } from '@/components/design/TabBar';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { ShituQaTab } from './ShituQaTab';
 import { ShituKnowledgePanel } from './ShituKnowledgePanel';
+import { ShituHelpDrawer } from './ShituHelpDrawer';
 
 type SubView = 'qa' | 'knowledge';
 
@@ -26,6 +27,7 @@ export function ShituAgentPage() {
   const [categoryKey, setCategoryKey] = useState<ShituCategoryKey>('culture');
   const [subView, setSubView] = useState<SubView>('qa');
   const [activeModel, setActiveModel] = useState<{ name?: string; platform?: string } | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -87,7 +89,22 @@ export function ShituAgentPage() {
           <p className="text-xs text-white/50 truncate">
             {activeTab?.description ?? '新人文化与制度问答 — 企业文化 / 事故教训 / 规章制度 / 奖赏表彰'}
           </p>
+          {meta?.authorName && (
+            <p className="text-[11px] text-white/35 mt-0.5 inline-flex items-center gap-1">
+              <User className="w-3 h-3" />
+              作者：{meta.authorName}
+            </p>
+          )}
         </div>
+        <button
+          type="button"
+          onClick={() => setHelpOpen(true)}
+          className="shrink-0 h-8 px-3 rounded-lg border border-white/12 bg-white/5 hover:bg-white/10 text-xs text-white/75 inline-flex items-center gap-1.5 transition"
+          title="查看使用说明"
+        >
+          <HelpCircle className="w-3.5 h-3.5 text-sky-300/85" />
+          使用帮助
+        </button>
       </header>
 
       <div className="shrink-0 flex flex-col gap-2">
@@ -129,6 +146,12 @@ export function ShituAgentPage() {
           )
         ) : null}
       </div>
+
+      <ShituHelpDrawer
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        authorName={meta?.authorName}
+      />
     </div>
   );
 }

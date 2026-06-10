@@ -15,6 +15,7 @@ export interface ShituTabMeta {
 export interface ShituMeta {
   tabs: ShituTabMeta[];
   canManageKnowledge: boolean;
+  authorName?: string;
 }
 
 export interface ShituCategoryStore {

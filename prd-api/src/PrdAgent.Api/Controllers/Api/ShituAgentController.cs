@@ -24,6 +24,7 @@ namespace PrdAgent.Api.Controllers.Api;
 public class ShituAgentController : ControllerBase
 {
     private const string AppKey = "shitu-agent";
+    private const string AuthorName = "魏喜胜";
 
     private const int ReferenceEntryMaxChars = 40000;
     private const int ReferenceTotalBudget = 120000;
@@ -92,6 +93,7 @@ public class ShituAgentController : ControllerBase
         {
             tabs,
             canManageKnowledge = HasManagePermission(),
+            authorName = AuthorName,
         }));
     }
 

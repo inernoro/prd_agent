@@ -418,6 +418,7 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
     routePath: '/shitu-agent',
     permission: 'shitu-agent.use',
     tags: ['识途', '新人', '文化', '制度', '问答'],
+    createdByName: '魏喜胜',
     wip: true,
     usageCount: 0,
     createdAt: new Date().toISOString(),
