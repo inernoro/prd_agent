@@ -19,6 +19,7 @@ import {
   Pencil,
   Download,
   Maximize2,
+  BoxSelect,
 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import {
@@ -33,6 +34,9 @@ import {
   getMdToPptModels,
 } from '@/services/real/mdToPptService';
 import { apiRequest } from '@/services/real/apiClient';
+import { NextStepBar } from './NextStepBar';
+import { ModelChipPopover } from './ModelChipPopover';
+import { SelectionFeedbackOverlay, type SelectionRectPct } from './SelectionFeedbackOverlay';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -262,24 +266,49 @@ function prepareIframeHtml(html: string, theme?: string, opts?: { editor?: boole
     "document.addEventListener('click',function(e){var t=e.target;while(t&&t!==document){if(t.tagName==='A'){var h=t.getAttribute('href')||'';if(h&&h.charAt(0)!=='#'){e.preventDefault();e.stopPropagation();}break;}t=t.parentNode;}},true);" +
     '}catch(e){}})();</script>';
 
-  // 3. 控制脚本（常注入）：页码上报 + 父窗口翻页指令监听。
+  // 3. 控制脚本（常注入）：页码上报 + 父窗口翻页/跳页指令监听 + 圈选信息桥。
   //    opaque origin（sandbox 仅 allow-scripts）下父页面无法访问 contentWindow.Reveal，
-  //    postMessage 是唯一可靠通道——翻页按钮/页码指示全靠它。
+  //    postMessage 是唯一可靠通道——翻页按钮/页码指示/圈选取信息全靠它。
+  //    桥就绪后上报 map-ppt-ready（ready-signal 模式），防止父页面在桥未装好时发指令被丢。
   const controlScript =
     '<script data-map-inject>(function(){' +
     'function tot(){var s=document.querySelectorAll(".reveal .slides>section");return s.length||1;}' +
     'function cur(){try{if(window.Reveal&&Reveal.getIndices){return (Reveal.getIndices().h||0)+1;}}catch(e){}return 1;}' +
     'function rep(){try{parent.postMessage({type:"map-ppt-slide",cur:cur(),total:tot()},"*");}catch(e){}}' +
+    // 圈选信息桥：父页面发来视口百分比矩形，换算像素后在中心点 + 四角内缩 10% 共 5 个采样点
+    // elementFromPoint 取元素，向上找最近的语义祖先（到 .slides 为止），去重收集至多 5 条描述回传。
+    // 任何异常也必须回传（texts 为空数组），不许静默吞掉。
+    'function rectInfo(d){var texts=[];try{' +
+    'var W=window.innerWidth,H=window.innerHeight;' +
+    'var x=W*d.xPct/100,y=H*d.yPct/100,w=W*d.wPct/100,h=H*d.hPct/100;' +
+    'var pts=[[x+w/2,y+h/2],[x+w*0.1,y+h*0.1],[x+w*0.9,y+h*0.1],[x+w*0.1,y+h*0.9],[x+w*0.9,y+h*0.9]];' +
+    'var SEL="h1,h2,h3,h4,p,li,blockquote,td,th,img,.card,.feat,section";' +
+    'var seen=[];' +
+    'for(var i=0;i<pts.length;i++){var el=document.elementFromPoint(pts[i][0],pts[i][1]);' +
+    'while(el&&el.matches&&!el.matches(SEL)){if(el.classList&&el.classList.contains("slides")){el=null;break;}el=el.parentElement;}' +
+    'if(el&&el.matches&&seen.indexOf(el)<0&&seen.length<5){seen.push(el);}}' +
+    'for(var j=0;j<seen.length;j++){var nd=seen[j];var tag=(nd.tagName||"").toLowerCase();' +
+    'var txt=tag==="img"?(nd.getAttribute("alt")||"img"):(nd.textContent||"").replace(/\\s+/g," ").trim().slice(0,60);' +
+    'texts.push(tag+":"+txt);}' +
+    '}catch(e){}' +
+    'try{parent.postMessage({type:"map-ppt-rect-info",id:d.id,slide:cur(),texts:texts},"*");}catch(e){}}' +
     'window.addEventListener("message",function(e){var d=e.data||{};try{' +
     'if(d.type==="map-ppt-nav"&&window.Reveal){if(d.dir==="prev"){Reveal.prev();}else{Reveal.next();}setTimeout(rep,80);}' +
-    '}catch(err){}});' +
+    // 页位恢复：父页面指定 0-based 横向索引直接跳页
+    'if(d.type==="map-ppt-goto"&&window.Reveal&&typeof d.h==="number"){Reveal.slide(d.h);setTimeout(rep,80);}' +
+    'if(d.type==="map-ppt-rect-query"){rectInfo(d);}' +
+    '}catch(err){if(d.type==="map-ppt-rect-query"){try{parent.postMessage({type:"map-ppt-rect-info",id:d.id,slide:1,texts:[]},"*");}catch(e2){}}}});' +
     'var n=0;var iv=setInterval(function(){n++;var R=window.Reveal;' +
-    'if(R&&R.getIndices){clearInterval(iv);rep();try{if(R.on){R.on("slidechanged",rep);}else if(R.addEventListener){R.addEventListener("slidechanged",rep);}}catch(e){}}' +
+    'if(R&&R.getIndices){clearInterval(iv);rep();try{if(R.on){R.on("slidechanged",rep);}else if(R.addEventListener){R.addEventListener("slidechanged",rep);}}catch(e){}' +
+    // 桥安装完成（找到 Reveal 且首次 rep 已发）→ 通知父页面可以下发指令了
+    'try{parent.postMessage({type:"map-ppt-ready"},"*");}catch(e){}}' +
     'else if(n>60){clearInterval(iv);}},250);' +
     '})();</script>';
 
   // 4. 编辑器脚本（仅编辑模式注入）：点击文字 contenteditable 直接改、
-  //    悬浮工具条 A+/A- 调字号，改动 debounce 序列化（剥离全部注入节点）postMessage 回父页面。
+  //    悬浮工具条 撤销/A+/A-/颜色/对齐，改动 debounce 序列化（剥离全部注入节点 +
+  //    清洗 reveal 运行时状态）postMessage 回父页面。
+  //    撤销：最多 20 条的 innerHTML 快照栈，修改发生前压栈（连续打字用 dirty 标志只压一次）。
   const editorScript = !opts?.editor
     ? ''
     : '<style data-map-inject>' +
@@ -287,27 +316,55 @@ function prepareIframeHtml(html: string, theme?: string, opts?: { editor?: boole
       '#__map_editor_toolbar__{position:fixed;display:none;z-index:99999;gap:6px;align-items:center;background:#17181c;color:#eee;border:1px solid rgba(255,255,255,.18);border-radius:8px;padding:6px 8px;font:12px/1 Inter,system-ui,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.4);}' +
       '#__map_editor_toolbar__ button{all:unset;cursor:pointer;padding:4px 8px;border-radius:5px;background:rgba(255,255,255,.08);color:#fff;font-weight:600;}' +
       '#__map_editor_toolbar__ button:hover{background:rgba(255,255,255,.18);}' +
+      // 颜色圆点：14px 圆形按钮，1px 浅描边便于暗底辨认；背景色走元素内联 style（内联优先于此规则）
+      '#__map_editor_toolbar__ button.__map_dot__{width:14px;height:14px;padding:0;border-radius:50%;border:1px solid rgba(255,255,255,.35);box-sizing:border-box;}' +
       '#__map_editor_toolbar__ span{color:rgba(255,255,255,.5);font-size:10px;}' +
       '</style>' +
       '<script data-map-inject>(function(){' +
       'var SEL="h1,h2,h3,h4,h5,h6,p,li,blockquote,td,th";var cur=null;var t=null;' +
+      // 撤销栈（最多 20 条）+ dirty 标志：beforeinput 首次触发时压栈（即"首次 input 前"的修改前快照），
+      // blur/换目标/按钮操作后复位 dirty
+      'var hist=[];var dirty=false;' +
+      'function slidesEl(){return document.querySelector(".reveal .slides");}' +
+      'function snap(){try{var s=slidesEl();if(s){hist.push(s.innerHTML);if(hist.length>20){hist.shift();}}}catch(e){}}' +
+      'function onBI(){if(!dirty){snap();dirty=true;}}' +
       'function serialize(){try{' +
       'var root=document.documentElement.cloneNode(true);' +
       'var rm=root.querySelectorAll("[data-map-inject],#__map_editor_toolbar__");' +
       'for(var i=0;i<rm.length;i++){if(rm[i].parentNode){rm[i].parentNode.removeChild(rm[i]);}}' +
       'var ce=root.querySelectorAll("[contenteditable]");for(var j=0;j<ce.length;j++){ce[j].removeAttribute("contenteditable");}' +
       'var ed=root.querySelectorAll(".__map_editing__");for(var k=0;k<ed.length;k++){ed[k].classList.remove("__map_editing__");if(!ed[k].getAttribute("class")){ed[k].removeAttribute("class");}}' +
+      // 清洗 reveal 运行时状态：序列化的是活 DOM，必须剥掉 reveal 注入的运行时节点/类/内联样式，
+      // 否则产物带着 present/past/future、display:none、slides transform 等脏状态
+      'try{var rt=root.querySelectorAll(".reveal .backgrounds,.reveal .progress,.reveal .controls,.reveal .slide-number,.reveal .speaker-notes,.reveal .pause-overlay");for(var a=0;a<rt.length;a++){if(rt[a].parentNode){rt[a].parentNode.removeChild(rt[a]);}}}catch(e1){}' +
+      'try{var sc=root.querySelectorAll(".slides section");for(var b=0;b<sc.length;b++){var sn=sc[b];sn.classList.remove("present");sn.classList.remove("past");sn.classList.remove("future");if(!sn.getAttribute("class")){sn.removeAttribute("class");}sn.removeAttribute("hidden");sn.removeAttribute("aria-hidden");sn.style.removeProperty("display");sn.style.removeProperty("top");if(!sn.getAttribute("style")){sn.removeAttribute("style");}}}catch(e2){}' +
+      'try{var sl=root.querySelector(".reveal .slides");if(sl){sl.removeAttribute("style");}}catch(e3){}' +
+      'try{var rv=root.querySelector(".reveal");if(rv){rv.classList.remove("ready");rv.classList.remove("overview");rv.classList.remove("paused");}}catch(e4){}' +
       'parent.postMessage({type:"map-ppt-html",html:"<!DOCTYPE html>\\n"+root.outerHTML},"*");' +
       '}catch(e){}}' +
       'function sched(){clearTimeout(t);t=setTimeout(serialize,500);}' +
       'var tb=document.createElement("div");tb.id="__map_editor_toolbar__";' +
-      "tb.innerHTML='<button data-act=\"minus\">A-</button><button data-act=\"plus\">A+</button><span>编辑中 · A+/A- 调字号 · Esc 退出</span>';" +
+      "tb.innerHTML='<button data-act=\"undo\">撤销</button><button data-act=\"minus\">A-</button><button data-act=\"plus\">A+</button>" +
+      "<button class=\"__map_dot__\" data-act=\"color\" data-color=\"#e6edf3\" style=\"background:#e6edf3\"></button>" +
+      "<button class=\"__map_dot__\" data-act=\"color\" data-color=\"#7ee787\" style=\"background:#7ee787\"></button>" +
+      "<button class=\"__map_dot__\" data-act=\"color\" data-color=\"#79c0ff\" style=\"background:#79c0ff\"></button>" +
+      "<button class=\"__map_dot__\" data-act=\"color\" data-color=\"#d2a8ff\" style=\"background:#d2a8ff\"></button>" +
+      "<button class=\"__map_dot__\" data-act=\"color\" data-color=\"#ffd166\" style=\"background:#ffd166\"></button>" +
+      "<button class=\"__map_dot__\" data-act=\"color\" data-color=\"#ff6b6b\" style=\"background:#ff6b6b\"></button>" +
+      "<button data-act=\"align\" data-align=\"left\">左</button><button data-act=\"align\" data-align=\"center\">中</button><button data-act=\"align\" data-align=\"right\">右</button>" +
+      "<span>编辑中 · Esc 退出</span>';" +
       'tb.addEventListener("mousedown",function(e){e.preventDefault();e.stopPropagation();});' +
-      'tb.addEventListener("click",function(e){var b=e.target.closest?e.target.closest("button"):null;if(!b||!cur)return;e.preventDefault();e.stopPropagation();' +
-      'var fs=parseFloat(getComputedStyle(cur).fontSize)||24;var nv=b.getAttribute("data-act")==="plus"?fs*1.12:fs/1.12;cur.style.fontSize=nv.toFixed(1)+"px";sched();place();});' +
-      'function place(){if(!cur)return;var r=cur.getBoundingClientRect();tb.style.display="flex";var top=r.top-46;if(top<8){top=r.bottom+10;}tb.style.top=top+"px";tb.style.left=Math.max(8,Math.min(window.innerWidth-220,r.left))+"px";}' +
-      'function desel(skip){if(!cur)return;cur.removeEventListener("input",sched);cur.removeAttribute("contenteditable");cur.classList.remove("__map_editing__");cur=null;tb.style.display="none";if(!skip){serialize();}}' +
-      'function sel(el){if(cur===el)return;desel(true);cur=el;el.classList.add("__map_editing__");el.setAttribute("contenteditable","true");el.addEventListener("input",sched);place();try{el.focus();}catch(e){}}' +
+      'tb.addEventListener("click",function(e){var b2=e.target.closest?e.target.closest("button"):null;if(!b2){return;}e.preventDefault();e.stopPropagation();var act=b2.getAttribute("data-act");' +
+      // 撤销：弹栈回填 slides → 清空选中态 → 同步 reveal 布局 → 序列化回传；栈空时无操作
+      'if(act==="undo"){if(!hist.length){return;}var se=slidesEl();if(!se){return;}se.innerHTML=hist.pop();cur=null;dirty=false;tb.style.display="none";try{if(window.Reveal&&Reveal.sync){Reveal.sync();}}catch(e1){}try{if(window.Reveal&&Reveal.layout){Reveal.layout();}}catch(e2){}sched();return;}' +
+      'if(!cur){return;}snap();dirty=false;' +
+      'if(act==="plus"||act==="minus"){var fs=parseFloat(getComputedStyle(cur).fontSize)||24;var nv=act==="plus"?fs*1.12:fs/1.12;cur.style.fontSize=nv.toFixed(1)+"px";}' +
+      'else if(act==="color"){cur.style.color=b2.getAttribute("data-color")||"";}' +
+      'else if(act==="align"){cur.style.textAlign=b2.getAttribute("data-align")||"";}' +
+      'sched();place();});' +
+      'function place(){if(!cur)return;var r=cur.getBoundingClientRect();tb.style.display="flex";var top=r.top-46;if(top<8){top=r.bottom+10;}tb.style.top=top+"px";tb.style.left=Math.max(8,Math.min(window.innerWidth-460,r.left))+"px";}' +
+      'function desel(skip){if(!cur)return;cur.removeEventListener("input",sched);cur.removeEventListener("beforeinput",onBI);cur.removeAttribute("contenteditable");cur.classList.remove("__map_editing__");cur=null;dirty=false;tb.style.display="none";if(!skip){serialize();}}' +
+      'function sel(el){if(cur===el)return;desel(true);cur=el;el.classList.add("__map_editing__");el.setAttribute("contenteditable","true");el.addEventListener("beforeinput",onBI);el.addEventListener("input",sched);place();try{el.focus();}catch(e){}}' +
       'document.addEventListener("click",function(e){' +
       'if(e.target.closest&&e.target.closest("#__map_editor_toolbar__")){return;}' +
       'var el=e.target.closest?e.target.closest(SEL):null;' +
@@ -670,6 +727,14 @@ export function MdToPptAgentPage() {
   const editedHtmlRef = useRef<string>('');
   const previewWrapRef = useRef<HTMLDivElement>(null);
 
+  // ─── 页位恢复：跟踪当前页（0-based），iframe 重载（编辑保存/换主题/patch）后经
+  //     map-ppt-ready 信号回跳，不再每次跳回第 1 页
+  const restoreSlideRef = useRef(0);
+
+  // ─── 圈选反馈：拖框圈选幻灯片区域 → 反查元素文本 → 组装精修指令填入输入框
+  const [feedbackMode, setFeedbackMode] = useState(false);
+  const pendingRectRef = useRef<{ id: string; note: string; rect: SelectionRectPct; slide: number; timer: number } | null>(null);
+
   // ─── Attachments & KB
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
   const [pendingKbRefs, setPendingKbRefs] = useState<KbRef[]>([]);
@@ -740,32 +805,82 @@ export function MdToPptAgentPage() {
     saveSession({ messages, activeRunId, theme, engine, model });
   }, [messages, activeRunId, theme, engine, model]);
 
-  // ─── 设置面板首次展开时拉取可切换模型列表（直出引擎）
-  useEffect(() => {
-    if (!showSettings || chatModels.length > 0) return;
+  // ─── 模型列表惰性拉取（设置面板展开 / 工具栏模型 chip 打开时共用）
+  const loadModels = useCallback(() => {
+    if (chatModels.length > 0) return;
     void getMdToPptModels().then((r) => {
       if (r && r.items.length > 0) setChatModels(r.items.map((i) => i.model));
     });
-  }, [showSettings, chatModels.length]);
+  }, [chatModels.length]);
 
-  // ─── iframe postMessage 监听：页码上报 + 编辑模式 HTML 回传
+  useEffect(() => {
+    if (showSettings) loadModels();
+  }, [showSettings, loadModels]);
+
+  // ─── 圈选反馈指令组装（texts 为空时退化为坐标描述）
+  const composeFeedback = useCallback((slide: number, texts: string[], note: string, rect: SelectionRectPct) => {
+    const what = texts.length > 0
+      ? `圈选内容：${texts.join('；')}`
+      : `圈选区域：左上(${rect.xPct.toFixed(0)}%,${rect.yPct.toFixed(0)}%) 大小(${rect.wPct.toFixed(0)}%x${rect.hPct.toFixed(0)}%)`;
+    return `第${slide}页，${what}。修改要求：${note}`;
+  }, []);
+
+  // ─── iframe postMessage 监听：页码上报 + 编辑稿回传 + ready 页位恢复 + 圈选信息
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       // opaque origin 下 e.origin === 'null'，只认来自当前预览 iframe 的消息
       if (e.source !== iframeRef.current?.contentWindow) return;
-      const d = e.data as { type?: string; html?: string; cur?: number; total?: number } | null;
+      const d = e.data as {
+        type?: string; html?: string; cur?: number; total?: number;
+        id?: string; slide?: number; texts?: string[];
+      } | null;
       if (!d || typeof d !== 'object') return;
       if (d.type === 'map-ppt-slide' && typeof d.cur === 'number' && typeof d.total === 'number') {
         setSlidePos({ cur: d.cur, total: d.total });
+        restoreSlideRef.current = d.cur - 1;
       }
       if (d.type === 'map-ppt-html' && typeof d.html === 'string' && looksLikeDeck(d.html)) {
         editedHtmlRef.current = d.html;
         setDirtyEdits(true);
       }
+      // 桥就绪：iframe 重载后回跳到重载前所在页（open-design ready-signal 模式）
+      if (d.type === 'map-ppt-ready' && restoreSlideRef.current > 0) {
+        iframeRef.current?.contentWindow?.postMessage({ type: 'map-ppt-goto', h: restoreSlideRef.current }, '*');
+      }
+      // 圈选反查结果：组装精修指令填入输入框（不自动发送，控制权交给用户）
+      if (d.type === 'map-ppt-rect-info' && typeof d.id === 'string') {
+        const pending = pendingRectRef.current;
+        if (!pending || pending.id !== d.id) return;
+        window.clearTimeout(pending.timer);
+        pendingRectRef.current = null;
+        const slide = typeof d.slide === 'number' && d.slide > 0 ? d.slide : pending.slide;
+        const texts = Array.isArray(d.texts) ? d.texts.filter((t): t is string => typeof t === 'string') : [];
+        setInput(composeFeedback(slide, texts, pending.note, pending.rect));
+        inputRef.current?.focus();
+      }
     };
     window.addEventListener('message', onMsg);
     return () => window.removeEventListener('message', onMsg);
-  }, []);
+  }, [composeFeedback]);
+
+  // ─── 圈选提交：向 iframe 反查选区内元素，1s 无响应则退化为坐标描述
+  const handleFeedbackSubmit = useCallback((payload: { rect: SelectionRectPct; note: string }) => {
+    setFeedbackMode(false);
+    const id = genId();
+    const slide = slidePos?.cur ?? 1;
+    const timer = window.setTimeout(() => {
+      // 桥无响应兜底：不让用户白画一个框
+      if (pendingRectRef.current?.id !== id) return;
+      pendingRectRef.current = null;
+      setInput(composeFeedback(slide, [], payload.note, payload.rect));
+      inputRef.current?.focus();
+    }, 1000);
+    pendingRectRef.current = { id, note: payload.note, rect: payload.rect, slide, timer };
+    iframeRef.current?.contentWindow?.postMessage(
+      { type: 'map-ppt-rect-query', id, xPct: payload.rect.xPct, yPct: payload.rect.yPct, wPct: payload.rect.wPct, hPct: payload.rect.hPct },
+      '*'
+    );
+  }, [slidePos, composeFeedback]);
 
   // ─── Nav: 翻页走 postMessage（opaque origin 下无法直接访问 contentWindow.Reveal）
   const deckNav = useCallback((dir: 'prev' | 'next') => {
@@ -793,6 +908,7 @@ export function MdToPptAgentPage() {
       commitEdits();
       setEditMode(false);
     } else {
+      setFeedbackMode(false); // 编辑与圈选互斥
       setEditMode(true);
     }
   }, [editMode, commitEdits]);
@@ -970,6 +1086,8 @@ export function MdToPptAgentPage() {
       setIsProcessing(true);
       setArtifactPhase('generating');
       setPublishedUrl('');
+      setFeedbackMode(false);
+      restoreSlideRef.current = 0; // 新一轮生成回到第 1 页
 
       const genMsg = pushMsg({
         role: 'assistant',
@@ -1203,7 +1321,13 @@ export function MdToPptAgentPage() {
     setEditMode(false);
     setDirtyEdits(false);
     setSlidePos(null);
+    setFeedbackMode(false);
     editedHtmlRef.current = '';
+    restoreSlideRef.current = 0;
+    if (pendingRectRef.current) {
+      window.clearTimeout(pendingRectRef.current.timer);
+      pendingRectRef.current = null;
+    }
     try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
   }, []);
 
@@ -1718,11 +1842,29 @@ export function MdToPptAgentPage() {
                 </div>
 
                 <div className="flex items-center gap-1.5">
-                  {modelInfo && (
-                    <span className="text-[9px] font-mono text-[var(--text-tertiary)] bg-white/4 border border-white/8 rounded px-1.5 py-0.5 max-w-[160px] truncate" title={modelInfo.model + ' via ' + modelInfo.platform}>
-                      {modelInfo.model.split('/').pop()} · {modelInfo.platform}
-                    </span>
-                  )}
+                  {/* 模型 chip：常驻可点（借鉴 open-design InlineModelSwitcher），免去翻设置面板 */}
+                  <ModelChipPopover
+                    modelInfo={modelInfo}
+                    selectedModel={model}
+                    models={chatModels}
+                    onSelect={setModel}
+                    onOpen={loadModels}
+                    disabled={engine !== 'map'}
+                  />
+                  <button
+                    onClick={() => setFeedbackMode((v) => !v)}
+                    disabled={isStreaming || editMode}
+                    title="圈选反馈：拖框圈出要修改的区域，写一句要求，自动组装成精修指令"
+                    className={[
+                      'flex items-center gap-1 px-2 py-1 rounded-md text-[11px] border disabled:opacity-40',
+                      feedbackMode
+                        ? 'bg-purple-500/25 text-purple-200 border-purple-500/40 font-semibold'
+                        : 'bg-white/5 text-[var(--text-secondary)] hover:bg-white/10 border-white/10',
+                    ].join(' ')}
+                  >
+                    <BoxSelect size={11} />
+                    圈选反馈
+                  </button>
                   <button
                     onClick={toggleEditMode}
                     disabled={isStreaming}
@@ -1769,12 +1911,26 @@ export function MdToPptAgentPage() {
                 </div>
               )}
 
+              {/* 下一步引导条：生成完成后给出动作建议（借鉴 open-design NextStepActions，seed 不自动发送） */}
+              {!editMode && !feedbackMode && !isStreaming && (
+                <NextStepBar
+                  onPublish={() => void handlePublish()}
+                  publishBusy={isPublishing}
+                  published={!!publishedUrl}
+                  onDownload={handleDownload}
+                  onSeedPatch={(t) => {
+                    setInput(t);
+                    inputRef.current?.focus();
+                  }}
+                />
+              )}
+
               {/* iframe —— sandbox="allow-scripts"（opaque origin，无 same-origin）
                     配合上方 prepareIframeHtml() 注入的 storage shim，
                     reveal.js init 不会因 storage 访问抛错导致整页空白。
                     生成 HTML 中的 <script> 无法访问主应用的 token/cookie/storage。
-                    翻页/页码/编辑全部走 postMessage 通道（见 controlScript/editorScript）。 */}
-              <div ref={previewWrapRef} className="flex-1 flex flex-col bg-black" style={{ minHeight: 0 }}>
+                    翻页/页码/编辑/页位恢复/圈选反查全部走 postMessage 通道（见 controlScript/editorScript）。 */}
+              <div ref={previewWrapRef} className="flex-1 flex flex-col bg-black" style={{ minHeight: 0, position: 'relative' }}>
                 <iframe
                   ref={iframeRef}
                   className="flex-1 w-full border-0"
@@ -1782,6 +1938,12 @@ export function MdToPptAgentPage() {
                   sandbox="allow-scripts"
                   title="PPT 预览"
                   style={{ minHeight: 0 }}
+                />
+                {/* 圈选反馈遮罩（借鉴 open-design PreviewDrawOverlay 极简版） */}
+                <SelectionFeedbackOverlay
+                  active={feedbackMode}
+                  onCancel={() => setFeedbackMode(false)}
+                  onSubmit={handleFeedbackSubmit}
                 />
               </div>
             </div>
