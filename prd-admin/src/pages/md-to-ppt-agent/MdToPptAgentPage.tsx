@@ -359,6 +359,50 @@ export function parseSlideProgress(html: string): SlideProgress {
   return { titles, building: opens > titles.length };
 }
 
+// ─── 生成期实况渲染（Gamma 式：等待时看到的就是真实幻灯页本身，不是状态面板）──
+// 从流里取已闭合的 <section> 原文 + <head> 里已完整到达的 <link>/<style>，
+// 拼一个"单页静态 deck"文档灌进实况 iframe：不带 Reveal 运行时（脚本通常在文件
+// 末尾还没流到），靠注入 CSS 把 section 静态铺满视口。
+// 输入未出新页时输出字符串恒等 → React 跳过 srcDoc 更新 → iframe 不重载不闪烁。
+
+export function extractCompletedSections(html: string): string[] {
+  return html.match(/<section\b[^>]*>[\s\S]*?<\/section>/gi) ?? [];
+}
+
+export function extractHeadAssets(html: string): string {
+  const bodyAt = html.search(/<body\b/i);
+  const head = bodyAt >= 0 ? html.slice(0, bodyAt) : html;
+  const links = head.match(/<link\b[^>]*>/gi) ?? [];
+  const styles = head.match(/<style\b[^>]*>[\s\S]*?<\/style>/gi) ?? [];
+  return links.join('') + styles.join('');
+}
+
+// 无 Reveal 运行时的静态铺版：中和 reveal.css 对 slides/section 的定位与隐藏
+const LIVE_SLIDE_CSS =
+  'html,body{margin:0;width:100%;height:100%;overflow:hidden;}' +
+  '.reveal{width:100%;height:100%;position:relative;overflow:hidden;font-size:28px;}' +
+  '.reveal .slides{position:absolute !important;inset:0 !important;width:100% !important;height:100% !important;' +
+  'transform:none !important;margin:0 !important;display:block !important;text-align:left;}' +
+  '.reveal .slides section{display:flex !important;flex-direction:column;justify-content:center;' +
+  'position:absolute !important;inset:0;width:auto !important;height:auto !important;' +
+  'visibility:visible !important;opacity:1 !important;transform:none !important;' +
+  'overflow:hidden;box-sizing:border-box;padding:5vh 6vw;}';
+
+export function buildLiveSlideDoc(headAssets: string, sectionHtml: string): string {
+  return (
+    '<!DOCTYPE html><html><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+    FONT_LINKS +
+    headAssets +
+    '<style>' +
+    LIVE_SLIDE_CSS +
+    '</style></head>' +
+    '<body><div class="reveal"><div class="slides">' +
+    sectionHtml +
+    '</div></div></body></html>'
+  );
+}
+
 // 读取 sessionStorage（安全）
 function loadSession(): SessionState | null {
   try {
@@ -663,6 +707,19 @@ export function MdToPptAgentPage() {
   // 幻灯进度：从流里解析已闭合的 <section>（页标题逐张点亮）
   const slideProgress = useMemo(() => parseSlideProgress(streamPreview), [streamPreview]);
 
+  // ─── 生成实况预览（主视觉）：已完成的页直接真实渲染，默认跟随最新完成页
+  const [liveSlideSel, setLiveSlideSel] = useState<number | null>(null);
+  const liveSections = useMemo(() => extractCompletedSections(streamPreview), [streamPreview]);
+  const liveHeadAssets = useMemo(() => extractHeadAssets(streamPreview), [streamPreview]);
+  const liveIdx =
+    liveSlideSel != null && liveSlideSel < liveSections.length
+      ? liveSlideSel
+      : liveSections.length - 1;
+  const liveDoc = useMemo(
+    () => (liveSections.length === 0 ? '' : buildLiveSlideDoc(liveHeadAssets, liveSections[liveIdx] ?? '')),
+    [liveSections, liveHeadAssets, liveIdx]
+  );
+
   const resetStreamPreview = useCallback(() => {
     streamBufRef.current = '';
     if (streamFlushTimerRef.current != null) {
@@ -670,6 +727,7 @@ export function MdToPptAgentPage() {
       streamFlushTimerRef.current = null;
     }
     setStreamPreview('');
+    setLiveSlideSel(null);
   }, []);
 
   const handleStreamDelta = useCallback((text: string) => {
@@ -1708,8 +1766,9 @@ export function MdToPptAgentPage() {
             </div>
           )}
 
-          {/* Generating progress（2 秒定理 + Gamma 式逐页点亮：等待全程屏幕持续有内容变化，
-                不让用户对着静止 spinner 空等。三层信息：阶段文案 → 幻灯页进度卡 → 代码流尾巴） */}
+          {/* Generating progress —— Gamma 式实况渲染：等待期的主视觉就是真实幻灯页本身。
+                已完成的页流式解析后立即真实渲染（实况 iframe），底部页卡可点击回看任意已完成页；
+                第一页出来之前用骨架幻灯 + 代码流尾巴 + Agent 环境准备过渡，全程无静止空等。 */}
           {(artifactPhase === 'generating' || artifactPhase === 'patching') && (() => {
             const doneCount = slideProgress.titles.length;
             const building = slideProgress.building;
@@ -1731,27 +1790,28 @@ export function MdToPptAgentPage() {
                   : genStageMsg(elapsedSec, artifactPhase === 'patching');
             const pct = totalSlots > 0 ? Math.min(99, Math.round((doneCount / totalSlots) * 100)) : 0;
             return (
-              <div
-                className="flex-1 flex flex-col items-center justify-center gap-4 px-6"
-                style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
-              >
-                <div className="flex items-center gap-3">
-                  <MapSpinner size={18} />
-                  <div>
-                    <p className="text-sm text-[var(--text-secondary)]">{stageText}</p>
+              <div className="flex-1 flex flex-col gap-2.5 px-4 py-3" style={{ minHeight: 0 }}>
+                {/* 状态行 */}
+                <div className="shrink-0 flex items-center gap-3">
+                  <MapSpinner size={16} />
+                  <div className="min-w-0">
+                    <p className="text-sm text-[var(--text-secondary)] truncate">{stageText}</p>
                     <p className="text-[11px] text-[var(--text-tertiary)] mt-0.5 tabular-nums">
                       已等待 {elapsedSec}s
                       {streamPreview.length > 0 && ` · 已接收 ${streamPreview.length.toLocaleString()} 字符`}
-                      {modelInfo && (
-                        <span className="font-mono"> · {modelInfo.model}</span>
-                      )}
+                      {modelInfo && <span className="font-mono"> · {modelInfo.model}</span>}
                     </p>
                   </div>
+                  {totalSlots > 0 && (
+                    <span className="ml-auto shrink-0 text-[11px] tabular-nums text-[var(--text-tertiary)]">
+                      {doneCount} / {totalSlots} 页
+                    </span>
+                  )}
                 </div>
 
-                {/* 总进度条（有页数预期才显示，避免假精确） */}
+                {/* 总进度条 */}
                 {totalSlots > 0 && (
-                  <div className="w-full rounded-full bg-white/6 overflow-hidden" style={{ maxWidth: 560, height: 4 }}>
+                  <div className="shrink-0 w-full rounded-full bg-white/6 overflow-hidden" style={{ height: 3 }}>
                     <div
                       className="h-full rounded-full bg-purple-400/80 transition-all duration-700"
                       style={{ width: `${Math.max(pct, streamPreview.length > 0 ? 4 : 0)}%` }}
@@ -1759,101 +1819,127 @@ export function MdToPptAgentPage() {
                   </div>
                 )}
 
-                {/* 幻灯页进度卡：已生成的页逐张点亮（显示抽出的页标题），当前页呼吸闪烁 */}
+                {/* 主视觉：实况渲染的真实幻灯页（无脚本静态铺版，新页完成才更新，不闪烁） */}
+                <div
+                  className="flex-1 rounded-lg border border-white/8 overflow-hidden"
+                  style={{ minHeight: 0, position: 'relative', background: 'rgba(0,0,0,.25)' }}
+                >
+                  {liveDoc ? (
+                    <>
+                      <iframe
+                        data-testid="live-slide-preview"
+                        srcDoc={liveDoc}
+                        sandbox=""
+                        title="生成实况预览"
+                        className="w-full h-full border-0"
+                      />
+                      <div className="absolute top-2 right-2 flex items-center gap-1.5">
+                        {liveSlideSel != null && (
+                          <button
+                            onClick={() => setLiveSlideSel(null)}
+                            className="px-2 py-0.5 rounded text-[10px] bg-black/60 text-purple-200 border border-purple-400/40 hover:bg-black/75"
+                          >
+                            回到最新
+                          </button>
+                        )}
+                        <span className="px-2 py-0.5 rounded text-[10px] bg-black/60 text-white/75 tabular-nums">
+                          实况 · 第 {liveIdx + 1} 页{liveSlideSel == null ? '（跟随最新）' : ''}
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    /* 第一页出来之前：骨架幻灯 + 代码流尾巴 / Agent 环境准备 */
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-5 px-8">
+                      <div className="w-full flex flex-col gap-3 animate-pulse" style={{ maxWidth: 460 }} aria-hidden>
+                        <div className="h-2.5 w-20 rounded bg-white/8" />
+                        <div className="h-7 w-3/4 rounded bg-white/10" />
+                        <div className="h-2.5 w-full rounded bg-white/6" />
+                        <div className="h-2.5 w-5/6 rounded bg-white/6" />
+                        <div className="grid grid-cols-3 gap-3 mt-1.5">
+                          <div className="h-14 rounded-lg bg-white/6" />
+                          <div className="h-14 rounded-lg bg-white/6" />
+                          <div className="h-14 rounded-lg bg-white/6" />
+                        </div>
+                      </div>
+
+                      {streamPreview.length > 0 && (
+                        <div
+                          data-testid="stream-preview"
+                          className="w-full rounded-lg bg-white/3 border border-white/8 overflow-hidden"
+                          style={{ maxWidth: 460 }}
+                        >
+                          <div className="px-3 py-1.5 text-[9px] text-[var(--text-tertiary)] font-semibold border-b border-white/5 flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
+                            AI 正在逐字输出 HTML（先写整体样式，第一页马上出现）
+                          </div>
+                          <div
+                            className="px-3 py-2 font-mono text-[10px] leading-relaxed text-[var(--text-tertiary)]"
+                            style={{ maxHeight: 84, overflow: 'hidden', wordBreak: 'break-all' }}
+                          >
+                            <StreamingText text={streamPreview} streaming maxTailChars={320} className="whitespace-pre-wrap" />
+                          </div>
+                        </div>
+                      )}
+
+                      {diagLines.length > 0 && streamPreview.length === 0 && (
+                        <div className="w-72 rounded-md bg-white/3 border border-white/6 overflow-hidden">
+                          <div className="px-3 py-1 text-[9px] text-[var(--text-tertiary)] font-semibold border-b border-white/5">
+                            Agent 环境准备
+                          </div>
+                          <div style={{ maxHeight: '100px', overflowY: 'auto', overscrollBehavior: 'contain' }}>
+                            {diagLines.slice(-10).map((d, i) => (
+                              <div key={i} className="px-3 py-0.5 text-[9px] font-mono text-[var(--text-tertiary)]">
+                                [{d.stage}]{' '}
+                                {d.message ? String(d.message) : d.warning ? String(d.warning) : ''}
+                                {typeof d.elapsedMs === 'number' ? ` ${Math.round(d.elapsedMs / 100) / 10}s` : ''}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* 底部页卡导航：完成的页可点击回看，当前绘制页呼吸闪烁 */}
                 {totalSlots > 0 && (
                   <div
                     data-testid="slide-progress-cards"
-                    className="flex flex-wrap justify-center gap-2"
-                    style={{ maxWidth: 620 }}
+                    className="shrink-0 flex gap-2 overflow-x-auto pb-1"
+                    style={{ overscrollBehavior: 'contain' }}
                   >
                     {Array.from({ length: totalSlots }, (_, i) => {
                       const isDone = i < doneCount;
                       const isCurrent = i === doneCount && building;
+                      const isViewing = liveDoc !== '' && i === liveIdx;
                       return (
-                        <div
+                        <button
                           key={i}
+                          disabled={!isDone}
+                          onClick={() => setLiveSlideSel(i === doneCount - 1 ? null : i)}
                           className={[
-                            'rounded-md border px-2 pt-1.5 pb-1 transition-colors duration-500',
+                            'shrink-0 rounded-md border px-2 pt-1.5 pb-1 text-left transition-colors duration-500',
                             isDone
-                              ? 'bg-purple-500/12 border-purple-500/30'
+                              ? 'bg-purple-500/12 border-purple-500/30 cursor-pointer hover:bg-purple-500/20'
                               : isCurrent
                                 ? 'bg-white/6 border-purple-500/40 animate-pulse'
                                 : 'bg-transparent border-dashed border-white/10',
+                            isViewing ? 'ring-2 ring-purple-400/70' : '',
                           ].join(' ')}
-                          style={{ width: 108, height: 62 }}
+                          style={{ width: 104, height: 56 }}
                         >
-                          <div
-                            className={[
-                              'text-[9px] tabular-nums',
-                              isDone ? 'text-purple-300' : 'text-[var(--text-tertiary)]',
-                            ].join(' ')}
-                          >
+                          <div className={['text-[9px] tabular-nums', isDone ? 'text-purple-300' : 'text-[var(--text-tertiary)]'].join(' ')}>
                             第 {i + 1} 页
                           </div>
                           <div
-                            className={[
-                              'text-[10px] leading-tight mt-0.5',
-                              isDone ? 'text-[var(--text-secondary)]' : 'text-[var(--text-tertiary)]',
-                            ].join(' ')}
-                            style={{
-                              display: '-webkit-box',
-                              WebkitLineClamp: 2,
-                              WebkitBoxOrient: 'vertical',
-                              overflow: 'hidden',
-                            }}
+                            className={['text-[10px] leading-tight mt-0.5', isDone ? 'text-[var(--text-secondary)]' : 'text-[var(--text-tertiary)]'].join(' ')}
+                            style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
                           >
-                            {isDone
-                              ? slideProgress.titles[i] || '已生成'
-                              : isCurrent
-                                ? '绘制中...'
-                                : ''}
+                            {isDone ? slideProgress.titles[i] || '已生成' : isCurrent ? '绘制中...' : ''}
                           </div>
-                        </div>
+                        </button>
                       );
                     })}
-                  </div>
-                )}
-
-                {/* LLM 输出实时滚动尾巴（maxTailChars 防大文本 span 爆炸） */}
-                {streamPreview.length > 0 && (
-                  <div
-                    data-testid="stream-preview"
-                    className="w-full rounded-lg bg-white/3 border border-white/8 overflow-hidden"
-                    style={{ maxWidth: 560 }}
-                  >
-                    <div className="px-3 py-1.5 text-[9px] text-[var(--text-tertiary)] font-semibold border-b border-white/5 flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
-                      AI 正在逐字输出 HTML
-                    </div>
-                    <div
-                      className="px-3 py-2 font-mono text-[10px] leading-relaxed text-[var(--text-tertiary)]"
-                      style={{ maxHeight: 96, overflow: 'hidden', wordBreak: 'break-all' }}
-                    >
-                      <StreamingText
-                        text={streamPreview}
-                        streaming
-                        maxTailChars={360}
-                        className="whitespace-pre-wrap"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* Agent 诊断（流式数据到达前的环境阶段反馈；数据到达后退为次要信息） */}
-                {diagLines.length > 0 && streamPreview.length === 0 && (
-                  <div className="w-72 rounded-md bg-white/3 border border-white/6 overflow-hidden">
-                    <div className="px-3 py-1 text-[9px] text-[var(--text-tertiary)] font-semibold border-b border-white/5">
-                      Agent 环境准备
-                    </div>
-                    <div style={{ maxHeight: '100px', overflowY: 'auto', overscrollBehavior: 'contain' }}>
-                      {diagLines.slice(-10).map((d, i) => (
-                        <div key={i} className="px-3 py-0.5 text-[9px] font-mono text-[var(--text-tertiary)]">
-                          [{d.stage}]{' '}
-                          {d.message ? String(d.message) : d.warning ? String(d.warning) : ''}
-                          {typeof d.elapsedMs === 'number' ? ` ${Math.round(d.elapsedMs / 100) / 10}s` : ''}
-                        </div>
-                      ))}
-                    </div>
                   </div>
                 )}
               </div>
