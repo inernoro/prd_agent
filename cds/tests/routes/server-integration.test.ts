@@ -58,6 +58,7 @@ interface HttpResponse {
   status: number;
   contentType: string;
   body: string;
+  headers: http.IncomingHttpHeaders;
 }
 
 async function request(server: http.Server, urlPath: string): Promise<HttpResponse> {
@@ -73,6 +74,7 @@ async function request(server: http.Server, urlPath: string): Promise<HttpRespon
             status: res.statusCode!,
             contentType: (res.headers['content-type'] || '').toString(),
             body: raw,
+            headers: res.headers,
           });
         });
       },
@@ -290,6 +292,19 @@ describe('Server route ordering (regression)', () => {
     expect(res.status).toBe(400);
     expect(res.contentType).toContain('application/json');
     expect(JSON.parse(res.body).error).toBe('invalid_since');
+  });
+
+  it('real createServer advertises bundled cdscli version on API responses', async () => {
+    const cliDir = path.join(tmpDir, '.claude', 'skills', 'cds', 'cli');
+    fs.mkdirSync(cliDir, { recursive: true });
+    fs.writeFileSync(path.join(cliDir, 'cdscli.py'), 'VERSION = "9.8.7"\n');
+    const app = buildRealServerWithEvents([]);
+    server = await startServer(app);
+
+    const res = await request(server, '/api/server-events');
+
+    expect(res.status).toBe(200);
+    expect(res.headers['x-cds-cli-latest']).toBe('9.8.7');
   });
 
   it('real createServer exposes slow HTTP endpoint rankings from recent samples', async () => {

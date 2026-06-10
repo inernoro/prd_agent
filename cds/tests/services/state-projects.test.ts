@@ -132,6 +132,50 @@ describe('StateService — projects (P4 Part 1)', () => {
       // Same createdAt → proves the second load did NOT regenerate.
       expect(secondCreatedAt).toBe(firstCreatedAt);
     });
+
+    it('sets a preview alias from git origin when legacy project slug is generic workspace', () => {
+      const repoRoot = path.join(tmpDir, 'workspace');
+      fs.mkdirSync(path.join(repoRoot, '.git'), { recursive: true });
+      fs.writeFileSync(
+        path.join(repoRoot, '.git', 'config'),
+        [
+          '[remote "origin"]',
+          '  url = https://github.com/inernoro/prd_agent.git',
+          '',
+        ].join('\n'),
+        'utf-8',
+      );
+      seedLegacyState(stateFile);
+
+      const svc = new StateService(stateFile, repoRoot);
+      svc.load();
+
+      const legacy = svc.getLegacyProject()!;
+      expect(legacy.slug).toBe('workspace');
+      expect(legacy.aliasSlug).toBe('prd-agent');
+    });
+
+    it('does not set a preview alias when the legacy slug is already project-specific', () => {
+      const repoRoot = path.join(tmpDir, 'prd_agent');
+      fs.mkdirSync(path.join(repoRoot, '.git'), { recursive: true });
+      fs.writeFileSync(
+        path.join(repoRoot, '.git', 'config'),
+        [
+          '[remote "origin"]',
+          '  url = https://github.com/example/other-app.git',
+          '',
+        ].join('\n'),
+        'utf-8',
+      );
+      seedLegacyState(stateFile);
+
+      const svc = new StateService(stateFile, repoRoot);
+      svc.load();
+
+      const legacy = svc.getLegacyProject()!;
+      expect(legacy.slug).toBe('prd-agent');
+      expect(legacy.aliasSlug).toBeUndefined();
+    });
   });
 
   describe('getProject / getLegacyProject', () => {

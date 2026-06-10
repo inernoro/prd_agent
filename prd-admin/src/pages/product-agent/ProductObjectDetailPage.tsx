@@ -41,7 +41,7 @@ import {
   type TracedDefect,
 } from '@/services/real/productAgent';
 import type { Requirement, Feature, ProductVersion, Customer, FeatureVersion, ItemGrade, FormField, ProductEntityType, DescTemplate, VersionLifecycle } from './types';
-import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL } from './types';
+import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, effectiveDefectGrade } from './types';
 
 const ITEM_GRADES: ItemGrade[] = ['p0', 'p1', 'p2', 'p3'];
 
@@ -664,19 +664,6 @@ function CreateObjectForm({
 }
 
 // ════════════════════════ 新建缺陷（独立页，对齐新建需求）════════════════════════
-const DEFECT_SEVERITIES: { v: string; label: string }[] = [
-  { v: 'blocker', label: '阻断' },
-  { v: 'critical', label: '严重' },
-  { v: 'major', label: '主要' },
-  { v: 'minor', label: '次要' },
-  { v: 'trivial', label: '轻微' },
-  { v: 'suggestion', label: '建议' },
-];
-const DEFECT_PRIORITIES: { v: string; label: string }[] = [
-  { v: 'high', label: '高' },
-  { v: 'medium', label: '中' },
-  { v: 'low', label: '低' },
-];
 const DEFECT_STATUSES: { v: string; label: string }[] = [
   { v: 'draft', label: '草稿' },
   { v: 'reviewing', label: '评审中' },
@@ -694,8 +681,7 @@ const DEFECT_STATUS_LABEL: Record<string, string> = Object.fromEntries(DEFECT_ST
 function CreateDefectForm({ productId, onCreated }: { productId: string; onCreated: (newId: string) => void }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [severity, setSeverity] = useState('');
-  const [priority, setPriority] = useState('');
+  const [grade, setGrade] = useState<ItemGrade>('p2');
   const [assigneeId, setAssigneeId] = useState('');
   const [featureId, setFeatureId] = useState('');
   const [versionId, setVersionId] = useState('');
@@ -732,7 +718,7 @@ function CreateDefectForm({ productId, onCreated }: { productId: string; onCreat
     if (!versionTouched) setVersionId(defaultVersionForFeature(fid));
   };
 
-  const canSubmit = !!title.trim() && !!priority && !!featureId;
+  const canSubmit = !!title.trim() && !!featureId;
 
   const create = async () => {
     if (!canSubmit) return;
@@ -740,8 +726,7 @@ function CreateDefectForm({ productId, onCreated }: { productId: string; onCreat
     const res = await createProductDefect(productId, {
       title: title.trim(),
       description: description || undefined,
-      severity: severity || undefined,
-      priority,
+      grade,
       assigneeId: assigneeId || null,
       featureId,
       versionId: versionId || undefined,
@@ -750,7 +735,6 @@ function CreateDefectForm({ productId, onCreated }: { productId: string; onCreat
     if (res.success && res.data) onCreated(res.data.id);
   };
 
-  const chip = (active: boolean) => `px-2.5 py-1 rounded-md text-xs border ${active ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40' : 'text-white/45 border-white/10 hover:bg-white/5'}`;
   const selectCls = 'w-full px-2.5 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40';
 
   return (
@@ -770,7 +754,7 @@ function CreateDefectForm({ productId, onCreated }: { productId: string; onCreat
             <DescriptionField value={description} onChange={setDescription} />
           </Card>
           {!canSubmit && (
-            <p className="text-[11px] text-amber-300/70 px-1">请填写「标题」「优先级」「关联功能」后才能提交。</p>
+            <p className="text-[11px] text-amber-300/70 px-1">请填写「标题」「关联功能」后才能提交。</p>
           )}
           <p className="text-[11px] text-white/35 px-1">创建后进入缺陷详情页，自动追溯到本产品与所选功能；可在缺陷管理智能体继续处理流转。</p>
         </>
@@ -779,20 +763,8 @@ function CreateDefectForm({ productId, onCreated }: { productId: string; onCreat
         <Card title="属性">
           <div className="flex flex-col gap-3.5">
             <div className="flex flex-col gap-1.5">
-              <FieldLabel>严重度</FieldLabel>
-              <div className="flex flex-wrap gap-1.5">
-                {DEFECT_SEVERITIES.map((s) => (
-                  <button key={s.v} type="button" onClick={() => setSeverity(severity === s.v ? '' : s.v)} className={chip(severity === s.v)}>{s.label}</button>
-                ))}
-              </div>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <FieldLabel required>优先级</FieldLabel>
-              <div className="flex gap-1.5">
-                {DEFECT_PRIORITIES.map((p) => (
-                  <button key={p.v} type="button" onClick={() => setPriority(p.v)} className={chip(priority === p.v)}>{p.label}</button>
-                ))}
-              </div>
+              <FieldLabel>等级</FieldLabel>
+              <GradeField grade={grade} setGrade={setGrade} />
             </div>
             <div className="flex flex-col gap-1.5">
               <FieldLabel>处理人</FieldLabel>
@@ -1498,8 +1470,7 @@ function DefectDetail({
   const navigate = useNavigate();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [severity, setSeverity] = useState('');
-  const [priority, setPriority] = useState('');
+  const [grade, setGrade] = useState<ItemGrade>('p2');
   const [status, setStatus] = useState('');
   const [assigneeId, setAssigneeId] = useState('');
   const [featureId, setFeatureId] = useState('');
@@ -1513,8 +1484,7 @@ function DefectDetail({
     if (defect) {
       setTitle(defect.title ?? '');
       setDescription(defect.rawContent ?? '');
-      setSeverity(defect.severity ?? '');
-      setPriority(defect.priority ?? '');
+      setGrade(effectiveDefectGrade(defect));
       setStatus(defect.status ?? '');
       setAssigneeId(defect.assigneeId ?? '');
       setFeatureId(defect.tracedFeatureId ?? '');
@@ -1529,14 +1499,13 @@ function DefectDetail({
     return (
       title !== (defect.title ?? '') ||
       description !== (defect.rawContent ?? '') ||
-      severity !== (defect.severity ?? '') ||
-      priority !== (defect.priority ?? '') ||
+      grade !== effectiveDefectGrade(defect) ||
       status !== (defect.status ?? '') ||
       assigneeId !== (defect.assigneeId ?? '') ||
       featureId !== (defect.tracedFeatureId ?? '') ||
       versionId !== (defect.tracedVersionId ?? '')
     );
-  }, [defect, title, description, severity, priority, status, assigneeId, featureId, versionId]);
+  }, [defect, title, description, grade, status, assigneeId, featureId, versionId]);
 
   if (!defect) return <NotFound />;
 
@@ -1549,8 +1518,7 @@ function DefectDetail({
     await updateProductDefect(productId, defect.id, {
       title: title.trim(),
       description,
-      severity: severity || undefined,
-      priority: priority || undefined,
+      grade,
       status: status || undefined,
       assigneeId: assigneeId || null,
       featureId: featureId || undefined,
@@ -1629,20 +1597,8 @@ function DefectDetail({
           <Card title="属性">
             <div className="flex flex-col gap-3.5">
               <div className="flex flex-col gap-1.5">
-                <FieldLabel>严重度</FieldLabel>
-                <div className="flex flex-wrap gap-1.5">
-                  {DEFECT_SEVERITIES.map((s) => (
-                    <button key={s.v} type="button" onClick={() => setSeverity(severity === s.v ? '' : s.v)} className={chip(severity === s.v)}>{s.label}</button>
-                  ))}
-                </div>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <FieldLabel>优先级</FieldLabel>
-                <div className="flex gap-1.5">
-                  {DEFECT_PRIORITIES.map((p) => (
-                    <button key={p.v} type="button" onClick={() => setPriority(priority === p.v ? '' : p.v)} className={chip(priority === p.v)}>{p.label}</button>
-                  ))}
-                </div>
+                <FieldLabel>等级</FieldLabel>
+                <GradeField grade={grade} setGrade={setGrade} />
               </div>
               <div className="flex flex-col gap-1.5">
                 <FieldLabel>处理人</FieldLabel>

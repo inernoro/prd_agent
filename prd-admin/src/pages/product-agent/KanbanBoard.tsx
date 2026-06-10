@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Clock, AlertTriangle, User } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
-import { getUsers } from '@/services';
+import { searchDirectoryUsers } from '@/services';
 import type { AdminUser } from '@/types/admin';
 import { listRequirements, listFeatures, transition } from '@/services/real/productAgent';
 import { useEffectiveWorkflow } from './DynamicForm';
@@ -36,9 +36,20 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
   useEffect(() => {
     void reload();
   }, [reload]);
+  // 处理人姓名走 /api/teams/search-users（仅需登录），普通产品成员也能拿到，不用管理员专用的 /api/users。
   useEffect(() => {
-    void getUsers({ page: 1, pageSize: 200 }).then((res) => {
-      if (res.success) setUsers(res.data.items);
+    void searchDirectoryUsers('', 200).then((res) => {
+      if (res.success) {
+        setUsers(res.data.items.map((u) => ({
+          userId: u.userId,
+          username: u.username,
+          displayName: u.displayName,
+          avatarFileName: u.avatarFileName,
+          role: '' as AdminUser['role'],
+          status: 'Active' as AdminUser['status'],
+          createdAt: '',
+        })));
+      }
     });
   }, []);
 

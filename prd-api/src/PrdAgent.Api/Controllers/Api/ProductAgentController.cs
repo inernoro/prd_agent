@@ -1172,7 +1172,7 @@ public class ProductAgentController : ControllerBase
             AddEdge($"version:{fv.VersionId}", $"feature:{fv.FeatureId}", "feature-in-version");
         foreach (var d in defects)
         {
-            nodes.Add(new { id = $"defect:{d.Id}", type = "defect", label = d.Title ?? d.DefectNo, sub = d.DefectNo, grade = (string?)d.Severity, state = d.Status });
+            nodes.Add(new { id = $"defect:{d.Id}", type = "defect", label = d.Title ?? d.DefectNo, sub = d.DefectNo, grade = d.Grade ?? SeverityToGrade(d.Severity), state = d.Status });
             var any = false;
             if (!string.IsNullOrEmpty(d.TracedRequirementId)) { AddEdge($"defect:{d.Id}", $"requirement:{d.TracedRequirementId}", "traces"); any = true; }
             if (!string.IsNullOrEmpty(d.TracedFeatureId)) { AddEdge($"defect:{d.Id}", $"feature:{d.TracedFeatureId}", "traces"); any = true; }
@@ -1338,6 +1338,68 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
+    /// <summary>
+    /// 工作台「我的待办」：只返回当前用户「现在需要处理」的项。
+    /// 需求/功能：当前状态责任人=我（处理人优先，未指派时取负责人）且未到终态(IsFinal)；
+    ///            流转给他人或到终态后自动从待办消失。
+    /// 缺陷：同样按状态责任人——处理人=我且处于处理环节(评审/待处理/已提交/已分配/处理中)，
+    ///      或上报人=我且处于起草/待验收。提交后流转到处理环节、或到终态，即从我的待办消失。
+    /// </summary>
+    [HttpGet("products/{productId}/my-todos")]
+    public async Task<IActionResult> MyTodos(string productId)
+    {
+        var userId = GetUserId();
+        if (await FindAccessibleProductAsync(productId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+
+        var reqs = await _db.Requirements.Find(r => r.ProductId == productId && !r.IsDeleted).SortByDescending(r => r.CreatedAt).ToListAsync();
+        var feats = await _db.Features.Find(f => f.ProductId == productId && !f.IsDeleted).SortByDescending(f => f.CreatedAt).ToListAsync();
+        var defects = await _db.DefectReports.Find(d => d.TracedProductId == productId && !d.IsDeleted).SortByDescending(d => d.CreatedAt).ToListAsync();
+
+        // 加载需求/功能实际绑定的流程定义，建终态键集合 + 状态标签表
+        var defIds = reqs.Select(r => r.WorkflowDefId).Concat(feats.Select(f => f.WorkflowDefId))
+            .Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!).Distinct().ToList();
+        var defs = defIds.Count == 0 ? new List<ProductWorkflowDefinition>()
+            : await _db.ProductWorkflowDefinitions.Find(w => defIds.Contains(w.Id) && !w.IsDeleted).ToListAsync();
+        var defById = defs.ToDictionary(d => d.Id, d => d);
+
+        bool IsFinal(string? defId, string? state)
+            => !string.IsNullOrEmpty(state) && !string.IsNullOrEmpty(defId)
+               && defById.TryGetValue(defId, out var def) && def.States.Any(s => s.Key == state && s.IsFinal);
+        string? StateLabel(string? defId, string? state)
+        {
+            if (string.IsNullOrEmpty(state)) return null;
+            if (!string.IsNullOrEmpty(defId) && defById.TryGetValue(defId, out var def))
+                return def.States.FirstOrDefault(s => s.Key == state)?.Label ?? state;
+            return state;
+        }
+        // 状态责任人：有处理人取处理人，否则取负责人
+        bool MineByState(string? assigneeId, string ownerId)
+            => (string.IsNullOrEmpty(assigneeId) ? ownerId : assigneeId) == userId;
+
+        // 缺陷按"状态责任人"判定（与需求/功能口径一致）：只在轮到我的状态才算待办。
+        // 处理环节(评审/待处理/已提交/已分配/处理中)的责任人是处理人；只有起草/待验收才轮到上报人。
+        // 已解决/已拒绝/已关闭为终态，永不进待办。
+        var assigneeActive = new HashSet<string>
+        {
+            DefectStatus.Reviewing, DefectStatus.Awaiting, DefectStatus.Submitted, DefectStatus.Assigned, DefectStatus.Processing,
+        };
+        var reporterActive = new HashSet<string> { DefectStatus.Draft, DefectStatus.Verifying };
+        bool DefectMine(DefectReport d)
+            => (d.AssigneeId == userId && assigneeActive.Contains(d.Status ?? ""))
+               || (d.ReporterId == userId && reporterActive.Contains(d.Status ?? ""));
+
+        var items = new List<object>();
+        foreach (var r in reqs.Where(r => MineByState(r.AssigneeId, r.OwnerId) && !IsFinal(r.WorkflowDefId, r.CurrentState)))
+            items.Add(new { kind = "requirement", id = r.Id, no = r.RequirementNo, title = r.Title, state = r.CurrentState, stateLabel = StateLabel(r.WorkflowDefId, r.CurrentState) });
+        foreach (var f in feats.Where(f => MineByState(f.AssigneeId, f.OwnerId) && !IsFinal(f.WorkflowDefId, f.CurrentState)))
+            items.Add(new { kind = "feature", id = f.Id, no = f.FeatureNo, title = f.Title, state = f.CurrentState, stateLabel = StateLabel(f.WorkflowDefId, f.CurrentState) });
+        foreach (var d in defects.Where(DefectMine))
+            items.Add(new { kind = "defect", id = d.Id, no = d.DefectNo, title = string.IsNullOrWhiteSpace(d.Title) ? d.DefectNo : d.Title!, state = (string?)d.Status, stateLabel = (string?)null });
+
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
     /// <summary>列出可被关联（追溯）的缺陷：当前用户可见、尚未追溯到任何产品。</summary>
     [HttpGet("products/{productId}/defects/linkable")]
     public async Task<IActionResult> ListLinkableDefects(string productId, [FromQuery] string? keyword = null)
@@ -1402,8 +1464,7 @@ public class ProductAgentController : ControllerBase
             DefectNo = await GenerateNoAsync("DEF", _db.DefectReports, "DefectNo"),
             Title = request.Title.Trim(),
             RawContent = request.Description?.Trim() ?? string.Empty,
-            Severity = request.Severity,
-            Priority = DefectPriority.All.Contains(request.Priority ?? "") ? request.Priority : null,
+            Grade = ProductItemGrade.All.Contains(request.Grade ?? "") ? request.Grade : ProductItemGrade.P2,
             AssigneeId = string.IsNullOrWhiteSpace(request.AssigneeId) ? null : request.AssigneeId,
             AssigneeName = assigneeName,
             Status = DefectStatus.Submitted,
@@ -1419,7 +1480,7 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(defect));
     }
 
-    /// <summary>在产品内编辑缺陷核心字段（标题/描述/严重度/优先级/状态/处理人/关联功能/版本）。完整流转仍在缺陷管理智能体。</summary>
+    /// <summary>在产品内编辑缺陷核心字段（标题/描述/等级/状态/处理人/关联功能/版本）。完整流转仍在缺陷管理智能体。</summary>
     [HttpPut("products/{productId}/defects/{defectId}")]
     public async Task<IActionResult> UpdateProductDefect(string productId, string defectId, [FromBody] UpdateProductDefectRequest request)
     {
@@ -1441,8 +1502,7 @@ public class ProductAgentController : ControllerBase
         var u = Builders<DefectReport>.Update
             .Set(d => d.Title, request.Title.Trim())
             .Set(d => d.RawContent, request.Description?.Trim() ?? string.Empty)
-            .Set(d => d.Severity, DefectSeverity.All.Contains(request.Severity ?? "") ? request.Severity : null)
-            .Set(d => d.Priority, DefectPriority.All.Contains(request.Priority ?? "") ? request.Priority : null)
+            .Set(d => d.Grade, ProductItemGrade.All.Contains(request.Grade ?? "") ? request.Grade : ProductItemGrade.P2)
             .Set(d => d.AssigneeId, string.IsNullOrWhiteSpace(request.AssigneeId) ? null : request.AssigneeId)
             .Set(d => d.AssigneeName, assigneeName)
             .Set(d => d.TracedFeatureId, string.IsNullOrWhiteSpace(request.FeatureId) ? null : request.FeatureId)
@@ -1501,7 +1561,7 @@ public class ProductAgentController : ControllerBase
             RequirementNo = await GenerateNoAsync("REQ", _db.Requirements, "RequirementNo"),
             Title = string.IsNullOrWhiteSpace(defect.Title) ? $"由缺陷 {defect.DefectNo} 转化" : defect.Title!.Trim(),
             Description = defect.RawContent,
-            Grade = SeverityToGrade(defect.Severity),
+            Grade = defect.Grade ?? SeverityToGrade(defect.Severity),
             WorkflowDefId = workflowDefId,
             OwnerId = userId,
             SourceDefectId = defectId,
@@ -1798,7 +1858,7 @@ public class ProductAgentController : ControllerBase
         }
         foreach (var d in defs)
         {
-            objLines.Add($"缺陷 [{d.DefectNo}] {d.Title}（严重度 {d.Severity ?? "—"}，优先级 {d.Priority ?? "—"}，状态 {d.Status}；提交 {D(d.SubmittedAt ?? d.CreatedAt)}，解决 {D(d.ResolvedAt)}，关闭 {D(d.ClosedAt)}）描述：{Short(d.RawContent)}");
+            objLines.Add($"缺陷 [{d.DefectNo}] {d.Title}（等级 {(d.Grade ?? SeverityToGrade(d.Severity)).ToUpperInvariant()}，状态 {d.Status}；提交 {D(d.SubmittedAt ?? d.CreatedAt)}，解决 {D(d.ResolvedAt)}，关闭 {D(d.ClosedAt)}）描述：{Short(d.RawContent)}");
             timeline.Add((d.SubmittedAt ?? d.CreatedAt, $"缺陷 {d.DefectNo} 提交"));
             if (d.ResolvedAt.HasValue) timeline.Add((d.ResolvedAt.Value, $"缺陷 {d.DefectNo} 解决"));
         }
@@ -1835,12 +1895,11 @@ public class ProductAgentController : ControllerBase
 
         var systemPrompt =
             "你是资深产品关系分析专家。下面给出一条以某个对象为锚点的「追溯关系链」，包含全部关联对象、它们之间的关系、以及关键时间线。\n" +
-            "请输出一段结构清晰的中文分析，要求：\n" +
-            "1. 讲清这条链的前因后果（从客户/需求出发，到版本/功能落地，到缺陷追溯的来龙去脉）；\n" +
-            "2. 不要遗漏关键对象与关系，点明锚点对象在整条链中的位置与作用；\n" +
-            "3. 必须体现重要时间节点（创建/发布/提交/解决等），说明时序与因果；\n" +
-            "4. 指出值得关注的关键信息或风险（如缺陷未解决、版本未发布、需求无客户来源等）。\n" +
-            "输出纯文本（可用短小分段/项目符号），不要 markdown 代码块、不要寒暄。";
+            "请输出简洁的中文分析，要求：\n" +
+            "1. 简洁但不丢关键信息：讲清这条链的来龙去脉（客户/需求 → 版本/功能落地 → 缺陷追溯），点明锚点对象的位置与作用、关键时间节点、值得关注的风险（如缺陷未解决、版本未发布、需求无客户来源等）。\n" +
+            "2. 控制篇幅：用 3-5 个短小要点或短段落表达，每点一句话讲透，不要冗长铺陈、不要复述所有字段。\n" +
+            "3. 输出纯文本，禁止任何 Markdown 标记：不要 #、*、**、反引号、代码块、竖线表格；要点用「· 」开头。\n" +
+            "不要寒暄、不要复述本提示词。";
 
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
             RequestId: Guid.NewGuid().ToString("N"), GroupId: null, SessionId: null, UserId: userId,
@@ -1880,6 +1939,184 @@ public class ProductAgentController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[product-agent] relation analysis stream error");
+            await Sse("error", new { message = "AI 调用异常，请重试" });
+            return;
+        }
+        await Sse("done", new { });
+    }
+
+    // ════════════════════════ 工作台「工作助手」问答（SSE 流式）════════════════════════
+
+    /// <summary>
+    /// 工作台「工作助手」：以该产品全量数据（需求/功能/缺陷/版本/客户）+ 本产品知识库文档摘录为上下文，
+    /// 流式回答用户问题（SSE：phase/typing/done）。
+    /// 保护：仅本产品成员可访问（FindAccessibleProductAsync），只取本产品数据，知识库只取该产品挂载
+    /// DocumentStore 的文本索引/摘要并截断，不跨产品、不倾倒原文件、prompt 约束不得编造或外引。
+    /// </summary>
+    [HttpPost("products/{productId}/assistant/ask")]
+    public async Task AssistantAsk(string productId, [FromBody] AssistantAskRequest request)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers["X-Accel-Buffering"] = "no";
+        async Task Sse(string evt, object data)
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(data);
+            await Response.WriteAsync($"event: {evt}\ndata: {json}\n\n");
+            await Response.Body.FlushAsync();
+        }
+
+        var userId = GetUserId();
+        var product = await FindAccessibleProductAsync(productId, userId);
+        if (product == null) { await Sse("error", new { message = "产品不存在或无权访问" }); return; }
+        var question = (request.Question ?? "").Trim();
+        if (question.Length == 0) { await Sse("error", new { message = "请输入问题" }); return; }
+        if (question.Length > 1000) question = question[..1000];
+
+        await Sse("phase", new { message = "正在汇总该产品数据与知识库…" });
+
+        string Strip(string? s) => System.Text.RegularExpressions.Regex.Replace(s ?? "", "<[^>]+>", " ")
+            .Replace("&nbsp;", " ").Replace("&amp;", "&").Replace("&lt;", "<").Replace("&gt;", ">").Trim();
+        string Short(string? s, int n = 200) { var t = Strip(s); return t.Length > n ? t[..n] + "…" : t; }
+        string D(DateTime? t) => t.HasValue ? t.Value.ToString("yyyy-MM-dd") : "—";
+
+        var versions = await _db.ProductVersions.Find(v => v.ProductId == productId && !v.IsDeleted).ToListAsync();
+        var reqs = await _db.Requirements.Find(r => r.ProductId == productId && !r.IsDeleted).ToListAsync();
+        var feats = await _db.Features.Find(f => f.ProductId == productId && !f.IsDeleted).ToListAsync();
+        var defects = await _db.DefectReports.Find(d => d.TracedProductId == productId && !d.IsDeleted).ToListAsync();
+        var custIds = reqs.SelectMany(r => r.CustomerIds).Distinct().ToList();
+        var custs = custIds.Count == 0 ? new List<Customer>() : await _db.Customers.Find(c => custIds.Contains(c.Id)).ToListAsync();
+
+        // 解析相关人员名（处理人/负责人/上报人/团队）—— 让助手能回答「某人本月情况 / 分工 / 负载」
+        var userIds = new HashSet<string>();
+        void AddU(string? id) { if (!string.IsNullOrWhiteSpace(id)) userIds.Add(id!); }
+        AddU(product.OwnerId);
+        foreach (var id in product.MemberIds) AddU(id);
+        foreach (var id in product.AdminIds) AddU(id);
+        foreach (var r in reqs) { AddU(r.AssigneeId); AddU(r.OwnerId); }
+        foreach (var f in feats) { AddU(f.AssigneeId); AddU(f.OwnerId); }
+        foreach (var d in defects) { AddU(d.AssigneeId); AddU(d.ReporterId); }
+        var usersList = userIds.Count == 0 ? new List<User>() : await _db.Users.Find(u => userIds.Contains(u.UserId)).ToListAsync();
+        var nameById = usersList.ToDictionary(u => u.UserId, u => string.IsNullOrWhiteSpace(u.DisplayName) ? (string.IsNullOrWhiteSpace(u.Username) ? u.UserId : u.Username) : u.DisplayName);
+        string N(string? id) => string.IsNullOrWhiteSpace(id) ? "未指派" : (nameById.TryGetValue(id!, out var nm) ? nm : id!);
+        var reqTitleById = reqs.GroupBy(r => r.Id).ToDictionary(g => g.Key, g => $"[{g.First().RequirementNo}]{g.First().Title}");
+        var verNameById = versions.GroupBy(v => v.Id).ToDictionary(g => g.Key, g => g.First().VersionName);
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"# 产品：[{product.ProductNo}] {product.Name}（分级 {product.Grade}，状态 {product.CurrentState ?? "—"}）");
+        sb.AppendLine($"今日：{DateTime.UtcNow:yyyy-MM-dd}（涉及本月时以当前自然月为准）");
+        var teamNames = new List<string>();
+        if (!string.IsNullOrWhiteSpace(product.OwnerId)) teamNames.Add($"{N(product.OwnerId)}(负责人)");
+        foreach (var id in product.MemberIds.Distinct()) if (id != product.OwnerId) teamNames.Add(N(id));
+        if (teamNames.Count > 0) sb.AppendLine($"团队成员：{string.Join("、", teamNames)}");
+        if (versions.Count > 0)
+        {
+            sb.AppendLine($"\n## 版本（{versions.Count}）");
+            foreach (var v in versions) sb.AppendLine($"- {v.VersionName}（{v.Lifecycle}/{v.CurrentState ?? "—"}；计划 {D(v.PlannedReleaseAt)}，已发布 {D(v.ReleasedAt)}）");
+        }
+        if (custs.Count > 0)
+        {
+            sb.AppendLine($"\n## 客户（{custs.Count}）");
+            foreach (var c in custs) sb.AppendLine($"- {c.Name}（{c.Company}）");
+        }
+        if (reqs.Count > 0)
+        {
+            sb.AppendLine($"\n## 需求（{reqs.Count}）");
+            foreach (var r in reqs) sb.AppendLine($"- [{r.RequirementNo}] {r.Title}（等级 {r.Grade.ToUpperInvariant()}，状态 {r.CurrentState ?? "—"}；处理人 {N(r.AssigneeId)}，负责人 {N(r.OwnerId)}；创建 {D(r.CreatedAt)}）{Short(r.Description)}");
+        }
+        if (feats.Count > 0)
+        {
+            sb.AppendLine($"\n## 功能（{feats.Count}）");
+            foreach (var f in feats)
+            {
+                var implReqs = f.RequirementIds.Count == 0 ? "无" : string.Join("、", f.RequirementIds.Select(id => reqTitleById.TryGetValue(id, out var t) ? t : id));
+                sb.AppendLine($"- [{f.FeatureNo}] {f.Title}（等级 {f.Grade.ToUpperInvariant()}，状态 {f.CurrentState ?? "—"}；处理人 {N(f.AssigneeId)}，负责人 {N(f.OwnerId)}；实现需求 {implReqs}；创建 {D(f.CreatedAt)}）{Short(f.Description)}");
+            }
+        }
+        if (defects.Count > 0)
+        {
+            sb.AppendLine($"\n## 缺陷（{defects.Count}）");
+            foreach (var d in defects)
+            {
+                var traced = !string.IsNullOrEmpty(d.TracedFeatureId) ? "功能"
+                    : !string.IsNullOrEmpty(d.TracedRequirementId) ? "需求"
+                    : !string.IsNullOrEmpty(d.TracedVersionId) ? ("版本" + (verNameById.TryGetValue(d.TracedVersionId!, out var vn) ? vn : ""))
+                    : "产品";
+                sb.AppendLine($"- [{d.DefectNo}] {d.Title}（等级 {(d.Grade ?? SeverityToGrade(d.Severity)).ToUpperInvariant()}，状态 {d.Status}；处理人 {N(d.AssigneeId)}，上报人 {N(d.ReporterId)}；追溯到{traced}；提交 {D(d.SubmittedAt ?? d.CreatedAt)}，解决 {D(d.ResolvedAt)}）{Short(d.RawContent)}");
+            }
+        }
+        // 知识库：仅本产品挂载的 DocumentStore 文本索引/摘要，截断保护，不取原文件
+        if (!string.IsNullOrEmpty(product.KnowledgeStoreId))
+        {
+            var entries = await _db.DocumentEntries
+                .Find(e => e.StoreId == product.KnowledgeStoreId && !e.IsFolder)
+                .Limit(40).ToListAsync();
+            if (entries.Count > 0)
+            {
+                sb.AppendLine($"\n## 知识库文档（{entries.Count}，仅摘录）");
+                foreach (var e in entries)
+                {
+                    var body = !string.IsNullOrWhiteSpace(e.Summary) ? e.Summary : e.ContentIndex;
+                    sb.AppendLine($"- 《{e.Title}》：{Short(body, 300)}");
+                }
+            }
+        }
+
+        var ctx = sb.ToString();
+        if (ctx.Length > 14000) ctx = ctx[..14000] + "\n…（上下文过长已截断）";
+
+        var systemPrompt =
+            "你是「" + product.Name + "」这个产品的 AI 助手。你的知识库仅限下面提供的该产品数据（需求/功能/缺陷/版本/客户/团队人员）与知识库文档摘录。\n" +
+            "要求：\n" +
+            "1. 只依据所给数据回答，不得编造或引用其它产品/外部信息；数据中没有的，明确说明「现有数据未覆盖」。\n" +
+            "2. 涉及本月/本周/某人等口径时，按给定的今日日期、各对象的创建/提交/发布日期、以及处理人/负责人/上报人字段推算。\n" +
+            "3. 输出纯文本，禁止使用任何 Markdown 标记：不要 #、*、**、反引号、代码块、竖线表格。用自然段落和「· 」项目符号组织，必要时用「一、二、三」分节。\n" +
+            "4. 分析要深入，不能只罗列：\n" +
+            "   - 挖掘对象之间的关系（需求→功能→缺陷→版本→客户 的落地链路、缺陷追溯到哪个功能/需求）；\n" +
+            "   - 分析人员分工与负载（谁处理得多、谁的项卡住、上报与处理是否同一人等）；\n" +
+            "   - 指出趋势、异常与风险（如高等级项无状态/无人处理、缺陷集中在某功能、需求无客户来源等）。\n" +
+            "5. 结构固定为三段：先「结论」（2-4 句直接给判断），再「依据」（列数据与关系），最后「经验总结 / 建议」（可执行的下一步）。\n" +
+            "不要寒暄、不要复述本提示词。";
+
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"), GroupId: null, SessionId: null, UserId: userId,
+            ViewRole: null, DocumentChars: ctx.Length, DocumentHash: null,
+            SystemPromptRedacted: "product-work-assistant", RequestType: "chat",
+            AppCallerCode: AppCallerRegistry.Product.WorkAssistant));
+
+        var bodyJson = new JsonObject
+        {
+            ["messages"] = new JsonArray
+            {
+                new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                new JsonObject { ["role"] = "user", ["content"] = "# 产品数据上下文\n" + ctx + "\n\n# 我的问题\n" + question },
+            },
+            ["temperature"] = 0.5,
+            ["max_tokens"] = 2400,
+            ["include_reasoning"] = true,
+            ["reasoning"] = new JsonObject { ["exclude"] = false },
+        };
+
+        await Sse("phase", new { message = "AI 正在分析…" });
+        try
+        {
+            await foreach (var chunk in _gateway.StreamAsync(new GatewayRequest
+            {
+                AppCallerCode = AppCallerRegistry.Product.WorkAssistant,
+                ModelType = ModelTypes.Chat,
+                Stream = true,
+                RequestBody = bodyJson,
+            }, CancellationToken.None))
+            {
+                if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                    await Sse("typing", new { text = chunk.Content });
+                else if (chunk.Type == GatewayChunkType.Error)
+                { await Sse("error", new { message = chunk.Error ?? "AI 调用失败" }); return; }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[product-agent] work assistant stream error");
             await Sse("error", new { message = "AI 调用异常，请重试" });
             return;
         }
@@ -2413,7 +2650,7 @@ public class ProductAgentController : ControllerBase
             .Where(d => string.IsNullOrWhiteSpace(status) || d.Status == status)
             .Where(d => string.IsNullOrWhiteSpace(keyword) || (d.Title?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false) || d.DefectNo.Contains(keyword, StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(d => d.UpdatedAt)
-            .Select(d => new { d.Id, productId = d.TracedProductId, productName = names.GetValueOrDefault(d.TracedProductId ?? "", ""), d.DefectNo, d.Title, d.Status, d.Severity, d.Priority, d.TracedRequirementId, d.TracedVersionId, d.UpdatedAt })
+            .Select(d => new { d.Id, productId = d.TracedProductId, productName = names.GetValueOrDefault(d.TracedProductId ?? "", ""), d.DefectNo, d.Title, d.Status, grade = d.Grade ?? SeverityToGrade(d.Severity), d.TracedRequirementId, d.TracedVersionId, d.UpdatedAt })
             .Take(1000).ToList();
         return Ok(ApiResponse<object>.Ok(new { items = rows }));
     }
@@ -2486,7 +2723,7 @@ public class ProductAgentController : ControllerBase
             AddEdge($"version:{fv.VersionId}", $"feature:{fv.FeatureId}", "feature-in-version");
         foreach (var d in defects)
         {
-            nodes.Add(new { id = $"defect:{d.Id}", type = "defect", label = d.Title ?? d.DefectNo, sub = d.DefectNo, grade = (string?)d.Severity, state = d.Status, productId = d.TracedProductId });
+            nodes.Add(new { id = $"defect:{d.Id}", type = "defect", label = d.Title ?? d.DefectNo, sub = d.DefectNo, grade = d.Grade ?? SeverityToGrade(d.Severity), state = d.Status, productId = d.TracedProductId });
             var any = false;
             if (!string.IsNullOrEmpty(d.TracedRequirementId)) { AddEdge($"defect:{d.Id}", $"requirement:{d.TracedRequirementId}", "traces"); any = true; }
             if (!string.IsNullOrEmpty(d.TracedFeatureId)) { AddEdge($"defect:{d.Id}", $"feature:{d.TracedFeatureId}", "traces"); any = true; }
@@ -2837,8 +3074,8 @@ public class CreateProductDefectRequest
 {
     public string Title { get; set; } = string.Empty;
     public string? Description { get; set; }
-    public string? Severity { get; set; }
-    public string? Priority { get; set; }
+    /// <summary>缺陷等级 p0/p1/p2/p3，见 ProductItemGrade（与需求/功能统一）</summary>
+    public string? Grade { get; set; }
     public string? AssigneeId { get; set; }
     public string? RequirementId { get; set; }
     public string? VersionId { get; set; }
@@ -2849,12 +3086,18 @@ public class UpdateProductDefectRequest
 {
     public string Title { get; set; } = string.Empty;
     public string? Description { get; set; }
-    public string? Severity { get; set; }
-    public string? Priority { get; set; }
+    /// <summary>缺陷等级 p0/p1/p2/p3，见 ProductItemGrade（与需求/功能统一）</summary>
+    public string? Grade { get; set; }
     public string? Status { get; set; }
     public string? AssigneeId { get; set; }
     public string? FeatureId { get; set; }
     public string? VersionId { get; set; }
+}
+
+public class AssistantAskRequest
+{
+    /// <summary>用户问题（工作助手问答）</summary>
+    public string? Question { get; set; }
 }
 
 public class RelationAnalysisRequest

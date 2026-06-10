@@ -142,6 +142,14 @@ public static class Product
         Category = "Analysis"
     )]
     public const string TraceRelationAnalysis = "product-agent.trace-relation-analysis::chat";
+
+    [AppCallerMetadata(
+        "产品管理-AI助手",
+        "工作台右侧抽屉 AI 助手问答：以该产品全量数据 + 知识库文档为上下文，回答需求/缺陷/矩阵/人员等分析问题（SSE 流式）",
+        ModelTypes = new[] { ModelTypes.Chat },
+        Category = "Analysis"
+    )]
+    public const string WorkAssistant = "product-agent.work-assistant::chat";
 }
 
 /// <summary>
