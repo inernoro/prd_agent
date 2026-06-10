@@ -57,6 +57,42 @@ export const listDocumentEntriesReal: ListDocumentEntriesContract = async (store
   return await apiRequest(url, { method: 'GET' });
 };
 
+/** 获取单条文档条目详情 */
+export async function getDocumentEntry(entryId: string) {
+  return await apiRequest<import('@/services/contracts/documentStore').DocumentEntry>(
+    api.documentStore.entries.detail(entryId), { method: 'GET' });
+}
+
+/** 知识列表查询参数（产品知识库列表视图：分页 + 多维筛选） */
+export interface KnowledgeEntriesQuery {
+  page?: number;
+  pageSize?: number;
+  keyword?: string;
+  searchContent?: boolean;
+  /** 分类过滤；'__none__' = 未分类 */
+  category?: string;
+  tag?: string;
+  versionId?: string;
+  sourceType?: string;
+}
+
+/** 分页 + 筛选列出知识条目（知识库列表视图专用，all=true 跨文件夹平铺、不含文件夹） */
+export async function listKnowledgeEntriesPaged(storeId: string, q: KnowledgeEntriesQuery = {}) {
+  const params = new URLSearchParams({ page: String(q.page ?? 1), pageSize: String(q.pageSize ?? 20), all: 'true', excludeFolders: 'true' });
+  if (q.keyword) params.set('keyword', q.keyword);
+  if (q.searchContent) params.set('searchContent', 'true');
+  if (q.category) params.set('category', q.category);
+  if (q.tag) params.set('tag', q.tag);
+  if (q.versionId) params.set('versionId', q.versionId);
+  if (q.sourceType) params.set('sourceType', q.sourceType);
+  return await apiRequest<{
+    items: import('@/services/contracts/documentStore').DocumentEntry[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }>(`${api.documentStore.entries.list(storeId)}?${params.toString()}`, { method: 'GET' });
+}
+
 /** 搜索文档条目（支持内容搜索） */
 export async function searchDocumentEntries(storeId: string, keyword: string, searchContent: boolean) {
   let url = `${api.documentStore.entries.list(storeId)}?page=1&pageSize=200&all=true&keyword=${encodeURIComponent(keyword)}`;

@@ -15,7 +15,7 @@ import { EChart } from '@/components/charts/EChart';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { systemDialog } from '@/lib/systemDialog';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
-import { ProductKnowledgePanel } from './ProductRelationModals';
+import { KnowledgeModule } from './knowledge/KnowledgeModule';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { KanbanBoard } from './KanbanBoard';
 import { RtmMatrix } from './RtmMatrix';
@@ -171,7 +171,7 @@ export function SingleProductView() {
     >
       {active === 'knowledge' ? (
         <div className="flex-1 min-h-0">
-          <ProductKnowledgePanel productId={product.id} />
+          <KnowledgeModule productId={product.id} />
         </div>
       ) : active === 'graph' ? (
         <div className="flex-1 min-h-0">

@@ -35,6 +35,7 @@ const PmTaskDetailPage = lazy(() => import('@/pages/pm-agent').then(m => ({ defa
 const OverviewShell = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.OverviewShell })));
 const SingleProductView = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.SingleProductView })));
 const ProductObjectDetailPage = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.ProductObjectDetailPage })));
+const KnowledgeDetailPage = lazy(() => import('@/pages/product-agent').then(m => ({ default: m.KnowledgeDetailPage })));
 const ChangelogPage = lazy(() => import('@/pages/changelog/ChangelogPage'));
 const SkillAgentPage = lazy(() => import('@/pages/SkillAgentPage'));
 const ArenaPage = lazy(() => import('@/pages/arena/ArenaPage').then(m => ({ default: m.ArenaPage })));
@@ -407,6 +408,13 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     placement: 'fullscreen',
     permission: 'product-agent.use',
     element: fullscreenGuarded('product-agent.use', <SingleProductView />),
+  },
+  {
+    // 知识详情页（独立路由，静态段 knowledge 优先于下方 :kind 通配），全屏，不进导航
+    path: '/product-agent/p/:productId/knowledge/:entryId',
+    placement: 'fullscreen',
+    permission: 'product-agent.use',
+    element: fullscreenGuarded('product-agent.use', <KnowledgeDetailPage />),
   },
   {
     // 对象独立详情/新建页（需求/功能/缺陷，:id 为 new 时是新建），参数化子路由，全屏，不进导航

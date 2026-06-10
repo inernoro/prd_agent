@@ -630,7 +630,7 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<DocumentEntry>.Ok(folder));
     }
 
-    /// <summary>获取空间内的文档条目列表（支持 parentId 过滤层级）</summary>
+    /// <summary>获取空间内的文档条目列表（支持 parentId 层级 + 分类/标签/关联版本过滤）</summary>
     [HttpGet("stores/{storeId}/entries")]
     public async Task<IActionResult> ListEntries(
         string storeId,
@@ -640,7 +640,11 @@ public class DocumentStoreController : ControllerBase
         [FromQuery] string? keyword = null,
         [FromQuery] string? parentId = null,
         [FromQuery] bool all = false,
-        [FromQuery] bool searchContent = false)
+        [FromQuery] bool searchContent = false,
+        [FromQuery] string? category = null,
+        [FromQuery] string? tag = null,
+        [FromQuery] string? versionId = null,
+        [FromQuery] bool excludeFolders = false)
     {
         var userId = GetUserId();
         var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
@@ -673,6 +677,27 @@ public class DocumentStoreController : ControllerBase
 
         if (!string.IsNullOrWhiteSpace(sourceType))
             filter &= filterBuilder.Eq(e => e.SourceType, sourceType);
+
+        // 分类过滤："__none__" 表示未分类（Category 为空）
+        if (!string.IsNullOrWhiteSpace(category))
+        {
+            filter &= category == "__none__"
+                ? filterBuilder.Or(
+                    filterBuilder.Eq(e => e.Category, null),
+                    filterBuilder.Eq(e => e.Category, string.Empty),
+                    filterBuilder.Exists(e => e.Category, false))
+                : filterBuilder.Eq(e => e.Category, category);
+        }
+
+        if (!string.IsNullOrWhiteSpace(tag))
+            filter &= filterBuilder.AnyEq(e => e.Tags, tag);
+
+        if (!string.IsNullOrWhiteSpace(versionId))
+            filter &= filterBuilder.AnyEq(e => e.VersionIds, versionId);
+
+        // 知识列表视图只看文档，不混文件夹（文件夹治理走独立 tab）
+        if (excludeFolders)
+            filter &= filterBuilder.Eq(e => e.IsFolder, false);
 
         if (!string.IsNullOrWhiteSpace(keyword))
         {
@@ -775,6 +800,8 @@ public class DocumentStoreController : ControllerBase
                 string.IsNullOrWhiteSpace(request.Category) ? null : request.Category.Trim()));
         if (request.Metadata != null)
             updates.Add(Builders<DocumentEntry>.Update.Set(e => e.Metadata, request.Metadata));
+        if (request.VersionIds != null)
+            updates.Add(Builders<DocumentEntry>.Update.Set(e => e.VersionIds, request.VersionIds));
 
         updates.Add(Builders<DocumentEntry>.Update.Set(e => e.UpdatedAt, DateTime.UtcNow));
         updates.Add(Builders<DocumentEntry>.Update.Set(e => e.UpdatedBy, userId));
@@ -4550,6 +4577,8 @@ public class UpdateDocumentEntryRequest
     /// <summary>分类（传空字符串=清除分类；null=不变）</summary>
     public string? Category { get; set; }
     public Dictionary<string, string>? Metadata { get; set; }
+    /// <summary>关联的产品版本 ID 列表（产品知识库专用；传空数组=清空关联；null=不变）</summary>
+    public List<string>? VersionIds { get; set; }
 }
 
 public class AddSubscriptionRequest

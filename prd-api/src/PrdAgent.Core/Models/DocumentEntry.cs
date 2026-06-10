@@ -44,6 +44,12 @@ public class DocumentEntry
     /// <summary>分类（知识库一等维度，单值，取自所属 DocumentStore.Categories；null=未分类）</summary>
     public string? Category { get; set; }
 
+    /// <summary>
+    /// 关联的产品版本 ID 列表（产品知识库专用，N:N）。
+    /// 知识统一存在产品库，版本详情按本字段「调取」该版本关联的知识；空=未关联任何版本。
+    /// </summary>
+    public List<string> VersionIds { get; set; } = new();
+
     /// <summary>扩展元数据（键值对，便于不同来源携带额外信息）</summary>
     public Dictionary<string, string> Metadata { get; set; } = new();
 

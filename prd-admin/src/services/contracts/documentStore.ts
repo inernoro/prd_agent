@@ -110,6 +110,8 @@ export type DocumentEntry = {
   tags: string[];
   /** 分类（取自所属知识库 categories；未分类为空） */
   category?: string;
+  /** 关联的产品版本 ID 列表（产品知识库专用；空=未关联） */
+  versionIds?: string[];
   metadata: Record<string, string>;
   createdBy: string;
   updatedBy?: string;
@@ -293,6 +295,8 @@ export type UpdateDocumentEntryInput = {
   /** 分类（空字符串=清除；不传=不变） */
   category?: string;
   metadata?: Record<string, string>;
+  /** 关联的产品版本 ID 列表（传空数组=清空；不传=不变） */
+  versionIds?: string[];
 };
 
 // ── Contract 签名 ──
