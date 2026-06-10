@@ -8,10 +8,20 @@ export interface OutlineSlide {
   bullets: string[];
 }
 
+/** 澄清问卷（opendesign 式：大纲阶段消歧，右侧填写后回传 AI） */
+export interface ClarifyQuestion {
+  id: string;
+  question: string;
+  type: 'single' | 'multi' | 'text';
+  options?: string[];
+}
+
 export interface MdToPptOutlineResult {
   totalPages: number;
   summary: string;
   outline: OutlineSlide[];
+  /** 仅当需求确有歧义时模型才返回（最多 3 题） */
+  clarify?: ClarifyQuestion[];
 }
 
 export interface MdToPptOutlineRequest {

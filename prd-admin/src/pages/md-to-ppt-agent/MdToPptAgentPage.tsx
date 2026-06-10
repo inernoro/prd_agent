@@ -22,11 +22,14 @@ import {
   History,
   ImagePlus,
   Trash2,
+  ChevronUp,
+  Sparkles,
 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import { StreamingText } from '@/components/streaming/StreamingText';
 import {
+  type ClarifyQuestion,
   type MdToPptDiagEvent,
   type MdToPptRunSummary,
   type MdToPptTemplateItem,
@@ -77,12 +80,29 @@ interface ChatMessage {
   error?: string;
 }
 
+/** 大纲工作稿：右侧编辑器的唯一数据源（状态机 outline-ready 阶段）。
+    用户的每次手工编辑即时落进它并持久化（刷新回来还在这个状态），
+    点「确认生成」前可以停留任意久。 */
+interface OutlineDraft {
+  /** 用户原始内容 + 附件 + 知识库（生成时的主上下文，调整大纲时保持不变） */
+  sourceText: string;
+  summary: string;
+  totalPages: number;
+  outline: OutlineSlide[];
+  /** AI 觉得有歧义时给出的澄清问卷（最多 3 题） */
+  clarify?: ClarifyQuestion[];
+  clarifyAnswers?: Record<string, string | string[]>;
+  clarifySent?: boolean;
+}
+
 interface SessionState {
   messages: ChatMessage[];
   activeRunId: string;
   theme: string;
   /** 选中的自定义模板 ID（null = 用官方主题 theme） */
   templateId?: string | null;
+  /** 大纲工作稿（outline-ready 阶段的刷新恢复） */
+  outlineDraft?: OutlineDraft | null;
 }
 
 interface KbStore {
@@ -744,6 +764,10 @@ export function MdToPptAgentPage() {
   const templateFileRef = useRef<HTMLInputElement>(null);
   const [showSettings, setShowSettings] = useState(false);
 
+  // 大纲工作稿（右侧编辑器数据源；sessionStorage 持久化，刷新恢复到 outline-ready 状态）
+  const [outlineDraft, setOutlineDraft] = useState<OutlineDraft | null>(savedSession?.outlineDraft ?? null);
+  const [outlineAiText, setOutlineAiText] = useState('');
+
   // 历史生成（server-authority：runs 落库，随时可载入继续精修/编辑/发布）
   const [showHistory, setShowHistory] = useState(false);
   const [historyRuns, setHistoryRuns] = useState<MdToPptRunSummary[]>([]);
@@ -951,8 +975,8 @@ export function MdToPptAgentPage() {
 
   // ─── Session persistence: save on state change
   useEffect(() => {
-    saveSession({ messages, activeRunId, theme, templateId });
-  }, [messages, activeRunId, theme, templateId]);
+    saveSession({ messages, activeRunId, theme, templateId, outlineDraft });
+  }, [messages, activeRunId, theme, templateId, outlineDraft]);
 
   // 模板列表进页即载（右侧模板画廊是空状态主视觉，必须秒出）
   useEffect(() => {
@@ -1133,7 +1157,7 @@ export function MdToPptAgentPage() {
 
   // ─── Outline flow
   const requestOutline = useCallback(
-    async (userText: string, attachments: Attachment[], kbRefs: KbRef[], targetPagesOverride?: number) => {
+    async (userText: string, attachments: Attachment[], kbRefs: KbRef[], targetPagesOverride?: number, sourceTextOverride?: string) => {
       setIsProcessing(true);
       setArtifactPhase('outlining');
       setDiagLines([]);
@@ -1174,16 +1198,31 @@ export function MdToPptAgentPage() {
         return;
       }
 
+      // 工作稿写入右侧编辑器（状态进入 outline-ready，刷新可恢复）
+      const sourceText =
+        sourceTextOverride ??
+        [userText, attachmentText, kbContext].filter(Boolean).join('\n\n---\n\n').trim();
+      setOutlineDraft({
+        sourceText,
+        summary: result.data.summary,
+        totalPages: result.data.totalPages,
+        outline: result.data.outline,
+        clarify: result.data.clarify?.slice(0, 3),
+        clarifyAnswers: {},
+        clarifySent: false,
+      });
+
+      const hasClarify = (result.data.clarify?.length ?? 0) > 0;
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantMsg.id
             ? {
                 ...m,
-                content: '大纲已生成，请确认后生成 PPT：',
-                phase: 'outline',
-                outline: result.data.outline,
-                totalPages: result.data.totalPages,
-                summary: result.data.summary,
+                content:
+                  '大纲已生成，在右侧展开了：可以直接改每页标题和要点、增删页，' +
+                  (hasClarify ? '顶部有几个澄清问题帮我消除歧义，' : '') +
+                  '也可以在下方输入框让我调整。改好后点右侧「确认，生成 PPT」。',
+                phase: 'text',
               }
             : m
         )
@@ -1199,40 +1238,16 @@ export function MdToPptAgentPage() {
     [messages, pushMsg]
   );
 
-  // ─── Convert flow（确认大纲后执行）
-  const startConvert = useCallback(
-    (outlineMsg: ChatMessage) => {
+  // ─── Convert 核心（大纲编辑器「确认生成」与旧版气泡共用）
+  const launchConvert = useCallback(
+    (fullContent: string, pages: number | null) => {
       if (isProcessing) return;
-
-      // 找对应的用户消息（大纲消息之前最近的 user 消息）
-      const msgIdx = messages.findIndex((m) => m.id === outlineMsg.id);
-      const userMsg = [...messages.slice(0, msgIdx)].reverse().find((m) => m.role === 'user');
-      const userContent = userMsg?.content ?? '';
-      const attachmentText = (userMsg?.attachments ?? [])
-        .map((a) => `## 附件：${a.name}\n\n${a.content}`)
-        .join('\n\n');
-      const kbContext = (userMsg?.kbRefs ?? [])
-        .map((r) => `## KB「${r.storeName}」>「${r.entryTitle}」\n\n${r.content}`)
-        .join('\n\n');
-
-      // 大纲结构注入
-      const outlineText = (outlineMsg.outline ?? [])
-        .map((s, i) => `${i + 1}. ${s.title}\n${s.bullets.map((b) => `   - ${b}`).join('\n')}`)
-        .join('\n');
-
-      const fullContent =
-        [userContent, attachmentText, kbContext]
-          .filter(Boolean)
-          .join('\n\n---\n\n')
-          .trim() +
-        (outlineText ? `\n\n---\n\n## 大纲结构（请严格按此页数和标题生成）\n\n${outlineText}` : '');
-
       setIsProcessing(true);
       setArtifactPhase('generating');
       setPublishedUrl('');
       setFeedbackMode(false);
       resetStreamPreview();
-      setExpectedPages(outlineMsg.totalPages ?? outlineMsg.outline?.length ?? null);
+      setExpectedPages(pages);
       restoreSlideRef.current = 0; // 新一轮生成回到第 1 页
       pendingRestoreRef.current = null;
 
@@ -1246,7 +1261,7 @@ export function MdToPptAgentPage() {
         content: fullContent,
         theme,
         templateId: templateId ?? undefined,
-        slideCount: outlineMsg.totalPages,
+        slideCount: pages ?? undefined,
         onRun: (runId) => {
           if (runId) setActiveRunId(runId);
           try {
@@ -1301,7 +1316,81 @@ export function MdToPptAgentPage() {
 
       cleanupRef.current = cleanup;
     },
-    [isProcessing, messages, pushMsg, theme, templateId, resetStreamPreview, handleStreamDelta, handleThinkingDelta]
+    [isProcessing, pushMsg, theme, templateId, resetStreamPreview, handleStreamDelta, handleThinkingDelta]
+  );
+
+  // 序列化大纲（注入生成提示词 / 调整上下文共用）
+  const serializeOutline = useCallback((outline: OutlineSlide[]) => {
+    return outline
+      .map((sl, i) => `${i + 1}. ${sl.title}\n${sl.bullets.map((b) => `   - ${b}`).join('\n')}`)
+      .join('\n');
+  }, []);
+
+  // 序列化澄清回答（有就拼进生成上下文，消歧义）
+  const serializeClarifyAnswers = useCallback((draft: OutlineDraft) => {
+    const qs = draft.clarify ?? [];
+    const answers = draft.clarifyAnswers ?? {};
+    const lines = qs
+      .map((q) => {
+        const a = answers[q.id];
+        if (a == null || (Array.isArray(a) && a.length === 0) || a === '') return null;
+        return `- ${q.question}：${Array.isArray(a) ? a.join('、') : a}`;
+      })
+      .filter(Boolean);
+    return lines.length > 0 ? '\n\n## 澄清回答\n' + lines.join('\n') : '';
+  }, []);
+
+  // ─── 大纲编辑器「确认，生成 PPT」：以右侧工作稿（含用户手工编辑 + 澄清回答）为准
+  const confirmOutlineDraft = useCallback(() => {
+    const draft = outlineDraft;
+    if (!draft || isProcessing) return;
+    const fullContent =
+      draft.sourceText +
+      serializeClarifyAnswers(draft) +
+      `\n\n---\n\n## 大纲结构（请严格按此页数和标题生成）\n\n${serializeOutline(draft.outline)}`;
+    launchConvert(fullContent, draft.totalPages || draft.outline.length || null);
+  }, [outlineDraft, isProcessing, serializeClarifyAnswers, serializeOutline, launchConvert]);
+
+  // ─── 旧版气泡确认（兼容历史会话里带内嵌大纲的消息）
+  const startConvert = useCallback(
+    (outlineMsg: ChatMessage) => {
+      if (isProcessing) return;
+      const msgIdx = messages.findIndex((m) => m.id === outlineMsg.id);
+      const userMsg = [...messages.slice(0, msgIdx)].reverse().find((m) => m.role === 'user');
+      const userContent = userMsg?.content ?? '';
+      const attachmentText = (userMsg?.attachments ?? [])
+        .map((a) => `## 附件：${a.name}\n\n${a.content}`)
+        .join('\n\n');
+      const kbContext = (userMsg?.kbRefs ?? [])
+        .map((r) => `## KB「${r.storeName}」>「${r.entryTitle}」\n\n${r.content}`)
+        .join('\n\n');
+      const outlineText = serializeOutline(outlineMsg.outline ?? []);
+      const fullContent =
+        [userContent, attachmentText, kbContext].filter(Boolean).join('\n\n---\n\n').trim() +
+        (outlineText ? `\n\n---\n\n## 大纲结构（请严格按此页数和标题生成）\n\n${outlineText}` : '');
+      launchConvert(fullContent, outlineMsg.totalPages ?? outlineMsg.outline?.length ?? null);
+    },
+    [isProcessing, messages, serializeOutline, launchConvert]
+  );
+
+  // ─── 让 AI 调整大纲（以右侧工作稿为基底：尊重用户手工编辑，页数守护）
+  const requestOutlineAdjust = useCallback(
+    (instruction: string) => {
+      const draft = outlineDraft;
+      if (!draft || isProcessing) return;
+      void requestOutline(
+        draft.sourceText +
+          serializeClarifyAnswers(draft) +
+          '\n\n当前大纲（用户可能已手工编辑，请在此基础上调整，未提到的页保持原样）：\n' +
+          serializeOutline(draft.outline) +
+          '\n\n调整要求：' + instruction +
+          '\n（除非调整要求里明确提到增减页数，否则总页数保持不变）',
+        [], [],
+        draft.totalPages || draft.outline.length,
+        draft.sourceText
+      );
+    },
+    [outlineDraft, isProcessing, requestOutline, serializeClarifyAnswers, serializeOutline]
   );
 
   // ─── Patch flow（对话式精修）。baseHtml 允许携带编辑模式未提交的最新稿；
@@ -1559,7 +1648,7 @@ export function MdToPptAgentPage() {
       kbRefs: kbs.length > 0 ? kbs : undefined,
     });
 
-    // 决策：如果已有 HTML → patch；否则 → 请求大纲
+    // 决策：有 HTML → patch；有大纲工作稿（且无新附件）→ AI 调整大纲；否则 → 请求大纲
     if (generatedHtml) {
       // 对话精修模式。若编辑模式有未提交修改，以编辑稿为基底并先落盘。
       const base = latestHtml();
@@ -1568,11 +1657,14 @@ export function MdToPptAgentPage() {
         setEditMode(false);
       }
       startPatch(text, base);
+    } else if (outlineDraft && atts.length === 0 && kbs.length === 0) {
+      // outline-ready 阶段：输入即调整大纲（右侧工作稿为基底）
+      requestOutlineAdjust(text);
     } else {
       // 初次生成：大纲先行
       void requestOutline(text, atts, kbs);
     }
-  }, [input, isProcessing, pendingAttachments, pendingKbRefs, generatedHtml, pushMsg, startPatch, requestOutline, latestHtml, editMode, commitEdits]);
+  }, [input, isProcessing, pendingAttachments, pendingKbRefs, generatedHtml, outlineDraft, pushMsg, startPatch, requestOutline, requestOutlineAdjust, latestHtml, editMode, commitEdits]);
 
   // ─── Publish（携带主题样式发布，标题取自 deck <title>）
   const handlePublish = useCallback(async () => {
@@ -1619,6 +1711,7 @@ export function MdToPptAgentPage() {
     setDirtyEdits(false);
     setSlidePos(null);
     setFeedbackMode(false);
+    setOutlineDraft(null);
     resetStreamPreview();
     editedHtmlRef.current = '';
     restoreSlideRef.current = 0;
@@ -2119,7 +2212,7 @@ export function MdToPptAgentPage() {
         <div className="flex-1 min-w-0 flex flex-col" style={{ minHeight: 0 }}>
           {/* Idle = 模板画廊：右侧大空间选模板（模板 = AI 生成参照），不藏设置里。
                 官方 5 套大卡片（迷你风格预览）+ 自定义模板 + 上传参考图新建。 */}
-          {artifactPhase === 'idle' && !generatedHtml && (
+          {artifactPhase === 'idle' && !generatedHtml && !outlineDraft && (
             <div
               className="flex-1 flex flex-col px-6 py-5 gap-4"
               style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
@@ -2233,6 +2326,264 @@ export function MdToPptAgentPage() {
                     <span className="text-[9px] px-4 text-center leading-relaxed">
                       截图 / 海报 / 喜欢的 PPT 页面，AI 提取配色字体版式作为生成参照
                     </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ─── 大纲编辑器（outline-ready 状态）：右侧大空间直接编辑，即改即存（刷新还在）。
+                顶部澄清问卷（AI 有歧义才出现）→ 中间逐页卡片可编辑/增删/上下移 →
+                底部「让 AI 调整」。确认生成在头部常驻。 ─── */}
+          {artifactPhase === 'idle' && !generatedHtml && outlineDraft && (
+            <div className="flex-1 flex flex-col" style={{ minHeight: 0 }} data-testid="outline-editor">
+              {/* 头部：摘要 + 页数 + 确认 */}
+              <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-white/8">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-[var(--text-primary)]">
+                    大纲编辑器
+                    <span className="ml-2 text-[11px] font-normal text-[var(--text-tertiary)] tabular-nums">
+                      {outlineDraft.outline.length} 页 · 直接点击编辑，改动即时保存（刷新不丢）
+                    </span>
+                  </p>
+                  {outlineDraft.summary && (
+                    <p className="text-[11px] text-[var(--text-tertiary)] truncate mt-0.5">{outlineDraft.summary}</p>
+                  )}
+                </div>
+                <button
+                  onClick={confirmOutlineDraft}
+                  disabled={isProcessing || outlineDraft.outline.length === 0}
+                  data-testid="outline-confirm"
+                  className="shrink-0 flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-purple-500/85 text-white hover:bg-purple-500 disabled:opacity-40"
+                >
+                  <Check size={12} />
+                  确认，生成 PPT
+                </button>
+              </div>
+
+              <div
+                className="flex-1 px-5 py-4 flex flex-col gap-3"
+                style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
+              >
+                {/* 澄清问卷（AI 确有歧义才出现；保存即入工作稿，发送给 AI 重排大纲） */}
+                {(outlineDraft.clarify?.length ?? 0) > 0 && !outlineDraft.clarifySent && (
+                  <div
+                    data-testid="clarify-card"
+                    className="shrink-0 rounded-xl border border-blue-500/25 bg-blue-500/6 px-4 py-3"
+                  >
+                    <div className="text-[12px] font-semibold text-blue-300 mb-2">
+                      AI 有几个问题想确认（消除歧义，可不答直接生成）
+                    </div>
+                    <div className="flex flex-col gap-2.5">
+                      {(outlineDraft.clarify ?? []).map((q) => {
+                        const ans = outlineDraft.clarifyAnswers?.[q.id];
+                        const setAns = (v: string | string[]) =>
+                          setOutlineDraft((d) => d ? { ...d, clarifyAnswers: { ...(d.clarifyAnswers ?? {}), [q.id]: v } } : d);
+                        return (
+                          <div key={q.id}>
+                            <div className="text-[11px] text-[var(--text-secondary)] mb-1">{q.question}</div>
+                            {q.type === 'text' ? (
+                              <input
+                                type="text"
+                                value={typeof ans === 'string' ? ans : ''}
+                                onChange={(e) => setAns(e.target.value)}
+                                placeholder="输入你的回答..."
+                                className="w-full text-[11px] bg-white/5 text-[var(--text-primary)] border border-white/10 rounded-md px-2 py-1.5 outline-none focus:border-blue-500/40"
+                              />
+                            ) : (
+                              <div className="flex flex-wrap gap-1.5">
+                                {(q.options ?? []).map((opt) => {
+                                  const selected = q.type === 'multi'
+                                    ? Array.isArray(ans) && ans.includes(opt)
+                                    : ans === opt;
+                                  return (
+                                    <button
+                                      key={opt}
+                                      onClick={() => {
+                                        if (q.type === 'multi') {
+                                          const cur = Array.isArray(ans) ? ans : [];
+                                          setAns(selected ? cur.filter((x) => x !== opt) : [...cur, opt]);
+                                        } else {
+                                          setAns(selected ? '' : opt);
+                                        }
+                                      }}
+                                      className={[
+                                        'px-2.5 py-1 rounded-full text-[11px] border transition-colors',
+                                        selected
+                                          ? 'bg-blue-500/25 border-blue-400/50 text-blue-200 font-medium'
+                                          : 'bg-white/4 border-white/10 text-[var(--text-secondary)] hover:bg-white/8',
+                                      ].join(' ')}
+                                    >
+                                      {opt}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="flex items-center gap-2 mt-2.5">
+                      <button
+                        onClick={() => {
+                          const draft = outlineDraft;
+                          if (!draft) return;
+                          const answered = serializeClarifyAnswers(draft);
+                          setOutlineDraft((d) => (d ? { ...d, clarifySent: true } : d));
+                          if (answered) {
+                            pushMsg({ role: 'user', content: '澄清回答：' + answered.replace('\n\n## 澄清回答\n', ' ').replace(/\n- /g, '；') });
+                            requestOutlineAdjust('按上述澄清回答更新大纲内容与侧重。');
+                          }
+                        }}
+                        disabled={isProcessing}
+                        data-testid="clarify-send"
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-blue-500/85 text-white hover:bg-blue-500 disabled:opacity-40"
+                      >
+                        <Send size={10} />
+                        保存并发送给 AI
+                      </button>
+                      <button
+                        onClick={() => setOutlineDraft((d) => (d ? { ...d, clarifySent: true } : d))}
+                        className="px-2 py-1 rounded-md text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] hover:bg-white/5"
+                      >
+                        跳过
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* 逐页卡片：标题 input + 要点 textarea（一行一条），上移/下移/删 */}
+                {outlineDraft.outline.map((slide, i) => (
+                  <div key={i} className="shrink-0 rounded-xl border border-white/10 bg-white/3 px-4 py-3" data-testid={'outline-card-' + i}>
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className="shrink-0 w-6 h-6 rounded-md bg-purple-500/15 text-purple-300 text-[11px] font-bold tabular-nums flex items-center justify-center">
+                        {i + 1}
+                      </span>
+                      <input
+                        type="text"
+                        value={slide.title}
+                        onChange={(e) =>
+                          setOutlineDraft((d) => {
+                            if (!d) return d;
+                            const outline = d.outline.map((sl, j) => (j === i ? { ...sl, title: e.target.value } : sl));
+                            return { ...d, outline };
+                          })
+                        }
+                        placeholder="本页标题"
+                        className="flex-1 text-[13px] font-semibold bg-transparent text-[var(--text-primary)] border-0 border-b border-transparent focus:border-purple-500/40 outline-none py-0.5"
+                      />
+                      <button
+                        onClick={() => setOutlineDraft((d) => {
+                          if (!d || i === 0) return d;
+                          const outline = [...d.outline];
+                          [outline[i - 1], outline[i]] = [outline[i], outline[i - 1]];
+                          return { ...d, outline };
+                        })}
+                        disabled={i === 0}
+                        title="上移"
+                        className="w-6 h-6 rounded-md text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-white/6 disabled:opacity-25 flex items-center justify-center"
+                      >
+                        <ChevronUp size={13} />
+                      </button>
+                      <button
+                        onClick={() => setOutlineDraft((d) => {
+                          if (!d || i >= d.outline.length - 1) return d;
+                          const outline = [...d.outline];
+                          [outline[i], outline[i + 1]] = [outline[i + 1], outline[i]];
+                          return { ...d, outline };
+                        })}
+                        disabled={i >= outlineDraft.outline.length - 1}
+                        title="下移"
+                        className="w-6 h-6 rounded-md text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-white/6 disabled:opacity-25 flex items-center justify-center"
+                      >
+                        <ChevronDown size={13} />
+                      </button>
+                      <button
+                        onClick={() => setOutlineDraft((d) => {
+                          if (!d) return d;
+                          const outline = d.outline.filter((_, j) => j !== i);
+                          return { ...d, outline, totalPages: outline.length };
+                        })}
+                        title="删除本页"
+                        className="w-6 h-6 rounded-md text-[var(--text-tertiary)] hover:text-red-400 hover:bg-white/6 flex items-center justify-center"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                    <textarea
+                      value={slide.bullets.join('\n')}
+                      onChange={(e) =>
+                        setOutlineDraft((d) => {
+                          if (!d) return d;
+                          const bullets = e.target.value.split('\n');
+                          const outline = d.outline.map((sl, j) => (j === i ? { ...sl, bullets } : sl));
+                          return { ...d, outline };
+                        })
+                      }
+                      onBlur={() =>
+                        setOutlineDraft((d) => {
+                          if (!d) return d;
+                          const outline = d.outline.map((sl, j) =>
+                            j === i ? { ...sl, bullets: sl.bullets.map((b) => b.trim()).filter(Boolean) } : sl
+                          );
+                          return { ...d, outline };
+                        })
+                      }
+                      rows={Math.max(2, slide.bullets.length)}
+                      placeholder="每行一条要点"
+                      className="w-full resize-none text-[11px] leading-relaxed bg-transparent text-[var(--text-secondary)] placeholder-[var(--text-tertiary)] border border-white/6 focus:border-purple-500/30 rounded-md px-2 py-1.5 outline-none ml-8"
+                      style={{ width: 'calc(100% - 2rem)', outline: 'none', boxShadow: 'none' }}
+                    />
+                  </div>
+                ))}
+
+                <button
+                  onClick={() => setOutlineDraft((d) => {
+                    if (!d) return d;
+                    const outline = [...d.outline, { title: '', bullets: [''] }];
+                    return { ...d, outline, totalPages: outline.length };
+                  })}
+                  data-testid="outline-add-page"
+                  className="shrink-0 flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-white/15 hover:border-purple-400/50 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] py-2.5 text-[11px]"
+                >
+                  <Plus size={12} />
+                  添加一页
+                </button>
+
+                {/* 让 AI 调整（也可以直接在左侧对话输入，效果相同） */}
+                <div className="shrink-0 flex items-center gap-2 pb-1">
+                  <Sparkles size={12} className="shrink-0 text-purple-400/70" />
+                  <input
+                    type="text"
+                    value={outlineAiText}
+                    onChange={(e) => setOutlineAiText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && outlineAiText.trim() && !isProcessing) {
+                        const t = outlineAiText.trim();
+                        setOutlineAiText('');
+                        pushMsg({ role: 'user', content: t });
+                        requestOutlineAdjust(t);
+                      }
+                    }}
+                    disabled={isProcessing}
+                    placeholder="让 AI 调整大纲，如：第3页拆成两页讲 / 整体更面向高管..."
+                    data-testid="outline-ai-input"
+                    className="flex-1 text-[11px] bg-white/4 text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border border-white/10 rounded-lg px-2.5 py-1.5 outline-none focus:border-purple-500/40 disabled:opacity-50"
+                    style={{ outline: 'none', boxShadow: 'none' }}
+                  />
+                  <button
+                    onClick={() => {
+                      const t = outlineAiText.trim();
+                      if (!t || isProcessing) return;
+                      setOutlineAiText('');
+                      pushMsg({ role: 'user', content: t });
+                      requestOutlineAdjust(t);
+                    }}
+                    disabled={!outlineAiText.trim() || isProcessing}
+                    className="shrink-0 px-2.5 py-1.5 rounded-lg text-[11px] font-medium bg-white/6 text-[var(--text-secondary)] hover:bg-white/10 border border-white/10 disabled:opacity-40"
+                  >
+                    AI 调整
                   </button>
                 </div>
               </div>

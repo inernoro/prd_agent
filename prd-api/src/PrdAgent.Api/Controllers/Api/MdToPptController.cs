@@ -213,13 +213,16 @@ public class MdToPptController : ControllerBase
             "你是专业 PPT 策划师。根据用户内容，输出一份 PPT 大纲（纯 JSON，不要其他任何解释和代码围栏）。\n" +
             $"目标页数：约 {targetPages} 页（封面+结语 2 页 + 内容页，实际可根据内容增减 1-2 页）。\n" +
             "输出格式：\n" +
-            "{\"totalPages\":8,\"summary\":\"一句话总结本 PPT 讲什么\",\"outline\":[{\"title\":\"封面\",\"bullets\":[\"副标题\",\"作者/日期\"]},{\"title\":\"现状分析\",\"bullets\":[\"要点1\",\"要点2\",\"要点3\"]},...,{\"title\":\"结语\",\"bullets\":[\"行动号召\",\"联系方式\"]}]}\n\n" +
+            "{\"totalPages\":8,\"summary\":\"一句话总结本 PPT 讲什么\",\"outline\":[{\"title\":\"封面\",\"bullets\":[\"副标题\",\"作者/日期\"]},{\"title\":\"现状分析\",\"bullets\":[\"要点1\",\"要点2\",\"要点3\"]},...,{\"title\":\"结语\",\"bullets\":[\"行动号召\",\"联系方式\"]}],\"clarify\":[{\"id\":\"q1\",\"question\":\"面向投资人还是内部团队？\",\"type\":\"single\",\"options\":[\"投资人\",\"内部团队\"]}]}\n\n" +
             "严格规则：\n" +
             "1. 只输出 JSON，第一个字符是 {，最后一个字符是 }，不得有 markdown 代码块、前缀说明、后缀解释\n" +
             "2. 每页 bullets 2-4 条，语言精炼\n" +
             "3. 版式不重复，避免每页都是列表结构\n" +
             "4. 禁止输出任何 emoji\n" +
-            "5. title 字段纯文本，不含序号（如「一、」「1.」）";
+            "5. title 字段纯文本，不含序号（如「一、」「1.」）\n" +
+            "6. clarify 为可选字段：仅当用户需求存在会显著影响内容方向的真实歧义时给出（受众/口吻/数据详略等），最多 3 题；" +
+            "type 取 single/multi/text，single/multi 必须给 options（2-5 个）。没有歧义时省略 clarify 字段，禁止为提问而提问\n" +
+            "7. 用户内容里若已包含「澄清回答」段落，视为歧义已消除，不得再输出 clarify";
 
         var contextParts = new List<string>();
         if (!string.IsNullOrWhiteSpace(req.Content))

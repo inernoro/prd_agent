@@ -20,3 +20,6 @@
 | fix | prd-admin | 输入框聚焦内圈浏览器默认 outline 残留清除（只留外壳整圈高亮）；知识库预览复用全站 MarkdownContent 渲染（不再裸文本） |
 | fix | prd-admin | 调整大纲不再按文本长度重估页数（沿用上一版页数，除非用户明确要求增减）；生成等待的「Agent 环境准备」移入对话气泡，预览区只留产物 |
 | fix | prd-admin | 编辑模式可编辑范围扩展 .stat/.stat-l/.lead/.eyebrow/.chip/.quote（大数字等 div 文本块此前点不中） |
+| feat | prd-admin | 大纲右侧编辑器：大纲生成后在右侧大空间逐页编辑（标题/要点/增删页/上下移），即改即存且刷新恢复（outline-ready 状态持久化）；头部常驻「确认生成」，底部「让 AI 调整」输入 |
+| feat | prd-api | 大纲接口扩展澄清问卷：需求确有歧义时模型返回最多 3 题（单选/多选/填空），无歧义不出题 |
+| feat | prd-admin | 澄清问卷卡（opendesign 式）：右侧填写 → 保存并发送给 AI 重排大纲，可跳过；对话输入在大纲阶段直接路由为 AI 调整大纲 |
