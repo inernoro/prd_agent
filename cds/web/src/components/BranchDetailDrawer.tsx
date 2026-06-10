@@ -3147,18 +3147,36 @@ function ResourceConnection({
   const canTemporaryExternal = resourcePermissionAllows(permissions, 'external-temporary-access');
   const canResetCredentials = resourcePermissionAllows(permissions, 'credentials-reset');
   const canInjectConnection = resourcePermissionAllows(permissions, 'connection-inject');
-  const rows = [
-    { label: '内部地址', value: resource.internalUrl || '-' },
-    { label: '外部地址', value: externalEnabled ? externalAddress || '未开启' : externalAddress ? `${externalAddress}（未开启）` : '未开启' },
+  const rows: Array<{
+    label: string;
+    value: string;
+    help?: string;
+    connectionScope?: 'external' | 'internal';
+    copyLabel?: string;
+  }> = [
+    { label: '内部地址', value: resource.internalUrl || '-', help: '仅 CDS 容器网络内可达，本地电脑不能直接使用。' },
     {
-      label: '外部连接串',
-      value: externalEnabled ? resource.externalAccess?.connectionString || externalAddress || '-' : '未开启',
-      connectionScope: externalEnabled && resource.source === 'infra' ? 'external' as const : undefined,
+      label: '外部地址',
+      value: externalEnabled ? externalAddress || '未开启' : '未开启公网访问，本地工具不可用',
+      help: externalEnabled
+        ? '用于本地 redis-cli、DataGrip、RedisInsight 等工具连接。'
+        : '需要先在下方临时开启公网 TCP 访问，才能生成本地可用地址。',
     },
     {
-      label: '内部连接串',
+      label: '外部连接串（本地工具）',
+      value: externalEnabled ? resource.externalAccess?.connectionString || externalAddress || '-' : '未开启公网访问，本地工具不可用',
+      connectionScope: externalEnabled && resource.source === 'infra' ? 'external' as const : undefined,
+      copyLabel: '复制本地可用',
+      help: externalEnabled
+        ? '复制后应能在本地 redis-cli、DataGrip、RedisInsight 等工具中使用。'
+        : '未开启公网访问时不提供复制，避免复制到本地不可用的内部地址。',
+    },
+    {
+      label: '内部连接串（容器内）',
       value: resource.connectionString || resource.internalUrl || '-',
       connectionScope: resource.source === 'infra' ? 'internal' as const : undefined,
+      copyLabel: '复制容器内用',
+      help: '只给同一 CDS 网络里的应用容器使用；本地电脑、DataGrip、redis-cli 不能直接使用。',
     },
   ];
   useEffect(() => {
@@ -3209,10 +3227,11 @@ function ResourceConnection({
                 }}
               >
                 {row.connectionScope && connectionBusy === row.connectionScope ? <Loader2 className="animate-spin" /> : <Copy />}
-                {row.connectionScope ? '复制可用' : '复制'}
+                {row.connectionScope ? row.copyLabel || '复制连接串' : '复制'}
               </Button>
             ) : null}
           </div>
+          {row.help ? <div className="mt-2 text-[11px] leading-4 text-muted-foreground">{row.help}</div> : null}
         </div>
       ))}
       {connectionMessage ? <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-xs leading-5 text-muted-foreground">{connectionMessage}</div> : null}
