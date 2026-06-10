@@ -3239,7 +3239,7 @@ function ResourceConnection({
         <div className="flex items-center justify-between gap-3">
           <div>
             <div className="font-semibold">外部访问控制</div>
-            <div className="mt-1">数据库默认保持内部访问；开启公网 TCP 访问时需要 IP allowlist、临时有效期和凭据重置记录。</div>
+            <div className="mt-1">数据库默认保持内部访问；开启公网 TCP 访问时必须填写 IP allowlist、临时有效期和凭据重置记录。</div>
             {resource.externalAccess?.expiresAt ? <div className="mt-1 font-mono">有效期至 {resource.externalAccess.expiresAt}</div> : null}
             {resource.externalAccess?.allowlist && resource.externalAccess.allowlist.length > 0 ? (
               <div className="mt-1 font-mono">
@@ -3288,7 +3288,7 @@ function ResourceConnection({
             />
           </label>
           <label className="grid gap-1">
-            <span className="text-[11px] text-amber-700/80 dark:text-amber-300/80">IP allowlist（每行一个，留空表示后端默认策略）</span>
+            <span className="text-[11px] text-amber-700/80 dark:text-amber-300/80">IP allowlist（必填，每行一个 IPv4/CIDR）</span>
             <textarea
               value={allowlistDraft}
               onChange={(event) => setAllowlistDraft(event.target.value)}

@@ -16,6 +16,7 @@ async function request(
   method: string,
   urlPath: string,
   body?: unknown,
+  headers: Record<string, string> = {},
 ): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {
     const addr = server.address() as { port: number };
@@ -28,6 +29,7 @@ async function request(
         method,
         headers: {
           'Content-Type': 'application/json',
+          ...headers,
           ...(payload ? { 'Content-Length': Buffer.byteLength(payload) } : {}),
         },
       },
@@ -101,6 +103,18 @@ function makeHarness(): {
   });
   const app = express();
   app.use(express.json());
+  app.use((req, _res, next) => {
+    if (req.headers['x-test-cookie-auth'] === '1') {
+      (req as any)._cdsCookieAuth = true;
+    }
+    if (req.headers['x-test-project-key'] === '1') {
+      (req as any).cdsProjectKey = { projectId: 'prd-agent', keyId: 'test-key' };
+    }
+    if (req.headers['x-test-ai-session'] === '1') {
+      (req as any)._aiSession = { id: 'test-ai', agentName: 'test', token: 'token', approvedAt: '', expiresAt: '' };
+    }
+    next();
+  });
   app.use('/api', createBranchRouter({ stateService, worktreeService, containerService, shell, config }));
   return { tmpDir, config, stateService, shell, app };
 }
@@ -193,10 +207,167 @@ describe('resource database access', () => {
       server!,
       'GET',
       '/api/branches/main-branch/resources/infra%3Aredis-main/connection-string?scope=external',
+      undefined,
+      { 'x-test-project-key': '1' },
     );
 
     expect(res.status).toBe(200);
     expect(res.body.connectionString).toBe('redis://:redis-secret@miduo.org:43111');
     expect(res.body.maskedConnectionString).toBe('redis://:******@miduo.org:43111');
+  });
+
+  it('expires temporary external access before returning connection strings', async () => {
+    const harness = makeHarness();
+    tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({
+      id: 'redis-main',
+      projectId: 'prd-agent',
+      name: 'redis-main',
+      dockerImage: 'redis:7',
+      containerPort: 6379,
+      hostPort: 6379,
+      containerName: 'cds-redis-main',
+      status: 'running',
+      env: { REDIS_PASSWORD: 'redis-secret' },
+      volumes: [],
+    });
+    harness.stateService.upsertResourceExternalAccess({
+      projectId: 'prd-agent',
+      branchId: 'main-branch',
+      resourceId: 'infra:redis-main',
+      enabled: true,
+      kind: 'tcp',
+      address: 'tcp://miduo.org:43111',
+      host: 'miduo.org',
+      port: 43111,
+      connectionString: 'redis://:redis-secret@miduo.org:43111',
+      proxyContainerName: 'cds-ext-redis-main',
+      targetHost: 'cds-redis-main',
+      targetPort: 6379,
+      allowlistEnforced: true,
+      firewallChain: 'CDS_EXT_REDIS',
+      allowlist: ['203.0.113.10/32'],
+      expiresAt: new Date(Date.now() - 60_000).toISOString(),
+      updatedBy: 'test',
+    });
+    harness.shell.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    await new Promise<void>((resolve) => {
+      server = harness.app.listen(0, '127.0.0.1', resolve);
+    });
+
+    const res = await request(
+      server!,
+      'GET',
+      '/api/branches/main-branch/resources/infra%3Aredis-main/connection-string?scope=external',
+      undefined,
+      { 'x-test-project-key': '1' },
+    );
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('资源尚未开启公网访问，无法生成外部连接串');
+    const policy = harness.stateService.getResourceExternalAccess('prd-agent', 'main-branch', 'infra:redis-main');
+    expect(policy?.enabled).toBe(false);
+    expect(harness.shell.commands.some((cmd) => cmd.includes('docker rm -f') && cmd.includes('cds-ext-redis-main'))).toBe(true);
+  });
+
+  it('blocks connection string reveal for unscoped AI callers', async () => {
+    const harness = makeHarness();
+    tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({
+      id: 'redis-main',
+      projectId: 'prd-agent',
+      name: 'redis-main',
+      dockerImage: 'redis:7',
+      containerPort: 6379,
+      hostPort: 6379,
+      containerName: 'cds-redis-main',
+      status: 'running',
+      env: { REDIS_PASSWORD: 'redis-secret' },
+      volumes: [],
+    });
+    await new Promise<void>((resolve) => {
+      server = harness.app.listen(0, '127.0.0.1', resolve);
+    });
+
+    const res = await request(
+      server!,
+      'GET',
+      '/api/branches/main-branch/resources/infra%3Aredis-main/connection-string?scope=internal',
+      undefined,
+      { 'x-test-ai-session': '1' },
+    );
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('forbidden_secret_reveal');
+  });
+
+  it('does not trust client-supplied resource role headers for destructive actions', async () => {
+    const harness = makeHarness();
+    tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({
+      id: 'redis-main',
+      projectId: 'prd-agent',
+      name: 'redis-main',
+      dockerImage: 'redis:7',
+      containerPort: 6379,
+      hostPort: 6379,
+      containerName: 'cds-redis-main',
+      status: 'running',
+      env: {},
+      volumes: [],
+    });
+    await new Promise<void>((resolve) => {
+      server = harness.app.listen(0, '127.0.0.1', resolve);
+    });
+
+    const res = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Aredis-main/clear-data',
+      { confirmResourceName: 'Redis 7' },
+      { 'x-cds-resource-role': 'admin' },
+    );
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('resource_permission_denied');
+    expect(res.body.role).toBe('member');
+  });
+
+  it('uses the target Mongo database as authSource for branch-created users', async () => {
+    const harness = makeHarness();
+    tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({
+      id: 'mongo-main',
+      projectId: 'prd-agent',
+      name: 'MongoDB 8',
+      dockerImage: 'mongo:7',
+      containerPort: 27017,
+      hostPort: 27017,
+      containerName: 'cds-mongo-main',
+      status: 'running',
+      dbName: 'app',
+      env: {
+        MONGO_INITDB_ROOT_USERNAME: 'root',
+        MONGO_INITDB_ROOT_PASSWORD: 'root-pw',
+      },
+      volumes: [],
+    });
+    harness.shell.addResponsePattern(/docker exec .* mongosh /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    harness.shell.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    await new Promise<void>((resolve) => {
+      server = harness.app.listen(0, '127.0.0.1', resolve);
+    });
+
+    const res = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/credentials/reset',
+      { confirmResourceName: 'MongoDB 8' },
+      { 'x-test-cookie-auth': '1' },
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.injectedEnv.MONGODB_URL).toContain('/app?authSource=app');
+    expect(res.body.injectedEnv.MONGODB_AUTH_SOURCE).toBe('app');
   });
 });

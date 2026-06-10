@@ -1324,7 +1324,7 @@ function resourceExternalPortRange(): { start: number; end: number } {
 async function allocateResourceExternalPort(shell: IShellExecutor, preferred?: number): Promise<number> {
   const used = await collectListeningPorts(shell);
   const { start, end } = resourceExternalPortRange();
-  if (preferred && preferred >= 1024 && preferred <= 65535) return preferred;
+  if (preferred && preferred >= 1024 && preferred <= 65535 && !used.has(preferred)) return preferred;
   for (let port = start; port <= end; port += 1) {
     if (!used.has(port)) return port;
   }
@@ -1422,6 +1422,9 @@ const targetPort = Number(process.env.TARGET_PORT || 0);
 const listenPort = Number(process.env.LISTEN_PORT || 15432);
 const allowlist = (process.env.ALLOWLIST || '').split(',').map((x) => x.trim()).filter(Boolean);
 const block = new net.BlockList();
+if (allowlist.length === 0) {
+  throw new Error('ALLOWLIST is required for CDS resource TCP proxy');
+}
 for (const rule of allowlist) {
   const [ip, prefixRaw] = rule.split('/');
   const prefix = Number(prefixRaw || '32');
@@ -1432,7 +1435,7 @@ function normalizeIp(ip) {
 }
 const server = net.createServer((client) => {
   const ip = normalizeIp(client.remoteAddress);
-  if (allowlist.length > 0 && !block.check(ip, 'ipv4')) {
+  if (!block.check(ip, 'ipv4')) {
     client.destroy();
     return;
   }
@@ -3269,7 +3272,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         branch: b,
         profiles: profilesByProject.get(branchProjectId) || [],
         infraServices: infraByProject.get(branchProjectId) || [],
-        externalAccessPolicies: stateService.getResourceExternalAccessForBranch(branchProjectId, b.id),
+        externalAccessPolicies: await getActiveResourceExternalAccessForBranch(branchProjectId, b),
         cloneTasks: stateService.listResourceCloneTasks({ projectId: branchProjectId, branchId: b.id }),
         previewUrl: b.previewUrl || '',
         publicHost: previewHost,
@@ -3997,7 +4000,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       branch,
       profiles: stateService.getBuildProfilesForProject(projectId),
       infraServices,
-      externalAccessPolicies: stateService.getResourceExternalAccessForBranch(projectId, branch.id),
+      externalAccessPolicies: await getActiveResourceExternalAccessForBranch(projectId, branch),
       cloneTasks: stateService.listResourceCloneTasks({ projectId, branchId: branch.id }),
       previewUrl,
       publicHost: previewHost,
@@ -4014,6 +4017,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return (config.previewDomain || config.rootDomains?.[0] || '')
       .replace(/^https?:\/\//, '')
       .replace(/\/+$/, '');
+  }
+
+  function hasProjectScopedOrCookieAuth(req: Request, projectId: string): boolean {
+    const projKey = (req as any).cdsProjectKey as { projectId: string } | undefined;
+    const cookieAuth = (req as any)._cdsCookieAuth === true;
+    return cookieAuth || Boolean(projKey && projKey.projectId === projectId);
+  }
+
+  function requireSecretRevealAccess(req: Request, res: Response, projectId: string): boolean {
+    if (hasProjectScopedOrCookieAuth(req, projectId)) return true;
+    res.status(403).json({
+      error: 'forbidden_secret_reveal',
+      reason: 'connection string reveal requires project-scoped key (cdsp_) or human cookie session',
+      projectId,
+      hint: '请在该项目下「授权 Agent」生成 cdsp_ 项目级 key，或使用已登录 CDS 控制台的人工会话。静态 AI_ACCESS_KEY 与 cdsg_ 全局 key 不允许读取明文连接串。',
+    });
+    return false;
   }
 
   type ResourcePermissionRole = 'member' | 'developer' | 'admin';
@@ -4033,17 +4053,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   function resolveResourcePermissionRole(req: Request): ResourcePermissionRole {
     const explicit = String(
-      req.headers['x-cds-resource-role']
-        || req.headers['x-cds-role']
-        || (req as any).workspaceMember?.role
+      (req as any).workspaceMember?.role
         || (req as any).user?.role
+        || (req as any).cdsUser?.role
         || '',
     ).toLowerCase();
     if (explicit === 'owner' || explicit === 'admin') return 'admin';
     if (explicit === 'developer' || explicit === 'dev') return 'developer';
     if (explicit === 'member' || explicit === 'viewer' || explicit === 'read-only') return 'member';
+    if ((req as any)._cdsCookieAuth === true) return 'admin';
     if ((req as any).cdsProjectKey) return 'developer';
-    return 'admin';
+    if ((req as any)._aiSession) return 'developer';
+    return 'member';
   }
 
   function resourcePermissionRank(role: ResourcePermissionRole): number {
@@ -4676,7 +4697,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const internalHost = service.id;
     const internalPort = service.containerPort || 27017;
     const authPart = branchUser ? `${encodeURIComponent(branchUser)}:${encodeURIComponent(branchPassword)}@` : '';
-    const authSource = branchUser ? '?authSource=admin' : '';
+    const authSourceDb = branchUser ? database : '';
+    const authSource = authSourceDb ? `?authSource=${encodeURIComponent(authSourceDb)}` : '';
     const databaseUrl = `mongodb://${authPart}${internalHost}:${internalPort}/${encodeURIComponent(database)}${authSource}`;
     const injectedEnv: Record<string, string> = {
       DATABASE_URL: databaseUrl,
@@ -4685,6 +4707,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       MONGODB_DATABASE: database,
       MONGODB_HOST: internalHost,
       MONGODB_PORT: String(internalPort),
+      ...(authSourceDb ? { MONGODB_AUTH_SOURCE: authSourceDb } : {}),
     };
     if (branchUser) {
       injectedEnv.MONGODB_USERNAME = branchUser;
@@ -5885,7 +5908,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       branch,
       profiles: stateService.getBuildProfilesForProject(projectId),
       infraServices: stateService.getInfraServicesForProject(projectId),
-      externalAccessPolicies: stateService.getResourceExternalAccessForBranch(projectId, branch.id),
+      externalAccessPolicies: await getActiveResourceExternalAccessForBranch(projectId, branch),
       cloneTasks: stateService.listResourceCloneTasks({ projectId, branchId: branch.id }),
       branchEnv: stateService.getCustomEnvScope(branch.id),
       previewUrl,
@@ -5971,10 +5994,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     if (runtime === 'mongodb') {
       const database = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || service.dbName || env.MONGO_INITDB_DATABASE || 'app';
-      const user = branchEnv.MONGO_INITDB_ROOT_USERNAME || branchEnv.MONGODB_USERNAME || env.MONGO_INITDB_ROOT_USERNAME || env.MONGO_USERNAME || env.MONGODB_USERNAME || '';
-      const password = branchEnv.MONGO_INITDB_ROOT_PASSWORD || branchEnv.MONGODB_PASSWORD || env.MONGO_INITDB_ROOT_PASSWORD || env.MONGO_PASSWORD || env.MONGODB_PASSWORD || '';
+      const branchUser = branchEnv.MONGODB_USERNAME || branchEnv.MONGO_USERNAME || '';
+      const serviceUser = branchEnv.MONGO_INITDB_ROOT_USERNAME || env.MONGO_INITDB_ROOT_USERNAME || env.MONGO_USERNAME || env.MONGODB_USERNAME || '';
+      const user = branchUser || serviceUser;
+      const branchPassword = branchEnv.MONGODB_PASSWORD || branchEnv.MONGO_PASSWORD || '';
+      const servicePassword = branchEnv.MONGO_INITDB_ROOT_PASSWORD || env.MONGO_INITDB_ROOT_PASSWORD || env.MONGO_PASSWORD || env.MONGODB_PASSWORD || '';
+      const password = branchPassword || servicePassword;
       const auth = user ? `${encodeURIComponent(user)}:${encodeURIComponent(password)}@` : '';
-      const authSource = user ? '?authSource=admin' : '';
+      const authSourceDb = user
+        ? (branchEnv.MONGODB_AUTH_SOURCE || branchEnv.MONGO_AUTH_SOURCE || (branchUser ? database : 'admin'))
+        : '';
+      const authSource = authSourceDb ? `?authSource=${encodeURIComponent(authSourceDb)}` : '';
       return `mongodb://${auth}${host}:${port}/${encodeURIComponent(database)}${authSource}`;
     }
     if (runtime === 'redis') {
@@ -5993,6 +6023,87 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (policy.firewallChain) {
       await cleanupResourceExternalFirewall(shell, policy.firewallChain, policy.port);
     }
+  }
+
+  function isResourceExternalAccessExpired(policy?: ResourceExternalAccessPolicy | null, now = Date.now()): boolean {
+    if (!policy?.enabled || !policy.expiresAt) return false;
+    const expiresAt = Date.parse(policy.expiresAt);
+    return Number.isFinite(expiresAt) && expiresAt <= now;
+  }
+
+  async function expireResourceExternalAccessIfNeeded(
+    projectId: string,
+    branch: BranchEntry,
+    resourceId: string,
+    policy?: ResourceExternalAccessPolicy,
+  ): Promise<ResourceExternalAccessPolicy | undefined> {
+    if (!policy || !isResourceExternalAccessExpired(policy)) return policy;
+    await disableTcpResourceExternalAccess(policy).catch(() => undefined);
+    const expired = stateService.upsertResourceExternalAccess({
+      projectId,
+      branchId: branch.id,
+      resourceId,
+      enabled: false,
+      kind: policy.kind,
+      address: policy.address,
+      host: policy.host,
+      port: policy.port,
+      connectionString: policy.connectionString,
+      proxyContainerName: undefined,
+      targetHost: undefined,
+      targetPort: undefined,
+      allowlistEnforced: false,
+      firewallChain: undefined,
+      allowlist: policy.allowlist || [],
+      expiresAt: policy.expiresAt,
+      updatedBy: 'system:ttl-expired',
+    });
+    stateService.appendActivityLog(projectId, {
+      type: 'resource-external-access',
+      branchId: branch.id,
+      branchName: branch.branch,
+      actor: 'system:ttl-expired',
+      resourceId,
+      result: 'success',
+      note: `资源外部访问已在 ${policy.expiresAt} 到期并自动关闭`,
+    });
+    stateService.save();
+    return expired;
+  }
+
+  async function getActiveResourceExternalAccessForBranch(projectId: string, branch: BranchEntry): Promise<ResourceExternalAccessPolicy[]> {
+    const policies = stateService.getResourceExternalAccessForBranch(projectId, branch.id);
+    for (const policy of policies) {
+      await expireResourceExternalAccessIfNeeded(projectId, branch, policy.resourceId, policy);
+    }
+    return stateService.getResourceExternalAccessForBranch(projectId, branch.id);
+  }
+
+  let resourceExternalAccessSweepRunning = false;
+  async function sweepExpiredResourceExternalAccess(): Promise<void> {
+    if (resourceExternalAccessSweepRunning) return;
+    resourceExternalAccessSweepRunning = true;
+    try {
+      for (const branch of stateService.getAllBranches()) {
+        const projectId = branch.projectId || 'default';
+        const policies = stateService.getResourceExternalAccessForBranch(projectId, branch.id);
+        for (const policy of policies) {
+          await expireResourceExternalAccessIfNeeded(projectId, branch, policy.resourceId, policy);
+        }
+      }
+    } finally {
+      resourceExternalAccessSweepRunning = false;
+    }
+  }
+
+  const resourceExternalAccessSweepMs = Number(process.env.CDS_RESOURCE_EXTERNAL_ACCESS_SWEEP_MS || 60_000);
+  if (resourceExternalAccessSweepMs > 0 && process.env.NODE_ENV !== 'test') {
+    const timer = setInterval(() => {
+      void sweepExpiredResourceExternalAccess().catch((err) => {
+        console.warn('[resource-external-access] expired policy sweep failed:', (err as Error).message);
+      });
+    }, resourceExternalAccessSweepMs);
+    timer.unref?.();
   }
 
   async function enableTcpResourceExternalAccess(input: {
@@ -6032,6 +6143,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     const host = resourcePublicHost();
     if (!host) throw new Error('CDS 未配置 previewDomain/rootDomains，无法生成公网 TCP host');
+    if (input.allowlist.length === 0) {
+      throw new Error('开启数据库/缓存公网 TCP 访问必须填写 IP allowlist，禁止空 allowlist 暴露到公网');
+    }
 
     const proxyContainerName = resourceExternalProxyName(input.projectId, input.branch.id, input.resourceId);
     const firewallChain = resourceExternalFirewallChain(input.projectId, input.branch.id, input.resourceId);
@@ -6224,6 +6338,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(400).json({ error: (err as Error).message });
       return;
     }
+    if (enabled && resource.source === 'infra' && allowlist.length === 0) {
+      res.status(400).json({ error: '开启数据库/缓存公网 TCP 访问必须填写 IP allowlist，禁止空 allowlist 暴露到公网' });
+      return;
+    }
     const ttlMinutesRaw = Number(req.body?.ttlMinutes);
     const ttlMinutes = Number.isFinite(ttlMinutesRaw) && ttlMinutesRaw > 0
       ? Math.min(ttlMinutesRaw, 7 * 24 * 60)
@@ -6330,10 +6448,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(400).json({ error: '只有 infra 资源支持生成数据库/缓存连接串' });
       return;
     }
+    if (!requireSecretRevealAccess(req, res, projectId)) return;
     if (!requireResourcePermission(req, res, 'connection-inject', branch, resource)) return;
     const service = resource.raw as InfraService;
     const scope = String(req.query.scope || 'internal') === 'external' ? 'external' : 'internal';
-    const policy = stateService.getResourceExternalAccess(projectId, branch.id, resourceId);
+    const policy = await expireResourceExternalAccessIfNeeded(
+      projectId,
+      branch,
+      resourceId,
+      stateService.getResourceExternalAccess(projectId, branch.id, resourceId),
+    );
     let host = service.id;
     let port = service.containerPort || resource.containerPort || resource.port;
     if (scope === 'external') {
