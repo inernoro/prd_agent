@@ -39,3 +39,30 @@ LLM(输入可含用户粘贴 / 上传 / 知识库,均可能被 prompt-injection)
 2026-06-09 按用户决定:**先禁用 selector 并标注「开发中」**(避免"选了却不生效"误导),
 保留 `draft.workspaceKbId` 字段占位。偿还时需后端设计 KB 注入(灌进 workspace 文件 / system
 prompt / 挂载),再前端接 `workspaceKbId` 下发。来源：Bugbot PR #750(Medium)。
+
+---
+
+## 3. 生成实况预览是"近似渲染"，与最终 Reveal 排版有细微差异（P3，体验债）
+
+2026-06-10 等待体验改为 Gamma 式实况渲染：流式 HTML 每闭合一个 `<section>` 即用
+"head 样式 + 静态铺版 CSS"在实况 iframe 真实渲染。因 reveal.js 运行时脚本在文件末尾
+（生成中尚未流到），实况页不走 Reveal 布局引擎，居中策略/字号缩放与最终渲染有细微差异。
+**边界**：实况预览定位是"看到产物在生长"，不承诺像素级一致；生成完成后切换真正的
+reveal.js 渲染。偿还方向（可选）：流式收到 `Reveal.initialize` 后切换为完整文档渐进渲染。
+
+## 4. 大纲规划仍走 ILlmGateway（设计决定，非债务，记录备查）
+
+2026-06-10 用户拍板 PPT 生成完全走 CDS Agent（MAP 直出已删除）。大纲规划（outline）
+是快速 JSON 往返、非 PPT 产物本体，保留在 ILlmGateway 上以保证"大纲秒回 + 顺手预热
+Agent 会话"的节奏。若未来要求大纲也走 Agent，需同时解决大纲期 5-15s 启动等待的体验。
+
+## 5. 预热会话缓存是单实例内存态（P3，多实例部署前需偿还）
+
+`MdToPptController.PrewarmSessions` 用 static ConcurrentDictionary 存 userId → 预热会话。
+单实例部署（当前形态）正确；多实例/水平扩容后预热命中率下降为 1/N（功能不坏，仅优化失效，
+未命中自动走全新创建路径）。偿还方向：挪到 Redis 或 Mongo 带 TTL 集合。
+
+## 6. 历史 run 记录 engine 字段存在 "map" 旧值（兼容已处理，记录备查）
+
+MAP 直出删除后，新 run 一律 engine="agent"；`md_to_ppt_runs` 历史记录仍有 engine="map"。
+前端 `MdToPptEngine` 类型保留 'map' 字面量用于历史展示，不可删。

@@ -304,6 +304,96 @@ public class MdToPptController : ControllerBase
     }
 
     // ─────────────────────────────────────────────
+    // POST /api/md-to-ppt/prewarm
+    // ─────────────────────────────────────────────
+
+    // 预热会话缓存：userId → 已创建并启动的 CDS Agent 会话。
+    // 大纲展示时前端预热，用户阅读/确认大纲的十几秒里把连接解析 + 会话创建 + 启动
+    // 全部做完；Convert 到来直接复用，把 5-15s 的 Agent 环境启动开销藏进阅读时间。
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, PrewarmEntry> PrewarmSessions = new();
+
+    private sealed record PrewarmEntry(string SessionId, DateTime CreatedAt);
+
+    private static readonly TimeSpan PrewarmTtl = TimeSpan.FromMinutes(8);
+
+    /// <summary>
+    /// 预创建并启动一个 CDS Agent 会话（幂等；失败静默——预热只是优化，绝不打扰用户）。
+    /// 前端在大纲生成成功后 fire-and-forget 调用。
+    /// </summary>
+    [HttpPost("prewarm")]
+    public async Task<IActionResult> Prewarm()
+    {
+        var userId = this.GetRequiredUserId();
+
+        if (PrewarmSessions.TryGetValue(userId, out var existing)
+            && DateTime.UtcNow - existing.CreatedAt < PrewarmTtl)
+        {
+            return Ok(new { sessionId = existing.SessionId, reused = true });
+        }
+
+        var connection = await ResolveCdsConnectionAsync(CancellationToken.None);
+        if (connection == null) return Ok(new { sessionId = (string?)null, reason = "no_connection" });
+        var profile = await ResolveRuntimeProfileAsync(userId, CancellationToken.None);
+        if (profile == null) return Ok(new { sessionId = (string?)null, reason = "no_profile" });
+
+        try
+        {
+            var session = await _sessions.CreateAsync(userId,
+                new CreateInfraAgentSessionRequest(
+                    connection.Id,
+                    profile.Runtime,
+                    profile.Model,
+                    "PPT 预热",
+                    InfraAgentToolPolicies.DenyAll,
+                    null,
+                    profile.Id,
+                    null,
+                    null,
+                    null,
+                    null),
+                CancellationToken.None);
+            if (!string.Equals(session.Status, InfraAgentSessionStatuses.Running, StringComparison.OrdinalIgnoreCase))
+            {
+                session = await _sessions.StartAsync(userId, session.Id,
+                    new StartInfraAgentSessionRequest(profile.Runtime, profile.Model),
+                    CancellationToken.None) ?? session;
+            }
+            PrewarmSessions[userId] = new PrewarmEntry(session.Id, DateTime.UtcNow);
+            _logger.LogInformation("[MdToPpt-Prewarm] session ready userId={UserId} sessionId={Id}", userId, session.Id);
+            return Ok(new { sessionId = session.Id });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[MdToPpt-Prewarm] failed userId={UserId}", userId);
+            return Ok(new { sessionId = (string?)null, reason = "create_failed" });
+        }
+    }
+
+    /// <summary>取走当前用户的预热会话（验证仍可用）；不可用返回 null 走全新创建路径</summary>
+    private async Task<InfraAgentSessionView?> TakePrewarmedSessionAsync(string userId)
+    {
+        if (!PrewarmSessions.TryRemove(userId, out var entry)) return null;
+        if (DateTime.UtcNow - entry.CreatedAt >= PrewarmTtl)
+        {
+            // 过期预热：后台停掉，不阻塞本次生成
+            try { await _sessions.StopAsync(userId, entry.SessionId, CancellationToken.None); } catch { }
+            return null;
+        }
+        try
+        {
+            var session = await _sessions.GetAsync(userId, entry.SessionId, CancellationToken.None);
+            if (session != null
+                && (string.Equals(session.Status, InfraAgentSessionStatuses.Running, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(session.Status, InfraAgentSessionStatuses.Idle, StringComparison.OrdinalIgnoreCase)))
+            {
+                return session;
+            }
+        }
+        catch { /* 预热会话不可用就走全新创建，不能让优化路径影响主流程 */ }
+        return null;
+    }
+
+    // ─────────────────────────────────────────────
     // POST /api/md-to-ppt/convert
     // ─────────────────────────────────────────────
 
@@ -559,38 +649,49 @@ public class MdToPptController : ControllerBase
             // 模型可见性：Agent 路径也要第一时间把模型名推给前端（ai-model-visibility 规则）
             await WriteEventAsync("model", new { model, platform = "CDS Agent" });
 
-            // 3. 创建会话 — toolPolicy=deny-all 禁止暴露任何工具，避免 agent 进入工具循环
+            // 3. 会话：优先复用大纲期间预热好的会话（启动开销已藏进用户阅读大纲的时间）
             var t2 = DateTime.UtcNow;
-            session = await _sessions.CreateAsync(userId,
-                new CreateInfraAgentSessionRequest(
-                    connection.Id,
-                    runtime,
-                    model,
-                    title,
-                    InfraAgentToolPolicies.DenyAll,   // 核心修复：不暴露任何工具
-                    null,
-                    runtimeProfile.Id,
-                    null,
-                    null,
-                    null,
-                    null),
-                CancellationToken.None);
-            var createMs = (int)(DateTime.UtcNow - t2).TotalMilliseconds;
-            _logger.LogInformation("[MdToPpt-Agent] session created elapsedMs={Ms} sessionId={Id} toolPolicy={Policy}",
-                createMs, session.Id, InfraAgentToolPolicies.DenyAll);
-            await WriteDiagAsync(new { stage = "create", elapsedMs = createMs, sessionId = session.Id, toolPolicy = InfraAgentToolPolicies.DenyAll });
-
-            // 4. 启动会话
-            var t3 = DateTime.UtcNow;
-            if (!string.Equals(session.Status, "running", StringComparison.OrdinalIgnoreCase))
+            session = await TakePrewarmedSessionAsync(userId);
+            if (session != null)
             {
-                session = await _sessions.StartAsync(userId, session.Id,
-                    new StartInfraAgentSessionRequest(runtime, model),
-                    CancellationToken.None) ?? session;
+                var hitMs = (int)(DateTime.UtcNow - t2).TotalMilliseconds;
+                _logger.LogInformation("[MdToPpt-Agent] prewarmed session reused sessionId={Id} status={Status}", session.Id, session.Status);
+                await WriteDiagAsync(new { stage = "prewarm_hit", elapsedMs = hitMs, sessionId = session.Id });
             }
-            var startMs = (int)(DateTime.UtcNow - t3).TotalMilliseconds;
-            _logger.LogInformation("[MdToPpt-Agent] session started elapsedMs={Ms} status={Status}", startMs, session.Status);
-            await WriteDiagAsync(new { stage = "start", elapsedMs = startMs, status = session.Status });
+            else
+            {
+                // 预热未命中 → 全新创建。toolPolicy=deny-all 禁止暴露任何工具，避免 agent 进入工具循环
+                session = await _sessions.CreateAsync(userId,
+                    new CreateInfraAgentSessionRequest(
+                        connection.Id,
+                        runtime,
+                        model,
+                        title,
+                        InfraAgentToolPolicies.DenyAll,   // 核心修复：不暴露任何工具
+                        null,
+                        runtimeProfile.Id,
+                        null,
+                        null,
+                        null,
+                        null),
+                    CancellationToken.None);
+                var createMs = (int)(DateTime.UtcNow - t2).TotalMilliseconds;
+                _logger.LogInformation("[MdToPpt-Agent] session created elapsedMs={Ms} sessionId={Id} toolPolicy={Policy}",
+                    createMs, session.Id, InfraAgentToolPolicies.DenyAll);
+                await WriteDiagAsync(new { stage = "create", elapsedMs = createMs, sessionId = session.Id, toolPolicy = InfraAgentToolPolicies.DenyAll });
+
+                // 4. 启动会话
+                var t3 = DateTime.UtcNow;
+                if (!string.Equals(session.Status, InfraAgentSessionStatuses.Running, StringComparison.OrdinalIgnoreCase))
+                {
+                    session = await _sessions.StartAsync(userId, session.Id,
+                        new StartInfraAgentSessionRequest(runtime, model),
+                        CancellationToken.None) ?? session;
+                }
+                var startMs = (int)(DateTime.UtcNow - t3).TotalMilliseconds;
+                _logger.LogInformation("[MdToPpt-Agent] session started elapsedMs={Ms} status={Status}", startMs, session.Status);
+                await WriteDiagAsync(new { stage = "start", elapsedMs = startMs, status = session.Status });
+            }
 
             // 5. 发送消息（系统提示词 + 用户内容合并）
             var fullPrompt = $"{systemPrompt}\n\n---\n\n{userPrompt}";

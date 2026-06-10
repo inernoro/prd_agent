@@ -42,6 +42,19 @@ export async function getMdToPptOutline(
   return { success: true, data: res.data };
 }
 
+// ============ Prewarm（大纲确认期间预热 CDS Agent 会话）============
+
+/**
+ * 预创建并启动 CDS Agent 会话（幂等、失败静默）。
+ * 在大纲生成成功后 fire-and-forget 调用，把 5-15s 的 Agent 环境启动开销
+ * 藏进用户阅读/确认大纲的时间里；Convert 时后端自动复用预热好的会话。
+ */
+export function prewarmMdToPpt(): void {
+  void apiRequest('/api/md-to-ppt/prewarm', { method: 'POST', body: {} }).catch(() => {
+    /* 预热只是优化，失败不打扰用户 */
+  });
+}
+
 // ============ Types ============
 
 // 生成引擎只有 CDS Agent 一条路（2026-06-10 用户拍板移除 MAP 直出）。

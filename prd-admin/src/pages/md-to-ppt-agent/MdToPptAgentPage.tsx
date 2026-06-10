@@ -29,6 +29,7 @@ import {
   publishMdToPpt,
   getMdToPptRun,
   getMdToPptOutline,
+  prewarmMdToPpt,
 } from '@/services/real/mdToPptService';
 import { apiRequest } from '@/services/real/apiClient';
 import { NextStepBar } from './NextStepBar';
@@ -1055,6 +1056,10 @@ export function MdToPptAgentPage() {
             : m
         )
       );
+
+      // 预热 CDS Agent 会话：用户阅读/确认大纲的十几秒里把环境启动做完，
+      // 点「确认生成」时后端直接复用，启动开销对用户不可见（产物即体验）
+      prewarmMdToPpt();
 
       setIsProcessing(false);
       setArtifactPhase('idle');
