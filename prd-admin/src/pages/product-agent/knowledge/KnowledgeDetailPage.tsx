@@ -95,6 +95,18 @@ export function KnowledgeDetailPage() {
   const back = () => navigate(`/product-agent/p/${productId}?tab=knowledge`);
   const openEntry = (id: string) => { if (id !== entryId) navigate(`/product-agent/p/${productId}/knowledge/${id}`); };
 
+  // 左侧目录双击改名（同步当前条目标题）
+  const handleRenameSibling = async (id: string, title: string) => {
+    const name = title.trim();
+    if (!name) return;
+    const res = await updateDocumentEntry(id, { title: name });
+    if (res.success) {
+      setSiblings((prev) => prev.map((x) => (x.id === id ? { ...x, title: name } : x)));
+      if (id === entryId) setEntry((e) => (e ? { ...e, title: name } : e));
+      toast.success('已重命名');
+    } else toast.error('重命名失败', res.error?.message);
+  };
+
   const startEdit = () => { setDraft(content ?? ''); setEditing(true); };
 
   const handleSave = async () => {
@@ -165,6 +177,8 @@ export function KnowledgeDetailPage() {
   const categories = store?.categories ?? [];
   const vIds = entry?.versionIds ?? [];
   const html = isHtml(entry?.contentType);
+  // 仅「完整 HTML 网页」需要预览/代码切换（iframe 渲染）；md / 富文本片段没有代码视角，不显示切换
+  const fullHtml = html && isFullHtmlDocument(content);
 
   return (
     <div className="h-screen min-h-0 flex flex-col bg-[#0f1014]">
@@ -189,7 +203,7 @@ export function KnowledgeDetailPage() {
           ) : (
             <>
               {/* HTML 预览/代码切换 */}
-              {html && content != null && content.trim() && (
+              {fullHtml && (
                 <div className="flex items-center rounded-lg border border-white/10 overflow-hidden mr-1">
                   <button onClick={() => setCodeMode(false)} className={`flex items-center gap-1 px-2.5 py-1.5 text-xs ${!codeMode ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}><Eye size={13} /> 预览</button>
                   <button onClick={() => setCodeMode(true)} className={`flex items-center gap-1 px-2.5 py-1.5 text-xs ${codeMode ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}><CodeIcon size={13} /> 代码</button>
@@ -208,7 +222,7 @@ export function KnowledgeDetailPage() {
 
       {/* 主体：左目录 + 右内容 */}
       <div className="flex-1 min-h-0 flex">
-        <FolderNav entries={siblings} currentId={entryId} onOpen={openEntry} />
+        <FolderNav entries={siblings} currentId={entryId} onOpen={openEntry} onRename={handleRenameSibling} />
 
         <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
           {loading ? (
@@ -220,7 +234,7 @@ export function KnowledgeDetailPage() {
               <RichKnowledgeEditor value={draft} onChange={setDraft} />
             </div>
           ) : (
-            <div className="mx-auto py-8 px-6" style={{ maxWidth: html && !codeMode && isFullHtmlDocument(content) ? 1400 : 880 }}>
+            <div className="mx-auto py-8 px-6" style={{ maxWidth: fullHtml && !codeMode ? 1400 : 980 }}>
               {/* 标题 + 元信息 */}
               <div className="mb-6 pb-5 border-b border-white/8">
                 <h1
@@ -320,11 +334,19 @@ function DocBody({ entry, content, fileUrl, html, codeMode, editable, onStartEdi
         />
       );
     }
-    // 富文本片段 → 内联渲染，融入当前主题
-    return <div className="markdown-reading text-[14.5px]" style={{ lineHeight: 1.85 }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(content!) }} />;
+    // 富文本片段 → 内联渲染，融入当前主题；用与编辑器一致的卡片承载，显示/编辑观感统一
+    return (
+      <div className="rounded-xl border border-white/10 bg-white/[0.02] px-7 py-6">
+        <div className="markdown-reading text-[14.5px]" style={{ lineHeight: 1.85 }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(content!) }} />
+      </div>
+    );
   }
   if (hasText) {
-    return <MarkdownContent content={content!} variant="reading" />;
+    return (
+      <div className="rounded-xl border border-white/10 bg-white/[0.02] px-7 py-6">
+        <MarkdownContent content={content!} variant="reading" />
+      </div>
+    );
   }
   if (entry.contentType.startsWith('image/') && fileUrl) {
     return <img src={fileUrl} alt={entry.title} className="max-w-full rounded-xl border border-white/10" />;
@@ -355,8 +377,13 @@ function DocBody({ entry, content, fileUrl, html, codeMode, editable, onStartEdi
   );
 }
 
-/** 左侧目录：按文件夹分组列出同库知识，高亮当前，点击切换。无文件夹时平铺。 */
-function FolderNav({ entries, currentId, onOpen }: { entries: DocumentEntry[]; currentId: string; onOpen: (id: string) => void }) {
+/** 左侧目录：按文件夹分组列出同库知识，高亮当前，单击切换、双击标题改名。无文件夹时平铺。 */
+function FolderNav({ entries, currentId, onOpen, onRename }: {
+  entries: DocumentEntry[];
+  currentId: string;
+  onOpen: (id: string) => void;
+  onRename: (id: string, title: string) => void;
+}) {
   const folders = entries.filter((e) => e.isFolder);
   const docs = entries.filter((e) => !e.isFolder);
   const rootDocs = docs.filter((d) => !d.parentId);
@@ -366,8 +393,8 @@ function FolderNav({ entries, currentId, onOpen }: { entries: DocumentEntry[]; c
 
   return (
     <div className="shrink-0 w-60 border-r border-white/8 overflow-y-auto py-3 px-2" style={{ overscrollBehavior: 'contain' }}>
-      <div className="px-2 pb-2 text-[11px] text-white/35 flex items-center gap-1"><FolderOpen size={12} /> 目录</div>
-      {rootDocs.map((d) => <NavItem key={d.id} entry={d} active={d.id === currentId} onOpen={onOpen} />)}
+      <div className="px-2 pb-2 text-[11px] text-white/35 flex items-center gap-1"><FolderOpen size={12} /> 目录 · 双击标题改名</div>
+      {rootDocs.map((d) => <NavItem key={d.id} entry={d} active={d.id === currentId} onOpen={onOpen} onRename={onRename} />)}
       {folders.map((f) => {
         const kids = byFolder(f.id);
         return (
@@ -376,7 +403,7 @@ function FolderNav({ entries, currentId, onOpen }: { entries: DocumentEntry[]; c
               <FolderOpen size={12} className="text-amber-300/70" /> {f.title} <span className="text-white/25">{kids.length}</span>
             </div>
             <div className="pl-2">
-              {kids.map((d) => <NavItem key={d.id} entry={d} active={d.id === currentId} onOpen={onOpen} />)}
+              {kids.map((d) => <NavItem key={d.id} entry={d} active={d.id === currentId} onOpen={onOpen} onRename={onRename} />)}
             </div>
           </div>
         );
@@ -385,14 +412,41 @@ function FolderNav({ entries, currentId, onOpen }: { entries: DocumentEntry[]; c
   );
 }
 
-function NavItem({ entry, active, onOpen }: { entry: DocumentEntry; active: boolean; onOpen: (id: string) => void }) {
+function NavItem({ entry, active, onOpen, onRename }: {
+  entry: DocumentEntry;
+  active: boolean;
+  onOpen: (id: string) => void;
+  onRename: (id: string, title: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(entry.title);
   const kind = fileKindOf(entry.contentType);
   const Icon = kind.icon;
+
+  const submit = () => {
+    setEditing(false);
+    if (val.trim() && val.trim() !== entry.title) onRename(entry.id, val.trim());
+  };
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } if (e.key === 'Escape') setEditing(false); }}
+        onBlur={submit}
+        className="no-focus-ring w-full text-sm bg-white/10 border border-cyan-500/40 rounded-md px-2 py-1 text-white outline-none"
+      />
+    );
+  }
+
   return (
     <button
       onClick={() => onOpen(entry.id)}
+      onDoubleClick={() => { setVal(entry.title); setEditing(true); }}
       className={`w-full text-left flex items-center gap-2 px-2 py-1.5 rounded-md text-sm truncate ${active ? 'bg-cyan-500/15 text-cyan-100' : 'text-white/70 hover:bg-white/5'}`}
-      title={entry.title}
+      title={`${entry.title}（双击改名）`}
     >
       <Icon size={13} className="shrink-0" style={{ color: active ? undefined : kind.color }} />
       <span className="truncate">{entry.title}</span>

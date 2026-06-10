@@ -9,3 +9,5 @@
 | feat | prd-admin | 知识详情页重写：左侧文件夹目录快速切换、HTML 直接预览+代码模式切换、富文本编辑器（图片上传/粘贴/拖拽 + 附件上传），新建文档默认富文本 |
 | feat | prd-api | DocumentStore 内容更新端点支持可选 contentType（富文本编辑后置为 text/html） |
 | fix | prd-admin | 知识详情 HTML 预览改为沙箱 iframe 真实网页渲染（保留自带样式/布局/脚本视觉，预览容器放宽至 1400px），富文本片段仍走主题内联渲染 |
+| polish | prd-admin | 知识详情：预览/代码切换仅对完整 HTML 网页显示（md/富文本片段不再显示）；显示卡片与富文本编辑器宽度/样式统一；列表点标题快捷改名；详情目录双击标题改名 |
+| fix | prd-admin | 富文本工具栏逐项修复：execCommand 前确保光标在编辑器内（修「点了没反应」），标题/引用/代码块改为可切回正文的块级切换，styleWithCSS=false 输出语义标签 |

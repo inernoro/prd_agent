@@ -22,14 +22,42 @@ export function RichKnowledgeEditor({ value, onChange }: { value: string; onChan
   }, [value]);
 
   const emit = () => { if (ref.current) onChange(ref.current.innerHTML); };
+
+  // 聚焦编辑器；若当前选区不在编辑器内（如点工具栏前没放光标），把光标落到末尾，
+  // 否则 execCommand 找不到作用目标 → 表现为「点了没反应」。
+  const ensureCaret = () => {
+    const el = ref.current;
+    if (!el) return;
+    const sel = window.getSelection();
+    const inEditor = sel && sel.rangeCount > 0 && el.contains(sel.getRangeAt(0).commonAncestorContainer);
+    el.focus();
+    if (!inEditor) {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    }
+  };
+
   const exec = (cmd: string, arg?: string) => {
-    ref.current?.focus();
+    ensureCaret();
+    try { document.execCommand('styleWithCSS', false, 'false'); } catch { /* 部分浏览器不支持，忽略 */ }
     document.execCommand(cmd, false, arg);
     emit();
   };
 
+  // 块级格式切换（标题/引用/代码块）：已是目标块则回退为正文 <p>
+  const toggleBlock = (tag: string) => {
+    ensureCaret();
+    let cur = '';
+    try { cur = (document.queryCommandValue('formatBlock') || '').toLowerCase(); } catch { /* ignore */ }
+    document.execCommand('formatBlock', false, cur === tag.toLowerCase() ? '<p>' : `<${tag}>`);
+    emit();
+  };
+
   const insertHtmlAtCaret = (html: string) => {
-    ref.current?.focus();
+    ensureCaret();
     document.execCommand('insertHTML', false, html);
     emit();
   };
@@ -105,16 +133,16 @@ export function RichKnowledgeEditor({ value, onChange }: { value: string; onChan
   const btn = 'w-7 h-7 flex items-center justify-center rounded text-white/55 hover:text-white hover:bg-white/10';
 
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.03] overflow-hidden flex flex-col" style={{ minHeight: '60vh' }}>
+    <div className="rounded-xl border border-white/10 bg-white/[0.02] overflow-hidden flex flex-col" style={{ minHeight: '60vh' }}>
       <input ref={imgInputRef} type="file" accept="image/*" multiple className="hidden" onChange={onPickImages} />
       <input ref={fileInputRef} type="file" multiple className="hidden" onChange={onPickFiles} />
       <div className="shrink-0 flex items-center gap-0.5 px-2 py-1.5 border-b border-white/10 bg-white/[0.02] flex-wrap">
         <ToolBtn cls={btn} title="加粗" onClick={() => exec('bold')}><Bold size={14} /></ToolBtn>
         <ToolBtn cls={btn} title="斜体" onClick={() => exec('italic')}><Italic size={14} /></ToolBtn>
         <ToolBtn cls={btn} title="下划线" onClick={() => exec('underline')}><Underline size={14} /></ToolBtn>
-        <ToolBtn cls={btn} title="标题" onClick={() => exec('formatBlock', 'H2')}><Heading size={14} /></ToolBtn>
-        <ToolBtn cls={btn} title="引用" onClick={() => exec('formatBlock', 'BLOCKQUOTE')}><Quote size={14} /></ToolBtn>
-        <ToolBtn cls={btn} title="代码块" onClick={() => exec('formatBlock', 'PRE')}><Code size={14} /></ToolBtn>
+        <ToolBtn cls={btn} title="标题（再点回正文）" onClick={() => toggleBlock('h2')}><Heading size={14} /></ToolBtn>
+        <ToolBtn cls={btn} title="引用（再点回正文）" onClick={() => toggleBlock('blockquote')}><Quote size={14} /></ToolBtn>
+        <ToolBtn cls={btn} title="代码块（再点回正文）" onClick={() => toggleBlock('pre')}><Code size={14} /></ToolBtn>
         <ToolBtn cls={btn} title="无序列表" onClick={() => exec('insertUnorderedList')}><List size={14} /></ToolBtn>
         <ToolBtn cls={btn} title="有序列表" onClick={() => exec('insertOrderedList')}><ListOrdered size={14} /></ToolBtn>
         <ToolBtn cls={btn} title="链接" onClick={addLink}><Link2 size={14} /></ToolBtn>
@@ -134,8 +162,8 @@ export function RichKnowledgeEditor({ value, onChange }: { value: string; onChan
         onPaste={onPaste}
         onDragOver={(e) => e.preventDefault()}
         onDrop={onDrop}
-        className="no-focus-ring flex-1 overflow-y-auto px-5 py-4 text-[14px] text-white/90 outline-none markdown-reading"
-        style={{ lineHeight: 1.75, overscrollBehavior: 'contain' }}
+        className="no-focus-ring flex-1 overflow-y-auto px-7 py-6 text-[14.5px] text-white/90 outline-none markdown-reading"
+        style={{ lineHeight: 1.85, overscrollBehavior: 'contain' }}
       />
     </div>
   );

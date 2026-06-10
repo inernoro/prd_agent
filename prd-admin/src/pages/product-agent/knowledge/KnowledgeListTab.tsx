@@ -42,6 +42,8 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
   const [tag, setTag] = useState('');
   const [versionId, setVersionId] = useState('');
   const [linkTarget, setLinkTarget] = useState<DocumentEntry | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const replaceInputRef = useRef<HTMLInputElement>(null);
   const replaceTargetRef = useRef<string | null>(null);
@@ -124,6 +126,18 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
     const res = await deleteDocumentEntry(entry.id);
     if (res.success) { toast.success('已删除'); onChanged(); await reload(); }
     else toast.error('删除失败', res.error?.message);
+  };
+
+  const submitRename = async (entry: DocumentEntry) => {
+    const name = renameValue.trim();
+    setRenamingId(null);
+    if (!name || name === entry.title) return;
+    const res = await updateDocumentEntry(entry.id, { title: name });
+    if (res.success) {
+      setItems((prev) => prev.map((x) => (x.id === entry.id ? { ...x, title: name } : x)));
+      onChanged();
+      toast.success('已重命名');
+    } else toast.error('重命名失败', res.error?.message);
   };
 
   const handleLinkVersions = async (entry: DocumentEntry, ids: string[]) => {
@@ -212,7 +226,28 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
                 <Icon size={16} className="shrink-0" style={{ color: kind.color }} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-sm text-white/90 truncate">{e.title}</span>
+                    {renamingId === e.id ? (
+                      <input
+                        autoFocus
+                        value={renameValue}
+                        onClick={(ev) => ev.stopPropagation()}
+                        onChange={(ev) => setRenameValue(ev.target.value)}
+                        onKeyDown={(ev) => {
+                          if (ev.key === 'Enter') { ev.preventDefault(); void submitRename(e); }
+                          if (ev.key === 'Escape') setRenamingId(null);
+                        }}
+                        onBlur={() => void submitRename(e)}
+                        className="no-focus-ring text-sm bg-white/10 border border-cyan-500/40 rounded px-1.5 py-0.5 text-white outline-none min-w-0 flex-1"
+                      />
+                    ) : (
+                      <span
+                        onClick={(ev) => { ev.stopPropagation(); setRenamingId(e.id); setRenameValue(e.title); }}
+                        className="text-sm text-white/90 truncate cursor-text hover:text-cyan-200"
+                        title="点击重命名"
+                      >
+                        {e.title}
+                      </span>
+                    )}
                     {e.category && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-300/90 border border-cyan-500/20 shrink-0">{e.category}</span>}
                     {(e.tags ?? []).slice(0, 3).map((t) => (
                       <span key={t} className="text-[10px] px-1.5 py-0.5 rounded bg-white/8 text-white/55 shrink-0">{t}</span>
