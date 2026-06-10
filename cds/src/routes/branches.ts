@@ -7211,6 +7211,90 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  router.post('/branches/:id/resources/:resourceId/data/mongo/write', async (req, res) => {
+    const ctx = await resolveMongoDataResourceForRequest(req, res);
+    if (!ctx) return;
+    const resources = await getBranchResourceSnapshot(ctx.branch);
+    const resource = resources.find((item) => item.id === ctx.resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${ctx.resourceId}" 不存在` });
+      return;
+    }
+    if (!requireResourcePermission(req, res, 'data-write', ctx.branch, resource)) return;
+    try {
+      ensureResourceNameConfirmed(req.body?.confirmResourceName, resource, '执行 MongoDB 写入');
+    } catch (err) {
+      res.status(409).json({ error: (err as Error).message });
+      return;
+    }
+
+    const action = String(req.body?.action || '').trim();
+    let database = '';
+    let collection = '';
+    let script = '';
+    try {
+      database = mongoDatabaseFromRequest(req.body?.database, mongoDatabaseForBranch(ctx.service, ctx.branch));
+      collection = mongoCollectionFromRequest(req.body?.collection);
+      if (action === 'insertOne') {
+        const document = mongoJsonObject(req.body?.document, 'document');
+        script = `JSON.stringify(db.getCollection(${mongoSafeJson(collection)}).insertOne(${mongoSafeJson(document)}))`;
+      } else if (action === 'updateMany') {
+        const filter = mongoJsonObject(req.body?.filter, 'filter');
+        const update = mongoJsonObject(req.body?.update, 'update');
+        if (Object.keys(update).length === 0) throw new Error('update 不能为空');
+        script = `JSON.stringify(db.getCollection(${mongoSafeJson(collection)}).updateMany(${mongoSafeJson(filter)}, ${mongoSafeJson(update)}))`;
+      } else if (action === 'deleteMany') {
+        const filter = mongoJsonObject(req.body?.filter, 'filter');
+        if (Object.keys(filter).length === 0) throw new Error('deleteMany 必须提供非空 filter');
+        script = `JSON.stringify(db.getCollection(${mongoSafeJson(collection)}).deleteMany(${mongoSafeJson(filter)}))`;
+      } else if (action === 'createCollection') {
+        script = `JSON.stringify(db.createCollection(${mongoSafeJson(collection)}))`;
+      } else if (action === 'dropCollection') {
+        script = `JSON.stringify({ dropped: db.getCollection(${mongoSafeJson(collection)}).drop() })`;
+      } else {
+        throw new Error('action 只允许 insertOne / updateMany / deleteMany / createCollection / dropCollection');
+      }
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+      return;
+    }
+
+    try {
+      const result = await runMongoJson(ctx.service, ctx.branch, script, database);
+      stateService.recordDestructiveOp({
+        type: 'purge-database',
+        projectId: ctx.projectId,
+        summary: `对 ${ctx.resourceName} 执行 MongoDB ${action}：${database}.${collection}`,
+        triggeredBy: resolveActorFromRequest(req),
+      });
+      stateService.appendActivityLog(ctx.projectId, {
+        type: 'resource-data-query',
+        branchId: ctx.branch.id,
+        branchName: ctx.branch.branch,
+        actor: resolveActorFromRequest(req),
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resourceName,
+        result: 'success',
+        note: `${ctx.resourceName} 执行 MongoDB ${action}：${database}.${collection}`,
+      });
+      stateService.save();
+      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, database, collection, action, result });
+    } catch (err) {
+      stateService.appendActivityLog(ctx.projectId, {
+        type: 'resource-data-query',
+        branchId: ctx.branch.id,
+        branchName: ctx.branch.branch,
+        actor: resolveActorFromRequest(req),
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resourceName,
+        result: 'failed',
+        note: `${ctx.resourceName} MongoDB ${action} 失败：${(err as Error).message}`,
+      });
+      stateService.save();
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   router.get('/branches/:id/resources/:resourceId/backups', async (req, res) => {
     const branch = stateService.getBranch(req.params.id);
     if (!branch) {

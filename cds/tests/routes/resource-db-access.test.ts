@@ -171,6 +171,55 @@ describe('resource database access', () => {
     expect(harness.shell.commands.some((cmd) => cmd.includes('/orders?authSource=admin'))).toBe(true);
   });
 
+  it('runs audited MongoDB writes with admin confirmation', async () => {
+    const harness = makeHarness();
+    tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({
+      id: 'mongo-main',
+      projectId: 'prd-agent',
+      name: 'mongo-main',
+      dockerImage: 'mongo:7',
+      containerPort: 27017,
+      hostPort: 27017,
+      containerName: 'cds-mongo-main',
+      status: 'running',
+      dbName: 'app',
+      env: {
+        MONGO_INITDB_ROOT_USERNAME: 'app',
+        MONGO_INITDB_ROOT_PASSWORD: 'pw',
+        MONGO_INITDB_DATABASE: 'app',
+      },
+      volumes: [],
+    });
+    harness.shell.addResponsePattern(/insertOne/, () => ({
+      stdout: '{"acknowledged":true,"insertedId":"abc123"}\n',
+      stderr: '',
+      exitCode: 0,
+    }));
+    harness.shell.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    await new Promise<void>((resolve) => {
+      server = harness.app.listen(0, '127.0.0.1', resolve);
+    });
+
+    const res = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/write',
+      {
+        action: 'insertOne',
+        database: 'app',
+        collection: 'users',
+        document: { name: 'Ada' },
+        confirmResourceName: 'mongo-main',
+      },
+      { 'x-test-cookie-auth': '1' },
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.result).toEqual({ acknowledged: true, insertedId: 'abc123' });
+    expect(harness.shell.commands.some((cmd) => cmd.includes('insertOne'))).toBe(true);
+  });
+
   it('returns a usable Redis external connection string with the real password', async () => {
     const harness = makeHarness();
     tmpDir = harness.tmpDir;

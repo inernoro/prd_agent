@@ -38,7 +38,7 @@ import {
 } from 'lucide-react';
 
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
-import { BranchDetailDrawer, type BranchDeploymentItem } from '@/components/BranchDetailDrawer';
+import { BranchDetailDrawer, type BranchDeploymentItem, type BranchResourceDetailTab } from '@/components/BranchDetailDrawer';
 import { CapacityFullDialog } from '@/components/CapacityFullDialog';
 import { Button } from '@/components/ui/button';
 import {
@@ -57,7 +57,6 @@ import { normalizeHostStats, type NormalizedHostStats } from '@/lib/host-stats';
 import {
   buildBranchResources,
   ResourceIcon,
-  resourceAccessIcon,
   type BranchResource,
   type BranchResourceInfraInput,
   type BranchResourceProfileInput,
@@ -100,10 +99,6 @@ function normalizeResourceChipDisplay(display?: ResourceChipDisplay): Required<R
     port: display?.port !== false,
   };
   return next.icon || next.name || next.port ? next : DEFAULT_RESOURCE_CHIP_DISPLAY;
-}
-
-function resourceChipName(resource: BranchResource): string {
-  return resource.runtime || resource.displayName || resource.serviceName;
 }
 
 interface ServiceState {
@@ -668,7 +663,7 @@ function shortCommitSha(branch: BranchSummary): string {
 }
 
 function commitSubject(branch: BranchSummary): string {
-  return branch.subject?.trim() || '暂无提交信息';
+  return branch.subject?.trim() || '';
 }
 
 function builderHandle(branch: BranchSummary): string {
@@ -1313,6 +1308,10 @@ export function BranchListPage(): JSX.Element {
     needSlots: number;
   } | null>(null);
   const [detailDrawerBranchId, setDetailDrawerBranchId] = useState<string | null>(null);
+  const [detailDrawerResourceFocus, setDetailDrawerResourceFocus] = useState<{
+    resourceId: string;
+    detailTab: BranchResourceDetailTab;
+  } | null>(null);
   const [releaseBranchId, setReleaseBranchId] = useState<string | null>(null);
   const [branchSearchOpen, setBranchSearchOpen] = useState(false);
   const [pendingEnvKeys, setPendingEnvKeys] = useState<string[]>([]);
@@ -2056,6 +2055,19 @@ export function BranchListPage(): JSX.Element {
     }
   }, [setAction, state]);
 
+  const openBranchDetail = useCallback((branchId: string) => {
+    setDetailDrawerResourceFocus(null);
+    setDetailDrawerBranchId(branchId);
+  }, []);
+
+  const openBranchResourcePanel = useCallback((branch: BranchSummary, resource: BranchResource) => {
+    setDetailDrawerResourceFocus({
+      resourceId: resource.id,
+      detailTab: resource.kind === 'app' ? 'logs' : 'data',
+    });
+    setDetailDrawerBranchId(branch.id);
+  }, []);
+
   const deployBranch = useCallback(async (
     branch: BranchSummary,
     openAfterDeploy = false,
@@ -2064,7 +2076,7 @@ export function BranchListPage(): JSX.Element {
     const key = branch.id;
     const kind = openAfterDeploy ? 'preview' : 'deploy';
     setAction(key, createAction(kind, '正在部署'));
-    setDetailDrawerBranchId(branch.id);
+    openBranchDetail(branch.id);
     try {
       await postSse(`/api/branches/${encodeURIComponent(branch.id)}/deploy`, {}, (event, data) => {
         appendActionLog(key, eventMessage(event, data));
@@ -2111,7 +2123,7 @@ export function BranchListPage(): JSX.Element {
       ));
       setToast(message);
     }
-  }, [appendActionLog, openRunningPreview, projectId, refresh, setAction]);
+  }, [appendActionLog, openBranchDetail, openRunningPreview, projectId, refresh, setAction]);
 
   const openPreview = useCallback(async (branch: BranchSummary, deployWhenNeeded = false): Promise<void> => {
     if (state.status !== 'ok') return;
@@ -3102,7 +3114,8 @@ export function BranchListPage(): JSX.Element {
                     onPreview={() => void openPreview(branch, false)}
                     onRelease={() => setReleaseBranchId(branch.id)}
                     onDeploy={() => void deployBranch(branch, false)}
-                    onDetail={() => setDetailDrawerBranchId(branch.id)}
+                    onDetail={() => openBranchDetail(branch.id)}
+                    onResourcePanel={(resource) => openBranchResourcePanel(branch, resource)}
                     onPull={() => void pullBranch(branch)}
                     onStop={() => void stopBranch(branch)}
                     onForceRebuild={() => void forceRebuildBranch(branch)}
@@ -3155,12 +3168,17 @@ export function BranchListPage(): JSX.Element {
             if (state.previewMode === 'simple') return simplePreviewUrl(state.config);
             return multiPreviewUrl(target, state.config);
           })()}
+          initialResourceId={detailDrawerResourceFocus?.resourceId || null}
+          initialResourceDetailTab={detailDrawerResourceFocus?.detailTab || null}
           branchStatus={(() => {
             if (state.status !== 'ok' || !detailDrawerBranchId) return undefined;
             const target = state.branches.find((b) => b.id === detailDrawerBranchId);
             return target?.status;
           })()}
-          onClose={() => setDetailDrawerBranchId(null)}
+          onClose={() => {
+            setDetailDrawerBranchId(null);
+            setDetailDrawerResourceFocus(null);
+          }}
           onToast={setToast}
           onActionComplete={() => void refresh()}
         />
@@ -4290,6 +4308,7 @@ function BranchCard({
   // 里已有的服务，补不回缺失的 profile（正是本次 openvisual 漂移的病根）。
   onDeploy,
   onDetail,
+  onResourcePanel,
   onPull,
   onStop,
   onForceRebuild,
@@ -4326,6 +4345,7 @@ function BranchCard({
   onRelease: () => void;
   onDeploy: () => void;
   onDetail: () => void;
+  onResourcePanel?: (resource: BranchResource) => void;
   onPull: () => void;
   onStop: () => void;
   onForceRebuild: () => void;
@@ -4429,7 +4449,7 @@ function BranchCard({
     setCommitHistoryState({ status: 'loading', commits: [] });
     try {
       const result = await apiRequest<{ commits?: BranchCommitSummary[] }>(
-        `/api/branches/${encodeURIComponent(branch.id)}/git-log?count=8`,
+        `/api/branches/${encodeURIComponent(branch.id)}/git-log?count=6`,
       );
       setCommitHistoryState({ status: 'ok', commits: result.commits || [] });
     } catch (err) {
@@ -4458,7 +4478,7 @@ function BranchCard({
   };
   const commitHistoryPanel = commitMenuOpen ? (
     <div
-      className="mt-2 rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2 shadow-lg"
+      className="absolute bottom-8 left-0 z-[140] w-[min(360px,calc(100vw-48px))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2 shadow-2xl"
       role="menu"
       aria-label={`${branch.branch} 最近提交`}
       onClick={(event) => event.stopPropagation()}
@@ -4474,20 +4494,22 @@ function BranchCard({
         <div className="px-2 py-3 text-xs leading-5 text-destructive">{commitHistoryState.message || '读取失败'}</div>
       ) : null}
       {commitHistoryState.status === 'ok' && commitHistoryState.commits.length === 0 ? (
-        <div className="px-2 py-3 text-xs text-muted-foreground">暂无提交历史。</div>
+        <div className="rounded-md border border-dashed border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 px-3 py-3 text-xs leading-5 text-muted-foreground">
+          这个分支还没有可展示的提交历史。
+        </div>
       ) : null}
       {commitHistoryState.status === 'ok' && commitHistoryState.commits.length > 0 ? (
-        <div className="max-h-72 overflow-y-auto">
+        <div className="max-h-56 overflow-y-auto pr-1">
           {commitHistoryState.commits.map((commit, index) => (
             <div
               key={`${commit.hash}-${index}`}
-              className="grid grid-cols-[56px_minmax(0,1fr)] gap-2 rounded-md px-2 py-2 text-xs hover:bg-muted/35"
+              className="grid grid-cols-[54px_minmax(0,1fr)] gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-muted/35"
               role="menuitem"
               title={`${commit.hash} ${commit.subject}`}
             >
               <span className="font-mono text-muted-foreground">{commit.hash}</span>
               <span className="min-w-0">
-                <span className="block truncate text-foreground">{commit.subject || '无提交信息'}</span>
+                <span className="block truncate text-foreground">{commit.subject || '未命名提交'}</span>
                 <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
                   {[commit.author, commit.date].filter(Boolean).join(' · ')}
                 </span>
@@ -4768,21 +4790,25 @@ function BranchCard({
           const chipClass = isError ? issueClass : statusClass(chipStatus);
           const chipRailClass = isError ? issueRailClass : statusRailClass(chipStatus);
           return (
-            <span
+            <button
               key={resource.id}
-              className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs ${chipClass} ${
+              type="button"
+              className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs transition-[background-color,border-color,box-shadow] hover:border-primary/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55 ${chipClass} ${
                 resource.access === 'external'
                   ? 'shadow-[0_0_0_1px_rgba(56,189,248,0.28),0_0_16px_-8px_rgba(56,189,248,0.85)] ring-1 ring-sky-400/35'
                   : ''
               }`}
-              title={`${resource.displayName}\n${resource.serviceName}${resource.containerName ? ` · ${resource.containerName}` : ''}\n${resource.access === 'external' ? '公网访问已开启' : '仅内部访问'}`}
+              title={`${resource.displayName}\n${resource.serviceName}${resource.containerName ? ` · ${resource.containerName}` : ''}\n点击打开资源面板`}
+              aria-label={`打开 ${resource.displayName} 资源面板`}
+              onClick={(event) => {
+                event.stopPropagation();
+                onResourcePanel?.(resource);
+              }}
             >
               <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${chipRailClass}`} aria-hidden />
               {chipDisplay.icon ? <ResourceIcon resource={resource} className="h-3.5 w-3.5 shrink-0" /> : null}
-              {chipDisplay.name ? <span className="max-w-[92px] truncate font-semibold">{resourceChipName(resource)}</span> : null}
               {chipDisplay.port ? <span className="font-mono text-muted-foreground">:{resource.port}</span> : null}
-              {resourceAccessIcon(resource)}
-            </span>
+            </button>
           );
         }) : (
           // 没有 port 时显示概览(只有当至少有 service 才显示,否则啥都不显示)
@@ -5003,7 +5029,7 @@ function BranchCard({
           }
         }}
       >
-        <div className="min-w-0 pr-2 text-muted-foreground">
+        <div className="relative min-w-0 pr-2 text-muted-foreground">
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex min-w-[54px] max-w-[94px] shrink-0 flex-col items-center gap-1" title={builderTitle}>
             <div className={`cds-actor-orbit ${actorOrbitVisible ? `cds-actor-orbit--active cds-actor-orbit--${actorOrbitTone}` : ''}`}>
@@ -5045,9 +5071,13 @@ function BranchCard({
                 {footerSha}
               </span>
             ) : null}
-            <span className="min-w-0 flex-1 truncate text-sm" title={footerSubject}>
-              {footerSubject}
-            </span>
+            {footerSubject ? (
+              <span className="min-w-0 flex-1 truncate text-sm" title={footerSubject}>
+                {footerSubject}
+              </span>
+            ) : (
+              <span className="min-w-0 flex-1" aria-hidden />
+            )}
             <button
               type="button"
               className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
