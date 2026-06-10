@@ -22,7 +22,8 @@ import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
 import { combinedOutput } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
-import { detectStack } from '../services/stack-detector.js';
+import { detectStack, type DatabaseInitRecommendation, type StackDetection } from '../services/stack-detector.js';
+import { buildInfraDataExec, detectInfraDataKind, maskSecretValues, runDockerExec } from './infra-data.js';
 import { getInfraCatalogPublic } from '../services/infra-catalog.js';
 import { assertProjectAccess } from './projects.js';
 import { CheckRunRunner } from '../services/check-run-runner.js';
@@ -2581,6 +2582,232 @@ export function createBranchRouter(deps: RouterDeps): Router {
       masked[k] = SENSITIVE.test(k) ? '***' : v;
     }
     return masked;
+  }
+
+  function isSqlInitInfra(service: InfraService): boolean {
+    const kind = detectInfraDataKind(service.dockerImage);
+    return kind === 'postgres' || kind === 'mysql';
+  }
+
+  function composeDatabaseInitCommand(detection: StackDetection, init: DatabaseInitRecommendation): string {
+    const command = (init.command || '').trim();
+    const install = (detection.installCommand || '').trim();
+    if (!command || !install) return command;
+    if (command.includes(install)) return command;
+    return `${install} && ${command}`;
+  }
+
+  async function runDatabaseSqlInit(params: {
+    entry: BranchEntry;
+    init: DatabaseInitRecommendation;
+    scanDir: string;
+    projectId: string;
+    logEvent: (ev: OperationLogEvent) => void;
+  }): Promise<void> {
+    const { entry, init, scanDir, projectId, logEvent } = params;
+    const file = init.files.find((f) => f === 'schema.sql' || f === 'init.sql') || init.files[0];
+    if (!file) throw new Error('未找到 SQL 初始化文件');
+    const sqlPath = path.resolve(scanDir, file);
+    const normalizedScanDir = path.resolve(scanDir);
+    if (!sqlPath.startsWith(`${normalizedScanDir}${path.sep}`) && sqlPath !== normalizedScanDir) {
+      throw new Error(`SQL 初始化文件路径非法: ${file}`);
+    }
+    const sql = fs.readFileSync(sqlPath, 'utf-8');
+    const infra = stateService.getInfraServicesForProject(projectId)
+      .filter((svc) => svc.status === 'running' && isSqlInitInfra(svc))
+      .sort((a, b) => a.id.localeCompare(b.id))[0];
+    if (!infra) {
+      throw new Error('检测到 SQL 初始化脚本，但没有已运行的 PostgreSQL/MySQL/MariaDB 服务可执行。');
+    }
+    logEvent({
+      step: `database-init-sql-${infra.id}`,
+      status: 'running',
+      title: `正在执行 ${file} 到 ${infra.name || infra.id}`,
+      detail: { infraId: infra.id, file, branchId: entry.id },
+      timestamp: new Date().toISOString(),
+    });
+    const plan = buildInfraDataExec(infra, 'init-sql', sql);
+    const result = await runDockerExec(plan.argv, plan.stdin, 120_000);
+    const output = maskSecretValues([result.stdout, result.stderr].filter(Boolean).join('\n'), plan.secretValues);
+    if (result.code !== 0) {
+      throw new Error(output || `${file} 执行失败，exit code ${result.code}`);
+    }
+    logEvent({
+      step: `database-init-sql-${infra.id}`,
+      status: 'done',
+      title: `初始化完成：${file}`,
+      log: output.trim() || undefined,
+      detail: { infraId: infra.id, file, truncated: result.truncated },
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  async function runDatabaseInitializationForDeploy(params: {
+    entry: BranchEntry;
+    profiles: BuildProfile[];
+    requestId?: string;
+    operationId?: string;
+    actor?: string;
+    trigger?: string;
+    assertCurrent?: (step: string) => void;
+    logEvent: (ev: OperationLogEvent) => void;
+  }): Promise<void> {
+    const { entry, profiles, requestId, operationId, actor, trigger, assertCurrent, logEvent } = params;
+    if (profiles.length === 0) return;
+    const projectId = entry.projectId || 'default';
+    const customEnv = getMergedEnv(projectId, entry.id);
+    const firstEffective = resolveEffectiveProfile(profiles[0], entry);
+    const scanTargets: Array<{ profile: BuildProfile; scanDir: string; label: string; root: boolean }> = profiles.map((profile) => {
+      const effective = resolveEffectiveProfile(profile, entry);
+      return {
+        profile: effective,
+        scanDir: path.resolve(entry.worktreePath, effective.workDir || '.'),
+        label: effective.name || effective.id,
+        root: false,
+      };
+    });
+    const rootDir = path.resolve(entry.worktreePath);
+    if (!scanTargets.some((target) => target.scanDir === rootDir)) {
+      scanTargets.push({
+        profile: { ...firstEffective, workDir: '.', containerWorkDir: firstEffective.containerWorkDir || '/app' },
+        scanDir: rootDir,
+        label: '仓库根目录',
+        root: true,
+      });
+    }
+
+    const seen = new Set<string>();
+    let executed = 0;
+    let skipped = 0;
+    logEvent({
+      step: 'database-init',
+      status: 'running',
+      title: '数据库准备中',
+      detail: { scanTargets: scanTargets.map((target) => ({ label: target.label, root: target.root })) },
+      timestamp: new Date().toISOString(),
+    });
+
+    for (const target of scanTargets) {
+      assertCurrent?.(`database-init scan ${target.label}`);
+      let detection: StackDetection;
+      try {
+        detection = detectStack(target.scanDir);
+      } catch (err) {
+        skipped += 1;
+        logEvent({
+          step: `database-init-scan-${target.label}`,
+          status: 'warning',
+          title: `${target.label} 初始化扫描失败`,
+          log: (err as Error).message,
+          timestamp: new Date().toISOString(),
+        });
+        continue;
+      }
+      const init = detection.databaseInit;
+      if (!init) continue;
+      const key = `${target.scanDir}:${init.kind}:${init.command || ''}:${init.files.join('|')}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (!init.autoExecutable) {
+        skipped += 1;
+        logEvent({
+          step: `database-init-${init.kind}-${target.label}`,
+          status: 'info',
+          title: `检测到 ${init.label}，需要手动确认后执行`,
+          log: init.summary,
+          timestamp: new Date().toISOString(),
+        });
+        continue;
+      }
+
+      if (init.kind === 'sql') {
+        try {
+          await runDatabaseSqlInit({ entry, init, scanDir: target.scanDir, projectId, logEvent });
+        } catch (err) {
+          logEvent({
+            step: `database-init-sql-${target.label}`,
+            status: 'error',
+            title: '初始化失败，查看日志',
+            log: (err as Error).message,
+            detail: { files: init.files, label: target.label },
+            timestamp: new Date().toISOString(),
+          });
+          throw err;
+        }
+        executed += 1;
+        continue;
+      }
+
+      const command = composeDatabaseInitCommand(detection, init);
+      if (!command) {
+        skipped += 1;
+        continue;
+      }
+      const step = `database-init-${target.profile.id}-${init.kind}`;
+      logEvent({
+        step,
+        status: 'running',
+        title: `正在执行迁移：${init.label}`,
+        log: command,
+        detail: { profileId: target.profile.id, files: init.files, signals: init.signals },
+        timestamp: new Date().toISOString(),
+      });
+      let result;
+      try {
+        result = await containerService.runProfileCommand(
+          entry,
+          target.profile,
+          command,
+          undefined,
+          customEnv,
+          { requestId, operationId, actor, trigger, assertCurrent, timeoutMs: target.profile.buildTimeout ?? 600_000 },
+        );
+      } catch (err) {
+        logEvent({
+          step,
+          status: 'error',
+          title: '初始化失败，查看日志',
+          log: (err as Error).message,
+          detail: { profileId: target.profile.id, files: init.files },
+          timestamp: new Date().toISOString(),
+        });
+        throw err;
+      }
+      const output = maskSecretsText(combinedOutput(result), { mask: true });
+      if (result.exitCode !== 0) {
+        const message = output || `${init.label} 初始化失败，exit code ${result.exitCode}`;
+        logEvent({
+          step,
+          status: 'error',
+          title: '初始化失败，查看日志',
+          log: message,
+          detail: { profileId: target.profile.id, files: init.files },
+          timestamp: new Date().toISOString(),
+        });
+        throw new Error(message);
+      }
+      logEvent({
+        step,
+        status: 'done',
+        title: `初始化完成：${init.label}`,
+        log: output.trim() || undefined,
+        detail: { profileId: target.profile.id, files: init.files },
+        timestamp: new Date().toISOString(),
+      });
+      executed += 1;
+    }
+
+    logEvent({
+      step: 'database-init',
+      status: 'done',
+      title: executed > 0
+        ? `数据库初始化完成：已执行 ${executed} 个任务`
+        : skipped > 0
+          ? '数据库初始化：已识别手动兜底项，未自动执行'
+          : '数据库初始化：未发现需要执行的任务',
+      detail: { executed, skipped },
+      timestamp: new Date().toISOString(),
+    });
   }
 
   // ── Helper: SSE setup ──
@@ -8598,6 +8825,78 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  router.post('/branches/:id/database-init/run', async (req, res) => {
+    const { id } = req.params;
+    const entry = stateService.getBranch(id);
+    if (!entry) {
+      res.status(404).json({ error: `分支 "${id}" 不存在` });
+      return;
+    }
+    {
+      const m = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (m) { res.status(m.status).json(m.body); return; }
+    }
+    const rawCommand = typeof req.body?.command === 'string' ? req.body.command.trim() : '';
+    if (!rawCommand) {
+      res.status(400).json({ error: 'migration_command_required', message: '迁移命令不能为空。' });
+      return;
+    }
+    if (rawCommand.length > 2000) {
+      res.status(400).json({ error: 'migration_command_too_long', message: '迁移命令过长，请控制在 2000 字符以内。' });
+      return;
+    }
+
+    const profiles = stateService.getBuildProfilesForProject(entry.projectId || 'default');
+    const requestedProfileId = typeof req.body?.profileId === 'string' ? req.body.profileId.trim() : '';
+    const baseProfile = (requestedProfileId
+      ? profiles.find((profile) => profile.id === requestedProfileId)
+      : profiles[0]) || null;
+    if (!baseProfile) {
+      res.status(400).json({ error: 'profile_not_found', message: requestedProfileId ? `构建配置不存在: ${requestedProfileId}` : '尚未配置构建配置。' });
+      return;
+    }
+
+    const branchOperationLease = beginBranchOperation(req, res, entry, {
+      kind: 'database-init',
+      profileId: baseProfile.id,
+      source: 'api.database-init-run',
+      reason: '手动执行数据库初始化/迁移命令',
+      sse: false,
+    });
+    if (branchOperationCoordinator && !branchOperationLease) return;
+
+    const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
+    try {
+      const profile = resolveEffectiveProfile(baseProfile, entry);
+      const result = await containerService.runProfileCommand(
+        entry,
+        profile,
+        rawCommand,
+        undefined,
+        getMergedEnv(entry.projectId || 'default', entry.id),
+        {
+          requestId,
+          operationId: branchOperationLease?.operationId || undefined,
+          actor: resolveActorFromRequest(req),
+          trigger: triggerFromRequest(req),
+          timeoutMs: profile.buildTimeout ?? 600_000,
+        },
+      );
+      const output = maskSecretsText(combinedOutput(result), { mask: true });
+      completeBranchOperation(branchOperationLease, result.exitCode === 0 ? 'completed' : 'failed');
+      res.status(result.exitCode === 0 ? 200 : 500).json({
+        ok: result.exitCode === 0,
+        profileId: profile.id,
+        command: rawCommand,
+        exitCode: result.exitCode,
+        output,
+      });
+    } catch (err) {
+      completeBranchOperation(branchOperationLease, 'failed');
+      res.status(500).json({ ok: false, error: (err as Error).message });
+    }
+  });
+
   // ── Build & Run (SSE stream) ──
 
   router.post('/branches/:id/deploy', async (req, res) => {
@@ -8952,6 +9251,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
           });
         }
       }
+
+      await runDatabaseInitializationForDeploy({
+        entry,
+        profiles,
+        requestId,
+        operationId: branchOperationLease?.operationId || undefined,
+        actor: resolveActorFromRequest(req),
+        trigger: triggerFromRequest(req),
+        assertCurrent: (step) => assertBranchOperationCurrent(branchOperationLease, step),
+        logEvent,
+      });
 
       // ── Compute startup layers (topological sort by dependsOn) ──
       // P4 Part 17 (G2 fix): scope infra by the branch's project so the

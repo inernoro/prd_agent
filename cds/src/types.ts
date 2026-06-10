@@ -685,6 +685,93 @@ export interface OperationLog {
   events: OperationLogEvent[];
 }
 
+export interface ReleaseArtifact {
+  type: 'branch-preview' | 'image' | 'static' | 'generic';
+  commitSha: string;
+  branchId?: string;
+  branchName?: string;
+  previewUrl?: string;
+  imageDigest?: string;
+  artifactPath?: string;
+}
+
+export interface ReleaseTarget {
+  id: string;
+  projectId: string;
+  name: string;
+  type: 'ssh' | 'image-registry' | 'static-site' | 'webhook' | 'gitops' | 'k8s';
+  createdAt: string;
+  updatedAt?: string;
+  createdBy?: string;
+  isEnabled: boolean;
+  ssh?: {
+    host: string;
+    port: number;
+    user: string;
+    /** RemoteHost.id that owns the encrypted SSH private key. */
+    privateKeyRef: string;
+    appPath: string;
+    deployCommand: string;
+    rollbackCommand?: string;
+    healthcheckUrl: string;
+  };
+}
+
+export interface ReleasePlanStep {
+  id: string;
+  title: string;
+  kind: 'ssh' | 'healthcheck' | 'record' | 'manual';
+  command?: string;
+}
+
+export interface ReleasePlan {
+  id: string;
+  projectId: string;
+  name: string;
+  template: 'ssh-script' | 'docker-compose-remote' | 'image-push' | 'webhook';
+  targetType: ReleaseTarget['type'];
+  steps: ReleasePlanStep[];
+  failureStrategy: 'stop' | 'rollback';
+  rollbackStrategy: 'command' | 'previous-release' | 'none';
+  createdAt: string;
+}
+
+export interface ReleaseLogEntry {
+  seq: number;
+  at: string;
+  level: 'info' | 'warn' | 'error';
+  message: string;
+  phase?: string;
+}
+
+export interface ReleaseRun {
+  releaseId: string;
+  projectId: string;
+  branchId: string;
+  commitSha: string;
+  artifact: ReleaseArtifact;
+  targetId: string;
+  planId: string;
+  status:
+    | 'queued'
+    | 'prechecking'
+    | 'running'
+    | 'healthchecking'
+    | 'success'
+    | 'failed'
+    | 'rollback_running'
+    | 'rollback_success'
+    | 'rollback_failed';
+  startedAt: string;
+  finishedAt?: string;
+  operator?: string;
+  logs: ReleaseLogEntry[];
+  seq: number;
+  previousReleaseId?: string;
+  rollbackOf?: string;
+  errorMessage?: string;
+}
+
 /** Persisted state */
 /**
  * Scoped custom environment variable store.
@@ -713,6 +800,12 @@ export interface CdsState {
   nextPortIndex: number;
   /** Per-branch operation logs */
   logs: Record<string, OperationLog[]>;
+  /** Release targets keyed by id. */
+  releaseTargets?: Record<string, ReleaseTarget>;
+  /** Release plan templates keyed by id. */
+  releasePlans?: Record<string, ReleasePlan>;
+  /** Immutable release run records keyed by releaseId. */
+  releaseRuns?: Record<string, ReleaseRun>;
   /** Per-branch append-only container log archives owned by CDS. */
   containerLogArchives?: Record<string, ContainerLogArchiveEntry[]>;
   /**

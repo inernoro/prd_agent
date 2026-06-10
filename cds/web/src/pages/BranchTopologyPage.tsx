@@ -885,6 +885,7 @@ export function BranchTopologyPage(): JSX.Element {
               <NodeDetails
                 selectedProfile={selectedProfile}
                 selectedInfra={selectedInfra}
+                profiles={state.profiles}
                 branches={state.branches}
                 activeBranch={activeBranch}
                 infra={state.infra}
@@ -1472,6 +1473,7 @@ function lastLines(value: string, count = 18): string {
 function NodeDetails({
   selectedProfile,
   selectedInfra,
+  profiles,
   branches,
   activeBranch,
   infra,
@@ -1483,6 +1485,7 @@ function NodeDetails({
 }: {
   selectedProfile: BuildProfile | null;
   selectedInfra: InfraService | null;
+  profiles: BuildProfile[];
   branches: BranchSummary[];
   activeBranch: BranchSummary | null;
   infra: InfraService[];
@@ -1538,7 +1541,15 @@ function NodeDetails({
   }
 
   if (selectedInfra) {
-    return <InfraDetails selectedInfra={selectedInfra} projectId={projectId} onToast={onToast} />;
+    return (
+      <InfraDetails
+        selectedInfra={selectedInfra}
+        projectId={projectId}
+        branchId={activeBranch?.id}
+        profiles={profiles.map((profile) => ({ id: profile.id, name: profile.name }))}
+        onToast={onToast}
+      />
+    );
   }
 
   const profile = selectedProfile!;
@@ -1773,10 +1784,14 @@ function NodeDetails({
 function InfraDetails({
   selectedInfra,
   projectId,
+  branchId,
+  profiles,
   onToast,
 }: {
   selectedInfra: InfraService;
   projectId: string;
+  branchId?: string;
+  profiles: Array<{ id: string; name: string }>;
   onToast: (message: string) => void;
 }): JSX.Element {
   const [logsState, setLogsState] = useState<
@@ -1845,6 +1860,8 @@ function InfraDetails({
       <InfraDataPanel
         infraId={selectedInfra.id}
         projectId={projectId}
+        branchId={branchId}
+        profiles={profiles}
         image={selectedInfra.dockerImage}
         running={selectedInfra.status === 'running'}
         initSql={selectedInfra.initSql}

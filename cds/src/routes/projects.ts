@@ -27,7 +27,7 @@
 import { Router } from 'express';
 import { randomBytes, createHash } from 'node:crypto';
 import type { StateService } from '../services/state.js';
-import { detectStack, detectModules, type StackDetection } from '../services/stack-detector.js';
+import { detectStack, detectModules, detectDatabaseInitialization, type StackDetection } from '../services/stack-detector.js';
 import { discoverComposeFiles, parseCdsCompose } from '../services/compose-parser.js';
 import { deriveEnvMetaForVars } from '../services/env-classifier.js';
 import { ProjectFilesService, ProjectFileError, type ProjectFilePayload } from '../services/project-files.js';
@@ -1718,10 +1718,21 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
           stack: d.stack,
           confidence: typeof d.confidence === 'number' ? d.confidence : 0,
           signals: Array.isArray(d.signals) ? d.signals.slice(0, 6) : [],
+          databaseInit: d.databaseInit || null,
+          databaseInitCandidates: d.databaseInitCandidates || [],
           manualSetupRequired: Boolean(d.manualSetupRequired),
         };
       });
-      res.json({ services, moduleCount: modules.length });
+      const databaseInitCandidates = [
+        ...detectDatabaseInitialization(dir),
+        ...modules.flatMap((m) => m.detection.databaseInitCandidates || []),
+      ];
+      res.json({
+        services,
+        moduleCount: modules.length,
+        databaseInit: databaseInitCandidates[0] || null,
+        databaseInitCandidates,
+      });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     } finally {
