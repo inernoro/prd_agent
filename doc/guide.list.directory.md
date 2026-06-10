@@ -1016,3 +1016,5 @@
 | 2026-03-11 | 重排 | `index.yml` + `guide.list.directory.md` | 按阅读优先级重新排序文档索引 |
 | 2026-03-10 | 新增 | `index.yml` | 文档元数据索引 |
 | 2026-03-10 | 新增 | `guide.list.directory.md` | 文档索引目录页 |
+| 2026-06-10 | 新增 | `debt.cds-nginx-loading-pages` | CDS loading pages 债务台账 |
+| 2026-06-10 | 新增 | `design.cds-skill-version-update` | CDS 技能版本与更新架构 |
