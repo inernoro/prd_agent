@@ -378,6 +378,9 @@
 - [海鲜市场（配置市场）使用教程](guide.marketplace) `guide.marketplace`
   > 配置浏览、筛选、Fork 与发布的完整流程
 
+- [视觉验收技能跨仓库使用教程](guide.visual-acceptance-skill) `guide.visual-acceptance-skill`
+  > 用个人 AgentApiKey + 海鲜市场安装、更新 `create-visual-test-to-kb`，避免借用个人 accesskey
+
 - [工作流画布操作手册](guide.workflow-canvas) `guide.workflow-canvas`
   > 工作流画布的详细操作参考
 
