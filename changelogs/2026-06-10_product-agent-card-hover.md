@@ -14,3 +14,4 @@
 | fix | prd-admin | 富文本工具栏根治：新增 knowledge-rich 作用域 CSS（Tailwind preflight 重置了 h2/blockquote/ul/pre 默认样式导致 formatBlock 生效但视觉无变化），编辑器与片段渲染同 class 所见即所得 |
 | fix | prd-admin | 知识格式纠错：contentType 误标 html 但正文无标签的按 Markdown 渲染与编辑（保存自动纠正类型），详情页新增「格式」手动切换（Markdown/富文本）；md 预览/编辑宽度与 HTML 统一为 1400 |
 | feat | prd-api | UpdateEntry 支持可选 contentType（格式纠错 Markdown 与 HTML 互转） |
+| fix | prd-admin | md 格式显示 HTML 裸标签乱码根治：新增 HTML↔Markdown 轻量互转；格式切换真正转换正文、markdown 模式遇 HTML 正文兜底按 HTML 渲染、进编辑自动 HTML→干净 Markdown |

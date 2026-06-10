@@ -25,6 +25,7 @@ import { listVersions } from '@/services/real/productAgent';
 import type { ProductVersion } from '../types';
 import type { LucideIcon } from 'lucide-react';
 import { fileKindOf, fmtSize, fmtTime, isEditableText, isHtml, isFullHtmlDocument, contentLooksHtml } from './shared';
+import { htmlToMarkdown, markdownToHtml } from './htmlMarkdown';
 import './knowledge.css';
 import { VersionLinkDialog } from './VersionLinkDialog';
 import { RichKnowledgeEditor, FileKindBadge } from './RichKnowledgeEditor';
@@ -108,7 +109,12 @@ export function KnowledgeDetailPage() {
     } else toast.error('重命名失败', res.error?.message);
   };
 
-  const startEdit = () => { setDraft(content ?? ''); setEditing(true); };
+  // 进入编辑：markdown 模式但正文是 HTML（历史混存）→ 转成干净 Markdown 再编辑
+  const startEdit = () => {
+    const raw = content ?? '';
+    setDraft(effectiveMarkdown && contentLooksHtml(raw) ? htmlToMarkdown(raw) : raw);
+    setEditing(true);
+  };
 
   const handleSave = async (asMarkdown: boolean) => {
     setSaving(true);
@@ -119,11 +125,18 @@ export function KnowledgeDetailPage() {
     else toast.error('保存失败', res.error?.message);
   };
 
-  /** 格式手动纠错：Markdown ↔ 富文本 HTML（不改正文，只改渲染/编辑方式） */
+  /** 格式切换：把正文真正在 Markdown ↔ 富文本 HTML 间转换，并持久化（不是只翻标记） */
   const handleSetFormat = async (ct: string) => {
-    const res = await updateDocumentEntry(entryId, { contentType: ct });
-    if (res.success) { setEntry(res.data); toast.success(ct.includes('markdown') ? '已按 Markdown 处理' : '已按富文本处理'); }
-    else toast.error('切换格式失败', res.error?.message);
+    const raw = content ?? '';
+    let next = raw;
+    if (ct.includes('markdown') && contentLooksHtml(raw)) next = htmlToMarkdown(raw);
+    else if (ct === 'text/html' && raw && !contentLooksHtml(raw)) next = markdownToHtml(raw);
+    const res = await updateDocumentContent(entryId, next, ct);
+    if (res.success) {
+      setContent(next);
+      setEntry((e) => (e ? { ...e, contentType: ct } : e));
+      toast.success(ct.includes('markdown') ? '已转为 Markdown' : '已转为富文本');
+    } else toast.error('切换格式失败', res.error?.message);
   };
 
   const handleRenameTitle = async () => {
@@ -359,11 +372,16 @@ function DocBody({ entry, content, fileUrl, html, markdown, codeMode, editable, 
 }) {
   const hasText = content != null && content.trim() !== '';
 
-  // markdown（含 contentType 误标 html 但正文无标签的纠错场景）→ 阅读排版
+  // markdown（含 contentType 误标 html 但正文无标签的纠错场景）→ 阅读排版。
+  // 若被标为 markdown 但正文其实是 HTML（历史混存），按 HTML 渲染避免吐裸标签；编辑时会转成干净 md。
   if (hasText && markdown) {
     return (
       <div className="rounded-xl border border-white/10 bg-white/[0.02] px-7 py-6">
-        <MarkdownContent content={content!} variant="reading" />
+        {contentLooksHtml(content) ? (
+          <div className="knowledge-rich text-[14.5px]" style={{ lineHeight: 1.85 }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(content!) }} />
+        ) : (
+          <MarkdownContent content={content!} variant="reading" />
+        )}
       </div>
     );
   }
