@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
-import { BookOpen, Clipboard, ExternalLink, PackageCheck, Search, Smartphone, Terminal } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { BookOpen, ChevronRight, Clipboard, ExternalLink, PackageCheck, Search, Smartphone, Terminal, X } from 'lucide-react';
 import { toast } from '@/lib/toast';
 
 interface PdaGuideSection {
@@ -122,7 +123,47 @@ function sectionText(section: PdaGuideSection): string {
   return `${section.title}\n${section.summary}\n${section.items.map((item, index) => `${index + 1}. ${item}`).join('\n')}`;
 }
 
-export function FrontEndPdaGuide() {
+export function FrontEndPdaRailCard({ onOpen }: { onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="fea-rail-card w-full text-left rounded-2xl border border-amber-400/25 bg-gradient-to-br from-amber-500/[0.16] to-orange-500/[0.05] p-4 hover:border-amber-300/40 hover:shadow-[0_8px_32px_rgba(245,158,11,0.14)] relative overflow-hidden"
+    >
+      <div
+        className="absolute -right-6 -top-6 w-24 h-24 rounded-full bg-amber-400/10 fea-hero-orb-alt pointer-events-none"
+        aria-hidden
+      />
+      <div className="relative flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-9 h-9 rounded-xl border border-amber-400/35 bg-amber-500/20 flex items-center justify-center shrink-0">
+            <Smartphone className="w-4 h-4 text-amber-100" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-semibold text-white">PDA 项目手册</h3>
+              <span className="px-1.5 py-0.5 rounded text-[9px] font-medium border border-amber-300/30 bg-amber-400/15 text-amber-100/90">
+                重点
+              </span>
+            </div>
+            <p className="text-[11px] text-amber-100/55 mt-0.5">uniapp-pda · 真机调试 · 发布排障</p>
+          </div>
+        </div>
+        <ChevronRight className="w-4 h-4 text-amber-200/50 shrink-0 mt-1" />
+      </div>
+      <div className="relative mt-3 grid grid-cols-2 gap-1.5">
+        {PDA_LINKS.slice(0, 2).map((link) => (
+          <span key={link.url} className="text-[10px] text-white/45 truncate">
+            {link.label}
+          </span>
+        ))}
+      </div>
+      <p className="relative mt-2 text-[10px] text-amber-200/50">点击打开完整手册、快捷链接与 AI 排障模板</p>
+    </button>
+  );
+}
+
+export function FrontEndPdaGuideModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [query, setQuery] = useState('');
 
   const filteredSections = useMemo(() => {
@@ -133,27 +174,60 @@ export function FrontEndPdaGuide() {
     );
   }, [query]);
 
-  const copyText = async (text: string, message: string) => {
+  const copyText = useCallback(async (text: string, message: string) => {
     await navigator.clipboard.writeText(text);
     toast.success(message);
-  };
+  }, []);
 
-  return (
-    <section className="shrink-0 rounded-2xl border border-white/10 bg-white/[0.035] overflow-hidden">
-      <div className="px-4 py-3 border-b border-white/10 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-        <div className="min-w-0 flex items-center gap-2">
-          <div className="w-8 h-8 rounded-xl border border-amber-400/25 bg-amber-500/10 flex items-center justify-center">
-            <Smartphone className="w-4 h-4 text-amber-200" />
+  useEffect(() => {
+    if (!open) {
+      setQuery('');
+      return;
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  const modal = (
+    <div
+      className="fea-modal-backdrop fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/65 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="PDA 项目手册"
+        className="fea-modal-panel w-full max-w-5xl rounded-2xl border border-white/10 bg-[#0b0d12] shadow-2xl flex flex-col"
+        style={{ height: '90vh', maxHeight: '90vh' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="shrink-0 px-5 py-4 border-b border-white/10 flex items-center justify-between gap-3">
+          <div className="min-w-0 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl border border-amber-400/25 bg-amber-500/10 flex items-center justify-center">
+              <Smartphone className="w-4 h-4 text-amber-200" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold text-white">PDA 项目手册</h2>
+              <p className="text-[11px] text-white/45">项目说明、开发调试、现场操作、构建发布和 AI 排障模板</p>
+            </div>
           </div>
-          <div className="min-w-0">
-            <h2 className="text-sm font-medium text-white">PDA 项目手册</h2>
-            <p className="text-[11px] text-white/45 truncate">
-              项目说明、开发调试、现场操作、构建发布和 AI 排障模板。
-            </p>
-          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-8 w-8 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 inline-flex items-center justify-center text-white/60"
+            aria-label="关闭"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
-        <div className="flex flex-col gap-2 md:flex-row md:items-center">
-          <div className="relative min-w-0 w-full md:w-72">
+
+        <div className="shrink-0 px-5 py-3 border-b border-white/10 flex flex-col gap-2 md:flex-row md:items-center">
+          <div className="relative flex-1 min-w-0">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/35" />
             <input
               value={query}
@@ -179,63 +253,67 @@ export function FrontEndPdaGuide() {
             复制排障提示词
           </button>
         </div>
-      </div>
 
-      <div className="p-4 space-y-3">
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2">
-          {PDA_LINKS.map((link) => (
-            <a
-              key={link.url}
-              href={link.url}
-              target="_blank"
-              rel="noreferrer"
-              className="rounded-xl border border-white/10 bg-black/15 px-3 py-2 text-xs text-sky-200/85 hover:bg-white/[0.06] inline-flex items-center justify-between gap-2"
-            >
-              <span className="truncate">{link.label}</span>
-              <ExternalLink className="w-3.5 h-3.5 shrink-0" />
-            </a>
-          ))}
-        </div>
-
-        {filteredSections.length === 0 ? (
-          <div className="rounded-xl border border-white/10 bg-black/15 px-4 py-5 text-sm text-white/45">
-            没有匹配的 PDA 手册内容。换“发布、激活、离线、扫码、WebView、导出 DB”等关键词试试。
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-            {filteredSections.map((section) => (
-              <article key={section.key} className="rounded-xl border border-white/10 bg-black/15 p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <h3 className="text-sm font-medium text-white flex items-center gap-2">
-                      <BookOpen className="w-3.5 h-3.5 text-amber-200/80" />
-                      {section.title}
-                    </h3>
-                    <p className="mt-1 text-xs leading-5 text-white/50">{section.summary}</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => copyText(sectionText(section), `已复制 ${section.title}`)}
-                    className="h-8 shrink-0 rounded-lg border border-white/10 bg-white/5 px-2.5 text-[11px] text-white/65 hover:bg-white/10 inline-flex items-center gap-1.5"
-                  >
-                    <Clipboard className="w-3.5 h-3.5" />
-                    复制
-                  </button>
-                </div>
-                <ul className="mt-3 space-y-1.5 text-[11px] leading-5 text-white/55">
-                  {section.items.map((item) => (
-                    <li key={item} className="flex gap-2">
-                      <span className="mt-2 h-1 w-1 rounded-full bg-amber-300/60 shrink-0" />
-                      <span>{item}</span>
-                    </li>
-                  ))}
-                </ul>
-              </article>
+        <div
+          className="flex-1 p-5 space-y-4"
+          style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
+        >
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2">
+            {PDA_LINKS.map((link) => (
+              <a
+                key={link.url}
+                href={link.url}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-xl border border-white/10 bg-black/15 px-3 py-2 text-xs text-sky-200/85 hover:bg-white/[0.06] inline-flex items-center justify-between gap-2 transition-colors duration-200"
+              >
+                <span className="truncate">{link.label}</span>
+                <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+              </a>
             ))}
           </div>
-        )}
-      </div>
-    </section>
-  );
-}
 
+          {filteredSections.length === 0 ? (
+            <div className="rounded-xl border border-white/10 bg-black/15 px-4 py-5 text-sm text-white/45">
+              没有匹配的 PDA 手册内容。换“发布、激活、离线、扫码、WebView、导出 DB”等关键词试试。
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+              {filteredSections.map((section) => (
+                <article key={section.key} className="rounded-xl border border-white/10 bg-black/15 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h3 className="text-sm font-medium text-white flex items-center gap-2">
+                        <BookOpen className="w-3.5 h-3.5 text-amber-200/80" />
+                        {section.title}
+                      </h3>
+                      <p className="mt-1 text-xs leading-5 text-white/50">{section.summary}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => copyText(sectionText(section), `已复制 ${section.title}`)}
+                      className="h-8 shrink-0 rounded-lg border border-white/10 bg-white/5 px-2.5 text-[11px] text-white/65 hover:bg-white/10 inline-flex items-center gap-1.5"
+                    >
+                      <Clipboard className="w-3.5 h-3.5" />
+                      复制
+                    </button>
+                  </div>
+                  <ul className="mt-3 space-y-1.5 text-[11px] leading-5 text-white/55">
+                    {section.items.map((item) => (
+                      <li key={item} className="flex gap-2">
+                        <span className="mt-2 h-1 w-1 rounded-full bg-amber-300/60 shrink-0" />
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </article>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  return createPortal(modal, document.body);
+}

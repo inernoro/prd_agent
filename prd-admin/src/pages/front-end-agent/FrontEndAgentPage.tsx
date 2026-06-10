@@ -14,14 +14,16 @@ import {
 } from 'lucide-react';
 import { connectSse } from '@/lib/useSseStream';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { StreamingText } from '@/components/streaming/StreamingText';
 import { toast } from '@/lib/toast';
 import {
   FRONT_END_AGENT_STREAM_URL,
   type FrontEndAgentRequest,
   type FrontEndAgentTaskType,
 } from '@/services/real/frontEndAgent';
-import { FrontEndPdaGuide } from './FrontEndPdaGuide';
-import { FrontEndProjectTable } from './FrontEndProjectTable';
+import { FrontEndPdaGuideModal, FrontEndPdaRailCard } from './FrontEndPdaGuide';
+import { FrontEndProjectRailCard, FrontEndProjectTableModal } from './FrontEndProjectTable';
+import './front-end-agent.css';
 
 interface TaskDefinition {
   key: FrontEndAgentTaskType;
@@ -105,12 +107,12 @@ function getTaskDefinition(key: FrontEndAgentTaskType): TaskDefinition {
   return TASK_DEFINITIONS.find((t) => t.key === key) ?? TASK_DEFINITIONS[0];
 }
 
-function accentClasses(accent: string): { border: string; bg: string; text: string; soft: string } {
-  const map: Record<string, { border: string; bg: string; text: string; soft: string }> = {
-    emerald: { border: 'border-emerald-400/30', bg: 'bg-emerald-500/10', text: 'text-emerald-200', soft: 'text-emerald-300/70' },
-    sky: { border: 'border-sky-400/30', bg: 'bg-sky-500/10', text: 'text-sky-200', soft: 'text-sky-300/70' },
-    rose: { border: 'border-rose-400/30', bg: 'bg-rose-500/10', text: 'text-rose-200', soft: 'text-rose-300/70' },
-    violet: { border: 'border-violet-400/30', bg: 'bg-violet-500/10', text: 'text-violet-200', soft: 'text-violet-300/70' },
+function accentClasses(accent: string): { border: string; bg: string; text: string; soft: string; glow: string } {
+  const map: Record<string, { border: string; bg: string; text: string; soft: string; glow: string }> = {
+    emerald: { border: 'border-emerald-400/30', bg: 'bg-emerald-500/10', text: 'text-emerald-200', soft: 'text-emerald-300/70', glow: 'shadow-[0_0_24px_rgba(16,185,129,0.15)]' },
+    sky: { border: 'border-sky-400/30', bg: 'bg-sky-500/10', text: 'text-sky-200', soft: 'text-sky-300/70', glow: 'shadow-[0_0_24px_rgba(14,165,233,0.15)]' },
+    rose: { border: 'border-rose-400/30', bg: 'bg-rose-500/10', text: 'text-rose-200', soft: 'text-rose-300/70', glow: 'shadow-[0_0_24px_rgba(244,63,94,0.15)]' },
+    violet: { border: 'border-violet-400/30', bg: 'bg-violet-500/10', text: 'text-violet-200', soft: 'text-violet-300/70', glow: 'shadow-[0_0_24px_rgba(139,92,246,0.15)]' },
   };
   return map[accent] ?? map.emerald;
 }
@@ -130,6 +132,8 @@ export function FrontEndAgentPage() {
   const [thinking, setThinking] = useState('');
   const [output, setOutput] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [projectModalOpen, setProjectModalOpen] = useState(false);
+  const [pdaModalOpen, setPdaModalOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -266,80 +270,89 @@ export function FrontEndAgentPage() {
   const ActiveIcon = activeTask.icon;
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-4 px-6 py-5 overflow-hidden">
-      <header className="shrink-0 flex items-center gap-3">
-        <div className={`w-10 h-10 rounded-xl border flex items-center justify-center ${activeAccent.border} ${activeAccent.bg}`}>
-          <Code2 className={`w-5 h-5 ${activeAccent.text}`} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-semibold text-white truncate">前端搭档智能体</h1>
-            <span className="px-2 py-0.5 rounded-full border border-white/10 bg-white/5 text-[11px] text-white/55">WIP</span>
+    <div className="h-full min-h-0 flex flex-col overflow-hidden relative">
+      <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
+        <div className="fea-hero-orb absolute -left-20 top-8 w-56 h-56 rounded-full bg-sky-500/10 blur-3xl" />
+        <div className="fea-hero-orb-alt absolute right-10 top-0 w-48 h-48 rounded-full bg-amber-500/10 blur-3xl" />
+        <div className="absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-sky-500/[0.06] to-transparent" />
+      </div>
+
+      <header className="relative shrink-0 px-6 pt-5 pb-3 fea-fade-up">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-2xl font-bold tracking-tight fea-title-shimmer">前端搭档智能体</h1>
+              <span className="px-2 py-0.5 rounded-full border border-white/10 bg-white/5 text-[11px] text-white/55">WIP</span>
+            </div>
+            <p className="mt-1.5 text-sm text-white/60">
+              你的前端同事没有离去，只是变成了智能体。
+            </p>
+            <p className="mt-1 text-xs text-white/40">
+              把 API、报错、截图现象和页面需求变成可复制的前端交付方案。
+            </p>
           </div>
-          <p className="text-xs text-white/50 truncate">把 API、报错、截图现象和页面需求变成可复制的前端交付方案。</p>
-        </div>
-        {(phaseMsg || model.name) && (
-          <div className="hidden lg:flex items-center gap-2 text-[11px] text-white/45">
-            {phaseMsg && <span>{phaseMsg}</span>}
-            {model.name && (
-              <span className="font-mono text-white/50">
-                模型：{model.name}{model.platform ? ` · ${model.platform}` : ''}
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-white/40 font-mono">
+            {model.name ? (
+              <span className="px-2.5 py-1 rounded-lg border border-white/10 bg-white/[0.04]">
+                {model.name}{model.platform ? ` · ${model.platform}` : ''}
+              </span>
+            ) : (
+              <span className="text-white/30">等待选择任务并生成</span>
+            )}
+            {phaseMsg && (
+              <span className="px-2.5 py-1 rounded-lg border border-white/10 bg-white/[0.04] text-white/50">
+                {phaseMsg}
               </span>
             )}
           </div>
-        )}
+        </div>
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          {TASK_DEFINITIONS.map((task) => {
+            const Icon = task.icon;
+            const selected = task.key === taskType;
+            const colors = accentClasses(task.accent);
+            return (
+              <button
+                key={task.key}
+                type="button"
+                onClick={() => setTaskType(task.key)}
+                className={`fea-task-pill inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-left ${
+                  selected
+                    ? `${colors.border} ${colors.bg} ${colors.text} ${colors.glow} fea-task-pill-active`
+                    : 'border-white/10 bg-white/[0.03] text-white/60 hover:bg-white/[0.06] hover:text-white/80'
+                }`}
+              >
+                <Icon className={`w-3.5 h-3.5 ${selected ? colors.text : 'text-white/45'}`} />
+                <span className="text-xs font-medium">{task.shortTitle}</span>
+              </button>
+            );
+          })}
+        </div>
       </header>
 
-      <div className="shrink-0 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-        {TASK_DEFINITIONS.map((task) => {
-          const Icon = task.icon;
-          const selected = task.key === taskType;
-          const colors = accentClasses(task.accent);
-          return (
-            <button
-              key={task.key}
-              type="button"
-              onClick={() => setTaskType(task.key)}
-              className={`text-left rounded-2xl border p-4 transition-all ${
-                selected ? `${colors.border} ${colors.bg}` : 'border-white/10 bg-white/[0.035] hover:bg-white/[0.06]'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <Icon className={`w-4 h-4 ${selected ? colors.text : 'text-white/50'}`} />
-                <span className="text-sm font-medium text-white">{task.shortTitle}</span>
-              </div>
-              <p className="mt-2 text-xs leading-5 text-white/55">{task.description}</p>
-            </button>
-          );
-        })}
-      </div>
-
-      <FrontEndProjectTable />
-
-      <FrontEndPdaGuide />
-
-      <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-[420px_minmax(0,1fr)] gap-4">
-        <section className="min-h-0 rounded-2xl border border-white/10 bg-white/[0.035] flex flex-col overflow-hidden">
+      <div className="relative flex-1 min-h-0 px-6 pb-5 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_280px] gap-4">
+        <section className="min-h-0 rounded-2xl border border-white/10 bg-white/[0.035] backdrop-blur-sm flex flex-col overflow-hidden fea-fade-up">
           <div className="shrink-0 px-4 py-3 border-b border-white/10 flex items-center gap-2">
             <ActiveIcon className={`w-4 h-4 ${activeAccent.soft}`} />
             <div className="min-w-0">
               <h2 className="text-sm font-medium text-white truncate">{activeTask.title}</h2>
-              <p className="text-[11px] text-white/45">输入越具体，输出越接近可直接落地。</p>
+              <p className="text-[11px] text-white/45">{activeTask.description}</p>
             </div>
           </div>
 
-          <div className="flex-1 min-h-0 p-4 space-y-4" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
+          <div className="flex-1 min-h-0 p-4 space-y-3" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
             <label className="block">
               <span className="text-xs font-medium text-white/70">需求或问题描述</span>
               <textarea
                 value={requirement}
                 onChange={(e) => setRequirement(e.target.value)}
                 placeholder={activeTask.placeholder}
-                className="mt-2 w-full min-h-[110px] rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white placeholder:text-white/25 outline-none focus:border-white/25"
+                className="mt-2 w-full min-h-[96px] rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white placeholder:text-white/25 outline-none focus:border-white/25 transition-colors duration-200"
               />
             </label>
 
-            <div className="grid grid-cols-1 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="block">
                 <span className="text-xs font-medium text-white/70">目标技术栈</span>
                 <select
@@ -358,7 +371,7 @@ export function FrontEndAgentPage() {
                   value={styleGuidance}
                   onChange={(e) => setStyleGuidance(e.target.value)}
                   className="mt-2 w-full h-9 rounded-xl border border-white/10 bg-black/20 px-3 text-sm text-white placeholder:text-white/25 outline-none focus:border-white/25"
-                  placeholder="例如：使用 Tailwind、不能新增依赖、保持当前设计系统"
+                  placeholder="例如：使用 Tailwind、不能新增依赖"
                 />
               </label>
             </div>
@@ -369,7 +382,7 @@ export function FrontEndAgentPage() {
                 value={primaryContextValue}
                 onChange={(e) => setPrimaryContextValue(e.target.value)}
                 placeholder={activeTask.contextPlaceholder}
-                className="mt-2 w-full min-h-[150px] rounded-xl border border-white/10 bg-black/20 px-3 py-2 font-mono text-xs leading-5 text-white placeholder:text-white/25 outline-none focus:border-white/25"
+                className="mt-2 w-full min-h-[120px] rounded-xl border border-white/10 bg-black/20 px-3 py-2 font-mono text-xs leading-5 text-white placeholder:text-white/25 outline-none focus:border-white/25 transition-colors duration-200"
               />
             </label>
 
@@ -384,15 +397,15 @@ export function FrontEndAgentPage() {
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="h-8 px-3 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-xs text-white/70 inline-flex items-center gap-1.5"
+                className="h-8 px-3 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-xs text-white/70 inline-flex items-center gap-1.5 transition-colors duration-200"
               >
                 <FileText className="w-3.5 h-3.5" />
-                上传文本材料
+                上传文本
               </button>
               <button
                 type="button"
                 onClick={handleReset}
-                className="h-8 px-3 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-xs text-white/55 inline-flex items-center gap-1.5"
+                className="h-8 px-3 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-xs text-white/55 inline-flex items-center gap-1.5 transition-colors duration-200"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
                 清空
@@ -400,21 +413,21 @@ export function FrontEndAgentPage() {
             </div>
           </div>
 
-          <div className="shrink-0 p-4 border-t border-white/10 flex gap-2">
+          <div className="shrink-0 p-4 border-t border-white/10">
             {isStreaming ? (
               <button
                 type="button"
                 onClick={handleAbort}
-                className="flex-1 h-10 rounded-xl border border-rose-400/25 bg-rose-500/10 hover:bg-rose-500/15 text-sm text-rose-100 inline-flex items-center justify-center gap-2"
+                className="w-full h-10 rounded-xl border border-rose-400/25 bg-rose-500/10 hover:bg-rose-500/15 text-sm text-rose-100 inline-flex items-center justify-center gap-2 transition-colors duration-200"
               >
                 <StopCircle className="w-4 h-4" />
-                中止本地连接
+                中止
               </button>
             ) : (
               <button
                 type="button"
                 onClick={handleGenerate}
-                className={`flex-1 h-10 rounded-xl border text-sm inline-flex items-center justify-center gap-2 ${activeAccent.border} ${activeAccent.bg} ${activeAccent.text}`}
+                className={`w-full h-10 rounded-xl border text-sm inline-flex items-center justify-center gap-2 transition-all duration-200 ${activeAccent.border} ${activeAccent.bg} ${activeAccent.text} hover:brightness-110`}
               >
                 <Sparkles className="w-4 h-4" />
                 生成前端方案
@@ -423,19 +436,19 @@ export function FrontEndAgentPage() {
           </div>
         </section>
 
-        <section className="min-h-0 rounded-2xl border border-white/10 bg-[#0b0d12] flex flex-col overflow-hidden">
+        <section className="min-h-0 rounded-2xl border border-white/10 bg-[#0b0d12]/90 backdrop-blur-sm flex flex-col overflow-hidden fea-fade-up">
           <div className="shrink-0 px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
             <div className="min-w-0">
               <h2 className="text-sm font-medium text-white">输出结果</h2>
               <p className="text-[11px] text-white/45 truncate">
-                {model.name ? `模型：${model.name}${model.platform ? ` · ${model.platform}` : ''}` : '等待生成，可复制完整结果给后端同事照做'}
+                {isStreaming ? '流式生成中' : output.trim() ? '可复制完整结果' : '等待生成'}
               </p>
             </div>
             <button
               type="button"
               onClick={handleCopy}
               disabled={!output.trim()}
-              className="h-8 px-3 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 disabled:opacity-40 text-xs text-white/65 inline-flex items-center gap-1.5"
+              className="h-8 px-3 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 disabled:opacity-40 text-xs text-white/65 inline-flex items-center gap-1.5 transition-colors duration-200"
             >
               <Clipboard className="w-3.5 h-3.5" />
               复制
@@ -456,18 +469,23 @@ export function FrontEndAgentPage() {
                     <pre className="mt-2 whitespace-pre-wrap font-mono leading-5">{thinking}</pre>
                   </details>
                 )}
-                <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-7 text-white/80">{output}</pre>
+                <StreamingText
+                  text={output}
+                  streaming={isStreaming}
+                  mode="blur"
+                  className="font-mono text-sm leading-7 text-white/80 whitespace-pre-wrap break-words"
+                />
               </div>
             ) : isStreaming ? (
-              <div className="h-full min-h-[280px] flex flex-col items-center justify-center text-white/55">
+              <div className="h-full min-h-[240px] flex flex-col items-center justify-center text-white/55">
                 <MapSpinner size={30} />
                 <p className="mt-4 text-sm">{phaseMsg || 'AI 正在处理...'}</p>
               </div>
             ) : (
-              <div className="h-full min-h-[280px] flex flex-col items-center justify-center text-center text-white/45">
+              <div className="h-full min-h-[240px] flex flex-col items-center justify-center text-center text-white/45 px-4">
                 <Code2 className="w-10 h-10 mb-3 text-white/20" />
-                <p className="text-sm text-white/65">选择任务类型并输入材料，生成可复制的前端交付方案。</p>
-                <p className="mt-2 text-xs max-w-md">建议至少提供接口 JSON、现有代码片段、报错日志或截图现象中的一种，结果会更具体。</p>
+                <p className="text-sm text-white/65">选择任务类型并输入材料</p>
+                <p className="mt-2 text-xs max-w-sm">建议提供接口 JSON、代码片段、报错日志或截图现象，结果会更具体。</p>
               </div>
             )}
           </div>
@@ -479,8 +497,25 @@ export function FrontEndAgentPage() {
             </div>
           )}
         </section>
+
+        <aside className="min-h-0 flex flex-col gap-3 xl:max-h-full fea-fade-up">
+          <div className="shrink-0">
+            <p className="text-[10px] uppercase tracking-widest text-white/30 mb-2 px-0.5">前端资源</p>
+            <div className="space-y-3">
+              <FrontEndPdaRailCard onOpen={() => setPdaModalOpen(true)} />
+              <FrontEndProjectRailCard onOpen={() => setProjectModalOpen(true)} />
+            </div>
+          </div>
+          <div className="hidden xl:block flex-1 min-h-0 rounded-2xl border border-dashed border-white/10 p-4 text-center">
+            <p className="text-[11px] text-white/35 leading-5">
+              右侧快速入口：PDA 手册与前端项目表按需弹窗打开，主工作区专注 AI 生成。
+            </p>
+          </div>
+        </aside>
       </div>
+
+      <FrontEndProjectTableModal open={projectModalOpen} onClose={() => setProjectModalOpen(false)} />
+      <FrontEndPdaGuideModal open={pdaModalOpen} onClose={() => setPdaModalOpen(false)} />
     </div>
   );
 }
-

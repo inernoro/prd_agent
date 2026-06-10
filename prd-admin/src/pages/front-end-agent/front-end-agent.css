@@ -1,0 +1,73 @@
+@keyframes fea-orb-drift {
+  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.45; }
+  50% { transform: translate(12px, -8px) scale(1.08); opacity: 0.7; }
+}
+
+@keyframes fea-orb-drift-alt {
+  0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.35; }
+  50% { transform: translate(-10px, 10px) scale(1.05); opacity: 0.55; }
+}
+
+@keyframes fea-shimmer {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+@keyframes fea-fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fea-pulse-ring {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.25); }
+  50% { box-shadow: 0 0 0 6px rgba(56, 189, 248, 0); }
+}
+
+.fea-hero-orb {
+  animation: fea-orb-drift 9s ease-in-out infinite;
+}
+
+.fea-hero-orb-alt {
+  animation: fea-orb-drift-alt 11s ease-in-out infinite;
+}
+
+.fea-title-shimmer {
+  background: linear-gradient(90deg, #e2e8f0 0%, #38bdf8 35%, #fbbf24 65%, #e2e8f0 100%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: fea-shimmer 6s linear infinite;
+}
+
+.fea-fade-up {
+  animation: fea-fade-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.fea-rail-card {
+  transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.28s ease, box-shadow 0.28s ease, background 0.28s ease;
+}
+
+.fea-rail-card:hover {
+  transform: translateY(-2px);
+}
+
+.fea-task-pill {
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.22s ease, background 0.22s ease, box-shadow 0.22s ease;
+}
+
+.fea-task-pill:hover {
+  transform: translateY(-1px);
+}
+
+.fea-task-pill-active {
+  animation: fea-pulse-ring 2.4s ease-in-out infinite;
+}
+
+.fea-modal-backdrop {
+  animation: fea-fade-up 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.fea-modal-panel {
+  animation: fea-fade-up 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
