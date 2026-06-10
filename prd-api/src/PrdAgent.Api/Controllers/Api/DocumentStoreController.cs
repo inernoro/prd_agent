@@ -1015,15 +1015,17 @@ public class DocumentStoreController : ControllerBase
         var summary = content.Length > 200 ? content[..200] : content;
         var contentIndex = content.Length > 2000 ? content[..2000] : content;
 
-        await _db.DocumentEntries.UpdateOneAsync(
-            e => e.Id == entryId,
-            Builders<DocumentEntry>.Update
-                .Set(e => e.DocumentId, entry.DocumentId)
-                .Set(e => e.Summary, summary.Trim())
-                .Set(e => e.ContentIndex, contentIndex.Trim())
-                .Set(e => e.UpdatedBy, userId)
-                .Set(e => e.UpdatedByName, userName)
-                .Set(e => e.UpdatedAt, DateTime.UtcNow));
+        var contentUpdate = Builders<DocumentEntry>.Update
+            .Set(e => e.DocumentId, entry.DocumentId)
+            .Set(e => e.Summary, summary.Trim())
+            .Set(e => e.ContentIndex, contentIndex.Trim())
+            .Set(e => e.UpdatedBy, userId)
+            .Set(e => e.UpdatedByName, userName)
+            .Set(e => e.UpdatedAt, DateTime.UtcNow);
+        if (!string.IsNullOrWhiteSpace(request.ContentType))
+            contentUpdate = contentUpdate.Set(e => e.ContentType, request.ContentType);
+
+        await _db.DocumentEntries.UpdateOneAsync(e => e.Id == entryId, contentUpdate);
 
         // 模板库的人工写入：持久化合规标记，前端可据此提示「缺 需求一一对应表」
         if (contentCompliant.HasValue)
@@ -4704,8 +4706,10 @@ public class MoveEntryRequest
 
 public class UpdateEntryContentRequest
 {
-    /// <summary>文档内容（Markdown/纯文本）</summary>
+    /// <summary>文档内容（Markdown / 纯文本 / 富文本 HTML）</summary>
     public string Content { get; set; } = string.Empty;
+    /// <summary>可选：同时更新条目的 contentType（如富文本编辑后置为 text/html）；null=不变</summary>
+    public string? ContentType { get; set; }
 }
 
 public class CreateShareLinkRequest

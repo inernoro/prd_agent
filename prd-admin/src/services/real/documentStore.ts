@@ -249,10 +249,10 @@ export async function moveDocumentEntry(entryId: string, parentId: string | null
 }
 
 /** 更新文档内容（在线编辑） */
-export async function updateDocumentContent(entryId: string, content: string) {
+export async function updateDocumentContent(entryId: string, content: string, contentType?: string) {
   return await apiRequest<{ updated: boolean; updatedAt?: string; updatedBy?: string; updatedByName?: string }>(
     api.documentStore.entries.content(entryId),
-    { method: 'PUT', body: { content } },
+    { method: 'PUT', body: contentType ? { content, contentType } : { content } },
   );
 }
 

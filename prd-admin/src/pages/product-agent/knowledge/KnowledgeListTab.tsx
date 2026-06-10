@@ -78,7 +78,7 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
     navigate(`/product-agent/p/${productId}/knowledge/${entryId}${edit ? '?edit=1' : ''}`);
 
   const handleCreate = async () => {
-    const res = await addDocumentEntry(storeId, { title: '新建文档', sourceType: 'upload', contentType: 'text/markdown', summary: '' });
+    const res = await addDocumentEntry(storeId, { title: '新建文档', sourceType: 'upload', contentType: 'text/html', summary: '' });
     if (res.success) { toast.success('已创建文档'); onChanged(); goDetail(res.data.id, true); }
     else toast.error('创建失败', res.error?.message);
   };
