@@ -54,12 +54,16 @@ x-cds-deploy-modes:
       label: "开发模式 (Vite HMR)"
       command: >-
         corepack enable &&
+        corepack prepare pnpm@10.28.2 --activate &&
+        pnpm config set store-dir /pnpm/store &&
         pnpm install --frozen-lockfile &&
         pnpm exec vite --host 0.0.0.0 --port 8000
     static:
       label: "静态部署 (vite build+serve)"
       command: >-
         corepack enable &&
+        corepack prepare pnpm@10.28.2 --activate &&
+        pnpm config set store-dir /pnpm/store &&
         pnpm install --frozen-lockfile &&
         sh scripts/cds-vite-build.sh &&
         npx -y serve -s dist -l tcp://0.0.0.0:8000
@@ -86,6 +90,8 @@ services:
       # 仅服务特有变量，全局变量已由 x-cds-env 注入
       ASPNETCORE_ENVIRONMENT: Development
       Changelog__RootPath: /repo
+      Changelog__GitHubBranch: "${VITE_GIT_BRANCH:-main}"
+      Changelog__GitHubToken: "${GITHUB_PAT:-}"
       MongoDB__ConnectionString: "mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}"
       MongoDB__DatabaseName: prdagent
       Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"
@@ -114,11 +120,14 @@ services:
       # 单挂 ./prd-admin 时 symlink 解析到 /thirdparty/ref 找不到目录，
       # vite build (static 模式) 的 copyPublicDir 步骤会报 ENOENT。
       - ./thirdparty:/thirdparty:ro
+      - admin-pnpm-store:/pnpm/store
     ports:
       - "8000"
     # 默认 dev：秒级就绪，避免 static 冷构建 OOM（exitCode=137）。需要 dist 时在 CDS 切 static 模式。
     command: >-
       corepack enable &&
+      corepack prepare pnpm@10.28.2 --activate &&
+      pnpm config set store-dir /pnpm/store &&
       pnpm install --frozen-lockfile &&
       pnpm exec vite --host 0.0.0.0 --port 8000
     labels:
@@ -154,5 +163,6 @@ services:
 
 volumes:
   api-nuget-cache:
+  admin-pnpm-store:
   mongodb-data:
   redis-data:

@@ -682,8 +682,7 @@ public sealed class ChangelogReader : IChangelogReader
         };
 
         var root = ResolveLocalRoot();
-        var gitPath = root == null ? null : Path.Combine(root, ".git");
-        if (root == null || gitPath == null || (!Directory.Exists(gitPath) && !File.Exists(gitPath)))
+        if (root == null || !HasUsableGitMetadata(root))
         {
             view.DataSourceAvailable = false;
             return view;
@@ -702,6 +701,30 @@ public sealed class ChangelogReader : IChangelogReader
         view.DataSourceAvailable = true;
         view.Logs = logs;
         return view;
+    }
+
+    private static bool HasUsableGitMetadata(string root)
+    {
+        var gitPath = Path.Combine(root, ".git");
+        if (Directory.Exists(gitPath)) return true;
+        if (!File.Exists(gitPath)) return false;
+
+        try
+        {
+            var firstLine = File.ReadLines(gitPath).FirstOrDefault()?.Trim();
+            if (string.IsNullOrWhiteSpace(firstLine)) return false;
+            const string prefix = "gitdir:";
+            if (!firstLine.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return true;
+
+            var gitDir = firstLine[prefix.Length..].Trim();
+            if (string.IsNullOrWhiteSpace(gitDir)) return false;
+            var resolved = Path.IsPathRooted(gitDir) ? gitDir : Path.GetFullPath(Path.Combine(root, gitDir));
+            return Directory.Exists(resolved);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     // ── GitHub 源 ─────────────────────────────────────────────────────
