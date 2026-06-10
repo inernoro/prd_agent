@@ -402,6 +402,7 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
     routePath: '/ccas-agent',
     permission: 'ccas-agent.use',
     tags: ['赋码', '采集', '产线', 'PRD', '流程图'],
+    createdByName: '魏喜胜',
     wip: true,
     usageCount: 0,
     createdAt: new Date().toISOString(),

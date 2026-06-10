@@ -3,3 +3,5 @@
 | feat | prd-admin | 新增识途页面：四 Tab + 问答窗 + 内嵌知识库，注册百宝箱与导航 |
 | feat | prd-admin | 识途新增使用帮助抽屉与作者署名（魏喜胜），百宝箱卡片同步展示作者 |
 | polish | prd-admin | 识途使用帮助抽屉去掉作者展示，页头与百宝箱保留 |
+| feat | prd-api | CCAS Agent meta 返回 authorName（魏喜胜） |
+| feat | prd-admin | CCAS 页头与百宝箱卡片展示作者魏喜胜 |

@@ -31,6 +31,7 @@ namespace PrdAgent.Api.Controllers.Api;
 public class CcasAgentController : ControllerBase
 {
     private const string AppKey = "ccas-agent";
+    private const string AuthorName = "魏喜胜";
 
     private readonly MongoDbContext _db;
     private readonly ILlmGateway _gateway;
@@ -75,6 +76,7 @@ public class CcasAgentController : ControllerBase
                 new { key = "box-stack", label = "箱垛", description = "仅箱 → 垛" },
                 new { key = "custom", label = "自定义", description = "完全按用户描述" },
             },
+            authorName = AuthorName,
         }));
     }
 
