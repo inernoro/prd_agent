@@ -4409,8 +4409,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   function mongoCredentials(service: InfraService, branch: BranchEntry, databaseOverride?: string): { user: string; password: string; database: string; uri: string; secrets: string[] } {
     const branchEnv = stateService.getCustomEnvScope(branch.id);
+    const branchUser = branchEnv.MONGODB_USERNAME || branchEnv.MONGO_USERNAME || '';
     const user = branchEnv.MONGO_INITDB_ROOT_USERNAME
-      || branchEnv.MONGODB_USERNAME
+      || branchUser
       || service.env?.MONGO_INITDB_ROOT_USERNAME
       || service.env?.MONGO_USERNAME
       || service.env?.MONGODB_USERNAME
@@ -4422,8 +4423,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       || service.env?.MONGODB_PASSWORD
       || '';
     const database = databaseOverride || mongoDatabaseForBranch(service, branch);
+    const authSourceDb = user
+      ? (branchEnv.MONGODB_AUTH_SOURCE || branchEnv.MONGO_AUTH_SOURCE || (branchUser ? database : 'admin'))
+      : '';
     const uri = user
-      ? `mongodb://${encodeURIComponent(user)}:${encodeURIComponent(password)}@localhost:27017/${encodeURIComponent(database)}?authSource=admin`
+      ? `mongodb://${encodeURIComponent(user)}:${encodeURIComponent(password)}@localhost:27017/${encodeURIComponent(database)}?authSource=${encodeURIComponent(authSourceDb)}`
       : `mongodb://localhost:27017/${encodeURIComponent(database)}`;
     return { user, password, database, uri, secrets: [password] };
   }
@@ -5226,15 +5230,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!database || !/^[a-zA-Z0-9_]+$/.test(database)) {
       throw new Error(`数据库名不合法: ${database || '(empty)'}`);
     }
-    const fileName = sanitizeBackupFileName(backupName);
-    if (!fileName.endsWith('.sql.gz')) {
-      throw new Error('当前只支持恢复 .sql.gz MySQL 备份');
-    }
-    const filePath = path.posix.join(resourceBackupDir(), fileName);
-    const exists = await shell.exec(`test -f ${shq(filePath)}`, { timeout: 10_000 });
-    if (exists.exitCode !== 0) {
-      throw new Error(`备份文件不存在: ${fileName}`);
-    }
+    const { fileName, filePath } = await assertBackupFile(backupName, 'mysql', { service, branch });
     const safetyBackup = await createMysqlBackupFile({
       service,
       branch,
@@ -5285,15 +5281,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!targetDatabase || !/^[a-zA-Z0-9_]+$/.test(targetDatabase)) {
       throw new Error(`目标数据库名不合法: ${targetDatabase || '(empty)'}`);
     }
-    const fileName = sanitizeBackupFileName(backupName);
-    if (!fileName.endsWith('.sql.gz')) {
-      throw new Error('当前只支持恢复 .sql.gz MySQL 备份');
-    }
-    const filePath = path.posix.join(resourceBackupDir(), fileName);
-    const exists = await shell.exec(`test -f ${shq(filePath)}`, { timeout: 10_000 });
-    if (exists.exitCode !== 0) {
-      throw new Error(`备份文件不存在: ${fileName}`);
-    }
+    const { fileName, filePath } = await assertBackupFile(backupName, 'mysql', { service, branch });
     const branchDb = await createMysqlBranchDatabase(service, branch, targetDatabase);
     const rootPassword = mysqlRootPassword(service);
     const result = await shell.exec(
@@ -5306,11 +5294,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return { ...branchDb, backup: fileName };
   }
 
-  async function assertBackupFile(fileNameInput: unknown, runtime: ResourceDatabaseRuntime): Promise<{ fileName: string; filePath: string }> {
+  async function assertBackupFile(
+    fileNameInput: unknown,
+    runtime: ResourceDatabaseRuntime,
+    scope: { service: InfraService; branch: BranchEntry },
+  ): Promise<{ fileName: string; filePath: string }> {
     const fileName = sanitizeBackupFileName(fileNameInput);
     const ext = resourceBackupExtension(runtime);
     if (!fileName.endsWith(ext)) {
       throw new Error(`当前 ${runtime} 备份只支持 ${ext} 文件`);
+    }
+    const prefix = `${scope.service.id}-${scope.branch.id}-`;
+    if (!fileName.startsWith(prefix)) {
+      throw new Error(`备份文件不属于当前资源或分支: ${fileName}`);
     }
     const filePath = path.posix.join(resourceBackupDir(), fileName);
     const exists = await shell.exec(`test -f ${shq(filePath)}`, { timeout: 10_000 });
@@ -5334,7 +5330,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       throw new Error(`PostgreSQL 服务当前未运行（status=${service.status}）`);
     }
     const database = postgresDatabaseForBranch(service, branch);
-    const { fileName, filePath } = await assertBackupFile(backupName, 'postgres');
+    const { fileName, filePath } = await assertBackupFile(backupName, 'postgres', { service, branch });
     const safetyBackup = await createPostgresBackupFile({
       service,
       branch,
@@ -5387,7 +5383,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     targetDatabase: string;
   }): Promise<MysqlConnectionEnvResult & { backup: string }> {
     const { service, branch, backupName, targetDatabase } = params;
-    const { fileName, filePath } = await assertBackupFile(backupName, 'postgres');
+    const { fileName, filePath } = await assertBackupFile(backupName, 'postgres', { service, branch });
     const branchDb = await createPostgresBranchDatabase(service, branch, targetDatabase);
     const result = await shell.exec(
       `gunzip -c ${shq(filePath)} | docker exec -i -e PGPASSWORD=${shq(branchDb.branchPassword)} ${shq(service.containerName || '')} psql -U ${shq(branchDb.branchUser)} -d ${shq(targetDatabase)} -v ON_ERROR_STOP=1`,
@@ -5413,7 +5409,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       throw new Error(`MongoDB 服务当前未运行（status=${service.status}）`);
     }
     const database = mongoDatabaseForBranch(service, branch);
-    const { fileName, filePath } = await assertBackupFile(backupName, 'mongodb');
+    const { fileName, filePath } = await assertBackupFile(backupName, 'mongodb', { service, branch });
     const safetyBackup = await createMongoBackupFile({
       service,
       branch,
@@ -5459,7 +5455,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     sourceDatabase: string;
   }): Promise<MysqlConnectionEnvResult & { backup: string }> {
     const { service, branch, backupName, targetDatabase, sourceDatabase } = params;
-    const { fileName, filePath } = await assertBackupFile(backupName, 'mongodb');
+    const { fileName, filePath } = await assertBackupFile(backupName, 'mongodb', { service, branch });
     const branchDb = await createMongoBranchDatabase(service, branch, targetDatabase);
     const admin = mongoAdminUri(service);
     const result = await shell.exec(
@@ -5485,7 +5481,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (service.status !== 'running') {
       throw new Error(`Redis 服务当前未运行（status=${service.status}）`);
     }
-    const { fileName, filePath } = await assertBackupFile(backupName, 'redis');
+    const { fileName, filePath } = await assertBackupFile(backupName, 'redis', { service, branch });
     const safetyBackup = await createRedisBackupFile({
       service,
       branch,
@@ -5578,11 +5574,38 @@ export function createBranchRouter(deps: RouterDeps): Router {
       : runtime === 'postgres'
         ? ['DATABASE_URL', 'POSTGRES_URL', 'POSTGRES_HOST', 'POSTGRES_PORT', 'POSTGRES_DB', 'POSTGRES_USER', 'POSTGRES_PASSWORD']
         : runtime === 'mongodb'
-          ? ['DATABASE_URL', 'MONGODB_URL', 'MONGO_INITDB_DATABASE', 'MONGODB_DATABASE', 'MONGODB_HOST', 'MONGODB_PORT', 'MONGODB_USERNAME', 'MONGODB_PASSWORD']
+          ? ['DATABASE_URL', 'MONGODB_URL', 'MONGO_INITDB_DATABASE', 'MONGODB_DATABASE', 'MONGODB_HOST', 'MONGODB_PORT', 'MONGODB_USERNAME', 'MONGODB_PASSWORD', 'MONGODB_AUTH_SOURCE']
           : ['DATABASE_URL', 'REDIS_URL', 'REDIS_HOST', 'REDIS_PORT', 'REDIS_PASSWORD'];
     for (const key of keys) {
       stateService.removeCustomEnvVar(key, branch.id);
     }
+  }
+
+  function branchOwnedDatabaseForDelete(runtime: ResourceDatabaseRuntime, service: InfraService, branch: BranchEntry): string {
+    const branchEnv = stateService.getCustomEnvScope(branch.id);
+    if (runtime === 'mysql') {
+      const database = branchEnv.MYSQL_DATABASE || '';
+      if (!database || !branchEnv.MYSQL_USER) {
+        throw new Error('未检测到分支独立 MySQL 数据库和用户，拒绝删除共享数据库');
+      }
+      return database.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 64);
+    }
+    if (runtime === 'postgres') {
+      const database = branchEnv.POSTGRES_DB || '';
+      if (!database || !branchEnv.POSTGRES_USER) {
+        throw new Error('未检测到分支独立 PostgreSQL 数据库和用户，拒绝删除共享数据库');
+      }
+      return database.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 63);
+    }
+    if (runtime === 'mongodb') {
+      const database = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || '';
+      const serviceRequiresAuth = Boolean(service.env?.MONGO_INITDB_ROOT_USERNAME || service.env?.MONGO_USERNAME || service.env?.MONGODB_USERNAME);
+      if (!database || (serviceRequiresAuth && (!branchEnv.MONGODB_USERNAME || !branchEnv.MONGODB_PASSWORD))) {
+        throw new Error('未检测到分支独立 MongoDB 数据库和用户，拒绝删除共享数据库');
+      }
+      return database.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 63);
+    }
+    throw new Error('Redis 当前是实例级资源，不支持删除为“分支独立数据库”');
   }
 
   async function clearResourceData(params: {
@@ -5662,8 +5685,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (runtime === 'redis') {
       throw new Error('Redis 当前是实例级资源，不支持删除为“分支独立数据库”');
     }
+    const database = branchOwnedDatabaseForDelete(runtime, service, branch);
     const safetyBackup = await createResourceBackupFile({ runtime, service, branch, resourceId, resourceName, projectId, actor, reason: 'pre-restore' });
-    const database = resourceDatabaseForRuntime(runtime, service, branch) || '';
     if (runtime === 'mysql') {
       const rootPassword = mysqlRootPassword(service);
       const branchEnv = stateService.getCustomEnvScope(branch.id);
@@ -5961,10 +5984,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const runtime = resourceRuntimeKey(resource.runtime);
     const env = service.env || {};
     const branchEnv = stateService.getCustomEnvScope(branch.id);
-    const db = branchEnv.MYSQL_DATABASE || service.dbName || env.MYSQL_DATABASE || env.POSTGRES_DB || env.MONGO_INITDB_DATABASE || 'app';
-    if (runtime === 'mysql') return `mysql://${branchEnv.MYSQL_USER || env.MYSQL_USER || 'user'}:******@${host}:${port}/${db}`;
-    if (runtime === 'postgres') return `postgres://${env.POSTGRES_USER || 'user'}:******@${host}:${port}/${db}`;
-    if (runtime === 'mongodb') return `mongodb://${env.MONGO_INITDB_ROOT_USERNAME || 'user'}:******@${host}:${port}/${db}`;
+    if (runtime === 'mysql') {
+      const db = branchEnv.MYSQL_DATABASE || service.dbName || env.MYSQL_DATABASE || env.MARIADB_DATABASE || 'app';
+      const user = branchEnv.MYSQL_USER || env.MYSQL_USER || env.MARIADB_USER || 'user';
+      return `mysql://${user}:******@${host}:${port}/${db}`;
+    }
+    if (runtime === 'postgres') {
+      const db = branchEnv.POSTGRES_DB || service.dbName || env.POSTGRES_DB || 'postgres';
+      const user = branchEnv.POSTGRES_USER || env.POSTGRES_USER || 'postgres';
+      return `postgres://${user}:******@${host}:${port}/${db}`;
+    }
+    if (runtime === 'mongodb') {
+      const db = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || service.dbName || env.MONGO_INITDB_DATABASE || 'app';
+      const branchUser = branchEnv.MONGODB_USERNAME || branchEnv.MONGO_USERNAME || '';
+      const user = branchEnv.MONGO_INITDB_ROOT_USERNAME
+        || branchUser
+        || env.MONGO_INITDB_ROOT_USERNAME
+        || env.MONGO_USERNAME
+        || env.MONGODB_USERNAME
+        || 'user';
+      const authSource = branchEnv.MONGODB_AUTH_SOURCE || branchEnv.MONGO_AUTH_SOURCE || (branchUser ? db : 'admin');
+      return `mongodb://${user}:******@${host}:${port}/${db}?authSource=${authSource}`;
+    }
     if (runtime === 'redis') return `redis://:******@${host}:${port}`;
     return `${host}:${port}`;
   }
@@ -6959,24 +7000,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `资源 "${resourceId}" 不存在` });
       return;
     }
-    if (resource.source !== 'infra' || resource.kind !== 'database') {
-      res.status(400).json({ error: '只有数据库资源支持备份列表' });
-      return;
-    }
     const runtime = resourceRuntimeKey(resource.runtime);
-    const rawInfra = resource.raw as InfraService;
-    if (!['mysql', 'postgres', 'mongodb', 'redis'].includes(runtime)) {
-      res.json({
-        branchId: branch.id,
-        resourceId,
-        runtime,
-        backups: [],
-        directory: resourceBackupDir(),
-        supported: false,
-        message: `${resource.runtime} 暂不支持资源级备份恢复`,
-      });
+    if (resource.source !== 'infra' || !['mysql', 'postgres', 'mongodb', 'redis'].includes(runtime)) {
+      res.status(400).json({ error: '只有数据库/缓存资源支持备份列表' });
       return;
     }
+    const rawInfra = resource.raw as InfraService;
     try {
       const database = resourceDatabaseForRuntime(runtime as ResourceDatabaseRuntime, rawInfra, branch);
       const backups = await listResourceBackupEntries(rawInfra, branch, runtime as ResourceDatabaseRuntime, database);
@@ -7002,14 +7031,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `资源 "${resourceId}" 不存在` });
       return;
     }
-    if (resource.source !== 'infra' || resource.kind !== 'database') {
-      res.status(400).json({ error: '只有数据库资源支持手动备份' });
-      return;
-    }
     if (!requireResourcePermission(req, res, 'backup-create', branch, resource)) return;
     const runtime = resourceRuntimeKey(resource.runtime);
-    if (!['mysql', 'postgres', 'mongodb', 'redis'].includes(runtime)) {
-      res.status(400).json({ error: `${resource.runtime} 暂不支持资源级手动备份` });
+    if (resource.source !== 'infra' || !['mysql', 'postgres', 'mongodb', 'redis'].includes(runtime)) {
+      res.status(400).json({ error: '只有数据库/缓存资源支持手动备份' });
       return;
     }
     const actor = resolveActorFromRequest(req);
@@ -7059,14 +7084,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `资源 "${resourceId}" 不存在` });
       return;
     }
-    if (resource.source !== 'infra' || resource.kind !== 'database') {
-      res.status(400).json({ error: '只有数据库资源支持备份恢复' });
-      return;
-    }
     if (!requireResourcePermission(req, res, 'backup-restore', branch, resource)) return;
     const runtime = resourceRuntimeKey(resource.runtime);
-    if (!['mysql', 'postgres', 'mongodb', 'redis'].includes(runtime)) {
-      res.status(400).json({ error: `${resource.runtime} 暂不支持资源级恢复` });
+    if (resource.source !== 'infra' || !['mysql', 'postgres', 'mongodb', 'redis'].includes(runtime)) {
+      res.status(400).json({ error: '只有数据库/缓存资源支持备份恢复' });
       return;
     }
     const confirmResourceName = String(req.body?.confirmResourceName || '').trim();
@@ -7102,7 +7123,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         note: `${resource.displayName} 恢复失败：${(err as Error).message}`,
       });
       stateService.save();
-      res.status(500).json({ error: (err as Error).message });
+      const message = (err as Error).message;
+      res.status(message.includes('备份文件不属于当前资源或分支') ? 409 : 500).json({ error: message });
     }
   });
 
@@ -7225,7 +7247,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         note: `${resource.displayName} 删除数据库失败：${(err as Error).message}`,
       });
       stateService.save();
-      res.status(500).json({ error: (err as Error).message });
+      const message = (err as Error).message;
+      res.status(message.includes('拒绝删除共享数据库') ? 409 : 500).json({ error: message });
     }
   });
 

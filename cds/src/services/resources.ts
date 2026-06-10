@@ -137,11 +137,29 @@ function internalInfraAddress(service: InfraService): string {
 
 function infraConnectionString(runtime: string, service: InfraService, host: string, branchEnv: Record<string, string> = {}): string {
   const env = service.env || {};
-  const db = branchEnv.MYSQL_DATABASE || service.dbName || env.MYSQL_DATABASE || env.POSTGRES_DB || env.MONGO_INITDB_DATABASE || 'app';
   const port = service.hostPort || service.containerPort || 0;
-  if (runtime === 'MySQL') return `mysql://${branchEnv.MYSQL_USER || env.MYSQL_USER || 'user'}:******@${host}:${port}/${db}`;
-  if (runtime === 'PostgreSQL') return `postgres://${env.POSTGRES_USER || 'user'}:******@${host}:${port}/${db}`;
-  if (runtime === 'MongoDB') return `mongodb://${env.MONGO_INITDB_ROOT_USERNAME || 'user'}:******@${host}:${port}/${db}`;
+  if (runtime === 'MySQL') {
+    const db = branchEnv.MYSQL_DATABASE || service.dbName || env.MYSQL_DATABASE || env.MARIADB_DATABASE || 'app';
+    const user = branchEnv.MYSQL_USER || env.MYSQL_USER || env.MARIADB_USER || 'user';
+    return `mysql://${user}:******@${host}:${port}/${db}`;
+  }
+  if (runtime === 'PostgreSQL') {
+    const db = branchEnv.POSTGRES_DB || service.dbName || env.POSTGRES_DB || 'postgres';
+    const user = branchEnv.POSTGRES_USER || env.POSTGRES_USER || 'postgres';
+    return `postgres://${user}:******@${host}:${port}/${db}`;
+  }
+  if (runtime === 'MongoDB') {
+    const db = branchEnv.MONGODB_DATABASE || branchEnv.MONGO_INITDB_DATABASE || service.dbName || env.MONGO_INITDB_DATABASE || 'app';
+    const branchUser = branchEnv.MONGODB_USERNAME || branchEnv.MONGO_USERNAME || '';
+    const user = branchEnv.MONGO_INITDB_ROOT_USERNAME
+      || branchUser
+      || env.MONGO_INITDB_ROOT_USERNAME
+      || env.MONGO_USERNAME
+      || env.MONGODB_USERNAME
+      || 'user';
+    const authSource = branchEnv.MONGODB_AUTH_SOURCE || branchEnv.MONGO_AUTH_SOURCE || (branchUser ? db : 'admin');
+    return `mongodb://${user}:******@${host}:${port}/${db}?authSource=${authSource}`;
+  }
   if (runtime === 'Redis') return `redis://:******@${host}:${port}`;
   if (runtime === 'RabbitMQ') return `amqp://${env.RABBITMQ_DEFAULT_USER || 'user'}:******@${host}:${port}`;
   return port ? `${host}:${port}` : '';

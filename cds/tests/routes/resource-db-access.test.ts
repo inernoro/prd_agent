@@ -370,4 +370,152 @@ describe('resource database access', () => {
     expect(res.body.injectedEnv.MONGODB_URL).toContain('/app?authSource=app');
     expect(res.body.injectedEnv.MONGODB_AUTH_SOURCE).toBe('app');
   });
+
+  it('uses branch Mongo authSource when reading data with branch-created users', async () => {
+    const harness = makeHarness();
+    tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({
+      id: 'mongo-main',
+      projectId: 'prd-agent',
+      name: 'mongo-main',
+      dockerImage: 'mongo:7',
+      containerPort: 27017,
+      hostPort: 27017,
+      containerName: 'cds-mongo-main',
+      status: 'running',
+      dbName: 'shared',
+      env: {
+        MONGO_INITDB_ROOT_USERNAME: 'root',
+        MONGO_INITDB_ROOT_PASSWORD: 'root-pw',
+      },
+      volumes: [],
+    });
+    harness.stateService.setCustomEnvVar('MONGODB_DATABASE', 'branchdb', 'main-branch');
+    harness.stateService.setCustomEnvVar('MONGODB_USERNAME', 'cds_main', 'main-branch');
+    harness.stateService.setCustomEnvVar('MONGODB_PASSWORD', 'branch-pw', 'main-branch');
+    harness.stateService.setCustomEnvVar('MONGODB_AUTH_SOURCE', 'branchdb', 'main-branch');
+    harness.shell.addResponsePattern(/mongodb:\/\/cds_main:branch-pw@localhost:27017\/branchdb\?authSource=branchdb/, () => ({
+      stdout: '[{"name":"orders","type":"collection"}]\n',
+      stderr: '',
+      exitCode: 0,
+    }));
+    harness.shell.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    await new Promise<void>((resolve) => {
+      server = harness.app.listen(0, '127.0.0.1', resolve);
+    });
+
+    const res = await request(
+      server!,
+      'GET',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/collections',
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.database).toBe('branchdb');
+    expect(res.body.collections).toEqual([{ name: 'orders', type: 'collection' }]);
+    expect(harness.shell.commands.some((cmd) => cmd.includes('/branchdb?authSource=branchdb'))).toBe(true);
+  });
+
+  it('lists Redis backups for cache resources', async () => {
+    const harness = makeHarness();
+    tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({
+      id: 'redis-main',
+      projectId: 'prd-agent',
+      name: 'redis-main',
+      dockerImage: 'redis:7',
+      containerPort: 6379,
+      hostPort: 6379,
+      containerName: 'cds-redis-main',
+      status: 'running',
+      env: {},
+      volumes: [],
+    });
+    harness.shell.addResponsePattern(/find .*redis-main-main-branch/, () => ({
+      stdout: 'redis-main-main-branch-instance-redis-manual-20260610T000000Z.rdb\t12\t1710000000\n',
+      stderr: '',
+      exitCode: 0,
+    }));
+    harness.shell.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    await new Promise<void>((resolve) => {
+      server = harness.app.listen(0, '127.0.0.1', resolve);
+    });
+
+    const res = await request(server!, 'GET', '/api/branches/main-branch/resources/infra%3Aredis-main/backups');
+
+    expect(res.status).toBe(200);
+    expect(res.body.runtime).toBe('redis');
+    expect(res.body.supported).toBe(true);
+    expect(res.body.backups).toHaveLength(1);
+    expect(res.body.backups[0].name).toBe('redis-main-main-branch-instance-redis-manual-20260610T000000Z.rdb');
+  });
+
+  it('rejects restoring a backup owned by another resource or branch', async () => {
+    const harness = makeHarness();
+    tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({
+      id: 'postgres-main',
+      projectId: 'prd-agent',
+      name: 'PostgreSQL 16',
+      dockerImage: 'postgres:16',
+      containerPort: 5432,
+      hostPort: 5432,
+      containerName: 'cds-postgres-main',
+      status: 'running',
+      dbName: 'app',
+      env: { POSTGRES_USER: 'postgres', POSTGRES_PASSWORD: 'pw', POSTGRES_DB: 'app' },
+      volumes: [],
+    });
+    await new Promise<void>((resolve) => {
+      server = harness.app.listen(0, '127.0.0.1', resolve);
+    });
+
+    const res = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Apostgres-main/restore-backup',
+      {
+        backupName: 'other-main-branch-app-postgres-manual-20260610T000000Z.sql.gz',
+        confirmResourceName: 'PostgreSQL 16',
+      },
+      { 'x-test-cookie-auth': '1' },
+    );
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain('备份文件不属于当前资源或分支');
+    expect(harness.shell.commands).toHaveLength(0);
+  });
+
+  it('refuses to delete shared databases without branch-owned database env', async () => {
+    const harness = makeHarness();
+    tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({
+      id: 'mysql-main',
+      projectId: 'prd-agent',
+      name: 'MySQL 8',
+      dockerImage: 'mysql:8',
+      containerPort: 3306,
+      hostPort: 3306,
+      containerName: 'cds-mysql-main',
+      status: 'running',
+      dbName: 'shared_app',
+      env: { MYSQL_ROOT_PASSWORD: 'root-pw', MYSQL_DATABASE: 'shared_app' },
+      volumes: [],
+    });
+    await new Promise<void>((resolve) => {
+      server = harness.app.listen(0, '127.0.0.1', resolve);
+    });
+
+    const res = await request(
+      server!,
+      'DELETE',
+      '/api/branches/main-branch/resources/infra%3Amysql-main',
+      { confirmResourceName: 'MySQL 8' },
+      { 'x-test-cookie-auth': '1' },
+    );
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain('拒绝删除共享数据库');
+    expect(harness.shell.commands.some((cmd) => cmd.includes('DROP DATABASE') || cmd.includes('mysqldump'))).toBe(false);
+  });
 });
