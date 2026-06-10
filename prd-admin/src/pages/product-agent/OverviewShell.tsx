@@ -36,13 +36,13 @@ import { GlobalSearch } from './GlobalSearch';
 import { ProductsSection } from './ProductsSection';
 import { SettingsSection } from './SettingsSection';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
+import { OverviewKnowledgeList } from './knowledge/OverviewKnowledgeList';
 import './product-cards.css';
 import {
   getOverviewStats,
   getOverviewRequirements,
   getOverviewFeatures,
   getOverviewDefects,
-  getOverviewKnowledge,
   listCustomers,
   createCustomer,
   updateCustomer,
@@ -51,7 +51,6 @@ import {
   type OverviewRequirementRow,
   type OverviewFeatureRow,
   type OverviewDefectRow,
-  type OverviewKnowledgeRow,
 } from '@/services/real/productAgent';
 import type { Customer } from './types';
 import { ITEM_GRADE_LABEL, VERSION_LIFECYCLE_LABEL, effectiveDefectGrade, defectStatusLabel } from './types';
@@ -141,7 +140,7 @@ export function OverviewShell() {
         </SectionShell>
       )}
       {active === 'knowledge' && (
-        <SectionShell title="知识库一览" desc="所有产品的知识库（含 MRD/SRS/PRD）">
+        <SectionShell title="知识库（跨产品）" desc="所有可访问产品的知识聚合列表，点击查看详情；新建 / 治理进入具体产品">
           <KnowledgeSection />
         </SectionShell>
       )}
@@ -539,43 +538,8 @@ function DefectsTable() {
 // ════════════════════════ 知识库 / 图谱 / 设置 ════════════════════════
 
 function KnowledgeSection() {
-  const navigate = useNavigate();
-  const [rows, setRows] = useState<OverviewKnowledgeRow[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let alive = true;
-    void (async () => {
-      const res = await getOverviewKnowledge();
-      if (alive && res.success) setRows(res.data.items);
-      if (alive) setLoading(false);
-    })();
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  if (loading) return <MapSectionLoader text="正在加载知识库…" />;
-  if (rows.length === 0) return <div className="text-center text-white/40 text-sm py-12">还没有产品知识库。进入产品的「知识库」tab 即可创建。</div>;
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-      {rows.map((r, i) => (
-        <button
-          key={r.storeId}
-          onClick={() => navigate(`/product-agent/p/${r.productId}`)}
-          style={{ animationDelay: `${Math.min(i, 14) * 45}ms` }}
-          className="pa-card text-left rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.05] p-4 flex flex-col gap-1.5"
-        >
-          <div className="flex items-center gap-2 text-white font-medium">
-            <BookOpen size={15} className="text-cyan-400 shrink-0" />
-            <span className="truncate">{r.name}</span>
-          </div>
-          <div className="text-[11px] text-white/40">{r.productName}</div>
-          <div className="text-[11px] text-white/50 mt-1">{r.documentCount} 篇文档 · 更新 {relTime(r.updatedAt)}</div>
-        </button>
-      ))}
-    </div>
-  );
+  // 跨产品聚合知识列表（与单产品知识列表同构，多「所属产品」列；治理操作落到具体产品库）
+  return <OverviewKnowledgeList />;
 }
 
 // ════════════════════════ 全局客户 ════════════════════════

@@ -3,3 +3,6 @@
 | fix | prd-api | 修复产品知识库"文档空间不存在"：DocumentStore 读写判定补齐全局产品管理权限（Super/ProductAgentAdmin/ProductAgentManage），与产品访问口径对齐 |
 | refactor | prd-admin | 产品知识库重构 P0：新增 4-Tab 知识模块（知识列表/分类管理/文件夹管理/标签管理），知识列表支持筛选/搜索/分页/增删改/重新上传，新增独立知识详情页路由 |
 | feat | prd-api | DocumentEntry 新增 VersionIds 字段（知识关联版本 N:N），条目列表支持 category/tag/versionId/excludeFolders 过滤，更新端点支持 versionIds |
+| feat | prd-admin | 产品知识库重构 P1：版本详情「本版本知识」调取卡（从产品库按版本筛选+关联知识对话框），总览知识库改为跨产品聚合列表（搜索/产品筛选/分页/进详情页） |
+| refactor | prd-api | 版本独立知识库下线：懒迁移旧版本库条目进产品库（VersionIds 标记归属，幂等），新增总览聚合知识端点 /overview/knowledge/entries |
+| chore | prd-admin | 清理死代码：VersionRelationModal / KnowledgeStoreModal / ProductKnowledgePanel 下线 |

@@ -285,6 +285,21 @@ export function getVersionKnowledgeStore(versionId: string) {
   return apiRequest<KnowledgeStore>(`/api/product/versions/${versionId}/knowledge/store`);
 }
 
+/** 总览聚合知识行：条目 + 所属产品 */
+export interface OverviewKnowledgeEntryRow {
+  entry: import('@/services/contracts/documentStore').DocumentEntry;
+  productId: string | null;
+  productName: string | null;
+}
+/** 管理层总览：跨产品聚合知识列表（分页 + 关键词/产品过滤） */
+export function getOverviewKnowledgeEntries(q: { page?: number; pageSize?: number; keyword?: string; productId?: string } = {}) {
+  const params = new URLSearchParams({ page: String(q.page ?? 1), pageSize: String(q.pageSize ?? 20) });
+  if (q.keyword) params.set('keyword', q.keyword);
+  if (q.productId) params.set('productId', q.productId);
+  return apiRequest<{ items: OverviewKnowledgeEntryRow[]; total: number; page: number; pageSize: number }>(
+    `/api/product/overview/knowledge/entries?${params.toString()}`);
+}
+
 // ── 缺陷追溯（复用 defect-agent，P1）──
 /** 追溯缺陷精简类型（DefectReport 子集） */
 export interface TracedDefect {
