@@ -1,7 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection } from '../types.js';
+import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ResourceExternalAccessPolicy, ResourceCloneTask } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
@@ -133,6 +133,8 @@ function emptyState(): CdsState {
     infraServices: [],
     previewMode: 'multi',
     activityLogs: {},
+    resourceExternalAccess: {},
+    resourceCloneTasks: [],
   };
 }
 
@@ -275,6 +277,8 @@ export class StateService {
       if (!this.state.activityLogs) this.state.activityLogs = {};
       if (!this.state.executors) this.state.executors = {};
       if (!this.state.dataMigrations) this.state.dataMigrations = [];
+      if (!this.state.resourceExternalAccess) this.state.resourceExternalAccess = {};
+      if (!this.state.resourceCloneTasks) this.state.resourceCloneTasks = [];
       if (!this.state.cdsPeers) this.state.cdsPeers = [];
       if (!this.state.projects) this.state.projects = [];
       // Migrate: backfill cacheMounts for existing build profiles
@@ -1303,6 +1307,7 @@ export class StateService {
         | 'githubAutoDeploy'
         | 'githubLinkedAt'
         | 'autoSmokeEnabled'
+        | 'resourceChipDisplay'
         | 'composeYaml'
         | 'composeUpdatedAt'
         | 'composeVersion'
@@ -2827,6 +2832,77 @@ export class StateService {
 
   removeDataMigration(id: string): void {
     this.state.dataMigrations = (this.state.dataMigrations || []).filter(m => m.id !== id);
+  }
+
+  // ── Branch resource state ──
+
+  resourcePolicyKey(projectId: string, branchId: string, resourceId: string): string {
+    return `${projectId}:${branchId}:${resourceId}`;
+  }
+
+  getResourceExternalAccess(projectId: string, branchId: string, resourceId: string): ResourceExternalAccessPolicy | undefined {
+    const key = this.resourcePolicyKey(projectId, branchId, resourceId);
+    return (this.state.resourceExternalAccess || {})[key];
+  }
+
+  getResourceExternalAccessForBranch(projectId: string, branchId: string): ResourceExternalAccessPolicy[] {
+    const prefix = `${projectId}:${branchId}:`;
+    return Object.entries(this.state.resourceExternalAccess || {})
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([, policy]) => policy);
+  }
+
+  upsertResourceExternalAccess(policy: Omit<ResourceExternalAccessPolicy, 'id' | 'createdAt' | 'updatedAt'>): ResourceExternalAccessPolicy {
+    if (!this.state.resourceExternalAccess) this.state.resourceExternalAccess = {};
+    const key = this.resourcePolicyKey(policy.projectId, policy.branchId, policy.resourceId);
+    const existing = this.state.resourceExternalAccess[key];
+    const now = new Date().toISOString();
+    const next: ResourceExternalAccessPolicy = {
+      ...existing,
+      ...policy,
+      id: existing?.id || key,
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
+    };
+    this.state.resourceExternalAccess[key] = next;
+    return next;
+  }
+
+  listResourceCloneTasks(filter: { projectId?: string; branchId?: string; resourceId?: string } = {}): ResourceCloneTask[] {
+    return (this.state.resourceCloneTasks || []).filter((task) => {
+      if (filter.projectId && task.projectId !== filter.projectId) return false;
+      if (filter.branchId && task.branchId !== filter.branchId) return false;
+      if (filter.resourceId && task.resourceId !== filter.resourceId) return false;
+      return true;
+    });
+  }
+
+  getResourceCloneTask(id: string): ResourceCloneTask | undefined {
+    return (this.state.resourceCloneTasks || []).find((task) => task.id === id);
+  }
+
+  addResourceCloneTask(task: Omit<ResourceCloneTask, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): ResourceCloneTask {
+    if (!this.state.resourceCloneTasks) this.state.resourceCloneTasks = [];
+    const now = new Date().toISOString();
+    const next: ResourceCloneTask = {
+      ...task,
+      id: task.id || crypto.randomUUID(),
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.state.resourceCloneTasks.push(next);
+    if (this.state.resourceCloneTasks.length > 200) {
+      this.state.resourceCloneTasks = this.state.resourceCloneTasks.slice(-200);
+    }
+    return next;
+  }
+
+  updateResourceCloneTask(id: string, updates: Partial<ResourceCloneTask>): ResourceCloneTask {
+    const list = this.state.resourceCloneTasks || [];
+    const task = list.find((item) => item.id === id);
+    if (!task) throw new Error(`资源克隆任务 "${id}" 不存在`);
+    Object.assign(task, updates, { updatedAt: new Date().toISOString() });
+    return task;
   }
 
   // ── CDS peers (remote CDS instances trusted for data migration) ──
