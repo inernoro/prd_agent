@@ -73,3 +73,14 @@ MAP 直出删除后，新 run 一律 engine="agent"；`md_to_ppt_runs` 历史记
 `md-to-ppt-page-guide` seed + `data-tour-id` 锚点 + 进页自动开讲）。2026-06-10 摘除
 百宝箱 wip 时该教程尚未做。偿还路径：页面加锚点（常驻元素：quick-starts/composer/
 风格选择/页卡），`BuildDefaultTips` 加 seed，更新 onboarding-tips 规则表。
+
+## 8. 真流式已修在 sidecar，生效依赖 sidecar 实例重启（P1 跟踪）
+
+2026-06-10 预览环境二轮验收实测：deck 88s 生成成功但正文全部结尾爆发，等待期实况渲染/
+思考流无内容可画。根因定位（证据链）：CDS message 接口 202 异步 + 流式 ingest 均正常；
+真凶在 `claude-sdk-sidecar/app/official_agent_sdk.py`——`ClaudeAgentOptions` 未开
+`include_partial_messages`，`receive_response()` 只产完整消息，token 级增量根本不产生。
+已修：开启该参数（旧版 SDK TypeError 优雅降级）+ `sdk_events.py` 映射
+`content_block_delta`（text_delta/thinking_delta）+ 完整消息块去重防正文双倍，
+单测 5 例守护。**注意**：本分支 compose 不含 sidecar 服务，CDS managed runtime 用的
+sidecar 实例另行部署——合并 main + sidecar 实例重启后真流式才在线上生效。

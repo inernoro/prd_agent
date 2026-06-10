@@ -11,9 +11,34 @@ class SdkEventAccumulator:
     output_tokens: int = 0
     result_error: str | None = None
     result_metadata: dict[str, Any] = field(default_factory=dict)
+    # include_partial_messages 开启后收到过 token 级增量：完整消息里的 text/thinking
+    # 块必须跳过（内容已逐 token 发过，再发一遍 = 正文双倍）
+    partial_streaming: bool = False
 
 
 def handle_sdk_message(message: Any, result_message_type: type, state: SdkEventAccumulator, *, cancelled: bool) -> list[SidecarEvent]:
+    # StreamEvent（include_partial_messages=True 时 SDK 产生）：token 级增量。
+    # 这是真流式的唯一来源——没有它，整条 assistant 消息要等全部生成完才一次性
+    # 到达（2026-06-10 MD转PPT 实测：88s 生成的 deck 正文全部在结尾爆发，
+    # 等待期的实况渲染/思考流全程无内容可画）。
+    event_payload = getattr(message, "event", None)
+    if isinstance(event_payload, dict) and not isinstance(message, result_message_type):
+        if event_payload.get("type") == "content_block_delta":
+            delta = event_payload.get("delta") or {}
+            dtype = delta.get("type")
+            if dtype == "text_delta":
+                text = delta.get("text") or ""
+                if text:
+                    state.partial_streaming = True
+                    state.final_text += text
+                    return [SidecarEvent(type="text_delta", text=text)]
+            elif dtype == "thinking_delta":
+                thinking = delta.get("thinking") or ""
+                if thinking:
+                    state.partial_streaming = True
+                    return [SidecarEvent(type="thinking", text=thinking)]
+        return []
+
     if isinstance(message, result_message_type):
         state.result_metadata = safe_result_metadata(message)
         result = getattr(message, "result", None)
@@ -33,10 +58,15 @@ def handle_sdk_message(message: Any, result_message_type: type, state: SdkEventA
         if btype in ("thinking", "thinkingblock", "redacted_thinking", "reasoning", "reasoningblock"):
             # 推理模型的思考块。官方 SDK 会给出 thinking 内容；过去这里没映射，导致用户在
             # 推理期间(可能数十秒)看到空白("首字太慢/思考不显示")。透出为 thinking 事件。
+            # token 级增量已经流过的内容不再整块重发。
+            if state.partial_streaming:
+                continue
             thinking = block_thinking(block)
             if thinking:
                 events.append(SidecarEvent(type="thinking", text=thinking))
         elif btype in ("text", "textblock"):
+            if state.partial_streaming:
+                continue
             text = block_text(block)
             if text:
                 state.final_text += text

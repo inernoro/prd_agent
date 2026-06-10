@@ -181,7 +181,7 @@ async def run_official_agent(
 
     env = upstream.to_sdk_env(req.timeout_seconds)
 
-    options = ClaudeAgentOptions(
+    option_kwargs: dict = dict(
         tools=builtin_allowed,
         allowed_tools=[*builtin_allowed, *sdk_tooling.map_tool_names],
         disallowed_tools=builtin_disallowed,
@@ -201,6 +201,18 @@ async def run_official_agent(
         setting_sources=setting_sources,
         extra_args=extra_args,
     )
+    # 真流式的关键：不开 include_partial_messages 时 receive_response() 只产出
+    # 完整消息，正文要等整条 assistant 消息生成完才一次性到达（生成类长输出
+    # 表现为"结尾爆发"，下游等待期无内容可渲染——2026-06-10 MD转PPT 实测）。
+    # 开启后 SDK 额外产出 StreamEvent（content_block_delta），由
+    # sdk_events.handle_sdk_message 映射为 token 级 text_delta/thinking。
+    # 旧版 SDK 不支持该参数则优雅降级回整消息模式。
+    try:
+        options = ClaudeAgentOptions(**option_kwargs, include_partial_messages=True)
+        partial_messages_enabled = True
+    except TypeError:
+        options = ClaudeAgentOptions(**option_kwargs)
+        partial_messages_enabled = False
 
     yield SidecarEvent(
         type="runtime_init",
@@ -222,6 +234,7 @@ async def run_official_agent(
             "client": "ClaudeSDKClient",
             "loopOwner": "claude-agent-sdk",
             "sdkLoopEnabled": True,
+            "partialMessages": partial_messages_enabled,
             "mapRole": "control-plane",
             "cdsRole": "sandbox-runtime",
             "interrupt": cancel_event is not None,
