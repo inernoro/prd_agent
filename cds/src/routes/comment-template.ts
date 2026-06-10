@@ -29,7 +29,7 @@ import {
   DEFAULT_TEMPLATE_BODY,
   VARIABLE_DEFS,
   buildDashboardUrl,
-  buildPreviewUrl,
+  buildPreviewUrlForProject,
   buildTemplateVariables,
   renderTemplate,
 } from '../services/comment-template.js';
@@ -160,14 +160,17 @@ export function createCommentTemplateRouter(deps: CommentTemplateRouterDeps): Ro
       ? stateService.getProject(realBranch.projectId)
       : undefined;
     const previewBranch = realBranch?.branch || PREVIEW_SAMPLE.branch;
-    const previewProjectSlug =
-      realProject?.slug || realBranch?.projectId || 'preview-project';
     const effectiveBranchId = realBranch?.id || 'preview-branch';
 
     const vars = buildTemplateVariables({
       branch: PREVIEW_SAMPLE.branch,
       commitSha: PREVIEW_SAMPLE.commitSha,
-      previewUrl: buildPreviewUrl(previewHost(), previewBranch, previewProjectSlug),
+      previewUrl: buildPreviewUrlForProject(
+        previewHost(),
+        previewBranch,
+        realProject,
+        realBranch?.projectId || 'preview-project',
+      ).url,
       dashboardUrl: buildDashboardUrl(config.publicBaseUrl, effectiveBranchId),
       repoFullName: PREVIEW_SAMPLE.repoFullName,
       prNumber: PREVIEW_SAMPLE.prNumber,

@@ -129,6 +129,8 @@ docs:
   design.cds-railway-onboarding-flow: CDS Railway 式部署向导设计
   design.cds-visual-deploy: CDS 绝对可视化一键部署设计（检测回填+把握度+试运行沙箱+多DB实例+env粘贴+应用已上线，含架构图）
   design.speech-agent: 演讲智能体技术设计（数据模型 / Controller / Service / SSE 协议）
+  design.peer-sync: 系统级跨节点互传（Peer Sync）设计
+  design.reprocess-chat-routing: 文档再加工 · 智能体调用路由设计
 
   # ── 三、指南 ──
   # 先看全貌索引，再看部署/开发，然后是 Agent 使用教程，最后是专题指南
@@ -148,6 +150,7 @@ docs:
   guide.workflow-agent: 工作流引擎使用教程
   guide.shortcuts-agent: 快捷指令使用教程
   guide.marketplace: 海鲜市场（配置市场）使用教程
+  guide.visual-acceptance-skill: 视觉验收技能跨仓库使用教程
   guide.workflow-canvas: 工作流画布操作手册
   guide.weekly-report: 周报功能完整操作指南
   guide.poster-feed-card: 多平台博主订阅 → 首页海报弹窗（涌现 1，TikTok/抖音/B站/小红书/YouTube）
@@ -261,6 +264,7 @@ docs:
   plan.emergence-1-tiktok-douyin-poster: 涌现 1 · TikTok / 抖音博主订阅首页广告海报
   plan.prd-admin-surface-style-migration: prd-admin 样式统一迁移看板
   plan.video-agent-list-detail-rebuild: 视频创作 Agent 列表 / 详情页全面重做交接
+  plan.cds-pr684-review-remediation: CDS PR #684 审查修复计划
 
   # ── 六、技术债务台账（按模块）──
   # 已知边界 / 后续可补 / 留尾风险，命名规范见 rule.doc-naming.md「debt.* 专项约定」
@@ -293,6 +297,10 @@ docs:
   debt.report-detail: 周报详情页（异构数据 + 多 tabs + 右栏面板）保留独立实现的债务台账
   debt.open-api: 开放接口对外网关债务台账（伞形 code 不变量 + 限流/降级/预警/配额 Phase 2 留尾）
   debt.document-store-sync: 知识库跨环境/本地库↔库同步 · 债务台账（删除传播/附件/冲突合并/教程未补）
+  debt.daily-report: 日报技能（daily-report-summary）债务台账
+  debt.peer-sync: 系统级跨节点互传（Peer Sync）债务台账
+  debt.task-tree: 个人任务树 Agent · 债务台账
+  debt.web-hosting-comments: 网页托管评论 · 债务台账
 
   # ── 七、周报（降序：最新在前）──
   report.agent-universe-completeness: 智能体宇宙 · 各智能体完备度看板（终极目标 vs 当前进度）

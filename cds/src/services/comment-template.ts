@@ -32,7 +32,7 @@
  * renderer in sync.
  */
 
-import { computePreviewSlug } from './preview-slug.js';
+import { computePreviewSlug, resolvePreviewProjectIdentity, type PreviewProjectIdentity, type ResolvedPreviewProjectIdentity } from './preview-slug.js';
 
 export interface TemplateVariableDef {
   /** `{{name}}` as it appears inside template bodies. */
@@ -168,6 +168,30 @@ export function buildPreviewUrl(
   return `https://${computePreviewSlug(branch, projectSlug)}.${host}`;
 }
 
+export interface BuildPreviewUrlForProjectResult {
+  url: string;
+  previewSlug: string;
+  projectIdentity: ResolvedPreviewProjectIdentity;
+}
+
+export function buildPreviewUrlForProject(
+  host: string | undefined | null,
+  branch: string | undefined | null,
+  project: PreviewProjectIdentity | undefined | null,
+  fallback?: string | null,
+): BuildPreviewUrlForProjectResult {
+  const projectIdentity = resolvePreviewProjectIdentity(project, fallback);
+  if (!branch || !projectIdentity.slug) {
+    return { url: '', previewSlug: '', projectIdentity };
+  }
+  const previewSlug = computePreviewSlug(branch, projectIdentity.slug);
+  return {
+    url: host ? `https://${previewSlug}.${host}` : '',
+    previewSlug,
+    projectIdentity,
+  };
+}
+
 /**
  * Assemble the PR-review Agent deeplink from the current branch's
  * preview URL.
@@ -225,4 +249,3 @@ export function buildTemplateVariables(input: BuildVariablesInput): TemplateVari
     prReviewUrl: buildPrReviewDeeplink(input.previewUrl || '', input.prUrl || ''),
   };
 }
-

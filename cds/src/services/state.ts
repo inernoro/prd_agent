@@ -1,5 +1,6 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ResourceExternalAccessPolicy, ResourceCloneTask } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
@@ -7,6 +8,7 @@ import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '..
 import { sealToken, unsealToken, isSealedSecret } from '../infra/secret-seal.js';
 import { normalizeCacheHostPath, resolveCacheBase } from './cache-paths.js';
 import { getGithubAppWhitelistSettings, normalizeGitHubOwnerList } from './github-app-whitelist.js';
+import { isGenericPreviewProjectSlug, repoNameFromGitRef } from './preview-slug.js';
 import {
   readActiveUpdate,
   writeActiveUpdate,
@@ -21,6 +23,41 @@ const PORT_ALLOC_STRIDE = 17;
 /** Max rolling backups of state.json kept on disk. Re-exported from the backing store so existing callers keep working. */
 const MAX_STATE_BACKUPS = JSON_MAX_BACKUPS;
 const SYSTEM_PROJECT_ID = '__system__';
+function readGitOriginUrl(repoRoot?: string): string {
+  if (!repoRoot) return '';
+  try {
+    const dotGit = path.join(repoRoot, '.git');
+    let gitDir = dotGit;
+    const stat = fs.statSync(dotGit);
+    if (stat.isFile()) {
+      const marker = fs.readFileSync(dotGit, 'utf8').trim();
+      const match = marker.match(/^gitdir:\s*(.+)$/i);
+      if (!match) return '';
+      gitDir = path.resolve(repoRoot, match[1]);
+    }
+    const config = fs.readFileSync(path.join(gitDir, 'config'), 'utf8');
+    const lines = config.split(/\r?\n/);
+    let inOrigin = false;
+    for (const raw of lines) {
+      const line = raw.trim();
+      const section = line.match(/^\[remote\s+"([^"]+)"\]$/);
+      if (section) {
+        inOrigin = section[1] === 'origin';
+        continue;
+      }
+      if (line.startsWith('[')) {
+        inOrigin = false;
+        continue;
+      }
+      if (!inOrigin) continue;
+      const url = line.match(/^url\s*=\s*(.+)$/);
+      if (url?.[1]) return url[1].trim();
+    }
+  } catch {
+    return '';
+  }
+  return '';
+}
 
 function classifyInfraScope(service: Partial<InfraService>): 'project' | 'system' {
   if (service.scope === 'project' || service.scope === 'system') return service.scope;
@@ -254,6 +291,11 @@ export class StateService {
       // Migrate: tag every pre-P4 branch/profile/infra/routing entry with
       // the legacy default projectId. See migrateProjectScoping().
       this.migrateProjectScoping();
+      // Legacy CDS instances sometimes ran from a generic checkout dir
+      // (`workspace`, `cursor-workspace`). Keep the immutable project slug
+      // intact, but set a preview alias from the Git repo so new URLs do
+      // not keep exposing the container/workspace folder name.
+      this.migrateLegacyPreviewAlias();
       // PR_A: 把旧的 4 个全局字段 seed 到所有项目（首次启动只跑一遍，
       // 已经有项目级值的字段会被跳过）。详见方法顶部注释。
       this.migrateGlobalsToProjects();
@@ -407,6 +449,27 @@ export class StateService {
     if (changed) {
       this.save();
     }
+  }
+
+  private migrateLegacyPreviewAlias(): void {
+    const projects = this.state.projects || [];
+    const legacy = projects.find((p) => p.legacyFlag === true);
+    if (!legacy || legacy.aliasSlug || !isGenericPreviewProjectSlug(legacy.slug)) return;
+
+    const candidate =
+      repoNameFromGitRef(legacy.gitRepoUrl) ||
+      repoNameFromGitRef(legacy.githubRepoFullName) ||
+      repoNameFromGitRef(readGitOriginUrl(this.repoRoot));
+    if (!candidate || candidate === legacy.slug) return;
+
+    const collides = projects.some(
+      (p) => p.id !== legacy.id && (p.slug === candidate || p.aliasSlug === candidate),
+    );
+    if (collides) return;
+
+    legacy.aliasSlug = candidate;
+    legacy.updatedAt = new Date().toISOString();
+    this.save();
   }
 
   /**
