@@ -13,6 +13,9 @@ import {
   MessageSquarePlus,
   History,
   FileCode,
+  ClipboardPaste,
+  FileDown,
+  Bug,
 } from 'lucide-react';
 import { useSseStream } from '@/lib/useSseStream';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
@@ -27,6 +30,8 @@ import {
   listDiagnoseSessions,
   getDiagnoseSession,
   deleteDiagnoseSession,
+  diagnoseToDefect,
+  exportDiagnoseSession,
   type ChannelTraceCase,
   type ChannelTraceCaseSeverity,
   type ChannelTraceRelatedCase,
@@ -68,6 +73,11 @@ export function CasesTab() {
   const [curHits, setCurHits] = useState<{ repo: string; path: string }[]>([]);
   const [sessions, setSessions] = useState<ChannelTraceDiagnoseSessionSummary[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [showPaste, setShowPaste] = useState(false);
+  const [contextText, setContextText] = useState('');
+  const [actionMsg, setActionMsg] = useState('');
+  const [exporting, setExporting] = useState(false);
+  const [sinking, setSinking] = useState(false);
   const streamRef = useRef('');
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -161,7 +171,58 @@ export function CasesTab() {
     streamRef.current = '';
     setStreamingText('');
     setMessages((prev) => [...prev, { role: 'user', content: text }]);
-    void start({ body: { sessionId: sessionId ?? undefined, message: text } });
+    void start({
+      body: {
+        sessionId: sessionId ?? undefined,
+        message: text,
+        contextText: contextText.trim() || undefined,
+      },
+    });
+    setContextText('');
+  };
+
+  const exportEvidence = async () => {
+    if (!sessionId || exporting) return;
+    setExporting(true);
+    setActionMsg('');
+    try {
+      const res = await exportDiagnoseSession(sessionId);
+      if (res.success && res.data) {
+        const blob = new Blob([res.data.markdown], { type: 'text/markdown;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = res.data.fileName;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        setActionMsg('已导出证据包 .md');
+      } else {
+        setActionMsg(res.error?.message || '导出失败');
+      }
+    } finally {
+      setExporting(false);
+      window.setTimeout(() => setActionMsg(''), 4000);
+    }
+  };
+
+  const sinkToDefect = async () => {
+    if (!sessionId || sinking) return;
+    if (!window.confirm('把这段诊断会话沉淀为一条缺陷（草稿态，可在「缺陷管理」继续处理）？')) return;
+    setSinking(true);
+    setActionMsg('');
+    try {
+      const res = await diagnoseToDefect(sessionId);
+      if (res.success && res.data) {
+        setActionMsg(`已沉淀为缺陷 ${res.data.defectNo}，可在「缺陷管理」查看`);
+      } else {
+        setActionMsg(res.error?.message || '沉淀失败');
+      }
+    } finally {
+      setSinking(false);
+      window.setTimeout(() => setActionMsg(''), 6000);
+    }
   };
 
   const newSession = () => {
@@ -230,6 +291,24 @@ export function CasesTab() {
             线上问题对话式诊断
           </div>
           <div className="ml-auto flex items-center gap-1.5">
+            <button
+              onClick={exportEvidence}
+              disabled={!sessionId || exporting || isStreaming}
+              title="导出本次诊断的证据包（Markdown：问答 + 召回案例 + 命中代码）"
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white/75 hover:bg-white/10 disabled:opacity-40"
+            >
+              {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
+              导出
+            </button>
+            <button
+              onClick={sinkToDefect}
+              disabled={!sessionId || sinking || isStreaming}
+              title="把诊断结论沉淀为缺陷（复用缺陷管理，草稿态可继续指派/跟踪）"
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white/75 hover:bg-white/10 disabled:opacity-40"
+            >
+              {sinking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Bug className="w-3.5 h-3.5" />}
+              沉淀缺陷
+            </button>
             <div className="relative">
               <button
                 onClick={() => {
@@ -293,6 +372,9 @@ export function CasesTab() {
             {model.platform ? ` · ${model.platform}` : ''}
           </div>
         )}
+        {actionMsg && (
+          <div className="shrink-0 px-6 pb-1 text-[11px] text-emerald-300/80">{actionMsg}</div>
+        )}
 
         <div
           ref={scrollRef}
@@ -346,6 +428,17 @@ export function CasesTab() {
         </div>
 
         <div className="shrink-0 px-6 py-3 border-t border-white/10">
+          {showPaste && (
+            <div className="mb-2">
+              <textarea
+                value={contextText}
+                onChange={(e) => setContextText(e.target.value)}
+                rows={3}
+                placeholder="粘贴防窜后台报错弹窗 / 列表数据的 HTML 或文本，作为本轮补充上下文（提交后自动清空）。"
+                className="w-full resize-y rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-xs text-white/85 placeholder:text-white/30 focus:outline-none focus:border-emerald-500/40 font-mono"
+              />
+            </div>
+          )}
           <div className="flex items-end gap-2">
             <textarea
               value={input}
@@ -357,6 +450,17 @@ export function CasesTab() {
               placeholder="描述线上问题现象 / 回答 AI 的追问（Ctrl/⌘+Enter 发送）"
               className="flex-1 resize-none rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 placeholder:text-white/30 focus:outline-none focus:border-emerald-500/40"
             />
+            <button
+              onClick={() => setShowPaste((v) => !v)}
+              title="粘贴后台页面 HTML / 文本作为上下文"
+              className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-2 rounded-lg border text-sm hover:bg-white/10 ${
+                showPaste || contextText.trim()
+                  ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                  : 'bg-white/5 border-white/10 text-white/75'
+              }`}
+            >
+              <ClipboardPaste className="w-4 h-4" />
+            </button>
             <button
               onClick={send}
               disabled={isStreaming || !input.trim()}

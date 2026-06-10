@@ -218,8 +218,90 @@ export async function deleteDiagnoseSession(id: string): Promise<ApiResponse<{ d
   });
 }
 
-/** 对话式诊断 SSE 流地址（POST，body: { sessionId?, message }） */
+/** 对话式诊断 SSE 流地址（POST，body: { sessionId?, message, contextText? }） */
 export const diagnoseAskUrl = '/api/channel-trace-agent/diagnose/ask';
+
+/** 把一段诊断会话一键沉淀为缺陷（复用缺陷 Agent） */
+export async function diagnoseToDefect(
+  sessionId: string,
+  payload?: { title?: string; severity?: string },
+): Promise<ApiResponse<{ defectId: string; defectNo: string; title: string }>> {
+  return apiRequest(
+    `/api/channel-trace-agent/diagnose/sessions/${encodeURIComponent(sessionId)}/to-defect`,
+    { method: 'POST', body: payload ?? {} },
+  );
+}
+
+/** 导出诊断会话「证据包」Markdown（前端下载/复制） */
+export async function exportDiagnoseSession(
+  sessionId: string,
+): Promise<ApiResponse<{ fileName: string; markdown: string }>> {
+  return apiRequest(
+    `/api/channel-trace-agent/diagnose/sessions/${encodeURIComponent(sessionId)}/export`,
+  );
+}
+
+// ──────────────────────────────────────────────
+// 排查清单（内置模板 + 自定义）
+// ──────────────────────────────────────────────
+
+export interface ChannelTraceChecklistStep {
+  text: string;
+  hint?: string | null;
+}
+
+export interface ChannelTraceChecklist {
+  id: string;
+  title: string;
+  scene: string;
+  steps: ChannelTraceChecklistStep[];
+  tags: string[];
+  isBuiltin: boolean;
+  createdBy: string;
+  createdByName: string;
+  updatedBy?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UpsertChecklistPayload {
+  title: string;
+  scene?: string;
+  steps: ChannelTraceChecklistStep[];
+  tags?: string[];
+}
+
+export async function getChecklistTemplates(): Promise<
+  ApiResponse<{ items: ChannelTraceChecklist[] }>
+> {
+  return apiRequest('/api/channel-trace-agent/checklists/templates');
+}
+
+export async function listChecklists(): Promise<ApiResponse<{ items: ChannelTraceChecklist[] }>> {
+  return apiRequest('/api/channel-trace-agent/checklists');
+}
+
+export async function createChecklist(
+  payload: UpsertChecklistPayload,
+): Promise<ApiResponse<{ item: ChannelTraceChecklist }>> {
+  return apiRequest('/api/channel-trace-agent/checklists', { method: 'POST', body: payload });
+}
+
+export async function updateChecklist(
+  id: string,
+  payload: UpsertChecklistPayload,
+): Promise<ApiResponse<{ item: ChannelTraceChecklist }>> {
+  return apiRequest(`/api/channel-trace-agent/checklists/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: payload,
+  });
+}
+
+export async function deleteChecklist(id: string): Promise<ApiResponse<{ deleted: boolean }>> {
+  return apiRequest(`/api/channel-trace-agent/checklists/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
 
 // ──────────────────────────────────────────────
 // 业务/代码差异对比

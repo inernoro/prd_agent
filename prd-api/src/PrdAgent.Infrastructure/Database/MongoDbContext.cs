@@ -145,6 +145,7 @@ public class MongoDbContext
     public IMongoCollection<ChannelTraceCase> ChannelTraceCases => _database.GetCollection<ChannelTraceCase>("channel_trace_cases");
     public IMongoCollection<ChannelTraceDiff> ChannelTraceDiffs => _database.GetCollection<ChannelTraceDiff>("channel_trace_diffs");
     public IMongoCollection<ChannelTraceDiagnoseSession> ChannelTraceDiagnoseSessions => _database.GetCollection<ChannelTraceDiagnoseSession>("channel_trace_diagnose_sessions");
+    public IMongoCollection<ChannelTraceChecklist> ChannelTraceChecklists => _database.GetCollection<ChannelTraceChecklist>("channel_trace_checklists");
 
     // CCAS Agent 赋码采集关联系统综合智能体
     public IMongoCollection<PrdAgent.Core.Models.CcasAgent.CcasEquipmentAsset> CcasEquipmentAssets

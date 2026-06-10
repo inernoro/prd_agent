@@ -182,6 +182,50 @@ public class ChannelTraceDiagnoseMessage
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
+/// <summary>
+/// 防窜物流线上问题「排查清单」模板：把一类问题（扫码失败 / 窜货误判 / 轨迹缺失 …）的
+/// 标准排查步骤固化为可逐项勾选的 checklist，新人照表排查，不依赖每次重新让 AI 推演。
+/// 内置模板由代码提供（IsBuiltin=true，不入库），用户也可创建/另存自己的清单（入库）。
+/// </summary>
+[BsonIgnoreExtraElements]
+public class ChannelTraceChecklist
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
+    /// <summary>清单标题</summary>
+    public string Title { get; set; } = string.Empty;
+
+    /// <summary>适用场景（如 扫码失败 / 窜货误判 / 物流轨迹缺失 / 关联解绑异常）</summary>
+    public string Scene { get; set; } = string.Empty;
+
+    /// <summary>排查步骤（有序）</summary>
+    public List<ChannelTraceChecklistStep> Steps { get; set; } = new();
+
+    /// <summary>分类标签</summary>
+    public List<string> Tags { get; set; } = new();
+
+    /// <summary>是否内置模板（内置由代码提供，不入库；用户清单恒为 false）</summary>
+    public bool IsBuiltin { get; set; }
+
+    public string CreatedBy { get; set; } = string.Empty;
+    public string CreatedByName { get; set; } = string.Empty;
+    public string? UpdatedBy { get; set; }
+
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>排查清单中的一步。</summary>
+[BsonIgnoreExtraElements]
+public class ChannelTraceChecklistStep
+{
+    /// <summary>这一步要检查/操作什么（一句话）</summary>
+    public string Text { get; set; } = string.Empty;
+
+    /// <summary>补充提示：怎么查、在哪查、异常长什么样（可空）</summary>
+    public string? Hint { get; set; }
+}
+
 public static class ChannelTraceCaseSeverities
 {
     public const string Low = "low";

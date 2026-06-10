@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Send, Plus, Pencil, Trash2, Loader2, X, BookOpen, Search, Upload, Paperclip, Image as ImageIcon } from 'lucide-react';
+import { Send, Plus, Pencil, Trash2, Loader2, X, BookOpen, Search, Upload, Paperclip, Image as ImageIcon, ClipboardPaste } from 'lucide-react';
 import { useSseStream } from '@/lib/useSseStream';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import { uploadAttachment } from '@/services/real/aiToolbox';
@@ -25,6 +25,8 @@ export function KnowledgeTab() {
   const [importing, setImporting] = useState(false);
   const [askFiles, setAskFiles] = useState<{ attachmentId: string; fileName: string; isImage: boolean }[]>([]);
   const [askUploading, setAskUploading] = useState(false);
+  const [showPaste, setShowPaste] = useState(false);
+  const [contextText, setContextText] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const askFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -57,6 +59,7 @@ export function KnowledgeTab() {
       body: {
         question: question.trim(),
         attachmentIds: askFiles.length > 0 ? askFiles.map((f) => f.attachmentId) : undefined,
+        contextText: contextText.trim() || undefined,
       },
     });
   };
@@ -128,6 +131,17 @@ export function KnowledgeTab() {
               className="flex-1 resize-none rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 placeholder:text-white/30 focus:outline-none focus:border-emerald-500/40"
             />
             <button
+              onClick={() => setShowPaste((v) => !v)}
+              title="粘贴防窜后台页面 HTML / 文本作为上下文（比截图省 token、字段更全）"
+              className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-2 rounded-lg border text-sm hover:bg-white/10 ${
+                showPaste || contextText.trim()
+                  ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                  : 'bg-white/5 border-white/10 text-white/75'
+              }`}
+            >
+              <ClipboardPaste className="w-4 h-4" />
+            </button>
+            <button
               onClick={() => askFileInputRef.current?.click()}
               disabled={askUploading || askFiles.length >= 8}
               title="上传防窜后台页面截图 / 文档，让 AI 识别页面与操作"
@@ -152,6 +166,28 @@ export function KnowledgeTab() {
               onChange={onAttachAskFiles}
             />
           </div>
+          {showPaste && (
+            <div className="mt-2">
+              <textarea
+                value={contextText}
+                onChange={(e) => setContextText(e.target.value)}
+                rows={3}
+                placeholder="粘贴防窜后台页面的 HTML 或文本（如选中页面右键「检查」复制元素，或直接复制页面文字）。提交问题时一并作为上下文。"
+                className="w-full resize-y rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-xs text-white/85 placeholder:text-white/30 focus:outline-none focus:border-emerald-500/40 font-mono"
+              />
+              {contextText.trim() && (
+                <div className="text-[11px] text-white/40 mt-1">
+                  已附带粘贴内容（{contextText.trim().length} 字），提交时会去标签转纯文本。
+                  <button
+                    onClick={() => setContextText('')}
+                    className="ml-2 text-white/40 hover:text-rose-400"
+                  >
+                    清空
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           {askFiles.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mt-2">
               {askFiles.map((f, i) => (

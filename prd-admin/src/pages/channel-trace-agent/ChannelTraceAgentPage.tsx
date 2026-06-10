@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { PackageSearch, BookOpen, Stethoscope, GitCompare } from 'lucide-react';
+import { PackageSearch, BookOpen, Stethoscope, GitCompare, ListChecks } from 'lucide-react';
 import { KnowledgeTab } from './KnowledgeTab';
 import { CasesTab } from './CasesTab';
 import { DiffTab } from './DiffTab';
+import { ChecklistTab } from './ChecklistTab';
 
-type Tab = 'knowledge' | 'cases' | 'diff';
+type Tab = 'knowledge' | 'cases' | 'checklist' | 'diff';
 
 export function ChannelTraceAgentPage() {
   const [tab, setTab] = useState<Tab>('knowledge');
@@ -36,6 +37,12 @@ export function ChannelTraceAgentPage() {
               问题排查
             </span>
           </TabButton>
+          <TabButton active={tab === 'checklist'} onClick={() => setTab('checklist')}>
+            <span className="inline-flex items-center gap-1.5">
+              <ListChecks className="w-3.5 h-3.5" />
+              排查清单
+            </span>
+          </TabButton>
           <TabButton active={tab === 'diff'} onClick={() => setTab('diff')}>
             <span className="inline-flex items-center gap-1.5">
               <GitCompare className="w-3.5 h-3.5" />
@@ -48,6 +55,7 @@ export function ChannelTraceAgentPage() {
       <div className="flex-1 min-h-0">
         {tab === 'knowledge' && <KnowledgeTab />}
         {tab === 'cases' && <CasesTab />}
+        {tab === 'checklist' && <ChecklistTab />}
         {tab === 'diff' && <DiffTab />}
       </div>
     </div>

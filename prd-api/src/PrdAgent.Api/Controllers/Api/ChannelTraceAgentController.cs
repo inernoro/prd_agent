@@ -214,6 +214,8 @@ public class ChannelTraceAgentController : ControllerBase
         public string? Question { get; set; }
         /// <summary>可选：上传的截图 / 文档附件 id（截图走视觉识别，文档取抽取文本作为上下文）。</summary>
         public List<string>? AttachmentIds { get; set; }
+        /// <summary>可选：用户从防窜后台直接粘贴的页面 HTML / 文本（去标签后作为上下文，比截图省 token、字段更全）。</summary>
+        public string? ContextText { get; set; }
     }
 
     /// <summary>
@@ -262,6 +264,14 @@ public class ChannelTraceAgentController : ControllerBase
                     else if (!string.IsNullOrWhiteSpace(a.ExtractedText))
                         docTexts.Add($"【{a.FileName}】\n{Truncate(a.ExtractedText, 20_000)}");
                 }
+            }
+
+            // 用户直接粘贴的页面 HTML / 文本：去标签转纯文本后并入文档上下文
+            if (!string.IsNullOrWhiteSpace(req.ContextText))
+            {
+                var pasted = StripHtml(req.ContextText);
+                if (!string.IsNullOrWhiteSpace(pasted))
+                    docTexts.Add($"【用户粘贴的防窜后台页面内容】\n{Truncate(pasted, 20_000)}");
             }
 
             var systemPrompt =
@@ -338,18 +348,26 @@ public class ChannelTraceAgentController : ControllerBase
     [HttpGet("cases")]
     public async Task<IActionResult> ListCases([FromQuery] string? keyword, CancellationToken ct)
     {
-        var filter = Builders<ChannelTraceCase>.Filter.Empty;
-        if (!string.IsNullOrWhiteSpace(keyword))
-        {
-            var kw = keyword.Trim();
-            filter = Builders<ChannelTraceCase>.Filter.Or(
-                Builders<ChannelTraceCase>.Filter.Regex(x => x.Title, new MongoDB.Bson.BsonRegularExpression(kw, "i")),
-                Builders<ChannelTraceCase>.Filter.Regex(x => x.Symptom, new MongoDB.Bson.BsonRegularExpression(kw, "i")));
-        }
-        var items = await _db.ChannelTraceCases.Find(filter)
+        var all = await _db.ChannelTraceCases.Find(Builders<ChannelTraceCase>.Filter.Empty)
             .SortByDescending(x => x.UpdatedAt)
             .Limit(500)
             .ToListAsync(ct);
+
+        if (string.IsNullOrWhiteSpace(keyword))
+            return Ok(ApiResponse<object>.Ok(new { items = all }));
+
+        // 检索增强：词重合度排序（命中同义/分词更全）打头，再并入纯子串命中兜底，
+        // 比单纯正则 OR(Title/Symptom) 召回更全（覆盖根因/解决方案/标签里的关键词）。
+        var kw = keyword.Trim();
+        var ranked = RankCasesByRelevance(all, kw, 500);
+        var lower = kw.ToLowerInvariant();
+        var substr = all.Where(c =>
+            (c.Title + " " + c.Symptom + " " + (c.RootCause ?? "") + " " + (c.Resolution ?? "") + " " + string.Join(" ", c.Tags))
+                .ToLowerInvariant().Contains(lower));
+        var items = ranked.Concat(substr)
+            .GroupBy(c => c.Id)
+            .Select(g => g.First())
+            .ToList();
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
@@ -625,6 +643,8 @@ public class ChannelTraceAgentController : ControllerBase
         /// <summary>已有会话 id；为空时新建会话</summary>
         public string? SessionId { get; set; }
         public string? Message { get; set; }
+        /// <summary>可选：用户从防窜后台粘贴的页面 HTML / 文本（报错弹窗、列表数据等），去标签后作为本轮上下文。</summary>
+        public string? ContextText { get; set; }
     }
 
     /// <summary>
@@ -726,6 +746,18 @@ public class ChannelTraceAgentController : ControllerBase
             contextNote.AppendLine();
             contextNote.AppendLine("== 内置仓库命中代码 ==");
             contextNote.AppendLine(hits.Count == 0 ? "（未扫描到相关代码或未配置仓库访问）" : BuildCodeContext(hits, CodeDiffInputBudget));
+
+            // 用户本轮粘贴的页面内容（报错弹窗 / 列表数据等）：去标签后并入上下文
+            if (!string.IsNullOrWhiteSpace(req.ContextText))
+            {
+                var pasted = StripHtml(req.ContextText);
+                if (!string.IsNullOrWhiteSpace(pasted))
+                {
+                    contextNote.AppendLine();
+                    contextNote.AppendLine("== 用户粘贴的防窜后台页面内容 ==");
+                    contextNote.AppendLine(Truncate(pasted, 20_000));
+                }
+            }
 
             var messages = new JsonArray
             {
@@ -954,6 +986,303 @@ public class ChannelTraceAgentController : ControllerBase
                 await writeEvent("error", new { message = "对比失败：" + ex.Message });
             }
         });
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // 能力 4：排查清单（内置模板 + 自定义 CRUD）
+    // ──────────────────────────────────────────────────────────────
+
+    /// <summary>内置排查清单模板（代码提供，不入库）：覆盖防窜物流高频问题类型，新人照表逐项排查。</summary>
+    private static readonly List<ChannelTraceChecklist> BuiltinChecklists = new()
+    {
+        new ChannelTraceChecklist
+        {
+            Id = "builtin-scan-fail",
+            Title = "扫码/上码失败排查",
+            Scene = "扫码失败",
+            IsBuiltin = true,
+            Tags = new() { "上码", "扫码失败" },
+            Steps = new()
+            {
+                new() { Text = "确认码本身状态", Hint = "在防窜后台「码管理」按码号查询：是否已激活/已作废/已被他人绑定" },
+                new() { Text = "确认码与商品/批次的关联是否建立", Hint = "未关联会导致扫码查不到商品信息" },
+                new() { Text = "核对扫码入口与码层级是否匹配", Hint = "箱码/盒码/单品码层级用错会报「码不存在」" },
+                new() { Text = "检查接口返回与错误码", Hint = "抓接口响应，区分是「码不存在」还是「无权限/签名失败」" },
+                new() { Text = "确认是否多环境/多库串号", Hint = "测试码扫到生产、或生产码扫到测试，会表现为查不到" },
+            },
+        },
+        new ChannelTraceChecklist
+        {
+            Id = "builtin-fleeing-misjudge",
+            Title = "窜货误判排查",
+            Scene = "窜货误判",
+            IsBuiltin = true,
+            Tags = new() { "窜货判定" },
+            Steps = new()
+            {
+                new() { Text = "确认该码的出库流向记录", Hint = "查出库单：发往的经销商/区域是否与判定区域一致" },
+                new() { Text = "核对经销商的授权销售区域配置", Hint = "区域配置错/边界模糊会导致正常流通被判窜货" },
+                new() { Text = "确认扫码上报的地理位置来源与精度", Hint = "GPS/IP 定位偏移可能把临界区域误判为跨区" },
+                new() { Text = "检查窜货判定规则与阈值", Hint = "判定逻辑（跨区/越级/时间窗）当前阈值是否过严" },
+                new() { Text = "回溯是否存在退货/调拨未登记", Hint = "合法调拨未录入系统会被识别为窜货" },
+            },
+        },
+        new ChannelTraceChecklist
+        {
+            Id = "builtin-track-missing",
+            Title = "物流轨迹缺失排查",
+            Scene = "物流轨迹缺失",
+            IsBuiltin = true,
+            Tags = new() { "物流轨迹" },
+            Steps = new()
+            {
+                new() { Text = "确认各环节扫码是否都已上报", Hint = "出库/入库/分拨任一环节漏扫都会断轨迹" },
+                new() { Text = "核对扫码上报是否成功落库", Hint = "查上报日志：是否有上报但写库失败" },
+                new() { Text = "确认轨迹聚合/排序逻辑", Hint = "时间戳乱序或时区问题会让轨迹看起来缺失" },
+                new() { Text = "检查码层级关联是否完整", Hint = "箱-盒-单品关联缺失会导致子码轨迹挂不上" },
+                new() { Text = "确认是否有数据同步延迟", Hint = "异步写入/MQ 积压会表现为短时间轨迹缺失" },
+            },
+        },
+        new ChannelTraceChecklist
+        {
+            Id = "builtin-relation-error",
+            Title = "关联/解绑异常排查",
+            Scene = "关联解绑异常",
+            IsBuiltin = true,
+            Tags = new() { "关联", "解绑" },
+            Steps = new()
+            {
+                new() { Text = "确认操作时码的当前绑定状态", Hint = "重复关联/对未绑定码解绑都会报错" },
+                new() { Text = "核对操作人的权限与所属组织", Hint = "跨组织操作他人的码会被拦截" },
+                new() { Text = "检查关联层级与父子码一致性", Hint = "父码已出库后再改子码关联通常被禁止" },
+                new() { Text = "确认是否存在并发操作", Hint = "并发关联/解绑可能产生脏状态，需看操作流水" },
+                new() { Text = "回查操作流水与最终态", Hint = "以操作流水（而非当前态）还原异常发生顺序" },
+            },
+        },
+    };
+
+    /// <summary>获取内置排查清单模板。</summary>
+    [HttpGet("checklists/templates")]
+    public IActionResult GetChecklistTemplates()
+        => Ok(ApiResponse<object>.Ok(new { items = BuiltinChecklists }));
+
+    /// <summary>列出当前用户的自定义排查清单（管理权限可见全部）。</summary>
+    [HttpGet("checklists")]
+    public async Task<IActionResult> ListChecklists(CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var filter = HasManagePermission()
+            ? Builders<ChannelTraceChecklist>.Filter.Empty
+            : Builders<ChannelTraceChecklist>.Filter.Eq(x => x.CreatedBy, userId);
+        var items = await _db.ChannelTraceChecklists.Find(filter)
+            .SortByDescending(x => x.UpdatedAt)
+            .Limit(200)
+            .ToListAsync(ct);
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    public class UpsertChecklistRequest
+    {
+        public string? Title { get; set; }
+        public string? Scene { get; set; }
+        public List<ChannelTraceChecklistStep>? Steps { get; set; }
+        public List<string>? Tags { get; set; }
+    }
+
+    [HttpPost("checklists")]
+    public async Task<IActionResult> CreateChecklist([FromBody] UpsertChecklistRequest req, CancellationToken ct)
+    {
+        if (req == null || string.IsNullOrWhiteSpace(req.Title))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "清单标题不能为空"));
+        var steps = NormalizeSteps(req.Steps);
+        if (steps.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "至少需要一个排查步骤"));
+
+        var userId = GetUserId();
+        var now = DateTime.UtcNow;
+        var entry = new ChannelTraceChecklist
+        {
+            Title = req.Title.Trim(),
+            Scene = req.Scene?.Trim() ?? string.Empty,
+            Steps = steps,
+            Tags = NormalizeTags(req.Tags),
+            IsBuiltin = false,
+            CreatedBy = userId,
+            CreatedByName = GetDisplayName(),
+            UpdatedBy = userId,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        await _db.ChannelTraceChecklists.InsertOneAsync(entry, cancellationToken: CancellationToken.None);
+        return Ok(ApiResponse<object>.Ok(new { item = entry }));
+    }
+
+    [HttpPut("checklists/{id}")]
+    public async Task<IActionResult> UpdateChecklist(string id, [FromBody] UpsertChecklistRequest req, CancellationToken ct)
+    {
+        if (req == null || string.IsNullOrWhiteSpace(req.Title))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "清单标题不能为空"));
+        var steps = NormalizeSteps(req.Steps);
+        if (steps.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "至少需要一个排查步骤"));
+
+        var entry = await _db.ChannelTraceChecklists.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (entry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "清单不存在"));
+        if (entry.CreatedBy != GetUserId() && !HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权编辑此清单"));
+
+        entry.Title = req.Title.Trim();
+        entry.Scene = req.Scene?.Trim() ?? string.Empty;
+        entry.Steps = steps;
+        entry.Tags = NormalizeTags(req.Tags);
+        entry.UpdatedBy = GetUserId();
+        entry.UpdatedAt = DateTime.UtcNow;
+        await _db.ChannelTraceChecklists.ReplaceOneAsync(x => x.Id == id, entry, cancellationToken: CancellationToken.None);
+        return Ok(ApiResponse<object>.Ok(new { item = entry }));
+    }
+
+    [HttpDelete("checklists/{id}")]
+    public async Task<IActionResult> DeleteChecklist(string id, CancellationToken ct)
+    {
+        var entry = await _db.ChannelTraceChecklists.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (entry == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "清单不存在"));
+        if (entry.CreatedBy != GetUserId() && !HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权删除此清单"));
+        await _db.ChannelTraceChecklists.DeleteOneAsync(x => x.Id == id, cancellationToken: CancellationToken.None);
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // 能力 5：诊断结论沉淀 / 证据包导出（复用缺陷 Agent 与会话数据）
+    // ──────────────────────────────────────────────────────────────
+
+    public class DiagnoseToDefectRequest
+    {
+        /// <summary>可选：覆盖缺陷标题（默认取会话标题）</summary>
+        public string? Title { get; set; }
+        /// <summary>可选：缺陷严重程度（blocker/critical/major/minor/trivial/suggestion），默认 major</summary>
+        public string? Severity { get; set; }
+    }
+
+    /// <summary>
+    /// 把一段诊断会话「一键沉淀为缺陷」：复用缺陷 Agent 的 DefectReport，写入当前用户名下（草稿态）。
+    /// 排查结论不再停留在聊天里，可在「缺陷管理」继续指派 / 跟踪 / 分享。
+    /// </summary>
+    [HttpPost("diagnose/sessions/{id}/to-defect")]
+    public async Task<IActionResult> DiagnoseToDefect(string id, [FromBody] DiagnoseToDefectRequest? req, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var session = await _db.ChannelTraceDiagnoseSessions.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (session == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "会话不存在"));
+        if (session.CreatedBy != userId && !HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权访问该会话"));
+        if (session.Messages.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "空会话无法沉淀为缺陷"));
+
+        var userMsgs = session.Messages.Where(m => m.Role == "user").Select(m => m.Content).ToList();
+        var lastAssistant = session.Messages.LastOrDefault(m => m.Role == "assistant")?.Content;
+        var symptom = userMsgs.Count > 0 ? userMsgs[0] : session.Title;
+
+        var rawContent = new StringBuilder();
+        rawContent.AppendLine("## 问题现象");
+        rawContent.AppendLine(string.Join("\n", userMsgs));
+        if (!string.IsNullOrWhiteSpace(lastAssistant))
+        {
+            rawContent.AppendLine();
+            rawContent.AppendLine("## AI 诊断分析");
+            rawContent.AppendLine(lastAssistant);
+        }
+        rawContent.AppendLine();
+        rawContent.AppendLine($"_（由商品溯源智能体「线上问题诊断」会话沉淀，会话 {session.Id}）_");
+
+        var title = string.IsNullOrWhiteSpace(req?.Title) ? session.Title : req!.Title!.Trim();
+        var severity = NormalizeDefectSeverity(req?.Severity);
+        var now = DateTime.UtcNow;
+        var defect = new DefectReport
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            DefectNo = await GenerateDefectNoAsync(ct),
+            Title = title,
+            RawContent = rawContent.ToString(),
+            StructuredData = new Dictionary<string, string>
+            {
+                ["title"] = title,
+                ["description"] = symptom,
+                ["actual"] = symptom,
+            },
+            Severity = severity,
+            Status = DefectStatus.Draft,
+            ReporterId = userId,
+            ReporterName = GetDisplayName(),
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        await _db.DefectReports.InsertOneAsync(defect, cancellationToken: CancellationToken.None);
+        _logger.LogInformation("[ChannelTraceAgent] diagnose session {SessionId} → defect {DefectNo}", session.Id, defect.DefectNo);
+        return Ok(ApiResponse<object>.Ok(new { defectId = defect.Id, defectNo = defect.DefectNo, title = defect.Title }));
+    }
+
+    /// <summary>
+    /// 导出诊断会话「证据包」（Markdown）：完整问答 + 召回案例标题 + 命中代码路径，
+    /// 便于交接 / 复盘 / 贴进发版说明。前端拿到后下载 .md 或复制。
+    /// </summary>
+    [HttpGet("diagnose/sessions/{id}/export")]
+    public async Task<IActionResult> ExportDiagnoseSession(string id, CancellationToken ct)
+    {
+        var session = await _db.ChannelTraceDiagnoseSessions.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (session == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "会话不存在"));
+        if (session.CreatedBy != GetUserId() && !HasManagePermission())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权访问该会话"));
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"# 线上问题诊断证据包：{session.Title}");
+        sb.AppendLine();
+        sb.AppendLine($"- 创建人：{session.CreatedByName}");
+        sb.AppendLine($"- 创建时间：{session.CreatedAt:yyyy-MM-dd HH:mm} UTC");
+        sb.AppendLine($"- 对话轮次：{session.Messages.Count}");
+        sb.AppendLine();
+        sb.AppendLine("---");
+        sb.AppendLine();
+
+        var turn = 0;
+        foreach (var m in session.Messages)
+        {
+            if (m.Role == "user")
+            {
+                turn++;
+                sb.AppendLine($"## 第 {turn} 轮 · 用户");
+                sb.AppendLine();
+                sb.AppendLine(m.Content);
+                sb.AppendLine();
+            }
+            else
+            {
+                sb.AppendLine("### AI 诊断");
+                if (m.RelatedCaseIds.Count > 0)
+                {
+                    var titles = await _db.ChannelTraceCases
+                        .Find(c => m.RelatedCaseIds.Contains(c.Id))
+                        .Project(c => c.Title)
+                        .ToListAsync(ct);
+                    if (titles.Count > 0)
+                        sb.AppendLine($"> 召回历史案例：{string.Join("、", titles)}");
+                }
+                if (m.CodeHits.Count > 0)
+                    sb.AppendLine($"> 命中代码：{string.Join("、", m.CodeHits.Select(h => $"{h.Repo}/{h.Path}"))}");
+                if (!string.IsNullOrWhiteSpace(m.Model))
+                    sb.AppendLine($"> 模型：{m.Model}{(string.IsNullOrWhiteSpace(m.ModelPlatform) ? "" : " · " + m.ModelPlatform)}");
+                sb.AppendLine();
+                sb.AppendLine(m.Content);
+                sb.AppendLine();
+            }
+        }
+
+        var fileName = $"防窜诊断证据包-{SanitizeFileName(session.Title)}-{session.UpdatedAt:yyyyMMdd}.md";
+        return Ok(ApiResponse<object>.Ok(new { fileName, markdown = sb.ToString() }));
     }
 
     /// <summary>调用 LLM 从功能描述中抽取代码检索关键词（非流式 + JSON 解析），失败时回退到本地分词。</summary>
@@ -1391,5 +1720,68 @@ public class ChannelTraceAgentController : ControllerBase
             result.Add(new string(new[] { cjk[i], cjk[i + 1] }));
 
         return result.ToList();
+    }
+
+    /// <summary>把粘贴的 HTML 去标签转纯文本：剥离 script/style、标签转空白、解码常见实体、压缩空白。</summary>
+    private static string StripHtml(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return string.Empty;
+        var s = input;
+        // 看起来不含标签就当纯文本直接返回（用户也可能直接粘文本）
+        if (!s.Contains('<'))
+            return s.Trim();
+        s = System.Text.RegularExpressions.Regex.Replace(s, "(?is)<(script|style)[^>]*>.*?</\\1>", " ");
+        s = System.Text.RegularExpressions.Regex.Replace(s, "(?i)<br\\s*/?>", "\n");
+        s = System.Text.RegularExpressions.Regex.Replace(s, "(?i)</(p|div|li|tr|h[1-6])>", "\n");
+        s = System.Text.RegularExpressions.Regex.Replace(s, "<[^>]+>", " ");
+        s = System.Net.WebUtility.HtmlDecode(s);
+        // 压缩连续空白/空行
+        s = System.Text.RegularExpressions.Regex.Replace(s, "[ \\t]+", " ");
+        s = System.Text.RegularExpressions.Regex.Replace(s, "\\n{3,}", "\n\n");
+        return s.Trim();
+    }
+
+    /// <summary>规整排查清单步骤：去空、修剪、限量。</summary>
+    private static List<ChannelTraceChecklistStep> NormalizeSteps(List<ChannelTraceChecklistStep>? steps)
+        => (steps ?? new List<ChannelTraceChecklistStep>())
+            .Where(s => s != null && !string.IsNullOrWhiteSpace(s.Text))
+            .Select(s => new ChannelTraceChecklistStep
+            {
+                Text = s.Text.Trim(),
+                Hint = string.IsNullOrWhiteSpace(s.Hint) ? null : s.Hint.Trim(),
+            })
+            .Take(50)
+            .ToList();
+
+    /// <summary>把请求里的缺陷严重度规整到 DefectSeverity 白名单，非法值回退 major。</summary>
+    private static string NormalizeDefectSeverity(string? severity)
+    {
+        var v = severity?.Trim().ToLowerInvariant();
+        return DefectSeverity.All.Contains(v) ? v! : DefectSeverity.Major;
+    }
+
+    /// <summary>生成缺陷编号 DEF-{year}-{seq:D4}（与缺陷 Agent 同一规则，避免编号风格漂移）。</summary>
+    private async Task<string> GenerateDefectNoAsync(CancellationToken ct)
+    {
+        var year = DateTime.UtcNow.Year;
+        var prefix = $"DEF-{year}-";
+        var latest = await _db.DefectReports
+            .Find(x => x.DefectNo.StartsWith(prefix))
+            .SortByDescending(x => x.DefectNo)
+            .FirstOrDefaultAsync(ct);
+        var next = 1;
+        if (latest != null && latest.DefectNo.StartsWith(prefix)
+            && int.TryParse(latest.DefectNo.Substring(prefix.Length), out var last))
+            next = last + 1;
+        return $"{prefix}{next:D4}";
+    }
+
+    /// <summary>把标题清洗成可用于文件名的片段（去非法字符、限长）。</summary>
+    private static string SanitizeFileName(string title)
+    {
+        if (string.IsNullOrWhiteSpace(title)) return "诊断";
+        var cleaned = System.Text.RegularExpressions.Regex.Replace(title, "[\\\\/:*?\"<>|\\n\\r\\t]", "");
+        cleaned = cleaned.Trim();
+        return cleaned.Length > 30 ? cleaned[..30] : (cleaned.Length == 0 ? "诊断" : cleaned);
     }
 }
