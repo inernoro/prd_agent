@@ -284,6 +284,37 @@ def validate_inputs(a, body, manifest):
     for kw in ("TODO", "待填", "待补"):
         if kw in body:
             errs.append(f"[半成品] 报告含未完成标记：{kw}")
+
+    # ── v2.3 证据链连线（2026-06-10，用户指出「问题原因和结果截图完全不同/有些完全没有连线」后新增）──
+    # 1) 正文 {{IMG:name}} 必须能连回 manifest（防图文脱节）
+    # 2) 「验收用例」表里状态为 pass 的行，证据列必须引用真实截图（「图XX」且 manifest 有以 XX 开头的图）；
+    #    「文字记录 / 无 / N.A.」一律拒收——没有图的断言不允许进 pass 报告。
+    mani_names = [(m.get("name") or "").strip() for m in manifest]
+    for ph in re.findall(r"\{\{IMG:([^}]+)\}\}", body):
+        if ph.strip() not in mani_names:
+            errs.append(f"[断链] 正文引用 {{{{IMG:{ph.strip()}}}}} 不在 manifest（图文脱节）")
+    in_case_table = False
+    for line in body.splitlines():
+        ls = line.strip()
+        if ls.startswith("#"):
+            in_case_table = "验收用例" in ls
+            continue
+        if not in_case_table or not ls.startswith("|"):
+            continue
+        cells = [c.strip() for c in ls.strip("|").split("|")]
+        if len(cells) < 3 or not any(c.lower() == "pass" for c in cells):
+            continue  # 表头/分隔行/非 pass 行不查
+        evidence = cells[-1]
+        if re.fullmatch(r"(文字记录|文字断言|日志|无|—|-{1,3}|N/?\.?A\.?)?", evidence, re.I):
+            errs.append(f"[断链] pass 用例无图证据（证据列={evidence!r}），无图断言不得 pass：{ls[:70]}")
+            continue
+        refs = re.findall(r"图\s*([0-9]+[a-zA-Z]?)", evidence)
+        if not refs:
+            errs.append(f"[断链] pass 用例证据列未引用截图（需「图XX」连到 manifest）：{ls[:70]}")
+        else:
+            for r0 in refs:
+                if not any(n.lower().startswith(r0.lower()) for n in mani_names):
+                    errs.append(f"[断链] pass 用例引用「图{r0}」但 manifest 无以 {r0} 开头的截图：{ls[:70]}")
     return errs
 
 
