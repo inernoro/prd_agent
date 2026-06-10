@@ -287,7 +287,7 @@ export function FrontEndAgentPage() {
   const ActiveIcon = activeTask.icon;
 
   return (
-    <div className="fea-page h-full min-h-0 flex flex-col overflow-hidden relative bg-[#02040a]">
+    <div className="fea-page h-full min-h-0 flex flex-col overflow-hidden relative bg-[#080604]">
       <FrontEndCosmosBackground />
 
       <header className="relative shrink-0 px-6 pt-5 pb-3 fea-fade-up">
@@ -295,25 +295,26 @@ export function FrontEndAgentPage() {
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-2xl font-bold tracking-tight fea-title-shimmer">前端搭档智能体</h1>
-              <span className="px-2 py-0.5 rounded-full border border-white/10 bg-white/5 text-[11px] text-white/55">WIP</span>
+              <span className="fea-vintage-badge px-2 py-0.5 rounded-full border">WIP</span>
             </div>
-            <p className="mt-1.5 text-sm text-white/60">
+            <p className="mt-1.5 text-sm fea-subtitle-warm italic">
               你的前端同事没有离去，只是变成了智能体。
             </p>
-            <p className="mt-1 text-xs text-white/40">
+            <p className="mt-1 text-xs fea-subtitle-muted">
               把 API、报错、截图现象和页面需求变成可复制的前端交付方案。
             </p>
+            <div className="fea-header-rule max-w-2xl" />
           </div>
-          <div className="flex flex-wrap items-center gap-2 text-[11px] text-white/40 font-mono">
+          <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono">
             {model.name ? (
-              <span className="px-2.5 py-1 rounded-lg border border-white/10 bg-white/[0.04]">
+              <span className="fea-chip px-2.5 py-1 rounded-lg">
                 {model.name}{model.platform ? ` · ${model.platform}` : ''}
               </span>
             ) : (
-              <span className="text-white/30">等待选择任务并生成</span>
+              <span className="fea-subtitle-muted">等待选择任务并生成</span>
             )}
             {phaseMsg && (
-              <span className="px-2.5 py-1 rounded-lg border border-white/10 bg-white/[0.04] text-white/50">
+              <span className="fea-chip px-2.5 py-1 rounded-lg">
                 {phaseMsg}
               </span>
             )}
@@ -333,7 +334,7 @@ export function FrontEndAgentPage() {
                 className={`fea-task-pill inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-left ${
                   selected
                     ? `${colors.border} ${colors.bg} ${colors.text} ${colors.glow} fea-task-pill-active`
-                    : 'border-white/10 bg-white/[0.03] text-white/60 hover:bg-white/[0.06] hover:text-white/80'
+                    : 'fea-task-pill-idle'
                 }`}
               >
                 <Icon className={`w-3.5 h-3.5 ${selected ? colors.text : 'text-white/45'}`} />
@@ -345,8 +346,8 @@ export function FrontEndAgentPage() {
       </header>
 
       <div className="relative flex-1 min-h-0 px-6 pb-5 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_280px] gap-4">
-        <section className="fea-panel min-h-0 rounded-2xl border border-white/10 flex flex-col overflow-hidden fea-fade-up">
-          <div className="shrink-0 px-4 py-3 border-b border-white/10 flex items-center gap-2">
+        <section className="fea-panel min-h-0 rounded-2xl border flex flex-col overflow-hidden fea-fade-up">
+          <div className="fea-panel-header shrink-0 px-4 py-3 border-b flex items-center gap-2">
             <ActiveIcon className={`w-4 h-4 ${activeAccent.soft}`} />
             <div className="min-w-0">
               <h2 className="text-sm font-medium text-white truncate">{activeTask.title}</h2>
@@ -356,22 +357,22 @@ export function FrontEndAgentPage() {
 
           <div className="flex-1 min-h-0 p-4 space-y-3" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
             <label className="block">
-              <span className="text-xs font-medium text-white/70">需求或问题描述</span>
+              <span className="fea-section-label text-xs font-medium">需求或问题描述</span>
               <textarea
                 value={requirement}
                 onChange={(e) => setRequirement(e.target.value)}
                 placeholder={activeTask.placeholder}
-                className="mt-2 w-full min-h-[96px] rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white placeholder:text-white/25 outline-none focus:border-white/25 transition-colors duration-200"
+                className="fea-input mt-2 w-full min-h-[96px] rounded-xl border px-3 py-2 text-sm outline-none transition-colors duration-200"
               />
             </label>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="block">
-                <span className="text-xs font-medium text-white/70">目标技术栈</span>
+                <span className="fea-section-label text-xs font-medium">目标技术栈</span>
                 <select
                   value={targetFramework}
                   onChange={(e) => setTargetFramework(e.target.value)}
-                  className="mt-2 w-full h-9 rounded-xl border border-white/10 bg-black/20 px-3 text-sm text-white outline-none focus:border-white/25"
+                  className="fea-input mt-2 w-full h-9 rounded-xl border px-3 text-sm outline-none"
                 >
                   {FRAMEWORK_OPTIONS.map((option) => (
                     <option key={option} value={option}>{option}</option>
@@ -379,11 +380,11 @@ export function FrontEndAgentPage() {
                 </select>
               </label>
               <label className="block">
-                <span className="text-xs font-medium text-white/70">样式 / 项目约束</span>
+                <span className="fea-section-label text-xs font-medium">样式 / 项目约束</span>
                 <input
                   value={styleGuidance}
                   onChange={(e) => setStyleGuidance(e.target.value)}
-                  className="mt-2 w-full h-9 rounded-xl border border-white/10 bg-black/20 px-3 text-sm text-white placeholder:text-white/25 outline-none focus:border-white/25"
+                  className="fea-input mt-2 w-full h-9 rounded-xl border px-3 text-sm outline-none"
                   placeholder="例如：使用 Tailwind、不能新增依赖"
                 />
               </label>
@@ -399,12 +400,12 @@ export function FrontEndAgentPage() {
               />
             ) : (
               <label className="block">
-                <span className="text-xs font-medium text-white/70">{activeTask.primaryContextLabel}</span>
+                <span className="fea-section-label text-xs font-medium">{activeTask.primaryContextLabel}</span>
                 <textarea
                   value={primaryContextValue}
                   onChange={(e) => setPrimaryContextValue(e.target.value)}
                   placeholder={activeTask.contextPlaceholder}
-                  className="mt-2 w-full min-h-[120px] rounded-xl border border-white/10 bg-black/20 px-3 py-2 font-mono text-xs leading-5 text-white placeholder:text-white/25 outline-none focus:border-white/25 transition-colors duration-200"
+                  className="fea-input mt-2 w-full min-h-[120px] rounded-xl border px-3 py-2 font-mono text-xs leading-5 outline-none transition-colors duration-200"
                 />
               </label>
             )}
@@ -436,7 +437,7 @@ export function FrontEndAgentPage() {
             </div>
           </div>
 
-          <div className="shrink-0 p-4 border-t border-white/10">
+          <div className="fea-panel-header shrink-0 p-4 border-t">
             {isStreaming ? (
               <button
                 type="button"
@@ -459,8 +460,8 @@ export function FrontEndAgentPage() {
           </div>
         </section>
 
-        <section className="fea-panel min-h-0 rounded-2xl border border-white/10 flex flex-col overflow-hidden fea-fade-up">
-          <div className="shrink-0 px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+        <section className="fea-panel min-h-0 rounded-2xl border flex flex-col overflow-hidden fea-fade-up">
+          <div className="fea-panel-header shrink-0 px-4 py-3 border-b flex items-center justify-between gap-3">
             <div className="min-w-0">
               <h2 className="text-sm font-medium text-white">输出结果</h2>
               <p className="text-[11px] text-white/45 truncate">
@@ -514,7 +515,7 @@ export function FrontEndAgentPage() {
           </div>
 
           {phase !== 'idle' && (
-            <div className="shrink-0 px-4 py-2 border-t border-white/10 text-[11px] text-white/40 flex items-center gap-2">
+            <div className="fea-panel-header shrink-0 px-4 py-2 border-t text-[11px] fea-subtitle-muted flex items-center gap-2">
               <span>状态：{phase === 'streaming' ? '生成中' : phase === 'done' ? '完成' : phase === 'error' ? '失败' : '待输入'}</span>
               {phaseMsg && <span>· {phaseMsg}</span>}
             </div>
@@ -523,14 +524,14 @@ export function FrontEndAgentPage() {
 
         <aside className="min-h-0 flex flex-col gap-3 xl:max-h-full fea-fade-up">
           <div className="shrink-0">
-            <p className="text-[10px] uppercase tracking-widest text-white/30 mb-2 px-0.5">前端资源</p>
+            <p className="fea-section-label text-[10px] uppercase mb-2 px-0.5">前端资源</p>
             <div className="space-y-3">
               <FrontEndPdaRailCard onOpen={() => setPdaModalOpen(true)} />
               <FrontEndProjectRailCard onOpen={() => setProjectModalOpen(true)} />
             </div>
           </div>
-          <div className="hidden xl:block flex-1 min-h-0 rounded-2xl border border-dashed border-white/10 p-4 text-center">
-            <p className="text-[11px] text-white/35 leading-5">
+          <div className="fea-aside-hint hidden xl:flex flex-1 min-h-0 rounded-2xl border border-dashed p-4 text-center items-center justify-center">
+            <p className="text-[11px] leading-5">
               右侧快速入口：PDA 手册与前端项目表按需弹窗打开，主工作区专注 AI 生成。
             </p>
           </div>
