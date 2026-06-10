@@ -91,7 +91,14 @@ const TASK_DEFINITIONS: TaskDefinition[] = [
   },
 ];
 
-const FRAMEWORK_OPTIONS = ['React + TypeScript', 'Vue 3 + TypeScript', '纯 HTML/CSS/JS', '按输入材料判断'];
+const FRAMEWORK_OPTIONS = [
+  'Vue3 + UniApp 小程序',
+  'Vue 3 + TypeScript',
+  'React + TypeScript',
+  '纯 HTML/CSS/JS',
+  '按输入材料判断',
+];
+const DEFAULT_TARGET_FRAMEWORK = FRAMEWORK_OPTIONS[0];
 
 type Phase = 'idle' | 'streaming' | 'done' | 'error';
 
@@ -122,7 +129,7 @@ function accentClasses(accent: string): { border: string; bg: string; text: stri
 export function FrontEndAgentPage() {
   const [taskType, setTaskType] = useState<FrontEndAgentTaskType>('api-adapter');
   const [requirement, setRequirement] = useState('');
-  const [targetFramework, setTargetFramework] = useState(FRAMEWORK_OPTIONS[0]);
+  const [targetFramework, setTargetFramework] = useState(DEFAULT_TARGET_FRAMEWORK);
   const [styleGuidance, setStyleGuidance] = useState('遵循当前项目风格，优先使用 TypeScript、清晰状态和基础错误处理。');
   const [apiSpec, setApiSpec] = useState('');
   const [existingCode, setExistingCode] = useState('');
