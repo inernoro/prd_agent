@@ -327,7 +327,7 @@ public class MdToPptController : ControllerBase
         if (engine == "agent")
             await RunAgentStreamAsync(userId, systemPrompt, userContent, "PPT", run);
         else
-            await RunMapStreamAsync(userId, systemPrompt, userContent, AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate, "convert", run);
+            await RunMapStreamAsync(userId, systemPrompt, userContent, AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate, "convert", run, req.Model);
     }
 
     // ─────────────────────────────────────────────
@@ -358,7 +358,38 @@ public class MdToPptController : ControllerBase
         if (engine == "agent")
             await RunAgentStreamAsync(userId, systemPrompt, userContent, "PPT 修改", run);
         else
-            await RunMapStreamAsync(userId, systemPrompt, userContent, AppCallerRegistry.MdToPptAgent.Generation.Patch, "patch", run);
+            await RunMapStreamAsync(userId, systemPrompt, userContent, AppCallerRegistry.MdToPptAgent.Generation.Patch, "patch", run, req.Model);
+    }
+
+    // ─────────────────────────────────────────────
+    // GET /api/md-to-ppt/models
+    // ─────────────────────────────────────────────
+
+    /// <summary>
+    /// 列出直出引擎（engine=map）可切换的 chat 模型。
+    /// 数据源：chat 类型模型池（model_groups），默认池模型排最前；前端据此渲染模型选择器，
+    /// 选中值经 Convert/Patch 的 Model 字段作为 ExpectedModel 传给 Gateway（调度器优先尊重）。
+    /// </summary>
+    [HttpGet("models")]
+    public async Task<IActionResult> GetModels()
+    {
+        var groups = await _db.ModelGroups
+            .Find(g => g.ModelType == ModelTypes.Chat)
+            .ToListAsync();
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var items = new List<object>();
+        string? defaultModel = null;
+        foreach (var g in groups.OrderByDescending(x => x.IsDefaultForType).ThenByDescending(x => x.Priority))
+        {
+            foreach (var m in g.Models)
+            {
+                if (string.IsNullOrWhiteSpace(m.ModelId) || !seen.Add(m.ModelId)) continue;
+                if (defaultModel == null && g.IsDefaultForType) defaultModel = m.ModelId;
+                items.Add(new { model = m.ModelId, isDefault = m.ModelId == defaultModel });
+            }
+        }
+        return Ok(new { items, defaultModel });
     }
 
     // ─────────────────────────────────────────────
@@ -521,7 +552,8 @@ public class MdToPptController : ControllerBase
         string userContent,
         string appCallerCode,
         string opLabel,
-        MdToPptRun run)
+        MdToPptRun run,
+        string? expectedModel = null)
     {
         var startedAt = DateTime.UtcNow;
         string? resolvedModel = null;
@@ -546,6 +578,8 @@ public class MdToPptController : ControllerBase
         {
             AppCallerCode = appCallerCode,
             ModelType = ModelTypes.Chat,
+            // 用户在前端选择的模型（可空 = 自动调度）。调度器优先尊重 expectedModel
+            ExpectedModel = string.IsNullOrWhiteSpace(expectedModel) ? null : expectedModel.Trim(),
             Stream = true,
             TimeoutSeconds = 600,
             RequestBody = new JsonObject
@@ -1198,6 +1232,9 @@ public class MdToPptConvertRequest
 
     /// <summary>生成引擎："map"（默认，MAP 直调）或 "agent"（CDS Agent）</summary>
     public string? Engine { get; set; }
+
+    /// <summary>期望模型（可选，仅 engine=map 生效；空 = 自动调度。来自 GET models 列表）</summary>
+    public string? Model { get; set; }
 }
 
 public class MdToPptPatchRequest
@@ -1213,6 +1250,9 @@ public class MdToPptPatchRequest
 
     /// <summary>生成引擎："map"（默认）或 "agent"</summary>
     public string? Engine { get; set; }
+
+    /// <summary>期望模型（可选，仅 engine=map 生效；空 = 自动调度）</summary>
+    public string? Model { get; set; }
 }
 
 public class MdToPptPublishRequest

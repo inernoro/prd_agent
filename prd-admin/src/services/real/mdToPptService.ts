@@ -170,6 +170,8 @@ export interface MdToPptConvertSseOptions {
   slideCount?: number;
   theme?: string;
   engine?: MdToPptEngine;
+  /** 期望模型（仅 engine=map 生效；空 = 自动调度。来自 getMdToPptModels） */
+  model?: string;
   onStart?: (info: { slideCount?: number; theme?: string }) => void;
   onRun?: (runId: string) => void;
   onModel?: (info: { model: string; platform: string }) => void;
@@ -196,6 +198,7 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
           slideCount: options.slideCount,
           theme: options.theme,
           engine: options.engine ?? 'map',
+          model: options.model || undefined,
         }),
         signal: abortController.signal,
       });
@@ -250,6 +253,8 @@ export interface MdToPptPatchSseOptions {
   slideRequest: string;
   slideIndex?: number;
   engine?: MdToPptEngine;
+  /** 期望模型（仅 engine=map 生效；空 = 自动调度） */
+  model?: string;
   onStart?: () => void;
   onRun?: (runId: string) => void;
   onModel?: (info: { model: string; platform: string }) => void;
@@ -276,6 +281,7 @@ export function streamMdToPptPatch(options: MdToPptPatchSseOptions): () => void 
           slideRequest: options.slideRequest,
           slideIndex: options.slideIndex,
           engine: options.engine ?? 'map',
+          model: options.model || undefined,
         }),
         signal: abortController.signal,
       });
@@ -380,4 +386,17 @@ export async function getMdToPptRun(id: string): Promise<MdToPptRunDetail | null
 export async function getRecentMdToPptRuns(): Promise<MdToPptRunSummary[]> {
   const res = await apiRequest<MdToPptRunSummary[]>('/api/md-to-ppt/runs');
   return res.success ? (res.data ?? []) : [];
+}
+
+// ============ Models（直出引擎可切换的 chat 模型）============
+
+export interface MdToPptModelItem {
+  model: string;
+  isDefault: boolean;
+}
+
+/** 直出引擎（map）可切换的 chat 模型列表，默认池模型排最前 */
+export async function getMdToPptModels(): Promise<{ items: MdToPptModelItem[]; defaultModel: string | null } | null> {
+  const res = await apiRequest<{ items: MdToPptModelItem[]; defaultModel: string | null }>('/api/md-to-ppt/models');
+  return res.success ? (res.data ?? null) : null;
 }

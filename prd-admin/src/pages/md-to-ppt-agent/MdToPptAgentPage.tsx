@@ -30,6 +30,7 @@ import {
   publishMdToPpt,
   getMdToPptRun,
   getMdToPptOutline,
+  getMdToPptModels,
 } from '@/services/real/mdToPptService';
 import { apiRequest } from '@/services/real/apiClient';
 
@@ -69,6 +70,8 @@ interface SessionState {
   activeRunId: string;
   theme: string;
   engine: MdToPptEngine;
+  /** 直出引擎期望模型（'' = 自动调度） */
+  model?: string;
 }
 
 interface KbStore {
@@ -641,6 +644,8 @@ export function MdToPptAgentPage() {
   // ─── Global settings (收进设置区，不占对话空间）
   const [theme, setTheme] = useState(savedSession?.theme ?? 'tech-dark');
   const [engine, setEngine] = useState<MdToPptEngine>(savedSession?.engine ?? 'map');
+  const [model, setModel] = useState(savedSession?.model ?? '');
+  const [chatModels, setChatModels] = useState<string[]>([]);
   const [showSettings, setShowSettings] = useState(false);
 
   // ─── Chat state
@@ -732,8 +737,16 @@ export function MdToPptAgentPage() {
 
   // ─── Session persistence: save on state change
   useEffect(() => {
-    saveSession({ messages, activeRunId, theme, engine });
-  }, [messages, activeRunId, theme, engine]);
+    saveSession({ messages, activeRunId, theme, engine, model });
+  }, [messages, activeRunId, theme, engine, model]);
+
+  // ─── 设置面板首次展开时拉取可切换模型列表（直出引擎）
+  useEffect(() => {
+    if (!showSettings || chatModels.length > 0) return;
+    void getMdToPptModels().then((r) => {
+      if (r && r.items.length > 0) setChatModels(r.items.map((i) => i.model));
+    });
+  }, [showSettings, chatModels.length]);
 
   // ─── iframe postMessage 监听：页码上报 + 编辑模式 HTML 回传
   useEffect(() => {
@@ -969,6 +982,7 @@ export function MdToPptAgentPage() {
         theme,
         slideCount: outlineMsg.totalPages,
         engine,
+        model: engine === 'map' ? model : undefined,
         onRun: (runId) => {
           if (runId) setActiveRunId(runId);
           try {
@@ -1022,7 +1036,7 @@ export function MdToPptAgentPage() {
 
       cleanupRef.current = cleanup;
     },
-    [isProcessing, messages, pushMsg, theme, engine]
+    [isProcessing, messages, pushMsg, theme, engine, model]
   );
 
   // ─── Patch flow（对话式精修）。baseHtml 允许携带编辑模式未提交的最新稿。
@@ -1044,6 +1058,7 @@ export function MdToPptAgentPage() {
         currentHtml: base,
         slideRequest: instruction,
         engine,
+        model: engine === 'map' ? model : undefined,
         onRun: (runId) => {
           if (runId) setActiveRunId(runId);
         },
@@ -1090,7 +1105,7 @@ export function MdToPptAgentPage() {
 
       cleanupRef.current = cleanup;
     },
-    [generatedHtml, isProcessing, pushMsg, engine]
+    [generatedHtml, isProcessing, pushMsg, engine, model]
   );
 
   // ─── Outline adjust（调整大纲后重新请求）
@@ -1279,6 +1294,26 @@ export function MdToPptAgentPage() {
             </div>
           </div>
 
+          {/* 模型（仅直出引擎可切换；Agent 引擎模型由运行配置决定） */}
+          {engine === 'map' && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-[var(--text-tertiary)]">模型</span>
+              <select
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                data-testid="model-select"
+                className="appearance-none text-[11px] py-1 pl-2 pr-5 rounded-md bg-white/5 text-[var(--text-primary)] border border-white/8 outline-none cursor-pointer max-w-[220px]"
+              >
+                <option value="">自动（默认池调度）</option>
+                {chatModels.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {/* 风格 */}
           <div className="flex items-center gap-1.5">
             <span className="text-[var(--text-tertiary)]">风格</span>
@@ -1313,7 +1348,7 @@ export function MdToPptAgentPage() {
 
         {/* ─── Left: Chat panel ─────────────────────────────────────────────── */}
         <div
-          className="w-72 shrink-0 flex flex-col border-r border-white/8"
+          className="w-[340px] shrink-0 flex flex-col border-r border-white/8"
           style={{ minHeight: 0 }}
         >
           {/* Messages */}
@@ -1446,80 +1481,55 @@ export function MdToPptAgentPage() {
             <div ref={chatEndRef} />
           </div>
 
-          {/* ─── Input area */}
-          <div className="shrink-0 border-t border-white/8 p-2 flex flex-col gap-1.5">
-            {/* Pending attachments & KB refs */}
-            {(pendingAttachments.length > 0 || pendingKbRefs.length > 0) && (
-              <div className="flex flex-wrap gap-1.5 px-1">
-                {pendingAttachments.map((a, i) => (
-                  <div
-                    key={i}
-                    className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/6 text-[10px] text-[var(--text-secondary)] border border-white/8"
-                  >
-                    <Upload size={9} />
-                    <span className="truncate max-w-[80px]">{a.name}</span>
-                    <button onClick={() => removeAttachment(i)}>
-                      <X size={9} />
-                    </button>
-                  </div>
-                ))}
-                {pendingKbRefs.map((r, i) => (
-                  <div
-                    key={i}
-                    className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500/10 text-[10px] text-blue-300 border border-blue-500/15"
-                  >
-                    <BookOpen size={9} />
-                    <span className="truncate max-w-[80px]">{r.entryTitle}</span>
-                    <button onClick={() => removeKbRef(i)}>
-                      <X size={9} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Input row */}
-            <div className="flex items-end gap-1.5">
-              {/* "+" menu */}
-              <div className="relative shrink-0">
-                <button
-                  onClick={() => setShowPlusMenu((v) => !v)}
-                  disabled={isProcessing}
-                  className="flex items-center justify-center w-7 h-7 rounded-lg bg-white/5 text-[var(--text-tertiary)] hover:bg-white/8 hover:text-[var(--text-secondary)] border border-white/8 disabled:opacity-40"
-                >
-                  <Plus size={13} />
-                </button>
-
-                {showPlusMenu && (
-                  <div className="absolute bottom-full left-0 mb-1 w-40 rounded-lg border border-white/10 bg-[var(--bg-elevated)] shadow-xl z-10">
-                    <button
-                      className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-[var(--text-secondary)] hover:bg-white/5"
-                      onClick={() => {
-                        setShowPlusMenu(false);
-                        fileInputRef.current?.click();
-                      }}
+          {/* ─── Input area（composer-shell 卡片式，借鉴 open-design：
+                输入区是一张完整卡片——附件 chips 在卡内顶部、textarea 无边框透明、
+                底部工具行（+ 菜单 / 快捷键提示 / 实底发送主按钮），focus-within 高亮整卡。
+                底部额外留白避免被 CDS 预览挂件（左下角 fixed 条）遮挡。 */}
+          <div className="shrink-0 border-t border-white/8 px-3 pt-3" style={{ paddingBottom: 34 }}>
+            <div
+              data-testid="composer-shell"
+              className="flex flex-col gap-1.5 rounded-xl border border-white/10 bg-white/4 px-2.5 pt-2.5 pb-2 transition-colors focus-within:border-purple-500/45 focus-within:bg-white/6"
+            >
+              {/* Pending attachments & KB refs（卡内顶部） */}
+              {(pendingAttachments.length > 0 || pendingKbRefs.length > 0) && (
+                <div className="flex flex-wrap gap-1.5">
+                  {pendingAttachments.map((a, i) => (
+                    <div
+                      key={i}
+                      className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/6 text-[10px] text-[var(--text-secondary)] border border-white/8"
                     >
-                      <Upload size={12} />
-                      添加文件
-                    </button>
-                    <button
-                      className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-[var(--text-secondary)] hover:bg-white/5 border-t border-white/6"
-                      onClick={() => {
-                        setShowPlusMenu(false);
-                        setShowKbPicker(true);
-                      }}
+                      <Upload size={9} />
+                      <span className="truncate max-w-[120px]">{a.name}</span>
+                      <button onClick={() => removeAttachment(i)}>
+                        <X size={9} />
+                      </button>
+                    </div>
+                  ))}
+                  {pendingKbRefs.map((r, i) => (
+                    <div
+                      key={i}
+                      className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500/10 text-[10px] text-blue-300 border border-blue-500/15"
                     >
-                      <BookOpen size={12} />
-                      引用知识库
-                    </button>
-                  </div>
-                )}
-              </div>
+                      <BookOpen size={9} />
+                      <span className="truncate max-w-[120px]">{r.entryTitle}</span>
+                      <button onClick={() => removeKbRef(i)}>
+                        <X size={9} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
 
+              {/* 无边框 textarea，随内容自动增高（60-180px） */}
               <textarea
                 ref={inputRef}
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  const el = e.target;
+                  el.style.height = 'auto';
+                  el.style.height = Math.min(el.scrollHeight, 180) + 'px';
+                }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
@@ -1531,19 +1541,66 @@ export function MdToPptAgentPage() {
                     ? '继续精修，如：第3页改两栏对比...'
                     : '告诉 AI 你想做什么 PPT...'
                 }
-                rows={2}
+                rows={3}
                 disabled={isProcessing}
-                className="flex-1 resize-none text-xs bg-white/5 text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border border-white/8 rounded-lg px-2.5 py-2 outline-none focus:border-purple-500/30 disabled:opacity-50"
-                style={{ minHeight: 0 }}
+                className="w-full resize-none text-xs leading-relaxed bg-transparent text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border-0 outline-none disabled:opacity-50"
+                style={{ minHeight: 60, maxHeight: 180, overflowY: 'auto', overscrollBehavior: 'contain' }}
               />
 
-              <button
-                onClick={handleSend}
-                disabled={!input.trim() || isProcessing}
-                className="shrink-0 flex items-center justify-center w-7 h-7 rounded-lg bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 border border-purple-500/25 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {isProcessing ? <MapSpinner size={12} /> : <Send size={12} />}
-              </button>
+              {/* 底部工具行 */}
+              <div className="flex items-center gap-2 pt-1.5 border-t border-white/6">
+                {/* "+" menu */}
+                <div className="relative shrink-0">
+                  <button
+                    onClick={() => setShowPlusMenu((v) => !v)}
+                    disabled={isProcessing}
+                    title="添加文件 / 引用知识库"
+                    className="flex items-center justify-center w-7 h-7 rounded-lg bg-white/5 text-[var(--text-tertiary)] hover:bg-white/8 hover:text-[var(--text-secondary)] border border-white/8 disabled:opacity-40"
+                  >
+                    <Plus size={13} />
+                  </button>
+
+                  {showPlusMenu && (
+                    <div className="absolute bottom-full left-0 mb-1 w-40 rounded-lg border border-white/10 bg-[var(--bg-elevated)] shadow-xl z-10">
+                      <button
+                        className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-[var(--text-secondary)] hover:bg-white/5"
+                        onClick={() => {
+                          setShowPlusMenu(false);
+                          fileInputRef.current?.click();
+                        }}
+                      >
+                        <Upload size={12} />
+                        添加文件
+                      </button>
+                      <button
+                        className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-[var(--text-secondary)] hover:bg-white/5 border-t border-white/6"
+                        onClick={() => {
+                          setShowPlusMenu(false);
+                          setShowKbPicker(true);
+                        }}
+                      >
+                        <BookOpen size={12} />
+                        引用知识库
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <span className="text-[9px] text-[var(--text-tertiary)] select-none">
+                  Enter 发送 · Shift+Enter 换行
+                </span>
+                <span className="flex-1" />
+
+                {/* 实底主按钮（主操作一眼可见） */}
+                <button
+                  onClick={handleSend}
+                  disabled={!input.trim() || isProcessing}
+                  className="shrink-0 flex items-center gap-1.5 h-7 px-3 rounded-lg text-[11px] font-semibold bg-purple-500/85 text-white hover:bg-purple-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  {isProcessing ? <MapSpinner size={11} /> : <Send size={11} />}
+                  发送
+                </button>
+              </div>
             </div>
           </div>
 
