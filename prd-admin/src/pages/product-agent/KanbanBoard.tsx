@@ -15,6 +15,7 @@ import { useEffectiveWorkflow } from './DynamicForm';
 import { ITEM_GRADE_LABEL } from './types';
 import type { Requirement, Feature } from './types';
 import { slaInfo } from './sla';
+import './product-cards.css';
 
 type Item = (Requirement | Feature) & { title: string; currentState?: string | null; grade: string; assigneeId?: string | null; stateEnteredAt?: string | null };
 
@@ -178,7 +179,7 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
                             draggable
                             onDragStart={() => setDragId(it.id)}
                             onClick={() => navigate(`/product-agent/p/${productId}/${entityType}/${it.id}`)}
-                            className="cursor-grab active:cursor-grabbing rounded-lg border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] p-2.5 flex flex-col gap-1.5"
+                            className="pa-row cursor-grab active:cursor-grabbing rounded-lg border border-white/10 bg-white/[0.03] p-2.5 flex flex-col gap-1.5"
                           >
                             <div className="text-sm text-white/90 line-clamp-2">{it.title}</div>
                             <div className="flex items-center gap-2 flex-wrap">

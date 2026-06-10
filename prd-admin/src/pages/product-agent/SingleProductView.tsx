@@ -15,7 +15,7 @@ import { EChart } from '@/components/charts/EChart';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { systemDialog } from '@/lib/systemDialog';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
-import { ProductKnowledgePanel } from './ProductRelationModals';
+import { KnowledgeModule } from './knowledge/KnowledgeModule';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { KanbanBoard } from './KanbanBoard';
 import { RtmMatrix } from './RtmMatrix';
@@ -23,6 +23,7 @@ import { ProductTeamTab } from './ProductTeamSection';
 import { ReportsTab } from './ReportsTab';
 import { BatchBar } from './BatchBar';
 import { UpgradeRequestsTab } from './UpgradeRequestsTab';
+import './product-cards.css';
 import {
   getProduct,
   deleteProduct,
@@ -170,7 +171,7 @@ export function SingleProductView() {
     >
       {active === 'knowledge' ? (
         <div className="flex-1 min-h-0">
-          <ProductKnowledgePanel productId={product.id} />
+          <KnowledgeModule productId={product.id} />
         </div>
       ) : active === 'graph' ? (
         <div className="flex-1 min-h-0">
@@ -270,7 +271,7 @@ function MyTodos({ product }: { product: Product }) {
   const stateOf = (it: MyTodoItem) => (it.kind === 'defect' ? defectStatusLabel(it.state) : it.stateLabel || undefined);
 
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+    <div className="pa-row rounded-xl border border-white/10 bg-white/[0.02] p-4">
       <div className="flex items-center gap-2 mb-3">
         <ListChecks size={15} className="text-cyan-400" />
         <span className="text-sm font-semibold text-white/80">我的待办</span>
@@ -294,7 +295,7 @@ function MyTodos({ product }: { product: Product }) {
 
 function TodoRow({ kind, color, no, title, state, onClick }: { kind: string; color: string; no: string; title: string; state?: string | null; onClick: () => void }) {
   return (
-    <button onClick={onClick} className="text-left flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-white/5 border border-white/5">
+    <button onClick={onClick} className="pa-row text-left flex items-center gap-2.5 px-2.5 py-2 rounded-lg border border-white/5">
       <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0" style={{ color, background: `${color}1a` }}>{kind}</span>
       <span className="text-[11px] font-mono text-white/35 shrink-0">{no}</span>
       <span className="text-sm text-white/85 truncate flex-1">{title}</span>
@@ -375,8 +376,8 @@ function ProductDashboard({ product }: { product: Product }) {
     <div className="flex flex-col gap-5">
       {product.description && <div className="text-sm text-white/60 max-w-3xl">{product.description}</div>}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {kpis.map((k) => (
-          <div key={k.label} className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+        {kpis.map((k, i) => (
+          <div key={k.label} style={{ animationDelay: `${i * 45}ms` }} className="pa-card rounded-xl border border-white/10 bg-white/[0.02] p-4">
             <div className="text-2xl font-semibold" style={{ color: k.color }}>{k.value}</div>
             <div className="text-xs text-white/50 mt-1">{k.label}</div>
           </div>
@@ -397,7 +398,7 @@ function ProductDashboard({ product }: { product: Product }) {
 
 function DashChart({ title, option, empty }: { title: string; option: EChartsOption; empty: boolean }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+    <div className="pa-card rounded-xl border border-white/10 bg-white/[0.02] p-4">
       <div className="text-sm font-medium text-white/70 mb-2">{title}</div>
       {empty ? <div className="h-[240px] flex items-center justify-center text-xs text-white/35">暂无数据</div> : <EChart option={option} height={240} />}
     </div>
@@ -864,7 +865,7 @@ function Row({
   actionLabel?: string;
 }) {
   return (
-    <div className="group flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-white/10 bg-white/[0.02] hover:bg-white/[0.04]">
+    <div className="pa-row group flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-white/10 bg-white/[0.02]">
       <button
         onClick={onClick}
         disabled={!onClick}
@@ -950,7 +951,7 @@ function StateBoard({
                 draggable
                 onDragStart={() => setDragId(r.id)}
                 onClick={() => onCardClick(r)}
-                className="cursor-grab active:cursor-grabbing rounded-md border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] px-2 py-1.5"
+                className="pa-row cursor-grab active:cursor-grabbing rounded-md border border-white/10 bg-white/[0.03] px-2 py-1.5"
               >
                 <div className="flex items-center gap-1.5">
                   <span className="text-[10px] px-1 py-0.5 rounded bg-white/10 text-white/60">{ITEM_GRADE_LABEL[r.grade]}</span>
@@ -992,7 +993,7 @@ function GradeBoard({
               <button
                 key={r.id}
                 onClick={() => onCardClick(r)}
-                className="text-left rounded-md border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] px-2 py-1.5 transition-colors"
+                className="pa-row text-left rounded-md border border-white/10 bg-white/[0.03] px-2 py-1.5"
               >
                 <div className="text-xs text-white/85 truncate">{r.title}</div>
                 <div className="text-[10px] text-white/40 mt-0.5 truncate">{renderSub(r)}</div>

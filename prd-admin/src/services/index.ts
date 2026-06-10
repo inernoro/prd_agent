@@ -1891,6 +1891,8 @@ export {
   togglePinnedEntry,
   listDocumentStoresWithPreview,
   searchDocumentEntries,
+  listKnowledgeEntriesPaged,
+  getDocumentEntry,
   moveDocumentEntry,
   updateDocumentContent,
   setFolderPrimaryChild,

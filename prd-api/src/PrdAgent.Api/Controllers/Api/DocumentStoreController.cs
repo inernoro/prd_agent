@@ -96,11 +96,19 @@ public class DocumentStoreController : ControllerBase
 
     /// <summary>
     /// 产品知识库访问判定：仅当 store.ProductKnowledgeRef 非空时生效（格式 product:{id} / version:{id}）。
-    /// 产品 owner 与成员均可读写（与 product-agent 的产品访问语义对齐）。
+    /// 产品 owner、成员、全局产品管理权限（Super/ProductAgentAdmin/ProductAgentManage）均可读写
+    /// （与 product-agent 的 FindAccessibleProductAsync 访问语义完全对齐）。
     /// </summary>
     private async Task<bool> IsProductKnowledgeMemberAsync(DocumentStore s, string userId)
     {
         if (string.IsNullOrEmpty(s.ProductKnowledgeRef)) return false;
+        // 与 ProductAgentController.CanManage() 对齐：全局产品管理权限可读写所有产品知识库。
+        // 否则管理员能通过 find-or-create 拿到 storeId，却在本控制器被拒（"文档空间不存在"）。
+        var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
+        if (permissions.Contains(AdminPermissionCatalog.Super)
+            || permissions.Contains(AdminPermissionCatalog.ProductAgentAdmin)
+            || permissions.Contains(AdminPermissionCatalog.ProductAgentManage))
+            return true;
         var parts = s.ProductKnowledgeRef.Split(':', 2);
         if (parts.Length != 2) return false;
         string? productId = parts[0] switch
@@ -622,7 +630,7 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<DocumentEntry>.Ok(folder));
     }
 
-    /// <summary>获取空间内的文档条目列表（支持 parentId 过滤层级）</summary>
+    /// <summary>获取空间内的文档条目列表（支持 parentId 层级 + 分类/标签/关联版本过滤）</summary>
     [HttpGet("stores/{storeId}/entries")]
     public async Task<IActionResult> ListEntries(
         string storeId,
@@ -632,7 +640,11 @@ public class DocumentStoreController : ControllerBase
         [FromQuery] string? keyword = null,
         [FromQuery] string? parentId = null,
         [FromQuery] bool all = false,
-        [FromQuery] bool searchContent = false)
+        [FromQuery] bool searchContent = false,
+        [FromQuery] string? category = null,
+        [FromQuery] string? tag = null,
+        [FromQuery] string? versionId = null,
+        [FromQuery] bool excludeFolders = false)
     {
         var userId = GetUserId();
         var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
@@ -665,6 +677,27 @@ public class DocumentStoreController : ControllerBase
 
         if (!string.IsNullOrWhiteSpace(sourceType))
             filter &= filterBuilder.Eq(e => e.SourceType, sourceType);
+
+        // 分类过滤："__none__" 表示未分类（Category 为空）
+        if (!string.IsNullOrWhiteSpace(category))
+        {
+            filter &= category == "__none__"
+                ? filterBuilder.Or(
+                    filterBuilder.Eq(e => e.Category, null),
+                    filterBuilder.Eq(e => e.Category, string.Empty),
+                    filterBuilder.Exists(e => e.Category, false))
+                : filterBuilder.Eq(e => e.Category, category);
+        }
+
+        if (!string.IsNullOrWhiteSpace(tag))
+            filter &= filterBuilder.AnyEq(e => e.Tags, tag);
+
+        if (!string.IsNullOrWhiteSpace(versionId))
+            filter &= filterBuilder.AnyEq(e => e.VersionIds, versionId);
+
+        // 知识列表视图只看文档，不混文件夹（文件夹治理走独立 tab）
+        if (excludeFolders)
+            filter &= filterBuilder.Eq(e => e.IsFolder, false);
 
         if (!string.IsNullOrWhiteSpace(keyword))
         {
@@ -767,6 +800,12 @@ public class DocumentStoreController : ControllerBase
                 string.IsNullOrWhiteSpace(request.Category) ? null : request.Category.Trim()));
         if (request.Metadata != null)
             updates.Add(Builders<DocumentEntry>.Update.Set(e => e.Metadata, request.Metadata));
+        if (request.VersionIds != null)
+            updates.Add(Builders<DocumentEntry>.Update.Set(e => e.VersionIds, request.VersionIds));
+        if (!string.IsNullOrWhiteSpace(request.ContentType))
+            updates.Add(Builders<DocumentEntry>.Update.Set(e => e.ContentType, request.ContentType));
+        if (request.SortOrder.HasValue)
+            updates.Add(Builders<DocumentEntry>.Update.Set(e => e.SortOrder, request.SortOrder.Value));
 
         updates.Add(Builders<DocumentEntry>.Update.Set(e => e.UpdatedAt, DateTime.UtcNow));
         updates.Add(Builders<DocumentEntry>.Update.Set(e => e.UpdatedBy, userId));
@@ -980,15 +1019,17 @@ public class DocumentStoreController : ControllerBase
         var summary = content.Length > 200 ? content[..200] : content;
         var contentIndex = content.Length > 2000 ? content[..2000] : content;
 
-        await _db.DocumentEntries.UpdateOneAsync(
-            e => e.Id == entryId,
-            Builders<DocumentEntry>.Update
-                .Set(e => e.DocumentId, entry.DocumentId)
-                .Set(e => e.Summary, summary.Trim())
-                .Set(e => e.ContentIndex, contentIndex.Trim())
-                .Set(e => e.UpdatedBy, userId)
-                .Set(e => e.UpdatedByName, userName)
-                .Set(e => e.UpdatedAt, DateTime.UtcNow));
+        var contentUpdate = Builders<DocumentEntry>.Update
+            .Set(e => e.DocumentId, entry.DocumentId)
+            .Set(e => e.Summary, summary.Trim())
+            .Set(e => e.ContentIndex, contentIndex.Trim())
+            .Set(e => e.UpdatedBy, userId)
+            .Set(e => e.UpdatedByName, userName)
+            .Set(e => e.UpdatedAt, DateTime.UtcNow);
+        if (!string.IsNullOrWhiteSpace(request.ContentType))
+            contentUpdate = contentUpdate.Set(e => e.ContentType, request.ContentType);
+
+        await _db.DocumentEntries.UpdateOneAsync(e => e.Id == entryId, contentUpdate);
 
         // 模板库的人工写入：持久化合规标记，前端可据此提示「缺 需求一一对应表」
         if (contentCompliant.HasValue)
@@ -4542,6 +4583,12 @@ public class UpdateDocumentEntryRequest
     /// <summary>分类（传空字符串=清除分类；null=不变）</summary>
     public string? Category { get; set; }
     public Dictionary<string, string>? Metadata { get; set; }
+    /// <summary>关联的产品版本 ID 列表（产品知识库专用；传空数组=清空关联；null=不变）</summary>
+    public List<string>? VersionIds { get; set; }
+    /// <summary>内容 MIME 类型（格式纠错：text/markdown ↔ text/html；null=不变）</summary>
+    public string? ContentType { get; set; }
+    /// <summary>目录手动排序值（拖拽排序写入；null=不变）</summary>
+    public double? SortOrder { get; set; }
 }
 
 public class AddSubscriptionRequest
@@ -4667,8 +4714,10 @@ public class MoveEntryRequest
 
 public class UpdateEntryContentRequest
 {
-    /// <summary>文档内容（Markdown/纯文本）</summary>
+    /// <summary>文档内容（Markdown / 纯文本 / 富文本 HTML）</summary>
     public string Content { get; set; } = string.Empty;
+    /// <summary>可选：同时更新条目的 contentType（如富文本编辑后置为 text/html）；null=不变</summary>
+    public string? ContentType { get; set; }
 }
 
 public class CreateShareLinkRequest

@@ -1268,13 +1268,13 @@ public class ProductAgentController : ControllerBase
 
     // ════════════════════════ 知识库挂载（复用 DocumentStore，P1）════════════════════════
 
-    /// <summary>产品整体知识库（find-or-create 绑定的 DocumentStore；前端复用 document-store 渲染）</summary>
-    [HttpGet("products/{productId}/knowledge/store")]
-    public async Task<IActionResult> GetProductKnowledgeStore(string productId)
+    /// <summary>
+    /// 解析产品整体知识库（find-or-create），并懒迁移旧的「每版本一个独立库」：
+    /// 旧版本库条目整体移入产品库（VersionIds = [versionId] 标记归属，保留文件夹树），版本库随后删除。
+    /// 迁移幂等：迁完 version.KnowledgeStoreId 置空，再次调用 no-op。
+    /// </summary>
+    private async Task<DocumentStore> ResolveProductKnowledgeStoreAsync(Product product)
     {
-        var product = await FindAccessibleProductAsync(productId, GetUserId());
-        if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
-
         DocumentStore? store = null;
         if (!string.IsNullOrEmpty(product.KnowledgeStoreId))
             store = await _db.DocumentStores.Find(s => s.Id == product.KnowledgeStoreId).FirstOrDefaultAsync();
@@ -1285,39 +1285,62 @@ public class ProductAgentController : ControllerBase
                 Name = $"{product.Name} · 整体知识库",
                 OwnerId = product.OwnerId,
                 AppKey = "product-agent",
-                ProductKnowledgeRef = $"product:{productId}",
+                ProductKnowledgeRef = $"product:{product.Id}",
             };
             await _db.DocumentStores.InsertOneAsync(store);
-            await _db.Products.UpdateOneAsync(p => p.Id == productId,
+            await _db.Products.UpdateOneAsync(p => p.Id == product.Id,
                 Builders<Product>.Update.Set(p => p.KnowledgeStoreId, store.Id).Set(p => p.UpdatedAt, DateTime.UtcNow));
         }
+
+        var staleVersions = await _db.ProductVersions
+            .Find(v => v.ProductId == product.Id && !v.IsDeleted && v.KnowledgeStoreId != null && v.KnowledgeStoreId != "")
+            .ToListAsync();
+        if (staleVersions.Count > 0)
+        {
+            foreach (var v in staleVersions)
+            {
+                if (v.KnowledgeStoreId != store.Id)
+                {
+                    await _db.DocumentEntries.UpdateManyAsync(
+                        e => e.StoreId == v.KnowledgeStoreId,
+                        Builders<DocumentEntry>.Update
+                            .Set(e => e.StoreId, store.Id)
+                            .Set(e => e.VersionIds, new List<string> { v.Id })
+                            .Set(e => e.UpdatedAt, DateTime.UtcNow));
+                    await _db.DocumentStores.DeleteOneAsync(s => s.Id == v.KnowledgeStoreId);
+                }
+                await _db.ProductVersions.UpdateOneAsync(x => x.Id == v.Id,
+                    Builders<ProductVersion>.Update.Set(x => x.KnowledgeStoreId, null));
+            }
+            var docCount = await _db.DocumentEntries.CountDocumentsAsync(e => e.StoreId == store.Id && !e.IsFolder);
+            await _db.DocumentStores.UpdateOneAsync(s => s.Id == store.Id,
+                Builders<DocumentStore>.Update.Set(s => s.DocumentCount, (int)docCount));
+        }
+        return store;
+    }
+
+    /// <summary>产品整体知识库（find-or-create 绑定的 DocumentStore；前端复用 document-store 渲染）</summary>
+    [HttpGet("products/{productId}/knowledge/store")]
+    public async Task<IActionResult> GetProductKnowledgeStore(string productId)
+    {
+        var product = await FindAccessibleProductAsync(productId, GetUserId());
+        if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        var store = await ResolveProductKnowledgeStoreAsync(product);
         return Ok(ApiResponse<object>.Ok(store));
     }
 
-    /// <summary>版本知识库（含 MRD/SRS/PRD；find-or-create 绑定的 DocumentStore）</summary>
+    /// <summary>
+    /// （兼容端点）版本知识库已并入产品整体库：知识统一存产品库、条目用 VersionIds 关联版本。
+    /// 本端点不再创建版本独立库，直接返回产品整体库（顺带完成懒迁移）。
+    /// </summary>
     [HttpGet("versions/{versionId}/knowledge/store")]
     public async Task<IActionResult> GetVersionKnowledgeStore(string versionId)
     {
         var version = await _db.ProductVersions.Find(v => v.Id == versionId && !v.IsDeleted).FirstOrDefaultAsync();
-        if (version == null || await FindAccessibleProductAsync(version.ProductId, GetUserId()) == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "版本不存在或无权访问"));
-
-        DocumentStore? store = null;
-        if (!string.IsNullOrEmpty(version.KnowledgeStoreId))
-            store = await _db.DocumentStores.Find(s => s.Id == version.KnowledgeStoreId).FirstOrDefaultAsync();
-        if (store == null)
-        {
-            store = new DocumentStore
-            {
-                Name = $"{version.VersionName} · 版本知识库",
-                OwnerId = version.OwnerId,
-                AppKey = "product-agent",
-                ProductKnowledgeRef = $"version:{versionId}",
-            };
-            await _db.DocumentStores.InsertOneAsync(store);
-            await _db.ProductVersions.UpdateOneAsync(v => v.Id == versionId,
-                Builders<ProductVersion>.Update.Set(v => v.KnowledgeStoreId, store.Id).Set(v => v.UpdatedAt, DateTime.UtcNow));
-        }
+        if (version == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "版本不存在或无权访问"));
+        var product = await FindAccessibleProductAsync(version.ProductId, GetUserId());
+        if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "版本不存在或无权访问"));
+        var store = await ResolveProductKnowledgeStoreAsync(product);
         return Ok(ApiResponse<object>.Ok(store));
     }
 
@@ -2673,6 +2696,66 @@ public class ProductAgentController : ControllerBase
             .Select(p => new { productId = p.Id, productName = p.Name, storeId = p.KnowledgeStoreId, name = storeById[p.KnowledgeStoreId!].Name, documentCount = storeById[p.KnowledgeStoreId!].DocumentCount, storeById[p.KnowledgeStoreId!].UpdatedAt })
             .ToList();
         return Ok(ApiResponse<object>.Ok(new { items = rows }));
+    }
+
+    /// <summary>
+    /// 管理层总览：跨产品聚合知识列表（分页 + 关键词/分类/标签/产品过滤）。
+    /// 与单产品知识列表同构，只是数据范围跨全部可访问产品，并多带「所属产品」。
+    /// </summary>
+    [HttpGet("overview/knowledge/entries")]
+    public async Task<IActionResult> OverviewKnowledgeEntries(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] string? keyword = null,
+        [FromQuery] string? category = null,
+        [FromQuery] string? tag = null,
+        [FromQuery] string? productId = null)
+    {
+        pageSize = Math.Clamp(pageSize, 1, 100);
+        page = Math.Max(1, page);
+
+        var scope = await GetAccessibleProductIdsAsync(GetUserId());
+        var pf = Builders<Product>.Filter.Eq(p => p.IsDeleted, false);
+        if (scope != null) pf &= Builders<Product>.Filter.In(p => p.Id, scope);
+        if (!string.IsNullOrWhiteSpace(productId)) pf &= Builders<Product>.Filter.Eq(p => p.Id, productId);
+        var products = await _db.Products.Find(pf).Limit(2000).ToListAsync();
+        var productByStoreId = products
+            .Where(p => !string.IsNullOrEmpty(p.KnowledgeStoreId))
+            .ToDictionary(p => p.KnowledgeStoreId!, p => p);
+        if (productByStoreId.Count == 0)
+            return Ok(ApiResponse<object>.Ok(new { items = Array.Empty<object>(), total = 0L, page, pageSize }));
+
+        var fb = Builders<DocumentEntry>.Filter;
+        var filter = fb.In(e => e.StoreId, productByStoreId.Keys) & fb.Eq(e => e.IsFolder, false);
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            var kw = System.Text.RegularExpressions.Regex.Escape(keyword.Trim());
+            filter &= fb.Or(
+                fb.Regex(e => e.Title, new MongoDB.Bson.BsonRegularExpression(kw, "i")),
+                fb.Regex(e => e.Summary, new MongoDB.Bson.BsonRegularExpression(kw, "i")),
+                fb.Regex(e => e.ContentIndex, new MongoDB.Bson.BsonRegularExpression(kw, "i")));
+        }
+        if (!string.IsNullOrWhiteSpace(category))
+            filter &= category == "__none__"
+                ? fb.Or(fb.Eq(e => e.Category, null), fb.Eq(e => e.Category, string.Empty), fb.Exists(e => e.Category, false))
+                : fb.Eq(e => e.Category, category);
+        if (!string.IsNullOrWhiteSpace(tag))
+            filter &= fb.AnyEq(e => e.Tags, tag);
+
+        var total = await _db.DocumentEntries.CountDocumentsAsync(filter);
+        var entries = await _db.DocumentEntries.Find(filter)
+            .SortByDescending(e => e.UpdatedAt)
+            .Skip((page - 1) * pageSize)
+            .Limit(pageSize)
+            .ToListAsync();
+
+        var items = entries.Select(e => new
+        {
+            entry = e,
+            productId = productByStoreId.TryGetValue(e.StoreId, out var p) ? p.Id : null,
+            productName = productByStoreId.TryGetValue(e.StoreId, out var p2) ? p2.Name : null,
+        }).ToList();
+        return Ok(ApiResponse<object>.Ok(new { items, total, page, pageSize }));
     }
 
     /// <summary>跨产品总览图：全部产品/版本/需求/功能/缺陷/客户 + 全部关系（最全的公司级关系图）。</summary>

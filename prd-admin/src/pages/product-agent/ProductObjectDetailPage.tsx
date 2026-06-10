@@ -9,16 +9,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Save, ListChecks, Puzzle, Bug, Link2, FileText, GitBranch, BookOpen, Share2, X, Sparkles } from 'lucide-react';
+import { ArrowLeft, Save, ListChecks, Puzzle, Bug, Link2, FileText, GitBranch, Share2, X, Sparkles } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { useSseStream } from '@/lib/useSseStream';
-import { RequirementRelationModal, DefectLinkerModal, KnowledgeStoreModal } from './ProductRelationModals';
+import { RequirementRelationModal, DefectLinkerModal } from './ProductRelationModals';
+import { VersionKnowledgeCard } from './knowledge/VersionKnowledgeCard';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { FormFieldsRenderer, RichTextField, useEffectiveTemplate, useEffectiveWorkflow } from './DynamicForm';
 import { WorkflowBar } from './WorkflowBar';
 import { ActivityTimeline } from './ActivityTimeline';
 import { slaInfo } from './sla';
+import './product-cards.css';
 import {
   listRequirements,
   createRequirement,
@@ -30,7 +32,6 @@ import {
   updateVersion,
   createFeatureVersion,
   deleteFeatureVersion,
-  getVersionKnowledgeStore,
   listCustomers,
   listFeatureVersions,
   listTracedDefects,
@@ -989,7 +990,7 @@ function DefectList({ defects, onClick, empty }: { defects: TracedDefect[]; onCl
         <button
           key={d.id}
           onClick={() => onClick(d.id)}
-          className="text-left flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg border border-white/10 bg-white/[0.02] hover:bg-white/[0.05]"
+          className="pa-row text-left flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg border border-white/10 bg-white/[0.02]"
         >
           <span className="text-sm text-white/80 truncate">
             <span className="text-[10px] text-white/40 mr-1.5 font-mono">{d.defectNo}</span>
@@ -1230,7 +1231,6 @@ function VersionDetail({
   const [selReqs, setSelReqs] = useState<Set<string>>(new Set());
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
-  const [showKnowledge, setShowKnowledge] = useState(false);
   const [showTrace, setShowTrace] = useState(false);
   const { template } = useEffectiveTemplate('version', productId);
   const { workflow } = useEffectiveWorkflow('version', productId);
@@ -1383,15 +1383,8 @@ function VersionDetail({
               )}
             </div>
           </Card>
-          <Card
-            title="版本知识库"
-            action={
-              <button onClick={() => setShowKnowledge(true)} className="flex items-center gap-1 text-[11px] text-cyan-300 hover:text-cyan-200">
-                <BookOpen size={12} /> 打开
-              </button>
-            }
-          >
-            <div className="text-[11px] text-white/40">MRD / SRS / PRD 等版本文档，支持分类筛选与快速新建。</div>
+          <Card title="本版本知识（从产品知识库调取）">
+            <VersionKnowledgeCard productId={productId} versionId={version.id} />
           </Card>
           <Card title="关联需求（本版本要做哪些需求）">
             {requirements.length === 0 ? (
@@ -1431,13 +1424,6 @@ function VersionDetail({
         </>
       }
     >
-      {showKnowledge && (
-        <KnowledgeStoreModal
-          title={`${version.versionName} · 版本知识库`}
-          fetcher={() => getVersionKnowledgeStore(version.id)}
-          onClose={() => setShowKnowledge(false)}
-        />
-      )}
       {showTrace && (
         <TraceRelationDrawer productId={productId} nodeId={`version:${version.id}`} title={version.versionName} onClose={() => setShowTrace(false)} />
       )}
