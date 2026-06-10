@@ -41,6 +41,7 @@ const SkillAgentPage = lazy(() => import('@/pages/SkillAgentPage'));
 const ArenaPage = lazy(() => import('@/pages/arena/ArenaPage').then(m => ({ default: m.ArenaPage })));
 const ReviewAgentPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentPage })));
 const CcasAgentPage = lazy(() => import('@/pages/ccas-agent').then(m => ({ default: m.CcasAgentPage })));
+const ShituAgentPage = lazy(() => import('@/pages/shitu-agent').then(m => ({ default: m.ShituAgentPage })));
 const PrReviewPage = lazy(() => import('@/pages/pr-review').then(m => ({ default: m.PrReviewPage })));
 const PaAgentPage = lazy(() => import('@/pages/pa-agent').then(m => ({ default: m.PaAgentPage })));
 const FrontEndAgentPage = lazy(() => import('@/pages/front-end-agent').then(m => ({ default: m.FrontEndAgentPage })));
@@ -350,6 +351,21 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'toolbox',
       appKey: 'ccas-agent',
       tags: ['赋码', '采集', '产线', 'PRD', '流程图'],
+    },
+  },
+  {
+    path: '/shitu-agent',
+    permission: 'shitu-agent.use',
+    element: shellGuarded('shitu-agent.use', <ShituAgentPage />),
+    nav: {
+      label: '识途',
+      shortLabel: '识途',
+      description: '新人文化与制度问答：企业文化 / 事故教训 / 规章制度 / 奖赏表彰',
+      icon: 'BookOpen',
+      section: 'toolbox',
+      appKey: 'shitu-agent',
+      tags: ['识途', '新人', '文化', '制度', '问答'],
+      wip: true,
     },
   },
   {

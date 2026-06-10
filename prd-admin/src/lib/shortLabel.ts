@@ -26,6 +26,7 @@ export const SHORT_LABEL_MAP: Record<string, string> = {
   'review-agent': '评审',
   'project-route-agent': '路由',
   'ccas-agent': '赋码',
+  'shitu-agent': '识途',
   'pr-review': 'PR审查',
   'report-agent': '周报',
   'arena-agent': '竞技场',

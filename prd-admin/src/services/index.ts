@@ -2148,6 +2148,21 @@ export type {
   CcasQaReferencePayload,
 } from '@/services/real/ccasAgent';
 
+// ── Shitu Agent 识途（新人文化与制度问答）──
+export {
+  getShituMeta,
+  getShituCategoryStore,
+  SHITU_QA_STREAM_URL,
+} from '@/services/real/shituAgent';
+export type {
+  ShituCategoryKey,
+  ShituTabMeta,
+  ShituMeta,
+  ShituCategoryStore,
+  ShituQaHistoryItem,
+  ShituQaReferencePayload,
+} from '@/services/real/shituAgent';
+
 // ── Front End Agent 前端搭档智能体 ──
 export {
   FRONT_END_AGENT_STREAM_URL,

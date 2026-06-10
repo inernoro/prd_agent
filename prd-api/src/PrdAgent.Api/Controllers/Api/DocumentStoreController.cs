@@ -87,12 +87,31 @@ public class DocumentStoreController : ControllerBase
     /// <summary>可写：拥有者 或 团队成员（决策 10 全员可编辑；不含 public）；项目库走项目成员判定</summary>
     private async Task<bool> CanWriteStoreAsync(DocumentStore s, string userId, List<string> myTeamIds)
         => s.OwnerId == userId || IsTeamShared(s, myTeamIds) || await IsPmProjectMemberAsync(s, userId, write: true)
-           || await IsProductKnowledgeMemberAsync(s, userId);
+           || await IsProductKnowledgeMemberAsync(s, userId)
+           || IsShituKnowledgeWritable(s);
 
     /// <summary>可读：拥有者 或 公开 或 团队成员；项目库走项目成员判定（含观察者/干系人）；产品库走产品成员判定</summary>
     private async Task<bool> CanReadStoreAsync(DocumentStore s, string userId, List<string> myTeamIds)
         => s.OwnerId == userId || s.IsPublic || IsTeamShared(s, myTeamIds) || await IsPmProjectMemberAsync(s, userId, write: false)
-           || await IsProductKnowledgeMemberAsync(s, userId);
+           || await IsProductKnowledgeMemberAsync(s, userId)
+           || IsShituKnowledgeReadable(s);
+
+    private bool IsShituKnowledgeReadable(DocumentStore s)
+    {
+        if (string.IsNullOrEmpty(s.ShituCategoryRef)) return false;
+        var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
+        return permissions.Contains(AdminPermissionCatalog.Super)
+               || permissions.Contains(AdminPermissionCatalog.ShituAgentUse)
+               || permissions.Contains(AdminPermissionCatalog.ShituAgentManage);
+    }
+
+    private bool IsShituKnowledgeWritable(DocumentStore s)
+    {
+        if (string.IsNullOrEmpty(s.ShituCategoryRef)) return false;
+        var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
+        return permissions.Contains(AdminPermissionCatalog.Super)
+               || permissions.Contains(AdminPermissionCatalog.ShituAgentManage);
+    }
 
     /// <summary>
     /// 产品知识库访问判定：仅当 store.ProductKnowledgeRef 非空时生效（格式 product:{id} / version:{id}）。
@@ -321,11 +340,12 @@ public class DocumentStoreController : ControllerBase
         }
         else
         {
-            // 我的知识库：排除项目库 / 产品库（PmProjectId / ProductKnowledgeRef 非空的库只在对应 Agent 的「知识库」tab 内访问）
+            // 我的知识库：排除项目库 / 产品库 / 识途库（专用 Agent 内嵌 tab 访问）
             filter = Builders<DocumentStore>.Filter.And(
                 Builders<DocumentStore>.Filter.Eq(s => s.OwnerId, userId),
                 Builders<DocumentStore>.Filter.Eq(s => s.PmProjectId, (string?)null),
-                Builders<DocumentStore>.Filter.Eq(s => s.ProductKnowledgeRef, (string?)null));
+                Builders<DocumentStore>.Filter.Eq(s => s.ProductKnowledgeRef, (string?)null),
+                Builders<DocumentStore>.Filter.Eq(s => s.ShituCategoryRef, (string?)null));
         }
 
         var total = await _db.DocumentStores.CountDocumentsAsync(filter);
@@ -2041,11 +2061,12 @@ public class DocumentStoreController : ControllerBase
         }
         else
         {
-            // 我的知识库：排除项目库 / 产品库（PmProjectId / ProductKnowledgeRef 非空的库只在对应 Agent 的「知识库」tab 内访问）
+            // 我的知识库：排除项目库 / 产品库 / 识途库（专用 Agent 内嵌 tab 访问）
             filter = Builders<DocumentStore>.Filter.And(
                 Builders<DocumentStore>.Filter.Eq(s => s.OwnerId, userId),
                 Builders<DocumentStore>.Filter.Eq(s => s.PmProjectId, (string?)null),
-                Builders<DocumentStore>.Filter.Eq(s => s.ProductKnowledgeRef, (string?)null));
+                Builders<DocumentStore>.Filter.Eq(s => s.ProductKnowledgeRef, (string?)null),
+                Builders<DocumentStore>.Filter.Eq(s => s.ShituCategoryRef, (string?)null));
         }
         var total = await _db.DocumentStores.CountDocumentsAsync(filter);
         var stores = await _db.DocumentStores.Find(filter)
