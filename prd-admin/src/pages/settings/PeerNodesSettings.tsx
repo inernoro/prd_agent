@@ -7,7 +7,7 @@
  *
  * 设计要点（基于 2026-06-07 真人验收反馈打磨）：
  * 1. 本节点身份明显可见且可复制（旧版用 11px mono 灰字塞在角落）
- * 2. 主流程收敛为一个「添加对端」入口，两端互换连接串后同时确认
+ * 2. 主流程收敛为一个「添加对端」入口，任一端粘贴对方连接串后由系统完成双向确认
  * 3. 已配对节点卡片改用图标 + 状态点 + 时间 + 内联动作，错误自动展开真因
  * 4. 严格遵守 cds-theme-tokens.md：颜色全部走 var(--*) token
  */
@@ -429,7 +429,7 @@ export function PeerNodesSettings() {
                 添加对端
               </div>
               <div className="text-[11px] mt-0.5 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-                两端各生成自己的连接串，互相粘贴对方连接串后点击添加；双方确认和探活成功后才会保存为已互联。
+                任一端拿到对方生成的连接串后粘贴并点击添加；系统双向确认和探活成功后，双方才会保存为已互联。
               </div>
             </div>
           </div>
@@ -644,7 +644,7 @@ export function PeerNodesSettings() {
             <div className="text-[12px] max-w-md mx-auto leading-relaxed" style={{ color: 'var(--text-muted)' }}>
               点击「添加对端」生成自己的连接串并发给对端，
               <br />
-              再粘贴对端连接串完成双端确认。
+              任一端粘贴对端连接串并点击添加后，系统会完成双端确认。
             </div>
           </div>
         ) : (
