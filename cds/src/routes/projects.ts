@@ -2260,6 +2260,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       description: string;
       gitRepoUrl: string;
       autoSmokeEnabled: boolean;
+      resourceChipDisplay: {
+        icon?: boolean;
+        name?: boolean;
+        port?: boolean;
+      };
       defaultDeployModes: Record<string, string>;
       autoPublishAfterMinutes: number;
       autoStopAfterMinutes: number;
@@ -2345,7 +2350,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
 
-    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'githubEventPolicy' | 'defaultDeployModes' | 'autoPublishAfterMinutes' | 'autoStopAfterMinutes'>> = {};
+    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'resourceChipDisplay' | 'githubEventPolicy' | 'defaultDeployModes' | 'autoPublishAfterMinutes' | 'autoStopAfterMinutes'>> = {};
     // PR_D.3: 合并 5 个 toggle 到 githubEventPolicy（partial patch — 仅
     // 对显式传入的 key 更新，不影响其它 key）。
     if (body.githubEventPolicy && typeof body.githubEventPolicy === 'object') {
@@ -2362,6 +2367,23 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       // Booleans come in as true / false / 'true' / 'false' depending on
       // the UI; coerce everything truthy but 'false' into a real boolean.
       patch.autoSmokeEnabled = body.autoSmokeEnabled === true || body.autoSmokeEnabled === 'true' as unknown as boolean;
+    }
+    if (body.resourceChipDisplay !== undefined) {
+      const incoming = body.resourceChipDisplay;
+      if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+        res.status(400).json({ error: 'validation', field: 'resourceChipDisplay', message: '资源标签显示设置格式不正确' });
+        return;
+      }
+      const next = {
+        icon: incoming.icon !== false,
+        name: incoming.name === true,
+        port: incoming.port !== false,
+      };
+      if (!next.icon && !next.name && !next.port) {
+        res.status(400).json({ error: 'validation', field: 'resourceChipDisplay', message: '资源标签至少要显示图标、名称、端口中的一项' });
+        return;
+      }
+      patch.resourceChipDisplay = next;
     }
     if (body.defaultDeployModes !== undefined) {
       const incoming = body.defaultDeployModes;

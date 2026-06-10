@@ -54,6 +54,14 @@ import { DropdownDivider, DropdownItem, DropdownLabel, DropdownMenu } from '@/co
 import { apiRequest, ApiError, apiUrl } from '@/lib/api';
 import { reduceBranchListState, type BranchListAction, type BranchListSlice } from '@/lib/branch-list-state';
 import { normalizeHostStats, type NormalizedHostStats } from '@/lib/host-stats';
+import {
+  buildBranchResources,
+  ResourceIcon,
+  resourceAccessIcon,
+  type BranchResource,
+  type BranchResourceInfraInput,
+  type BranchResourceProfileInput,
+} from '@/lib/resources';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
 import { CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
 
@@ -62,6 +70,7 @@ interface ProjectSummary {
   slug: string;
   name: string;
   aliasName?: string;
+  resourceChipDisplay?: ResourceChipDisplay;
   description?: string;
   cloneStatus?: 'pending' | 'cloning' | 'ready' | 'error';
   cloneError?: string;
@@ -72,6 +81,31 @@ interface ProjectSummary {
   branchCount?: number;
 }
 
+type ResourceChipDisplay = {
+  icon?: boolean;
+  name?: boolean;
+  port?: boolean;
+};
+
+const DEFAULT_RESOURCE_CHIP_DISPLAY: Required<ResourceChipDisplay> = {
+  icon: true,
+  name: false,
+  port: true,
+};
+
+function normalizeResourceChipDisplay(display?: ResourceChipDisplay): Required<ResourceChipDisplay> {
+  const next = {
+    icon: display?.icon !== false,
+    name: display?.name === true,
+    port: display?.port !== false,
+  };
+  return next.icon || next.name || next.port ? next : DEFAULT_RESOURCE_CHIP_DISPLAY;
+}
+
+function resourceChipName(resource: BranchResource): string {
+  return resource.runtime || resource.displayName || resource.serviceName;
+}
+
 interface ServiceState {
   profileId: string;
   containerName: string;
@@ -80,12 +114,16 @@ interface ServiceState {
   errorMessage?: string;
 }
 
+type InfraServiceSummary = BranchResourceInfraInput;
+type BuildProfileSummary = BranchResourceProfileInput;
+
 interface BranchSummary {
   id: string;
   projectId: string;
   branch: string;
   status: 'idle' | 'building' | 'starting' | 'running' | 'restarting' | 'stopping' | 'error';
   services: Record<string, ServiceState>;
+  resources?: BranchResource[];
   createdAt: string;
   lastPushAt?: string;
   lastAccessedAt?: string;
@@ -132,6 +170,13 @@ interface BranchSummary {
       hasDrift: boolean;
     };
   };
+}
+
+interface BranchCommitSummary {
+  hash: string;
+  subject: string;
+  author?: string;
+  date?: string;
 }
 
 interface BranchesResponse {
@@ -345,6 +390,8 @@ type LoadState =
       remoteBranches: RemoteBranch[];
       previewMode: 'simple' | 'port' | 'multi';
       config: CdsConfigResponse;
+      buildProfiles: BuildProfileSummary[];
+      infraServices: InfraServiceSummary[];
       capacity?: BranchesResponse['capacity'];
       projectWarning?: string;
       // Codex review(PR #590):banner 条件需要 infra service dockerImage,而非 branch.services 的 key。
@@ -618,6 +665,10 @@ function branchRoleCardClass(role: BranchVisualRole): string {
 function shortCommitSha(branch: BranchSummary): string {
   const sha = branch.commitSha || branch.githubCommitSha || '';
   return /^[0-9a-f]{7,40}$/i.test(sha) ? sha.slice(0, 7) : '';
+}
+
+function commitSubject(branch: BranchSummary): string {
+  return branch.subject?.trim() || '暂无提交信息';
 }
 
 function builderHandle(branch: BranchSummary): string {
@@ -1081,24 +1132,6 @@ function runningServiceCount(branch: BranchSummary): number {
   return Object.values(branch.services || {}).filter((svc) => svc.status === 'running').length;
 }
 
-function compactServiceLabel(profileId: string): string {
-  const normalized = profileId.trim();
-  if (!normalized) return 'service';
-  const tokens = normalized.toLowerCase().split(/[-_]+/).filter(Boolean);
-
-  if (tokens.includes('frontend')) return 'frontend';
-  if (tokens.includes('backend')) return 'backend';
-  if (tokens.includes('api')) return 'api';
-  if (tokens.includes('admin')) return 'admin';
-  if (tokens.includes('web')) return 'web';
-  if (tokens.includes('bootstrap') || tokens.includes('server')) return 'backend';
-
-  return normalized
-    .replace(/[-_]prd[-_]?agent$/i, '')
-    .replace(/[-_]agent$/i, '')
-    .replace(/[-_]mytapd$/i, '');
-}
-
 function isBusy(branch?: BranchSummary): boolean {
   if (!branch) return false;
   return branch.status === 'building' || branch.status === 'starting' || branch.status === 'restarting' || branch.status === 'stopping';
@@ -1436,14 +1469,14 @@ export function BranchListPage(): JSX.Element {
     try {
       const branchUrl = `/api/branches?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}`;
       const infraUrl = `/api/infra?project=${encodeURIComponent(projectId)}&live=${forceLive ? 'true' : 'false'}`;
-      const [projectResult, branchesResult, previewModeResult, configResult, infraResult] = await Promise.allSettled([
+      const profilesUrl = `/api/build-profiles?project=${encodeURIComponent(projectId)}`;
+      const [projectResult, branchesResult, previewModeResult, configResult, infraResult, profilesResult] = await Promise.allSettled([
         apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
         apiRequest<BranchesResponse>(branchUrl),
         apiRequest<PreviewModeResponse>(`/api/projects/${encodeURIComponent(projectId)}/preview-mode`),
         apiRequest<CdsConfigResponse>('/api/config'),
-        apiRequest<{ services: Array<{ id: string; dockerImage?: string }> }>(
-          infraUrl,
-        ),
+        apiRequest<{ services: InfraServiceSummary[] }>(infraUrl),
+        apiRequest<{ profiles: BuildProfileSummary[] }>(profilesUrl),
       ]);
       if (branchesResult.status === 'rejected') {
         if (branchesResult.reason instanceof ApiError && branchesResult.reason.transient) {
@@ -1470,6 +1503,7 @@ export function BranchListPage(): JSX.Element {
         : { mode: 'multi' as const };
       const config = configResult.status === 'fulfilled' ? configResult.value : {};
       const infraRes = infraResult.status === 'fulfilled' ? infraResult.value : { services: [] };
+      const buildProfiles = profilesResult.status === 'fulfilled' ? (profilesResult.value.profiles || []) : [];
       // Codex review(PR #590):banner 显示条件来自 infra dockerImage,不是 branch.services key。
       // 兜底也看 id(用户用 'db' 等命名,但 image 字段是真实信号)。
       // Bugbot review(PR #590):**不**含 mongo。banner 文案专写 "schema.sql / mysql / postgres",
@@ -1489,6 +1523,8 @@ export function BranchListPage(): JSX.Element {
             remoteBranches: [],
             previewMode: previewModeRes.mode || 'multi',
             config,
+            buildProfiles,
+            infraServices: infraRes.services || [],
             capacity: branchesRes.capacity,
             projectWarning,
             hasSchemafulInfra,
@@ -1508,6 +1544,8 @@ export function BranchListPage(): JSX.Element {
           remoteBranches: prev.status === 'ok' ? prev.remoteBranches : [],
           previewMode: previewModeRes.mode || 'multi',
           config,
+          buildProfiles,
+          infraServices: infraRes.services || [],
           capacity: branchesRes.capacity,
           projectWarning: applied.state.projectWarning || projectWarning,
           hasSchemafulInfra,
@@ -3040,9 +3078,20 @@ export function BranchListPage(): JSX.Element {
                   <BranchCard
                     key={branch.id}
                     branch={branch}
+                    resources={branch.resources && branch.resources.length > 0 ? branch.resources : state.status === 'ok' ? buildBranchResources({
+                      branchId: branch.id,
+                      branchName: branch.branch,
+                      services: branch.services || {},
+                      profiles: state.buildProfiles,
+                      infraServices: state.infraServices,
+                      previewUrl: state.previewMode === 'simple'
+                        ? simplePreviewUrl(state.config)
+                        : multiPreviewUrl(branch, state.config),
+                    }) : []}
                     action={actions[branch.id]}
                     now={actionClock}
                     projectId={projectId}
+                    resourceChipDisplay={state.status === 'ok' ? state.project.resourceChipDisplay : undefined}
                     highlighted={highlightedBranchId === branch.id}
                     highlightPulse={highlightPulseBranchId === branch.id}
                     activityEvents={activityEvents
@@ -4223,9 +4272,11 @@ function isReleaseTerminal(status: string): boolean {
 
 function BranchCard({
   branch,
+  resources,
   action,
   now,
   capacityWarning,
+  resourceChipDisplay,
   highlighted,
   highlightPulse,
   activityEvents = [],
@@ -4252,6 +4303,7 @@ function BranchCard({
   onClickTag,
 }: {
   branch: BranchSummary;
+  resources: BranchResource[];
   action?: BranchAction;
   now: number;
   capacityWarning?: string;
@@ -4261,6 +4313,7 @@ function BranchCard({
   // `branch.projectId`. Keeping the prop optional to avoid a churn of
   // callers when we later need it (e.g. cross-project routing tests).
   projectId?: string;
+  resourceChipDisplay?: ResourceChipDisplay;
   selected?: boolean;
   // 搜索框命中"已粘贴的分支名/SHA"时,父组件 set 这个 prop = true,触发
   // 稳定选中态 + 自动滚到可视区。详见 focusBranchCard / index.css。
@@ -4294,10 +4347,8 @@ function BranchCard({
   const busy = action?.status === 'running' || isBusy(branch);
   const deleteBusy = action?.status === 'running' && action.kind === 'delete';
   const runningCount = runningServiceCount(branch);
-  const services = Object.values(branch.services || {});
-  // 用户反馈(2026-05-04):"+1 显得很多余,明明都可以显示" — 不再 slice(0,1) +
-  // hiddenCount,所有有 hostPort 的 service 全部 inline 显示。卡片自动 wrap。
-  const portChips = services.filter((service) => service.hostPort);
+  const visibleResources = resources.filter((resource) => resource.port).slice(0, 6);
+  const chipDisplay = normalizeResourceChipDisplay(resourceChipDisplay);
   const previewCapacityWarning = branch.status === 'running' ? '' : capacityWarning;
 
   // 新设计(2026-05-04 用户主诉求):
@@ -4344,7 +4395,12 @@ function BranchCard({
   const builderInitial = builderLabel ? (builderLabel.trim().charAt(0) || '?').toUpperCase() : '?';
   const footerBuilder = builderHandle(branch);
   const footerSha = shortCommitSha(branch);
+  const footerSubject = commitSubject(branch);
   const [builderAvatarStatus, setBuilderAvatarStatus] = useState<AvatarLoadStatus>(() => cachedAvatarStatus(builderAvatarUrl));
+  const [commitMenuOpen, setCommitMenuOpen] = useState(false);
+  const [commitHistoryState, setCommitHistoryState] = useState<
+    { status: 'idle' | 'loading' | 'ok' | 'error'; commits: BranchCommitSummary[]; message?: string }
+  >({ status: 'idle', commits: [] });
   const actorOrbitVisible = Boolean(footerBuilder) && (isInterim || action?.status === 'running' || isAiActive);
   const actorOrbitTone = isError || action?.status === 'error'
     ? 'danger'
@@ -4366,6 +4422,24 @@ function BranchCard({
   useEffect(() => {
     setBuilderAvatarStatus(cachedAvatarStatus(builderAvatarUrl));
   }, [builderAvatarUrl]);
+  const toggleCommitMenu = async (): Promise<void> => {
+    const nextOpen = !commitMenuOpen;
+    setCommitMenuOpen(nextOpen);
+    if (!nextOpen || commitHistoryState.status === 'ok' || commitHistoryState.status === 'loading') return;
+    setCommitHistoryState({ status: 'loading', commits: [] });
+    try {
+      const result = await apiRequest<{ commits?: BranchCommitSummary[] }>(
+        `/api/branches/${encodeURIComponent(branch.id)}/git-log?count=8`,
+      );
+      setCommitHistoryState({ status: 'ok', commits: result.commits || [] });
+    } catch (err) {
+      setCommitHistoryState({
+        status: 'error',
+        commits: [],
+        message: err instanceof ApiError ? err.message : String(err),
+      });
+    }
+  };
   const submitTagDraft = async (): Promise<void> => {
     const trimmed = tagDraft.trim();
     if (!trimmed) {
@@ -4382,11 +4456,53 @@ function BranchCard({
     setTagEditorOpen(false);
     setTagDeleteTarget(null);
   };
+  const commitHistoryPanel = commitMenuOpen ? (
+    <div
+      className="mt-2 rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2 shadow-lg"
+      role="menu"
+      aria-label={`${branch.branch} 最近提交`}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <div className="mb-1 flex items-center justify-between gap-2 px-1.5 text-[11px] text-muted-foreground">
+        <span>最近提交</span>
+        <span className="truncate font-mono">{branch.branch}</span>
+      </div>
+      {commitHistoryState.status === 'loading' ? (
+        <div className="px-2 py-3 text-xs text-muted-foreground">读取提交历史...</div>
+      ) : null}
+      {commitHistoryState.status === 'error' ? (
+        <div className="px-2 py-3 text-xs leading-5 text-destructive">{commitHistoryState.message || '读取失败'}</div>
+      ) : null}
+      {commitHistoryState.status === 'ok' && commitHistoryState.commits.length === 0 ? (
+        <div className="px-2 py-3 text-xs text-muted-foreground">暂无提交历史。</div>
+      ) : null}
+      {commitHistoryState.status === 'ok' && commitHistoryState.commits.length > 0 ? (
+        <div className="max-h-72 overflow-y-auto">
+          {commitHistoryState.commits.map((commit, index) => (
+            <div
+              key={`${commit.hash}-${index}`}
+              className="grid grid-cols-[56px_minmax(0,1fr)] gap-2 rounded-md px-2 py-2 text-xs hover:bg-muted/35"
+              role="menuitem"
+              title={`${commit.hash} ${commit.subject}`}
+            >
+              <span className="font-mono text-muted-foreground">{commit.hash}</span>
+              <span className="min-w-0">
+                <span className="block truncate text-foreground">{commit.subject || '无提交信息'}</span>
+                <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
+                  {[commit.author, commit.date].filter(Boolean).join(' · ')}
+                </span>
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  ) : null;
 
   return (
     <article
       data-branch-card-id={branch.id}
-      className={`group relative flex min-h-[158px] cursor-pointer flex-col ${tagEditorOpen || tagDeleteTarget || aiPanelOpen ? 'z-40 overflow-visible' : isError ? 'z-20 overflow-visible hover:z-50 focus-within:z-50' : 'overflow-hidden'} rounded-md border ${
+      className={`group relative flex min-h-[158px] cursor-pointer flex-col ${tagEditorOpen || tagDeleteTarget || aiPanelOpen || commitMenuOpen ? 'z-40 overflow-visible' : isError ? 'z-20 overflow-visible hover:z-50 focus-within:z-50' : 'overflow-hidden'} rounded-md border ${
         isError
           ? branchIssueCardClass(branch)
           : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
@@ -4644,21 +4760,28 @@ function BranchCard({
             ) : null}
           </span>
         ) : null}
-        {portChips.length > 0 ? portChips.map((service) => {
+        {visibleResources.length > 0 ? visibleResources.map((resource) => {
           // 端口 chip 颜色优先跟 branch 整体态:isInterim/isError 时强制对齐
           // (端口监听了不代表流量已通,容易给用户"绿色=就绪"的错觉);
           // running 时才用 service 自身状态做精细化区分。
-          const chipStatus = isInterim || isError ? branch.status : service.status;
+          const chipStatus = isInterim || isError ? branch.status : resource.status;
           const chipClass = isError ? issueClass : statusClass(chipStatus);
           const chipRailClass = isError ? issueRailClass : statusRailClass(chipStatus);
           return (
             <span
-              key={service.profileId}
-              className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 font-mono text-xs ${chipClass}`}
-              title={`${service.profileId}${service.hostPort ? ` :${service.hostPort}` : ''}`}
+              key={resource.id}
+              className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs ${chipClass} ${
+                resource.access === 'external'
+                  ? 'shadow-[0_0_0_1px_rgba(56,189,248,0.28),0_0_16px_-8px_rgba(56,189,248,0.85)] ring-1 ring-sky-400/35'
+                  : ''
+              }`}
+              title={`${resource.displayName}\n${resource.serviceName}${resource.containerName ? ` · ${resource.containerName}` : ''}\n${resource.access === 'external' ? '公网访问已开启' : '仅内部访问'}`}
             >
               <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${chipRailClass}`} aria-hidden />
-              <span>{compactServiceLabel(service.profileId)}</span>
+              {chipDisplay.icon ? <ResourceIcon resource={resource} className="h-3.5 w-3.5 shrink-0" /> : null}
+              {chipDisplay.name ? <span className="max-w-[92px] truncate font-semibold">{resourceChipName(resource)}</span> : null}
+              {chipDisplay.port ? <span className="font-mono text-muted-foreground">:{resource.port}</span> : null}
+              {resourceAccessIcon(resource)}
             </span>
           );
         }) : (
@@ -4880,8 +5003,9 @@ function BranchCard({
           }
         }}
       >
-        <div className="flex min-w-0 items-center gap-3 pr-2 text-muted-foreground">
-          <div className="flex min-w-[54px] max-w-[94px] shrink-0 flex-col items-center gap-1" title={builderTitle}>
+        <div className="min-w-0 pr-2 text-muted-foreground">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex min-w-[54px] max-w-[94px] shrink-0 flex-col items-center gap-1" title={builderTitle}>
             <div className={`cds-actor-orbit ${actorOrbitVisible ? `cds-actor-orbit--active cds-actor-orbit--${actorOrbitTone}` : ''}`}>
               {actorOrbitVisible && footerBuilder ? <CircularActorText text={footerBuilder} /> : null}
               <div
@@ -4915,14 +5039,31 @@ function BranchCard({
               </span>
             ) : null}
           </div>
-          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <div className="relative flex min-w-0 flex-1 items-center gap-2">
             {footerSha ? (
               <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground" title={`commit ${footerSha}`}>
                 {footerSha}
               </span>
             ) : null}
-            <span className="min-w-0 truncate text-sm">{branch.subject || branch.branch}</span>
+            <span className="min-w-0 flex-1 truncate text-sm" title={footerSubject}>
+              {footerSubject}
+            </span>
+            <button
+              type="button"
+              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+              title="查看提交历史"
+              aria-label={`${branch.branch} 提交历史`}
+              aria-expanded={commitMenuOpen}
+              onClick={(event) => {
+                event.stopPropagation();
+                void toggleCommitMenu();
+              }}
+            >
+              <ChevronDown className={`h-3.5 w-3.5 transition-transform ${commitMenuOpen ? 'rotate-180' : ''}`} />
+            </button>
+            </div>
           </div>
+          {commitHistoryPanel}
         </div>
         {/*
           重设计(2026-05-04 用户主诉求):

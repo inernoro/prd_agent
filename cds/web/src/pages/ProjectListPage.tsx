@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 're
 import { Link, useNavigate } from 'react-router-dom';
 import { motion, useMotionValue, useSpring, useTransform, type MotionValue } from 'motion/react';
 import {
+  Activity,
   AlertTriangle,
   ArrowRight,
   Bell,
@@ -49,7 +50,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { apiRequest, ApiError } from '@/lib/api';
+import { apiRequest, ApiError, apiUrl } from '@/lib/api';
 import { useInfraCatalog } from '@/lib/infraCatalog';
 import { RuntimeValidateButton } from '@/components/deployment/RuntimeValidateButton';
 import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
@@ -435,6 +436,7 @@ export function ProjectListPage(): JSX.Element {
   // Phase 8 — clone 完成后的 env 配置弹窗:必填项强制让用户感知,配完跳分支页
   const [envSetupTarget, setEnvSetupTarget] = useState<ProjectSummary | null>(null);
   const [agentKeyProject, setAgentKeyProject] = useState<ProjectSummary | null>(null);
+  const [agentSessionProject, setAgentSessionProject] = useState<ProjectSummary | null>(null);
   const [globalAgentKeyOpen, setGlobalAgentKeyOpen] = useState(false);
   const [skillDownloadOpen, setSkillDownloadOpen] = useState(false);
   const [legacyDialogOpen, setLegacyDialogOpen] = useState(false);
@@ -728,6 +730,7 @@ export function ProjectListPage(): JSX.Element {
                   project={project}
                   onClone={() => setCloneTarget(project)}
                   onAgentKeys={() => setAgentKeyProject(project)}
+                  onAgentSessions={() => setAgentSessionProject(project)}
                   onDelete={() => setDeleteTarget(project)}
                 />
               ))}
@@ -793,6 +796,12 @@ export function ProjectListPage(): JSX.Element {
             if (!open) setAgentKeyProject(null);
           }}
           onToast={setToast}
+        />
+        <AgentSessionsDialog
+          project={agentSessionProject}
+          onOpenChange={(open) => {
+            if (!open) setAgentSessionProject(null);
+          }}
         />
         <GlobalAgentKeyManagerDialog
           open={globalAgentKeyOpen}
@@ -1693,11 +1702,13 @@ function ProjectCard({
   project,
   onClone,
   onAgentKeys,
+  onAgentSessions,
   onDelete,
 }: {
   project: ProjectSummary;
   onClone: () => void;
   onAgentKeys: () => void;
+  onAgentSessions: () => void;
   onDelete: () => void;
 }): JSX.Element {
   const title = displayName(project);
@@ -1860,6 +1871,19 @@ function ProjectCard({
           title="Agent Key"
         >
           <KeyRound />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="pointer-events-auto h-8 w-8 bg-[hsl(var(--surface-raised))]/90 shadow-sm backdrop-blur"
+          onClick={(event) => {
+            event.stopPropagation();
+            onAgentSessions();
+          }}
+          aria-label={`${title} Agent 会话`}
+          title="Agent 会话"
+        >
+          <Activity />
         </Button>
         <Button
           variant="ghost"
@@ -2205,6 +2229,358 @@ function AgentKeyManagerDialog({
         onToast={onToast}
       />
     </>
+  );
+}
+
+interface AgentSessionView {
+  id: string;
+  projectId: string;
+  runtime?: string;
+  model?: string;
+  status: string;
+  workerId?: string;
+  containerName?: string;
+  createdAt: string;
+  updatedAt?: string;
+  stoppedAt?: string;
+  eventCount?: number;
+}
+
+// 后端 pushCdsAgentEvent 落库的事件形状是 { seq, type, payload, createdAt }
+// (见 cds/src/routes/remote-hosts.ts)。早先这里误写成 ts/data,导致时间显示 Invalid Date、
+// 摘要永远为空。字段名必须与后端一致。
+interface AgentSessionEvent {
+  seq: number;
+  type: string;
+  createdAt: string;
+  payload?: unknown;
+}
+
+function AgentSessionsDialog({
+  project,
+  onOpenChange,
+}: {
+  project: ProjectSummary | null;
+  onOpenChange: (open: boolean) => void;
+}): JSX.Element {
+  const [listState, setListState] = useState<
+    | { status: 'idle' }
+    | { status: 'loading' }
+    | { status: 'error'; message: string }
+    | { status: 'ok'; sessions: AgentSessionView[] }
+  >({ status: 'idle' });
+  const [selectedSession, setSelectedSession] = useState<AgentSessionView | null>(null);
+  const [events, setEvents] = useState<AgentSessionEvent[]>([]);
+  const [streaming, setStreaming] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const eventsEndRef = useRef<HTMLDivElement | null>(null);
+
+  const fetchSeqRef = useRef(0);
+  // silent=true 用于 5s 后台自动刷新:不切回 loading 态(否则列表每 5 秒闪一次骨架)。
+  // fetchSeqRef 守卫:切项目/快速重入时,旧请求晚返回不得覆盖新项目的列表(stale response)。
+  const loadSessions = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!project) return;
+      const seq = ++fetchSeqRef.current;
+      if (!opts?.silent) setListState({ status: 'loading' });
+      try {
+        const data = await apiRequest<{ items: AgentSessionView[] }>(
+          `/api/projects/${encodeURIComponent(project.id)}/agent-sessions`,
+        );
+        if (seq !== fetchSeqRef.current) return;
+        setListState({ status: 'ok', sessions: data.items || [] });
+      } catch (err) {
+        if (seq !== fetchSeqRef.current) return;
+        setListState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      }
+    },
+    [project],
+  );
+
+  useEffect(() => {
+    if (project) {
+      void loadSessions();
+    } else {
+      setListState({ status: 'idle' });
+      setSelectedSession(null);
+      setEvents([]);
+    }
+  }, [loadSessions, project]);
+
+  // Auto-refresh list every 5s when open and on list view
+  useEffect(() => {
+    if (!project || selectedSession) return;
+    const timer = setInterval(() => {
+      void loadSessions({ silent: true });
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [loadSessions, project, selectedSession]);
+
+  // SSE stream for selected session
+  useEffect(() => {
+    if (!selectedSession || !project) {
+      abortRef.current?.abort();
+      setStreaming(false);
+      return;
+    }
+
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setEvents([]);
+    setStreaming(true);
+
+    let afterSeq = 0;
+    const url = apiUrl(
+      `/api/projects/${encodeURIComponent(project.id)}/agent-sessions/${encodeURIComponent(selectedSession.id)}/stream`,
+    );
+
+    // 读一次流:回放 afterSeq 之后的事件,返回是否已到达终态(看到 done/error/stopped)。
+    // CDS 的 stream 端点是一次性的(回放缓冲事件 + keepalive 后即 Connection: close,见
+    // remote-hosts.ts),所以单次 fetch 读不到之后产生的事件。
+    async function readOnce(): Promise<{ terminal: boolean; ok: boolean }> {
+      const response = await fetch(`${url}?afterSeq=${afterSeq}`, {
+        credentials: 'include',
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.body) return { terminal: true, ok: false };
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let terminal = false;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (line.startsWith('data:')) {
+            const raw = line.slice(5).trim();
+            if (!raw || raw === '[DONE]') continue;
+            try {
+              const evt = JSON.parse(raw) as AgentSessionEvent;
+              // 流末尾的 keepalive 帧是 { ts }(无 seq/type/payload),不是真实事件,
+              // 不能塞进时间线(否则显示为空白垃圾行)。只接收带 type 的真实事件。
+              if (typeof evt.type !== 'string') continue;
+              if (typeof evt.seq === 'number') afterSeq = evt.seq;
+              if (evt.type === 'done' || evt.type === 'error') terminal = true;
+              if (evt.type === 'status') {
+                const st = (evt.payload as { status?: string } | undefined)?.status;
+                if (st === 'stopped' || st === 'error') terminal = true;
+              }
+              // stale 守卫:切到别的会话/关窗时,cleanup 已 abort 本 controller。此刻
+              // 上一会话晚返回的事件不能再 append(否则两个会话的时间线会混在一起)。
+              if (controller.signal.aborted) return { terminal, ok: true };
+              setEvents((prev) => [...prev, evt]);
+            } catch {
+              // ignore parse errors
+            }
+          }
+        }
+      }
+      return { terminal, ok: true };
+    }
+
+    async function readStream() {
+      try {
+        // 会话本身已是终态(stopped/error/idle)→ 只回放一次;运行中(running/pending)→
+        // 用更新后的 afterSeq 持续重连轮询,直到看到终态事件,保证"实时可观测"不假死。
+        const sessionAlreadyTerminal =
+          selectedSession!.status !== 'running' && selectedSession!.status !== 'pending';
+        while (!controller.signal.aborted) {
+          const { terminal, ok } = await readOnce();
+          if (sessionAlreadyTerminal || terminal || !ok || controller.signal.aborted) break;
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+        }
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+      } finally {
+        // 仅当本 controller 仍是当前会话的(未被 cleanup abort)才落 streaming=false;
+        // 否则会把刚切过去的新会话的 streaming 误置回 false。
+        if (!controller.signal.aborted) setStreaming(false);
+      }
+    }
+
+    void readStream();
+
+    return () => {
+      controller.abort();
+      setStreaming(false);
+    };
+  }, [selectedSession, project]);
+
+  // Scroll to bottom when new events arrive
+  useEffect(() => {
+    eventsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [events]);
+
+  function eventTypeLabel(type: string): string {
+    const map: Record<string, string> = {
+      text_delta: '文本输出',
+      thinking: '思考',
+      tool_call: '调用工具',
+      tool_result: '工具结果',
+      status: '状态变更',
+      log: '日志',
+      done: '完成',
+      error: '错误',
+      runtime_init: '运行时初始化',
+      hook: '钩子',
+      usage: '用量',
+    };
+    return map[type] ?? type;
+  }
+
+  function sessionStatusLabel(status: string): string {
+    const map: Record<string, string> = {
+      pending: '等待中',
+      running: '运行中',
+      stopped: '已停止',
+      error: '出错',
+    };
+    return map[status] ?? status;
+  }
+
+  function eventSummary(evt: AgentSessionEvent): string {
+    const p = evt.payload as Record<string, unknown> | undefined;
+    if (!p) return '';
+    if (evt.type === 'text_delta' || evt.type === 'thinking') {
+      return typeof p.text === 'string' ? (p.text as string).slice(0, 120) : '';
+    }
+    if (evt.type === 'tool_call' || evt.type === 'tool_result') {
+      // 后端 payload 用 toolName(claude-agent-sdk)；兼容旧字段 tool/name。
+      return (p.toolName as string) ?? (p.tool as string) ?? (p.name as string) ?? '';
+    }
+    if (evt.type === 'status') {
+      return (p.status as string) ?? '';
+    }
+    if (evt.type === 'done') {
+      return typeof p.finalText === 'string' ? (p.finalText as string).slice(0, 120) : '';
+    }
+    if (evt.type === 'error' || evt.type === 'log') {
+      return (p.message as string) ?? (p.reason as string) ?? '';
+    }
+    return '';
+  }
+
+  return (
+    <Dialog open={Boolean(project)} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl" style={{ maxHeight: '90vh' }}>
+        <DialogHeader>
+          <DialogTitle>{selectedSession ? 'Agent 会话详情' : 'Agent 会话列表'}</DialogTitle>
+          <DialogDescription>{project ? `${displayName(project)} · 实时可观测` : ''}</DialogDescription>
+        </DialogHeader>
+
+        {!selectedSession ? (
+          <div
+            className="flex flex-col gap-3"
+            style={{ minHeight: 0, overflowY: 'auto', maxHeight: '60vh', overscrollBehavior: 'contain' }}
+          >
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => void loadSessions()}>
+                <RefreshCw className="h-4 w-4" />
+                刷新
+              </Button>
+            </div>
+
+            {listState.status === 'loading' ? <LoadingBlock label="加载会话列表" /> : null}
+            {listState.status === 'error' ? <ErrorBlock message={listState.message} /> : null}
+            {listState.status === 'ok' && listState.sessions.length === 0 ? (
+              <div className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
+                当前无活动会话；MAP 端发起 CDS Agent 任务后会出现在这里
+              </div>
+            ) : null}
+            {listState.status === 'ok' && listState.sessions.length > 0 ? (
+              <div className="space-y-2">
+                {listState.sessions.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    className="cds-surface-raised cds-hairline w-full cursor-pointer rounded px-3 py-3 text-left hover:bg-accent"
+                    onClick={() => setSelectedSession(s)}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                          <span className="truncate font-mono">{s.id.slice(0, 8)}</span>
+                          <CodePill>{sessionStatusLabel(s.status)}</CodePill>
+                          {s.model ? <CodePill>{s.model}</CodePill> : null}
+                          {s.runtime ? <CodePill>{s.runtime}</CodePill> : null}
+                        </div>
+                        <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
+                          <span>创建：{formatDate(s.createdAt)}</span>
+                          {s.eventCount !== undefined ? <span>事件数：{s.eventCount}</span> : null}
+                          {s.workerId ? <span>Worker：{s.workerId.slice(0, 12)}</span> : null}
+                        </div>
+                      </div>
+                      <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3" style={{ minHeight: 0 }}>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setSelectedSession(null);
+                  setEvents([]);
+                }}
+              >
+                返回列表
+              </Button>
+              <CodePill>{sessionStatusLabel(selectedSession.status)}</CodePill>
+              {selectedSession.model ? <CodePill>{selectedSession.model}</CodePill> : null}
+              {selectedSession.runtime ? <CodePill>{selectedSession.runtime}</CodePill> : null}
+              {streaming ? <span className="text-xs text-muted-foreground">实时更新中...</span> : null}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              <span>创建：{formatDate(selectedSession.createdAt)}</span>
+              {selectedSession.workerId ? (
+                <span className="ml-4">Worker：{selectedSession.workerId}</span>
+              ) : null}
+            </div>
+            <div
+              className="rounded-md border border-border bg-[var(--bg-base)] p-2"
+              style={{ minHeight: 0, maxHeight: '50vh', overflowY: 'auto', overscrollBehavior: 'contain' }}
+            >
+              {events.length === 0 ? (
+                <div className="py-4 text-center text-xs text-muted-foreground">
+                  {streaming ? '等待事件...' : '暂无事件'}
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {events.map((evt) => (
+                    <div key={evt.seq} className="flex gap-2 text-xs">
+                      <span className="shrink-0 text-muted-foreground">
+                        {evt.createdAt ? new Date(evt.createdAt).toLocaleTimeString() : ''}
+                      </span>
+                      <span className="shrink-0 font-medium">{eventTypeLabel(evt.type)}</span>
+                      {eventSummary(evt) ? (
+                        <span className="min-w-0 truncate text-muted-foreground">{eventSummary(evt)}</span>
+                      ) : null}
+                    </div>
+                  ))}
+                  <div ref={eventsEndRef} />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            关闭
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

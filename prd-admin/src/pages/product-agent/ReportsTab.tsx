@@ -8,6 +8,7 @@ import type { EChartsOption } from 'echarts';
 import { EChart } from '@/components/charts/EChart';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { getProductAnalytics, type ProductAnalytics } from '@/services/real/productAgent';
+import './product-cards.css';
 
 const C = { done: '#22c55e', doing: '#f59e0b', todo: '#64748b', req: '#38bdf8', feat: '#a78bfa' };
 
@@ -110,7 +111,7 @@ export function ReportsTab({ productId }: { productId: string }) {
 
 function Kpi({ label, value, color }: { label: string; value: number | string; color?: string }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3.5">
+    <div className="pa-card rounded-xl border border-white/10 bg-white/[0.02] p-3.5">
       <div className="text-2xl font-semibold leading-none" style={{ color: color ?? 'rgba(255,255,255,0.92)' }}>{value}</div>
       <div className="text-[11px] text-white/45 mt-1.5">{label}</div>
     </div>
@@ -119,7 +120,7 @@ function Kpi({ label, value, color }: { label: string; value: number | string; c
 
 function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+    <div className="pa-card rounded-xl border border-white/10 bg-white/[0.02] p-4">
       <div className="text-xs font-semibold text-white/60 mb-3">{title}</div>
       {children}
     </div>

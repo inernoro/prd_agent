@@ -61,7 +61,7 @@ x-cds-deploy-modes:
       command: >-
         corepack enable &&
         pnpm install --frozen-lockfile &&
-        VITE_BUILD_ID="${VITE_BUILD_ID:-$(date +%Y%m%d%H%M%S)}" pnpm exec vite build &&
+        sh scripts/cds-vite-build.sh &&
         npx -y serve -s dist -l tcp://0.0.0.0:8000
 services:
   # ── App Services (有相对路径 volume mount) ──
@@ -116,17 +116,16 @@ services:
       - ./thirdparty:/thirdparty:ro
     ports:
       - "8000"
+    # 默认 dev：秒级就绪，避免 static 冷构建 OOM（exitCode=137）。需要 dist 时在 CDS 切 static 模式。
     command: >-
       corepack enable &&
       pnpm install --frozen-lockfile &&
-      VITE_BUILD_ID="${VITE_BUILD_ID:-$(date +%Y%m%d%H%M%S)}" pnpm exec vite build &&
-      npx -y serve -s dist -l tcp://0.0.0.0:8000
+      pnpm exec vite --host 0.0.0.0 --port 8000
     labels:
       cds.path-prefix: "/"
       cds.readiness-path: "/"
-      # admin static 模式每次部署都 pnpm install + vite build（重型依赖 mermaid/katex/cytoscape，
-      # 共享 CDS 主机冷构建实测 ~614s）。600s 上限会必现"就绪探测超时"，提到 1200s 留足余量。
-      cds.readiness-timeout: "1200"
+      # dev 模式 Vite 秒起；static 冷构建见 x-cds-deploy-modes.admin.static（readiness 1200s）
+      cds.readiness-timeout: "300"
       cds.readiness-interval: "3"
 
   # ── Infrastructure Services (无相对路径 mount) ──

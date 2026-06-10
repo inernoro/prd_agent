@@ -876,6 +876,10 @@ export interface CdsState {
   schedulerMaxHotOverride?: number;
   /** Data migration task history */
   dataMigrations?: DataMigration[];
+  /** Per-branch/per-resource external access policies. Keyed by projectId:branchId:resourceId. */
+  resourceExternalAccess?: Record<string, ResourceExternalAccessPolicy>;
+  /** Resource-scoped database clone / create / restore task history. */
+  resourceCloneTasks?: ResourceCloneTask[];
   /** Registered remote CDS peers (for one-click cross-CDS data migration) */
   cdsPeers?: CdsPeer[];
   /**
@@ -1417,6 +1421,16 @@ export interface ProjectActivityLog {
     | 'ai-release'     // AI agent 释放
     | 'branch-deleted' // DELETE /branches/:id
     | 'branch-created' // POST /branches
+    | 'resource-created'
+    | 'resource-deleted'
+    | 'resource-restart'
+    | 'resource-external-access'
+    | 'resource-db-clone'
+    | 'resource-backup'
+    | 'resource-restore'
+    | 'resource-credentials-reset'
+    | 'resource-connection-inject'
+    | 'resource-data-query'
   ;
   /** 关联分支（如有）。 */
   branchId?: string;
@@ -1426,6 +1440,61 @@ export interface ProjectActivityLog {
   actor?: string;
   /** 自由文本，可空。展示用，<= 200 字符。 */
   note?: string;
+  /** 关联资源（如 app:frontend / infra:mysql）。 */
+  resourceId?: string;
+  /** 资源显示名缓存，避免 UI 再 join。 */
+  resourceName?: string;
+  /** 操作结果。 */
+  result?: 'success' | 'failed' | 'pending';
+}
+
+export interface ResourceExternalAccessPolicy {
+  id: string;
+  projectId: string;
+  branchId: string;
+  resourceId: string;
+  enabled: boolean;
+  kind: 'https' | 'tcp';
+  address?: string;
+  host?: string;
+  port?: number;
+  connectionString?: string;
+  proxyContainerName?: string;
+  targetHost?: string;
+  targetPort?: number;
+  allowlistEnforced?: boolean;
+  firewallChain?: string;
+  allowlist: string[];
+  expiresAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  updatedBy?: string;
+}
+
+export interface ResourceCloneTask {
+  id: string;
+  projectId: string;
+  branchId: string;
+  resourceId: string;
+  runtime: 'mysql' | 'postgres' | 'mongodb' | 'redis' | 'unknown';
+  mode: 'empty' | 'clone-main' | 'restore-backup' | 'connect-existing';
+  strategy: 'branch-database' | 'mysqldump' | 'mysqlpump' | 'background-copy' | 'backup-restore' | 'external-connection';
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  progress: number;
+  progressMessage?: string;
+  sourceBranchId?: string;
+  sourceResourceId?: string;
+  targetDatabase?: string;
+  backupId?: string;
+  externalConnectionName?: string;
+  injectedEnv?: Record<string, string>;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  actor?: string;
+  log?: string;
 }
 
 /**
@@ -1626,6 +1695,16 @@ export interface Project {
    * 字段缺省时（老 project / fresh install）按 'shared' 处理。
    */
   infraIsolation?: 'shared' | 'per-branch';
+  /**
+   * 分支卡片资源 chip 的显示项。默认只显示技术图标 + 端口，避免
+   * Node.js / .NET / MongoDB 等名称把卡片撑成多行。项目设置可开启
+   * 运行时名称显示，但 icon/name/port 至少要保留一项。
+   */
+  resourceChipDisplay?: {
+    icon?: boolean;
+    name?: boolean;
+    port?: boolean;
+  };
   /**
    * Project kind. 'git' is the only value Part 1 creates; 'manual'
    * lands in P6 when users can upload their own compose.

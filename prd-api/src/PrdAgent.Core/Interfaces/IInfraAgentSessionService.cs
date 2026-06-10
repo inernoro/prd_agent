@@ -20,6 +20,13 @@ public interface IInfraAgentSessionService
 
     Task<InfraAgentSessionView?> SendMessageAsync(string userId, string id, SendInfraAgentMessageRequest request, CancellationToken ct);
 
+    /// <summary>
+    /// 把一组文本文件注入到该 agent 会话的工作区（path 1 文件注入接缝）。
+    /// v1 复用 CDS 现成的 POST /projects/:id/files（写进项目分支 worktree），不改边车镜像。
+    /// 返回是否成功写入。
+    /// </summary>
+    Task<bool> InjectWorkspaceFilesAsync(string userId, string id, IReadOnlyList<InfraAgentWorkspaceFileInput> files, CancellationToken ct);
+
     Task RunRuntimeJobAsync(string userId, string id, string content, CancellationToken ct);
 
     Task<InfraAgentSessionView?> StopAsync(string userId, string id, CancellationToken ct);
@@ -64,6 +71,9 @@ public sealed record InfraAgentRuntimeJob(
     string Content,
     DateTime EnqueuedAt
 );
+
+/// <summary>注入到 agent 工作区的单个文本文件。Path 为相对路径（如 input.md）。</summary>
+public sealed record InfraAgentWorkspaceFileInput(string Path, string Content);
 
 public record CreateInfraAgentSessionRequest(
     string ConnectionId,

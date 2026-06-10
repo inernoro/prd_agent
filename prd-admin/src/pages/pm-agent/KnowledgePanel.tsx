@@ -119,11 +119,29 @@ export function KnowledgePanel({ projectId }: Props) {
                     <button key={s.siteId} onClick={() => window.open(s.url, '_blank', 'noopener')}
                       className="group text-left rounded-xl border overflow-hidden flex flex-col transition-colors hover:border-[var(--border-strong)]"
                       style={{ borderColor: 'var(--border-subtle)', background: 'var(--bg-card)' }} title={`打开 ${s.title || '站点'}`}>
-                      {/* 封面 */}
+                      {/* 封面：优先封面图 → 托管页缩放 iframe 实时预览 → 占位图标 */}
                       <div className="relative h-28 flex items-center justify-center overflow-hidden" style={{ background: 'var(--bg-base)' }}>
-                        {s.coverImageUrl
-                          ? <img src={s.coverImageUrl} alt="" className="w-full h-full object-cover" loading="lazy" />
-                          : <ImageIcon size={26} style={{ color: 'var(--text-muted)', opacity: 0.5 }} />}
+                        {s.coverImageUrl ? (
+                          <img src={s.coverImageUrl} alt="" className="w-full h-full object-cover" loading="lazy" />
+                        ) : s.url ? (
+                          <iframe
+                            src={s.url}
+                            title={s.title || '站点预览'}
+                            loading="lazy"
+                            scrolling="no"
+                            referrerPolicy="no-referrer"
+                            aria-hidden
+                            tabIndex={-1}
+                            style={{
+                              position: 'absolute', top: 0, left: 0,
+                              width: `${100 / 0.32}%`, height: `${112 / 0.32}px`,
+                              transform: 'scale(0.32)', transformOrigin: 'top left',
+                              border: 0, pointerEvents: 'none', background: 'var(--bg-base)',
+                            }}
+                          />
+                        ) : (
+                          <ImageIcon size={26} style={{ color: 'var(--text-muted)', opacity: 0.5 }} />
+                        )}
                         <span className="absolute top-2 right-2 text-[10px] px-1.5 py-0.5 rounded inline-flex items-center gap-1"
                           style={{ background: isPublic ? 'rgba(16,185,129,0.16)' : 'rgba(148,163,184,0.18)', color: isPublic ? '#10B981' : 'var(--text-secondary)' }}>
                           {isPublic ? <><Globe size={9} />公开</> : <><Lock size={9} />未公开</>}

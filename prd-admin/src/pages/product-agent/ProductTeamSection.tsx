@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { UserPlus, ShieldCheck, ShieldOff, Trash2, Crown } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
+import './product-cards.css';
 import {
   listProductMembers,
   addProductMembers,
@@ -117,7 +118,7 @@ export function ProductTeamTab({ productId }: { productId: string }) {
           return (
             <div
               key={m.userId}
-              className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg bg-white/[0.03] border border-white/5"
+              className="pa-row flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg bg-white/[0.03] border border-white/5"
             >
               <div className="flex items-center gap-2.5 min-w-0">
                 {isOwner && <Crown size={14} className="text-amber-300 shrink-0" />}

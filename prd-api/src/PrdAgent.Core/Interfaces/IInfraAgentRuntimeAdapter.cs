@@ -76,6 +76,7 @@ public enum InfraAgentRuntimeEventType
 {
     Unknown = 0,
     TextDelta,
+    Thinking,
     ToolUse,
     ToolResult,
     Usage,

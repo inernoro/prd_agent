@@ -312,6 +312,11 @@ public static class AdminPermissionCatalog
     public const string PaAgentUse = "pa-agent.use";
 
     /// <summary>
+    /// 前端搭档智能体权限：API 接入、组件生成、前端报错诊断和视觉样式建议
+    /// </summary>
+    public const string FrontEndAgentUse = "front-end-agent.use";
+
+    /// <summary>
     /// 系统互联管理权限：配置跨节点互传的对端节点（测试↔正式环境配对），管理员级。
     /// </summary>
     public const string PeerSyncManage = "peer-sync.manage";
@@ -427,6 +432,7 @@ public static class AdminPermissionCatalog
 
         new(CcasAgentUse, "赋码采集关联系统智能体", "产线赋码业务的 PRD 生成 + 设备素材库 + 流程示意图绘制"),
         new(PaAgentUse, "私人助理 Agent", "任务拆解、四象限排序、任务清单管理"),
+        new(FrontEndAgentUse, "前端搭档智能体", "API 接入、组件生成、前端报错诊断和视觉样式建议"),
 
         new(PeerSyncManage, "系统互联-管理", "配置跨节点互传的对端节点（测试↔正式环境配对）"),
 

@@ -137,7 +137,7 @@ public interface IHostedSiteService
     Task<List<ShareViewLog>> ListShareViewLogsForSiteAsync(string siteId, string userId, int limit = 50, CancellationToken ct = default);
 
     /// <summary>
-    /// 用户分享统计聚合：当前所有未撤销分享 + 活跃链接 + 时间窗内访问总量 / 独立 IP / 时间线。
+    /// 用户分享统计聚合：当前所有未撤销分享 + 活跃链接 + 时间窗内访问总量 / 独立访客 / 时间线。
     /// 用于「分享统计」Drawer（参考 Cloudflare 风格简化版）。
     /// siteId 非空时把统计范围收窄到该站点（用于站点卡上的「本站点统计」过滤按钮）。
     /// </summary>
@@ -266,8 +266,13 @@ public class ShareAnalyticsResult
     public int ExpiredShares { get; set; }
     public long TotalViews { get; set; }
     public int UniqueIpCount { get; set; }
+    public long CommentCount { get; set; }
     public List<ShareAnalyticsTimelineEntry> Timeline { get; set; } = new();
     public List<ShareAnalyticsLinkSummary> TopLinks { get; set; } = new();
+    public List<ShareAnalyticsTrendPoint> Trend { get; set; } = new();
+    public List<ShareAnalyticsHourlyPoint> Hourly { get; set; } = new();
+    public List<ShareAnalyticsVisitorStats> TopVisitors { get; set; } = new();
+    public List<ShareAnalyticsCommentEntry> RecentComments { get; set; } = new();
 }
 
 public class ShareAnalyticsTimelineEntry
@@ -275,9 +280,13 @@ public class ShareAnalyticsTimelineEntry
     public DateTime ViewedAt { get; set; }
     public string ShareToken { get; set; } = string.Empty;
     public string? ShareTitle { get; set; }
+    public string ShareUrl { get; set; } = string.Empty;
+    public string? ViewerUserId { get; set; }
     public string? ViewerName { get; set; }
+    public string? ViewerAvatarFileName { get; set; }
     public string? IpAddress { get; set; }
     public string? UserAgent { get; set; }
+    public string? ClientSummary { get; set; }
 }
 
 public class ShareAnalyticsLinkSummary
@@ -285,12 +294,56 @@ public class ShareAnalyticsLinkSummary
     public string ShareId { get; set; } = string.Empty;
     public string Token { get; set; } = string.Empty;
     public string? Title { get; set; }
+    public string ShareUrl { get; set; } = string.Empty;
     public long ViewCount { get; set; }
     public long UniqueIpCount { get; set; }
     public DateTime? LastViewedAt { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? ExpiresAt { get; set; }
     public string Visibility { get; set; } = "owner-only";
+    public List<ShareAnalyticsVisitorSummary> Visitors { get; set; } = new();
+}
+
+public class ShareAnalyticsVisitorSummary
+{
+    public string? ViewerUserId { get; set; }
+    public string ViewerName { get; set; } = "匿名访客";
+    public string? ViewerAvatarFileName { get; set; }
+    public long ViewCount { get; set; }
+}
+
+public class ShareAnalyticsTrendPoint
+{
+    public string Date { get; set; } = string.Empty;
+    public long Views { get; set; }
+    public long Comments { get; set; }
+}
+
+public class ShareAnalyticsHourlyPoint
+{
+    public int Hour { get; set; }
+    public long Views { get; set; }
+}
+
+public class ShareAnalyticsVisitorStats
+{
+    public string? ViewerUserId { get; set; }
+    public string ViewerName { get; set; } = "匿名访客";
+    public string? ViewerAvatarFileName { get; set; }
+    public long ViewCount { get; set; }
+    public DateTime LastViewedAt { get; set; }
+}
+
+public class ShareAnalyticsCommentEntry
+{
+    public string Id { get; set; } = string.Empty;
+    public string SiteId { get; set; } = string.Empty;
+    public string SiteTitle { get; set; } = string.Empty;
+    public string? ShareToken { get; set; }
+    public string AuthorName { get; set; } = "用户";
+    public string? AuthorAvatarFileName { get; set; }
+    public string Content { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; }
 }
 
 public class ShareDiagnosticsResult

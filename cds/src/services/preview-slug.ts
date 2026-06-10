@@ -52,6 +52,32 @@ export interface PreviewProjectIdentity {
   name?: string | null;
   gitRepoUrl?: string | null;
   githubRepoFullName?: string | null;
+  legacyFlag?: boolean | null;
+}
+
+export type PreviewProjectIdentitySource = 'aliasSlug' | 'slug' | 'repo' | 'fallback' | 'id' | 'name' | 'default';
+
+export interface ResolvedPreviewProjectIdentity {
+  slug: string;
+  source: PreviewProjectIdentitySource;
+  degraded: boolean;
+  reason?: string;
+}
+
+export const GENERIC_PREVIEW_PROJECT_SLUGS = new Set([
+  'workspace',
+  'cursor-workspace',
+  'codex-workspace',
+  'project',
+  'repo',
+  'repository',
+  'source',
+  'src',
+  'app',
+]);
+
+export function isGenericPreviewProjectSlug(slug: string | undefined | null): boolean {
+  return GENERIC_PREVIEW_PROJECT_SLUGS.has(slugifyForPreview(String(slug || '')));
 }
 
 /**
@@ -95,19 +121,84 @@ export function previewProjectSlug(
   project: PreviewProjectIdentity | undefined | null,
   fallback?: string | null,
 ): string {
-  const fromProjectIdentity = slugifyForPreview(
-    project?.aliasSlug ||
-    project?.slug ||
-    fallback ||
-    project?.id ||
-    project?.name ||
-    'default',
-  );
-  if (fromProjectIdentity) return fromProjectIdentity;
+  return resolvePreviewProjectIdentity(project, fallback).slug;
+}
 
-  return repoNameFromGitRef(project?.gitRepoUrl)
-    || repoNameFromGitRef(project?.githubRepoFullName)
-    || 'default';
+/**
+ * Resolve the project identity segment used in generated preview URLs.
+ *
+ * This is the SSOT for "what project name goes into preview hostnames".
+ * Callers that need diagnostics should use the full return value; legacy
+ * call sites can keep using previewProjectSlug(), which delegates here.
+ */
+export function resolvePreviewProjectIdentity(
+  project: PreviewProjectIdentity | undefined | null,
+  fallback?: string | null,
+): ResolvedPreviewProjectIdentity {
+  const alias = slugifyForPreview(project?.aliasSlug || '');
+  if (alias) {
+    return { slug: alias, source: 'aliasSlug', degraded: false };
+  }
+
+  const slug = slugifyForPreview(project?.slug || '');
+  if (slug) {
+    if (project?.legacyFlag && isGenericPreviewProjectSlug(slug)) {
+      return {
+        slug,
+        source: 'slug',
+        degraded: true,
+        reason: `legacy project slug '${slug}' is generic; keeping it unless a collision-checked aliasSlug is persisted`,
+      };
+    }
+    return { slug, source: 'slug', degraded: false };
+  }
+
+  const fallbackSlug = slugifyForPreview(fallback || '');
+  if (fallbackSlug) {
+    return {
+      slug: fallbackSlug,
+      source: 'fallback',
+      degraded: true,
+      reason: 'project slug missing; using caller fallback',
+    };
+  }
+
+  const id = slugifyForPreview(project?.id || '');
+  if (id) {
+    return {
+      slug: id,
+      source: 'id',
+      degraded: true,
+      reason: 'project slug missing; using project id',
+    };
+  }
+
+  const name = slugifyForPreview(project?.name || '');
+  if (name) {
+    return {
+      slug: name,
+      source: 'name',
+      degraded: true,
+      reason: 'project slug missing; using project name',
+    };
+  }
+
+  const repo = repoNameFromGitRef(project?.gitRepoUrl) || repoNameFromGitRef(project?.githubRepoFullName);
+  if (repo) {
+    return {
+      slug: repo,
+      source: 'repo',
+      degraded: true,
+      reason: 'project identity missing; using repository slug',
+    };
+  }
+
+  return {
+    slug: 'default',
+    source: 'default',
+    degraded: true,
+    reason: 'project identity missing; using default preview identity',
+  };
 }
 
 /**

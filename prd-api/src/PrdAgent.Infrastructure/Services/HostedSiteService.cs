@@ -1098,12 +1098,17 @@ public class HostedSiteService : IHostedSiteService
         // 记录观看日志
         try
         {
+            var viewerAvatarFileName = !string.IsNullOrWhiteSpace(viewerUserId)
+                ? await LookupAvatarFileNameAsync(viewerUserId, ct)
+                : null;
+
             await _db.ShareViewLogs.InsertOneAsync(new ShareViewLog
             {
                 ShareToken = token,
                 ShareId = share.Id,
                 ViewerUserId = viewerUserId,
                 ViewerName = viewerName,
+                ViewerAvatarFileName = viewerAvatarFileName,
                 ShareOwnerUserId = share.CreatedBy,
                 IpAddress = ipAddress,
                 UserAgent = userAgent,
@@ -1460,7 +1465,8 @@ public class HostedSiteService : IHostedSiteService
     public async Task<ShareAnalyticsResult> GetShareAnalyticsAsync(string userId, int rangeDays, string? siteId = null, CancellationToken ct = default)
     {
         if (rangeDays <= 0 || rangeDays > 365) rangeDays = 7;
-        var rangeStart = DateTime.UtcNow.AddDays(-rangeDays);
+        var now = DateTime.UtcNow;
+        var rangeStart = now.Date.AddDays(-(rangeDays - 1));
 
         // 全量 shares（含已过期、不含 visit 链）
         var fbLink = Builders<WebPageShareLink>.Filter;
@@ -1471,53 +1477,212 @@ public class HostedSiteService : IHostedSiteService
             .Find(fbLink.Eq(x => x.CreatedBy, userId) & fbLink.Ne(x => x.Purpose, "visit") & siteScopedFilter)
             .ToListAsync(ct);
 
-        var now = DateTime.UtcNow;
         var totalShares = allShares.Count;
         var activeShares = allShares.Count(s => !s.IsRevoked && (!s.ExpiresAt.HasValue || s.ExpiresAt.Value > now));
         var expiredShares = allShares.Count(s => s.ExpiresAt.HasValue && s.ExpiresAt.Value <= now);
 
         var tokens = allShares.Select(s => s.Token).ToList();
+        var shareSiteIds = string.IsNullOrWhiteSpace(siteId)
+            ? allShares
+                .SelectMany(s =>
+                {
+                    var ids = s.SiteIds.Count > 0 ? s.SiteIds : new List<string>();
+                    if (!string.IsNullOrWhiteSpace(s.SiteId) && !ids.Contains(s.SiteId)) ids.Insert(0, s.SiteId);
+                    return ids;
+                })
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct()
+                .ToList()
+            : new List<string> { siteId };
         var fbLog = Builders<ShareViewLog>.Filter;
-        var recentLogs = tokens.Count == 0
+        var logFilter = tokens.Count == 0
+            ? fbLog.Eq(x => x.ShareToken, "__none__")
+            : fbLog.In(x => x.ShareToken, tokens) & fbLog.Gte(x => x.ViewedAt, rangeStart);
+        var windowLogs = tokens.Count == 0
             ? new List<ShareViewLog>()
             : await _db.ShareViewLogs
-                .Find(fbLog.In(x => x.ShareToken, tokens) & fbLog.Gte(x => x.ViewedAt, rangeStart))
+                .Find(logFilter)
                 .SortByDescending(x => x.ViewedAt)
-                .Limit(500)
+                .Limit(5000)
                 .ToListAsync(ct);
+        var recentLogs = windowLogs.Take(500).ToList();
 
-        var totalViews = recentLogs.Count;
-        var uniqueIps = recentLogs.Where(l => !string.IsNullOrEmpty(l.IpAddress))
-            .Select(l => l.IpAddress!).Distinct().Count();
+        var tokenViewStats = tokens.Count == 0
+            ? new List<ShareTokenViewAggregate>()
+            : await _db.ShareViewLogs.Aggregate()
+                .Match(logFilter)
+                .Group(l => l.ShareToken, g => new ShareTokenViewAggregate
+                {
+                    Token = g.Key,
+                    ViewCount = g.Count(),
+                    LastViewedAt = g.Max(x => x.ViewedAt),
+                })
+                .ToListAsync(ct);
+        var totalViews = tokenViewStats.Sum(s => s.ViewCount);
+        var uniqueVisitors = windowLogs
+            .Select(ViewerDedupeKey)
+            .Where(k => !string.IsNullOrWhiteSpace(k))
+            .Distinct()
+            .Count();
 
-        // 时间线（脱敏 IP：前两段保留，后两段打码，避免泄露给非 admin）
-        var titleByToken = allShares.ToDictionary(s => s.Token, s => s.Title);
+        var viewerUserIds = windowLogs
+            .Select(l => l.ViewerUserId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Select(id => id!)
+            .Distinct()
+            .ToList();
+        var viewerUsers = viewerUserIds.Count == 0
+            ? new List<User>()
+            : await _db.Users.Find(Builders<User>.Filter.In(u => u.UserId, viewerUserIds))
+                .Project(Builders<User>.Projection.Expression(u => new User
+                {
+                    UserId = u.UserId,
+                    Username = u.Username,
+                    DisplayName = u.DisplayName,
+                    AvatarFileName = u.AvatarFileName,
+                }))
+                .ToListAsync(ct);
+        var viewerMap = viewerUsers.ToDictionary(u => u.UserId, u => u);
+
+        // 时间线（脱敏 IP：前两段保留，后两段打码，避免泄露给非 admin；UI 不再把 IP 作为主指标）
+        var shareByToken = allShares.ToDictionary(s => s.Token, s => s);
         var timeline = recentLogs.Take(100).Select(l => new ShareAnalyticsTimelineEntry
         {
             ViewedAt = l.ViewedAt,
             ShareToken = l.ShareToken,
-            ShareTitle = StripLegacySharePrefix(titleByToken.TryGetValue(l.ShareToken, out var t) ? t : null),
-            ViewerName = l.ViewerName,
+            ShareTitle = StripLegacySharePrefix(shareByToken.TryGetValue(l.ShareToken, out var s) ? s.Title : null),
+            ShareUrl = shareByToken.TryGetValue(l.ShareToken, out var s2) ? BuildSharePreviewPath(s2) : $"/s/wp/{l.ShareToken}",
+            ViewerUserId = l.ViewerUserId,
+            ViewerName = ResolveViewerName(l, viewerMap),
+            ViewerAvatarFileName = ResolveViewerAvatar(l, viewerMap),
             IpAddress = MaskIp(l.IpAddress),
             UserAgent = l.UserAgent,
+            ClientSummary = BuildClientSummary(l.UserAgent, l.IpAddress),
         }).ToList();
 
-        // Top 链接（按 ViewCount 排序，最多 10 条）
+        var visitorsByToken = windowLogs
+            .GroupBy(l => l.ShareToken)
+            .ToDictionary(
+                g => g.Key,
+                g => g.GroupBy(ViewerDedupeKey)
+                    .Select(vg =>
+                    {
+                        var latest = vg.OrderByDescending(x => x.ViewedAt).First();
+                        return new ShareAnalyticsVisitorSummary
+                        {
+                            ViewerUserId = latest.ViewerUserId,
+                            ViewerName = ResolveViewerName(latest, viewerMap),
+                            ViewerAvatarFileName = ResolveViewerAvatar(latest, viewerMap),
+                            ViewCount = vg.LongCount(),
+                        };
+                    })
+                    .OrderByDescending(v => v.ViewCount)
+                    .ThenBy(v => v.ViewerName == "匿名访客" ? 1 : 0)
+                    .Take(5)
+                    .ToList());
+        var visitorCountsByToken = windowLogs
+            .GroupBy(l => l.ShareToken)
+            .ToDictionary(g => g.Key, g => g.Select(ViewerDedupeKey).Distinct().LongCount());
+        var viewCountsByToken = tokenViewStats.ToDictionary(s => s.Token, s => s.ViewCount);
+        var lastViewedAtByToken = tokenViewStats.ToDictionary(s => s.Token, s => s.LastViewedAt);
+
+        var siteTitleMap = shareSiteIds.Count == 0
+            ? new Dictionary<string, string>()
+            : (await _db.HostedSites.Find(Builders<HostedSite>.Filter.In(s => s.Id, shareSiteIds))
+                .Project(Builders<HostedSite>.Projection.Expression(s => new HostedSite
+                {
+                    Id = s.Id,
+                    Title = s.Title,
+                }))
+                .ToListAsync(ct))
+                .ToDictionary(s => s.Id, s => s.Title);
+
+        var comments = shareSiteIds.Count == 0
+            ? new List<HostedSiteComment>()
+            : await _db.HostedSiteComments
+                .Find(Builders<HostedSiteComment>.Filter.In(c => c.SiteId, shareSiteIds)
+                    & Builders<HostedSiteComment>.Filter.Eq(c => c.IsDeleted, false)
+                    & Builders<HostedSiteComment>.Filter.Gte(c => c.CreatedAt, rangeStart))
+                .SortByDescending(c => c.CreatedAt)
+                .ToListAsync(ct);
+
+        var trend = new List<ShareAnalyticsTrendPoint>();
+        for (var offset = 0; offset < rangeDays; offset++)
+        {
+            var date = rangeStart.Date.AddDays(offset);
+            var nextDate = date.AddDays(1);
+            var key = date.ToString("yyyy-MM-dd");
+            var views = tokens.Count == 0
+                ? 0
+                : await _db.ShareViewLogs.CountDocumentsAsync(
+                    logFilter & fbLog.Gte(x => x.ViewedAt, date) & fbLog.Lt(x => x.ViewedAt, nextDate),
+                    cancellationToken: ct);
+            trend.Add(new ShareAnalyticsTrendPoint
+            {
+                Date = key,
+                Views = views,
+                Comments = comments.LongCount(c => c.CreatedAt >= date && c.CreatedAt < nextDate),
+            });
+        }
+
+        var hourly = Enumerable.Range(0, 24)
+            .Select(hour => new ShareAnalyticsHourlyPoint
+            {
+                Hour = hour,
+                Views = windowLogs.LongCount(l => l.ViewedAt.Hour == hour),
+            })
+            .ToList();
+
+        var topVisitors = windowLogs
+            .GroupBy(ViewerDedupeKey)
+            .Select(g =>
+            {
+                var latest = g.OrderByDescending(x => x.ViewedAt).First();
+                return new ShareAnalyticsVisitorStats
+                {
+                    ViewerUserId = latest.ViewerUserId,
+                    ViewerName = ResolveViewerName(latest, viewerMap),
+                    ViewerAvatarFileName = ResolveViewerAvatar(latest, viewerMap),
+                    ViewCount = g.LongCount(),
+                    LastViewedAt = latest.ViewedAt,
+                };
+            })
+            .OrderByDescending(v => v.ViewCount)
+            .ThenByDescending(v => v.LastViewedAt)
+            .Take(8)
+            .ToList();
+
+        var recentComments = comments.Take(20).Select(c => new ShareAnalyticsCommentEntry
+        {
+            Id = c.Id,
+            SiteId = c.SiteId,
+            SiteTitle = siteTitleMap.TryGetValue(c.SiteId, out var title) ? title : "网页",
+            ShareToken = c.ShareToken,
+            AuthorName = c.AuthorName,
+            AuthorAvatarFileName = c.AuthorAvatarFileName,
+            Content = TruncateComment(c.Content),
+            CreatedAt = c.CreatedAt,
+        }).ToList();
+
+        // Top 链接（按当前时间窗 PV 排序，最多 10 条）
         var topLinks = allShares
             .Where(s => !s.IsRevoked)
-            .OrderByDescending(s => s.ViewCount)
+            .OrderByDescending(s => viewCountsByToken.TryGetValue(s.Token, out var viewCount) ? viewCount : 0)
+            .ThenByDescending(s => lastViewedAtByToken.TryGetValue(s.Token, out var lastViewedAt) ? lastViewedAt : DateTime.MinValue)
             .Take(10)
             .Select(s => new ShareAnalyticsLinkSummary
             {
                 ShareId = s.Id,
                 Token = s.Token,
                 Title = StripLegacySharePrefix(s.Title),
-                ViewCount = s.ViewCount,
-                UniqueIpCount = s.UniqueIpCount,
-                LastViewedAt = s.LastViewedAt,
+                ShareUrl = BuildSharePreviewPath(s),
+                ViewCount = viewCountsByToken.TryGetValue(s.Token, out var viewCount) ? viewCount : 0,
+                UniqueIpCount = visitorCountsByToken.TryGetValue(s.Token, out var visitorCount) ? visitorCount : 0,
+                LastViewedAt = lastViewedAtByToken.TryGetValue(s.Token, out var lastViewedAt) ? lastViewedAt : null,
                 CreatedAt = s.CreatedAt,
                 ExpiresAt = s.ExpiresAt,
                 Visibility = s.Visibility ?? "owner-only",
+                Visitors = visitorsByToken.TryGetValue(s.Token, out var visitors) ? visitors : new List<ShareAnalyticsVisitorSummary>(),
             })
             .ToList();
 
@@ -1527,9 +1692,14 @@ public class HostedSiteService : IHostedSiteService
             ActiveShares = activeShares,
             ExpiredShares = expiredShares,
             TotalViews = totalViews,
-            UniqueIpCount = uniqueIps,
+            UniqueIpCount = uniqueVisitors,
+            CommentCount = comments.Count,
             Timeline = timeline,
             TopLinks = topLinks,
+            Trend = trend,
+            Hourly = hourly,
+            TopVisitors = topVisitors,
+            RecentComments = recentComments,
         };
     }
 
@@ -1666,6 +1836,79 @@ public class HostedSiteService : IHostedSiteService
             .Project(Builders<User>.Projection.Expression(u => u.DisplayName))
             .FirstOrDefaultAsync(ct);
         return string.IsNullOrWhiteSpace(user) ? null : user;
+    }
+
+    private async Task<string?> LookupAvatarFileNameAsync(string userId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(userId)) return null;
+        var avatar = await _db.Users.Find(x => x.UserId == userId)
+            .Project(Builders<User>.Projection.Expression(u => u.AvatarFileName))
+            .FirstOrDefaultAsync(ct);
+        return string.IsNullOrWhiteSpace(avatar) ? null : avatar;
+    }
+
+    private static string BuildSharePreviewPath(WebPageShareLink share)
+        => share.ShortSeq > 0 ? $"/s/{share.ShortSeq}" : $"/s/wp/{share.Token}";
+
+    private static string ViewerDedupeKey(ShareViewLog log)
+    {
+        if (!string.IsNullOrWhiteSpace(log.ViewerUserId))
+            return $"u:{log.ViewerUserId}";
+        if (!string.IsNullOrWhiteSpace(log.IpAddress))
+            return $"ip:{log.IpAddress}";
+        if (!string.IsNullOrWhiteSpace(log.UserAgent))
+            return $"ua:{log.UserAgent}";
+        return "anonymous";
+    }
+
+    private static string ResolveViewerName(ShareViewLog log, IReadOnlyDictionary<string, User> viewerMap)
+    {
+        if (!string.IsNullOrWhiteSpace(log.ViewerUserId) && viewerMap.TryGetValue(log.ViewerUserId, out var user))
+        {
+            if (!string.IsNullOrWhiteSpace(user.DisplayName)) return user.DisplayName;
+            if (!string.IsNullOrWhiteSpace(user.Username)) return user.Username;
+        }
+        if (!string.IsNullOrWhiteSpace(log.ViewerName)) return log.ViewerName;
+        return "匿名访客";
+    }
+
+    private static string? ResolveViewerAvatar(ShareViewLog log, IReadOnlyDictionary<string, User> viewerMap)
+    {
+        if (!string.IsNullOrWhiteSpace(log.ViewerUserId)
+            && viewerMap.TryGetValue(log.ViewerUserId, out var user)
+            && !string.IsNullOrWhiteSpace(user.AvatarFileName))
+            return user.AvatarFileName;
+        return string.IsNullOrWhiteSpace(log.ViewerAvatarFileName) ? null : log.ViewerAvatarFileName;
+    }
+
+    private static string BuildClientSummary(string? userAgent, string? ipAddress)
+    {
+        var parts = new List<string>();
+        var ua = userAgent ?? string.Empty;
+        if (ua.Contains("Mobile", StringComparison.OrdinalIgnoreCase) ||
+            ua.Contains("Android", StringComparison.OrdinalIgnoreCase) ||
+            ua.Contains("iPhone", StringComparison.OrdinalIgnoreCase))
+            parts.Add("移动端");
+        else if (!string.IsNullOrWhiteSpace(ua))
+            parts.Add("桌面端");
+
+        var browser =
+            ua.Contains("Edg/", StringComparison.OrdinalIgnoreCase) ? "Edge" :
+            ua.Contains("Chrome/", StringComparison.OrdinalIgnoreCase) ? "Chrome" :
+            ua.Contains("Safari/", StringComparison.OrdinalIgnoreCase) ? "Safari" :
+            ua.Contains("Firefox/", StringComparison.OrdinalIgnoreCase) ? "Firefox" :
+            null;
+        if (browser != null) parts.Add(browser);
+
+        var maskedIp = MaskIp(ipAddress);
+        if (!string.IsNullOrWhiteSpace(maskedIp)) parts.Add(maskedIp);
+        return parts.Count == 0 ? "未知来源" : string.Join(" · ", parts);
+    }
+
+    private static string TruncateComment(string? content)
+    {
+        var text = (content ?? string.Empty).Trim();
+        return text.Length <= 80 ? text : text[..80] + "…";
     }
 
     // ─────────────────────────────────────────────
@@ -1927,7 +2170,9 @@ public class HostedSiteService : IHostedSiteService
     // v2：改「可靠驱动优先」，新增任意带 next()/prev() 的自定义元素（如 deck-stage）直驱
     // v3：分档 + 透明可控 —— 高可信自动开（角落提示条可关）、低可信(.slide≥2)仅邀请不劫持
     // v4：一律邀请式 —— 任何情况都不自动劫持键盘，必须用户点角落「开启」才生效（会话内记住）
-    private const int SlideNavVersion = 4;
+    // v5：幻灯片判定后主动聚焦页面主体，避免新窗口/iframe 预览必须先点内容区才接收快捷键。
+    // v6：所有托管 HTML 都在加载后尝试聚焦内部文档；幻灯片判断只决定是否启用翻页兼容 UI。
+    private const int SlideNavVersion = 6;
 
     // 注入块起始标记。注入块形如 {marker}<script>...</script>，剥离时从 marker 找到其后
     // 第一个 </script> 一并删除，因此升级垫片版本时旧块会被整体替换而非被「幂等跳过」。
@@ -2045,6 +2290,21 @@ public class HostedSiteService : IHostedSiteService
     (document.activeElement || document.body || document).dispatchEvent(ev);
   }
   function inEditable(t){ return !!(t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)); }
+  function focusDeck(){
+    try {
+      if (inEditable(document.activeElement)) return;
+      var t = document.body || document.documentElement;
+      if (!t) return;
+      if (!t.hasAttribute('tabindex')) t.setAttribute('tabindex', '-1');
+      if (typeof t.focus === 'function') t.focus({ preventScroll:true });
+      if (typeof window.focus === 'function') window.focus();
+    } catch(e){}
+  }
+  function bootFocus(){
+    focusDeck();
+    setTimeout(focusDeck, 80);
+    setTimeout(focusDeck, 240);
+  }
   function onKey(e){
     if (e[SYN] || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
     if (inEditable(e.target)) return;
@@ -2118,9 +2378,9 @@ public class HostedSiteService : IHostedSiteService
     if (getPref() === 'on') enable(false); // 本会话已主动开过 → 直接开
     else renderPill(false);                // 默认仅邀请，绝不自动劫持键盘
   }
-  if (document.readyState !== 'loading') decide();
-  document.addEventListener('DOMContentLoaded', decide);
-  window.addEventListener('load', decide);
+  if (document.readyState !== 'loading') { bootFocus(); decide(); }
+  document.addEventListener('DOMContentLoaded', function(){ bootFocus(); decide(); });
+  window.addEventListener('load', function(){ bootFocus(); decide(); });
   // 框架/自定义元素可能异步 upgrade：未决策则重试
   var tries = 0;
   var timer = setInterval(function(){ if (!decided) decide(); if (decided || ++tries > 30) clearInterval(timer); }, 300);
@@ -2375,5 +2635,12 @@ public class HostedSiteService : IHostedSiteService
         public string EntryFile { get; set; } = "index.html";
         public long TotalSize { get; set; }
         public string? Error { get; set; }
+    }
+
+    private sealed class ShareTokenViewAggregate
+    {
+        public string Token { get; set; } = string.Empty;
+        public long ViewCount { get; set; }
+        public DateTime LastViewedAt { get; set; }
     }
 }

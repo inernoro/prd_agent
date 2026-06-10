@@ -58,7 +58,7 @@ export function truncateTagDisplay(tag: string, maxChars = 2): string {
   let width = 0;
   let result = '';
   for (const ch of tag) {
-    const w = /[一-鿿　-ヿ]/.test(ch) ? 1 : 0.5;
+    const w = /[\u4e00-\u9fff\u3040-\u30ff]/.test(ch) ? 1 : 0.5;
     if (width + w > maxChars) {
       return result + '…';
     }

@@ -45,6 +45,7 @@ docs:
   spec.cds-project-model: CDS 多项目数据字典
   spec.short-links: 统一短链系统规格
   spec.speech-agent: 演讲智能体（长文本 → 思维导图演讲）产品规格
+  spec.front-end-agent: 前端搭档智能体产品规格
 
   # ── 二、设计文档 ──
   # 先看核心架构，再看各模块设计
@@ -52,6 +53,7 @@ docs:
   design.acceptance-system: 功能验收体系设计（业界对标的标准化验收 + 取证 + 归档）
   design.acceptance-kb: 验收报告知识库设计（最新在前 + 结论可视 + 模板约束 + 跨环境同步）
   design.agent-universe: 智能体宇宙设计（能力契约 SSOT + 统一调用信封 + 漫威宇宙式互通）
+  design.knowledge-agent-architecture: 知识库智能体架构设计（三层模型 + map/cds-agent 命名 + 借运行时不重建 + KB-as-files 进、diff 闸出）
   design.server-authority: 服务器权威性设计
   design.unified-skill-system: 技能系统统一设计
   design.llm-gateway: LLM Gateway 统一调用架构设计
@@ -94,6 +96,7 @@ docs:
   design.cds-agent-official-sdk-adapter: CDS Agent 官方 SDK Adapter 设计
   design.cds-agent-commercial-architecture-and-roadmap: CDS Agent 商业级架构与路线图
   design.cds-agent-managed-runtime-fact-source: CDS Agent R0 · CDS-managed runtime fact source 设计
+  design.knowledge-agent-architecture: CDS Agent 工作区基础设施模型（文件夹/知识库为主，GitHub 降级为钩子）
   design.cds-onboarding: CDS 极简上手设计：一键配置 + 项目扫描技能
   design.cds-ai-compose: CDS AI 生成 compose 草稿设计（可选路径，借用 CDS Agent/OpenRouter，确定性检测器为兜底）
   design.ai-report-systems: AI 周报系统市场调研报告
@@ -127,6 +130,8 @@ docs:
   design.cds-railway-onboarding-flow: CDS Railway 式部署向导设计
   design.cds-visual-deploy: CDS 绝对可视化一键部署设计（检测回填+把握度+试运行沙箱+多DB实例+env粘贴+应用已上线，含架构图）
   design.speech-agent: 演讲智能体技术设计（数据模型 / Controller / Service / SSE 协议）
+  design.peer-sync: 系统级跨节点互传（Peer Sync）设计
+  design.reprocess-chat-routing: 文档再加工 · 智能体调用路由设计
 
   # ── 三、指南 ──
   # 先看全貌索引，再看部署/开发，然后是 Agent 使用教程，最后是专题指南
@@ -146,6 +151,7 @@ docs:
   guide.workflow-agent: 工作流引擎使用教程
   guide.shortcuts-agent: 快捷指令使用教程
   guide.marketplace: 海鲜市场（配置市场）使用教程
+  guide.visual-acceptance-skill: 视觉验收技能跨仓库使用教程
   guide.workflow-canvas: 工作流画布操作手册
   guide.weekly-report: 周报功能完整操作指南
   guide.poster-feed-card: 多平台博主订阅 → 首页海报弹窗（涌现 1，TikTok/抖音/B站/小红书/YouTube）
@@ -233,6 +239,7 @@ docs:
   plan.ai-toolbox-mvp: AI 百宝箱 MVP 规划
   plan.ai-toolbox-next-steps: AI 百宝箱未完成项与下一步规划
   plan.ai-text-assist: AI 文本辅助通用 Domain 设计
+  plan.md-to-ppt-chat-redesign: MD转PPT 对话式 artifact 工作台改造计划
   plan.manual-image-marking-control: 配图标记手动干预（Phase 1/2/3 分阶段计划）
   plan.animation-optimization: 动画优化计划
   plan.desktop-asset-features: Desktop 资产功能方案
@@ -258,6 +265,7 @@ docs:
   plan.emergence-1-tiktok-douyin-poster: 涌现 1 · TikTok / 抖音博主订阅首页广告海报
   plan.prd-admin-surface-style-migration: prd-admin 样式统一迁移看板
   plan.video-agent-list-detail-rebuild: 视频创作 Agent 列表 / 详情页全面重做交接
+  plan.cds-pr684-review-remediation: CDS PR #684 审查修复计划
 
   # ── 六、技术债务台账（按模块）──
   # 已知边界 / 后续可补 / 留尾风险，命名规范见 rule.doc-naming.md「debt.* 专项约定」
@@ -272,6 +280,7 @@ docs:
   debt.cds-agent: CDS Agent 工作台 · 债务台账（R1 商业级 / Lite 边界 / 文档熵减）
   debt.cds-state-json: CDS state.json 影子存储债务台账
   debt.cds-compose-secrets: CDS compose 模板 TODO secrets / 全量 import 被拒债务台账
+  debt.md-to-ppt: MD 转网页 PPT · 债务台账（预览 iframe same-origin 安全债 / KB 注入未实现）
   debt.changelog-center: 更新中心（终身存储 + SSE 推送）债务台账
   debt.cds-tutorial: CDS 教程（示例工程 + 隔离知识库 + 评分/自愈）债务台账
   debt.cds-visual-deploy: CDS 绝对可视化一键部署 · 债务台账（已知边界 + 低边际 backlog + 独立 fixture demo 阻塞）
@@ -289,6 +298,10 @@ docs:
   debt.report-detail: 周报详情页（异构数据 + 多 tabs + 右栏面板）保留独立实现的债务台账
   debt.open-api: 开放接口对外网关债务台账（伞形 code 不变量 + 限流/降级/预警/配额 Phase 2 留尾）
   debt.document-store-sync: 知识库跨环境/本地库↔库同步 · 债务台账（删除传播/附件/冲突合并/教程未补）
+  debt.daily-report: 日报技能（daily-report-summary）债务台账
+  debt.peer-sync: 系统级跨节点互传（Peer Sync）债务台账
+  debt.task-tree: 个人任务树 Agent · 债务台账
+  debt.web-hosting-comments: 网页托管评论 · 债务台账
 
   # ── 七、周报（降序：最新在前）──
   report.agent-universe-completeness: 智能体宇宙 · 各智能体完备度看板（终极目标 vs 当前进度）

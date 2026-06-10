@@ -168,6 +168,7 @@ import { ReviewAgentCardArt } from './ReviewAgentCardArt';
 import { ProjectRouteAgentCardArt } from './ProjectRouteAgentCardArt';
 import { PaAgentCardArt } from './PaAgentCardArt';
 import { PmAgentCardArt } from './PmAgentCardArt';
+import { ProductAgentCardArt } from './ProductAgentCardArt';
 import { useAgentImageUrl, useAgentVideoUrl } from '@/stores/homepageAssetsStore';
 
 export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
@@ -427,6 +428,8 @@ export function ToolCard({ item, source = 'mine' }: ToolCardProps) {
         </>
       ) : item.agentKey === 'pm-agent' && !uploadedCover ? (
         <PmAgentCardArt />
+      ) : item.agentKey === 'product-agent' && !uploadedCover ? (
+        <ProductAgentCardArt />
       ) : coverUrl && !coverFailed ? (
         <>
           <img

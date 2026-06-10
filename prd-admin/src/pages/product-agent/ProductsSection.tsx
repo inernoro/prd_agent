@@ -6,9 +6,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Search, Pencil, Trash2 } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+import { systemDialog } from '@/lib/systemDialog';
 import { listProducts, createProduct, updateProduct, deleteProduct } from '@/services/real/productAgent';
 import type { Product, ProductGrade, ProductCategory } from './types';
 import { useProductCategories, categoryLabel, categoryColor } from './productCategories';
+import './product-cards.css';
 
 export function ProductsSection() {
   const navigate = useNavigate();
@@ -80,11 +82,12 @@ export function ProductsSection() {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-3">
-          {products.map((p) => (
+          {products.map((p, i) => (
             <div
               key={p.id}
               onClick={() => navigate(`/product-agent/p/${p.id}`)}
-              className="group cursor-pointer rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.05] hover:border-white/20 p-4 transition-colors flex flex-col gap-2"
+              style={{ animationDelay: `${Math.min(i, 14) * 45}ms` }}
+              className="pa-card group cursor-pointer rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.05] p-4 flex flex-col gap-2"
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
@@ -117,6 +120,14 @@ export function ProductsSection() {
                   <button
                     onClick={async (e) => {
                       e.stopPropagation();
+                      const ok = await systemDialog.confirm({
+                        title: '删除产品',
+                        message: `确定删除产品「${p.name}」吗？该产品下的需求、功能、版本等关联数据将一并不可访问，此操作不可恢复。`,
+                        tone: 'danger',
+                        confirmText: '删除',
+                        cancelText: '取消',
+                      });
+                      if (!ok) return;
                       const res = await deleteProduct(p.id);
                       if (res.success) await reload();
                     }}

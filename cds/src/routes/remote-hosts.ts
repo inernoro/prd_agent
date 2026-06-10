@@ -42,7 +42,7 @@ import {
   type SidecarSpec,
 } from '../services/sidecar/sidecar-deployer.js';
 import { CdsPairingService } from '../services/connection/pairing-service.js';
-import { computePreviewSlug, previewProjectSlug } from '../services/preview-slug.js';
+import { buildPreviewUrlForProject } from '../services/comment-template.js';
 
 export interface RemoteHostsRouterDeps {
   stateService: StateService;
@@ -535,7 +535,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
   });
 
   router.post('/projects/:id/runtime-capacity/reconcile', async (req, res) => {
-    const auth = authenticateProjectRequest(req.headers.authorization, req.params.id, pairing, ['shared-service:deploy']);
+    const auth = authenticateProjectRequest(req as any, req.params.id, pairing, ['shared-service:deploy']);
     if (!auth.ok) {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
       return;
@@ -589,7 +589,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
   });
 
   router.post('/projects/:id/agent-sessions', async (req, res) => {
-    const auth = authenticateProjectRequest(req.headers.authorization, req.params.id, pairing, ['shared-service:deploy']);
+    const auth = authenticateProjectRequest(req as any, req.params.id, pairing, ['shared-service:deploy']);
     if (!auth.ok) {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
       return;
@@ -672,8 +672,21 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     res.status(201).json({ item: toCdsAgentSessionView(session) });
   });
 
+  router.get('/projects/:id/agent-sessions', (req, res) => {
+    const auth = authenticateProjectRequest(req as any, req.params.id, pairing, ['instance:read']);
+    if (!auth.ok) {
+      res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
+      return;
+    }
+    const sessions = Array.from(cdsAgentSessions.values())
+      .filter(s => s.projectId === req.params.id)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .map(toCdsAgentSessionView);
+    res.json({ items: sessions });
+  });
+
   router.get('/projects/:projectId/agent-sessions/:sessionId', (req, res) => {
-    const auth = authenticateProjectRequest(req.headers.authorization, req.params.projectId, pairing, ['instance:read']);
+    const auth = authenticateProjectRequest(req as any, req.params.projectId, pairing, ['instance:read']);
     if (!auth.ok) {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
       return;
@@ -692,7 +705,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
   });
 
   router.post('/projects/:projectId/agent-sessions/:sessionId/messages', async (req, res) => {
-    const auth = authenticateProjectRequest(req.headers.authorization, req.params.projectId, pairing, ['deployment:stream']);
+    const auth = authenticateProjectRequest(req as any, req.params.projectId, pairing, ['deployment:stream']);
     if (!auth.ok) {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
       return;
@@ -822,7 +835,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
   });
 
   router.get('/projects/:projectId/agent-sessions/:sessionId/stream', async (req, res) => {
-    const auth = authenticateProjectRequest(req.headers.authorization, req.params.projectId, pairing, ['deployment:stream']);
+    const auth = authenticateProjectRequest(req as any, req.params.projectId, pairing, ['deployment:stream']);
     if (!auth.ok) {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
       return;
@@ -849,7 +862,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
   });
 
   router.post('/projects/:projectId/agent-sessions/:sessionId/tool-approvals/:approvalId', (req, res) => {
-    const auth = authenticateProjectRequest(req.headers.authorization, req.params.projectId, pairing, ['deployment:stream']);
+    const auth = authenticateProjectRequest(req as any, req.params.projectId, pairing, ['deployment:stream']);
     if (!auth.ok) {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
       return;
@@ -868,7 +881,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
   });
 
   router.post('/projects/:projectId/agent-sessions/:sessionId/stop', (req, res) => {
-    const auth = authenticateProjectRequest(req.headers.authorization, req.params.projectId, pairing, ['shared-service:deploy']);
+    const auth = authenticateProjectRequest(req as any, req.params.projectId, pairing, ['shared-service:deploy']);
     if (!auth.ok) {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
       return;
@@ -900,7 +913,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
   });
 
   router.get('/projects/:projectId/agent-sessions/:sessionId/logs', (req, res) => {
-    const auth = authenticateProjectRequest(req.headers.authorization, req.params.projectId, pairing, ['instance:read']);
+    const auth = authenticateProjectRequest(req as any, req.params.projectId, pairing, ['instance:read']);
     if (!auth.ok) {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
       return;
@@ -1027,7 +1040,6 @@ function collectProjectRuntimeInstances(
   }
 
   if (shouldIncludeBranchServicesInInstanceDiscovery(project)) {
-    const projectSlug = previewProjectSlug(project, project.id);
     const previewRoot = resolvePreviewRootDomain();
     discovery.previewRootConfigured = Boolean(previewRoot);
     const branches = stateService.getBranchesForProject(project.id);
@@ -1044,8 +1056,9 @@ function collectProjectRuntimeInstances(
           continue;
         }
         discovery.runtimeBranchServiceCount += 1;
-        const previewSlug = computePreviewSlug(branch.branch, projectSlug);
-        const baseUrl = previewRoot ? `https://${previewSlug}.${previewRoot}` : undefined;
+        const preview = buildPreviewUrlForProject(previewRoot, branch.branch, project, project.id);
+        const previewSlug = preview.previewSlug;
+        const baseUrl = preview.url || undefined;
         const officialSdkRuntime = isOfficialSdkRuntimeService('claude-sdk', serviceState, profile);
         instances.push({
           deploymentId: `branch:${branch.id}:${serviceState.profileId}`,
@@ -1487,7 +1500,7 @@ function buildCdsManagedRuntimeCapacity(
 }
 
 type CdsAgentSessionStatus = 'creating' | 'running' | 'idle' | 'stopping' | 'stopped' | 'failed';
-type CdsAgentEventType = 'status' | 'runtime_init' | 'text_delta' | 'tool_call' | 'tool_result' | 'log' | 'error' | 'done' | 'hook' | 'usage';
+type CdsAgentEventType = 'status' | 'runtime_init' | 'text_delta' | 'thinking' | 'tool_call' | 'tool_result' | 'log' | 'error' | 'done' | 'hook' | 'usage';
 
 interface CdsAgentResourcePolicy {
   cpuCores: number;
@@ -1558,12 +1571,43 @@ interface CdsManagedRuntimeResult {
 }
 
 function authenticateProjectRequest(
-  authorization: string | string[] | undefined,
+  req: {
+    headers: { authorization?: string | string[] | undefined };
+    _cdsCookieAuth?: boolean;
+    _aiSession?: unknown;
+    cdsProjectKey?: { projectId: string; keyId: string };
+  },
   projectId: string,
   pairing: CdsPairingService,
   requiredScopes: string[],
 ): { ok: true } | { ok: false; status: number; code: string; message: string } {
-  const token = extractBearerToken(authorization);
+  // [#746 obs-auth] 仪表盘操作者放行 —— 人类 cookie 登录(`_cdsCookieAuth`,由 server.ts
+  // 主鉴权中间件盖章)是 admin 等价,直接放行。不加这条,仪表盘操作者点「Sidecar Pool /
+  // Agent 会话」卡片会永远 401(端点只认 Bearer 连接 token,而浏览器带的是 cds_token cookie)。
+  if (req._cdsCookieAuth === true) {
+    return { ok: true };
+  }
+  // AI 会话分两种(server.ts resolveAiSession):
+  //  - 全局超级密钥(AI_ACCESS_KEY):有 `_aiSession`、无 `cdsProjectKey` → admin 等价,放行。
+  //  - 项目级 Agent Key(cdsp_*):同时带 `_aiSession` 和 `cdsProjectKey={projectId,keyId}`,
+  //    只能访问自己被授权的那个项目。绝不能把它当 admin 等价 —— 否则给项目 A 签的 key 改下
+  //    URL 里的 projectId 就能列/控制项目 B 的 Agent 会话(跨租户越权,Codex P1)。
+  if (req._aiSession) {
+    const projectKey = req.cdsProjectKey;
+    if (!projectKey) {
+      return { ok: true };
+    }
+    if (projectKey.projectId === projectId) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      status: 403,
+      code: 'project_mismatch',
+      message: 'project-scoped key cannot access another project',
+    };
+  }
+  const token = extractBearerToken(req.headers.authorization);
   const connection = pairing.authenticateLongToken(token);
   if (!connection) {
     return { ok: false, status: 401, code: 'invalid_long_token', message: 'invalid connection token' };
@@ -1707,8 +1751,7 @@ function resolveCdsManagedRuntimeBaseUrl(
   }
   const previewRoot = resolvePreviewRootDomain();
   if (!previewRoot) return null;
-  const previewSlug = computePreviewSlug(branch.branch, previewProjectSlug(project, project.id));
-  return `https://${previewSlug}.${previewRoot}`;
+  return buildPreviewUrlForProject(previewRoot, branch.branch, project, project.id).url || null;
 }
 
 function toCdsManagedRuntimeTransportView(transport: CdsManagedRuntimeTransport): Record<string, unknown> {
@@ -1976,6 +2019,12 @@ function ingestOfficialSdkSseFrame(
       runtimeOwnedBy: 'cds-managed-runtime',
       transport: toCdsManagedRuntimeTransportView(transport),
     });
+    return null;
+  }
+  if (sidecarType === 'thinking') {
+    // 推理模型的思考内容：透传给 MAP/前端展示，消除"首字慢/思考期间空白"。
+    const text = normalizeOptionalString(payload.text) || '';
+    if (text) pushCdsAgentEvent(session, 'thinking', { text });
     return null;
   }
   if (sidecarType === 'text_delta') {

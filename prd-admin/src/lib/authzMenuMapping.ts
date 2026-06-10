@@ -106,6 +106,12 @@ export const menuList: MenuDef[] = [
     permissions: ['pr-review.use'],
   },
   {
+    appKey: 'front-end-agent',
+    label: '前端搭档智能体',
+    icon: 'Code2',
+    permissions: ['front-end-agent.use'],
+  },
+  {
     appKey: 'defect-agent',
     label: '缺陷管理智能体',
     icon: 'Bug',
@@ -264,6 +270,7 @@ export const allPermissions: PermissionDef[] = [
   { key: 'project-route-agent.use', label: '项目路由智能体', description: '上传方案并查看自己的路径解析结果', category: 'use' },
   { key: 'project-route-agent.manage', label: '项目路由智能体 - 管理', description: '维护公共站点说明 + 仓库登记表', category: 'manage' },
   { key: 'pr-review.use', label: 'PR 审查智能体', description: '基于每用户 GitHub OAuth 的 PR 审查（任意团队）', category: 'use' },
+  { key: 'front-end-agent.use', label: '前端搭档智能体', description: 'API 接入、组件生成、前端报错诊断和视觉样式建议', category: 'use' },
   { key: 'defect-agent.use', label: '缺陷管理智能体', description: '提交和查看缺陷', category: 'use' },
   { key: 'defect-agent.manage', label: '缺陷管理智能体 - 管理', description: '设置模板、指派处理人', category: 'manage' },
   { key: 'arena-agent.use', label: 'AI 竞技场智能体', description: '模型盲评对战', category: 'use' },

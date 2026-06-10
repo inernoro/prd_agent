@@ -1,6 +1,6 @@
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { getRoleMeta } from '@/lib/roleConfig';
-import { getUsers } from '@/services';
+import { searchDirectoryUsers } from '@/services';
 import type { AdminUser } from '@/types/admin';
 import { Check, ChevronDown, Search, User, Users } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -73,26 +73,68 @@ export function UserSearchSelect({
   const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // 下拉面板位置（Portal 渲染需要绝对坐标）
-  const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  // 下拉面板位置（Portal 渲染需要绝对坐标）。空间不足时向上翻转，并按可用空间限高。
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; left: number; width: number; maxHeight: number } | null>(null);
 
   // 内部用户数据（当外部未提供时自动获取）
   const [internalUsers, setInternalUsers] = useState<AdminUser[]>([]);
-  const [fetched, setFetched] = useState(false);
 
   const users = externalUsers ?? internalUsers;
 
-  // 自动获取用户列表（仅在未提供外部用户且首次打开时）
+  // 自动检索用户：走仅登录可用的 /api/teams/search-users（不再用管理员的 /api/users，普通成员也能搜）。
+  // 打开时拉首批；输入关键词时服务端搜索（防抖），结果集合随查询变化。
   useEffect(() => {
-    if (externalUsers || fetched) return;
+    if (externalUsers) return;
     if (!open) return;
-    setFetched(true);
-    void getUsers({ page: 1, pageSize: 200 }).then((res) => {
-      if (res.success) {
-        setInternalUsers(res.data.items.filter((u) => u.status === 'Active'));
-      }
+    let cancelled = false;
+    const kw = filter.trim();
+    const t = setTimeout(() => {
+      void searchDirectoryUsers(kw, 50).then((res) => {
+        if (cancelled || !res.success) return;
+        setInternalUsers(res.data.items.map((u) => ({
+          userId: u.userId,
+          username: u.username,
+          displayName: u.displayName,
+          avatarFileName: u.avatarFileName,
+          role: '' as AdminUser['role'],
+          status: 'Active' as AdminUser['status'],
+          createdAt: '',
+        })));
+      });
+    }, kw ? 200 : 0);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [externalUsers, open, filter]);
+
+  // 已选 value 但用户未加载（关闭态/首次渲染）时，预拉目录解析显示名，避免触发器空白（如「处理人」框已指派却显示占位）。
+  useEffect(() => {
+    if (externalUsers || !value || open) return;
+    if (users.some((u) => u.userId === value)) return;
+    let cancelled = false;
+    void searchDirectoryUsers('', 200).then((res) => {
+      if (cancelled || !res.success) return;
+      setInternalUsers((prev) => {
+        if (prev.some((u) => u.userId === value)) return prev;
+        const map = new Map(prev.map((u) => [u.userId, u]));
+        for (const u of res.data.items) {
+          if (!map.has(u.userId)) {
+            map.set(u.userId, {
+              userId: u.userId,
+              username: u.username,
+              displayName: u.displayName,
+              avatarFileName: u.avatarFileName,
+              role: '' as AdminUser['role'],
+              status: 'Active' as AdminUser['status'],
+              createdAt: '',
+            });
+          }
+        }
+        return [...map.values()];
+      });
     });
-  }, [externalUsers, fetched, open]);
+    return () => { cancelled = true; };
+    // users 故意不入依赖（派生自 internalUsers，入依赖会在 setInternalUsers 后循环触发）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value, open, externalUsers]);
 
   const selected = users.find((u) => u.userId === value);
   const q = filter.trim().toLowerCase();
@@ -105,15 +147,23 @@ export function UserSearchSelect({
       )
     : users;
 
-  // 计算下拉面板位置
+  // 计算下拉面板位置：默认向下；若下方空间不足且上方更宽裕则向上翻转，maxHeight 按可用空间收敛，
+  // 同时把 left 夹在视口内，避免靠近底部/右侧时被裁切（修复评论区 @ 弹层显示不全）。
   const updatePos = useCallback(() => {
     if (!triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
-    setPos({
-      top: rect.bottom + 4,
-      left: rect.left,
-      width: Math.max(rect.width, 260),
-    });
+    const margin = 8;
+    const desired = 320;
+    const spaceBelow = window.innerHeight - rect.bottom - margin;
+    const spaceAbove = rect.top - margin;
+    const openUp = spaceBelow < Math.min(desired, 200) && spaceAbove > spaceBelow;
+    const width = Math.max(rect.width, 260);
+    const left = Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin));
+    if (openUp) {
+      setPos({ bottom: window.innerHeight - rect.top + 4, left, width, maxHeight: Math.max(160, Math.min(desired, spaceAbove)) });
+    } else {
+      setPos({ top: rect.bottom + 4, left, width, maxHeight: Math.max(160, Math.min(desired, spaceBelow)) });
+    }
   }, []);
 
   // 打开时计算位置，滚动/resize 时更新
@@ -165,9 +215,10 @@ export function UserSearchSelect({
       style={{
         position: 'fixed',
         top: pos.top,
+        bottom: pos.bottom,
         left: pos.left,
         width: pos.width,
-        maxHeight: '320px',
+        maxHeight: pos.maxHeight,
         zIndex: 9999,
         background: 'var(--glass-bg-end, rgba(22, 22, 28, 0.98))',
         border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
@@ -253,13 +304,15 @@ export function UserSearchSelect({
                     <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                       {u.displayName}
                     </span>
-                    <span
-                      className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold px-1 py-px rounded-[3px] leading-tight"
-                      style={{ background: rm.bg, border: `1px solid ${rm.border}`, color: rm.color }}
-                    >
-                      <RoleIcon size={9} />
-                      {rm.label}
-                    </span>
+                    {u.role && (
+                      <span
+                        className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold px-1 py-px rounded-[3px] leading-tight"
+                        style={{ background: rm.bg, border: `1px solid ${rm.border}`, color: rm.color }}
+                      >
+                        <RoleIcon size={9} />
+                        {rm.label}
+                      </span>
+                    )}
                     {isBot && (
                       <span className="shrink-0 text-[9px] px-1 py-px rounded-[3px] leading-tight" style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.25)', color: 'rgba(34,197,94,0.9)' }}>
                         BOT
