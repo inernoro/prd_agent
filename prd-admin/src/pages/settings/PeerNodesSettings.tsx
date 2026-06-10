@@ -125,6 +125,16 @@ type PeerConnectPayload = {
   displayName?: string;
 };
 
+const PAIRING_CODE_FALLBACK_SECONDS = 3 * 24 * 60 * 60;
+
+function fmtPairingTimeLeft(seconds: number) {
+  if (seconds <= 0) return '已失效';
+  if (seconds >= 86_400) return `${Math.ceil(seconds / 86_400)} 天`;
+  if (seconds >= 3_600) return `${Math.ceil(seconds / 3_600)} 小时`;
+  if (seconds >= 60) return `${Math.ceil(seconds / 60)} 分钟`;
+  return `${seconds} 秒`;
+}
+
 function toBase64Url(json: string) {
   const bytes = new TextEncoder().encode(json);
   let binary = '';
@@ -153,7 +163,7 @@ function parsePeerConnectString(text: string): PeerConnectPayload {
   if (!payload.nodeId || !payload.baseUrl || !payload.pairingCode || !payload.expiresAt) {
     throw new Error('连接串缺少节点标识、地址或密钥');
   }
-  if (Date.parse(payload.expiresAt) <= Date.now()) throw new Error('对端连接串已过期，请让对端重新生成');
+  if (Date.parse(payload.expiresAt) <= Date.now()) throw new Error('对端连接串已失效，请让对端重新生成');
   return payload as PeerConnectPayload;
 }
 
@@ -230,7 +240,7 @@ export function PeerNodesSettings() {
     setGenBusy(false);
     if (res.success && res.data) {
       setCode(res.data.pairingCode);
-      setCodeExpiresAt(Date.now() + (res.data.expiresInSeconds || 300) * 1000);
+      setCodeExpiresAt(Date.now() + (res.data.expiresInSeconds || PAIRING_CODE_FALLBACK_SECONDS) * 1000);
       setSelfNodeId(res.data.selfNodeId);
       setSelfBaseUrl(res.data.selfBaseUrl);
       setCopiedCode(false);
@@ -365,7 +375,7 @@ export function PeerNodesSettings() {
 
   return (
     <div
-      className="h-full min-h-0 flex flex-col gap-5 overflow-y-auto pb-6"
+      className="h-full min-h-0 w-full max-w-[1120px] mx-auto flex flex-col gap-5 overflow-y-auto pb-6"
       style={{ overscrollBehavior: 'contain' }}
     >
       {/* ── 本节点身份卡（hero） ── */}
@@ -429,7 +439,7 @@ export function PeerNodesSettings() {
                 添加对端
               </div>
               <div className="text-[11px] mt-0.5 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-                任一端拿到对方生成的连接串后粘贴并点击添加；系统双向确认和探活成功后，双方才会保存为已互联。
+                任一端拿到对方生成的连接串后粘贴并点击添加；连接串 3 天内有效、使用一次后失效，系统双向确认和探活成功后双方才会保存。
               </div>
             </div>
           </div>
@@ -441,7 +451,7 @@ export function PeerNodesSettings() {
 
       {showAdd && (
         <section
-          className="rounded-xl p-4 space-y-3"
+          className="rounded-xl p-5 space-y-4"
           style={{
             background: 'var(--bg-card, rgba(255,255,255,0.03))',
             border: '1px solid rgba(168,85,247,0.20)',
@@ -461,7 +471,7 @@ export function PeerNodesSettings() {
               </span>
               {code && (
                 <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                  剩余 {codeSecondsLeft}s
+                  剩余 {fmtPairingTimeLeft(codeSecondsLeft)}
                 </span>
               )}
             </div>
@@ -485,10 +495,17 @@ export function PeerNodesSettings() {
                 </div>
               </>
             ) : (
-              <Button size="sm" variant="secondary" onClick={handleGenCode} disabled={genBusy} className="w-full">
-                {genBusy ? <MapSpinner size={13} /> : <KeyRound size={13} />}
-                生成我的连接串
-              </Button>
+              <div className="flex items-center justify-between gap-3 flex-wrap rounded-md px-3 py-2"
+                style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.08)' }}
+              >
+                <span className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                  连接串 3 天内有效，使用一次后立即失效。
+                </span>
+                <Button size="sm" variant="secondary" onClick={handleGenCode} disabled={genBusy}>
+                  {genBusy ? <MapSpinner size={13} /> : <KeyRound size={13} />}
+                  生成我的连接串
+                </Button>
+              </div>
             )}
           </div>
 
