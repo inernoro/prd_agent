@@ -1,6 +1,6 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
-import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection } from '../types.js';
+import type { CdsState, BranchEntry, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import type { StateBackingStore } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
@@ -94,6 +94,9 @@ function emptyState(): CdsState {
     defaultBranch: null,
     customEnv: { [GLOBAL_ENV_SCOPE]: {} } as CustomEnvStore,
     infraServices: [],
+    releaseTargets: {},
+    releasePlans: {},
+    releaseRuns: {},
     previewMode: 'multi',
     activityLogs: {},
   };
@@ -223,6 +226,9 @@ export class StateService {
       this.state = loaded;
       // Migrate older state files
       if (!this.state.logs) this.state.logs = {};
+      if (!this.state.releaseTargets) this.state.releaseTargets = {};
+      if (!this.state.releasePlans) this.state.releasePlans = {};
+      if (!this.state.releaseRuns) this.state.releaseRuns = {};
       if (!this.state.containerLogArchives) this.state.containerLogArchives = {};
       if (!this.state.routingRules) this.state.routingRules = [];
       if (!this.state.buildProfiles) this.state.buildProfiles = [];
@@ -1442,6 +1448,120 @@ export class StateService {
     this.state.serviceDeployments[id] = merged;
     this.save();
     return merged;
+  }
+
+  // ── Release targets / plans / runs (preview → production control plane) ──
+
+  getReleaseTargets(projectId?: string): ReleaseTarget[] {
+    if (!this.state.releaseTargets) return [];
+    return Object.values(this.state.releaseTargets)
+      .filter((target) => !projectId || target.projectId === projectId);
+  }
+
+  getReleaseTarget(id: string): ReleaseTarget | undefined {
+    return this.state.releaseTargets?.[id];
+  }
+
+  upsertReleaseTarget(target: ReleaseTarget): ReleaseTarget {
+    if (!this.state.releaseTargets) this.state.releaseTargets = {};
+    const now = new Date().toISOString();
+    const existing = this.state.releaseTargets[target.id];
+    this.state.releaseTargets[target.id] = {
+      ...existing,
+      ...target,
+      createdAt: existing?.createdAt || target.createdAt || now,
+      updatedAt: now,
+    };
+    this.save();
+    return this.state.releaseTargets[target.id];
+  }
+
+  removeReleaseTarget(id: string): boolean {
+    if (!this.state.releaseTargets?.[id]) return false;
+    delete this.state.releaseTargets[id];
+    this.save();
+    return true;
+  }
+
+  getReleasePlans(projectId?: string): ReleasePlan[] {
+    if (!this.state.releasePlans) return [];
+    return Object.values(this.state.releasePlans)
+      .filter((plan) => !projectId || plan.projectId === projectId);
+  }
+
+  getReleasePlan(id: string): ReleasePlan | undefined {
+    return this.state.releasePlans?.[id];
+  }
+
+  upsertReleasePlan(plan: ReleasePlan): ReleasePlan {
+    if (!this.state.releasePlans) this.state.releasePlans = {};
+    this.state.releasePlans[plan.id] = plan;
+    this.save();
+    return plan;
+  }
+
+  getReleaseRuns(filter: { projectId?: string; targetId?: string; branchId?: string } = {}): ReleaseRun[] {
+    if (!this.state.releaseRuns) return [];
+    return Object.values(this.state.releaseRuns)
+      .filter((run) => !filter.projectId || run.projectId === filter.projectId)
+      .filter((run) => !filter.targetId || run.targetId === filter.targetId)
+      .filter((run) => !filter.branchId || run.branchId === filter.branchId)
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  }
+
+  getReleaseRun(id: string): ReleaseRun | undefined {
+    return this.state.releaseRuns?.[id];
+  }
+
+  addReleaseRun(run: ReleaseRun): ReleaseRun {
+    if (!this.state.releaseRuns) this.state.releaseRuns = {};
+    if (this.state.releaseRuns[run.releaseId]) {
+      throw new Error(`ReleaseRun already exists: ${run.releaseId}`);
+    }
+    this.state.releaseRuns[run.releaseId] = run;
+    this.save();
+    return run;
+  }
+
+  patchReleaseRun(id: string, fields: Partial<ReleaseRun>): ReleaseRun {
+    if (!this.state.releaseRuns?.[id]) {
+      throw new Error(`ReleaseRun not found: ${id}`);
+    }
+    const current = this.state.releaseRuns[id];
+    const merged = { ...current, ...fields, releaseId: id, logs: current.logs };
+    this.state.releaseRuns[id] = merged;
+    this.save();
+    return merged;
+  }
+
+  appendReleaseRunLog(
+    id: string,
+    entry: Omit<ReleaseLogEntry, 'seq' | 'at'> & { at?: string },
+  ): ReleaseRun {
+    if (!this.state.releaseRuns?.[id]) {
+      throw new Error(`ReleaseRun not found: ${id}`);
+    }
+    const run = this.state.releaseRuns[id];
+    const nextSeq = (run.seq || 0) + 1;
+    run.logs.push({
+      seq: nextSeq,
+      at: entry.at || new Date().toISOString(),
+      level: entry.level,
+      message: entry.message,
+      phase: entry.phase,
+    });
+    run.seq = nextSeq;
+    this.save();
+    return run;
+  }
+
+  getLatestSuccessfulReleaseRun(targetId: string, beforeReleaseId?: string): ReleaseRun | undefined {
+    const runs = this.getReleaseRuns({ targetId })
+      .filter((run) => run.status === 'success');
+    if (!beforeReleaseId) return runs[0];
+    const current = this.getReleaseRun(beforeReleaseId);
+    const beforeTs = current?.startedAt;
+    return runs.find((run) => run.releaseId !== beforeReleaseId && (!beforeTs || run.startedAt < beforeTs));
   }
 
   // ── CDS configuration pairing connections (MAP / CLI partners, 2026-05-06) ──

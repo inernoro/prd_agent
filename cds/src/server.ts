@@ -19,6 +19,7 @@ import { createProjectStorageRouter } from './routes/project-storage.js';
 import { createCacheRouter } from './routes/cache.js';
 import { createSnapshotsRouter } from './routes/snapshots.js';
 import { createRemoteHostsRouter } from './routes/remote-hosts.js';
+import { createReleasesRouter } from './routes/releases.js';
 import { createCdsSystemConnectionsRouter } from './routes/cds-system-connections.js';
 import { createCdsSystemTopologyRouter } from './routes/cds-system-topology.js';
 import { createTopologyAggregator } from './services/topology-aggregator.js';
@@ -492,6 +493,18 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /cds-system/github/webhook-deliveries': '列出 Webhook 日志',
     'GET /cds-system/github/app-whitelist': '获取 GitHub 白名单',
     'PUT /cds-system/github/app-whitelist': '更新 GitHub 白名单',
+    // 发布控制面（preview → release，2026-06-10）
+    'GET /releases/targets': '列出发布目标',
+    'POST /releases/targets': '创建发布目标',
+    'PATCH /releases/targets/:id': '更新发布目标',
+    'DELETE /releases/targets/:id': '删除发布目标',
+    'POST /releases/branches/:branchId/preflight': '执行发布前检查',
+    'POST /releases/branches/:branchId/runs': '启动分支发布',
+    'GET /releases/runs': '列出发布记录',
+    'GET /releases/runs/:id': '查看发布记录',
+    'POST /releases/runs/:id/rollback': '回滚发布记录',
+    'GET /releases/runs/:id/stream': '订阅发布日志流',
+    'GET /releases/center': '查看发布中心',
     'GET /branches': '获取系统状态信息',
     'POST /branches': '注册新分支',
     'GET /remote-branches': '获取远程分支',
@@ -2837,6 +2850,9 @@ export function createServer(deps: ServerDeps): express.Express {
     stateService: deps.stateService,
     containerService: deps.containerService,
     config: deps.config,
+  }));
+  app.use('/api', createReleasesRouter({
+    stateService: deps.stateService,
   }));
   // CDS 配对连接（系统级），见 routes/cds-system-connections.ts。
   app.use('/api', createCdsSystemConnectionsRouter({

@@ -143,6 +143,57 @@ interface BranchesResponse {
   };
 }
 
+interface ReleaseTargetSummary {
+  id: string;
+  projectId: string;
+  name: string;
+  type: string;
+  isEnabled: boolean;
+  ssh?: {
+    host: string;
+    port: number;
+    user: string;
+    healthcheckUrl: string;
+  };
+}
+
+interface ReleaseRunSummary {
+  releaseId: string;
+  projectId: string;
+  branchId: string;
+  commitSha: string;
+  targetId: string;
+  status: string;
+  startedAt: string;
+  finishedAt?: string;
+  operator?: string;
+  logs: ReleaseLogEntry[];
+  previousReleaseId?: string;
+  rollbackOf?: string;
+}
+
+interface ReleaseLogEntry {
+  seq: number;
+  at: string;
+  level: 'info' | 'warn' | 'error';
+  message: string;
+  phase?: string;
+}
+
+interface ReleasePreflightCheck {
+  id: string;
+  label: string;
+  status: 'pass' | 'warn' | 'fail';
+  message: string;
+  blocking: boolean;
+}
+
+interface ReleasePreflightResult {
+  ok: boolean;
+  checks: ReleasePreflightCheck[];
+  previousRelease?: ReleaseRunSummary;
+}
+
 interface RemoteBranch {
   name: string;
   date?: string;
@@ -1229,6 +1280,7 @@ export function BranchListPage(): JSX.Element {
     needSlots: number;
   } | null>(null);
   const [detailDrawerBranchId, setDetailDrawerBranchId] = useState<string | null>(null);
+  const [releaseBranchId, setReleaseBranchId] = useState<string | null>(null);
   const [branchSearchOpen, setBranchSearchOpen] = useState(false);
   const [pendingEnvKeys, setPendingEnvKeys] = useState<string[]>([]);
   // 标签过滤:用户点击 BranchCard 上某个标签 chip 时切到只显示该标签的分支;
@@ -2999,6 +3051,7 @@ export function BranchListPage(): JSX.Element {
                     capacityWarning={state.status === 'ok' ? capacityMessage(state.capacity, [branch]) : ''}
                     activeTagFilter={activeTagFilter}
                     onPreview={() => void openPreview(branch, false)}
+                    onRelease={() => setReleaseBranchId(branch.id)}
                     onDeploy={() => void deployBranch(branch, false)}
                     onDetail={() => setDetailDrawerBranchId(branch.id)}
                     onPull={() => void pullBranch(branch)}
@@ -3024,6 +3077,18 @@ export function BranchListPage(): JSX.Element {
         {/* Branch detail drawer — opens when 详情 is clicked on a card.
             Avoids the page navigation the user explicitly asked us to skip
             ("能在一个页面完成的，切勿跳转页面"). */}
+        <ReleaseBranchDialog
+          branch={state.status === 'ok' && releaseBranchId ? state.branches.find((b) => b.id === releaseBranchId) || null : null}
+          previewUrl={(() => {
+            if (state.status !== 'ok' || !releaseBranchId) return '';
+            const target = state.branches.find((b) => b.id === releaseBranchId);
+            if (!target) return '';
+            if (state.previewMode === 'simple') return simplePreviewUrl(state.config);
+            return multiPreviewUrl(target, state.config);
+          })()}
+          onClose={() => setReleaseBranchId(null)}
+          onToast={setToast}
+        />
         <BranchDetailDrawer
           open={!!detailDrawerBranchId}
           branchId={detailDrawerBranchId}
@@ -3939,6 +4004,223 @@ function OpsDrawer({
   );
 }
 
+function ReleaseBranchDialog({
+  branch,
+  previewUrl,
+  onClose,
+  onToast,
+}: {
+  branch: BranchSummary | null;
+  previewUrl: string;
+  onClose: () => void;
+  onToast: (message: string) => void;
+}): JSX.Element {
+  const [targets, setTargets] = useState<ReleaseTargetSummary[]>([]);
+  const [targetId, setTargetId] = useState('');
+  const [loadingTargets, setLoadingTargets] = useState(false);
+  const [preflight, setPreflight] = useState<ReleasePreflightResult | null>(null);
+  const [preflightState, setPreflightState] = useState<'idle' | 'running' | 'error'>('idle');
+  const [run, setRun] = useState<ReleaseRunSummary | null>(null);
+  const [logs, setLogs] = useState<ReleaseLogEntry[]>([]);
+  const [starting, setStarting] = useState(false);
+
+  useEffect(() => {
+    if (!branch) return undefined;
+    setPreflight(null);
+    setRun(null);
+    setLogs([]);
+    setLoadingTargets(true);
+    const ctrl = new AbortController();
+    apiRequest<{ targets: ReleaseTargetSummary[] }>(
+      `/api/releases/targets?project=${encodeURIComponent(branch.projectId)}`,
+      { signal: ctrl.signal },
+    )
+      .then((data) => {
+        const enabled = (data.targets || []).filter((target) => target.isEnabled && target.type === 'ssh');
+        setTargets(enabled);
+        setTargetId((current) => current && enabled.some((target) => target.id === current) ? current : enabled[0]?.id || '');
+      })
+      .catch((err) => {
+        if ((err as DOMException)?.name === 'AbortError') return;
+        onToast(err instanceof ApiError ? err.message : String(err));
+      })
+      .finally(() => setLoadingTargets(false));
+    return () => ctrl.abort();
+  }, [branch, onToast]);
+
+  useEffect(() => {
+    if (!run || isReleaseTerminal(run.status)) return undefined;
+    const source = new EventSource(apiUrl(`/api/releases/runs/${encodeURIComponent(run.releaseId)}/stream?afterSeq=${run.logs.at(-1)?.seq || 0}`));
+    source.addEventListener('snapshot', (event) => {
+      const data = parseSseJson<{ run: ReleaseRunSummary; logs: ReleaseLogEntry[] }>(event);
+      if (!data) return;
+      setRun(data.run);
+      setLogs(dedupeReleaseLogs(data.run.logs || []));
+    });
+    source.addEventListener('release.log', (event) => {
+      const data = parseSseJson<{ log: ReleaseLogEntry }>(event);
+      if (!data?.log) return;
+      setLogs((current) => dedupeReleaseLogs([...current, data.log]));
+    });
+    source.addEventListener('release.status', (event) => {
+      const data = parseSseJson<{ run: ReleaseRunSummary }>(event);
+      if (data?.run) {
+        setRun(data.run);
+        setLogs((current) => dedupeReleaseLogs([...(data.run.logs || []), ...current]));
+      }
+    });
+    return () => source.close();
+  }, [run?.releaseId, run?.status]);
+
+  const runPreflight = async (): Promise<void> => {
+    if (!branch || !targetId) return;
+    setPreflightState('running');
+    setPreflight(null);
+    try {
+      const result = await apiRequest<ReleasePreflightResult>(`/api/releases/branches/${encodeURIComponent(branch.id)}/preflight`, {
+        method: 'POST',
+        body: { targetId, previewUrl },
+      });
+      setPreflight(result);
+      setPreflightState('idle');
+    } catch (err) {
+      setPreflightState('error');
+      onToast(err instanceof ApiError ? err.message : String(err));
+    }
+  };
+
+  const startRelease = async (): Promise<void> => {
+    if (!branch || !targetId) return;
+    setStarting(true);
+    try {
+      const result = await apiRequest<{ run: ReleaseRunSummary }>(`/api/releases/branches/${encodeURIComponent(branch.id)}/runs`, {
+        method: 'POST',
+        body: { targetId, previewUrl },
+      });
+      setRun(result.run);
+      setLogs(result.run.logs || []);
+      onToast('发布已开始');
+    } catch (err) {
+      onToast(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  return (
+    <Dialog open={!!branch} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>发布 {branch?.branch}</DialogTitle>
+          <DialogDescription>从已验收预览分支发布到指定 SSH 目标。</DialogDescription>
+        </DialogHeader>
+        {!branch ? null : (
+          <div className="space-y-4">
+            <div className="grid gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3 text-sm md:grid-cols-3">
+              <div>
+                <div className="text-xs text-muted-foreground">Commit</div>
+                <div className="mt-1 font-mono">{shortCommitSha(branch) || '-'}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">Preview</div>
+                <div className="mt-1 truncate font-mono">{previewUrl || '-'}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">Status</div>
+                <div className="mt-1">{statusLabel(branch.status)}</div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="grid min-w-[260px] flex-1 gap-1 text-sm">
+                <span className="text-muted-foreground">发布目标</span>
+                <select
+                  value={targetId}
+                  onChange={(event) => {
+                    setTargetId(event.target.value);
+                    setPreflight(null);
+                  }}
+                  disabled={loadingTargets || targets.length === 0}
+                  className="h-9 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 text-sm outline-none focus:border-primary/60"
+                >
+                  {targets.length === 0 ? <option value="">没有可用 SSH target</option> : null}
+                  {targets.map((target) => (
+                    <option key={target.id} value={target.id}>
+                      {target.name} · {target.ssh?.user}@{target.ssh?.host}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <Button variant="outline" onClick={() => void runPreflight()} disabled={!targetId || preflightState === 'running'}>
+                {preflightState === 'running' ? <Loader2 className="animate-spin" /> : <Gauge />}
+                发布前检查
+              </Button>
+              <Button onClick={() => void startRelease()} disabled={!targetId || !preflight?.ok || starting || !!run}>
+                {starting ? <Loader2 className="animate-spin" /> : <Rocket />}
+                开始发布
+              </Button>
+              <Button asChild variant="outline">
+                <Link to={`/release-center?project=${encodeURIComponent(branch.projectId)}`}>发布中心</Link>
+              </Button>
+            </div>
+
+            {targets.length === 0 && !loadingTargets ? (
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-600 dark:text-amber-300">
+                当前项目没有 SSH ReleaseTarget。先到发布中心创建目标。
+              </div>
+            ) : null}
+
+            {preflight ? (
+              <div className="grid gap-2">
+                {preflight.checks.map((check) => (
+                  <div
+                    key={check.id}
+                    className={`flex items-start justify-between gap-3 rounded-md border px-3 py-2 text-sm ${
+                      check.status === 'pass'
+                        ? 'border-emerald-500/30 bg-emerald-500/10'
+                        : check.status === 'warn'
+                          ? 'border-amber-500/30 bg-amber-500/10'
+                          : 'border-red-500/30 bg-red-500/10'
+                    }`}
+                  >
+                    <div>
+                      <div className="font-medium">{check.label}</div>
+                      <div className="mt-0.5 text-xs text-muted-foreground">{check.message}</div>
+                    </div>
+                    <span className="font-mono text-xs">{check.status}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {run ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-mono">{run.releaseId}</span>
+                  <span className="rounded-md border border-[hsl(var(--hairline))] px-2 py-1 text-xs">{run.status}</span>
+                </div>
+                <pre className="max-h-72 overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 text-xs leading-5">
+                  {logs.map((log) => `[${formatShortTime(log.at)}] ${log.level.toUpperCase()} ${log.phase ? `${log.phase}: ` : ''}${log.message}`).join('\n') || '等待日志...'}
+                </pre>
+              </div>
+            ) : null}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function dedupeReleaseLogs(items: ReleaseLogEntry[]): ReleaseLogEntry[] {
+  const bySeq = new Map<number, ReleaseLogEntry>();
+  for (const item of items) bySeq.set(item.seq, item);
+  return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
+}
+
+function isReleaseTerminal(status: string): boolean {
+  return ['success', 'failed', 'rollback_success', 'rollback_failed'].includes(status);
+}
+
 function BranchCard({
   branch,
   action,
@@ -3949,6 +4231,7 @@ function BranchCard({
   activityEvents = [],
   activeTagFilter,
   onPreview,
+  onRelease,
   // 2026-05-04 重设计:常规部署按钮从卡片右下移到「分支详情抽屉 → 设置 tab」。
   // 2026-05-29 P0 复活:onDeploy 重新被卡片使用 —— 漂移徽标「一键收敛」点击时
   // 调它（= deployBranch → POST /deploy，读项目全部 build profile，补齐缺失服务）。
@@ -3987,6 +4270,7 @@ function BranchCard({
   activeTagFilter?: string | null;
   onSelect?: () => void;
   onPreview: () => void;
+  onRelease: () => void;
   onDeploy: () => void;
   onDetail: () => void;
   onPull: () => void;
@@ -4649,57 +4933,75 @@ function BranchCard({
               到当前服务状态/日志 → 确认后再点",直接卡片右下点 Play 容易误操作。
               卡片淡化暗示"这个分支没在跑",用户主动点开抽屉就能恢复。
         */}
-        {isRunning ? (
-          previewCapacityWarning ? (
-	            <ConfirmAction
-	              title="容量不足，仍然预览部署？"
-	              description={previewCapacityWarning}
-	              confirmLabel="继续"
-	              disabled={busy}
-	              onConfirm={onPreview}
-              trigger={(
-                <Button
-                  size="icon"
-                  variant="outline"
-                  className={isAiActive
-                    ? 'cds-ai-preview-beacon border-sky-400/45 bg-sky-400/10 text-sky-300 hover:bg-sky-400/15 hover:text-sky-200'
-                    : isAiOperated
-                      ? 'border-sky-400/30 bg-sky-400/5 text-sky-300/80 hover:bg-sky-400/10 hover:text-sky-200'
-                    : 'border-primary/35 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary'}
-                  title={isAiOperated ? `${aiTitle} · 打开 AI 操作面板` : '预览'}
-                  aria-label={isAiOperated ? `${aiState.label}，打开 AI 操作面板` : '预览'}
-                >
-                  {isAiOperated ? <Bot /> : <Eye />}
-                </Button>
-              )}
-            />
-          ) : (
+        <div className="flex shrink-0 items-center gap-2">
+          {isRunning ? (
             <Button
               size="icon"
               variant="outline"
-              className={isAiActive
-                ? 'cds-ai-preview-beacon border-sky-400/45 bg-sky-400/10 text-sky-300 hover:bg-sky-400/15 hover:text-sky-200'
-                : isAiOperated
-                  ? 'border-sky-400/30 bg-sky-400/5 text-sky-300/80 hover:bg-sky-400/10 hover:text-sky-200'
-                : 'border-primary/35 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary'}
-              onClick={isAiOperated
-                ? (event) => {
-                  event.stopPropagation();
-                  setAiPanelOpen((current) => !current);
-                }
-                : onPreview}
+              onClick={(event) => {
+                event.stopPropagation();
+                onRelease();
+              }}
               disabled={busy}
-              title={isAiOperated ? `${aiTitle} · 打开 AI 操作面板` : '预览'}
-              aria-label={isAiOperated ? `${aiState.label}，打开 AI 操作面板` : '预览'}
+              title="发布到目标"
+              aria-label="发布到目标"
+              className="border-emerald-500/35 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/15 hover:text-emerald-500"
             >
-              {busy ? <Loader2 className="animate-spin" /> : isAiOperated ? <Bot /> : <Eye />}
+              <Rocket />
             </Button>
-          )
-        ) : isInterim ? (
-          <Button size="icon" variant="outline" disabled title={statusLabel(branch.status)} aria-label={statusLabel(branch.status)}>
-            <Loader2 className="animate-spin" />
-          </Button>
-        ) : null}
+          ) : null}
+          {isRunning ? (
+            previewCapacityWarning ? (
+              <ConfirmAction
+                title="容量不足，仍然预览部署？"
+                description={previewCapacityWarning}
+                confirmLabel="继续"
+                disabled={busy}
+                onConfirm={onPreview}
+                trigger={(
+                  <Button
+                    size="icon"
+                    variant="outline"
+                    className={isAiActive
+                      ? 'cds-ai-preview-beacon border-sky-400/45 bg-sky-400/10 text-sky-300 hover:bg-sky-400/15 hover:text-sky-200'
+                      : isAiOperated
+                        ? 'border-sky-400/30 bg-sky-400/5 text-sky-300/80 hover:bg-sky-400/10 hover:text-sky-200'
+                      : 'border-primary/35 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary'}
+                    title={isAiOperated ? `${aiTitle} · 打开 AI 操作面板` : '预览'}
+                    aria-label={isAiOperated ? `${aiState.label}，打开 AI 操作面板` : '预览'}
+                  >
+                    {isAiOperated ? <Bot /> : <Eye />}
+                  </Button>
+                )}
+              />
+            ) : (
+              <Button
+                size="icon"
+                variant="outline"
+                className={isAiActive
+                  ? 'cds-ai-preview-beacon border-sky-400/45 bg-sky-400/10 text-sky-300 hover:bg-sky-400/15 hover:text-sky-200'
+                  : isAiOperated
+                    ? 'border-sky-400/30 bg-sky-400/5 text-sky-300/80 hover:bg-sky-400/10 hover:text-sky-200'
+                  : 'border-primary/35 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary'}
+                onClick={isAiOperated
+                  ? (event) => {
+                    event.stopPropagation();
+                    setAiPanelOpen((current) => !current);
+                  }
+                  : onPreview}
+                disabled={busy}
+                title={isAiOperated ? `${aiTitle} · 打开 AI 操作面板` : '预览'}
+                aria-label={isAiOperated ? `${aiState.label}，打开 AI 操作面板` : '预览'}
+              >
+                {busy ? <Loader2 className="animate-spin" /> : isAiOperated ? <Bot /> : <Eye />}
+              </Button>
+            )
+          ) : isInterim ? (
+            <Button size="icon" variant="outline" disabled title={statusLabel(branch.status)} aria-label={statusLabel(branch.status)}>
+              <Loader2 className="animate-spin" />
+            </Button>
+          ) : null}
+        </div>
       </footer>
     </article>
   );
