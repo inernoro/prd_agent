@@ -20,6 +20,8 @@ import type {
   ProductCategory,
   DescTemplate,
   ProductMembersResult,
+  ProductInitiation,
+  ProductRelease,
 } from '@/pages/product-agent/types';
 
 interface ListWrap<T> {
@@ -81,6 +83,58 @@ export function updateVersion(versionId: string, body: Partial<ProductVersion>) 
 }
 export function deleteVersion(versionId: string) {
   return apiRequest<{ deleted: boolean }>(`/api/product/versions/${versionId}`, { method: 'DELETE' });
+}
+
+export function listInitiations(productId: string) {
+  return apiRequest<ListWrap<ProductInitiation>>(`/api/product/products/${productId}/initiations`);
+}
+export function createInitiation(productId: string, body: {
+  projectType: 'standard' | 'custom';
+  customerSource?: string;
+  planName: string;
+  planUrl?: string;
+  versionType: 'major' | 'medium' | 'minor';
+  requirementIds: string[];
+}) {
+  return apiRequest<ProductInitiation>(`/api/product/products/${productId}/initiations`, { method: 'POST', body });
+}
+export function syncInitiationReview(id: string, submissionId: string) {
+  return apiRequest<ProductInitiation>(`/api/product/initiations/${id}/review`, { method: 'POST', body: { submissionId } });
+}
+export function decideInitiation(id: string, body: {
+  reviewMeetingRequired: boolean;
+  expectedMeetingAt?: string;
+  primaryOwnerId?: string;
+}) {
+  return apiRequest<ProductInitiation>(`/api/product/initiations/${id}/decision`, { method: 'POST', body });
+}
+export function approveInitiation(id: string, comment?: string) {
+  return apiRequest<ProductInitiation>(`/api/product/initiations/${id}/approve`, { method: 'POST', body: { comment } });
+}
+export function listReleases(productId: string) {
+  return apiRequest<ListWrap<ProductRelease>>(`/api/product/products/${productId}/releases`);
+}
+export function createRelease(productId: string, body: {
+  initiationId?: string;
+  isTemporaryOptimization: boolean;
+  planName?: string;
+  additionalRequirementIds?: string[];
+  teamMemberIds: string[];
+  plannedReleaseAt: string;
+}) {
+  return apiRequest<ProductRelease>(`/api/product/products/${productId}/releases`, { method: 'POST', body });
+}
+export function completeRelease(id: string, announcementUrl: string) {
+  return apiRequest<ProductRelease>(`/api/product/releases/${id}/complete`, { method: 'POST', body: { announcementUrl } });
+}
+export function importVersionWorkflow(productId: string, body: {
+  kind: 'initiation' | 'release';
+  rows: Array<Record<string, unknown>>;
+}) {
+  return apiRequest<{ created: number; errors: { row: number; message: string }[] }>(
+    `/api/product/products/${productId}/version-workflow/import`,
+    { method: 'POST', body },
+  );
 }
 
 // ── 需求 ──

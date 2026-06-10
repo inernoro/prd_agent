@@ -23,6 +23,7 @@ import { ProductTeamTab } from './ProductTeamSection';
 import { ReportsTab } from './ReportsTab';
 import { BatchBar } from './BatchBar';
 import { UpgradeRequestsTab } from './UpgradeRequestsTab';
+import { VersionWorkflowTab } from './VersionWorkflowTab';
 import {
   getProduct,
   deleteProduct,
@@ -407,6 +408,10 @@ function DashChart({ title, option, empty }: { title: string; option: EChartsOpt
 
 // ── 版本 tab（含大版本升级申请）──
 function VersionsTab({ productId }: { productId: string }) {
+  return <VersionWorkflowTab productId={productId} />;
+}
+
+export function LegacyVersionsTab({ productId }: { productId: string }) {
   const navigate = useNavigate();
   const [items, setItems] = useState<ProductVersion[]>([]);
   const [loading, setLoading] = useState(true);

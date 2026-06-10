@@ -103,6 +103,53 @@ export interface ProductVersion {
   updatedAt: string;
 }
 
+export type VersionScale = 'major' | 'medium' | 'minor';
+
+export interface ProductInitiation {
+  id: string;
+  productId: string;
+  tCode?: string | null;
+  projectType: 'standard' | 'custom';
+  customerSource?: string | null;
+  planName: string;
+  planUrl?: string | null;
+  versionType: VersionScale;
+  requirementIds: string[];
+  status: string;
+  reviewSubmissionId?: string | null;
+  reviewScore?: number | null;
+  reviewPassed?: boolean | null;
+  reviewMeetingRequired?: boolean | null;
+  expectedMeetingAt?: string | null;
+  primaryOwnerId?: string | null;
+  approvalComment?: string | null;
+  createdBy: string;
+  sourceType: 'system' | 'import';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProductRelease {
+  id: string;
+  productId: string;
+  initiationId?: string | null;
+  tCode?: string | null;
+  vCode: string;
+  isTemporaryOptimization: boolean;
+  planName: string;
+  versionType: VersionScale;
+  planUrl?: string | null;
+  requirementIds: string[];
+  teamMemberIds: string[];
+  plannedReleaseAt?: string | null;
+  releasedAt?: string | null;
+  announcementUrl?: string | null;
+  status: string;
+  sourceType: 'system' | 'import';
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Requirement {
   id: string;
   productId: string;

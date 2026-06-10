@@ -367,6 +367,241 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
+    // Product committee workflow: initiation (T code) and release (V code).
+    [HttpGet("products/{productId}/initiations")]
+    public async Task<IActionResult> ListInitiations(string productId)
+    {
+        if (await FindAccessibleProductAsync(productId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        var items = await _db.ProductInitiations.Find(x => x.ProductId == productId && !x.IsDeleted)
+            .SortByDescending(x => x.CreatedAt).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    [HttpPost("products/{productId}/initiations")]
+    public async Task<IActionResult> CreateInitiation(string productId, [FromBody] CreateInitiationRequest request)
+    {
+        var userId = GetUserId();
+        if (await FindAccessibleProductAsync(productId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        if (string.IsNullOrWhiteSpace(request.PlanName))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "方案名称不能为空"));
+        if (request.ProjectType == "custom" && string.IsNullOrWhiteSpace(request.CustomerSource))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "定制项目必须填写客户来源"));
+
+        var item = new ProductInitiation
+        {
+            ProductId = productId,
+            ProjectType = request.ProjectType == "custom" ? "custom" : "standard",
+            CustomerSource = request.CustomerSource?.Trim(),
+            PlanName = request.PlanName.Trim(),
+            PlanUrl = request.PlanUrl?.Trim(),
+            VersionType = NormalizeVersionType(request.VersionType),
+            RequirementIds = request.RequirementIds?.Distinct().ToList() ?? new(),
+            Status = "review_pending",
+            CreatedBy = userId,
+        };
+        await _db.ProductInitiations.InsertOneAsync(item);
+        return Ok(ApiResponse<object>.Ok(item));
+    }
+
+    [HttpPost("initiations/{id}/review")]
+    public async Task<IActionResult> SyncInitiationReview(string id, [FromBody] SyncInitiationReviewRequest request)
+    {
+        var item = await _db.ProductInitiations.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
+        if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
+        var submission = await _db.ReviewSubmissions.Find(x => x.Id == request.SubmissionId).FirstOrDefaultAsync();
+        if (submission == null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "评审任务不存在"));
+
+        ReviewResult? result = null;
+        if (!string.IsNullOrWhiteSpace(submission.ResultId))
+            result = await _db.ReviewResults.Find(x => x.Id == submission.ResultId).FirstOrDefaultAsync();
+        var passed = result?.IsPassed ?? submission.IsPassed;
+        var status = submission.Status == ReviewStatuses.Done
+            ? (passed == true ? "decision_pending" : "review_failed")
+            : "review_pending";
+        await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id,
+            Builders<ProductInitiation>.Update
+                .Set(x => x.ReviewSubmissionId, submission.Id)
+                .Set(x => x.ReviewScore, result == null ? null : result.TotalScore)
+                .Set(x => x.ReviewPassed, passed)
+                .Set(x => x.Status, status)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        var updated = await _db.ProductInitiations.Find(x => x.Id == id).FirstOrDefaultAsync();
+        return Ok(ApiResponse<object>.Ok(updated));
+    }
+
+    [HttpPost("initiations/{id}/decision")]
+    public async Task<IActionResult> DecideInitiation(string id, [FromBody] InitiationDecisionRequest request)
+    {
+        var item = await _db.ProductInitiations.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
+        if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
+        if (item.ReviewPassed != true)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "Agent 评审通过后才能提交立项决策"));
+
+        if (request.ReviewMeetingRequired && !request.ExpectedMeetingAt.HasValue)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写预计评审会时间"));
+        if (!request.ReviewMeetingRequired && string.IsNullOrWhiteSpace(request.PrimaryOwnerId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择产品主负责人"));
+
+        var tCode = request.ReviewMeetingRequired ? await GenerateWorkflowCodeAsync(item.ProductId, "T", item.VersionType) : null;
+        await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id,
+            Builders<ProductInitiation>.Update
+                .Set(x => x.ReviewMeetingRequired, request.ReviewMeetingRequired)
+                .Set(x => x.ExpectedMeetingAt, request.ExpectedMeetingAt)
+                .Set(x => x.PrimaryOwnerId, request.PrimaryOwnerId)
+                .Set(x => x.TCode, tCode)
+                .Set(x => x.Status, request.ReviewMeetingRequired ? "approved" : "owner_pending")
+                .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        var updated = await _db.ProductInitiations.Find(x => x.Id == id).FirstOrDefaultAsync();
+        return Ok(ApiResponse<object>.Ok(updated));
+    }
+
+    [HttpPost("initiations/{id}/approve")]
+    public async Task<IActionResult> ApproveInitiation(string id, [FromBody] ApproveInitiationRequest request)
+    {
+        var item = await _db.ProductInitiations.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
+        if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
+        if (item.Status != "owner_pending")
+            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "当前记录不在负责人审批状态"));
+        if (item.PrimaryOwnerId != GetUserId() && !CanManage())
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅产品主负责人可审批"));
+
+        var tCode = await GenerateWorkflowCodeAsync(item.ProductId, "T", item.VersionType);
+        await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id,
+            Builders<ProductInitiation>.Update
+                .Set(x => x.TCode, tCode)
+                .Set(x => x.Status, "approved")
+                .Set(x => x.ApprovalComment, request.Comment?.Trim())
+                .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        var updated = await _db.ProductInitiations.Find(x => x.Id == id).FirstOrDefaultAsync();
+        return Ok(ApiResponse<object>.Ok(updated));
+    }
+
+    [HttpGet("products/{productId}/releases")]
+    public async Task<IActionResult> ListReleases(string productId)
+    {
+        if (await FindAccessibleProductAsync(productId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        var items = await _db.ProductReleases.Find(x => x.ProductId == productId && !x.IsDeleted)
+            .SortByDescending(x => x.CreatedAt).ToListAsync();
+        return Ok(ApiResponse<object>.Ok(new { items }));
+    }
+
+    [HttpPost("products/{productId}/releases")]
+    public async Task<IActionResult> CreateRelease(string productId, [FromBody] CreateReleaseRequest request)
+    {
+        var userId = GetUserId();
+        if (await FindAccessibleProductAsync(productId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        ProductInitiation? initiation = null;
+        if (!request.IsTemporaryOptimization)
+        {
+            initiation = await _db.ProductInitiations.Find(x => x.Id == request.InitiationId && x.ProductId == productId && x.Status == "approved" && !x.IsDeleted).FirstOrDefaultAsync();
+            if (initiation == null)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择已通过并取得 T 号的立项"));
+            var existing = await _db.ProductReleases.Find(x => x.InitiationId == initiation.Id && !x.IsDeleted).FirstOrDefaultAsync();
+            if (existing != null)
+                return BadRequest(ApiResponse<object>.Fail("DUPLICATE_RELEASE", $"该立项已申领上线号 {existing.VCode}"));
+        }
+        if (request.TeamMemberIds == null || request.TeamMemberIds.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "项目组成员不能为空"));
+        if (!request.PlannedReleaseAt.HasValue)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "上线时间不能为空"));
+
+        var versionType = request.IsTemporaryOptimization ? "minor" : initiation!.VersionType;
+        var vCode = initiation?.TCode?.Replace("T", "V", StringComparison.OrdinalIgnoreCase)
+            ?? await GenerateWorkflowCodeAsync(productId, "V", versionType);
+        var item = new ProductRelease
+        {
+            ProductId = productId,
+            InitiationId = initiation?.Id,
+            TCode = initiation?.TCode,
+            VCode = vCode,
+            IsTemporaryOptimization = request.IsTemporaryOptimization,
+            PlanName = request.IsTemporaryOptimization ? request.PlanName?.Trim() ?? "临时优化需求" : initiation!.PlanName,
+            VersionType = versionType,
+            PlanUrl = initiation?.PlanUrl,
+            RequirementIds = (initiation?.RequirementIds ?? new()).Concat(request.AdditionalRequirementIds ?? new()).Distinct().ToList(),
+            TeamMemberIds = request.TeamMemberIds.Distinct().ToList(),
+            PlannedReleaseAt = request.PlannedReleaseAt,
+            Status = "announcement_pending",
+            CreatedBy = userId,
+        };
+        await _db.ProductReleases.InsertOneAsync(item);
+        return Ok(ApiResponse<object>.Ok(item));
+    }
+
+    [HttpPost("releases/{id}/complete")]
+    public async Task<IActionResult> CompleteRelease(string id, [FromBody] CompleteReleaseRequest request)
+    {
+        var item = await _db.ProductReleases.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
+        if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "上线记录不存在或无权访问"));
+        if (string.IsNullOrWhiteSpace(request.AnnouncementUrl))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "上线公告地址不能为空"));
+        await _db.ProductReleases.UpdateOneAsync(x => x.Id == id,
+            Builders<ProductRelease>.Update
+                .Set(x => x.AnnouncementUrl, request.AnnouncementUrl.Trim())
+                .Set(x => x.Status, "released")
+                .Set(x => x.ReleasedAt, DateTime.UtcNow)
+                .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        var updated = await _db.ProductReleases.Find(x => x.Id == id).FirstOrDefaultAsync();
+        return Ok(ApiResponse<object>.Ok(updated));
+    }
+
+    [HttpPost("products/{productId}/version-workflow/import")]
+    public async Task<IActionResult> ImportVersionWorkflow(string productId, [FromBody] ImportVersionWorkflowRequest request)
+    {
+        var userId = GetUserId();
+        if (await FindAccessibleProductAsync(productId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        var errors = new List<object>();
+        var created = 0;
+        for (var index = 0; index < request.Rows.Count; index++)
+        {
+            var row = request.Rows[index];
+            if (string.IsNullOrWhiteSpace(row.PlanName))
+            {
+                errors.Add(new { row = index + 2, message = "方案名称不能为空" });
+                continue;
+            }
+            if (request.Kind == "release")
+            {
+                if (string.IsNullOrWhiteSpace(row.Code))
+                {
+                    errors.Add(new { row = index + 2, message = "上线历史数据必须有 V 号" });
+                    continue;
+                }
+                await _db.ProductReleases.InsertOneAsync(new ProductRelease
+                {
+                    ProductId = productId, TCode = row.TCode, VCode = row.Code.Trim(), PlanName = row.PlanName.Trim(),
+                    VersionType = NormalizeVersionType(row.VersionType), AnnouncementUrl = row.AnnouncementUrl,
+                    Status = string.IsNullOrWhiteSpace(row.AnnouncementUrl) ? "announcement_pending" : "released",
+                    PlannedReleaseAt = row.Date, ReleasedAt = row.Date, CreatedBy = userId, SourceType = "import",
+                    LegacyData = row.LegacyData ?? new(),
+                });
+            }
+            else
+            {
+                await _db.ProductInitiations.InsertOneAsync(new ProductInitiation
+                {
+                    ProductId = productId, TCode = row.Code?.Trim(), PlanName = row.PlanName.Trim(),
+                    VersionType = NormalizeVersionType(row.VersionType), PlanUrl = row.PlanUrl,
+                    ProjectType = row.ProjectType == "custom" ? "custom" : "standard", CustomerSource = row.CustomerSource,
+                    Status = string.IsNullOrWhiteSpace(row.Code) ? "draft" : "approved", CreatedBy = userId,
+                    SourceType = "import", LegacyData = row.LegacyData ?? new(),
+                });
+            }
+            created++;
+        }
+        return Ok(ApiResponse<object>.Ok(new { created, errors }));
+    }
+
     // ════════════════════════ 需求 Requirement ════════════════════════
 
     /// <summary>需求列表（按产品，可按版本 / 客户过滤）</summary>
@@ -2804,6 +3039,36 @@ public class ProductAgentController : ControllerBase
         return $"{full}{(count + 1):D4}";
     }
 
+    private static string NormalizeVersionType(string? value) =>
+        value?.Trim().ToLowerInvariant() switch
+        {
+            "major" or "大版本" => "major",
+            "medium" or "中版本" => "medium",
+            _ => "minor",
+        };
+
+    private async Task<string> GenerateWorkflowCodeAsync(string productId, string prefix, string versionType)
+    {
+        var codes = prefix == "T"
+            ? (await _db.ProductInitiations.Find(x => x.ProductId == productId && x.TCode != null && !x.IsDeleted).Project(x => x.TCode!).ToListAsync())
+            : (await _db.ProductReleases.Find(x => x.ProductId == productId && x.VCode != "" && !x.IsDeleted).Project(x => x.VCode).ToListAsync());
+        var max = new[] { 0, 0, 0 };
+        foreach (var code in codes)
+        {
+            var parts = code.TrimStart('T', 't', 'V', 'v').Split('.');
+            if (parts.Length != 3 || !int.TryParse(parts[0], out var a) || !int.TryParse(parts[1], out var b) || !int.TryParse(parts[2], out var c)) continue;
+            if (a > max[0] || a == max[0] && b > max[1] || a == max[0] && b == max[1] && c > max[2])
+                max = new[] { a, b, c };
+        }
+        switch (NormalizeVersionType(versionType))
+        {
+            case "major": max = new[] { max[0] + 1, 0, 0 }; break;
+            case "medium": max = new[] { max[0], max[1] + 1, 0 }; break;
+            default: max[2]++; break;
+        }
+        return $"{prefix}{max[0]}.{max[1]}.{max[2]}";
+    }
+
     /// <summary>根据流程定义解析初始状态 Key（未绑定流程时返回 null）。</summary>
     private async Task<string?> ResolveInitialStateAsync(string? workflowDefId)
     {
@@ -2937,6 +3202,68 @@ public class UpsertVersionRequest
     public string? TemplateId { get; set; }
     public string? WorkflowDefId { get; set; }
     public Dictionary<string, string>? FormData { get; set; }
+}
+
+public class CreateInitiationRequest
+{
+    public string ProjectType { get; set; } = "standard";
+    public string? CustomerSource { get; set; }
+    public string PlanName { get; set; } = string.Empty;
+    public string? PlanUrl { get; set; }
+    public string VersionType { get; set; } = "minor";
+    public List<string>? RequirementIds { get; set; }
+}
+
+public class SyncInitiationReviewRequest
+{
+    public string SubmissionId { get; set; } = string.Empty;
+}
+
+public class InitiationDecisionRequest
+{
+    public bool ReviewMeetingRequired { get; set; }
+    public DateTime? ExpectedMeetingAt { get; set; }
+    public string? PrimaryOwnerId { get; set; }
+}
+
+public class ApproveInitiationRequest
+{
+    public string? Comment { get; set; }
+}
+
+public class CreateReleaseRequest
+{
+    public string? InitiationId { get; set; }
+    public bool IsTemporaryOptimization { get; set; }
+    public string? PlanName { get; set; }
+    public List<string>? AdditionalRequirementIds { get; set; }
+    public List<string>? TeamMemberIds { get; set; }
+    public DateTime? PlannedReleaseAt { get; set; }
+}
+
+public class CompleteReleaseRequest
+{
+    public string AnnouncementUrl { get; set; } = string.Empty;
+}
+
+public class ImportVersionWorkflowRequest
+{
+    public string Kind { get; set; } = "initiation";
+    public List<ImportVersionWorkflowRow> Rows { get; set; } = new();
+}
+
+public class ImportVersionWorkflowRow
+{
+    public string? Code { get; set; }
+    public string? TCode { get; set; }
+    public string? PlanName { get; set; }
+    public string? VersionType { get; set; }
+    public string? ProjectType { get; set; }
+    public string? CustomerSource { get; set; }
+    public string? PlanUrl { get; set; }
+    public string? AnnouncementUrl { get; set; }
+    public DateTime? Date { get; set; }
+    public Dictionary<string, string>? LegacyData { get; set; }
 }
 
 public class UpsertRequirementRequest
