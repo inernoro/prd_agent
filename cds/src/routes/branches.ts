@@ -32,7 +32,6 @@ import { classifyEnvKey } from '../config/known-env-keys.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 import { isAllowedCdsBranchName, isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { buildPreviewUrlForProject } from '../services/comment-template.js';
-import { computePreviewSlug, previewProjectSlug } from '../services/preview-slug.js';
 import { maskSecrets as maskSecretsText, shouldMask } from '../services/secret-masker.js';
 import { buildUnifiedBranchResources, type UnifiedBranchResource } from '../services/resources.js';
 import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
@@ -3993,13 +3992,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.save();
     }
 
-    const project = stateService.getProject(projectId);
-    const projectSlug = previewProjectSlug(project, projectId);
-    const previewSlug = branch.branch && projectSlug
-      ? computePreviewSlug(branch.branch, projectSlug)
-      : branch.id;
     const previewHost = (config.previewDomain || config.rootDomains?.[0] || '').replace(/^https?:\/\//, '').replace(/\/+$/, '');
-    const previewUrl = previewHost && previewSlug ? `https://${previewSlug}.${previewHost}` : '';
+    const preview = branch.branch
+      ? buildPreviewUrlForProject(previewHost, branch.branch, stateService.getProject(projectId), projectId)
+      : undefined;
+    const previewUrl = preview?.url || '';
     const resources = buildUnifiedBranchResources({
       branch,
       profiles: stateService.getBuildProfilesForProject(projectId),
@@ -5901,13 +5898,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   async function getBranchResourceSnapshot(branch: BranchEntry) {
     const projectId = branch.projectId || 'default';
-    const project = stateService.getProject(projectId);
-    const projectSlug = previewProjectSlug(project, projectId);
-    const previewSlug = branch.branch && projectSlug
-      ? computePreviewSlug(branch.branch, projectSlug)
-      : branch.id;
     const previewHost = resourcePublicHost();
-    const previewUrl = previewHost && previewSlug ? `https://${previewSlug}.${previewHost}` : '';
+    const preview = branch.branch
+      ? buildPreviewUrlForProject(previewHost, branch.branch, stateService.getProject(projectId), projectId)
+      : undefined;
+    const previewUrl = preview?.url || '';
     return buildUnifiedBranchResources({
       branch,
       profiles: stateService.getBuildProfilesForProject(projectId),
