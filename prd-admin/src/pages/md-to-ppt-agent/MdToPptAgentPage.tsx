@@ -24,6 +24,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { MarkdownContent } from '@/components/ui/MarkdownContent';
 import { StreamingText } from '@/components/streaming/StreamingText';
 import {
   type MdToPptDiagEvent,
@@ -255,7 +256,7 @@ function prepareIframeHtml(html: string, opts?: { editor?: boolean }): string {
       '#__map_editor_toolbar__ span{color:rgba(255,255,255,.5);font-size:10px;}' +
       '</style>' +
       '<script data-map-inject>(function(){' +
-      'var SEL="h1,h2,h3,h4,h5,h6,p,li,blockquote,td,th";var cur=null;var t=null;' +
+      'var SEL="h1,h2,h3,h4,h5,h6,p,li,blockquote,td,th,.stat,.stat-l,.lead,.eyebrow,.chip,.quote";var cur=null;var t=null;' +
       // 撤销栈（最多 20 条）+ dirty 标志：beforeinput 首次触发时压栈（即"首次 input 前"的修改前快照），
       // blur/换目标/按钮操作后复位 dirty
       'var hist=[];var dirty=false;' +
@@ -612,9 +613,9 @@ function KbPicker({ onClose, onSelect }: KbPickerProps) {
                 >
                   {previewLoading && <div className="flex justify-center py-8"><MapSpinner size={14} /></div>}
                   {!previewLoading && (
-                    <pre className="text-[11px] leading-relaxed text-[var(--text-secondary)] whitespace-pre-wrap break-words font-sans">
-                      {previewContent || '（空文档）'}
-                    </pre>
+                    previewContent
+                      ? <MarkdownContent content={previewContent} className="text-[12px]" />
+                      : <div className="text-xs text-[var(--text-tertiary)]">（空文档）</div>
                   )}
                 </div>
               </>
@@ -1132,7 +1133,7 @@ export function MdToPptAgentPage() {
 
   // ─── Outline flow
   const requestOutline = useCallback(
-    async (userText: string, attachments: Attachment[], kbRefs: KbRef[]) => {
+    async (userText: string, attachments: Attachment[], kbRefs: KbRef[], targetPagesOverride?: number) => {
       setIsProcessing(true);
       setArtifactPhase('outlining');
       setDiagLines([]);
@@ -1144,7 +1145,7 @@ export function MdToPptAgentPage() {
       const historyMsgs = messages.filter((m) => m.role === 'user').slice(-3);
       const chatHistory = historyMsgs.map((m) => `用户: ${m.content}`).join('\n');
 
-      const targetPages = estimatePages(userText + attachmentText + kbContext);
+      const targetPages = targetPagesOverride ?? estimatePages(userText + attachmentText + kbContext);
 
       const assistantMsg = pushMsg({
         role: 'assistant',
@@ -1528,7 +1529,13 @@ export function MdToPptAgentPage() {
       // 追加一条用户消息
       pushMsg({ role: 'user', content: instruction });
 
-      void requestOutline(userContent + '\n\n调整要求：' + instruction, [], []);
+      // 页数沿用上一版大纲（修 2026-06-10 实测 bug：调整一句结语，页数从 6 被重估成 4——
+      // estimatePages 按文本长度估页对"调整"场景完全不适用；除非用户明确要求改页数）
+      void requestOutline(
+        userContent + '\n\n调整要求：' + instruction + '\n（除非调整要求里明确提到增减页数，否则总页数保持不变）',
+        [], [],
+        outlineMsg.totalPages ?? outlineMsg.outline?.length
+      );
     },
     [isProcessing, messages, pushMsg, requestOutline]
   );
@@ -1919,6 +1926,14 @@ export function MdToPptAgentPage() {
                           <MapSpinner size={11} />
                           <span>{msg.content}</span>
                         </div>
+                        {isStreaming && streamPreview.length === 0 && thinkingPreview.length === 0 && diagLines.length > 0 && (
+                          <div className="text-[9px] font-mono text-[var(--text-tertiary)]">
+                            环境准备 {diagLines.slice(-1)[0].stage}
+                            {typeof diagLines.slice(-1)[0].elapsedMs === 'number'
+                              ? ` ${Math.round((diagLines.slice(-1)[0].elapsedMs as number) / 100) / 10}s`
+                              : ''}
+                          </div>
+                        )}
                         {isStreaming && thinkingPreview.length > 0 && (
                           <div
                             data-testid="thinking-bubble"
@@ -2029,8 +2044,8 @@ export function MdToPptAgentPage() {
                 }
                 rows={3}
                 disabled={isProcessing}
-                className="w-full resize-none text-xs leading-relaxed bg-transparent text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border-0 outline-none disabled:opacity-50"
-                style={{ minHeight: 60, maxHeight: 180, overflowY: 'auto', overscrollBehavior: 'contain' }}
+                className="w-full resize-none text-xs leading-relaxed bg-transparent text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border-0 outline-none focus:outline-none focus-visible:outline-none disabled:opacity-50"
+                style={{ minHeight: 60, maxHeight: 180, overflowY: 'auto', overscrollBehavior: 'contain', outline: 'none', boxShadow: 'none' }}
               />
 
               {/* 底部工具行 */}
@@ -2354,22 +2369,6 @@ export function MdToPptAgentPage() {
                         </div>
                       )}
 
-                      {diagLines.length > 0 && streamPreview.length === 0 && (
-                        <div className="w-72 rounded-md bg-white/3 border border-white/6 overflow-hidden">
-                          <div className="px-3 py-1 text-[9px] text-[var(--text-tertiary)] font-semibold border-b border-white/5">
-                            Agent 环境准备
-                          </div>
-                          <div style={{ maxHeight: '100px', overflowY: 'auto', overscrollBehavior: 'contain' }}>
-                            {diagLines.slice(-10).map((d, i) => (
-                              <div key={i} className="px-3 py-0.5 text-[9px] font-mono text-[var(--text-tertiary)]">
-                                [{d.stage}]{' '}
-                                {d.message ? String(d.message) : d.warning ? String(d.warning) : ''}
-                                {typeof d.elapsedMs === 'number' ? ` ${Math.round(d.elapsedMs / 100) / 10}s` : ''}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
                     </div>
                   )}
                 </div>
