@@ -130,14 +130,14 @@ export function maskSecretValues(text: string, secrets: string[]): string {
   return out;
 }
 
-interface DockerExecResult {
+export interface DockerExecResult {
   stdout: string;
   stderr: string;
   code: number;
   truncated: boolean;
 }
 
-function runDockerExec(argv: string[], stdin: string, timeoutMs = 30_000, maxBytes = 256 * 1024): Promise<DockerExecResult> {
+export function runDockerExec(argv: string[], stdin: string, timeoutMs = 30_000, maxBytes = 256 * 1024): Promise<DockerExecResult> {
   return new Promise((resolve) => {
     const proc = spawn('docker', argv, { stdio: ['pipe', 'pipe', 'pipe'] });
     let out = '';

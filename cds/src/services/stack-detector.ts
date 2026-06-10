@@ -73,6 +73,28 @@ export type DetectedFramework =
   | 'flask'
   | 'rails';
 
+export type DetectedDatabaseInitKind =
+  | 'prisma'
+  | 'drizzle'
+  | 'typeorm'
+  | 'sequelize'
+  | 'django'
+  | 'alembic'
+  | 'rails'
+  | 'sql';
+
+export interface DatabaseInitRecommendation {
+  kind: DetectedDatabaseInitKind;
+  label: string;
+  command?: string;
+  files: string[];
+  signals: string[];
+  confidence: number;
+  summary: string;
+  /** Phase 1 only recommends. Phase 2 can execute this after DB ready. */
+  autoExecutable: boolean;
+}
+
 export interface StackDetection {
   stack: DetectedStack;
   confidence: number; // 0..1 (1 = high confidence match)
@@ -112,6 +134,12 @@ export interface StackDetection {
    * (e.g. Next.js) that need a build step distinct from install.
    */
   suggestedBuildCommand?: string;
+  /**
+   * Phase 1 database initialization recommendation. This is deliberately
+   * advisory: deploy execution is added by a later phase after DB readiness.
+   */
+  databaseInit?: DatabaseInitRecommendation;
+  databaseInitCandidates?: DatabaseInitRecommendation[];
 }
 
 /** Return an "unknown" detection that callers can treat as fallback. */
@@ -141,6 +169,229 @@ function readText(p: string): string | null {
   } catch {
     return null;
   }
+}
+
+function rel(searchPath: string, filePath: string): string {
+  return path.relative(searchPath, filePath).split(path.sep).join('/');
+}
+
+function firstExisting(searchPath: string, candidates: string[]): string | null {
+  for (const candidate of candidates) {
+    const abs = path.join(searchPath, candidate);
+    if (fs.existsSync(abs)) return candidate;
+  }
+  return null;
+}
+
+function listRootSqlFiles(searchPath: string): string[] {
+  const preferred = ['schema.sql', 'init.sql'];
+  const out: string[] = [];
+  for (const name of preferred) {
+    if (fs.existsSync(path.join(searchPath, name))) out.push(name);
+  }
+  try {
+    const entries = fs.readdirSync(searchPath, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      if (!/\.sql$/i.test(entry.name)) continue;
+      if (out.includes(entry.name)) continue;
+      out.push(entry.name);
+    }
+  } catch {
+    // ignore unreadable dirs; caller will simply have no SQL fallback.
+  }
+  return out.slice(0, 8);
+}
+
+function detectTypeormConfig(searchPath: string): string | null {
+  return firstExisting(searchPath, [
+    'ormconfig.json',
+    'ormconfig.js',
+    'ormconfig.ts',
+    'ormconfig.cjs',
+    'ormconfig.mjs',
+    'data-source.ts',
+    'data-source.js',
+    'src/data-source.ts',
+    'src/data-source.js',
+  ]);
+}
+
+function detectSequelizeConfig(searchPath: string): string | null {
+  return firstExisting(searchPath, [
+    '.sequelizerc',
+    'config/config.json',
+    'config/config.js',
+    'config/database.js',
+    'sequelize.config.js',
+    'sequelize.config.cjs',
+  ]);
+}
+
+function nodeMigrationCommand(searchPath: string, tool: 'prisma' | 'drizzle-kit' | 'typeorm' | 'sequelize-cli', args: string): string {
+  const pkg = readJson(path.join(searchPath, 'package.json')) || {};
+  const pm = detectNodePackageManager(searchPath, pkg);
+  if (tool === 'prisma') {
+    if (pm === 'pnpm') return `pnpm exec prisma ${args}`;
+    if (pm === 'yarn') return `yarn prisma ${args}`;
+    return `npx prisma ${args}`;
+  }
+  if (tool === 'drizzle-kit') {
+    if (pm === 'pnpm') return `pnpm exec drizzle-kit ${args}`;
+    if (pm === 'yarn') return `yarn drizzle-kit ${args}`;
+    return `npx drizzle-kit ${args}`;
+  }
+  if (tool === 'typeorm') {
+    if (pm === 'pnpm') return `pnpm exec typeorm ${args}`;
+    if (pm === 'yarn') return `yarn typeorm ${args}`;
+    return `npx typeorm ${args}`;
+  }
+  if (pm === 'pnpm') return `pnpm exec sequelize-cli ${args}`;
+  if (pm === 'yarn') return `yarn sequelize-cli ${args}`;
+  return `npx sequelize-cli ${args}`;
+}
+
+function recommendation(params: {
+  kind: DetectedDatabaseInitKind;
+  label: string;
+  command?: string;
+  files: string[];
+  signals: string[];
+  confidence: number;
+  summary: string;
+  autoExecutable?: boolean;
+}): DatabaseInitRecommendation {
+  return {
+    kind: params.kind,
+    label: params.label,
+    command: params.command,
+    files: params.files,
+    signals: params.signals,
+    confidence: params.confidence,
+    summary: params.summary,
+    autoExecutable: params.autoExecutable ?? Boolean(params.command),
+  };
+}
+
+export function detectDatabaseInitialization(searchPath: string): DatabaseInitRecommendation[] {
+  if (!fs.existsSync(searchPath)) return [];
+  const out: DatabaseInitRecommendation[] = [];
+
+  const prismaSchema = firstExisting(searchPath, ['prisma/schema.prisma']);
+  if (prismaSchema) {
+    const command = nodeMigrationCommand(searchPath, 'prisma', 'migrate deploy');
+    out.push(recommendation({
+      kind: 'prisma',
+      label: 'Prisma',
+      command,
+      files: [prismaSchema],
+      signals: ['prisma/schema.prisma'],
+      confidence: 0.98,
+      summary: `检测到 Prisma，部署后建议执行 ${command}`,
+    }));
+  }
+
+  const drizzleConfig = firstExisting(searchPath, [
+    'drizzle.config.ts',
+    'drizzle.config.js',
+    'drizzle.config.mjs',
+    'drizzle.config.cjs',
+  ]);
+  if (drizzleConfig) {
+    const command = nodeMigrationCommand(searchPath, 'drizzle-kit', 'migrate');
+    out.push(recommendation({
+      kind: 'drizzle',
+      label: 'Drizzle',
+      command,
+      files: [drizzleConfig],
+      signals: ['drizzle.config.*'],
+      confidence: 0.94,
+      summary: `检测到 Drizzle，部署后建议执行 ${command}`,
+    }));
+  }
+
+  const typeormConfig = detectTypeormConfig(searchPath);
+  if (typeormConfig) {
+    const command = nodeMigrationCommand(searchPath, 'typeorm', 'migration:run');
+    out.push(recommendation({
+      kind: 'typeorm',
+      label: 'TypeORM',
+      command,
+      files: [typeormConfig],
+      signals: ['typeorm config'],
+      confidence: 0.82,
+      summary: `检测到 TypeORM 配置，部署后建议执行 ${command}`,
+    }));
+  }
+
+  const sequelizeConfig = detectSequelizeConfig(searchPath);
+  if (sequelizeConfig) {
+    const command = nodeMigrationCommand(searchPath, 'sequelize-cli', 'db:migrate');
+    out.push(recommendation({
+      kind: 'sequelize',
+      label: 'Sequelize',
+      command,
+      files: [sequelizeConfig],
+      signals: ['sequelize config'],
+      confidence: 0.82,
+      summary: `检测到 Sequelize 配置，部署后建议执行 ${command}`,
+    }));
+  }
+
+  const managePy = firstExisting(searchPath, ['manage.py']);
+  if (managePy) {
+    out.push(recommendation({
+      kind: 'django',
+      label: 'Django migrate',
+      command: 'python manage.py migrate',
+      files: [managePy],
+      signals: ['manage.py'],
+      confidence: 0.96,
+      summary: '检测到 Django，部署后建议执行 python manage.py migrate',
+    }));
+  }
+
+  const alembicIni = firstExisting(searchPath, ['alembic.ini']);
+  if (alembicIni) {
+    out.push(recommendation({
+      kind: 'alembic',
+      label: 'Alembic',
+      command: 'alembic upgrade head',
+      files: [alembicIni],
+      signals: ['alembic.ini'],
+      confidence: 0.93,
+      summary: '检测到 Alembic，部署后建议执行 alembic upgrade head',
+    }));
+  }
+
+  const railsMigrations = path.join(searchPath, 'db', 'migrate');
+  if (fs.existsSync(railsMigrations)) {
+    out.push(recommendation({
+      kind: 'rails',
+      label: 'Rails migrate',
+      command: 'bundle exec rails db:migrate',
+      files: [rel(searchPath, railsMigrations)],
+      signals: ['db/migrate'],
+      confidence: 0.92,
+      summary: '检测到 Rails migrations，部署后建议执行 bundle exec rails db:migrate',
+    }));
+  }
+
+  const sqlFiles = listRootSqlFiles(searchPath);
+  if (sqlFiles.length > 0) {
+    const primary = sqlFiles.includes('schema.sql') ? 'schema.sql' : sqlFiles.includes('init.sql') ? 'init.sql' : sqlFiles[0];
+    out.push(recommendation({
+      kind: 'sql',
+      label: 'SQL 初始化脚本',
+      files: sqlFiles,
+      signals: ['*.sql'],
+      confidence: primary === 'schema.sql' || primary === 'init.sql' ? 0.78 : 0.62,
+      summary: `检测到 ${primary}，可用于初始化数据库`,
+      autoExecutable: primary === 'schema.sql' || primary === 'init.sql',
+    }));
+  }
+
+  return out.sort((a, b) => b.confidence - a.confidence);
 }
 
 type NodePackageManager = 'pnpm' | 'yarn' | 'npm';
@@ -694,6 +945,17 @@ function applyFramework(
   };
 }
 
+function withDatabaseInitialization(result: StackDetection, searchPath: string): StackDetection {
+  const candidates = detectDatabaseInitialization(searchPath);
+  if (candidates.length === 0) return result;
+  return {
+    ...result,
+    databaseInit: candidates[0],
+    databaseInitCandidates: candidates,
+    signals: Array.from(new Set([...result.signals, ...candidates.flatMap((item) => item.signals)])),
+  };
+}
+
 /**
  * Run every detector in priority order and return the first match.
  * Falls back to an "unknown" marker if nothing matches so the
@@ -728,10 +990,10 @@ export function detectStack(searchPath: string): StackDetection {
       // The framework layer is a best-effort refinement — if nothing
       // matches we return the base detection unchanged.
       const fw = detectFramework(result.stack, searchPath);
-      return fw ? applyFramework(result, fw) : result;
+      return withDatabaseInitialization(fw ? applyFramework(result, fw) : result, searchPath);
     }
   }
-  return unknownDetection(searchPath);
+  return withDatabaseInitialization(unknownDetection(searchPath), searchPath);
 }
 
 /**
