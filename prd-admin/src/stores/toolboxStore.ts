@@ -261,7 +261,9 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
     tags: ['PPT', 'Markdown', '演示', '网页', 'reveal.js'],
     usageCount: 0,
     createdAt: new Date().toISOString(),
-    wip: true,
+    // wip 已摘除（2026-06-10）：预览环境真人路径验收通过——登录→发需求→大纲→
+    // CDS Agent 生成 8 页 deck→Reveal 渲染→翻页交互，全链路 8/11 步 pass，
+    // 失败 3 步为驱动脚本选择器问题与推理模型思考期实况空窗（同日已修）
   },
   {
     id: 'builtin-task-tree',

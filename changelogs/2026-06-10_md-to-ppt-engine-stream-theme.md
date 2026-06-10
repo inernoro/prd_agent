@@ -8,3 +8,6 @@
 | feat | prd-admin | 生成等待主视觉升级为实况渲染（对标 Gamma）：每页 HTML 流式闭合后立即在 iframe 真实渲染成幻灯页，默认跟随最新完成页，底部页卡可点击回看；首页出现前用骨架幻灯过渡 |
 | feat | prd-api | 新增 /api/md-to-ppt/prewarm：大纲确认期间预创建并启动 CDS Agent 会话，convert 自动复用，把 5-15s 环境启动开销藏进用户阅读大纲的时间 |
 | feat | prd-admin | 大纲生成成功后静默预热 Agent 会话（fire-and-forget，失败不打扰用户） |
+| feat | prd-api | MD 转 PPT 透传推理模型 thinking 事件到 SSE（deepseek-v3.2 实测思考占总耗时 90%，思考期必须有内容可看） |
+| feat | prd-admin | 等待面板新增 AI 思考过程实时流（思考期主视觉），状态行显示已思考字数 |
+| feat | prd-admin | 百宝箱「MD 转网页 PPT」摘除 wip 标记（预览环境真人路径验收通过：8 页 deck 生成/渲染/翻页全链路跑通） |

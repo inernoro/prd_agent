@@ -19,6 +19,7 @@ namespace PrdAgent.Api.Controllers.Api;
 ///   event: start  — 会话开始
 ///   event: model  — data: {"model":"...","platform":"..."}  模型信息
 ///   event: diag   — data: {...}  诊断事件
+///   event: thinking — data: {"text":"..."}  推理模型思考过程增量
 ///   event: delta  — data: {"text":"..."}  增量 HTML 片段
 ///   event: done   — data: {"html":"..."}  完整 HTML
 ///   event: error  — data: {"message":"..."}
@@ -765,6 +766,18 @@ public class MdToPptController : ControllerBase
                                         fullText.Append(fragment);
                                         await WriteEventAsync("delta", new { text = fragment });
                                     }
+                                }
+                                break;
+
+                            case InfraAgentEventTypes.Thinking:
+                                // 推理模型（deepseek-v3.2 等）先想后写：思考可长达数分钟，正文集中尾部爆发。
+                                // 必须把思考过程透传给前端展示（CLAUDE §6），否则等待期实况预览无内容可渲染，
+                                // 用户面对骨架空等（2026-06-10 预览环境验收实测 331s 中前 300s 全在思考）。
+                                if (root.TryGetProperty("text", out var thinkProp))
+                                {
+                                    var thinkFrag = thinkProp.GetString() ?? "";
+                                    if (!string.IsNullOrEmpty(thinkFrag))
+                                        await WriteEventAsync("thinking", new { text = thinkFrag });
                                 }
                                 break;
 

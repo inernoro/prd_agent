@@ -116,6 +116,7 @@ async function readSseStream(
     onRun?: (runId: string) => void;
     onModel?: (info: { model: string; platform: string }) => void;
     onDiag?: (data: MdToPptDiagEvent) => void;
+    onThinking?: (text: string) => void;
     onDelta?: (text: string) => void;
     onDone?: (data: Record<string, unknown>) => void;
     onError?: (message: string) => void;
@@ -159,6 +160,8 @@ async function readSseStream(
             });
           } else if (currentEvent === 'diag') {
             handlers.onDiag?.(data as MdToPptDiagEvent);
+          } else if (currentEvent === 'thinking') {
+            handlers.onThinking?.((data.text as string) ?? '');
           } else if (currentEvent === 'delta') {
             handlers.onDelta?.((data.text as string) ?? '');
           } else if (currentEvent === 'done') {
@@ -188,6 +191,8 @@ export interface MdToPptConvertSseOptions {
   onRun?: (runId: string) => void;
   onModel?: (info: { model: string; platform: string }) => void;
   onDiag?: (data: MdToPptDiagEvent) => void;
+  /** 推理模型思考过程增量（先想后写的模型，等待期展示思考内容） */
+  onThinking?: (text: string) => void;
   onDelta?: (text: string) => void;
   onDone?: (result: { html: string }) => void;
   onError?: (message: string) => void;
@@ -229,6 +234,7 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
         onRun: options.onRun,
         onModel: options.onModel,
         onDiag: options.onDiag,
+        onThinking: options.onThinking,
         onDelta: options.onDelta,
         onDone: (data) => {
           resolved = true;
@@ -268,6 +274,8 @@ export interface MdToPptPatchSseOptions {
   onRun?: (runId: string) => void;
   onModel?: (info: { model: string; platform: string }) => void;
   onDiag?: (data: MdToPptDiagEvent) => void;
+  /** 推理模型思考过程增量 */
+  onThinking?: (text: string) => void;
   onDelta?: (text: string) => void;
   onDone?: (result: { html: string }) => void;
   onError?: (message: string) => void;
@@ -305,6 +313,7 @@ export function streamMdToPptPatch(options: MdToPptPatchSseOptions): () => void 
         onRun: options.onRun,
         onModel: options.onModel,
         onDiag: options.onDiag,
+        onThinking: options.onThinking,
         onDelta: options.onDelta,
         onDone: (data) => {
           resolved = true;

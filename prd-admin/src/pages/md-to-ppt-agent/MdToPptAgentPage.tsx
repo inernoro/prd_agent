@@ -721,13 +721,25 @@ export function MdToPptAgentPage() {
     [liveSections, liveHeadAssets, liveIdx]
   );
 
+  // ─── 思考过程流（推理模型先想后写：deepseek-v3.2 实测思考可占总耗时 90%，
+  //     正文集中尾部爆发。思考期间产物无片段可渲染，就渲染思考本身——它就是此刻的产物）
+  const [thinkingPreview, setThinkingPreview] = useState('');
+  const thinkingBufRef = useRef('');
+  const thinkingFlushTimerRef = useRef<number | null>(null);
+
   const resetStreamPreview = useCallback(() => {
     streamBufRef.current = '';
+    thinkingBufRef.current = '';
     if (streamFlushTimerRef.current != null) {
       window.clearTimeout(streamFlushTimerRef.current);
       streamFlushTimerRef.current = null;
     }
+    if (thinkingFlushTimerRef.current != null) {
+      window.clearTimeout(thinkingFlushTimerRef.current);
+      thinkingFlushTimerRef.current = null;
+    }
     setStreamPreview('');
+    setThinkingPreview('');
     setLiveSlideSel(null);
   }, []);
 
@@ -738,6 +750,17 @@ export function MdToPptAgentPage() {
       streamFlushTimerRef.current = window.setTimeout(() => {
         streamFlushTimerRef.current = null;
         setStreamPreview(streamBufRef.current);
+      }, 150);
+    }
+  }, []);
+
+  const handleThinkingDelta = useCallback((text: string) => {
+    if (!text) return;
+    thinkingBufRef.current += text;
+    if (thinkingFlushTimerRef.current == null) {
+      thinkingFlushTimerRef.current = window.setTimeout(() => {
+        thinkingFlushTimerRef.current = null;
+        setThinkingPreview(thinkingBufRef.current);
       }, 150);
     }
   }, []);
@@ -1122,6 +1145,7 @@ export function MdToPptAgentPage() {
         },
         onModel: (info) => setModelInfo(info),
         onDiag: (d) => setDiagLines((prev) => [...prev, d]),
+        onThinking: handleThinkingDelta,
         onDelta: handleStreamDelta,
         onDone: (result) => {
           const html = result.html;
@@ -1167,7 +1191,7 @@ export function MdToPptAgentPage() {
 
       cleanupRef.current = cleanup;
     },
-    [isProcessing, messages, pushMsg, theme, resetStreamPreview, handleStreamDelta]
+    [isProcessing, messages, pushMsg, theme, resetStreamPreview, handleStreamDelta, handleThinkingDelta]
   );
 
   // ─── Patch flow（对话式精修）。baseHtml 允许携带编辑模式未提交的最新稿；
@@ -1198,6 +1222,7 @@ export function MdToPptAgentPage() {
         },
         onModel: (info) => setModelInfo(info),
         onDiag: (d) => setDiagLines((prev) => [...prev, d]),
+        onThinking: handleThinkingDelta,
         onDelta: handleStreamDelta,
         onDone: (result) => {
           const html = result.html;
@@ -1239,7 +1264,7 @@ export function MdToPptAgentPage() {
 
       cleanupRef.current = cleanup;
     },
-    [generatedHtml, isProcessing, pushMsg, theme, slidePos, resetStreamPreview, handleStreamDelta]
+    [generatedHtml, isProcessing, pushMsg, theme, slidePos, resetStreamPreview, handleStreamDelta, handleThinkingDelta]
   );
 
   // ─── 换风格 = AI 参照新风格整体重绘（2026-06-10 用户纠偏：风格是 AI 的设计参照，
@@ -1783,9 +1808,11 @@ export function MdToPptAgentPage() {
               diagLines.some((d) => d.stage === 'send' || d.stage === 'first_event' || d.stage === 'first_text_delta');
             const stageText =
               streamPreview.length === 0
-                ? agentPrepared
-                  ? '模型已就绪，正在构思整体设计与版式...'
-                  : '正在连接 CDS Agent 环境...'
+                ? thinkingPreview.length > 0
+                  ? '模型深度思考中（推理模型先想后写，思考过程见下方）...'
+                  : agentPrepared
+                    ? '模型已就绪，正在构思整体设计与版式...'
+                    : '正在连接 CDS Agent 环境...'
                 : doneCount > 0 || building
                   ? building
                     ? `正在绘制第 ${doneCount + 1} 页${expectedPages ? `（共约 ${expectedPages} 页）` : ''}...`
@@ -1803,7 +1830,11 @@ export function MdToPptAgentPage() {
                     <p className="text-sm text-[var(--text-secondary)] truncate">{stageText}</p>
                     <p className="text-[11px] text-[var(--text-tertiary)] mt-0.5 tabular-nums">
                       已等待 {elapsedSec}s
-                      {streamPreview.length > 0 && ` · 已接收 ${streamPreview.length.toLocaleString()} 字符`}
+                      {streamPreview.length > 0
+                        ? ` · 已接收 ${streamPreview.length.toLocaleString()} 字符`
+                        : thinkingPreview.length > 0
+                          ? ` · 已思考 ${thinkingPreview.length.toLocaleString()} 字`
+                          : ''}
                       {modelInfo && <span className="font-mono"> · {modelInfo.model}</span>}
                     </p>
                   </div>
@@ -1866,6 +1897,25 @@ export function MdToPptAgentPage() {
                           <div className="h-14 rounded-lg bg-white/6" />
                         </div>
                       </div>
+
+                      {thinkingPreview.length > 0 && (
+                        <div
+                          data-testid="thinking-preview"
+                          className="w-full rounded-lg bg-purple-500/6 border border-purple-500/20 overflow-hidden"
+                          style={{ maxWidth: 460 }}
+                        >
+                          <div className="px-3 py-1.5 text-[9px] text-purple-300/90 font-semibold border-b border-purple-500/15 flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
+                            AI 思考过程（推理模型先想后写）
+                          </div>
+                          <div
+                            className="px-3 py-2 text-[10px] leading-relaxed text-[var(--text-tertiary)]"
+                            style={{ maxHeight: 120, overflow: 'hidden', wordBreak: 'break-word' }}
+                          >
+                            <StreamingText text={thinkingPreview} streaming maxTailChars={420} className="whitespace-pre-wrap" />
+                          </div>
+                        </div>
+                      )}
 
                       {streamPreview.length > 0 && (
                         <div
