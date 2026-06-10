@@ -147,11 +147,7 @@ export function ShituAgentPage() {
         ) : null}
       </div>
 
-      <ShituHelpDrawer
-        open={helpOpen}
-        onClose={() => setHelpOpen(false)}
-        authorName={meta?.authorName}
-      />
+      <ShituHelpDrawer open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>
   );
 }

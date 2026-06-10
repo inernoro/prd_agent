@@ -5,10 +5,9 @@ import { X } from 'lucide-react';
 interface Props {
   open: boolean;
   onClose: () => void;
-  authorName?: string;
 }
 
-export function ShituHelpDrawer({ open, onClose, authorName }: Props) {
+export function ShituHelpDrawer({ open, onClose }: Props) {
   useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => {
@@ -34,10 +33,7 @@ export function ShituHelpDrawer({ open, onClose, authorName }: Props) {
         <header className="shrink-0 px-5 py-4 border-b border-white/10 flex items-center justify-between gap-3">
           <div>
             <h2 className="text-base font-semibold text-white">识途使用帮助</h2>
-            <p className="mt-1 text-xs text-white/45">
-              新人文化与制度问答 — 严格基于知识库回答，不杜撰。
-              {authorName ? ` · 作者：${authorName}` : ''}
-            </p>
+            <p className="mt-1 text-xs text-white/45">新人文化与制度问答 — 严格基于知识库回答，不杜撰。</p>
           </div>
           <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/10 text-white/55">
             <X className="w-4 h-4" />
