@@ -19,6 +19,7 @@ import { FormFieldsRenderer, RichTextField, useEffectiveTemplate, useEffectiveWo
 import { WorkflowBar } from './WorkflowBar';
 import { ActivityTimeline } from './ActivityTimeline';
 import { slaInfo } from './sla';
+import './product-cards.css';
 import {
   listRequirements,
   createRequirement,
@@ -989,7 +990,7 @@ function DefectList({ defects, onClick, empty }: { defects: TracedDefect[]; onCl
         <button
           key={d.id}
           onClick={() => onClick(d.id)}
-          className="text-left flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg border border-white/10 bg-white/[0.02] hover:bg-white/[0.05]"
+          className="pa-row text-left flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg border border-white/10 bg-white/[0.02]"
         >
           <span className="text-sm text-white/80 truncate">
             <span className="text-[10px] text-white/40 mr-1.5 font-mono">{d.defectNo}</span>

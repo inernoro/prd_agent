@@ -23,6 +23,7 @@ import { ProductTeamTab } from './ProductTeamSection';
 import { ReportsTab } from './ReportsTab';
 import { BatchBar } from './BatchBar';
 import { UpgradeRequestsTab } from './UpgradeRequestsTab';
+import './product-cards.css';
 import {
   getProduct,
   deleteProduct,
@@ -864,7 +865,7 @@ function Row({
   actionLabel?: string;
 }) {
   return (
-    <div className="group flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-white/10 bg-white/[0.02] hover:bg-white/[0.04]">
+    <div className="pa-row group flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-white/10 bg-white/[0.02]">
       <button
         onClick={onClick}
         disabled={!onClick}
@@ -950,7 +951,7 @@ function StateBoard({
                 draggable
                 onDragStart={() => setDragId(r.id)}
                 onClick={() => onCardClick(r)}
-                className="cursor-grab active:cursor-grabbing rounded-md border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] px-2 py-1.5"
+                className="pa-row cursor-grab active:cursor-grabbing rounded-md border border-white/10 bg-white/[0.03] px-2 py-1.5"
               >
                 <div className="flex items-center gap-1.5">
                   <span className="text-[10px] px-1 py-0.5 rounded bg-white/10 text-white/60">{ITEM_GRADE_LABEL[r.grade]}</span>
@@ -992,7 +993,7 @@ function GradeBoard({
               <button
                 key={r.id}
                 onClick={() => onCardClick(r)}
-                className="text-left rounded-md border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] px-2 py-1.5 transition-colors"
+                className="pa-row text-left rounded-md border border-white/10 bg-white/[0.03] px-2 py-1.5"
               >
                 <div className="text-xs text-white/85 truncate">{r.title}</div>
                 <div className="text-[10px] text-white/40 mt-0.5 truncate">{renderSub(r)}</div>
