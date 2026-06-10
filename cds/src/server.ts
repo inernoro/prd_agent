@@ -702,6 +702,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/branches\/(.+)\/pull$/, '拉取分支代码'],
     [/^POST \/branches\/(.+)\/deploy\/(.+)$/, '部署单服务'],
     [/^POST \/branches\/(.+)\/deploy$/, '全量部署'],
+    [/^POST \/branches\/(.+)\/database-init\/run$/, '执行数据库初始化命令'],
     [/^POST \/branches\/(.+)\/stop$/, '停止分支服务'],
     [/^POST \/branches\/(.+)\/restart$/, '重新启动分支'],
     [/^GET \/branches\/(.+)\/activity-logs$/, '查看分支系统日志'],

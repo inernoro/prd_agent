@@ -1713,11 +1713,11 @@ export function BranchListPage(): JSX.Element {
     window.dispatchEvent(new CustomEvent('cds:notice:upsert', {
       detail: {
         id: `branch:${projectId}:schema-init`,
-        title: '数据库初始化(schema.sql)',
-        body: '检测到 mysql / postgres 类基础设施。需要初始化数据库时，进入环境变量配置向导上传 schema.sql，容器首次启动会自动执行。',
+        title: '数据库初始化建议',
+        body: '检测到 mysql / postgres 类基础设施。CDS 会先扫描 Prisma、Django、Alembic、schema.sql 等初始化信号并给出推荐方式；手动导入 SQL 仅作为兜底。',
         tone: 'info',
         href: projectEnvSettingsHref(projectId),
-        actionLabel: '上传初始化 SQL',
+        actionLabel: '查看推荐方式',
         source: 'schema',
         projectId,
         projectName: displayName(state.project),
