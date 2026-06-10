@@ -84,3 +84,10 @@ MAP 直出删除后，新 run 一律 engine="agent"；`md_to_ppt_runs` 历史记
 `content_block_delta`（text_delta/thinking_delta）+ 完整消息块去重防正文双倍，
 单测 5 例守护。**注意**：本分支 compose 不含 sidecar 服务，CDS managed runtime 用的
 sidecar 实例另行部署——合并 main + sidecar 实例重启后真流式才在线上生效。
+
+## 9. 历史列表含乱码时代的坏产物 run（P3，自然老化）
+
+2026-06-10 去重修复（CdsSeq 水位线）之前生成/精修的 run，落库 html 本身是字符缺失的
+坏产物；历史载入它们会黑屏 + 页码 "- / -"。功能本身正常（载入/提示/继续精修链路通过
+三轮验收）。这些旧 run 随 20 条列表上限自然滚出；如需主动清理，删除 md_to_ppt_runs
+中 2026-06-10 17:00 UTC 前 op=patch 的记录即可。
