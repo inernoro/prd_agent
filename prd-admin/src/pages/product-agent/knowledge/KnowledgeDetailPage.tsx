@@ -24,7 +24,7 @@ import type { DocumentEntry, DocumentStore } from '@/services/contracts/document
 import { listVersions } from '@/services/real/productAgent';
 import type { ProductVersion } from '../types';
 import type { LucideIcon } from 'lucide-react';
-import { fileKindOf, fmtSize, fmtTime, isEditableText, isHtml } from './shared';
+import { fileKindOf, fmtSize, fmtTime, isEditableText, isHtml, isFullHtmlDocument } from './shared';
 import { VersionLinkDialog } from './VersionLinkDialog';
 import { RichKnowledgeEditor, FileKindBadge } from './RichKnowledgeEditor';
 
@@ -220,7 +220,7 @@ export function KnowledgeDetailPage() {
               <RichKnowledgeEditor value={draft} onChange={setDraft} />
             </div>
           ) : (
-            <div className="mx-auto py-8 px-6" style={{ maxWidth: 880 }}>
+            <div className="mx-auto py-8 px-6" style={{ maxWidth: html && !codeMode && isFullHtmlDocument(content) ? 1400 : 880 }}>
               {/* 标题 + 元信息 */}
               <div className="mb-6 pb-5 border-b border-white/8">
                 <h1
@@ -304,9 +304,24 @@ function DocBody({ entry, content, fileUrl, html, codeMode, editable, onStartEdi
   const hasText = content != null && content.trim() !== '';
 
   if (hasText && html) {
-    return codeMode
-      ? <pre className="rounded-xl border border-white/10 bg-white/[0.02] p-4 text-[12.5px] leading-relaxed text-white/80 overflow-x-auto whitespace-pre-wrap break-words" style={{ fontFamily: 'monospace' }}>{content}</pre>
-      : <div className="markdown-reading text-[14.5px]" style={{ lineHeight: 1.85 }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(content!) }} />;
+    if (codeMode) {
+      return <pre className="rounded-xl border border-white/10 bg-white/[0.02] p-4 text-[12.5px] leading-relaxed text-white/80 overflow-x-auto whitespace-pre-wrap break-words" style={{ fontFamily: 'monospace' }}>{content}</pre>;
+    }
+    // 完整 HTML 文档（含 doctype/html/head/style）→ 沙箱 iframe 按真实网页渲染，保留自带样式与布局。
+    // sandbox 不带 allow-same-origin：脚本跑在不透明源，拿不到父页 token/DOM，安全隔离。
+    if (isFullHtmlDocument(content)) {
+      return (
+        <iframe
+          srcDoc={content!}
+          title={entry.title}
+          sandbox="allow-scripts allow-popups"
+          className="w-full rounded-xl border border-white/10"
+          style={{ height: '78vh', background: '#fff' }}
+        />
+      );
+    }
+    // 富文本片段 → 内联渲染，融入当前主题
+    return <div className="markdown-reading text-[14.5px]" style={{ lineHeight: 1.85 }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(content!) }} />;
   }
   if (hasText) {
     return <MarkdownContent content={content!} variant="reading" />;

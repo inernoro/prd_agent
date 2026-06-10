@@ -8,3 +8,4 @@
 | chore | prd-admin | 清理死代码：VersionRelationModal / KnowledgeStoreModal / ProductKnowledgePanel 下线 |
 | feat | prd-admin | 知识详情页重写：左侧文件夹目录快速切换、HTML 直接预览+代码模式切换、富文本编辑器（图片上传/粘贴/拖拽 + 附件上传），新建文档默认富文本 |
 | feat | prd-api | DocumentStore 内容更新端点支持可选 contentType（富文本编辑后置为 text/html） |
+| fix | prd-admin | 知识详情 HTML 预览改为沙箱 iframe 真实网页渲染（保留自带样式/布局/脚本视觉，预览容器放宽至 1400px），富文本片段仍走主题内联渲染 |

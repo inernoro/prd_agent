@@ -32,6 +32,11 @@ export function isHtml(contentType: string | undefined): boolean {
   return (contentType ?? '').toLowerCase().includes('html');
 }
 
+/** 是否「完整 HTML 网页」（含 doctype/html/head/style）——详情页用沙箱 iframe 按真实网页渲染 */
+export function isFullHtmlDocument(content: string | null | undefined): boolean {
+  return !!content && /<!doctype html|<html[\s>]|<head[\s>]|<style[\s>]/i.test(content);
+}
+
 /** 是否可在线富文本编辑（markdown / 纯文本 / html 走内置编辑器） */
 export function isEditableText(contentType: string | undefined): boolean {
   const ct = (contentType ?? '').toLowerCase();
