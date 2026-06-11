@@ -511,7 +511,12 @@ export function TechDocFormatAgentPage() {
                     className="hidden"
                     onChange={handleRequirementFiles}
                   />
-                  <Button variant="secondary" size="sm" onClick={() => requirementFileInputRef.current?.click()}>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="shrink-0 whitespace-nowrap"
+                    onClick={() => requirementFileInputRef.current?.click()}
+                  >
                     <Upload size={14} />
                     上传
                   </Button>
@@ -554,7 +559,13 @@ export function TechDocFormatAgentPage() {
                       连接账号后选择仓库和目录，生成时会带入项目路径与目录摘要。
                     </p>
                   </div>
-                  <Button variant="secondary" size="sm" onClick={loadGitHubAuthStatus} disabled={githubAuthLoading}>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="shrink-0 whitespace-nowrap"
+                    onClick={loadGitHubAuthStatus}
+                    disabled={githubAuthLoading}
+                  >
                     {githubAuthLoading ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
                     刷新
                   </Button>
