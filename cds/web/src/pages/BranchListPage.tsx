@@ -4384,6 +4384,16 @@ function BranchCard({
   const timeBadge = branchTimeBadge(branch, now, busySince);
   const origin = branchOriginBadge(branch);
   const runtime = branchRuntimeBadge(branch);
+  const runtimeIconClass = runtime?.kind === 'pending'
+    ? 'text-amber-500'
+    : runtime?.kind === 'mixed'
+      ? 'text-violet-500'
+      : runtime?.kind === 'release'
+        ? 'text-emerald-500'
+        : 'text-sky-500';
+  const runtimeIconTitle = runtime
+    ? `${runtime.label}: ${runtime.title}\n来源: ${origin.label} — ${origin.title}`
+    : `源码版: 源码 / 热加载\n来源: ${origin.label} — ${origin.title}`;
   const role = branchVisualRole(branch.branch);
   const roleCardClass = branchRoleCardClass(role);
   const issueLabel = isError ? branchIssueLabel(branch) : '';
@@ -4557,10 +4567,19 @@ function BranchCard({
           - 分支名给最大宽度,truncate(必要时 hover 显示完整) */}
       <header className="flex min-w-0 items-start justify-between gap-3 px-5 pt-5">
         <div className="flex min-w-0 flex-1 items-start gap-3">
-          <Github
-            className={`mt-1.5 h-4 w-4 shrink-0 text-sky-500 ${isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-0' : isInterim ? 'animate-pulse' : ''}`}
-            aria-hidden
-          />
+          <span className="mt-1.5 shrink-0" title={runtimeIconTitle}>
+            {runtime ? (
+              <Rocket
+                className={`h-4 w-4 ${runtimeIconClass} ${isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-0' : isInterim ? 'animate-pulse' : ''}`}
+                aria-label={runtime.label}
+              />
+            ) : (
+              <Github
+                className={`h-4 w-4 ${runtimeIconClass} ${isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-0' : isInterim ? 'animate-pulse' : ''}`}
+                aria-label="源码版"
+              />
+            )}
+          </span>
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-1.5">
               <h3
@@ -4596,27 +4615,6 @@ function BranchCard({
                   AI
                 </button>
               ) : null}
-              {/*
-                2026-05-14：标题行的徽章从「Webhook / 手动」改为分支当前的「运行模式」
-                （发布版 / 源码 / 混合）。用户更关心的是"这个分支跑的是热加载还是 publish"，
-                而不是"来源是 webhook 还是手动"。来源信息降级到 title attribute（hover 看到）。
-                发布相关运行模式带火箭图标；源码只保留普通文字，避免误导成发布态。
-              */}
-              {runtime ? (
-                <span
-                  className={`inline-flex h-5 w-6 shrink-0 items-center justify-center rounded border text-[10px] font-medium ${runtime.className}`}
-                  title={`${runtime.title}\n来源: ${origin.label} — ${origin.title}`}
-                >
-                  <Rocket className={isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-2 h-2.5 w-2.5' : 'h-2.5 w-2.5'} aria-hidden />
-                </span>
-              ) : (
-                <span
-                  className="inline-flex h-5 w-6 shrink-0 items-center justify-center rounded border border-[hsl(var(--hairline))] text-[10px] font-medium text-muted-foreground"
-                  title={`运行模式: 源码 / 热加载\n来源: ${origin.label} — ${origin.title}`}
-                >
-                  <Github className="h-2.5 w-2.5" aria-hidden />
-                </span>
-              )}
             </div>
           </div>
         </div>
