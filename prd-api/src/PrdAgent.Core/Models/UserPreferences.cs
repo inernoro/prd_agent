@@ -56,6 +56,11 @@ public class UserPreferences
     /// </summary>
     public ProductAgentPreferences? ProductAgentPreferences { get; set; }
 
+    /// <summary>
+    /// 项目管理智能体偏好设置（用户级，跨项目共用）
+    /// </summary>
+    public PmAgentPreferences? PmAgentPreferences { get; set; }
+
     /// <summary>更新时间</summary>
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
@@ -218,6 +223,19 @@ public class ProductAgentPreferences
     /// <summary>
     /// 工作台「快捷操作」展示的操作 id 有序列表（id 对应前端 quickActionRegistry，后端只存字符串不校验语义）。
     /// 为空时前端走默认（创建需求 / 创建缺陷）。
+    /// </summary>
+    public List<string>? QuickActionIds { get; set; }
+}
+
+/// <summary>
+/// 项目管理智能体偏好设置（用户级，跨项目共用）
+/// </summary>
+[BsonIgnoreExtraElements]
+public class PmAgentPreferences
+{
+    /// <summary>
+    /// 首页「便捷操作」展示的操作 id 有序列表（id 对应前端 pmQuickActionRegistry，后端只存字符串不校验语义）。
+    /// 为 null 时前端走默认（创建项目 / 创建目标 / 创建里程碑 / 创建任务）。
     /// </summary>
     public List<string>? QuickActionIds { get; set; }
 }

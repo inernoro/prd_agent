@@ -2062,6 +2062,9 @@ export {
   updatePmRiskReal as updatePmRisk,
   deletePmRiskReal as deletePmRisk,
   getPmBurndownReal as getPmBurndown,
+  getPmMyTodosReal as getPmMyTodos,
+  getPmAgentPreferencesReal as getPmAgentPreferences,
+  updatePmQuickActionsReal as updatePmQuickActions,
 } from '@/services/real/pmAgent';
 export type {
   PmProject,
@@ -2117,6 +2120,8 @@ export type {
   UpdatePmTaskInput,
   BatchCreatePmTasksInput,
   SetStakeholdersInput,
+  PmMyTodoItem,
+  PmAgentPrefs,
 } from '@/services/contracts/pmAgent';
 
 // ── CCAS Agent 赋码采集关联综合智能体 ──

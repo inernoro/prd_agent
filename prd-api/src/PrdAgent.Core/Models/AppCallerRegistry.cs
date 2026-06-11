@@ -1320,6 +1320,17 @@ public static class ProjectManagement
         )]
         public const string Chat = "pm-agent.milestone-suggest::chat";
     }
+
+    public static class Assistant
+    {
+        [AppCallerMetadata(
+            "项目管理-AI助手",
+            "首页工作台 AI 助手：以当前用户全部相关项目(目标/里程碑/任务/风险)为上下文，跨项目问答分析，并可通过对话创建项目/目标/里程碑/任务(SSE 流式)",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Analysis"
+        )]
+        public const string Chat = "pm-agent.assistant::chat";
+    }
 }
 
 /// <summary>

@@ -6,7 +6,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { FolderKanban, Plus, Trash2, TrendingUp, Lightbulb, ChevronUp, ChevronDown, ShieldCheck } from 'lucide-react';
+import { FolderKanban, Plus, Trash2, TrendingUp, Lightbulb, ChevronUp, ChevronDown, ShieldCheck, Home } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { AgentFullscreenLayout, type NavItem } from '@/components/agent-shell/AgentFullscreenLayout';
@@ -19,11 +19,14 @@ import { CreateProjectDialog } from './CreateProjectDialog';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import { DashboardView } from './DashboardView';
 import { AuditLogView } from './AuditLogView';
+import { PmAssistantPanel } from './PmAssistantPanel';
+import { PmTodosCard } from './PmTodosCard';
+import { PmQuickActionsCard } from './PmQuickActionsCard';
 import { PROJECT_TYPE_REGISTRY, LIFECYCLE_REGISTRY, GRADE_REGISTRY, PM_ACCENT } from './pmConstants';
 
-type WorkspaceNav = 'projects' | 'dashboard' | 'audit';
+type WorkspaceNav = 'home' | 'projects' | 'dashboard' | 'audit';
 
-const NAV_KEYS = new Set<WorkspaceNav>(['projects', 'dashboard', 'audit']);
+const NAV_KEYS = new Set<WorkspaceNav>(['home', 'projects', 'dashboard', 'audit']);
 
 export function PmAgentPage() {
   const navigate = useNavigate();
@@ -39,9 +42,9 @@ export function PmAgentPage() {
     return perms.includes('pm-agent.audit') || perms.includes('super');
   });
 
-  // 一级导航记录在 URL（?nav=），刷新/返回不丢位置
+  // 一级导航记录在 URL（?nav=），刷新/返回不丢位置；默认落在首页（AI 工作台）
   const navParam = searchParams.get('nav');
-  const active: WorkspaceNav = navParam && NAV_KEYS.has(navParam as WorkspaceNav) ? (navParam as WorkspaceNav) : 'projects';
+  const active: WorkspaceNav = navParam && NAV_KEYS.has(navParam as WorkspaceNav) ? (navParam as WorkspaceNav) : 'home';
   const setActive = (key: WorkspaceNav) => {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
@@ -56,7 +59,13 @@ export function PmAgentPage() {
     if (legacyProject) navigate(`/pm-agent/p/${legacyProject}`, { replace: true });
   }, [legacyProject, navigate]);
 
+  // 便捷操作：立项弹窗（页面级宿主）+ AI 助手输入预填（nonce 保证同模板可重复触发）
+  const [showCreate, setShowCreate] = useState(false);
+  const [prefill, setPrefill] = useState<{ text: string; nonce: number } | null>(null);
+  const fillAssistant = (text: string) => setPrefill({ text, nonce: Date.now() });
+
   const NAV: NavItem<WorkspaceNav>[] = [
+    { key: 'home', label: '首页', icon: Home },
     { key: 'projects', label: '项目', icon: FolderKanban },
     { key: 'dashboard', label: 'NPSS 看板', icon: TrendingUp, hidden: !canViewDashboard, dividerBefore: true },
     { key: 'audit', label: '审计日志', icon: ShieldCheck, hidden: !canViewAudit },
@@ -71,11 +80,30 @@ export function PmAgentPage() {
       onSelect={setActive}
       accent={PM_ACCENT}
     >
-      <div className="flex-1 min-h-0 flex flex-col p-5 pa-accent-blue">
-        {active === 'projects' && <ProjectsSection onOpen={(id) => navigate(`/pm-agent/p/${id}`)} />}
-        {active === 'dashboard' && canViewDashboard && <DashboardView />}
-        {active === 'audit' && canViewAudit && <AuditLogView />}
-      </div>
+      {active === 'home' ? (
+        // 首页：AI 助手主区（70%）+ 右栏待办/便捷操作（30%），撑满高度各自滚动
+        <div className="flex-1 min-h-0 flex pa-accent-blue">
+          <div className="h-full min-h-0 min-w-0 flex flex-col border-r border-white/10" style={{ width: '70%' }}>
+            <PmAssistantPanel prefill={prefill} />
+          </div>
+          <aside className="h-full min-h-0 min-w-0 flex flex-col gap-4 p-4" style={{ width: '30%' }}>
+            <PmTodosCard />
+            <PmQuickActionsCard ctx={{ openCreateProject: () => setShowCreate(true), fillAssistant, gotoNav: (n) => setActive(n as WorkspaceNav) }} />
+          </aside>
+        </div>
+      ) : (
+        <div className="flex-1 min-h-0 flex flex-col p-5 pa-accent-blue">
+          {active === 'projects' && <ProjectsSection onOpen={(id) => navigate(`/pm-agent/p/${id}`)} />}
+          {active === 'dashboard' && canViewDashboard && <DashboardView />}
+          {active === 'audit' && canViewAudit && <AuditLogView />}
+        </div>
+      )}
+      {showCreate && (
+        <CreateProjectDialog
+          onClose={() => setShowCreate(false)}
+          onCreated={(project) => { setShowCreate(false); navigate(`/pm-agent/p/${project.id}`); }}
+        />
+      )}
     </AgentFullscreenLayout>
   );
 }

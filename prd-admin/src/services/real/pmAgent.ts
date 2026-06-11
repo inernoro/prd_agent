@@ -71,6 +71,9 @@ import type {
   UpdatePmRiskContract,
   DeletePmRiskContract,
   GetPmBurndownContract,
+  GetPmMyTodosContract,
+  GetPmAgentPreferencesContract,
+  UpdatePmQuickActionsContract,
 } from '@/services/contracts/pmAgent';
 import type { ApiResponse } from '@/types/api';
 import { useAuthStore } from '@/stores/authStore';
@@ -386,4 +389,18 @@ export const getPmRewardConfigReal: GetPmRewardConfigContract = async () => {
 
 export const updatePmRewardConfigReal: UpdatePmRewardConfigContract = async (input) => {
   return await apiRequest(api.pm.rewardConfig(), { method: 'PUT', body: input });
+};
+
+// ── 首页工作台（跨项目）──
+
+export const getPmMyTodosReal: GetPmMyTodosContract = async () => {
+  return await apiRequest(api.pm.myTodos(), { method: 'GET' });
+};
+
+export const getPmAgentPreferencesReal: GetPmAgentPreferencesContract = async () => {
+  return await apiRequest(api.pm.preferences(), { method: 'GET' });
+};
+
+export const updatePmQuickActionsReal: UpdatePmQuickActionsContract = async (quickActionIds) => {
+  return await apiRequest(api.pm.quickActions(), { method: 'PUT', body: { quickActionIds } });
 };

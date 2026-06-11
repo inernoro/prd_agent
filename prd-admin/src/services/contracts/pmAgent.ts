@@ -730,3 +730,26 @@ export type ListPmTaskWorkLogsContract = (taskId: string) => Promise<ApiResponse
 export type CreatePmTaskWorkLogContract = (taskId: string, input: CreatePmTaskWorkLogInput) => Promise<ApiResponse<PmTaskWorkLog>>;
 export type UpdatePmTaskWorkLogContract = (logId: string, input: UpdatePmTaskWorkLogInput) => Promise<ApiResponse<{ updated: boolean }>>;
 export type DeletePmTaskWorkLogContract = (logId: string) => Promise<ApiResponse<{ deleted: boolean }>>;
+
+// ── 首页工作台（跨项目）──
+
+/** 首页「我的待办」一条：跨项目聚合（指派给我的未完成任务 + 待我打分的结案评价）。 */
+export interface PmMyTodoItem {
+  kind: 'task' | 'evaluation';
+  id: string;
+  projectId: string;
+  projectTitle: string;
+  title: string;
+  dueAt?: string | null;
+  priority?: PmTaskPriority | null;
+  status?: PmTaskStatus | null;
+  overdue: boolean;
+}
+export type GetPmMyTodosContract = () => Promise<ApiResponse<{ items: PmMyTodoItem[]; total: number }>>;
+
+/** 项目管理智能体用户偏好（quickActionIds：null = 从未配置走默认；空数组 = 用户主动清空）。 */
+export interface PmAgentPrefs {
+  quickActionIds: string[] | null;
+}
+export type GetPmAgentPreferencesContract = () => Promise<ApiResponse<PmAgentPrefs>>;
+export type UpdatePmQuickActionsContract = (quickActionIds: string[]) => Promise<ApiResponse<PmAgentPrefs>>;
