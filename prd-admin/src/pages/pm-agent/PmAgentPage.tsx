@@ -6,7 +6,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { FolderKanban, Plus, Trash2, TrendingUp, Lightbulb, ChevronUp, ChevronDown, ShieldCheck, Home, BarChart3 } from 'lucide-react';
+import { FolderKanban, Plus, Trash2, TrendingUp, Lightbulb, ChevronUp, ChevronDown, ShieldCheck, Home, BarChart3, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { AgentFullscreenLayout, type NavItem } from '@/components/agent-shell/AgentFullscreenLayout';
@@ -77,6 +77,16 @@ export function PmAgentPage() {
     <AgentFullscreenLayout
       title="项目管理"
       subtitle="立项 → 目标 → 里程碑 / 任务 → 结案"
+      topSlot={
+        <div className="mb-2">
+          <button
+            onClick={() => navigate('/')}
+            className="flex items-center gap-1.5 text-[11px] text-white/40 hover:text-white"
+          >
+            <ArrowLeft size={13} /> 返回首页
+          </button>
+        </div>
+      }
       items={NAV}
       active={active}
       onSelect={setActive}
