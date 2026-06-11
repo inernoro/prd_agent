@@ -82,6 +82,14 @@
 ### 5.6 加锚点:TabBar/PageHeader 自动注入 pill
 `PageHeader`/`TabBar` 在有 `title`/`items`/`actions` 时**自动注入** `<TipsEntryButton/>`,pill 在「本页无教程」时自隐。⇒ 用这两个组件的页面**无需手嵌** pill;自定义头部的页面才需手嵌。
 
+### 5.7 自动弹出严格按页（2026-06-11,治「无教程页面弹出全部教程」）
+- **没有教程的页面绝不自动弹任何东西**。自动出现只剩两类,且都限定在「本页有教程」的页面:
+  1. 新人没走完本页 `*-page-guide` → Spotlight 自动开讲(每 session 一次,机制不变);
+  2. 本页功能有更新(本页存在未学会的 `*-update-*` / `feature-release` tip)→ 抽屉自动展开一次,**只显示本页教程列表**。
+- 决策唯一入口:`pageGuideMatch.ts` 的 `pickAutoOpenUpdateTip(pageTips, opened)`,入参必须是 `filterPageTips` 按当前页过滤后的子集 —— 结构性保证不会在 A 页弹 B 页教程;禁止再用全量 tips 做自动弹出判定,禁止自动 `setShowAllPages(true)`。
+- **「管理员定向推送(isTargeted)自动弹抽屉」已删除**:推送管理后台 2026-06-04 已下线,该路径只剩脏数据来源 —— Track 端点会给「看过一眼」的用户补 Delivery 统计记录,`/visible` 旧逻辑 `isTargeted = TargetUserId==userId || mine != null` 把统计记录误判成"被推送",导致任何浏览过的教程永久变成"为你推送",并在无教程页面自动弹出"全部教程"面板(2026-06-11 用户反馈「莫名其妙弹出,像病毒一样」)。后端已改为仅认 `TargetUserId`,Delivery 仅作统计。
+- 守卫测试:`prd-admin/src/components/daily-tips/__tests__/pageGuideMatch.test.ts` 的 `pickAutoOpenUpdateTip` 套件(无教程页恒 null / isTargeted 不参与决策)。
+
 ## 六、相关
 
 - `.claude/skills/createzzdemo/SKILL.md` — 生成单条教程小书
