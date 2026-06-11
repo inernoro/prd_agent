@@ -2,7 +2,6 @@ import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Settings, Square, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiRequest, ApiError } from '@/lib/api';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
@@ -3522,6 +3521,7 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
   const [selectedCollection, setSelectedCollection] = useState('');
   const selectedDatabaseRef = useRef('');
   const [documentsState, setDocumentsState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; documents: unknown[]; message?: string }>({ status: 'idle', documents: [] });
+  const [selectedDocumentIndex, setSelectedDocumentIndex] = useState(0);
   const [mode, setMode] = useState<'browse' | 'query' | 'mutate'>('browse');
   const [filter, setFilter] = useState('{}');
   const [projection, setProjection] = useState('{}');
@@ -3533,7 +3533,6 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
   const [writeFilter, setWriteFilter] = useState('{\n  "_id": "replace-with-id"\n}');
   const [writeConfirm, setWriteConfirm] = useState('');
   const [writeState, setWriteState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; result?: unknown; message?: string }>({ status: 'idle' });
-  const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const basePath = resource.branchId
     ? `/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/data/mongo`
     : '';
@@ -3587,6 +3586,7 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
     try {
       const res = await apiRequest<{ documents: unknown[] }>(`${basePath}/documents?database=${encodeURIComponent(database)}&collection=${encodeURIComponent(collection)}&limit=50`);
       setDocumentsState({ status: 'ok', documents: res.documents || [] });
+      setSelectedDocumentIndex(0);
     } catch (err) {
       setDocumentsState({ status: 'error', documents: [], message: err instanceof ApiError ? err.message : String(err) });
     }
@@ -3626,6 +3626,7 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
         },
       });
       setDocumentsState({ status: 'ok', documents: res.documents || [] });
+      setSelectedDocumentIndex(0);
     } catch (err) {
       setDocumentsState({ status: 'error', documents: [], message: err instanceof ApiError ? err.message : String(err) });
     }
@@ -3669,242 +3670,199 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
       ? `默认库 ${databasesState.configuredDatabase}`
       : '';
 
-  const workbenchBody = (
-    <div className="grid min-h-0 gap-4 text-sm">
-      <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
-        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
-          <div className="min-w-0">
-            <div className="text-xs font-semibold">工作区</div>
-            <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{databaseLabel}.{selectedCollection || '-'}</div>
-            {configuredDatabaseNotice ? <div className="mt-1 text-[11px] text-muted-foreground">{configuredDatabaseNotice}</div> : null}
-          </div>
-          <div className="flex max-w-full flex-wrap items-center gap-2 sm:justify-end">
-            {(['browse', 'query', 'mutate'] as const).map((item) => (
-              <button
-                key={item}
-                type="button"
-                className={`h-8 rounded-md px-3 text-xs transition-colors ${mode === item ? 'bg-primary text-primary-foreground' : 'border border-[hsl(var(--hairline))] text-muted-foreground hover:text-foreground'}`}
-                onClick={() => setMode(item)}
-              >
-                {item === 'browse' ? '浏览数据' : item === 'query' ? '条件查询' : '写入 / 结构'}
-              </button>
-            ))}
+  return (
+    <div className="grid min-h-[720px] overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/30 text-sm lg:grid-cols-[280px_minmax(0,1fr)]">
+      <aside className="min-h-0 border-b border-[hsl(var(--hairline))] bg-background/35 lg:border-b-0 lg:border-r">
+        <div className="border-b border-[hsl(var(--hairline))] px-3 py-3">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <div className="text-xs font-semibold">数据库资源管理器</div>
+              <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{resource.displayName} :{resource.port || resource.containerPort || '?'}</div>
+            </div>
             <Button type="button" size="sm" variant="outline" disabled={databasesState.status === 'loading'} onClick={() => void loadDatabases()}>
               <RefreshCw className={databasesState.status === 'loading' ? 'animate-spin' : ''} />
-              刷新
             </Button>
           </div>
+          {configuredDatabaseNotice ? <div className="mt-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/55 px-2 py-1.5 text-[11px] text-muted-foreground">{configuredDatabaseNotice}</div> : null}
         </div>
 
-        <div className="grid gap-3 p-3">
-          <div>
-            <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Database</div>
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              {databasesState.databases.length > 0 ? databasesState.databases.map((db) => {
+        <div className="max-h-[640px] overflow-auto p-2">
+          {databasesState.status === 'error' ? (
+            <div className="px-2 py-3 text-xs leading-5 text-destructive">{databasesState.message}</div>
+          ) : databasesState.databases.length > 0 ? (
+            <div className="space-y-1">
+              {databasesState.databases.map((db) => {
+                const activeDatabase = db.name === selectedDatabase;
                 const isConfigured = db.name === databasesState.configuredDatabase;
                 const isSystem = SYSTEM_MONGO_DATABASES.has(db.name);
                 return (
-                  <button
-                    key={db.name}
-                    type="button"
-                    className={`inline-flex h-8 shrink-0 items-center gap-2 rounded-md border px-3 text-xs ${db.name === selectedDatabase ? 'border-primary bg-primary/10 text-foreground' : 'border-[hsl(var(--hairline))] text-muted-foreground hover:text-foreground'}`}
-                    onClick={() => {
-                      setSelectedCollection('');
-                      setCollectionsState({ status: 'idle', collections: [], database: db.name });
-                      setDocumentsState({ status: 'idle', documents: [] });
-                      setSelectedDatabase(db.name);
-                    }}
-                  >
-                    <span className="font-mono">{db.name}</span>
-                    {isConfigured ? <span className="rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">默认</span> : null}
-                    {isSystem ? <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">系统</span> : null}
-                  </button>
+                  <div key={db.name} className="rounded-md">
+                    <button
+                      type="button"
+                      className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors ${activeDatabase ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-[hsl(var(--surface-sunken))]/70 hover:text-foreground'}`}
+                      onClick={() => {
+                        setSelectedCollection('');
+                        setCollectionsState({ status: 'idle', collections: [], database: db.name });
+                        setDocumentsState({ status: 'idle', documents: [] });
+                        setSelectedDocumentIndex(0);
+                        setSelectedDatabase(db.name);
+                      }}
+                    >
+                      <span className="text-muted-foreground">{activeDatabase ? '▾' : '▸'}</span>
+                      <Database className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                      <span className="min-w-0 flex-1 truncate font-mono">{db.name}</span>
+                      {isConfigured ? <span className="rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">默认</span> : null}
+                      {isSystem ? <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">系统</span> : null}
+                    </button>
+                    {activeDatabase ? (
+                      <div className="ml-6 mt-1 space-y-1 border-l border-[hsl(var(--hairline))] pl-2">
+                        {collectionsState.status === 'error' ? (
+                          <div className="px-2 py-2 text-[11px] leading-5 text-destructive">{collectionsState.message}</div>
+                        ) : collectionsState.collections.length > 0 ? collectionsState.collections.map((collection) => {
+                          const activeCollection = collection.name === selectedCollection;
+                          return (
+                            <button
+                              key={collection.name}
+                              type="button"
+                              className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors ${activeCollection ? 'bg-primary/15 text-foreground ring-1 ring-primary/30' : 'text-muted-foreground hover:bg-[hsl(var(--surface-sunken))]/70 hover:text-foreground'}`}
+                              onClick={() => {
+                                setSelectedCollection(collection.name);
+                                setSelectedDocumentIndex(0);
+                                setMode('browse');
+                              }}
+                            >
+                              <span className="grid h-4 w-4 place-items-center rounded border border-[hsl(var(--hairline))] text-[10px]">T</span>
+                              <span className="min-w-0 flex-1 truncate font-mono">{collection.name}</span>
+                              <span className="text-[10px] text-muted-foreground">{collection.type || 'collection'}</span>
+                            </button>
+                          );
+                        }) : (
+                          <div className="px-2 py-2 text-[11px] text-muted-foreground">
+                            {collectionsState.status === 'loading' ? '读取 collection...' : '暂无 collection'}
+                          </div>
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
                 );
-              }) : (
-                <div className="text-xs text-muted-foreground">{databasesState.status === 'loading' ? '读取数据库...' : databasesState.message || '没有数据库信息。'}</div>
-              )}
+              })}
             </div>
-          </div>
+          ) : (
+            <div className="px-2 py-3 text-xs text-muted-foreground">{databasesState.status === 'loading' ? '读取数据库...' : '没有数据库信息。'}</div>
+          )}
+        </div>
+      </aside>
 
-          <div>
-            <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Collection</div>
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              {collectionsState.status === 'error' ? (
-                <div className="text-xs text-destructive">{collectionsState.message}</div>
-              ) : collectionsState.collections.length > 0 ? collectionsState.collections.map((collection) => (
+      <div className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)]">
+        <section className="border-b border-[hsl(var(--hairline))] bg-background/25">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
+            <div className="min-w-0">
+              <div className="text-xs font-semibold">MongoDB Console</div>
+              <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{databaseLabel}.{selectedCollection || '-'}</div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {(['browse', 'query', 'mutate'] as const).map((item) => (
                 <button
-                  key={collection.name}
+                  key={item}
                   type="button"
-                  className={`inline-flex h-8 shrink-0 items-center gap-2 rounded-md border px-3 text-xs ${collection.name === selectedCollection ? 'border-primary bg-primary/10 text-foreground' : 'border-[hsl(var(--hairline))] text-muted-foreground hover:text-foreground'}`}
-                  onClick={() => {
-                    setSelectedCollection(collection.name);
-                    setMode('browse');
-                  }}
+                  className={`h-8 rounded-md px-3 text-xs transition-colors ${mode === item ? 'bg-primary text-primary-foreground' : 'border border-[hsl(var(--hairline))] text-muted-foreground hover:text-foreground'}`}
+                  onClick={() => setMode(item)}
                 >
-                  <span className="font-mono">{collection.name}</span>
-                  <span>{collection.type || 'collection'}</span>
+                  {item === 'browse' ? '数据' : item === 'query' ? '查询' : '写入 / 结构'}
                 </button>
-              )) : (
-                <div className="text-xs text-muted-foreground">
-                  {collectionsState.status === 'loading'
-                    ? '读取 collection...'
-                    : selectedDatabase
-                      ? `${selectedDatabase} 暂无 collection。可在「写入 / 结构」里创建 collection，或切换其他数据库。`
-                      : '请选择数据库。'}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="grid min-h-[420px] gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="min-w-0 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
-          <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
-            <div>
-              <div className="text-xs font-semibold">Document Browser</div>
-              <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{selectedCollection || '未选择 collection'}</div>
-            </div>
-            <Button type="button" size="sm" variant="outline" disabled={!selectedDatabase || !selectedCollection || documentsState.status === 'loading'} onClick={() => void loadDocuments(selectedDatabase, selectedCollection)}>
-              {documentsState.status === 'loading' ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-              重新读取
-            </Button>
-          </div>
-          <MongoDocumentsView state={documentsState} collection={selectedCollection} />
-        </div>
-
-        <div className="min-w-0 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
-          {mode === 'query' ? (
-            <>
-              <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
-                <div className="text-xs font-semibold">条件查询</div>
+              ))}
+              {mode === 'query' ? (
                 <Button type="button" size="sm" variant="outline" disabled={!selectedDatabase || !selectedCollection || documentsState.status === 'loading'} onClick={() => void runMongoQuery()}>
                   {documentsState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Play />}
                   执行
                 </Button>
-              </div>
-              <div className="grid gap-3 p-3">
-                <CodeEditor label="filter" value={filter} onChange={setFilter} language="json" minHeight={108} />
-                <CodeEditor label="projection" value={projection} onChange={setProjection} language="json" minHeight={92} />
-                <CodeEditor label="sort" value={sort} onChange={setSort} language="json" minHeight={92} />
-              </div>
-            </>
-          ) : mode === 'mutate' ? (
-            <>
-              <div className="flex items-center justify-between gap-3 border-b border-destructive/20 px-3 py-2">
-                <div>
-                  <div className="text-xs font-semibold text-destructive">写入 / 结构</div>
-                  <div className="mt-0.5 text-[11px] text-muted-foreground">所有写操作都需要资源名确认，并进入审计记录。</div>
-                </div>
+              ) : mode === 'mutate' ? (
                 <Button type="button" size="sm" variant="destructive" disabled={!writeConfirm.trim() || !writeTargetCollection || writeState.status === 'loading'} onClick={() => void runMongoWrite()}>
                   {writeState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Play />}
                   执行
                 </Button>
+              ) : (
+                <Button type="button" size="sm" variant="outline" disabled={!selectedDatabase || !selectedCollection || documentsState.status === 'loading'} onClick={() => void loadDocuments(selectedDatabase, selectedCollection)}>
+                  {documentsState.status === 'loading' ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                  刷新结果
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {mode === 'query' ? (
+            <div className="grid gap-3 p-3 xl:grid-cols-3">
+              <CodeEditor label="filter" value={filter} onChange={setFilter} language="json" minHeight={92} />
+              <CodeEditor label="projection" value={projection} onChange={setProjection} language="json" minHeight={92} />
+              <CodeEditor label="sort" value={sort} onChange={setSort} language="json" minHeight={92} />
+            </div>
+          ) : mode === 'mutate' ? (
+            <div className="grid gap-3 p-3">
+              <div className="flex flex-wrap gap-2">
+                {(['insertOne', 'updateMany', 'deleteMany', 'createCollection', 'dropCollection'] as const).map((action) => (
+                  <button
+                    key={action}
+                    type="button"
+                    className={`h-8 rounded-md px-3 font-mono text-xs transition-colors ${writeAction === action ? 'bg-destructive text-destructive-foreground' : 'border border-destructive/25 text-muted-foreground hover:text-foreground'}`}
+                    onClick={() => setWriteAction(action)}
+                  >
+                    {action}
+                  </button>
+                ))}
               </div>
-              <div className="grid gap-3 p-3">
-                <div className="flex flex-wrap gap-2">
-                  {(['insertOne', 'updateMany', 'deleteMany', 'createCollection', 'dropCollection'] as const).map((action) => (
-                    <button
-                      key={action}
-                      type="button"
-                      className={`h-8 rounded-md px-3 font-mono text-xs transition-colors ${writeAction === action ? 'bg-destructive text-destructive-foreground' : 'border border-destructive/25 text-muted-foreground hover:text-foreground'}`}
-                      onClick={() => setWriteAction(action)}
-                    >
-                      {action}
-                    </button>
-                  ))}
+              <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_260px]">
+                <div className="min-w-0">
+                  {writeAction === 'insertOne' ? (
+                    <CodeEditor label="document" value={documentDraft} onChange={(value) => setDocumentDraft(tryFormatJsonText(value))} language="json" minHeight={154} />
+                  ) : null}
+                  {writeAction === 'updateMany' || writeAction === 'deleteMany' ? (
+                    <div className="grid gap-3 xl:grid-cols-2">
+                      <CodeEditor label="filter" value={writeFilter} onChange={(value) => setWriteFilter(tryFormatJsonText(value))} language="json" minHeight={132} />
+                      {writeAction === 'updateMany' ? <CodeEditor label="update" value={updateDraft} onChange={(value) => setUpdateDraft(tryFormatJsonText(value))} language="json" minHeight={132} /> : null}
+                    </div>
+                  ) : null}
+                  {writeAction === 'createCollection' || writeAction === 'dropCollection' ? (
+                    <label className="grid gap-1 text-xs">
+                      <span className="text-muted-foreground">目标 collection</span>
+                      <input
+                        value={writeCollection}
+                        onChange={(event) => setWriteCollection(event.target.value)}
+                        className="h-9 rounded-md border border-destructive/25 bg-background px-3 font-mono outline-none focus:border-destructive"
+                        placeholder="users"
+                      />
+                    </label>
+                  ) : null}
                 </div>
-                {writeAction === 'insertOne' ? (
-                  <CodeEditor label="document" value={documentDraft} onChange={(value) => setDocumentDraft(tryFormatJsonText(value))} language="json" minHeight={154} />
-                ) : null}
-                {writeAction === 'updateMany' || writeAction === 'deleteMany' ? (
-                  <>
-                    <CodeEditor label="filter" value={writeFilter} onChange={(value) => setWriteFilter(tryFormatJsonText(value))} language="json" minHeight={116} />
-                    {writeAction === 'updateMany' ? <CodeEditor label="update" value={updateDraft} onChange={(value) => setUpdateDraft(tryFormatJsonText(value))} language="json" minHeight={116} /> : null}
-                  </>
-                ) : null}
-                {writeAction === 'createCollection' || writeAction === 'dropCollection' ? (
+                <div className="grid content-start gap-3">
                   <label className="grid gap-1 text-xs">
-                    <span className="text-muted-foreground">目标 collection</span>
+                    <span className="text-muted-foreground">输入资源名确认：{resource.serviceName}</span>
                     <input
-                      value={writeCollection}
-                      onChange={(event) => setWriteCollection(event.target.value)}
+                      value={writeConfirm}
+                      onChange={(event) => setWriteConfirm(event.target.value)}
                       className="h-9 rounded-md border border-destructive/25 bg-background px-3 font-mono outline-none focus:border-destructive"
-                      placeholder="users"
+                      placeholder={resource.serviceName}
                     />
                   </label>
-                ) : null}
-                <label className="grid gap-1 text-xs">
-                  <span className="text-muted-foreground">输入资源名确认：{resource.serviceName}</span>
-                  <input
-                    value={writeConfirm}
-                    onChange={(event) => setWriteConfirm(event.target.value)}
-                    className="h-9 rounded-md border border-destructive/25 bg-background px-3 font-mono outline-none focus:border-destructive"
-                    placeholder={resource.serviceName}
-                  />
-                </label>
-                <MongoWriteResult state={writeState} />
-              </div>
-            </>
-          ) : (
-            <div className="grid gap-3 p-3 text-xs leading-5 text-muted-foreground">
-              <div className="rounded-md border border-[hsl(var(--hairline))] bg-background/60 px-3 py-2">
-                左侧显示当前 collection 的前 50 条文档。切换 collection 会自动刷新预览。
-              </div>
-              <div className="rounded-md border border-[hsl(var(--hairline))] bg-background/60 px-3 py-2">
-                需要精确筛选时切换到「条件查询」；需要 insert/update/delete 或创建/删除 collection 时切换到「写入 / 结构」。
+                  <MongoWriteResult state={writeState} />
+                </div>
               </div>
             </div>
+          ) : (
+            <div className="p-3">
+              <pre className="overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-background px-3 py-2 font-mono text-xs leading-5">
+                {highlightedCode(`db.${selectedCollection || '<collection>'}.find({}).limit(50);`, 'json')}
+              </pre>
+            </div>
           )}
-        </div>
-      </section>
-    </div>
-  );
+        </section>
 
-  return (
-    <div className="space-y-3 text-sm">
-      <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 p-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-xs font-semibold">MongoDB 可视化操作面板</div>
-            <div className="mt-1 truncate font-mono text-[11px] text-muted-foreground">{databaseLabel}.{selectedCollection || '-'}</div>
-            {configuredDatabaseNotice ? <div className="mt-1 text-[11px] text-muted-foreground">{configuredDatabaseNotice}</div> : null}
-          </div>
-          <Button type="button" size="sm" onClick={() => setWorkbenchOpen(true)}>
-            <Database />
-            打开面板
-          </Button>
-        </div>
-        <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
-          <div className="rounded-md border border-[hsl(var(--hairline))] bg-background/50 px-3 py-2">
-            <div className="font-medium text-foreground">浏览</div>
-            <div className="mt-1">按 database / collection 查看文档。</div>
-          </div>
-          <div className="rounded-md border border-[hsl(var(--hairline))] bg-background/50 px-3 py-2">
-            <div className="font-medium text-foreground">查询</div>
-            <div className="mt-1">使用 filter / projection / sort 精确筛选。</div>
-          </div>
-          <div className="rounded-md border border-[hsl(var(--hairline))] bg-background/50 px-3 py-2">
-            <div className="font-medium text-foreground">写入 / 结构</div>
-            <div className="mt-1">可视化执行 insert、update、delete 和 collection 管理。</div>
-          </div>
-        </div>
-      </section>
-
-      <Dialog open={workbenchOpen} onOpenChange={setWorkbenchOpen}>
-        <DialogContent
-          className="max-w-none"
-          style={{ width: 'min(1280px, calc(100vw - 32px))', maxHeight: '92vh' }}
-        >
-          <DialogHeader>
-            <DialogTitle>MongoDB 可视化操作面板</DialogTitle>
-            <DialogDescription>
-              {resource.displayName} · {resource.serviceName} · {databaseLabel}.{selectedCollection || '-'}
-            </DialogDescription>
-          </DialogHeader>
-          {workbenchBody}
-        </DialogContent>
-      </Dialog>
+        <MongoDocumentsView
+          state={documentsState}
+          collection={selectedCollection}
+          selectedIndex={selectedDocumentIndex}
+          onSelectIndex={setSelectedDocumentIndex}
+        />
+      </div>
     </div>
   );
 }
@@ -3912,12 +3870,21 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
 function MongoDocumentsView({
   state,
   collection,
+  selectedIndex,
+  onSelectIndex,
 }: {
   state: { status: 'idle' | 'loading' | 'ok' | 'error'; documents: unknown[]; message?: string };
   collection?: string;
+  selectedIndex: number;
+  onSelectIndex: (index: number) => void;
 }): JSX.Element {
   if (state.status === 'loading') {
-    return <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />读取文档</div>;
+    return (
+      <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        读取文档
+      </div>
+    );
   }
   if (state.status === 'error') {
     return <div className="px-3 py-3 text-xs leading-5 text-destructive">{state.message}</div>;
@@ -3929,19 +3896,109 @@ function MongoDocumentsView({
       </div>
     );
   }
+
+  const columns = mongoDocumentColumns(state.documents);
+  const selectedDocument = state.documents[Math.min(selectedIndex, state.documents.length - 1)] ?? state.documents[0];
+  const selectedJson = JSON.stringify(selectedDocument, null, 2);
+
   return (
-    <div className="max-h-[560px] space-y-2 overflow-auto p-3">
-      {state.documents.map((doc, index) => {
-        const text = JSON.stringify(doc, null, 2);
-        return (
-          // eslint-disable-next-line react/no-array-index-key
-          <pre key={index} className="rounded-md border border-[hsl(var(--hairline))] bg-background p-3 font-mono text-xs leading-5">
-            {highlightedCode(text, 'json')}
+    <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)]">
+      <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] bg-background/30 px-3 py-2">
+        <div>
+          <div className="text-xs font-semibold">结果</div>
+          <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">
+            {collection} · {state.documents.length} documents · table + JSON
+          </div>
+        </div>
+        <div className="rounded-md border border-[hsl(var(--hairline))] px-2 py-1 text-[11px] text-muted-foreground">
+          选中第 {Math.min(selectedIndex + 1, state.documents.length)} 行
+        </div>
+      </div>
+      <div className="grid min-h-0 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="min-h-0 overflow-auto">
+          <table className="w-full min-w-[920px] text-left text-xs">
+            <thead className="sticky top-0 z-10 bg-[hsl(var(--surface-sunken))] text-muted-foreground">
+              <tr>
+                <th className="w-12 px-3 py-2 font-medium">#</th>
+                {columns.map((column) => (
+                  <th key={column} className="px-3 py-2 font-medium">
+                    <span className="font-mono">{column}</span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {state.documents.map((doc, rowIndex) => {
+                const row = mongoDocumentRecord(doc);
+                const active = rowIndex === selectedIndex;
+                return (
+                  // eslint-disable-next-line react/no-array-index-key
+                  <tr
+                    key={rowIndex}
+                    className={`cursor-pointer border-t border-[hsl(var(--hairline))] ${active ? 'bg-primary/10 text-foreground' : 'hover:bg-[hsl(var(--surface-sunken))]/70'}`}
+                    onClick={() => onSelectIndex(rowIndex)}
+                  >
+                    <td className="px-3 py-2 font-mono text-muted-foreground">{rowIndex + 1}</td>
+                    {columns.map((column) => (
+                      <td key={`${rowIndex}-${column}`} className="max-w-[280px] truncate px-3 py-2 font-mono text-muted-foreground" title={mongoValuePreview(row[column])}>
+                        {mongoValuePreview(row[column])}
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <aside className="min-h-0 border-t border-[hsl(var(--hairline))] bg-background/30 lg:border-l lg:border-t-0">
+          <div className="border-b border-[hsl(var(--hairline))] px-3 py-2">
+            <div className="text-xs font-semibold">当前文档</div>
+            <div className="mt-0.5 text-[11px] text-muted-foreground">JSON 详情</div>
+          </div>
+          <pre className="max-h-[420px] overflow-auto p-3 font-mono text-xs leading-5">
+            {highlightedCode(selectedJson, 'json')}
           </pre>
-        );
-      })}
+        </aside>
+      </div>
     </div>
   );
+}
+
+function mongoDocumentRecord(doc: unknown): Record<string, unknown> {
+  if (doc && typeof doc === 'object' && !Array.isArray(doc)) return doc as Record<string, unknown>;
+  return { value: doc };
+}
+
+function mongoDocumentColumns(documents: unknown[]): string[] {
+  const seen = new Set<string>();
+  const columns: string[] = [];
+  for (const doc of documents.slice(0, 50)) {
+    const record = mongoDocumentRecord(doc);
+    for (const key of Object.keys(record)) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+      columns.push(key);
+      if (columns.length >= 14) return prioritizeMongoColumns(columns);
+    }
+  }
+  return prioritizeMongoColumns(columns);
+}
+
+function prioritizeMongoColumns(columns: string[]): string[] {
+  return columns.includes('_id')
+    ? ['_id', ...columns.filter((column) => column !== '_id')]
+    : columns;
+}
+
+function mongoValuePreview(value: unknown): string {
+  if (value === null || value === undefined) return 'null';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
 
 function MongoWriteResult({
@@ -4294,160 +4351,197 @@ function SqlResourceDataPanel({ resource }: { resource: BranchResource }): JSX.E
   ] as const;
 
   return (
-    <div className="space-y-4 text-sm">
-      <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
-          <div className="min-w-0">
-            <div className="text-xs font-semibold">SQL Workbench</div>
-            <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{tablesState.database || '-'}</div>
-          </div>
-          <div className="flex items-center gap-2">
-            {(['browse', 'query', 'mutate'] as const).map((item) => (
-              <button
-                key={item}
-                type="button"
-                className={`h-8 rounded-md px-3 text-xs transition-colors ${mode === item ? 'bg-primary text-primary-foreground' : 'border border-[hsl(var(--hairline))] text-muted-foreground hover:text-foreground'}`}
-                onClick={() => setMode(item)}
-              >
-                {item === 'browse' ? '浏览' : item === 'query' ? '查询' : 'DDL / DML'}
-              </button>
-            ))}
+    <div className="grid min-h-[720px] overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/30 text-sm lg:grid-cols-[280px_minmax(0,1fr)]">
+      <aside className="min-h-0 border-b border-[hsl(var(--hairline))] bg-background/35 lg:border-b-0 lg:border-r">
+        <div className="border-b border-[hsl(var(--hairline))] px-3 py-3">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <div className="text-xs font-semibold">数据库资源管理器</div>
+              <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{resource.displayName} · {tablesState.database || '-'}</div>
+            </div>
             <Button type="button" size="sm" variant="outline" disabled={tablesState.status === 'loading'} onClick={() => void loadTables()}>
               <RefreshCw className={tablesState.status === 'loading' ? 'animate-spin' : ''} />
-              刷新
             </Button>
           </div>
         </div>
+        <div className="max-h-[640px] overflow-auto p-2">
+          {tablesState.status === 'error' ? (
+            <div className="px-2 py-3 text-xs leading-5 text-destructive">{tablesState.message}</div>
+          ) : tablesState.tables.length > 0 ? (
+            <div className="space-y-1">
+              <div className="flex h-8 items-center gap-2 rounded-md px-2 text-xs text-foreground">
+                <Database className="h-3.5 w-3.5 text-cyan-500" />
+                <span className="min-w-0 truncate font-mono">{tablesState.database || 'database'}</span>
+              </div>
+              <div className="ml-4 space-y-1 border-l border-[hsl(var(--hairline))] pl-2">
+                {tablesState.tables.map((table) => {
+                  const active = table.name === selectedTable;
+                  return (
+                    <button
+                      key={table.name}
+                      type="button"
+                      className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors ${active ? 'bg-primary/15 text-foreground ring-1 ring-primary/30' : 'text-muted-foreground hover:bg-[hsl(var(--surface-sunken))]/70 hover:text-foreground'}`}
+                      onClick={() => {
+                        setSelectedTable(table.name);
+                        setSql(`SELECT * FROM ${quoteSqlTableName(resource, table.name)} LIMIT 50`);
+                        setMode('browse');
+                      }}
+                    >
+                      <span className="grid h-4 w-4 place-items-center rounded border border-[hsl(var(--hairline))] text-[10px]">{table.type === 'VIEW' ? 'V' : 'T'}</span>
+                      <span className="min-w-0 flex-1 truncate font-mono">{table.name}</span>
+                      <span className="text-[10px] text-muted-foreground">{table.type === 'VIEW' ? 'view' : 'table'}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div className="px-2 py-3 text-xs text-muted-foreground">{tablesState.status === 'loading' ? '读取表列表...' : '没有表。'}</div>
+          )}
+        </div>
+      </aside>
 
-        <div className="space-y-3 p-3">
-          <div className="flex gap-2 overflow-x-auto">
-            {tablesState.status === 'error' ? (
-              <div className="text-xs leading-5 text-destructive">{tablesState.message}</div>
-            ) : tablesState.tables.length > 0 ? tablesState.tables.map((table) => {
-              const active = table.name === selectedTable;
-              return (
+      <div className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)]">
+        <section className="border-b border-[hsl(var(--hairline))] bg-background/25">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
+            <div className="min-w-0">
+              <div className="text-xs font-semibold">SQL Console</div>
+              <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{selectedTable ? `${tablesState.database || '-'}.${selectedTable}` : tablesState.database || '-'}</div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {(['browse', 'query', 'mutate'] as const).map((item) => (
                 <button
-                  key={table.name}
+                  key={item}
                   type="button"
-                  className={`inline-flex h-8 shrink-0 items-center gap-2 rounded-md border px-3 text-xs ${active ? 'border-primary bg-primary/10 text-foreground' : 'border-[hsl(var(--hairline))] text-muted-foreground hover:text-foreground'}`}
+                  className={`h-8 rounded-md px-3 text-xs transition-colors ${mode === item ? 'bg-primary text-primary-foreground' : 'border border-[hsl(var(--hairline))] text-muted-foreground hover:text-foreground'}`}
+                  onClick={() => setMode(item)}
+                >
+                  {item === 'browse' ? '数据 / 结构' : item === 'query' ? '查询' : 'DDL / DML'}
+                </button>
+              ))}
+              {mode === 'query' ? (
+                <Button type="button" size="sm" variant="outline" disabled={queryState.status === 'loading'} onClick={() => void runReadOnlySql()}>
+                  {queryState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Play />}
+                  执行查询
+                </Button>
+              ) : mode === 'mutate' ? (
+                <Button type="button" size="sm" variant="destructive" disabled={!writeSql.trim() || !writeConfirm.trim() || writeState.status === 'loading'} onClick={() => void runWriteSql()}>
+                  {writeState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Play />}
+                  执行写入
+                </Button>
+              ) : (
+                <Button type="button" size="sm" variant="outline" disabled={!selectedTable || previewState.status === 'loading'} onClick={() => selectedTable && void loadTableDetail(selectedTable)}>
+                  {previewState.status === 'loading' ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                  刷新结果
+                </Button>
+              )}
+            </div>
+          </div>
+          <div className="grid gap-3 p-3">
+            {mode === 'mutate' ? (
+              <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_280px]">
+                <CodeEditor label="写 SQL" value={writeSql} onChange={setWriteSql} language="sql" minHeight={164} placeholder="INSERT / UPDATE / DELETE / CREATE / ALTER / DROP / TRUNCATE / REPLACE" />
+                <div className="grid content-start gap-3">
+                  <label className="grid gap-1 text-xs">
+                    <span className="text-muted-foreground">输入资源名确认：{resource.serviceName}</span>
+                    <input
+                      value={writeConfirm}
+                      onChange={(event) => setWriteConfirm(event.target.value)}
+                      className="h-9 rounded-md border border-destructive/25 bg-background px-3 font-mono outline-none focus:border-destructive"
+                      placeholder={resource.serviceName}
+                    />
+                  </label>
+                  <div className="rounded-md border border-destructive/25 bg-destructive/5 px-3 py-2 text-[11px] leading-5 text-muted-foreground">
+                    INSERT / UPDATE / DELETE / CREATE / ALTER / DROP / TRUNCATE / REPLACE 会经过权限、资源名确认和审计。
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <CodeEditor label={mode === 'query' ? 'SELECT / SHOW / DESCRIBE / EXPLAIN' : '当前预览 SQL'} value={sql} onChange={setSql} language="sql" minHeight={140} />
+            )}
+            <div className="flex flex-wrap gap-2">
+              {sqlTemplates.map(([label, template, targetMode]) => (
+                <button
+                  key={label}
+                  type="button"
+                  className="h-7 rounded-md border border-[hsl(var(--hairline))] px-2.5 font-mono text-[11px] text-muted-foreground transition-colors hover:text-foreground"
                   onClick={() => {
-                    setSelectedTable(table.name);
-                    setSql(`SELECT * FROM ${quoteSqlTableName(resource, table.name)} LIMIT 50`);
-                    setMode('browse');
+                    if (targetMode === 'query') {
+                      setSql(template);
+                      setMode('query');
+                    } else {
+                      setWriteSql(template);
+                      setMode('mutate');
+                    }
                   }}
                 >
-                  <span className="font-mono">{table.name}</span>
-                  <span className="text-[10px]">{table.type === 'VIEW' ? 'view' : 'table'}</span>
+                  {label}
                 </button>
-              );
-            }) : (
-              <div className="text-xs text-muted-foreground">{tablesState.status === 'loading' ? '读取表列表...' : '没有表。'}</div>
-            )}
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            {sqlTemplates.map(([label, template, targetMode]) => (
-              <button
-                key={label}
-                type="button"
-                className="h-7 rounded-md border border-[hsl(var(--hairline))] px-2.5 font-mono text-[11px] text-muted-foreground transition-colors hover:text-foreground"
-                onClick={() => {
-                  if (targetMode === 'query') {
-                    setSql(template);
-                    setMode('query');
-                  } else {
-                    setWriteSql(template);
-                    setMode('mutate');
-                  }
-                }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {mode === 'browse' ? (
-        <div className="grid gap-4">
-          <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
-            <div className="border-b border-[hsl(var(--hairline))] px-3 py-2 text-xs font-semibold">Schema</div>
-            {schemaState.status === 'error' ? (
-              <div className="px-3 py-3 text-xs text-destructive">{schemaState.message}</div>
-            ) : schemaState.status === 'loading' ? (
-              <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />读取字段</div>
-            ) : (
-              <div className="max-h-[300px] overflow-auto">
-                <table className="w-full min-w-[840px] text-left text-xs">
-                  <thead className="sticky top-0 bg-[hsl(var(--surface-sunken))] text-muted-foreground">
-                    <tr>{['字段', '类型', 'Null', 'Key', 'Default', 'Extra'].map((head) => <th key={head} className="px-3 py-2 font-medium">{head}</th>)}</tr>
-                  </thead>
-                  <tbody>
-                    {schemaState.columns.map((column) => (
-                      <tr key={column.name} className="border-t border-[hsl(var(--hairline))]">
-                        <td className="px-3 py-2 font-mono">{column.name}</td>
-                        <td className="px-3 py-2 font-mono text-muted-foreground">{column.type}</td>
-                        <td className="px-3 py-2">{column.nullable || '-'}</td>
-                        <td className="px-3 py-2">{column.key || '-'}</td>
-                        <td className="px-3 py-2 font-mono text-muted-foreground">{column.defaultValue || '-'}</td>
-                        <td className="px-3 py-2 text-muted-foreground">{column.extra || '-'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
-          <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
-            <div className="border-b border-[hsl(var(--hairline))] px-3 py-2 text-xs font-semibold">数据预览</div>
-            <DbResultTable state={previewState} emptyLabel="选择表后预览前 50 行。" />
-          </section>
-        </div>
-      ) : null}
-
-      {mode === 'query' ? (
-        <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
-          <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
-            <div className="text-xs font-semibold">只读 SQL</div>
-            <Button type="button" size="sm" variant="outline" disabled={queryState.status === 'loading'} onClick={() => void runReadOnlySql()}>
-              {queryState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Play />}
-              执行查询
-            </Button>
-          </div>
-          <div className="grid gap-3 p-3">
-            <CodeEditor label="SELECT / SHOW / DESCRIBE / EXPLAIN" value={sql} onChange={setSql} language="sql" minHeight={180} />
-            <DbResultTable state={queryState} emptyLabel="查询结果会显示在这里。" />
-          </div>
-        </section>
-      ) : null}
-
-      {mode === 'mutate' ? (
-        <section className="rounded-md border border-destructive/30 bg-destructive/5">
-          <div className="flex items-center justify-between gap-3 border-b border-destructive/20 px-3 py-2">
-            <div>
-              <div className="text-xs font-semibold text-destructive">DDL / DML</div>
-              <div className="mt-0.5 text-[11px] text-muted-foreground">INSERT / UPDATE / DELETE / CREATE / ALTER / DROP / TRUNCATE / REPLACE；后端会做权限、确认和审计。</div>
+              ))}
             </div>
-            <Button type="button" size="sm" variant="destructive" disabled={!writeSql.trim() || !writeConfirm.trim() || writeState.status === 'loading'} onClick={() => void runWriteSql()}>
-              {writeState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Play />}
-              执行写入
-            </Button>
-          </div>
-          <div className="grid gap-3 p-3">
-            <CodeEditor label="写 SQL" value={writeSql} onChange={setWriteSql} language="sql" minHeight={180} placeholder="INSERT / UPDATE / DELETE / CREATE / ALTER / DROP / TRUNCATE / REPLACE" />
-            <label className="grid gap-1 text-xs">
-              <span className="text-muted-foreground">输入资源名确认：{resource.serviceName}</span>
-              <input
-                value={writeConfirm}
-                onChange={(event) => setWriteConfirm(event.target.value)}
-                className="h-9 rounded-md border border-destructive/25 bg-background px-3 font-mono outline-none focus:border-destructive"
-                placeholder={resource.serviceName}
-              />
-            </label>
-            <DbResultTable state={writeState} emptyLabel="执行 DDL / DML 后会显示影响结果；无结果集时代表命令已完成。" />
           </div>
         </section>
-      ) : null}
+
+        <section className="min-h-0 overflow-auto bg-background/20">
+          {mode === 'browse' ? (
+            <div className="grid min-h-full lg:grid-cols-[minmax(0,1fr)_360px]">
+              <div className="min-w-0">
+                <div className="border-b border-[hsl(var(--hairline))] px-3 py-2">
+                  <div className="text-xs font-semibold">数据预览</div>
+                  <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{selectedTable || '未选择表'} · LIMIT 50</div>
+                </div>
+                <DbResultTable state={previewState} emptyLabel="选择表后预览前 50 行。" />
+              </div>
+              <aside className="border-t border-[hsl(var(--hairline))] bg-background/30 lg:border-l lg:border-t-0">
+                <div className="border-b border-[hsl(var(--hairline))] px-3 py-2">
+                  <div className="text-xs font-semibold">结构</div>
+                  <div className="mt-0.5 text-[11px] text-muted-foreground">Columns / DDL 视角</div>
+                </div>
+                <SqlSchemaTable state={schemaState} />
+              </aside>
+            </div>
+          ) : mode === 'query' ? (
+            <DbResultTable state={queryState} emptyLabel="查询结果会显示在这里。" />
+          ) : (
+            <DbResultTable state={writeState} emptyLabel="执行 DDL / DML 后会显示影响结果；无结果集时代表命令已完成。" />
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function SqlSchemaTable({
+  state,
+}: {
+  state: { status: 'idle' | 'loading' | 'ok' | 'error'; columns: DbColumnSummary[]; message?: string };
+}): JSX.Element {
+  if (state.status === 'loading') {
+    return <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />读取字段</div>;
+  }
+  if (state.status === 'error') {
+    return <div className="px-3 py-3 text-xs leading-5 text-destructive">{state.message}</div>;
+  }
+  if (state.columns.length === 0) {
+    return <div className="px-3 py-3 text-xs text-muted-foreground">选择表后显示字段结构。</div>;
+  }
+  return (
+    <div className="max-h-[520px] overflow-auto">
+      <table className="w-full min-w-[520px] text-left text-xs">
+        <thead className="sticky top-0 bg-[hsl(var(--surface-sunken))] text-muted-foreground">
+          <tr>{['字段', '类型', 'Key', 'Null'].map((head) => <th key={head} className="px-3 py-2 font-medium">{head}</th>)}</tr>
+        </thead>
+        <tbody>
+          {state.columns.map((column) => (
+            <tr key={column.name} className="border-t border-[hsl(var(--hairline))]">
+              <td className="px-3 py-2 font-mono">{column.name}</td>
+              <td className="px-3 py-2 font-mono text-muted-foreground">{column.type}</td>
+              <td className="px-3 py-2">{column.key || '-'}</td>
+              <td className="px-3 py-2">{column.nullable || '-'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
