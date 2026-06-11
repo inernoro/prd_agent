@@ -771,6 +771,11 @@ function projectIdFromQuery(): string {
   return new URLSearchParams(window.location.search).get('project') || '';
 }
 
+function resourceDetailTabFromQuery(value: string | null): BranchResourceDetailTab {
+  const allowed = new Set<BranchResourceDetailTab>(['overview', 'connection', 'data', 'backups', 'variables', 'metrics', 'logs', 'settings']);
+  return value && allowed.has(value as BranchResourceDetailTab) ? value as BranchResourceDetailTab : 'data';
+}
+
 function displayName(project: ProjectSummary): string {
   return project.aliasName || project.name || project.slug || project.id;
 }
@@ -1298,6 +1303,17 @@ export function BranchListPage(): JSX.Element {
   const highlightPulseTimerRef = useRef<number | null>(null);
   const previewQueryRef = useRef(new URLSearchParams(window.location.search).get('preview') || '');
   const previewQueryConsumedRef = useRef(false);
+  const resourceOpenQueryParams = new URLSearchParams(window.location.search);
+  const resourceOpenQueryRef = useRef<{
+    branchId: string;
+    resourceId: string;
+    detailTab: BranchResourceDetailTab;
+  }>({
+    branchId: resourceOpenQueryParams.get('openBranch') || '',
+    resourceId: resourceOpenQueryParams.get('resource') || '',
+    detailTab: resourceDetailTabFromQuery(resourceOpenQueryParams.get('resourceTab')),
+  });
+  const resourceOpenQueryConsumedRef = useRef(false);
 
   const setAction = useCallback((key: string, next: BranchAction | null) => {
     actionRef.current = { ...actionRef.current };
@@ -2703,6 +2719,25 @@ export function BranchListPage(): JSX.Element {
     window.history.replaceState(null, '', `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`);
     void previewBranchByName(requestedBranch);
   }, [previewBranchByName, state.status]);
+
+  useEffect(() => {
+    if (resourceOpenQueryConsumedRef.current || state.status !== 'ok') return;
+    const request = resourceOpenQueryRef.current;
+    if (!request.branchId || !request.resourceId) return;
+    const branch = state.branches.find((item) => item.id === request.branchId);
+    if (!branch) return;
+    resourceOpenQueryConsumedRef.current = true;
+    setDetailDrawerResourceFocus({
+      resourceId: request.resourceId,
+      detailTab: request.detailTab,
+    });
+    setDetailDrawerBranchId(branch.id);
+    const params = new URLSearchParams(window.location.search);
+    params.delete('openBranch');
+    params.delete('resource');
+    params.delete('resourceTab');
+    window.history.replaceState(null, '', `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`);
+  }, [state]);
 
   const capacityAssist = useMemo(() => {
     if (state.status !== 'ok' || !state.capacity || selectedBranches.length === 0) {
