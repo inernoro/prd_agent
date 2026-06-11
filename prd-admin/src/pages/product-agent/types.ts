@@ -187,9 +187,36 @@ export interface Requirement {
   ownerId: string;
   assigneeId?: string | null;
   sourceDefectId?: string | null;
+  sourceSystem?: string | null;
+  externalId?: string | null;
+  sourceUrl?: string | null;
+  sourceSnapshot?: RequirementSourceSnapshot | null;
   stateEnteredAt?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface RequirementSourceSnapshot {
+  status: string;
+  priority: string;
+  fields: Record<string, string>;
+  handlerNames: string[];
+  developerNames: string[];
+  creatorNames: string[];
+  ccNames: string[];
+  comments: {
+    author: string;
+    title: string;
+    content: string;
+    createdAt?: string | null;
+  }[];
+  attachmentIds: string[];
+  sourceCreatedAt?: string | null;
+  sourceModifiedAt?: string | null;
+  sourceCompletedAt?: string | null;
+  importedFileName: string;
+  importBatchId: string;
+  importedAt: string;
 }
 
 export interface Feature {
