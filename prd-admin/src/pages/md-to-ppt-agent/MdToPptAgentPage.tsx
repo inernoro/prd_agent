@@ -22,7 +22,6 @@ import {
   History,
   ImagePlus,
   Trash2,
-  ChevronUp,
   Sparkles,
 } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -767,6 +766,12 @@ export function MdToPptAgentPage() {
   // 大纲工作稿（右侧编辑器数据源；sessionStorage 持久化，刷新恢复到 outline-ready 状态）
   const [outlineDraft, setOutlineDraft] = useState<OutlineDraft | null>(savedSession?.outlineDraft ?? null);
   const [outlineAiText, setOutlineAiText] = useState('');
+  // AI 调整中：编辑器保持在场，卡片蒙层降透明（不许整屏消失）
+  const [outlineAdjusting, setOutlineAdjusting] = useState(false);
+  // 被 AI 改动 / 拖拽换位的卡片索引：1.6s 渐变高亮，让用户看清"变化发生在哪"
+  const [flashCards, setFlashCards] = useState<Set<number>>(new Set());
+  // 拖拽排序：被拖卡索引
+  const dragIdxRef = useRef<number | null>(null);
 
   // 历史生成（server-authority：runs 落库，随时可载入继续精修/编辑/发布）
   const [showHistory, setShowHistory] = useState(false);
@@ -1157,9 +1162,22 @@ export function MdToPptAgentPage() {
 
   // ─── Outline flow
   const requestOutline = useCallback(
-    async (userText: string, attachments: Attachment[], kbRefs: KbRef[], targetPagesOverride?: number, sourceTextOverride?: string) => {
+    async (
+      userText: string,
+      attachments: Attachment[],
+      kbRefs: KbRef[],
+      targetPagesOverride?: number,
+      sourceTextOverride?: string,
+      adjustMode?: boolean
+    ) => {
       setIsProcessing(true);
-      setArtifactPhase('outlining');
+      // 调整模式：编辑器保持在场（内联 busy 蒙层），不切全屏「规划中」——
+      // 否则用户手里的大纲整个消失，像被清空了（2026-06-11 用户原话「好像全都消失了」）
+      if (adjustMode) {
+        setOutlineAdjusting(true);
+      } else {
+        setArtifactPhase('outlining');
+      }
       setDiagLines([]);
 
       const attachmentText = attachments.map((a) => `## 附件：${a.name}\n\n${a.content}`).join('\n\n');
@@ -1194,8 +1212,23 @@ export function MdToPptAgentPage() {
           )
         );
         setIsProcessing(false);
+        setOutlineAdjusting(false);
         setArtifactPhase('idle');
         return;
+      }
+
+      // diff：找出本次被 AI 改动的页（与旧稿逐页比较），1s 渐变高亮让用户看清"改了哪"
+      const prevOutline = outlineDraft?.outline ?? [];
+      const changed = new Set<number>();
+      result.data.outline.forEach((sl, i) => {
+        const old0 = prevOutline[i];
+        if (!old0 || old0.title !== sl.title || old0.bullets.join('\n') !== sl.bullets.join('\n')) {
+          changed.add(i);
+        }
+      });
+      if (adjustMode && changed.size > 0) {
+        setFlashCards(changed);
+        window.setTimeout(() => setFlashCards(new Set()), 1600);
       }
 
       // 工作稿写入右侧编辑器（状态进入 outline-ready，刷新可恢复）
@@ -1233,9 +1266,10 @@ export function MdToPptAgentPage() {
       prewarmMdToPpt();
 
       setIsProcessing(false);
+      setOutlineAdjusting(false);
       setArtifactPhase('idle');
     },
-    [messages, pushMsg]
+    [messages, pushMsg, outlineDraft]
   );
 
   // ─── Convert 核心（大纲编辑器「确认生成」与旧版气泡共用）
@@ -1381,13 +1415,15 @@ export function MdToPptAgentPage() {
       void requestOutline(
         draft.sourceText +
           serializeClarifyAnswers(draft) +
-          '\n\n当前大纲（用户可能已手工编辑，请在此基础上调整，未提到的页保持原样）：\n' +
+          '\n\n当前大纲（用户可能已手工编辑，请在此基础上调整）：\n' +
           serializeOutline(draft.outline) +
           '\n\n调整要求：' + instruction +
-          '\n（除非调整要求里明确提到增减页数，否则总页数保持不变）',
+          '\n（硬约束：只改动与调整要求直接相关的页；其余页的标题与要点必须逐字原样保留，' +
+          '禁止任何改写、润色、增删、换序。除非调整要求明确提到增减页数，否则总页数保持不变）',
         [], [],
         draft.totalPages || draft.outline.length,
-        draft.sourceText
+        draft.sourceText,
+        true
       );
     },
     [outlineDraft, isProcessing, requestOutline, serializeClarifyAnswers, serializeOutline]
@@ -2340,11 +2376,18 @@ export function MdToPptAgentPage() {
               {/* 头部：摘要 + 页数 + 确认 */}
               <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-white/8">
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-[var(--text-primary)]">
+                  <p className="text-sm font-semibold text-[var(--text-primary)] flex items-center gap-2">
                     大纲编辑器
-                    <span className="ml-2 text-[11px] font-normal text-[var(--text-tertiary)] tabular-nums">
-                      {outlineDraft.outline.length} 页 · 直接点击编辑，改动即时保存（刷新不丢）
-                    </span>
+                    {outlineAdjusting ? (
+                      <span className="flex items-center gap-1.5 text-[11px] font-normal text-purple-300">
+                        <MapSpinner size={11} />
+                        AI 正在按你的要求调整（只动相关页，其余逐字保留）...
+                      </span>
+                    ) : (
+                      <span className="text-[11px] font-normal text-[var(--text-tertiary)] tabular-nums">
+                        {outlineDraft.outline.length} 页 · 点击编辑 / 拖卡片换位，改动即时保存（刷新不丢）
+                      </span>
+                    )}
                   </p>
                   {outlineDraft.summary && (
                     <p className="text-[11px] text-[var(--text-tertiary)] truncate mt-0.5">{outlineDraft.summary}</p>
@@ -2453,16 +2496,61 @@ export function MdToPptAgentPage() {
                   </div>
                 )}
 
-                {/* 逐页卡片网格：一排 3-4 个（自适应列宽），比竖排堆叠更一目了然 */}
+                {/* 逐页卡片网格：3:4 竖卡（幻灯缩略卡比例），拖拽换位（抓住卡头序号区拖到目标卡上），
+                      换位/AI 改动的卡 1.6s 紫色渐变高亮——变化必须被看见 */}
                 <div
-                  className="shrink-0 grid gap-3"
-                  style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}
+                  className={['shrink-0 grid gap-3 transition-opacity', outlineAdjusting ? 'opacity-50 pointer-events-none' : ''].join(' ')}
+                  style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(225px, 1fr))' }}
                   data-testid="outline-grid"
                 >
                 {outlineDraft.outline.map((slide, i) => (
-                  <div key={i} className="rounded-xl border border-white/10 bg-white/3 px-3.5 py-3 flex flex-col" data-testid={'outline-card-' + i}>
+                  <div
+                    key={i}
+                    draggable
+                    onDragStart={(e) => {
+                      dragIdxRef.current = i;
+                      e.dataTransfer.effectAllowed = 'move';
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'move';
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const from = dragIdxRef.current;
+                      dragIdxRef.current = null;
+                      if (from == null || from === i) return;
+                      setOutlineDraft((d) => {
+                        if (!d) return d;
+                        const outline = [...d.outline];
+                        const [moved] = outline.splice(from, 1);
+                        outline.splice(i, 0, moved);
+                        return { ...d, outline };
+                      });
+                      // 序号渐变：换位涉及的区间全部高亮 1.6s，避免用户感知不到变化
+                      const lo = Math.min(from, i);
+                      const hi = Math.max(from, i);
+                      setFlashCards(new Set(Array.from({ length: hi - lo + 1 }, (_, k) => lo + k)));
+                      window.setTimeout(() => setFlashCards(new Set()), 1600);
+                    }}
+                    className={[
+                      'rounded-xl border px-3.5 py-3 flex flex-col cursor-grab active:cursor-grabbing',
+                      'transition-all duration-700',
+                      flashCards.has(i)
+                        ? 'border-purple-400/70 bg-purple-500/12 shadow-[0_0_18px_rgba(168,85,247,.25)]'
+                        : 'border-white/10 bg-white/3',
+                    ].join(' ')}
+                    style={{ aspectRatio: '3 / 4', minHeight: 0 }}
+                    data-testid={'outline-card-' + i}
+                  >
                     <div className="flex items-center gap-2 mb-1.5">
-                      <span className="shrink-0 w-6 h-6 rounded-md bg-purple-500/15 text-purple-300 text-[11px] font-bold tabular-nums flex items-center justify-center">
+                      <span
+                        title="按住拖拽换位"
+                        className={[
+                          'shrink-0 w-6 h-6 rounded-md text-[11px] font-bold tabular-nums flex items-center justify-center transition-colors duration-700',
+                          flashCards.has(i) ? 'bg-purple-400/60 text-white' : 'bg-purple-500/15 text-purple-300',
+                        ].join(' ')}
+                      >
                         {i + 1}
                       </span>
                       <input
@@ -2476,34 +2564,8 @@ export function MdToPptAgentPage() {
                           })
                         }
                         placeholder="本页标题"
-                        className="flex-1 text-[13px] font-semibold bg-transparent text-[var(--text-primary)] border-0 border-b border-transparent focus:border-purple-500/40 outline-none py-0.5"
+                        className="flex-1 min-w-0 text-[13px] font-semibold bg-transparent text-[var(--text-primary)] border-0 border-b border-transparent focus:border-purple-500/40 outline-none py-0.5"
                       />
-                      <button
-                        onClick={() => setOutlineDraft((d) => {
-                          if (!d || i === 0) return d;
-                          const outline = [...d.outline];
-                          [outline[i - 1], outline[i]] = [outline[i], outline[i - 1]];
-                          return { ...d, outline };
-                        })}
-                        disabled={i === 0}
-                        title="上移"
-                        className="w-6 h-6 rounded-md text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-white/6 disabled:opacity-25 flex items-center justify-center"
-                      >
-                        <ChevronUp size={13} />
-                      </button>
-                      <button
-                        onClick={() => setOutlineDraft((d) => {
-                          if (!d || i >= d.outline.length - 1) return d;
-                          const outline = [...d.outline];
-                          [outline[i], outline[i + 1]] = [outline[i + 1], outline[i]];
-                          return { ...d, outline };
-                        })}
-                        disabled={i >= outlineDraft.outline.length - 1}
-                        title="下移"
-                        className="w-6 h-6 rounded-md text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-white/6 disabled:opacity-25 flex items-center justify-center"
-                      >
-                        <ChevronDown size={13} />
-                      </button>
                       <button
                         onClick={() => setOutlineDraft((d) => {
                           if (!d) return d;
@@ -2550,8 +2612,8 @@ export function MdToPptAgentPage() {
                     return { ...d, outline, totalPages: outline.length };
                   })}
                   data-testid="outline-add-page"
-                  className="flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-white/15 hover:border-purple-400/50 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] text-[11px]"
-                  style={{ minHeight: 120 }}
+                  className="flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-white/15 hover:border-purple-400/50 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] text-[11px]"
+                  style={{ aspectRatio: '3 / 4', minHeight: 0 }}
                 >
                   <Plus size={12} />
                   添加一页
@@ -2597,12 +2659,38 @@ export function MdToPptAgentPage() {
             </div>
           )}
 
-          {/* Outlining progress */}
+          {/* Outlining progress：产物形状动画——大纲卡骨架逐张脉冲浮现（产物即体验：
+                等的是大纲，看到的就是大纲在长出来的样子，不是一个孤零零的转圈） */}
           {artifactPhase === 'outlining' && (
-            <div className="flex-1 flex flex-col items-center justify-center gap-3">
-              <MapSpinner size={20} />
-              <p className="text-sm text-[var(--text-secondary)]">正在规划大纲...</p>
-              <p className="text-xs text-[var(--text-tertiary)]">分析内容结构，生成最优页面分配</p>
+            <div className="flex-1 flex flex-col px-6 py-5 gap-4" style={{ minHeight: 0, overflow: 'hidden' }}>
+              <div className="shrink-0 flex items-center gap-2.5">
+                <MapSpinner size={16} />
+                <div>
+                  <p className="text-sm text-[var(--text-secondary)]">正在规划大纲...</p>
+                  <p className="text-[11px] text-[var(--text-tertiary)] mt-0.5">分析内容结构，生成最优页面分配</p>
+                </div>
+              </div>
+              <div
+                className="grid gap-3"
+                style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(225px, 1fr))' }}
+                aria-hidden
+              >
+                {Array.from({ length: 8 }, (_, i) => (
+                  <div
+                    key={i}
+                    className="rounded-xl border border-white/8 bg-white/3 px-3.5 py-3 flex flex-col gap-2 animate-pulse"
+                    style={{ aspectRatio: '3 / 4', minHeight: 0, animationDelay: `${i * 180}ms` }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-md bg-purple-500/15" />
+                      <div className="h-3 rounded bg-white/10" style={{ width: `${55 + ((i * 17) % 30)}%` }} />
+                    </div>
+                    <div className="h-2 rounded bg-white/6 w-full" />
+                    <div className="h-2 rounded bg-white/6" style={{ width: `${60 + ((i * 23) % 30)}%` }} />
+                    <div className="h-2 rounded bg-white/6" style={{ width: `${45 + ((i * 13) % 35)}%` }} />
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 

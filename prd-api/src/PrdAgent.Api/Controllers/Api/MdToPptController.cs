@@ -222,7 +222,8 @@ public class MdToPptController : ControllerBase
             "5. title 字段纯文本，不含序号（如「一、」「1.」）\n" +
             "6. clarify 为可选字段：仅当用户需求存在会显著影响内容方向的真实歧义时给出，最多 3 题。典型必问情形：用户未指明受众（对外客户/管理层/全员）或正式程度，而这会显著改变内容侧重时，应给 1-2 题；需求已写明受众与重点时禁止出题；" +
             "type 取 single/multi/text，single/multi 必须给 options（2-5 个）。没有歧义时省略 clarify 字段，禁止为提问而提问\n" +
-            "7. 用户内容里若已包含「澄清回答」段落，视为歧义已消除，不得再输出 clarify";
+            "7. 用户内容里若已包含「澄清回答」段落，视为歧义已消除，不得再输出 clarify\n" +
+            "8. 用户内容里若包含「当前大纲」段落，则本次是**调整任务**：只改动与调整要求直接相关的页；其余页的 title 与 bullets 必须逐字原样保留（一个字都不许改写/润色/增删/换序），输出时原文复制";
 
         var contextParts = new List<string>();
         if (!string.IsNullOrWhiteSpace(req.Content))
