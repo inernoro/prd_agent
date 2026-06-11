@@ -24,9 +24,19 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
 | **归档密钥 env**(仅 doc-store 模式) | 落库鉴权 | `AI_ACCESS_KEY`(AI 超级密钥)、`MAP_AI_USER`(impersonate 谁) |
 | **cdscli**(可选) | 自动取预览域名 | 仓库内 `.claude/skills/cds/cli/cdscli.py`;没有就在 config 填 `previewUrlOverride` |
 
-`report.mode=local` 时**只需 Playwright + Python**,不需要任何密钥/网络——报告写本地 `doc/acceptance/`。
+`report.mode=local` 时**只需 Playwright + Python**,不需要任何密钥/网络——报告写仓库外临时目录(默认 `/tmp/acceptance-reports/`)。
 
 接入新仓库:见文末"跨仓库复用",改 `acceptance.config.json` 一处即可。
+
+## 仓库零污染硬规则（2026-06-10 起）
+
+> 用户明确禁止把验收截图/视频/本地报告放进项目目录。验收证据属于临时产物或知识库附件,不是源码。
+
+- **禁止在仓库内生成或保留验收图片/视频/本地报告**:包括 `doc/acceptance/`、`artifacts/acceptance/`、业务目录下的 `*.png/*.jpg/*.webp/*.webm`、临时 driver。所有取证输出必须写到 `/tmp/...` 或仓库外的 `ACCEPTANCE_OUT_ROOT`。
+- **doc-store 模式**:截图先在 `/tmp/acc_shots...` 暂存,归档脚本上传到知识库后只交付分享链/entryId/storeId;不要把截图复制回仓库。
+- **local 模式**:只允许仓库外输出(默认 `/tmp/acceptance-reports/`)。`archive_report.py` 会拒绝 `localOutDir` 指向当前 git worktree 内部。
+- **任何清理都必须先问用户**:如果发现历史验收图片已经在 git status/index 里,只报告路径和建议;**不得擅自 `rm`、`git rm`、`git restore`、`git reset`**。
+- **最终交付必须说明**:本次是否产生本地验收产物、所在仓库外路径、是否有项目内新增图片。若项目内出现新增图片,本次验收不合格,先停下汇报。
 
 ## 三个核心规矩(v2 相对 v1 的升级,违反即不合格)
 
@@ -103,7 +113,7 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
    - **v1.0 双主题**:先 `detectThemeSupport(page,cfg)` 探测本页是否真支持 light(标准 §5.4);`supportsLight=true` 才双主题各一张,dark-only 页单图 + 注明不计 fail。别交两张一模一样的暗图。
    - **v1.0 机读产物**:`writeManifest` 同时写 `result.json`(verdict/autoFindings/themeSupport/timing),供下游 Agent 直接消费。
    - **v1.0 过程视频(可选)**:`launch(cfg,{recordVideoDir:OUT})` + 收尾 `finalizeVideo(page,ctx,OUT)`,产 `walkthrough.webm` 作**本地证据,不进知识库正文**(沿用用户决定,见 `debt.visual-acceptance-skill.md`)。
-   运行:`PWPATH=$(npm root -g)/playwright node <driver>.mjs`(无 playwright 先 `npm i -g playwright && npx playwright install chromium`)。
+   运行:`PWPATH=$(npm root -g)/playwright node <driver>.mjs`(无 playwright 先 `npm i -g playwright && npx playwright install chromium`)。**driver 文件和 outDir 必须在 `/tmp` 或仓库外目录,禁止放进项目。**
 3. **读图核对**:截图用 Read 工具读回,肉眼级核对(这套抓到过"匿名未登录""按钮没渲染"等真 bug)。据此填**自动选定的模板**得出 Verdict。两套模板共享同一速览卡(H1 + Verdict + 一句话结论 + 元信息表) + 同一结尾(meta 注释);中间章节按所选风格走。
 4. **归档**:`python3 scripts/archive_report.py --config acceptance.config.json --target "<目标>" --module "<模块>" --feature "<功能>" --type "<新增功能|优化|修复>" --verdict <pass|conditional|fail> --tier <L0|L1|L2> --report-md <正文.md> --manifest <outDir>/manifest.json [--branch --commit]`。
    - **命名固定结构**(用户定):标题 = `项目 · 模块 · 功能 · 操作方式 · 验收报告`(`--module/--feature/--type` 拼装,空段自动跳过)。**状态(通过/不通过)不进标题——走 tags 标记**(脚本自动写 `[verdict_cn, type, tier]`),不靠改名表达状态。
@@ -125,7 +135,7 @@ export MAP_AI_USER=inernoro MAP_ACCEPT_PASS='***' AI_ACCESS_KEY='***'
 cp $SKILL/scripts/example-driver.mjs /tmp/my-driver.mjs
 #   编辑 /tmp/my-driver.mjs:登录 → gotoByClick(目标菜单) → 操作 → shot(...)
 
-# 2. 取证(产出 /tmp/acc_shots/*.png + manifest.json)
+# 2. 取证(产出 /tmp/acc_shots/*.png + manifest.json,禁止写项目目录)
 node /tmp/my-driver.mjs "$(python3 $SKILL/../cds/cli/cdscli.py --human preview-url)"
 
 # 3. 读图核对(用 Read 工具逐张看),据 templates/report-template.md 写 /tmp/report_body.md
@@ -179,7 +189,7 @@ python3 $SKILL/scripts/read_comments.py --config $SKILL/acceptance.config.json \
 
 ## 跨仓库复用
 
-整个技能项目无关,耦合点全在 `acceptance.config.json`:预览域名命令、登录选择器与 env、文档空间 API base、报告库名、截图参数。别的仓库装本技能 + 改配置即用;`report.mode=local` 时退化为写 `doc/acceptance/` 本地 md + 截图,不依赖文档空间。
+整个技能项目无关,耦合点全在 `acceptance.config.json`:预览域名命令、登录选择器与 env、文档空间 API base、报告库名、截图参数。别的仓库装本技能 + 改配置即用;`report.mode=local` 时退化为写仓库外本地 md + 截图(默认 `/tmp/acceptance-reports/`),不依赖文档空间。
 
 ## 与既有技能的关系
 

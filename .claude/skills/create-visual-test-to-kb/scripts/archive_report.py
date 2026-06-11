@@ -4,8 +4,8 @@
 两种输出模式（由 acceptance.config.json 的 report.mode 决定）：
   - doc-store：上传截图 → 删图条目(保URL) → 找/建报告库 → 建条目(正文以 # 标题
     打头,根治目录 `---`) → 写正文 → 出分享短链。需要文档空间 API + AI 密钥。
-  - local：把报告写成本地 md + 截图拷到本地目录，图用相对路径引用。**零依赖**，
-    适合没有文档空间的仓库。
+  - local：把报告写到仓库外本地目录，图用相对路径引用。**零依赖**，
+    适合没有文档空间的仓库；禁止写入当前 git worktree。
 
 用法：
   python3 archive_report.py \
@@ -60,6 +60,35 @@ def build_meta(report_id, now, reviewer, a, preview):
     )
 
 
+def git_root():
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        return os.path.realpath(out) if out else ""
+    except Exception:
+        return ""
+
+
+def ensure_outside_git_worktree(path, label):
+    root = git_root()
+    if not root:
+        return
+    real = os.path.realpath(os.path.abspath(path))
+    try:
+        inside = os.path.commonpath([root, real]) == root
+    except ValueError:
+        inside = False
+    if inside:
+        raise RuntimeError(
+            f"{label} 指向当前 git worktree 内部: {path}。"
+            "验收图片/本地报告禁止写入项目目录；请改到 /tmp/acceptance-reports 或设置仓库外路径。"
+        )
+
+
 def assemble(title, body, evidence, meta, img_md=None):
     """正文以 H1 标题打头（根治目录 `---`，见标准 §2.1），机读字段在文末注释。
     支持两种图片占位：
@@ -74,7 +103,8 @@ def assemble(title, body, evidence, meta, img_md=None):
 
 
 def run_local(cfg, a, title, report_id, body, manifest, meta, tags=None):
-    out_dir = cfg["report"].get("localOutDir", "doc/acceptance")
+    out_dir = cfg["report"].get("localOutDir", "/tmp/acceptance-reports")
+    ensure_outside_git_worktree(out_dir, "report.localOutDir")
     os.makedirs(out_dir, exist_ok=True)
     shot_dir = os.path.join(out_dir, report_id)
     os.makedirs(shot_dir, exist_ok=True)

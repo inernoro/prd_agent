@@ -26,6 +26,9 @@ namespace PrdAgent.Api.Controllers.Api;
     WritePermission = AdminPermissionCatalog.PeerSyncManage)]
 public class AdminPeerNodesController : ControllerBase
 {
+    private const int PairingCodeTtlDays = 3;
+    private const int PairingCodeTtlSeconds = PairingCodeTtlDays * 24 * 60 * 60;
+
     private readonly MongoDbContext _db;
     private readonly IPeerNodeService _peer;
     private readonly ISafeOutboundUrlValidator _urlValidator;
@@ -86,7 +89,7 @@ public class AdminPeerNodesController : ControllerBase
         }));
     }
 
-    /// <summary>生成一次性配对码（5 分钟有效，供对端管理员粘贴）。</summary>
+    /// <summary>生成一次性配对码（3 天有效，使用一次后失效，供对端管理员粘贴）。</summary>
     [HttpPost("pairing-code")]
     public async Task<IActionResult> GeneratePairingCode(CancellationToken ct)
     {
@@ -95,13 +98,13 @@ public class AdminPeerNodesController : ControllerBase
         {
             Id = code,
             CreatedBy = GetUserId(),
-            ExpiresAt = DateTime.UtcNow.AddMinutes(5),
+            ExpiresAt = DateTime.UtcNow.AddDays(PairingCodeTtlDays),
         }, cancellationToken: ct);
         var selfNodeId = await _peer.GetSelfNodeIdAsync(ct);
         return Ok(ApiResponse<object>.Ok(new
         {
             pairingCode = code,
-            expiresInSeconds = 300,
+            expiresInSeconds = PairingCodeTtlSeconds,
             selfNodeId,
             selfBaseUrl = SelfBaseUrl(null),
         }));
