@@ -60,7 +60,8 @@ requireContains('branchList', 'className="cds-branch-card-grid"', 'branch list u
 requireNotContains('branchList', 'grid gap-4 sm:grid-cols-2 2xl:grid-cols-3', 'branch list does not use fixed 3-column Tailwind grid');
 requireContains('css', '.cds-workspace.cds-branch-list-workspace', 'branch list workspace overrides generic cap with higher specificity');
 requireContains('css', 'max-width: 3000px', 'branch list workspace has wide cap');
-requireContains('css', 'grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));', 'branch grid fills row width');
+requireContains('css', 'grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr));', 'branch grid keeps empty tracks so a single card does not stretch full-width');
+requireNotContains('css', 'grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));', 'branch grid avoids auto-fit single-card stretch regression');
 
 // Preview/release action: the release action must live inside the preview split
 // menu on both the branch card and detail drawer. Separate strong action buttons
