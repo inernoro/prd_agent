@@ -1083,6 +1083,14 @@ export default function ChangelogPage() {
               <Filter size={14} />
               筛选
             </div>
+            <span
+              className="inline-flex items-center gap-1 text-[11px]"
+              style={{ color: 'var(--text-muted)' }}
+              title="角标统计最近 30 天的条目数，越久没有新增热度自然衰减；火焰 = 近 30 天最热类型"
+            >
+              <Flame size={10} style={{ color: '#fb923c' }} />
+              热度 = 近 30 天条目数
+            </span>
             
             <div className="flex flex-wrap ml-1" style={{ gap: '12px 10px', paddingTop: '6px' }}>
               {availableTypes.map((t) => {
