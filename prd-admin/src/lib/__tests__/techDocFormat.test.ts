@@ -3,6 +3,7 @@ import {
   buildPm2502Draft,
   buildTechDocGenerationPrompt,
   PM2502_TECH_DOC_TEMPLATE,
+  validateTechDocContentQuality,
   validateTechDocFormat,
 } from '../techDocFormat';
 
@@ -58,5 +59,33 @@ describe('techDocFormat', () => {
     expect(prompt).toContain('只能输出 Markdown 正文');
     expect(prompt).toContain('# 一、项目简介');
     expect(prompt).toContain('### 1.原有接口');
+    expect(prompt).toContain('内容事实来源优先级');
+    expect(prompt).toContain('禁止只复制模板');
+  });
+
+  it('rejects a template-only generated document when requirements are concrete', () => {
+    const result = validateTechDocContentQuality(PM2502_TECH_DOC_TEMPLATE, {
+      projectName: 'DDD Harness 渐进式项目架构',
+      appName: 'miduo-backend',
+      moduleName: '文档中枢',
+      featureName: 'DDD Harness 架构初始化',
+      requirementText: '请根据 DDD+Harness 渐进式新项目架构指南生成技术分析文档，包含 miduo-md 文档中枢、技能门禁、领域分层和 P0 阶段交付。',
+      projectLinks: 'https://github.com/MiDouTech/miduo-backend',
+      requirementFiles: [
+        {
+          name: 'DDD+Harness-渐进式新项目架构指南.md',
+          content: 'P0 阶段需要建立 miduo-md 文档中枢，补齐 .cursor/skills 技能门禁，并明确领域分层。',
+        },
+      ],
+      githubProject: {
+        fullName: 'MiDouTech/miduo-backend',
+        owner: 'MiDouTech',
+        repo: 'miduo-backend',
+        path: '/',
+      },
+    });
+
+    expect(result.passed).toBe(false);
+    expect(result.issues.some((issue) => issue.id === 'content-template-example-leftover')).toBe(true);
   });
 });

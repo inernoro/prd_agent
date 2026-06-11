@@ -41,6 +41,10 @@ export interface TechDocDraftInput {
     path?: string;
     htmlUrl?: string;
     treeSummary?: string;
+    files?: Array<{
+      path: string;
+      content: string;
+    }>;
   };
 }
 
@@ -531,6 +535,112 @@ export function validateTechDocFormat(markdown: string): TechDocValidationResult
   };
 }
 
+export function validateTechDocContentQuality(
+  markdown: string,
+  input: TechDocDraftInput,
+): TechDocValidationResult {
+  const doc = normalizeDoc(markdown);
+  const issues: TechDocIssue[] = [];
+  const hasConcreteInput =
+    input.requirementText.trim().length > 20
+    || (input.requirementFiles ?? []).some((file) => file.content.trim().length > 20)
+    || !!input.githubProject?.fullName;
+
+  if (!doc || !hasConcreteInput) {
+    return {
+      passed: true,
+      score: 100,
+      issues: [],
+      summary: { errorCount: 0, warningCount: 0, infoCount: 0 },
+    };
+  }
+
+  const placeholderMatches = doc.match(/暂无|待定|待填写|不涉及|xxxxx|xxx/g) ?? [];
+  if (placeholderMatches.length >= 12) {
+    pushIssue(issues, {
+      id: 'content-too-many-placeholders',
+      severity: 'error',
+      title: '内容仍以占位为主',
+      detail: `检测到 ${placeholderMatches.length} 个“暂无/待定/待填写/xxx”类占位。需求明确时不能只输出模板占位。`,
+      fix: '重新读取上传需求和 GitHub 项目上下文，把背景、目的、功能点、流程、接口/数据库影响、测试范围和工时填成具体内容。',
+    });
+  }
+
+  const templateExampleHits = [
+    '会员小程序',
+    '升级礼包弹窗',
+    '码包文件上传-预检',
+    '/v1/code/package/execute-upload',
+    '/v1/code/code-relation/validate-add',
+  ].filter((text) => doc.includes(text));
+  if (templateExampleHits.length > 0) {
+    pushIssue(issues, {
+      id: 'content-template-example-leftover',
+      severity: 'error',
+      title: '残留 PM2502 示例内容',
+      detail: `检测到模板示例内容残留：${templateExampleHits.join('、')}。`,
+      fix: '删除模板示例业务，替换为当前需求和项目中的真实模块、接口、流程和影响范围。',
+    });
+  }
+
+  const requirementKeywords = extractKeywords([
+    input.requirementText,
+    ...(input.requirementFiles ?? []).map((file) => `${file.name}\n${file.content}`),
+  ].join('\n'));
+  const matchedKeywords = requirementKeywords.filter((keyword) => doc.includes(keyword));
+  if (requirementKeywords.length >= 3 && matchedKeywords.length < Math.min(3, requirementKeywords.length)) {
+    pushIssue(issues, {
+      id: 'content-not-grounded-in-requirement',
+      severity: 'error',
+      title: '未充分引用需求关键信息',
+      detail: `需求中可识别的关键词较多，但输出只命中 ${matchedKeywords.length} 个。`,
+      fix: `至少围绕这些需求关键词展开：${requirementKeywords.slice(0, 8).join('、')}。`,
+    });
+  }
+
+  const project = input.githubProject;
+  if (project?.fullName && !doc.includes(project.repo) && !doc.includes(project.fullName)) {
+    pushIssue(issues, {
+      id: 'content-missing-selected-repo',
+      severity: 'warning',
+      title: '未体现所选 GitHub 项目',
+      detail: `已选择 ${project.fullName}，但输出未明确引用该仓库或项目路径。`,
+      fix: '在参考资料、前端设计/实现分析或影响范围中写明所选仓库和项目路径。',
+    });
+  }
+
+  const errorCount = issues.filter((issue) => issue.severity === 'error').length;
+  const warningCount = issues.filter((issue) => issue.severity === 'warning').length;
+  const infoCount = issues.filter((issue) => issue.severity === 'info').length;
+  const score = Math.max(0, 100 - errorCount * 20 - warningCount * 6 - infoCount);
+
+  return {
+    passed: errorCount === 0,
+    score,
+    issues,
+    summary: { errorCount, warningCount, infoCount },
+  };
+}
+
+function extractKeywords(text: string): string[] {
+  const stopwords = new Set([
+    '需求', '文档', '项目', '功能', '生成', '技术', '分析', '模板', '需要', '进行',
+    '支持', '对应', '上传', '用户', '根据', '以及', '一个', '这个',
+  ]);
+  const matches = text.match(/[\u4e00-\u9fa5A-Za-z0-9_-]{3,}/g) ?? [];
+  const counts = new Map<string, number>();
+  for (const raw of matches) {
+    const word = raw.trim();
+    if (word.length < 3 || stopwords.has(word)) continue;
+    if (/^\d+$/.test(word)) continue;
+    counts.set(word, (counts.get(word) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || b[0].length - a[0].length)
+    .map(([word]) => word)
+    .slice(0, 12);
+}
+
 function withFallback(value: string | undefined, fallback: string): string {
   const trimmed = value?.trim();
   return trimmed ? trimmed : fallback;
@@ -568,6 +678,10 @@ export function buildTechDocGenerationPrompt(input: TechDocDraftInput): string {
     .map((file, index) => `### 上传需求文件 ${index + 1}：${file.name}\n${file.content.trim()}`)
     .join('\n\n');
   const github = input.githubProject;
+  const projectFiles = (github?.files ?? [])
+    .filter((file) => file.content.trim())
+    .map((file, index) => `### 项目文件 ${index + 1}：${file.path}\n${file.content.trim()}`)
+    .join('\n\n');
   const githubContext = github
     ? `- GitHub 仓库：${github.fullName}\n- GitHub 项目路径：${github.path || '/'}\n- 默认分支：${github.branch || '默认分支'}\n- 仓库链接：${github.htmlUrl || '未提供'}\n- 当前路径文件/目录摘要：\n${github.treeSummary || '暂无'}`
     : '未选择 GitHub 项目路径';
@@ -577,13 +691,15 @@ export function buildTechDocGenerationPrompt(input: TechDocDraftInput): string {
 硬性要求：
 1. 只能输出 Markdown 正文，不要包裹代码块，不要解释过程。
 2. 默认且唯一模板为 PM2502，必须严格保留模板的标题、编号、空格、表格列、括号说明、引用块、红字 HTML、<br/>。
-3. 顶层章节只能是：
+3. 内容事实来源优先级：上传需求文件 > 用户手写需求说明 > GitHub 项目文件内容 > GitHub 目录摘要 > 表单字段。必须先读事实源再填模板。
+4. 禁止只复制模板或大量写“暂无/待定/不涉及”。只有事实源确实没有的信息才允许占位。
+5. 不得保留 PM2502 示例业务（会员小程序、升级礼包、码包上传、码关系等），必须替换为当前需求和当前项目的真实内容。
+6. 顶层章节只能是：
 ${TOP_LEVEL_HEADINGS.join('\n')}
-4. “# 三、项目设计”下二级标题顺序必须是：
+7. “# 三、项目设计”下二级标题顺序必须是：
 ${PROJECT_DESIGN_SECTIONS.join('\n')}
-5. 如果信息不足，用“暂无/待定/不涉及/待排期”占位，不要删模板栏目。
-6. 禁止输出补丁标记、字面量 \\n、模板外顶层章节、第二套正文。
-7. 技术细节必须放入模板已有栏目，不能新建 PM2502 外的顶层章节。
+8. 技术细节必须放入模板已有栏目，不能新建 PM2502 外的顶层章节。
+9. 输出前自检：项目背景/目的、项目内容表、流程设计、实现分析、影响范围、实施规划至少 6 处必须包含当前需求或 GitHub 项目的具体信息。
 
 用户输入：
 - 项目名称：${withFallback(input.projectName, '待填写')}
@@ -604,7 +720,10 @@ ${withFallback(input.requirementText, '暂无')}
 上传需求文件内容：
 ${uploadedFiles || '暂无'}
 
-PM2502 模板全文如下，请复制其结构后替换内容：
+GitHub 项目关键文件内容：
+${projectFiles || '暂无'}
+
+PM2502 模板全文如下。它只提供格式骨架，不是内容答案；必须复制结构并替换示例/占位内容：
 ${PM2502_TECH_DOC_TEMPLATE}`;
 }
 

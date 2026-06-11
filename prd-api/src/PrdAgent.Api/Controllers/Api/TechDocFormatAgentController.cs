@@ -27,6 +27,21 @@ public sealed class TechDocFormatAgentController : ControllerBase
     private const string AppKey = "tech-doc-format-agent";
     private const int MaxReposPageSize = 50;
     private const int MaxTreeItems = 200;
+    private const int MaxContextFiles = 16;
+    private const int MaxContextDepth = 2;
+    private const int MaxContextFileBytes = 120_000;
+    private const int MaxContextFileChars = 24_000;
+    private static readonly string[] ContextFileExtensions =
+    [
+        ".md", ".txt", ".json", ".yml", ".yaml", ".csproj", ".sln", ".cs",
+        ".ts", ".tsx", ".js", ".jsx", ".vue", ".config", ".props", ".targets"
+    ];
+    private static readonly string[] ContextFileNameHints =
+    [
+        "readme", "package.json", "pnpm-lock.yaml", "yarn.lock", "package-lock.json",
+        "dockerfile", "docker-compose", "program.cs", "startup.cs", "appsettings",
+        "controller", "service", "route", "router"
+    ];
 
     private readonly MongoDbContext _db;
     private readonly IGitHubOAuthService _oauth;
@@ -244,6 +259,59 @@ public sealed class TechDocFormatAgentController : ControllerBase
         }
     }
 
+    [HttpGet("github/context")]
+    public async Task<IActionResult> GetRepositoryContext(
+        [FromQuery] string owner,
+        [FromQuery] string repo,
+        [FromQuery] string? path,
+        [FromQuery] string? branch,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            if (!PrUrlParser.IsSafeOwnerRepo(owner, repo))
+            {
+                return BadRequest(ApiResponse<object>.Fail(GitHubErrorCodes.PR_URL_INVALID, "owner/repo 含非法字符"));
+            }
+
+            var userId = this.GetRequiredUserId();
+            var token = await ResolveUserTokenAsync(userId, CancellationToken.None);
+            var safePath = NormalizePath(path);
+            using var client = CreateGitHubClient(token);
+
+            var files = await CollectContextFilesAsync(
+                client,
+                owner,
+                repo,
+                safePath,
+                branch,
+                depth: 0,
+                CancellationToken.None);
+
+            await TouchLastUsedAsync(userId, CancellationToken.None);
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                owner,
+                repo,
+                path = safePath,
+                branch,
+                files = files.Select(file => new
+                {
+                    file.Path,
+                    file.Name,
+                    file.Size,
+                    file.Content,
+                    file.Truncated,
+                    file.HtmlUrl,
+                }),
+            }));
+        }
+        catch (GitHubException ex)
+        {
+            return MapException(ex);
+        }
+    }
+
     private async Task PersistConnectionAsync(string userId, string accessToken, string scope)
     {
         var userInfo = await _oauth.FetchUserInfoAsync(accessToken, CancellationToken.None);
@@ -372,6 +440,123 @@ public sealed class TechDocFormatAgentController : ControllerBase
         size = item.Size,
         htmlUrl = item.HtmlUrl,
     };
+
+    private async Task<List<TechDocGitHubContextFile>> CollectContextFilesAsync(
+        HttpClient client,
+        string owner,
+        string repo,
+        string path,
+        string? branch,
+        int depth,
+        CancellationToken ct)
+    {
+        if (depth > MaxContextDepth) return [];
+
+        var contentsPath = string.IsNullOrWhiteSpace(path)
+            ? $"repos/{owner}/{repo}/contents"
+            : $"repos/{owner}/{repo}/contents/{Uri.EscapeDataString(path).Replace("%2F", "/", StringComparison.Ordinal)}";
+        if (!string.IsNullOrWhiteSpace(branch))
+        {
+            contentsPath += $"?ref={Uri.EscapeDataString(branch)}";
+        }
+
+        using var resp = await client.GetAsync(contentsPath, ct);
+        await ThrowIfGitHubErrorAsync(resp, $"读取 {owner}/{repo}/{path} 失败", ct);
+        var text = await resp.Content.ReadAsStringAsync(ct);
+        var items = System.Text.Json.JsonSerializer.Deserialize<List<TechDocGitHubContentDto>>(text)
+            ?? new List<TechDocGitHubContentDto>();
+
+        var files = new List<TechDocGitHubContextFile>();
+        foreach (var item in RankContextCandidates(items))
+        {
+            if (files.Count >= MaxContextFiles) break;
+
+            if (string.Equals(item.Type, "file", StringComparison.OrdinalIgnoreCase) && IsContextFile(item))
+            {
+                var file = await FetchContextFileAsync(client, item, ct);
+                if (file != null) files.Add(file);
+            }
+            else if (string.Equals(item.Type, "dir", StringComparison.OrdinalIgnoreCase)
+                && depth < MaxContextDepth
+                && IsUsefulContextDirectory(item.Name))
+            {
+                var nested = await CollectContextFilesAsync(
+                    client,
+                    owner,
+                    repo,
+                    item.Path ?? string.Empty,
+                    branch,
+                    depth + 1,
+                    ct);
+                files.AddRange(nested.Take(MaxContextFiles - files.Count));
+            }
+        }
+        return files.Take(MaxContextFiles).ToList();
+    }
+
+    private async Task<TechDocGitHubContextFile?> FetchContextFileAsync(
+        HttpClient client,
+        TechDocGitHubContentDto item,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(item.DownloadUrl)) return null;
+        if (item.Size is > MaxContextFileBytes) return null;
+
+        using var resp = await client.GetAsync(item.DownloadUrl, ct);
+        if (!resp.IsSuccessStatusCode) return null;
+
+        var content = await resp.Content.ReadAsStringAsync(ct);
+        var truncated = content.Length > MaxContextFileChars;
+        if (truncated) content = content[..MaxContextFileChars] + "\n\n[... 文件内容已截断 ...]";
+
+        return new TechDocGitHubContextFile
+        {
+            Name = item.Name ?? string.Empty,
+            Path = item.Path ?? item.Name ?? string.Empty,
+            Size = item.Size,
+            HtmlUrl = item.HtmlUrl,
+            Content = content,
+            Truncated = truncated,
+        };
+    }
+
+    private static IEnumerable<TechDocGitHubContentDto> RankContextCandidates(IEnumerable<TechDocGitHubContentDto> items)
+    {
+        return items.OrderByDescending(item => ContextScore(item)).ThenBy(item => item.Name);
+    }
+
+    private static int ContextScore(TechDocGitHubContentDto item)
+    {
+        var name = (item.Name ?? string.Empty).ToLowerInvariant();
+        var path = (item.Path ?? string.Empty).ToLowerInvariant();
+        var score = 0;
+        if (string.Equals(item.Type, "dir", StringComparison.OrdinalIgnoreCase)) score += 20;
+        if (ContextFileNameHints.Any(hint => name.Contains(hint) || path.Contains(hint))) score += 50;
+        if (name.StartsWith("readme")) score += 80;
+        if (name.EndsWith(".csproj") || name.EndsWith(".sln") || name == "package.json") score += 70;
+        if (path.Contains("controller") || path.Contains("service") || path.Contains("src/")) score += 20;
+        return score;
+    }
+
+    private static bool IsContextFile(TechDocGitHubContentDto item)
+    {
+        var name = item.Name ?? string.Empty;
+        var lower = name.ToLowerInvariant();
+        return ContextFileExtensions.Any(ext => lower.EndsWith(ext, StringComparison.Ordinal))
+            || ContextFileNameHints.Any(hint => lower.Contains(hint));
+    }
+
+    private static bool IsUsefulContextDirectory(string? name)
+    {
+        var lower = (name ?? string.Empty).ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(lower)) return false;
+        if (lower is "node_modules" or "bin" or "obj" or "dist" or "build" or ".git") return false;
+        return lower is "src" or "app" or "api" or "backend" or "frontend" or "controllers" or "services"
+            or "pages" or "components" or "lib" or "docs" or "doc" or "miduo-md"
+            || lower.Contains("service")
+            || lower.Contains("controller")
+            || lower.Contains("api");
+    }
 }
 
 public sealed class TechDocDeviceFlowPollRequest
@@ -434,4 +619,17 @@ internal sealed class TechDocGitHubContentDto
 
     [JsonPropertyName("html_url")]
     public string? HtmlUrl { get; set; }
+
+    [JsonPropertyName("download_url")]
+    public string? DownloadUrl { get; set; }
+}
+
+internal sealed class TechDocGitHubContextFile
+{
+    public string Name { get; set; } = string.Empty;
+    public string Path { get; set; } = string.Empty;
+    public long? Size { get; set; }
+    public string? HtmlUrl { get; set; }
+    public string Content { get; set; } = string.Empty;
+    public bool Truncated { get; set; }
 }

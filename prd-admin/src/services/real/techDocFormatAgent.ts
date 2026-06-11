@@ -65,6 +65,23 @@ export interface TechDocGitHubTree {
   items: TechDocGitHubTreeItem[];
 }
 
+export interface TechDocGitHubContextFile {
+  name: string;
+  path: string;
+  size?: number | null;
+  content: string;
+  truncated: boolean;
+  htmlUrl?: string | null;
+}
+
+export interface TechDocGitHubContext {
+  owner: string;
+  repo: string;
+  path: string;
+  branch?: string | null;
+  files: TechDocGitHubContextFile[];
+}
+
 export async function getTechDocGitHubAuthStatus(): Promise<ApiResponse<TechDocGitHubAuthStatus>> {
   return apiRequest<TechDocGitHubAuthStatus>(api.techDocFormatAgent.github.auth.status());
 }
@@ -102,5 +119,16 @@ export async function getTechDocGitHubTree(
 ): Promise<ApiResponse<TechDocGitHubTree>> {
   return apiRequest<TechDocGitHubTree>(
     api.techDocFormatAgent.github.tree(owner, repo, path, branch),
+  );
+}
+
+export async function getTechDocGitHubContext(
+  owner: string,
+  repo: string,
+  path?: string,
+  branch?: string,
+): Promise<ApiResponse<TechDocGitHubContext>> {
+  return apiRequest<TechDocGitHubContext>(
+    api.techDocFormatAgent.github.context(owner, repo, path, branch),
   );
 }

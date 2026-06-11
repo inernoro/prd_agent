@@ -26,12 +26,14 @@ import { toast } from '@/lib/toast';
 import { streamDirectChat } from '@/services/real/aiToolbox';
 import {
   getTechDocGitHubAuthStatus,
+  getTechDocGitHubContext,
   getTechDocGitHubTree,
   listTechDocGitHubRepositories,
   pollTechDocGitHubDeviceFlow,
   startTechDocGitHubDeviceFlow,
   type TechDocDeviceFlowStart,
   type TechDocGitHubAuthStatus,
+  type TechDocGitHubContext,
   type TechDocGitHubRepository,
   type TechDocGitHubTreeItem,
 } from '@/services/real/techDocFormatAgent';
@@ -40,6 +42,7 @@ import {
   buildTechDocGenerationPrompt,
   buildTechDocRepairPrompt,
   PM2502_TECH_DOC_TEMPLATE,
+  validateTechDocContentQuality,
   validateTechDocFormat,
   type TechDocDraftInput,
   type TechDocIssue,
@@ -121,6 +124,8 @@ export function TechDocFormatAgentPage() {
   const [treeLoading, setTreeLoading] = useState(false);
   const [currentPath, setCurrentPath] = useState('');
   const [selectedProjectPath, setSelectedProjectPath] = useState('');
+  const [projectContext, setProjectContext] = useState<TechDocGitHubContext | null>(null);
+  const [projectContextLoading, setProjectContextLoading] = useState(false);
 
   useEffect(() => {
     if (phase !== 'streaming') {
@@ -181,6 +186,18 @@ export function TechDocFormatAgentPage() {
     }
     setTreeItems(res.data.items);
     setCurrentPath(res.data.path || '');
+  }, []);
+
+  const loadProjectContext = useCallback(async (repo: TechDocGitHubRepository, path = '') => {
+    setProjectContextLoading(true);
+    const res = await getTechDocGitHubContext(repo.owner, repo.repo, path, repo.defaultBranch ?? undefined);
+    setProjectContextLoading(false);
+    if (!res.success || !res.data) {
+      toast.error('项目内容读取失败', res.error?.message ?? '请确认账号有仓库访问权限');
+      return null;
+    }
+    setProjectContext(res.data);
+    return res.data;
   }, []);
 
   const startGitHubConnect = useCallback(async () => {
@@ -268,8 +285,30 @@ export function TechDocFormatAgentPage() {
       path: selectedProjectPath || currentPath || '/',
       htmlUrl: selectedRepo.htmlUrl ?? undefined,
       treeSummary: selectedTreeSummary,
+      files: (projectContext?.files ?? []).map((file) => ({
+        path: file.path,
+        content: file.content,
+      })),
     } : undefined,
-  }), [currentPath, form, requirementFiles, selectedProjectPath, selectedRepo, selectedTreeSummary]);
+  }), [currentPath, form, projectContext?.files, requirementFiles, selectedProjectPath, selectedRepo, selectedTreeSummary]);
+
+  const contentQualityValidation = useMemo(
+    () => validateTechDocContentQuality(generatedDoc, generationInput),
+    [generatedDoc, generationInput],
+  );
+
+  const generatedCombinedValidation = useMemo(() => {
+    const issues = [...generatedValidation.issues, ...contentQualityValidation.issues];
+    const errorCount = issues.filter((issue) => issue.severity === 'error').length;
+    const warningCount = issues.filter((issue) => issue.severity === 'warning').length;
+    const infoCount = issues.filter((issue) => issue.severity === 'info').length;
+    return {
+      passed: errorCount === 0,
+      score: Math.min(generatedValidation.score, contentQualityValidation.score),
+      issues,
+      summary: { errorCount, warningCount, infoCount },
+    };
+  }, [contentQualityValidation, generatedValidation]);
 
   const canGenerate =
     form.requirementText.trim().length > 0
@@ -297,7 +336,7 @@ export function TechDocFormatAgentPage() {
     setErrorMsg('');
     setModelInfo(null);
     setActiveTab('generate');
-    toast.success('已生成 PM2502 底稿', '底稿已自动完成模板校验');
+    toast.success('已生成 PM2502 底稿', '底稿仅用于起草，完整文档仍需通过内容质量校验');
   }, [generationInput]);
 
   const runPrompt = useCallback((prompt: string) => {
@@ -339,13 +378,13 @@ export function TechDocFormatAgentPage() {
       toast.warning('暂无可修复文档');
       return;
     }
-    const issues = generatedValidation.issues.filter((issue) => issue.severity !== 'info');
+    const issues = generatedCombinedValidation.issues.filter((issue) => issue.severity !== 'info');
     if (issues.length === 0) {
-      toast.success('当前文档已通过格式校验');
+      toast.success('当前文档已通过格式与内容校验');
       return;
     }
     runPrompt(buildTechDocRepairPrompt(generatedDoc, issues));
-  }, [generatedDoc, generatedValidation.issues, runPrompt]);
+  }, [generatedCombinedValidation.issues, generatedDoc, runPrompt]);
 
   const handleStop = useCallback(() => {
     abortRef.current?.();
@@ -388,6 +427,7 @@ export function TechDocFormatAgentPage() {
   const handleSelectRepo = useCallback((repo: TechDocGitHubRepository) => {
     setSelectedRepo(repo);
     setSelectedProjectPath('');
+    setProjectContext(null);
     setCurrentPath('');
     setTreeItems([]);
     updateForm('projectLinks', repo.htmlUrl ?? repo.fullName);
@@ -399,11 +439,14 @@ export function TechDocFormatAgentPage() {
     void loadTree(selectedRepo, item.path);
   }, [loadTree, selectedRepo]);
 
-  const handleSelectCurrentPath = useCallback(() => {
+  const handleSelectCurrentPath = useCallback(async () => {
     if (!selectedRepo) return;
-    setSelectedProjectPath(currentPath || '/');
-    toast.success('已选择项目路径', `${selectedRepo.fullName}/${currentPath || ''}`);
-  }, [currentPath, selectedRepo]);
+    const path = currentPath || '/';
+    const context = await loadProjectContext(selectedRepo, currentPath);
+    if (!context) return;
+    setSelectedProjectPath(path);
+    toast.success('已读取项目上下文', `读取 ${context.files.length} 个关键文件`);
+  }, [currentPath, loadProjectContext, selectedRepo]);
 
   const inputClass =
     'w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-[color:var(--text-primary)] placeholder:text-[color:var(--text-muted)] outline-none focus:border-indigo-400/50';
@@ -679,8 +722,14 @@ export function TechDocFormatAgentPage() {
                           >
                             {selectedRepo.fullName}
                           </button>
-                          <Button variant="secondary" size="xs" onClick={handleSelectCurrentPath}>
-                            选当前路径
+                          <Button
+                            variant="secondary"
+                            size="xs"
+                            onClick={handleSelectCurrentPath}
+                            disabled={projectContextLoading}
+                          >
+                            {projectContextLoading ? <MapSpinner size={12} /> : null}
+                            读取并选中
                           </Button>
                         </div>
                         <div className="mb-2 flex items-center gap-1 text-[10px] text-[color:var(--text-secondary)]">
@@ -692,6 +741,13 @@ export function TechDocFormatAgentPage() {
                             </span>
                           )}
                         </div>
+                        {projectContext && selectedProjectPath && (
+                          <div className="mb-2 rounded-md border border-emerald-400/20 bg-emerald-500/10 px-2 py-1.5 text-[10px] text-emerald-100">
+                            已读取 {projectContext.files.length} 个关键项目文件：
+                            {projectContext.files.slice(0, 3).map((file) => file.path).join('、')}
+                            {projectContext.files.length > 3 ? ' 等' : ''}
+                          </div>
+                        )}
                         <div className="max-h-[160px] space-y-1 overflow-y-auto pr-1">
                           {treeLoading && (
                             <div className="flex items-center gap-2 px-2 py-3 text-xs text-[color:var(--text-secondary)]">
@@ -823,7 +879,7 @@ export function TechDocFormatAgentPage() {
                 </span>
               )}
               {generatedDoc.trim() && phase !== 'streaming' && (
-                <ValidationBadge result={generatedValidation} />
+                <ValidationBadge result={generatedCombinedValidation} />
               )}
             </div>
 
@@ -848,7 +904,7 @@ export function TechDocFormatAgentPage() {
             </div>
 
             {generatedDoc.trim() && phase !== 'streaming' && (
-              <IssueList issues={generatedValidation.issues} />
+              <IssueList issues={generatedCombinedValidation.issues} />
             )}
           </GlassCard>
         </div>

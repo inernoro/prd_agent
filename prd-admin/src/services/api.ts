@@ -468,6 +468,14 @@ export const api = {
         if (branch) q.set('branch', branch);
         return `/api/tech-doc-format-agent/github/tree?${q.toString()}`;
       },
+      context: (owner: string, repo: string, path?: string, branch?: string) => {
+        const q = new URLSearchParams();
+        q.set('owner', owner);
+        q.set('repo', repo);
+        if (path) q.set('path', path);
+        if (branch) q.set('branch', branch);
+        return `/api/tech-doc-format-agent/github/context?${q.toString()}`;
+      },
     },
   },
 
