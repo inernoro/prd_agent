@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Settings, Square, Trash2, X } from 'lucide-react';
+import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Maximize2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Settings, Square, Table2, Terminal, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiRequest, ApiError } from '@/lib/api';
@@ -3365,13 +3365,9 @@ interface DbTableSummary {
   type?: string;
 }
 
-interface DbColumnSummary {
+interface DbTableSummary {
   name: string;
-  type: string;
-  nullable?: string;
-  key?: string;
-  defaultValue?: string;
-  extra?: string;
+  type?: string;
 }
 
 interface DbQueryResult {
@@ -3380,31 +3376,179 @@ interface DbQueryResult {
   rowCount: number;
 }
 
+type ResourceWorkbenchRuntime = 'sql' | 'document' | 'keyValue' | 'queue' | 'unsupported';
+type ResourceWorkbenchRunner = 'sql' | 'mongo' | 'redis-readonly' | 'planned';
+type WorkbenchResultMode = 'table' | 'json' | 'output';
+
+interface ResourceWorkbenchAdapter {
+  runtime: ResourceWorkbenchRuntime;
+  runner: ResourceWorkbenchRunner;
+  label: string;
+  treeLabel: string;
+  consoleLabel: string;
+  commandLanguage: 'sql' | 'json' | 'mongo';
+  resultModes: WorkbenchResultMode[];
+  defaultCommand: string;
+  ready: boolean;
+  note: string;
+  customPanels: string[];
+}
+
+function normalizeWorkbenchRuntime(runtime: string): 'mysql' | 'postgres' | 'sqlserver' | 'mongodb' | 'redis' | 'rabbitmq' | 'unknown' {
+  const raw = runtime.toLowerCase();
+  if (raw.includes('mysql') || raw.includes('mariadb')) return 'mysql';
+  if (raw.includes('postgres')) return 'postgres';
+  if (raw.includes('sql server') || raw.includes('mssql') || raw.includes('sqlserver')) return 'sqlserver';
+  if (raw.includes('mongo')) return 'mongodb';
+  if (raw.includes('redis')) return 'redis';
+  if (raw.includes('rabbit')) return 'rabbitmq';
+  return 'unknown';
+}
+
+function resourceWorkbenchAdapter(resource: BranchResource): ResourceWorkbenchAdapter {
+  const runtime = normalizeWorkbenchRuntime(resource.runtime);
+  if (runtime === 'mysql' || runtime === 'postgres') {
+    return {
+      runtime: 'sql',
+      runner: 'sql',
+      label: `${resource.runtime} 工作台`,
+      treeLabel: '数据库 / 表',
+      consoleLabel: 'SQL Console',
+      commandLanguage: 'sql',
+      resultModes: ['table', 'json', 'output'],
+      defaultCommand: 'SELECT * FROM <table> LIMIT 50',
+      ready: true,
+      note: 'SQL 系资源共用同一套左树、命令区和结果区；DDL/DML 走写权限与审计。',
+      customPanels: ['schema', 'ddl', 'backup'],
+    };
+  }
+  if (runtime === 'sqlserver') {
+    return {
+      runtime: 'sql',
+      runner: 'planned',
+      label: 'SQL Server 工作台',
+      treeLabel: '数据库 / schema / 表',
+      consoleLabel: 'T-SQL Console',
+      commandLanguage: 'sql',
+      resultModes: ['table', 'json', 'output'],
+      defaultCommand: 'SELECT TOP 50 * FROM <table>;',
+      ready: false,
+      note: '已纳入通用 SQL 工作台协议；执行器需要容器内 sqlcmd 或 mssql-tools 后接入。',
+      customPanels: ['schema', 'ddl', 'backup'],
+    };
+  }
+  if (runtime === 'mongodb') {
+    return {
+      runtime: 'document',
+      runner: 'mongo',
+      label: 'MongoDB 工作台',
+      treeLabel: '数据库 / collection',
+      consoleLabel: 'MongoDB Console',
+      commandLanguage: 'mongo',
+      resultModes: ['table', 'json', 'output'],
+      defaultCommand: 'db.getCollection("<collection>").find({}).limit(50);',
+      ready: true,
+      note: '文档型资源复用同一大面板；collection 选择只负责生成默认命令。',
+      customPanels: ['collection', 'index', 'document'],
+    };
+  }
+  if (runtime === 'redis') {
+    return {
+      runtime: 'keyValue',
+      runner: 'redis-readonly',
+      label: 'Redis 工作台',
+      treeLabel: 'DB / key',
+      consoleLabel: 'Redis Console',
+      commandLanguage: 'json',
+      resultModes: ['json', 'output'],
+      defaultCommand: 'GET <key>',
+      ready: true,
+      note: '第一阶段保留只读 key 浏览；后续在同一协议下补命令执行和结构化编辑。',
+      customPanels: ['string', 'hash', 'list', 'set', 'zset', 'stream'],
+    };
+  }
+  if (runtime === 'rabbitmq') {
+    return {
+      runtime: 'queue',
+      runner: 'planned',
+      label: 'RabbitMQ 工作台',
+      treeLabel: 'vhost / exchange / queue / binding',
+      consoleLabel: 'RabbitMQ Command',
+      commandLanguage: 'json',
+      resultModes: ['table', 'json', 'output'],
+      defaultCommand: 'list queues',
+      ready: false,
+      note: '队列型资源已纳入协议；后续接入 list / peek / publish / purge 等动作命令。',
+      customPanels: ['queue', 'exchange', 'binding', 'message'],
+    };
+  }
+  return {
+    runtime: 'unsupported',
+    runner: 'planned',
+    label: `${resource.runtime} 工作台`,
+    treeLabel: '资源树',
+    consoleLabel: 'Command',
+    commandLanguage: 'json',
+    resultModes: ['json', 'output'],
+    defaultCommand: '',
+    ready: false,
+    note: '该资源尚未声明数据工作台执行器，可按同一 adapter 协议扩展。',
+    customPanels: [],
+  };
+}
+
 function ResourceDataPanel({ resource }: { resource: BranchResource }): JSX.Element {
-  const isSqlDatabase = resource.runtime === 'MySQL' || resource.runtime === 'PostgreSQL';
-  if (resource.runtime === 'Redis') {
+  const adapter = resourceWorkbenchAdapter(resource);
+  if (adapter.runner === 'redis-readonly') {
     return <RedisResourceDataPanel resource={resource} />;
   }
-  if (resource.runtime === 'MongoDB') {
+  if (adapter.runner === 'mongo') {
     return <MongoResourceDataPanel resource={resource} />;
   }
-  if (!isSqlDatabase) {
-    const items = ['表列表', 'Schema', '只读数据预览', 'SQL Console'];
-    return (
-      <div className="grid gap-2">
-        {items.map((item) => (
-          <div key={item} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-sm">
-            {item}
-          </div>
-        ))}
-        <div className="rounded-md border border-[hsl(var(--hairline))] px-3 py-2 text-xs leading-5 text-muted-foreground">
-          第一阶段 MySQL/PostgreSQL 已接入结构化只读面板；{resource.runtime} 的数据浏览执行器待接入。
-        </div>
-      </div>
-    );
+  if (adapter.runner === 'sql') {
+    return <SqlResourceDataPanel resource={resource} adapter={adapter} />;
   }
+  return <PlannedResourceWorkbenchPanel resource={resource} adapter={adapter} />;
+}
 
-  return <SqlResourceDataPanel resource={resource} />;
+function PlannedResourceWorkbenchPanel({ resource, adapter }: { resource: BranchResource; adapter: ResourceWorkbenchAdapter }): JSX.Element {
+  return (
+    <div className="grid gap-3 text-sm">
+      <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <Terminal className="h-4 w-4 text-primary" />
+              {adapter.label}
+            </div>
+            <div className="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">
+              {adapter.treeLabel}，右上执行 {adapter.consoleLabel}，右下查看{adapter.resultModes.map(resultModeLabel).join(' / ')}。{adapter.note}
+            </div>
+            <div className="mt-2 font-mono text-[11px] text-muted-foreground">
+              {resource.displayName} · :{resource.port || resource.containerPort || '?'}
+            </div>
+          </div>
+          <span className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs text-amber-700 dark:text-amber-300">
+            执行器待接入
+          </span>
+        </div>
+        <div className="mt-4 grid gap-2 md:grid-cols-3">
+          <MetricChip label="左侧资源树" value={adapter.treeLabel} />
+          <MetricChip label="命令区" value={adapter.consoleLabel} />
+          <MetricChip label="默认命令" value={adapter.defaultCommand || '-'} />
+        </div>
+        {adapter.customPanels.length > 0 ? (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {adapter.customPanels.map((panel) => (
+              <span key={panel} className="rounded border border-[hsl(var(--hairline))] bg-background/60 px-2 py-1 font-mono text-[11px] text-muted-foreground">
+                {panel}
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 interface MongoDatabaseSummary {
@@ -3427,10 +3571,12 @@ function chooseMongoDatabase(databases: MongoDatabaseSummary[], preferredDatabas
   return businessDatabase?.name || databases[0]?.name || preferredDatabase || '';
 }
 
-function highlightedCode(value: string, language: 'sql' | 'json'): ReactNode[] {
+function highlightedCode(value: string, language: 'sql' | 'json' | 'mongo'): ReactNode[] {
   const pattern = language === 'sql'
     ? /\b(select|from|where|insert|into|values|update|set|delete|create|alter|drop|truncate|replace|table|index|view|limit|order|by|group|join|left|right|inner|outer|on|and|or|null|not|primary|key|default|describe|show|explain)\b|('[^']*'|"[^"]*"|`[^`]*`)|(--.*$)|(\b\d+(?:\.\d+)?\b)/gim
-    : /("(?:\\.|[^"\\])*"(?=\s*:))|("(?:\\.|[^"\\])*")|(\btrue\b|\bfalse\b|\bnull\b)|(-?\b\d+(?:\.\d+)?\b)/gim;
+    : language === 'mongo'
+      ? /\b(db|find|findOne|aggregate|countDocuments|insertOne|insertMany|updateOne|updateMany|deleteOne|deleteMany|createCollection|drop|createIndex|dropIndex|limit|sort|toArray)\b|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|(\btrue\b|\bfalse\b|\bnull\b)|(-?\b\d+(?:\.\d+)?\b)/gim
+      : /("(?:\\.|[^"\\])*"(?=\s*:))|("(?:\\.|[^"\\])*")|(\btrue\b|\bfalse\b|\bnull\b)|(-?\b\d+(?:\.\d+)?\b)/gim;
   const nodes: ReactNode[] = [];
   let lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -3445,6 +3591,14 @@ function highlightedCode(value: string, language: 'sql' | 'json'): ReactNode[] {
           : match[3]
             ? 'text-muted-foreground'
             : 'text-amber-700 dark:text-amber-300'
+      : language === 'mongo'
+        ? match[1]
+          ? 'text-sky-600 dark:text-sky-300'
+          : match[2]
+            ? 'text-emerald-700 dark:text-emerald-300'
+            : match[3]
+              ? 'text-violet-600 dark:text-violet-300'
+              : 'text-amber-700 dark:text-amber-300'
       : match[1]
         ? 'text-sky-600 dark:text-sky-300'
         : match[2]
@@ -3470,7 +3624,7 @@ function CodeEditor({
   label: string;
   value: string;
   onChange: (value: string) => void;
-  language: 'sql' | 'json';
+  language: 'sql' | 'json' | 'mongo';
   minHeight?: number;
   placeholder?: string;
 }): JSX.Element {
@@ -3498,32 +3652,101 @@ function CodeEditor({
   );
 }
 
-function tryFormatJsonText(value: string): string {
-  try {
-    return JSON.stringify(JSON.parse(value || '{}'), null, 2);
-  } catch {
-    return value;
-  }
+interface MongoCommandState {
+  status: 'idle' | 'loading' | 'ok' | 'error';
+  documents: unknown[];
+  output?: unknown;
+  message?: string;
+}
+
+function ResourceWorkbenchLauncher({
+  resource,
+  title,
+  description,
+  onOpen,
+}: {
+  resource: BranchResource;
+  title: string;
+  description: string;
+  onOpen: () => void;
+}): JSX.Element {
+  return (
+    <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <Terminal className="h-4 w-4 text-primary" />
+            {title}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">{description}</div>
+          <div className="mt-2 font-mono text-[11px] text-muted-foreground">
+            {resource.displayName} · :{resource.port || resource.containerPort || '?'}
+          </div>
+        </div>
+        <Button type="button" onClick={onOpen}>
+          <Maximize2 className="h-4 w-4" />
+          打开工作台
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ResourceWorkbenchModal({
+  open,
+  title,
+  subtitle,
+  onClose,
+  children,
+}: {
+  open: boolean;
+  title: string;
+  subtitle: string;
+  onClose: () => void;
+  children: ReactNode;
+}): JSX.Element | null {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[90] bg-black/65 p-3 backdrop-blur-sm md:p-5" role="dialog" aria-modal="true">
+      <div className="mx-auto grid h-full max-w-[1760px] grid-rows-[auto_minmax(0,1fr)] overflow-hidden rounded-lg border border-[hsl(var(--hairline))] bg-background shadow-2xl">
+        <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold">{title}</div>
+            <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{subtitle}</div>
+          </div>
+          <Button type="button" size="sm" variant="ghost" onClick={onClose} aria-label="关闭工作台">
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function defaultMongoCommand(collection: string): string {
+  return collection
+    ? `db.getCollection(${JSON.stringify(collection)}).find({}).limit(50);`
+    : 'db.getCollection("<collection>").find({}).limit(50);';
+}
+
+function resultModeLabel(mode: WorkbenchResultMode): string {
+  if (mode === 'table') return '表';
+  if (mode === 'json') return 'JSON';
+  return '输出';
 }
 
 function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX.Element {
+  const [workbenchOpen, setWorkbenchOpen] = useState(true);
   const [databasesState, setDatabasesState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; databases: MongoDatabaseSummary[]; currentDatabase?: string; configuredDatabase?: string; message?: string }>({ status: 'idle', databases: [] });
   const [collectionsState, setCollectionsState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; collections: MongoCollectionSummary[]; database?: string; message?: string }>({ status: 'idle', collections: [] });
   const [selectedDatabase, setSelectedDatabase] = useState('');
-  const [selectedCollection, setSelectedCollection] = useState('');
   const selectedDatabaseRef = useRef('');
-  const [documentsState, setDocumentsState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; documents: unknown[]; message?: string }>({ status: 'idle', documents: [] });
-  const [mode, setMode] = useState<'browse' | 'query' | 'mutate'>('browse');
-  const [filter, setFilter] = useState('{}');
-  const [projection, setProjection] = useState('{}');
-  const [sort, setSort] = useState('{}');
-  const [writeAction, setWriteAction] = useState<'insertOne' | 'updateMany' | 'deleteMany' | 'createCollection' | 'dropCollection'>('insertOne');
-  const [writeCollection, setWriteCollection] = useState('');
-  const [documentDraft, setDocumentDraft] = useState('{\n  "name": "demo"\n}');
-  const [updateDraft, setUpdateDraft] = useState('{\n  "$set": {\n    "name": "updated"\n  }\n}');
-  const [writeFilter, setWriteFilter] = useState('{\n  "_id": "replace-with-id"\n}');
-  const [writeConfirm, setWriteConfirm] = useState('');
-  const [writeState, setWriteState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; result?: unknown; message?: string }>({ status: 'idle' });
+  const [selectedCollection, setSelectedCollection] = useState('');
+  const [command, setCommand] = useState(defaultMongoCommand(''));
+  const [resultMode, setResultMode] = useState<WorkbenchResultMode>('table');
+  const [commandState, setCommandState] = useState<MongoCommandState>({ status: 'idle', documents: [] });
+  const [selectedDocumentIndex, setSelectedDocumentIndex] = useState(0);
   const basePath = resource.branchId
     ? `/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/data/mongo`
     : '';
@@ -3545,7 +3768,7 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
         if (nextDatabase !== current) {
           setSelectedCollection('');
           setCollectionsState({ status: 'idle', collections: [], database: nextDatabase });
-          setDocumentsState({ status: 'idle', documents: [] });
+          setCommandState({ status: 'idle', documents: [] });
         }
         return nextDatabase;
       });
@@ -3557,7 +3780,7 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
   const loadCollections = useCallback(async (database: string, preferredCollection?: string) => {
     if (!basePath || !database) return;
     setCollectionsState((current) => ({ ...current, status: 'loading', message: undefined }));
-    setDocumentsState({ status: 'idle', documents: [] });
+    setCommandState({ status: 'idle', documents: [] });
     try {
       const res = await apiRequest<{ database?: string; collections: MongoCollectionSummary[] }>(`${basePath}/collections?database=${encodeURIComponent(database)}`);
       const collections = res.collections || [];
@@ -3566,6 +3789,7 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
         : collections[0]?.name || '';
       setCollectionsState({ status: 'ok', collections, database: res.database });
       setSelectedCollection(nextCollection);
+      setCommand(defaultMongoCommand(nextCollection));
     } catch (err) {
       setCollectionsState({ status: 'error', collections: [], message: err instanceof ApiError ? err.message : String(err) });
     }
@@ -3573,12 +3797,14 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
 
   const loadDocuments = useCallback(async (database: string, collection: string) => {
     if (!basePath || !database || !collection) return;
-    setDocumentsState({ status: 'loading', documents: [] });
+    setCommandState({ status: 'loading', documents: [] });
     try {
       const res = await apiRequest<{ documents: unknown[] }>(`${basePath}/documents?database=${encodeURIComponent(database)}&collection=${encodeURIComponent(collection)}&limit=50`);
-      setDocumentsState({ status: 'ok', documents: res.documents || [] });
+      setCommandState({ status: 'ok', documents: res.documents || [] });
+      setResultMode('table');
+      setSelectedDocumentIndex(0);
     } catch (err) {
-      setDocumentsState({ status: 'error', documents: [], message: err instanceof ApiError ? err.message : String(err) });
+      setCommandState({ status: 'error', documents: [], message: err instanceof ApiError ? err.message : String(err) });
     }
   }, [basePath]);
 
@@ -3592,66 +3818,33 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
   }, [loadCollections, selectedDatabase]);
 
   useEffect(() => {
-    setWriteCollection(selectedCollection);
-  }, [selectedCollection]);
-
-  useEffect(() => {
     if (!selectedDatabase || !selectedCollection) return;
     void loadDocuments(selectedDatabase, selectedCollection);
   }, [loadDocuments, selectedCollection, selectedDatabase]);
 
-  async function runMongoQuery(): Promise<void> {
-    if (!basePath || !selectedDatabase || !selectedCollection) return;
-    setDocumentsState({ status: 'loading', documents: [] });
+  async function runMongoCommand(): Promise<void> {
+    if (!basePath || !selectedDatabase || !command.trim()) return;
+    setCommandState({ status: 'loading', documents: [] });
     try {
-      const res = await apiRequest<{ documents: unknown[] }>(`${basePath}/query`, {
+      const res = await apiRequest<{ kind: 'documents' | 'output'; documents?: unknown[]; output?: unknown; collection?: string }>(`${basePath}/command`, {
         method: 'POST',
         body: {
           database: selectedDatabase,
-          collection: selectedCollection,
-          filter,
-          projection,
-          sort,
-          limit: 50,
+          command,
+          confirmResourceName: resource.serviceName || resource.displayName,
         },
       });
-      setDocumentsState({ status: 'ok', documents: res.documents || [] });
+      if (res.collection) setSelectedCollection(res.collection);
+      setCommandState({ status: 'ok', documents: res.documents || [], output: res.output });
+      setResultMode(res.kind === 'documents' ? 'table' : 'output');
+      setSelectedDocumentIndex(0);
+      if (res.kind === 'output') void loadCollections(selectedDatabase, res.collection || selectedCollection);
     } catch (err) {
-      setDocumentsState({ status: 'error', documents: [], message: err instanceof ApiError ? err.message : String(err) });
+      setCommandState({ status: 'error', documents: [], message: err instanceof ApiError ? err.message : String(err) });
+      setResultMode('output');
     }
   }
 
-  async function runMongoWrite(): Promise<void> {
-    const targetCollection = writeAction === 'createCollection' || writeAction === 'dropCollection'
-      ? writeCollection.trim()
-      : selectedCollection;
-    if (!basePath || !selectedDatabase || !targetCollection) return;
-    setWriteState({ status: 'loading' });
-    try {
-      const body: Record<string, unknown> = {
-        action: writeAction,
-        database: selectedDatabase,
-        collection: targetCollection,
-        confirmResourceName: writeConfirm,
-      };
-      if (writeAction === 'insertOne') body.document = documentDraft;
-      if (writeAction === 'updateMany') {
-        body.filter = writeFilter;
-        body.update = updateDraft;
-      }
-      if (writeAction === 'deleteMany') body.filter = writeFilter;
-      const res = await apiRequest<{ result: unknown }>(`${basePath}/write`, { method: 'POST', body });
-      setWriteState({ status: 'ok', result: res.result });
-      await loadCollections(selectedDatabase, writeAction === 'dropCollection' ? undefined : targetCollection);
-      if (writeAction !== 'dropCollection') await loadDocuments(selectedDatabase, targetCollection);
-    } catch (err) {
-      setWriteState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
-    }
-  }
-
-  const writeTargetCollection = writeAction === 'createCollection' || writeAction === 'dropCollection'
-    ? writeCollection.trim()
-    : selectedCollection;
   const databaseLabel = selectedDatabase || databasesState.currentDatabase || '-';
   const configuredDatabaseNotice = databasesState.configuredDatabase && databaseLabel !== '-' && databasesState.configuredDatabase !== databaseLabel
     ? `配置默认库 ${databasesState.configuredDatabase} 暂未创建，已选中 ${databaseLabel}`
@@ -3660,220 +3853,302 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
       : '';
 
   return (
-    <div className="space-y-4 text-sm">
-      <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
-          <div>
-            <div className="text-xs font-semibold">MongoDB Workbench</div>
-            <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{databaseLabel}.{selectedCollection || '-'}</div>
-            {configuredDatabaseNotice ? <div className="mt-1 text-[11px] text-muted-foreground">{configuredDatabaseNotice}</div> : null}
-          </div>
-          <div className="flex items-center gap-2">
-            {(['browse', 'query', 'mutate'] as const).map((item) => (
-              <button
-                key={item}
-                type="button"
-                className={`h-8 rounded-md px-3 text-xs transition-colors ${mode === item ? 'bg-primary text-primary-foreground' : 'border border-[hsl(var(--hairline))] text-muted-foreground hover:text-foreground'}`}
-                onClick={() => setMode(item)}
-              >
-                {item === 'browse' ? '浏览' : item === 'query' ? '查询' : '写入 / 结构'}
-              </button>
-            ))}
-            <Button type="button" size="sm" variant="outline" disabled={databasesState.status === 'loading'} onClick={() => void loadDatabases()}>
-              <RefreshCw className={databasesState.status === 'loading' ? 'animate-spin' : ''} />
-              刷新
-            </Button>
-          </div>
-        </div>
-
-        <div className="space-y-3 p-3">
-          <div>
-            <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Database</div>
-            <div className="flex gap-2 overflow-x-auto">
-              {databasesState.databases.length > 0 ? databasesState.databases.map((db) => (
-                <button
-                  key={db.name}
-                  type="button"
-                  className={`inline-flex h-8 shrink-0 items-center gap-2 rounded-md border px-3 text-xs ${db.name === selectedDatabase ? 'border-primary bg-primary/10 text-foreground' : 'border-[hsl(var(--hairline))] text-muted-foreground hover:text-foreground'}`}
-                  onClick={() => {
-                    setSelectedCollection('');
-                    setCollectionsState({ status: 'idle', collections: [], database: db.name });
-                    setDocumentsState({ status: 'idle', documents: [] });
-                    setSelectedDatabase(db.name);
-                  }}
-                >
-                  <span className="font-mono">{db.name}</span>
-                  <span>{formatBytes(db.sizeOnDisk || 0)}</span>
-                </button>
-              )) : (
-                <div className="text-xs text-muted-foreground">{databasesState.status === 'loading' ? '读取数据库...' : databasesState.message || '没有数据库信息。'}</div>
-              )}
-            </div>
-          </div>
-
-          <div>
-            <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Collection</div>
-            <div className="flex gap-2 overflow-x-auto">
-              {collectionsState.status === 'error' ? (
-                <div className="text-xs text-destructive">{collectionsState.message}</div>
-              ) : collectionsState.collections.length > 0 ? collectionsState.collections.map((collection) => (
-                <button
-                  key={collection.name}
-                  type="button"
-                  className={`inline-flex h-8 shrink-0 items-center gap-2 rounded-md border px-3 text-xs ${collection.name === selectedCollection ? 'border-primary bg-primary/10 text-foreground' : 'border-[hsl(var(--hairline))] text-muted-foreground hover:text-foreground'}`}
-                  onClick={() => {
-                    setSelectedCollection(collection.name);
-                    setMode('browse');
-                  }}
-                >
-                  <span className="font-mono">{collection.name}</span>
-                  <span>{collection.type || 'collection'}</span>
-                </button>
-              )) : (
-                <div className="text-xs text-muted-foreground">
-                  {collectionsState.status === 'loading'
-                    ? '读取 collection...'
-                    : selectedDatabase
-                      ? `${selectedDatabase} 暂无 collection。可在「写入 / 结构」里创建 collection，或切换其他数据库。`
-                      : '请选择数据库。'}
+    <>
+      <ResourceWorkbenchLauncher
+        resource={resource}
+        title="MongoDB 工作台"
+        description="左侧选择数据库和 collection，右上执行一条命令，右下查看表格、JSON 或命令输出。"
+        onOpen={() => setWorkbenchOpen(true)}
+      />
+      <ResourceWorkbenchModal
+        open={workbenchOpen}
+        title={`MongoDB :${resource.port || resource.containerPort || '?'}`}
+        subtitle={`${databaseLabel}.${selectedCollection || '-'} · ${resource.displayName}`}
+        onClose={() => setWorkbenchOpen(false)}
+      >
+        <div className="grid min-h-0 text-sm lg:grid-cols-[320px_minmax(0,1fr)]">
+          <aside className="min-h-0 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/25 lg:border-b-0 lg:border-r">
+            <div className="border-b border-[hsl(var(--hairline))] px-3 py-3">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <div className="text-xs font-semibold">数据库 / collection</div>
+                  <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{resource.displayName} :{resource.port || resource.containerPort || '?'}</div>
                 </div>
+                <Button type="button" size="sm" variant="outline" disabled={databasesState.status === 'loading'} onClick={() => void loadDatabases()}>
+                  <RefreshCw className={databasesState.status === 'loading' ? 'animate-spin' : ''} />
+                </Button>
+              </div>
+              {configuredDatabaseNotice ? <div className="mt-2 rounded-md border border-[hsl(var(--hairline))] bg-background/55 px-2 py-1.5 text-[11px] text-muted-foreground">{configuredDatabaseNotice}</div> : null}
+            </div>
+            <div className="h-full overflow-auto p-2">
+              {databasesState.status === 'error' ? (
+                <div className="px-2 py-3 text-xs leading-5 text-destructive">{databasesState.message}</div>
+              ) : databasesState.databases.length > 0 ? (
+                <div className="space-y-1">
+                  {databasesState.databases.map((db) => {
+                    const activeDatabase = db.name === selectedDatabase;
+                    const isConfigured = db.name === databasesState.configuredDatabase;
+                    const isSystem = SYSTEM_MONGO_DATABASES.has(db.name);
+                    return (
+                      <div key={db.name} className="rounded-md">
+                        <button
+                          type="button"
+                          className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors ${activeDatabase ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}
+                          onClick={() => {
+                            setSelectedCollection('');
+                            setSelectedDatabase(db.name);
+                            setCommandState({ status: 'idle', documents: [] });
+                          }}
+                        >
+                          <span className="text-muted-foreground">{activeDatabase ? '▾' : '▸'}</span>
+                          <Database className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                          <span className="min-w-0 flex-1 truncate font-mono">{db.name}</span>
+                          {isConfigured ? <span className="rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">默认</span> : null}
+                          {isSystem ? <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">系统</span> : null}
+                        </button>
+                        {activeDatabase ? (
+                          <div className="ml-6 mt-1 space-y-1 border-l border-[hsl(var(--hairline))] pl-2">
+                            {collectionsState.status === 'error' ? (
+                              <div className="px-2 py-2 text-[11px] leading-5 text-destructive">{collectionsState.message}</div>
+                            ) : collectionsState.collections.length > 0 ? collectionsState.collections.map((collection) => {
+                              const activeCollection = collection.name === selectedCollection;
+                              return (
+                                <button
+                                  key={collection.name}
+                                  type="button"
+                                  className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors ${activeCollection ? 'bg-primary/15 text-foreground ring-1 ring-primary/30' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}
+                                  onClick={() => {
+                                    setSelectedCollection(collection.name);
+                                    setCommand(defaultMongoCommand(collection.name));
+                                    setSelectedDocumentIndex(0);
+                                  }}
+                                >
+                                  <Table2 className="h-3.5 w-3.5 shrink-0" />
+                                  <span className="min-w-0 flex-1 truncate font-mono">{collection.name}</span>
+                                </button>
+                              );
+                            }) : (
+                              <div className="px-2 py-2 text-[11px] text-muted-foreground">
+                                {collectionsState.status === 'loading' ? '读取 collection...' : '暂无 collection'}
+                              </div>
+                            )}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="px-2 py-3 text-xs text-muted-foreground">{databasesState.status === 'loading' ? '读取数据库...' : '没有数据库信息。'}</div>
               )}
             </div>
-          </div>
-        </div>
-      </section>
+          </aside>
 
-      {mode === 'query' ? (
-        <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
-          <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
-            <div className="text-xs font-semibold">查询条件</div>
-            <Button type="button" size="sm" variant="outline" disabled={documentsState.status === 'loading'} onClick={() => void runMongoQuery()}>
-              {documentsState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Play />}
-              执行查询
-            </Button>
-          </div>
-          <div className="grid gap-3 p-3 lg:grid-cols-3">
-            <CodeEditor label="filter" value={filter} onChange={setFilter} language="json" minHeight={128} />
-            <CodeEditor label="projection" value={projection} onChange={setProjection} language="json" minHeight={128} />
-            <CodeEditor label="sort" value={sort} onChange={setSort} language="json" minHeight={128} />
-          </div>
-        </section>
-      ) : null}
-
-      {mode === 'mutate' ? (
-        <section className="rounded-md border border-destructive/30 bg-destructive/5">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-destructive/20 px-3 py-2">
-            <div>
-              <div className="text-xs font-semibold text-destructive">写入 / 结构</div>
-              <div className="mt-0.5 text-[11px] text-muted-foreground">insert / update / delete / create collection / drop collection；后端校验权限、资源名确认和审计。</div>
-            </div>
-            <Button type="button" size="sm" variant="destructive" disabled={!writeConfirm.trim() || !writeTargetCollection || writeState.status === 'loading'} onClick={() => void runMongoWrite()}>
-              {writeState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Play />}
-              执行
-            </Button>
-          </div>
-          <div className="space-y-3 p-3">
-            <div className="flex flex-wrap gap-2">
-              {(['insertOne', 'updateMany', 'deleteMany', 'createCollection', 'dropCollection'] as const).map((action) => (
-                <button
-                  key={action}
-                  type="button"
-                  className={`h-8 rounded-md px-3 font-mono text-xs transition-colors ${writeAction === action ? 'bg-destructive text-destructive-foreground' : 'border border-destructive/25 text-muted-foreground hover:text-foreground'}`}
-                  onClick={() => setWriteAction(action)}
-                >
-                  {action}
-                </button>
-              ))}
-            </div>
-            {writeAction === 'insertOne' ? (
-              <CodeEditor label="document" value={documentDraft} onChange={(value) => setDocumentDraft(tryFormatJsonText(value))} language="json" minHeight={190} />
-            ) : null}
-            {writeAction === 'updateMany' || writeAction === 'deleteMany' ? (
-              <div className="grid gap-3 lg:grid-cols-2">
-                <CodeEditor label="filter" value={writeFilter} onChange={(value) => setWriteFilter(tryFormatJsonText(value))} language="json" minHeight={160} />
-                {writeAction === 'updateMany' ? <CodeEditor label="update" value={updateDraft} onChange={(value) => setUpdateDraft(tryFormatJsonText(value))} language="json" minHeight={160} /> : null}
+          <main className="grid min-h-0 min-w-0 grid-rows-[245px_minmax(0,1fr)]">
+            <section className="border-b border-[hsl(var(--hairline))] bg-background/30">
+              <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold">MongoDB Console</div>
+                  <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{databaseLabel}.{selectedCollection || '-'}</div>
+                </div>
+                <Button type="button" size="sm" disabled={!selectedDatabase || !command.trim() || commandState.status === 'loading'} onClick={() => void runMongoCommand()}>
+                  {commandState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Play />}
+                  执行
+                </Button>
               </div>
-            ) : null}
-            {writeAction === 'createCollection' || writeAction === 'dropCollection' ? (
-              <label className="grid gap-1 text-xs">
-                <span className="text-muted-foreground">目标 collection</span>
-                <input
-                  value={writeCollection}
-                  onChange={(event) => setWriteCollection(event.target.value)}
-                  className="h-9 rounded-md border border-destructive/25 bg-background px-3 font-mono outline-none focus:border-destructive"
-                  placeholder="users"
+              <div
+                className="p-3"
+                onKeyDown={(event) => {
+                  if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+                    event.preventDefault();
+                    void runMongoCommand();
+                  }
+                }}
+              >
+                <CodeEditor
+                  label="命令"
+                  value={command}
+                  onChange={setCommand}
+                  language="mongo"
+                  minHeight={158}
+                  placeholder="db.getCollection('users').find({}).limit(50);"
                 />
-              </label>
-            ) : null}
-            <label className="grid gap-1 text-xs">
-              <span className="text-muted-foreground">输入资源名确认：{resource.serviceName}</span>
-              <input
-                value={writeConfirm}
-                onChange={(event) => setWriteConfirm(event.target.value)}
-                className="h-9 rounded-md border border-destructive/25 bg-background px-3 font-mono outline-none focus:border-destructive"
-                placeholder={resource.serviceName}
-              />
-            </label>
-            <MongoWriteResult state={writeState} />
-          </div>
-        </section>
-      ) : null}
+              </div>
+            </section>
 
-      <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
-        <div className="border-b border-[hsl(var(--hairline))] px-3 py-2 text-xs font-semibold">Document Browser</div>
-        <MongoDocumentsView state={documentsState} />
-      </section>
-    </div>
+            <MongoDocumentsView
+              state={commandState}
+              collection={selectedCollection}
+              selectedIndex={selectedDocumentIndex}
+              onSelectIndex={setSelectedDocumentIndex}
+              viewMode={resultMode}
+              onViewModeChange={setResultMode}
+            />
+          </main>
+        </div>
+      </ResourceWorkbenchModal>
+    </>
   );
 }
 
 function MongoDocumentsView({
   state,
+  collection,
+  selectedIndex,
+  onSelectIndex,
+  viewMode,
+  onViewModeChange,
 }: {
-  state: { status: 'idle' | 'loading' | 'ok' | 'error'; documents: unknown[]; message?: string };
+  state: MongoCommandState;
+  collection?: string;
+  selectedIndex: number;
+  onSelectIndex: (index: number) => void;
+  viewMode: WorkbenchResultMode;
+  onViewModeChange: (mode: WorkbenchResultMode) => void;
 }): JSX.Element {
-  if (state.status === 'loading') {
-    return <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />读取文档</div>;
-  }
-  if (state.status === 'error') {
-    return <div className="px-3 py-3 text-xs leading-5 text-destructive">{state.message}</div>;
-  }
-  if (state.documents.length === 0) {
-    return <div className="px-3 py-3 text-xs text-muted-foreground">选择 collection 后预览前 50 条文档。</div>;
-  }
+  const hasDocuments = state.documents.length > 0;
+  const outputText = state.status === 'error'
+    ? state.message || '执行失败'
+    : state.output === undefined
+      ? state.status === 'ok'
+        ? '执行完成。'
+        : '执行命令后在这里查看输出。'
+      : typeof state.output === 'string'
+        ? state.output
+        : JSON.stringify(state.output, null, 2);
+  const jsonText = hasDocuments
+    ? JSON.stringify(state.documents, null, 2)
+    : outputText;
+  const activeMode: WorkbenchResultMode = viewMode === 'table' && !hasDocuments ? 'output' : viewMode;
+
   return (
-    <div className="max-h-[560px] space-y-2 overflow-auto p-3">
-      {state.documents.map((doc, index) => {
-        const text = JSON.stringify(doc, null, 2);
-        return (
-          // eslint-disable-next-line react/no-array-index-key
-          <pre key={index} className="rounded-md border border-[hsl(var(--hairline))] bg-background p-3 font-mono text-xs leading-5">
-            {highlightedCode(text, 'json')}
-          </pre>
-        );
-      })}
+    <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] bg-background/20">
+      <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] bg-background/30 px-3 py-2">
+        <div className="min-w-0">
+          <div className="text-xs font-semibold">结果</div>
+          <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
+            {collection || '-'} · {hasDocuments ? `${state.documents.length} rows` : 'command output'}
+          </div>
+        </div>
+        <div className="flex items-center gap-1 rounded-md border border-[hsl(var(--hairline))] bg-background/70 p-1">
+          {(['table', 'json', 'output'] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              className={`inline-flex h-7 items-center gap-1.5 rounded px-2 text-[11px] transition-colors ${activeMode === mode ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              onClick={() => onViewModeChange(mode)}
+            >
+              {mode === 'table' ? <Table2 className="h-3.5 w-3.5" /> : mode === 'json' ? <Braces className="h-3.5 w-3.5" /> : <Terminal className="h-3.5 w-3.5" />}
+              {resultModeLabel(mode)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {state.status === 'loading' ? (
+        <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          执行中
+        </div>
+      ) : activeMode === 'table' && hasDocuments ? (
+        <MongoDocumentTable documents={state.documents} selectedIndex={selectedIndex} onSelectIndex={onSelectIndex} />
+      ) : activeMode === 'json' ? (
+        <pre className="min-h-0 overflow-auto p-3 font-mono text-xs leading-5">
+          {highlightedCode(jsonText, 'json')}
+        </pre>
+      ) : (
+        <pre className={`min-h-0 overflow-auto p-3 font-mono text-xs leading-5 ${state.status === 'error' ? 'text-destructive' : 'text-muted-foreground'}`}>
+          {outputText}
+        </pre>
+      )}
     </div>
   );
 }
 
-function MongoWriteResult({
-  state,
+function MongoDocumentTable({
+  documents,
+  selectedIndex,
+  onSelectIndex,
 }: {
-  state: { status: 'idle' | 'loading' | 'ok' | 'error'; result?: unknown; message?: string };
-}): JSX.Element | null {
-  if (state.status === 'idle') return null;
-  if (state.status === 'loading') {
-    return <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />执行中</div>;
-  }
-  if (state.status === 'error') {
-    return <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">{state.message}</div>;
-  }
-  const text = JSON.stringify(state.result || {}, null, 2);
+  documents: unknown[];
+  selectedIndex: number;
+  onSelectIndex: (index: number) => void;
+}): JSX.Element {
+  const columns = mongoDocumentColumns(documents);
   return (
-    <pre className="max-h-[220px] overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-background p-3 font-mono text-xs leading-5">
-      {highlightedCode(text, 'json')}
-    </pre>
+    <div className="min-h-0 overflow-auto">
+      <table className="w-full min-w-[920px] text-left text-xs">
+        <thead className="sticky top-0 z-10 bg-[hsl(var(--surface-sunken))] text-muted-foreground">
+          <tr>
+            <th className="w-12 px-3 py-2 font-medium">#</th>
+            {columns.map((column) => (
+              <th key={column} className="px-3 py-2 font-medium">
+                <span className="font-mono">{column}</span>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {documents.map((doc, rowIndex) => {
+            const row = mongoDocumentRecord(doc);
+            const active = rowIndex === selectedIndex;
+            return (
+              <tr
+                // eslint-disable-next-line react/no-array-index-key
+                key={rowIndex}
+                className={`cursor-pointer border-t border-[hsl(var(--hairline))] ${active ? 'bg-primary/10 text-foreground' : 'hover:bg-[hsl(var(--surface-sunken))]/70'}`}
+                onClick={() => onSelectIndex(rowIndex)}
+              >
+                <td className="px-3 py-2 font-mono text-muted-foreground">{rowIndex + 1}</td>
+                {columns.map((column) => (
+                  <td key={`${rowIndex}-${column}`} className="max-w-[280px] truncate px-3 py-2 font-mono text-muted-foreground" title={mongoValuePreview(row[column])}>
+                    {mongoValuePreview(row[column])}
+                  </td>
+                ))}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
+}
+
+function mongoDocumentRecord(doc: unknown): Record<string, unknown> {
+  if (doc && typeof doc === 'object' && !Array.isArray(doc)) return doc as Record<string, unknown>;
+  return { value: doc };
+}
+
+function mongoDocumentColumns(documents: unknown[]): string[] {
+  const seen = new Set<string>();
+  const columns: string[] = [];
+  for (const doc of documents.slice(0, 50)) {
+    const record = mongoDocumentRecord(doc);
+    for (const key of Object.keys(record)) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+      columns.push(key);
+      if (columns.length >= 14) return prioritizeMongoColumns(columns);
+    }
+  }
+  return prioritizeMongoColumns(columns);
+}
+
+function prioritizeMongoColumns(columns: string[]): string[] {
+  return columns.includes('_id')
+    ? ['_id', ...columns.filter((column) => column !== '_id')]
+    : columns;
+}
+
+function mongoValuePreview(value: unknown): string {
+  if (value === null || value === undefined) return 'null';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
 
 interface RedisKeySummary {
@@ -4108,17 +4383,20 @@ function quoteSqlTableName(resource: BranchResource, table: string): string {
   return `\`${table.replace(/`/g, '``')}\``;
 }
 
-function SqlResourceDataPanel({ resource }: { resource: BranchResource }): JSX.Element {
+type DbResultState = { status: 'idle' | 'loading' | 'ok' | 'error'; result?: DbQueryResult; message?: string };
+
+function sqlCommandIsReadOnly(sql: string): boolean {
+  const head = sql.trim().replace(/;+$/g, '').match(/^([a-z]+)/i)?.[1]?.toLowerCase() || '';
+  return ['select', 'show', 'describe', 'desc', 'explain'].includes(head);
+}
+
+function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource; adapter: ResourceWorkbenchAdapter }): JSX.Element {
+  const [workbenchOpen, setWorkbenchOpen] = useState(true);
   const [tablesState, setTablesState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; tables: DbTableSummary[]; database?: string; message?: string }>({ status: 'idle', tables: [] });
   const [selectedTable, setSelectedTable] = useState('');
-  const [schemaState, setSchemaState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; columns: DbColumnSummary[]; message?: string }>({ status: 'idle', columns: [] });
-  const [previewState, setPreviewState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; result?: DbQueryResult; message?: string }>({ status: 'idle' });
-  const [mode, setMode] = useState<'browse' | 'query' | 'mutate'>('browse');
   const [sql, setSql] = useState('SELECT 1');
-  const [queryState, setQueryState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; result?: DbQueryResult; message?: string }>({ status: 'idle' });
-  const [writeSql, setWriteSql] = useState('');
-  const [writeConfirm, setWriteConfirm] = useState('');
-  const [writeState, setWriteState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; result?: DbQueryResult; message?: string }>({ status: 'idle' });
+  const [resultState, setResultState] = useState<DbResultState>({ status: 'idle' });
+  const [resultMode, setResultMode] = useState<WorkbenchResultMode>('table');
 
   const basePath = resource.branchId
     ? `/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/data`
@@ -4138,21 +4416,16 @@ function SqlResourceDataPanel({ resource }: { resource: BranchResource }): JSX.E
     }
   }, [basePath, resource]);
 
-  const loadTableDetail = useCallback(async (table: string) => {
+  const loadTablePreview = useCallback(async (table: string) => {
     if (!basePath || !table) return;
-    setSchemaState({ status: 'loading', columns: [] });
-    setPreviewState({ status: 'loading' });
+    setResultState({ status: 'loading' });
     try {
-      const [schema, preview] = await Promise.all([
-        apiRequest<{ columns: DbColumnSummary[] }>(`${basePath}/schema?table=${encodeURIComponent(table)}`),
-        apiRequest<DbQueryResult>(`${basePath}/preview?table=${encodeURIComponent(table)}&limit=50`),
-      ]);
-      setSchemaState({ status: 'ok', columns: schema.columns || [] });
-      setPreviewState({ status: 'ok', result: preview });
+      const preview = await apiRequest<DbQueryResult>(`${basePath}/preview?table=${encodeURIComponent(table)}&limit=50`);
+      setResultState({ status: 'ok', result: preview });
+      setResultMode(preview.columns.length > 0 ? 'table' : 'output');
     } catch (err) {
-      const message = err instanceof ApiError ? err.message : String(err);
-      setSchemaState({ status: 'error', columns: [], message });
-      setPreviewState({ status: 'error', message });
+      setResultState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      setResultMode('output');
     }
   }, [basePath]);
 
@@ -4162,252 +4435,225 @@ function SqlResourceDataPanel({ resource }: { resource: BranchResource }): JSX.E
 
   useEffect(() => {
     if (!selectedTable) return;
-    void loadTableDetail(selectedTable);
-  }, [loadTableDetail, selectedTable]);
+    void loadTablePreview(selectedTable);
+  }, [loadTablePreview, selectedTable]);
 
-  async function runReadOnlySql(): Promise<void> {
-    if (!basePath) return;
-    setQueryState({ status: 'loading' });
+  async function runSqlCommand(): Promise<void> {
+    if (!basePath || !sql.trim()) return;
+    setResultState({ status: 'loading' });
     try {
-      const result = await apiRequest<DbQueryResult>(`${basePath}/query`, {
+      const readOnly = sqlCommandIsReadOnly(sql);
+      const result = await apiRequest<DbQueryResult>(`${basePath}/${readOnly ? 'query' : 'query-write'}`, {
         method: 'POST',
-        body: { sql },
+        body: readOnly ? { sql } : { sql, confirmResourceName: resource.serviceName || resource.displayName },
       });
-      setQueryState({ status: 'ok', result });
+      setResultState({ status: 'ok', result });
+      setResultMode(result.columns.length > 0 ? 'table' : 'output');
+      if (!readOnly) {
+        void loadTables();
+        if (selectedTable) void loadTablePreview(selectedTable);
+      }
     } catch (err) {
-      setQueryState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      setResultState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      setResultMode('output');
     }
   }
-
-  async function runWriteSql(): Promise<void> {
-    if (!basePath) return;
-    setWriteState({ status: 'loading' });
-    try {
-      const result = await apiRequest<DbQueryResult>(`${basePath}/query-write`, {
-        method: 'POST',
-        body: { sql: writeSql, confirmResourceName: writeConfirm },
-      });
-      setWriteState({ status: 'ok', result });
-      void loadTables();
-      if (selectedTable) void loadTableDetail(selectedTable);
-    } catch (err) {
-      setWriteState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
-    }
-  }
-
-  const quotedTable = selectedTable ? quoteSqlTableName(resource, selectedTable) : 'your_table';
-  const sqlTemplates = [
-    ['SELECT', `SELECT * FROM ${quotedTable} LIMIT 50`, 'query'],
-    ['INSERT', `INSERT INTO ${quotedTable} (column_name) VALUES ('value')`, 'mutate'],
-    ['UPDATE', `UPDATE ${quotedTable} SET column_name = 'value' WHERE id = 1`, 'mutate'],
-    ['DELETE', `DELETE FROM ${quotedTable} WHERE id = 1`, 'mutate'],
-    ['CREATE', 'CREATE TABLE demo_table (id INT PRIMARY KEY, name VARCHAR(255))', 'mutate'],
-    ['ALTER', `ALTER TABLE ${quotedTable} ADD COLUMN note VARCHAR(255)`, 'mutate'],
-  ] as const;
 
   return (
-    <div className="space-y-4 text-sm">
-      <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
-          <div className="min-w-0">
-            <div className="text-xs font-semibold">SQL Workbench</div>
-            <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{tablesState.database || '-'}</div>
-          </div>
-          <div className="flex items-center gap-2">
-            {(['browse', 'query', 'mutate'] as const).map((item) => (
-              <button
-                key={item}
-                type="button"
-                className={`h-8 rounded-md px-3 text-xs transition-colors ${mode === item ? 'bg-primary text-primary-foreground' : 'border border-[hsl(var(--hairline))] text-muted-foreground hover:text-foreground'}`}
-                onClick={() => setMode(item)}
-              >
-                {item === 'browse' ? '浏览' : item === 'query' ? '查询' : 'DDL / DML'}
-              </button>
-            ))}
-            <Button type="button" size="sm" variant="outline" disabled={tablesState.status === 'loading'} onClick={() => void loadTables()}>
-              <RefreshCw className={tablesState.status === 'loading' ? 'animate-spin' : ''} />
-              刷新
-            </Button>
-          </div>
-        </div>
+    <>
+      <ResourceWorkbenchLauncher
+        resource={resource}
+        title={adapter.label}
+        description={`${adapter.treeLabel}，右上执行一条命令，右下查看${adapter.resultModes.map(resultModeLabel).join(' / ')}。`}
+        onOpen={() => setWorkbenchOpen(true)}
+      />
+      <ResourceWorkbenchModal
+        open={workbenchOpen}
+        title={`${resource.runtime} :${resource.port || resource.containerPort || '?'}`}
+        subtitle={`${tablesState.database || '-'}${selectedTable ? `.${selectedTable}` : ''} · ${resource.displayName}`}
+        onClose={() => setWorkbenchOpen(false)}
+      >
+        <div className="grid min-h-0 text-sm lg:grid-cols-[320px_minmax(0,1fr)]">
+          <aside className="min-h-0 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/25 lg:border-b-0 lg:border-r">
+            <div className="border-b border-[hsl(var(--hairline))] px-3 py-3">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <div className="text-xs font-semibold">{adapter.treeLabel}</div>
+                  <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{resource.displayName} · {tablesState.database || '-'}</div>
+                </div>
+                <Button type="button" size="sm" variant="outline" disabled={tablesState.status === 'loading'} onClick={() => void loadTables()}>
+                  <RefreshCw className={tablesState.status === 'loading' ? 'animate-spin' : ''} />
+                </Button>
+              </div>
+            </div>
+            <div className="h-full overflow-auto p-2">
+              {tablesState.status === 'error' ? (
+                <div className="px-2 py-3 text-xs leading-5 text-destructive">{tablesState.message}</div>
+              ) : tablesState.tables.length > 0 ? (
+                <div className="space-y-1">
+                  <div className="flex h-8 items-center gap-2 rounded-md px-2 text-xs text-foreground">
+                    <Database className="h-3.5 w-3.5 text-cyan-500" />
+                    <span className="min-w-0 truncate font-mono">{tablesState.database || 'database'}</span>
+                  </div>
+                  <div className="ml-4 space-y-1 border-l border-[hsl(var(--hairline))] pl-2">
+                    {tablesState.tables.map((table) => {
+                      const active = table.name === selectedTable;
+                      return (
+                        <button
+                          key={table.name}
+                          type="button"
+                          className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors ${active ? 'bg-primary/15 text-foreground ring-1 ring-primary/30' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}
+                          onClick={() => {
+                            setSelectedTable(table.name);
+                            setSql(`SELECT * FROM ${quoteSqlTableName(resource, table.name)} LIMIT 50`);
+                          }}
+                        >
+                          <Table2 className="h-3.5 w-3.5 shrink-0" />
+                          <span className="min-w-0 flex-1 truncate font-mono">{table.name}</span>
+                          <span className="text-[10px] text-muted-foreground">{table.type === 'VIEW' ? 'view' : 'table'}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div className="px-2 py-3 text-xs text-muted-foreground">{tablesState.status === 'loading' ? '读取表列表...' : '没有表。'}</div>
+              )}
+            </div>
+          </aside>
 
-        <div className="space-y-3 p-3">
-          <div className="flex gap-2 overflow-x-auto">
-            {tablesState.status === 'error' ? (
-              <div className="text-xs leading-5 text-destructive">{tablesState.message}</div>
-            ) : tablesState.tables.length > 0 ? tablesState.tables.map((table) => {
-              const active = table.name === selectedTable;
-              return (
-                <button
-                  key={table.name}
-                  type="button"
-                  className={`inline-flex h-8 shrink-0 items-center gap-2 rounded-md border px-3 text-xs ${active ? 'border-primary bg-primary/10 text-foreground' : 'border-[hsl(var(--hairline))] text-muted-foreground hover:text-foreground'}`}
-                  onClick={() => {
-                    setSelectedTable(table.name);
-                    setSql(`SELECT * FROM ${quoteSqlTableName(resource, table.name)} LIMIT 50`);
-                    setMode('browse');
-                  }}
-                >
-                  <span className="font-mono">{table.name}</span>
-                  <span className="text-[10px]">{table.type === 'VIEW' ? 'view' : 'table'}</span>
-                </button>
-              );
-            }) : (
-              <div className="text-xs text-muted-foreground">{tablesState.status === 'loading' ? '读取表列表...' : '没有表。'}</div>
-            )}
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            {sqlTemplates.map(([label, template, targetMode]) => (
-              <button
-                key={label}
-                type="button"
-                className="h-7 rounded-md border border-[hsl(var(--hairline))] px-2.5 font-mono text-[11px] text-muted-foreground transition-colors hover:text-foreground"
-                onClick={() => {
-                  if (targetMode === 'query') {
-                    setSql(template);
-                    setMode('query');
-                  } else {
-                    setWriteSql(template);
-                    setMode('mutate');
+          <main className="grid min-h-0 min-w-0 grid-rows-[245px_minmax(0,1fr)]">
+            <section className="border-b border-[hsl(var(--hairline))] bg-background/30">
+              <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold">{adapter.consoleLabel}</div>
+                  <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{selectedTable ? `${tablesState.database || '-'}.${selectedTable}` : tablesState.database || '-'}</div>
+                </div>
+                <Button type="button" size="sm" disabled={!sql.trim() || resultState.status === 'loading'} onClick={() => void runSqlCommand()}>
+                  {resultState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Play />}
+                  执行
+                </Button>
+              </div>
+              <div
+                className="p-3"
+                onKeyDown={(event) => {
+                  if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+                    event.preventDefault();
+                    void runSqlCommand();
                   }
                 }}
               >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {mode === 'browse' ? (
-        <div className="grid gap-4">
-          <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
-            <div className="border-b border-[hsl(var(--hairline))] px-3 py-2 text-xs font-semibold">Schema</div>
-            {schemaState.status === 'error' ? (
-              <div className="px-3 py-3 text-xs text-destructive">{schemaState.message}</div>
-            ) : schemaState.status === 'loading' ? (
-              <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />读取字段</div>
-            ) : (
-              <div className="max-h-[300px] overflow-auto">
-                <table className="w-full min-w-[840px] text-left text-xs">
-                  <thead className="sticky top-0 bg-[hsl(var(--surface-sunken))] text-muted-foreground">
-                    <tr>{['字段', '类型', 'Null', 'Key', 'Default', 'Extra'].map((head) => <th key={head} className="px-3 py-2 font-medium">{head}</th>)}</tr>
-                  </thead>
-                  <tbody>
-                    {schemaState.columns.map((column) => (
-                      <tr key={column.name} className="border-t border-[hsl(var(--hairline))]">
-                        <td className="px-3 py-2 font-mono">{column.name}</td>
-                        <td className="px-3 py-2 font-mono text-muted-foreground">{column.type}</td>
-                        <td className="px-3 py-2">{column.nullable || '-'}</td>
-                        <td className="px-3 py-2">{column.key || '-'}</td>
-                        <td className="px-3 py-2 font-mono text-muted-foreground">{column.defaultValue || '-'}</td>
-                        <td className="px-3 py-2 text-muted-foreground">{column.extra || '-'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <CodeEditor
+                  label="命令"
+                  value={sql}
+                  onChange={setSql}
+                  language="sql"
+                  minHeight={158}
+                  placeholder="SELECT * FROM users LIMIT 50"
+                />
               </div>
-            )}
-          </section>
-          <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
-            <div className="border-b border-[hsl(var(--hairline))] px-3 py-2 text-xs font-semibold">数据预览</div>
-            <DbResultTable state={previewState} emptyLabel="选择表后预览前 50 行。" />
-          </section>
+            </section>
+
+            <DbResultTable
+              state={resultState}
+              emptyLabel="选择表或执行 SQL 后在这里显示结果。"
+              viewMode={resultMode}
+              onViewModeChange={setResultMode}
+            />
+          </main>
         </div>
-      ) : null}
-
-      {mode === 'query' ? (
-        <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
-          <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
-            <div className="text-xs font-semibold">只读 SQL</div>
-            <Button type="button" size="sm" variant="outline" disabled={queryState.status === 'loading'} onClick={() => void runReadOnlySql()}>
-              {queryState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Play />}
-              执行查询
-            </Button>
-          </div>
-          <div className="grid gap-3 p-3">
-            <CodeEditor label="SELECT / SHOW / DESCRIBE / EXPLAIN" value={sql} onChange={setSql} language="sql" minHeight={180} />
-            <DbResultTable state={queryState} emptyLabel="查询结果会显示在这里。" />
-          </div>
-        </section>
-      ) : null}
-
-      {mode === 'mutate' ? (
-        <section className="rounded-md border border-destructive/30 bg-destructive/5">
-          <div className="flex items-center justify-between gap-3 border-b border-destructive/20 px-3 py-2">
-            <div>
-              <div className="text-xs font-semibold text-destructive">DDL / DML</div>
-              <div className="mt-0.5 text-[11px] text-muted-foreground">INSERT / UPDATE / DELETE / CREATE / ALTER / DROP / TRUNCATE / REPLACE；后端会做权限、确认和审计。</div>
-            </div>
-            <Button type="button" size="sm" variant="destructive" disabled={!writeSql.trim() || !writeConfirm.trim() || writeState.status === 'loading'} onClick={() => void runWriteSql()}>
-              {writeState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Play />}
-              执行写入
-            </Button>
-          </div>
-          <div className="grid gap-3 p-3">
-            <CodeEditor label="写 SQL" value={writeSql} onChange={setWriteSql} language="sql" minHeight={180} placeholder="INSERT / UPDATE / DELETE / CREATE / ALTER / DROP / TRUNCATE / REPLACE" />
-            <label className="grid gap-1 text-xs">
-              <span className="text-muted-foreground">输入资源名确认：{resource.serviceName}</span>
-              <input
-                value={writeConfirm}
-                onChange={(event) => setWriteConfirm(event.target.value)}
-                className="h-9 rounded-md border border-destructive/25 bg-background px-3 font-mono outline-none focus:border-destructive"
-                placeholder={resource.serviceName}
-              />
-            </label>
-            <DbResultTable state={writeState} emptyLabel="执行 DDL / DML 后会显示影响结果；无结果集时代表命令已完成。" />
-          </div>
-        </section>
-      ) : null}
-    </div>
+      </ResourceWorkbenchModal>
+    </>
   );
 }
 
 function DbResultTable({
   state,
   emptyLabel,
+  viewMode,
+  onViewModeChange,
 }: {
-  state: { status: 'idle' | 'loading' | 'ok' | 'error'; result?: DbQueryResult; message?: string };
+  state: DbResultState;
   emptyLabel: string;
+  viewMode: WorkbenchResultMode;
+  onViewModeChange: (mode: WorkbenchResultMode) => void;
 }): JSX.Element {
-  if (state.status === 'loading') {
-    return <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />查询中</div>;
-  }
-  if (state.status === 'error') {
-    return <div className="px-3 py-3 text-xs leading-5 text-destructive">{state.message}</div>;
-  }
-  if (!state.result || state.result.columns.length === 0) {
-    if (state.status === 'ok') {
-      return <div className="px-3 py-3 text-xs text-emerald-600 dark:text-emerald-300">执行完成，返回 {state.result?.rowCount ?? 0} 行。</div>;
-    }
-    return <div className="px-3 py-3 text-xs text-muted-foreground">{emptyLabel}</div>;
-  }
+  const hasRows = Boolean(state.result && state.result.columns.length > 0);
+  const activeMode: WorkbenchResultMode = viewMode === 'table' && !hasRows ? 'output' : viewMode;
+  const jsonRows = state.result
+    ? state.result.rows.map((row) => Object.fromEntries(state.result!.columns.map((column, index) => [column, row[index] ?? null])))
+    : [];
+  const outputText = state.status === 'error'
+    ? state.message || '执行失败'
+    : state.result
+      ? state.result.columns.length > 0
+        ? `返回 ${state.result.rowCount} 行。`
+        : `执行完成，返回 ${state.result.rowCount} 行。`
+      : emptyLabel;
+
   return (
-    <div className="max-h-[260px] overflow-auto">
-      <table className="w-full min-w-[720px] text-left text-xs">
-        <thead className="sticky top-0 bg-[hsl(var(--surface-sunken))] text-muted-foreground">
-          <tr>
-            {state.result.columns.map((column) => <th key={column} className="px-3 py-2 font-medium">{column}</th>)}
-          </tr>
-        </thead>
-        <tbody>
-          {state.result.rows.map((row, rowIndex) => (
-            // eslint-disable-next-line react/no-array-index-key
-            <tr key={rowIndex} className="border-t border-[hsl(var(--hairline))]">
-              {state.result!.columns.map((column, columnIndex) => (
-                <td key={`${column}-${columnIndex}`} className="max-w-[260px] truncate px-3 py-2 font-mono text-muted-foreground" title={row[columnIndex] || ''}>
-                  {row[columnIndex] || 'NULL'}
-                </td>
-              ))}
-            </tr>
+    <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] bg-background/20">
+      <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] bg-background/30 px-3 py-2">
+        <div className="min-w-0">
+          <div className="text-xs font-semibold">结果</div>
+          <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">
+            {hasRows ? `${state.result?.rowCount || 0} rows` : 'command output'}
+          </div>
+        </div>
+        <div className="flex items-center gap-1 rounded-md border border-[hsl(var(--hairline))] bg-background/70 p-1">
+          {(['table', 'json', 'output'] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              className={`inline-flex h-7 items-center gap-1.5 rounded px-2 text-[11px] transition-colors ${activeMode === mode ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              onClick={() => onViewModeChange(mode)}
+            >
+              {mode === 'table' ? <Table2 className="h-3.5 w-3.5" /> : mode === 'json' ? <Braces className="h-3.5 w-3.5" /> : <Terminal className="h-3.5 w-3.5" />}
+              {resultModeLabel(mode)}
+            </button>
           ))}
-        </tbody>
-      </table>
+        </div>
+      </div>
+
+      {state.status === 'loading' ? (
+        <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />执行中</div>
+      ) : activeMode === 'table' && hasRows ? (
+        <div className="min-h-0 overflow-auto">
+          <table className="w-full min-w-[720px] text-left text-xs">
+            <thead className="sticky top-0 bg-[hsl(var(--surface-sunken))] text-muted-foreground">
+              <tr>
+                {state.result!.columns.map((column) => <th key={column} className="px-3 py-2 font-medium">{column}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {state.result!.rows.map((row, rowIndex) => (
+                <tr
+                  // eslint-disable-next-line react/no-array-index-key
+                  key={rowIndex}
+                  className="border-t border-[hsl(var(--hairline))] hover:bg-[hsl(var(--surface-sunken))]/70"
+                >
+                  {state.result!.columns.map((column, columnIndex) => (
+                    <td key={`${column}-${columnIndex}`} className="max-w-[260px] truncate px-3 py-2 font-mono text-muted-foreground" title={row[columnIndex] || ''}>
+                      {row[columnIndex] || 'NULL'}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : activeMode === 'json' ? (
+        <pre className="min-h-0 overflow-auto p-3 font-mono text-xs leading-5">
+          {highlightedCode(JSON.stringify(jsonRows, null, 2), 'json')}
+        </pre>
+      ) : (
+        <pre className={`min-h-0 overflow-auto p-3 font-mono text-xs leading-5 ${state.status === 'error' ? 'text-destructive' : 'text-muted-foreground'}`}>
+          {outputText}
+        </pre>
+      )}
     </div>
   );
 }
-
 interface ResourceBackupEntry {
   id: string;
   name: string;
