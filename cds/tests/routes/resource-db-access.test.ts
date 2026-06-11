@@ -129,6 +129,47 @@ describe('resource database access', () => {
     if (tmpDir && fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  it('selects an existing business MongoDB database when the configured default is missing', async () => {
+    const harness = makeHarness();
+    tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({
+      id: 'mongo-main',
+      projectId: 'prd-agent',
+      name: 'mongo-main',
+      dockerImage: 'mongo:7',
+      containerPort: 27017,
+      hostPort: 27017,
+      containerName: 'cds-mongo-main',
+      status: 'running',
+      dbName: 'app',
+      env: {
+        MONGO_INITDB_ROOT_USERNAME: 'app',
+        MONGO_INITDB_ROOT_PASSWORD: 'pw',
+        MONGO_INITDB_DATABASE: 'app',
+      },
+      volumes: [],
+    });
+    harness.shell.addResponsePattern(/listDatabases/, () => ({
+      stdout: '[{"name":"admin","sizeOnDisk":0},{"name":"config","sizeOnDisk":0},{"name":"local","sizeOnDisk":0},{"name":"prdagent","sizeOnDisk":4096}]\n',
+      stderr: '',
+      exitCode: 0,
+    }));
+    harness.shell.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    await new Promise<void>((resolve) => {
+      server = harness.app.listen(0, '127.0.0.1', resolve);
+    });
+
+    const res = await request(
+      server!,
+      'GET',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/databases',
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.configuredDatabase).toBe('app');
+    expect(res.body.currentDatabase).toBe('prdagent');
+  });
+
   it('queries MongoDB collections against the selected database', async () => {
     const harness = makeHarness();
     tmpDir = harness.tmpDir;

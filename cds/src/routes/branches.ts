@@ -4634,6 +4634,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return value;
   }
 
+  function chooseMongoCurrentDatabase(configuredDatabase: string, databases: unknown[]): string {
+    const validDatabases = databases
+      .map((item) => (item && typeof item === 'object' && 'name' in item ? String((item as { name?: unknown }).name || '') : ''))
+      .filter((name) => /^[a-zA-Z0-9_-]{1,63}$/.test(name));
+    if (validDatabases.includes(configuredDatabase)) return configuredDatabase;
+    const businessDatabase = validDatabases.find((name) => !['admin', 'config', 'local'].includes(name));
+    return businessDatabase || validDatabases[0] || configuredDatabase;
+  }
+
   function mongoCredentials(service: InfraService, branch: BranchEntry, databaseOverride?: string): { user: string; password: string; database: string; uri: string; secrets: string[] } {
     const branchEnv = stateService.getCustomEnvScope(branch.id);
     const branchUser = branchEnv.MONGODB_USERNAME || branchEnv.MONGO_USERNAME || '';
@@ -7114,9 +7123,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const ctx = await resolveMongoDataResourceForRequest(req, res);
     if (!ctx) return;
     try {
-      const currentDatabase = mongoDatabaseForBranch(ctx.service, ctx.branch);
+      const configuredDatabase = mongoDatabaseForBranch(ctx.service, ctx.branch);
       const data = await runMongoJson(ctx.service, ctx.branch, 'JSON.stringify(db.adminCommand({ listDatabases: 1 }).databases.map(d => ({ name: d.name, sizeOnDisk: d.sizeOnDisk || 0 })))');
-      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, currentDatabase, databases: Array.isArray(data) ? data : [] });
+      const databases = Array.isArray(data) ? data : [];
+      const currentDatabase = chooseMongoCurrentDatabase(configuredDatabase, databases);
+      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, configuredDatabase, currentDatabase, databases });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }

@@ -3417,6 +3417,16 @@ interface MongoCollectionSummary {
   type?: string;
 }
 
+const SYSTEM_MONGO_DATABASES = new Set(['admin', 'config', 'local']);
+
+function chooseMongoDatabase(databases: MongoDatabaseSummary[], preferredDatabase?: string, currentDatabase?: string): string {
+  const names = new Set(databases.map((database) => database.name));
+  if (currentDatabase && names.has(currentDatabase)) return currentDatabase;
+  if (preferredDatabase && names.has(preferredDatabase)) return preferredDatabase;
+  const businessDatabase = databases.find((database) => !SYSTEM_MONGO_DATABASES.has(database.name));
+  return businessDatabase?.name || databases[0]?.name || preferredDatabase || '';
+}
+
 function highlightedCode(value: string, language: 'sql' | 'json'): ReactNode[] {
   const pattern = language === 'sql'
     ? /\b(select|from|where|insert|into|values|update|set|delete|create|alter|drop|truncate|replace|table|index|view|limit|order|by|group|join|left|right|inner|outer|on|and|or|null|not|primary|key|default|describe|show|explain)\b|('[^']*'|"[^"]*"|`[^`]*`)|(--.*$)|(\b\d+(?:\.\d+)?\b)/gim
@@ -3497,10 +3507,11 @@ function tryFormatJsonText(value: string): string {
 }
 
 function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX.Element {
-  const [databasesState, setDatabasesState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; databases: MongoDatabaseSummary[]; currentDatabase?: string; message?: string }>({ status: 'idle', databases: [] });
+  const [databasesState, setDatabasesState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; databases: MongoDatabaseSummary[]; currentDatabase?: string; configuredDatabase?: string; message?: string }>({ status: 'idle', databases: [] });
   const [collectionsState, setCollectionsState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; collections: MongoCollectionSummary[]; database?: string; message?: string }>({ status: 'idle', collections: [] });
   const [selectedDatabase, setSelectedDatabase] = useState('');
   const [selectedCollection, setSelectedCollection] = useState('');
+  const selectedDatabaseRef = useRef('');
   const [documentsState, setDocumentsState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; documents: unknown[]; message?: string }>({ status: 'idle', documents: [] });
   const [mode, setMode] = useState<'browse' | 'query' | 'mutate'>('browse');
   const [filter, setFilter] = useState('{}');
@@ -3517,15 +3528,27 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
     ? `/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/data/mongo`
     : '';
 
+  useEffect(() => {
+    selectedDatabaseRef.current = selectedDatabase;
+  }, [selectedDatabase]);
+
   const loadDatabases = useCallback(async () => {
     if (!basePath) return;
     setDatabasesState((current) => ({ ...current, status: 'loading', message: undefined }));
     try {
-      const res = await apiRequest<{ currentDatabase?: string; databases: MongoDatabaseSummary[] }>(`${basePath}/databases`);
+      const res = await apiRequest<{ currentDatabase?: string; configuredDatabase?: string; databases: MongoDatabaseSummary[] }>(`${basePath}/databases`);
       const databases = res.databases || [];
-      const currentDatabase = res.currentDatabase || databases[0]?.name || '';
-      setDatabasesState({ status: 'ok', databases, currentDatabase });
-      setSelectedDatabase((current) => current || currentDatabase);
+      const currentDatabase = chooseMongoDatabase(databases, res.currentDatabase, selectedDatabaseRef.current);
+      setDatabasesState({ status: 'ok', databases, currentDatabase, configuredDatabase: res.configuredDatabase });
+      setSelectedDatabase((current) => {
+        const nextDatabase = chooseMongoDatabase(databases, res.currentDatabase, current);
+        if (nextDatabase !== current) {
+          setSelectedCollection('');
+          setCollectionsState({ status: 'idle', collections: [], database: nextDatabase });
+          setDocumentsState({ status: 'idle', documents: [] });
+        }
+        return nextDatabase;
+      });
     } catch (err) {
       setDatabasesState({ status: 'error', databases: [], message: err instanceof ApiError ? err.message : String(err) });
     }
@@ -3629,6 +3652,12 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
   const writeTargetCollection = writeAction === 'createCollection' || writeAction === 'dropCollection'
     ? writeCollection.trim()
     : selectedCollection;
+  const databaseLabel = selectedDatabase || databasesState.currentDatabase || '-';
+  const configuredDatabaseNotice = databasesState.configuredDatabase && databaseLabel !== '-' && databasesState.configuredDatabase !== databaseLabel
+    ? `配置默认库 ${databasesState.configuredDatabase} 暂未创建，已选中 ${databaseLabel}`
+    : databasesState.configuredDatabase
+      ? `默认库 ${databasesState.configuredDatabase}`
+      : '';
 
   return (
     <div className="space-y-4 text-sm">
@@ -3636,7 +3665,8 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
           <div>
             <div className="text-xs font-semibold">MongoDB Workbench</div>
-            <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{selectedDatabase || databasesState.currentDatabase || '-'}.{selectedCollection || '-'}</div>
+            <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{databaseLabel}.{selectedCollection || '-'}</div>
+            {configuredDatabaseNotice ? <div className="mt-1 text-[11px] text-muted-foreground">{configuredDatabaseNotice}</div> : null}
           </div>
           <div className="flex items-center gap-2">
             {(['browse', 'query', 'mutate'] as const).map((item) => (
@@ -3665,10 +3695,15 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
                   key={db.name}
                   type="button"
                   className={`inline-flex h-8 shrink-0 items-center gap-2 rounded-md border px-3 text-xs ${db.name === selectedDatabase ? 'border-primary bg-primary/10 text-foreground' : 'border-[hsl(var(--hairline))] text-muted-foreground hover:text-foreground'}`}
-                  onClick={() => setSelectedDatabase(db.name)}
+                  onClick={() => {
+                    setSelectedCollection('');
+                    setCollectionsState({ status: 'idle', collections: [], database: db.name });
+                    setDocumentsState({ status: 'idle', documents: [] });
+                    setSelectedDatabase(db.name);
+                  }}
                 >
                   <span className="font-mono">{db.name}</span>
-                  <span>{db.sizeOnDisk ? formatBytes(db.sizeOnDisk) : '-'}</span>
+                  <span>{formatBytes(db.sizeOnDisk || 0)}</span>
                 </button>
               )) : (
                 <div className="text-xs text-muted-foreground">{databasesState.status === 'loading' ? '读取数据库...' : databasesState.message || '没有数据库信息。'}</div>
@@ -3695,7 +3730,13 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
                   <span>{collection.type || 'collection'}</span>
                 </button>
               )) : (
-                <div className="text-xs text-muted-foreground">{collectionsState.status === 'loading' ? '读取 collection...' : '没有 collection。'}</div>
+                <div className="text-xs text-muted-foreground">
+                  {collectionsState.status === 'loading'
+                    ? '读取 collection...'
+                    : selectedDatabase
+                      ? `${selectedDatabase} 暂无 collection。可在「写入 / 结构」里创建 collection，或切换其他数据库。`
+                      : '请选择数据库。'}
+                </div>
               )}
             </div>
           </div>
