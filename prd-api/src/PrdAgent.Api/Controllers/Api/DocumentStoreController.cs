@@ -37,6 +37,7 @@ public class DocumentStoreController : ControllerBase
     private readonly ISafeOutboundUrlValidator _urlValidator;
     private readonly ITeamService _teams;
     private readonly ITeamActivityService _teamActivity;
+    private readonly DocStoreServices.MentionService _mentions;
     private readonly ILogger<DocumentStoreController> _logger;
 
     /// <summary>20 MB per file</summary>
@@ -59,6 +60,7 @@ public class DocumentStoreController : ControllerBase
         ISafeOutboundUrlValidator urlValidator,
         ITeamService teams,
         ITeamActivityService teamActivity,
+        DocStoreServices.MentionService mentions,
         ILogger<DocumentStoreController> logger)
     {
         _db = db;
@@ -69,6 +71,7 @@ public class DocumentStoreController : ControllerBase
         _urlValidator = urlValidator;
         _teams = teams;
         _teamActivity = teamActivity;
+        _mentions = mentions;
         _logger = logger;
     }
 
@@ -814,6 +817,8 @@ public class DocumentStoreController : ControllerBase
         var viewEventsResult = await _db.DocumentStoreViewEvents.DeleteManyAsync(v => v.EntryId != null && idsToDelete.Contains(v.EntryId));
         var inlineCommentsResult = await _db.DocumentInlineComments.DeleteManyAsync(c => idsToDelete.Contains(c.EntryId));
         var agentRunsResult = await _db.DocumentStoreAgentRuns.DeleteManyAsync(r => idsToDelete.Contains(r.SourceEntryId));
+        // 双链账本：清掉以这些 entry 为 from 或 to 的所有引用
+        var mentionsDeleted = await _mentions.CascadeDeleteAsync(MentionEntityType.Document, idsToDelete);
 
         long documentsDeleted = 0;
         if (documentIds.Count > 0)
@@ -851,10 +856,10 @@ public class DocumentStoreController : ControllerBase
                 .Set(s => s.UpdatedAt, DateTime.UtcNow));
 
         _logger.LogInformation(
-            "[document-store] Entry cascaded deleted: {EntryId} from store {StoreId} by {UserId} | entries={Entries} syncLogs={Logs} docs={Docs} attachments={Atts} views={Views} inlineComments={Comments} agentRuns={Runs}",
+            "[document-store] Entry cascaded deleted: {EntryId} from store {StoreId} by {UserId} | entries={Entries} syncLogs={Logs} docs={Docs} attachments={Atts} views={Views} inlineComments={Comments} agentRuns={Runs} mentions={Mentions}",
             entryId, entry.StoreId, userId,
             entriesResult.DeletedCount, syncLogsResult.DeletedCount, documentsDeleted, attachmentsDeleted,
-            viewEventsResult.DeletedCount, inlineCommentsResult.DeletedCount, agentRunsResult.DeletedCount);
+            viewEventsResult.DeletedCount, inlineCommentsResult.DeletedCount, agentRunsResult.DeletedCount, mentionsDeleted);
 
         await LogStoreActivityAsync(store, userId, TeamActivityAction.EntryDeleted, "entry", entryId, entryTitle);
 
@@ -977,6 +982,9 @@ public class DocumentStoreController : ControllerBase
         // 重锚定划词评论：正文更新后，遍历所有 active 评论，用 SelectedText + context 重新定位
         var rebindStats = await RebindInlineCommentsAsync(entryId, content);
 
+        // 重算双链账本：解析正文里的 [[xxx]]，写入 mentions 集合
+        var mentionsWritten = await _mentions.ResyncDocumentMentionsAsync(store.Id, entryId, content);
+
         await LogStoreActivityAsync(store, userId, TeamActivityAction.EntryUpdated, "entry", entryId, entry.Title);
 
         return Ok(ApiResponse<object>.Ok(new
@@ -987,6 +995,7 @@ public class DocumentStoreController : ControllerBase
             updatedByName = userName,
             inlineCommentsRebound = rebindStats.rebound,
             inlineCommentsOrphaned = rebindStats.orphaned,
+            mentionsWritten,
         }));
     }
 

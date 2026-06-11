@@ -412,6 +412,12 @@ export type DocBrowserProps = {
   sharedEntryIds?: Set<string>;
   emptyState?: React.ReactNode;
   loading?: boolean;
+  /**
+   * 内容区底部插槽：在文档正文渲染之后、还在可滚动内容区内挂载的 React 节点。
+   * MVP 用于挂载 BacklinksPanel（反向链接面板）。
+   * 不传则不渲染，对现有调用方无影响。
+   */
+  contentFooter?: (entryId: string) => React.ReactNode;
   /** 目录排序模式，默认 'default'（置顶+folder+主文档+标题）。阅读/分享场景建议 'created-desc'。 */
   sortMode?: DocBrowserSortMode;
   /**
@@ -1472,6 +1478,7 @@ export function DocBrowser({
   tagColors: tagColorsProp,
   onTagColorsChange,
   inlineCommentShareToken,
+  contentFooter,
 }: DocBrowserProps) {
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState<DocBrowserEntry[] | null>(null);
@@ -3084,6 +3091,12 @@ export function DocBrowser({
                   <div className="flex flex-col items-center justify-center h-full text-center text-gray-400 gap-2">
                     <FolderOpen size={48} className="opacity-20 mb-2" />
                     <p className="text-[13px]">{selectedEntryData?.isFolder ? '这是一个目录' : '无法预览该文件'}</p>
+                  </div>
+                )}
+                {/* 内容底部插槽：阅读态 + 非文件夹 + 选中条目 时挂载（如反向链接面板） */}
+                {!editMode && !contentLoading && contentFooter && selectedEntryId && !selectedEntryData?.isFolder && (
+                  <div style={{ marginTop: 8 }}>
+                    {contentFooter(selectedEntryId)}
                   </div>
                 )}
                 {/* 划词选中时的浮层"添加评论"按钮——仅有写权限时出现；只读访客（私有分享/匿名公开）不弹，

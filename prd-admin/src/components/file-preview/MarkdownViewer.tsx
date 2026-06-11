@@ -93,10 +93,29 @@ const docSanitizeSchema = {
   ],
 };
 
+/**
+ * 把 wiki 链接语法 [[标题]] / [[标题|别名]] 转成标准 markdown 链接 [文本](wikilink:标题)
+ * 这样 ReactMarkdown 视为普通链接渲染，由下方 a 组件的自定义 renderer 拦截 wikilink: href
+ * 渲染为可点击的双链样式。点击发送 CustomEvent('wikilink:click')，由上层（DocumentStorePage）
+ * 监听并跳转到对应 entry。详见 doc/design.knowledge-base-mention-network.md。
+ */
+function preprocessWikilinks(body: string): string {
+  if (!body) return body;
+  // 故意不识别嵌套/换行/管道符里的内容，与后端 WikiLinkParser 行为一致
+  return body.replace(/\[\[([^\[\]\|\n]+?)(?:\|([^\[\]\n]+?))?\]\]/g, (_, title: string, alias?: string) => {
+    const display = (alias ?? title).trim();
+    const target = title.trim();
+    if (!target) return '';
+    // wikilink: 是自定义协议，下面 a 组件 renderer 会按这个前缀拦截渲染
+    return `[${display}](wikilink:${encodeURIComponent(target)})`;
+  });
+}
+
 function MarkdownViewerBase({ content }: { content: string }) {
   // 剥离首个 YAML frontmatter 块，避免 ---/title:/description: 被当正文渲染。
   // 与左侧标题提取共用 parseFrontmatter（SSOT）。
-  const body = useMemo(() => parseFrontmatter(content).body, [content]);
+  // 同时把 [[xxx]] 双链预处理成标准 markdown 链接（wikilink: 协议）。
+  const body = useMemo(() => preprocessWikilinks(parseFrontmatter(content).body), [content]);
 
   // 图片 lightbox：点击 markdown 中任意 <img> 打开放大模态，支持 ← → 切换。
   // 注意：不能用"每次渲染重置 ref + img renderer 中 push"的方式收集图片！
@@ -190,6 +209,33 @@ function MarkdownViewerBase({ content }: { content: string }) {
           h6: mkHeading('h6'),
           p: ({ children }) => <p className="my-3.5 whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.78))' }}>{children}</p>,
           a: ({ href, children }) => {
+            // 双链 [[xxx]] → wikilink: 协议（preprocessWikilinks 转出）
+            if (href && href.startsWith('wikilink:')) {
+              const title = decodeURIComponent(href.slice('wikilink:'.length));
+              return (
+                <a
+                  href={`#wikilink:${encodeURIComponent(title)}`}
+                  className="wikilink-anchor"
+                  data-wikilink={title}
+                  style={{
+                    color: 'rgba(124,156,255,0.95)',
+                    background: 'rgba(124,156,255,0.08)',
+                    padding: '0 4px',
+                    borderRadius: 3,
+                    borderBottom: '1px solid rgba(124,156,255,0.45)',
+                    textDecoration: 'none',
+                    cursor: 'pointer',
+                  }}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    // 派发到全局，由消费方（DocumentStorePage 等）监听并跳转
+                    document.dispatchEvent(new CustomEvent('wikilink:click', { detail: { title } }));
+                  }}
+                >
+                  {children}
+                </a>
+              );
+            }
             // 锚点 → SPA 内 scroll，不新开标签页
             if (href && href.startsWith('#')) {
               return (

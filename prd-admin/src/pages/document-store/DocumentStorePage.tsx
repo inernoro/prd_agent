@@ -82,6 +82,7 @@ import { RelativeTime } from '@/components/ui/RelativeTime';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
 import { DocEmptyState } from '@/components/doc-browser/DocEmptyState';
+import { BacklinksPanel } from '@/components/doc-browser/BacklinksPanel';
 import type {
   DocumentStore,
   DocumentStoreWithPreview,
@@ -605,6 +606,29 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
   const [sharedEntryIds, setSharedEntryIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(undefined);
+
+  // 双链跳转：监听 MarkdownViewer / BacklinksPanel 派发的 wikilink:click 事件，
+  // 在当前知识库的 entries 里按标题查 entryId 并切换选中。命中不到时降级为搜索关键字
+  // 提示（不报错，让用户去搜索栏继续找）。
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent<{ title?: string; entryId?: string }>;
+      const directId = ce.detail?.entryId;
+      if (directId && entries.some(en => en.id === directId)) {
+        setSelectedEntryId(directId);
+        return;
+      }
+      const title = (ce.detail?.title ?? '').trim();
+      if (!title) return;
+      const hit = entries.find(en => en.title === title);
+      if (hit) {
+        setSelectedEntryId(hit.id);
+      }
+      // 命中不到：当前 MVP 不自动跳转，未来可加 toast 或自动创建文档草稿
+    };
+    document.addEventListener('wikilink:click', handler);
+    return () => document.removeEventListener('wikilink:click', handler);
+  }, [entries]);
   // 从账号统计点击文档跳转而来：挂载时打开指定文档（组件按 storeId key 重挂载，仅消费一次）
   useEffect(() => {
     if (initialEntryId) setSelectedEntryId(initialEntryId);
@@ -1116,6 +1140,12 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
               />
             </div>
           }
+          contentFooter={(entryId) => (
+            <BacklinksPanel
+              entryId={entryId}
+              onJumpToEntry={(id) => setSelectedEntryId(id)}
+            />
+          )}
         />
       </div>
 
