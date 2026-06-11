@@ -761,6 +761,15 @@ public class MdToPptController : ControllerBase
         var run = await CreateRunAsync(userId, "agent", template != null ? $"custom:{template.Name}" : req.Theme, "patch", req.SlideRequest);
         await WriteEventAsync("run", new { runId = run.Id });
 
+        // 定向单页 patch（2026-06-11 诉求 4「重绘本页」）：只把目标页交给一个子智能体
+        // 重画并在服务端原位替换——不再把整份 58KB HTML 喂给模型重出（旧路径实测 7 分钟+）。
+        // 官方主题限定（自定义模板的页级提示词 token 物化仍是 debt）；失败回落整篇路径。
+        if (req.SlideIndex.HasValue && template == null && !string.IsNullOrEmpty(req.CurrentHtml))
+        {
+            var handled = await TryRunSinglePagePatchAsync(userId, req, run, req.SlideIndex.Value);
+            if (handled) return;
+        }
+
         // 风格/模板随 patch 下发：换风格 = AI 参照该风格重绘整页 HTML（设计 token、
         // 字体、版式气质都在系统提示词里），不是前端套一层 CSS 换皮。
         var systemPrompt = BuildPptSystemPrompt(req.Theme, template?.StyleSpec);
@@ -1261,6 +1270,94 @@ public class MdToPptController : ControllerBase
             _logger.LogError(ex, "[MdToPpt-Pages] failed userId={UserId}", userId);
             await PersistRunErrorAsync(run, ex.Message);
             await EmitAsync("error", new { message = ex.Message });
+        }
+        finally
+        {
+            kaCts.Cancel();
+            try { await kaTask; } catch { }
+        }
+    }
+
+    /// <summary>
+    /// 定向单页 patch：抽出目标 section → 单个子智能体按页级提示词重画 → 消毒 → 原位替换。
+    /// 返回 false 表示无法走单页路径（页索引越界 / deck 结构不识别），调用方回落整篇路径。
+    /// 失败（agent 不可用等）时发 error 事件并返回 true（已处理，不再二次跑整篇）。
+    /// </summary>
+    private async Task<bool> TryRunSinglePagePatchAsync(string userId, MdToPptPatchRequest req, MdToPptRun run, int oneBasedIndex)
+    {
+        var html = req.CurrentHtml!;
+        var matches = System.Text.RegularExpressions.Regex.Matches(html, "<section[\\s\\S]*?</section>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (matches.Count == 0 || oneBasedIndex < 1 || oneBasedIndex > matches.Count) return false;
+
+        var connection = await ResolveCdsConnectionAsync(CancellationToken.None);
+        var profile = connection == null ? null : await ResolveRuntimeProfileAsync(userId, CancellationToken.None, req.RuntimeProfileId);
+        if (connection == null || profile == null) return false; // 回落整篇路径（它有自己的错误提示）
+
+        await WriteEventAsync("model", new { model = profile.Model, platform = "CDS Agent" });
+        await WriteDiagAsync(new { stage = "page_patch_start", page = oneBasedIndex, total = matches.Count });
+        _logger.LogInformation("[MdToPpt-PagePatch] start userId={UserId} page={Page}/{Total}", userId, oneBasedIndex, matches.Count);
+
+        // 心跳：单页重画 1-3 分钟，SSE 不能断流（Cloudflare 100s 缓冲）
+        using var kaCts = new CancellationTokenSource();
+        var kaTask = Task.Run(async () =>
+        {
+            try
+            {
+                while (!kaCts.Token.IsCancellationRequested)
+                {
+                    await Task.Delay(10000, kaCts.Token);
+                    try
+                    {
+                        await Response.WriteAsync(": keepalive\n\n", CancellationToken.None);
+                        await Response.Body.FlushAsync(CancellationToken.None);
+                    }
+                    catch { /* 客户端断开不影响生成（服务器权威性） */ }
+                }
+            }
+            catch (OperationCanceledException) { }
+        });
+
+        try
+        {
+            var idx = oneBasedIndex - 1;
+            var current = matches[idx].Value;
+            var sys = BuildPageSystemPrompt(req.Theme, idx, matches.Count);
+            var usr =
+                $"这是第 {oneBasedIndex}/{matches.Count} 页当前的 HTML：\n{current}\n\n" +
+                $"修改要求（只动这一页）：\n{req.SlideRequest?.Trim()}\n\n" +
+                "硬约束：未被修改要求点名的信息内容必须逐字保留（数字、名称、要点一字不差）；" +
+                "重新设计排版时严格遵守画布与版面硬约束。";
+
+            var (text, err) = await RunAgentOnceAsync(userId, connection, profile, sys, usr, $"PPT 第{oneBasedIndex}页修改", null);
+            var section = text != null ? ExtractSection(text) : string.Empty;
+            if (string.IsNullOrEmpty(section))
+            {
+                _logger.LogWarning("[MdToPpt-PagePatch] invalid section, retrying page={Page} err={Err}", oneBasedIndex, err);
+                var (text2, err2) = await RunAgentOnceAsync(userId, connection, profile, sys, usr, $"PPT 第{oneBasedIndex}页修改R", null);
+                section = text2 != null ? ExtractSection(text2) : string.Empty;
+                if (string.IsNullOrEmpty(section))
+                {
+                    var msg = err2 ?? err ?? "单页重绘失败，请重试";
+                    await PersistRunErrorAsync(run, msg);
+                    await WriteEventAsync("error", new { message = msg });
+                    return true;
+                }
+            }
+
+            var newHtml = html[..matches[idx].Index] + section + html[(matches[idx].Index + matches[idx].Length)..];
+            await PersistRunDoneAsync(run, newHtml, profile.Model, "CDS Agent");
+            await WriteEventAsync("page", new { index = idx, total = matches.Count, html = section, done = 1 });
+            await WriteEventAsync("done", new { html = newHtml });
+            _logger.LogInformation("[MdToPpt-PagePatch] DONE userId={UserId} page={Page} newLen={Len}", userId, oneBasedIndex, newHtml.Length);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[MdToPpt-PagePatch] failed userId={UserId} page={Page}", userId, oneBasedIndex);
+            await PersistRunErrorAsync(run, ex.Message);
+            await WriteEventAsync("error", new { message = ex.Message });
+            return true;
         }
         finally
         {
