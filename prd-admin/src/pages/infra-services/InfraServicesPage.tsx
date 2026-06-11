@@ -32,7 +32,9 @@ import {
   createInfraAgentHookProfile,
   createInfraAgentRuntimeProfile,
   createInfraAgentSession,
+  deleteInfraAgentRuntimeProfile,
   getInfraAgentLogs,
+  importDefaultInfraAgentRuntimeProfile,
   listInfraAgentHookProfiles,
   listInfraAgentEvents,
   listInfraAgentRuntimeProfiles,
@@ -40,6 +42,8 @@ import {
   sendInfraAgentMessage,
   startInfraAgentSession,
   stopInfraAgentSession,
+  testInfraAgentRuntimeProfile,
+  updateInfraAgentRuntimeProfile,
   type InfraAgentEventView,
   type InfraAgentHookProfileView,
   type InfraAgentRuntimeProfileView,
@@ -173,7 +177,18 @@ export default function InfraServicesPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [hookProfiles, setHookProfiles] = useState<InfraAgentHookProfileView[]>([]);
   const [runtimeProfiles, setRuntimeProfiles] = useState<InfraAgentRuntimeProfileView[]>([]);
-  const [activeOperationTab, setActiveOperationTab] = useState<InfraOperationTab>('instances');
+  // 深链支持：/infra-services?tab=config 直达「配置」tab（PPT 页模型弹层等入口跳转用）
+  const [activeOperationTab, setActiveOperationTab] = useState<InfraOperationTab>(() => {
+    const q = new URLSearchParams(window.location.search).get('tab');
+    return INFRA_OPERATION_TABS.some((t) => t.key === q) ? (q as InfraOperationTab) : 'instances';
+  });
+  // 失效连接默认折叠（2026-06-11 用户反馈：12 条尸体卡占满首屏，常用操作被推到第四屏）
+  const [showRevoked, setShowRevoked] = useState(false);
+  // 模型运行配置的编辑/删除/测试状态（此前卡片只读，改不了是体验缺陷）
+  const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
+  const [confirmDeleteProfileId, setConfirmDeleteProfileId] = useState<string | null>(null);
+  const [testingProfileId, setTestingProfileId] = useState<string | null>(null);
+  const [profileTestNotes, setProfileTestNotes] = useState<Record<string, { ok: boolean; text: string }>>({});
   const [sessionDraft, setSessionDraft] = useState({
     title: 'CDS Agent 测试会话',
     runtime: 'claude-sdk',
@@ -395,23 +410,116 @@ export default function InfraServicesPage() {
     toast.success('Hook profile 已保存');
   }
 
-  async function onCreateRuntimeProfile() {
+  // 保存：editingProfileId 在场 = 修改既有配置（apiKey 留空沿用原 key），否则新建
+  async function onSaveRuntimeProfile() {
     setAgentBusy(true);
-    const res = await createInfraAgentRuntimeProfile(runtimeDraft);
+    const res = editingProfileId
+      ? await updateInfraAgentRuntimeProfile(editingProfileId, runtimeDraft)
+      : await createInfraAgentRuntimeProfile(runtimeDraft);
     setAgentBusy(false);
     if (!res.success || !res.data?.item) {
-      toast.error('保存模型配置失败', res.error?.message ?? '请检查 baseUrl、model 和 API key');
+      toast.error(editingProfileId ? '修改模型配置失败' : '保存模型配置失败', res.error?.message ?? '请检查 baseUrl、model 和 API key');
       return;
     }
-    setRuntimeProfiles((prev) => [res.data!.item, ...prev.filter((x) => x.id !== res.data!.item.id)]);
+    await reloadRuntimeProfilesAfterMutation(res.data.item.id);
     setSessionDraft((prev) => ({
       ...prev,
       runtimeProfileId: res.data!.item.id,
       runtime: res.data!.item.runtime,
       model: res.data!.item.model,
     }));
+    setEditingProfileId(null);
     setRuntimeDraft((prev) => ({ ...prev, apiKey: '' }));
-    toast.success('模型配置已保存', '新建会话会使用该系统级配置');
+    toast.success(editingProfileId ? '模型配置已修改' : '模型配置已保存', '所有走 CDS Agent 的功能即时生效');
+  }
+
+  // 默认切换会联动改其他条目的 isDefault，必须整表重拉（不能只 patch 一条）
+  async function reloadRuntimeProfilesAfterMutation(_touchedId?: string) {
+    const list = await listInfraAgentRuntimeProfiles();
+    if (list.success && list.data) {
+      const items = (list.data as { items?: InfraAgentRuntimeProfileView[] }).items ?? [];
+      setRuntimeProfiles(items);
+    }
+  }
+
+  function onEditRuntimeProfile(p: InfraAgentRuntimeProfileView) {
+    setEditingProfileId(p.id);
+    setConfirmDeleteProfileId(null);
+    setRuntimeDraft({
+      name: p.name,
+      runtime: p.runtime,
+      protocol: p.protocol,
+      baseUrl: p.baseUrl,
+      model: p.model,
+      apiKey: '', // 留空 = 沿用原 key（后端 retainsExistingApiKey 语义）
+      isDefault: p.isDefault,
+    });
+  }
+
+  async function onSetDefaultRuntimeProfile(p: InfraAgentRuntimeProfileView) {
+    setAgentBusy(true);
+    const res = await updateInfraAgentRuntimeProfile(p.id, {
+      name: p.name,
+      runtime: p.runtime,
+      protocol: p.protocol,
+      baseUrl: p.baseUrl,
+      model: p.model,
+      isDefault: true,
+    });
+    setAgentBusy(false);
+    if (!res.success) {
+      toast.error('设为默认失败', res.error?.message ?? '请稍后重试');
+      return;
+    }
+    await reloadRuntimeProfilesAfterMutation(p.id);
+    toast.success(`「${p.name}」已设为默认`, '所有走 CDS Agent 的功能缺省使用它');
+  }
+
+  // 两击确认删除（第一次点变红「确认删除」，再点才执行），避免误删
+  async function onDeleteRuntimeProfile(p: InfraAgentRuntimeProfileView) {
+    if (confirmDeleteProfileId !== p.id) {
+      setConfirmDeleteProfileId(p.id);
+      return;
+    }
+    setConfirmDeleteProfileId(null);
+    setAgentBusy(true);
+    const res = await deleteInfraAgentRuntimeProfile(p.id);
+    setAgentBusy(false);
+    if (!res.success) {
+      toast.error('删除失败', res.error?.message ?? '请稍后重试');
+      return;
+    }
+    if (editingProfileId === p.id) setEditingProfileId(null);
+    await reloadRuntimeProfilesAfterMutation();
+    toast.success(`「${p.name}」已删除`);
+  }
+
+  async function onTestRuntimeProfile(p: InfraAgentRuntimeProfileView) {
+    setTestingProfileId(p.id);
+    const res = await testInfraAgentRuntimeProfile(p.id);
+    setTestingProfileId(null);
+    const r = res.success ? (res.data as { result?: { success: boolean; message: string; elapsedMs: number } } | null)?.result : null;
+    if (!r) {
+      setProfileTestNotes((prev) => ({ ...prev, [p.id]: { ok: false, text: res.error?.message ?? '测试请求失败' } }));
+      return;
+    }
+    setProfileTestNotes((prev) => ({
+      ...prev,
+      [p.id]: { ok: r.success, text: `${r.success ? '连通' : '失败'} · ${r.message}（${r.elapsedMs}ms）` },
+    }));
+  }
+
+  // 一键从「模型管理」导入系统主模型为运行配置（零摩擦：不用手抄 baseUrl/key）
+  async function onImportDefaultRuntimeProfile() {
+    setAgentBusy(true);
+    const res = await importDefaultInfraAgentRuntimeProfile();
+    setAgentBusy(false);
+    if (!res.success || !res.data?.item) {
+      toast.error('导入失败', res.error?.message ?? '请确认模型管理里已配置系统主模型');
+      return;
+    }
+    await reloadRuntimeProfilesAfterMutation(res.data.item.id);
+    toast.success('已从模型管理导入', `「${res.data.item.name}」（${res.data.item.model}）`);
   }
 
   async function onApproveTool(approvalId: string, decision: 'allow' | 'deny') {
@@ -657,26 +765,118 @@ export default function InfraServicesPage() {
     return (
       <div className="grid gap-3 md:grid-cols-2">
         <div className="rounded-lg p-4" style={cardStyle}>
-          <div className="text-xs font-semibold text-white/55 mb-2">模型运行配置</div>
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <div className="text-xs font-semibold text-white/55">模型运行配置</div>
+            <button
+              type="button"
+              onClick={() => void onImportDefaultRuntimeProfile()}
+              disabled={agentBusy}
+              title="从「模型管理」一键导入系统主模型为运行配置，不用手抄 baseUrl/key"
+              className="text-[11px] text-sky-200/85 hover:text-sky-100 disabled:opacity-45"
+            >
+              从模型管理导入
+            </button>
+          </div>
           <div className="space-y-2">
             {runtimeProfiles.length === 0 ? (
               <div className="text-sm text-white/45">还没有系统级模型配置。保存后会话可使用 Anthropic 或 OpenAI-compatible baseUrl 和 model。</div>
             ) : (
-              runtimeProfiles.map((profile) => (
-                <div key={profile.id} className="rounded-md px-3 py-2" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-medium text-white/85">{profile.name}</span>
-                    <span className="text-[11px] text-white/45">{profile.isDefault ? '默认' : profile.runtime}</span>
+              runtimeProfiles.map((profile) => {
+                const note = profileTestNotes[profile.id];
+                const editing = editingProfileId === profile.id;
+                return (
+                  <div
+                    key={profile.id}
+                    data-testid={'runtime-profile-' + profile.id}
+                    className="rounded-md px-3 py-2"
+                    style={{
+                      background: 'rgba(0,0,0,0.18)',
+                      border: editing ? '1px solid rgba(99,179,237,0.45)' : '1px solid rgba(255,255,255,0.06)',
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-medium text-white/85 truncate">{profile.name}</span>
+                      <span className="shrink-0 text-[11px] text-white/45">{profile.isDefault ? '默认' : profile.runtime}</span>
+                    </div>
+                    <div className="mt-1 text-xs text-white/50 break-all">{profile.baseUrl}</div>
+                    <div className="mt-1 text-xs text-white/50">protocol: {profile.protocol} · model: {profile.model} · key: {profile.hasApiKey ? '已配置' : '未配置'}</div>
+                    {note && (
+                      <div className={['mt-1.5 text-[11px]', note.ok ? 'text-emerald-300/90' : 'text-red-300/90'].join(' ')}>
+                        {note.text}
+                      </div>
+                    )}
+                    {/* 操作行（2026-06-11 用户反馈「设置不够全, 怎么更改」：此前卡片只读，
+                          后端 PUT/DELETE/test 早已就绪，这里补 UI 接线） */}
+                    <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => onEditRuntimeProfile(profile)}
+                        disabled={agentBusy}
+                        className="rounded px-2 py-1 text-[11px] text-white/70 hover:text-white disabled:opacity-45"
+                        style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}
+                      >
+                        编辑
+                      </button>
+                      {!profile.isDefault && (
+                        <button
+                          type="button"
+                          onClick={() => void onSetDefaultRuntimeProfile(profile)}
+                          disabled={agentBusy}
+                          className="rounded px-2 py-1 text-[11px] disabled:opacity-45"
+                          style={{ background: 'rgba(99,179,237,0.12)', border: '1px solid rgba(99,179,237,0.3)', color: 'rgba(186,230,253,0.95)' }}
+                        >
+                          设为默认
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => void onTestRuntimeProfile(profile)}
+                        disabled={agentBusy || testingProfileId === profile.id}
+                        title="对 baseUrl/model/key 发一次真实探测请求"
+                        className="rounded px-2 py-1 text-[11px] text-white/70 hover:text-white disabled:opacity-45 inline-flex items-center gap-1"
+                        style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}
+                      >
+                        {testingProfileId === profile.id && <MapSpinner size={10} />}
+                        {testingProfileId === profile.id ? '测试中' : '测试连通'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void onDeleteRuntimeProfile(profile)}
+                        disabled={agentBusy}
+                        className="rounded px-2 py-1 text-[11px] disabled:opacity-45"
+                        style={
+                          confirmDeleteProfileId === profile.id
+                            ? { background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.5)', color: 'rgba(252,165,165,1)' }
+                            : { background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: 'rgba(252,165,165,0.9)' }
+                        }
+                      >
+                        {confirmDeleteProfileId === profile.id ? '确认删除?' : '删除'}
+                      </button>
+                    </div>
                   </div>
-                  <div className="mt-1 text-xs text-white/50 break-all">{profile.baseUrl}</div>
-                  <div className="mt-1 text-xs text-white/50">protocol: {profile.protocol} · model: {profile.model} · key: {profile.hasApiKey ? '已配置' : '未配置'}</div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
         <div className="rounded-lg p-4 space-y-3" style={cardStyle}>
-          <div className="text-xs font-semibold text-white/55">新增模型配置</div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-xs font-semibold text-white/55">
+              {editingProfileId ? '修改模型配置（API key 留空 = 沿用原 key）' : '新增模型配置'}
+            </div>
+            {editingProfileId && (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingProfileId(null);
+                  setRuntimeDraft((prev) => ({ ...prev, apiKey: '' }));
+                }}
+                className="text-[11px] text-white/55 hover:text-white/85"
+              >
+                取消编辑
+              </button>
+            )}
+          </div>
           <div className="grid gap-2 sm:grid-cols-2">
             <input
               value={runtimeDraft.name}
@@ -741,12 +941,18 @@ export default function InfraServicesPage() {
           </label>
           <button
             type="button"
-            onClick={() => void onCreateRuntimeProfile()}
-            disabled={agentBusy || !runtimeDraft.baseUrl.trim() || !runtimeDraft.model.trim() || !runtimeDraft.apiKey.trim()}
+            onClick={() => void onSaveRuntimeProfile()}
+            disabled={
+              agentBusy
+              || !runtimeDraft.baseUrl.trim()
+              || !runtimeDraft.model.trim()
+              || (!editingProfileId && !runtimeDraft.apiKey.trim()) // 编辑模式留空 key = 沿用原 key
+            }
+            data-testid="save-runtime-profile"
             className="rounded-md px-3 py-1.5 text-xs disabled:opacity-45"
             style={{ background: 'rgba(99,179,237,0.16)', border: '1px solid rgba(99,179,237,0.35)', color: 'rgba(186,230,253,0.96)' }}
           >
-            保存模型配置
+            {editingProfileId ? '保存修改' : '保存模型配置'}
           </button>
         </div>
         <div className="rounded-lg p-4" style={cardStyle}>
@@ -901,15 +1107,26 @@ export default function InfraServicesPage() {
               </div>
             )}
 
+            {/* 失效连接默认折叠（2026-06-11 用户反馈：12 条尸体卡占满首屏，
+                  把真正常用的「操作台/配置」推到第四屏） */}
             {revokedConnections.length > 0 && (
               <div className="space-y-3">
-                <div className="flex items-center gap-2 pt-1 text-xs font-semibold text-white/55">
+                <button
+                  type="button"
+                  onClick={() => setShowRevoked((v) => !v)}
+                  className="flex items-center gap-2 pt-1 text-xs font-semibold text-white/55 hover:text-white/80"
+                >
                   <span>失效连接</span>
                   <span className="text-white/35">({revokedConnections.length})</span>
-                </div>
-                <ul className="space-y-3">
-                  {revokedConnections.map((c) => renderConnectionCard(c, false))}
-                </ul>
+                  <span className="text-[11px] font-normal text-white/40">
+                    {showRevoked ? '收起' : '展开（已自动排除，不影响使用）'}
+                  </span>
+                </button>
+                {showRevoked && (
+                  <ul className="space-y-3">
+                    {revokedConnections.map((c) => renderConnectionCard(c, false))}
+                  </ul>
+                )}
               </div>
             )}
           </div>

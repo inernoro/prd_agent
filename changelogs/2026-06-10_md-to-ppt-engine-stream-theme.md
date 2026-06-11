@@ -55,3 +55,5 @@
 | fix | prd-admin | 输入框底部工具行视觉修整：快捷键提示挪进 placeholder/按钮 title（原被模型 chip 挤成两行折叠）；模型 chip 只显示短名（vendor 前缀去掉，全名在 tooltip） |
 | feat | prd-api | 官方模板 +2 套（借鉴 open-design.ai 招牌设计系统）：工坊拼贴 Atelier Zero（暖纸/珊瑚单热点/Inter 800 混 Playfair Italic/罗马数字章节/mono 微注）与 Kami 纸墨（羊皮纸/墨蓝 ≤5%/衬线单字重 500 禁粗禁斜/四级暖灰/实色 tag） |
 | feat | prd-admin | 模板画廊新增工坊拼贴 / Kami 纸墨两张卡（官方共 12 套），迷你预览含纸面径向晕影与衬线示例标题 |
+| feat | prd-admin | 基础设施服务页模型运行配置补全 CRUD 接线：卡片新增 编辑/设为默认/测试连通/两击确认删除（后端 PUT/DELETE/test 早已就绪，此前 UI 只读改不了）；表单区分新增/修改模式（编辑留空 key 沿用原 key）；新增「从模型管理导入」一键建配置 |
+| feat | prd-admin | /infra-services 支持 ?tab=config 深链直达配置 tab；失效连接默认折叠（12 条尸体卡不再占满首屏）；PPT 模型弹层只有一条配置时给出去基础设施新增的引导链 |

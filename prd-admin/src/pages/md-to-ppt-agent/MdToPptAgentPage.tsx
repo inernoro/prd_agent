@@ -2475,6 +2475,14 @@ export function MdToPptAgentPage() {
                           切换生成模型（来自「基础设施 → 配置」的运行配置）
                         </div>
                         <div style={{ maxHeight: 220, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+                          {profiles.length <= 1 && (
+                            <a
+                              href="/infra-services?tab=config"
+                              className="block px-3 py-2 text-[10px] text-sky-300/90 hover:text-sky-200 border-b border-white/6"
+                            >
+                              只有一条配置？去「基础设施 → 配置」新增/修改模型，建好回来即可切换
+                            </a>
+                          )}
                           {profiles.map((p) => {
                             const active = effectiveProfile?.id === p.id;
                             return (
