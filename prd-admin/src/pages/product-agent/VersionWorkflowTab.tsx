@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { CheckCircle2, FileSpreadsheet, HelpCircle, Loader2, Plus, Search, Upload, X } from 'lucide-react';
 import JSZip from 'jszip';
 import {
@@ -604,7 +605,28 @@ function RecordToolbar({ query, onQueryChange, scope, onScopeChange, ownerId, on
 }
 
 function Stepper({ step }: { step: number }) { return <div className="mb-6 flex">{['基础信息', 'Agent 评审', '立项决策'].map((label, i) => <div key={label} className="flex flex-1 items-center last:flex-none"><div className={`flex items-center gap-2 text-xs ${step >= i + 1 ? 'text-cyan-300' : 'text-white/30'}`}><span className={`flex h-7 w-7 items-center justify-center rounded-full border ${step > i + 1 ? 'border-cyan-400 bg-cyan-400 text-slate-950' : step === i + 1 ? 'border-cyan-400' : 'border-white/15'}`}>{step > i + 1 ? <CheckCircle2 size={15} /> : i + 1}</span>{label}</div>{i < 2 && <div className={`mx-3 h-px flex-1 ${step > i + 1 ? 'bg-cyan-400' : 'bg-white/10'}`} />}</div>)}</div>; }
-function Modal({ title, onClose, width, children }: { title: string; onClose: () => void; width: string; children: React.ReactNode }) { return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"><div className={`max-h-[90vh] w-full ${width} overflow-auto rounded-2xl border border-white/10 bg-[#15171c]`}><div className="sticky top-0 z-10 flex justify-between border-b border-white/10 bg-[#15171c] px-6 py-4"><h3 className="text-base font-semibold text-white/90">{title}</h3><button onClick={onClose} className="text-white/40"><X size={18} /></button></div><div className="p-6">{children}</div></div></div>; }
+function Modal({ title, onClose, width, children }: { title: string; onClose: () => void; width: string; children: React.ReactNode }) {
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className={`flex w-full ${width} flex-col rounded-2xl border border-white/10 bg-[#15171c]`}
+        style={{ height: 'min(90vh, 760px)', maxHeight: '90vh' }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex shrink-0 justify-between border-b border-white/10 px-6 py-4">
+          <h3 className="text-base font-semibold text-white/90">{title}</h3>
+          <button onClick={onClose} className="text-white/40 hover:text-white" aria-label="关闭">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-6" style={{ minHeight: 0, overscrollBehavior: 'contain' }}>
+          {children}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
 function Field({ label, full, children }: { label: string; full?: boolean; children: React.ReactNode }) { return <label className={full ? 'md:col-span-2' : ''}><span className="mb-1.5 block text-xs text-white/50">{label}</span>{children}</label>; }
 function Input(props: React.InputHTMLAttributes<HTMLInputElement>) { return <input {...props} className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-cyan-400/50" />; }
 function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) { return <select {...props} className="w-full rounded-lg border border-white/10 bg-[#111318] px-3 py-2 text-sm text-white outline-none">{props.children}</select>; }

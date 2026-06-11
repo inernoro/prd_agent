@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Save, ListChecks, Puzzle, Bug, Link2, FileText, GitBranch, Share2, X, Sparkles } from 'lucide-react';
+import { ArrowLeft, Save, ListChecks, Puzzle, Bug, Link2, FileText, GitBranch, Share2, X, Sparkles, ExternalLink, MessageSquareText } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { useSseStream } from '@/lib/useSseStream';
@@ -862,7 +862,7 @@ function RequirementDetail({
 
   return (
     <DetailScaffold
-      no={requirement.requirementNo}
+      no={`${requirement.requirementNo}${requirement.externalId ? ` · TAPD ${requirement.externalId}` : ''}`}
       kindLabel="需求"
       kindColor="#FBBF24"
       title={title}
@@ -886,6 +886,29 @@ function RequirementDetail({
               <FormFieldsRenderer fields={split.files} values={formData} onChange={setField} productId={productId} />
             </Card>
           )}
+          {requirement.sourceSnapshot?.comments?.length ? (
+            <Card title={`TAPD 评论与流转 · ${requirement.sourceSnapshot.comments.length}`}>
+              <div className="flex flex-col gap-3">
+                {requirement.sourceSnapshot.comments.map((comment, index) => (
+                  <div key={`${comment.author}-${comment.createdAt ?? index}`} className="rounded-lg border border-white/10 bg-white/[0.025] p-3">
+                    <div className="flex items-start gap-2">
+                      <MessageSquareText size={15} className="text-cyan-300 mt-0.5 shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-sm text-white/80">
+                            <span className="font-medium">{comment.author || '未知用户'}</span>
+                            <span className="text-white/40 ml-2">{comment.title}</span>
+                          </div>
+                          <span className="text-[11px] text-white/35 shrink-0">{fmtDate(comment.createdAt)}</span>
+                        </div>
+                        {comment.content && <div className="mt-2 text-sm text-white/65 whitespace-pre-wrap leading-6">{comment.content}</div>}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          ) : null}
           <Card title="动态">
             <ActivityTimeline entityType="requirement" entityId={requirement.id} />
           </Card>
@@ -893,6 +916,18 @@ function RequirementDetail({
       }
       sidebar={
         <>
+          {requirement.sourceSystem === 'tapd' && requirement.sourceSnapshot && (
+            <Card
+              title="TAPD 属性"
+              action={requirement.sourceUrl ? (
+                <a href={requirement.sourceUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[11px] text-cyan-300 hover:text-cyan-200">
+                  打开原需求 <ExternalLink size={11} />
+                </a>
+              ) : undefined}
+            >
+              <TapdSourceProperties requirement={requirement} />
+            </Card>
+          )}
           <Card title="属性">
             <div className="flex flex-col gap-3.5">
               {requirement.sourceDefectId && (
@@ -979,6 +1014,58 @@ function RequirementDetail({
         <TraceRelationDrawer productId={productId} nodeId={`requirement:${requirement.id}`} title={requirement.title} onClose={() => setShowTrace(false)} />
       )}
     </DetailScaffold>
+  );
+}
+
+const TAPD_FIELD_ORDER = [
+  '状态',
+  '优先级',
+  '模块',
+  '规模',
+  '分类',
+  '业务价值',
+  '需求来源',
+  '需求类型',
+  '需求类别',
+  '功能',
+  '处理人',
+  '开发人员',
+  '创建人',
+  '抄送人',
+  '客户名称',
+  '责任团队',
+  '所属产品',
+  '所属团队',
+  '预计开始',
+  '预计结束',
+  '完成时间',
+  '开发实际排期',
+  '评审时效',
+  '评审明确性',
+  '每月排期优化',
+  '需求联系人',
+  '期望排期时间',
+] as const;
+
+function TapdSourceProperties({ requirement }: { requirement: Requirement }) {
+  const snapshot = requirement.sourceSnapshot!;
+  const fields = snapshot.fields ?? {};
+  const visibleFields = TAPD_FIELD_ORDER
+    .map((label) => ({ label, value: fields[label] }))
+    .filter((item) => item.value);
+
+  return (
+    <div className="flex flex-col gap-2.5">
+      {visibleFields.map((item) => (
+        <InfoRow key={item.label} label={item.label} value={item.value} />
+      ))}
+      <div className="pt-2 mt-1 border-t border-white/8 flex flex-col gap-2">
+        <InfoRow label="来源文件" value={snapshot.importedFileName || '—'} />
+        <InfoRow label="TAPD 创建" value={fmtDate(snapshot.sourceCreatedAt)} />
+        <InfoRow label="TAPD 修改" value={fmtDate(snapshot.sourceModifiedAt)} />
+        <InfoRow label="导入时间" value={fmtDate(snapshot.importedAt)} />
+      </div>
+    </div>
   );
 }
 
