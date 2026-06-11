@@ -8,7 +8,7 @@
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, Send, Copy, Check, Trash2, Mic, MicOff, ExternalLink, CircleAlert } from 'lucide-react';
+import { Sparkles, Send, Copy, Check, Trash2, Mic, MicOff, ExternalLink, CircleAlert, FileText } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { StreamingText } from '@/components/streaming/StreamingText';
 import { useSseStream } from '@/lib/useSseStream';
@@ -18,6 +18,7 @@ import { resolveAvatarUrl } from '@/lib/avatar';
 import { stripMarkdown } from '@/lib/stripMarkdown';
 import { toast } from '@/lib/toast';
 import { api } from '@/services/api';
+import { AttachmentUploadButton, AttachmentChips, type AssistantAttachment } from '@/components/assistant/AssistantAttachments';
 
 const PRESETS = ['我的任务概览', '哪个项目风险最高', '本周到期的里程碑和逾期任务'];
 
@@ -36,6 +37,8 @@ interface QA {
   q: string;
   a: string;
   actions?: PmAssistantActionResult[];
+  /** 随该问题携带的附件名（仅展示用） */
+  files?: string[];
 }
 
 export function PmAssistantPanel({ prefill }: { prefill?: { text: string; nonce: number } | null }) {
@@ -55,9 +58,13 @@ export function PmAssistantPanel({ prefill }: { prefill?: { text: string; nonce:
   const [liveAnswer, setLiveAnswer] = useState('');
   const [liveActions, setLiveActions] = useState<PmAssistantActionResult[]>([]);
   const [input, setInput] = useState('');
+  // 附件作为上下文（md/pdf，先经后端提取为纯文本驻留前端，随提问回传）
+  const [files, setFiles] = useState<AssistantAttachment[]>([]);
+  const [pendingFiles, setPendingFiles] = useState<string[]>([]);
   const answerRef = useRef('');
   const actionsRef = useRef<PmAssistantActionResult[]>([]);
   const pendingRef = useRef<string | null>(null);
+  const pendingFilesRef = useRef<string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -80,10 +87,13 @@ export function PmAssistantPanel({ prefill }: { prefill?: { text: string; nonce:
   const finalize = (a: string) => {
     const q = pendingRef.current;
     const actions = actionsRef.current;
-    if (q != null) setHistory((h) => [...h, { q, a, ...(actions.length > 0 ? { actions } : {}) }]);
+    const qFiles = pendingFilesRef.current;
+    if (q != null) setHistory((h) => [...h, { q, a, ...(actions.length > 0 ? { actions } : {}), ...(qFiles.length > 0 ? { files: qFiles } : {}) }]);
     pendingRef.current = null;
     actionsRef.current = [];
+    pendingFilesRef.current = [];
     setPendingQ(null);
+    setPendingFiles([]);
     setLiveAnswer('');
     setLiveActions([]);
     answerRef.current = '';
@@ -130,7 +140,13 @@ export function PmAssistantPanel({ prefill }: { prefill?: { text: string; nonce:
     pendingRef.current = text;
     setPendingQ(text);
     setInput('');
-    void sse.start({ body: { question: text } });
+    // 附件随本次提问消费：回传已提取文本，发送后清空
+    const fileNames = files.map((f) => f.name);
+    pendingFilesRef.current = fileNames;
+    setPendingFiles(fileNames);
+    const attachments = files.map((f) => ({ name: f.name, text: f.text }));
+    setFiles([]);
+    void sse.start({ body: { question: text, ...(attachments.length > 0 ? { attachments } : {}) } });
   };
 
   const clearAll = () => {
@@ -138,7 +154,10 @@ export function PmAssistantPanel({ prefill }: { prefill?: { text: string; nonce:
     pendingRef.current = null;
     answerRef.current = '';
     actionsRef.current = [];
+    pendingFilesRef.current = [];
     setPendingQ(null);
+    setPendingFiles([]);
+    setFiles([]);
     setLiveAnswer('');
     setLiveActions([]);
     setHistory([]);
@@ -191,19 +210,20 @@ export function PmAssistantPanel({ prefill }: { prefill?: { text: string; nonce:
             <div className="text-[12px] text-white/40 leading-relaxed max-w-md">
               我能基于你相关的全部项目（目标 / 里程碑 / 任务 / 风险）跨项目回答问题，也能直接替你创建。
               试试下方的快捷分析，或者对我说：「帮我创建一个项目：官网改版，目标是上线新官网」。
+              也可以点左下角回形针上传 md / pdf 文档，让我基于文档内容分析或批量创建。
             </div>
           </div>
         )}
         {history.map((m, i) => (
           <div key={i} className="space-y-2.5">
-            <UserRow text={m.q} avatar={myAvatar} />
+            <UserRow text={m.q} avatar={myAvatar} files={m.files} />
             <AiRow text={m.a} />
             {m.actions && m.actions.length > 0 && <ActionResults items={m.actions} />}
           </div>
         ))}
         {pendingQ && (
           <div className="space-y-2.5">
-            <UserRow text={pendingQ} avatar={myAvatar} />
+            <UserRow text={pendingQ} avatar={myAvatar} files={pendingFiles} />
             <AiRow streaming>
               {connecting ? (
                 <span className="inline-flex items-center gap-2 text-white/50 text-[12px]">
@@ -239,6 +259,11 @@ export function PmAssistantPanel({ prefill }: { prefill?: { text: string; nonce:
             speech.listening ? 'border-red-400/50' : 'border-white/10 focus-within:border-blue-500/40'
           }`}
         >
+          {files.length > 0 && (
+            <div className="px-3 pt-2.5">
+              <AttachmentChips items={files} onRemove={(i) => setFiles((p) => p.filter((_, idx) => idx !== i))} accent="#3B82F6" />
+            </div>
+          )}
           <textarea
             ref={inputRef}
             value={input}
@@ -255,6 +280,12 @@ export function PmAssistantPanel({ prefill }: { prefill?: { text: string; nonce:
             style={{ minHeight: 84, maxHeight: 200, overflowY: 'auto' }}
           />
           <div className="flex items-center gap-1.5 px-2.5 pb-2.5">
+            <AttachmentUploadButton
+              extractUrl={api.pm.assistantAttachments()}
+              attachments={files}
+              onAdd={(f) => setFiles((p) => [...p, f])}
+              disabled={sse.isStreaming}
+            />
             {speech.listening && (
               <span className="flex items-center gap-1.5 text-[11px] text-red-300">
                 <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
@@ -343,11 +374,20 @@ function ActionResults({ items }: { items: PmAssistantActionResult[] }) {
   );
 }
 
-/** 用户消息行：头像在右，气泡右对齐。 */
-function UserRow({ text, avatar }: { text: string; avatar: string }) {
+/** 用户消息行：头像在右，气泡右对齐；携带附件时在正文上方显示文件名胶囊。 */
+function UserRow({ text, avatar, files }: { text: string; avatar: string; files?: string[] }) {
   return (
     <div className="flex items-start gap-2 justify-end">
       <div className="max-w-[80%] text-[13px] text-blue-50 bg-blue-500/15 border border-blue-500/25 rounded-2xl rounded-tr-sm px-3 py-2 whitespace-pre-wrap leading-relaxed">
+        {files && files.length > 0 && (
+          <div className="flex flex-wrap gap-1 mb-1.5">
+            {files.map((f, i) => (
+              <span key={i} className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 border border-blue-400/30 text-blue-100">
+                <FileText size={10} /> {f}
+              </span>
+            ))}
+          </div>
+        )}
         {text}
       </div>
       <img src={avatar} alt="" referrerPolicy="no-referrer" className="w-7 h-7 rounded-full object-cover shrink-0 mt-0.5" />

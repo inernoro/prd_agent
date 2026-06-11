@@ -8,7 +8,7 @@
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Sparkles, Send, Copy, Check, Trash2, Mic, MicOff, ExternalLink, CircleAlert } from 'lucide-react';
+import { Sparkles, Send, Copy, Check, Trash2, Mic, MicOff, ExternalLink, CircleAlert, FileText } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { StreamingText } from '@/components/streaming/StreamingText';
 import { useSseStream } from '@/lib/useSseStream';
@@ -17,6 +17,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { stripMarkdown } from '@/lib/stripMarkdown';
 import { toast } from '@/lib/toast';
+import { AttachmentUploadButton, AttachmentChips, type AssistantAttachment } from '@/components/assistant/AssistantAttachments';
 
 const PRESETS = ['本月需求分析', '本月需求矩阵分析', '本月缺陷分析'];
 
@@ -34,6 +35,8 @@ interface QA {
   q: string;
   a: string;
   actions?: AssistantActionResult[];
+  /** 随该问题携带的附件名（仅展示用） */
+  files?: string[];
 }
 
 export function ProductAssistantPanel({ productId, productName }: { productId: string; productName: string }) {
@@ -53,9 +56,13 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
   const [liveAnswer, setLiveAnswer] = useState('');
   const [liveActions, setLiveActions] = useState<AssistantActionResult[]>([]);
   const [input, setInput] = useState('');
+  // 附件作为上下文（md/pdf，先经后端提取为纯文本驻留前端，随提问回传）
+  const [files, setFiles] = useState<AssistantAttachment[]>([]);
+  const [pendingFiles, setPendingFiles] = useState<string[]>([]);
   const answerRef = useRef('');
   const actionsRef = useRef<AssistantActionResult[]>([]);
   const pendingRef = useRef<string | null>(null);
+  const pendingFilesRef = useRef<string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // 对话持久化（按产品隔离，sessionStorage：切走重回不丢，手动清除才没）
@@ -70,10 +77,13 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
   const finalize = (a: string) => {
     const q = pendingRef.current;
     const actions = actionsRef.current;
-    if (q != null) setHistory((h) => [...h, { q, a, ...(actions.length > 0 ? { actions } : {}) }]);
+    const qFiles = pendingFilesRef.current;
+    if (q != null) setHistory((h) => [...h, { q, a, ...(actions.length > 0 ? { actions } : {}), ...(qFiles.length > 0 ? { files: qFiles } : {}) }]);
     pendingRef.current = null;
     actionsRef.current = [];
+    pendingFilesRef.current = [];
     setPendingQ(null);
+    setPendingFiles([]);
     setLiveAnswer('');
     setLiveActions([]);
     answerRef.current = '';
@@ -121,7 +131,13 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
     pendingRef.current = text;
     setPendingQ(text);
     setInput('');
-    void sse.start({ body: { question: text } });
+    // 附件随本次提问消费：回传已提取文本，发送后清空
+    const fileNames = files.map((f) => f.name);
+    pendingFilesRef.current = fileNames;
+    setPendingFiles(fileNames);
+    const attachments = files.map((f) => ({ name: f.name, text: f.text }));
+    setFiles([]);
+    void sse.start({ body: { question: text, ...(attachments.length > 0 ? { attachments } : {}) } });
   };
 
   const clearAll = () => {
@@ -129,7 +145,10 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
     pendingRef.current = null;
     answerRef.current = '';
     actionsRef.current = [];
+    pendingFilesRef.current = [];
     setPendingQ(null);
+    setPendingFiles([]);
+    setFiles([]);
     setLiveAnswer('');
     setLiveActions([]);
     setHistory([]);
@@ -182,19 +201,20 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
             <div className="text-[12px] text-white/40 leading-relaxed max-w-md">
               我能基于本产品的需求 / 功能 / 缺陷 / 版本 / 客户与知识库回答你的问题，也能直接替你创建对象。
               试试下方的快捷分析，或者对我说：「帮我创建一个P1需求：支持导出PDF」。
+              也可以点左下角回形针上传 md / pdf 文档，让我基于文档内容分析或批量创建。
             </div>
           </div>
         )}
         {history.map((m, i) => (
           <div key={i} className="space-y-2.5">
-            <UserRow text={m.q} avatar={myAvatar} />
+            <UserRow text={m.q} avatar={myAvatar} files={m.files} />
             <AiRow text={m.a} />
             {m.actions && m.actions.length > 0 && <ActionResults items={m.actions} productId={productId} />}
           </div>
         ))}
         {pendingQ && (
           <div className="space-y-2.5">
-            <UserRow text={pendingQ} avatar={myAvatar} />
+            <UserRow text={pendingQ} avatar={myAvatar} files={pendingFiles} />
             <AiRow streaming>
               {connecting ? (
                 <span className="inline-flex items-center gap-2 text-white/50 text-[12px]">
@@ -230,6 +250,11 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
             speech.listening ? 'border-red-400/50' : 'border-white/10 focus-within:border-cyan-500/40'
           }`}
         >
+          {files.length > 0 && (
+            <div className="px-3 pt-2.5">
+              <AttachmentChips items={files} onRemove={(i) => setFiles((p) => p.filter((_, idx) => idx !== i))} accent="#22D3EE" />
+            </div>
+          )}
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -245,6 +270,12 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
             style={{ minHeight: 84, maxHeight: 200, overflowY: 'auto' }}
           />
           <div className="flex items-center gap-1.5 px-2.5 pb-2.5">
+            <AttachmentUploadButton
+              extractUrl="/api/product/assistant/attachments"
+              attachments={files}
+              onAdd={(f) => setFiles((p) => [...p, f])}
+              disabled={sse.isStreaming}
+            />
             {speech.listening && (
               <span className="flex items-center gap-1.5 text-[11px] text-red-300">
                 <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
@@ -323,11 +354,20 @@ function ActionResults({ items, productId }: { items: AssistantActionResult[]; p
   );
 }
 
-/** 用户消息行：头像在右，气泡右对齐。 */
-function UserRow({ text, avatar }: { text: string; avatar: string }) {
+/** 用户消息行：头像在右，气泡右对齐；携带附件时在正文上方显示文件名胶囊。 */
+function UserRow({ text, avatar, files }: { text: string; avatar: string; files?: string[] }) {
   return (
     <div className="flex items-start gap-2 justify-end">
       <div className="max-w-[80%] text-[13px] text-cyan-50 bg-cyan-500/15 border border-cyan-500/25 rounded-2xl rounded-tr-sm px-3 py-2 whitespace-pre-wrap leading-relaxed">
+        {files && files.length > 0 && (
+          <div className="flex flex-wrap gap-1 mb-1.5">
+            {files.map((f, i) => (
+              <span key={i} className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 border border-cyan-400/30 text-cyan-100">
+                <FileText size={10} /> {f}
+              </span>
+            ))}
+          </div>
+        )}
         {text}
       </div>
       <img src={avatar} alt="" referrerPolicy="no-referrer" className="w-7 h-7 rounded-full object-cover shrink-0 mt-0.5" />

@@ -1428,6 +1428,7 @@ export const api = {
     preferences: () => '/api/pm/preferences',
     quickActions: () => '/api/pm/preferences/quick-actions',
     assistantAsk: () => '/api/pm/assistant/ask',
+    assistantAttachments: () => '/api/pm/assistant/attachments',
     weeklyReportsImportable: (params?: { weekYear?: number; weekNumber?: number }) => {
       const q = new URLSearchParams();
       if (params?.weekYear) q.set('weekYear', String(params.weekYear));

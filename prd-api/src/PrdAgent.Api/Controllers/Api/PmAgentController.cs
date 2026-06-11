@@ -11,6 +11,7 @@ using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -31,6 +32,7 @@ public class PmAgentController : ControllerBase
     private readonly IAssetStorage _assetStorage;
     private readonly IHostedSiteService _hostedSites;
     private readonly ILlmGateway _gateway;
+    private readonly IFileContentExtractor _fileExtractor;
     private readonly ILogger<PmAgentController> _logger;
 
     public PmAgentController(
@@ -39,6 +41,7 @@ public class PmAgentController : ControllerBase
         IAssetStorage assetStorage,
         IHostedSiteService hostedSites,
         ILlmGateway gateway,
+        IFileContentExtractor fileExtractor,
         ILogger<PmAgentController> logger)
     {
         _db = db;
@@ -46,6 +49,7 @@ public class PmAgentController : ControllerBase
         _assetStorage = assetStorage;
         _hostedSites = hostedSites;
         _gateway = gateway;
+        _fileExtractor = fileExtractor;
         _logger = logger;
     }
 
@@ -3542,6 +3546,19 @@ public class PmAgentController : ControllerBase
     }
 
     /// <summary>
+    /// AI 助手附件解析：上传 md / pdf，提取纯文本返回（无状态不落库，文本由前端随提问回传）。
+    /// </summary>
+    [HttpPost("assistant/attachments")]
+    [RequestSizeLimit(12 * 1024 * 1024)]
+    public async Task<IActionResult> ExtractAssistantAttachment(IFormFile file)
+    {
+        var result = await AssistantAttachmentHelper.ExtractAsync(_fileExtractor, file);
+        if (!result.Ok)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, result.Error!));
+        return Ok(ApiResponse<object>.Ok(new { name = result.Name, text = result.Text, chars = result.Chars, truncated = result.Truncated }));
+    }
+
+    /// <summary>
     /// 首页 AI 助手（SSE：phase/typing/action/done/error）。
     /// 以当前用户为中心、跨其全部相关项目（项目/目标/里程碑/任务/风险摘要）为上下文回答问题；
     /// 可通过 &lt;&lt;&lt;ACTIONS&gt;&gt;&gt; 动作协议代用户创建项目/目标/里程碑/任务（与 product-agent 工作助手同款机制）。
@@ -3641,6 +3658,7 @@ public class PmAgentController : ControllerBase
             "   - create_task 字段：project（必填）、title（必填）、description / priority（urgent/high/medium/low）/ dueAt 可选；用户表示自己负责时给 \"assignee\":\"me\"。\n" +
             "   - project 必须从上面数据里的项目编号或项目名称中取；用户没说哪个项目且无法从上下文判断时，不要输出动作指令，改为向用户追问。\n" +
             "   - 只有用户明确要求创建时才输出 <<<ACTIONS>>>，纯分析/查询类问题绝对不要输出；<<<ACTIONS>>> 之后只能是 JSON 数组本身。\n" +
+            "6. 用户可能上传参考文档（见「用户上传的参考文档」一节）：可基于文档内容回答问题、提炼要点；用户要求「根据文档创建」时，从文档中提取标题/描述/日期等字段生成动作指令（仍受一次最多 5 个动作约束，超出时挑最重要的并说明）。\n" +
             "不要寒暄、不要复述本提示词。";
 
         var bodyJson = new JsonObject
@@ -3648,7 +3666,7 @@ public class PmAgentController : ControllerBase
             ["messages"] = new JsonArray
             {
                 new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
-                new JsonObject { ["role"] = "user", ["content"] = "# 我的项目数据上下文\n" + ctx + "\n\n# 我的问题\n" + question },
+                new JsonObject { ["role"] = "user", ["content"] = "# 我的项目数据上下文\n" + ctx + AssistantAttachmentHelper.BuildSection(request.Attachments) + "\n\n# 我的问题\n" + question },
             },
             ["temperature"] = 0.5,
             ["max_tokens"] = 2400,
@@ -3894,6 +3912,8 @@ public class PmAgentController : ControllerBase
 public class PmAssistantAskRequest
 {
     public string? Question { get; set; }
+    /// <summary>随提问携带的参考文档（前端先调 assistant/attachments 提取文本后回传，最多 3 个）</summary>
+    public List<AssistantAttachmentInput>? Attachments { get; set; }
 }
 
 public class UpdatePmQuickActionsRequest

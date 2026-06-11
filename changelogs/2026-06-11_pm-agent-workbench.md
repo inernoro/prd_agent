@@ -4,3 +4,5 @@
 | feat | prd-api | PmAgentController 新增首页工作台端点：POST /api/pm/assistant/ask（SSE 动作协议）、GET /api/pm/my-todos、GET /api/pm/reports/summary、便捷操作偏好读写；AppCallerRegistry 注册 pm-agent.assistant::chat |
 | refactor | prd-admin | 抽取 AgentFullscreenLayout 与 agent-cards.css 为跨智能体共享件（product-agent 原文件转发兼容），项目卡片对齐 pa-card 动效（蓝色强调） |
 | polish | prd-admin | 项目头部精简：AI 健康诊断 / AI 结案报告 / 结案评价收进「更多操作」下拉，层次更清晰 |
+| feat | prd-admin | 项目管理/产品管理智能体 AI 助手输入框左下角支持上传附件作为上下文（md / pdf），可基于文档内容分析与批量创建（共享 AssistantAttachments 组件） |
+| feat | prd-api | 新增 AI 助手附件解析端点 POST /api/pm/assistant/attachments 与 /api/product/assistant/attachments（PdfPig 提取纯文本，无状态不落库），ask 请求支持 attachments 回传拼接上下文 |
