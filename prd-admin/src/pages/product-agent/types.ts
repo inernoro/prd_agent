@@ -103,6 +103,73 @@ export interface ProductVersion {
   updatedAt: string;
 }
 
+export type VersionScale = 'major' | 'medium' | 'minor';
+
+export interface ProductInitiation {
+  id: string;
+  productId: string;
+  tCode?: string | null;
+  systemName?: string | null;
+  appName?: string | null;
+  projectType: 'standard' | 'custom';
+  customerSource?: string | null;
+  planName: string;
+  requirementDescription?: string | null;
+  departmentName?: string | null;
+  planUrl?: string | null;
+  versionType: VersionScale;
+  requirementIds: string[];
+  status: string;
+  reviewSubmissionId?: string | null;
+  reviewScore?: number | null;
+  reviewPassed?: boolean | null;
+  reviewMeetingRequired?: boolean | null;
+  expectedMeetingAt?: string | null;
+  firstDraftMeetingAt?: string | null;
+  secondDraftMeetingAt?: string | null;
+  thirdDraftMeetingAt?: string | null;
+  projectAt?: string | null;
+  plannedProjectAt?: string | null;
+  needUiDesign?: boolean | null;
+  isAiPoc?: boolean | null;
+  developmentStatus: string;
+  remark?: string | null;
+  primaryOwnerId?: string | null;
+  approvalComment?: string | null;
+  createdBy: string;
+  sourceType: 'system' | 'import';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProductRelease {
+  id: string;
+  productId: string;
+  initiationId?: string | null;
+  tCode?: string | null;
+  vCode: string;
+  systemName?: string | null;
+  appName?: string | null;
+  isTemporaryOptimization: boolean;
+  projectType: 'standard' | 'custom';
+  planName: string;
+  versionType: VersionScale;
+  planUrl?: string | null;
+  departmentName?: string | null;
+  ownerId?: string | null;
+  openBrandScope: string;
+  requirementIds: string[];
+  teamMemberIds: string[];
+  plannedReleaseAt?: string | null;
+  releasedAt?: string | null;
+  announcementUrl?: string | null;
+  status: string;
+  createdBy: string;
+  sourceType: 'system' | 'import';
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Requirement {
   id: string;
   productId: string;
