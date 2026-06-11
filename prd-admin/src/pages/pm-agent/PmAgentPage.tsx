@@ -6,7 +6,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { FolderKanban, Plus, Trash2, TrendingUp, Lightbulb, ChevronUp, ChevronDown, ShieldCheck, Home } from 'lucide-react';
+import { FolderKanban, Plus, Trash2, TrendingUp, Lightbulb, ChevronUp, ChevronDown, ShieldCheck, Home, BarChart3 } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { AgentFullscreenLayout, type NavItem } from '@/components/agent-shell/AgentFullscreenLayout';
@@ -22,11 +22,12 @@ import { AuditLogView } from './AuditLogView';
 import { PmAssistantPanel } from './PmAssistantPanel';
 import { PmTodosCard } from './PmTodosCard';
 import { PmQuickActionsCard } from './PmQuickActionsCard';
+import { PmReportsSection } from './PmReportsSection';
 import { PROJECT_TYPE_REGISTRY, LIFECYCLE_REGISTRY, GRADE_REGISTRY, PM_ACCENT } from './pmConstants';
 
-type WorkspaceNav = 'home' | 'projects' | 'dashboard' | 'audit';
+type WorkspaceNav = 'home' | 'projects' | 'reports' | 'dashboard' | 'audit';
 
-const NAV_KEYS = new Set<WorkspaceNav>(['home', 'projects', 'dashboard', 'audit']);
+const NAV_KEYS = new Set<WorkspaceNav>(['home', 'projects', 'reports', 'dashboard', 'audit']);
 
 export function PmAgentPage() {
   const navigate = useNavigate();
@@ -67,6 +68,7 @@ export function PmAgentPage() {
   const NAV: NavItem<WorkspaceNav>[] = [
     { key: 'home', label: '首页', icon: Home },
     { key: 'projects', label: '项目', icon: FolderKanban },
+    { key: 'reports', label: '报表', icon: BarChart3 },
     { key: 'dashboard', label: 'NPSS 看板', icon: TrendingUp, hidden: !canViewDashboard, dividerBefore: true },
     { key: 'audit', label: '审计日志', icon: ShieldCheck, hidden: !canViewAudit },
   ];
@@ -94,6 +96,7 @@ export function PmAgentPage() {
       ) : (
         <div className="flex-1 min-h-0 flex flex-col p-5 pa-accent-blue">
           {active === 'projects' && <ProjectsSection onOpen={(id) => navigate(`/pm-agent/p/${id}`)} />}
+          {active === 'reports' && <PmReportsSection />}
           {active === 'dashboard' && canViewDashboard && <DashboardView />}
           {active === 'audit' && canViewAudit && <AuditLogView />}
         </div>

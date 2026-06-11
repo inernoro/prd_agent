@@ -276,7 +276,7 @@ export function ProjectDetailPage() {
       subtitle={project.projectNo}
       topSlot={
         <div className="mb-2">
-          <button onClick={() => navigate('/pm-agent')} className="flex items-center gap-1.5 text-[11px] text-white/40 hover:text-white">
+          <button onClick={() => navigate('/pm-agent?nav=projects')} className="flex items-center gap-1.5 text-[11px] text-white/40 hover:text-white">
             <ArrowLeft size={13} /> 项目列表
           </button>
         </div>

@@ -16,6 +16,7 @@ import {
   Milestone,
   ListPlus,
   FolderKanban,
+  BarChart3,
   TrendingUp,
   ShieldCheck,
 } from 'lucide-react';
@@ -65,6 +66,7 @@ export const PM_QUICK_ACTION_REGISTRY: PmQuickActionDef[] = [
   },
   // ── 页面直达 ──
   { id: 'goto-projects', label: '项目列表', icon: FolderKanban, group: 'goto', run: ({ gotoNav }) => gotoNav('projects') },
+  { id: 'goto-reports', label: '报表', icon: BarChart3, group: 'goto', run: ({ gotoNav }) => gotoNav('reports') },
   { id: 'goto-dashboard', label: 'NPSS 看板', icon: TrendingUp, group: 'goto', permission: 'pm-agent.dashboard', run: ({ gotoNav }) => gotoNav('dashboard') },
   { id: 'goto-audit', label: '审计日志', icon: ShieldCheck, group: 'goto', permission: 'pm-agent.audit', run: ({ gotoNav }) => gotoNav('audit') },
 ];

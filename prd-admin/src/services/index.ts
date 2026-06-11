@@ -2065,6 +2065,7 @@ export {
   getPmMyTodosReal as getPmMyTodos,
   getPmAgentPreferencesReal as getPmAgentPreferences,
   updatePmQuickActionsReal as updatePmQuickActions,
+  getPmReportSummaryReal as getPmReportSummary,
 } from '@/services/real/pmAgent';
 export type {
   PmProject,
@@ -2122,6 +2123,7 @@ export type {
   SetStakeholdersInput,
   PmMyTodoItem,
   PmAgentPrefs,
+  PmReportSummary,
 } from '@/services/contracts/pmAgent';
 
 // ── CCAS Agent 赋码采集关联综合智能体 ──

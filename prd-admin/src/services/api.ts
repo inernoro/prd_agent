@@ -1424,6 +1424,7 @@ export const api = {
     },
     // 首页工作台（跨项目）
     myTodos: () => '/api/pm/my-todos',
+    reportsSummary: (scope?: string) => `/api/pm/reports/summary${scope ? `?scope=${encodeURIComponent(scope)}` : ''}`,
     preferences: () => '/api/pm/preferences',
     quickActions: () => '/api/pm/preferences/quick-actions',
     assistantAsk: () => '/api/pm/assistant/ask',

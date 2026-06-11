@@ -74,6 +74,7 @@ import type {
   GetPmMyTodosContract,
   GetPmAgentPreferencesContract,
   UpdatePmQuickActionsContract,
+  GetPmReportSummaryContract,
 } from '@/services/contracts/pmAgent';
 import type { ApiResponse } from '@/types/api';
 import { useAuthStore } from '@/stores/authStore';
@@ -403,4 +404,8 @@ export const getPmAgentPreferencesReal: GetPmAgentPreferencesContract = async ()
 
 export const updatePmQuickActionsReal: UpdatePmQuickActionsContract = async (quickActionIds) => {
   return await apiRequest(api.pm.quickActions(), { method: 'PUT', body: { quickActionIds } });
+};
+
+export const getPmReportSummaryReal: GetPmReportSummaryContract = async (scope) => {
+  return await apiRequest(api.pm.reportsSummary(scope), { method: 'GET' });
 };

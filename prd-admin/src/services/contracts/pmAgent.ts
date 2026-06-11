@@ -753,3 +753,31 @@ export interface PmAgentPrefs {
 }
 export type GetPmAgentPreferencesContract = () => Promise<ApiResponse<PmAgentPrefs>>;
 export type UpdatePmQuickActionsContract = (quickActionIds: string[]) => Promise<ApiResponse<PmAgentPrefs>>;
+
+/** 跨项目执行数据报表（一级导航「报表」页，与 NPSS 看板分工：本接口管执行数据）。 */
+export interface PmReportSummary {
+  scope: 'managed' | 'related' | 'all';
+  projectTotal: number;
+  lifecycleDist: Array<{ key: PmProjectLifecycle; count: number }>;
+  typeDist: Array<{ key: PmProjectType; count: number }>;
+  tasks: {
+    total: number;
+    done: number;
+    overdue: number;
+    completionRate: number;
+    statusDist: Array<{ key: PmTaskStatus; count: number }>;
+    assigneeTop: Array<{ name: string; total: number; done: number; overdue: number }>;
+  };
+  milestones: {
+    total: number;
+    reached: number;
+    overdue: number;
+    upcoming: Array<{ id: string; projectId: string; projectTitle: string; title: string; dueAt?: string | null }>;
+  };
+  risks: {
+    open: number;
+    matrix: Array<{ probability: PmRiskLevel; impact: PmRiskLevel; count: number }>;
+    top: Array<{ id: string; projectId: string; projectTitle: string; title: string; probability: PmRiskLevel; impact: PmRiskLevel; status: PmRiskStatus; score: number }>;
+  };
+}
+export type GetPmReportSummaryContract = (scope?: PmProjectScope) => Promise<ApiResponse<PmReportSummary>>;

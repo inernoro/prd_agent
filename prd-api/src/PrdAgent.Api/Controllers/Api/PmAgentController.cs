@@ -3397,6 +3397,121 @@ public class PmAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items, total = items.Count }));
     }
 
+    /// <summary>
+    /// 跨项目执行数据报表（与 NPSS 看板分工：NPSS 管经营评价/奖金，本端点管执行数据）。
+    /// scope: managed(我管理的) / related(我相关的) / all(默认，全部我可见的)。
+    /// </summary>
+    [HttpGet("reports/summary")]
+    public async Task<IActionResult> GetReportsSummary([FromQuery] string? scope = null)
+    {
+        var userId = GetUserId();
+        var b = Builders<PmProject>.Filter;
+        var conds = new List<FilterDefinition<PmProject>> { b.Eq(p => p.IsDeleted, false) };
+        var managed = b.Eq(p => p.LeaderId, userId);
+        var related = b.And(
+            b.Or(
+                b.AnyEq(p => p.MemberIds, userId),
+                b.AnyEq(p => p.ObserverIds, userId),
+                b.ElemMatch(p => p.Stakeholders, s => s.UserId == userId)),
+            b.Ne(p => p.LeaderId, userId));
+        if (scope == "managed") conds.Add(managed);
+        else if (scope == "related") conds.Add(related);
+        else conds.Add(b.Or(
+            b.Eq(p => p.OwnerId, userId), b.Eq(p => p.LeaderId, userId),
+            b.AnyEq(p => p.MemberIds, userId), b.AnyEq(p => p.ObserverIds, userId),
+            b.ElemMatch(p => p.Stakeholders, s => s.UserId == userId)));
+
+        var projects = await _db.PmProjects.Find(b.And(conds)).SortByDescending(p => p.UpdatedAt).Limit(200).ToListAsync();
+        var projIds = projects.Select(p => p.Id).ToList();
+        var titleById = projects.ToDictionary(p => p.Id, p => p.Title);
+        var today = DateTime.UtcNow.Date;
+
+        var tasks = projIds.Count == 0 ? new List<PmTask>() : await _db.PmTasks
+            .Find(t => projIds.Contains(t.ProjectId)).Limit(3000).ToListAsync();
+        var milestones = projIds.Count == 0 ? new List<PmMilestone>() : await _db.PmMilestones
+            .Find(m => projIds.Contains(m.ProjectId)).Limit(500).ToListAsync();
+        var risks = projIds.Count == 0 ? new List<PmRisk>() : await _db.PmRisks
+            .Find(r => projIds.Contains(r.ProjectId)).Limit(500).ToListAsync();
+
+        // 项目维度：生命周期 / 类型分布
+        var lifecycleDist = PmProjectLifecycle.All
+            .Select(k => new { key = k, count = projects.Count(p => p.Lifecycle == k) })
+            .Where(x => x.count > 0).ToList();
+        var typeDist = PmProjectType.All
+            .Select(k => new { key = k, count = projects.Count(p => p.ProjectType == k) })
+            .Where(x => x.count > 0).ToList();
+
+        // 任务维度：状态分布 / 完成率 / 逾期 / 负责人 Top
+        bool IsOpen(PmTask t) => t.Status != PmTaskStatus.Done && t.Status != PmTaskStatus.Cancelled;
+        bool IsOverdue(PmTask t) => IsOpen(t) && t.DueAt.HasValue && t.DueAt.Value < today;
+        var doneCount = tasks.Count(t => t.Status == PmTaskStatus.Done);
+        var effective = tasks.Count(t => t.Status != PmTaskStatus.Cancelled);
+        var statusDist = PmTaskStatus.All
+            .Select(k => new { key = k, count = tasks.Count(t => t.Status == k) })
+            .Where(x => x.count > 0).ToList();
+        var assigneeTop = tasks
+            .Where(t => !string.IsNullOrWhiteSpace(t.AssigneeId))
+            .GroupBy(t => t.AssigneeId!)
+            .Select(g => new
+            {
+                name = g.Select(t => t.AssigneeName).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n)) ?? "未知",
+                total = g.Count(),
+                done = g.Count(t => t.Status == PmTaskStatus.Done),
+                overdue = g.Count(IsOverdue),
+            })
+            .OrderByDescending(x => x.total).Take(10).ToList();
+
+        // 里程碑维度：达成 / 逾期未达成 / 即将到期
+        var msReached = milestones.Count(m => m.Status == PmMilestoneStatus.Reached);
+        var msOverdue = milestones.Count(m => m.Status == PmMilestoneStatus.Planned && m.DueAt.HasValue && m.DueAt.Value < today);
+        var msUpcoming = milestones
+            .Where(m => m.Status == PmMilestoneStatus.Planned && m.DueAt.HasValue && m.DueAt.Value >= today)
+            .OrderBy(m => m.DueAt)
+            .Take(8)
+            .Select(m => new { id = m.Id, projectId = m.ProjectId, projectTitle = titleById.GetValueOrDefault(m.ProjectId, ""), title = m.Title, dueAt = m.DueAt })
+            .ToList();
+
+        // 风险维度：概率 x 影响矩阵 + 高分 Top
+        int W(string level) => level == PmRiskLevel.High ? 3 : level == PmRiskLevel.Medium ? 2 : 1;
+        var openRisks = risks.Where(r => r.Status != PmRiskStatus.Closed).ToList();
+        var riskLevels = new[] { PmRiskLevel.High, PmRiskLevel.Medium, PmRiskLevel.Low };
+        var riskMatrix = (from prob in riskLevels
+                          from impact in riskLevels
+                          let count = openRisks.Count(r => r.Probability == prob && r.Impact == impact)
+                          where count > 0
+                          select new { probability = prob, impact, count }).ToList();
+        var riskTop = openRisks
+            .OrderByDescending(r => W(r.Probability) * W(r.Impact))
+            .Take(8)
+            .Select(r => new
+            {
+                id = r.Id, projectId = r.ProjectId,
+                projectTitle = titleById.GetValueOrDefault(r.ProjectId, ""),
+                title = r.Title, probability = r.Probability, impact = r.Impact,
+                status = r.Status, score = W(r.Probability) * W(r.Impact),
+            })
+            .ToList();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            scope = scope == "managed" || scope == "related" ? scope : "all",
+            projectTotal = projects.Count,
+            lifecycleDist,
+            typeDist,
+            tasks = new
+            {
+                total = tasks.Count,
+                done = doneCount,
+                overdue = tasks.Count(IsOverdue),
+                completionRate = effective > 0 ? Math.Round(doneCount * 100.0 / effective) : 0,
+                statusDist,
+                assigneeTop,
+            },
+            milestones = new { total = milestones.Count, reached = msReached, overdue = msOverdue, upcoming = msUpcoming },
+            risks = new { open = openRisks.Count, matrix = riskMatrix, top = riskTop },
+        }));
+    }
+
     /// <summary>项目管理智能体用户偏好（quickActionIds 为 null 表示从未配置，前端走默认）。</summary>
     [HttpGet("preferences")]
     public async Task<IActionResult> GetPmPreferences()
