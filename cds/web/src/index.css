@@ -326,70 +326,35 @@
     animation-delay: 0.36s;
   }
 
-  .cds-actor-orbit {
-    position: relative;
-    display: grid;
-    place-items: center;
-    width: 28px;
-    height: 28px;
-    overflow: visible;
+  .cds-actor-name-glow {
+    animation: cds-actor-name-breathe 1.85s ease-in-out infinite;
+    text-shadow:
+      0 0 8px var(--cds-actor-name-glow),
+      0 0 18px var(--cds-actor-name-glow-soft);
   }
 
-  .cds-actor-orbit--active {
-    width: 54px;
-    height: 54px;
-    margin-block: -8px -6px;
+  .cds-actor-name-glow--ai {
+    color: rgb(94 234 212 / 0.92);
+    --cds-actor-name-glow: rgb(45 212 191 / 0.62);
+    --cds-actor-name-glow-soft: rgb(20 184 166 / 0.34);
   }
 
-  .cds-actor-orbit__avatar {
-    z-index: 2;
-  }
-
-  .cds-actor-orbit__ring {
-    position: absolute;
-    inset: 0;
-    z-index: 1;
+  .cds-actor-name-glow--build {
     color: rgb(125 211 252 / 0.92);
-    filter: drop-shadow(0 0 5px rgb(56 189 248 / 0.5));
-    pointer-events: none;
-    animation: cds-actor-orbit-spin 12s linear infinite;
+    --cds-actor-name-glow: rgb(56 189 248 / 0.58);
+    --cds-actor-name-glow-soft: rgb(14 165 233 / 0.3);
   }
 
-  .cds-actor-orbit--ai .cds-actor-orbit__ring {
-    color: rgb(45 212 191 / 0.96);
-    filter: drop-shadow(0 0 6px rgb(20 184 166 / 0.58));
+  .cds-actor-name-glow--warning {
+    color: rgb(251 191 36 / 0.9);
+    --cds-actor-name-glow: rgb(245 158 11 / 0.5);
+    --cds-actor-name-glow-soft: rgb(217 119 6 / 0.28);
   }
 
-  .cds-actor-orbit--build .cds-actor-orbit__ring {
-    color: rgb(125 211 252 / 0.94);
-    filter: drop-shadow(0 0 6px rgb(56 189 248 / 0.58));
-  }
-
-  .cds-actor-orbit--warning .cds-actor-orbit__ring {
-    color: rgb(251 191 36 / 0.96);
-    filter: drop-shadow(0 0 6px rgb(245 158 11 / 0.52));
-  }
-
-  .cds-actor-orbit--danger .cds-actor-orbit__ring {
-    color: rgb(248 113 113 / 0.96);
-    filter: drop-shadow(0 0 6px rgb(239 68 68 / 0.52));
-  }
-
-  .cds-actor-orbit__char {
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    width: 8px;
-    margin-left: -4px;
-    margin-top: -4px;
-    text-align: center;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-    font-size: 7px;
-    font-weight: 700;
-    line-height: 8px;
-    letter-spacing: 0;
-    text-transform: uppercase;
-    transform-origin: 50% 50%;
+  .cds-actor-name-glow--danger {
+    color: rgb(248 113 113 / 0.9);
+    --cds-actor-name-glow: rgb(239 68 68 / 0.52);
+    --cds-actor-name-glow-soft: rgb(220 38 38 / 0.28);
   }
 
   [data-theme='light'] .cds-ai-preview-beacon {
@@ -489,8 +454,19 @@
     }
   }
 
-  @keyframes cds-actor-orbit-spin {
-    to { transform: rotate(360deg); }
+  @keyframes cds-actor-name-breathe {
+    0%, 100% {
+      opacity: 0.74;
+      text-shadow:
+        0 0 4px var(--cds-actor-name-glow),
+        0 0 12px var(--cds-actor-name-glow-soft);
+    }
+    50% {
+      opacity: 1;
+      text-shadow:
+        0 0 9px var(--cds-actor-name-glow),
+        0 0 22px var(--cds-actor-name-glow-soft);
+    }
   }
 
   @keyframes cds-site-notice-pulse {
@@ -511,7 +487,7 @@
     .cds-ai-preview-beacon svg,
     .cds-ai-active-card .cds-ai-kinetic-icon,
     .cds-ai-active-card .cds-ai-kinetic-dot,
-    .cds-actor-orbit__ring,
+    .cds-actor-name-glow,
     .cds-site-notice-trigger--active {
       animation: none;
     }
