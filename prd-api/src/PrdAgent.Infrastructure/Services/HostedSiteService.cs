@@ -376,13 +376,23 @@ public class HostedSiteService : IHostedSiteService
         var fb = Builders<HostedSite>.Filter;
         FilterDefinition<HostedSite> filter;
 
-        if (string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(teamId))
+        if (string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase))
         {
-            // 团队作用域：必须是我所在的团队，且站点已分享到该团队
             var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
-            if (!myTeamIds.Contains(teamId))
-                return (new List<HostedSite>(), 0);
-            filter = fb.AnyEq(x => x.SharedTeamIds, teamId);
+            if (!string.IsNullOrWhiteSpace(teamId))
+            {
+                // 团队作用域：必须是我所在的团队，且站点已分享到该团队
+                if (!myTeamIds.Contains(teamId))
+                    return (new List<HostedSite>(), 0);
+                filter = fb.AnyEq(x => x.SharedTeamIds, teamId);
+            }
+            else
+            {
+                // 团队聚合视图：不传 teamId = 我加入的所有团队的共享站点（知识库团队空间消费）
+                if (myTeamIds.Count == 0)
+                    return (new List<HostedSite>(), 0);
+                filter = fb.AnyIn(x => x.SharedTeamIds, myTeamIds);
+            }
         }
         else
         {

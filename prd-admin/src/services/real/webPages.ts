@@ -272,9 +272,10 @@ export async function listSites(params?: {
   if (params?.sort) sp.set('sort', params.sort);
   if (params?.skip) sp.set('skip', String(params.skip));
   if (params?.limit) sp.set('limit', String(params.limit));
-  if (params?.scope === 'team' && params?.teamId) {
+  if (params?.scope === 'team') {
     sp.set('scope', 'team');
-    sp.set('teamId', params.teamId);
+    // teamId 缺省 = 跨团队聚合视图（我加入的所有团队的共享站点）
+    if (params.teamId) sp.set('teamId', params.teamId);
   }
   const q = sp.toString();
   return apiRequest(`${api.webPages.list()}${q ? `?${q}` : ''}`, { method: 'GET' });

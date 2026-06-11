@@ -361,14 +361,19 @@ public class WebPagesController : ControllerBase
 
         // 团队作用域：附带创建者头像/昵称（卡片左下角展示）+ 我在该团队的网页托管有效角色
         //（owner/editor/viewer），前端据此隐藏 viewer 的编辑/删除/分享入口。即使列表为空也返回角色。
-        if (string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(teamId))
+        // teamId 为空 = 跨团队聚合视图（知识库团队空间消费），无单团队角色概念，仅附带 owners。
+        if (string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase))
         {
-            var myRoles = await _teams.GetMyWebHostingTeamRolesAsync(userId);
-            var myWebHostingRole = myRoles.GetValueOrDefault(teamId);
             var owners = items.Count > 0
                 ? await BuildUserCardsAsync(items.Select(s => s.OwnerUserId))
                 : new Dictionary<string, object>();
-            return Ok(ApiResponse<object>.Ok(new { items, total, owners, myWebHostingRole }));
+            if (!string.IsNullOrWhiteSpace(teamId))
+            {
+                var myRoles = await _teams.GetMyWebHostingTeamRolesAsync(userId);
+                var myWebHostingRole = myRoles.GetValueOrDefault(teamId);
+                return Ok(ApiResponse<object>.Ok(new { items, total, owners, myWebHostingRole }));
+            }
+            return Ok(ApiResponse<object>.Ok(new { items, total, owners }));
         }
 
         return Ok(ApiResponse<object>.Ok(new { items, total }));
