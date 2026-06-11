@@ -7,7 +7,7 @@
  *
  * 设计要点（基于 2026-06-07 真人验收反馈打磨）：
  * 1. 本节点身份明显可见且可复制（旧版用 11px mono 灰字塞在角落）
- * 2. 主流程收敛为一个「添加对端」入口，两端互换连接串后同时确认
+ * 2. 主流程收敛为一个「添加对端」入口，任一端粘贴对方连接串后由系统完成双向确认
  * 3. 已配对节点卡片改用图标 + 状态点 + 时间 + 内联动作，错误自动展开真因
  * 4. 严格遵守 cds-theme-tokens.md：颜色全部走 var(--*) token
  */
@@ -125,6 +125,16 @@ type PeerConnectPayload = {
   displayName?: string;
 };
 
+const PAIRING_CODE_FALLBACK_SECONDS = 3 * 24 * 60 * 60;
+
+function fmtPairingTimeLeft(seconds: number) {
+  if (seconds <= 0) return '已失效';
+  if (seconds >= 86_400) return `${Math.ceil(seconds / 86_400)} 天`;
+  if (seconds >= 3_600) return `${Math.ceil(seconds / 3_600)} 小时`;
+  if (seconds >= 60) return `${Math.ceil(seconds / 60)} 分钟`;
+  return `${seconds} 秒`;
+}
+
 function toBase64Url(json: string) {
   const bytes = new TextEncoder().encode(json);
   let binary = '';
@@ -153,7 +163,7 @@ function parsePeerConnectString(text: string): PeerConnectPayload {
   if (!payload.nodeId || !payload.baseUrl || !payload.pairingCode || !payload.expiresAt) {
     throw new Error('连接串缺少节点标识、地址或密钥');
   }
-  if (Date.parse(payload.expiresAt) <= Date.now()) throw new Error('对端连接串已过期，请让对端重新生成');
+  if (Date.parse(payload.expiresAt) <= Date.now()) throw new Error('对端连接串已失效，请让对端重新生成');
   return payload as PeerConnectPayload;
 }
 
@@ -230,7 +240,7 @@ export function PeerNodesSettings() {
     setGenBusy(false);
     if (res.success && res.data) {
       setCode(res.data.pairingCode);
-      setCodeExpiresAt(Date.now() + (res.data.expiresInSeconds || 300) * 1000);
+      setCodeExpiresAt(Date.now() + (res.data.expiresInSeconds || PAIRING_CODE_FALLBACK_SECONDS) * 1000);
       setSelfNodeId(res.data.selfNodeId);
       setSelfBaseUrl(res.data.selfBaseUrl);
       setCopiedCode(false);
@@ -365,24 +375,30 @@ export function PeerNodesSettings() {
 
   return (
     <div
-      className="h-full min-h-0 flex flex-col gap-5 overflow-y-auto pb-6"
-      style={{ overscrollBehavior: 'contain' }}
+      className="h-full min-h-0 overflow-y-auto pb-8"
+      style={{
+        overscrollBehavior: 'contain',
+        background:
+          'linear-gradient(180deg, rgba(22,27,36,0.98) 0%, rgba(18,22,30,0.98) 100%)',
+      }}
     >
+      <div className="mx-auto flex w-full max-w-[1280px] flex-col gap-4 px-3 sm:px-4">
       {/* ── 本节点身份卡（hero） ── */}
       <section
-        className="relative rounded-2xl overflow-hidden p-5"
+        className="relative overflow-hidden rounded-xl p-4"
         style={{
           background:
-            'linear-gradient(135deg, rgba(99,102,241,0.10) 0%, rgba(59,130,246,0.06) 50%, rgba(236,72,153,0.06) 100%)',
-          border: '1px solid rgba(255,255,255,0.08)',
+            'linear-gradient(180deg, rgba(34,42,55,0.88) 0%, rgba(27,34,46,0.82) 100%)',
+          border: '1px solid rgba(148,163,184,0.14)',
+          boxShadow: '0 12px 28px rgba(2,6,23,0.22)',
         }}
       >
         <div className="flex items-start gap-4 flex-wrap">
           <div
             className="shrink-0 w-11 h-11 rounded-xl flex items-center justify-center"
-            style={{ background: 'rgba(99,102,241,0.18)', border: '1px solid rgba(99,102,241,0.30)' }}
+            style={{ background: 'rgba(51,65,85,0.72)', border: '1px solid rgba(148,163,184,0.16)' }}
           >
-            <Server size={20} style={{ color: 'rgba(165,180,252,0.95)' }} />
+            <Server size={20} style={{ color: 'rgba(191,219,254,0.92)' }} />
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 mb-1">
@@ -396,7 +412,7 @@ export function PeerNodesSettings() {
                 {nodes.length} 个对端已配对
               </span>
             </div>
-            <p className="text-[12px] mb-3 leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+            <p className="text-[12px] mb-3 max-w-3xl leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
               管理员一次配置对端节点（测试 ↔ 正式环境），用户即可在知识库等应用右上角「发送到」一键互传。
               配对走一次性码 + HMAC 签名，共享密钥永不在前端 / 链接中暴露。
             </p>
@@ -410,26 +426,27 @@ export function PeerNodesSettings() {
 
       {/* ── 添加对端 ── */}
       <section
-        className="rounded-xl p-4 space-y-3"
+        className="rounded-xl p-4"
         style={{
-          background: 'var(--bg-card, rgba(255,255,255,0.03))',
-          border: '1px solid rgba(255,255,255,0.08)',
+          background: 'rgba(31,39,52,0.78)',
+          border: '1px solid rgba(148,163,184,0.14)',
+          boxShadow: '0 8px 20px rgba(2,6,23,0.14)',
         }}
       >
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="flex items-start gap-3 min-w-0">
             <div
               className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center"
-              style={{ background: 'rgba(99,102,241,0.14)', border: '1px solid rgba(99,102,241,0.24)' }}
+              style={{ background: 'rgba(51,65,85,0.70)', border: '1px solid rgba(148,163,184,0.16)' }}
             >
-              <Plus size={16} style={{ color: 'rgba(165,180,252,0.95)' }} />
+              <Plus size={16} style={{ color: 'rgba(203,213,225,0.95)' }} />
             </div>
             <div className="min-w-0">
               <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
                 添加对端
               </div>
               <div className="text-[11px] mt-0.5 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-                两端各生成自己的连接串，互相粘贴对方连接串后点击添加；双方确认和探活成功后才会保存为已互联。
+                任一端拿到对方生成的连接串后粘贴并点击添加；连接串 3 天内有效、使用一次后失效，系统双向确认和探活成功后双方才会保存。
               </div>
             </div>
           </div>
@@ -441,10 +458,11 @@ export function PeerNodesSettings() {
 
       {showAdd && (
         <section
-          className="rounded-xl p-4 space-y-3"
+          className="rounded-xl p-5 space-y-4"
           style={{
-            background: 'var(--bg-card, rgba(255,255,255,0.03))',
-            border: '1px solid rgba(168,85,247,0.20)',
+            background: 'rgba(32,38,50,0.96)',
+            border: '1px solid rgba(148,163,184,0.16)',
+            boxShadow: '0 18px 42px rgba(2,6,23,0.22)',
           }}
         >
           <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
@@ -453,7 +471,7 @@ export function PeerNodesSettings() {
 
           <div
             className="rounded-lg p-3 space-y-2"
-            style={{ background: 'rgba(59,130,246,0.05)', border: '1px solid rgba(59,130,246,0.16)' }}
+            style={{ background: 'rgba(24,31,42,0.78)', border: '1px solid rgba(148,163,184,0.14)' }}
           >
             <div className="flex items-center justify-between gap-2">
               <span className="text-[11px] font-medium" style={{ color: 'var(--text-secondary)' }}>
@@ -461,7 +479,7 @@ export function PeerNodesSettings() {
               </span>
               {code && (
                 <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                  剩余 {codeSecondsLeft}s
+                  剩余 {fmtPairingTimeLeft(codeSecondsLeft)}
                 </span>
               )}
             </div>
@@ -469,7 +487,7 @@ export function PeerNodesSettings() {
               <>
                 <code
                   className="block text-[11px] font-mono break-all px-2 py-2 rounded max-h-20 overflow-y-auto"
-                  style={{ background: 'rgba(0,0,0,0.22)', color: 'var(--text-primary)' }}
+                  style={{ background: 'rgba(11,18,32,0.72)', color: 'var(--text-primary)' }}
                 >
                   {selfConnectText}
                 </code>
@@ -485,10 +503,18 @@ export function PeerNodesSettings() {
                 </div>
               </>
             ) : (
-              <Button size="sm" variant="secondary" onClick={handleGenCode} disabled={genBusy} className="w-full">
-                {genBusy ? <MapSpinner size={13} /> : <KeyRound size={13} />}
-                生成我的连接串
-              </Button>
+              <div
+                className="flex items-center justify-between gap-3 flex-wrap rounded-md px-3 py-2"
+                style={{ background: 'rgba(36,45,59,0.72)', border: '1px solid rgba(148,163,184,0.12)' }}
+              >
+                <span className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                  连接串 3 天内有效，使用一次后立即失效。
+                </span>
+                <Button size="sm" variant="secondary" onClick={handleGenCode} disabled={genBusy}>
+                  {genBusy ? <MapSpinner size={13} /> : <KeyRound size={13} />}
+                  生成我的连接串
+                </Button>
+              </div>
             )}
           </div>
 
@@ -500,7 +526,7 @@ export function PeerNodesSettings() {
               className="w-full min-h-[92px] resize-y rounded-lg px-3 py-2 text-[12px] font-mono outline-none"
               style={{
                 background: 'var(--bg-input, rgba(255,255,255,0.04))',
-                border: '1px solid rgba(255,255,255,0.10)',
+                border: '1px solid rgba(148,163,184,0.20)',
                 color: 'var(--text-primary)',
               }}
               placeholder="粘贴对端生成的 peer-connect:v1:..."
@@ -536,7 +562,7 @@ export function PeerNodesSettings() {
                 className="w-full rounded-lg px-3 py-2 text-[13px] outline-none"
                 style={{
                   background: 'var(--bg-input, rgba(255,255,255,0.04))',
-                  border: '1px solid rgba(255,255,255,0.10)',
+                  border: '1px solid rgba(148,163,184,0.20)',
                   color: 'var(--text-primary)',
                 }}
                 placeholder="如：正式环境"
@@ -552,7 +578,7 @@ export function PeerNodesSettings() {
                 className="w-full rounded-lg px-3 py-2 text-[13px] outline-none"
                 style={{
                   background: 'var(--bg-input, rgba(255,255,255,0.04))',
-                  border: '1px solid rgba(255,255,255,0.10)',
+                  border: '1px solid rgba(148,163,184,0.20)',
                   color: 'var(--text-primary)',
                 }}
                 placeholder="如：测试环境"
@@ -644,7 +670,7 @@ export function PeerNodesSettings() {
             <div className="text-[12px] max-w-md mx-auto leading-relaxed" style={{ color: 'var(--text-muted)' }}>
               点击「添加对端」生成自己的连接串并发给对端，
               <br />
-              再粘贴对端连接串完成双端确认。
+              任一端粘贴对端连接串并点击添加后，系统会完成双端确认。
             </div>
           </div>
         ) : (
@@ -763,6 +789,7 @@ export function PeerNodesSettings() {
           </button>
         </div>
       )}
+      </div>
     </div>
   );
 }
