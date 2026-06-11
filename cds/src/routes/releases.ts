@@ -1,10 +1,11 @@
 import crypto from 'node:crypto';
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import type { StateService } from '../services/state.js';
 import type { ReleaseTarget } from '../types.js';
 import { ReleaseService } from '../services/release-service.js';
 import { releaseEvents } from '../services/release-events.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
+import { assertProjectAccess } from './projects.js';
 
 export interface ReleasesRouterDeps {
   stateService: StateService;
@@ -15,7 +16,8 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
   const service = new ReleaseService(deps.stateService);
 
   router.get('/releases/targets', (req, res) => {
-    const projectId = typeof req.query.project === 'string' ? req.query.project : undefined;
+    const projectId = resolveReadableProjectId(req, res);
+    if (projectId === false) return;
     if (projectId) service.ensureDefaultPlans(projectId);
     res.json({
       targets: deps.stateService.getReleaseTargets(projectId),
@@ -34,6 +36,8 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
 
   router.post('/releases/targets', (req, res) => {
     const body = (req.body || {}) as Record<string, unknown>;
+    const access = rejectProjectMismatch(req, res, typeof body.projectId === 'string' ? body.projectId : undefined);
+    if (access) return;
     const validation = validateSshTargetBody(body, false);
     if (validation) {
       res.status(400).json({ error: validation });
@@ -74,6 +78,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       res.status(404).json({ error: 'release target not found' });
       return;
     }
+    if (rejectProjectMismatch(req, res, existing.projectId)) return;
     const body = (req.body || {}) as Record<string, unknown>;
     const mergedBody = {
       projectId: existing.projectId,
@@ -94,6 +99,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       res.status(400).json({ error: validation });
       return;
     }
+    if (rejectProjectMismatch(req, res, typeof mergedBody.projectId === 'string' ? mergedBody.projectId : undefined)) return;
     const updated: ReleaseTarget = {
       ...existing,
       projectId: String(mergedBody.projectId).trim(),
@@ -114,6 +120,12 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
   });
 
   router.delete('/releases/targets/:id', (req, res) => {
+    const existing = deps.stateService.getReleaseTarget(req.params.id);
+    if (!existing) {
+      res.status(404).json({ error: 'release target not found' });
+      return;
+    }
+    if (rejectProjectMismatch(req, res, existing.projectId)) return;
     const runs = deps.stateService.getReleaseRuns({ targetId: req.params.id });
     if (runs.length > 0) {
       res.status(409).json({ error: 'target has release runs and cannot be deleted' });
@@ -132,6 +144,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       res.status(400).json({ error: 'targetId is required' });
       return;
     }
+    if (rejectBranchAndTargetMismatch(req, res, deps.stateService, req.params.branchId, body.targetId.trim())) return;
     try {
       const result = await service.preflight({
         branchId: req.params.branchId,
@@ -151,6 +164,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       res.status(400).json({ error: 'targetId is required' });
       return;
     }
+    if (rejectBranchAndTargetMismatch(req, res, deps.stateService, req.params.branchId, body.targetId.trim())) return;
     try {
       const run = await service.startRelease({
         branchId: req.params.branchId,
@@ -165,9 +179,11 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
   });
 
   router.get('/releases/runs', (req, res) => {
+    const projectId = resolveReadableProjectId(req, res);
+    if (projectId === false) return;
     res.json({
       runs: deps.stateService.getReleaseRuns({
-        projectId: typeof req.query.project === 'string' ? req.query.project : undefined,
+        projectId,
         targetId: typeof req.query.targetId === 'string' ? req.query.targetId : undefined,
         branchId: typeof req.query.branchId === 'string' ? req.query.branchId : undefined,
       }),
@@ -180,10 +196,17 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       res.status(404).json({ error: 'release run not found' });
       return;
     }
+    if (rejectProjectMismatch(req, res, run.projectId)) return;
     res.json({ run });
   });
 
   router.post('/releases/runs/:id/rollback', async (req, res) => {
+    const existing = deps.stateService.getReleaseRun(req.params.id);
+    if (!existing) {
+      res.status(404).json({ error: 'ReleaseRun not found' });
+      return;
+    }
+    if (rejectProjectMismatch(req, res, existing.projectId)) return;
     try {
       const run = await service.startRollback(req.params.id, resolveActorFromRequest(req));
       res.status(202).json({ run, streamUrl: `/api/releases/runs/${run.releaseId}/stream` });
@@ -198,6 +221,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       res.status(404).json({ error: 'release run not found' });
       return;
     }
+    if (rejectProjectMismatch(req, res, run.projectId)) return;
     const afterSeq = Number(req.query.afterSeq || 0);
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -227,7 +251,8 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
   });
 
   router.get('/releases/center', (req, res) => {
-    const projectId = typeof req.query.project === 'string' ? req.query.project : undefined;
+    const projectId = resolveReadableProjectId(req, res);
+    if (projectId === false) return;
     if (projectId) service.ensureDefaultPlans(projectId);
     const targets = deps.stateService.getReleaseTargets(projectId);
     const runs = deps.stateService.getReleaseRuns(projectId ? { projectId } : {});
@@ -250,6 +275,39 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
   });
 
   return router;
+}
+
+function requestProjectKey(req: Request): { projectId: string; keyId: string } | undefined {
+  return (req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } }).cdsProjectKey;
+}
+
+function rejectProjectMismatch(req: Request, res: Response, projectId: string | undefined): boolean {
+  const mismatch = assertProjectAccess(req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } }, projectId);
+  if (!mismatch) return false;
+  res.status(mismatch.status).json(mismatch.body);
+  return true;
+}
+
+function resolveReadableProjectId(req: Request, res: Response): string | undefined | false {
+  const queryProject = typeof req.query.project === 'string' ? req.query.project : undefined;
+  const projectKey = requestProjectKey(req);
+  const projectId = queryProject || projectKey?.projectId;
+  if (rejectProjectMismatch(req, res, projectId)) return false;
+  return projectId;
+}
+
+function rejectBranchAndTargetMismatch(
+  req: Request,
+  res: Response,
+  stateService: StateService,
+  branchId: string,
+  targetId: string,
+): boolean {
+  const branch = stateService.getBranch(branchId);
+  const target = stateService.getReleaseTarget(targetId);
+  if (rejectProjectMismatch(req, res, branch?.projectId)) return true;
+  if (rejectProjectMismatch(req, res, target?.projectId)) return true;
+  return false;
 }
 
 function validateSshTargetBody(body: Record<string, unknown>, allowExisting: boolean): string | null {

@@ -82,6 +82,7 @@ export class ReleaseService {
     const push = (check: ReleasePreflightCheck): void => { checks.push(check); };
     const branch = this.stateService.getBranch(input.branchId);
     const target = this.stateService.getReleaseTarget(input.targetId);
+    const projectMismatch = Boolean(branch && target && branch.projectId !== target.projectId);
     const projectId = branch?.projectId || target?.projectId || 'default';
     const plan = this.ensureDefaultPlans(projectId).find((item) => item.template === 'ssh-script');
 
@@ -113,28 +114,42 @@ export class ReleaseService {
       push({ id: 'target', label: '发布目标', status: 'fail', message: `${target.name} 已禁用`, blocking: true });
     } else if (target.type !== 'ssh' || !target.ssh) {
       push({ id: 'target', label: '发布目标', status: 'fail', message: 'MVP 只支持 SSH ReleaseTarget', blocking: true });
+    } else if (projectMismatch) {
+      push({
+        id: 'project-scope',
+        label: '项目一致',
+        status: 'fail',
+        message: `分支属于 ${branch?.projectId || 'default'}，发布目标属于 ${target.projectId || 'default'}，禁止跨项目发布`,
+        blocking: true,
+      });
     } else {
       push({ id: 'target', label: '发布目标', status: 'pass', message: `${target.name} (${target.ssh.user}@${target.ssh.host}:${target.ssh.port})`, blocking: false });
     }
 
-    if (target?.ssh?.deployCommand?.trim()) {
+    const canProbeTarget = Boolean(target?.ssh && target.isEnabled && target.type === 'ssh' && !projectMismatch);
+
+    if (!projectMismatch && target?.ssh?.deployCommand?.trim()) {
       push({ id: 'deploy-command', label: 'deployCommand 已配置', status: 'pass', message: target.ssh.deployCommand.trim(), blocking: false });
-    } else {
+    } else if (!projectMismatch) {
       push({ id: 'deploy-command', label: 'deployCommand 已配置', status: 'fail', message: 'SSH target 缺少 deployCommand', blocking: true });
     }
 
-    if (target?.ssh?.healthcheckUrl?.trim()) {
-      try {
-        await probeHealthcheck(target.ssh.healthcheckUrl);
-        push({ id: 'healthcheck', label: 'healthcheckUrl 可用', status: 'pass', message: target.ssh.healthcheckUrl, blocking: false });
-      } catch (err) {
-        push({ id: 'healthcheck', label: 'healthcheckUrl 可用', status: 'fail', message: (err as Error).message, blocking: true });
+    if (!projectMismatch && target?.ssh?.healthcheckUrl?.trim()) {
+      if (canProbeTarget) {
+        try {
+          await probeHealthcheck(target.ssh.healthcheckUrl);
+          push({ id: 'healthcheck', label: 'healthcheckUrl 可用', status: 'pass', message: target.ssh.healthcheckUrl, blocking: false });
+        } catch (err) {
+          push({ id: 'healthcheck', label: 'healthcheckUrl 可用', status: 'fail', message: (err as Error).message, blocking: true });
+        }
+      } else {
+        push({ id: 'healthcheck', label: 'healthcheckUrl 可用', status: 'warn', message: '目标未启用，已跳过健康检查探测', blocking: false });
       }
-    } else {
+    } else if (!projectMismatch) {
       push({ id: 'healthcheck', label: 'healthcheckUrl 可用', status: 'fail', message: 'SSH target 缺少 healthcheckUrl', blocking: true });
     }
 
-    if (target?.ssh?.privateKeyRef) {
+    if (canProbeTarget && target?.ssh?.privateKeyRef) {
       const host = this.stateService.getRemoteHost(target.ssh.privateKeyRef);
       if (!host) {
         push({ id: 'ssh', label: '目标主机可连接', status: 'fail', message: `privateKeyRef 不存在: ${target.ssh.privateKeyRef}`, blocking: true });
