@@ -1115,6 +1115,7 @@ export const api = {
     viewLogs: '/api/web-pages/shares/view-logs',
     shareLogsForSite: (siteId: string) => `/api/web-pages/${siteId}/share-logs`,
     renewShare: (shareId: string) => `/api/web-pages/shares/${shareId}/renew`,
+    shareShortLink: (shareId: string) => `/api/web-pages/shares/${shareId}/short-link`,
     shareAnalytics: '/api/web-pages/shares/analytics',
   },
   // ============ 公开主页（/u/:username 无需登录） ============
