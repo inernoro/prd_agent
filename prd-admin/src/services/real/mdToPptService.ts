@@ -86,6 +86,30 @@ export async function getMdToPptProfiles(): Promise<MdToPptProfileItem[]> {
   return res.success && Array.isArray(res.data) ? res.data : [];
 }
 
+export interface MdToPptPoolModelItem {
+  id: string;
+  name: string;
+  model: string;
+  platform: string;
+  isMain: boolean;
+  ready: boolean;
+}
+
+/** 模型池候选（弹层「从模型池直选」）：选中即物化为运行配置，配置原样传给 CDS */
+export async function getMdToPptPoolModels(): Promise<MdToPptPoolModelItem[]> {
+  const res = await apiRequest<MdToPptPoolModelItem[]>('/api/md-to-ppt/pool-models');
+  return res.success && Array.isArray(res.data) ? res.data : [];
+}
+
+/** 把池内模型一键物化为运行配置（幂等，复用平台 baseUrl/key），返回可立即选中的配置项 */
+export async function createMdToPptProfileFromPool(modelId: string): Promise<MdToPptProfileItem | null> {
+  const res = await apiRequest<MdToPptProfileItem>('/api/md-to-ppt/profiles/from-pool', {
+    method: 'POST',
+    body: { modelId },
+  });
+  return res.success && res.data ? res.data : null;
+}
+
 // ============ Types ============
 
 // 生成引擎只有 CDS Agent 一条路（2026-06-10 用户拍板移除 MAP 直出）。

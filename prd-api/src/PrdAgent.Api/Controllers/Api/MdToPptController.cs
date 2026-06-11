@@ -37,6 +37,7 @@ public class MdToPptController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
+    private readonly IInfraAgentRuntimeProfileService _runtimeProfiles;
     private readonly ILogger<MdToPptController> _logger;
 
     // PPT 系统提示词（按风格主题生成不同设计系统）。
@@ -313,12 +314,14 @@ public class MdToPptController : ControllerBase
         MongoDbContext db,
         ILlmGateway gateway,
         ILLMRequestContextAccessor llmRequestContext,
+        IInfraAgentRuntimeProfileService runtimeProfiles,
         ILogger<MdToPptController> logger)
     {
         _sessions = sessions;
         _db = db;
         _gateway = gateway;
         _llmRequestContext = llmRequestContext;
+        _runtimeProfiles = runtimeProfiles;
         _logger = logger;
     }
 
@@ -652,6 +655,71 @@ public class MdToPptController : ControllerBase
             isEffectiveDefault = def != null && def.Id == p.Id,
             owned = p.CreatedByUserId == userId,
         }));
+    }
+
+    /// <summary>
+    /// 模型池候选（2026-06-11 用户提案：模型池配过的 baseUrl/key 不再手抄）。
+    /// PPT 弹层「从模型池直选」数据源：启用的 chat 类模型 + 平台名 + 是否已物化为运行配置。
+    /// 没有池调度概念——选中哪个就把哪个的配置原样传给 CDS，由 CDS 自行发请求。
+    /// </summary>
+    [HttpGet("pool-models")]
+    public async Task<IActionResult> ListPoolModels()
+    {
+        var userId = this.GetRequiredUserId();
+        var models = await _db.LLMModels
+            .Find(x => x.Enabled && !x.IsImageGen)
+            .SortByDescending(x => x.IsMain)
+            .ThenBy(x => x.Priority)
+            .Limit(400)
+            .ToListAsync(CancellationToken.None);
+        var platformIds = models.Select(m => m.PlatformId).Where(p => !string.IsNullOrEmpty(p)).Distinct().ToList();
+        var platforms = await _db.LLMPlatforms
+            .Find(Builders<LLMPlatform>.Filter.In(x => x.Id, platformIds))
+            .ToListAsync(CancellationToken.None);
+        var platformNames = platforms.ToDictionary(p => p.Id, p => p.Name);
+        // 已物化为运行配置的池模型标记出来（弹层里直接显示「已就绪」）
+        var profiles = await ListVisibleRuntimeProfilesAsync(userId, CancellationToken.None);
+        var readyModels = profiles.Select(p => p.Model).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return Ok(models.Select(m => new
+        {
+            id = m.Id,
+            name = m.Name,
+            model = m.ModelName,
+            platform = m.PlatformId != null && platformNames.TryGetValue(m.PlatformId, out var pn) ? pn : "",
+            isMain = m.IsMain,
+            ready = readyModels.Contains(m.ModelName.Trim()),
+        }));
+    }
+
+    /// <summary>
+    /// 把池内模型一键物化为运行配置（幂等）：复用平台 baseUrl/key，零手填。
+    /// 返回与 GET /profiles 同形的条目，前端建完即选中。
+    /// </summary>
+    [HttpPost("profiles/from-pool")]
+    public async Task<IActionResult> CreateProfileFromPool([FromBody] MdToPptFromPoolRequest req)
+    {
+        var userId = this.GetRequiredUserId();
+        if (string.IsNullOrWhiteSpace(req.ModelId))
+            return BadRequest(new { error = "modelId 不能为空" });
+        try
+        {
+            var view = await _runtimeProfiles.ImportFromPoolAsync(userId, req.ModelId.Trim(), CancellationToken.None);
+            return Ok(new
+            {
+                id = view.Id,
+                name = view.Name,
+                model = view.Model,
+                runtime = view.Runtime,
+                isDefault = view.IsDefault,
+                isEffectiveDefault = false,
+                owned = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[MdToPpt] from-pool failed userId={UserId} modelId={ModelId}", userId, req.ModelId);
+            return BadRequest(new { error = ex.Message });
+        }
     }
 
     [HttpPost("prewarm")]
@@ -2015,6 +2083,12 @@ public class MdToPptPatchRequest
 
     /// <summary>模型运行配置 ID（可选；用户在 PPT 页随时切换模型，缺省走默认链）</summary>
     public string? RuntimeProfileId { get; set; }
+}
+
+public class MdToPptFromPoolRequest
+{
+    /// <summary>模型池里的 LLMModel.Id</summary>
+    public string? ModelId { get; set; }
 }
 
 public class MdToPptPrewarmRequest

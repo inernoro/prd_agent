@@ -21,6 +21,8 @@ public interface IInfraAgentRuntimeProfileService
     Task<InfraAgentRuntimeProfileView> UpdateAsync(string id, string userId, UpsertInfraAgentRuntimeProfileRequest request, CancellationToken ct);
 
     Task<InfraAgentRuntimeProfileView> ImportDefaultModelAsync(string userId, CancellationToken ct);
+    /// <summary>从模型池任选模型物化为运行配置（幂等；不抢默认位）</summary>
+    Task<InfraAgentRuntimeProfileView> ImportFromPoolAsync(string userId, string modelId, CancellationToken ct);
 
     Task<bool> DeleteAsync(string id, string userId, CancellationToken ct);
 

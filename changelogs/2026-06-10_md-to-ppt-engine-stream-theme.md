@@ -58,3 +58,6 @@
 | feat | prd-admin | 基础设施服务页模型运行配置补全 CRUD 接线：卡片新增 编辑/设为默认/测试连通/两击确认删除（后端 PUT/DELETE/test 早已就绪，此前 UI 只读改不了）；表单区分新增/修改模式（编辑留空 key 沿用原 key）；新增「从模型管理导入」一键建配置 |
 | feat | prd-admin | /infra-services 支持 ?tab=config 深链直达配置 tab；失效连接默认折叠（12 条尸体卡不再占满首屏）；PPT 模型弹层只有一条配置时给出去基础设施新增的引导链 |
 | fix | prd-admin | 基础设施操作台整段上移到页面第二屏（原埋在测试台/架构介绍下第四屏，用户两次找不到模型配置）；「配置」tab 排第一并设为默认——进页即见模型运行配置 |
+| feat | prd-api | 模型池直选（用户提案落地）：GET /api/md-to-ppt/pool-models 列出启用池模型 + POST profiles/from-pool 一键物化为运行配置（幂等复用平台 baseUrl/key，零手填）；无池调度概念——选中哪个就把哪个的配置原样传给 CDS，由 CDS 自行发请求 |
+| feat | prd-admin | PPT 模型弹层新增「从模型池直选」组：搜索模型/平台、点选即自动建配置并选中、已物化标「已就绪」；不再要求用户去基础设施页手抄 baseUrl/key |
+| feat | prd-api | InfraAgentRuntimeProfileService 新增 ImportFromPoolAsync：任选池内模型物化为运行配置（协议/runtime 自动推断、key 加密存储、不抢默认位） |

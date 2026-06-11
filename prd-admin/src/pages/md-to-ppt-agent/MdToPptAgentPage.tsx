@@ -41,7 +41,10 @@ import {
   getMdToPptOutline,
   getMdToPptTemplates,
   getMdToPptProfiles,
+  getMdToPptPoolModels,
+  createMdToPptProfileFromPool,
   type MdToPptProfileItem,
+  type MdToPptPoolModelItem,
   createMdToPptTemplate,
   deleteMdToPptTemplate,
   prewarmMdToPpt,
@@ -949,6 +952,12 @@ export function MdToPptAgentPage() {
     try { return sessionStorage.getItem('md2ppt-profile'); } catch { return null; }
   });
   const [showModelPicker, setShowModelPicker] = useState(false);
+  // 模型池直选（2026-06-11 用户提案：池里配过的 baseUrl/key 不再手抄；
+  // 无池调度概念——选中哪个就把哪个的配置原样传给 CDS，由 CDS 自行发请求）
+  const [poolModels, setPoolModels] = useState<MdToPptPoolModelItem[]>([]);
+  const [poolQuery, setPoolQuery] = useState('');
+  const [poolBusyId, setPoolBusyId] = useState<string | null>(null);
+  const poolLoadedRef = useRef(false);
   const setSelectedProfileId = useCallback((id: string | null) => {
     setSelectedProfileIdRaw(id);
     try {
@@ -2445,7 +2454,13 @@ export function MdToPptAgentPage() {
                 {profiles.length > 0 && (
                   <div className="relative shrink-0 min-w-0">
                     <button
-                      onClick={() => setShowModelPicker((v) => !v)}
+                      onClick={() => {
+                        setShowModelPicker((v) => !v);
+                        if (!poolLoadedRef.current) {
+                          poolLoadedRef.current = true;
+                          void getMdToPptPoolModels().then(setPoolModels);
+                        }
+                      }}
                       disabled={isProcessing}
                       data-testid="model-picker-chip"
                       title={'当前模型：' + (effectiveProfile?.model ?? '默认') + '（点击切换，影响后续生成/精修）'}
@@ -2474,15 +2489,7 @@ export function MdToPptAgentPage() {
                         <div className="px-3 py-2 text-[10px] text-[var(--text-tertiary)] border-b border-white/6">
                           切换生成模型（来自「基础设施 → 配置」的运行配置）
                         </div>
-                        <div style={{ maxHeight: 220, overflowY: 'auto', overscrollBehavior: 'contain' }}>
-                          {profiles.length <= 1 && (
-                            <a
-                              href="/infra-services?tab=config"
-                              className="block px-3 py-2 text-[10px] text-sky-300/90 hover:text-sky-200 border-b border-white/6"
-                            >
-                              只有一条配置？去「基础设施 → 配置」新增/修改模型，建好回来即可切换
-                            </a>
-                          )}
+                        <div style={{ maxHeight: 200, overflowY: 'auto', overscrollBehavior: 'contain' }}>
                           {profiles.map((p) => {
                             const active = effectiveProfile?.id === p.id;
                             return (
@@ -2511,6 +2518,64 @@ export function MdToPptAgentPage() {
                               </button>
                             );
                           })}
+                        </div>
+
+                        {/* 模型池直选：池里配过的 baseUrl/key 直接用，点选即物化为配置并选中 */}
+                        <div className="px-3 py-1.5 text-[10px] text-[var(--text-tertiary)] border-t border-white/6 flex items-center justify-between gap-2">
+                          <span>从模型池直选（自动复用平台 baseUrl/key）</span>
+                          <a href="/infra-services?tab=config" className="shrink-0 text-sky-300/80 hover:text-sky-200">高级配置</a>
+                        </div>
+                        <div className="px-2 pb-1.5">
+                          <input
+                            value={poolQuery}
+                            onChange={(e) => setPoolQuery(e.target.value)}
+                            placeholder="搜索模型 / 平台..."
+                            data-testid="pool-search"
+                            className="w-full h-7 px-2 rounded-md text-[11px] bg-white/4 text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border border-white/8 outline-none focus:border-purple-400/50"
+                          />
+                        </div>
+                        <div style={{ maxHeight: 180, overflowY: 'auto', overscrollBehavior: 'contain' }} data-testid="pool-list">
+                          {poolModels
+                            .filter((m) => {
+                              const q = poolQuery.trim().toLowerCase();
+                              if (!q) return true;
+                              return m.model.toLowerCase().includes(q) || m.name.toLowerCase().includes(q) || m.platform.toLowerCase().includes(q);
+                            })
+                            .slice(0, 30)
+                            .map((m) => (
+                              <button
+                                key={m.id}
+                                disabled={poolBusyId != null}
+                                onClick={async () => {
+                                  setPoolBusyId(m.id);
+                                  const created = await createMdToPptProfileFromPool(m.id);
+                                  setPoolBusyId(null);
+                                  if (!created) return;
+                                  // 物化成功：刷新配置列表并立即选中（选中谁，convert/patch 就传谁给 CDS）
+                                  const latest = await getMdToPptProfiles();
+                                  setProfiles(latest);
+                                  setSelectedProfileId(created.id);
+                                  setShowModelPicker(false);
+                                  if (outlineDraft) prewarmMdToPpt(created.id);
+                                }}
+                                className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-white/5 disabled:opacity-50"
+                              >
+                                <div className="min-w-0 flex-1">
+                                  <div className="text-[11px] font-mono truncate text-[var(--text-secondary)]">{m.model}</div>
+                                  <div className="text-[9px] text-[var(--text-tertiary)] truncate">{m.platform}{m.isMain ? ' · 系统主模型' : ''}</div>
+                                </div>
+                                {poolBusyId === m.id ? (
+                                  <MapSpinner size={10} />
+                                ) : m.ready ? (
+                                  <span className="shrink-0 text-[9px] text-emerald-300/80">已就绪</span>
+                                ) : (
+                                  <span className="shrink-0 text-[9px] text-[var(--text-tertiary)]">点选即用</span>
+                                )}
+                              </button>
+                            ))}
+                          {poolModels.length === 0 && (
+                            <div className="px-3 py-2 text-[10px] text-[var(--text-tertiary)]">模型池加载中或为空...</div>
+                          )}
                         </div>
                       </div>
                     )}

@@ -399,6 +399,78 @@ public class InfraAgentRuntimeProfileService : IInfraAgentRuntimeProfileService
         return ToView(profile, userId);
     }
 
+    /// <summary>
+    /// 从系统模型池任选一个模型物化为运行配置（2026-06-11 用户提案：模型池配过的
+    /// baseUrl/key 不应再让人手抄一遍）。幂等：同 用户+model+baseUrl 已存在则刷新复用。
+    /// 不抢默认位（IsDefault=false），由调用方在弹层里即选即用。
+    /// </summary>
+    public async Task<InfraAgentRuntimeProfileView> ImportFromPoolAsync(string userId, string modelId, CancellationToken ct)
+    {
+        var model = await _db.LLMModels
+            .Find(x => x.Id == modelId && x.Enabled)
+            .FirstOrDefaultAsync(ct);
+        if (model == null)
+        {
+            throw new InfraAgentRuntimeProfileException(
+                InfraAgentRuntimeProfileErrorCodes.ModelNotConfigured,
+                "模型池中没有该模型或已停用",
+                StatusCodes.Status404NotFound);
+        }
+
+        var resolved = await ResolveModelApiConfigAsync(model, ct);
+        if (string.IsNullOrWhiteSpace(resolved.ApiUrl)
+            || string.IsNullOrWhiteSpace(resolved.ApiKey)
+            || string.IsNullOrWhiteSpace(model.ModelName))
+        {
+            throw new InfraAgentRuntimeProfileException(
+                InfraAgentRuntimeProfileErrorCodes.ModelConfigIncomplete,
+                $"模型「{model.Name}」缺少 baseUrl、model 或 API key，无法同步到 CDS Agent",
+                StatusCodes.Status409Conflict);
+        }
+
+        var now = DateTime.UtcNow;
+        var protocol = InferProtocol(resolved.PlatformType, resolved.ApiUrl);
+        var baseUrl = NormalizeModelBaseUrl(resolved.ApiUrl);
+        var runtime = InferRuntime(protocol, model.ModelName);
+        InfraAgentRuntimeProfileTemplates.ValidateApiKeyForProfile(protocol, baseUrl, resolved.ApiKey);
+
+        var trimmedModel = model.ModelName.Trim();
+        var existing = await _db.InfraAgentRuntimeProfiles
+            .Find(x => x.CreatedByUserId == userId && x.Model == trimmedModel && x.BaseUrl == baseUrl)
+            .FirstOrDefaultAsync(ct);
+        if (existing != null)
+        {
+            existing.Runtime = runtime;
+            existing.Protocol = protocol;
+            existing.ApiKeyEncrypted = _protector.Protect(resolved.ApiKey);
+            existing.UpdatedAt = now;
+            await _db.InfraAgentRuntimeProfiles.ReplaceOneAsync(ProfileIdOwnerFilter(existing.Id, userId), existing, cancellationToken: ct);
+            return ToView(existing, userId);
+        }
+
+        var profile = new InfraAgentRuntimeProfile
+        {
+            Name = $"池 · {model.Name}",
+            Runtime = runtime,
+            Protocol = protocol,
+            BaseUrl = baseUrl,
+            Model = trimmedModel,
+            ApiKeyEncrypted = _protector.Protect(resolved.ApiKey),
+            ResourceCpuCores = 2,
+            ResourceMemoryMb = 4096,
+            TimeoutSeconds = 900,
+            NetworkPolicy = InfraAgentRuntimeNetworkPolicies.Restricted,
+            AutoCleanupMinutes = 30,
+            IsDefault = false,
+            CreatedByUserId = userId,
+            SharedTeamIds = new List<string>(),
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        await _db.InfraAgentRuntimeProfiles.InsertOneAsync(profile, cancellationToken: ct);
+        return ToView(profile, userId);
+    }
+
     public async Task<bool> DeleteAsync(string id, string userId, CancellationToken ct)
     {
         var result = await _db.InfraAgentRuntimeProfiles.DeleteOneAsync(ProfileIdOwnerFilter(id, userId), ct);
