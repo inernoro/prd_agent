@@ -1014,7 +1014,26 @@ public class MdToPptController : ControllerBase
         var cleaned = StripCodeFences(text);
         var m = System.Text.RegularExpressions.Regex.Match(cleaned, "<section[\\s\\S]*?</section>",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        return m.Success ? SanitizeSection(m.Value) : string.Empty;
+        if (!m.Success) return string.Empty;
+        // 上游输出损坏检测（2026-06-11 真实事故）：deepseek 经 OpenRouter 偶发丢字符，
+        // 整页 HTML 缺 26 个 "<"，标签碎片被当正文渲染到幻灯上。检测到损坏按无效处理，
+        // 让既有「重试一次 → 兜底页」链路接管，绝不把碎标签端给用户。
+        if (LooksCorruptedSection(m.Value)) return string.Empty;
+        return SanitizeSection(m.Value);
+    }
+
+    /// <summary>
+    /// 标签碎片检测：剥掉注释与完好标签后，残余"正文"里仍出现 style="/class=" 这种
+    /// 属性语法 = 某些 "&lt;" 字符丢失、标签退化成了可见文本。阈值 3 防误伤
+    /// （展示代码片段的合法页可能含 1-2 处属性字样）。
+    /// </summary>
+    internal static bool LooksCorruptedSection(string section)
+    {
+        if (string.IsNullOrEmpty(section)) return false;
+        var t = System.Text.RegularExpressions.Regex.Replace(section, "<!--[\\s\\S]*?-->", " ");
+        t = System.Text.RegularExpressions.Regex.Replace(t, "<[^<>]*>", " ");
+        var hits = System.Text.RegularExpressions.Regex.Matches(t, "(?:style|class)\\s*=\\s*\"").Count;
+        return hits >= 3;
     }
 
     /// <summary>

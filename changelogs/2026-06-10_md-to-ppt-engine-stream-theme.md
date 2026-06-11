@@ -51,3 +51,4 @@
 | feat | prd-admin | 生成后切换模板改为先确认再重绘（确认条说明耗时与影响），杜绝误触模板色点白白触发 1 分钟整体重绘 |
 | fix | prd-admin | 模型切换弹层补点击外部关闭（fixed 背板），不再只能点 chip 收起 |
 | feat | prd-api | 定向单页 patch：SlideIndex 命中时只把目标页交给单个子智能体重画并原位替换（页级提示词+消毒+心跳），不再整篇 58KB 重出（旧路径实测 7 分钟未完成）；失败回落整篇路径 |
+| fix | prd-api | 标签碎片守卫：上游偶发丢字符（deepseek/OpenRouter 实测 finalText 缺 26 个 "<"）导致标签当正文渲染——ExtractSection 检测损坏自动走重试/兜底链路 + 3 条回归测试 |

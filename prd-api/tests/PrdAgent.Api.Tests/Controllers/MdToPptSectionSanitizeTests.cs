@@ -74,4 +74,33 @@ public class MdToPptSectionSanitizeTests
         // 内层元素的布局样式不受影响（消毒只针对 section 根）
         Assert.Contains("<div style=\"display:flex;gap:12px;width:48%\">cards</div>", output);
     }
+
+    // ─── 标签碎片检测（2026-06-11 真实事故：上游丢 "<"，标签退化成可见正文）───
+
+    [Fact]
+    public void CorruptedSection_MissingAngleBrackets_Detected()
+    {
+        // 真实事故样本形态：多处 "<" 丢失，div class=... 变成正文
+        var corrupted = "<section> div style=\"position: relative; width: 960px;\"> " +
+                        "<div style=\"flex:1\"> div class=\"step-num\" style=\"width: 80px;\"> 内容 " +
+                        " div class=\"card\" style=\"background: var(--card);\"> 更多内容</div></section>";
+        Assert.True(MdToPptController.LooksCorruptedSection(corrupted));
+    }
+
+    [Fact]
+    public void HealthySection_WithManyInlineStyles_NotFlagged()
+    {
+        // 完好页：标签完整，inline style 再多也不该误判
+        var healthy = "<section><div style=\"display:flex\"><div class=\"card\" style=\"padding:20px\">A</div>" +
+                      "<div class=\"card\" style=\"padding:20px\">B</div><div class=\"stat\" style=\"color:red\">C</div></div></section>";
+        Assert.False(MdToPptController.LooksCorruptedSection(healthy));
+    }
+
+    [Fact]
+    public void CodeSampleSection_FewAttrLiterals_NotFlagged()
+    {
+        // 展示代码片段的合法页（1-2 处属性字样在正文中）低于阈值，不误伤
+        var codePage = "<section><h2>示例</h2><pre>用法：写 class=\"card\" 即可</pre></section>";
+        Assert.False(MdToPptController.LooksCorruptedSection(codePage));
+    }
 }
