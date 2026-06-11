@@ -495,7 +495,7 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
     icon: 'FileText',
     category: 'builtin',
     type: 'builtin',
-    kind: 'tool',
+    kind: 'agent',
     agentKey: 'tech-doc-format-agent',
     routePath: '/tech-doc-format-agent',
     permission: 'access',
