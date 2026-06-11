@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Settings, Square, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiRequest, ApiError } from '@/lib/api';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
@@ -3524,6 +3525,7 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
   const [writeFilter, setWriteFilter] = useState('{\n  "_id": "replace-with-id"\n}');
   const [writeConfirm, setWriteConfirm] = useState('');
   const [writeState, setWriteState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; result?: unknown; message?: string }>({ status: 'idle' });
+  const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const basePath = resource.branchId
     ? `/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/data/mongo`
     : '';
@@ -3659,16 +3661,16 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
       ? `默认库 ${databasesState.configuredDatabase}`
       : '';
 
-  return (
-    <div className="space-y-4 text-sm">
+  const workbenchBody = (
+    <div className="grid min-h-0 gap-4 text-sm">
       <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
-          <div>
-            <div className="text-xs font-semibold">MongoDB Workbench</div>
-            <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{databaseLabel}.{selectedCollection || '-'}</div>
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
+          <div className="min-w-0">
+            <div className="text-xs font-semibold">工作区</div>
+            <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{databaseLabel}.{selectedCollection || '-'}</div>
             {configuredDatabaseNotice ? <div className="mt-1 text-[11px] text-muted-foreground">{configuredDatabaseNotice}</div> : null}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex max-w-full flex-wrap items-center gap-2 sm:justify-end">
             {(['browse', 'query', 'mutate'] as const).map((item) => (
               <button
                 key={item}
@@ -3676,7 +3678,7 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
                 className={`h-8 rounded-md px-3 text-xs transition-colors ${mode === item ? 'bg-primary text-primary-foreground' : 'border border-[hsl(var(--hairline))] text-muted-foreground hover:text-foreground'}`}
                 onClick={() => setMode(item)}
               >
-                {item === 'browse' ? '浏览' : item === 'query' ? '查询' : '写入 / 结构'}
+                {item === 'browse' ? '浏览数据' : item === 'query' ? '条件查询' : '写入 / 结构'}
               </button>
             ))}
             <Button type="button" size="sm" variant="outline" disabled={databasesState.status === 'loading'} onClick={() => void loadDatabases()}>
@@ -3686,26 +3688,31 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
           </div>
         </div>
 
-        <div className="space-y-3 p-3">
+        <div className="grid gap-3 p-3">
           <div>
             <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Database</div>
-            <div className="flex gap-2 overflow-x-auto">
-              {databasesState.databases.length > 0 ? databasesState.databases.map((db) => (
-                <button
-                  key={db.name}
-                  type="button"
-                  className={`inline-flex h-8 shrink-0 items-center gap-2 rounded-md border px-3 text-xs ${db.name === selectedDatabase ? 'border-primary bg-primary/10 text-foreground' : 'border-[hsl(var(--hairline))] text-muted-foreground hover:text-foreground'}`}
-                  onClick={() => {
-                    setSelectedCollection('');
-                    setCollectionsState({ status: 'idle', collections: [], database: db.name });
-                    setDocumentsState({ status: 'idle', documents: [] });
-                    setSelectedDatabase(db.name);
-                  }}
-                >
-                  <span className="font-mono">{db.name}</span>
-                  <span>{formatBytes(db.sizeOnDisk || 0)}</span>
-                </button>
-              )) : (
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {databasesState.databases.length > 0 ? databasesState.databases.map((db) => {
+                const isConfigured = db.name === databasesState.configuredDatabase;
+                const isSystem = SYSTEM_MONGO_DATABASES.has(db.name);
+                return (
+                  <button
+                    key={db.name}
+                    type="button"
+                    className={`inline-flex h-8 shrink-0 items-center gap-2 rounded-md border px-3 text-xs ${db.name === selectedDatabase ? 'border-primary bg-primary/10 text-foreground' : 'border-[hsl(var(--hairline))] text-muted-foreground hover:text-foreground'}`}
+                    onClick={() => {
+                      setSelectedCollection('');
+                      setCollectionsState({ status: 'idle', collections: [], database: db.name });
+                      setDocumentsState({ status: 'idle', documents: [] });
+                      setSelectedDatabase(db.name);
+                    }}
+                  >
+                    <span className="font-mono">{db.name}</span>
+                    {isConfigured ? <span className="rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">默认</span> : null}
+                    {isSystem ? <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">系统</span> : null}
+                  </button>
+                );
+              }) : (
                 <div className="text-xs text-muted-foreground">{databasesState.status === 'loading' ? '读取数据库...' : databasesState.message || '没有数据库信息。'}</div>
               )}
             </div>
@@ -3713,7 +3720,7 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
 
           <div>
             <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Collection</div>
-            <div className="flex gap-2 overflow-x-auto">
+            <div className="flex gap-2 overflow-x-auto pb-1">
               {collectionsState.status === 'error' ? (
                 <div className="text-xs text-destructive">{collectionsState.message}</div>
               ) : collectionsState.collections.length > 0 ? collectionsState.collections.map((collection) => (
@@ -3743,86 +3750,153 @@ function MongoResourceDataPanel({ resource }: { resource: BranchResource }): JSX
         </div>
       </section>
 
-      {mode === 'query' ? (
-        <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
+      <section className="grid min-h-[420px] gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="min-w-0 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
           <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
-            <div className="text-xs font-semibold">查询条件</div>
-            <Button type="button" size="sm" variant="outline" disabled={documentsState.status === 'loading'} onClick={() => void runMongoQuery()}>
-              {documentsState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Play />}
-              执行查询
-            </Button>
-          </div>
-          <div className="grid gap-3 p-3 lg:grid-cols-3">
-            <CodeEditor label="filter" value={filter} onChange={setFilter} language="json" minHeight={128} />
-            <CodeEditor label="projection" value={projection} onChange={setProjection} language="json" minHeight={128} />
-            <CodeEditor label="sort" value={sort} onChange={setSort} language="json" minHeight={128} />
-          </div>
-        </section>
-      ) : null}
-
-      {mode === 'mutate' ? (
-        <section className="rounded-md border border-destructive/30 bg-destructive/5">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-destructive/20 px-3 py-2">
             <div>
-              <div className="text-xs font-semibold text-destructive">写入 / 结构</div>
-              <div className="mt-0.5 text-[11px] text-muted-foreground">insert / update / delete / create collection / drop collection；后端校验权限、资源名确认和审计。</div>
+              <div className="text-xs font-semibold">Document Browser</div>
+              <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{selectedCollection || '未选择 collection'}</div>
             </div>
-            <Button type="button" size="sm" variant="destructive" disabled={!writeConfirm.trim() || !writeTargetCollection || writeState.status === 'loading'} onClick={() => void runMongoWrite()}>
-              {writeState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Play />}
-              执行
+            <Button type="button" size="sm" variant="outline" disabled={!selectedDatabase || !selectedCollection || documentsState.status === 'loading'} onClick={() => void loadDocuments(selectedDatabase, selectedCollection)}>
+              {documentsState.status === 'loading' ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+              重新读取
             </Button>
           </div>
-          <div className="space-y-3 p-3">
-            <div className="flex flex-wrap gap-2">
-              {(['insertOne', 'updateMany', 'deleteMany', 'createCollection', 'dropCollection'] as const).map((action) => (
-                <button
-                  key={action}
-                  type="button"
-                  className={`h-8 rounded-md px-3 font-mono text-xs transition-colors ${writeAction === action ? 'bg-destructive text-destructive-foreground' : 'border border-destructive/25 text-muted-foreground hover:text-foreground'}`}
-                  onClick={() => setWriteAction(action)}
-                >
-                  {action}
-                </button>
-              ))}
-            </div>
-            {writeAction === 'insertOne' ? (
-              <CodeEditor label="document" value={documentDraft} onChange={(value) => setDocumentDraft(tryFormatJsonText(value))} language="json" minHeight={190} />
-            ) : null}
-            {writeAction === 'updateMany' || writeAction === 'deleteMany' ? (
-              <div className="grid gap-3 lg:grid-cols-2">
-                <CodeEditor label="filter" value={writeFilter} onChange={(value) => setWriteFilter(tryFormatJsonText(value))} language="json" minHeight={160} />
-                {writeAction === 'updateMany' ? <CodeEditor label="update" value={updateDraft} onChange={(value) => setUpdateDraft(tryFormatJsonText(value))} language="json" minHeight={160} /> : null}
-              </div>
-            ) : null}
-            {writeAction === 'createCollection' || writeAction === 'dropCollection' ? (
-              <label className="grid gap-1 text-xs">
-                <span className="text-muted-foreground">目标 collection</span>
-                <input
-                  value={writeCollection}
-                  onChange={(event) => setWriteCollection(event.target.value)}
-                  className="h-9 rounded-md border border-destructive/25 bg-background px-3 font-mono outline-none focus:border-destructive"
-                  placeholder="users"
-                />
-              </label>
-            ) : null}
-            <label className="grid gap-1 text-xs">
-              <span className="text-muted-foreground">输入资源名确认：{resource.serviceName}</span>
-              <input
-                value={writeConfirm}
-                onChange={(event) => setWriteConfirm(event.target.value)}
-                className="h-9 rounded-md border border-destructive/25 bg-background px-3 font-mono outline-none focus:border-destructive"
-                placeholder={resource.serviceName}
-              />
-            </label>
-            <MongoWriteResult state={writeState} />
-          </div>
-        </section>
-      ) : null}
+          <MongoDocumentsView state={documentsState} />
+        </div>
 
-      <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
-        <div className="border-b border-[hsl(var(--hairline))] px-3 py-2 text-xs font-semibold">Document Browser</div>
-        <MongoDocumentsView state={documentsState} />
+        <div className="min-w-0 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35">
+          {mode === 'query' ? (
+            <>
+              <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
+                <div className="text-xs font-semibold">条件查询</div>
+                <Button type="button" size="sm" variant="outline" disabled={!selectedDatabase || !selectedCollection || documentsState.status === 'loading'} onClick={() => void runMongoQuery()}>
+                  {documentsState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Play />}
+                  执行
+                </Button>
+              </div>
+              <div className="grid gap-3 p-3">
+                <CodeEditor label="filter" value={filter} onChange={setFilter} language="json" minHeight={108} />
+                <CodeEditor label="projection" value={projection} onChange={setProjection} language="json" minHeight={92} />
+                <CodeEditor label="sort" value={sort} onChange={setSort} language="json" minHeight={92} />
+              </div>
+            </>
+          ) : mode === 'mutate' ? (
+            <>
+              <div className="flex items-center justify-between gap-3 border-b border-destructive/20 px-3 py-2">
+                <div>
+                  <div className="text-xs font-semibold text-destructive">写入 / 结构</div>
+                  <div className="mt-0.5 text-[11px] text-muted-foreground">所有写操作都需要资源名确认，并进入审计记录。</div>
+                </div>
+                <Button type="button" size="sm" variant="destructive" disabled={!writeConfirm.trim() || !writeTargetCollection || writeState.status === 'loading'} onClick={() => void runMongoWrite()}>
+                  {writeState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Play />}
+                  执行
+                </Button>
+              </div>
+              <div className="grid gap-3 p-3">
+                <div className="flex flex-wrap gap-2">
+                  {(['insertOne', 'updateMany', 'deleteMany', 'createCollection', 'dropCollection'] as const).map((action) => (
+                    <button
+                      key={action}
+                      type="button"
+                      className={`h-8 rounded-md px-3 font-mono text-xs transition-colors ${writeAction === action ? 'bg-destructive text-destructive-foreground' : 'border border-destructive/25 text-muted-foreground hover:text-foreground'}`}
+                      onClick={() => setWriteAction(action)}
+                    >
+                      {action}
+                    </button>
+                  ))}
+                </div>
+                {writeAction === 'insertOne' ? (
+                  <CodeEditor label="document" value={documentDraft} onChange={(value) => setDocumentDraft(tryFormatJsonText(value))} language="json" minHeight={154} />
+                ) : null}
+                {writeAction === 'updateMany' || writeAction === 'deleteMany' ? (
+                  <>
+                    <CodeEditor label="filter" value={writeFilter} onChange={(value) => setWriteFilter(tryFormatJsonText(value))} language="json" minHeight={116} />
+                    {writeAction === 'updateMany' ? <CodeEditor label="update" value={updateDraft} onChange={(value) => setUpdateDraft(tryFormatJsonText(value))} language="json" minHeight={116} /> : null}
+                  </>
+                ) : null}
+                {writeAction === 'createCollection' || writeAction === 'dropCollection' ? (
+                  <label className="grid gap-1 text-xs">
+                    <span className="text-muted-foreground">目标 collection</span>
+                    <input
+                      value={writeCollection}
+                      onChange={(event) => setWriteCollection(event.target.value)}
+                      className="h-9 rounded-md border border-destructive/25 bg-background px-3 font-mono outline-none focus:border-destructive"
+                      placeholder="users"
+                    />
+                  </label>
+                ) : null}
+                <label className="grid gap-1 text-xs">
+                  <span className="text-muted-foreground">输入资源名确认：{resource.serviceName}</span>
+                  <input
+                    value={writeConfirm}
+                    onChange={(event) => setWriteConfirm(event.target.value)}
+                    className="h-9 rounded-md border border-destructive/25 bg-background px-3 font-mono outline-none focus:border-destructive"
+                    placeholder={resource.serviceName}
+                  />
+                </label>
+                <MongoWriteResult state={writeState} />
+              </div>
+            </>
+          ) : (
+            <div className="grid gap-3 p-3 text-xs leading-5 text-muted-foreground">
+              <div className="rounded-md border border-[hsl(var(--hairline))] bg-background/60 px-3 py-2">
+                左侧显示当前 collection 的前 50 条文档。切换 collection 会自动刷新预览。
+              </div>
+              <div className="rounded-md border border-[hsl(var(--hairline))] bg-background/60 px-3 py-2">
+                需要精确筛选时切换到「条件查询」；需要 insert/update/delete 或创建/删除 collection 时切换到「写入 / 结构」。
+              </div>
+            </div>
+          )}
+        </div>
       </section>
+    </div>
+  );
+
+  return (
+    <div className="space-y-3 text-sm">
+      <section className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 p-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-xs font-semibold">MongoDB 可视化操作面板</div>
+            <div className="mt-1 truncate font-mono text-[11px] text-muted-foreground">{databaseLabel}.{selectedCollection || '-'}</div>
+            {configuredDatabaseNotice ? <div className="mt-1 text-[11px] text-muted-foreground">{configuredDatabaseNotice}</div> : null}
+          </div>
+          <Button type="button" size="sm" onClick={() => setWorkbenchOpen(true)}>
+            <Database />
+            打开面板
+          </Button>
+        </div>
+        <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
+          <div className="rounded-md border border-[hsl(var(--hairline))] bg-background/50 px-3 py-2">
+            <div className="font-medium text-foreground">浏览</div>
+            <div className="mt-1">按 database / collection 查看文档。</div>
+          </div>
+          <div className="rounded-md border border-[hsl(var(--hairline))] bg-background/50 px-3 py-2">
+            <div className="font-medium text-foreground">查询</div>
+            <div className="mt-1">使用 filter / projection / sort 精确筛选。</div>
+          </div>
+          <div className="rounded-md border border-[hsl(var(--hairline))] bg-background/50 px-3 py-2">
+            <div className="font-medium text-foreground">写入 / 结构</div>
+            <div className="mt-1">可视化执行 insert、update、delete 和 collection 管理。</div>
+          </div>
+        </div>
+      </section>
+
+      <Dialog open={workbenchOpen} onOpenChange={setWorkbenchOpen}>
+        <DialogContent
+          className="max-w-none"
+          style={{ width: 'min(1280px, calc(100vw - 32px))', maxHeight: '92vh' }}
+        >
+          <DialogHeader>
+            <DialogTitle>MongoDB 可视化操作面板</DialogTitle>
+            <DialogDescription>
+              {resource.displayName} · {resource.serviceName} · {databaseLabel}.{selectedCollection || '-'}
+            </DialogDescription>
+          </DialogHeader>
+          {workbenchBody}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
