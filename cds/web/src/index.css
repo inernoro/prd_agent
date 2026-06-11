@@ -1010,6 +1010,18 @@
     max-width: 1360px;
   }
 
+  .cds-branch-list-workspace {
+    max-width: 3000px;
+  }
+
+  .cds-branch-card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 520px));
+    justify-content: start;
+    align-items: start;
+    gap: 1rem;
+  }
+
   .cds-workspace-settings {
     max-width: 1650px;
   }

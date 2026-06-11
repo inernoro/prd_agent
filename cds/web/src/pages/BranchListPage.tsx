@@ -2973,7 +2973,7 @@ export function BranchListPage(): JSX.Element {
         />
       }
     >
-      <Workspace wide>
+      <Workspace wide className="cds-branch-list-workspace">
         {/* Hero: search-or-paste branch with autocomplete dropdown — replaces
             the old left "tracked / remote" two-list panel which the user
             said wasn't useful. Daily flow: focus the input, see all branches,
@@ -3004,9 +3004,9 @@ export function BranchListPage(): JSX.Element {
           </div>
         ) : null}
 
-        {/* Branch tile grid — built user mental model: cards in a 3-up
-            grid, each with [预览] [部署] [详情] inline + kebab menu for low-frequency
-            actions (拉取 / 停止 / 收藏 / 调试 / 标签 / 重置 / 删除). */}
+        {/* Branch tile grid — adaptive columns with bounded card width.
+            Wide screens gain more cards per row without stretching a few
+            cards into oversized panels. */}
         {state.status === 'ok' ? (
           <div className="mt-6">
             {/* 标签过滤栏:仅在有激活过滤时出现。点 × 清除过滤,恢复显示全部分支。
@@ -3057,7 +3057,7 @@ export function BranchListPage(): JSX.Element {
                 </div>
               </div>
             ) : (
-              <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
+              <div className="cds-branch-card-grid">
                 {sortedBranches.map((branch) => (
                   <BranchCard
                     key={branch.id}
