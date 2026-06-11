@@ -785,6 +785,9 @@
 
 ### 七、周报
 
+- [CDS 数据库资源工作台 L1 验收报告](report.cds-db-workbench-l1-acceptance) `report.cds-db-workbench-l1-acceptance`
+  > MySQL/PostgreSQL DDL+CRUD、MongoDB find、Redis readonly、RabbitMQ/SQL Server planned 的远端验收报告与截图证据
+
 - [智能体宇宙 · 完备度看板](report.agent-universe-completeness) `report.agent-universe-completeness`
   > 各智能体完备度看板：终极目标、当前进度、TodoList、目前情况、风险点（当前加权进度约 55%）
 
