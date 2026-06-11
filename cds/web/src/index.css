@@ -156,6 +156,17 @@
     animation: cds-drawer-slide-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
   }
 
+  .cds-branch-list-workspace {
+    max-width: 3000px;
+  }
+
+  .cds-branch-card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+    align-items: start;
+    gap: 1rem;
+  }
+
   /*
    * BranchCard 搜索命中选中态。旧实现依赖 9s pulse animation + setTimeout,
    * 在 SSE 刷新和列表重排时容易被重新渲染打断。现在改为稳定选中态:
