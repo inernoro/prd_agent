@@ -596,6 +596,85 @@ public class HostedSiteService : IHostedSiteService
         return site;
     }
 
+    public async Task<HostedSite> CopyToTeamAsync(string siteId, string userId, string teamId, string? groupId, CancellationToken ct)
+    {
+        // 只能复制自己拥有的站点（「复用个人空间的网页」是所有权动作）
+        var source = await _db.HostedSites.Find(x => x.Id == siteId && x.OwnerUserId == userId).FirstOrDefaultAsync(ct);
+        if (source == null)
+            throw new KeyNotFoundException("站点不存在或无权限");
+
+        // 目标团队必须有网页托管编辑权限（与 SetSharedTeamsAsync 同款门控，viewer 不可投放）
+        var roles = await _teams.GetMyWebHostingTeamRolesAsync(userId, ct);
+        if (!(roles.TryGetValue(teamId, out var role)
+              && (role == WebHostingRoles.Owner || role == WebHostingRoles.Editor)))
+            throw new UnauthorizedAccessException("无权将网页复制到该团队：你在该团队是只读或非成员角色");
+
+        // 分组归属（可选）：必须是目标团队下的分组，防止跨团队挂靠
+        if (!string.IsNullOrWhiteSpace(groupId))
+        {
+            var group = await _db.WebPageGroups.Find(g => g.Id == groupId && g.TeamId == teamId).FirstOrDefaultAsync(ct);
+            if (group == null)
+                throw new KeyNotFoundException("目标分组不存在或不属于该团队");
+        }
+
+        // 物理复制 COS 文件：副本与原件彻底独立（删除/重传互不影响），
+        // 与 SaveSharedSiteAsync 的「引用复用」刻意不同 —— 团队副本的规则与团队内新建站点一致。
+        var newSiteId = Guid.NewGuid().ToString("N");
+        var now = DateTime.UtcNow;
+        var newFiles = new List<HostedSiteFile>();
+        long totalSize = 0;
+        foreach (var f in source.Files)
+        {
+            var bytes = await _storage.TryDownloadBytesAsync(f.CosKey, ct);
+            if (bytes == null)
+            {
+                _logger.LogWarning("复制站点 {SiteId} 时源文件缺失，跳过: {CosKey}", siteId, f.CosKey);
+                continue;
+            }
+            var newKey = _storage.BuildSiteKey(newSiteId, f.Path);
+            await _storage.UploadToKeyAsync(newKey, bytes, f.MimeType, CancellationToken.None, SiteCacheControl);
+            newFiles.Add(new HostedSiteFile { Path = f.Path, CosKey = newKey, Size = bytes.Length, MimeType = f.MimeType });
+            totalSize += bytes.Length;
+        }
+        if (newFiles.Count == 0)
+            throw new InvalidOperationException("源站点文件已不可读，无法复制");
+        if (!newFiles.Any(f => string.Equals(f.Path, source.EntryFile, StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException("源站点入口文件缺失，无法复制");
+
+        var copy = new HostedSite
+        {
+            Id = newSiteId,
+            Title = source.Title,
+            Description = source.Description,
+            SourceType = "team-copy",
+            SourceRef = source.Id,
+            CosPrefix = $"web-hosting/sites/{newSiteId}/",
+            EntryFile = source.EntryFile,
+            SiteUrl = AppendVersion(_storage.BuildUrlForKey(_storage.BuildSiteKey(newSiteId, source.EntryFile)), now),
+            Files = newFiles,
+            TotalSize = totalSize,
+            Tags = source.Tags.ToList(),
+            CoverImageUrl = source.CoverImageUrl,
+            WrappedAssetType = source.WrappedAssetType,
+            OwnerUserId = userId,
+            SharedTeamIds = new List<string> { teamId },
+            GroupId = string.IsNullOrWhiteSpace(groupId) ? null : groupId,
+            CreatedAt = now,
+            UpdatedAt = now,
+            ContentVersion = now,
+            SlideNavCompatVersion = source.SlideNavCompatVersion,
+        };
+
+        await _db.HostedSites.InsertOneAsync(copy, cancellationToken: ct);
+        await _teamActivity.LogForTeamsAsync(
+            new List<string> { teamId }, TeamAppKey.WebHosting, userId,
+            TeamActivityAction.SiteShared, "site", copy.Id, copy.Title, ct);
+
+        _logger.LogInformation("用户 {UserId} 将站点 {SourceId} 复制进团队 {TeamId} 为新站点 {NewId}（{FileCount} 个文件, {TotalSize} bytes）",
+            userId, siteId, teamId, newSiteId, newFiles.Count, totalSize);
+        return copy;
+    }
+
     // ─────────────────────────────────────────────
     // 可见性
     // ─────────────────────────────────────────────

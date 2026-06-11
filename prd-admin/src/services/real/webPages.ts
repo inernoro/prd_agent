@@ -32,6 +32,8 @@ export interface HostedSite {
   ownerUserId: string;
   /** 分享到的团队 ID 列表（仅网页托管消费） */
   sharedTeamIds?: string[];
+  /** 团队空间分组归属（专题/日常分类的 WebPageGroup.Id；null/undefined = 未分组） */
+  groupId?: string | null;
   viewCount: number;
   /** 可见性：private = 仅自己可见 | public = 出现在 /u/:username 公开页 */
   visibility?: 'private' | 'public';
@@ -316,6 +318,63 @@ export async function listFolders(): Promise<ApiResponse<{ folders: string[] }>>
 
 export async function listTags(): Promise<ApiResponse<{ tags: TagCount[] }>> {
   return apiRequest(api.webPages.tags(), { method: 'GET' });
+}
+
+// ─── Team Groups（团队空间专题 / 日常分类） ───
+
+export interface WebPageGroup {
+  id: string;
+  teamId: string;
+  /** topic = 专题 | daily = 日常分类 */
+  kind: 'topic' | 'daily';
+  name: string;
+  sortOrder: number;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function listSiteGroups(teamId: string): Promise<ApiResponse<{ groups: WebPageGroup[] }>> {
+  return apiRequest(`${api.webPages.groups()}?teamId=${encodeURIComponent(teamId)}`, { method: 'GET' });
+}
+
+export async function createSiteGroup(input: {
+  teamId: string;
+  kind: 'topic' | 'daily';
+  name: string;
+  sortOrder?: number;
+}): Promise<ApiResponse<WebPageGroup>> {
+  return apiRequest(api.webPages.groups(), { method: 'POST', body: input });
+}
+
+export async function updateSiteGroup(
+  groupId: string,
+  input: { name?: string; sortOrder?: number },
+): Promise<ApiResponse<WebPageGroup>> {
+  return apiRequest(api.webPages.groupById(encodeURIComponent(groupId)), { method: 'PUT', body: input });
+}
+
+export async function deleteSiteGroup(groupId: string): Promise<ApiResponse<{ deleted: boolean }>> {
+  return apiRequest(api.webPages.groupById(encodeURIComponent(groupId)), { method: 'DELETE' });
+}
+
+export async function setSiteGroup(siteId: string, groupId: string | null): Promise<ApiResponse<HostedSite>> {
+  return apiRequest(api.webPages.setGroup(encodeURIComponent(siteId)), {
+    method: 'PATCH',
+    body: { groupId },
+  });
+}
+
+/** 把自己的网页物理复制一份进团队空间（副本独立，原件不受影响） */
+export async function copySiteToTeam(
+  siteId: string,
+  teamId: string,
+  groupId?: string | null,
+): Promise<ApiResponse<HostedSite>> {
+  return apiRequest(api.webPages.copyToTeam(encodeURIComponent(siteId)), {
+    method: 'POST',
+    body: { teamId, groupId: groupId ?? null },
+  });
 }
 
 // ─── Share ───

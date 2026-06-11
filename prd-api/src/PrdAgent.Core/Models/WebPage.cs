@@ -78,6 +78,12 @@ public class HostedSite
     /// </summary>
     public List<string> SharedTeamIds { get; set; } = new();
 
+    /// <summary>
+    /// 团队空间分组归属（WebPageGroup.Id，专题或日常分类）。
+    /// null = 未归入任何分组。仅站点在团队空间内时有意义；个人空间用 Folder 组织。
+    /// </summary>
+    public string? GroupId { get; set; }
+
     /// <summary>浏览次数</summary>
     public long ViewCount { get; set; }
 

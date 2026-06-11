@@ -255,6 +255,7 @@ public class MongoDbContext
     public IMongoCollection<HostedSite> HostedSites => _database.GetCollection<HostedSite>("hosted_sites");
     public IMongoCollection<WebPageShareLink> WebPageShareLinks => _database.GetCollection<WebPageShareLink>("web_page_share_links");
     public IMongoCollection<ShareViewLog> ShareViewLogs => _database.GetCollection<ShareViewLog>("share_view_logs");
+    public IMongoCollection<WebPageGroup> WebPageGroups => _database.GetCollection<WebPageGroup>("web_page_groups");
 
     // 统一短链路由（所有分享系统共用 /s/{seq}）
     public IMongoCollection<ShortLink> ShortLinks => _database.GetCollection<ShortLink>("short_links");
