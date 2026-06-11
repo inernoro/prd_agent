@@ -638,6 +638,102 @@ describe('resource database access', () => {
     expect(res.body.capability.resultModes).toEqual(['table', 'json', 'output']);
   });
 
+  it('keeps PostgreSQL schema in table tree and preview queries', async () => {
+    const harness = makeHarness();
+    tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({
+      id: 'postgres-main',
+      projectId: 'prd-agent',
+      name: 'PostgreSQL 16',
+      dockerImage: 'postgres:16',
+      containerPort: 5432,
+      hostPort: 5432,
+      containerName: 'cds-postgres-main',
+      status: 'running',
+      dbName: 'app',
+      env: { POSTGRES_USER: 'postgres', POSTGRES_PASSWORD: 'pw', POSTGRES_DB: 'app' },
+      volumes: [],
+    });
+    harness.shell.addResponsePattern(/information_schema\.tables/, () => ({
+      stdout: 'table_schema\ttable_name\ttable_type\npublic\tusers\tBASE TABLE\naudit\tevents\tBASE TABLE\n',
+      stderr: '',
+      exitCode: 0,
+    }));
+    harness.shell.addResponsePattern(/SELECT \* FROM "audit"\."events" LIMIT 50/, () => ({
+      stdout: 'id\tname\n1\tcreated\n',
+      stderr: '',
+      exitCode: 0,
+    }));
+    harness.shell.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    await new Promise<void>((resolve) => {
+      server = harness.app.listen(0, '127.0.0.1', resolve);
+    });
+
+    const tables = await request(server!, 'GET', '/api/branches/main-branch/resources/infra%3Apostgres-main/data/tables');
+    const preview = await request(server!, 'GET', '/api/branches/main-branch/resources/infra%3Apostgres-main/data/preview?schema=audit&table=events');
+
+    expect(tables.status).toBe(200);
+    expect(tables.body.tables).toEqual([
+      { schema: 'public', name: 'users', fullName: 'public.users', type: 'BASE TABLE' },
+      { schema: 'audit', name: 'events', fullName: 'audit.events', type: 'BASE TABLE' },
+    ]);
+    expect(preview.status).toBe(200);
+    expect(preview.body.schema).toBe('audit');
+    expect(preview.body.table).toBe('events');
+    expect(harness.shell.commands.some((cmd) => cmd.includes('SELECT * FROM "audit"."events" LIMIT 50'))).toBe(true);
+  });
+
+  it('runs MongoDB workbench find command and rejects write-like commands', async () => {
+    const harness = makeHarness();
+    tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({
+      id: 'mongo-main',
+      projectId: 'prd-agent',
+      name: 'MongoDB 7',
+      dockerImage: 'mongo:7',
+      containerPort: 27017,
+      hostPort: 27017,
+      containerName: 'cds-mongo-main',
+      status: 'running',
+      dbName: 'orders',
+      env: {
+        MONGO_INITDB_ROOT_USERNAME: 'app',
+        MONGO_INITDB_ROOT_PASSWORD: 'pw',
+        MONGO_INITDB_DATABASE: 'orders',
+      },
+      volumes: [],
+    });
+    harness.shell.addResponsePattern(/getCollection\("users"\)\.find\(\{\}\)\.limit\(50\)\)\.toArray/, () => ({
+      stdout: '[{"_id":"u1","name":"Ann"}]\n',
+      stderr: '',
+      exitCode: 0,
+    }));
+    harness.shell.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    await new Promise<void>((resolve) => {
+      server = harness.app.listen(0, '127.0.0.1', resolve);
+    });
+
+    const ok = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
+      { database: 'orders', command: 'db.getCollection("users").find({}).limit(50);' },
+    );
+    const rejected = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/command',
+      { database: 'orders', command: 'db.getCollection("users").deleteMany({ active: false }).limit(50);' },
+    );
+
+    expect(ok.status).toBe(200);
+    expect(ok.body.collection).toBe('users');
+    expect(ok.body.kind).toBe('documents');
+    expect(ok.body.documents).toEqual([{ _id: 'u1', name: 'Ann' }]);
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.error).toContain('只允许只读 find 查询');
+  });
+
   it('describes planned workbench capability for SQL Server and RabbitMQ resources', async () => {
     const harness = makeHarness();
     tmpDir = harness.tmpDir;

@@ -3368,12 +3368,9 @@ function ResourceConnection({
 }
 
 interface DbTableSummary {
+  schema?: string;
   name: string;
-  type?: string;
-}
-
-interface DbTableSummary {
-  name: string;
+  fullName?: string;
   type?: string;
 }
 
@@ -3381,6 +3378,14 @@ interface DbQueryResult {
   columns: string[];
   rows: string[][];
   rowCount: number;
+}
+
+interface WorkbenchCommandResult {
+  ok?: boolean;
+  exitCode?: number;
+  output?: string;
+  error?: string | null;
+  truncated?: boolean;
 }
 
 type ResourceWorkbenchRuntime = 'sql' | 'document' | 'keyValue' | 'queue' | 'unsupported';
@@ -3393,10 +3398,11 @@ interface ResourceWorkbenchAdapter {
   label: string;
   treeLabel: string;
   consoleLabel: string;
-  commandLanguage: 'sql' | 'json' | 'mongo';
+  commandLanguage: 'sql' | 'mongo' | 'redis' | 'rabbitmq' | 'text';
   resultModes: WorkbenchResultMode[];
   defaultCommand: string;
   ready: boolean;
+  writeSupported: boolean;
   note: string;
   customPanels: string[];
 }
@@ -3425,6 +3431,7 @@ function resourceWorkbenchAdapter(resource: BranchResource): ResourceWorkbenchAd
       resultModes: ['table', 'json', 'output'],
       defaultCommand: 'SELECT * FROM <table> LIMIT 50',
       ready: true,
+      writeSupported: true,
       note: 'SQL 系资源共用同一套左树、命令区和结果区；DDL/DML 走写权限与审计。',
       customPanels: ['schema', 'ddl', 'backup'],
     };
@@ -3440,6 +3447,7 @@ function resourceWorkbenchAdapter(resource: BranchResource): ResourceWorkbenchAd
       resultModes: ['table', 'json', 'output'],
       defaultCommand: 'SELECT TOP 50 * FROM <table>;',
       ready: false,
+      writeSupported: false,
       note: '已纳入通用 SQL 工作台协议；执行器需要容器内 sqlcmd 或 mssql-tools 后接入。',
       customPanels: ['schema', 'ddl', 'backup'],
     };
@@ -3455,6 +3463,7 @@ function resourceWorkbenchAdapter(resource: BranchResource): ResourceWorkbenchAd
       resultModes: ['table', 'json', 'output'],
       defaultCommand: 'db.getCollection("<collection>").find({}).limit(50);',
       ready: true,
+      writeSupported: true,
       note: '文档型资源复用同一大面板；collection 选择只负责生成默认命令。',
       customPanels: ['collection', 'index', 'document'],
     };
@@ -3466,10 +3475,11 @@ function resourceWorkbenchAdapter(resource: BranchResource): ResourceWorkbenchAd
       label: 'Redis 工作台',
       treeLabel: 'DB / key',
       consoleLabel: 'Redis Console',
-      commandLanguage: 'json',
+      commandLanguage: 'redis',
       resultModes: ['json', 'output'],
       defaultCommand: 'GET <key>',
       ready: true,
+      writeSupported: false,
       note: '第一阶段保留只读 key 浏览；后续在同一协议下补命令执行和结构化编辑。',
       customPanels: ['string', 'hash', 'list', 'set', 'zset', 'stream'],
     };
@@ -3481,10 +3491,11 @@ function resourceWorkbenchAdapter(resource: BranchResource): ResourceWorkbenchAd
       label: 'RabbitMQ 工作台',
       treeLabel: 'vhost / exchange / queue / binding',
       consoleLabel: 'RabbitMQ Command',
-      commandLanguage: 'json',
+      commandLanguage: 'rabbitmq',
       resultModes: ['table', 'json', 'output'],
       defaultCommand: 'list queues',
       ready: false,
+      writeSupported: false,
       note: '队列型资源已纳入协议；后续接入 list / peek / publish / purge 等动作命令。',
       customPanels: ['queue', 'exchange', 'binding', 'message'],
     };
@@ -3495,10 +3506,11 @@ function resourceWorkbenchAdapter(resource: BranchResource): ResourceWorkbenchAd
     label: `${resource.runtime} 工作台`,
     treeLabel: '资源树',
     consoleLabel: 'Command',
-    commandLanguage: 'json',
+    commandLanguage: 'text',
     resultModes: ['json', 'output'],
     defaultCommand: '',
     ready: false,
+    writeSupported: false,
     note: '该资源尚未声明数据工作台执行器，可按同一 adapter 协议扩展。',
     customPanels: [],
   };
@@ -4385,9 +4397,16 @@ function formatRedisPreview(preview: RedisKeyDetail['preview']): string {
   return preview.values.join('\n');
 }
 
-function quoteSqlTableName(resource: BranchResource, table: string): string {
-  if (resource.runtime === 'PostgreSQL') return `"${table.replace(/"/g, '""')}"`;
-  return `\`${table.replace(/`/g, '``')}\``;
+function sqlTableKey(table: DbTableSummary): string {
+  return table.schema ? `${table.schema}.${table.name}` : table.name;
+}
+
+function quoteSqlTableName(resource: BranchResource, table: DbTableSummary): string {
+  if (resource.runtime === 'PostgreSQL') {
+    const quote = (value: string): string => `"${value.replace(/"/g, '""')}"`;
+    return table.schema ? `${quote(table.schema)}.${quote(table.name)}` : quote(table.name);
+  }
+  return `\`${table.name.replace(/`/g, '``')}\``;
 }
 
 type DbResultState = { status: 'idle' | 'loading' | 'ok' | 'error'; result?: DbQueryResult; message?: string };
@@ -4400,14 +4419,22 @@ function sqlCommandIsReadOnly(sql: string): boolean {
 function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource; adapter: ResourceWorkbenchAdapter }): JSX.Element {
   const [workbenchOpen, setWorkbenchOpen] = useState(true);
   const [tablesState, setTablesState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; tables: DbTableSummary[]; database?: string; message?: string }>({ status: 'idle', tables: [] });
-  const [selectedTable, setSelectedTable] = useState('');
+  const [selectedTableKey, setSelectedTableKey] = useState('');
   const [sql, setSql] = useState('SELECT 1');
   const [resultState, setResultState] = useState<DbResultState>({ status: 'idle' });
   const [resultMode, setResultMode] = useState<WorkbenchResultMode>('table');
+  const [initSql, setInitSql] = useState('');
+  const [migrationCommand, setMigrationCommand] = useState('');
+  const [initBusy, setInitBusy] = useState<'init-sql' | 'migration' | null>(null);
+  const [initResult, setInitResult] = useState<WorkbenchCommandResult | null>(null);
+  const [initError, setInitError] = useState('');
 
   const basePath = resource.branchId
     ? `/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/data`
     : '';
+  const infraId = resource.source === 'infra' ? resource.id.replace(/^infra:/, '') : '';
+  const projectId = resource.projectId || '';
+  const selectedTable = tablesState.tables.find((table) => sqlTableKey(table) === selectedTableKey) || null;
 
   const loadTables = useCallback(async () => {
     if (!basePath) return;
@@ -4416,18 +4443,19 @@ function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource;
       const res = await apiRequest<{ database?: string; tables: DbTableSummary[] }>(`${basePath}/tables`);
       const tables = res.tables || [];
       setTablesState({ status: 'ok', tables, database: res.database });
-      setSelectedTable((current) => current || tables[0]?.name || '');
-      setSql((current) => (!current || current === 'SELECT 1') && tables[0]?.name ? `SELECT * FROM ${quoteSqlTableName(resource, tables[0].name)} LIMIT 50` : current);
+      setSelectedTableKey((current) => current || (tables[0] ? sqlTableKey(tables[0]) : ''));
+      setSql((current) => (!current || current === 'SELECT 1') && tables[0] ? `SELECT * FROM ${quoteSqlTableName(resource, tables[0])} LIMIT 50` : current);
     } catch (err) {
       setTablesState({ status: 'error', tables: [], message: err instanceof ApiError ? err.message : String(err) });
     }
   }, [basePath, resource]);
 
-  const loadTablePreview = useCallback(async (table: string) => {
+  const loadTablePreview = useCallback(async (table: DbTableSummary) => {
     if (!basePath || !table) return;
     setResultState({ status: 'loading' });
     try {
-      const preview = await apiRequest<DbQueryResult>(`${basePath}/preview?table=${encodeURIComponent(table)}&limit=50`);
+      const schemaQs = table.schema ? `&schema=${encodeURIComponent(table.schema)}` : '';
+      const preview = await apiRequest<DbQueryResult>(`${basePath}/preview?table=${encodeURIComponent(table.name)}${schemaQs}&limit=50`);
       setResultState({ status: 'ok', result: preview });
       setResultMode(preview.columns.length > 0 ? 'table' : 'output');
     } catch (err) {
@@ -4444,6 +4472,42 @@ function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource;
     if (!selectedTable) return;
     void loadTablePreview(selectedTable);
   }, [loadTablePreview, selectedTable]);
+
+  async function runInitializationSql(): Promise<void> {
+    if (!infraId || !projectId || !initSql.trim()) return;
+    setInitBusy('init-sql');
+    setInitError('');
+    try {
+      const result = await apiRequest<WorkbenchCommandResult>(`/api/infra/${encodeURIComponent(infraId)}/init-sql?project=${encodeURIComponent(projectId)}`, {
+        method: 'POST',
+        body: { sql: initSql },
+      });
+      setInitResult(result);
+      void loadTables();
+    } catch (err) {
+      setInitError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setInitBusy(null);
+    }
+  }
+
+  async function runMigrationCommand(): Promise<void> {
+    if (!resource.branchId || !migrationCommand.trim()) return;
+    setInitBusy('migration');
+    setInitError('');
+    try {
+      const result = await apiRequest<WorkbenchCommandResult>(`/api/branches/${encodeURIComponent(resource.branchId)}/database-init/run`, {
+        method: 'POST',
+        body: { command: migrationCommand.trim() },
+      });
+      setInitResult(result);
+      void loadTables();
+    } catch (err) {
+      setInitError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setInitBusy(null);
+    }
+  }
 
   async function runSqlCommand(): Promise<void> {
     if (!basePath || !sql.trim()) return;
@@ -4477,7 +4541,7 @@ function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource;
       <ResourceWorkbenchModal
         open={workbenchOpen}
         title={`${resource.runtime} :${resource.port || resource.containerPort || '?'}`}
-        subtitle={`${tablesState.database || '-'}${selectedTable ? `.${selectedTable}` : ''} · ${resource.displayName}`}
+        subtitle={`${tablesState.database || '-'}${selectedTable ? `.${selectedTable.schema ? `${selectedTable.schema}.` : ''}${selectedTable.name}` : ''} · ${resource.displayName}`}
         onClose={() => setWorkbenchOpen(false)}
       >
         <div className="grid min-h-0 text-sm lg:grid-cols-[320px_minmax(0,1fr)]">
@@ -4504,19 +4568,19 @@ function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource;
                   </div>
                   <div className="ml-4 space-y-1 border-l border-[hsl(var(--hairline))] pl-2">
                     {tablesState.tables.map((table) => {
-                      const active = table.name === selectedTable;
+                      const active = sqlTableKey(table) === selectedTableKey;
                       return (
                         <button
-                          key={table.name}
+                          key={sqlTableKey(table)}
                           type="button"
                           className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors ${active ? 'bg-primary/15 text-foreground ring-1 ring-primary/30' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}
                           onClick={() => {
-                            setSelectedTable(table.name);
-                            setSql(`SELECT * FROM ${quoteSqlTableName(resource, table.name)} LIMIT 50`);
+                            setSelectedTableKey(sqlTableKey(table));
+                            setSql(`SELECT * FROM ${quoteSqlTableName(resource, table)} LIMIT 50`);
                           }}
                         >
                           <Table2 className="h-3.5 w-3.5 shrink-0" />
-                          <span className="min-w-0 flex-1 truncate font-mono">{table.name}</span>
+                          <span className="min-w-0 flex-1 truncate font-mono">{table.schema && resource.runtime === 'PostgreSQL' ? `${table.schema}.${table.name}` : table.name}</span>
                           <span className="text-[10px] text-muted-foreground">{table.type === 'VIEW' ? 'view' : 'table'}</span>
                         </button>
                       );
@@ -4534,7 +4598,7 @@ function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource;
               <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
                 <div className="min-w-0">
                   <div className="text-xs font-semibold">{adapter.consoleLabel}</div>
-                  <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{selectedTable ? `${tablesState.database || '-'}.${selectedTable}` : tablesState.database || '-'}</div>
+                  <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{selectedTable ? `${tablesState.database || '-'}.${selectedTable.schema ? `${selectedTable.schema}.` : ''}${selectedTable.name}` : tablesState.database || '-'}</div>
                 </div>
                 <Button type="button" size="sm" disabled={!sql.trim() || resultState.status === 'loading'} onClick={() => void runSqlCommand()}>
                   {resultState.status === 'loading' ? <Loader2 className="animate-spin" /> : <Play />}
@@ -4568,6 +4632,51 @@ function SqlResourceDataPanel({ resource, adapter }: { resource: BranchResource;
               onViewModeChange={setResultMode}
             />
           </main>
+          <section className="border-t border-[hsl(var(--hairline))] bg-background/30 p-3 lg:col-span-2">
+            <details className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 p-3">
+              <summary className="cursor-pointer text-xs font-semibold">初始化 / 迁移 / 重试</summary>
+              <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                <div className="space-y-2">
+                  <div className="text-[11px] font-medium text-muted-foreground">执行初始化 SQL</div>
+                  <textarea
+                    className="min-h-28 w-full resize-y rounded-md border border-[hsl(var(--hairline))] bg-background px-3 py-2 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    value={initSql}
+                    onChange={(event) => setInitSql(event.target.value)}
+                    placeholder="CREATE TABLE example (id INT PRIMARY KEY);"
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" size="sm" variant="outline" disabled={!initSql.trim() || initBusy !== null || !infraId || !projectId} onClick={() => void runInitializationSql()}>
+                      {initBusy === 'init-sql' ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                      执行初始化 SQL
+                    </Button>
+                    <Button type="button" size="sm" variant="ghost" disabled={!sql.trim()} onClick={() => setInitSql(sql)}>
+                      载入当前命令
+                    </Button>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <div className="text-[11px] font-medium text-muted-foreground">执行迁移命令</div>
+                  <input
+                    className="h-9 w-full rounded-md border border-[hsl(var(--hairline))] bg-background px-3 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    value={migrationCommand}
+                    onChange={(event) => setMigrationCommand(event.target.value)}
+                    placeholder="pnpm exec prisma migrate deploy"
+                  />
+                  <Button type="button" size="sm" variant="outline" disabled={!resource.branchId || !migrationCommand.trim() || initBusy !== null} onClick={() => void runMigrationCommand()}>
+                    {initBusy === 'migration' ? <Loader2 className="animate-spin" /> : <Play />}
+                    执行迁移命令
+                  </Button>
+                  {initError ? <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{initError}</div> : null}
+                  {initResult ? (
+                    <pre className="max-h-32 overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-background p-2 font-mono text-[11px] leading-5 text-muted-foreground">
+                      {(initResult.error ? `[exit ${initResult.exitCode ?? 1}]\n${initResult.error}\n\n` : '') + (initResult.output || (initResult.ok === false ? '执行失败' : '执行完成'))}
+                      {initResult.truncated ? '\n...(输出已截断)' : ''}
+                    </pre>
+                  ) : null}
+                </div>
+              </div>
+            </details>
+          </section>
         </div>
       </ResourceWorkbenchModal>
     </>

@@ -4582,6 +4582,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     rowCount: number;
   }
 
+  interface SqlTableRef {
+    schema?: string;
+    table: string;
+  }
+
   type SqlDataRuntime = 'mysql' | 'postgres';
 
   function mysqlRootPassword(service: InfraService): string {
@@ -4735,6 +4740,29 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return value;
   }
 
+  function sqlSchemaFromRequest(input: unknown): string | undefined {
+    const value = String(input || '').trim();
+    if (!value) return undefined;
+    if (!/^[a-zA-Z0-9_$]+$/.test(value)) {
+      throw new Error('schema 名不合法');
+    }
+    return value;
+  }
+
+  function sqlTableRefFromRequest(tableInput: unknown, schemaInput: unknown): SqlTableRef {
+    return {
+      schema: sqlSchemaFromRequest(schemaInput),
+      table: tableNameFromRequest(tableInput),
+    };
+  }
+
+  function sqlTableIdent(runtime: SqlDataRuntime, ref: SqlTableRef): string {
+    if (runtime === 'postgres') {
+      return ref.schema ? `${pgIdent(ref.schema)}.${pgIdent(ref.table)}` : pgIdent(ref.table);
+    }
+    return sqlIdent(ref.table);
+  }
+
   function redisPassword(service: InfraService): string {
     return service.env?.REDIS_PASSWORD || service.env?.REDIS_PASS || service.env?.REDISCLI_AUTH || '';
   }
@@ -4841,6 +4869,39 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const text = JSON.stringify(value ?? {});
     if (text.length > 20_000) throw new Error('MongoDB 查询 JSON 过长（上限 20KB）');
     return text;
+  }
+
+  function normalizeMongoFindCommand(commandInput: unknown): { collection: string; script: string } {
+    const command = String(commandInput || '').trim();
+    if (!command) throw new Error('MongoDB 命令不能为空');
+    if (command.length > 20_000) throw new Error('MongoDB 命令过长（上限 20KB）');
+    const withoutTrailing = command.replace(/;+$/g, '').trim();
+    if (withoutTrailing.includes(';')) {
+      throw new Error('MongoDB Console 一次只允许执行一条命令');
+    }
+    if (/\b(insert|insertOne|insertMany|update|updateOne|updateMany|delete|deleteOne|deleteMany|drop|dropDatabase|dropCollection|create|createCollection|aggregate|mapReduce|eval|runCommand|adminCommand|getSiblingDB|copyDatabase|shutdownServer)\b/i.test(withoutTrailing) || /\$where\b/i.test(withoutTrailing)) {
+      throw new Error('MongoDB Console 当前只允许只读 find 查询');
+    }
+
+    const getCollectionMatch = withoutTrailing.match(/^db\.getCollection\((["'])([^"'\r\n]{1,120})\1\)\.find\s*\(/);
+    const dotCollectionMatch = withoutTrailing.match(/^db\.([a-zA-Z0-9_$-]{1,120})\.find\s*\(/);
+    const collection = getCollectionMatch?.[2] || dotCollectionMatch?.[1] || '';
+    if (!collection) {
+      throw new Error('MongoDB Console 当前只支持 db.getCollection("collection").find(...) 或 db.collection.find(...)');
+    }
+    mongoCollectionFromRequest(collection);
+    if (!/\.limit\s*\(\s*\d{1,3}\s*\)\s*$/.test(withoutTrailing)) {
+      throw new Error('MongoDB find 查询必须显式追加 limit(1-100)');
+    }
+    const limitRaw = Number(withoutTrailing.match(/\.limit\s*\(\s*(\d{1,3})\s*\)\s*$/)?.[1] || 0);
+    if (!Number.isFinite(limitRaw) || limitRaw < 1 || limitRaw > 100) {
+      throw new Error('MongoDB limit 必须在 1-100 之间');
+    }
+
+    return {
+      collection,
+      script: `JSON.stringify((${withoutTrailing}).toArray())`,
+    };
   }
 
   async function runRedisCli(service: InfraService, args: string[], timeoutMs = 15_000): Promise<string> {
@@ -6994,13 +7055,27 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       const database = sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch);
       const sql = ctx.runtime === 'postgres'
-        ? "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name"
+        ? "SELECT table_schema, table_name, table_type FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema') ORDER BY table_schema, table_name"
         : 'SHOW FULL TABLES';
       const result = await runSqlDataQuery(ctx.runtime, ctx.service, ctx.branch, sql);
-      const tables = result.rows.map((row) => ({
-        name: row[0] || '',
-        type: row[1] || 'BASE TABLE',
-      })).filter((row) => row.name);
+      const tables = result.rows.map((row) => {
+        if (ctx.runtime === 'postgres') {
+          const schema = row[0] || 'public';
+          const name = row[1] || '';
+          return {
+            schema,
+            name,
+            fullName: `${schema}.${name}`,
+            type: row[2] || 'BASE TABLE',
+          };
+        }
+        return {
+          schema: database,
+          name: row[0] || '',
+          fullName: row[0] || '',
+          type: row[1] || 'BASE TABLE',
+        };
+      }).filter((row) => row.name);
       res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, runtime: ctx.runtime, database, tables });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -7038,9 +7113,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
   router.get('/branches/:id/resources/:resourceId/data/schema', async (req, res) => {
     const ctx = await resolveSqlDataResourceForRequest(req, res);
     if (!ctx) return;
-    let table = '';
+    let ref: SqlTableRef;
     try {
-      table = tableNameFromRequest(req.query.table);
+      ref = sqlTableRefFromRequest(req.query.table, req.query.schema);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
       return;
@@ -7054,13 +7129,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
           'column_default,',
           "CASE WHEN column_default LIKE 'nextval%' THEN 'auto_increment' ELSE '' END AS extra",
           'FROM information_schema.columns c',
-          `WHERE table_schema = 'public' AND table_name = ${sqlString(table)}`,
+          `WHERE table_schema = ${pgString(ref.schema || 'public')} AND table_name = ${pgString(ref.table)}`,
           'ORDER BY ordinal_position',
         ].join(' ')
         : [
           'SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_DEFAULT, EXTRA',
           'FROM information_schema.COLUMNS',
-          `WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${sqlString(table)}`,
+          `WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${sqlString(ref.table)}`,
           'ORDER BY ORDINAL_POSITION',
         ].join(' ');
       const result = await runSqlDataQuery(ctx.runtime, ctx.service, ctx.branch, sql);
@@ -7072,7 +7147,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         defaultValue: row[4] || '',
         extra: row[5] || '',
       }));
-      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, runtime: ctx.runtime, database, table, columns });
+      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, runtime: ctx.runtime, database, schema: ref.schema || (ctx.runtime === 'postgres' ? 'public' : database), table: ref.table, columns });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -7081,9 +7156,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
   router.get('/branches/:id/resources/:resourceId/data/preview', async (req, res) => {
     const ctx = await resolveSqlDataResourceForRequest(req, res);
     if (!ctx) return;
-    let table = '';
+    let ref: SqlTableRef;
     try {
-      table = tableNameFromRequest(req.query.table);
+      ref = sqlTableRefFromRequest(req.query.table, req.query.schema);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
       return;
@@ -7092,9 +7167,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.floor(limitRaw), 1), 200) : 50;
     try {
       const database = sqlDataDatabase(ctx.runtime, ctx.service, ctx.branch);
-      const ident = ctx.runtime === 'postgres' ? pgIdent(table) : sqlIdent(table);
+      const ident = sqlTableIdent(ctx.runtime, ref);
       const result = await runSqlDataQuery(ctx.runtime, ctx.service, ctx.branch, `SELECT * FROM ${ident} LIMIT ${limit}`);
-      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, runtime: ctx.runtime, database, table, limit, ...result });
+      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, runtime: ctx.runtime, database, schema: ref.schema || (ctx.runtime === 'postgres' ? 'public' : database), table: ref.table, limit, ...result });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -7318,6 +7393,55 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const data = await runMongoJson(ctx.service, ctx.branch, script, database);
       res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, database, collection, limit, documents: Array.isArray(data) ? data : [] });
     } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/branches/:id/resources/:resourceId/data/mongo/command', async (req, res) => {
+    const ctx = await resolveMongoDataResourceForRequest(req, res);
+    if (!ctx) return;
+    let database = '';
+    let command: { collection: string; script: string };
+    try {
+      database = mongoDatabaseFromRequest(req.body?.database, mongoDatabaseForBranch(ctx.service, ctx.branch));
+      command = normalizeMongoFindCommand(req.body?.command);
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+      return;
+    }
+    try {
+      const data = await runMongoJson(ctx.service, ctx.branch, command.script, database);
+      stateService.appendActivityLog(ctx.projectId, {
+        type: 'resource-data-query',
+        branchId: ctx.branch.id,
+        branchName: ctx.branch.branch,
+        actor: resolveActorFromRequest(req),
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resourceName,
+        result: 'success',
+        note: `${ctx.resourceName} 执行 MongoDB find：${database}.${command.collection}`,
+      });
+      stateService.save();
+      res.json({
+        branchId: ctx.branch.id,
+        resourceId: ctx.resourceId,
+        database,
+        collection: command.collection,
+        kind: 'documents',
+        documents: Array.isArray(data) ? data : [],
+      });
+    } catch (err) {
+      stateService.appendActivityLog(ctx.projectId, {
+        type: 'resource-data-query',
+        branchId: ctx.branch.id,
+        branchName: ctx.branch.branch,
+        actor: resolveActorFromRequest(req),
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resourceName,
+        result: 'failed',
+        note: `${ctx.resourceName} MongoDB command 失败：${(err as Error).message}`,
+      });
+      stateService.save();
       res.status(500).json({ error: (err as Error).message });
     }
   });
