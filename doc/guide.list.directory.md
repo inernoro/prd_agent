@@ -1020,3 +1020,5 @@
 | 2026-03-10 | 新增 | `guide.list.directory.md` | 文档索引目录页 |
 | 2026-06-10 | 新增 | `debt.cds-nginx-loading-pages` | CDS loading pages 债务台账 |
 | 2026-06-10 | 新增 | `design.cds-skill-version-update` | CDS 技能版本与更新架构 |
+| 2026-06-10 | 新增 | `plan.product-agent-version-workflow` | 产品管理智能体版本流程整改计划 |
+| 2026-06-11 | 新增 | `report.version-20260610-1-summary` | version-20260610-1 分支改动说明 |
