@@ -3,11 +3,13 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.Services;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -29,13 +31,15 @@ public class ProductAgentController : ControllerBase
     private readonly ILogger<ProductAgentController> _logger;
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
+    private readonly IFileContentExtractor _fileExtractor;
 
-    public ProductAgentController(MongoDbContext db, ILogger<ProductAgentController> logger, ILlmGateway gateway, ILLMRequestContextAccessor llmRequestContext)
+    public ProductAgentController(MongoDbContext db, ILogger<ProductAgentController> logger, ILlmGateway gateway, ILLMRequestContextAccessor llmRequestContext, IFileContentExtractor fileExtractor)
     {
         _db = db;
         _logger = logger;
         _gateway = gateway;
         _llmRequestContext = llmRequestContext;
+        _fileExtractor = fileExtractor;
     }
 
     private string GetUserId() => this.GetRequiredUserId();
@@ -2253,6 +2257,19 @@ public class ProductAgentController : ControllerBase
     // ════════════════════════ 工作台「工作助手」问答（SSE 流式）════════════════════════
 
     /// <summary>
+    /// AI 助手附件解析：上传 md / pdf，提取纯文本返回（无状态不落库，文本由前端随提问回传）。
+    /// </summary>
+    [HttpPost("assistant/attachments")]
+    [RequestSizeLimit(12 * 1024 * 1024)]
+    public async Task<IActionResult> ExtractAssistantAttachment(IFormFile file)
+    {
+        var result = await AssistantAttachmentHelper.ExtractAsync(_fileExtractor, file);
+        if (!result.Ok)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, result.Error!));
+        return Ok(ApiResponse<object>.Ok(new { name = result.Name, text = result.Text, chars = result.Chars, truncated = result.Truncated }));
+    }
+
+    /// <summary>
     /// 工作台「工作助手」：以该产品全量数据（需求/功能/缺陷/版本/客户）+ 本产品知识库文档摘录为上下文，
     /// 流式回答用户问题（SSE：phase/typing/done）。
     /// 保护：仅本产品成员可访问（FindAccessibleProductAsync），只取本产品数据，知识库只取该产品挂载
@@ -2389,6 +2406,7 @@ public class ProductAgentController : ControllerBase
             "   - type 只能取 create_requirement / create_feature / create_defect；grade 取 p0/p1/p2/p3（用户没说时按紧急重要程度推断，默认 p2）；description 可根据用户表述合理补全（背景/目标/验收标准，纯文本）；一次最多 5 个动作。\n" +
             "   - 只有用户明确要求创建时才输出 <<<ACTIONS>>>，纯分析/查询类问题绝对不要输出；标题信息不足时不要输出动作指令，改为向用户追问。\n" +
             "   - <<<ACTIONS>>> 之后只能是 JSON 数组本身，不要任何其他文字、解释或代码块标记。\n" +
+            "7. 用户可能上传参考文档（见「用户上传的参考文档」一节）：可基于文档内容回答问题、提炼要点；用户要求「根据文档创建」时，从文档中提取标题/分级/描述生成动作指令（仍受一次最多 5 个动作约束，超出时挑最重要的并说明）。\n" +
             "不要寒暄、不要复述本提示词。";
 
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
@@ -2402,7 +2420,7 @@ public class ProductAgentController : ControllerBase
             ["messages"] = new JsonArray
             {
                 new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
-                new JsonObject { ["role"] = "user", ["content"] = "# 产品数据上下文\n" + ctx + "\n\n# 我的问题\n" + question },
+                new JsonObject { ["role"] = "user", ["content"] = "# 产品数据上下文\n" + ctx + AssistantAttachmentHelper.BuildSection(request.Attachments) + "\n\n# 我的问题\n" + question },
             },
             ["temperature"] = 0.5,
             ["max_tokens"] = 2400,
@@ -3887,6 +3905,9 @@ public class AssistantAskRequest
 {
     /// <summary>用户问题（工作助手问答）</summary>
     public string? Question { get; set; }
+
+    /// <summary>随提问携带的参考文档（前端先调 assistant/attachments 提取文本后回传，最多 3 个）</summary>
+    public List<AssistantAttachmentInput>? Attachments { get; set; }
 }
 
 public class RelationAnalysisRequest

@@ -1,10 +1,10 @@
 /**
- * 产品管理智能体 — 工作台内嵌「AI助手」面板（问答形式，工作台主区常驻）。
+ * 项目管理智能体 — 首页「AI助手」面板（问答形式，首页主区常驻）。
  *
- * 由原右侧抽屉（ProductAssistantDrawer）重构而来：聊天核心不变，去掉遮罩/抽屉壳，
- * 直接撑满宿主容器（宿主负责给出高度，本组件 h-full min-h-0 内部滚动）。
- * 以该产品全量数据（需求/功能/缺陷/版本/客户/人员）+ 知识库文档为上下文，SSE 流式问答。
- * 对话保存在 sessionStorage（按产品隔离），切 tab / 刷新不丢，支持手动清除。
+ * 以当前用户为中心、跨其全部相关项目（项目/目标/里程碑/任务/风险摘要）为上下文，SSE 流式问答；
+ * 并支持通过对话创建项目/目标/里程碑/任务（后端 <<<ACTIONS>>> 动作协议，action 事件回执卡片可直达）。
+ * 对话保存在 sessionStorage（用户级），切 tab / 刷新不丢，支持手动清除。
+ * 结构参考 product-agent/ProductAssistantPanel（蓝色强调）。
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -17,16 +17,18 @@ import { useAuthStore } from '@/stores/authStore';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { stripMarkdown } from '@/lib/stripMarkdown';
 import { toast } from '@/lib/toast';
+import { api } from '@/services/api';
 import { AttachmentUploadButton, AttachmentChips, type AssistantAttachment } from '@/components/assistant/AssistantAttachments';
 
-const PRESETS = ['本月需求分析', '本月需求矩阵分析', '本月缺陷分析'];
+const PRESETS = ['我的任务概览', '哪个项目风险最高', '本周到期的里程碑和逾期任务'];
 
 /** 后端 SSE action 事件载荷：助手替用户创建对象的执行结果 */
-interface AssistantActionResult {
-  kind: 'requirement' | 'feature' | 'defect' | string;
+interface PmAssistantActionResult {
+  kind: 'project' | 'goal' | 'milestone' | 'task' | string;
   ok: boolean;
   id?: string | null;
-  no?: string;
+  projectId?: string | null;
+  projectTitle?: string | null;
   title?: string;
   error?: string | null;
 }
@@ -34,13 +36,13 @@ interface AssistantActionResult {
 interface QA {
   q: string;
   a: string;
-  actions?: AssistantActionResult[];
+  actions?: PmAssistantActionResult[];
   /** 随该问题携带的附件名（仅展示用） */
   files?: string[];
 }
 
-export function ProductAssistantPanel({ productId, productName }: { productId: string; productName: string }) {
-  const storageKey = `pa-ai-assistant:${productId}`;
+export function PmAssistantPanel({ prefill }: { prefill?: { text: string; nonce: number } | null }) {
+  const storageKey = 'pm-ai-assistant';
   const me = useAuthStore((s) => s.user);
   const myAvatar = resolveAvatarUrl({ username: me?.username, avatarFileName: me?.avatarFileName });
 
@@ -54,25 +56,33 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
   });
   const [pendingQ, setPendingQ] = useState<string | null>(null);
   const [liveAnswer, setLiveAnswer] = useState('');
-  const [liveActions, setLiveActions] = useState<AssistantActionResult[]>([]);
+  const [liveActions, setLiveActions] = useState<PmAssistantActionResult[]>([]);
   const [input, setInput] = useState('');
   // 附件作为上下文（md/pdf，先经后端提取为纯文本驻留前端，随提问回传）
   const [files, setFiles] = useState<AssistantAttachment[]>([]);
   const [pendingFiles, setPendingFiles] = useState<string[]>([]);
   const answerRef = useRef('');
-  const actionsRef = useRef<AssistantActionResult[]>([]);
+  const actionsRef = useRef<PmAssistantActionResult[]>([]);
   const pendingRef = useRef<string | null>(null);
   const pendingFilesRef = useRef<string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // 对话持久化（按产品隔离，sessionStorage：切走重回不丢，手动清除才没）
+  // 便捷操作「创建目标/里程碑/任务」预填模板 → 填进输入框并聚焦，由用户补全后发送
+  useEffect(() => {
+    if (!prefill || !prefill.text) return;
+    setInput(prefill.text);
+    inputRef.current?.focus();
+  }, [prefill]);
+
+  // 对话持久化（sessionStorage：切走重回不丢，手动清除才没）
   useEffect(() => {
     try {
       sessionStorage.setItem(storageKey, JSON.stringify(history));
     } catch {
       /* ignore quota */
     }
-  }, [history, storageKey]);
+  }, [history]);
 
   const finalize = (a: string) => {
     const q = pendingRef.current;
@@ -90,16 +100,16 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
   };
 
   const sse = useSseStream({
-    url: `/api/product/products/${productId}/assistant/ask`,
+    url: api.pm.assistantAsk(),
     method: 'POST',
     onTyping: (t) => {
       answerRef.current += t;
       setLiveAnswer(answerRef.current);
     },
     onEvent: {
-      // 助手创建对象的执行结果（需求/功能/缺陷），流尾随 done 一起到达
+      // 助手创建对象的执行结果（项目/目标/里程碑/任务），流尾随 done 一起到达
       action: (d) => {
-        actionsRef.current = [...actionsRef.current, d as AssistantActionResult];
+        actionsRef.current = [...actionsRef.current, d as PmAssistantActionResult];
         setLiveActions(actionsRef.current);
       },
     },
@@ -121,7 +131,6 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
   const ask = (q: string) => {
     const text = q.trim();
     if (!text || sse.isStreaming) return;
-    // 语音聆听中发送：静默取消识别，丢弃未决结果，否则迟到的 onresult 会把文本写回已清空的输入框
     if (speech.listening) speech.cancel();
     speechBaseRef.current = '';
     answerRef.current = '';
@@ -170,10 +179,10 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
     <div className="h-full min-h-0 flex flex-col">
       {/* 头部 */}
       <div className="shrink-0 flex items-center gap-2 px-5 py-3.5 border-b border-white/10">
-        <Sparkles size={16} className="text-cyan-300" />
+        <Sparkles size={16} className="text-blue-300" />
         <div className="flex flex-col min-w-0">
           <span className="text-sm font-semibold text-white/90">AI助手</span>
-          <span className="text-[11px] text-white/40 truncate">基于「{productName}」全量数据 + 知识库问答</span>
+          <span className="text-[11px] text-white/40 truncate">基于你全部相关项目的数据，跨项目问答与操作</span>
         </div>
         {history.length > 0 && (
           <button
@@ -194,13 +203,13 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
       >
         {history.length === 0 && !pendingQ && (
           <div className="h-full flex flex-col items-center justify-center gap-3 text-center px-6">
-            <div className="w-12 h-12 rounded-2xl flex items-center justify-center bg-cyan-500/10 border border-cyan-500/25">
-              <Sparkles size={22} className="text-cyan-300" />
+            <div className="w-12 h-12 rounded-2xl flex items-center justify-center bg-blue-500/10 border border-blue-500/25">
+              <Sparkles size={22} className="text-blue-300" />
             </div>
             <div className="text-sm text-white/70 font-medium">问点什么吧</div>
             <div className="text-[12px] text-white/40 leading-relaxed max-w-md">
-              我能基于本产品的需求 / 功能 / 缺陷 / 版本 / 客户与知识库回答你的问题，也能直接替你创建对象。
-              试试下方的快捷分析，或者对我说：「帮我创建一个P1需求：支持导出PDF」。
+              我能基于你相关的全部项目（目标 / 里程碑 / 任务 / 风险）跨项目回答问题，也能直接替你创建。
+              试试下方的快捷分析，或者对我说：「帮我创建一个项目：官网改版，目标是上线新官网」。
               也可以点左下角回形针上传 md / pdf 文档，让我基于文档内容分析或批量创建。
             </div>
           </div>
@@ -209,7 +218,7 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
           <div key={i} className="space-y-2.5">
             <UserRow text={m.q} avatar={myAvatar} files={m.files} />
             <AiRow text={m.a} />
-            {m.actions && m.actions.length > 0 && <ActionResults items={m.actions} productId={productId} />}
+            {m.actions && m.actions.length > 0 && <ActionResults items={m.actions} />}
           </div>
         ))}
         {pendingQ && (
@@ -224,7 +233,7 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
                 <StreamingText text={stripMarkdown(liveAnswer)} streaming />
               )}
             </AiRow>
-            {liveActions.length > 0 && <ActionResults items={liveActions} productId={productId} />}
+            {liveActions.length > 0 && <ActionResults items={liveActions} />}
           </div>
         )}
       </div>
@@ -236,26 +245,27 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
             key={p}
             disabled={sse.isStreaming}
             onClick={() => ask(p)}
-            className="text-[12px] px-2.5 py-1 rounded-full border border-cyan-500/30 text-cyan-200 bg-cyan-500/10 hover:bg-cyan-500/20 disabled:opacity-40"
+            className="text-[12px] px-2.5 py-1 rounded-full border border-blue-500/30 text-blue-200 bg-blue-500/10 hover:bg-blue-500/20 disabled:opacity-40"
           >
             {p}
           </button>
         ))}
       </div>
 
-      {/* 输入区（参考 Codex 桌面端：大输入框 + 底部操作行，语音/发送在框内右下） */}
+      {/* 输入区（大输入框 + 底部操作行，语音/发送在框内右下） */}
       <div className="shrink-0 px-5 py-3">
         <div
           className={`rounded-xl border bg-white/5 flex flex-col transition-colors ${
-            speech.listening ? 'border-red-400/50' : 'border-white/10 focus-within:border-cyan-500/40'
+            speech.listening ? 'border-red-400/50' : 'border-white/10 focus-within:border-blue-500/40'
           }`}
         >
           {files.length > 0 && (
             <div className="px-3 pt-2.5">
-              <AttachmentChips items={files} onRemove={(i) => setFiles((p) => p.filter((_, idx) => idx !== i))} accent="#22D3EE" />
+              <AttachmentChips items={files} onRemove={(i) => setFiles((p) => p.filter((_, idx) => idx !== i))} accent="#3B82F6" />
             </div>
           )}
           <textarea
+            ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
@@ -271,7 +281,7 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
           />
           <div className="flex items-center gap-1.5 px-2.5 pb-2.5">
             <AttachmentUploadButton
-              extractUrl="/api/product/assistant/attachments"
+              extractUrl={api.pm.assistantAttachments()}
               attachments={files}
               onAdd={(f) => setFiles((p) => [...p, f])}
               disabled={sse.isStreaming}
@@ -299,7 +309,7 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
               <button
                 onClick={() => ask(input)}
                 disabled={!input.trim() || sse.isStreaming}
-                className="flex items-center justify-center w-8 h-8 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm hover:bg-cyan-500/30 disabled:opacity-40"
+                className="flex items-center justify-center w-8 h-8 rounded-lg bg-blue-500/20 text-blue-200 border border-blue-500/40 text-sm hover:bg-blue-500/30 disabled:opacity-40"
                 title="发送"
               >
                 {sse.isStreaming ? <MapSpinner size={14} /> : <Send size={14} />}
@@ -313,14 +323,22 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
 }
 
 const ACTION_KIND_META: Record<string, { label: string; color: string }> = {
-  requirement: { label: '需求', color: '#FBBF24' },
-  feature: { label: '功能', color: '#A78BFA' },
-  defect: { label: '缺陷', color: '#F87171' },
+  project: { label: '项目', color: '#3B82F6' },
+  goal: { label: '目标', color: '#FBBF24' },
+  milestone: { label: '里程碑', color: '#A78BFA' },
+  task: { label: '任务', color: '#34D399' },
 };
 
-/** 助手创建对象的结果卡片：成功可点击直达详情页，失败显示原因。与 AI 气泡左对齐（头像宽 28 + 间距 8）。 */
-function ActionResults({ items, productId }: { items: AssistantActionResult[]; productId: string }) {
+/** 助手创建对象的结果卡片：成功可点击直达对应项目页/任务页，失败显示原因。 */
+function ActionResults({ items }: { items: PmAssistantActionResult[] }) {
   const navigate = useNavigate();
+  const open = (r: PmAssistantActionResult) => {
+    if (!r.ok || !r.projectId) return;
+    if (r.kind === 'project') navigate(`/pm-agent/p/${r.projectId}`);
+    else if (r.kind === 'task' && r.id) navigate(`/pm-agent/p/${r.projectId}/task/${r.id}`);
+    else if (r.kind === 'goal') navigate(`/pm-agent/p/${r.projectId}?tab=goals`);
+    else if (r.kind === 'milestone') navigate(`/pm-agent/p/${r.projectId}?tab=milestones`);
+  };
   return (
     <div className="flex flex-col gap-1.5" style={{ marginLeft: 36 }}>
       {items.map((r, i) => {
@@ -336,15 +354,17 @@ function ActionResults({ items, productId }: { items: AssistantActionResult[]; p
         return (
           <button
             key={i}
-            onClick={() => r.id && navigate(`/product-agent/p/${productId}/${r.kind}/${r.id}`)}
-            className="group flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 bg-white/[0.03] hover:bg-cyan-500/10 hover:border-cyan-500/30 text-left"
+            onClick={() => open(r)}
+            className="group flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 bg-white/[0.03] hover:bg-blue-500/10 hover:border-blue-500/30 text-left"
           >
             <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0" style={{ color: meta.color, background: `${meta.color}1a` }}>
               已创建{meta.label}
             </span>
-            <span className="text-[11px] font-mono text-white/40 shrink-0">{r.no}</span>
+            {r.projectTitle && r.kind !== 'project' && (
+              <span className="text-[11px] text-white/40 shrink-0 truncate" style={{ maxWidth: 120 }}>{r.projectTitle}</span>
+            )}
             <span className="text-[12px] text-white/85 truncate flex-1">{r.title}</span>
-            <span className="flex items-center gap-1 text-[11px] text-cyan-300/70 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+            <span className="flex items-center gap-1 text-[11px] text-blue-300/70 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
               查看 <ExternalLink size={11} />
             </span>
           </button>
@@ -358,11 +378,11 @@ function ActionResults({ items, productId }: { items: AssistantActionResult[]; p
 function UserRow({ text, avatar, files }: { text: string; avatar: string; files?: string[] }) {
   return (
     <div className="flex items-start gap-2 justify-end">
-      <div className="max-w-[80%] text-[13px] text-cyan-50 bg-cyan-500/15 border border-cyan-500/25 rounded-2xl rounded-tr-sm px-3 py-2 whitespace-pre-wrap leading-relaxed">
+      <div className="max-w-[80%] text-[13px] text-blue-50 bg-blue-500/15 border border-blue-500/25 rounded-2xl rounded-tr-sm px-3 py-2 whitespace-pre-wrap leading-relaxed">
         {files && files.length > 0 && (
           <div className="flex flex-wrap gap-1 mb-1.5">
             {files.map((f, i) => (
-              <span key={i} className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 border border-cyan-400/30 text-cyan-100">
+              <span key={i} className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 border border-blue-400/30 text-blue-100">
                 <FileText size={10} /> {f}
               </span>
             ))}
@@ -387,8 +407,8 @@ function AiRow({ text, streaming, children }: { text?: string; streaming?: boole
   };
   return (
     <div className="flex items-start gap-2">
-      <div className="w-7 h-7 rounded-full shrink-0 flex items-center justify-center bg-cyan-500/15 border border-cyan-500/30 mt-0.5">
-        <Sparkles size={14} className="text-cyan-300" />
+      <div className="w-7 h-7 rounded-full shrink-0 flex items-center justify-center bg-blue-500/15 border border-blue-500/30 mt-0.5">
+        <Sparkles size={14} className="text-blue-300" />
       </div>
       <div className="group relative max-w-[85%] text-[13px] text-white/85 bg-white/[0.04] border border-white/10 rounded-2xl rounded-tl-sm px-3 py-2 leading-relaxed whitespace-pre-wrap">
         {children ?? text}

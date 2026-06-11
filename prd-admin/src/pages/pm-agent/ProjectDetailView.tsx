@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Sparkles, Plus, LayoutGrid, List, GanttChartSquare, Trash2, Users, UserCog, Award, Search, CalendarClock, BookOpen, Gavel, FileText, NotebookText, Target, Milestone, FolderOpen, ShieldAlert, Stethoscope, TrendingDown } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { ArrowLeft, Sparkles, Plus, LayoutGrid, List, GanttChartSquare, Trash2, Users, UserCog, Award, Search, CalendarClock, BookOpen, Gavel, FileText, NotebookText, Target, Milestone, FolderOpen, ShieldAlert, Stethoscope, TrendingDown, MoreHorizontal } from 'lucide-react';
 import { Button } from '@/components/design/Button';
+import { AgentFullscreenLayout, type NavItem } from '@/components/agent-shell/AgentFullscreenLayout';
+import '@/components/agent-shell/agent-cards.css';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { toast } from '@/lib/toast';
@@ -28,19 +30,15 @@ import { ClosureReportPanel } from './ClosureReportPanel';
 import { HealthDiagnosisPanel } from './HealthDiagnosisPanel';
 import { EvaluatePanel } from './EvaluatePanel';
 import { TaskDetailDrawer } from './TaskDetailDrawer';
-import { PROJECT_TYPE_REGISTRY, LIFECYCLE_REGISTRY, TASK_STATUS_REGISTRY, PRIORITY_REGISTRY, GRADE_REGISTRY, progressColor } from './pmConstants';
-
-interface Props {
-  projectId: string;
-  onBack: () => void;
-}
+import { PROJECT_TYPE_REGISTRY, LIFECYCLE_REGISTRY, TASK_STATUS_REGISTRY, PRIORITY_REGISTRY, GRADE_REGISTRY, progressColor, PM_ACCENT } from './pmConstants';
 
 type ViewTab = 'goals' | 'milestones' | 'tasks' | 'decisions' | 'risks' | 'report' | 'library' | 'members' | 'stakeholders';
 type LibraryTab = 'weekly' | 'meetings' | 'knowledge';
 type TaskViewMode = 'board' | 'list' | 'gantt';
 type GroupBy = 'none' | 'assignee' | 'priority';
 
-const TABS: { key: ViewTab; label: string; icon: typeof LayoutGrid }[] = [
+// 项目层左侧导航（一级）：项目内 9 大模块
+const TABS: NavItem<ViewTab>[] = [
   { key: 'goals', label: '目标', icon: Target },
   { key: 'milestones', label: '里程碑', icon: Milestone },
   { key: 'tasks', label: '任务', icon: LayoutGrid },
@@ -51,6 +49,8 @@ const TABS: { key: ViewTab; label: string; icon: typeof LayoutGrid }[] = [
   { key: 'members', label: '成员', icon: UserCog },
   { key: 'stakeholders', label: '干系人', icon: Users },
 ];
+
+const TAB_KEYS = new Set<ViewTab>(TABS.map((t) => t.key));
 
 // 「资料」二级子 tab（周报 / 会议纪要 / 知识库）
 const LIBRARY_TABS: { key: LibraryTab; label: string; icon: typeof LayoutGrid }[] = [
@@ -69,15 +69,27 @@ const TASK_VIEWS: { key: TaskViewMode; label: string; icon: typeof LayoutGrid }[
 const isOverdue = (t: PmTask) => !!t.dueAt && t.status !== 'done' && t.status !== 'cancelled' && new Date(t.dueAt) < new Date(new Date().toDateString());
 const ORDER_STEP = 1024;
 
-export function ProjectDetailView({ projectId, onBack }: Props) {
+/** 项目层全屏页（/pm-agent/p/:projectId）：左侧导航 = 项目内 9 大模块，?tab= 持久化。 */
+export function ProjectDetailPage() {
   const navigate = useNavigate();
+  const { projectId = '' } = useParams();
   const myId = useAuthStore((s) => s.user?.userId ?? '');
   const [project, setProject] = useState<PmProject | null>(null);
   const [tasks, setTasks] = useState<PmTask[]>([]);
   const [milestones, setMilestones] = useState<PmMilestone[]>([]);
   const [goals, setGoals] = useState<PmGoal[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<ViewTab>('tasks');
+  // 当前模块记录在 URL（?tab=），从任务详情页返回时能停在原模块
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const tab: ViewTab = tabParam && TAB_KEYS.has(tabParam as ViewTab) ? (tabParam as ViewTab) : 'tasks';
+  const setTab = useCallback((key: ViewTab) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set('tab', key);
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
   const [viewMode, setViewMode] = useState<TaskViewMode>('board');
   const [showDecompose, setShowDecompose] = useState(false);
   const [showEvaluate, setShowEvaluate] = useState(false);
@@ -97,8 +109,8 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
     const t = tasks.find((x) => x.id === taskId);
     if (t) { setTab('tasks'); setViewMode('list'); setOpenTask(t); }
     else toast.error('任务不存在', '可能已被删除');
-  }, [tasks]);
-  const navigateToWeekly = useCallback((reportId: string) => { setTab('library'); setLibraryTab('weekly'); setTargetWeeklyId(reportId); }, []);
+  }, [tasks, setTab]);
+  const navigateToWeekly = useCallback((reportId: string) => { setTab('library'); setLibraryTab('weekly'); setTargetWeeklyId(reportId); }, [setTab]);
   // 立项后引导：成员只有项目经理一人、且无观察者时，引导去拉人协作（有人后自动消失，可手动收起）
   const [teamGuideDismissed, setTeamGuideDismissed] = useState(() => sessionStorage.getItem(`pm-team-guide-${projectId}`) === '1');
   const dismissTeamGuide = () => { sessionStorage.setItem(`pm-team-guide-${projectId}`, '1'); setTeamGuideDismissed(true); };
@@ -223,8 +235,18 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
 
   const hasFilter = search || fPriority || fAssignee || myOnly;
 
-  if (loading) return <div className="flex-1 min-h-0 flex items-center justify-center"><MapSectionLoader text="正在加载项目…" /></div>;
-  if (!project) return null;
+  if (loading) {
+    return (
+      <div className="h-screen min-h-0 flex items-center justify-center bg-[#0f1014]">
+        <MapSectionLoader text="正在加载项目…" />
+      </div>
+    );
+  }
+  if (!project) {
+    return (
+      <div className="h-screen min-h-0 flex items-center justify-center bg-[#0f1014] text-white/40 text-sm">项目不存在或无权访问</div>
+    );
+  }
 
   const typeMeta = PROJECT_TYPE_REGISTRY[project.projectType];
   const lifeMeta = LIFECYCLE_REGISTRY[project.lifecycle];
@@ -249,12 +271,24 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
   })();
 
   return (
-    <div className="flex flex-col gap-3 h-full min-h-0">
-      {/* 项目头部 */}
+    <AgentFullscreenLayout
+      title={project.title}
+      subtitle={project.projectNo}
+      topSlot={
+        <div className="mb-2">
+          <button onClick={() => navigate('/pm-agent?nav=projects')} className="flex items-center gap-1.5 text-[11px] text-white/40 hover:text-white">
+            <ArrowLeft size={13} /> 项目列表
+          </button>
+        </div>
+      }
+      items={TABS}
+      active={tab}
+      onSelect={setTab}
+      accent={PM_ACCENT}
+    >
+    <div className="flex-1 flex flex-col gap-3 min-h-0 p-5 pa-accent-blue">
+      {/* 项目头部（精简：标题 + 徽章 + 关键信息，低频操作收进「更多操作」） */}
       <div className="shrink-0">
-        <button onClick={onBack} className="flex items-center gap-1 text-[12px] mb-2 hover:opacity-70" style={{ color: 'var(--text-muted)' }}>
-          <ArrowLeft size={14} /> 返回项目列表
-        </button>
         <div className="flex items-start gap-3 flex-wrap">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
@@ -315,15 +349,12 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
               )}
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {(project.ownerId === myId || project.leaderId === myId) && (
-              <>
-                <Button variant="ghost" onClick={() => setShowDiagnosis(true)}><Stethoscope size={14} />AI 健康诊断</Button>
-                <Button variant="ghost" onClick={() => setShowClosure(true)}><Sparkles size={14} />AI 结案报告</Button>
-              </>
-            )}
-            <Button variant="secondary" onClick={() => setShowEvaluate(true)}><Award size={14} />结案评价</Button>
-          </div>
+          <MoreActionsMenu
+            canManage={project.ownerId === myId || project.leaderId === myId}
+            onDiagnosis={() => setShowDiagnosis(true)}
+            onClosure={() => setShowClosure(true)}
+            onEvaluate={() => setShowEvaluate(true)}
+          />
         </div>
       </div>
 
@@ -349,23 +380,6 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
           </div>
         </div>
       )}
-
-      {/* Tab 切换 */}
-      <div className="shrink-0">
-        <div className="inline-flex flex-wrap gap-1 rounded-lg p-1" style={{ background: 'var(--bg-base)' }}>
-          {TABS.map((t) => {
-            const Icon = t.icon;
-            const active = tab === t.key;
-            return (
-              <button key={t.key} onClick={() => setTab(t.key)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] transition-colors shrink-0"
-                style={{ background: active ? 'var(--bg-card)' : 'transparent', color: active ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                <Icon size={14} /> {t.label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
 
       {/* 任务工具栏：视图切换（看板/列表/甘特）+ 快速添加任务 + AI 拆解（仅「任务」Tab）*/}
       {tab === 'tasks' && (
@@ -592,6 +606,55 @@ export function ProjectDetailView({ projectId, onBack }: Props) {
 
       {showDiagnosis && (
         <HealthDiagnosisPanel projectId={projectId} projectNo={project.projectNo} onClose={() => setShowDiagnosis(false)} />
+      )}
+    </div>
+    </AgentFullscreenLayout>
+  );
+}
+
+/** 项目头部「更多操作」下拉：AI 健康诊断 / AI 结案报告（管理者）+ 结案评价 */
+function MoreActionsMenu({ canManage, onDiagnosis, onClosure, onEvaluate }: {
+  canManage: boolean;
+  onDiagnosis: () => void;
+  onClosure: () => void;
+  onEvaluate: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  const items = [
+    ...(canManage ? [
+      { label: 'AI 健康诊断', icon: Stethoscope, run: onDiagnosis },
+      { label: 'AI 结案报告', icon: Sparkles, run: onClosure },
+    ] : []),
+    { label: '结案评价', icon: Award, run: onEvaluate },
+  ];
+
+  return (
+    <div className="relative shrink-0" ref={ref}>
+      <Button variant="secondary" size="sm" onClick={() => setOpen((v) => !v)}>
+        <MoreHorizontal size={14} />更多操作
+      </Button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-50 min-w-[160px] rounded-lg border py-1 shadow-xl"
+          style={{ background: 'var(--bg-elevated)', borderColor: 'var(--border-subtle)' }}>
+          {items.map((it) => {
+            const Icon = it.icon;
+            return (
+              <button key={it.label} onClick={() => { setOpen(false); it.run(); }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-left hover:bg-white/5"
+                style={{ color: 'var(--text-primary)' }}>
+                <Icon size={14} style={{ color: 'var(--text-muted)' }} /> {it.label}
+              </button>
+            );
+          })}
+        </div>
       )}
     </div>
   );

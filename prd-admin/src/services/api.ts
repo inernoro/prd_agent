@@ -1422,6 +1422,13 @@ export const api = {
     knowledge: {
       file: (fileId: string) => `/api/pm/knowledge/files/${fileId}`,
     },
+    // 首页工作台（跨项目）
+    myTodos: () => '/api/pm/my-todos',
+    reportsSummary: (scope?: string) => `/api/pm/reports/summary${scope ? `?scope=${encodeURIComponent(scope)}` : ''}`,
+    preferences: () => '/api/pm/preferences',
+    quickActions: () => '/api/pm/preferences/quick-actions',
+    assistantAsk: () => '/api/pm/assistant/ask',
+    assistantAttachments: () => '/api/pm/assistant/attachments',
     weeklyReportsImportable: (params?: { weekYear?: number; weekNumber?: number }) => {
       const q = new URLSearchParams();
       if (params?.weekYear) q.set('weekYear', String(params.weekYear));
