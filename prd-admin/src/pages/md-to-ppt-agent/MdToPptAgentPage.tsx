@@ -256,6 +256,29 @@ const THEME_OPTIONS: Array<{
       sampleTitle: '轻盈信息层', stat: '78%', statLabel: '透明度',
     },
   },
+  {
+    value: 'atelier-zero', label: '工坊拼贴', desc: '暖纸 + 斜体衬线混排 + 珊瑚句点，杂志级印刷感（open-design 同款）',
+    dotBg: '#efe7d2', dotRing: '#ed6f5c',
+    preview: {
+      style: {
+        background:
+          'radial-gradient(80% 60% at 100% 0%, rgba(106,92,56,0.08), transparent 60%), radial-gradient(70% 50% at 0% 100%, rgba(106,92,56,0.06), transparent 60%), #efe7d2',
+      },
+      ink: '#15140f', accent: '#ed6f5c',
+      titleFontFamily: "'Playfair Display', Georgia, serif",
+      sampleTitle: '工坊年鉴', stat: 'II.', statLabel: 'CHAPTER',
+    },
+  },
+  {
+    value: 'kami-paper', label: 'Kami 纸墨', desc: '羊皮纸 + 墨蓝单强调 + 衬线单字重，白皮书印刷质感（kami 紙）',
+    dotBg: '#f5f4ed', dotRing: '#1B365D',
+    preview: {
+      style: { background: '#f5f4ed' },
+      ink: '#141413', accent: '#1B365D',
+      titleFontFamily: "Charter, 'Source Han Serif SC', 'Noto Serif SC', Georgia, serif",
+      sampleTitle: '纸上提案', stat: '05', statLabel: 'SECTION',
+    },
+  },
 ];
 
 // 空状态快速开始示例（零摩擦输入：点击填入输入框，用户可改后再发送）

@@ -270,6 +270,30 @@ public class MdToPptController : ControllerBase
                     "字体：h1/h2 用 Inter 800；h3/h4 海蓝全大写；正文 Inter。" +
                     ".card 用半透明白（rgba(255,255,255,.72)）+ backdrop-filter:blur(14px) + 1px 白边——玻璃卡是本风格签名；" +
                     ".stat 数字海蓝；.orb 用天青低透明度光晕；整体如 macOS 发布会的轻盈通透");
+            case "atelier-zero":
+                return (
+                    ":root{--bg:#efe7d2;--bg2:#ece4cf;--ink:#15140f;--muted:#5a5448;--line:rgba(21,20,15,.18);--card:#f7f1de;--a1:#ed6f5c;--a2:#e9b94a;--a3:#6e7448;--orb-op:0;}\n" +
+                    "html,body,.reveal{background:#efe7d2;}\n",
+                    "工坊拼贴（Atelier Zero，源自 open-design.ai 的招牌设计系统）——暖手工纸底（#efe7d2）+ 珊瑚单热点（#ed6f5c），" +
+                    "杂志级印刷质感（Monocle/Apartamento/IDEA 气质）。" +
+                    "字体：大标题用 Inter 800 紧排（letter-spacing:-0.03em），其中 1-2 个情绪词用 'Playfair Display' Italic 500 斜体衬线混排在同一行——" +
+                    "粗黑无衬线扛结构、斜体衬线带情绪，这是本风格的签名；每个标题句尾加珊瑚色句点（<span style=\"color:var(--a1)\">.</span>）。" +
+                    "章节标用 Playfair Italic 罗马数字（I. II. III.，珊瑚色）；微注用 'JetBrains Mono' 10px 弱墨色（如坐标 52.5200 N · 13.4050 E、版号 FIG. 01 / OD-26、页码 004 / 008）。" +
+                    "颜色铁律：珊瑚每页最多一个热点（CTA 或罗马数字二选一）；芥末黄 #e9b94a 只做首饰级点缀（一颗星/一个圆点）绝不做主强调；禁止纯黑（最深 #15140f）、禁止纯白底。" +
+                    ".card 用骨白 #f7f1de + 18px 圆角 + 1px 墨色 6% 内描边；分隔一律 1px hairline 细线；" +
+                    ".stat 数字配虚线圆环装饰；版式不对称、上重下轻、留白慷慨，如小型高工艺工作室的年报内页");
+            case "kami-paper":
+                return (
+                    ":root{--bg:#f5f4ed;--bg2:#e8e6dc;--ink:#141413;--muted:#504e49;--line:#e5e3d8;--card:#faf9f5;--a1:#1B365D;--a2:#2D5A8A;--a3:#6b6a64;--orb-op:0;}\n" +
+                    "html,body,.reveal{background:#f5f4ed;}\n",
+                    "纸墨蓝（Kami 紙，open-design.ai 出品的印刷纸面系统）——羊皮纸底（#f5f4ed，绝不用纯白）+ 墨蓝单强调（#1B365D），" +
+                    "高级白皮书/打字机信函质感，多语排版（中文用 'Source Han Serif SC'/'Noto Serif SC'）。" +
+                    "字体铁律：层级全靠衬线单字重 500 撑——禁止加粗（700/900）、禁止斜体、禁止第二强调色；正文行高紧凑（1.4-1.55，印刷节奏）。" +
+                    "墨蓝只占版面 ≤5%：章节编号、引文左侧竖线、关键指标数值——超了就俗。" +
+                    "灰阶只用四级暖灰（#141413/#3d3d3a/#504e49/#6b6a64），禁止冷灰（slate 系）；" +
+                    ".card 用米白 #faf9f5 + 1px ring 描边 + 极轻晕影（0 4px 24px rgba(0,0,0,.05)），禁止硬投影；" +
+                    "tag/chip 底色用实色 #E4ECF5（不用 rgba）；数字一律 font-variant-numeric:tabular-nums；" +
+                    "整体如好纸上印的好内容，安静、克制、像一份值得收藏的纸质提案");
             default: // tech-dark
                 return (
                     ":root{--bg:#0d1117;--bg2:#161b22;--ink:#e6edf3;--muted:#8b949e;--line:rgba(139,148,158,.22);--card:#161b22;--a1:#7ee787;--a2:#79c0ff;--a3:#d2a8ff;--orb-op:.14;}\n" +
