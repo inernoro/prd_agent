@@ -1,59 +1,6 @@
 /*
- * 产品管理智能体 — 卡片/列表行统一动效
- * 两档：
- *   .pa-card —— grid 可点击卡片（产品卡 / 知识库卡 / KPI 导航卡）：
- *               入场淡入上浮 + 悬停抬升 + 青色辉光 + 描边提亮。
- *   .pa-row  —— 列表行 / 看板卡 / 紧凑项：仅悬停描边提亮 + 青色辉光 + 背景提亮，
- *               不上浮、无入场动画（密集列表/筛选重渲染时避免闪烁）。
- * 降级：prefers-reduced-motion 下全部关闭。
+ * 产品管理智能体 — 卡片/列表行统一动效。
+ * 实现已抽取为跨智能体共享样式 components/agent-shell/agent-cards.css，
+ * 此处仅做转发以兼容既有 import。
  */
-
-@keyframes paCardIn {
-  from {
-    opacity: 0;
-    transform: translateY(12px) scale(0.97);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-.pa-card {
-  animation: paCardIn 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
-  transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease, background-color 0.22s ease;
-  will-change: transform;
-}
-
-.pa-card:hover {
-  transform: translateY(-4px);
-  border-color: rgba(34, 211, 238, 0.45) !important;
-  box-shadow:
-    0 12px 32px -12px rgba(6, 182, 212, 0.38),
-    0 6px 16px -8px rgba(0, 0, 0, 0.55);
-}
-
-.pa-card:active {
-  transform: translateY(-1px) scale(0.995);
-}
-
-/* 列表行 / 看板卡：只取悬停描边 + 辉光 + 背景提亮，不上浮（密集列表更稳） */
-.pa-row {
-  transition: box-shadow 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
-}
-
-.pa-row:hover {
-  border-color: rgba(34, 211, 238, 0.4) !important;
-  background-color: rgba(255, 255, 255, 0.05);
-  box-shadow: 0 4px 14px -6px rgba(6, 182, 212, 0.3);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .pa-card {
-    animation: none;
-  }
-  .pa-card:hover,
-  .pa-card:active {
-    transform: none;
-  }
-}
+@import '../../components/agent-shell/agent-cards.css';
