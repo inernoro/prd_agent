@@ -125,6 +125,61 @@ public class MdToPptController : ControllerBase
 
     // 按风格主题返回（CSS token 块 + 风格气质描述）。前端「风格模板」下拉的 5 个值各对应一套配色。
     // 5 套主题借鉴 open-design 模板库，视觉各异：Tech 极黑 / 钴蓝格纸 / 纸墨编辑 / 复古 Zine / Swiss 极简
+    // PPT 设计系统组件类（壳子 <style> 与提示词共用的 SSOT）。
+    // 并行逐页生成模式下它进入文档 head，对子智能体是「可选工具箱」而非模板义务。
+    private const string PptComponentCss =
+        ".reveal{font-family:'Inter',-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',system-ui,sans-serif;color:var(--ink);}\n" +
+        ".reveal .slides section{text-align:left;padding:2vh 5vw;}\n" +
+        ".eyebrow{text-transform:uppercase;letter-spacing:.24em;font-size:.78rem;font-weight:800;color:var(--a2);margin-bottom:18px;}\n" +
+        ".title-xl{font-size:clamp(44px,6.6vw,86px);font-weight:850;line-height:1.06;letter-spacing:-.025em;margin:0;color:var(--ink);}\n" +
+        ".title-md{font-size:clamp(30px,4vw,52px);font-weight:800;line-height:1.1;letter-spacing:-.02em;margin:0 0 6px;color:var(--ink);}\n" +
+        ".lead{font-size:clamp(17px,1.6vw,22px);color:var(--muted);max-width:46ch;line-height:1.5;}\n" +
+        ".grid{display:grid;gap:22px;margin-top:34px;}.g2{grid-template-columns:1fr 1fr;}.g3{grid-template-columns:repeat(3,1fr);}\n" +
+        ".card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:26px 28px;box-shadow:0 2px 14px rgba(0,0,0,.06);}\n" +
+        ".card h3{margin:0 0 8px;font-size:1.15rem;font-weight:800;color:var(--ink);}.card p{margin:0;color:var(--muted);font-size:.98rem;line-height:1.5;}\n" +
+        ".stat{font-size:clamp(40px,5.5vw,72px);font-weight:850;letter-spacing:-.02em;color:var(--a1);}\n" +
+        ".stat-l{color:var(--muted);font-size:.95rem;margin-top:4px;}\n" +
+        ".chip{display:inline-flex;align-items:center;gap:8px;padding:7px 14px;border:1px solid var(--line);border-radius:999px;font-size:.85rem;color:var(--ink);}\n" +
+        ".bar{width:54px;height:5px;border-radius:9px;background:linear-gradient(90deg,var(--a1),var(--a2));margin:20px 0;}\n" +
+        ".quote{font-size:clamp(26px,3.2vw,42px);font-weight:700;line-height:1.3;color:var(--ink);border-left:4px solid var(--a3);padding-left:28px;}\n" +
+        ".orb{position:absolute;border-radius:50%;filter:blur(80px);opacity:var(--orb-op);z-index:0;pointer-events:none;}.orb.a{width:420px;height:420px;background:var(--a1);right:-80px;top:-90px;}.orb.b{width:340px;height:340px;background:var(--a3);left:-70px;bottom:-90px;}\n" +
+        ".reveal .slide-number{background:transparent;color:var(--muted);}\n" +
+        "li{margin:10px 0;line-height:1.5;}ul{list-style:none;padding:0;}ul li{padding-left:26px;position:relative;}ul li::before{content:'';position:absolute;left:0;top:.6em;width:8px;height:8px;border-radius:3px;background:linear-gradient(120deg,var(--a1),var(--a2));}\n" +
+        ".feat{display:flex;align-items:flex-start;gap:16px;padding:18px;background:var(--card);border:1px solid var(--line);border-radius:16px;}\n" +
+        ".feat-icon{flex-shrink:0;width:40px;height:40px;border-radius:12px;background:linear-gradient(135deg,var(--a1),var(--a2));display:flex;align-items:center;justify-content:center;}\n" +
+        ".feat h4{margin:0 0 4px;font-size:1rem;font-weight:700;color:var(--ink);}.feat p{margin:0;font-size:.9rem;color:var(--muted);line-height:1.5;}\n" +
+        ".table{width:100%;border-collapse:collapse;font-size:.9rem;}\n" +
+        ".table th{padding:10px 14px;text-align:left;font-size:.78rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--a2);border-bottom:2px solid var(--line);}\n" +
+        ".table td{padding:10px 14px;color:var(--ink);border-bottom:1px solid var(--line);}\n" +
+        ".table tr:last-child td{border-bottom:none;}.table tr:nth-child(even) td{background:var(--card);}\n" +
+        ".callout{display:flex;gap:14px;padding:18px 20px;border-radius:14px;border:1px solid var(--a1);background:rgba(99,102,241,.08);}\n" +
+        ".callout-icon{flex-shrink:0;width:22px;height:22px;border-radius:50%;background:var(--a1);margin-top:1px;}\n" +
+        ".callout p{margin:0;color:var(--ink);font-size:.98rem;line-height:1.55;}\n" +
+        ".step-row{display:flex;gap:0;margin-top:30px;}\n" +
+        ".step-item{flex:1;position:relative;padding:0 12px;text-align:center;}\n" +
+        ".step-item::before{content:'';position:absolute;top:20px;left:50%;right:-50%;height:2px;background:linear-gradient(90deg,var(--a1),var(--a2));z-index:0;}\n" +
+        ".step-item:last-child::before{display:none;}\n" +
+        ".step-num{width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,var(--a1),var(--a2));color:#fff;font-weight:800;font-size:1rem;display:inline-flex;align-items:center;justify-content:center;position:relative;z-index:1;margin-bottom:10px;}\n" +
+        ".step-item h4{font-size:.9rem;font-weight:700;color:var(--ink);margin:0 0 4px;}\n" +
+        ".step-item p{font-size:.82rem;color:var(--muted);margin:0;line-height:1.4;}\n" +
+        ".reveal .slides .orb{position:absolute !important;pointer-events:none;}\n";
+
+    // 并行逐页模式的 deck 壳（head 确定 = 实况渲染从第一页就有真样式；脚本在尾部）
+    private static (string head, string suffix) BuildDeckShell(string? theme, string title)
+    {
+        var (tokens, _) = ThemeTokens(theme);
+        var head =
+            "<!DOCTYPE html>\n<html lang=\"zh\">\n<head>\n<meta charset=\"utf-8\">\n" +
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n" +
+            $"<title>{System.Net.WebUtility.HtmlEncode(title)}</title>\n" +
+            "<link rel=\"stylesheet\" href=\"https://cdn.jsdelivr.net/npm/reveal.js@4/dist/reveal.css\">\n" +
+            "<style>\n" + tokens + PptComponentCss + "</style>\n</head>\n<body>\n<div class=\"reveal\">\n<div class=\"slides\">\n";
+        var suffix =
+            "\n</div>\n</div>\n<script src=\"https://cdn.jsdelivr.net/npm/reveal.js@4/dist/reveal.js\"></script>\n" +
+            "<script>Reveal.initialize({ hash:false, transition:'fade', slideNumber:'c/t', controls:true, progress:true, center:true, margin:0.06 });</script>\n</body>\n</html>";
+        return (head, suffix);
+    }
+
     private static (string tokens, string tone) ThemeTokens(string? theme)
     {
         switch ((theme ?? "tech-dark").Trim().ToLowerInvariant())
@@ -216,7 +271,7 @@ public class MdToPptController : ControllerBase
             "{\"totalPages\":8,\"summary\":\"一句话总结本 PPT 讲什么\",\"outline\":[{\"title\":\"封面\",\"bullets\":[\"副标题\",\"作者/日期\"]},{\"title\":\"现状分析\",\"bullets\":[\"要点1\",\"要点2\",\"要点3\"]},...,{\"title\":\"结语\",\"bullets\":[\"行动号召\",\"联系方式\"]}],\"clarify\":[{\"id\":\"q1\",\"question\":\"面向投资人还是内部团队？\",\"type\":\"single\",\"options\":[\"投资人\",\"内部团队\"]}]}\n\n" +
             "严格规则：\n" +
             "1. 只输出 JSON，第一个字符是 {，最后一个字符是 }，不得有 markdown 代码块、前缀说明、后缀解释\n" +
-            "2. 每页 bullets 2-4 条，语言精炼\n" +
+            "2. 每页 bullets 3-5 条；每条 12-30 字、必须有具体落点（数字/对象/实例/动作），禁止「介绍背景」「展示优势」这类空壳短语；除封面/结语外每页至少 1 条数据或实例类要点\n" +
             "3. 版式不重复，避免每页都是列表结构\n" +
             "4. 禁止输出任何 emoji\n" +
             "5. title 字段纯文本，不含序号（如「一、」「1.」）\n" +
@@ -591,6 +646,15 @@ public class MdToPptController : ControllerBase
         var run = await CreateRunAsync(userId, "agent", template != null ? $"custom:{template.Name}" : req.Theme, "convert", req.Content);
         await WriteEventAsync("run", new { runId = run.Id });
 
+        // 并行逐页编排（用户 2026-06-11 架构提案）：大纲定稿 → 壳子确定（设计系统）→
+        // 子智能体并行各画一页 → 每页完成即推 page 事件（真实进度 + 实况渲染）→ 拼装。
+        // 自定义模板暂走整篇路径（壳子 token 需先从风格规范物化，记 debt）。
+        if (req.OutlinePages is { Count: > 0 } && template == null)
+        {
+            await RunPagesGenerationAsync(userId, req, run);
+            return;
+        }
+
         var systemPrompt = BuildPptSystemPrompt(req.Theme, template?.StyleSpec);
         var styleHint = $"目标页数约 {req.SlideCount ?? 8} 页。";
         var userContent = $"{styleHint}\n\n---\n\n# 用户内容\n\n{req.Content?.Trim()}";
@@ -781,6 +845,282 @@ public class MdToPptController : ControllerBase
     // ─────────────────────────────────────────────
     // CDS Agent 路径（可观测，诊断插桩）
     // ─────────────────────────────────────────────
+
+    // ─────────────────────────────────────────────
+    // 并行逐页编排：壳子确定 → 子智能体并行各画一页 → page 事件实时进度 → 拼装
+    // ─────────────────────────────────────────────
+
+    private static readonly string[] PageLayoutHints =
+    {
+        "数据看板 Big Numbers（.stat 大数字格 + kicker），数字压住版面",
+        "两栏对比（.grid.g2 现状 vs 方案，对比清晰）",
+        "功能特性列表（3-4 个 .feat 条目，图标方块+标题+说明）",
+        "对比表格（.table 多列对比，表头 kicker 样式）",
+        "流程步骤（.step-row 横向 3-4 步，序号圆+连接线）",
+        "金句/章节转场（.quote 大字引用 + 强调条）",
+        "要点卡片（.grid.g3 每卡一要点，禁止裸列表）",
+    };
+
+    private static string BuildPageSystemPrompt(string? theme, int index, int total)
+    {
+        var (_, tone) = ThemeTokens(theme);
+        return
+            "你是顶级演示设计师，正在与其他设计师并行完成同一份 reveal.js 演示的不同页面。" +
+            "文档 <head> 已包含设计系统：CSS 变量（--bg/--bg2/--ink/--muted/--line/--card/--a1/--a2/--a3/--orb-op）" +
+            "与组件类（.eyebrow/.title-xl/.title-md/.lead/.grid .g2 .g3/.card/.stat/.stat-l/.chip/.bar/.quote/.orb/.feat/.feat-icon/.table/.callout/.step-row/.step-num）。\n" +
+            "## 本次风格\n" + tone + "\n\n" +
+            "## 设计自由（重要，反「套模板」）\n" +
+            "组件类是工具箱不是模板——为本页内容定制独特版式：可自由用内联 style 排布、混搭或完全不用组件类；" +
+            "但所有颜色必须取自 CSS 变量、字体必须符合本风格。目标是「这一页像为内容量身设计的」，不是把内容塞进固定骨架。\n\n" +
+            "## 内容要求\n" +
+            "信息充实：结构化正文（卡片/数据/对比/列表至少一种）+ 至少一个视觉装置（光晕/强调条/大数字/独特大字编排）。" +
+            "绝不允许一句话居中、四周大片空白。\n\n" +
+            "## 输出（最高优先级）\n" +
+            $"只输出本页（第 {index + 1}/{total} 页）一个完整的 <section>...</section> HTML 片段：" +
+            "首字符是 <，末字符是 >；不含 <html>/<head>/<style>/<script>，不含 markdown 围栏与任何解释；" +
+            "禁止任何 emoji；禁止对文字使用 color:transparent + background-clip:text；禁止调用工具。";
+    }
+
+    private static string BuildPageUserPrompt(
+        MdToPptConvertRequest req, int index, int total)
+    {
+        var pages = req.OutlinePages!;
+        var page = pages[index];
+        var bullets = (page.Bullets ?? new List<string>()).Where(b => !string.IsNullOrWhiteSpace(b)).ToList();
+        var prev = index > 0 ? pages[index - 1].Title : null;
+        var next = index < total - 1 ? pages[index + 1].Title : null;
+        string hint;
+        if (index == 0)
+            hint = "封面：（暗色风格）.orb 光晕 + .eyebrow + 超大 .title-xl + .lead 副标题 + 底部 .chip 行；（亮色风格）大字占版面 2/3 + 纤细副标题 + hairline 分隔";
+        else if (index == total - 1)
+            hint = "结语：居中 .title-xl + 行动号召 + .chip 联系方式，或左对齐大字 + 装饰图形";
+        else
+            hint = PageLayoutHints[(index - 1) % PageLayoutHints.Length];
+
+        var context = (req.Content ?? string.Empty).Trim();
+        if (context.Length > 600) context = context[..600] + "…";
+
+        var sb = new StringBuilder();
+        sb.Append("整份 PPT 主题：").Append(req.Summary ?? "（见全局上下文）").Append('\n');
+        sb.Append("全局上下文（节选）：").Append(context).Append("\n\n");
+        sb.Append($"共 {total} 页；本页是第 {index + 1} 页：{page.Title}\n");
+        sb.Append("本页要点（信息必须全部呈现，可润色排版不可丢失）：\n");
+        foreach (var b in bullets) sb.Append("- ").Append(b).Append('\n');
+        if (prev != null) sb.Append($"上一页标题：「{prev}」\n");
+        if (next != null) sb.Append($"下一页标题：「{next}」\n");
+        sb.Append("版式建议（可不采纳，但必须与相邻页差异化）：").Append(hint);
+        return sb.ToString();
+    }
+
+    private static string ExtractSection(string text)
+    {
+        var cleaned = StripCodeFences(text);
+        var m = System.Text.RegularExpressions.Regex.Match(cleaned, "<section[\\s\\S]*?</section>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return m.Success ? m.Value : string.Empty;
+    }
+
+    private static string FallbackSection(MdToPptOutlinePageDto page, int index)
+    {
+        var enc = (string? t) => System.Net.WebUtility.HtmlEncode(t ?? string.Empty);
+        var lis = string.Join("", (page.Bullets ?? new List<string>())
+            .Where(b => !string.IsNullOrWhiteSpace(b))
+            .Select(b => $"<li>{enc(b)}</li>"));
+        return $"<section><div class=\"eyebrow\">第 {index + 1} 页</div>" +
+               $"<h2 class=\"title-md\">{enc(page.Title)}</h2><ul>{lis}</ul></section>";
+    }
+
+    /// <summary>单次 agent 会话往返：创建/复用 → 发送 → 轮询至 done，返回最终文本（页级子任务用）</summary>
+    private async Task<(string? text, string? error)> RunAgentOnceAsync(
+        string userId,
+        InfraConnection connection,
+        InfraAgentRuntimeProfile profile,
+        string systemPrompt,
+        string userPrompt,
+        string title,
+        InfraAgentSessionView? presession)
+    {
+        InfraAgentSessionView? session = presession;
+        try
+        {
+            if (session == null)
+            {
+                session = await _sessions.CreateAsync(userId,
+                    new CreateInfraAgentSessionRequest(
+                        connection.Id, profile.Runtime, profile.Model, title,
+                        InfraAgentToolPolicies.DenyAll, null, profile.Id, null, null, null, null),
+                    CancellationToken.None);
+                if (!string.Equals(session.Status, InfraAgentSessionStatuses.Running, StringComparison.OrdinalIgnoreCase))
+                {
+                    session = await _sessions.StartAsync(userId, session.Id,
+                        new StartInfraAgentSessionRequest(profile.Runtime, profile.Model),
+                        CancellationToken.None) ?? session;
+                }
+            }
+
+            await _sessions.SendMessageAsync(userId, session.Id,
+                new SendInfraAgentMessageRequest($"{systemPrompt}\n\n---\n\n{userPrompt}"),
+                CancellationToken.None);
+
+            var afterSeq = 0L;
+            var fullText = new StringBuilder();
+            for (var round = 0; round < 300; round++) // ~4 分钟/页
+            {
+                var batch = await _sessions.ListEventsAsync(userId, session.Id, afterSeq, 50, CancellationToken.None);
+                foreach (var evt in batch.OrderBy(x => x.Seq))
+                {
+                    if (evt.Seq <= afterSeq) continue;
+                    afterSeq = evt.Seq;
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(evt.PayloadJson ?? "{}");
+                        var root = doc.RootElement;
+                        switch (evt.Type)
+                        {
+                            case InfraAgentEventTypes.TextDelta:
+                                if (root.TryGetProperty("text", out var tp))
+                                    fullText.Append(tp.GetString() ?? "");
+                                break;
+                            case InfraAgentEventTypes.Done:
+                                var raw = root.TryGetProperty("finalText", out var fp) ? fp.GetString() ?? "" : "";
+                                return (string.IsNullOrEmpty(raw) ? fullText.ToString() : raw, null);
+                            case InfraAgentEventTypes.Error:
+                                var msg = root.TryGetProperty("message", out var mp) ? mp.GetString() : null;
+                                return (null, msg ?? "CDS Agent 页面生成失败");
+                        }
+                    }
+                    catch { /* 单事件解析失败不致命 */ }
+                }
+                await Task.Delay(800);
+            }
+            return (null, "页面生成超时");
+        }
+        finally
+        {
+            if (session != null)
+            {
+                try { await _sessions.StopAsync(userId, session.Id, CancellationToken.None); } catch { }
+            }
+        }
+    }
+
+    /// <summary>并行逐页生成：frame（壳子）→ N 路并行 page 事件 → 拼装 done</summary>
+    private async Task RunPagesGenerationAsync(string userId, MdToPptConvertRequest req, MdToPptRun run)
+    {
+        var startedAt = DateTime.UtcNow;
+        var pages = req.OutlinePages!;
+        var total = pages.Count;
+        var sseLock = new SemaphoreSlim(1, 1);
+
+        async Task EmitAsync(string evt, object payload)
+        {
+            await sseLock.WaitAsync();
+            try { await WriteEventAsync(evt, payload); }
+            finally { sseLock.Release(); }
+        }
+
+        var connection = await ResolveCdsConnectionAsync(CancellationToken.None);
+        if (connection == null)
+        {
+            await PersistRunErrorAsync(run, "没有可用的 active CDS 连接，请先完成系统级 CDS 授权");
+            await EmitAsync("error", new { message = "没有可用的 active CDS 连接，请先完成系统级 CDS 授权" });
+            return;
+        }
+        var profile = await ResolveRuntimeProfileAsync(userId, CancellationToken.None);
+        if (profile == null)
+        {
+            await PersistRunErrorAsync(run, "没有可用的模型运行配置");
+            await EmitAsync("error", new { message = "没有可用的模型运行配置，请先配置 baseUrl、model 和 API key" });
+            return;
+        }
+        await EmitAsync("model", new { model = profile.Model, platform = "CDS Agent" });
+
+        var deckTitle = pages[0].Title is { Length: > 0 } t ? t : (req.Summary ?? "PPT 演示");
+        var (head, suffix) = BuildDeckShell(req.Theme, deckTitle);
+        await EmitAsync("frame", new { head, total });
+        await EmitAsync("diag", new { stage = "pages_start", total, parallel = 4 });
+        _logger.LogInformation("[MdToPpt-Pages] start userId={UserId} total={Total}", userId, total);
+
+        // 心跳：并行期间 SSE 不断流
+        var clientGone = false;
+        using var kaCts = new CancellationTokenSource();
+        var kaTask = Task.Run(async () =>
+        {
+            try
+            {
+                while (!kaCts.Token.IsCancellationRequested)
+                {
+                    await Task.Delay(10000, kaCts.Token);
+                    if (clientGone) continue;
+                    await sseLock.WaitAsync();
+                    try
+                    {
+                        await Response.WriteAsync(": keepalive\n\n", CancellationToken.None);
+                        await Response.Body.FlushAsync(CancellationToken.None);
+                    }
+                    catch { clientGone = true; }
+                    finally { sseLock.Release(); }
+                }
+            }
+            catch (OperationCanceledException) { }
+        });
+
+        var sections = new string[total];
+        var gate = new SemaphoreSlim(4, 4); // 并行度：4 路子智能体
+        var presession = await TakePrewarmedSessionAsync(userId); // 预热会话给第 1 页
+        var doneCount = 0;
+
+        try
+        {
+            var tasks = Enumerable.Range(0, total).Select(async i =>
+            {
+                await gate.WaitAsync();
+                try
+                {
+                    var sys = BuildPageSystemPrompt(req.Theme, i, total);
+                    var usr = BuildPageUserPrompt(req, i, total);
+                    var (text, err) = await RunAgentOnceAsync(
+                        userId, connection, profile, sys, usr, $"PPT 第{i + 1}页", i == 0 ? presession : null);
+                    var section = text != null ? ExtractSection(text) : string.Empty;
+                    if (string.IsNullOrEmpty(section))
+                    {
+                        // 单页失败重试一次，再失败用大纲兜底页（绝不让整份卡死）
+                        if (err == null || text != null)
+                            _logger.LogWarning("[MdToPpt-Pages] page {Idx} invalid section, retrying", i);
+                        var (text2, _) = await RunAgentOnceAsync(
+                            userId, connection, profile, sys, usr, $"PPT 第{i + 1}页R", null);
+                        section = text2 != null ? ExtractSection(text2) : string.Empty;
+                        if (string.IsNullOrEmpty(section)) section = FallbackSection(pages[i], i);
+                    }
+                    sections[i] = section;
+                    var n = Interlocked.Increment(ref doneCount);
+                    var ms = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+                    _logger.LogInformation("[MdToPpt-Pages] page {Idx} done {N}/{Total} elapsedMs={Ms}", i, n, total, ms);
+                    await EmitAsync("page", new { index = i, total, html = section, done = n });
+                }
+                finally { gate.Release(); }
+            }).ToList();
+
+            await Task.WhenAll(tasks);
+
+            var html = head + string.Join("\n", sections) + suffix;
+            var totalMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+            _logger.LogInformation("[MdToPpt-Pages] DONE userId={UserId} totalMs={Ms} htmlLen={Len}", userId, totalMs, html.Length);
+            await PersistRunDoneAsync(run, html, profile.Model, "CDS Agent");
+            await EmitAsync("done", new { html });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[MdToPpt-Pages] failed userId={UserId}", userId);
+            await PersistRunErrorAsync(run, ex.Message);
+            await EmitAsync("error", new { message = ex.Message });
+        }
+        finally
+        {
+            kaCts.Cancel();
+            try { await kaTask; } catch { }
+        }
+    }
 
     private async Task RunAgentStreamAsync(string userId, string systemPrompt, string userPrompt, string title, MdToPptRun run)
     {
@@ -1343,6 +1683,18 @@ public class MdToPptConvertRequest
 
     /// <summary>自定义模板 ID（可选；优先于 Theme 生效）</summary>
     public string? TemplateId { get; set; }
+
+    /// <summary>结构化大纲（并行逐页生成模式；来自右侧大纲编辑器工作稿）</summary>
+    public List<MdToPptOutlinePageDto>? OutlinePages { get; set; }
+
+    /// <summary>PPT 一句话主题（并行逐页模式给子智能体的全局语境）</summary>
+    public string? Summary { get; set; }
+}
+
+public class MdToPptOutlinePageDto
+{
+    public string? Title { get; set; }
+    public List<string>? Bullets { get; set; }
 }
 
 public class MdToPptPatchRequest

@@ -805,6 +805,14 @@ export function MdToPptAgentPage() {
   // 幻灯进度：从流里解析已闭合的 <section>（页标题逐张点亮）
   const slideProgress = useMemo(() => parseSlideProgress(streamPreview), [streamPreview]);
 
+  // ─── 并行逐页生成进度（pages 模式）：壳子 head + 每页完成即点亮（真实进度，不依赖 token 流）
+  const [frameHead, setFrameHead] = useState('');
+  const [pagesTotal, setPagesTotal] = useState(0);
+  const [pagesDone, setPagesDone] = useState<Record<number, string>>({});
+
+  // ─── 计时基准（服务器权威性）：刷新恢复时用 run.createdAt，不许前端从 0 重数
+  const genStartAtRef = useRef<number>(0);
+
   // ─── 生成实况预览（主视觉）：已完成的页直接真实渲染，默认跟随最新完成页
   const [liveSlideSel, setLiveSlideSel] = useState<number | null>(null);
   const liveSections = useMemo(() => extractCompletedSections(streamPreview), [streamPreview]);
@@ -817,6 +825,22 @@ export function MdToPptAgentPage() {
     () => (liveSections.length === 0 ? '' : buildLiveSlideDoc(liveHeadAssets, liveSections[liveIdx] ?? '')),
     [liveSections, liveHeadAssets, liveIdx]
   );
+
+  // pages 模式实况：壳子 head（设计系统完整）+ 选中/最新完成页（并行完成，非顺序）
+  const pagesDoneIdxs = useMemo(
+    () => Object.keys(pagesDone).map(Number).sort((a, b) => a - b),
+    [pagesDone]
+  );
+  const pagesLiveIdx =
+    liveSlideSel != null && pagesDone[liveSlideSel] != null
+      ? liveSlideSel
+      : pagesDoneIdxs.length > 0
+        ? pagesDoneIdxs[pagesDoneIdxs.length - 1]
+        : -1;
+  const pagesLiveDoc = useMemo(() => {
+    if (!frameHead || pagesLiveIdx < 0) return '';
+    return buildLiveSlideDoc(extractHeadAssets(frameHead + '<body>'), pagesDone[pagesLiveIdx] ?? '');
+  }, [frameHead, pagesLiveIdx, pagesDone]);
 
   // ─── 思考过程流（推理模型先想后写：deepseek-v3.2 实测思考可占总耗时 90%，
   //     正文集中尾部爆发。思考期间产物无片段可渲染，就渲染思考本身——它就是此刻的产物）
@@ -838,6 +862,9 @@ export function MdToPptAgentPage() {
     setStreamPreview('');
     setThinkingPreview('');
     setLiveSlideSel(null);
+    setFrameHead('');
+    setPagesTotal(0);
+    setPagesDone({});
   }, []);
 
   const handleStreamDelta = useCallback((text: string) => {
@@ -928,10 +955,13 @@ export function MdToPptAgentPage() {
   // ─── Elapsed timer for artifact progress
   useEffect(() => {
     if (artifactPhase === 'generating' || artifactPhase === 'patching') {
-      setElapsedSec(0);
-      const t = window.setInterval(() => setElapsedSec((s) => s + 1), 1000);
+      if (!genStartAtRef.current) genStartAtRef.current = Date.now();
+      const tick = () => setElapsedSec(Math.max(0, Math.floor((Date.now() - genStartAtRef.current) / 1000)));
+      tick();
+      const t = window.setInterval(tick, 1000);
       return () => window.clearInterval(t);
     } else {
+      genStartAtRef.current = 0;
       setElapsedSec(0);
     }
   }, [artifactPhase]);
@@ -957,6 +987,20 @@ export function MdToPptAgentPage() {
     let cancelled = false;
     let timer: number | undefined;
 
+    // 恢复对账：把聊天里残留的「正在生成/修改」气泡按 run 真实状态翻转——
+    // 此前只恢复 deck 不对账消息，刷新后气泡永远停在"正在生成 PPT..."（2026-06-11 实测）
+    const reconcileMessages = (status: 'done' | 'error', error?: string | null) => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.role === 'assistant' && (m.phase === 'generating' || m.phase === 'patching')
+            ? status === 'done'
+              ? { ...m, phase: 'done', content: 'PPT 已生成！你可以继续对话精修、编辑内容、换模板或发布。' }
+              : { ...m, phase: 'error', content: '生成失败：' + (error ?? '未知错误') }
+            : m
+        )
+      );
+    };
+
     const poll = async () => {
       const run = await getMdToPptRun(runId);
       if (cancelled) return;
@@ -965,7 +1009,13 @@ export function MdToPptAgentPage() {
         setGeneratedHtml(run.html);
         setActiveRunId(runId);
         setArtifactPhase('done');
+        reconcileMessages('done');
+      } else if (run.status === 'error') {
+        setArtifactPhase('idle');
+        reconcileMessages('error', run.error);
       } else if (run.status === 'running') {
+        // 计时基准 = 服务端 run.createdAt（服务器权威性：刷新后显示真实已等待时长）
+        genStartAtRef.current = new Date(run.createdAt).getTime();
         setArtifactPhase('generating');
         timer = window.setTimeout(poll, 3000);
       }
@@ -1274,7 +1324,7 @@ export function MdToPptAgentPage() {
 
   // ─── Convert 核心（大纲编辑器「确认生成」与旧版气泡共用）
   const launchConvert = useCallback(
-    (fullContent: string, pages: number | null) => {
+    (fullContent: string, pages: number | null, outlinePages?: OutlineSlide[], summary?: string) => {
       if (isProcessing) return;
       setIsProcessing(true);
       setArtifactPhase('generating');
@@ -1296,6 +1346,16 @@ export function MdToPptAgentPage() {
         theme,
         templateId: templateId ?? undefined,
         slideCount: pages ?? undefined,
+        outlinePages,
+        summary,
+        onFrame: (f) => {
+          setFrameHead(f.head);
+          setPagesTotal(f.total);
+        },
+        onPage: (pg) => {
+          setPagesTotal(pg.total);
+          setPagesDone((prev) => ({ ...prev, [pg.index]: pg.html }));
+        },
         onRun: (runId) => {
           if (runId) setActiveRunId(runId);
           try {
@@ -1382,7 +1442,12 @@ export function MdToPptAgentPage() {
       draft.sourceText +
       serializeClarifyAnswers(draft) +
       `\n\n---\n\n## 大纲结构（请严格按此页数和标题生成）\n\n${serializeOutline(draft.outline)}`;
-    launchConvert(fullContent, draft.totalPages || draft.outline.length || null);
+    launchConvert(
+      fullContent,
+      draft.totalPages || draft.outline.length || null,
+      draft.outline,
+      draft.summary
+    );
   }, [outlineDraft, isProcessing, serializeClarifyAnswers, serializeOutline, launchConvert]);
 
   // ─── 旧版气泡确认（兼容历史会话里带内嵌大纲的消息）
@@ -1402,7 +1467,12 @@ export function MdToPptAgentPage() {
       const fullContent =
         [userContent, attachmentText, kbContext].filter(Boolean).join('\n\n---\n\n').trim() +
         (outlineText ? `\n\n---\n\n## 大纲结构（请严格按此页数和标题生成）\n\n${outlineText}` : '');
-      launchConvert(fullContent, outlineMsg.totalPages ?? outlineMsg.outline?.length ?? null);
+      launchConvert(
+        fullContent,
+        outlineMsg.totalPages ?? outlineMsg.outline?.length ?? null,
+        outlineMsg.outline,
+        outlineMsg.summary
+      );
     },
     [isProcessing, messages, serializeOutline, launchConvert]
   );
@@ -2698,14 +2768,24 @@ export function MdToPptAgentPage() {
                 已完成的页流式解析后立即真实渲染（实况 iframe），底部页卡可点击回看任意已完成页；
                 第一页出来之前用骨架幻灯 + 代码流尾巴 + Agent 环境准备过渡，全程无静止空等。 */}
           {(artifactPhase === 'generating' || artifactPhase === 'patching') && (() => {
-            const doneCount = slideProgress.titles.length;
-            const building = slideProgress.building;
-            const totalSlots = Math.max(expectedPages ?? 0, doneCount + (building ? 1 : 0));
+            const pagesMode = pagesTotal > 0;
+            const doneCount = pagesMode ? pagesDoneIdxs.length : slideProgress.titles.length;
+            const building = pagesMode ? doneCount < pagesTotal : slideProgress.building;
+            const totalSlots = pagesMode
+              ? pagesTotal
+              : Math.max(expectedPages ?? 0, doneCount + (building ? 1 : 0));
+            const effLiveDoc = pagesMode ? pagesLiveDoc : liveDoc;
+            const effLiveIdx = pagesMode ? pagesLiveIdx : liveIdx;
             const agentPrepared =
               modelInfo != null ||
               diagLines.some((d) => d.stage === 'send' || d.stage === 'first_event' || d.stage === 'first_text_delta');
-            const stageText =
-              streamPreview.length === 0
+            const stageText = pagesMode
+              ? doneCount === 0
+                ? `${pagesTotal} 路子智能体并行绘制中（每页独立设计）...`
+                : doneCount < pagesTotal
+                  ? `已完成 ${doneCount} / ${pagesTotal} 页（并行绘制中，可点亮起的页卡先看）...`
+                  : '全部页面完成，正在拼装 deck...'
+              : streamPreview.length === 0
                 ? thinkingPreview.length > 0
                   ? '模型深度思考中（推理模型先想后写，思考过程见下方）...'
                   : agentPrepared
@@ -2728,11 +2808,13 @@ export function MdToPptAgentPage() {
                     <p className="text-sm text-[var(--text-secondary)] truncate">{stageText}</p>
                     <p className="text-[11px] text-[var(--text-tertiary)] mt-0.5 tabular-nums">
                       已等待 {elapsedSec}s
-                      {streamPreview.length > 0
-                        ? ` · 已接收 ${streamPreview.length.toLocaleString()} 字符`
-                        : thinkingPreview.length > 0
-                          ? ` · 已思考 ${thinkingPreview.length.toLocaleString()} 字`
-                          : ''}
+                      {pagesMode
+                        ? ` · ${doneCount}/${pagesTotal} 页完成`
+                        : streamPreview.length > 0
+                          ? ` · 已接收 ${streamPreview.length.toLocaleString()} 字符`
+                          : thinkingPreview.length > 0
+                            ? ` · 已思考 ${thinkingPreview.length.toLocaleString()} 字`
+                            : ''}
                       {modelInfo && <span className="font-mono"> · {modelInfo.model}</span>}
                     </p>
                   </div>
@@ -2758,11 +2840,11 @@ export function MdToPptAgentPage() {
                   className="flex-1 rounded-lg border border-white/8 overflow-hidden"
                   style={{ minHeight: 0, position: 'relative', background: 'rgba(0,0,0,.25)' }}
                 >
-                  {liveDoc ? (
+                  {effLiveDoc ? (
                     <>
                       <iframe
                         data-testid="live-slide-preview"
-                        srcDoc={liveDoc}
+                        srcDoc={effLiveDoc}
                         sandbox=""
                         title="生成实况预览"
                         className="w-full h-full border-0"
@@ -2777,7 +2859,7 @@ export function MdToPptAgentPage() {
                           </button>
                         )}
                         <span className="px-2 py-0.5 rounded text-[10px] bg-black/60 text-white/75 tabular-nums">
-                          实况 · 第 {liveIdx + 1} 页{liveSlideSel == null ? '（跟随最新）' : ''}
+                          实况 · 第 {effLiveIdx + 1} 页{liveSlideSel == null ? '（跟随最新）' : ''}
                         </span>
                       </div>
                     </>
@@ -2827,14 +2909,18 @@ export function MdToPptAgentPage() {
                     style={{ overscrollBehavior: 'contain' }}
                   >
                     {Array.from({ length: totalSlots }, (_, i) => {
-                      const isDone = i < doneCount;
-                      const isCurrent = i === doneCount && building;
-                      const isViewing = liveDoc !== '' && i === liveIdx;
+                      const isDone = pagesMode ? pagesDone[i] != null : i < doneCount;
+                      const isCurrent = pagesMode ? !isDone && building : i === doneCount && building;
+                      const isViewing = effLiveDoc !== '' && i === effLiveIdx;
                       return (
                         <button
                           key={i}
                           disabled={!isDone}
-                          onClick={() => setLiveSlideSel(i === doneCount - 1 ? null : i)}
+                          onClick={() => {
+                            // 点最新完成页 = 回到「跟随最新」；点其他已完成页 = 锁定查看该页
+                            const latest = pagesMode ? pagesLiveIdx : doneCount - 1;
+                            setLiveSlideSel(i === latest ? null : i);
+                          }}
                           className={[
                             'shrink-0 rounded-md border px-2 pt-1.5 pb-1 text-left transition-colors duration-500',
                             isDone
@@ -2853,7 +2939,11 @@ export function MdToPptAgentPage() {
                             className={['text-[10px] leading-tight mt-0.5', isDone ? 'text-[var(--text-secondary)]' : 'text-[var(--text-tertiary)]'].join(' ')}
                             style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
                           >
-                            {isDone ? slideProgress.titles[i] || '已生成' : isCurrent ? '绘制中...' : ''}
+                            {isDone
+                              ? (pagesMode ? outlineDraft?.outline[i]?.title : slideProgress.titles[i]) || '已生成'
+                              : isCurrent
+                                ? '绘制中...'
+                                : ''}
                           </div>
                         </button>
                       );

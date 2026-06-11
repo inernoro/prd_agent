@@ -128,6 +128,8 @@ async function readSseStream(
     onDiag?: (data: MdToPptDiagEvent) => void;
     onThinking?: (text: string) => void;
     onDelta?: (text: string) => void;
+    onFrame?: (data: { head: string; total: number }) => void;
+    onPage?: (data: { index: number; total: number; html: string; done: number }) => void;
     onDone?: (data: Record<string, unknown>) => void;
     onError?: (message: string) => void;
   }
@@ -172,6 +174,15 @@ async function readSseStream(
             handlers.onDiag?.(data as MdToPptDiagEvent);
           } else if (currentEvent === 'thinking') {
             handlers.onThinking?.((data.text as string) ?? '');
+          } else if (currentEvent === 'frame') {
+            handlers.onFrame?.({ head: (data.head as string) ?? '', total: (data.total as number) ?? 0 });
+          } else if (currentEvent === 'page') {
+            handlers.onPage?.({
+              index: (data.index as number) ?? 0,
+              total: (data.total as number) ?? 0,
+              html: (data.html as string) ?? '',
+              done: (data.done as number) ?? 0,
+            });
           } else if (currentEvent === 'delta') {
             handlers.onDelta?.((data.text as string) ?? '');
           } else if (currentEvent === 'done') {
@@ -199,6 +210,14 @@ export interface MdToPptConvertSseOptions {
   theme?: string;
   /** 自定义模板 ID（优先于 theme 生效，后端取模板风格规范作为生成参照） */
   templateId?: string;
+  /** 结构化大纲（触发并行逐页生成：壳子确定后子智能体各画一页，page 事件实时进度） */
+  outlinePages?: OutlineSlide[];
+  /** PPT 一句话主题（逐页模式给子智能体的全局语境） */
+  summary?: string;
+  /** 壳子就绪（head 含完整设计系统，实况渲染用） */
+  onFrame?: (data: { head: string; total: number }) => void;
+  /** 单页完成（并行，真实进度） */
+  onPage?: (data: { index: number; total: number; html: string; done: number }) => void;
   onStart?: (info: { slideCount?: number; theme?: string }) => void;
   onRun?: (runId: string) => void;
   onModel?: (info: { model: string; platform: string }) => void;
@@ -227,6 +246,8 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
           slideCount: options.slideCount,
           theme: options.theme,
           templateId: options.templateId,
+          outlinePages: options.outlinePages,
+          summary: options.summary,
         }),
         signal: abortController.signal,
       });
@@ -249,6 +270,8 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
         onDiag: options.onDiag,
         onThinking: options.onThinking,
         onDelta: options.onDelta,
+        onFrame: options.onFrame,
+        onPage: options.onPage,
         onDone: (data) => {
           resolved = true;
           options.onDone?.({ html: (data.html as string) ?? '' });
