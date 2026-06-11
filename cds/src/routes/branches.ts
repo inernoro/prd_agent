@@ -17276,6 +17276,24 @@ cdscli project list --human
       timingRecorder.merge({ buildBackendMs: Date.now() - cdsBackendStart });
       send('build-backend', 'done', `后端 dist/ 已重编到 ${newHead} (${backendSec}s)`);
 
+      // The first nginx-render above runs before dist/ is rebuilt, so pages
+      // generated from dist/cli/render-page.js (notably cds-waiting.html) can
+      // otherwise lag one deploy behind. Re-render after the atomic dist swap
+      // so nginx uses the current loading-page templates during this restart.
+      try {
+        const renderRes = await shell.exec('./exec_cds.sh nginx-render', {
+          cwd: path.join(repoRoot, 'cds'),
+          timeout: 15_000,
+        });
+        if (renderRes.exitCode === 0) {
+          send('nginx-render', 'done', 'nginx 模板已用新 dist 重新渲染');
+        } else {
+          send('nginx-render', 'warning', `nginx-render(new dist) exit=${renderRes.exitCode}: ${(renderRes.stderr || renderRes.stdout || '').slice(0, 200)}`);
+        }
+      } catch (err) {
+        send('nginx-render', 'warning', `nginx-render(new dist) 异常(忽略,继续): ${(err as Error).message}`);
+      }
+
       // In-process 重建 cds/web/dist —— 详见 runInProcessWebBuild 注释
       // (Bugbot PR #524 第九轮重构:抽到顶层 helper,与 self-force-sync 共用)
       timingRecorder.merge(await runInProcessWebBuild(newHead, send, res));
