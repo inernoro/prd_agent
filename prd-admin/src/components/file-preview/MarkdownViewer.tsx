@@ -84,6 +84,8 @@ const docSanitizeSchema = {
   attributes: {
     ...defaultSchema.attributes,
     '*': [...(defaultSchema.attributes?.['*'] || []), 'id'],
+    // 允许 wikilink: 协议的 href（双链渲染走自定义 a 组件拦截）
+    a: [...(defaultSchema.attributes?.a || []), ['href', /^(?:#|https?:|mailto:|wikilink:).+/]],
     math: ['xmlns'],
   },
   tagNames: [
@@ -91,6 +93,14 @@ const docSanitizeSchema = {
     'math', 'semantics', 'mrow', 'mi', 'mo', 'mn', 'msup', 'msub',
     'mfrac', 'msqrt', 'mover', 'munder', 'mtable', 'mtr', 'mtd', 'mtext', 'annotation',
   ],
+  // 同时把 wikilink 加进协议白名单（双重保险：有些版本走 protocols，有些走 attribute pattern）
+  protocols: {
+    ...(defaultSchema.protocols ?? {}),
+    href: [
+      ...((defaultSchema.protocols as { href?: string[] } | undefined)?.href ?? ['http', 'https', 'mailto']),
+      'wikilink',
+    ],
+  },
 };
 
 /**
