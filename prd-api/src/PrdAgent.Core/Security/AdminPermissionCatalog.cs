@@ -307,6 +307,16 @@ public static class AdminPermissionCatalog
     public const string CcasAgentUse = "ccas-agent.use";
 
     /// <summary>
+    /// 识途 Agent 权限：新人文化与制度问答
+    /// </summary>
+    public const string ShituAgentUse = "shitu-agent.use";
+
+    /// <summary>
+    /// 识途 Agent 管理权限：维护内嵌分类知识库
+    /// </summary>
+    public const string ShituAgentManage = "shitu-agent.manage";
+
+    /// <summary>
     /// 私人助理 Agent 权限：任务拆解、四象限排序、任务清单管理
     /// </summary>
     public const string PaAgentUse = "pa-agent.use";
@@ -431,6 +441,8 @@ public static class AdminPermissionCatalog
         new(SkillAgentUse, "技能引导智能体", "AI 引导创建技能、导出技能包"),
 
         new(CcasAgentUse, "赋码采集关联系统智能体", "产线赋码业务的 PRD 生成 + 设备素材库 + 流程示意图绘制"),
+        new(ShituAgentUse, "识途智能体", "新人文化与制度问答（企业文化/事故教训/规章制度/奖赏表彰）"),
+        new(ShituAgentManage, "识途智能体-管理", "维护识途内嵌分类知识库内容"),
         new(PaAgentUse, "私人助理 Agent", "任务拆解、四象限排序、任务清单管理"),
         new(FrontEndAgentUse, "前端搭档智能体", "API 接入、组件生成、前端报错诊断和视觉样式建议"),
 

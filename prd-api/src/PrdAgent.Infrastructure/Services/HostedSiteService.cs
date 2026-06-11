@@ -376,13 +376,23 @@ public class HostedSiteService : IHostedSiteService
         var fb = Builders<HostedSite>.Filter;
         FilterDefinition<HostedSite> filter;
 
-        if (string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(teamId))
+        if (string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase))
         {
-            // 团队作用域：必须是我所在的团队，且站点已分享到该团队
             var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, ct);
-            if (!myTeamIds.Contains(teamId))
-                return (new List<HostedSite>(), 0);
-            filter = fb.AnyEq(x => x.SharedTeamIds, teamId);
+            if (!string.IsNullOrWhiteSpace(teamId))
+            {
+                // 团队作用域：必须是我所在的团队，且站点已分享到该团队
+                if (!myTeamIds.Contains(teamId))
+                    return (new List<HostedSite>(), 0);
+                filter = fb.AnyEq(x => x.SharedTeamIds, teamId);
+            }
+            else
+            {
+                // 团队聚合视图：不传 teamId = 我加入的所有团队的共享站点（知识库团队空间消费）
+                if (myTeamIds.Count == 0)
+                    return (new List<HostedSite>(), 0);
+                filter = fb.AnyIn(x => x.SharedTeamIds, myTeamIds);
+            }
         }
         else
         {
@@ -594,6 +604,85 @@ public class HostedSiteService : IHostedSiteService
 
         site.SharedTeamIds = sanitized;
         return site;
+    }
+
+    public async Task<HostedSite> CopyToTeamAsync(string siteId, string userId, string teamId, string? groupId, CancellationToken ct)
+    {
+        // 只能复制自己拥有的站点（「复用个人空间的网页」是所有权动作）
+        var source = await _db.HostedSites.Find(x => x.Id == siteId && x.OwnerUserId == userId).FirstOrDefaultAsync(ct);
+        if (source == null)
+            throw new KeyNotFoundException("站点不存在或无权限");
+
+        // 目标团队必须有网页托管编辑权限（与 SetSharedTeamsAsync 同款门控，viewer 不可投放）
+        var roles = await _teams.GetMyWebHostingTeamRolesAsync(userId, ct);
+        if (!(roles.TryGetValue(teamId, out var role)
+              && (role == WebHostingRoles.Owner || role == WebHostingRoles.Editor)))
+            throw new UnauthorizedAccessException("无权将网页复制到该团队：你在该团队是只读或非成员角色");
+
+        // 分组归属（可选）：必须是目标团队下的分组，防止跨团队挂靠
+        if (!string.IsNullOrWhiteSpace(groupId))
+        {
+            var group = await _db.WebPageGroups.Find(g => g.Id == groupId && g.TeamId == teamId).FirstOrDefaultAsync(ct);
+            if (group == null)
+                throw new KeyNotFoundException("目标分组不存在或不属于该团队");
+        }
+
+        // 物理复制 COS 文件：副本与原件彻底独立（删除/重传互不影响），
+        // 与 SaveSharedSiteAsync 的「引用复用」刻意不同 —— 团队副本的规则与团队内新建站点一致。
+        var newSiteId = Guid.NewGuid().ToString("N");
+        var now = DateTime.UtcNow;
+        var newFiles = new List<HostedSiteFile>();
+        long totalSize = 0;
+        foreach (var f in source.Files)
+        {
+            var bytes = await _storage.TryDownloadBytesAsync(f.CosKey, ct);
+            if (bytes == null)
+            {
+                _logger.LogWarning("复制站点 {SiteId} 时源文件缺失，跳过: {CosKey}", siteId, f.CosKey);
+                continue;
+            }
+            var newKey = _storage.BuildSiteKey(newSiteId, f.Path);
+            await _storage.UploadToKeyAsync(newKey, bytes, f.MimeType, CancellationToken.None, SiteCacheControl);
+            newFiles.Add(new HostedSiteFile { Path = f.Path, CosKey = newKey, Size = bytes.Length, MimeType = f.MimeType });
+            totalSize += bytes.Length;
+        }
+        if (newFiles.Count == 0)
+            throw new InvalidOperationException("源站点文件已不可读，无法复制");
+        if (!newFiles.Any(f => string.Equals(f.Path, source.EntryFile, StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException("源站点入口文件缺失，无法复制");
+
+        var copy = new HostedSite
+        {
+            Id = newSiteId,
+            Title = source.Title,
+            Description = source.Description,
+            SourceType = "team-copy",
+            SourceRef = source.Id,
+            CosPrefix = $"web-hosting/sites/{newSiteId}/",
+            EntryFile = source.EntryFile,
+            SiteUrl = AppendVersion(_storage.BuildUrlForKey(_storage.BuildSiteKey(newSiteId, source.EntryFile)), now),
+            Files = newFiles,
+            TotalSize = totalSize,
+            Tags = source.Tags.ToList(),
+            CoverImageUrl = source.CoverImageUrl,
+            WrappedAssetType = source.WrappedAssetType,
+            OwnerUserId = userId,
+            SharedTeamIds = new List<string> { teamId },
+            GroupId = string.IsNullOrWhiteSpace(groupId) ? null : groupId,
+            CreatedAt = now,
+            UpdatedAt = now,
+            ContentVersion = now,
+            SlideNavCompatVersion = source.SlideNavCompatVersion,
+        };
+
+        await _db.HostedSites.InsertOneAsync(copy, cancellationToken: ct);
+        await _teamActivity.LogForTeamsAsync(
+            new List<string> { teamId }, TeamAppKey.WebHosting, userId,
+            TeamActivityAction.SiteShared, "site", copy.Id, copy.Title, ct);
+
+        _logger.LogInformation("用户 {UserId} 将站点 {SourceId} 复制进团队 {TeamId} 为新站点 {NewId}（{FileCount} 个文件, {TotalSize} bytes）",
+            userId, siteId, teamId, newSiteId, newFiles.Count, totalSize);
+        return copy;
     }
 
     // ─────────────────────────────────────────────
@@ -1006,14 +1095,42 @@ public class HostedSiteService : IHostedSiteService
     }
 
     /// <summary>
+    /// 团队内部人判定：登录用户对分享指向的全部站点都具备成员关系
+    /// （分享创建者本人 / 站点创建者 / 站点已共享到我所在的团队）。
+    /// 合集分享按「全部站点」判定，防止混入他团队站点时被部分成员免密带过。
+    /// </summary>
+    private async Task<bool> IsTeamInsiderForShareAsync(WebPageShareLink share, string viewerUserId, CancellationToken ct)
+    {
+        if (share.CreatedBy == viewerUserId) return true;
+
+        var targetIds = new List<string>(share.SiteIds ?? new List<string>());
+        if (share.SiteId != null && !targetIds.Contains(share.SiteId))
+            targetIds.Insert(0, share.SiteId);
+        if (targetIds.Count == 0) return false;
+
+        var sites = await _db.HostedSites.Find(x => targetIds.Contains(x.Id)).ToListAsync(ct);
+        if (sites.Count == 0) return false;
+
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(viewerUserId, ct);
+        return sites.All(s =>
+            s.OwnerUserId == viewerUserId
+            || (s.SharedTeamIds ?? new List<string>()).Any(myTeamIds.Contains));
+    }
+
+    /// <summary>
     /// 分享访问统一关卡：滑动窗口速率限制 + Hash 优先校验 + 持久化窗口状态。
     /// 返回 null 表示通过；返回 tuple 时调用方应直接 short-circuit 用对应 HttpStatus 回客户端。
     /// 不绑定 IP：容器反代下 IP 不可靠，NAT 局域网下会一锅端 —— 改按 shareLink 全局限速。
+    /// 团队成员免密：登录用户若是分享目标站点的团队内部人（IsTeamInsiderForShareAsync），
+    /// 视同内部访问直接放行密码门控；外部访客（未登录 / 非成员）仍需密码。
     /// </summary>
     private async Task<(string Error, int HttpStatus, int? RetryAfter)?> EnforceShareAccessAsync(
-        WebPageShareLink share, string? password, CancellationToken ct)
+        WebPageShareLink share, string? password, string? viewerUserId, CancellationToken ct)
     {
         if (share.AccessLevel != "password") return null;
+
+        if (!string.IsNullOrEmpty(viewerUserId) && await IsTeamInsiderForShareAsync(share, viewerUserId, ct))
+            return null;
 
         var rl = _sharePwd.CheckRateLimit(share.RecentAttempts);
         if (!rl.Allowed)
@@ -1083,7 +1200,7 @@ public class HostedSiteService : IHostedSiteService
             return new ShareViewResult { Error = vg.Error, HttpStatus = vg.HttpStatus, ErrorCode = vg.ErrorCode };
         // "public" + 通过 visibility 校验后：下面 password gate 仍然生效
 
-        var gate = await EnforceShareAccessAsync(share, password, ct);
+        var gate = await EnforceShareAccessAsync(share, password, viewerUserId, ct);
         if (gate is { } g)
             return new ShareViewResult { Error = g.Error, HttpStatus = g.HttpStatus, RetryAfterSeconds = g.RetryAfter, ErrorCode = g.HttpStatus == 429 ? "rate_limited" : "wrong_password" };
 
@@ -1931,7 +2048,7 @@ public class HostedSiteService : IHostedSiteService
         if (visGate is { } vg)
             return new SaveSharedSiteResult { Error = vg.Error, HttpStatus = vg.HttpStatus };
 
-        var gate = await EnforceShareAccessAsync(share, password, ct);
+        var gate = await EnforceShareAccessAsync(share, password, userId, ct);
         if (gate is { } g)
             return new SaveSharedSiteResult { Error = g.Error, HttpStatus = g.HttpStatus, RetryAfterSeconds = g.RetryAfter };
 
@@ -2611,7 +2728,7 @@ public class HostedSiteService : IHostedSiteService
 
         // 密码门控：复用 ViewShareAsync 同款 EnforceShareAccessAsync —— 它内置滑动窗口速率限制
         // （10 次/分钟）+ 持久化 RecentAttempts + 恒时比对。直接手写比对会绕过防爆破（Codex P1）。
-        var gate = await EnforceShareAccessAsync(share, password, ct);
+        var gate = await EnforceShareAccessAsync(share, password, viewerUserId, ct);
         if (gate is { } g)
         {
             var code = g.HttpStatus == 429 ? "rate_limited" : "UNAUTHORIZED";

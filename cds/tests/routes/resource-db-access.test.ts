@@ -129,6 +129,47 @@ describe('resource database access', () => {
     if (tmpDir && fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  it('selects an existing business MongoDB database when the configured default is missing', async () => {
+    const harness = makeHarness();
+    tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({
+      id: 'mongo-main',
+      projectId: 'prd-agent',
+      name: 'mongo-main',
+      dockerImage: 'mongo:7',
+      containerPort: 27017,
+      hostPort: 27017,
+      containerName: 'cds-mongo-main',
+      status: 'running',
+      dbName: 'app',
+      env: {
+        MONGO_INITDB_ROOT_USERNAME: 'app',
+        MONGO_INITDB_ROOT_PASSWORD: 'pw',
+        MONGO_INITDB_DATABASE: 'app',
+      },
+      volumes: [],
+    });
+    harness.shell.addResponsePattern(/listDatabases/, () => ({
+      stdout: '[{"name":"admin","sizeOnDisk":0},{"name":"config","sizeOnDisk":0},{"name":"local","sizeOnDisk":0},{"name":"prdagent","sizeOnDisk":4096}]\n',
+      stderr: '',
+      exitCode: 0,
+    }));
+    harness.shell.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    await new Promise<void>((resolve) => {
+      server = harness.app.listen(0, '127.0.0.1', resolve);
+    });
+
+    const res = await request(
+      server!,
+      'GET',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/databases',
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.configuredDatabase).toBe('app');
+    expect(res.body.currentDatabase).toBe('prdagent');
+  });
+
   it('queries MongoDB collections against the selected database', async () => {
     const harness = makeHarness();
     tmpDir = harness.tmpDir;
@@ -169,6 +210,55 @@ describe('resource database access', () => {
     expect(res.body.database).toBe('orders');
     expect(res.body.collections).toEqual([{ name: 'users', type: 'collection' }]);
     expect(harness.shell.commands.some((cmd) => cmd.includes('/orders?authSource=admin'))).toBe(true);
+  });
+
+  it('runs audited MongoDB writes with admin confirmation', async () => {
+    const harness = makeHarness();
+    tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({
+      id: 'mongo-main',
+      projectId: 'prd-agent',
+      name: 'mongo-main',
+      dockerImage: 'mongo:7',
+      containerPort: 27017,
+      hostPort: 27017,
+      containerName: 'cds-mongo-main',
+      status: 'running',
+      dbName: 'app',
+      env: {
+        MONGO_INITDB_ROOT_USERNAME: 'app',
+        MONGO_INITDB_ROOT_PASSWORD: 'pw',
+        MONGO_INITDB_DATABASE: 'app',
+      },
+      volumes: [],
+    });
+    harness.shell.addResponsePattern(/insertOne/, () => ({
+      stdout: '{"acknowledged":true,"insertedId":"abc123"}\n',
+      stderr: '',
+      exitCode: 0,
+    }));
+    harness.shell.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    await new Promise<void>((resolve) => {
+      server = harness.app.listen(0, '127.0.0.1', resolve);
+    });
+
+    const res = await request(
+      server!,
+      'POST',
+      '/api/branches/main-branch/resources/infra%3Amongo-main/data/mongo/write',
+      {
+        action: 'insertOne',
+        database: 'app',
+        collection: 'users',
+        document: { name: 'Ada' },
+        confirmResourceName: 'mongo-main',
+      },
+      { 'x-test-cookie-auth': '1' },
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.result).toEqual({ acknowledged: true, insertedId: 'abc123' });
+    expect(harness.shell.commands.some((cmd) => cmd.includes('insertOne'))).toBe(true);
   });
 
   it('returns a usable Redis external connection string with the real password', async () => {
@@ -517,5 +607,82 @@ describe('resource database access', () => {
     expect(res.status).toBe(409);
     expect(res.body.error).toContain('拒绝删除共享数据库');
     expect(harness.shell.commands.some((cmd) => cmd.includes('DROP DATABASE') || cmd.includes('mysqldump'))).toBe(false);
+  });
+
+  it('describes ready workbench capability for SQL database resources', async () => {
+    const harness = makeHarness();
+    tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({
+      id: 'mysql-main',
+      projectId: 'prd-agent',
+      name: 'MySQL 8',
+      dockerImage: 'mysql:8',
+      containerPort: 3306,
+      hostPort: 3306,
+      containerName: 'cds-mysql-main',
+      status: 'running',
+      dbName: 'app',
+      env: { MYSQL_ROOT_PASSWORD: 'root-pw', MYSQL_DATABASE: 'app' },
+      volumes: [],
+    });
+    await new Promise<void>((resolve) => {
+      server = harness.app.listen(0, '127.0.0.1', resolve);
+    });
+
+    const res = await request(server!, 'GET', '/api/branches/main-branch/resources/infra%3Amysql-main/workbench-capability');
+
+    expect(res.status).toBe(200);
+    expect(res.body.capability.runtimeKey).toBe('mysql');
+    expect(res.body.capability.runner).toBe('sql');
+    expect(res.body.capability.ready).toBe(true);
+    expect(res.body.capability.resultModes).toEqual(['table', 'json', 'output']);
+  });
+
+  it('describes planned workbench capability for SQL Server and RabbitMQ resources', async () => {
+    const harness = makeHarness();
+    tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({
+      id: 'mssql-main',
+      projectId: 'prd-agent',
+      name: 'SQL Server',
+      dockerImage: 'mcr.microsoft.com/mssql/server:2022-latest',
+      containerPort: 1433,
+      hostPort: 1433,
+      containerName: 'cds-mssql-main',
+      status: 'running',
+      dbName: 'app',
+      env: { ACCEPT_EULA: 'Y', MSSQL_SA_PASSWORD: 'pw' },
+      volumes: [],
+    });
+    harness.stateService.addInfraService({
+      id: 'rabbit-main',
+      projectId: 'prd-agent',
+      name: 'RabbitMQ',
+      dockerImage: 'rabbitmq:3-management',
+      containerPort: 5672,
+      hostPort: 5672,
+      containerName: 'cds-rabbit-main',
+      status: 'running',
+      env: {},
+      volumes: [],
+    });
+    await new Promise<void>((resolve) => {
+      server = harness.app.listen(0, '127.0.0.1', resolve);
+    });
+
+    const sqlServer = await request(server!, 'GET', '/api/branches/main-branch/resources/infra%3Amssql-main/workbench-capability');
+    const rabbit = await request(server!, 'GET', '/api/branches/main-branch/resources/infra%3Arabbit-main/workbench-capability');
+
+    expect(sqlServer.status).toBe(200);
+    expect(sqlServer.body.capability.runtimeKey).toBe('sqlserver');
+    expect(sqlServer.body.capability.runtime).toBe('sql');
+    expect(sqlServer.body.capability.runner).toBe('planned');
+    expect(sqlServer.body.capability.defaultCommand).toContain('SELECT TOP 50');
+
+    expect(rabbit.status).toBe(200);
+    expect(rabbit.body.capability.runtimeKey).toBe('rabbitmq');
+    expect(rabbit.body.capability.runtime).toBe('queue');
+    expect(rabbit.body.capability.runner).toBe('planned');
+    expect(rabbit.body.capability.treeLabel).toContain('queue');
   });
 });

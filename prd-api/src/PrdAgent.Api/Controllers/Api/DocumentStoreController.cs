@@ -87,12 +87,31 @@ public class DocumentStoreController : ControllerBase
     /// <summary>可写：拥有者 或 团队成员（决策 10 全员可编辑；不含 public）；项目库走项目成员判定</summary>
     private async Task<bool> CanWriteStoreAsync(DocumentStore s, string userId, List<string> myTeamIds)
         => s.OwnerId == userId || IsTeamShared(s, myTeamIds) || await IsPmProjectMemberAsync(s, userId, write: true)
-           || await IsProductKnowledgeMemberAsync(s, userId);
+           || await IsProductKnowledgeMemberAsync(s, userId)
+           || IsShituKnowledgeWritable(s);
 
     /// <summary>可读：拥有者 或 公开 或 团队成员；项目库走项目成员判定（含观察者/干系人）；产品库走产品成员判定</summary>
     private async Task<bool> CanReadStoreAsync(DocumentStore s, string userId, List<string> myTeamIds)
         => s.OwnerId == userId || s.IsPublic || IsTeamShared(s, myTeamIds) || await IsPmProjectMemberAsync(s, userId, write: false)
-           || await IsProductKnowledgeMemberAsync(s, userId);
+           || await IsProductKnowledgeMemberAsync(s, userId)
+           || IsShituKnowledgeReadable(s);
+
+    private bool IsShituKnowledgeReadable(DocumentStore s)
+    {
+        if (string.IsNullOrEmpty(s.ShituCategoryRef)) return false;
+        var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
+        return permissions.Contains(AdminPermissionCatalog.Super)
+               || permissions.Contains(AdminPermissionCatalog.ShituAgentUse)
+               || permissions.Contains(AdminPermissionCatalog.ShituAgentManage);
+    }
+
+    private bool IsShituKnowledgeWritable(DocumentStore s)
+    {
+        if (string.IsNullOrEmpty(s.ShituCategoryRef)) return false;
+        var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
+        return permissions.Contains(AdminPermissionCatalog.Super)
+               || permissions.Contains(AdminPermissionCatalog.ShituAgentManage);
+    }
 
     /// <summary>
     /// 产品知识库访问判定：仅当 store.ProductKnowledgeRef 非空时生效（格式 product:{id} / version:{id}）。
@@ -312,20 +331,31 @@ public class DocumentStoreController : ControllerBase
         page = Math.Max(1, page);
 
         FilterDefinition<DocumentStore> filter;
-        if (string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(teamId))
+        if (string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase))
         {
             var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
-            if (!myTeamIds.Contains(teamId))
-                return Ok(ApiResponse<object>.Ok(new { items = new List<DocumentStore>(), total = 0, page, pageSize }));
-            filter = Builders<DocumentStore>.Filter.AnyEq(s => s.SharedTeamIds, teamId);
+            if (!string.IsNullOrWhiteSpace(teamId))
+            {
+                if (!myTeamIds.Contains(teamId))
+                    return Ok(ApiResponse<object>.Ok(new { items = new List<DocumentStore>(), total = 0, page, pageSize }));
+                filter = Builders<DocumentStore>.Filter.AnyEq(s => s.SharedTeamIds, teamId);
+            }
+            else
+            {
+                // 团队空间聚合视图：不传 teamId = 我加入的所有团队的共享空间
+                if (myTeamIds.Count == 0)
+                    return Ok(ApiResponse<object>.Ok(new { items = new List<DocumentStore>(), total = 0, page, pageSize }));
+                filter = Builders<DocumentStore>.Filter.AnyIn(s => s.SharedTeamIds, myTeamIds);
+            }
         }
         else
         {
-            // 我的知识库：排除项目库 / 产品库（PmProjectId / ProductKnowledgeRef 非空的库只在对应 Agent 的「知识库」tab 内访问）
+            // 我的知识库：排除项目库 / 产品库 / 识途库（专用 Agent 内嵌 tab 访问）
             filter = Builders<DocumentStore>.Filter.And(
                 Builders<DocumentStore>.Filter.Eq(s => s.OwnerId, userId),
                 Builders<DocumentStore>.Filter.Eq(s => s.PmProjectId, (string?)null),
-                Builders<DocumentStore>.Filter.Eq(s => s.ProductKnowledgeRef, (string?)null));
+                Builders<DocumentStore>.Filter.Eq(s => s.ProductKnowledgeRef, (string?)null),
+                Builders<DocumentStore>.Filter.Eq(s => s.ShituCategoryRef, (string?)null));
         }
 
         var total = await _db.DocumentStores.CountDocumentsAsync(filter);
@@ -2030,22 +2060,33 @@ public class DocumentStoreController : ControllerBase
         pageSize = Math.Clamp(pageSize, 1, 500);
         page = Math.Max(1, page);
 
-        var isTeamScope = string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(teamId);
+        var isTeamScope = string.Equals(scope, "team", StringComparison.OrdinalIgnoreCase);
         FilterDefinition<DocumentStore> filter;
         if (isTeamScope)
         {
             var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
-            if (!myTeamIds.Contains(teamId!))
-                return Ok(ApiResponse<object>.Ok(new { items = new List<object>(), total = 0, page, pageSize }));
-            filter = Builders<DocumentStore>.Filter.AnyEq(s => s.SharedTeamIds, teamId);
+            if (!string.IsNullOrWhiteSpace(teamId))
+            {
+                if (!myTeamIds.Contains(teamId!))
+                    return Ok(ApiResponse<object>.Ok(new { items = new List<object>(), total = 0, page, pageSize }));
+                filter = Builders<DocumentStore>.Filter.AnyEq(s => s.SharedTeamIds, teamId);
+            }
+            else
+            {
+                // 团队空间聚合视图：不传 teamId = 我加入的所有团队的共享空间
+                if (myTeamIds.Count == 0)
+                    return Ok(ApiResponse<object>.Ok(new { items = new List<object>(), total = 0, page, pageSize }));
+                filter = Builders<DocumentStore>.Filter.AnyIn(s => s.SharedTeamIds, myTeamIds);
+            }
         }
         else
         {
-            // 我的知识库：排除项目库 / 产品库（PmProjectId / ProductKnowledgeRef 非空的库只在对应 Agent 的「知识库」tab 内访问）
+            // 我的知识库：排除项目库 / 产品库 / 识途库（专用 Agent 内嵌 tab 访问）
             filter = Builders<DocumentStore>.Filter.And(
                 Builders<DocumentStore>.Filter.Eq(s => s.OwnerId, userId),
                 Builders<DocumentStore>.Filter.Eq(s => s.PmProjectId, (string?)null),
-                Builders<DocumentStore>.Filter.Eq(s => s.ProductKnowledgeRef, (string?)null));
+                Builders<DocumentStore>.Filter.Eq(s => s.ProductKnowledgeRef, (string?)null),
+                Builders<DocumentStore>.Filter.Eq(s => s.ShituCategoryRef, (string?)null));
         }
         var total = await _db.DocumentStores.CountDocumentsAsync(filter);
         var stores = await _db.DocumentStores.Find(filter)

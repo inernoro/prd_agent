@@ -1323,6 +1323,25 @@ public static class ProjectManagement
 }
 
 /// <summary>
+/// 识途 Agent — 新人文化与制度问答
+/// </summary>
+public static class ShituAgent
+{
+    public const string AppName = "识途 Agent";
+
+    public static class Qa
+    {
+        [AppCallerMetadata(
+            "识途-知识库问答",
+            "基于分类知识库（企业文化/事故教训/规章制度/奖赏表彰）的严格 RAG 多轮问答",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Chat"
+        )]
+        public const string Chat = "shitu-agent.qa::chat";
+    }
+}
+
+/// <summary>
 /// CCAS (Code Collection &amp; Association System) Agent — 赋码采集关联系统综合智能体
 /// </summary>
 public static class CcasAgent

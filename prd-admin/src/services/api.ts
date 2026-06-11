@@ -1091,6 +1091,10 @@ export const api = {
     batchDelete: () => '/api/web-pages/batch-delete',
     setVisibility: (id: string) => `/api/web-pages/${id}/visibility`,
     setTeams: (id: string) => `/api/web-pages/${id}/teams`,
+    groups: () => '/api/web-pages/groups',
+    groupById: (groupId: string) => `/api/web-pages/groups/${groupId}`,
+    setGroup: (id: string) => `/api/web-pages/${id}/group`,
+    copyToTeam: (id: string) => `/api/web-pages/${id}/copy-to-team`,
     // 波1 访客痕迹：记录一次访问 + owner 查本页访客名单。
     // 走独立前缀 /api/web-page-analytics 避开 AdminPermissionMiddleware 对 /api/web-pages/* 的写权限拦截。
     recordView: (id: string) => `/api/web-page-analytics/${id}/record-view`,

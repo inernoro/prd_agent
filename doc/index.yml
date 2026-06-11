@@ -353,3 +353,12 @@ docs:
   report.skill-eval-sample-diataxis: 文档技能评测·documentation-writer（Diátaxis）样本输出
   report.cds-mongo-log-split-incident-2026-05-23: CDS Mongo 日志拆分事故复盘（2026-05-23）
   report.tutorial-coverage: 页面教程全量路由覆盖审计（2026-06-04）
+  debt.cds-nginx-loading-pages:
+    title: "CDS loading pages 债务台账"
+    status: partial
+  design.cds-skill-version-update:
+    title: "CDS 技能版本与更新架构"
+    status: active
+  report.cds-agent-ux-acceptance-2026-06-06:
+    title: "CDS Agent 体验修复验收报告（2026-06-06）"
+    status: active

@@ -255,6 +255,7 @@ public class MongoDbContext
     public IMongoCollection<HostedSite> HostedSites => _database.GetCollection<HostedSite>("hosted_sites");
     public IMongoCollection<WebPageShareLink> WebPageShareLinks => _database.GetCollection<WebPageShareLink>("web_page_share_links");
     public IMongoCollection<ShareViewLog> ShareViewLogs => _database.GetCollection<ShareViewLog>("share_view_logs");
+    public IMongoCollection<WebPageGroup> WebPageGroups => _database.GetCollection<WebPageGroup>("web_page_groups");
 
     // 统一短链路由（所有分享系统共用 /s/{seq}）
     public IMongoCollection<ShortLink> ShortLinks => _database.GetCollection<ShortLink>("short_links");
@@ -346,6 +347,8 @@ public class MongoDbContext
     // Product Management 产品管理（产品-版本-需求-功能-客户 + 通用表单/状态机引擎）
     public IMongoCollection<Product> Products => _database.GetCollection<Product>("products");
     public IMongoCollection<ProductVersion> ProductVersions => _database.GetCollection<ProductVersion>("product_versions");
+    public IMongoCollection<ProductInitiation> ProductInitiations => _database.GetCollection<ProductInitiation>("product_initiations");
+    public IMongoCollection<ProductRelease> ProductReleases => _database.GetCollection<ProductRelease>("product_releases");
     public IMongoCollection<Requirement> Requirements => _database.GetCollection<Requirement>("requirements");
     public IMongoCollection<Feature> Features => _database.GetCollection<Feature>("features");
     public IMongoCollection<FeatureVersion> FeatureVersions => _database.GetCollection<FeatureVersion>("feature_versions");

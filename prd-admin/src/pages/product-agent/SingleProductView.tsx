@@ -13,7 +13,6 @@ import { Plus, Trash2, GitBranch, ListChecks, Puzzle, UserCog, BookOpen, Share2,
 import { ProductAssistantDrawer } from './ProductAssistantDrawer';
 import { EChart } from '@/components/charts/EChart';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
-import { systemDialog } from '@/lib/systemDialog';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
 import { KnowledgeModule } from './knowledge/KnowledgeModule';
 import { ProductGraphCanvas } from './ProductGraphCanvas';
@@ -24,9 +23,9 @@ import { ReportsTab } from './ReportsTab';
 import { BatchBar } from './BatchBar';
 import { UpgradeRequestsTab } from './UpgradeRequestsTab';
 import './product-cards.css';
+import { VersionWorkflowTab } from './VersionWorkflowTab';
 import {
   getProduct,
-  deleteProduct,
   listVersions,
   createVersion,
   deleteVersion,
@@ -120,19 +119,6 @@ export function SingleProductView() {
     void reload();
   }, [reload]);
 
-  const onDelete = async () => {
-    const ok = await systemDialog.confirm({
-      title: '删除产品',
-      message: `确定删除产品「${product?.name ?? ''}」吗？该产品下的需求、功能、版本等关联数据将一并不可访问，此操作不可恢复。`,
-      tone: 'danger',
-      confirmText: '删除',
-      cancelText: '取消',
-    });
-    if (!ok) return;
-    const res = await deleteProduct(productId);
-    if (res.success) navigate('/product-agent');
-  };
-
   if (loading) {
     return (
       <div className="h-screen min-h-0 flex items-center justify-center bg-[#0f1014]">
@@ -147,7 +133,7 @@ export function SingleProductView() {
   }
 
   const SECTION_TITLE: Record<Section, string> = {
-    overview: '工作台', versions: '版本（含升级申请）', requirements: '需求', features: '功能', board: '看板', rtm: '追溯矩阵', reports: '报表',
+    overview: '工作台', versions: '版本', requirements: '需求', features: '功能', board: '看板', rtm: '追溯矩阵', reports: '报表',
     defects: '缺陷', team: '团队', knowledge: '知识库', graph: '图谱',
   };
 
@@ -156,12 +142,9 @@ export function SingleProductView() {
       title={product.name}
       subtitle={`${product.productNo} · ${categoryLabel(categories, product.grade)}`}
       topSlot={
-        <div className="flex items-center justify-between mb-2">
+        <div className="mb-2">
           <button onClick={() => navigate('/product-agent')} className="flex items-center gap-1.5 text-[11px] text-white/40 hover:text-white">
             <ArrowLeft size={13} /> 产品列表
-          </button>
-          <button onClick={onDelete} className="text-[11px] text-red-300/60 hover:text-red-300" title="删除产品">
-            <Trash2 size={13} />
           </button>
         </div>
       }
@@ -408,6 +391,10 @@ function DashChart({ title, option, empty }: { title: string; option: EChartsOpt
 
 // ── 版本 tab（含大版本升级申请）──
 function VersionsTab({ productId }: { productId: string }) {
+  return <VersionWorkflowTab productId={productId} />;
+}
+
+export function LegacyVersionsTab({ productId }: { productId: string }) {
   const navigate = useNavigate();
   const [items, setItems] = useState<ProductVersion[]>([]);
   const [loading, setLoading] = useState(true);

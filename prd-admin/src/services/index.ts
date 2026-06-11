@@ -1701,8 +1701,14 @@ export {
   listShareViewLogs,
   renewShare as renewSiteShare,
   getShareAnalytics as getSiteShareAnalytics,
+  listSiteGroups,
+  createSiteGroup,
+  updateSiteGroup,
+  deleteSiteGroup,
+  setSiteGroup,
+  copySiteToTeam,
 } from '@/services/real/webPages';
-export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, SharedSiteInfo, ShareViewData, ShareViewLogItem, SiteOwnerCard, ShareAnalyticsResult, ShareAnalyticsLinkSummary, ShareAnalyticsTimelineEntry, ShareAnalyticsVisitorSummary, ShareAnalyticsTrendPoint, ShareAnalyticsHourlyPoint, ShareAnalyticsVisitorStats, ShareAnalyticsCommentEntry } from '@/services/real/webPages';
+export type { HostedSite, HostedSiteFile, ShareLinkItem, TagCount, WebPageGroup, SharedSiteInfo, ShareViewData, ShareViewLogItem, SiteOwnerCard, ShareAnalyticsResult, ShareAnalyticsLinkSummary, ShareAnalyticsTimelineEntry, ShareAnalyticsVisitorSummary, ShareAnalyticsTrendPoint, ShareAnalyticsHourlyPoint, ShareAnalyticsVisitorStats, ShareAnalyticsCommentEntry } from '@/services/real/webPages';
 
 // ── Team 团队（跨应用协作） ──
 export {
@@ -2147,6 +2153,21 @@ export type {
   CcasQaRequest,
   CcasQaReferencePayload,
 } from '@/services/real/ccasAgent';
+
+// ── Shitu Agent 识途（新人文化与制度问答）──
+export {
+  getShituMeta,
+  getShituCategoryStore,
+  SHITU_QA_STREAM_URL,
+} from '@/services/real/shituAgent';
+export type {
+  ShituCategoryKey,
+  ShituTabMeta,
+  ShituMeta,
+  ShituCategoryStore,
+  ShituQaHistoryItem,
+  ShituQaReferencePayload,
+} from '@/services/real/shituAgent';
 
 // ── Front End Agent 前端搭档智能体 ──
 export {

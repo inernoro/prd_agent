@@ -4392,6 +4392,132 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return 'unknown';
   }
 
+  type ResourceWorkbenchRuntimeKey = 'mysql' | 'postgres' | 'sqlserver' | 'mongodb' | 'redis' | 'rabbitmq' | 'unknown';
+
+  interface ResourceWorkbenchCapability {
+    runtimeKey: ResourceWorkbenchRuntimeKey;
+    runtime: 'sql' | 'document' | 'keyValue' | 'queue' | 'unsupported';
+    runner: 'sql' | 'mongo' | 'redis-readonly' | 'planned';
+    treeLabel: string;
+    consoleLabel: string;
+    commandLanguage: 'sql' | 'mongo' | 'redis' | 'rabbitmq' | 'text';
+    resultModes: Array<'table' | 'json' | 'output'>;
+    defaultCommand: string;
+    ready: boolean;
+    writeSupported: boolean;
+    customPanels: string[];
+    note: string;
+  }
+
+  function resourceWorkbenchRuntimeKey(runtime: string): ResourceWorkbenchRuntimeKey {
+    const lower = runtime.toLowerCase();
+    if (lower.includes('mysql') || lower.includes('mariadb')) return 'mysql';
+    if (lower.includes('postgres')) return 'postgres';
+    if (lower.includes('sql server') || lower.includes('mssql') || lower.includes('sqlserver')) return 'sqlserver';
+    if (lower.includes('mongo')) return 'mongodb';
+    if (lower.includes('redis')) return 'redis';
+    if (lower.includes('rabbit')) return 'rabbitmq';
+    return 'unknown';
+  }
+
+  function resourceWorkbenchCapability(runtime: string): ResourceWorkbenchCapability {
+    const runtimeKey = resourceWorkbenchRuntimeKey(runtime);
+    if (runtimeKey === 'mysql' || runtimeKey === 'postgres') {
+      return {
+        runtimeKey,
+        runtime: 'sql',
+        runner: 'sql',
+        treeLabel: '数据库 / 表',
+        consoleLabel: 'SQL Console',
+        commandLanguage: 'sql',
+        resultModes: ['table', 'json', 'output'],
+        defaultCommand: 'SELECT * FROM <table> LIMIT 50',
+        ready: true,
+        writeSupported: true,
+        customPanels: ['schema', 'ddl', 'backup'],
+        note: 'SQL 系资源共用统一工作台协议，DDL/DML 由 data-write 权限和审计保护。',
+      };
+    }
+    if (runtimeKey === 'sqlserver') {
+      return {
+        runtimeKey,
+        runtime: 'sql',
+        runner: 'planned',
+        treeLabel: '数据库 / schema / 表',
+        consoleLabel: 'T-SQL Console',
+        commandLanguage: 'sql',
+        resultModes: ['table', 'json', 'output'],
+        defaultCommand: 'SELECT TOP 50 * FROM <table>;',
+        ready: false,
+        writeSupported: false,
+        customPanels: ['schema', 'ddl', 'backup'],
+        note: 'SQL Server for Linux 已进入工作台协议，执行器需要 sqlcmd/mssql-tools 后接入。',
+      };
+    }
+    if (runtimeKey === 'mongodb') {
+      return {
+        runtimeKey,
+        runtime: 'document',
+        runner: 'mongo',
+        treeLabel: '数据库 / collection',
+        consoleLabel: 'MongoDB Console',
+        commandLanguage: 'mongo',
+        resultModes: ['table', 'json', 'output'],
+        defaultCommand: 'db.getCollection("<collection>").find({}).limit(50);',
+        ready: true,
+        writeSupported: true,
+        customPanels: ['collection', 'index', 'document'],
+        note: '文档型资源共用统一工作台协议，collection 选择只生成默认命令。',
+      };
+    }
+    if (runtimeKey === 'redis') {
+      return {
+        runtimeKey,
+        runtime: 'keyValue',
+        runner: 'redis-readonly',
+        treeLabel: 'DB / key',
+        consoleLabel: 'Redis Console',
+        commandLanguage: 'redis',
+        resultModes: ['json', 'output'],
+        defaultCommand: 'GET <key>',
+        ready: true,
+        writeSupported: false,
+        customPanels: ['string', 'hash', 'list', 'set', 'zset', 'stream'],
+        note: 'Redis 先保留只读 key 浏览，后续在同一协议下补命令执行和结构化编辑。',
+      };
+    }
+    if (runtimeKey === 'rabbitmq') {
+      return {
+        runtimeKey,
+        runtime: 'queue',
+        runner: 'planned',
+        treeLabel: 'vhost / exchange / queue / binding',
+        consoleLabel: 'RabbitMQ Command',
+        commandLanguage: 'rabbitmq',
+        resultModes: ['table', 'json', 'output'],
+        defaultCommand: 'list queues',
+        ready: false,
+        writeSupported: false,
+        customPanels: ['queue', 'exchange', 'binding', 'message'],
+        note: 'RabbitMQ 已进入工作台协议，后续接入 list / peek / publish / purge 等动作命令。',
+      };
+    }
+    return {
+      runtimeKey,
+      runtime: 'unsupported',
+      runner: 'planned',
+      treeLabel: '资源树',
+      consoleLabel: 'Command',
+      commandLanguage: 'text',
+      resultModes: ['json', 'output'],
+      defaultCommand: '',
+      ready: false,
+      writeSupported: false,
+      customPanels: [],
+      note: '该资源尚未声明数据工作台执行器。',
+    };
+  }
+
   function sqlIdent(name: string): string {
     return `\`${name.replace(/`/g, '``')}\``;
   }
@@ -4632,6 +4758,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
       throw new Error(`MongoDB database 名不合法：${value || '(empty)'}`);
     }
     return value;
+  }
+
+  function chooseMongoCurrentDatabase(configuredDatabase: string, databases: unknown[]): string {
+    const validDatabases = databases
+      .map((item) => (item && typeof item === 'object' && 'name' in item ? String((item as { name?: unknown }).name || '') : ''))
+      .filter((name) => /^[a-zA-Z0-9_-]{1,63}$/.test(name));
+    if (validDatabases.includes(configuredDatabase)) return configuredDatabase;
+    const businessDatabase = validDatabases.find((name) => !['admin', 'config', 'local'].includes(name));
+    return businessDatabase || validDatabases[0] || configuredDatabase;
   }
 
   function mongoCredentials(service: InfraService, branch: BranchEntry, databaseOverride?: string): { user: string; password: string; database: string; uri: string; secrets: string[] } {
@@ -6872,6 +7007,34 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  router.get('/branches/:id/resources/:resourceId/workbench-capability', async (req, res) => {
+    const branch = stateService.getBranch(req.params.id);
+    if (!branch) {
+      res.status(404).json({ error: `分支 "${req.params.id}" 不存在` });
+      return;
+    }
+    const projectId = branch.projectId || 'default';
+    const m = assertProjectAccess(req as any, projectId);
+    if (m) { res.status(m.status).json(m.body); return; }
+    const resourceId = decodeResourceId(req.params.resourceId);
+    const resources = await getBranchResourceSnapshot(branch);
+    const resource = resources.find((item) => item.id === resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${resourceId}" 不存在` });
+      return;
+    }
+    const capability = resourceWorkbenchCapability(resource.runtime);
+    res.json({
+      branchId: branch.id,
+      resourceId,
+      resourceName: resource.displayName,
+      source: resource.source,
+      kind: resource.kind,
+      runtime: resource.runtime,
+      capability,
+    });
+  });
+
   router.get('/branches/:id/resources/:resourceId/data/schema', async (req, res) => {
     const ctx = await resolveSqlDataResourceForRequest(req, res);
     if (!ctx) return;
@@ -7114,9 +7277,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const ctx = await resolveMongoDataResourceForRequest(req, res);
     if (!ctx) return;
     try {
-      const currentDatabase = mongoDatabaseForBranch(ctx.service, ctx.branch);
+      const configuredDatabase = mongoDatabaseForBranch(ctx.service, ctx.branch);
       const data = await runMongoJson(ctx.service, ctx.branch, 'JSON.stringify(db.adminCommand({ listDatabases: 1 }).databases.map(d => ({ name: d.name, sizeOnDisk: d.sizeOnDisk || 0 })))');
-      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, currentDatabase, databases: Array.isArray(data) ? data : [] });
+      const databases = Array.isArray(data) ? data : [];
+      const currentDatabase = chooseMongoCurrentDatabase(configuredDatabase, databases);
+      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, configuredDatabase, currentDatabase, databases });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -7205,6 +7370,90 @@ export function createBranchRouter(deps: RouterDeps): Router {
         resourceName: ctx.resourceName,
         result: 'failed',
         note: `${ctx.resourceName} MongoDB 查询失败：${(err as Error).message}`,
+      });
+      stateService.save();
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/branches/:id/resources/:resourceId/data/mongo/write', async (req, res) => {
+    const ctx = await resolveMongoDataResourceForRequest(req, res);
+    if (!ctx) return;
+    const resources = await getBranchResourceSnapshot(ctx.branch);
+    const resource = resources.find((item) => item.id === ctx.resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${ctx.resourceId}" 不存在` });
+      return;
+    }
+    if (!requireResourcePermission(req, res, 'data-write', ctx.branch, resource)) return;
+    try {
+      ensureResourceNameConfirmed(req.body?.confirmResourceName, resource, '执行 MongoDB 写入');
+    } catch (err) {
+      res.status(409).json({ error: (err as Error).message });
+      return;
+    }
+
+    const action = String(req.body?.action || '').trim();
+    let database = '';
+    let collection = '';
+    let script = '';
+    try {
+      database = mongoDatabaseFromRequest(req.body?.database, mongoDatabaseForBranch(ctx.service, ctx.branch));
+      collection = mongoCollectionFromRequest(req.body?.collection);
+      if (action === 'insertOne') {
+        const document = mongoJsonObject(req.body?.document, 'document');
+        script = `JSON.stringify(db.getCollection(${mongoSafeJson(collection)}).insertOne(${mongoSafeJson(document)}))`;
+      } else if (action === 'updateMany') {
+        const filter = mongoJsonObject(req.body?.filter, 'filter');
+        const update = mongoJsonObject(req.body?.update, 'update');
+        if (Object.keys(update).length === 0) throw new Error('update 不能为空');
+        script = `JSON.stringify(db.getCollection(${mongoSafeJson(collection)}).updateMany(${mongoSafeJson(filter)}, ${mongoSafeJson(update)}))`;
+      } else if (action === 'deleteMany') {
+        const filter = mongoJsonObject(req.body?.filter, 'filter');
+        if (Object.keys(filter).length === 0) throw new Error('deleteMany 必须提供非空 filter');
+        script = `JSON.stringify(db.getCollection(${mongoSafeJson(collection)}).deleteMany(${mongoSafeJson(filter)}))`;
+      } else if (action === 'createCollection') {
+        script = `JSON.stringify(db.createCollection(${mongoSafeJson(collection)}))`;
+      } else if (action === 'dropCollection') {
+        script = `JSON.stringify({ dropped: db.getCollection(${mongoSafeJson(collection)}).drop() })`;
+      } else {
+        throw new Error('action 只允许 insertOne / updateMany / deleteMany / createCollection / dropCollection');
+      }
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+      return;
+    }
+
+    try {
+      const result = await runMongoJson(ctx.service, ctx.branch, script, database);
+      stateService.recordDestructiveOp({
+        type: 'purge-database',
+        projectId: ctx.projectId,
+        summary: `对 ${ctx.resourceName} 执行 MongoDB ${action}：${database}.${collection}`,
+        triggeredBy: resolveActorFromRequest(req),
+      });
+      stateService.appendActivityLog(ctx.projectId, {
+        type: 'resource-data-query',
+        branchId: ctx.branch.id,
+        branchName: ctx.branch.branch,
+        actor: resolveActorFromRequest(req),
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resourceName,
+        result: 'success',
+        note: `${ctx.resourceName} 执行 MongoDB ${action}：${database}.${collection}`,
+      });
+      stateService.save();
+      res.json({ branchId: ctx.branch.id, resourceId: ctx.resourceId, database, collection, action, result });
+    } catch (err) {
+      stateService.appendActivityLog(ctx.projectId, {
+        type: 'resource-data-query',
+        branchId: ctx.branch.id,
+        branchName: ctx.branch.branch,
+        actor: resolveActorFromRequest(req),
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resourceName,
+        result: 'failed',
+        note: `${ctx.resourceName} MongoDB ${action} 失败：${(err as Error).message}`,
       });
       stateService.save();
       res.status(500).json({ error: (err as Error).message });
