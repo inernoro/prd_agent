@@ -261,9 +261,29 @@ export interface ProductAnalytics {
   releaseProgress: { versionId: string; versionName: string; total: number; done: number; doing: number; todo: number }[];
   overall: { total: number; done: number; doing: number; todo: number };
   velocity: { week: string; requirements: number; features: number }[];
+  /** 规模统计（原工作台数据展示区迁入报表） */
+  counts: { versions: number; requirements: number; features: number; defects: number };
+  /** 需求分级分布（key: p0-p3） */
+  requirementsByGrade: Record<string, number>;
+  /** 追溯缺陷状态分布（key: DefectStatus 原始值） */
+  defectsByStatus: Record<string, number>;
+  /** 版本生命周期分布（key: lifecycle） */
+  versionsByLifecycle: Record<string, number>;
 }
 export function getProductAnalytics(productId: string) {
   return apiRequest<ProductAnalytics>(`/api/product/products/${productId}/analytics`);
+}
+
+// ── 用户偏好（工作台快捷操作，用户级跨产品共用） ──
+export interface ProductAgentPrefs {
+  /** null = 从未配置（前端走默认）；空数组 = 用户主动清空 */
+  quickActionIds: string[] | null;
+}
+export function getProductAgentPreferences() {
+  return apiRequest<ProductAgentPrefs>('/api/product/preferences');
+}
+export function updateProductAgentQuickActions(quickActionIds: string[]) {
+  return apiRequest<ProductAgentPrefs>('/api/product/preferences/quick-actions', { method: 'PUT', body: { quickActionIds } });
 }
 
 // ── 批量操作 ──
