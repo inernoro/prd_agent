@@ -85,7 +85,11 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 
 // 添加服务
 builder.Services.AddScoped<PrdAgent.Api.Filters.PmAuditActionFilter>();
-builder.Services.AddControllers()
+builder.Services.AddControllers(options =>
+    {
+        // 团队动态：全局白名单审计（白名单外的动作一次字典查找即逃逸）
+        options.Filters.Add<PrdAgent.Api.Filters.ActivityLogActionFilter>();
+    })
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;

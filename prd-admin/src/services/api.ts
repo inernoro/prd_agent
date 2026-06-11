@@ -188,6 +188,12 @@ export const api = {
     },
   },
 
+  // ============ Team Activity 团队动态 ============
+  teamActivity: {
+    logs: () => '/api/team-activity/logs',
+    modules: () => '/api/team-activity/modules',
+  },
+
   // ============ Skills 技能管理 ============
   skills: {
     list: () => '/api/skills',

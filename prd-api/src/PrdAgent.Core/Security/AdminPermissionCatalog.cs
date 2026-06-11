@@ -332,6 +332,11 @@ public static class AdminPermissionCatalog
     public const string PeerSyncManage = "peer-sync.manage";
 
     /// <summary>
+    /// 团队动态权限（读）：查看全员工作动态时间线（管理员级）
+    /// </summary>
+    public const string TeamActivityRead = "team-activity.read";
+
+    /// <summary>
     /// 超级权限（当路由未配置映射时，用于兜底放行；同时也可用于 root 破窗全权限）。
     /// </summary>
     public const string Super = "super";
@@ -450,6 +455,8 @@ public static class AdminPermissionCatalog
 
         new(DailyTipsRead, "小技巧-读", "查看小技巧列表（管理视图）"),
         new(DailyTipsWrite, "小技巧-写", "新建/编辑/删除首页小技巧与引导卡片"),
+
+        new(TeamActivityRead, "团队动态-读", "查看全员工作动态时间线（仅授予管理层）"),
 
         new(Super, "超级权限", "兜底放行：建议仅给 root/超级管理员"),
     };

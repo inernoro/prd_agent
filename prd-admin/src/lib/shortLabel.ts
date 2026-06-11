@@ -63,6 +63,7 @@ export const SHORT_LABEL_MAP: Record<string, string> = {
   'lab': '实验室',
   'automations': '自动化',
   'logs': '日志',
+  'team-activity': '动态',
 
   // ── 管理 / 其他 ───────────────────────
   'authz': '权限',
