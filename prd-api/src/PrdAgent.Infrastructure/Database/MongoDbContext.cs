@@ -344,6 +344,9 @@ public class MongoDbContext
     public IMongoCollection<PmRisk> PmRisks => _database.GetCollection<PmRisk>("pm_risks");
     public IMongoCollection<PmAuditLog> PmAuditLogs => _database.GetCollection<PmAuditLog>("pm_audit_logs");
 
+    // 团队动态（全平台白名单写操作留痕，ActivityLogActionFilter 写入）
+    public IMongoCollection<ActivityLog> ActivityLogs => _database.GetCollection<ActivityLog>("activity_logs");
+
     // Product Management 产品管理（产品-版本-需求-功能-客户 + 通用表单/状态机引擎）
     public IMongoCollection<Product> Products => _database.GetCollection<Product>("products");
     public IMongoCollection<ProductVersion> ProductVersions => _database.GetCollection<ProductVersion>("product_versions");

@@ -1307,3 +1307,28 @@ db.peer_nodes.createIndex(
   { name: "uniq_peer_nodes_remote_node_id", unique: true }
 )
 ```
+
+### activity_logs
+
+团队动态（全平台白名单写操作留痕，`ActivityLogActionFilter` 写入，`/api/team-activity/logs` 按
+时间倒序分页读取，支持按人（ActorId）/ 模块（Module）/ 时间范围筛选）。
+
+```js
+// 时间线主查询 — 无筛选时按时间倒序翻页
+db.activity_logs.createIndex(
+  { "CreatedAt": -1 },
+  { name: "idx_activity_logs_created_at" }
+)
+
+// 按人筛选 + 时间倒序
+db.activity_logs.createIndex(
+  { "ActorId": 1, "CreatedAt": -1 },
+  { name: "idx_activity_logs_actor_created" }
+)
+
+// 按模块筛选 + 时间倒序
+db.activity_logs.createIndex(
+  { "Module": 1, "CreatedAt": -1 },
+  { name: "idx_activity_logs_module_created" }
+)
+```

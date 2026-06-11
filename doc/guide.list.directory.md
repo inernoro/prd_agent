@@ -99,6 +99,8 @@
   > 三层模型(脑/技能/沙箱) + map-agent·cds-agent 命名 + 借运行时不重建 + 唯一接缝(KB 当工作目录进、改动经 diff 闸出)；md→ppt 避坑
 - [服务器权威性设计](design.server-authority) `design.server-authority`
   > 客户端断开不取消服务器任务的架构设计
+- [团队动态设计](design.team-activity) `design.team-activity`
+  > 全局白名单审计 Filter 自动留痕 + TargetTitle 标题快照（删除前预读）+ 管理员时间线页（/team-activity）
 
 - [LLM Gateway 统一调用架构设计](design.llm-gateway) `design.llm-gateway`
   > 所有 LLM 调用通过统一网关，三级调度 + 健康管理

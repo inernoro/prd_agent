@@ -49,6 +49,7 @@ const ProjectRouteAgentPage = lazy(() => import('@/pages/project-route-agent').t
 const UsersPage = lazy(() => import('@/pages/UsersPage'));
 const ModelManageTabsPage = lazy(() => import('@/pages/ModelManageTabsPage').then(m => ({ default: m.ModelManageTabsPage })));
 const LlmLogsPage = lazy(() => import('@/pages/LlmLogsPage'));
+const TeamActivityPage = lazy(() => import('@/pages/team-activity/TeamActivityPage'));
 const LabPage = lazy(() => import('@/pages/LabPage'));
 const AutomationRulesPage = lazy(() => import('@/pages/AutomationRulesPage'));
 const WebPagesPage = lazy(() => import('@/pages/WebPagesPage'));
@@ -581,6 +582,19 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       icon: 'ScrollText',
       section: 'utility',
       tags: ['日志', 'logs', '审计'],
+    },
+  },
+  {
+    path: '/team-activity',
+    permission: 'team-activity.read',
+    element: shellGuarded('team-activity.read', <TeamActivityPage />),
+    nav: {
+      label: '团队动态',
+      shortLabel: '动态',
+      description: '全员工作动态时间线（管理员）',
+      icon: 'Activity',
+      section: 'utility',
+      tags: ['动态', '活动', '工作日志', 'activity'],
     },
   },
 
