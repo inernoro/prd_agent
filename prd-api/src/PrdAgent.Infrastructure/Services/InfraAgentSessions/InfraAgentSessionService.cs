@@ -207,6 +207,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             ToolPolicy = NormalizeToolPolicy(request.ToolPolicy),
             HookProfileId = NormalizeOptional(request.HookProfileId),
             Title = NormalizeTitle(request.Title),
+            ClientApp = NormalizeOptional(request.ClientApp),
             Status = InfraAgentSessionStatuses.Idle,
             CreatedAt = now,
             UpdatedAt = now
@@ -266,6 +267,10 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             {
                 runtime,
                 model,
+                // 观测台标签（2026-06-11）：CDS 侧请求列表按 title/用户/应用展示与筛选
+                title = session.Title,
+                clientUser = session.UserId,
+                clientApp = session.ClientApp ?? "map",
                 modelBaseUrl,
                 modelProtocol = runtimeProfile?.Protocol,
                 modelApiKey = runtimeProfile?.ApiKey,

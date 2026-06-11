@@ -64,3 +64,6 @@
 | feat | prd-api | 流式逐页大纲 POST /api/md-to-ppt/outline-stream：模型按 JSONL 输出（首行 meta 含整体配色/排字/气质，随后每页一行含 design 设计意图），服务端逐行解析每成功一页立刻推 SSE——第一页几秒内可见；兜底整 JSON 解析 |
 | feat | prd-api | 页级 design 字段贯通：大纲设计意图（版式/视觉装置/排字/强调）随 OutlinePages 直接喂给并行子智能体的页级提示词（设计闭环非摆设） |
 | feat | prd-admin | 大纲编辑器流式化：meta 到达即出编辑器骨架（脉冲占位卡），每页到达填充真卡并渐变高亮；卡片新增可编辑设计意图行；流式中确认禁用、序列化大纲带设计行 |
+| feat | cds | Agent 请求观测台（用户信任诉求落地）：新页 /agent-requests/:projectId——一条条请求实时列表（title/clientApp/clientUser/model/状态/耗时/事件数 + 收发内容预览）、按用户/应用/状态/关键字筛选、行展开看完整事件流；项目卡心电图按钮直达 |
+| feat | cds | 会话打标 + 聚合端点：POST agent-sessions 接受 title/clientUser/clientApp；GET /projects/:id/agent-requests 合并 live 会话与持久历史（state 持久 ring buffer 500 条，重启后历史可查）；结构性事件发布 agent-session.activity 到全局 SSE 总线（text_delta 不发防洪水）+ 5 条路由测试 |
+| feat | prd-api | MAP 创建 CDS 会话补传观测台标签：title/clientUser(userId)/clientApp；CreateInfraAgentSessionRequest 加 ClientApp，MdToPpt 全部会话标记 md-to-ppt |

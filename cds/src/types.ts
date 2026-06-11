@@ -918,6 +918,12 @@ export interface CdsState {
    */
   selfUpdateHistory?: SelfUpdateRecord[];
   /**
+   * Agent 请求历史摘要(2026-06-11 用户信任诉求:「看到一条条请求事件才相信
+   * HTML 真是远程 agent 返回的」)。会话 stop/fail 时由 remote-hosts 落一条摘要
+   * (收发预览各截 2000 字),ring buffer 500 条;全量事件仍在内存随重启丢失。
+   */
+  agentRequestHistory?: AgentRequestRecord[];
+  /**
    * Daemon 启动完成时间戳(ISO),由 index.ts 的 server.listen() 回调写入。
    * 2026-05-07 用户反馈"在左下角卡了 1 小时"导致的 timing 体系审视
    * (report.cds-self-update-timing-audit.md):durationMs 只覆盖 process.exit
@@ -1158,6 +1164,24 @@ export interface ActiveSelfUpdate {
   /** 启动时扫描发现 sidecar pid 已死 → 标 true。前端渲染"已中断"红色态。
    *  下次正常更新触发时清掉。 */
   interrupted?: boolean;
+}
+
+/** Agent 请求历史摘要（观测台持久层，重启可查） */
+export interface AgentRequestRecord {
+  sessionId: string;
+  projectId: string;
+  title: string | null;
+  clientUser: string | null;
+  clientApp: string | null;
+  runtime: string;
+  model: string | null;
+  status: string;
+  createdAt: string;
+  finishedAt: string;
+  durationMs: number;
+  eventCount: number;
+  requestPreview: string | null;
+  responsePreview: string | null;
 }
 
 export interface SelfUpdateRecord {

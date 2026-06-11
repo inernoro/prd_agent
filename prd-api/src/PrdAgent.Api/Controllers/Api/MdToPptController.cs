@@ -1435,7 +1435,7 @@ public class MdToPptController : ControllerBase
                 session = await _sessions.CreateAsync(userId,
                     new CreateInfraAgentSessionRequest(
                         connection.Id, profile.Runtime, profile.Model, title,
-                        InfraAgentToolPolicies.DenyAll, null, profile.Id, null, null, null, null),
+                        InfraAgentToolPolicies.DenyAll, null, profile.Id, null, null, null, null, "md-to-ppt"),
                     CancellationToken.None);
                 if (!string.Equals(session.Status, InfraAgentSessionStatuses.Running, StringComparison.OrdinalIgnoreCase))
                 {
@@ -1771,7 +1771,8 @@ public class MdToPptController : ControllerBase
                         null,
                         null,
                         null,
-                        null),
+                        null,
+                        "md-to-ppt"),
                     CancellationToken.None);
                 var createMs = (int)(DateTime.UtcNow - t2).TotalMilliseconds;
                 _logger.LogInformation("[MdToPpt-Agent] session created elapsedMs={Ms} sessionId={Id} toolPolicy={Policy}",
