@@ -731,34 +731,6 @@ function rememberAvatarStatus(url: string, status: 'loaded' | 'failed'): void {
   writeAvatarStorage(url, status);
 }
 
-function circularActorText(value: string): string {
-  const base = (value || '').trim() || 'CDS';
-  const compact = base.replace(/\s+/g, '');
-  const clipped = compact.length > 18 ? compact.slice(0, 18) : compact;
-  return `${clipped} • ${clipped} •`;
-}
-
-function CircularActorText({ text }: { text: string }): JSX.Element {
-  const chars = Array.from(circularActorText(text));
-  return (
-    <span className="cds-actor-orbit__ring" aria-hidden>
-      {chars.map((char, index) => {
-        const angle = (360 / chars.length) * index;
-        return (
-          <span
-            // eslint-disable-next-line react/no-array-index-key
-            key={`${char}-${index}`}
-            className="cds-actor-orbit__char"
-            style={{ transform: `rotate(${angle}deg) translateY(-23px) rotate(90deg)` }}
-          >
-            {char}
-          </span>
-        );
-      })}
-    </span>
-  );
-}
-
 function formatBytesFromMB(value?: number): string {
   if (!value || value <= 0) return '未知';
   if (value >= 1024) return `${Math.round(value / 102.4) / 10} GB`;
@@ -4431,14 +4403,22 @@ function BranchCard({
   const [commitHistoryState, setCommitHistoryState] = useState<
     { status: 'idle' | 'loading' | 'ok' | 'error'; commits: BranchCommitSummary[]; message?: string }
   >({ status: 'idle', commits: [] });
-  const actorOrbitVisible = Boolean(footerBuilder) && (isInterim || action?.status === 'running' || isAiActive);
-  const actorOrbitTone = isError || action?.status === 'error'
+  const actorNameGlowVisible = Boolean(footerBuilder) && (isInterim || action?.status === 'running' || isAiActive);
+  const actorNameGlowTone = isError || action?.status === 'error'
     ? 'danger'
     : isAiActive
       ? 'ai'
       : branch.status === 'stopping' || action?.kind === 'stop'
         ? 'warning'
         : 'build';
+  const actorNameGlowClass = actorNameGlowVisible
+    ? {
+      ai: 'cds-actor-name-glow cds-actor-name-glow--ai',
+      build: 'cds-actor-name-glow cds-actor-name-glow--build',
+      warning: 'cds-actor-name-glow cds-actor-name-glow--warning',
+      danger: 'cds-actor-name-glow cds-actor-name-glow--danger',
+    }[actorNameGlowTone]
+    : 'text-foreground/70';
   useEffect(() => {
     if (!tagEditorOpen) return;
     const frame = window.requestAnimationFrame(() => tagInputRef.current?.focus());
@@ -5029,10 +5009,8 @@ function BranchCard({
         <div className="relative min-w-0 pr-2 text-muted-foreground">
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex min-w-[54px] max-w-[94px] shrink-0 flex-col items-center gap-1" title={builderTitle}>
-            <div className={`cds-actor-orbit ${actorOrbitVisible ? `cds-actor-orbit--active cds-actor-orbit--${actorOrbitTone}` : ''}`}>
-              {actorOrbitVisible && footerBuilder ? <CircularActorText text={footerBuilder} /> : null}
               <div
-                className="cds-actor-orbit__avatar relative flex h-7 w-7 items-center justify-center overflow-hidden rounded-full border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] text-[11px] font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
+                className="relative flex h-7 w-7 items-center justify-center overflow-hidden rounded-full border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] text-[11px] font-semibold text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
                 aria-label={builderTitle}
               >
                 <span className="absolute inset-0 flex items-center justify-center" aria-hidden>
@@ -5055,39 +5033,38 @@ function BranchCard({
                   />
                 ) : null}
               </div>
+              {footerBuilder ? (
+                <span className={`block max-w-full break-all text-center text-[10px] font-medium leading-tight ${actorNameGlowClass}`}>
+                  {footerBuilder}
+                </span>
+              ) : null}
             </div>
-            {footerBuilder && !actorOrbitVisible ? (
-              <span className="block max-w-full break-all text-center text-[10px] font-medium leading-tight text-foreground/70">
-                {footerBuilder}
-              </span>
-            ) : null}
-          </div>
             <div className="relative flex min-w-0 flex-1 items-center gap-2">
-            {footerSha ? (
-              <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground" title={`commit ${footerSha}`}>
-                {footerSha}
-              </span>
-            ) : null}
-            {footerSubject ? (
-              <span className="min-w-0 flex-1 truncate text-sm" title={footerSubject}>
-                {footerSubject}
-              </span>
-            ) : (
-              <span className="min-w-0 flex-1" aria-hidden />
-            )}
-            <button
-              type="button"
-              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
-              title="查看提交历史"
-              aria-label={`${branch.branch} 提交历史`}
-              aria-expanded={commitMenuOpen}
-              onClick={(event) => {
-                event.stopPropagation();
-                void toggleCommitMenu();
-              }}
-            >
-              <ChevronDown className={`h-3.5 w-3.5 transition-transform ${commitMenuOpen ? 'rotate-180' : ''}`} />
-            </button>
+              {footerSha ? (
+                <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground" title={`commit ${footerSha}`}>
+                  {footerSha}
+                </span>
+              ) : null}
+              {footerSubject ? (
+                <span className="min-w-0 flex-1 truncate text-sm" title={footerSubject}>
+                  {footerSubject}
+                </span>
+              ) : (
+                <span className="min-w-0 flex-1" aria-hidden />
+              )}
+              <button
+                type="button"
+                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                title="查看提交历史"
+                aria-label={`${branch.branch} 提交历史`}
+                aria-expanded={commitMenuOpen}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void toggleCommitMenu();
+                }}
+              >
+                <ChevronDown className={`h-3.5 w-3.5 transition-transform ${commitMenuOpen ? 'rotate-180' : ''}`} />
+              </button>
             </div>
           </div>
           {commitHistoryPanel}
