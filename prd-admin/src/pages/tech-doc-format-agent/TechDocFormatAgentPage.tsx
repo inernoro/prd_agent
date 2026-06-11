@@ -2,10 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } f
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronRight,
   Copy,
   Download,
+  FileUp,
   FileText,
+  Folder,
+  Github,
+  GitBranch,
+  Link2,
   RefreshCw,
+  Search,
   ShieldCheck,
   Upload,
   Wand2,
@@ -18,6 +25,17 @@ import { StreamingText } from '@/components/streaming/StreamingText';
 import { toast } from '@/lib/toast';
 import { streamDirectChat } from '@/services/real/aiToolbox';
 import {
+  getTechDocGitHubAuthStatus,
+  getTechDocGitHubTree,
+  listTechDocGitHubRepositories,
+  pollTechDocGitHubDeviceFlow,
+  startTechDocGitHubDeviceFlow,
+  type TechDocDeviceFlowStart,
+  type TechDocGitHubAuthStatus,
+  type TechDocGitHubRepository,
+  type TechDocGitHubTreeItem,
+} from '@/services/real/techDocFormatAgent';
+import {
   buildPm2502Draft,
   buildTechDocGenerationPrompt,
   buildTechDocRepairPrompt,
@@ -29,6 +47,18 @@ import {
 
 type ActiveTab = 'generate' | 'check' | 'template';
 type RunPhase = 'idle' | 'streaming' | 'done' | 'error';
+
+interface RequirementFile {
+  name: string;
+  content: string;
+  size: number;
+}
+
+interface DeviceFlowState extends TechDocDeviceFlowStart {
+  startedAt: number;
+  status: 'polling' | 'expired' | 'denied' | 'failed';
+  errorDetail?: string;
+}
 
 const DEFAULT_FORM: TechDocDraftInput = {
   projectName: '',
@@ -76,7 +106,21 @@ export function TechDocFormatAgentPage() {
   const [modelInfo, setModelInfo] = useState<{ model?: string; platform?: string } | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
   const abortRef = useRef<(() => void) | null>(null);
+  const pollTimerRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const requirementFileInputRef = useRef<HTMLInputElement>(null);
+  const [requirementFiles, setRequirementFiles] = useState<RequirementFile[]>([]);
+  const [githubAuth, setGithubAuth] = useState<TechDocGitHubAuthStatus | null>(null);
+  const [githubAuthLoading, setGithubAuthLoading] = useState(false);
+  const [deviceFlow, setDeviceFlow] = useState<DeviceFlowState | null>(null);
+  const [repoQuery, setRepoQuery] = useState('');
+  const [repos, setRepos] = useState<TechDocGitHubRepository[]>([]);
+  const [reposLoading, setReposLoading] = useState(false);
+  const [selectedRepo, setSelectedRepo] = useState<TechDocGitHubRepository | null>(null);
+  const [treeItems, setTreeItems] = useState<TechDocGitHubTreeItem[]>([]);
+  const [treeLoading, setTreeLoading] = useState(false);
+  const [currentPath, setCurrentPath] = useState('');
+  const [selectedProjectPath, setSelectedProjectPath] = useState('');
 
   useEffect(() => {
     if (phase !== 'streaming') {
@@ -88,8 +132,107 @@ export function TechDocFormatAgentPage() {
   }, [phase]);
 
   useEffect(() => {
-    return () => abortRef.current?.();
+    return () => {
+      abortRef.current?.();
+      if (pollTimerRef.current) window.clearTimeout(pollTimerRef.current);
+    };
   }, []);
+
+  const loadGitHubAuthStatus = useCallback(async () => {
+    setGithubAuthLoading(true);
+    const res = await getTechDocGitHubAuthStatus();
+    setGithubAuthLoading(false);
+    if (res.success && res.data) {
+      setGithubAuth(res.data);
+      return;
+    }
+    toast.error('GitHub 连接状态加载失败', res.error?.message ?? '请稍后重试');
+  }, []);
+
+  useEffect(() => {
+    void loadGitHubAuthStatus();
+  }, [loadGitHubAuthStatus]);
+
+  const loadRepositories = useCallback(async (query = repoQuery) => {
+    if (!githubAuth?.connected) return;
+    setReposLoading(true);
+    const res = await listTechDocGitHubRepositories(query, 1, 30);
+    setReposLoading(false);
+    if (!res.success || !res.data) {
+      toast.error('仓库列表加载失败', res.error?.message ?? '请确认 GitHub 授权仍有效');
+      return;
+    }
+    setRepos(res.data.items);
+  }, [githubAuth?.connected, repoQuery]);
+
+  useEffect(() => {
+    if (githubAuth?.connected) {
+      void loadRepositories('');
+    }
+  }, [githubAuth?.connected, loadRepositories]);
+
+  const loadTree = useCallback(async (repo: TechDocGitHubRepository, path = '') => {
+    setTreeLoading(true);
+    const res = await getTechDocGitHubTree(repo.owner, repo.repo, path, repo.defaultBranch ?? undefined);
+    setTreeLoading(false);
+    if (!res.success || !res.data) {
+      toast.error('项目路径加载失败', res.error?.message ?? '请确认账号有仓库访问权限');
+      return;
+    }
+    setTreeItems(res.data.items);
+    setCurrentPath(res.data.path || '');
+  }, []);
+
+  const startGitHubConnect = useCallback(async () => {
+    if (pollTimerRef.current) window.clearTimeout(pollTimerRef.current);
+    setDeviceFlow(null);
+    const res = await startTechDocGitHubDeviceFlow();
+    if (!res.success || !res.data) {
+      toast.error('无法发起 GitHub 授权', res.error?.message ?? '请检查 OAuth 配置');
+      return;
+    }
+    const flow: DeviceFlowState = {
+      ...res.data,
+      startedAt: Date.now(),
+      status: 'polling',
+    };
+    setDeviceFlow(flow);
+    window.open(res.data.verificationUriComplete, '_blank', 'noopener,noreferrer');
+  }, []);
+
+  useEffect(() => {
+    if (!deviceFlow || deviceFlow.status !== 'polling') return;
+
+    let cancelled = false;
+    const poll = async () => {
+      const res = await pollTechDocGitHubDeviceFlow(deviceFlow.flowToken);
+      if (cancelled) return;
+      if (!res.success || !res.data) {
+        setDeviceFlow((prev) => prev ? { ...prev, status: 'failed', errorDetail: res.error?.message ?? '授权轮询失败' } : prev);
+        return;
+      }
+      if (res.data.status === 'done') {
+        setDeviceFlow(null);
+        toast.success('GitHub 已连接');
+        await loadGitHubAuthStatus();
+        return;
+      }
+      if (res.data.status === 'expired' || res.data.status === 'denied') {
+        setDeviceFlow((prev) => prev ? { ...prev, status: res.data.status === 'expired' ? 'expired' : 'denied' } : prev);
+        return;
+      }
+      const interval = res.data.status === 'slow_down'
+        ? deviceFlow.intervalSeconds + 5
+        : deviceFlow.intervalSeconds;
+      pollTimerRef.current = window.setTimeout(poll, Math.max(1, interval) * 1000);
+    };
+
+    pollTimerRef.current = window.setTimeout(poll, Math.max(1, deviceFlow.intervalSeconds) * 1000);
+    return () => {
+      cancelled = true;
+      if (pollTimerRef.current) window.clearTimeout(pollTimerRef.current);
+    };
+  }, [deviceFlow, loadGitHubAuthStatus]);
 
   const generatedValidation = useMemo(
     () => validateTechDocFormat(generatedDoc),
@@ -101,7 +244,38 @@ export function TechDocFormatAgentPage() {
     [checkDoc],
   );
 
-  const canGenerate = form.requirementText.trim().length > 0 || form.projectLinks.trim().length > 0;
+  const selectedTreeSummary = useMemo(() => {
+    if (!selectedRepo) return '';
+    const dirs = treeItems.filter((item) => item.type === 'dir').slice(0, 30);
+    const files = treeItems.filter((item) => item.type !== 'dir').slice(0, 30);
+    return [
+      dirs.length > 0 ? `目录：${dirs.map((item) => item.path).join('、')}` : '',
+      files.length > 0 ? `文件：${files.map((item) => item.path).join('、')}` : '',
+    ].filter(Boolean).join('\n');
+  }, [selectedRepo, treeItems]);
+
+  const generationInput = useMemo<TechDocDraftInput>(() => ({
+    ...form,
+    requirementFiles: requirementFiles.map((file) => ({
+      name: file.name,
+      content: file.content,
+    })),
+    githubProject: selectedRepo ? {
+      fullName: selectedRepo.fullName,
+      owner: selectedRepo.owner,
+      repo: selectedRepo.repo,
+      branch: selectedRepo.defaultBranch ?? undefined,
+      path: selectedProjectPath || currentPath || '/',
+      htmlUrl: selectedRepo.htmlUrl ?? undefined,
+      treeSummary: selectedTreeSummary,
+    } : undefined,
+  }), [currentPath, form, requirementFiles, selectedProjectPath, selectedRepo, selectedTreeSummary]);
+
+  const canGenerate =
+    form.requirementText.trim().length > 0
+    || form.projectLinks.trim().length > 0
+    || requirementFiles.length > 0
+    || !!selectedRepo;
 
   const updateForm = useCallback((key: keyof TechDocDraftInput, value: string) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -117,14 +291,14 @@ export function TechDocFormatAgentPage() {
   }, []);
 
   const handleBuildDraft = useCallback(() => {
-    const draft = buildPm2502Draft(form);
+    const draft = buildPm2502Draft(generationInput);
     setGeneratedDoc(draft);
     setPhase('done');
     setErrorMsg('');
     setModelInfo(null);
     setActiveTab('generate');
     toast.success('已生成 PM2502 底稿', '底稿已自动完成模板校验');
-  }, [form]);
+  }, [generationInput]);
 
   const runPrompt = useCallback((prompt: string) => {
     abortRef.current?.();
@@ -154,11 +328,11 @@ export function TechDocFormatAgentPage() {
 
   const handleAiGenerate = useCallback(() => {
     if (!canGenerate) {
-      toast.warning('请先填写功能说明或项目链接');
+      toast.warning('请先填写功能说明、上传需求文件或选择 GitHub 项目');
       return;
     }
-    runPrompt(buildTechDocGenerationPrompt(form));
-  }, [canGenerate, form, runPrompt]);
+    runPrompt(buildTechDocGenerationPrompt(generationInput));
+  }, [canGenerate, generationInput, runPrompt]);
 
   const handleRepair = useCallback(() => {
     if (!generatedDoc.trim()) {
@@ -190,6 +364,47 @@ export function TechDocFormatAgentPage() {
     event.target.value = '';
   }, []);
 
+  const handleRequirementFiles = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    if (files.length === 0) return;
+    const next: RequirementFile[] = [];
+    for (const file of files) {
+      const text = await file.text();
+      next.push({
+        name: file.name,
+        content: text.slice(0, 40_000),
+        size: file.size,
+      });
+    }
+    setRequirementFiles((prev) => [...prev, ...next].slice(0, 8));
+    event.target.value = '';
+    toast.success('需求文件已读取', `已加入 ${next.length} 个文件`);
+  }, []);
+
+  const removeRequirementFile = useCallback((name: string) => {
+    setRequirementFiles((prev) => prev.filter((file) => file.name !== name));
+  }, []);
+
+  const handleSelectRepo = useCallback((repo: TechDocGitHubRepository) => {
+    setSelectedRepo(repo);
+    setSelectedProjectPath('');
+    setCurrentPath('');
+    setTreeItems([]);
+    updateForm('projectLinks', repo.htmlUrl ?? repo.fullName);
+    void loadTree(repo, '');
+  }, [loadTree, updateForm]);
+
+  const handleOpenTreePath = useCallback((item: TechDocGitHubTreeItem) => {
+    if (!selectedRepo || item.type !== 'dir') return;
+    void loadTree(selectedRepo, item.path);
+  }, [loadTree, selectedRepo]);
+
+  const handleSelectCurrentPath = useCallback(() => {
+    if (!selectedRepo) return;
+    setSelectedProjectPath(currentPath || '/');
+    toast.success('已选择项目路径', `${selectedRepo.fullName}/${currentPath || ''}`);
+  }, [currentPath, selectedRepo]);
+
   const inputClass =
     'w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-[color:var(--text-primary)] placeholder:text-[color:var(--text-muted)] outline-none focus:border-indigo-400/50';
 
@@ -203,7 +418,7 @@ export function TechDocFormatAgentPage() {
           <div>
             <h1 className="text-xl font-semibold text-[color:var(--text-primary)]">技术分析文档格式校验 Agent</h1>
             <p className="mt-1 max-w-3xl text-sm text-[color:var(--text-secondary)]">
-              根据功能和项目链接生成 PM2502 技术分析文档，或上传已有技术分析文档检查标题、表格、红字、引用块和微格式。
+              根据功能说明、上传需求文件和 GitHub 项目路径生成 PM2502 技术分析文档，也可检查已有文档格式。
             </p>
           </div>
         </div>
@@ -276,6 +491,235 @@ export function TechDocFormatAgentPage() {
                   placeholder="粘贴功能、项目、代码仓库、需求文档等链接"
                 />
               </label>
+
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div>
+                    <div className="flex items-center gap-2 text-xs font-semibold text-[color:var(--text-primary)]">
+                      <FileUp size={14} />
+                      上传需求文件
+                    </div>
+                    <p className="mt-1 text-[11px] text-[color:var(--text-secondary)]">
+                      支持 .md/.txt 等文本文件，内容会作为需求上下文参与生成。
+                    </p>
+                  </div>
+                  <input
+                    ref={requirementFileInputRef}
+                    type="file"
+                    multiple
+                    accept=".md,.markdown,.txt,text/markdown,text/plain"
+                    className="hidden"
+                    onChange={handleRequirementFiles}
+                  />
+                  <Button variant="secondary" size="sm" onClick={() => requirementFileInputRef.current?.click()}>
+                    <Upload size={14} />
+                    上传
+                  </Button>
+                </div>
+                {requirementFiles.length > 0 ? (
+                  <div className="space-y-2">
+                    {requirementFiles.map((file) => (
+                      <div key={file.name} className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/20 px-2 py-1.5">
+                        <FileText size={13} className="shrink-0 text-indigo-200" />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-xs text-[color:var(--text-primary)]">{file.name}</div>
+                          <div className="text-[10px] text-[color:var(--text-secondary)]">{Math.ceil(file.size / 1024)} KB</div>
+                        </div>
+                        <button
+                          type="button"
+                          className="rounded p-1 text-[color:var(--text-secondary)] hover:bg-white/10 hover:text-[color:var(--text-primary)]"
+                          onClick={() => removeRequirementFile(file.name)}
+                          aria-label={`移除 ${file.name}`}
+                        >
+                          <XCircle size={13} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-dashed border-white/10 px-3 py-4 text-center text-xs text-[color:var(--text-secondary)]">
+                    还没有上传需求文件
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                <div className="mb-3 flex items-start justify-between gap-2">
+                  <div>
+                    <div className="flex items-center gap-2 text-xs font-semibold text-[color:var(--text-primary)]">
+                      <Github size={14} />
+                      GitHub 项目路径
+                    </div>
+                    <p className="mt-1 text-[11px] text-[color:var(--text-secondary)]">
+                      连接账号后选择仓库和目录，生成时会带入项目路径与目录摘要。
+                    </p>
+                  </div>
+                  <Button variant="secondary" size="sm" onClick={loadGitHubAuthStatus} disabled={githubAuthLoading}>
+                    {githubAuthLoading ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
+                    刷新
+                  </Button>
+                </div>
+
+                {!githubAuth?.oauthConfigured && !githubAuthLoading && (
+                  <div className="rounded-lg border border-amber-400/20 bg-amber-500/10 p-3 text-xs text-amber-100">
+                    管理员尚未配置 GitHub OAuth Device Flow，暂不能选择仓库。
+                  </div>
+                )}
+
+                {githubAuth?.oauthConfigured && !githubAuth.connected && (
+                  <div className="space-y-3">
+                    <div className="rounded-lg border border-white/10 bg-black/20 p-3 text-xs text-[color:var(--text-secondary)]">
+                      当前未连接 GitHub。连接后可读取你有权限访问的仓库列表。
+                    </div>
+                    <Button variant="primary" size="sm" onClick={startGitHubConnect}>
+                      <Github size={14} />
+                      连接 GitHub
+                    </Button>
+                  </div>
+                )}
+
+                {deviceFlow && (
+                  <div className="mt-3 rounded-lg border border-indigo-400/20 bg-indigo-500/10 p-3 text-xs text-indigo-100">
+                    <div className="flex items-center justify-between gap-2">
+                      <span>授权码：<span className="font-mono font-semibold">{deviceFlow.userCode}</span></span>
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1 rounded bg-white/10 px-2 py-1"
+                        onClick={() => window.open(deviceFlow.verificationUriComplete, '_blank', 'noopener,noreferrer')}
+                      >
+                        <Link2 size={12} />
+                        打开授权页
+                      </button>
+                    </div>
+                    <div className="mt-2">
+                      {deviceFlow.status === 'polling' && '等待 GitHub 授权完成，本页会自动检测。'}
+                      {deviceFlow.status === 'expired' && '授权已超时，请重新连接。'}
+                      {deviceFlow.status === 'denied' && '你在 GitHub 页面拒绝了授权。'}
+                      {deviceFlow.status === 'failed' && `授权失败：${deviceFlow.errorDetail ?? '未知错误'}`}
+                    </div>
+                  </div>
+                )}
+
+                {githubAuth?.connected && (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 rounded-lg border border-emerald-400/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+                      {githubAuth.avatarUrl ? (
+                        <img src={githubAuth.avatarUrl} alt={githubAuth.login} className="h-5 w-5 rounded-full" />
+                      ) : (
+                        <Github size={14} />
+                      )}
+                      已连接 {githubAuth.login}
+                    </div>
+
+                    <div className="flex gap-2">
+                      <div className="relative min-w-0 flex-1">
+                        <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-[color:var(--text-secondary)]" />
+                        <input
+                          className={`${inputClass} pl-7`}
+                          value={repoQuery}
+                          onChange={(e) => setRepoQuery(e.target.value)}
+                          placeholder="搜索仓库"
+                        />
+                      </div>
+                      <Button variant="secondary" size="sm" onClick={() => loadRepositories(repoQuery)} disabled={reposLoading}>
+                        {reposLoading ? <MapSpinner size={14} /> : <Search size={14} />}
+                        搜索
+                      </Button>
+                    </div>
+
+                    <div className="max-h-[180px] space-y-2 overflow-y-auto pr-1">
+                      {repos.map((repo) => (
+                        <button
+                          key={repo.id}
+                          type="button"
+                          className={`w-full rounded-lg border px-3 py-2 text-left transition ${
+                            selectedRepo?.id === repo.id
+                              ? 'border-indigo-400/40 bg-indigo-500/10'
+                              : 'border-white/10 bg-black/20 hover:bg-white/[0.05]'
+                          }`}
+                          onClick={() => handleSelectRepo(repo)}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="truncate text-xs font-semibold text-[color:var(--text-primary)]">{repo.fullName}</span>
+                            <span className="shrink-0 rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-[color:var(--text-secondary)]">
+                              {repo.isPrivate ? '私有' : '公开'}
+                            </span>
+                          </div>
+                          <div className="mt-1 flex items-center gap-2 text-[10px] text-[color:var(--text-secondary)]">
+                            <GitBranch size={11} />
+                            {repo.defaultBranch || '默认分支'}
+                          </div>
+                        </button>
+                      ))}
+                      {repos.length === 0 && !reposLoading && (
+                        <div className="rounded-lg border border-dashed border-white/10 px-3 py-4 text-center text-xs text-[color:var(--text-secondary)]">
+                          暂无仓库，连接后点击搜索刷新
+                        </div>
+                      )}
+                    </div>
+
+                    {selectedRepo && (
+                      <div className="rounded-lg border border-white/10 bg-black/20 p-2">
+                        <div className="mb-2 flex items-center justify-between gap-2 text-xs">
+                          <button
+                            type="button"
+                            className="min-w-0 truncate text-left text-indigo-100"
+                            onClick={() => void loadTree(selectedRepo, '')}
+                          >
+                            {selectedRepo.fullName}
+                          </button>
+                          <Button variant="secondary" size="xs" onClick={handleSelectCurrentPath}>
+                            选当前路径
+                          </Button>
+                        </div>
+                        <div className="mb-2 flex items-center gap-1 text-[10px] text-[color:var(--text-secondary)]">
+                          <Folder size={11} />
+                          /{currentPath}
+                          {selectedProjectPath && (
+                            <span className="ml-auto rounded-full bg-emerald-500/10 px-2 py-0.5 text-emerald-100">
+                              已选 /{selectedProjectPath === '/' ? '' : selectedProjectPath}
+                            </span>
+                          )}
+                        </div>
+                        <div className="max-h-[160px] space-y-1 overflow-y-auto pr-1">
+                          {treeLoading && (
+                            <div className="flex items-center gap-2 px-2 py-3 text-xs text-[color:var(--text-secondary)]">
+                              <MapSpinner size={14} />
+                              加载目录中
+                            </div>
+                          )}
+                          {!treeLoading && currentPath && (
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-[color:var(--text-secondary)] hover:bg-white/10"
+                              onClick={() => {
+                                const parent = currentPath.split('/').slice(0, -1).join('/');
+                                void loadTree(selectedRepo, parent);
+                              }}
+                            >
+                              <Folder size={13} />
+                              返回上级
+                            </button>
+                          )}
+                          {!treeLoading && treeItems.map((item) => (
+                            <button
+                              key={item.path}
+                              type="button"
+                              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-[color:var(--text-secondary)] hover:bg-white/10 disabled:opacity-50"
+                              onClick={() => handleOpenTreePath(item)}
+                              disabled={item.type !== 'dir'}
+                            >
+                              {item.type === 'dir' ? <Folder size={13} /> : <FileText size={13} />}
+                              <span className="min-w-0 flex-1 truncate">{item.name}</span>
+                              {item.type === 'dir' && <ChevronRight size={12} />}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <label className="space-y-1 text-xs text-[color:var(--text-secondary)]">

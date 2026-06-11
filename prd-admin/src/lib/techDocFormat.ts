@@ -29,6 +29,19 @@ export interface TechDocDraftInput {
   uiLink?: string;
   showdocLink?: string;
   testCaseLink?: string;
+  requirementFiles?: Array<{
+    name: string;
+    content: string;
+  }>;
+  githubProject?: {
+    fullName: string;
+    owner: string;
+    repo: string;
+    branch?: string;
+    path?: string;
+    htmlUrl?: string;
+    treeSummary?: string;
+  };
 }
 
 const TOP_LEVEL_HEADINGS = [
@@ -550,6 +563,15 @@ export function buildPm2502Draft(input: TechDocDraftInput): string {
 }
 
 export function buildTechDocGenerationPrompt(input: TechDocDraftInput): string {
+  const uploadedFiles = (input.requirementFiles ?? [])
+    .filter((file) => file.content.trim())
+    .map((file, index) => `### 上传需求文件 ${index + 1}：${file.name}\n${file.content.trim()}`)
+    .join('\n\n');
+  const github = input.githubProject;
+  const githubContext = github
+    ? `- GitHub 仓库：${github.fullName}\n- GitHub 项目路径：${github.path || '/'}\n- 默认分支：${github.branch || '默认分支'}\n- 仓库链接：${github.htmlUrl || '未提供'}\n- 当前路径文件/目录摘要：\n${github.treeSummary || '暂无'}`
+    : '未选择 GitHub 项目路径';
+
   return `你是技术分析文档格式校验与生成 Agent。请根据用户提供的功能说明和项目链接，生成一份技术分析 Markdown 文档。
 
 硬性要求：
@@ -573,8 +595,14 @@ ${PROJECT_DESIGN_SECTIONS.join('\n')}
 - showdoc 地址：${withFallback(input.showdocLink, '待补充')}
 - 测试用例：${withFallback(input.testCaseLink, '待补充')}
 
+GitHub 项目上下文：
+${githubContext}
+
 功能与需求说明：
 ${withFallback(input.requirementText, '暂无')}
+
+上传需求文件内容：
+${uploadedFiles || '暂无'}
 
 PM2502 模板全文如下，请复制其结构后替换内容：
 ${PM2502_TECH_DOC_TEMPLATE}`;
