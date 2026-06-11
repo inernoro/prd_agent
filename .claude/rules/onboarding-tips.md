@@ -90,6 +90,26 @@
 - **「管理员定向推送(isTargeted)自动弹抽屉」已删除**:推送管理后台 2026-06-04 已下线,该路径只剩脏数据来源 —— Track 端点会给「看过一眼」的用户补 Delivery 统计记录,`/visible` 旧逻辑 `isTargeted = TargetUserId==userId || mine != null` 把统计记录误判成"被推送",导致任何浏览过的教程永久变成"为你推送",并在无教程页面自动弹出"全部教程"面板(2026-06-11 用户反馈「莫名其妙弹出,像病毒一样」)。后端已改为仅认 `TargetUserId`,Delivery 仅作统计。
 - 守卫测试:`prd-admin/src/components/daily-tips/__tests__/pageGuideMatch.test.ts` 的 `pickAutoOpenUpdateTip` 套件(无教程页恒 null / isTargeted 不参与决策)。
 
+## 5.9 关闭体验三连(2026-06-11,本节为现行机制)
+
+用户反馈:多步教程「每天弹一次很烦」+「关闭时飞回入口的动画看不见」。三处改动:
+
+### 5.9.1 「我已学会」一键退出口(SpotlightOverlay)
+- 多步教程气泡底部新增「我已学会」按钮(`steps.length>0 && payload.id` 才显示;单步「知道了」本身即确认,不重复加)。
+- 点击 = `markLearned(payload.id)` + 飞回动画关闭。该页 `*-page-guide` 学会后不再自动开讲、入口不再脉冲(仍可手动重看)。给「觉得弹窗烦」的用户无需走完整套即可退出。
+
+### 5.9.2 任何关闭都播「飞回入口」动画,半速(SpotlightOverlay)
+- 飞回动画(毕业帽 → 右上角 `[data-tour-entry]` pill)从「仅完成末步触发」扩展到**所有关闭路径**:X / 点空白遮罩 / ESC / 我已学会 / 完成。
+- `FlyingToken` 时长 720ms → **1440ms(半速)**,解决「太快看不见」。统一走 `closeWithFlyBack()`(先 `flyBackToEntry()` 设 flyBack 再 `setDismissed`);`flyBackToEntry` 起点优先取当前光圈、退而取气泡卡片,取不到就不播(定位中/超时态无光圈时静默关闭)。
+- 注意:纯关闭(X/空白/ESC)**只播动画不 markLearned**;只有「我已学会」「完成」才标记学会。
+
+### 5.9.3 轻微提醒更新(`*-update-reminder`,第三类自动弹出)
+- 新增一种「更新提醒」子类:`sourceId` 含 `-update-reminder`,`sourceType=update-reminder`,单步(无 `Steps`,靠 `TargetSelector` + `Title`/`Body`)。
+- 进入对应页 → 由 `TipsDrawer` 专用 effect 走 **Spotlight 悬浮气泡**(不是抽屉),在功能位置弹一次轻提醒「这里更新了」;弹出当下即 `markLearned` → 不管用户取消还是「知道了」都不再显示(跨 session 永不再弹,服务端持久化)。
+- 与 §5.7 第 2 类「周更新教程(`*-update-YYYYwNN`/`feature-release`)自动展开抽屉」互斥:`pickAutoOpenUpdateTip` 用 `isUpdateReminderTip` 把 reminder 排除出抽屉路径,避免同一条既弹抽屉又弹气泡。优先级低于本页 `*-page-guide` 强制开讲。
+- 首例:`visual-agent-paste-update-reminder`(视觉创作首页可粘贴图片),锚 `[data-tour-id=visual-image-btn]`,`endAt=2026-09-01` 后新用户不再看到。
+- 判定函数 SSOT:`pageGuideMatch.ts` 的 `isUpdateReminderTip`;守卫测试见 `pageGuideMatch.test.ts` 的「isUpdateReminderTip / 轻微提醒更新走 Spotlight 气泡而非抽屉」套件。
+
 ## 六、相关
 
 - `.claude/skills/createzzdemo/SKILL.md` — 生成单条教程小书

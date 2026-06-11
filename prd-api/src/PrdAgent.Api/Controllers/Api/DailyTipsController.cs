@@ -535,6 +535,11 @@ public sealed class DailyTipsController : ControllerBase
     private static readonly DateTime FeatureTip2026W21ExpireAt =
         new(2026, 6, 2, 0, 0, 0, DateTimeKind.Utc);
 
+    // 「轻微提醒更新」(视觉创作首页可粘贴图片)的固定下线时间。同样锚定发布日,不能用 now.AddDays(n)。
+    // 过此日期后新用户不再看到这条新功能气泡(老用户看过即 markLearned,本就不再弹)。
+    private static readonly DateTime VisualPasteReminderExpireAt =
+        new(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc);
+
     /// <summary>
     /// 已退役的 seed SourceId：被新版各页 *-page-guide 完整教程取代的旧版精简短教程。
     /// 老环境若曾跑过 /seed 把它们落了库，新旧 SourceId 不冲突会导致新旧并存（Codex P2）。
@@ -583,6 +588,23 @@ public sealed class DailyTipsController : ControllerBase
         // 的短 tip 全部删掉;用户说「短短的流程一条流程的给删掉」。
         return new List<DailyTip>
         {
+            // ===== 轻微提醒更新（*-update-reminder，单步悬浮气泡，进页自动弹一次、看过即不再显示）=====
+            // 与下面「新功能公告」(feature-release，自动展开抽屉让用户「跟我做」)不同:
+            // reminder 直接在功能位置弹一个轻量气泡,告诉用户「这里更新了」,不要求走流程。
+            // 前端 isUpdateReminderTip 据 sourceId 含 `-update-reminder` 识别,走 Spotlight 气泡路径,
+            // 弹出当下即 markLearned → 不管取消还是「知道了」都不再显示(详见 onboarding-tips 规则)。
+            T("visual-agent-paste-update-reminder", "card",
+                "新功能 · 可以直接粘贴图片了",
+                "视觉创作首页现在支持直接粘贴剪贴板里的图片了:复制任意图片后,点一下输入框按 Ctrl/Cmd+V 即可作为参考图;也能把本地图片直接拖进输入框。",
+                "/visual-agent",
+                "知道了",
+                "[data-tour-id=visual-image-btn]",
+                1,
+                autoAction: null,
+                endAt: VisualPasteReminderExpireAt,
+                sourceType: "update-reminder",
+                tier: "advanced"),
+
             // ===== 新功能公告（feature-release，7 天后自动过期，避免过时弹窗堆首页）=====
             // 这两条对应 2026-W20/W21 上线的能力，默认推送给所有用户。过期后由 /visible 的
             // EndAt 过滤自动隐藏；下一批新功能上线时替换此处两条即可（属时效内容，定期更新）。
@@ -920,7 +942,7 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=visual-page-title]", Title = "第 1 步：欢迎来到视觉创作", Body = "不用自己配 API key，平台已接好多个生图模型，描述一句话就能出图。", NavigateTo = "/visual-agent" },
                         new() { Selector = "[data-tour-id=visual-subtitle]", Title = "第 2 步：它能做什么", Body = "海报、插画、品牌视觉、参考图改造……用一句话描述需求即可。" },
                         new() { Selector = "[data-tour-id=visual-prompt-input]", Title = "第 3 步：写下你想要的画面", Body = "中英文都行，越具体越好（主体 + 场景 + 风格）。" },
-                        new() { Selector = "[data-tour-id=visual-image-btn]", Title = "第 4 步：上传参考图", Body = "有参考图就点「图片」上传，AI 会参考它的构图或风格。" },
+                        new() { Selector = "[data-tour-id=visual-image-btn]", Title = "第 4 步：上传参考图", Body = "有参考图就点「图片」上传，AI 会参考它的构图或风格。也可直接 Ctrl/Cmd+V 粘贴剪贴板里的图片，或把本地图片拖进输入框。" },
                         new() { Selector = "[data-tour-id=visual-size-btn]", Title = "第 5 步：选画布尺寸", Body = "点尺寸按钮选常见规格（方图 / 竖图 / 横图 / 海报等）。" },
                         new() { Selector = "[data-tour-id=visual-scenarios]", Title = "第 6 步：场景快捷标签", Body = "不知道怎么写？点下面的预设场景一键套用提示词。" },
                         new() { Selector = "[data-tour-id=visual-pro]", Title = "第 7 步：Pro 高级能力", Body = "高亮的 Pro 标签提供更强的设计与编排能力，点开了解。" },

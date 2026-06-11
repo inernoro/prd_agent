@@ -82,6 +82,19 @@ export function isUpdateTip(t: DailyTip): boolean {
 }
 
 /**
+ * 是否为「轻微提醒更新」(sourceId 含 `-update-reminder`)——单步悬浮气泡式的新功能提醒,
+ * 进入对应页面自动以 Spotlight 弹一次、看过即标记学会、之后永不再弹(不管取消还是知道了)。
+ *
+ * 与普通「更新教程」(*-update-YYYYwNN / feature-release)的区别:后者自动展开**抽屉**让用户
+ * 主动「跟我做」,前者直接在功能位置弹一个**悬浮气泡**轻提醒。两条路径互斥:reminder 由
+ * TipsDrawer 的专用 effect 走 Spotlight,因此必须从 pickAutoOpenUpdateTip(抽屉路径)里排除,
+ * 否则同一条 tip 会既弹抽屉又弹气泡。
+ */
+export function isUpdateReminderTip(t: DailyTip): boolean {
+  return t.sourceId?.includes('-update-reminder') ?? false;
+}
+
+/**
  * 「本页更新教程自动展开」的唯一决策函数(用户 2026-06-11 规则:推送只跟页面走)。
  *
  * 自动弹出仅两类,且都严格限定在「本页有教程」的页面:
@@ -98,7 +111,11 @@ export function pickAutoOpenUpdateTip(
   pageTips: DailyTip[],
   alreadyOpened: Set<string>,
 ): DailyTip | null {
-  return pageTips.find((t) => isUpdateTip(t) && !t.learned && !alreadyOpened.has(t.id)) ?? null;
+  // 排除「轻微提醒更新」(*-update-reminder):它走 Spotlight 悬浮气泡路径(TipsDrawer 专用 effect),
+  // 不走抽屉自动展开,否则同一条会双弹。
+  return pageTips.find(
+    (t) => isUpdateTip(t) && !isUpdateReminderTip(t) && !t.learned && !alreadyOpened.has(t.id),
+  ) ?? null;
 }
 
 /**
