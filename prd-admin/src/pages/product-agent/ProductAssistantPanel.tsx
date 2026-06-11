@@ -7,7 +7,8 @@
  * 对话保存在 sessionStorage（按产品隔离），切 tab / 刷新不丢，支持手动清除。
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Sparkles, Send, Copy, Check, Trash2, Mic, MicOff } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Sparkles, Send, Copy, Check, Trash2, Mic, MicOff, ExternalLink, CircleAlert } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { StreamingText } from '@/components/streaming/StreamingText';
 import { useSseStream } from '@/lib/useSseStream';
@@ -19,9 +20,20 @@ import { toast } from '@/lib/toast';
 
 const PRESETS = ['本月需求分析', '本月需求矩阵分析', '本月缺陷分析'];
 
+/** 后端 SSE action 事件载荷：助手替用户创建对象的执行结果 */
+interface AssistantActionResult {
+  kind: 'requirement' | 'feature' | 'defect' | string;
+  ok: boolean;
+  id?: string | null;
+  no?: string;
+  title?: string;
+  error?: string | null;
+}
+
 interface QA {
   q: string;
   a: string;
+  actions?: AssistantActionResult[];
 }
 
 export function ProductAssistantPanel({ productId, productName }: { productId: string; productName: string }) {
@@ -39,8 +51,10 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
   });
   const [pendingQ, setPendingQ] = useState<string | null>(null);
   const [liveAnswer, setLiveAnswer] = useState('');
+  const [liveActions, setLiveActions] = useState<AssistantActionResult[]>([]);
   const [input, setInput] = useState('');
   const answerRef = useRef('');
+  const actionsRef = useRef<AssistantActionResult[]>([]);
   const pendingRef = useRef<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -55,10 +69,13 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
 
   const finalize = (a: string) => {
     const q = pendingRef.current;
-    if (q != null) setHistory((h) => [...h, { q, a }]);
+    const actions = actionsRef.current;
+    if (q != null) setHistory((h) => [...h, { q, a, ...(actions.length > 0 ? { actions } : {}) }]);
     pendingRef.current = null;
+    actionsRef.current = [];
     setPendingQ(null);
     setLiveAnswer('');
+    setLiveActions([]);
     answerRef.current = '';
   };
 
@@ -68,6 +85,13 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
     onTyping: (t) => {
       answerRef.current += t;
       setLiveAnswer(answerRef.current);
+    },
+    onEvent: {
+      // 助手创建对象的执行结果（需求/功能/缺陷），流尾随 done 一起到达
+      action: (d) => {
+        actionsRef.current = [...actionsRef.current, d as AssistantActionResult];
+        setLiveActions(actionsRef.current);
+      },
     },
     onDone: () => finalize(stripMarkdown(answerRef.current) || '（无内容）'),
     onError: (m) => finalize(`出错：${m}`),
@@ -87,9 +111,13 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
   const ask = (q: string) => {
     const text = q.trim();
     if (!text || sse.isStreaming) return;
-    if (speech.listening) speech.stop();
+    // 语音聆听中发送：静默取消识别，丢弃未决结果，否则迟到的 onresult 会把文本写回已清空的输入框
+    if (speech.listening) speech.cancel();
+    speechBaseRef.current = '';
     answerRef.current = '';
+    actionsRef.current = [];
     setLiveAnswer('');
+    setLiveActions([]);
     pendingRef.current = text;
     setPendingQ(text);
     setInput('');
@@ -100,8 +128,10 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
     sse.abort();
     pendingRef.current = null;
     answerRef.current = '';
+    actionsRef.current = [];
     setPendingQ(null);
     setLiveAnswer('');
+    setLiveActions([]);
     setHistory([]);
     try {
       sessionStorage.removeItem(storageKey);
@@ -150,7 +180,8 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
             </div>
             <div className="text-sm text-white/70 font-medium">问点什么吧</div>
             <div className="text-[12px] text-white/40 leading-relaxed max-w-md">
-              我能基于本产品的需求 / 功能 / 缺陷 / 版本 / 客户与知识库回答你的问题。试试下方的快捷分析，或直接提问。
+              我能基于本产品的需求 / 功能 / 缺陷 / 版本 / 客户与知识库回答你的问题，也能直接替你创建对象。
+              试试下方的快捷分析，或者对我说：「帮我创建一个P1需求：支持导出PDF」。
             </div>
           </div>
         )}
@@ -158,6 +189,7 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
           <div key={i} className="space-y-2.5">
             <UserRow text={m.q} avatar={myAvatar} />
             <AiRow text={m.a} />
+            {m.actions && m.actions.length > 0 && <ActionResults items={m.actions} productId={productId} />}
           </div>
         ))}
         {pendingQ && (
@@ -172,6 +204,7 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
                 <StreamingText text={stripMarkdown(liveAnswer)} streaming />
               )}
             </AiRow>
+            {liveActions.length > 0 && <ActionResults items={liveActions} productId={productId} />}
           </div>
         )}
       </div>
@@ -208,7 +241,7 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
             }}
             rows={3}
             placeholder={speech.listening ? '正在聆听，直接说出你的问题…' : '输入问题，Enter 发送，Shift+Enter 换行…'}
-            className="w-full resize-none bg-transparent px-3.5 pt-3 text-[13px] text-white/90 outline-none placeholder:text-white/30"
+            className="no-focus-ring w-full resize-none bg-transparent px-3.5 pt-3 text-[13px] text-white/90 outline-none placeholder:text-white/30"
             style={{ minHeight: 84, maxHeight: 200, overflowY: 'auto' }}
           />
           <div className="flex items-center gap-1.5 px-2.5 pb-2.5">
@@ -244,6 +277,48 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+const ACTION_KIND_META: Record<string, { label: string; color: string }> = {
+  requirement: { label: '需求', color: '#FBBF24' },
+  feature: { label: '功能', color: '#A78BFA' },
+  defect: { label: '缺陷', color: '#F87171' },
+};
+
+/** 助手创建对象的结果卡片：成功可点击直达详情页，失败显示原因。与 AI 气泡左对齐（头像宽 28 + 间距 8）。 */
+function ActionResults({ items, productId }: { items: AssistantActionResult[]; productId: string }) {
+  const navigate = useNavigate();
+  return (
+    <div className="flex flex-col gap-1.5" style={{ marginLeft: 36 }}>
+      {items.map((r, i) => {
+        const meta = ACTION_KIND_META[r.kind] ?? { label: r.kind, color: '#94A3B8' };
+        if (!r.ok) {
+          return (
+            <div key={i} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-red-400/30 bg-red-500/10 text-[12px] text-red-200">
+              <CircleAlert size={14} className="shrink-0" />
+              <span className="truncate">创建{meta.label}「{r.title}」失败：{r.error || '未知错误'}</span>
+            </div>
+          );
+        }
+        return (
+          <button
+            key={i}
+            onClick={() => r.id && navigate(`/product-agent/p/${productId}/${r.kind}/${r.id}`)}
+            className="group flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 bg-white/[0.03] hover:bg-cyan-500/10 hover:border-cyan-500/30 text-left"
+          >
+            <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0" style={{ color: meta.color, background: `${meta.color}1a` }}>
+              已创建{meta.label}
+            </span>
+            <span className="text-[11px] font-mono text-white/40 shrink-0">{r.no}</span>
+            <span className="text-[12px] text-white/85 truncate flex-1">{r.title}</span>
+            <span className="flex items-center gap-1 text-[11px] text-cyan-300/70 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+              查看 <ExternalLink size={11} />
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }

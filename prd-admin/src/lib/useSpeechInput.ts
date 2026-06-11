@@ -65,6 +65,19 @@ export function useSpeechInput({
     setListening(false);
   };
 
+  /** 静默取消：解绑回调再中止，丢弃未决识别结果（发送后清空输入框时用，避免迟到的 onresult 把文本写回来） */
+  const cancel = () => {
+    const rec = recRef.current;
+    if (rec) {
+      rec.onresult = null;
+      rec.onend = null;
+      rec.onerror = null;
+      rec.abort();
+      recRef.current = null;
+    }
+    setListening(false);
+  };
+
   const start = () => {
     const Ctor = getCtor();
     if (!Ctor || recRef.current) return;
@@ -116,5 +129,5 @@ export function useSpeechInput({
     }
   }, []);
 
-  return { supported, listening, start, stop, toggle: () => (listening ? stop() : start()) };
+  return { supported, listening, start, stop, cancel, toggle: () => (listening ? stop() : start()) };
 }
