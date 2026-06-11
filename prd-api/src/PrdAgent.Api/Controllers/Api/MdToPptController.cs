@@ -447,6 +447,224 @@ public class MdToPptController : ControllerBase
     }
 
     // ─────────────────────────────────────────────
+    // POST /api/md-to-ppt/outline-stream（流式逐页大纲）
+    // ─────────────────────────────────────────────
+
+    /// <summary>
+    /// 流式大纲（2026-06-11 用户反馈：整坨 JSON 等太久 + 大纲缺设计细节）。
+    /// 模型按 JSONL 输出（首行 meta，随后每页一行），服务端逐行解析、每成功一行
+    /// 立刻推 SSE——第一页几秒内可见。页级 design 字段（版式/视觉/排字）随大纲
+    /// 定稿后直接喂给并行子智能体（设计意图闭环，不是摆设）。
+    /// </summary>
+    [HttpPost("outline-stream")]
+    public async Task OutlineStream([FromBody] MdToPptOutlineRequest req)
+    {
+        var userId = this.GetRequiredUserId();
+        SetSseHeaders();
+        await WriteSsePreambleAsync();
+        await WriteEventAsync("start", null);
+
+        if (string.IsNullOrWhiteSpace(req.Content))
+        {
+            await WriteEventAsync("error", new { message = "内容不能为空" });
+            return;
+        }
+
+        var targetPages = req.TargetPages is > 0 ? req.TargetPages.Value : 8;
+        var systemPrompt =
+            "你是顶级演示设计总监。根据用户内容输出 PPT 大纲，格式为 JSONL（每行一个独立 JSON 对象，行内禁止换行，输出完一行立即换行）。" +
+            "不得有 markdown 围栏、前后缀解释。\n" +
+            $"目标页数：约 {targetPages} 页（封面+结语 2 页 + 内容页，可按内容增减 1-2 页）。\n" +
+            "第 1 行必须是 meta：\n" +
+            "{\"type\":\"meta\",\"totalPages\":8,\"summary\":\"一句话总结\",\"design\":{\"palette\":\"整体配色策略（主色/强调色/底色气质，一句话）\",\"typography\":\"字体与排字策略（标题字重/正文密度/对齐，一句话）\",\"mood\":\"3-5 个气质关键词\"},\"clarify\":[{\"id\":\"q1\",\"question\":\"...\",\"type\":\"single\",\"options\":[\"...\"]}]}\n" +
+            "随后每页一行：\n" +
+            "{\"type\":\"page\",\"index\":1,\"title\":\"封面\",\"bullets\":[\"副标题\",\"作者/日期\"],\"design\":\"版式：左大题右装置；视觉装置：大数字看板；排字：标题 64px 级两行压缩、正文 16px；强调：单热点色用在数字\"}\n\n" +
+            "严格规则：\n" +
+            "1. 每页 bullets 3-5 条；每条 12-30 字、必须有具体落点（数字/对象/实例/动作），禁止「介绍背景」「展示优势」这类空壳；除封面/结语外每页至少 1 条数据或实例类要点\n" +
+            "2. 每页 design 必填（30-60 字）：版式结构 + 视觉装置 + 排字策略 + 强调用法，相邻页版式必须差异化（两栏对比/大数字看板/时间线/表格/金句转场/卡片网格轮换）\n" +
+            "3. 禁止任何 emoji；title 纯文本不含序号\n" +
+            "4. clarify 为 meta 的可选字段：仅当需求存在显著影响内容方向的真实歧义时给出，最多 3 题（未指明受众或正式程度且显著影响内容时应给 1-2 题；需求明确时禁止出题）；type 取 single/multi/text，single/multi 必须给 options（2-5 个）\n" +
+            "5. 用户内容含「澄清回答」段落 = 歧义已消除，不得再输出 clarify\n" +
+            "6. 用户内容含「当前大纲」段落 = 调整任务：只改与调整要求直接相关的页；其余页 title 与 bullets 必须逐字原样保留（一个字不许改写/增删/换序），design 缺失的页补写 design 不算改动";
+
+        var contextParts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(req.Content))
+            contextParts.Add($"# 用户内容\n\n{req.Content.Trim()}");
+        if (!string.IsNullOrWhiteSpace(req.AttachmentText))
+            contextParts.Add($"# 附件内容\n\n{req.AttachmentText.Trim()}");
+        if (!string.IsNullOrWhiteSpace(req.KbContext))
+            contextParts.Add($"# 知识库内容\n\n{req.KbContext.Trim()}");
+        if (!string.IsNullOrWhiteSpace(req.ChatHistory))
+            contextParts.Add($"# 对话历史\n\n{req.ChatHistory.Trim()}");
+        var userContent = string.Join("\n\n---\n\n", contextParts);
+
+        using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null,
+            SessionId: null,
+            UserId: userId,
+            ViewRole: null,
+            DocumentChars: userContent.Length,
+            DocumentHash: null,
+            SystemPromptRedacted: "[MdToPpt-OutlineStream]",
+            RequestType: "chat",
+            AppCallerCode: AppCallerRegistry.MdToPptAgent.Generation.Outline));
+
+        var gatewayRequest = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.MdToPptAgent.Generation.Outline,
+            ModelType = ModelTypes.Chat,
+            Stream = true,
+            TimeoutSeconds = 90,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                    new JsonObject { ["role"] = "user",   ["content"] = userContent },
+                },
+                ["temperature"] = 0.3,
+                ["max_tokens"] = 6144,
+            },
+        };
+
+        var fullText = new StringBuilder();
+        var lineBuf = new StringBuilder();   // 当前未闭合行
+        var pendingLine = new StringBuilder(); // 解析失败的行（模型跨行输出 JSON 时拼接重试）
+        var emittedPages = 0;
+        var emittedMeta = false;
+
+        async Task TryEmitLineAsync(string line)
+        {
+            var t = line.Trim();
+            if (t.Length == 0 || t.StartsWith("```", StringComparison.Ordinal)) return;
+            pendingLine.Append(t);
+            var candidate = pendingLine.ToString();
+            try
+            {
+                using var doc = JsonDocument.Parse(candidate);
+                pendingLine.Clear();
+                var root = doc.RootElement;
+                var type = root.TryGetProperty("type", out var tp) ? tp.GetString() : null;
+                if (type == "meta" && !emittedMeta)
+                {
+                    emittedMeta = true;
+                    await WriteEventAsync("meta", root.Clone());
+                }
+                else if (type == "page")
+                {
+                    emittedPages++;
+                    await WriteEventAsync("page", root.Clone());
+                }
+            }
+            catch (JsonException)
+            {
+                // 行不完整（模型跨行）：保留 pendingLine 等下一行拼接；超长则丢弃防失控
+                if (pendingLine.Length > 8000) pendingLine.Clear();
+            }
+        }
+
+        try
+        {
+            await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
+            {
+                if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    fullText.Append(chunk.Content);
+                    foreach (var ch in chunk.Content)
+                    {
+                        if (ch == '\n')
+                        {
+                            await TryEmitLineAsync(lineBuf.ToString());
+                            lineBuf.Clear();
+                        }
+                        else lineBuf.Append(ch);
+                    }
+                }
+                else if (chunk.Type == GatewayChunkType.Error)
+                {
+                    var err = chunk.Error ?? chunk.Content ?? "大纲生成失败";
+                    _logger.LogError("[MdToPpt-OutlineStream] gateway error userId={UserId}: {Error}", userId, err);
+                    await WriteEventAsync("error", new { message = err });
+                    return;
+                }
+            }
+            if (lineBuf.Length > 0) await TryEmitLineAsync(lineBuf.ToString());
+
+            // 兜底：模型没按 JSONL 走（整坨 JSON）→ 按旧格式整体解析补发
+            if (emittedPages == 0)
+            {
+                var raw = StripOutlineFences(fullText.ToString());
+                try
+                {
+                    using var doc = JsonDocument.Parse(raw);
+                    var root = doc.RootElement;
+                    if (!emittedMeta)
+                    {
+                        var meta = new Dictionary<string, object?>
+                        {
+                            ["type"] = "meta",
+                            ["totalPages"] = root.TryGetProperty("totalPages", out var tpEl) ? tpEl.GetInt32() : 0,
+                            ["summary"] = root.TryGetProperty("summary", out var smEl) ? smEl.GetString() : null,
+                        };
+                        if (root.TryGetProperty("clarify", out var clEl)) meta["clarify"] = clEl.Clone();
+                        await WriteEventAsync("meta", meta);
+                    }
+                    if (root.TryGetProperty("outline", out var olEl) && olEl.ValueKind == JsonValueKind.Array)
+                    {
+                        var idx = 0;
+                        foreach (var pg in olEl.EnumerateArray())
+                        {
+                            idx++;
+                            await WriteEventAsync("page", new
+                            {
+                                type = "page",
+                                index = idx,
+                                title = pg.TryGetProperty("title", out var ti) ? ti.GetString() : null,
+                                bullets = pg.TryGetProperty("bullets", out var bu) ? bu.Clone() : default,
+                                design = pg.TryGetProperty("design", out var de) ? de.GetString() : null,
+                            });
+                            emittedPages++;
+                        }
+                    }
+                }
+                catch (JsonException)
+                {
+                    _logger.LogWarning("[MdToPpt-OutlineStream] fallback parse failed userId={UserId} len={Len}", userId, raw.Length);
+                }
+            }
+
+            if (emittedPages == 0)
+            {
+                await WriteEventAsync("error", new { message = "大纲解析失败，请重试" });
+                return;
+            }
+            await WriteEventAsync("done", new { pages = emittedPages });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[MdToPpt-OutlineStream] unexpected error userId={UserId}", userId);
+            await WriteEventAsync("error", new { message = ex.Message });
+        }
+    }
+
+    private static string StripOutlineFences(string raw)
+    {
+        raw = raw.Trim();
+        if (raw.StartsWith("```", StringComparison.Ordinal))
+        {
+            var nl = raw.IndexOf('\n');
+            if (nl >= 0) raw = raw[(nl + 1)..];
+        }
+        if (raw.EndsWith("```", StringComparison.Ordinal))
+        {
+            var last = raw.LastIndexOf("```", StringComparison.Ordinal);
+            if (last > 0) raw = raw[..last].TrimEnd();
+        }
+        return raw.Trim();
+    }
+
+    // ─────────────────────────────────────────────
     // 自定义模板（上传参考图 → 视觉模型提取风格规范 → 生成时作为 AI 设计参照）
     // ─────────────────────────────────────────────
 
@@ -1097,6 +1315,8 @@ public class MdToPptController : ControllerBase
         foreach (var b in bullets) sb.Append("- ").Append(b).Append('\n');
         if (prev != null) sb.Append($"上一页标题：「{prev}」\n");
         if (next != null) sb.Append($"下一页标题：「{next}」\n");
+        if (!string.IsNullOrWhiteSpace(page.Design))
+            sb.Append("本页设计意图（大纲阶段已与用户确认，优先遵循）：").Append(page.Design.Trim()).Append('\n');
         sb.Append("版式建议（可不采纳，但必须与相邻页差异化）：").Append(hint);
         return sb.ToString();
     }
@@ -2062,6 +2282,8 @@ public class MdToPptOutlinePageDto
 {
     public string? Title { get; set; }
     public List<string>? Bullets { get; set; }
+    /// <summary>页级设计意图（来自流式大纲：版式/视觉装置/排字/强调），直接喂给并行子智能体</summary>
+    public string? Design { get; set; }
 }
 
 public class MdToPptPatchRequest

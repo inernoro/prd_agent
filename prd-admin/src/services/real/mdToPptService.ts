@@ -6,6 +6,8 @@ import { useAuthStore } from '@/stores/authStore';
 export interface OutlineSlide {
   title: string;
   bullets: string[];
+  /** 页级设计意图（版式/视觉装置/排字/强调），随大纲定稿喂给并行子智能体 */
+  design?: string;
 }
 
 /** 澄清问卷（opendesign 式：大纲阶段消歧，右侧填写后回传 AI） */
@@ -50,6 +52,116 @@ export async function getMdToPptOutline(
     return { success: false, error: '大纲数据为空' };
   }
   return { success: true, data: res.data };
+}
+
+// ============ Outline Stream（流式逐页大纲：第一页几秒内可见）============
+
+export interface OutlineStreamMeta {
+  totalPages: number;
+  summary: string;
+  design?: { palette?: string; typography?: string; mood?: string };
+  clarify?: ClarifyQuestion[];
+}
+
+export interface OutlineStreamPageEvent {
+  index: number;
+  title: string;
+  bullets: string[];
+  design?: string;
+}
+
+export interface MdToPptOutlineStreamOptions extends MdToPptOutlineRequest {
+  onMeta?: (meta: OutlineStreamMeta) => void;
+  onPage?: (page: OutlineStreamPageEvent) => void;
+  onDone?: (info: { pages: number }) => void;
+  onError?: (message: string) => void;
+}
+
+/**
+ * 流式大纲：后端按 JSONL 逐行解析模型输出，每解析成功一页立刻推 SSE。
+ * 返回 cleanup 函数（中止请求）。
+ */
+export function streamMdToPptOutline(options: MdToPptOutlineStreamOptions): () => void {
+  const abortController = new AbortController();
+  (async () => {
+    try {
+      const response = await fetch('/api/md-to-ppt/outline-stream', {
+        method: 'POST',
+        headers: buildSseHeaders(),
+        body: JSON.stringify({
+          content: options.content,
+          attachmentText: options.attachmentText,
+          kbContext: options.kbContext,
+          chatHistory: options.chatHistory,
+          targetPages: options.targetPages,
+        }),
+        signal: abortController.signal,
+      });
+      if (!response.ok) {
+        options.onError?.(`HTTP ${response.status}`);
+        return;
+      }
+      const reader = response.body?.getReader();
+      if (!reader) {
+        options.onError?.('无法读取响应流');
+        return;
+      }
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let currentEvent = '';
+      let currentData = '';
+      let resolved = false;
+      outer: while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (line.startsWith('event:')) currentEvent = line.slice(6).trim();
+          else if (line.startsWith('data:')) currentData = line.slice(5).trim();
+          else if (line === '' && currentEvent && currentData) {
+            try {
+              const data = JSON.parse(currentData) as Record<string, unknown>;
+              if (currentEvent === 'meta') {
+                options.onMeta?.({
+                  totalPages: (data.totalPages as number) ?? 0,
+                  summary: (data.summary as string) ?? '',
+                  design: data.design as OutlineStreamMeta['design'],
+                  clarify: data.clarify as ClarifyQuestion[] | undefined,
+                });
+              } else if (currentEvent === 'page') {
+                options.onPage?.({
+                  index: (data.index as number) ?? 0,
+                  title: (data.title as string) ?? '',
+                  bullets: Array.isArray(data.bullets) ? (data.bullets as string[]) : [],
+                  design: (data.design as string) ?? undefined,
+                });
+              } else if (currentEvent === 'done') {
+                resolved = true;
+                options.onDone?.({ pages: (data.pages as number) ?? 0 });
+                break outer;
+              } else if (currentEvent === 'error') {
+                resolved = true;
+                options.onError?.((data.message as string) ?? '大纲生成失败');
+                break outer;
+              }
+            } catch { /* 单事件解析失败不致命 */ }
+            currentEvent = '';
+            currentData = '';
+          }
+        }
+      }
+      if (!resolved && !abortController.signal.aborted) {
+        options.onError?.('连接意外断开，请重试');
+      }
+    } catch (e) {
+      if ((e as Error).name !== 'AbortError') {
+        options.onError?.((e as Error).message);
+      }
+    }
+  })();
+  return () => abortController.abort();
 }
 
 // ============ Prewarm（大纲确认期间预热 CDS Agent 会话）============

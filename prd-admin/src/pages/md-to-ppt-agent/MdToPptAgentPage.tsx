@@ -38,7 +38,7 @@ import {
   publishMdToPpt,
   getMdToPptRun,
   getRecentMdToPptRuns,
-  getMdToPptOutline,
+  streamMdToPptOutline,
   getMdToPptTemplates,
   getMdToPptProfiles,
   getMdToPptPoolModels,
@@ -920,6 +920,8 @@ export function MdToPptAgentPage() {
   const [outlineAiText, setOutlineAiText] = useState('');
   // AI 调整中：编辑器保持在场，卡片蒙层降透明（不许整屏消失）
   const [outlineAdjusting, setOutlineAdjusting] = useState(false);
+  // 流式大纲进行中：编辑器已在场、页卡逐张填充（确认按钮禁用，骨架占位未到页）
+  const [outlineStreaming, setOutlineStreaming] = useState(false);
   // 被 AI 改动 / 拖拽换位的卡片索引：1.6s 渐变高亮，让用户看清"变化发生在哪"
   const [flashCards, setFlashCards] = useState<Set<number>>(new Set());
   // 拖拽排序：被拖卡索引
@@ -1407,7 +1409,7 @@ export function MdToPptAgentPage() {
 
   // ─── Outline flow
   const requestOutline = useCallback(
-    async (
+    (
       userText: string,
       attachments: Attachment[],
       kbRefs: KbRef[],
@@ -1440,79 +1442,123 @@ export function MdToPptAgentPage() {
         phase: 'outline',
       });
 
-      const result = await getMdToPptOutline({
+      // 流式大纲（2026-06-11 用户反馈：整坨 JSON 等太久）：meta 到达即出编辑器骨架，
+      // 每页解析成功立刻填充一张卡——第一页几秒内可见，不再苦等
+      const sourceText =
+        sourceTextOverride ??
+        [userText, attachmentText, kbContext].filter(Boolean).join('\n\n---\n\n').trim();
+      const prevOutline = outlineDraft?.outline ?? [];
+      let metaSeen = false;
+      let pagesSeen = 0;
+      let clarifyCount = 0;
+
+      const finish = (errorMsg?: string) => {
+        if (errorMsg) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantMsg.id
+                ? { ...m, content: '大纲生成失败：' + errorMsg, phase: 'error', error: errorMsg }
+                : m
+            )
+          );
+          // 调整失败保留原稿；全新失败回 idle（编辑器/画廊由 outlineDraft 决定）
+        }
+        setIsProcessing(false);
+        setOutlineAdjusting(false);
+        setOutlineStreaming(false);
+        setArtifactPhase('idle');
+      };
+
+      streamMdToPptOutline({
         content: userText,
         attachmentText: attachmentText || undefined,
         kbContext: kbContext || undefined,
         chatHistory: chatHistory || undefined,
         targetPages,
+        onMeta: (meta) => {
+          metaSeen = true;
+          clarifyCount = meta.clarify?.length ?? 0;
+          setOutlineStreaming(true);
+          if (!adjustMode) {
+            // 立刻出编辑器：空 outline + totalPages 骨架占位，页到一张填一张
+            setArtifactPhase('idle');
+            setOutlineDraft({
+              sourceText,
+              summary: meta.summary,
+              totalPages: meta.totalPages || targetPages,
+              outline: [],
+              clarify: meta.clarify?.slice(0, 3),
+              clarifyAnswers: {},
+              clarifySent: false,
+            });
+          } else {
+            setOutlineDraft((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    summary: meta.summary || prev.summary,
+                    clarify: meta.clarify?.slice(0, 3) ?? prev.clarify,
+                  }
+                : prev
+            );
+          }
+        },
+        onPage: (pg) => {
+          pagesSeen++;
+          const slide: OutlineSlide = { title: pg.title, bullets: pg.bullets, design: pg.design };
+          const idx = (pg.index || pagesSeen) - 1;
+          setOutlineDraft((prev) => {
+            if (!prev) return prev;
+            const outline = [...prev.outline];
+            outline[idx] = slide;
+            return { ...prev, outline };
+          });
+          // 新到的卡渐变高亮：全新模式每张都闪一下（出生动效）；
+          // 调整模式只闪真正变化的页（AI 最小惊讶）
+          const old0 = prevOutline[idx];
+          const changedNow =
+            !adjustMode || !old0 || old0.title !== slide.title || old0.bullets.join('\n') !== slide.bullets.join('\n');
+          if (changedNow) {
+            setFlashCards((prev) => new Set(prev).add(idx));
+            window.setTimeout(() => {
+              setFlashCards((prev) => {
+                const next = new Set(prev);
+                next.delete(idx);
+                return next;
+              });
+            }, 1600);
+          }
+        },
+        onDone: () => {
+          if (!metaSeen && pagesSeen === 0) {
+            finish('大纲为空，请重试');
+            return;
+          }
+          // 收尾：totalPages 以实际页数为准（骨架若多于实际页数则收掉）
+          setOutlineDraft((prev) =>
+            prev ? { ...prev, totalPages: prev.outline.filter(Boolean).length, outline: prev.outline.filter(Boolean) } : prev
+          );
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantMsg.id
+                ? {
+                    ...m,
+                    content:
+                      `大纲已生成（${pagesSeen} 页，含每页版式与排字设计意图），在右侧展开了：` +
+                      '可以直接改标题、要点和设计行，增删页、拖拽换位，' +
+                      (clarifyCount > 0 ? '顶部有几个澄清问题帮我消除歧义，' : '') +
+                      '也可以在下方输入框让我调整。改好后点右侧「确认，生成 PPT」。',
+                    phase: 'text',
+                  }
+                : m
+            )
+          );
+          // 预热 CDS Agent 会话：用户阅读/确认大纲的十几秒里把环境启动做完（产物即体验）
+          prewarmMdToPpt(selectedProfileId);
+          finish();
+        },
+        onError: (err) => finish(err),
       });
-
-      if (!result.success) {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMsg.id
-              ? { ...m, content: '大纲生成失败：' + result.error, phase: 'error', error: result.error }
-              : m
-          )
-        );
-        setIsProcessing(false);
-        setOutlineAdjusting(false);
-        setArtifactPhase('idle');
-        return;
-      }
-
-      // diff：找出本次被 AI 改动的页（与旧稿逐页比较），1s 渐变高亮让用户看清"改了哪"
-      const prevOutline = outlineDraft?.outline ?? [];
-      const changed = new Set<number>();
-      result.data.outline.forEach((sl, i) => {
-        const old0 = prevOutline[i];
-        if (!old0 || old0.title !== sl.title || old0.bullets.join('\n') !== sl.bullets.join('\n')) {
-          changed.add(i);
-        }
-      });
-      if (adjustMode && changed.size > 0) {
-        setFlashCards(changed);
-        window.setTimeout(() => setFlashCards(new Set()), 1600);
-      }
-
-      // 工作稿写入右侧编辑器（状态进入 outline-ready，刷新可恢复）
-      const sourceText =
-        sourceTextOverride ??
-        [userText, attachmentText, kbContext].filter(Boolean).join('\n\n---\n\n').trim();
-      setOutlineDraft({
-        sourceText,
-        summary: result.data.summary,
-        totalPages: result.data.totalPages,
-        outline: result.data.outline,
-        clarify: result.data.clarify?.slice(0, 3),
-        clarifyAnswers: {},
-        clarifySent: false,
-      });
-
-      const hasClarify = (result.data.clarify?.length ?? 0) > 0;
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantMsg.id
-            ? {
-                ...m,
-                content:
-                  '大纲已生成，在右侧展开了：可以直接改每页标题和要点、增删页，' +
-                  (hasClarify ? '顶部有几个澄清问题帮我消除歧义，' : '') +
-                  '也可以在下方输入框让我调整。改好后点右侧「确认，生成 PPT」。',
-                phase: 'text',
-              }
-            : m
-        )
-      );
-
-      // 预热 CDS Agent 会话：用户阅读/确认大纲的十几秒里把环境启动做完，
-      // 点「确认生成」时后端直接复用，启动开销对用户不可见（产物即体验）
-      prewarmMdToPpt(selectedProfileId);
-
-      setIsProcessing(false);
-      setOutlineAdjusting(false);
-      setArtifactPhase('idle');
     },
     [messages, pushMsg, outlineDraft, selectedProfileId]
   );
@@ -1639,7 +1685,11 @@ export function MdToPptAgentPage() {
   // 序列化大纲（注入生成提示词 / 调整上下文共用）
   const serializeOutline = useCallback((outline: OutlineSlide[]) => {
     return outline
-      .map((sl, i) => `${i + 1}. ${sl.title}\n${sl.bullets.map((b) => `   - ${b}`).join('\n')}`)
+      .map((sl, i) => {
+        const lines = [`${i + 1}. ${sl.title}`, ...sl.bullets.map((b) => `   - ${b}`)];
+        if (sl.design) lines.push(`   设计：${sl.design}`);
+        return lines.join('\n');
+      })
       .join('\n');
   }, []);
 
@@ -2768,6 +2818,11 @@ export function MdToPptAgentPage() {
                         <MapSpinner size={11} />
                         AI 正在按你的要求调整（只动相关页，其余逐字保留）...
                       </span>
+                    ) : outlineStreaming ? (
+                      <span className="flex items-center gap-1.5 text-[11px] font-normal text-purple-300" data-testid="outline-streaming">
+                        <MapSpinner size={11} />
+                        大纲逐页生成中（{outlineDraft.outline.filter(Boolean).length}/{outlineDraft.totalPages} 页，可先阅读已到的页）...
+                      </span>
                     ) : (
                       <span className="text-[11px] font-normal text-[var(--text-tertiary)] tabular-nums">
                         {outlineDraft.outline.length} 页 · 点击编辑 / 拖卡片换位，改动即时保存（刷新不丢）
@@ -2780,7 +2835,7 @@ export function MdToPptAgentPage() {
                 </div>
                 <button
                   onClick={confirmOutlineDraft}
-                  disabled={isProcessing || outlineDraft.outline.length === 0}
+                  disabled={isProcessing || outlineStreaming || outlineDraft.outline.length === 0}
                   data-testid="outline-confirm"
                   className="shrink-0 flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-purple-500/85 text-white hover:bg-purple-500 disabled:opacity-40"
                 >
@@ -2888,7 +2943,7 @@ export function MdToPptAgentPage() {
                   style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(225px, 1fr))' }}
                   data-testid="outline-grid"
                 >
-                {outlineDraft.outline.map((slide, i) => (
+                {outlineDraft.outline.map((slide, i) => slide && (
                   <div
                     key={i}
                     draggable
@@ -2987,9 +3042,48 @@ export function MdToPptAgentPage() {
                       className="w-full flex-1 resize-none text-[11px] leading-relaxed bg-transparent text-[var(--text-secondary)] placeholder-[var(--text-tertiary)] border border-white/6 focus:border-purple-500/30 rounded-md px-2 py-1.5 outline-none"
                       style={{ outline: 'none', boxShadow: 'none', minHeight: 64 }}
                     />
+                    {/* 设计意图行（来自流式大纲，可改）：版式/视觉装置/排字，定稿后直接喂给子智能体 */}
+                    <input
+                      type="text"
+                      value={slide.design ?? ''}
+                      onChange={(e) =>
+                        setOutlineDraft((d) => {
+                          if (!d) return d;
+                          const outline = d.outline.map((sl, j) => (j === i ? { ...sl, design: e.target.value } : sl));
+                          return { ...d, outline };
+                        })
+                      }
+                      placeholder="设计意图：版式 / 视觉装置 / 排字..."
+                      title="本页设计意图（版式/视觉装置/排字/强调），生成时子智能体优先遵循"
+                      data-testid={'outline-design-' + i}
+                      className="mt-1.5 w-full text-[10px] italic bg-transparent text-purple-300/75 placeholder-[var(--text-tertiary)] border border-transparent focus:border-purple-500/30 rounded-md px-2 py-1 outline-none"
+                    />
                   </div>
                 ))}
 
+                {/* 流式骨架占位：未到的页用脉冲卡，逐张被真卡顶替（产物即体验） */}
+                {outlineStreaming &&
+                  Array.from(
+                    { length: Math.max(0, (outlineDraft.totalPages || 0) - outlineDraft.outline.filter(Boolean).length) },
+                    (_, k) => (
+                      <div
+                        key={'skeleton-' + k}
+                        className="rounded-xl border border-dashed border-white/10 bg-white/2 px-3.5 py-3 flex flex-col gap-2 animate-pulse"
+                        style={{ aspectRatio: '3 / 4', minHeight: 0 }}
+                        aria-hidden
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-md bg-white/8" />
+                          <div className="h-2.5 w-2/3 rounded bg-white/8" />
+                        </div>
+                        <div className="h-2 w-full rounded bg-white/5" />
+                        <div className="h-2 w-5/6 rounded bg-white/5" />
+                        <div className="h-2 w-4/6 rounded bg-white/5" />
+                      </div>
+                    )
+                  )}
+
+                {!outlineStreaming && (
                 <button
                   onClick={() => setOutlineDraft((d) => {
                     if (!d) return d;
@@ -3003,6 +3097,7 @@ export function MdToPptAgentPage() {
                   <Plus size={12} />
                   添加一页
                 </button>
+                )}
                 </div>
 
                 {/* 让 AI 调整（也可以直接在左侧对话输入，效果相同） */}
