@@ -111,13 +111,15 @@ const docSanitizeSchema = {
  */
 function preprocessWikilinks(body: string): string {
   if (!body) return body;
-  // 故意不识别嵌套/换行/管道符里的内容，与后端 WikiLinkParser 行为一致
+  // 故意不识别嵌套/换行/管道符里的内容，与后端 WikiLinkParser 行为一致。
+  // 用 #wikilink/ 前缀 hash 锚（sanitize 永远放行 # 协议），下方 a 组件 renderer
+  // 优先匹配此前缀。曾尝试自定义 wikilink: 协议，被 rehypeSanitize 协议白名单剥掉
+  // 失败（即使把 wikilink 写进 protocols.href 仍然不稳）。hash 锚最简单可靠。
   return body.replace(/\[\[([^\[\]\|\n]+?)(?:\|([^\[\]\n]+?))?\]\]/g, (_, title: string, alias?: string) => {
     const display = (alias ?? title).trim();
     const target = title.trim();
     if (!target) return '';
-    // wikilink: 是自定义协议，下面 a 组件 renderer 会按这个前缀拦截渲染
-    return `[${display}](wikilink:${encodeURIComponent(target)})`;
+    return `[${display}](#wikilink/${encodeURIComponent(target)})`;
   });
 }
 
@@ -219,12 +221,13 @@ function MarkdownViewerBase({ content }: { content: string }) {
           h6: mkHeading('h6'),
           p: ({ children }) => <p className="my-3.5 whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.78))' }}>{children}</p>,
           a: ({ href, children }) => {
-            // 双链 [[xxx]] → wikilink: 协议（preprocessWikilinks 转出）
-            if (href && href.startsWith('wikilink:')) {
-              const title = decodeURIComponent(href.slice('wikilink:'.length));
+            // 双链 [[xxx]] → #wikilink/ hash 锚（preprocessWikilinks 转出）。
+            // 必须放在通用 # 锚点分支之前，否则会被当成 in-page anchor 处理。
+            if (href && href.startsWith('#wikilink/')) {
+              const title = decodeURIComponent(href.slice('#wikilink/'.length));
               return (
                 <a
-                  href={`#wikilink:${encodeURIComponent(title)}`}
+                  href={href}
                   className="wikilink-anchor"
                   data-wikilink={title}
                   style={{
