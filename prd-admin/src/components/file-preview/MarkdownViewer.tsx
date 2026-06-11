@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, memo, type ReactNode } from 'react';
+import { useCallback, useMemo, useState, memo, useEffect, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -14,6 +14,7 @@ import { parseFrontmatter } from '@/lib/frontmatter';
 import { ImageLightbox } from '@/components/ui/ImageLightbox';
 import { MermaidDiagram } from '@/components/ui/MermaidDiagram';
 import { UpdateTimeline, parseMermaidTimeline } from '@/components/ui/UpdateTimeline';
+import { lookupWikilinkTitle } from '@/lib/wikilinkCache';
 // SSOT：与 TOC（markdownToc.ts）共用同一套「标题文本 → slug」规则，
 // 保证目录点击能精确跳到带内嵌 HTML 的标题（rehypeRaw 渲染后）。
 import { headingTextToSlug } from '@/lib/markdownToc';
@@ -225,19 +226,33 @@ function MarkdownViewerBase({ content }: { content: string }) {
             // 必须放在通用 # 锚点分支之前，否则会被当成 in-page anchor 处理。
             if (href && href.startsWith('#wikilink/')) {
               const title = decodeURIComponent(href.slice('#wikilink/'.length));
+              // 查缓存判断目标是否存在 → 不存在时改用"虚链接"样式（橙色虚线下划线）
+              const cached = lookupWikilinkTitle(title);
+              const exists = cached !== null;
               return (
                 <a
                   href={href}
-                  className="wikilink-anchor"
+                  className={exists ? 'wikilink-anchor' : 'wikilink-anchor wikilink-broken'}
                   data-wikilink={title}
                   style={{
-                    color: 'rgba(124,156,255,0.95)',
-                    background: 'rgba(124,156,255,0.08)',
+                    color: exists ? 'rgba(124,156,255,0.95)' : 'rgba(255,156,77,0.85)',
+                    background: exists ? 'rgba(124,156,255,0.08)' : 'rgba(255,156,77,0.06)',
                     padding: '0 4px',
                     borderRadius: 3,
-                    borderBottom: '1px solid rgba(124,156,255,0.45)',
+                    borderBottom: exists
+                      ? '1px solid rgba(124,156,255,0.45)'
+                      : '1px dashed rgba(255,156,77,0.5)',
                     textDecoration: 'none',
                     cursor: 'pointer',
+                  }}
+                  title={exists ? undefined : `「${title}」尚不存在`}
+                  onMouseEnter={(e) => {
+                    document.dispatchEvent(new CustomEvent('wikilink:hover', {
+                      detail: { title, x: e.clientX, y: e.clientY, exists },
+                    }));
+                  }}
+                  onMouseLeave={() => {
+                    document.dispatchEvent(new CustomEvent('wikilink:unhover'));
                   }}
                   onClick={(e) => {
                     e.preventDefault();

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext } from 'react';
 import { createPortal } from 'react-dom';
 import { FilePreview } from '@/components/file-preview';
+import { WikilinkAutocomplete } from '@/components/doc-browser/WikilinkAutocomplete';
 import {
   FolderOpen, FolderClosed, Star, Rss, Github,
   Search, ChevronRight, ChevronDown, Plus, Pin, PinOff,
@@ -418,6 +419,11 @@ export type DocBrowserProps = {
    * 不传则不渲染，对现有调用方无影响。
    */
   contentFooter?: (entryId: string) => React.ReactNode;
+  /**
+   * 启用双链编辑器自动补全：编辑模式下输入 [[ 或 @ 弹出本库文档候选。
+   * 不传则编辑器无补全。仅 DocumentStorePage 的私人编辑场景传入。
+   */
+  autocompleteStoreId?: string;
   /** 目录排序模式，默认 'default'（置顶+folder+主文档+标题）。阅读/分享场景建议 'created-desc'。 */
   sortMode?: DocBrowserSortMode;
   /**
@@ -1479,6 +1485,7 @@ export function DocBrowser({
   onTagColorsChange,
   inlineCommentShareToken,
   contentFooter,
+  autocompleteStoreId,
 }: DocBrowserProps) {
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState<DocBrowserEntry[] | null>(null);
@@ -1648,6 +1655,8 @@ export function DocBrowser({
 
   // 批次 D：划词评论
   const contentAreaRef = useRef<HTMLDivElement>(null);
+  // 双链编辑器自动补全用的 textarea ref（只在编辑模式生效）
+  const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   const [inlineCommentsOpen, setInlineCommentsOpen] = useState(false);
   const [evidenceGraphOpen, setEvidenceGraphOpen] = useState(false);
   const [pendingSelection, setPendingSelection] = useState<PendingSelection | null>(null);
@@ -3066,20 +3075,41 @@ export function DocBrowser({
                 {contentLoading ? (
                   <MapSectionLoader text="加载文档内容…" />
                 ) : editMode ? (
-                  <textarea
-                    value={editContent}
-                    onChange={(e) => setEditContent(e.target.value)}
-                    spellCheck={false}
-                    className="w-full h-full min-h-[400px] resize-none outline-none text-[13px] font-mono leading-relaxed"
-                    style={{
-                      background: 'rgba(0,0,0,0.2)',
-                      border: '1px solid rgba(255,255,255,0.08)',
-                      borderRadius: '8px',
-                      padding: '12px 16px',
-                      color: 'var(--text-primary)',
-                    }}
-                    placeholder="在此编辑文档内容..."
-                  />
+                  <>
+                    <textarea
+                      ref={editTextareaRef}
+                      value={editContent}
+                      onChange={(e) => setEditContent(e.target.value)}
+                      spellCheck={false}
+                      className="w-full h-full min-h-[400px] resize-none outline-none text-[13px] font-mono leading-relaxed"
+                      style={{
+                        background: 'rgba(0,0,0,0.2)',
+                        border: '1px solid rgba(255,255,255,0.08)',
+                        borderRadius: '8px',
+                        padding: '12px 16px',
+                        color: 'var(--text-primary)',
+                      }}
+                      placeholder={autocompleteStoreId ? '输入正文，可写 [[标题]] 引用其他文档（试试 [[ 自动补全）...' : '在此编辑文档内容...'}
+                    />
+                    {autocompleteStoreId && (
+                      <WikilinkAutocomplete
+                        textareaRef={editTextareaRef}
+                        value={editContent}
+                        storeId={autocompleteStoreId}
+                        onInsert={(next, cursor) => {
+                          setEditContent(next);
+                          // 异步把光标定位到插入后
+                          window.setTimeout(() => {
+                            const ta = editTextareaRef.current;
+                            if (ta) {
+                              ta.focus();
+                              ta.setSelectionRange(cursor, cursor);
+                            }
+                          }, 0);
+                        }}
+                      />
+                    )}
+                  </>
                 ) : (preview
                       || selectedEntryData?.sourceType === 'github_directory'
                       || selectedEntryData?.contentType === 'application/x-github-directory') ? (

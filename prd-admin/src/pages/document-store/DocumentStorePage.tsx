@@ -84,6 +84,8 @@ import { resolveAvatarUrl } from '@/lib/avatar';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
 import { DocEmptyState } from '@/components/doc-browser/DocEmptyState';
 import { BacklinksPanel } from '@/components/doc-browser/BacklinksPanel';
+import { WikilinkHoverCard } from '@/components/doc-browser/WikilinkHoverCard';
+import { setWikilinkEntries } from '@/lib/wikilinkCache';
 import type {
   DocumentStore,
   DocumentStoreWithPreview,
@@ -619,6 +621,14 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
       setSelectedEntryId(pending);
     }
     sessionStorage.removeItem('doc-store-pending-entry');
+  }, [entries]);
+
+  // 喂 wikilink 缓存：每次 entries 变化（增删改、切库）都重灌一次，
+  // 让 MarkdownViewer 悬停预览 + WikilinkAutocomplete 走的"虚链接"判定能即时拿到最新映射。
+  useEffect(() => {
+    setWikilinkEntries(entries.filter(e => !e.isFolder).map(e => ({
+      id: e.id, title: e.title, summary: e.summary, updatedAt: e.updatedAt,
+    })));
   }, [entries]);
 
   // 双链跳转：监听 MarkdownViewer / BacklinksPanel 派发的 wikilink:click 事件，
@@ -1168,7 +1178,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
               onJumpToEntry={(id) => setSelectedEntryId(id)}
             />
           )}
+          autocompleteStoreId={storeId}
         />
+        <WikilinkHoverCard />
       </div>
 
       {/* 添加订阅对话框 */}
