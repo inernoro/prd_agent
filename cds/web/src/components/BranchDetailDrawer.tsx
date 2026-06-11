@@ -10,6 +10,7 @@ import { BranchDetailLoadingSkeleton, ErrorBlock, LoadingBlock } from '@/pages/c
 import { EnvEditor } from '@/pages/cds-settings/EnvEditor';
 import { ActiveDeployment } from '@/components/deployment/ActiveDeployment';
 import { HistoryRow } from '@/components/deployment/HistoryRow';
+import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
 import { deriveBranchPhases, type PhaseKey } from '@/lib/deploymentPhases';
 import { normalizeContainerLogsForDisplay } from '@/lib/containerLogs';
 import {
@@ -755,6 +756,7 @@ export function BranchDetailDrawer({
   initialResourceDetailTab,
   onToast,
   onActionComplete,
+  onRelease,
 }: {
   branchId: string | null;
   projectId: string;
@@ -768,6 +770,7 @@ export function BranchDetailDrawer({
   /** 操作(deploy/pull/stop/reset/delete)完成后回调,父页面用来重拉 BranchList。
       delete 完成时本组件会自动 onClose,父页面无需特别处理。 */
   onActionComplete?: (action: 'deploy' | 'restart' | 'pull' | 'stop' | 'reset' | 'delete') => void;
+  onRelease?: (branchId: string) => void;
   /**
    * Production preview URL precomputed at the caller (so the Drawer
    * doesn't have to load /api/config independently). Empty string =
@@ -1753,12 +1756,14 @@ export function BranchDetailDrawer({
                       {branch.previewUrl}
                     </a>
                   </div>
-                  <Button asChild size="sm" className="shrink-0 bg-emerald-600 text-white hover:bg-emerald-700">
-                    <a href={branch.previewUrl} target="_blank" rel="noreferrer">
-                      <ExternalLink />
-                      打开预览
-                    </a>
-                  </Button>
+                  <PreviewActionSplitButton
+                    className="shrink-0"
+                    previewHref={branch.previewUrl}
+                    previewTitle="打开预览"
+                    previewAriaLabel="打开预览"
+                    onRelease={onRelease ? () => onRelease(branch.id) : undefined}
+                    releaseDisabled={!onRelease}
+                  />
                 </div>
               ) : null}
               <section className="border-b border-[hsl(var(--hairline))] px-5 py-4">

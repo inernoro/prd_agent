@@ -10,7 +10,6 @@ import {
   ChevronDown,
   Copy,
   Cpu,
-  Eye,
   ExternalLink,
   Gauge,
   GitBranch,
@@ -39,6 +38,7 @@ import {
 
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { BranchDetailDrawer, type BranchDeploymentItem, type BranchResourceDetailTab } from '@/components/BranchDetailDrawer';
+import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
 import { CapacityFullDialog } from '@/components/CapacityFullDialog';
 import { Button } from '@/components/ui/button';
 import {
@@ -3081,7 +3081,6 @@ export function BranchListPage(): JSX.Element {
                     activityEvents={activityEvents
                       .filter((event) => event.source === 'ai' && activityBranchMatches(event, branch.id))
                       .slice(0, 5)}
-                    capacityWarning={state.status === 'ok' ? capacityMessage(state.capacity, [branch]) : ''}
                     activeTagFilter={activeTagFilter}
                     onPreview={() => void openPreview(branch, false)}
                     onRelease={() => setReleaseBranchId(branch.id)}
@@ -3153,6 +3152,7 @@ export function BranchListPage(): JSX.Element {
           }}
           onToast={setToast}
           onActionComplete={() => void refresh()}
+          onRelease={(branchId) => setReleaseBranchId(branchId)}
         />
 
         {state.status === 'ok' ? (
@@ -4265,7 +4265,6 @@ function BranchCard({
   resources,
   action,
   now,
-  capacityWarning,
   resourceChipDisplay,
   highlighted,
   highlightPulse,
@@ -4297,7 +4296,6 @@ function BranchCard({
   resources: BranchResource[];
   action?: BranchAction;
   now: number;
-  capacityWarning?: string;
   activityEvents?: ActivityEvent[];
   // projectId is reserved for future inline modes; the call site already
   // passes it but BranchCard currently derives all routing data from
@@ -4341,10 +4339,9 @@ function BranchCard({
   const runningCount = runningServiceCount(branch);
   const visibleResources = resources.filter((resource) => resource.port).slice(0, 6);
   const chipDisplay = normalizeResourceChipDisplay(resourceChipDisplay);
-  const previewCapacityWarning = branch.status === 'running' ? '' : capacityWarning;
 
   // 新设计(2026-05-04 用户主诉求):
-  //   1. 预览才是重点色(primary 橙) — running 态显示 Eye,主动作
+  //   1. 预览是主动作 — running 态显示 Eye split button,下拉承载发布
   //   2. 部署不再放在卡片右下 — 走"打开抽屉 → 设置 tab → 重新部署"
   //      避免用户误点(部署=有副作用,需要确认上下文)
   //   3. 未运行/已停止 → 整卡 opacity-60 暗示,不再单独显示"未运行"chip
@@ -5078,7 +5075,7 @@ function BranchCard({
         </div>
         {/*
           重设计(2026-05-04 用户主诉求):
-            - running 态:Eye 按钮(主橙 primary 色,**预览=重点色**)。点开预览页。
+            - running 态:Eye split button。主按钮点开预览,下拉里发布到目标。
             - 中间态:loading 旋转图标(non-clickable)
             - **未运行/异常**:**不再放部署按钮**。需要部署 → 点开抽屉 →
               设置 tab → 「重新部署」。理由:部署有副作用,需要"打开上下文 → 看
@@ -5087,46 +5084,7 @@ function BranchCard({
         */}
         <div className="flex shrink-0 items-center gap-2">
           {isRunning ? (
-            <Button
-              size="icon"
-              variant="outline"
-              onClick={(event) => {
-                event.stopPropagation();
-                onRelease();
-              }}
-              disabled={busy}
-              title="发布到目标"
-              aria-label="发布到目标"
-              className="border-emerald-500/35 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/15 hover:text-emerald-500"
-            >
-              <ExternalLink />
-            </Button>
-          ) : null}
-          {isRunning ? (
-            previewCapacityWarning ? (
-              <ConfirmAction
-                title="容量不足，仍然预览部署？"
-                description={previewCapacityWarning}
-                confirmLabel="继续"
-                disabled={busy}
-                onConfirm={onPreview}
-                trigger={(
-                  <Button
-                    size="icon"
-                    variant="outline"
-                    className={isAiActive
-                      ? 'cds-ai-preview-beacon border-sky-400/45 bg-sky-400/10 text-sky-300 hover:bg-sky-400/15 hover:text-sky-200'
-                      : isAiOperated
-                        ? 'border-sky-400/30 bg-sky-400/5 text-sky-300/80 hover:bg-sky-400/10 hover:text-sky-200'
-                      : 'border-primary/35 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary'}
-                    title={isAiOperated ? `${aiTitle} · 打开 AI 操作面板` : '预览'}
-                    aria-label={isAiOperated ? `${aiState.label}，打开 AI 操作面板` : '预览'}
-                  >
-                    {isAiOperated ? <Bot /> : <Eye />}
-                  </Button>
-                )}
-              />
-            ) : (
+            isAiOperated ? (
               <Button
                 size="icon"
                 variant="outline"
@@ -5145,8 +5103,17 @@ function BranchCard({
                 title={isAiOperated ? `${aiTitle} · 打开 AI 操作面板` : '预览'}
                 aria-label={isAiOperated ? `${aiState.label}，打开 AI 操作面板` : '预览'}
               >
-                {busy ? <Loader2 className="animate-spin" /> : isAiOperated ? <Bot /> : <Eye />}
+                {busy ? <Loader2 className="animate-spin" /> : <Bot />}
               </Button>
+            ) : (
+              <PreviewActionSplitButton
+                disabled={busy}
+                loading={busy}
+                onPreview={onPreview}
+                onRelease={onRelease}
+                previewTitle="打开预览"
+                previewAriaLabel="打开预览"
+              />
             )
           ) : isInterim ? (
             <Button size="icon" variant="outline" disabled title={statusLabel(branch.status)} aria-label={statusLabel(branch.status)}>
