@@ -11,6 +11,7 @@
     "serve": "tsx src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "audit:ui": "node ../scripts/audit-cds-ui-regressions.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },

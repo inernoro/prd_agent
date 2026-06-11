@@ -10,7 +10,6 @@ import {
   ChevronDown,
   Copy,
   Cpu,
-  Eye,
   ExternalLink,
   Gauge,
   GitBranch,
@@ -39,6 +38,7 @@ import {
 
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { BranchDetailDrawer, type BranchDeploymentItem, type BranchResourceDetailTab } from '@/components/BranchDetailDrawer';
+import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
 import { CapacityFullDialog } from '@/components/CapacityFullDialog';
 import { Button } from '@/components/ui/button';
 import {
@@ -3152,6 +3152,7 @@ export function BranchListPage(): JSX.Element {
           }}
           onToast={setToast}
           onActionComplete={() => void refresh()}
+          onRelease={(branchId) => setReleaseBranchId(branchId)}
         />
 
         {state.status === 'ok' ? (
@@ -4323,9 +4324,9 @@ function BranchCard({
   onClickTag?: (tag: string) => void;
 }): JSX.Element {
   /*
-   * BranchTile — compact card sized for a 3-up grid (~360px wide). Mirrors
-   * the legacy mental model: primary actions [预览] [部署] [详情] inline at
-   * the bottom; low-frequency actions live in a kebab dropdown.
+   * BranchTile — compact card inside the adaptive branch grid. Primary
+   * preview/release actions are merged into one split button; low-frequency
+   * branch operations live in the kebab dropdown.
    */
   const busy = action?.status === 'running' || isBusy(branch);
   const deleteBusy = action?.status === 'running' && action.kind === 'delete';
@@ -4757,11 +4758,18 @@ function BranchCard({
           // running 时才用 service 自身状态做精细化区分。
           const chipStatus = isInterim || isError ? branch.status : resource.status;
           const chipRailClass = isError ? issueRailClass : statusRailClass(chipStatus);
+          const chipToneClass = chipStatus === 'running'
+            ? 'border-emerald-500/25 bg-emerald-500/[0.055] text-foreground/85 hover:border-emerald-500/40 hover:bg-emerald-500/10 hover:text-foreground'
+            : chipStatus === 'error'
+              ? 'border-destructive/30 bg-destructive/10 text-foreground/85 hover:border-destructive/45 hover:bg-destructive/15 hover:text-foreground'
+              : isInterim
+                ? 'border-sky-500/30 bg-sky-500/10 text-foreground/85 hover:border-sky-500/45 hover:bg-sky-500/15 hover:text-foreground'
+                : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))]/75 text-foreground/75 hover:border-primary/30 hover:bg-[hsl(var(--surface-raised))]/90 hover:text-foreground';
           return (
             <button
               key={resource.id}
               type="button"
-              className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))]/60 px-2 text-xs text-foreground/75 transition-[background-color,border-color,color] hover:border-primary/35 hover:bg-[hsl(var(--surface-raised))]/75 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 ${
+              className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs shadow-[inset_0_1px_0_rgba(255,255,255,0.035)] transition-[background-color,border-color,color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 ${chipToneClass} ${
                 resource.access === 'external'
                   ? 'ring-1 ring-[hsl(var(--hairline))]'
                   : ''
@@ -4774,8 +4782,8 @@ function BranchCard({
               }}
             >
               <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${chipRailClass}`} aria-hidden />
-              {chipDisplay.icon ? <ResourceIcon resource={resource} className="h-3.5 w-3.5 shrink-0 opacity-90 saturate-90" /> : null}
-              {chipDisplay.port ? <span className="font-mono text-foreground/75">:{resource.port}</span> : null}
+              {chipDisplay.icon ? <ResourceIcon resource={resource} className="h-3.5 w-3.5 shrink-0 opacity-85 saturate-100 brightness-105" /> : null}
+              {chipDisplay.port ? <span className="font-mono text-foreground/80">:{resource.port}</span> : null}
             </button>
           );
         }) : (
@@ -5061,8 +5069,9 @@ function BranchCard({
           {commitHistoryPanel}
         </div>
         {/*
-          重设计(2026-05-04 用户主诉求):
-            - running 态:Eye 按钮(主橙 primary 色,**预览=重点色**)。点开预览页。
+          重设计(2026-06-11 用户主诉求):
+            - running 态:预览 + 发布合并成一个 split button。主按钮预览,
+              下拉菜单包含发布,避免右下角两个强按钮互相抢焦点。
             - 中间态:loading 旋转图标(non-clickable)
             - **未运行/异常**:**不再放部署按钮**。需要部署 → 点开抽屉 →
               设置 tab → 「重新部署」。理由:部署有副作用,需要"打开上下文 → 看
@@ -5071,67 +5080,19 @@ function BranchCard({
         */}
         <div className="flex shrink-0 items-center gap-2">
           {isRunning ? (
-            <Button
-              size="icon"
-              variant="outline"
-              onClick={(event) => {
-                event.stopPropagation();
-                onRelease();
-              }}
+            <PreviewActionSplitButton
               disabled={busy}
-              title="发布到目标"
-              aria-label="发布到目标"
-              className="border-emerald-500/35 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/15 hover:text-emerald-500"
-            >
-              <ExternalLink />
-            </Button>
-          ) : null}
-          {isRunning ? (
-            previewCapacityWarning ? (
-              <ConfirmAction
-                title="容量不足，仍然预览部署？"
-                description={previewCapacityWarning}
-                confirmLabel="继续"
-                disabled={busy}
-                onConfirm={onPreview}
-                trigger={(
-                  <Button
-                    size="icon"
-                    variant="outline"
-                    className={isAiActive
-                      ? 'cds-ai-preview-beacon border-sky-400/45 bg-sky-400/10 text-sky-300 hover:bg-sky-400/15 hover:text-sky-200'
-                      : isAiOperated
-                        ? 'border-sky-400/30 bg-sky-400/5 text-sky-300/80 hover:bg-sky-400/10 hover:text-sky-200'
-                      : 'border-primary/35 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary'}
-                    title={isAiOperated ? `${aiTitle} · 打开 AI 操作面板` : '预览'}
-                    aria-label={isAiOperated ? `${aiState.label}，打开 AI 操作面板` : '预览'}
-                  >
-                    {isAiOperated ? <Bot /> : <Eye />}
-                  </Button>
-                )}
-              />
-            ) : (
-              <Button
-                size="icon"
-                variant="outline"
-                className={isAiActive
-                  ? 'cds-ai-preview-beacon border-sky-400/45 bg-sky-400/10 text-sky-300 hover:bg-sky-400/15 hover:text-sky-200'
-                  : isAiOperated
-                    ? 'border-sky-400/30 bg-sky-400/5 text-sky-300/80 hover:bg-sky-400/10 hover:text-sky-200'
-                  : 'border-primary/35 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary'}
-                onClick={isAiOperated
-                  ? (event) => {
-                    event.stopPropagation();
-                    setAiPanelOpen((current) => !current);
-                  }
-                  : onPreview}
-                disabled={busy}
-                title={isAiOperated ? `${aiTitle} · 打开 AI 操作面板` : '预览'}
-                aria-label={isAiOperated ? `${aiState.label}，打开 AI 操作面板` : '预览'}
-              >
-                {busy ? <Loader2 className="animate-spin" /> : isAiOperated ? <Bot /> : <Eye />}
-              </Button>
-            )
+              loading={busy}
+              icon={isAiOperated ? <Bot className="h-4 w-4" /> : undefined}
+              previewTitle={isAiOperated ? `${aiTitle} · 打开 AI 操作面板` : '预览'}
+              previewAriaLabel={isAiOperated ? `${aiState.label}，打开 AI 操作面板` : '预览'}
+              previewConfirmTitle={previewCapacityWarning && !isAiOperated ? '容量不足，仍然预览部署？' : undefined}
+              previewConfirmDescription={previewCapacityWarning && !isAiOperated ? previewCapacityWarning : undefined}
+              onPreview={isAiOperated
+                ? () => setAiPanelOpen((current) => !current)
+                : onPreview}
+              onRelease={onRelease}
+            />
           ) : isInterim ? (
             <Button size="icon" variant="outline" disabled title={statusLabel(branch.status)} aria-label={statusLabel(branch.status)}>
               <Loader2 className="animate-spin" />
