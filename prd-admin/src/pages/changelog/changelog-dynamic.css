@@ -3,12 +3,6 @@
    - 统计条：新提交到达扫光 + AI 总结按钮流光
    prefers-reduced-motion 时关闭持续动画 */
 
-@property --clg-spin {
-  syntax: '<angle>';
-  initial-value: 0deg;
-  inherits: false;
-}
-
 /* ── 筛选 chip 微交互 ───────────────────────── */
 .clg-chip {
   position: relative;
@@ -41,55 +35,23 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* 热度第 1 名：流光描边 + 呼吸光晕（currentColor = 该类型主题色） */
-.clg-chip-hot1 { animation: clg-breathe 2.6s ease-in-out infinite; }
-.clg-chip-hot1::before {
-  content: '';
-  position: absolute;
-  inset: -1.5px;
-  border-radius: 13px;
-  padding: 1.5px;
-  background: conic-gradient(
-    from var(--clg-spin),
-    transparent 0%, currentColor 18%, transparent 38%,
-    transparent 62%, currentColor 80%, transparent 100%
-  );
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  animation: clg-spin 3.2s linear infinite;
-  opacity: 0.9;
-  pointer-events: none;
-}
-/* 热度第 2/3 名：静态弱光晕 */
+/* 热度发光：二选一定论（2026-06-11 用户反馈「闪烁火花 vs 闪烁按钮」）——保留火花、
+   去掉 chip 整体呼吸/流光（一排按钮里持续闪整块太吵）。热度名次只用静态光晕分层 */
+.clg-chip-hot1 { box-shadow: 0 0 16px 1px color-mix(in srgb, currentColor 26%, transparent); }
 .clg-chip-hot2 { box-shadow: 0 0 12px 0 color-mix(in srgb, currentColor 16%, transparent); }
 
-@keyframes clg-spin { to { --clg-spin: 360deg; } }
-@keyframes clg-breathe {
-  0%, 100% { box-shadow: 0 0 0 0 transparent; }
-  50% { box-shadow: 0 0 18px 1px color-mix(in srgb, currentColor 28%, transparent); }
-}
-
-/* 最热标签火焰角标 */
-.clg-flame {
-  position: absolute;
-  top: -7px;
-  left: -6px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+/* 最热标签的徽章：火焰 + 数字一体（橙红渐变），并入右上角原徽章位，
+   不再用独立左上角火焰（会与左邻 chip 的数字徽章重叠，2026-06-11 截图反馈） */
+.clg-badge-hot {
   color: #ffffff;
-  background: linear-gradient(135deg, #fb923c, #f43f5e);
+  background: linear-gradient(135deg, #fb923c, #f43f5e) !important;
   box-shadow: 0 2px 8px rgba(244, 63, 94, 0.5);
-  animation: clg-flicker 1.6s ease-in-out infinite;
-  pointer-events: none;
+  gap: 2px;
 }
+.clg-badge-hot svg { animation: clg-flicker 1.6s ease-in-out infinite; }
 @keyframes clg-flicker {
   0%, 100% { transform: scale(1) rotate(-4deg); }
-  50% { transform: scale(1.15) rotate(5deg); }
+  50% { transform: scale(1.12) rotate(5deg); }
 }
 
 /* ── 统计 chip：新提交到达扫光 ───────────────── */
@@ -134,8 +96,6 @@
 
 /* 减弱动效偏好：关闭持续动画（粒子在 JS 侧拦截） */
 @media (prefers-reduced-motion: reduce) {
-  .clg-chip-hot1,
-  .clg-chip-hot1::before,
-  .clg-flame,
+  .clg-badge-hot svg,
   .clg-ai-shimmer::after { animation: none; }
 }

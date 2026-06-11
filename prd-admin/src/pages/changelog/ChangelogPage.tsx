@@ -1083,14 +1083,6 @@ export default function ChangelogPage() {
               <Filter size={14} />
               筛选
             </div>
-            <span
-              className="inline-flex items-center gap-1 text-[11px]"
-              style={{ color: 'var(--text-muted)' }}
-              title="角标统计最近 30 天的条目数，越久没有新增热度自然衰减；火焰 = 近 30 天最热类型"
-            >
-              <Flame size={10} style={{ color: '#fb923c' }} />
-              热度 = 近 30 天条目数
-            </span>
             
             <div className="flex flex-wrap ml-1" style={{ gap: '12px 10px', paddingTop: '6px' }}>
               {availableTypes.map((t) => {
@@ -1119,17 +1111,19 @@ export default function ChangelogPage() {
                       filter: active ? 'brightness(1.15)' : undefined,
                     }}
                   >
-                    {hotRank === 0 && (
-                      <span className="clg-flame">
-                        <Flame size={9} strokeWidth={2.5} />
-                      </span>
-                    )}
                     <Icon size={13} />
                     {meta.label}
                     {count > 0 && (
-                      <span className="clg-badge" style={{ background: meta.color }}>
-                        {count}
-                      </span>
+                      hotRank === 0 ? (
+                        <span className="clg-badge clg-badge-hot">
+                          <Flame size={9} strokeWidth={2.5} />
+                          {count}
+                        </span>
+                      ) : (
+                        <span className="clg-badge" style={{ background: meta.color }}>
+                          {count}
+                        </span>
+                      )
                     )}
                   </button>
                 );
@@ -1151,6 +1145,15 @@ export default function ChangelogPage() {
                 清除筛选
               </button>
             )}
+
+            <span
+              className="ml-auto inline-flex items-center gap-1 text-[11px] self-end pb-1"
+              style={{ color: 'var(--text-muted)', opacity: 0.75 }}
+              title="角标统计最近 30 天的条目数，越久没有新增热度自然衰减；火焰徽章 = 近 30 天最热类型"
+            >
+              <Flame size={10} style={{ color: '#fb923c' }} />
+              近 30 天热度
+            </span>
           </div>
         )}
       </header>
