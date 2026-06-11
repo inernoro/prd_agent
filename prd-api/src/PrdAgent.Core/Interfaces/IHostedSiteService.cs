@@ -110,7 +110,15 @@ public interface IHostedSiteService
         CancellationToken ct = default,
         string purpose = "share",
         bool forceNew = false,
-        string visibility = "owner-only");
+        string visibility = "owner-only",
+        bool allocateShortLink = false);
+
+    /// <summary>
+    /// 事后为某条已存在的分享按需分配数字短链 /s/{seq}（用户在分享面板点「生成数字短链」）。
+    /// 幂等：已有则返回原 Seq。返回分配后的 ShortSeq（&gt;0 成功）。
+    /// 仅创建者可调用；visit 便捷链不支持。
+    /// </summary>
+    Task<long> EnsureShortLinkAsync(string userId, string shareId, CancellationToken ct = default);
 
     /// <summary>
     /// 列出分享：默认包含未过期 + 过期 ≤ 7 天（允许续期）的链接。

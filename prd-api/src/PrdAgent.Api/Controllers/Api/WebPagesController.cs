@@ -732,7 +732,10 @@ public class WebPagesController : ControllerBase
                 req.Password, req.ExpiresInDays,
                 purpose: isVisit ? "visit" : "share",
                 forceNew: forceNew,
-                visibility: visibility);
+                visibility: visibility,
+                // 数字短链按需分配：仅当用户在分享面板主动选「数字短链」时 client 传 true。
+                // 默认 false → 只发不可枚举的 /s/wp/{token} 长链，不污染 short_links。
+                allocateShortLink: req.AllocateShortLink ?? false);
 
             // P1 调整（2026-05-21 用户反馈）：默认 URL 保留分类前缀 /s/wp/{token}
             //   - 分类前缀有语义、利于在分享总管理面板里按类型分类
@@ -762,6 +765,37 @@ public class WebPagesController : ControllerBase
         catch (UnauthorizedAccessException ex)
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, ex.Message));
+        }
+    }
+
+    /// <summary>
+    /// 事后为某条已存在的分享生成数字短链 /s/{seq}（用户在分享面板点「生成数字短链」）。
+    /// 幂等：已有短链则原样返回。仅创建者可调用。
+    /// </summary>
+    [HttpPost("shares/{shareId}/short-link")]
+    public async Task<IActionResult> EnsureShareShortLink(string shareId)
+    {
+        try
+        {
+            var seq = await _siteService.EnsureShortLinkAsync(GetUserId(), shareId);
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                shortSeq = seq,
+                shortShareUrl = seq > 0 ? $"/s/{seq}" : null,
+                unifiedShareUrl = (string?)null, // 由 client 用已知 token 自行拼 /s/{token}
+            }));
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, ex.Message));
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, ex.Message));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
         }
     }
 
@@ -1107,6 +1141,12 @@ public class CreateWebPageShareRequest
 
     /// <summary>访问可见性：owner-only（默认） / logged-in / public</summary>
     public string? Visibility { get; set; }
+
+    /// <summary>
+    /// 是否分配数字短链 /s/{seq}。默认 false：用户意图里没有短链就不强制生成，
+    /// 只发不可枚举的 /s/wp/{token} 长链。仅当用户在分享面板主动选「数字短链」时传 true。
+    /// </summary>
+    public bool? AllocateShortLink { get; set; }
 }
 
 public class RenewShareRequest

@@ -1695,6 +1695,7 @@ export {
   listTags as listSiteTags,
   createShareLink as createSiteShareLink,
   listShares as listSiteShares,
+  ensureShareShortLink as ensureSiteShareShortLink,
   revokeShare as revokeSiteShare,
   viewShare as viewSiteShare,
   saveSharedSite,
