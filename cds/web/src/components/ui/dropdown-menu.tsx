@@ -42,7 +42,12 @@ export function DropdownMenu({
     const el = triggerRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    const top = rect.bottom + 6; // 6px gap below the trigger (was mt-1.5)
+    const popoverHeight = popoverRef.current?.offsetHeight || 0;
+    const belowTop = rect.bottom + 6; // 6px gap below the trigger (was mt-1.5)
+    const aboveTop = rect.top - popoverHeight - 6;
+    const top = popoverHeight > 0 && belowTop + popoverHeight > window.innerHeight - 8
+      ? Math.max(8, aboveTop)
+      : belowTop;
     const left = align === 'end' ? rect.right - width : rect.left;
     setCoords({ top, left });
   };
