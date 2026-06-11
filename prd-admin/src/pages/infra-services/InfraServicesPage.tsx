@@ -76,11 +76,13 @@ const RESPONSIBILITY_SPLIT = [
   },
 ];
 
+// 配置排第一且为默认 tab（2026-06-11 用户两次反馈找不到模型配置：
+// 日常高频操作是改模型配置，不是看实例状态）
 const INFRA_OPERATION_TABS = [
+  { key: 'config', name: '配置' },
   { key: 'instances', name: '实例' },
   { key: 'routing', name: '路由' },
   { key: 'monitoring', name: '监控' },
-  { key: 'config', name: '配置' },
 ] as const;
 
 type InfraOperationTab = (typeof INFRA_OPERATION_TABS)[number]['key'];
@@ -180,7 +182,7 @@ export default function InfraServicesPage() {
   // 深链支持：/infra-services?tab=config 直达「配置」tab（PPT 页模型弹层等入口跳转用）
   const [activeOperationTab, setActiveOperationTab] = useState<InfraOperationTab>(() => {
     const q = new URLSearchParams(window.location.search).get('tab');
-    return INFRA_OPERATION_TABS.some((t) => t.key === q) ? (q as InfraOperationTab) : 'instances';
+    return INFRA_OPERATION_TABS.some((t) => t.key === q) ? (q as InfraOperationTab) : 'config';
   });
   // 失效连接默认折叠（2026-06-11 用户反馈：12 条尸体卡占满首屏，常用操作被推到第四屏）
   const [showRevoked, setShowRevoked] = useState(false);
@@ -1045,6 +1047,48 @@ export default function InfraServicesPage() {
         </div>
       </section>
 
+      <section
+        className="rounded-xl p-5"
+        style={{
+          background: 'rgba(255,255,255,0.03)',
+          border: '1px solid rgba(255,255,255,0.08)',
+        }}
+      >
+        <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+          <div className="flex items-center gap-2">
+          <Server size={16} style={{ color: 'rgba(167,243,208,0.9)' }} />
+            <h3 className="text-sm font-semibold text-white">基础设施操作台</h3>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <a
+              href="/cds-agent"
+              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-sky-100 transition-colors hover:text-white"
+              style={{ background: 'rgba(56,189,248,0.14)', border: '1px solid rgba(125,211,252,0.24)' }}
+            >
+              <Terminal size={14} />
+              打开 CDS Agent
+            </a>
+            <div className="inline-flex rounded-lg p-1" style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              {INFRA_OPERATION_TABS.map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setActiveOperationTab(tab.key)}
+                  className="rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+                  style={{
+                    background: activeOperationTab === tab.key ? 'rgba(99,179,237,0.18)' : 'transparent',
+                    color: activeOperationTab === tab.key ? 'rgba(186,230,253,0.96)' : 'rgba(255,255,255,0.55)',
+                  }}
+                >
+                  {tab.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        {renderOperationTab()}
+      </section>
+
       {completingAuthorization && (
         <section
           className="rounded-xl p-4 flex items-center gap-3"
@@ -1450,47 +1494,6 @@ export default function InfraServicesPage() {
         ))}
       </section>
 
-      <section
-        className="rounded-xl p-5"
-        style={{
-          background: 'rgba(255,255,255,0.03)',
-          border: '1px solid rgba(255,255,255,0.08)',
-        }}
-      >
-        <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
-          <div className="flex items-center gap-2">
-          <Server size={16} style={{ color: 'rgba(167,243,208,0.9)' }} />
-            <h3 className="text-sm font-semibold text-white">基础设施操作台</h3>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <a
-              href="/cds-agent"
-              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-sky-100 transition-colors hover:text-white"
-              style={{ background: 'rgba(56,189,248,0.14)', border: '1px solid rgba(125,211,252,0.24)' }}
-            >
-              <Terminal size={14} />
-              打开 CDS Agent
-            </a>
-            <div className="inline-flex rounded-lg p-1" style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.08)' }}>
-              {INFRA_OPERATION_TABS.map((tab) => (
-                <button
-                  key={tab.key}
-                  type="button"
-                  onClick={() => setActiveOperationTab(tab.key)}
-                  className="rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
-                  style={{
-                    background: activeOperationTab === tab.key ? 'rgba(99,179,237,0.18)' : 'transparent',
-                    color: activeOperationTab === tab.key ? 'rgba(186,230,253,0.96)' : 'rgba(255,255,255,0.55)',
-                  }}
-                >
-                  {tab.name}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-        {renderOperationTab()}
-      </section>
 
       <section
         className="rounded-xl p-5"
