@@ -607,6 +607,18 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onManageSync, initial
   const [loading, setLoading] = useState(true);
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(undefined);
 
+  // 从宇宙图等外部页面跳转过来时，sessionStorage 里可能有一个 pending entry：
+  // 在 entries 加载完成后消费一次（设置选中条目并清理 key，避免下次进入再次自动跳转）。
+  useEffect(() => {
+    if (entries.length === 0) return;
+    const pending = sessionStorage.getItem('doc-store-pending-entry');
+    if (!pending) return;
+    if (entries.some(e => e.id === pending)) {
+      setSelectedEntryId(pending);
+    }
+    sessionStorage.removeItem('doc-store-pending-entry');
+  }, [entries]);
+
   // 双链跳转：监听 MarkdownViewer / BacklinksPanel 派发的 wikilink:click 事件，
   // 在当前知识库的 entries 里按标题查 entryId 并切换选中。命中不到时降级为搜索关键字
   // 提示（不报错，让用户去搜索栏继续找）。
