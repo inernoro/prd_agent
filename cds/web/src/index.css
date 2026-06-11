@@ -1016,7 +1016,7 @@
 
   .cds-branch-card-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 500px));
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 480px));
     justify-content: start;
     align-items: start;
     gap: 1rem;
