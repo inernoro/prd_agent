@@ -4717,6 +4717,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return text;
   }
 
+  function normalizeMongoWorkbenchCommand(input: unknown): { command: string; write: boolean; collection?: string; hasLimit: boolean } {
+    const trimmed = String(input || '').trim();
+    if (!trimmed) throw new Error('MongoDB 命令不能为空');
+    if (trimmed.length > 20_000) throw new Error('MongoDB 命令过长（上限 20KB）');
+    const command = trimmed.replace(/;+$/g, '').trim();
+    if (!command.startsWith('db.')) throw new Error('MongoDB 工作台只允许执行 db.* 命令');
+    if (command.includes(';')) throw new Error('MongoDB 工作台一次只允许执行一条命令');
+    if (/\b(load|sleep|while|for|function|connect|process|require|import)\b|new\s+Mongo|getSiblingDB|adminCommand|runCommand/i.test(command)) {
+      throw new Error('检测到高风险 MongoDB shell 语句，已拒绝执行');
+    }
+    const collection =
+      command.match(/db\.getCollection\(\s*(['"`])([^'"`]+)\1\s*\)/)?.[2]
+      || command.match(/db\.([a-zA-Z_$][\w$]*)\./)?.[1];
+    const write = /\.(insertOne|insertMany|updateOne|updateMany|deleteOne|deleteMany|replaceOne|drop|createIndex|dropIndex|dropIndexes)\s*\(/i.test(command)
+      || /\bdb\.createCollection\s*\(/i.test(command)
+      || /\bdb\.dropDatabase\s*\(/i.test(command);
+    return { command, write, collection, hasLimit: /\.limit\s*\(/i.test(command) };
+  }
+
   async function runRedisCli(service: InfraService, args: string[], timeoutMs = 15_000): Promise<string> {
     if (service.status !== 'running') {
       throw new Error(`Redis 服务当前未运行（status=${service.status}）`);
@@ -7216,6 +7235,98 @@ export function createBranchRouter(deps: RouterDeps): Router {
         resourceName: ctx.resourceName,
         result: 'failed',
         note: `${ctx.resourceName} MongoDB 查询失败：${(err as Error).message}`,
+      });
+      stateService.save();
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  router.post('/branches/:id/resources/:resourceId/data/mongo/command', async (req, res) => {
+    const ctx = await resolveMongoDataResourceForRequest(req, res);
+    if (!ctx) return;
+    const resources = await getBranchResourceSnapshot(ctx.branch);
+    const resource = resources.find((item) => item.id === ctx.resourceId);
+    if (!resource) {
+      res.status(404).json({ error: `资源 "${ctx.resourceId}" 不存在` });
+      return;
+    }
+
+    let database = '';
+    let normalized: { command: string; write: boolean; collection?: string; hasLimit: boolean };
+    try {
+      database = mongoDatabaseFromRequest(req.body?.database, mongoDatabaseForBranch(ctx.service, ctx.branch));
+      normalized = normalizeMongoWorkbenchCommand(req.body?.command);
+      if (normalized.write) {
+        if (!requireResourcePermission(req, res, 'data-write', ctx.branch, resource)) return;
+        ensureResourceNameConfirmed(req.body?.confirmResourceName, resource, '执行 MongoDB 命令');
+      }
+    } catch (err) {
+      const status = (err as Error).message.includes('确认') ? 409 : 400;
+      res.status(status).json({ error: (err as Error).message });
+      return;
+    }
+
+    try {
+      const cursorRead = !normalized.hasLimit;
+      const script = [
+        `const __value = (${normalized.command});`,
+        'let __kind = "output";',
+        'let __documents = [];',
+        'let __output = __value;',
+        'if (__value && typeof __value.toArray === "function") {',
+        cursorRead
+          ? '  __documents = __value.limit(100).toArray();'
+          : '  __documents = __value.toArray().slice(0, 100);',
+        '  __kind = "documents";',
+        '  __output = null;',
+        '} else if (Array.isArray(__value)) {',
+        '  __documents = __value.slice(0, 100);',
+        '  __kind = "documents";',
+        '  __output = null;',
+        '}',
+        'JSON.stringify({ kind: __kind, documents: __documents, output: __output })',
+      ].join('\n');
+      const raw = await runMongoJson(ctx.service, ctx.branch, script, database);
+      const result = raw && typeof raw === 'object' ? raw as { kind?: string; documents?: unknown[]; output?: unknown } : {};
+      if (normalized.write) {
+        stateService.recordDestructiveOp({
+          type: 'purge-database',
+          projectId: ctx.projectId,
+          summary: `对 ${ctx.resourceName} 执行 MongoDB 命令：${database}.${normalized.collection || '-'}`,
+          triggeredBy: resolveActorFromRequest(req),
+        });
+      }
+      stateService.appendActivityLog(ctx.projectId, {
+        type: 'resource-data-query',
+        branchId: ctx.branch.id,
+        branchName: ctx.branch.branch,
+        actor: resolveActorFromRequest(req),
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resourceName,
+        result: 'success',
+        note: `${ctx.resourceName} 执行 MongoDB 命令：${normalized.command.slice(0, 120)}`,
+      });
+      stateService.save();
+      res.json({
+        branchId: ctx.branch.id,
+        resourceId: ctx.resourceId,
+        database,
+        collection: normalized.collection,
+        command: normalized.command,
+        kind: result.kind === 'documents' ? 'documents' : 'output',
+        documents: Array.isArray(result.documents) ? result.documents : [],
+        output: result.output,
+      });
+    } catch (err) {
+      stateService.appendActivityLog(ctx.projectId, {
+        type: 'resource-data-query',
+        branchId: ctx.branch.id,
+        branchName: ctx.branch.branch,
+        actor: resolveActorFromRequest(req),
+        resourceId: ctx.resourceId,
+        resourceName: ctx.resourceName,
+        result: 'failed',
+        note: `${ctx.resourceName} MongoDB 命令失败：${(err as Error).message}`,
       });
       stateService.save();
       res.status(500).json({ error: (err as Error).message });
