@@ -59,7 +59,8 @@ export function QuickActionsCard({ productId, gotoTab }: { productId: string; go
       ) : actions.length === 0 ? (
         <div className="text-[12px] text-white/35 py-3 text-center">还没有快捷操作，点右上角「配置」添加。</div>
       ) : (
-        <div className="grid grid-cols-2 gap-2">
+        // 配置很多时卡片内部滚动，避免把右栏「我的待办」挤到零高
+        <div className="grid grid-cols-2 gap-2" style={{ maxHeight: 280, overflowY: 'auto', overscrollBehavior: 'contain' }}>
           {actions.map((a) => {
             const Icon = a.icon;
             return (

@@ -152,10 +152,10 @@ export function SingleProductView() {
       {active === 'overview' ? (
         // 工作台：AI助手主区（70%）+ 右栏待办/快捷操作（30%），撑满高度各自滚动
         <div className="flex-1 min-h-0 flex">
-          <div className="h-full min-h-0 flex flex-col border-r border-white/10" style={{ width: '70%' }}>
+          <div className="h-full min-h-0 min-w-0 flex flex-col border-r border-white/10" style={{ width: '70%' }}>
             <ProductAssistantPanel productId={product.id} productName={product.name} />
           </div>
-          <aside className="h-full min-h-0 flex flex-col gap-4 p-4" style={{ width: '30%' }}>
+          <aside className="h-full min-h-0 min-w-0 flex flex-col gap-4 p-4" style={{ width: '30%' }}>
             <MyTodos product={product} />
             <QuickActionsCard productId={product.id} gotoTab={(t) => setActive(t as Section)} />
           </aside>
