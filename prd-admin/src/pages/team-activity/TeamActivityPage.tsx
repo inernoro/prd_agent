@@ -61,6 +61,7 @@ export default function TeamActivityPage() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [modules, setModules] = useState<ActivityModuleOption[]>([]);
 
   const [filterUserId, setFilterUserId] = useState('');
@@ -90,9 +91,18 @@ export default function TeamActivityPage() {
       });
       if (fetchIdRef.current !== fetchId) return;
       if (res.success) {
+        setLoadError(null);
         setItems((prev) => (append ? [...prev, ...res.data.items] : res.data.items));
         setTotal(res.data.total);
         setPage(nextPage);
+      } else if (!append) {
+        // 刷新失败时清掉旧筛选的结果，避免筛选条件与列表内容错位
+        setItems([]);
+        setTotal(0);
+        setPage(1);
+        setLoadError(res.error?.message ?? '加载失败，请重试');
+      } else {
+        setLoadError(res.error?.message ?? '加载失败，请重试');
       }
       setLoading(false);
       setLoadingMore(false);
@@ -155,6 +165,14 @@ export default function TeamActivityPage() {
         >
           {loading ? (
             <MapSectionLoader text="正在加载团队动态…" />
+          ) : loadError && items.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+              <Activity size={36} className="text-white/15" />
+              <div className="text-sm text-white/60">{loadError}</div>
+              <Button variant="secondary" size="sm" onClick={() => void load(1, false)}>
+                重试
+              </Button>
+            </div>
           ) : items.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
               <Activity size={36} className="text-white/15" />
@@ -180,7 +198,8 @@ export default function TeamActivityPage() {
               ))}
 
               {hasMore && (
-                <div className="flex justify-center pt-1 pb-2">
+                <div className="flex flex-col items-center gap-1.5 pt-1 pb-2">
+                  {loadError ? <span className="text-[11px] text-red-300/80">{loadError}</span> : null}
                   <Button variant="secondary" size="sm" disabled={loadingMore} onClick={() => void load(page + 1, true)}>
                     {loadingMore ? <MapSpinner size={14} /> : null}
                     加载更多（已显示 {items.length} / {total} 条）
