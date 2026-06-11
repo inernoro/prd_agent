@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import {
   FileText,
@@ -11,7 +11,6 @@ import {
   Plus,
   Upload,
   BookOpen,
-  ChevronDown,
   Check,
   AlertCircle,
   RotateCcw,
@@ -119,16 +118,141 @@ interface KbEntry {
 
 const SESSION_KEY = 'md-to-ppt-chat-v1';
 
-// dotBg/dotRing 用于预览工具栏的风格色点。
+// dotBg/dotRing 用于预览工具栏的风格色点；preview 用于画廊迷你幻灯预览。
 // 「风格」语义（2026-06-10 用户纠偏）：风格是 AI 生成 HTML 时参照的设计语言（提示词里的
 // 设计 token + 字体 + 版式气质），切换风格 = 让 AI 按新风格整体重绘，
 // 绝不是前端注入一层 !important CSS 把 AI 的设计盖掉换个皮。
-const THEME_OPTIONS = [
-  { value: 'tech-dark', label: 'Tech 极黑', dotBg: '#0d1117', dotRing: '#7ee787' },
-  { value: 'cobalt-grid', label: '钴蓝格纸', dotBg: '#F0EBDE', dotRing: '#1F2BE0' },
-  { value: 'editorial-ink', label: '纸墨编辑', dotBg: '#f1efea', dotRing: '#0a0a0b' },
-  { value: 'warm-zine', label: '复古 Zine', dotBg: '#C8B99A', dotRing: '#008F4D' },
-  { value: 'swiss-minimal', label: 'Swiss 极简', dotBg: '#fafaf8', dotRing: '#002FA7' },
+// value 必须与后端 MdToPptController.ThemeTokens 的 case 一一对应。
+interface ThemePreview {
+  /** 迷你幻灯容器样式（背景可用渐变/格纸纹理） */
+  style: CSSProperties;
+  /** 标题主色 */
+  ink: string;
+  /** 强调色（eyebrow 条 / 角标数字） */
+  accent: string;
+  /** 标题字体（衬线/等宽主题用） */
+  titleFontFamily?: string;
+  /** 示例标题（表达该模板的内容气质） */
+  sampleTitle: string;
+  /** 右下角示例数字 + 注脚（让缩略图像一页真的幻灯） */
+  stat: string;
+  statLabel: string;
+}
+
+const THEME_OPTIONS: Array<{
+  value: string;
+  label: string;
+  desc: string;
+  dotBg: string;
+  dotRing: string;
+  preview: ThemePreview;
+}> = [
+  {
+    value: 'tech-dark', label: 'Tech 极黑', desc: '深色代码感 + 霓虹绿强调，技术方案与发布首选',
+    dotBg: '#0d1117', dotRing: '#7ee787',
+    preview: {
+      style: { background: 'linear-gradient(135deg, #0d1117 0%, #161b22 100%)' },
+      ink: '#e6edf3', accent: '#7ee787',
+      titleFontFamily: "'JetBrains Mono', ui-monospace, monospace",
+      sampleTitle: '系统架构总览', stat: '99.9%', statLabel: 'UPTIME',
+    },
+  },
+  {
+    value: 'cobalt-grid', label: '钴蓝格纸', desc: '米白格纸 + 国际钴蓝，数据报告的理性气质',
+    dotBg: '#F0EBDE', dotRing: '#1F2BE0',
+    preview: {
+      style: {
+        background: '#F0EBDE',
+        backgroundImage:
+          'linear-gradient(rgba(31,43,224,0.10) 1px, transparent 1px), linear-gradient(90deg, rgba(31,43,224,0.10) 1px, transparent 1px)',
+        backgroundSize: '14px 14px',
+      },
+      ink: '#16208f', accent: '#1F2BE0',
+      sampleTitle: '季度数据报告', stat: '240%', statLabel: '同比增长',
+    },
+  },
+  {
+    value: 'editorial-ink', label: '纸墨编辑', desc: '纸面杂志排版，衬线标题与大段留白',
+    dotBg: '#f1efea', dotRing: '#0a0a0b',
+    preview: {
+      style: { background: '#f1efea' },
+      ink: '#0a0a0b', accent: '#b91c1c',
+      titleFontFamily: "'Noto Serif SC', Georgia, serif",
+      sampleTitle: '观点与论证', stat: '04', statLabel: 'CHAPTER',
+    },
+  },
+  {
+    value: 'warm-zine', label: '复古 Zine', desc: '复古拼贴暖调，创意提案的手作感',
+    dotBg: '#C8B99A', dotRing: '#008F4D',
+    preview: {
+      style: { background: 'linear-gradient(160deg, #C8B99A 0%, #BFAD8C 100%)' },
+      ink: '#2b2418', accent: '#008F4D',
+      sampleTitle: '创意提案集', stat: 'No.7', statLabel: 'ISSUE',
+    },
+  },
+  {
+    value: 'swiss-minimal', label: 'Swiss 极简', desc: '瑞士网格极简，黑白灰 + 一抹克莱因蓝',
+    dotBg: '#fafaf8', dotRing: '#002FA7',
+    preview: {
+      style: { background: '#fafaf8' },
+      ink: '#111111', accent: '#002FA7',
+      sampleTitle: '极简设计原则', stat: '03', statLabel: 'PRINCIPLES',
+    },
+  },
+  {
+    value: 'aurora-gradient', label: '极光渐变', desc: '深空极光渐变 + 玻璃卡片，未来感产品愿景',
+    dotBg: '#0a0e27', dotRing: '#818cf8',
+    preview: {
+      style: {
+        background:
+          'radial-gradient(120% 90% at 85% 0%, rgba(192,132,252,0.45), transparent 55%), radial-gradient(120% 90% at 0% 100%, rgba(56,189,248,0.40), transparent 55%), #0a0e27',
+      },
+      ink: '#eef2ff', accent: '#818cf8',
+      sampleTitle: '未来产品愿景', stat: '10x', statLabel: 'LEAP',
+    },
+  },
+  {
+    value: 'sunset-bold', label: '日落炽橙', desc: '日落炽橙大色块，发布会级视觉冲击',
+    dotBg: '#1c1210', dotRing: '#fb923c',
+    preview: {
+      style: { background: 'linear-gradient(140deg, #1c1210 30%, #3b1a12 72%, #58241a 100%)' },
+      ink: '#fff7ed', accent: '#fb923c',
+      sampleTitle: '品牌发布之夜', stat: '2026', statLabel: 'LAUNCH',
+    },
+  },
+  {
+    value: 'forest-organic', label: '森林有机', desc: '苔绿米纸自然系，衬线标题的温润质感',
+    dotBg: '#f4f1e8', dotRing: '#2f6b3c',
+    preview: {
+      style: {
+        background: 'radial-gradient(90% 70% at 100% 0%, rgba(47,107,60,0.14), transparent 60%), #f4f1e8',
+      },
+      ink: '#1f3d26', accent: '#2f6b3c',
+      titleFontFamily: "'Noto Serif SC', Georgia, serif",
+      sampleTitle: '可持续增长', stat: '+38%', statLabel: '年复合增速',
+    },
+  },
+  {
+    value: 'royal-velvet', label: '鎏金深紫', desc: '深紫丝绒 + 鎏金衬线，年度盛典与高端致辞',
+    dotBg: '#17102b', dotRing: '#d4af37',
+    preview: {
+      style: {
+        background: 'radial-gradient(120% 100% at 50% 0%, rgba(212,175,55,0.16), transparent 55%), #17102b',
+      },
+      ink: '#f3e9d2', accent: '#d4af37',
+      titleFontFamily: "'Playfair Display', 'Noto Serif SC', serif",
+      sampleTitle: '年度旗舰致辞', stat: 'X', statLabel: 'ANNIVERSARY',
+    },
+  },
+  {
+    value: 'ocean-glass', label: '海洋玻璃', desc: '浅海蓝玻璃拟态，轻盈通透的信息层次',
+    dotBg: '#eaf4fb', dotRing: '#0369a1',
+    preview: {
+      style: { background: 'linear-gradient(135deg, #eaf4fb 0%, #d6eaf8 55%, #c2e0f4 100%)' },
+      ink: '#0c4a6e', accent: '#0369a1',
+      sampleTitle: '轻盈信息层', stat: '78%', statLabel: '透明度',
+    },
+  },
 ];
 
 // 空状态快速开始示例（零摩擦输入：点击填入输入框，用户可改后再发送）
@@ -761,7 +885,6 @@ export function MdToPptAgentPage() {
   const templatesLoadedRef = useRef(false);
   const [templateBusy, setTemplateBusy] = useState(false);
   const templateFileRef = useRef<HTMLInputElement>(null);
-  const [showSettings, setShowSettings] = useState(false);
 
   // 大纲工作稿（右侧编辑器数据源；sessionStorage 持久化，刷新恢复到 outline-ready 状态）
   const [outlineDraft, setOutlineDraft] = useState<OutlineDraft | null>(savedSession?.outlineDraft ?? null);
@@ -1845,18 +1968,6 @@ export function MdToPptAgentPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* 设置收起区 */}
-          <button
-            onClick={() => setShowSettings((v) => !v)}
-            className="flex items-center gap-1 text-[10px] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] px-2 py-1 rounded-md hover:bg-white/4"
-          >
-            设置
-            <ChevronDown
-              size={10}
-              className={`transition-transform ${showSettings ? 'rotate-180' : ''}`}
-            />
-          </button>
-
           {isStreaming && (
             <button
               onClick={handleAbort}
@@ -1899,103 +2010,16 @@ export function MdToPptAgentPage() {
         </div>
       </div>
 
-      {/* Settings panel（收起）。引擎只有 CDS Agent 一条路，模型由 Agent 运行配置决定。
-          模板 = AI 生成时参照的设计语言：官方 5 套 + 自定义（上传参考图提取风格规范）。
-          生成前选 = 按它画；生成后切 = AI 整体重绘（不是 CSS 换皮）。 */}
-      {showSettings && (
-        <div className="shrink-0 flex items-start gap-3 px-4 py-2 border-b border-white/6 bg-white/2 text-[11px] flex-wrap">
-          <span className="text-[var(--text-tertiary)] pt-1">模板</span>
-
-          <div className="flex flex-col gap-1.5 min-w-0">
-            {/* 官方模板 */}
-            <div className="flex items-center gap-1.5 flex-wrap" data-testid="official-templates">
-              {THEME_OPTIONS.map((opt) => {
-                const active = templateId == null && theme === opt.value;
-                return (
-                  <button
-                    key={opt.value}
-                    onClick={() => switchTheme(opt.value)}
-                    disabled={isStreaming}
-                    title={(generatedHtml ? '切换后 AI 按该风格整体重绘（约 1 分钟）：' : 'AI 生成参照：') + opt.label}
-                    className={[
-                      'flex items-center gap-1.5 px-2 py-1 rounded-md border disabled:opacity-40',
-                      active
-                        ? 'bg-purple-500/20 border-purple-500/40 text-purple-200 font-semibold'
-                        : 'bg-white/4 border-white/8 text-[var(--text-secondary)] hover:bg-white/8',
-                    ].join(' ')}
-                  >
-                    <span
-                      className="w-3 h-3 rounded-full shrink-0"
-                      style={{ background: opt.dotBg, border: '2px solid ' + opt.dotRing }}
-                    />
-                    {opt.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* 自定义模板（上传参考图 → 风格规范提取） */}
-            <div className="flex items-center gap-1.5 flex-wrap" data-testid="custom-templates">
-              {customTemplates.map((t) => {
-                const active = templateId === t.id;
-                return (
-                  <span key={t.id} className="inline-flex items-center">
-                    <button
-                      onClick={() => selectCustomTemplate(t)}
-                      disabled={isStreaming}
-                      title={(generatedHtml ? '点击 = AI 按该模板整体重绘：' : 'AI 生成参照：') + t.styleSpec}
-                      className={[
-                        'flex items-center gap-1.5 px-2 py-1 rounded-l-md border border-r-0 disabled:opacity-40 max-w-[160px]',
-                        active
-                          ? 'bg-purple-500/20 border-purple-500/40 text-purple-200 font-semibold'
-                          : 'bg-white/4 border-white/8 text-[var(--text-secondary)] hover:bg-white/8',
-                      ].join(' ')}
-                    >
-                      <span
-                        className="w-3 h-3 rounded-full shrink-0"
-                        style={{ background: t.bgColor, border: '2px solid ' + t.accentColor }}
-                      />
-                      <span className="truncate">{t.name}</span>
-                    </button>
-                    <button
-                      onClick={() => void removeTemplate(t)}
-                      disabled={isStreaming}
-                      title={'删除模板：' + t.name}
-                      className={[
-                        'flex items-center justify-center w-5 self-stretch rounded-r-md border disabled:opacity-40',
-                        active
-                          ? 'bg-purple-500/15 border-purple-500/40 text-purple-300/70 hover:text-red-300'
-                          : 'bg-white/4 border-white/8 text-[var(--text-tertiary)] hover:text-red-400',
-                      ].join(' ')}
-                    >
-                      <Trash2 size={10} />
-                    </button>
-                  </span>
-                );
-              })}
-
-              <button
-                onClick={() => templateFileRef.current?.click()}
-                disabled={isStreaming || templateBusy}
-                title="上传一张设计参考图（截图/海报/喜欢的 PPT 页面），AI 提取风格规范作为自定义模板"
-                data-testid="upload-template"
-                className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-dashed border-white/15 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] hover:border-white/30 disabled:opacity-40"
-              >
-                {templateBusy ? <MapSpinner size={11} /> : <ImagePlus size={11} />}
-                {templateBusy ? '正在提取风格（约 10s）...' : '上传参考图新建'}
-              </button>
-            </div>
-          </div>
-
-          <input
-            ref={templateFileRef}
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            onChange={(e) => void handleTemplateFile(e)}
-            className="hidden"
-          />
-        </div>
-      )}
+      {/* 模板选择只有两个入口（不再有「设置」收起面板，那是画廊的重复）：
+          生成前 = 右侧模板画廊（大卡片迷你预览）；生成后 = 预览工具栏色点（AI 整体重绘）。
+          隐藏的上传 input 常驻在此，画廊「上传参考图新建」按钮引用它。 */}
+      <input
+        ref={templateFileRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        onChange={(e) => void handleTemplateFile(e)}
+        className="hidden"
+      />
 
       {/* Published URL banner */}
       {publishedUrl && (
@@ -2317,7 +2341,7 @@ export function MdToPptAgentPage() {
         {/* ─── Right: Artifact panel ──────────────────────────────────────── */}
         <div className="flex-1 min-w-0 flex flex-col" style={{ minHeight: 0 }}>
           {/* Idle = 模板画廊：右侧大空间选模板（模板 = AI 生成参照），不藏设置里。
-                官方 5 套大卡片（迷你风格预览）+ 自定义模板 + 上传参考图新建。 */}
+                官方 10 套大卡片（迷你风格预览）+ 自定义模板 + 上传参考图新建。 */}
           {artifactPhase === 'idle' && !generatedHtml && !outlineDraft && (
             <div
               className="flex-1 flex flex-col px-6 py-5 gap-4"
@@ -2336,17 +2360,20 @@ export function MdToPptAgentPage() {
                 </div>
               </div>
 
-              {/* 官方模板 */}
+              {/* 官方模板：每张卡用模板自己的设计语言画一页迷你幻灯
+                  （渐变/格纸底 + 主题字体标题 + 角标数据），所见即生成参照 */}
               <div className="shrink-0">
                 <div className="text-[11px] font-semibold text-[var(--text-tertiary)] mb-2">官方模板</div>
-                <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))' }}>
+                <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))' }}>
                   {THEME_OPTIONS.map((opt) => {
                     const active = templateId == null && theme === opt.value;
+                    const pv = opt.preview;
                     return (
                       <button
                         key={opt.value}
                         onClick={() => switchTheme(opt.value)}
                         data-testid={'tpl-official-' + opt.value}
+                        title={opt.desc}
                         className={[
                           'group text-left rounded-xl border overflow-hidden transition-all',
                           active
@@ -2354,20 +2381,36 @@ export function MdToPptAgentPage() {
                             : 'border-white/10 hover:border-white/25',
                         ].join(' ')}
                       >
-                        {/* 迷你风格预览：用模板自己的底色/强调色画一张缩略幻灯 */}
-                        <div className="px-4 pt-4 pb-3" style={{ background: opt.dotBg, height: 96 }}>
-                          <div className="w-8 h-1 rounded-full mb-2" style={{ background: opt.dotRing }} />
-                          <div className="text-[15px] font-extrabold leading-tight" style={{ color: opt.dotRing }}>
-                            Aa 标题示意
+                        <div className="relative px-4 pt-3.5 pb-3 overflow-hidden" style={{ height: 112, ...pv.style }}>
+                          <div className="w-7 rounded-full mb-2" style={{ background: pv.accent, height: 3 }} />
+                          <div
+                            className="text-[15px] font-extrabold leading-tight"
+                            style={{ color: pv.ink, fontFamily: pv.titleFontFamily }}
+                          >
+                            {pv.sampleTitle}
                           </div>
-                          <div className="mt-1.5 h-1.5 w-3/4 rounded" style={{ background: opt.dotRing, opacity: 0.25 }} />
-                          <div className="mt-1 h-1.5 w-1/2 rounded" style={{ background: opt.dotRing, opacity: 0.18 }} />
+                          <div className="mt-2 h-1.5 w-3/4 rounded" style={{ background: pv.ink, opacity: 0.22 }} />
+                          <div className="mt-1 h-1.5 w-1/2 rounded" style={{ background: pv.ink, opacity: 0.14 }} />
+                          <div className="absolute right-3.5 bottom-2.5 text-right">
+                            <div
+                              className="text-[19px] font-extrabold leading-none tabular-nums"
+                              style={{ color: pv.accent, fontFamily: pv.titleFontFamily }}
+                            >
+                              {pv.stat}
+                            </div>
+                            <div className="text-[8px] mt-0.5 tracking-widest" style={{ color: pv.ink, opacity: 0.5 }}>
+                              {pv.statLabel}
+                            </div>
+                          </div>
                         </div>
-                        <div className="flex items-center justify-between px-3 py-2 bg-white/4">
-                          <span className={['text-[12px] font-medium', active ? 'text-purple-200' : 'text-[var(--text-secondary)]'].join(' ')}>
-                            {opt.label}
-                          </span>
-                          {active && <Check size={12} className="text-purple-300" />}
+                        <div className="px-3 py-2 bg-white/4">
+                          <div className="flex items-center justify-between">
+                            <span className={['text-[12px] font-semibold', active ? 'text-purple-200' : 'text-[var(--text-primary)]'].join(' ')}>
+                              {opt.label}
+                            </span>
+                            {active && <Check size={12} className="text-purple-300 shrink-0" />}
+                          </div>
+                          <div className="text-[10px] text-[var(--text-tertiary)] truncate mt-0.5">{opt.desc}</div>
                         </div>
                       </button>
                     );
@@ -2378,7 +2421,7 @@ export function MdToPptAgentPage() {
               {/* 自定义模板（上传参考图，AI 提取风格规范作为参照） */}
               <div className="shrink-0">
                 <div className="text-[11px] font-semibold text-[var(--text-tertiary)] mb-2">自定义模板</div>
-                <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))' }}>
+                <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))' }}>
                   {customTemplates.map((t) => {
                     const active = templateId === t.id;
                     return (
@@ -2392,7 +2435,7 @@ export function MdToPptAgentPage() {
                         ].join(' ')}
                       >
                         <button onClick={() => selectCustomTemplate(t)} className="block w-full text-left">
-                          <div className="px-4 pt-4 pb-3" style={{ background: t.bgColor, height: 96 }}>
+                          <div className="px-4 pt-4 pb-3" style={{ background: t.bgColor, height: 112 }}>
                             <div className="w-8 h-1 rounded-full mb-2" style={{ background: t.accentColor }} />
                             <div className="text-[15px] font-extrabold leading-tight" style={{ color: t.accentColor }}>
                               Aa {t.name.slice(0, 6)}
@@ -2423,7 +2466,7 @@ export function MdToPptAgentPage() {
                     disabled={templateBusy}
                     data-testid="gallery-upload-template"
                     className="rounded-xl border border-dashed border-white/15 hover:border-purple-400/50 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] flex flex-col items-center justify-center gap-2 transition-colors disabled:opacity-50"
-                    style={{ minHeight: 134 }}
+                    style={{ minHeight: 150 }}
                   >
                     {templateBusy ? <MapSpinner size={18} /> : <ImagePlus size={18} />}
                     <span className="text-[11px] font-medium">
@@ -2982,7 +3025,7 @@ export function MdToPptAgentPage() {
                   </button>
 
                   {/* 模板色点：点击 = AI 参照该模板整体重绘（约 1 分钟，全程流式可见）。
-                        官方 5 套 + 自定义模板（参考图提取） */}
+                        官方 10 套 + 自定义模板（参考图提取） */}
                   <div className="flex items-center gap-1.5 ml-2 pl-2.5 border-l border-white/10" data-testid="theme-dots">
                     {THEME_OPTIONS.map((opt) => (
                       <button

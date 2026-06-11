@@ -60,3 +60,31 @@
 - claude-sdk-sidecar 的 include_partial_messages 修复（e8cc003）合并 main +
   sidecar 实例重启后，思考流/逐页实况才真正在线上活起来——本计划 1-3 的体验
   都建立在真流式之上，应最先落地。
+
+## 9. 用户模板共享走海鲜市场（2026-06-11 用户提案：做得不错的模板可以拿来）
+
+复用既有 Marketplace 基建（`.claude/rules/marketplace.md`），不另造轮子：
+
+- 后端：`MdToPptTemplate` 实现 `IForkable`。
+  - `GetCopyableFields()` 白名单：Name / StyleSpec / BgColor / AccentColor
+    （ExtractModel / UserId / CreatedAt 不复制，OnForked 重置归属与时间）。
+  - 加 `IMarketplaceItem` 公共字段（IsPublic / ForkCount / 描述），
+    publish / fork 端点挂在 MdToPptController 或独立 marketplace 路由。
+- 前端：`marketplaceTypes.tsx` 的 `CONFIG_TYPE_REGISTRY` 注册新类型
+  `pptTemplate`（label「PPT 模板」，数据源 `md_to_ppt_templates`），
+  PreviewRenderer 直接复用画廊迷你幻灯卡（bgColor + accentColor + styleSpec 摘要）。
+- 画廊加第三个分组「市场精选」：列出已公开模板，一键 fork 进自己的自定义模板。
+- 验收口径：A 用户上传参考图建模板并公开 → B 用户海鲜市场看到并 fork →
+  B 的画廊出现该模板且能用它生成（styleSpec 生效）。
+
+## 10. 官方模板持续扩容（2026-06-11 已扩到 10 套，后续节奏）
+
+- 已落地 10 套（tech-dark / cobalt-grid / editorial-ink / warm-zine /
+  swiss-minimal / aurora-gradient / sunset-bold / forest-organic /
+  royal-velvet / ocean-glass），前后端 value 一一对应
+  （后端 ThemeTokens switch + 前端 THEME_OPTIONS）。
+- 后续每加一套的清单：后端 ThemeTokens case（:root token + tone 描述）→
+  前端 THEME_OPTIONS（label/desc/dotBg/dotRing/preview 迷你幻灯参数）→
+  画廊自动出卡，工具栏自动出色点，无需其他改动。
+- 参照业界（Gamma/Pitch/Beautiful.ai）的风格族谱继续补：玻璃拟态亮色系、
+  暗色弥散光、报刊双栏、手绘标注风等候选。

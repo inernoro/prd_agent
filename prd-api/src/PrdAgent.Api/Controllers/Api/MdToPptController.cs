@@ -219,6 +219,46 @@ public class MdToPptController : ControllerBase
                     "严格网格排版，大量留白；前端会注入顶部/底部细 hairline；" +
                     "颜色只用黑与蓝，完全禁止渐变、光晕、装饰性色块；" +
                     ".stat 数字全大写蓝色；.table 表头蓝色全大写；整体理性精准，如 Apple 发布会 keynote 的极简版");
+            case "aurora-gradient":
+                return (
+                    ":root{--bg:#0a0e27;--bg2:#141937;--ink:#eef0ff;--muted:#9aa3d4;--line:rgba(154,163,212,.22);--card:rgba(99,102,241,.10);--a1:#818cf8;--a2:#38bdf8;--a3:#c084fc;--orb-op:.35;}\n" +
+                    "html,body,.reveal{background:#0a0e27;}\n",
+                    "极光渐变（Aurora，对标 Gamma 默认主题）——深夜蓝底（#0a0e27）+ 靛紫/天青极光光晕（.orb 必用且面积大）。" +
+                    "字体：h1/h2 用 Inter 800 大字；kicker 用 .eyebrow 天青色。" +
+                    ".card 用半透明靛紫底 + 1px 微光边；.stat 数字靛紫 var(--a1)；" +
+                    "渐变只用于 .orb/.bar 装饰，标题实色；整体如现代 SaaS 发布会，光感通透");
+            case "sunset-bold":
+                return (
+                    ":root{--bg:#1c1210;--bg2:#2a1a14;--ink:#fff3ec;--muted:#d9a994;--line:rgba(255,178,128,.25);--card:#2a1a14;--a1:#fb923c;--a2:#f43f5e;--a3:#fbbf24;--orb-op:.3;}\n" +
+                    "html,body,.reveal{background:#1c1210;}\n",
+                    "日落炽橙（Sunset Bold）——暖黑底（#1c1210）+ 炽橙/玫红强调，品牌营销气质，敢用大字。" +
+                    "字体：h1/h2 用 Inter 850 超大号（可到 9vw），行高压紧；正文 Inter。" +
+                    ".stat 数字炽橙 var(--a1)；.orb 用橙红双光晕；.bar 强调条必用；" +
+                    "排版大胆有冲击力，大面积留黑衬托暖色，如 Spotify Wrapped/Stripe Sessions");
+            case "forest-organic":
+                return (
+                    ":root{--bg:#f4f1e8;--bg2:#e8e2d2;--ink:#1d2b1f;--muted:#5a6b58;--line:rgba(29,43,31,.18);--card:#fffdf6;--a1:#2f6b3c;--a2:#7ba05b;--a3:#1d4428;--orb-op:0;}\n" +
+                    "html,body,.reveal{background:#f4f1e8;}\n",
+                    "森林有机（亮色自然系）——米色纸底（#f4f1e8）+ 深林绿（#2f6b3c），自然/ESG/健康主题。" +
+                    "字体：h1/h2 用 'Noto Serif SC' 衬线（font-weight:700）；h3/h4 绿色全大写 Inter；正文 Inter。" +
+                    ".card 用暖白底 + 大圆角（24px）+ 浅绿边；.stat 数字深绿；禁止光晕；" +
+                    "强调用细横线与叶形圆角色块，整体温润安静如 Kinfolk 杂志");
+            case "royal-velvet":
+                return (
+                    ":root{--bg:#17102b;--bg2:#221740;--ink:#f3eeff;--muted:#b3a6d9;--line:rgba(179,166,217,.22);--card:#221740;--a1:#d4af37;--a2:#a78bfa;--a3:#f0c75e;--orb-op:.25;}\n" +
+                    "html,body,.reveal{background:#17102b;}\n",
+                    "鎏金深紫（高端 keynote）——深紫绒底（#17102b）+ 鎏金强调（#d4af37），奢华而克制。" +
+                    "字体：h1/h2 用 'Playfair Display' 衬线（font-weight:600，不斜体）；h3/h4 金色全大写细字 Inter；正文 Inter。" +
+                    ".stat 数字鎏金 var(--a1)；.card 深紫绒底 + 金色细边（1px rgba(212,175,55,.35)）；" +
+                    ".quote 左侧金色细竖条；光晕紫金双色低调使用；如奢侈品牌年度发布");
+            case "ocean-glass":
+                return (
+                    ":root{--bg:#eaf4fb;--bg2:#d9eaf6;--ink:#0c2d48;--muted:#48708f;--line:rgba(12,45,72,.15);--card:rgba(255,255,255,.72);--a1:#0369a1;--a2:#0ea5e9;--a3:#075985;--orb-op:.2;}\n" +
+                    "html,body,.reveal{background:#eaf4fb;}\n",
+                    "海洋玻璃（亮色玻璃拟态）——浅蓝白底（#eaf4fb）+ 海蓝强调（#0369a1），清爽科技感。" +
+                    "字体：h1/h2 用 Inter 800；h3/h4 海蓝全大写；正文 Inter。" +
+                    ".card 用半透明白（rgba(255,255,255,.72)）+ backdrop-filter:blur(14px) + 1px 白边——玻璃卡是本风格签名；" +
+                    ".stat 数字海蓝；.orb 用天青低透明度光晕；整体如 macOS 发布会的轻盈通透");
             default: // tech-dark
                 return (
                     ":root{--bg:#0d1117;--bg2:#161b22;--ink:#e6edf3;--muted:#8b949e;--line:rgba(139,148,158,.22);--card:#161b22;--a1:#7ee787;--a2:#79c0ff;--a3:#d2a8ff;--orb-op:.14;}\n" +
