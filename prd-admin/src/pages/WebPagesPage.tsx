@@ -221,15 +221,23 @@ interface SiteGroup {
 
 /** 按分组方式把（已排序的）站点列表切成分节。
  * 关键：保持传入数组的顺序（= 排序结果），只按 first-seen 顺序建组，
- * 因此「分组」与「排序」互不干扰 —— 排序决定顺序，分组只插标题。 */
-function buildSiteGroups(items: HostedSite[], mode: GroupMode): SiteGroup[] {
+ * 因此「分组」与「排序」互不干扰 —— 排序决定顺序，分组只插标题。
+ * teamGroups 传入时（团队空间）按专题/分类实体切分节；否则按个人空间的 folder 字段。 */
+function buildSiteGroups(items: HostedSite[], mode: GroupMode, teamGroups?: WebPageGroup[]): SiteGroup[] {
+  const groupById = new Map((teamGroups ?? []).map((g) => [g.id, g]));
   const map = new Map<string, SiteGroup>();
   for (const site of items) {
     let key: string;
     let label: string;
     if (mode === 'folder') {
-      key = site.folder ? `f:${site.folder}` : 'f:__none__';
-      label = site.folder || '未分类';
+      if (teamGroups) {
+        const g = site.groupId ? groupById.get(site.groupId) : undefined;
+        key = g ? `g:${g.id}` : 'g:__none__';
+        label = g ? `${g.kind === 'topic' ? '专题' : '分类'} · ${g.name}` : '未分组';
+      } else {
+        key = site.folder ? `f:${site.folder}` : 'f:__none__';
+        label = site.folder || '未分类';
+      }
     } else {
       label = toDateBucketLabel(site.createdAt);
       key = `t:${label}`;
@@ -619,7 +627,10 @@ export default function WebPagesPage() {
     }
     return activeFolder ? spaceSites.filter((s) => s.folder === activeFolder) : spaceSites;
   }, [spaceSites, activeFolder, activeGroupId, currentSpace.kind]);
-  const siteGroups = useMemo(() => buildSiteGroups(displaySites, groupMode), [displaySites, groupMode]);
+  const siteGroups = useMemo(
+    () => buildSiteGroups(displaySites, groupMode, currentSpace.kind === 'team' ? teamGroups : undefined),
+    [displaySites, groupMode, currentSpace.kind, teamGroups],
+  );
   const cardWidth = CARD_SIZE_OPTIONS.find(o => o.value === cardSize)?.width ?? 260;
 
   const enterSpace = (s: Space) => {
@@ -940,12 +951,12 @@ export default function WebPagesPage() {
             />
           </div>
 
-          {/* 分组 segment pill group：二选一 */}
+          {/* 分组 segment pill group：二选一（团队空间按专题/分类切分节，个人空间按文件夹） */}
           <div data-tour-id="webpages-group-pills">
             <SegmentPills
               options={[
                 { value: 'time', label: '日期' },
-                { value: 'folder', label: '文件夹' },
+                { value: 'folder', label: currentSpace.kind === 'team' ? '分组' : '文件夹' },
               ]}
               value={groupMode}
               onChange={(v) => setGroupMode(v as GroupMode)}
