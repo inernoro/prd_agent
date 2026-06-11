@@ -156,7 +156,7 @@
     animation: cds-drawer-slide-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
   }
 
-  .cds-branch-list-workspace {
+  .cds-workspace.cds-branch-list-workspace {
     max-width: 3000px;
   }
 
