@@ -18,6 +18,15 @@ namespace PrdAgent.Api.Filters;
 /// </summary>
 public sealed class ActivityLogActionFilter : IAsyncActionFilter
 {
+    /// <summary>HttpContext.Items 标记 key：本次请求未发生新写入（如幂等回放命中缓存），跳过留痕</summary>
+    public const string SuppressItemKey = "team-activity:suppress";
+
+    /// <summary>
+    /// 在"返回缓存结果、未发生新写入"的分支（典型：Idempotency-Key 回放命中）调用，
+    /// 避免客户端超时重试时产生重复动态。
+    /// </summary>
+    public static void Suppress(HttpContext httpContext) => httpContext.Items[SuppressItemKey] = true;
+
     private const int MaxTitleLength = 200;
 
     private readonly MongoDbContext _db;
@@ -74,6 +83,9 @@ public sealed class ActivityLogActionFilter : IAsyncActionFilter
         {
             // Action 抛了未处理异常时不留痕——此时 Result 为空、响应码还停留在默认 200，不能当成功
             if (executed.Exception != null && !executed.ExceptionHandled) return;
+
+            // 幂等回放等"未发生新写入"的成功响应不留痕（由业务分支显式打标）
+            if (context.HttpContext.Items.ContainsKey(SuppressItemKey)) return;
 
             // 仅记录成功结果（2xx）
             var status = (executed.Result as ObjectResult)?.StatusCode
